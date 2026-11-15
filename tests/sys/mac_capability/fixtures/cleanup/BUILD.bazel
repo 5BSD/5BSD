@@ -1,3 +1,4 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# amd64 only, like the mac_capability services it plugs into (sys/dev/mac_capability).
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
 amd64_generic_module_objects(srcs = ["cleanup_fixture.c"], deps = ["//sys/dev/mac_capability:fixture_kpi_headers"])

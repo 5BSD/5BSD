@@ -6,17 +6,16 @@ Test-only capability services for tests/sys/mac_capability:
   include/      wire protocols shared with the test programs
 
 They are built by buildkernel from sys/modules/mac_capability_test_* when
-tests are enabled (MK_TESTS), installed in /boot/kernel and packaged in
-mac-capability-tests, never in a kernel package.  Production code does not
-include their headers.
+tests are enabled (MK_TESTS, or ALL_MODULES), with Makefile.fixture here:
+they install in /usr/tests/sys/mac_capability/fixtures, off the kernel
+module path, and are packaged in mac-capability-tests, never in a kernel
+package.  Production code does not include their headers.
 
-The keystore and kernelstore cases declare require.kmods; preload both in
-the test guest's /boot/loader.conf:
-
-  mac_capability_test_keystore_load="YES"
-  mac_capability_test_kernelstore_load="YES"
-
-The unload and cleanup cases load and unload mac_capability_test_cleanup
-themselves, so it must not be preloaded.  The fixtures register test
-services; load them only in a disposable test guest, never on a host whose
-capability plane is in production use.
+The cases load them by absolute path; no loader configuration is needed.
+A keystore or kernelstore case loads its fixture the first time it connects
+(require_fixture() in mac_capability_test_helpers.h), and the fixture stays
+loaded; the unload and cleanup cases load and unload
+mac_capability_test_cleanup themselves.  A missing or refused fixture fails
+the case.  The fixtures register test services: run the suite only in a
+disposable test guest, never on a host whose capability plane is in
+production use.

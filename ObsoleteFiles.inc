@@ -1,7 +1,14 @@
 # 20261115: the stale plane-free runner of tests/sys/mac_capability is
 # retired (the suite runs under kyua in the VM tiers).  Its fixture modules
-# ship in /boot/kernel again, with the mac-capability-tests package.
+# ship with the mac-capability-tests package in
+# /usr/tests/sys/mac_capability/fixtures, never on the kernel module path.
 OLD_FILES+= usr/tests/sys/mac_capability/run_tests
+OLD_FILES+= boot/kernel/mac_capability_test_cleanup.ko
+OLD_FILES+= boot/kernel/mac_capability_test_kernelstore.ko
+OLD_FILES+= boot/kernel/mac_capability_test_keystore.ko
+OLD_FILES+= usr/lib/debug/boot/kernel/mac_capability_test_cleanup.ko.debug
+OLD_FILES+= usr/lib/debug/boot/kernel/mac_capability_test_kernelstore.ko.debug
+OLD_FILES+= usr/lib/debug/boot/kernel/mac_capability_test_keystore.ko.debug
 
 # 20261029: the local OpenTelemetry agent (Fluent Bit) is no longer part
 # of the base system.

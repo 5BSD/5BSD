@@ -346,7 +346,7 @@ ATF_TC_HEAD(capsicum_send_ioctl_limit, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "SENDMSG is denied when absent from the fd ioctl allowlist");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_test_keystore");
+	    "mac_capability");
 }
 ATF_TC_BODY(capsicum_send_ioctl_limit, tc)
 {
@@ -375,7 +375,7 @@ ATF_TC_HEAD(capsicum_recv_ioctl_limit, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "RECVMSG is denied when absent from the fd ioctl allowlist");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_test_keystore");
+	    "mac_capability");
 }
 ATF_TC_BODY(capsicum_recv_ioctl_limit, tc)
 {

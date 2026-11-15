@@ -384,9 +384,10 @@ state by uid or nonce without trusting the payload; `queue_depth`,
 1024 instances) are the resource ceilings; a service that pushes unsolicited
 messages sets `MAC_CAPABILITY_SVC_NOTIFY` and uses `mac_capability_notify`;
 and `MODULE_DEPEND` on `mac_capability` is required. The kernel-side tests
-in `tests/sys/mac_capability` use the fixtures preloaded by the test
-guest's loader, which is how you would test a new service before there is a
-userland provider in front of it (see [Testing](testing.md)).
+in `tests/sys/mac_capability` kldload the fixtures by absolute path from
+`/usr/tests/sys/mac_capability/fixtures`, which is how you would test a new
+service before there is a userland provider in front of it (see
+[Testing](testing.md)).
 
 ## KPI changes to know about
 

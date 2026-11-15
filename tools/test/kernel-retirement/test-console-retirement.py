@@ -53,9 +53,39 @@ class ConsoleRetirement(unittest.TestCase):
         for name in fixtures:
             self.assertIn(name, modules)
             result = subprocess.run(['make', '-C', str(SRC / 'sys/modules' / name),
-                '-V', 'KMODTAGS'], capture_output=True, text=True)
+                '-V', 'KMODTAGS', '-V', 'KMODDIR'], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout.strip(), 'package=mac-capability-tests')
+            tags, kmoddir = result.stdout.splitlines()
+            self.assertEqual(tags, 'package=mac-capability-tests')
+            # Off the kernel module path (the 20261011 exclusion stands).
+            self.assertEqual(kmoddir, '/usr/tests/sys/mac_capability/fixtures')
+
+    def test_capability_fixture_plist_routing(self):
+        # The kernel stage's METALOG goes through mtree-to-plist.awk with
+        # kernel=yes; a fixture must land in its test package, not kernel.
+        with tempfile.TemporaryDirectory() as td:
+            lines = ''.join(
+                './usr/tests/sys/mac_capability/fixtures/%s.ko type=file '
+                'uname=root gname=wheel mode=0444 '
+                'tags=package=mac-capability-tests\n' % name
+                for name in ['mac_capability_test_keystore',
+                             'mac_capability_test_kernelstore',
+                             'mac_capability_test_cleanup'])
+            lines += ('./boot/kernel/kernel type=file uname=root gname=wheel '
+                'mode=0555\n')
+            result = subprocess.run(['awk', '-v', 'kernel=yes', '-f',
+                str(SRC / 'release/scripts/mtree-to-plist.awk')],
+                input=lines, cwd=td, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            test_plist = Path(td, 'mac-capability-tests.plist').read_text()
+            kernel_plist = Path(td, 'kernel.plist').read_text()
+            for name in ['mac_capability_test_keystore',
+                         'mac_capability_test_kernelstore',
+                         'mac_capability_test_cleanup']:
+                self.assertIn('/usr/tests/sys/mac_capability/fixtures/%s.ko' % name,
+                    test_plist)
+                self.assertNotIn(name, kernel_plist)
+            self.assertIn('/boot/kernel/kernel', kernel_plist)
 
     def test_vt_keymap_font_and_legacy_keymap_translation(self):
         for keymap in ['us', 'us.iso']:

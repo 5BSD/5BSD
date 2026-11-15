@@ -9,12 +9,18 @@
 #ifndef _MAC_CAPABILITY_TEST_HELPERS_H_
 #define _MAC_CAPABILITY_TEST_HELPERS_H_
 
-#include <sys/types.h>
+#include <sys/param.h>
 #include <sys/ioctl.h>
+#include <sys/linker.h>
+#include <sys/module.h>
+#include <sys/rctl.h>
 #include <sys/sysctl.h>
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -36,13 +42,47 @@ mac_capability_open(void)
 	return (fd);
 }
 
-/* Helper: connect to a service, return instance fd */
+/*
+ * The test-only fixture services ship with this suite (mac-capability-tests)
+ * in FIXTURE_DIR, off the kernel module path; see fixtures/README.
+ */
+#define	FIXTURE_DIR	"/usr/tests/sys/mac_capability/fixtures"
+
+/*
+ * Make sure fixture module name is loaded, loading it by absolute path if it
+ * is not.  It stays loaded: later cases and other test programs share it.
+ * A missing or refused fixture fails the case; it is never a skip.
+ */
+static inline void
+require_fixture(const char *name)
+{
+	char path[MAXPATHLEN];
+
+	if (modfind(name) >= 0)
+		return;
+	snprintf(path, sizeof(path), "%s/%s.ko", FIXTURE_DIR, name);
+	ATF_REQUIRE_MSG(kldload(path) >= 0 || errno == EEXIST,
+	    "kldload %s: %s (installed with mac-capability-tests)", path,
+	    strerror(errno));
+	ATF_REQUIRE_MSG(modfind(name) >= 0, "%s loaded but not registered",
+	    name);
+}
+
+/*
+ * Helper: connect to a service, return instance fd.  The keystore and
+ * kernelstore fixture services are loaded first if need be; the cleanup
+ * fixture is loaded and unloaded by its own cases.
+ */
 static inline int
 mac_capability_connect(const char *name)
 {
 	struct mac_capability_connect_args ca;
 	int ctl, saved;
 
+	if (strcmp(name, "test_keystore") == 0)
+		require_fixture("mac_capability_test_keystore");
+	else if (strcmp(name, "test_kernelstore") == 0)
+		require_fixture("mac_capability_test_kernelstore");
 	ctl = mac_capability_open();
 	memset(&ca, 0, sizeof(ca));
 	strlcpy(ca.name, name, sizeof(ca.name));

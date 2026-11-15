@@ -5,11 +5,9 @@
  *
  * Tests for mac_capability_coalition — capability-based resource group management.
  *
- * Requires:
- *   kldload mac_capability
- *   kldload mac_capability_coalition
- *   kldload mac_capability_test_keystore   (for mac_capability member tests)
- *   kldload mac_capability_channel            (for mac_capability member termination tests)
+ * The plane and its services are compiled in.  The member tests use the
+ * mac_capability_test_keystore fixture, which mac_capability_connect() loads
+ * from the test package (mac_capability_test_helpers.h).
  */
 
 #include <sys/param.h>
@@ -606,7 +604,7 @@ ATF_TC_HEAD(enlist_mac_capability_member, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Enlist a mac_capability instance as member, verify STAT");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_coalition mac_capability_test_keystore");
+	    "mac_capability mac_capability_coalition");
 }
 ATF_TC_BODY(enlist_mac_capability_member, tc)
 {
@@ -637,7 +635,7 @@ ATF_TC_HEAD(terminate_revokes_mac_capability, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Terminating coalition revokes mac_capability members (ECONNRESET)");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_coalition mac_capability_test_keystore");
+	    "mac_capability mac_capability_coalition");
 }
 ATF_TC_BODY(terminate_revokes_mac_capability, tc)
 {
@@ -679,7 +677,7 @@ ATF_TC_HEAD(enlist_multiple_types, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Enlist socket and mac_capability, verify mixed STAT");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_coalition mac_capability_test_keystore");
+	    "mac_capability mac_capability_coalition");
 }
 ATF_TC_BODY(enlist_multiple_types, tc)
 {
@@ -849,7 +847,7 @@ ATF_TC_HEAD(terminate_cascades_nested, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Terminating parent cascades to nested child members");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_coalition mac_capability_test_keystore");
+	    "mac_capability mac_capability_coalition");
 }
 ATF_TC_BODY(terminate_cascades_nested, tc)
 {
@@ -3385,7 +3383,7 @@ ATF_TC_HEAD(watchdog_fires_revokes_mac_capability, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Watchdog expiry revokes mac_capability members");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_coalition mac_capability_test_keystore");
+	    "mac_capability mac_capability_coalition");
 	atf_tc_set_md_var(tc, "timeout", "10");
 }
 ATF_TC_BODY(watchdog_fires_revokes_mac_capability, tc)
@@ -3431,7 +3429,7 @@ ATF_TC_HEAD(large_timeouts_do_not_fire, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Near-limit deadline and watchdog values do not fire immediately");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_coalition mac_capability_test_keystore");
+	    "mac_capability mac_capability_coalition");
 }
 ATF_TC_BODY(large_timeouts_do_not_fire, tc)
 {
@@ -3665,7 +3663,7 @@ ATF_TC_HEAD(set_leader_mac_capability, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Mac_capability leader death (revoke) terminates coalition members");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_coalition mac_capability_test_keystore");
+	    "mac_capability mac_capability_coalition");
 }
 ATF_TC_BODY(set_leader_mac_capability, tc)
 {
@@ -3833,7 +3831,7 @@ ATF_TC_HEAD(close_terminates_members, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Closing coalition fd terminates all members via co_revoke");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_coalition mac_capability_test_keystore");
+	    "mac_capability mac_capability_coalition");
 }
 ATF_TC_BODY(close_terminates_members, tc)
 {
@@ -4341,7 +4339,7 @@ ATF_TC_HEAD(graceful_terminate_revokes_mac_capability, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Graceful terminate revokes mac_capability members");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_coalition mac_capability_test_keystore");
+	    "mac_capability mac_capability_coalition");
 }
 ATF_TC_BODY(graceful_terminate_revokes_mac_capability, tc)
 {
@@ -4437,7 +4435,7 @@ ATF_TC_HEAD(deadline_fires_revokes_mac_capability, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Deadline expiry revokes mac_capability members");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_coalition mac_capability_test_keystore");
+	    "mac_capability mac_capability_coalition");
 	atf_tc_set_md_var(tc, "timeout", "10");
 }
 ATF_TC_BODY(deadline_fires_revokes_mac_capability, tc)
@@ -4746,7 +4744,7 @@ ATF_TC_HEAD(mac_capability_member_type_tracking, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Mac_capability members are tracked as DTYPE_MAC_CAPABILITY, not generic");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_coalition mac_capability_test_keystore");
+	    "mac_capability mac_capability_coalition");
 }
 ATF_TC_BODY(mac_capability_member_type_tracking, tc)
 {
@@ -4790,7 +4788,7 @@ ATF_TC_HEAD(mac_capability_member_multiple_services, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Multiple mac_capability members from different services are counted");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_coalition mac_capability_test_keystore mac_capability_channel");
+	    "mac_capability mac_capability_coalition mac_capability_channel");
 }
 ATF_TC_BODY(mac_capability_member_multiple_services, tc)
 {
@@ -4829,7 +4827,7 @@ ATF_TC_HEAD(terminate_revokes_multiple_services, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Termination revokes mac_capability members from different services");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_coalition mac_capability_test_keystore mac_capability_channel");
+	    "mac_capability mac_capability_coalition mac_capability_channel");
 }
 ATF_TC_BODY(terminate_revokes_multiple_services, tc)
 {

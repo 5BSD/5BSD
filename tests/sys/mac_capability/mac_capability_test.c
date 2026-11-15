@@ -173,7 +173,7 @@ ATF_TC(connect_service);
 ATF_TC_HEAD(connect_service, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "Connect to keystore service");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(connect_service, tc)
 {
@@ -188,7 +188,7 @@ ATF_TC_HEAD(descriptor_kinfo, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC capability descriptors expose service identity to process tools");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_test_keystore");
+	    "mac_capability");
 }
 ATF_TC_BODY(descriptor_kinfo, tc)
 {
@@ -251,7 +251,7 @@ ATF_TC_HEAD(fcntl_cloexec_flag, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "F_GETFD/F_SETFD work on mac_capability instance fds");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(fcntl_cloexec_flag, tc)
 {
@@ -277,7 +277,7 @@ ATF_TC_HEAD(cloexec_on_exec, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "FD_CLOEXEC closes a mac_capability instance fd across exec");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(cloexec_on_exec, tc)
 {
@@ -314,7 +314,7 @@ ATF_TC_HEAD(fcntl_nonblock_recvmsg, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "fcntl(O_NONBLOCK) enables nonblocking MAC_CAPABILITY_RECVMSG");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(fcntl_nonblock_recvmsg, tc)
 {
@@ -346,7 +346,7 @@ ATF_TC_HEAD(capsicum_ioctl_limit, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "cap_ioctls_limit restricts MAC_CAPABILITY instance ioctls");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(capsicum_ioctl_limit, tc)
 {
@@ -404,7 +404,7 @@ ATF_TC_HEAD(capsicum_fcntl_limit, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "cap_fcntls_limit restricts fcntl operations on mac_capability fds");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(capsicum_fcntl_limit, tc)
 {
@@ -431,7 +431,7 @@ ATF_TC_HEAD(capsicum_event_limit, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "CAP_EVENT gates kqueue registration on mac_capability instance fds");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(capsicum_event_limit, tc)
 {
@@ -472,7 +472,7 @@ ATF_TC_HEAD(capmode_existing_instance, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Existing mac_capability instances keep working after cap_enter");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(capmode_existing_instance, tc)
 {
@@ -518,7 +518,7 @@ ATF_TC_HEAD(write_read, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_SENDMSG enqueues async, MAC_CAPABILITY_RECVMSG gets reply");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(write_read, tc)
 {
@@ -563,7 +563,7 @@ ATF_TC(fetch_notfound);
 ATF_TC_HEAD(fetch_notfound, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "Fetch nonexistent key returns NOTFOUND");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(fetch_notfound, tc)
 {
@@ -590,7 +590,7 @@ ATF_TC_HEAD(concurrent_instances, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Multiple instances to same service work independently");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(concurrent_instances, tc)
 {
@@ -611,7 +611,7 @@ ATF_TC_HEAD(zero_length_write_noop, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_SENDMSG with payload_len=0 sends a zero-length message");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(zero_length_write_noop, tc)
 {
@@ -645,7 +645,7 @@ ATF_TC_HEAD(nonblock_read_eagain, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "O_NONBLOCK MAC_CAPABILITY_RECVMSG with no pending messages returns EAGAIN");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(nonblock_read_eagain, tc)
 {
@@ -674,7 +674,7 @@ ATF_TC_HEAD(recvmsg_basic, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_RECVMSG dequeues reply with payload and reply token");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(recvmsg_basic, tc)
 {
@@ -718,7 +718,7 @@ ATF_TC_HEAD(reply_token_correlation, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Reply tokens correlate requests to responses in FIFO order");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(reply_token_correlation, tc)
 {
@@ -806,7 +806,7 @@ ATF_TC_HEAD(fd_passing_single, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "SENDMSG with pipe, socket, and /dev/null fd attachments");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(fd_passing_single, tc)
 {
@@ -841,7 +841,7 @@ ATF_TC_HEAD(fd_passing_multiple, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "SENDMSG with pipe + socket + file fds in one message");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(fd_passing_multiple, tc)
 {
@@ -889,7 +889,7 @@ ATF_TC_HEAD(fd_too_many, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Sending > MAC_CAPABILITY_MAX_FDS fds fails EINVAL");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(fd_too_many, tc)
 {
@@ -923,7 +923,7 @@ ATF_TC_HEAD(kqueue_read, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "kqueue EVFILT_READ fires when reply available");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(kqueue_read, tc)
 {
@@ -958,7 +958,7 @@ ATF_TC_HEAD(kqueue_evfilt_write, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "kqueue EVFILT_WRITE fires when RX queue has space");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(kqueue_evfilt_write, tc)
 {
@@ -996,7 +996,7 @@ ATF_TC(instance_fstat);
 ATF_TC_HEAD(instance_fstat, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "fstat on instance fd reports TX queue len");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(instance_fstat, tc)
 {
@@ -1039,7 +1039,7 @@ ATF_TC_HEAD(queue_ordering, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Multiple replies dequeued in FIFO order");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(queue_ordering, tc)
 {
@@ -1088,7 +1088,7 @@ ATF_TC_HEAD(capability_delegation, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Instance fd inherited by child process works");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(capability_delegation, tc)
 {
@@ -1132,7 +1132,7 @@ ATF_TC_HEAD(scm_rights_passing, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "SCM_RIGHTS preserves a mac_capability fd ioctl allowlist");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(scm_rights_passing, tc)
 {
@@ -1228,7 +1228,7 @@ ATF_TC_HEAD(multiproc_store_fetch, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Parent stores key, child fetches via separate instance");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(multiproc_store_fetch, tc)
 {
@@ -1291,7 +1291,7 @@ ATF_TC_HEAD(multiproc_concurrent_writers, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Multiple processes write concurrently to separate instances");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(multiproc_concurrent_writers, tc)
 {
@@ -1354,7 +1354,7 @@ ATF_TC_HEAD(close_during_pending, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Closing instance with pending messages does not panic");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(close_during_pending, tc)
 {
@@ -1380,7 +1380,7 @@ ATF_TC_HEAD(rapid_fire, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Rapid fire 100 requests, recv all 100 replies");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(rapid_fire, tc)
 {
@@ -1425,7 +1425,7 @@ ATF_TC_HEAD(write_oversized, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_SENDMSG with payload > MAC_CAPABILITY_MAX_MSG returns EMSGSIZE");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(write_oversized, tc)
 {
@@ -1451,7 +1451,7 @@ ATF_TC_HEAD(sendmsg_bad_fd, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "SENDMSG with invalid fd number fails EBADF");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(sendmsg_bad_fd, tc)
 {
@@ -1479,7 +1479,7 @@ ATF_TC_HEAD(read_buffer_too_small, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_RECVMSG with buffer smaller than message returns EMSGSIZE");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(read_buffer_too_small, tc)
 {
@@ -1521,7 +1521,7 @@ ATF_TC_HEAD(recvmsg_buffer_too_small, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "RECVMSG with small buffer returns EMSGSIZE and required size");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(recvmsg_buffer_too_small, tc)
 {
@@ -1561,7 +1561,7 @@ ATF_TC_HEAD(recvmsg_empty_nonblock, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "RECVMSG on empty queue with O_NONBLOCK returns EAGAIN");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(recvmsg_empty_nonblock, tc)
 {
@@ -1588,7 +1588,7 @@ ATF_TC_HEAD(dup_shared_instance, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "dup() shares instance �� write on one, read on the other");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(dup_shared_instance, tc)
 {
@@ -1638,7 +1638,7 @@ ATF_TC_HEAD(instance_ioctl_bad_cmd, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Unknown ioctl on instance fd returns ENOTTY");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(instance_ioctl_bad_cmd, tc)
 {
@@ -1655,7 +1655,7 @@ ATF_TC_HEAD(connect_on_instance_fd, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_CONNECT on a instance fd returns ENOTTY");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(connect_on_instance_fd, tc)
 {
@@ -1676,7 +1676,7 @@ ATF_TC_HEAD(write_after_close_child, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_SENDMSG after peer process closes shared fd still works");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(write_after_close_child, tc)
 {
@@ -1717,7 +1717,7 @@ ATF_TC_HEAD(sendmsg_zero_payload_with_fds, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "SENDMSG with zero payload but attached fds works");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(sendmsg_zero_payload_with_fds, tc)
 {
@@ -1757,7 +1757,7 @@ ATF_TC_HEAD(getinfo, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_GETINFO returns service identity and basic metadata");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(getinfo, tc)
 {
@@ -1886,7 +1886,7 @@ ATF_TC_HEAD(channel_forwards_metadata, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Channel forwarding preserves badge, reply token, and trailer");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_channel mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_channel");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(channel_forwards_metadata, tc)
@@ -1935,7 +1935,7 @@ ATF_TC_HEAD(channel_forwards_fds_and_metadata, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Channel forwarding preserves attached fds and metadata");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_channel mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_channel");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(channel_forwards_fds_and_metadata, tc)
@@ -2151,7 +2151,7 @@ ATF_TC_HEAD(channel_crossproc_forwards_metadata, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Channel forwarding preserves child sender metadata across fork");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_channel mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_channel");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(channel_crossproc_forwards_metadata, tc)
@@ -2236,7 +2236,7 @@ ATF_TC_HEAD(getinfo_limits, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_GETINFO returns real limits and feature bits");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(getinfo_limits, tc)
 {
@@ -2265,7 +2265,7 @@ ATF_TC_HEAD(credential_trailer, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "RECVMSG trailer is zeroed on kernel reply path");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(credential_trailer, tc)
 {
@@ -2316,7 +2316,7 @@ ATF_TC_HEAD(call_no_handler, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_CALL on async-only service returns EOPNOTSUPP");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(call_no_handler, tc)
 {
@@ -2342,7 +2342,7 @@ ATF_TC_HEAD(call_flags_nonzero, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_CALL with unknown flags returns EINVAL on sync service");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(call_flags_nonzero, tc)
 {
@@ -2368,7 +2368,7 @@ ATF_TC_HEAD(terminate_instance, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_TERMINATE kills the instance for all holders");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(terminate_instance, tc)
 {
@@ -2399,7 +2399,7 @@ ATF_TC_HEAD(terminate_then_send, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "SENDMSG after revoke-via-token returns EPIPE");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(terminate_then_send, tc)
 {
@@ -2424,7 +2424,7 @@ ATF_TC_HEAD(terminate_sync_service, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_TERMINATE works on sync-only service");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(terminate_sync_service, tc)
 {
@@ -2457,7 +2457,7 @@ ATF_TC_HEAD(normal_ops_no_terminate, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Normal operations do not terminate");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(normal_ops_no_terminate, tc)
 {
@@ -2489,7 +2489,7 @@ ATF_TC_HEAD(sendmsg_on_sync_service, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_SENDMSG on sync-only service returns EOPNOTSUPP");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(sendmsg_on_sync_service, tc)
 {
@@ -2510,7 +2510,7 @@ ATF_TC_HEAD(call_on_async_service, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_CALL on async-only service returns EOPNOTSUPP");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(call_on_async_service, tc)
 {
@@ -2543,7 +2543,7 @@ ATF_TC_HEAD(getinfo_async_features, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Async service reports SENDMSG+KQUEUE but not CALL");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(getinfo_async_features, tc)
 {
@@ -2567,7 +2567,7 @@ ATF_TC_HEAD(getinfo_sync_features, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Sync service reports CALL but not SENDMSG or KQUEUE");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(getinfo_sync_features, tc)
 {
@@ -3034,7 +3034,7 @@ ATF_TC_HEAD(keystore_max_keys, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Keystore enforces max key limit");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 	atf_tc_set_md_var(tc, "timeout", "30");
 }
 ATF_TC_BODY(keystore_max_keys, tc)
@@ -3080,7 +3080,7 @@ ATF_TC_HEAD(keystore_overwrite, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Storing to an existing key overwrites the value");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(keystore_overwrite, tc)
 {
@@ -3120,7 +3120,7 @@ ATF_TC_HEAD(keystore_uid_isolation, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Different UIDs cannot see each other's keys");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(keystore_uid_isolation, tc)
@@ -3188,7 +3188,7 @@ ATF_TC_HEAD(keystore_badge_unique, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Each keystore instance gets a unique badge");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(keystore_badge_unique, tc)
 {
@@ -3227,7 +3227,7 @@ ATF_TC_HEAD(xfer_keystore_ok, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Transferable capability can be passed via SCM_RIGHTS");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(xfer_keystore_ok, tc)
 {
@@ -3347,7 +3347,7 @@ ATF_TC_HEAD(revoke_blocks_operations, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_REVOKE_{SEND,RECV,CALL} each block their operation");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_test_keystore mac_capability_test_kernelstore");
+	    "mac_capability");
 }
 ATF_TC_BODY(revoke_blocks_operations, tc)
 {
@@ -3426,7 +3426,7 @@ ATF_TC_HEAD(revoke_send_recv_both, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Revoking both send and recv blocks both");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(revoke_send_recv_both, tc)
 {
@@ -3465,7 +3465,7 @@ ATF_TC_HEAD(revoke_is_permanent, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Revoke is one-way — calling it again is harmless");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(revoke_is_permanent, tc)
 {
@@ -3492,7 +3492,7 @@ ATF_TC_HEAD(revoke_affects_all_dups, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Revoke on one handle affects all dups (same instance)");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(revoke_affects_all_dups, tc)
 {
@@ -3521,7 +3521,7 @@ ATF_TC_HEAD(terminate_after_revoke_send, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_TERMINATE works even after MAC_CAPABILITY_REVOKE_SEND");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(terminate_after_revoke_send, tc)
 {
@@ -3558,7 +3558,7 @@ ATF_TC_HEAD(call_reply_fds_zero, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_CALL with reply_nfds=0 works normally");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(call_reply_fds_zero, tc)
 {
@@ -3592,7 +3592,7 @@ ATF_TC_HEAD(call_reply_fds_buf_no_fds, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_CALL with reply_fds buffer but handler returns 0 fds");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(call_reply_fds_buf_no_fds, tc)
 {
@@ -3627,7 +3627,7 @@ ATF_TC_HEAD(call_reply_nfds_too_many, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_CALL with reply_nfds > MAC_CAPABILITY_MAX_FDS returns EINVAL");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(call_reply_nfds_too_many, tc)
 {
@@ -3656,7 +3656,7 @@ ATF_TC_HEAD(call_reply_preserves_ioctl_limit, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_CALL reply fd preserves its ioctl allowlist");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_test_kernelstore");
+	    "mac_capability");
 }
 ATF_TC_BODY(call_reply_preserves_ioctl_limit, tc)
 {
@@ -3706,7 +3706,7 @@ ATF_TC_HEAD(xfer_none_prevents_transfer, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "CAP_XFER_NONE prevents SCM_RIGHTS transfer");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(xfer_none_prevents_transfer, tc)
 {
@@ -3793,7 +3793,7 @@ ATF_TC_HEAD(xfer_none_still_usable, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "CAP_XFER_NONE capability still works for messaging");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(xfer_none_still_usable, tc)
 {
@@ -3826,7 +3826,7 @@ ATF_TC_HEAD(xfer_none_trampoline, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Trampoline receives capability, sets CAP_XFER_NONE, cannot forward");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(xfer_none_trampoline, tc)
 {
@@ -3951,7 +3951,7 @@ ATF_TC_HEAD(xfer_sendmsg_none_blocks, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "mac_capability SENDMSG rejects attached fd with CAP_XFER_NONE");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(xfer_sendmsg_none_blocks, tc)
 {
@@ -3986,7 +3986,7 @@ ATF_TC_HEAD(xfer_sendmsg_once_consumed, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "mac_capability SENDMSG with XFER_ONCE: first succeeds, second fails");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(xfer_sendmsg_once_consumed, tc)
 {
@@ -4037,7 +4037,7 @@ ATF_TC_HEAD(xfer_sendmsg_multi_atomic, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "mac_capability SENDMSG multi-fd with one NONE rejects atomically");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(xfer_sendmsg_multi_atomic, tc)
 {
@@ -4278,7 +4278,7 @@ ATF_TC_HEAD(xfer_call_none_rejected, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "mac_capability CALL rejects request fd with CAP_XFER_NONE");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(xfer_call_none_rejected, tc)
 {
@@ -4317,7 +4317,7 @@ ATF_TC_HEAD(xfer_call_once_consumed, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "mac_capability CALL with XFER_ONCE: consumed, second call fails");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(xfer_call_once_consumed, tc)
 {
@@ -6397,7 +6397,7 @@ ATF_TC_HEAD(kqueue_eof_on_terminate, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "kqueue fires EV_EOF when instance is terminated");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(kqueue_eof_on_terminate, tc)
 {
@@ -6432,7 +6432,7 @@ ATF_TC_HEAD(max_payload_size, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Send exactly MAC_CAPABILITY_MAX_MSG bytes, verify round trip");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(max_payload_size, tc)
 {
@@ -6466,7 +6466,7 @@ ATF_TC_HEAD(payload_over_max, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Send MAC_CAPABILITY_MAX_MSG+1 bytes returns EMSGSIZE");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(payload_over_max, tc)
 {
@@ -6585,7 +6585,7 @@ ATF_TC_HEAD(terminate_twice, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_TERMINATE twice is harmless");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(terminate_twice, tc)
 {
@@ -6627,7 +6627,7 @@ ATF_TC_HEAD(call_req_oversized, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_CALL with req_len > max returns EMSGSIZE");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(call_req_oversized, tc)
 {
@@ -6729,7 +6729,7 @@ ATF_TC_HEAD(rapid_connect_disconnect, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Rapid connect and close 100 times does not leak");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(rapid_connect_disconnect, tc)
 {
@@ -6805,7 +6805,7 @@ ATF_TC_HEAD(sendmsg_flags_nonzero, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "SENDMSG with nonzero flags returns EINVAL");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(sendmsg_flags_nonzero, tc)
 {
@@ -6829,7 +6829,7 @@ ATF_TC_HEAD(recvmsg_flags_nonzero, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "RECVMSG with nonzero flags returns EINVAL");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(recvmsg_flags_nonzero, tc)
 {
@@ -6854,7 +6854,7 @@ ATF_TC_HEAD(xfer_none_idempotent, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "CAP_XFER_NONE twice is harmless");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(xfer_none_idempotent, tc)
 {
@@ -6875,7 +6875,7 @@ ATF_TC_HEAD(revoke_send_on_sync, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "REVOKE_SEND on a sync service: SENDMSG answers EACCES, the "
 	    "revocation being checked before the service type");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(revoke_send_on_sync, tc)
 {
@@ -6903,7 +6903,7 @@ ATF_TC_HEAD(revoke_call_on_async, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "REVOKE_CALL on an async service: CALL answers EACCES, the "
 	    "revocation being checked before the service type");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(revoke_call_on_async, tc)
 {
@@ -6929,7 +6929,7 @@ ATF_TC_HEAD(close_during_blocked_recv, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Close fd from another thread while RECVMSG blocks");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(close_during_blocked_recv, tc)
 {
@@ -6974,7 +6974,7 @@ ATF_TC_HEAD(getinfo_after_terminate, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "GETINFO on terminated instance still returns metadata");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(getinfo_after_terminate, tc)
 {
@@ -6999,7 +6999,7 @@ ATF_TC_HEAD(capsicum_gates_terminate, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "cap_ioctls_limit can block MAC_CAPABILITY_TERMINATE");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(capsicum_gates_terminate, tc)
 {
@@ -7120,7 +7120,7 @@ ATF_TC_HEAD(nonce_nonzero, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Program nonce is non-zero in credential trailer");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(nonce_nonzero, tc)
@@ -7180,7 +7180,7 @@ ATF_TC_HEAD(nonce_inherits_fork, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Forked child inherits parent's process nonce");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(nonce_inherits_fork, tc)
@@ -7253,7 +7253,7 @@ ATF_TC_HEAD(nonce_trailer_zero_on_reply, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Kernel replies have zero nonce in trailer");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(nonce_trailer_zero_on_reply, tc)
@@ -7395,7 +7395,7 @@ ATF_TC_HEAD(kstore_put_get, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Put and get a value from kernelstore");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(kstore_put_get, tc)
 {
@@ -7420,7 +7420,7 @@ ATF_TC_HEAD(kstore_get_notfound, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Get on missing key returns NOTFOUND");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(kstore_get_notfound, tc)
 {
@@ -7442,7 +7442,7 @@ ATF_TC_HEAD(kstore_delete, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Delete removes a key");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(kstore_delete, tc)
 {
@@ -7466,7 +7466,7 @@ ATF_TC_HEAD(kstore_overwrite, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Put overwrites existing value");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(kstore_overwrite, tc)
 {
@@ -7492,7 +7492,7 @@ ATF_TC_HEAD(kstore_mint_shared, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Minted member sees same data as owner");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(kstore_mint_shared, tc)
 {
@@ -7534,7 +7534,7 @@ ATF_TC_HEAD(kstore_member_no_mint, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Members cannot mint");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(kstore_member_no_mint, tc)
 {
@@ -7558,7 +7558,7 @@ ATF_TC_HEAD(kstore_close_destroys, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Closing all fds destroys the store");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(kstore_close_destroys, tc)
 {
@@ -7595,7 +7595,7 @@ ATF_TC_HEAD(kstore_separate_stores, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Two connects create separate stores");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(kstore_separate_stores, tc)
 {
@@ -7624,7 +7624,7 @@ ATF_TC_HEAD(kstore_delete_notfound, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Delete on missing key returns NOTFOUND");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(kstore_delete_notfound, tc)
 {
@@ -7643,7 +7643,7 @@ ATF_TC_HEAD(kstore_multiproc, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Child process writes, parent reads via shared store");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(kstore_multiproc, tc)
@@ -7705,7 +7705,7 @@ ATF_TC_HEAD(kstore_revoke_member, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Owner can revoke member via MAC_CAPABILITY_TERMINATE");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(kstore_revoke_member, tc)
 {
@@ -7743,9 +7743,10 @@ ATF_TC_BODY(kstore_revoke_member, tc)
 
 /*
  * mac_capability_test_cleanup ships with this suite (mac-capability-tests,
- * built from sys/modules); these cases load and unload it themselves.
+ * built from sys/modules, installed in FIXTURE_DIR); these cases load and
+ * unload it themselves by absolute path.
  */
-#define	CLEANUP_FIXTURE	"/boot/kernel/mac_capability_test_cleanup.ko"
+#define	CLEANUP_FIXTURE	FIXTURE_DIR "/mac_capability_test_cleanup.ko"
 
 static void
 require_cleanup_fixture(void)

@@ -597,5 +597,12 @@ for token in DEFERRED_ENFORCED_TIER DEFERRED_DEVICE_TIER; do
 		echo "DEFERRED_TO_DEVICE_TIER=$ndefer (run without ISOLATION_ENFORCE=1 with the same stage and suites; not a pass)";;
 	esac
 done
+# A case kyua skipped for a module that is not loaded did not run: the stage
+# or the loader configuration is incomplete, and the run is not clean.
+nkmod=$(tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c 'Required kmods are not loaded' || true)
+if [ "$nkmod" -ne 0 ]; then
+	echo "KMOD_SKIPPED=$nkmod (required kernel modules not loaded; not a pass)"
+	verdict=VM_NOT_CLEAN
+fi
 echo "$verdict"
 [ "$verdict" = VM_CLEAN ]
