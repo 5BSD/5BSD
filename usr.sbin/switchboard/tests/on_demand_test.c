@@ -475,6 +475,7 @@ ATF_TC_BODY(restart_superseded_by_launch, tc)
 	struct timespec zero = { 0, 0 };
 	struct kevent kev;
 	struct svc_runtime svc;
+	uintptr_t stale_ident;
 	int kq;
 
 	(void)tc;
@@ -490,6 +491,7 @@ ATF_TC_BODY(restart_superseded_by_launch, tc)
 	schedule_restart(&svc, kq);
 	ATF_REQUIRE(svc.restart_pending);
 	ATF_REQUIRE(svc.timer_ident != 0);
+	stale_ident = svc.timer_ident;
 
 	launch_calls = 0;
 	ATF_REQUIRE_EQ(0, svc_launch_or_await(&svc, kq));
@@ -499,6 +501,20 @@ ATF_TC_BODY(restart_superseded_by_launch, tc)
 	ATF_CHECK_EQ(0, svc.timer_ident);
 	/* And it is gone from the kqueue, not only from the runtime. */
 	ATF_CHECK_EQ(0, kevent(kq, NULL, 0, &kev, 1, &zero));
+
+	/*
+	 * A timer event already returned in the same kevent() batch, before
+	 * the launch cancelled it, names the old ident: it launches nothing
+	 * and counts nothing.
+	 */
+	memset(&kev, 0, sizeof(kev));
+	kev.ident = stale_ident;
+	kev.filter = EVFILT_TIMER;
+	kev.udata = &svc;
+	supervisor_handle_timer(&kev);
+	ATF_CHECK_EQ(1, launch_calls);
+	ATF_CHECK_EQ(1, svc.restart_count);
+	ATF_CHECK(!svc.restart_pending);
 
 	exec_refuses_started = false;
 	switchboard_kq = -1;
@@ -542,9 +558,8 @@ ATF_TC_BODY(restart_timer_for_started_unit, tc)
 		ATF_CHECK_EQ(1, svc.restart_count);
 		ATF_CHECK(svc.state == SVC_STATE_RUNNING ||
 		    svc.state == SVC_STATE_STARTING);
-		ATF_CHECK(!svc.restart_pending);
-		/* Nothing re-armed: drain the kqueue to be sure. */
-		svc_cancel_restart(&svc, kq);
+		/* Nothing re-armed. */
+		ATF_CHECK(!svc.restart_pending && svc.timer_ident == 0);
 	}
 	ATF_CHECK_EQ(0, launch_calls);
 	ATF_CHECK_EQ(1234, svc.pid);
