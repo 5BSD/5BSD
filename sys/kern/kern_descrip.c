@@ -5810,10 +5810,15 @@ static int
 sysctl_kern_file(SYSCTL_HANDLER_ARGS)
 {
 	struct xfile xf;
+	struct kern_file_proc {
+		struct filedesc *fdp;
+		pid_t	pid;
+		uid_t	uid;
+	} *procs;
 	struct filedesc *fdp;
 	struct file *fp;
 	struct proc *p;
-	int error, n;
+	int error, i, n, nheld, size;
 
 	error = sysctl_wire_old_buffer(req, 0);
 	if (error != 0)
@@ -5838,10 +5843,31 @@ sysctl_kern_file(SYSCTL_HANDLER_ARGS)
 		sx_sunlock(&allproc_lock);
 		return (SYSCTL_OUT(req, 0, n * sizeof(xf)));
 	}
-	error = 0;
-	bzero(&xf, sizeof(xf));
-	xf.xf_size = sizeof(xf);
-	sx_slock(&allproc_lock);
+
+	/*
+	 * Hold the descriptor table of every visible process first, and read
+	 * the tables once allproc_lock is dropped.  A table lock is held
+	 * across vnode locks (knote_fdclose() at close(2)), and vnode-locked
+	 * paths take proctree_lock (the last close of a controlling terminal
+	 * in devfs_close()), which orders before allproc_lock: taking a
+	 * table lock under allproc_lock would close that cycle.  The snapshot
+	 * costs a reference and 16 bytes per process for the duration of the
+	 * call, sized by nprocs (bounded by maxproc).
+	 */
+	size = nprocs + 16;
+	for (;;) {
+		procs = mallocarray(size, sizeof(*procs), M_TEMP, M_WAITOK);
+		sx_slock(&allproc_lock);
+		n = 0;
+		FOREACH_PROC_IN_SYSTEM(p)
+			n++;
+		if (n <= size)
+			break;
+		sx_sunlock(&allproc_lock);
+		free(procs, M_TEMP);
+		size = n + 16;
+	}
+	nheld = 0;
 	FOREACH_PROC_IN_SYSTEM(p) {
 		PROC_LOCK(p);
 		if (p->p_state == PRS_NEW) {
@@ -5852,15 +5878,31 @@ sysctl_kern_file(SYSCTL_HANDLER_ARGS)
 			PROC_UNLOCK(p);
 			continue;
 		}
-		xf.xf_pid = p->p_pid;
-		xf.xf_uid = p->p_ucred->cr_uid;
 		fdp = fdhold(p);
+		if (fdp != NULL) {
+			procs[nheld].fdp = fdp;
+			procs[nheld].pid = p->p_pid;
+			procs[nheld].uid = p->p_ucred->cr_uid;
+			nheld++;
+		}
 		PROC_UNLOCK(p);
-		if (fdp == NULL)
-			continue;
-		FILEDESC_SLOCK(fdp);
-		if (refcount_load(&fdp->fd_refcnt) == 0)
+	}
+	sx_sunlock(&allproc_lock);
+
+	error = 0;
+	bzero(&xf, sizeof(xf));
+	xf.xf_size = sizeof(xf);
+	for (i = 0; i < nheld; i++) {
+		fdp = procs[i].fdp;
+		if (error != 0)
 			goto nextproc;
+		xf.xf_pid = procs[i].pid;
+		xf.xf_uid = procs[i].uid;
+		FILEDESC_SLOCK(fdp);
+		if (refcount_load(&fdp->fd_refcnt) == 0) {
+			FILEDESC_SUNLOCK(fdp);
+			goto nextproc;
+		}
 		FILEDESC_FOREACH_FP(fdp, n, fp) {
 			xf.xf_fd = n;
 			xf.xf_file = (uintptr_t)fp;
@@ -5881,13 +5923,11 @@ sysctl_kern_file(SYSCTL_HANDLER_ARGS)
 			if (error != 0)
 				break;
 		}
-nextproc:
 		FILEDESC_SUNLOCK(fdp);
+nextproc:
 		fddrop(fdp);
-		if (error)
-			break;
 	}
-	sx_sunlock(&allproc_lock);
+	free(procs, M_TEMP);
 	return (error);
 }
 
