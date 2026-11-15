@@ -18,7 +18,7 @@
 #include "idle_common.h"
 
 #ifndef ABAC_IDLE_LEVEL
-#define	ABAC_IDLE_LEVEL	2
+#define	ABAC_IDLE_LEVEL	3
 #endif
 
 static void

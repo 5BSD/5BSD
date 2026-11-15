@@ -1276,10 +1276,12 @@ abac_syscall(struct thread *td, int call, void *arg)
  *
  * ABAC must be present when the MAC framework initializes object labels.
  * It cannot be loaded after boot, and omitting UNLOADOK prevents labels and
- * their UMA-backed storage from outliving the policy code.
+ * their UMA-backed storage from outliving the policy code.  Its hooks count
+ * toward the framework's fast-path flags only while abac_live_ops needs
+ * them (abac_gate_update_locked()).
  */
 MAC_POLICY_SET(&abac_ops, mac_abac, "ABAC MAC Policy",
-    MPC_LOADTIME_FLAG_NOTLATE, &abac_slot);
+    MPC_LOADTIME_FLAG_NOTLATE | MPC_LOADTIME_FLAG_FP_INACTIVE, &abac_slot);
 
 /*
  * Idle gating.
@@ -1305,8 +1307,6 @@ MAC_POLICY_SET(&abac_ops, mac_abac, "ABAC MAC Policy",
 uint32_t abac_live_ops __read_mostly;
 int abac_force_hooks;
 
-/* True once the fast-path flags follow abac_live_ops. */
-static bool abac_gate_fp = false;
 
 /* The fast-path hooks of mac_abac and the operations they evaluate. */
 static const struct abac_fp_gate {
@@ -1375,16 +1375,48 @@ abac_gate_update_locked(void)
 	}
 	/* Enable before publishing, disable after. */
 	atomic_store_32(&abac_live_ops, old | want);
-	if (abac_gate_fp) {
-		error = mac_policy_fastpath_set(&mac_abac_mac_policy_conf, on,
-		    non, true);
-		KASSERT(error == 0, ("abac gate on: %d", error));
-		error = mac_policy_fastpath_set(&mac_abac_mac_policy_conf, off,
-		    noff, false);
-		KASSERT(error == 0, ("abac gate off: %d", error));
-	}
+	error = mac_policy_fastpath_set(&mac_abac_mac_policy_conf, on, non,
+	    true);
+	KASSERT(error == 0, ("abac gate on: %d", error));
+	error = mac_policy_fastpath_set(&mac_abac_mac_policy_conf, off, noff,
+	    false);
+	KASSERT(error == 0, ("abac gate off: %d", error));
 	atomic_store_32(&abac_live_ops, want);
 }
+
+/*
+ * Every fast-path hook mac_abac implements must be in abac_fp_gate[]: one
+ * that is not would never be counted, and its rules never enforced while
+ * no other policy held the flag.  An uncovered hook is counted for good
+ * instead (it costs time, never enforcement); INVARIANTS kernels stop.
+ * Registration happened at SI_SUB_MAC_POLICY with nothing counted.
+ */
+static void
+abac_gate_check_coverage(void *arg __unused)
+{
+	u_short hooks[64];
+	u_int i, j, n;
+	int error __diagused;
+
+	n = mac_policy_fastpath_hooks(&mac_abac_mac_policy_conf, hooks,
+	    nitems(hooks));
+	KASSERT(n <= nitems(hooks), ("mac_abac: %u fast-path hooks", n));
+	for (i = 0; i < MIN(n, nitems(hooks)); i++) {
+		for (j = 0; j < nitems(abac_fp_gate); j++)
+			if (abac_fp_gate[j].afg_hook == hooks[i])
+				break;
+		if (j < nitems(abac_fp_gate))
+			continue;
+		printf("mac_abac: fast-path hook %u has no gate entry; "
+		    "kept active\n", hooks[i]);
+		error = mac_policy_fastpath_set(&mac_abac_mac_policy_conf,
+		    &hooks[i], 1, true);
+		KASSERT(false, ("mac_abac: fast-path hook %u not gated (%d)",
+		    hooks[i], error));
+	}
+}
+SYSINIT(abac_gate, SI_SUB_MAC_LATE, SI_ORDER_ANY, abac_gate_check_coverage,
+    NULL);
 
 /* Store a setting that decides liveness, under the rule lock. */
 void

@@ -110,13 +110,14 @@ entry_check()
 
 # Whether OES and mac_abac are reached with nobody listening, as the
 # kernel under test must answer: "yes yes" before the idle gates; OES
-# counts its fast-path hooks only while live from commit O3 on.
+# counts its fast-path hooks only while live from commit O3 on, mac_abac
+# from A4 on.  With security.mac.fastpath the expectation is computed.
 # Hooks both implement are reached by both while either counts the flag
 # (an idle policy is still called, and returns at its gate); hooks only OES
 # implements are reached only while OES counts them.
-: ${SHARED_IDLE_ENTRY:=yes}
+: ${SHARED_IDLE_ENTRY:=no}
 : ${OES_ONLY_IDLE_ENTRY:=no}
-: ${FP_INACTIVE_POLICIES:=oes}
+: ${FP_INACTIVE_POLICIES:=oes mac_abac}
 
 atf_test_case entry_file_read
 entry_file_read_head()
@@ -287,8 +288,8 @@ f3_new_flags_body()
 atf_test_case f4_inactive_policies
 f4_inactive_policies_head()
 {
-	atf_set descr "F-4: oes registers fast-path inactive and counts nothing"\
-	    "while nobody listens"
+	atf_set descr "F-4: oes and mac_abac register fast-path inactive and count"\
+	    "nothing while nobody listens and no rule is loaded"
 	atf_set require.user root
 }
 f4_inactive_policies_body()
