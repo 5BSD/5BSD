@@ -109,6 +109,31 @@ const struct fileops mac_capability_instance_ops = {
 	.fo_flags = DFLAG_PASSABLE,
 };
 
+#ifdef MAC
+/*
+ * The receiver's policy admits one descriptor arriving over a held
+ * capability channel: a message attachment or a CALL reply (I6).  The thread
+ * is marked for the duration of the check so that a policy can tell this
+ * receipt from ambient SCM_RIGHTS receipt; capprotect's CP_SF_NOFDRECV
+ * removes only the latter (mac_capability_capprotect(4)).  Nothing may wait
+ * for a supervisor, substitute a descriptor or receive another one while
+ * the flag is set: whatever ran here would inherit the exemption.
+ * fdswap_receive() and syscall return assert that it never leaks.
+ */
+static int
+mac_capability_check_receive(struct thread *td, struct file *fp)
+{
+	int error;
+
+	MPASS(td == curthread);
+	MPASS((td->td_pflags2 & TDP2_CAPCHAN_RECV) == 0);
+	td->td_pflags2 |= TDP2_CAPCHAN_RECV;
+	error = mac_file_check_receive(td->td_ucred, fp);
+	td->td_pflags2 &= ~TDP2_CAPCHAN_RECV;
+	return (error);
+}
+#endif
+
 static void
 mac_capability_probe_fd_receive(struct file *fp, int fd, struct thread *td)
 {
@@ -875,7 +900,7 @@ mac_capability_msg_deliver(struct mac_capability_instance *s,
 		 * descriptor that could not be held does.
 		 */
 		for (i = 0; i < nfds_out; i++) {
-			error = mac_file_check_receive(td->td_ucred,
+			error = mac_capability_check_receive(td,
 			    msg->cm_fdset->fds[i]);
 			if (error != 0) {
 				for (i = 0; i < nfds_out; i++)
@@ -1605,7 +1630,7 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 				error = 0;
 #ifdef MAC
 				/* The caller's policy admits the reply (I6). */
-				error = mac_file_check_receive(td->td_ucred,
+				error = mac_capability_check_receive(td,
 				    out_fds[i]);
 #endif
 				if (error != 0) {

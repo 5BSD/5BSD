@@ -819,7 +819,7 @@ install(const char *from_name, const char *to_name, u_long fset, u_int flags)
 {
 	char backup[MAXPATHLEN], pathbuf[MAXPATHLEN], tempfile[MAXPATHLEN];
 	struct stat from_sb, temp_sb, to_sb;
-	struct timespec tsb[2];
+	struct timespec tsb[2], *tsp;
 	char *digestresult;
 	const char *p;
 	int from_fd, temp_fd, to_fd, serrno;
@@ -827,6 +827,7 @@ install(const char *from_name, const char *to_name, u_long fset, u_int flags)
 
 	devnull = exists = files_match = ispipe = stripped = false;
 	digestresult = NULL;
+	tsp = NULL;
 	from_fd = to_fd = -1;
 
 	if (strcmp(from_name, _PATH_DEVNULL) == 0) {
@@ -872,7 +873,15 @@ install(const char *from_name, const char *to_name, u_long fset, u_int flags)
 	if (devnull) {
 		/* No from_fd needed */
 	} else if (ispipe) {
+		/*
+		 * The source was not stat(2)ed by name above.  Describe it
+		 * through the descriptor, so that the flags and times copied
+		 * to the target below are those of whatever standard input
+		 * is (none for a pipe), not stack garbage.
+		 */
 		from_fd = STDIN_FILENO;
+		if (fstat(from_fd, &from_sb))
+			err(EX_OSERR, "%s", from_name);
 	} else {
 		if ((from_fd = open(from_name, O_RDONLY)) < 0)
 			err(EX_OSERR, "%s", from_name);
@@ -1024,12 +1033,17 @@ install(const char *from_name, const char *to_name, u_long fset, u_int flags)
 	}
 
 	/*
-	 * Preserve the timestamp of the source file if necessary.
+	 * Preserve the timestamp of the source file if necessary.  A standard
+	 * input that is not a regular file (a pipe, a terminal) has no times
+	 * worth keeping: like /dev/null, it gets none, and none is logged, so
+	 * a -p -M install from a pipe stays reproducible.
 	 */
-	if (dopreserve && !files_match && !devnull) {
+	if (dopreserve && !files_match && !devnull &&
+	    (!ispipe || S_ISREG(from_sb.st_mode))) {
 		tsb[0] = from_sb.st_atim;
 		tsb[1] = from_sb.st_mtim;
 		(void)utimensat(AT_FDCWD, to_name, tsb, 0);
+		tsp = tsb;
 	}
 
 	if (fstat(to_fd, &to_sb) == -1) {
@@ -1100,7 +1114,8 @@ install(const char *from_name, const char *to_name, u_long fset, u_int flags)
 	if (!devnull && !ispipe)
 		(void)close(from_fd);
 
-	metadata_log(to_name, "file", tsb, NULL, digestresult, to_sb.st_size);
+	/* Log a time only if one was set from the source above. */
+	metadata_log(to_name, "file", tsp, NULL, digestresult, to_sb.st_size);
 	free(digestresult);
 }
 

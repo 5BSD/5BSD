@@ -1353,6 +1353,7 @@ ATF_TC_BODY(sysctl_isolation_union_and_subtract, tc)
 	const char *only_y[] = { SYSCTL_OID_Y };
 	int svc, rc;
 
+	require_isolation_enforced();
 	svc = sys_connect();
 
 	/* Add X, then add Y — additive union grows the isolated set. */

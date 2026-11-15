@@ -143,7 +143,7 @@ means `CP_SF_ALL`.
 | `CP_SF_NOPRIVS` | `noprivs` | `priv_check`: every privilege fails |
 | `CP_SF_NOFORK`, `CP_SF_NOEXEC`, `CP_SF_NOSOCK` | `nofork`, `noexec`, `nosock` | `proc_check_fork`, `vnode_check_exec`, `socket_check_create` |
 | `CP_SF_NOIPC` | `noipc` | SysV and POSIX shm, sem and msq hooks |
-| `CP_SF_NOFDRECV` | `nofdrecv` | `file_check_receive`: no ambient `SCM_RIGHTS`; attachments over a held channel are unaffected |
+| `CP_SF_NOFDRECV` | `nofdrecv` | `file_check_receive`: no ambient `SCM_RIGHTS`; attachments over a held channel and descriptors in a `MAC_CAPABILITY_CALL` reply are unaffected |
 | `CP_SF_PROTECT`, `CP_SF_RESTRICT`, `CP_SF_ALL` | `protect`, `restrict`, `all` | the groups |
 
 Three parties always pass: the process itself, its protector, and a

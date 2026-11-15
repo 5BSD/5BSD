@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # Native installation inventory shared by leaf and aggregate targets.
 TESTDIR = "/usr/tests/usr.sbin/BSDLog"
-ATF_PROGRAMS = ["bundle_test", "config_test", "evolution_test", "pool_fairness_test",
+ATF_PROGRAMS = ["bundle_test", "config_test", "evolution_test", "pool_fairness_test", "pool_start_test",
     "provider_test", "quota_test", "session_test", "storage_barrier_test", "storage_test",
     "store_fallback_test", "store_limit_test", "store_test"]
 BINARIES = [p for p in ATF_PROGRAMS if p != "bundle_test"] + ["next_peer", "latency_bench"]
