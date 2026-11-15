@@ -6357,6 +6357,15 @@ cache_fplookup_failed_vexec(struct cache_fpl *fpl, int error)
 	}
 
 	/*
+	 * The locked walk does not search the directory a ".." starts from
+	 * before it has stayed at a root or crossed to the covered vnode of
+	 * a mount root (vfs_lookup()).  A failed search here says nothing
+	 * about the answer: leave it to the locked walk.
+	 */
+	if (__predict_false(cache_fpl_isdotdot(cnp)))
+		return (cache_fpl_aborted(fpl));
+
+	/*
 	 * TODO: Due to ignoring trailing slashes lookup will perform a
 	 * permission check on the last dir when it should not be doing it.  It
 	 * may fail, but said failure should be ignored. It is possible to fix
