@@ -71,6 +71,25 @@ This page describes the device as built through stage 1c-iii (served
 files, directories and symlinks, attachment, served lookups, working
 directory and root), and names every answer that differs from a real
 file.
+.Pp
+A controller that attaches programs
+.Pq Sx Attachment and resolution
+is their
+.Em Capability Broker :
+the kernel puts each capability an attached program is about to obtain
+to it first, at the
+.Em capability lifecycle hooks ,
+and it answers allow
+.Pq Dv DQ_RESOLVE_PASS ,
+deny
+.Pq an errno ,
+substitute
+.Pq Dv DQ_RESOLVE_SWAP , Sx Descriptor substitution
+or proxy
+.Pq Dv DQ_RESOLVE_FD , Sx Served answers .
+A Capability Broker is not one of the brokered system services, the
+providers that hand out capabilities on request.
+Code and this page keep the word controller.
 .Ss Opening the device
 .Pa /dev/dq
 is created mode 0600, owner root, group wheel.
@@ -1990,7 +2009,9 @@ A controller may
 a process to its queue.
 From then on every name the process resolves is posted to the queue as a
 .Dv DQ_OP_RESOLVE
-event before the lookup runs, and the controller decides: it answers
+event, the naming hook, one of the capability lifecycle hooks
+.Pq Sx DESCRIPTION ,
+before the lookup runs, and the controller decides: it answers
 .Dv DQ_RESOLVE_PASS
 and the lookup proceeds unchanged, or an errno and the system call fails
 with it.
@@ -2824,7 +2845,8 @@ and takes
 .Dv DQ_RESOLVE_FD
 or an errno: the controller reopens it.
 .Ss Descriptor substitution
-Descriptor substitution answers an open with a real open file of the
+Descriptor substitution is the substitute answer of a Capability Broker:
+it answers an open with a real open file of the
 controller's: the
 .Dv DQ_RESOLVE_SWAP
 answer, called a swap below.
@@ -3045,7 +3067,7 @@ comes before this last test.
 The file keeps the credential of the controller's open
 .Pq Va f_cred
 and the rights of the controller's descriptor; see
-.Sx The substituted file and the restricted controller .
+.Sx The substituted file and the restricted Capability Broker .
 .Pp
 .Sy Duties of a swapping controller .
 .Bl -bullet -compact
@@ -3054,7 +3076,7 @@ Restrict yourself before you answer: open the queue, attach the program,
 then give up privilege
 .Pq and enter a jail or capability mode where that fits ,
 and only then open the files you hand over
-.Pq Sx The substituted file and the restricted controller .
+.Pq Sx The substituted file and the restricted Capability Broker .
 Hold no descriptor from before that you will hand over.
 .It
 Open the file afresh for each answer, with the request's access mode and
@@ -3106,7 +3128,7 @@ Attached processes are not killed when the queue dies: a requester that
 outlives its controller keeps every swapped descriptor, and is given no
 new one.
 .El
-.Ss The substituted file and the restricted controller
+.Ss The substituted file and the restricted Capability Broker
 A swap hands over the controller's open file exactly as it is.
 The requester's descriptor is the same open file, with the credential the
 controller's thread had when it opened the file

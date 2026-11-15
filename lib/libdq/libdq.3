@@ -319,6 +319,19 @@ device.
 A controller opens a queue, mints descriptors that present an identity of
 its choosing, reads the events the kernel posts for operations on those
 descriptors and answers them by id.
+A controller that attaches programs is their
+.Em Capability Broker
+.Pq Xr dq 4 :
+it answers the capability lifecycle hooks with allow
+.Pq Fn dq_reply_resolve_pass ,
+deny
+.Pq Fn dq_reply_resolve_errno ,
+substitute
+.Pq Fn dq_reply_resolve_swap
+or proxy
+.Pq Fn dq_reply_resolve_fd .
+It is not one of the brokered system services; this page keeps the
+word controller.
 Every function is a thin wrapper over the
 .Xr ioctl 2
 and
@@ -1372,7 +1385,7 @@ once, or create the tree, before
 if the system changes them.
 The order, and what each restriction bounds, is in
 .Xr dq 4 ,
-.Sx The substituted file and the restricted controller .
+.Sx The substituted file and the restricted Capability Broker .
 .Pp
 .Fn dq_event_readdir
 returns a

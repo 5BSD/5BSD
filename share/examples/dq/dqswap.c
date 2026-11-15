@@ -31,10 +31,10 @@
  *			command attached as root; then both give up root,
  *			and only then is a substitute opened.  A swapped file
  *			keeps the credential of the open that made it (dq(4),
- *			"The substituted file and the restricted controller"):
- *			one opened by root would keep set-ID bits and ignore
- *			quotas in the command's hands.  The user may not be
- *			root.
+ *			"The substituted file and the restricted Capability
+ *			Broker"): one opened by root would keep set-ID bits
+ *			and ignore quotas in the command's hands.  The user
+ *			may not be root.
  *
  * Paths are compared as strings with what the command passed to open(2):
  * give the absolute path and use it in the command.  stat(2) and every

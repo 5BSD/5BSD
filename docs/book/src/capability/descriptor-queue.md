@@ -200,8 +200,10 @@ Open questions are in section 21, item 21.
 | event / reply / push | kernel→controller operation with an id; the controller's answer; unsolicited controller→kernel message |
 | supervisor, userspace supervisor | the controller. The owner's term since 2026-11-08; sections written earlier say controller |
 | supervisor queue | the queue |
+| Capability Broker | the owner's name (2026-11-15) for a supervisor that attaches programs: it decides every capability they are about to obtain, at the capability lifecycle hooks, and answers allow (PASS), deny (an errno), substitute (SWAP) or proxy (FD). Not one of the brokered system services (BSDFilesystem's storage broker and the other providers), which hand out capabilities on request. Code and this chapter keep supervisor and controller |
+| capability lifecycle hooks | the kernel points at which an attached program's acquisition is put to its Capability Broker first; today the naming hook (`DQ_OP_RESOLVE`) |
 | proxy descriptor | an object: a descriptor whose operations the supervisor answers. Identifiers keep `dq_` and `DTYPE_DQ` |
-| swap | the supervisor's answer to an acquisition with a descriptor it controls, which the kernel installs in the requester (D303). The descriptor is a real object or, later, a proxy object. The feature is named Descriptor Substitution; code and ABI keep `SWAP` |
+| swap | the supervisor's answer to an acquisition with a descriptor it controls, which the kernel installs in the requester (D303). The descriptor is a real object or, later, a proxy object. The feature is named Descriptor Substitution, the substitute answer of a Capability Broker; code and ABI keep `SWAP` |
 | confinement | what a supervisor builds for a program from swapped and proxy descriptors, the supervisor queue, OpenES, Capsicum rights and the transfer controls (open item 18) |
 
 ## 3. Invariants
@@ -1703,7 +1705,7 @@ the uid drop gives the program the ordinary treatment (set-ID bits,
 reserved blocks and the quota exemption follow the opener's privilege;
 root in a jail loses only the quota exemption); a jail or capability mode
 bounds what the supervisor can reach.
-`dq(4)` "The substituted file and the restricted controller" gives the
+`dq(4)` "The substituted file and the restricted Capability Broker" gives the
 order and the rules; `tests/sys/dq/dq_restricted_test` and the `dqswap`
 example show them. A kernel check that a handed-over file's credential
 matches the program's is future work, opt-in per queue.

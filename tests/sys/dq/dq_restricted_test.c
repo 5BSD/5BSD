@@ -4,11 +4,11 @@
  * Copyright (c) 2026 Kory Heard <koryheard@icloud.com>
  *
  * A supervisor that restricts itself after it opened the queue (dq(4),
- * "The substituted file and the restricted controller"): it gives up root,
- * enters a jail, enters capability mode, or all three, and keeps serving,
- * SWAP included.  A swapped file is handed over as it is, with the
- * credential of the open that made it, so what a restricted supervisor can
- * hand over is what it can still open.
+ * "The substituted file and the restricted Capability Broker"): it
+ * gives up root, enters a jail, enters capability mode, or all three,
+ * and keeps serving, SWAP included.  A swapped file is handed over as it
+ * is, with the credential of the open that made it, so what a restricted
+ * supervisor can hand over is what it can still open.
  *
  * Three processes per scene:
  *   T  the ATF test process: files, jails, every check;
