@@ -1623,7 +1623,8 @@ bytes). WITNESS must stay clean throughout.
 
 For a run with nothing skipped the runner is given three things besides
 the suites. `LOADER_EXTRA` preloads `mac_test_hooks` (with `linux64`,
-`linprocfs`, `linsysfs`, `fdescfs`, `mqueuefs` and `dtraceall`): the plane
+`linprocfs`, `linsysfs`, `fdescfs`, `mqueuefs`, `dtraceall` and
+`imgact_binmisc`, which `dq_resolve_test`'s binmisc row needs): the plane
 refuses a module load after boot, and `dq_socket_test:mac_denial_no_event`
 needs the policy's `socket_check_create` toggle.
 `KYUA_VARS=test_suites.FreeBSD.allow_sysctl_side_effects=1` lets

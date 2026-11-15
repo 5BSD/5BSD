@@ -378,9 +378,13 @@ ATF_TC_BODY(errno_answers, tc)
 	dqt_attach_spawn(&c, &ch, child_deny, NULL);
 	memset(&r, 0, sizeof(r));
 	dqt_attach_collect(&ch, &r, sizeof(r));
+	ATF_CHECK_EQ(EIO, r.r[0].err);
 	ATF_CHECK_EQ(EIO, r.r[1].err);
+	ATF_CHECK_EQ(ENOENT, r.r[2].err);
 	dqt_stats2(&c, &st);
-	ATF_CHECK(st.ds2_bad_replies >= 2);
+	/* The two lookups of rt-deny, each answered EPIPE: two bad replies. */
+	ATF_CHECK_EQ_MSG(2, st.ds2_bad_replies, "ds2_bad_replies %ju",
+	    (uintmax_t)st.ds2_bad_replies);
 	dqt_fini(&c);
 }
 

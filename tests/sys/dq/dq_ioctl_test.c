@@ -194,7 +194,8 @@ ATF_TC_BODY(shapes, tc)
 	/* The bodies the kernel posted: lengths per shape, never a pointer. */
 	dqt_lock(&c);
 	printf("IOCTL records: %u\n", c.events[DQ_OP_IOCTL]);
-	ATF_CHECK(c.events[DQ_OP_IOCTL] >= 9);
+	/* One record per ioctl that reaches the controller. */
+	ATF_CHECK_EQ(9, c.events[DQ_OP_IOCTL]);
 	ATF_CHECK_EQ(0, c.reply_failures);
 	dqt_unlock(&c);
 	dqt_fini(&c);

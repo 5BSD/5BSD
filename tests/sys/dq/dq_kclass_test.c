@@ -73,7 +73,8 @@ run(void (*fn)(void *, void *), bool cwd_only)
 	ATF_REQUIRE(dq_get_stats2(s.q, &b) == 0);
 	printf("ds2_resolve_exdev rose by %ju\n",
 	    (uintmax_t)(b.ds2_resolve_exdev - a.ds2_resolve_exdev));
-	ATF_CHECK_MSG(b.ds2_resolve_exdev - a.ds2_resolve_exdev >= 4,
+	/* One refusal per call: ktrace, acct, kldload, swapon. */
+	ATF_CHECK_MSG(b.ds2_resolve_exdev - a.ds2_resolve_exdev == 4,
 	    "ds2_resolve_exdev rose by %ju",
 	    (uintmax_t)(b.ds2_resolve_exdev - a.ds2_resolve_exdev));
 	ATF_CHECK_EQ(a.ds2_resolve_unmarked, b.ds2_resolve_unmarked);
