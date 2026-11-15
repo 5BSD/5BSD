@@ -21,13 +21,29 @@
 #include <security/oes/oes.h>
 #include "test_common.h"
 
-/* Modules to try - must be loadable and unloadable */
+/*
+ * Modules to try: small, without dependencies, and unloadable when nothing
+ * uses them.  Two families are deliberately absent because they load but
+ * do not unload, so a test that tried them first neither saw the event nor
+ * took the module out again: filemon(4), whose MOD_QUIESCE handler always
+ * answers EBUSY, and the accept filters, which answer EOPNOTSUPP unless
+ * net.inet.accf.unloadable is set.
+ */
 static const char *test_modules[] = {
-	"filemon",	/* File monitoring for make(1) - usually safe */
-	"accf_data",
-	"accf_http",
+	"if_disc",
+	"nullfs",
 	NULL
 };
+
+/* The event names the file ("accf_data.ko"), the test the module. */
+static int
+kld_name_matches(const char *name, const char *modname)
+{
+	size_t len = strlen(modname);
+
+	return (strncmp(name, modname, len) == 0 &&
+	    (name[len] == '\0' || strcmp(name + len, ".ko") == 0));
+}
 
 static int
 read_events(int fd, int *kldunload_seen, const char *expected_name)
@@ -43,8 +59,8 @@ read_events(int fd, int *kldunload_seen, const char *expected_name)
 			fprintf(stderr, "  got NOTIFY_KLDUNLOAD: name=%s\n",
 			    msg->em_event_data.kldunload.name);
 			if (expected_name != NULL &&
-			    strcmp(msg->em_event_data.kldunload.name,
-			    expected_name) == 0) {
+			    kld_name_matches(msg->em_event_data.kldunload.name,
+			    expected_name)) {
 				*kldunload_seen = 1;
 			} else if (expected_name == NULL) {
 				*kldunload_seen = 1;
@@ -66,7 +82,7 @@ main(void)
 	struct pollfd pfd;
 	struct timespec start;
 	int fileid = -1;
-	int was_loaded = 0;
+	int unloaded = 0;
 	const char *modname = NULL;
 	int i;
 
@@ -110,64 +126,59 @@ main(void)
 		close(fd);
 		return (1);
 	}
-
-	/* Try each module until we find one we can load */
-	for (i = 0; test_modules[i] != NULL; i++) {
-		modname = test_modules[i];
-
-		/* Check if module is already loaded - skip it, we need fresh load */
-		fileid = kldfind(modname);
-		if (fileid >= 0) {
-			fprintf(stderr, "  %s: already loaded, skipping\n", modname);
-			fileid = -1;  /* Reset so we try next module */
-			continue;
-		}
-
-		/* Try to load it */
-		fileid = kldload(modname);
-		if (fileid >= 0) {
-			fprintf(stderr, "  loaded %s (fileid=%d)\n", modname, fileid);
-			was_loaded = 0;
-			break;
-		}
-		/* EEXIST means compiled into kernel, skip to next */
-		if (errno == EEXIST) {
-			fprintf(stderr, "  %s: compiled into kernel\n", modname);
-		} else {
-			fprintf(stderr, "  %s: %s (errno=%d)\n",
-			    modname, strerror(errno), errno);
-		}
-	}
-
-	if (fileid < 0) {
-		printf("SKIP: cannot load any test module\n");
-		close(fd);
-		return (0);
-	}
-
-	fprintf(stderr, "  using module: %s (fileid=%d)\n", modname, fileid);
-
-	/* Unload - this should trigger the event */
-	if (kldunload(fileid) < 0) {
-		int err = errno;
-		if (err == EPERM || err == ENOTSUP || err == EOPNOTSUPP) {
-			fprintf(stderr, "  kldunload failed: %s (errno=%d)\n",
-			    strerror(err), err);
-			printf("SKIP: kldunload not permitted\n");
-			close(fd);
-			return (0);
-		}
-		if (errno == EBUSY) {
-			fprintf(stderr, "  %s is busy, trying next module\n", modname);
-			/* Module is in use, can't test with it */
-			printf("SKIP: all available modules are in use\n");
-			close(fd);
-			return (0);
-		}
-		perror("kldunload");
+	/* The unload is this process's own doing: lift the default self mute. */
+	if (test_unmute_self(fd) < 0) {
+		perror("OES_IOC_UNMUTE_PROCESS");
 		close(fd);
 		return (1);
 	}
+
+	/*
+	 * Load a module that is not loaded yet and unload it again.  One
+	 * that loads but will not unload is left and the next one tried.
+	 */
+	for (i = 0; test_modules[i] != NULL; i++) {
+		modname = test_modules[i];
+
+		if (kldfind(modname) >= 0) {
+			fprintf(stderr, "  %s: already loaded, not ours to "
+			    "unload\n", modname);
+			continue;
+		}
+		fileid = kldload(modname);
+		if (fileid < 0) {
+			fprintf(stderr, "  %s: kldload: %s (errno=%d)\n",
+			    modname, strerror(errno), errno);
+			continue;
+		}
+		fprintf(stderr, "  loaded %s (fileid=%d)\n", modname, fileid);
+		if (kldunload(fileid) == 0) {
+			unloaded = 1;
+			break;
+		}
+		fprintf(stderr, "  %s: kldunload: %s (errno=%d)\n", modname,
+		    strerror(errno), errno);
+	}
+
+	if (!unloaded) {
+		int securelevel = -1;
+		size_t len = sizeof(securelevel);
+
+		/* A raised securelevel forbids both calls to everybody. */
+		(void)sysctlbyname("kern.securelevel", &securelevel, &len,
+		    NULL, 0);
+		close(fd);
+		if (securelevel > 0) {
+			printf("SKIP: securelevel %d forbids loading and "
+			    "unloading modules\n", securelevel);
+			return (0);
+		}
+		fprintf(stderr, "FAIL: no test module could be loaded and "
+		    "unloaded\n");
+		return (1);
+	}
+
+	fprintf(stderr, "  unloaded %s\n", modname);
 
 	/* Wait for and read events */
 	clock_gettime(CLOCK_MONOTONIC, &start);
@@ -193,11 +204,6 @@ main(void)
 
 		if (kldunload_seen)
 			break;
-	}
-
-	/* Reload module if it was loaded before the test */
-	if (was_loaded) {
-		(void)kldload(modname);
 	}
 
 	close(fd);

@@ -194,7 +194,19 @@ oes_client_set_jail_scope(struct oes_client *ec, struct thread *td,
 	error = oes_client_scope_settable_locked(ec);
 	if (error == 0) {
 		ec->ec_jail_jid = jid;
-		ec->ec_jail_set_jailed = jailed(td->td_ucred);
+		/*
+		 * Remember which jail the scope was named from: the jid and
+		 * name are in that jail's terms and are shown to no other.
+		 * Held so that a later jail at the same address is not taken
+		 * for it, until that jail is removed (oes_prison_remove())
+		 * or the client is closed; the host is not counted.
+		 * allprison_lock is held, so the jail is not being removed.
+		 */
+		if (jailed(td->td_ucred)) {
+			prison_hold(mypr);
+			ec->ec_jail_setter_pr = mypr;
+			atomic_add_int(&oes_softc.sc_jail_setters, 1);
+		}
 		strlcpy(ec->ec_jail_name, name, sizeof(ec->ec_jail_name));
 		ec->ec_jail_state = 0;
 		rm_wlock(&oes_softc.sc_jail_lock);
@@ -232,12 +244,14 @@ oes_client_get_jail_scope(struct oes_client *ec, struct thread *td,
 	}
 	args->ejs_flags = ec->ec_jail_flags;
 	/*
-	 * The jid and name are as the setter named the jail.  A jailed
-	 * reader is not shown what an unjailed setter recorded: that is the
-	 * host's view of jail IDs and names (compare kern_proc.c, which
-	 * hides a jail's own ID from inside it).
+	 * The jid and name are as the setter named the jail, relative to
+	 * the setter's own jail.  A jailed reader is shown them only when it
+	 * is in that jail: what the host or another jail recorded is not its
+	 * view of jail IDs and names (compare kern_proc.c, which hides a
+	 * jail's own ID from inside it).
 	 */
-	if (!jailed(td->td_ucred) || ec->ec_jail_set_jailed) {
+	if (!jailed(td->td_ucred) ||
+	    td->td_ucred->cr_prison == ec->ec_jail_setter_pr) {
 		args->ejs_jid = ec->ec_jail_jid;
 		strlcpy(args->ejs_name, ec->ec_jail_name,
 		    sizeof(args->ejs_name));

@@ -97,12 +97,13 @@ also before setting its mode or subscriptions.
 The argument,
 .Vt struct oes_jail_scope_args ,
 names a jail by jail ID
-.Pq Va ejs_jid ;
-0 is the caller's own jail, which is the host system for an unjailed caller
+.Pq Va ejs_jid
 or, with
 .Dv OES_JAIL_SCOPE_BYNAME ,
 by name
 .Pq Va ejs_name .
+Jail ID 0 is the caller's own jail, which is the host system for an unjailed
+caller.
 The jail is looked up relative to the caller's jail: a jailed caller can name
 only its own jail, as jail ID 0, or a jail beneath it.
 Such a client receives AUTH and NOTIFY events only for threads whose
@@ -110,6 +111,9 @@ credential is, when the event is generated, in that jail or in a jail nested
 beneath it;
 .Dv OES_JAIL_SCOPE_NOCHILDREN
 excludes nested jails.
+An AUTH client that uses it does not supervise a process once that process
+moves into a nested jail; use it for AUTH only on jails that cannot have
+children.
 Membership is evaluated for every event, so processes that enter the jail
 later with
 .Xr jail_attach 2
@@ -155,8 +159,10 @@ returns the flags, with
 once the scope is dead, and the jail ID and name as the scope was set:
 a caller that named its own jail reads back jail ID 0 and the name
 .Dq 0 .
-They are left zero for a jailed caller reading a scope that was set from
-outside any jail.
+They are left zero for a jailed caller that is not in the jail the scope was
+set from, a scope set from outside any jail included.
+Event records are not adjusted for the reader: a jailed reader sees the jail
+IDs and hierarchical jail names of the host's view.
 It fails with
 .Er ENOENT
 for a client without a jail scope.
@@ -190,6 +196,9 @@ or a fail-closed
 .Va security.oes.default_deadline_miss_mode
 is set, and events that invalidate cached decisions while a jail-scoped client
 has cached any.
+Under the first two settings an AUTH operation outside the jail is then denied
+unless some other client authorizes it: a jail-scoped client does not satisfy
+a strict policy for the rest of the system.
 A client with any other scope, descendants included, switches this off.
 .Pp
 Per-event AUTH deadlines may be configured with
@@ -239,6 +248,13 @@ File objects include vnode identity, ownership, mode and flags, size, exact
 allocated bytes, preferred block size, generation, special-device ID,
 filesystem revision and type, link count, and second-plus-nanosecond access,
 modification, change, and birth timestamps.
+The attributes are read from the object when the event is generated.
+The access timestamp of the executable in an exec event may already
+include the kernel's own reads of the image during that exec, such as those
+of
+.Dv MAC_VERIEXEC
+image verification, and may be later than the one the file had before the
+exec began; the other timestamps are not changed by an exec.
 The
 .Dv OES_FILE_META_*
 bits distinguish unavailable attributes, unavailable or truncated paths,
@@ -258,6 +274,12 @@ File
 events are delivered via the
 .Fn mac_vnode_check_close
 hook; because a close cannot be denied, close is a NOTIFY-only event.
+A signal that a process sends to itself generates no event: the kernel
+permits it before any MAC check is made.
+A reboot event reports a request made with
+.Xr reboot 2 ,
+before the kernel has decided whether the caller may make it; it does not
+say that the system is going down.
 .Pp
 Descriptors served by a
 .Xr dq 4

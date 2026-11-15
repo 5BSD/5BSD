@@ -1868,10 +1868,16 @@ oes_deliver_notify_locked(struct oes_pending *ep)
  * jail's last user reference, which removes the jail from another thread.
  * So the jail's remove method ends nothing.  It marks the scopes
  * (EC_JAIL_ENDING) and schedules the delivery task, which claims the marked
- * scopes before it drains sc_defer and ends them after: every event queued
- * before the method ran is on sc_defer before the claim and is delivered
- * while the scope still matches.  The scope keeps its prison reference
- * until then, so the address it compares against cannot be reused.
+ * scopes before it delivers from sc_defer and ends them after: every event
+ * queued before the method ran is on sc_defer before the claim and is
+ * delivered while the scope still matches.  The scope keeps its prison
+ * reference until then, so the address it compares against cannot be reused.
+ *
+ * The queue is FIFO with one consumer, so the events queued before the claim
+ * are the first sc_defer_count entries at the claim; the scopes end once
+ * those are delivered, not when the queue is empty.  Under sustained load
+ * the queue may never be empty, and the end of a scope, with the reference
+ * that keeps the removed jail in the dying state, must not wait for that.
  *
  * Sleepable events are dispatched by their own thread and need no such
  * care for a jail that empties: a thread delivers its events before it can
@@ -1934,35 +1940,53 @@ oes_jail_scopes_finish(void)
 
 /*
  * Deferred-delivery task: drain the deferred queue, delivering each event with
- * the blocking path above.  Runs on the system taskqueue thread, so it may
+ * the blocking path above.  Runs on the OES delivery thread, so it may
  * sleep/block on the client locks.
+ *
+ * The queue is drained in rounds.  A round claims the jail scopes that are
+ * ending, delivers the events that were queued when it began and then ends
+ * the scopes it claimed; see oes_jail_scopes_claim().  The producers may
+ * keep the queue from ever becoming empty, so neither the claim nor the end
+ * of a scope waits for that: a scope marked during one round is claimed by
+ * the next and ended when that one is done, after at most 2 * OES_DEFER_MAX
+ * deliveries.  The task returns when a round finds nothing queued and
+ * nothing to end; whatever is queued or marked after that round's look
+ * enqueues the task again.
  */
 void
 oes_defer_task_fn(void *arg __unused, int pending __unused)
 {
 	struct oes_pending *ep;
+	uint32_t budget;
 	bool ending;
 
-	/* Before the drain; see oes_jail_scopes_claim(). */
-	ending = oes_jail_scopes_claim();
-
 	for (;;) {
+		/* Before the snapshot; see oes_jail_scopes_claim(). */
+		ending = oes_jail_scopes_claim();
 		mtx_lock_spin(&oes_softc.sc_defer_mtx);
-		ep = TAILQ_FIRST(&oes_softc.sc_defer);
-		if (ep == NULL) {
-			mtx_unlock_spin(&oes_softc.sc_defer_mtx);
-			break;
-		}
-		TAILQ_REMOVE(&oes_softc.sc_defer, ep, ep_link);
-		oes_softc.sc_defer_count--;
+		budget = oes_softc.sc_defer_count;
 		mtx_unlock_spin(&oes_softc.sc_defer_mtx);
+		if (budget == 0 && !ending)
+			break;
 
-		oes_deliver_notify_locked(ep);
-		oes_pending_rele(ep);
+		for (; budget != 0; budget--) {
+			mtx_lock_spin(&oes_softc.sc_defer_mtx);
+			ep = TAILQ_FIRST(&oes_softc.sc_defer);
+			if (ep == NULL) {
+				mtx_unlock_spin(&oes_softc.sc_defer_mtx);
+				break;
+			}
+			TAILQ_REMOVE(&oes_softc.sc_defer, ep, ep_link);
+			oes_softc.sc_defer_count--;
+			mtx_unlock_spin(&oes_softc.sc_defer_mtx);
+
+			oes_deliver_notify_locked(ep);
+			oes_pending_rele(ep);
+		}
+
+		if (ending)
+			oes_jail_scopes_finish();
 	}
-
-	if (ending)
-		oes_jail_scopes_finish();
 }
 
 /*
@@ -3210,6 +3234,20 @@ oes_generate_vnode_event(oes_event_type_t event,
 					strlcpy(tp->ep_comm,
 					    info->target_proc->p_comm,
 					    sizeof(tp->ep_comm));
+					/*
+					 * The jail the event was aimed at, for
+					 * a reader of inbound events.  The
+					 * credential is stable only under the
+					 * target's lock, which p_cansched()'s
+					 * callers hold.
+					 */
+					if (mtx_owned(&info->target_proc->p_mtx) &&
+					    info->target_proc->p_ucred != NULL &&
+					    jailed(info->target_proc->p_ucred)) {
+						tp->ep_jid = info->target_proc->
+						    p_ucred->cr_prison->pr_id;
+						tp->ep_flags |= EP_FLAG_JAILED;
+					}
 				} else {
 					bool tp_owned =
 					    mtx_owned(&info->target_proc->p_mtx);
@@ -5103,17 +5141,26 @@ static struct mac_policy_conf oes_mac_policy_conf = {
  * marked and the delivery task ends them once it has delivered what the
  * jail had already generated; see oes_jail_scopes_claim().  Must not sleep
  * and must return 0.
+ *
+ * A client also remembers the jail its scope was named from
+ * (ec_jail_setter_pr).  When that is the jail being removed the reference
+ * is given up here, whether or not the scope has ended, so that an open
+ * descriptor never keeps a removed jail in the dying state; the jail's own
+ * view of the scope then has no reader left to be shown to.
  */
 static int
 oes_prison_remove(void *obj, void *data __unused)
 {
 	struct oes_client *ec;
 	struct prison *pr = obj;
+	u_int nsetter;
 	bool marked;
 
-	if (atomic_load_int(&oes_softc.sc_njail) == 0)
+	if (atomic_load_int(&oes_softc.sc_njail) == 0 &&
+	    atomic_load_int(&oes_softc.sc_jail_setters) == 0)
 		return (0);
 	marked = false;
+	nsetter = 0;
 	OES_LOCK();
 	LIST_FOREACH(ec, &oes_softc.sc_jail_clients, ec_jail_link) {
 		if (ec->ec_jail_pr != pr || ec->ec_jail_state != 0)
@@ -5122,7 +5169,23 @@ oes_prison_remove(void *obj, void *data __unused)
 		atomic_add_int(&oes_softc.sc_jail_ending, 1);
 		marked = true;
 	}
+	if (atomic_load_int(&oes_softc.sc_jail_setters) != 0) {
+		LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
+			EC_LOCK(ec);
+			if (ec->ec_jail_setter_pr == pr) {
+				ec->ec_jail_setter_pr = NULL;
+				nsetter++;
+			}
+			EC_UNLOCK(ec);
+		}
+	}
 	OES_UNLOCK();
+	if (nsetter != 0) {
+		atomic_subtract_int(&oes_softc.sc_jail_setters, nsetter);
+		/* Never the last: the caller holds the prison it removes. */
+		while (nsetter-- != 0)
+			prison_free(pr);
+	}
 	if (marked)
 		taskqueue_enqueue(oes_softc.sc_defer_tq,
 		    &oes_softc.sc_defer_task);
