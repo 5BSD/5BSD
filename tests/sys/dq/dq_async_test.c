@@ -72,13 +72,14 @@ static bool
 wait_stats2(struct dqt_ctl *c, bool (*pred)(const struct dq_stats2 *,
     uint64_t), uint64_t arg, int ms, struct dq_stats2 *out)
 {
-	int waited;
+	int64_t deadline;
 
-	for (waited = 0;; waited += 10) {
+	deadline = dqt_now_ms() + ms;
+	for (;;) {
 		dqt_stats2(c, out);
 		if (pred(out, arg))
 			return (true);
-		if (waited >= ms)
+		if (dqt_now_ms() >= deadline)
 			return (false);
 		dqt_msleep(10);
 	}

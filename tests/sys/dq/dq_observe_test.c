@@ -165,13 +165,15 @@ ATF_TC_BODY(list_queues, tc)
 	dqt_pause(&c);
 	{
 		struct dqt_child ch;
-		int status, waited;
+		int64_t deadline;
+		int status;
 
 		dqt_spawn(&ch, child_one_read, &a);
 		/* Wait for the post rather than a fixed sleep (4-vCPU guest). */
-		for (waited = 0; waited < DQT_WAIT_MS; waited += 10) {
+		deadline = dqt_now_ms() + DQT_WAIT_MS;
+		for (;;) {
 			ATF_REQUIRE(find_queue(svc, st.ds_queue_id, &qi));
-			if (qi.qi_pending != 0)
+			if (qi.qi_pending != 0 || dqt_now_ms() >= deadline)
 				break;
 			dqt_msleep(10);
 		}
@@ -212,7 +214,8 @@ ATF_TC_BODY(list_objects, tc)
 	struct dq_stats st;
 	size_t count, i;
 	uint64_t total;
-	int oracle, svc, waited;
+	int64_t deadline;
+	int oracle, svc;
 	bool saw1, saw2;
 
 	dqt_fill(data, sizeof(data), 92);
@@ -264,10 +267,11 @@ ATF_TC_BODY(list_objects, tc)
 	 */
 	ATF_REQUIRE_EQ(0, close(o1->fd));
 	o1->fd = -1;
-	for (waited = 0;; waited += 10) {
+	deadline = dqt_now_ms() + 4 * DQT_WAIT_MS;
+	for (;;) {
 		ATF_REQUIRE_EQ(0, dq_observe_list_objects(svc, st.ds_queue_id,
 		    0, oi, nitems(oi), &count, &total));
-		if (total == 1 || waited >= 4 * DQT_WAIT_MS)
+		if (total == 1 || dqt_now_ms() >= deadline)
 			break;
 		dqt_msleep(10);
 	}

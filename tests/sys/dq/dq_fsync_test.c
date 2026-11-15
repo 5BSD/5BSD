@@ -219,7 +219,8 @@ ATF_TC_BODY(write_deny_local, tc)
 	o = setup(&c, &backing, &pol, 0);
 	ATF_CHECK_EQ(0, fsync(o->fd));
 	ATF_CHECK_EQ(0, fdatasync(o->fd));
-	dqt_msleep(100);
+	/* Everything posted before the fence has been recorded. */
+	dqt_fence(&c);
 	dqt_lock(&c);
 	ATF_CHECK_EQ(0, c.records);
 	dqt_unlock(&c);

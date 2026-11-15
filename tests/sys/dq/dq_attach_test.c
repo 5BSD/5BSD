@@ -443,14 +443,13 @@ sigchld_noop(int sig __unused)
 {
 }
 
-/* Take the one pending SIGCHLD; nothing else may be pending afterwards. */
+/* Take the one pending SIGCHLD. */
 static void
 one_sigchld(const char *what, pid_t pid, int code, int st)
 {
 	struct timespec ts = { 5, 0 };
-	sigset_t chld, pend;
+	sigset_t chld;
 	siginfo_t si;
-	int sig;
 
 	sigemptyset(&chld);
 	sigaddset(&chld, SIGCHLD);
@@ -462,7 +461,18 @@ one_sigchld(const char *what, pid_t pid, int code, int st)
 	    si.si_code);
 	ATF_CHECK_EQ_MSG(st, si.si_status, "%s: si_status %d", what,
 	    si.si_status);
-	dqt_msleep(100);
+}
+
+/*
+ * Nothing else is pending.  Called once the child is reaped: its exit has
+ * then finished, and every signal its exit sends has been sent.
+ */
+static void
+no_other_signal(const char *what)
+{
+	sigset_t pend;
+	int sig;
+
 	sigemptyset(&pend);
 	ATF_REQUIRE_EQ(0, sigpending(&pend));
 	for (sig = 1; sig < NSIG; sig++)
@@ -521,6 +531,7 @@ ATF_TC_BODY(attached_exit_status, tc)
 	ATF_REQUIRE_EQ(ch.pid, waitpid(ch.pid, &status, 0));
 	ATF_CHECK_EQ_MSG(W_EXITCODE(3, 0), status, "exit 3: status %#x",
 	    status);
+	no_other_signal("exit 3");
 	ATF_CHECK_EQ(0, close(ch.pd));
 	(void)close(ch.pipefd);
 
@@ -542,6 +553,7 @@ ATF_TC_BODY(attached_exit_status, tc)
 	ATF_REQUIRE_EQ(ch.pid, waitpid(ch.pid, &status, 0));
 	ATF_CHECK_EQ_MSG(W_EXITCODE(0, SIGTERM), status,
 	    "SIGTERM: status %#x", status);
+	no_other_signal("SIGTERM");
 	ATF_CHECK_EQ(0, close(ch.pd));
 	(void)close(ch.pipefd);
 

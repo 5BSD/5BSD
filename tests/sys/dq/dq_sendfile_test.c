@@ -395,8 +395,9 @@ reader_start(struct reader *rd, int fd, unsigned char *buf, size_t cap)
 	ATF_REQUIRE_EQ(0, pthread_mutex_init(&rd->mtx, NULL));
 	ATF_REQUIRE_EQ(0, pthread_cond_init(&rd->cv, NULL));
 	ATF_REQUIRE_EQ(0, pthread_create(&rd->thr, NULL, reader_main, rd));
-	/* Let it block in read(2), so that the answer has to wake it. */
-	dqt_msleep(200);
+	/* It blocks in read(2), so that the answer has to wake it. */
+	ATF_REQUIRE_MSG(dqt_wait_wmesg(getpid(), "sbwait", DQT_WAIT_MS),
+	    "the reader thread did not block in read(2)");
 }
 
 static bool

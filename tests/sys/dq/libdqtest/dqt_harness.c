@@ -246,6 +246,23 @@ dqt_handle_record(struct dqt_ctl *c, const struct dq_event *ev,
 	const void *body;
 
 	body = dq_event_body(ev, &bodylen);
+	o = dqt_object_by_id(c, ev->de_object);
+	if (o != NULL && o->fence) {
+		/* A fence's records are its own: see dq_test.h. */
+		dqt_record_seq(c, ev->de_seq);
+		if (ev->de_op == DQ_OP_CLOSE)
+			c->fence_closes++;
+		if (ev->de_op != DQ_OP_READ || ev->de_id == 0)
+			return (false);
+		c->fence_reads++;
+		pr->serve_ev = NULL;
+		pr->serve_obj = NULL;
+		pr->id = ev->de_id;
+		pr->error = 0;
+		pr->data = o->data;
+		pr->len = o->len;
+		return (true);
+	}
 	c->records++;
 	if (ev->de_op <= DQ_OP_REPLY)
 		c->events[ev->de_op]++;
@@ -255,7 +272,6 @@ dqt_handle_record(struct dqt_ctl *c, const struct dq_event *ev,
 		c->op_seq[ev->de_op] = ev->de_seq;
 		c->op_caller[ev->de_op] = ev->de_caller;
 	}
-	o = dqt_object_by_id(c, ev->de_object);
 	pr->serve_ev = NULL;
 	pr->serve_obj = NULL;
 	dqt_record_body(c, o, ev);
@@ -450,15 +466,26 @@ dqt_process_batch(struct dqt_ctl *c, const char *buf, size_t len)
 	}
 }
 
+static void
+dqt_batch_done(struct dqt_ctl *c)
+{
+
+	pthread_mutex_lock(&c->mtx);
+	c->inbatch--;
+	pthread_cond_broadcast(&c->cv);
+	pthread_mutex_unlock(&c->mtx);
+}
+
 static void *
 dqt_reader(void *arg)
 {
-	struct dqt_ctl *c = arg;
+	struct dqt_reader_arg *ra = arg;
+	struct dqt_ctl *c = ra->c;
 	struct pollfd pfd;
 	struct timespec ts;
 	char *buf;
 	ssize_t got;
-	int q;
+	int err, q;
 
 	buf = malloc(DQT_READ_BUFSIZE);
 	if (buf == NULL)
@@ -497,17 +524,25 @@ dqt_reader(void *arg)
 			pthread_mutex_unlock(&c->mtx);
 			continue;
 		}
+		/* From here to the last reply: dqt_pause waits for it. */
+		c->inbatch++;
 		pthread_mutex_unlock(&c->mtx);
 		/*
 		 * The queue is non-blocking: with two readers both wake on
 		 * poll and the loser must not sleep in read(2) forever.
 		 */
 		if (dq_read_events(q, buf, DQT_READ_BUFSIZE, &got) == -1) {
-			if (errno == EAGAIN || errno == EINTR)
+			err = errno;
+			dqt_batch_done(c);
+			if (err == EAGAIN || err == EINTR)
 				continue;
 			break;	/* ENXIO: the queue is gone */
 		}
+		pthread_mutex_lock(&c->mtx);
+		c->thr_batches[ra->idx]++;
+		pthread_mutex_unlock(&c->mtx);
 		dqt_process_batch(c, buf, (size_t)got);
+		dqt_batch_done(c);
 	}
 	free(buf);
 	return (NULL);
@@ -536,9 +571,12 @@ dqt_start(struct dqt_ctl *c, int nreaders)
 	ATF_REQUIRE(flags != -1);
 	ATF_REQUIRE_EQ(0, fcntl(c->q, F_SETFL, flags | O_NONBLOCK));
 	c->nthr = nreaders;
-	for (i = 0; i < nreaders; i++)
+	for (i = 0; i < nreaders; i++) {
+		c->rarg[i].c = c;
+		c->rarg[i].idx = i;
 		ATF_REQUIRE_EQ(0, pthread_create(&c->thr[i], NULL, dqt_reader,
-		    c));
+		    &c->rarg[i]));
+	}
 }
 
 void
@@ -631,9 +669,13 @@ dqt_pause(struct dqt_ctl *c)
 
 	pthread_mutex_lock(&c->mtx);
 	c->paused = true;
+	/*
+	 * A reader already past the check finishes its current batch,
+	 * replies (and any reply_delay_ms) included; none starts another.
+	 */
+	while (c->inbatch > 0)
+		pthread_cond_wait(&c->cv, &c->mtx);
 	pthread_mutex_unlock(&c->mtx);
-	/* A reader already past the check finishes its current batch. */
-	dqt_msleep(2 * DQT_POLL_MS);
 }
 
 void
@@ -837,6 +879,91 @@ dqt_object_by_id(struct dqt_ctl *c, uint64_t id)
 }
 
 /*
+ * Fences
+ */
+
+static const unsigned char dqt_fence_byte = 'f';
+
+static void
+dqt_fence_child(void *arg, void *result)
+{
+	struct dqt_rr *r = result;
+	unsigned char b;
+
+	r->rv = pread(*(int *)arg, &b, 1, 0);
+	r->err = r->rv == -1 ? errno : 0;
+}
+
+/* A sentinel object presenting the identity of a file of its own. */
+static struct dqt_object *
+dqt_fence_mint(struct dqt_ctl *c, const char *name, uint32_t events)
+{
+	char path[DQT_PATH_MAX];
+	struct dq_policy pol;
+	struct dqt_object *o;
+	int fd;
+
+	fd = dqt_make_oracle(name, &dqt_fence_byte, 1, path, sizeof(path));
+	dq_policy_default(&pol);
+	pol.dp_events = events;
+	o = dqt_mint(c, fd, path, &dqt_fence_byte, 1, &pol);
+	(void)close(fd);
+	pthread_mutex_lock(&c->mtx);
+	o->fence = true;
+	pthread_mutex_unlock(&c->mtx);
+	return (o);
+}
+
+void
+dqt_fence(struct dqt_ctl *c)
+{
+	struct dqt_rr r;
+	unsigned before, after;
+	bool paused;
+
+	pthread_mutex_lock(&c->mtx);
+	paused = c->paused;
+	before = c->fence_reads;
+	pthread_mutex_unlock(&c->mtx);
+	ATF_REQUIRE_MSG(c->nthr == 1 && !paused, "a fence needs one reader "
+	    "thread, not paused");
+	if (c->fence_obj == NULL)
+		c->fence_obj = dqt_fence_mint(c, "dqt-fence", 0);
+	dqt_run_child(dqt_fence_child, &c->fence_obj->fd, &r, sizeof(r));
+	ATF_REQUIRE_EQ_MSG(1, r.rv, "the fence's read: %s", strerror(r.err));
+	pthread_mutex_lock(&c->mtx);
+	after = c->fence_reads;
+	pthread_mutex_unlock(&c->mtx);
+	ATF_REQUIRE_MSG(after > before, "the fence's READ was answered but "
+	    "not recorded");
+}
+
+static bool
+dqt_cond_fence_closes(struct dqt_ctl *c, uintptr_t n,
+    uintptr_t unused __unused)
+{
+
+	return (c->fence_closes >= (unsigned)n);
+}
+
+void
+dqt_close_fence(struct dqt_ctl *c)
+{
+	struct dqt_object *o;
+	unsigned before;
+
+	pthread_mutex_lock(&c->mtx);
+	before = c->fence_closes;
+	pthread_mutex_unlock(&c->mtx);
+	o = dqt_fence_mint(c, "dqt-close-fence", DQ_EVENTS_CLOSE);
+	ATF_REQUIRE_EQ(0, close(o->fd));
+	o->fd = -1;
+	ATF_REQUIRE_MSG(dqt_wait_cond(c, dqt_cond_fence_closes,
+	    (uintptr_t)before + 1, 0, DQT_WAIT_MS), "the close fence's CLOSE "
+	    "did not arrive");
+}
+
+/*
  * Requesters
  */
 
@@ -979,18 +1106,67 @@ dqt_msleep(int ms)
 		continue;
 }
 
-static bool
-dqt_wait_cond(struct dqt_ctl *c, bool (*cond)(struct dqt_ctl *, uintptr_t,
-    uintptr_t), uintptr_t a, uintptr_t b, int ms)
+bool
+dqt_wait_wmesg(pid_t pid, const char *wmesg, int ms)
 {
-	int waited;
+	struct kinfo_proc *kp;
+	int64_t deadline;
+	size_t len;
+	int i, mib[4], n;
+	bool found;
+
+	mib[0] = CTL_KERN;
+	mib[1] = KERN_PROC;
+	mib[2] = KERN_PROC_PID | KERN_PROC_INC_THREAD;
+	mib[3] = pid;
+	deadline = dqt_now_ms() + ms;
+	for (;;) {
+		found = false;
+		len = 0;
+		if (sysctl(mib, nitems(mib), NULL, &len, NULL, 0) == 0 &&
+		    len != 0) {
+			len *= 2;
+			kp = malloc(len);
+			ATF_REQUIRE(kp != NULL);
+			if (sysctl(mib, nitems(mib), kp, &len, NULL, 0) == 0) {
+				n = (int)(len / sizeof(*kp));
+				for (i = 0; i < n && !found; i++)
+					found = strcmp(kp[i].ki_wmesg,
+					    wmesg) == 0;
+			}
+			free(kp);
+		}
+		if (found)
+			return (true);
+		if (dqt_now_ms() >= deadline)
+			return (false);
+		dqt_msleep(5);
+	}
+}
+
+int64_t
+dqt_now_ms(void)
+{
+	struct timespec ts;
+
+	(void)clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ((int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+}
+
+/* cond(c, a, b) under the lock, until it holds or ms have passed. */
+bool
+dqt_wait_cond(struct dqt_ctl *c, dqt_cond_fn cond, uintptr_t a, uintptr_t b,
+    int ms)
+{
+	int64_t deadline;
 	bool ok;
 
-	for (waited = 0;; waited += 10) {
+	deadline = dqt_now_ms() + ms;
+	for (;;) {
 		pthread_mutex_lock(&c->mtx);
 		ok = cond(c, a, b);
 		pthread_mutex_unlock(&c->mtx);
-		if (ok || waited >= ms)
+		if (ok || dqt_now_ms() >= deadline)
 			return (ok);
 		dqt_msleep(10);
 	}
@@ -1073,13 +1249,14 @@ bool
 dqt_wait_stats(struct dqt_ctl *c, dqt_stats_pred pred, uintptr_t arg, int ms)
 {
 	struct dq_stats st;
-	int waited;
+	int64_t deadline;
 
-	for (waited = 0;; waited += 10) {
+	deadline = dqt_now_ms() + ms;
+	for (;;) {
 		dqt_stats(c, &st);
 		if (pred(&st, arg))
 			return (true);
-		if (waited >= ms)
+		if (dqt_now_ms() >= deadline)
 			return (false);
 		dqt_msleep(10);
 	}

@@ -227,13 +227,14 @@ static uint64_t
 srv_wait_live(struct srv *s, uint64_t n)
 {
 	struct dq_stats2 st;
-	int i;
+	int64_t deadline;
 
-	for (i = 0; i < 500; i++) {
+	deadline = dqt_now_ms() + DQT_WAIT_MS;
+	for (;;) {
 		srv_stats(s, &st);
-		if (st.ds2_objects_live == n)
+		if (st.ds2_objects_live == n || dqt_now_ms() >= deadline)
 			break;
-		usleep(10000);
+		dqt_msleep(10);
 	}
 	return (st.ds2_objects_live);
 }
@@ -247,15 +248,17 @@ srv_wait_live(struct srv *s, uint64_t n)
 static int
 srv_wait_closes(struct srv *s, int n)
 {
-	int closes, i;
+	int64_t deadline;
+	int closes;
 
-	for (i = 0; i < 500; i++) {
+	deadline = dqt_now_ms() + DQT_WAIT_MS;
+	for (;;) {
 		pthread_mutex_lock(&s->mtx);
 		closes = s->closes;
 		pthread_mutex_unlock(&s->mtx);
-		if (closes >= n)
+		if (closes >= n || dqt_now_ms() >= deadline)
 			break;
-		usleep(10000);
+		dqt_msleep(10);
 	}
 	return (closes);
 }

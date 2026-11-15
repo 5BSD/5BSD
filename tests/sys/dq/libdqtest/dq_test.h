@@ -55,6 +55,7 @@ struct dqt_object {
 	struct dq_ident_file ident;	/* the GETATTR answer / serve copy */
 	int		 read_errno;	/* 0: serve bytes; else this errno */
 	int		 serve_errno;	/* != 0: answer every 1b event with it */
+	bool		 fence;		/* a fence sentinel (dqt_fence) */
 	int		 backing;	/* -1, or the file dq_serve_file serves */
 	struct dq_serve_state *lockstate;	/* the queue's (dqt_ctl), shared */
 	struct dq_serve_opts sopts;
@@ -92,14 +93,23 @@ enum dqt_order {
 	DQT_ORDER_REVERSE,		/* answer a batch last first */
 };
 
+struct dqt_ctl;
+struct dqt_reader_arg {
+	struct dqt_ctl	*c;
+	int		 idx;
+};
+
 struct dqt_ctl {
 	int		 q;		/* the queue, -1 once closed */
 	pthread_t	 thr[DQT_READERS_MAX];
+	struct dqt_reader_arg rarg[DQT_READERS_MAX];
+	unsigned	 thr_batches[DQT_READERS_MAX];	/* batches per reader */
 	int		 nthr;
 	pthread_mutex_t	 mtx;
 	pthread_cond_t	 cv;
 	bool		 stop;
 	bool		 paused;	/* do not read the queue */
+	int		 inbatch;	/* readers between read(2) and replies */
 	bool		 hold_replies;	/* read, record, do not answer */
 	int		 reply_delay_ms;
 	enum dqt_order	 order;
@@ -165,6 +175,15 @@ struct dqt_ctl {
 	   the objects of one identity), made at the first backing mint. */
 	struct dq_serve_state *lockstate;
 	int		 ninterrupted;
+	/*
+	 * Fences (dqt_fence, dqt_close_fence): their sentinels' records are
+	 * counted here and nowhere else (not in records, events, rd[] or
+	 * held[]), and always answered, held or paused or not; their
+	 * sequence numbers still go to seqs[] and the gap count.
+	 */
+	struct dqt_object *fence_obj;
+	unsigned	 fence_reads;
+	unsigned	 fence_closes;
 };
 
 /*
@@ -269,7 +288,28 @@ struct dqt_rr {
 	int		 err;
 };
 
-/* Controller-side waits and queries. */
+/*
+ * Positive fences, for a test that asserts something did not happen.
+ * dqt_fence: a child reads one byte of a sentinel object and the
+ * controller sees that READ; the queue is FIFO and the reader handles a
+ * batch in order, so every record posted before the child's read (by any
+ * process, synchronously) has been recorded.  It needs one reader thread
+ * that is not paused.  dqt_close_fence: a fresh sentinel with CLOSE events
+ * is closed and its CLOSE seen.  A CLOSE is posted when the last reference
+ * goes, from the dq task queue when the object has pages; that queue
+ * dispatches in order, so a CLOSE due before the sentinel's has been
+ * dispatched too.  Use it with the object count (ds2_objects_live) where
+ * it matters: an object still counted has posted no CLOSE.
+ */
+void	dqt_fence(struct dqt_ctl *c);
+void	dqt_close_fence(struct dqt_ctl *c);
+
+/* Controller-side waits and queries; every wait has a monotonic deadline. */
+int64_t	dqt_now_ms(void);		/* CLOCK_MONOTONIC, in ms */
+/* cond(c, a, b), called with c->mtx held, until it holds or ms pass. */
+typedef bool (*dqt_cond_fn)(struct dqt_ctl *c, uintptr_t a, uintptr_t b);
+bool	dqt_wait_cond(struct dqt_ctl *c, dqt_cond_fn cond, uintptr_t a,
+	    uintptr_t b, int ms);
 bool	dqt_wait_events(struct dqt_ctl *c, uint32_t op, unsigned n, int ms);
 bool	dqt_wait_held(struct dqt_ctl *c, int n, int ms);
 bool	dqt_wait_interrupts(struct dqt_ctl *c, int n, int ms);
@@ -278,6 +318,14 @@ bool	dqt_wait_locks(struct dqt_ctl *c, struct dqt_object *o, int n, int ms);
 void	dqt_stats(struct dqt_ctl *c, struct dq_stats *st);
 void	dqt_stats2(struct dqt_ctl *c, struct dq_stats2 *st);
 void	dqt_msleep(int ms);
+/*
+ * Wait until a thread of pid sleeps on the wait channel message wmesg (a
+ * requester blocked where the test needs it, instead of a fixed sleep).
+ */
+bool	dqt_wait_wmesg(pid_t pid, const char *wmesg, int ms);
+/* The kernel's wait channel messages a test waits for (dq_queue.c). */
+#define	DQT_WMESG_REPLY		"dqwait"	/* a delivered event's reply */
+#define	DQT_WMESG_INFLIGHT	"dqinfl"	/* the per-object in-flight bound */
 /* Poll the queue's statistics until pred(st, arg) holds or ms elapse. */
 typedef bool (*dqt_stats_pred)(const struct dq_stats *st, uintptr_t arg);
 bool	dqt_wait_stats(struct dqt_ctl *c, dqt_stats_pred pred, uintptr_t arg,

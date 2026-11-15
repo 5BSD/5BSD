@@ -265,20 +265,18 @@ count_unlocks(struct dqt_ctl *c, const struct dqt_object *o, uint32_t kind,
 }
 
 static bool
+cond_unlocks(struct dqt_ctl *c __unused, uintptr_t o, uintptr_t n)
+{
+
+	return (((const struct dqt_object *)o)->nunlocks >= (int)n);
+}
+
+static bool
 wait_unlocks(struct dqt_ctl *c, const struct dqt_object *o, int n)
 {
-	int waited;
-	bool ok;
 
-	for (waited = 0; waited < DQT_WAIT_MS; waited += 10) {
-		pthread_mutex_lock(&c->mtx);
-		ok = o->nunlocks >= n;
-		pthread_mutex_unlock(&c->mtx);
-		if (ok)
-			return (true);
-		dqt_msleep(10);
-	}
-	return (false);
+	return (dqt_wait_cond(c, cond_unlocks, (uintptr_t)o, (uintptr_t)n,
+	    DQT_WAIT_MS));
 }
 
 ATF_TC(posix_oracle);
@@ -503,7 +501,9 @@ ATF_TC_BODY(setlkw_interrupt, tc)
 		w.cmd = k == 0 ? F_SETLKW : F_OFD_SETLKW;
 		dqt_spawn(&wch, child_setlkw, &w);
 		ATF_REQUIRE(dqt_wait_locks(&f.c, f.o, 2 + k, DQT_WAIT_MS));
-		dqt_msleep(50);
+		/* The waiter sleeps for the LOCK's reply: signal it there. */
+		ATF_REQUIRE(dqt_wait_wmesg(wch.pid, DQT_WMESG_REPLY,
+		    DQT_WAIT_MS));
 		ATF_REQUIRE_EQ(0, kill(wch.pid, SIGUSR1));
 		dqt_collect(&wch, &r, sizeof(r));
 		ATF_CHECK_EQ(-1, r.rv);
@@ -511,8 +511,12 @@ ATF_TC_BODY(setlkw_interrupt, tc)
 		ATF_CHECK(dqt_wait_interrupts(&f.c, k + 1, DQT_WAIT_MS));
 	}
 	holder_release(&h, &hch, &hr);
-	/* Nobody holds the range: the waiters' proxies were cancelled. */
-	dqt_msleep(100);
+	/*
+	 * Nobody holds the range: the waiters' proxies were cancelled.  The
+	 * INTERRUPTs and the holder's UNLOCK_ALL were served before the
+	 * fence's READ.
+	 */
+	dqt_fence(&f.c);
 	memset(&pa, 0, sizeof(pa));
 	pa.sfd = f.o->fd;
 	pa.ofd = f.oracle;
@@ -966,7 +970,8 @@ ATF_TC_BODY(posix_spans_siblings, tc)
 		/* The owner closes its second descriptor of each file. */
 		sib_step(&s);
 		ATF_REQUIRE(wait_unlocks(&f.c, b, 1));
-		dqt_msleep(50);
+		/* The UNLOCK_ALL was served before the fence's READ. */
+		dqt_fence(&f.c);
 		sib_probe(f.o->fd, f.oracle, &pr);
 		ATF_CHECK_EQ_MSG(0, pr.s[0].rv, "after the close (lock_b %d): %s",
 		    k == 0, strerror(pr.s[0].err));

@@ -360,7 +360,8 @@ ATF_TC_BODY(deny_and_local, tc)
 	errno = 0;
 	ATF_CHECK_EQ(-1, ioctl(ev->fd, DQT_IOC_IN, &in));
 	ATF_CHECK_EQ(EDEADLK, errno);
-	dqt_msleep(100);
+	/* Everything posted before the fence has been recorded. */
+	dqt_fence(&c);
 	dqt_lock(&c);
 	ATF_CHECK_EQ(0, c.records);
 	dqt_unlock(&c);

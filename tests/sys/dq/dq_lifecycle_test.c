@@ -48,6 +48,24 @@ child_one_read(void *arg, void *result)
 	r->err = r->rv == -1 ? errno : 0;
 }
 
+/*
+ * The object is still referenced: it is still counted live (a CLOSE is
+ * posted only after it retires), and no CLOSE was due before the fence's.
+ */
+static void
+no_close_yet(struct dqt_ctl *c)
+{
+	struct dq_stats2 st;
+
+	dqt_close_fence(c);
+	dqt_stats2(c, &st);
+	ATF_CHECK_EQ_MSG(1, st.ds2_objects_live, "%ju objects live",
+	    (uintmax_t)st.ds2_objects_live);
+	dqt_lock(c);
+	ATF_CHECK_EQ(0, c->events[DQ_OP_CLOSE]);
+	dqt_unlock(c);
+}
+
 ATF_TC_WITH_CLEANUP(close_once);
 ATF_TC_HEAD(close_once, tc)
 {
@@ -89,21 +107,16 @@ ATF_TC_BODY(close_once, tc)
 	dqt_lock(&c);
 	ATF_CHECK_EQ(1, c.events[DQ_OP_READ]);
 	dqt_unlock(&c);
-	dqt_msleep(100);
-	dqt_lock(&c);
-	ATF_CHECK_EQ(0, c.events[DQ_OP_CLOSE]);
-	dqt_unlock(&c);
+	no_close_yet(&c);
 
 	ATF_REQUIRE_EQ(0, close(o->fd));
 	o->fd = -1;
 	ATF_REQUIRE_EQ(0, close(d));
-	dqt_msleep(100);
-	dqt_lock(&c);
-	ATF_CHECK_EQ(0, c.events[DQ_OP_CLOSE]);
-	dqt_unlock(&c);
+	no_close_yet(&c);
 	ATF_REQUIRE_EQ(0, close(reopen));
 	ATF_CHECK(dqt_wait_events(&c, DQ_OP_CLOSE, 1, DQT_WAIT_MS));
-	dqt_msleep(100);
+	/* A second CLOSE would have been dispatched before the fence's. */
+	dqt_close_fence(&c);
 	dqt_lock(&c);
 	ATF_CHECK_EQ(1, c.events[DQ_OP_CLOSE]);
 	ATF_CHECK_EQ(1, o->closes);
@@ -548,8 +561,11 @@ ATF_TC_BODY(unattached_holder_survives, tc)
 			r.cl.err = r.cl.rv == -1 ? errno : 0;
 			if (write(res[1], &r, sizeof(r)) != sizeof(r))
 				_exit(73);
-			/* Still here a while later, with nothing pending. */
-			dqt_msleep(500);
+			/*
+			 * Nothing pending.  The supervisor was reaped before
+			 * the go byte: its exit had finished, and whatever
+			 * its exit sends had been sent.
+			 */
 			sigemptyset(&pend);
 			(void)sigpending(&pend);
 			for (sig = 1; sig < NSIG; sig++)
@@ -582,7 +598,6 @@ ATF_TC_BODY(unattached_holder_survives, tc)
 	ATF_REQUIRE_EQ(0, procctl(P_PID, getpid(), PROC_REAP_STATUS, &rs));
 	ATF_CHECK_EQ_MSG(1, (int)rs.rs_children, "%u children",
 	    rs.rs_children);
-	dqt_msleep(200);
 	ATF_CHECK_EQ_MSG(0, waitpid(holder, &status, WNOHANG),
 	    "the holder did not outlive the supervisor: status %#x", status);
 	ATF_CHECK_EQ(0, kill(holder, 0));

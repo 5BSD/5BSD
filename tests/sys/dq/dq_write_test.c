@@ -536,7 +536,8 @@ ATF_TC_BODY(short_write, tc)
 	answer_write(&f, 0, 5, 0);
 	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(5, r.rv);
-	dqt_msleep(100);
+	/* A second chunk would have been posted before the fence. */
+	dqt_fence(&f.c);
 	dqt_lock(&f.c);
 	ATF_CHECK_EQ(1, f.c.nheld);	/* no second chunk */
 	/* The kernel's size follows the controller's word, not the request. */
