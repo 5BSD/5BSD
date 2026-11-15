@@ -19,6 +19,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -192,6 +193,7 @@ ATF_TC_BODY(shapes, tc)
 	ATF_CHECK_EQ(r.oracle_setown.err, r.setown.err);
 	/* The bodies the kernel posted: lengths per shape, never a pointer. */
 	dqt_lock(&c);
+	printf("IOCTL records: %u\n", c.events[DQ_OP_IOCTL]);
 	ATF_CHECK(c.events[DQ_OP_IOCTL] >= 9);
 	ATF_CHECK_EQ(0, c.reply_failures);
 	dqt_unlock(&c);

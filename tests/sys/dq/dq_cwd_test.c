@@ -966,7 +966,9 @@ ATF_TC_BODY(cwd_switch_stress, tc)
 	}
 	pthread_mutex_unlock(&s.mtx);
 	printf("served starts %d, real starts %d\n", nserved, nreal);
-	ATF_CHECK(nserved + nreal > 0);
+	/* Both kinds of start, or the switch was never raced. */
+	ATF_CHECK_MSG(nserved > 0 && nreal > 0, "race not exercised: %d "
+	    "served starts, %d real starts", nserved, nreal);
 	ts_stop(&s);
 }
 

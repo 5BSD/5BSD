@@ -379,12 +379,12 @@ ATF_TC_BODY(reply_racing_signal, tc)
 		ATF_CHECK_EQ(ESRCH, c.last_reply_errno);
 	dqt_unlock(&c);
 	ATF_CHECK_EQ(0, st.ds_inflight);
-	/* A race seen going one way only has tested one side of it. */
-	if (ndata == 0 || neintr == 0) {
-		dqt_fini(&c);
-		atf_tc_skip("race not exercised: %d data, %d EINTR in %d "
-		    "rounds", ndata, neintr, i);
-	}
+	/*
+	 * A race seen going one way only has tested one side of it.  This
+	 * fails rather than skips: atf_tc_skip would hide the checks above.
+	 */
+	ATF_CHECK_MSG(ndata != 0 && neintr != 0, "race not exercised: %d "
+	    "data, %d EINTR in %d rounds", ndata, neintr, i);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -736,11 +736,9 @@ ATF_TC_BODY(two_readers, tc)
 	ATF_CHECK_EQ(NTHREADS * 8, st.ds_events_delivered);
 	ATF_CHECK_EQ(NTHREADS * 8, st.ds_replies);
 	/* One reader that read every batch has shared nothing. */
-	if (c.thr_batches[0] == 0 || c.thr_batches[1] == 0) {
-		dqt_fini(&c);
-		atf_tc_skip("race not exercised: reader 0 read %u batches, "
-		    "reader 1 %u", c.thr_batches[0], c.thr_batches[1]);
-	}
+	ATF_CHECK_MSG(c.thr_batches[0] != 0 && c.thr_batches[1] != 0,
+	    "race not exercised: reader 0 read %u batches, reader 1 %u",
+	    c.thr_batches[0], c.thr_batches[1]);
 	dqt_fini(&c);
 	(void)close(oracle);
 }

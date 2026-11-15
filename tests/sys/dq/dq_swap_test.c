@@ -1480,6 +1480,13 @@ ATF_TC_BODY(swap_supervisor_gone_race, tc)
 	ATF_REQUIRE(buf != NULL);
 	len = sizeof(ncpu);
 	ATF_REQUIRE_EQ(0, sysctlbyname("hw.ncpu", &ncpu, &len, NULL, 0));
+	/*
+	 * With one CPU the close and the install cannot overlap, and which
+	 * comes first is the scheduler's choice: the race cannot be run.
+	 * Said before anything is checked, so that the skip hides nothing.
+	 */
+	if (ncpu == 1)
+		atf_tc_skip("race not exercised: one CPU");
 	installed = refused = 0;
 	/*
 	 * Both outcomes are wanted, and neither is owed by a correct kernel
@@ -1493,17 +1500,10 @@ ATF_TC_BODY(swap_supervisor_gone_race, tc)
 	}
 	printf("installed before the death %d, refused %d, in %d passes of "
 	    "%d rounds\n", installed, refused, pass, SW_RACE_ROUNDS);
-	/*
-	 * A race that only ever went one way has tested one side of it.
-	 * With one CPU the close and the install cannot overlap, and which
-	 * comes first is the scheduler's choice.
-	 */
-	if (ncpu == 1)
-		printf("one CPU: the split is not required\n");
-	else
-		ATF_CHECK_MSG(installed > 0 && refused > 0, "the race went "
-		    "one way only: %d installed, %d refused in %d passes",
-		    installed, refused, pass);
+	/* A race that only ever went one way has tested one side of it. */
+	ATF_CHECK_MSG(installed > 0 && refused > 0, "race not exercised: "
+	    "one way only, %d installed, %d refused in %d passes", installed,
+	    refused, pass);
 	free(buf);
 }
 

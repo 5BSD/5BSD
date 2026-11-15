@@ -1135,8 +1135,9 @@ ATF_TC_BODY(slot_revalidation, tc)
 /*
  * Kernel-consumer paths (class 2): swapon/swapoff of an md vnode device,
  * quotactl(Q_QUOTAON)'s quota file, unmount of a tmpfs, a nullfs mount's
- * mount point and target, extattrctl with a NULL file name.  Each row is
- * skipped (with a note) where this machine cannot provide it.
+ * mount point and target, extattrctl with a NULL file name.  A row whose
+ * prerequisite is missing fails (one skip policy: a row not taken is not a
+ * pass), except quotactl's, which needs a file system with quotas.
  */
 #define	KC_MD_SAVED	"rt-md.unit"
 
@@ -1285,14 +1286,16 @@ ATF_TC_BODY(kernel_consumer_rows, tc)
 			(void)fclose(fp);
 		}
 	} else
-		fprintf(stderr, "no md device: swapon row skipped\n");
+		ATF_CHECK_MSG(false, "row not taken: no md device for swapon "
+		    "(%s)", out);
 	/* A tmpfs to unmount. */
 	ATF_REQUIRE_EQ(0, mkdir("rt-tmpfs", 0755));
 	if (run_cmd("mount -t tmpfs tmpfs rt-tmpfs 2>&1", out,
 	    sizeof(out)) == 0)
 		(void)snprintf(a.tmpfs, sizeof(a.tmpfs), "%s/rt-tmpfs", cwd);
 	else
-		fprintf(stderr, "no tmpfs: unmount row skipped (%s)\n", out);
+		ATF_CHECK_MSG(false, "row not taken: no tmpfs to unmount (%s)",
+		    out);
 	ATF_REQUIRE_EQ(0, mkdir("rt-nullsrc", 0755));
 	ATF_REQUIRE_EQ(0, mkdir("rt-nullmnt", 0755));
 	ATF_REQUIRE_EQ(0, mkdir("rt-eactl-dir", 0755));
@@ -1316,10 +1319,16 @@ ATF_TC_BODY(kernel_consumer_rows, tc)
 			    "swapoff's)", a.md, count_kconsumer(&c, a.md + 5, 0));
 		}
 	}
+	/*
+	 * The quota file is opened by the file system's quotaon (ufs_quota.c),
+	 * so the row needs UFS with options QUOTA.  The work directory of
+	 * the test guests has no quotas: this row is not taken there, and
+	 * says so in the output.
+	 */
 	if (r.quotaon.rv == -1 && (r.quotaon.err == EOPNOTSUPP ||
 	    r.quotaon.err == EINVAL))
-		fprintf(stderr, "quotas unavailable here (%s): quotactl row "
-		    "skipped\n", strerror(r.quotaon.err));
+		printf("row not taken: quotas unavailable here (%s)\n",
+		    strerror(r.quotaon.err));
 	else
 		check_kconsumer(&c, "rt-quota.user", "quotactl Q_QUOTAON");
 	if (a.tmpfs[0] != '\0') {
@@ -1452,22 +1461,19 @@ ATF_TC_BODY(attached_kernel_paths, tc)
 	ATF_REQUIRE(fd != -1);
 	(void)close(fd);
 	a.have_fh = getfh("rt-fh-src", &a.fh) == 0;
-	if (!a.have_fh)
-		fprintf(stderr, "getfh: %s: fhlink row skipped\n",
-		    strerror(errno));
+	ATF_CHECK_MSG(a.have_fh, "row not taken: getfh: %s", strerror(errno));
 	len = 0;
 	a.have_binmisc = sysctlbyname(IBE_SYSCTL_NAME_LIST, NULL, &len, NULL,
 	    0) == 0;
-	if (!a.have_binmisc)
-		fprintf(stderr, "imgact_binmisc not loaded: binmisc row "
-		    "skipped\n");
+	ATF_CHECK_MSG(a.have_binmisc, "row not taken: imgact_binmisc is not "
+	    "loaded");
 
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ch, child_round5, &a);
 	memset(&r, 0, sizeof(r));
 	dqt_attach_collect(&ch, &r, sizeof(r));
 	if (r.mdattach.rv == -2)
-		fprintf(stderr, "no /dev/mdctl (%s): md row skipped\n",
+		ATF_CHECK_MSG(false, "row not taken: no /dev/mdctl (%s)",
 		    strerror(r.mdattach.err));
 	else {
 		ATF_CHECK_EQ(-1, r.mdattach.rv);

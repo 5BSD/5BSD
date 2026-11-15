@@ -11,12 +11,15 @@
 #include <sys/capsicum.h>
 #include <sys/filio.h>
 #include <sys/ioctl.h>
+#include <sys/linker.h>
+#include <sys/module.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 
 #include <atf-c.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -459,16 +462,17 @@ ATF_TC_BODY(nonroot_open_refused, tc)
 	struct dqt_rr r;
 	int q;
 
-	q = dqt_open_queue();	/* skip when the device is absent */
+	q = dqt_open_queue();	/* fails when the device is absent */
 	dqt_run_child(child_open_as_nobody, NULL, &r, sizeof(r));
 	ATF_REQUIRE_MSG(r.rv != -2, "setuid: %s", strerror(r.err));
 	ATF_CHECK_EQ(-1, r.rv);
 	/*
 	 * The node's mode refuses first (EACCES from the permission check);
-	 * the privilege check behind it would answer EPERM.  Either is the
-	 * refusal D85 requires.
+	 * the privilege check behind it answers EPERM only once the mode
+	 * lets the caller through (dq_legitimacy_test's
+	 * nonroot_open_behind_mode).  The order is part of the behaviour.
 	 */
-	ATF_CHECK_MSG(r.err == EACCES || r.err == EPERM, "errno %d", r.err);
+	ATF_CHECK_EQ_MSG(EACCES, r.err, "errno %d", r.err);
 	(void)close(q);
 }
 
@@ -805,18 +809,32 @@ ATF_TC_HEAD(kldunload_refused, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "the dq module never unloads");
 	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "require.progs", "kldstat kldunload");
 }
 ATF_TC_BODY(kldunload_refused, tc)
 {
-	int q;
+	int fileid, q;
 
 	q = dqt_open_queue();
-	if (system("kldstat -q -m dq") != 0)
-		atf_tc_skip("no dq module is registered");
-	/* Static: not a file to unload; loaded: MOD_UNLOAD answers EBUSY. */
-	ATF_CHECK(system("kldunload dq >/dev/null 2>&1") != 0);
-	ATF_CHECK_EQ(0, system("kldstat -q -m dq"));
+	ATF_REQUIRE_MSG(modfind("dq") != -1, "no dq module is registered: %s",
+	    strerror(errno));
+	fileid = kldfind("dq.ko");
+	if (fileid == -1) {
+		/* Compiled in: there is no file to unload. */
+		ATF_CHECK_EQ_MSG(ENOENT, errno, "kldfind dq.ko: %s",
+		    strerror(errno));
+		printf("dq is compiled into the kernel\n");
+	} else {
+		/*
+		 * Loaded from dq.ko: MOD_UNLOAD answers EBUSY.  An EPERM
+		 * would be a policy refusing the unload before dq is asked,
+		 * and would show nothing about dq.
+		 */
+		errno = 0;
+		ATF_CHECK_EQ(-1, kldunload(fileid));
+		ATF_CHECK_EQ_MSG(EBUSY, errno, "kldunload dq.ko: %s",
+		    strerror(errno));
+	}
+	ATF_CHECK_MSG(modfind("dq") != -1, "dq is gone");
 	/* The device still works. */
 	(void)close(q);
 	q = dqt_open_queue();

@@ -364,8 +364,8 @@ ATF_TC_BODY(aio_read_oracle, tc)
 	size_t len;
 	int oracle, unsafe;
 
-	if (modfind("aio") == -1)
-		atf_tc_skip("aio module: %s", strerror(errno));
+	ATF_REQUIRE_MSG(modfind("aio") != -1, "aio module: %s",
+	    strerror(errno));
 	len = sizeof(unsafe);
 	ATF_REQUIRE_EQ(0, sysctlbyname("vfs.aio.enable_unsafe", &unsafe, &len,
 	    NULL, 0));
@@ -417,6 +417,17 @@ ATF_TC_BODY(aio_read_oracle, tc)
 	}
 	dqt_fini(&c);
 	(void)close(oracle);
+	if (unsafe == 0) {
+		/*
+		 * The pin above holds today; the real file's answer is the
+		 * one owed.  A kernel that closes the difference reports an
+		 * unexpected pass here.
+		 */
+		atf_tc_expect_fail("recorded difference: aio_read of a served "
+		    "file is EOPNOTSUPP without vfs.aio.enable_unsafe");
+		ATF_CHECK_EQ(oracle_res.rv, served.rv);
+		ATF_CHECK_EQ(oracle_res.ret, served.ret);
+	}
 }
 
 ATF_TC(chunk_boundaries);
