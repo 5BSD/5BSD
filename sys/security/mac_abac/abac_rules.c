@@ -17,6 +17,7 @@
 #include <sys/module.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
+#include <sys/proc.h>
 #include <sys/rwlock.h>
 #include <sys/sysctl.h>
 
@@ -183,10 +184,14 @@ int
 abac_rules_check(struct ucred *cred, struct abac_label *subj,
     struct abac_label *obj, uint32_t op, struct proc *obj_proc)
 {
+	struct abac_ctx_attrs sattrs, oattrs;
 	const struct abac_rule *rule;
 	int i, si, result;
 	uint16_t set;
 	uint32_t matched_rule_id = 0;
+#ifdef INVARIANTS
+	int locks;
+#endif
 
 	atomic_add_64(&abac_checks, 1);
 
@@ -202,7 +207,22 @@ abac_rules_check(struct ucred *cred, struct abac_label *subj,
 	/* DTrace: check entry (pass hash for efficiency) */
 	SDT_PROBE3(abac, rules, check, entry, subj->vl_hash, obj->vl_hash, op);
 
+	/*
+	 * Lock contract: a process hook (obj_proc != NULL) is called with the
+	 * target's process lock held, by cr_cansignal(), p_cansched(),
+	 * p_candebug() and p_canwait(); no hook holds abac_rules_lock.  The
+	 * rule lock is therefore taken after process locks, and nothing may
+	 * take a process lock under it: the context attributes are taken
+	 * here, before it, and matching takes no lock at all.
+	 */
+	rw_assert(&abac_rules_lock, RA_UNLOCKED);
+	abac_ctx_attrs_subject(&sattrs, cred);
+	abac_ctx_attrs_object(&oattrs, obj_proc);
+
 	rw_rlock(&abac_rules_lock);
+#ifdef INVARIANTS
+	locks = curthread->td_locks;
+#endif
 
 	result = EACCES;	/* Default deny */
 
@@ -224,7 +244,10 @@ abac_rules_check(struct ucred *cred, struct abac_label *subj,
 			if (rule->vr_set != set)
 				continue;
 
-			if (abac_rule_matches(rule, subj, obj, op, cred, obj_proc)) {
+			if (abac_rule_matches(rule, subj, obj, op, &sattrs,
+			    obj_proc != NULL ? &oattrs : NULL)) {
+				KASSERT(curthread->td_locks == locks,
+				    ("abac: lock taken while matching"));
 				/* DTrace: rule matched */
 				SDT_PROBE3(abac, rules, rule, match,
 				    rule->vr_id, rule->vr_action, op);
@@ -242,6 +265,9 @@ abac_rules_check(struct ucred *cred, struct abac_label *subj,
 			}
 		}
 	}
+
+	KASSERT(curthread->td_locks == locks,
+	    ("abac: lock taken while matching"));
 
 	/*
 	 * No rule matched - use default policy.

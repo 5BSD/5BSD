@@ -114,7 +114,22 @@ Controlling terminal presence
 .El
 .Pp
 Subject context applies to the calling process.
-Object context applies to the target process (for debug/signal/sched operations).
+Object context applies to the target process (for debug, signal, sched and
+wait operations).
+.Pp
+A target process has a controlling terminal when
+.Pa /dev/tty
+would open for it: it acquired the terminal of its session
+and the session still holds it.
+For the calling process the test is the first half only: a process whose
+session leader has exited, or has given the terminal up with
+.Dv TIOCNOTTY ,
+keeps counting as having a controlling terminal in subject context,
+although
+.Pa /dev/tty
+no longer opens for it.
+The calling process's session cannot be read reliably while another
+process is locked for the check.
 .Sh SYSCTLS
 .Bl -tag -width indent
 .It Va security.mac.mac_abac.enabled

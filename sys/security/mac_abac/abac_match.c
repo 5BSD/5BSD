@@ -79,170 +79,147 @@ done:
 }
 
 /*
- * Check if context constraints match
+ * Context attributes
  *
- * Context constraints allow rules to be conditional on:
+ * Context constraints make a rule conditional on attributes of the subject
+ * or, for process operations, of the target process:
  * - Capability mode (sandboxed or not)
  * - Jail context (host, specific jail, or any jail)
- * - User ID (effective UID)
- * - Group ID (effective GID)
- * - Real UID
- * - Session ID
- * - Whether process has a controlling TTY
+ * - User ID (effective UID), real UID, group ID (effective GID)
+ * - Whether the process has a controlling terminal
  *
- * For subject context: pass cred (caller's credential), proc=NULL
- * For object context: pass cred=NULL, proc (target process), PROC_LOCK held.
+ * The attributes are taken once per check, before abac_rules_lock is
+ * acquired, and matching compares plain values: it takes no lock.  The
+ * process hooks run with the target's process lock held, and the rule lock
+ * is taken under it; a process lock taken while matching would order the
+ * rule lock before a process lock, and the caller's process lock after the
+ * target's (two processes acting on each other).
  *
- * At least one of cred or proc must be provided if flags are set.
+ * "Has a controlling terminal" is answered as /dev/tty answers it
+ * (ctty_clone()) for a target process: P_CONTROLT, and a session that
+ * still holds its terminal (s_ttyvp), read under the target's lock that
+ * the MAC caller holds.  For the calling process only P_CONTROLT is
+ * read, without its lock: the hook may hold another process's lock, so
+ * the caller's process group, and the session through it, cannot be
+ * held stable (setsid(2) in a sibling thread can free the old session).
+ * A caller whose session leader has exited or given the terminal up
+ * therefore still counts as having one; mac_abac(4) documents this.
+ */
+static void
+abac_ctx_attrs_cred(struct abac_ctx_attrs *attrs, struct ucred *cred,
+    bool has_tty)
+{
+
+	attrs->va_valid = true;
+	attrs->va_capmode = (cred->cr_flags & CRED_FLAG_CAPMODE) != 0;
+	attrs->va_has_tty = has_tty;
+	attrs->va_jailid = cred->cr_prison != NULL ? cred->cr_prison->pr_id : 0;
+	attrs->va_uid = cred->cr_uid;
+	attrs->va_ruid = cred->cr_ruid;
+	attrs->va_gid = cred->cr_gid;
+}
+
+/* The subject: the hook's credential (NULL: no subject context). */
+void
+abac_ctx_attrs_subject(struct abac_ctx_attrs *attrs, struct ucred *cred)
+{
+
+	if (cred == NULL) {
+		attrs->va_valid = false;
+		return;
+	}
+	abac_ctx_attrs_cred(attrs, cred,
+	    (atomic_load_int(&curproc->p_flag) & P_CONTROLT) != 0);
+}
+
+/* A target process, locked by the MAC caller (NULL: no object context). */
+void
+abac_ctx_attrs_object(struct abac_ctx_attrs *attrs, struct proc *p)
+{
+	struct pgrp *pg;
+
+	if (p == NULL) {
+		attrs->va_valid = false;
+		return;
+	}
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	if (p->p_ucred == NULL) {
+		attrs->va_valid = false;
+		return;
+	}
+	/*
+	 * The process lock keeps p_pgrp, and with it the session, stable.
+	 * The terminal is the session's while the session still holds it:
+	 * s_ttyvp is cleared when the session leader exits or gives the
+	 * terminal up (killjobc(), TIOCNOTTY), while the members keep
+	 * P_CONTROLT.  This is the test of /dev/tty (ctty_clone()).
+	 */
+	pg = p->p_pgrp;
+	abac_ctx_attrs_cred(attrs, p->p_ucred,
+	    (p->p_flag & P_CONTROLT) != 0 && pg != NULL &&
+	    atomic_load_ptr(&pg->pg_session->s_ttyvp) != NULL);
+}
+
+/*
+ * Check if context constraints match the given attributes.  A constraint
+ * without known attributes does not match.
  */
 bool
 abac_context_matches(const struct abac_context *ctx,
-    struct ucred *cred, struct proc *proc)
+    const struct abac_ctx_attrs *attrs)
 {
-	struct ucred *check_cred;
-	struct proc *check_proc;
-	bool match;
 
 	/* If no context flags set, match everything */
 	if (ctx->vc_flags == 0)
 		return (true);
-
-	/*
-	 * Determine which credential/process to check.
-	 * For subject context: use cred (caller)
-	 * For object context: use proc's credential (target)
-	 */
-	if (cred != NULL) {
-		check_cred = crhold(cred);
-		check_proc = curproc;
-	} else if (proc != NULL) {
-		/* mac_proc_check_{debug,sched,signal,wait} owns this lock. */
-		PROC_LOCK_ASSERT(proc, MA_OWNED);
-		check_cred = proc->p_ucred;
-		if (check_cred != NULL)
-			crhold(check_cred);
-		check_proc = proc;
-	} else {
-		/* No context info available, can't match constraints */
+	if (attrs == NULL || !attrs->va_valid)
 		return (false);
-	}
 
-	if (check_cred == NULL) {
+	if ((ctx->vc_flags & ABAC_CTX_CAP_SANDBOXED) != 0 &&
+	    attrs->va_capmode != ctx->vc_cap_sandboxed)
 		return (false);
-	}
-	match = true;
 
-	/* Check capability mode (sandboxed) */
-	if (ctx->vc_flags & ABAC_CTX_CAP_SANDBOXED) {
-		bool is_sandboxed;
-
-		/*
-		 * Match the same credential as the other context predicates.
-		 * The executing thread need not be the supplied subject.
-		 */
-		is_sandboxed =
-		    (check_cred->cr_flags & CRED_FLAG_CAPMODE) != 0;
-
-		if (is_sandboxed != ctx->vc_cap_sandboxed) {
-			match = false;
-			goto out;
-		}
-	}
-
-	/* Check jail context */
-	if (ctx->vc_flags & ABAC_CTX_JAIL) {
-		int jailid = 0;
-		if (check_cred->cr_prison != NULL)
-			jailid = check_cred->cr_prison->pr_id;
-
+	if ((ctx->vc_flags & ABAC_CTX_JAIL) != 0) {
 		switch (ctx->vc_jail_check) {
 		case 0:
 			/* Must be on host (jail 0) */
-			if (jailid != 0)
-				match = false;
+			if (attrs->va_jailid != 0)
+				return (false);
 			break;
 		case -1:
 			/* Must be in any jail (not host) */
-			if (jailid == 0)
-				match = false;
+			if (attrs->va_jailid == 0)
+				return (false);
 			break;
 		default:
 			/* Must be in specific jail */
-			if (jailid != ctx->vc_jail_check)
-				match = false;
+			if (attrs->va_jailid != ctx->vc_jail_check)
+				return (false);
 			break;
 		}
-		if (!match)
-			goto out;
 	}
 
-	/* Check effective UID */
-	if (ctx->vc_flags & ABAC_CTX_UID) {
-		if (check_cred->cr_uid != ctx->vc_uid) {
-			match = false;
-			goto out;
-		}
-	}
+	if ((ctx->vc_flags & ABAC_CTX_UID) != 0 &&
+	    attrs->va_uid != ctx->vc_uid)
+		return (false);
+	if ((ctx->vc_flags & ABAC_CTX_GID) != 0 &&
+	    attrs->va_gid != ctx->vc_gid)
+		return (false);
+	if ((ctx->vc_flags & ABAC_CTX_RUID) != 0 &&
+	    attrs->va_ruid != ctx->vc_uid)
+		return (false);
+	if ((ctx->vc_flags & ABAC_CTX_HAS_TTY) != 0 &&
+	    attrs->va_has_tty != ctx->vc_has_tty)
+		return (false);
 
-	/* Check effective GID */
-	if (ctx->vc_flags & ABAC_CTX_GID) {
-		if (check_cred->cr_gid != ctx->vc_gid) {
-			match = false;
-			goto out;
-		}
-	}
-
-	/* Check real UID */
-	if (ctx->vc_flags & ABAC_CTX_RUID) {
-		if (check_cred->cr_ruid != ctx->vc_uid) {
-			match = false;
-			goto out;
-		}
-	}
-
-	/* Check session/login context - via process's session */
-	if (ctx->vc_flags & ABAC_CTX_HAS_TTY) {
-		bool has_tty = false;
-
-		if (cred == NULL) {
-			/*
-			 * Object context: the caller holds the target's
-			 * process lock (asserted above), which keeps p_pgrp,
-			 * and with it the session, stable.  Locking it again
-			 * here would recurse.  s_ttyp is protected by
-			 * proctree_lock, which these callers do not hold, so
-			 * this is a snapshot, as in fill_kinfo_proc().  A
-			 * process being reaped has left its process group.
-			 */
-			if (proc->p_pgrp != NULL)
-				has_tty = atomic_load_ptr(
-				    &proc->p_pgrp->pg_session->s_ttyp) != NULL;
-		} else {
-			/*
-			 * Subject context: access the session pointer under
-			 * the process lock to avoid races with session
-			 * changes.
-			 */
-			PROC_LOCK(check_proc);
-			if (check_proc->p_session != NULL)
-				has_tty = (check_proc->p_session->s_ttyp != NULL);
-			PROC_UNLOCK(check_proc);
-		}
-
-		if (has_tty != ctx->vc_has_tty)
-			match = false;
-	}
-
-out:
-	crfree(check_cred);
-	return (match);
+	return (true);
 }
 
 /*
  * Check if a rule matches the current access request
  *
- * subj_cred: credential of the subject (caller) - used for subject context
- * obj_proc: target process for proc operations - used for object context (may be NULL)
+ * subj_attrs: the subject's context attributes
+ * obj_attrs: the target process's, for process operations (may be NULL)
  *
  * Uses abac_rule_pattern_match for the compact rule pattern structures.
  */
@@ -251,8 +228,8 @@ abac_rule_matches(const struct abac_rule *rule,
     const struct abac_label *subj,
     const struct abac_label *obj,
     uint32_t op,
-    struct ucred *subj_cred,
-    struct proc *obj_proc)
+    const struct abac_ctx_attrs *subj_attrs,
+    const struct abac_ctx_attrs *obj_attrs)
 {
 
 	/* Check if operation is covered by this rule */
@@ -268,11 +245,11 @@ abac_rule_matches(const struct abac_rule *rule,
 		return (false);
 
 	/* Check subject context constraints (jail, capability mode, etc.) */
-	if (!abac_context_matches(&rule->vr_subj_context, subj_cred, NULL))
+	if (!abac_context_matches(&rule->vr_subj_context, subj_attrs))
 		return (false);
 
 	/* Check object context constraints (for proc operations) */
-	if (!abac_context_matches(&rule->vr_obj_context, NULL, obj_proc))
+	if (!abac_context_matches(&rule->vr_obj_context, obj_attrs))
 		return (false);
 
 	return (true);

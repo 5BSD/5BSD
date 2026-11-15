@@ -2,6 +2,7 @@
 /* Real process admission, opt-in only: affected kernels may panic or hang. */
 #include <sys/types.h>
 #include <sys/mac.h>
+#include <sys/procctl.h>
 #include <sys/ioctl.h>
 #include <sys/resource.h>
 #include <sys/ptrace.h>
@@ -16,6 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <security/mac_abac/mac_abac.h>
@@ -39,6 +41,17 @@ denied(void)
 	ATF_REQUIRE(sysctlbyname("security.mac.mac_abac.denied", &value,
 	    &size, NULL, 0) == 0);
 	return (value);
+}
+
+/* The case found the rule table empty and may flush it when done. */
+static void
+own_rule_table(void)
+{
+	FILE *fp;
+
+	fp = fopen("own-rule-table", "w");
+	ATF_REQUIRE(fp != NULL);
+	ATF_REQUIRE(fclose(fp) == 0);
 }
 
 static uint32_t
@@ -120,7 +133,7 @@ check_context(const atf_tc_t *tc, uint32_t operation, int target_tty)
 {
 	char subject[96], text[112], byte;
 	mac_t label;
-	pid_t child;
+	pid_t child, leader;
 	uint32_t id;
 	uint64_t before;
 	int gate[2], ready[2], status, priority, master = -1, slave = -1;
@@ -133,6 +146,7 @@ check_context(const atf_tc_t *tc, uint32_t operation, int target_tty)
 	    setting("security.mac.mac_abac.rule_count") != 0 ||
 	    setting("security.mac.mac_abac.default_policy") != 0)
 		atf_tc_skip("requires enabled permissive ABAC, empty rules and default allow");
+	own_rule_table();
 	snprintf(subject, sizeof(subject), "type=process-context-%d", getpid());
 	snprintf(text, sizeof(text), "mac_abac/%s", subject);
 	ATF_REQUIRE(mac_from_text(&label, text) == 0);
@@ -140,7 +154,10 @@ check_context(const atf_tc_t *tc, uint32_t operation, int target_tty)
 	mac_free(label);
 	ATF_REQUIRE(pipe(gate) == 0);
 	ATF_REQUIRE(pipe(ready) == 0);
-	if (target_tty == 1) {
+	if (target_tty == 2)
+		/* The orphaned member comes back to this process. */
+		ATF_REQUIRE(procctl(P_PID, getpid(), PROC_REAP_ACQUIRE, NULL) == 0);
+	if (target_tty >= 1) {
 		master = posix_openpt(O_RDWR | O_NOCTTY);
 		ATF_REQUIRE(master >= 0);
 		ATF_REQUIRE(grantpt(master) == 0);
@@ -157,14 +174,34 @@ check_context(const atf_tc_t *tc, uint32_t operation, int target_tty)
 		if (target_tty >= 0) {
 			if (setsid() == -1)
 				_exit(10);
-			if (target_tty == 1) {
+			if (target_tty >= 1) {
 				close(master);
 				if (ioctl(slave, TIOCSCTTY, NULL) == -1)
 					_exit(11);
 			}
+			if (target_tty == 2) {
+				/*
+				 * A nohup job: a member that ignores SIGHUP,
+				 * left behind when the session leader exits.
+				 */
+				leader = getpid();
+				child = fork();
+				if (child == -1)
+					_exit(14);
+				if (child != 0) {
+					if (write(ready[1], &child, sizeof(child)) !=
+					    sizeof(child))
+						_exit(15);
+					_exit(0);
+				}
+				signal(SIGHUP, SIG_IGN);
+				close(slave);
+				while (getppid() == leader)
+					usleep(1000);
+			}
 			ttyfd = open("/dev/tty", O_RDWR);
 			if ((target_tty == 1 && ttyfd < 0) ||
-			    (target_tty == 0 && (ttyfd >= 0 || errno != ENXIO)))
+			    (target_tty != 1 && (ttyfd >= 0 || errno != ENXIO)))
 				_exit(12);
 			if (ttyfd >= 0)
 				close(ttyfd);
@@ -180,6 +217,13 @@ check_context(const atf_tc_t *tc, uint32_t operation, int target_tty)
 	close(ready[1]);
 	if (slave >= 0)
 		close(slave);
+	if (target_tty == 2) {
+		leader = child;
+		ATF_REQUIRE(read(ready[0], &child, sizeof(child)) ==
+		    sizeof(child));
+		ATF_REQUIRE(waitpid(leader, &status, 0) == leader);
+		ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	}
 	ATF_REQUIRE(read(ready[0], &byte, 1) == 1 && byte == 'R');
 	close(ready[0]);
 	/* Preserve the child's inherited priority during scheduling admission. */
@@ -194,8 +238,8 @@ check_context(const atf_tc_t *tc, uint32_t operation, int target_tty)
 		id = arm_rule(subject, operation, context);
 		before = denied();
 		check_operation(child, operation, priority); /* permissive */
-		ATF_REQUIRE_EQ(before + (target_tty < 0 || context - 2 == target_tty),
-		    denied());
+		ATF_REQUIRE_EQ(before + (target_tty < 0 ||
+		    context - 2 == (target_tty == 1)), denied());
 		remove_rule(id);
 		finish_operation(child, operation);
 		check_operation(child, operation, priority);
@@ -214,6 +258,16 @@ cleanup_rule(void)
 	uint32_t id;
 	int result;
 
+	/*
+	 * A case that found the rule table empty owns it: flush it, so that
+	 * a failed case leaves no rule (and no used slot) to the next one.
+	 */
+	if (access("own-rule-table", F_OK) == 0) {
+		(void)mac_syscall("mac_abac", ABAC_SYS_RULE_CLEAR, NULL);
+		(void)unlink("own-rule-table");
+		(void)unlink("signal-rule-id");
+		return;
+	}
 	record = fopen("signal-rule-id", "r");
 	if (record == NULL)
 		return;
@@ -369,6 +423,193 @@ TTY_TARGET_CASE(debug_target_with_tty, ABAC_OP_DEBUG);
 TTY_TARGET_CASE(sched_target_with_tty, ABAC_OP_SCHED);
 TTY_TARGET_CASE(wait_target_with_tty, ABAC_OP_WAIT);
 
+/*
+ * A nohup job outlives its session leader: it keeps P_CONTROLT, but the
+ * session no longer holds the terminal and /dev/tty does not open for it.
+ * An object "tty" constraint must see no terminal.
+ */
+#define	ORPHAN_TTY_CASE(name, operation)				\
+ATF_TC_WITH_CLEANUP(name);						\
+ATF_TC_HEAD(name, tc)							\
+{									\
+	atf_tc_set_md_var(tc, "descr",					\
+	    "target whose session leader exited has no terminal");	\
+	atf_tc_set_md_var(tc, "require.user", "root");			\
+	atf_tc_set_md_var(tc, "require.kmods", "mac_abac");		\
+	atf_tc_set_md_var(tc, "is.exclusive", "true");			\
+	atf_tc_set_md_var(tc, "timeout", "30");				\
+}									\
+ATF_TC_BODY(name, tc)							\
+{									\
+	check_context(tc, operation, 2);				\
+}									\
+ATF_TC_CLEANUP(name, tc)						\
+{									\
+	(void)tc;							\
+	cleanup_rule();							\
+}
+
+ORPHAN_TTY_CASE(signal_target_orphaned_tty, ABAC_OP_SIGNAL);
+ORPHAN_TTY_CASE(wait_target_orphaned_tty, ABAC_OP_WAIT);
+
+/*
+ * Two processes signal each other under a rule with a subject "tty"
+ * constraint, optionally while the rule lock is taken as a writer.  The process
+ * hooks run with the target's process lock held; a rule engine that took
+ * the caller's process lock there (A holds B and wants A, B holds A and
+ * wants B), or any process lock under its rule lock with a writer queued,
+ * deadlocks.  WITNESS does not see the first: process locks are DUPOK.
+ * A deadlock shows as the children never finishing; the parent gives up
+ * after a bound.  Permissive mode: the rule is evaluated and counted, and
+ * kill(2) still succeeds.
+ */
+#define	MUTUAL_ROUNDS	20000
+#define	MUTUAL_BOUND_S	60
+
+static void
+mutual_signals(const atf_tc_t *tc, bool rule_updates)
+{
+	int command[2][2], result[2][2], status;
+	struct abac_set_range range;
+	pid_t children[2], target;
+	char subject[96], text[112], token;
+	mac_t label;
+	time_t end;
+	uint64_t before;
+	uint32_t id;
+	unsigned done;
+
+	if (strcmp(atf_tc_get_config_var_wd(tc, "disposable_vm", "no"), "yes") != 0)
+		atf_tc_skip("requires explicit disposable_vm=yes; affected kernels deadlock");
+	if (setting("security.mac.mac_abac.enabled") != 1 ||
+	    setting("security.mac.mac_abac.mode") != ABAC_MODE_PERMISSIVE ||
+	    setting("security.mac.mac_abac.rule_count") != 0 ||
+	    setting("security.mac.mac_abac.default_policy") != 0)
+		atf_tc_skip("requires enabled permissive ABAC, empty rules and default allow");
+	own_rule_table();
+	snprintf(subject, sizeof(subject), "type=mutual-context-%d", getpid());
+	snprintf(text, sizeof(text), "mac_abac/%s", subject);
+	ATF_REQUIRE(mac_from_text(&label, text) == 0);
+	ATF_REQUIRE(mac_set_proc(label) == 0);
+	mac_free(label);
+	for (unsigned i = 0; i < 2; i++) {
+		ATF_REQUIRE(pipe(command[i]) == 0);
+		ATF_REQUIRE(pipe(result[i]) == 0);
+	}
+	for (unsigned i = 0; i < 2; i++) {
+		children[i] = fork();
+		ATF_REQUIRE(children[i] >= 0);
+		if (children[i] == 0) {
+			for (unsigned j = 0; j < 2; j++) {
+				close(command[j][1]);
+				close(result[j][0]);
+				if (j != i) {
+					close(command[j][0]);
+					close(result[j][1]);
+				}
+			}
+			/* No controlling terminal: the rule matches. */
+			if (setsid() == -1)
+				_exit(10);
+			if (write(result[i][1], "R", 1) != 1 ||
+			    read(command[i][0], &target, sizeof(target)) !=
+			    sizeof(target))
+				_exit(11);
+			for (unsigned n = 0; n < MUTUAL_ROUNDS; n++) {
+				if (kill(target, 0) != 0)
+					_exit(12);
+			}
+			if (write(result[i][1], "D", 1) != 1 ||
+			    read(command[i][0], &token, 1) != 1)
+				_exit(13);
+			_exit(0);
+		}
+	}
+	for (unsigned i = 0; i < 2; i++) {
+		close(command[i][0]);
+		close(result[i][1]);
+		ATF_REQUIRE(read(result[i][0], &token, 1) == 1 && token == 'R');
+		ATF_REQUIRE(fcntl(result[i][0], F_SETFL, O_NONBLOCK) == 0);
+	}
+	id = arm_rule(subject, ABAC_OP_SIGNAL, 4);
+	before = denied();
+	for (unsigned i = 0; i < 2; i++) {
+		target = children[1 - i];
+		ATF_REQUIRE(write(command[i][1], &target, sizeof(target)) ==
+		    sizeof(target));
+	}
+	/*
+	 * Re-enabling the default set, which stays enabled, takes the rule
+	 * lock as a writer without changing what the rules decide, and
+	 * without using rule slots (removed rules do not free theirs).
+	 */
+	range.vsr_start = range.vsr_end = 0;
+	done = 0;
+	for (end = time(NULL) + MUTUAL_BOUND_S; done != 3 && time(NULL) < end;) {
+		for (unsigned i = 0; i < 2; i++) {
+			if ((done & (1u << i)) == 0 &&
+			    read(result[i][0], &token, 1) == 1 && token == 'D')
+				done |= 1u << i;
+		}
+		if (rule_updates)
+			ATF_REQUIRE(mac_syscall("mac_abac", ABAC_SYS_SET_ENABLE,
+			    &range) == 0);
+		else
+			usleep(10000);
+	}
+	if (done != 3)
+		atf_tc_fail("the signalling processes did not finish in %d s "
+		    "(done %#x): deadlocked", MUTUAL_BOUND_S, done);
+	/* Each kill(2) was evaluated against the rule and matched it. */
+	ATF_REQUIRE_EQ(before + 2 * MUTUAL_ROUNDS, denied());
+	remove_rule(id);
+	for (unsigned i = 0; i < 2; i++) {
+		ATF_REQUIRE(write(command[i][1], "X", 1) == 1);
+		close(command[i][1]);
+		close(result[i][0]);
+		ATF_REQUIRE(waitpid(children[i], &status, 0) == children[i]);
+		ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	}
+}
+
+ATF_TC_WITH_CLEANUP(signal_mutual_subject_tty);
+ATF_TC_HEAD(signal_mutual_subject_tty, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Two processes signal each other under a subject tty rule");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "is.exclusive", "true");
+	atf_tc_set_md_var(tc, "timeout", "120");
+}
+ATF_TC_BODY(signal_mutual_subject_tty, tc)
+{
+	mutual_signals(tc, false);
+}
+ATF_TC_CLEANUP(signal_mutual_subject_tty, tc)
+{
+	(void)tc;
+	cleanup_rule();
+}
+
+ATF_TC_WITH_CLEANUP(signal_mutual_rule_updates);
+ATF_TC_HEAD(signal_mutual_rule_updates, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Mutual signals under a subject tty rule against a rule-lock writer");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "is.exclusive", "true");
+	atf_tc_set_md_var(tc, "timeout", "120");
+}
+ATF_TC_BODY(signal_mutual_rule_updates, tc)
+{
+	mutual_signals(tc, true);
+}
+ATF_TC_CLEANUP(signal_mutual_rule_updates, tc)
+{
+	(void)tc;
+	cleanup_rule();
+}
+
 ATF_TC_WITH_CLEANUP(signal_reciprocal_subject_tty);
 ATF_TC_HEAD(signal_reciprocal_subject_tty, tc)
 {
@@ -473,5 +714,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, debug_target_with_tty);
 	ATF_TP_ADD_TC(tp, sched_target_with_tty);
 	ATF_TP_ADD_TC(tp, wait_target_with_tty);
+	ATF_TP_ADD_TC(tp, signal_target_orphaned_tty);
+	ATF_TP_ADD_TC(tp, wait_target_orphaned_tty);
+	ATF_TP_ADD_TC(tp, signal_mutual_subject_tty);
+	ATF_TP_ADD_TC(tp, signal_mutual_rule_updates);
 	return (atf_no_error());
 }
