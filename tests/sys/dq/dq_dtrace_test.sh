@@ -46,7 +46,7 @@ dq_probes_fire_head()
 dq_probes_fire_body()
 {
 	require_dtrace
-	atf_check -o save:fired dtrace -q -n '
+	atf_check -o save:fired -e ignore dtrace -q -n '
 	    dq:::queue-open, dq:::queue-close, dq:::attach,
 	    dq:::resolve-post, dq:::resolve-reply
 	    { @n[probename] = count(); }
