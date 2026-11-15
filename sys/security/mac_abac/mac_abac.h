@@ -706,6 +706,7 @@ extern int abac_force_hooks;
 extern struct abac_rule *abac_rules[];
 extern int abac_rule_end;
 extern struct rwlock abac_rules_lock;
+#define	ABAC_OPS_LIVE(ops)	((atomic_load_32(&abac_live_ops) & (ops)) != 0)
 #define	ABAC_CHECK_LIVE(ops)	do {					\
 	if (__predict_true((atomic_load_32(&abac_live_ops) & (ops)) == 0)) \
 		return (0);						\

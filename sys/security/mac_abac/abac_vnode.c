@@ -533,6 +533,9 @@ abac_vnode_check_deleteextattr(struct ucred *cred, struct vnode *vp,
 		}
 
 		/* Check setextattr operation - deletion is a form of modification */
+		/* Rule-independent checks done; no rule names the operation. */
+		if (!ABAC_OPS_LIVE(ABAC_OP_SETEXTATTR))
+			return (0);
 		error = abac_rules_check(cred, subj, obj, ABAC_OP_SETEXTATTR, NULL);
 
 		/* In permissive mode, log but allow */
@@ -625,6 +628,7 @@ abac_vnode_check_getextattr(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_GETEXTATTR);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -1092,7 +1096,9 @@ abac_vnode_check_relabel(struct ucred *cred, struct vnode *vp,
 		}
 	}
 
-	/* Use SETEXTATTR as proxy for relabeling */
+	/* Use SETEXTATTR as proxy for relabeling; nothing to evaluate idle. */
+	if (!ABAC_OPS_LIVE(ABAC_OP_SETEXTATTR))
+		return (0);
 	error = abac_rules_check(cred, subj, obj, ABAC_OP_SETEXTATTR, NULL);
 
 	if (error != 0 && abac_mode == ABAC_MODE_PERMISSIVE)
@@ -1293,6 +1299,9 @@ abac_vnode_check_setextattr(struct ucred *cred, struct vnode *vp,
 		}
 
 		/* Check setextattr operation */
+		/* Rule-independent checks done; no rule names the operation. */
+		if (!ABAC_OPS_LIVE(ABAC_OP_SETEXTATTR))
+			return (0);
 		error = abac_rules_check(cred, subj, obj, ABAC_OP_SETEXTATTR, NULL);
 
 		/* In permissive mode, log but allow */
