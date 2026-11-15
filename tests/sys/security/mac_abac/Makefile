@@ -6,6 +6,7 @@ ATF_TESTS_C+=	parser_test
 ATF_TESTS_C+=	kernel_test
 ATF_TESTS_C+=	mprotect_test
 ATF_TESTS_C+=	signal_context_test
+ATF_TESTS_C+=	idle_pin_test
 
 SRCS.parser_test=	parser_test.c parse_line.c
 .PATH: ${SRCTOP}/usr.sbin/mac_abacd
@@ -29,5 +30,11 @@ TEST_METADATA.mprotect_test+=	is_exclusive="true"
 TEST_METADATA.signal_context_test+=	required_user="root"
 TEST_METADATA.signal_context_test+=	required_kmods="mac_abac"
 TEST_METADATA.signal_context_test+=	is_exclusive="true"
+
+# idle_pin_test switches the mode to enforcing; its rules name labels only
+# its own workers and files carry.
+TEST_METADATA.idle_pin_test+=	required_user="root"
+TEST_METADATA.idle_pin_test+=	required_kmods="mac_abac"
+TEST_METADATA.idle_pin_test+=	is_exclusive="true"
 
 .include <bsd.test.mk>
