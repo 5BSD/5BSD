@@ -3,6 +3,18 @@
 See [BUILD-OPTIONS.md](BUILD-OPTIONS.md) for GENERIC/NODEBUG, diagnostics versus
 debug symbols, native option boundaries and remaining Make compatibility.
 
+## Current provider and upgrade acceptance
+
+The Log-enabled full-upgrade VM passes all 34 checks and normal shutdown.
+All four phases check 13 manifest-derived boot units, seven ordinary RPC cases
+(including Log emit/flush/query), NetworkControl and SystemExtension operations.
+Signed 450-package inactive upgrade/new kernel, login/PAM/SSH/su, rollback,
+shared-file persistence and unused-BE removal pass. Hash-bound review:
+`bazel-provider-log-operator-vm-review-r1-20261115` under `/usr/obj/usr/src`.
+Authorized Device, Filesystem, Crypto, Trace and Audit delivery remain open;
+this is not complete-provider, Secure Boot or performance qualification.
+Make remains production/default; see [COMPLETION-PLAN.md](COMPLETION-PLAN.md).
+
 ## Resource measurement boundary
 
 Normal frontend time-l timings measure the client and omit an existing Bazel

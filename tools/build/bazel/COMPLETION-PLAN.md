@@ -1,6 +1,6 @@
 # Native Bazel completion plan
 
-## Current gate ledger (2026-11-14)
+## Current gate ledger (2026-11-15)
 
 All six gates remain open. Update this ledger when evidence changes; dated
 execution notes below retain history and do not override these current rows.
@@ -9,7 +9,7 @@ is not authorized.
 
 | Gate | Current evidence and remaining work |
 | --- | --- |
-| 1. Runtime and upgrade | Fresh R11 VM R3 passes all 34 checks, normal shutdown, signed 450-package upgrade/new kernel, authentication, rollback, shared-file persistence and unused-BE deletion. It checks 13 manifest-derived boot services and six selected ordinary-session operations; all-provider operation coverage is explicitly false and remains open. The Log-enabled helper now has native capture acceptance (five targets / 59 underlying Python cases); live Log remains pending. Operator VM R1 now passes all 34 checks and normal shutdown, including NetworkControl and SystemExtension at all four phases (147 verified root operations). A fresh superset VM with the newly captured Log helper is running; complete-provider coverage stays false. Earlier timeout failures remain retained. |
+| 1. Runtime and upgrade | Fresh R11 VM R3 passes all 34 checks, normal shutdown, signed 450-package upgrade/new kernel, authentication, rollback, shared-file persistence and unused-BE deletion. It checks 13 manifest-derived boot services and six selected ordinary-session operations; all-provider operation coverage is explicitly false and remains open. The fresh Log-enabled superset VM now passes all 34 checks and normal shutdown, including seven ordinary operations (actual Log emit/flush/query), NetworkControl and SystemExtension in all four phases. Its 147 root-operation outputs, source/serial and phase reports independently verify. Complete-provider coverage stays false; authorized Device, Filesystem, Crypto, Trace and Audit delivery remain open. Earlier timeout failures remain retained. |
 | 2. AMD64 parity/configurations | Full R15 passes 32 selected verification tests and captures 450 packages with tests=false and tests_support=yes; it does not qualify the installed OS test suite. The general-helper identity corrections are included. Its 14 general-helper archives match independently Make-qualified focused AMD64 bytes; native static/shared libc smoke probes pass. Focused kernel matches Make's allocated contracts, loader symbols and CTF; native split-debug binding passes. Seven corrected modules match except reported GNU build-ID digests, with exact CTF. Complete current package/debug/install contracts and required configuration selections remain open. |
 | 3. Bootstrap/dependencies/cache/sandbox | Narrow target/execution compiler roles and actual ABI tests pass. Public target-configuration queries resolve alias ambiguity without ignoring duplicates. Actual configured queries now collapse ordinary/NOSSP consumers to one normal host DTrace bootstrap, preserving all 13 selected ARM64 outputs byte-for-byte. Earlier AMD64 R11 and ARM64 R7 snapshots verified all 8,345/16,682 files and actual target/execution ELF roles before the dev header merge; their current source bindings are stale. Fresh AMD64 R12 and ARM64 R8 materializations pass with direct copy bindings; the fresh AMD64 SDK/loader run passes four selected targets (39 Python checks plus one host ATF case), with hash-verified reports and 82 captured files; the fresh ARM64 run also passes three host-artifact targets (39 Python checks) and captures 75 files. Earlier native R3 runs both host-test scripts (25 cases) and preserves all ten startup objects per architecture against independent Make contracts. These are Make-built seeds; independent native bootstrap, copied-payload/source mutation checks, complete invalidation/reproducibility and filesystem isolation remain required. |
 | 4. Resources/performance | A source-owned reaper supervisor now accounts complete private-server descendant CPU/block operations and sampled aggregate RSS; seven real process regressions and maintained AMD64 qualification pass. Normal frontend timings explicitly identify their client-only scope. This qualifies instrumentation, not performance. Command/QEMU observations exist, including R2 staying below its 4 GiB process-RSS and 8 GiB overlay budgets. Controlled clean/incremental CPU, aggregate RAM, disk I/O and retained-footprint comparisons remain required. Full R15 uses an explicit 32 GiB qualification-cache budget; this is not a production default or a performance result. |
@@ -23,6 +23,24 @@ Module diagnostics: /usr/obj/usr/src/bazel-module-source-identity-review-r1-2026
 ARM64 CSU proof: /usr/obj/usr/src/bazel-arm64-csu-parity-r1-20261114.
 
 
+### Log-enabled full-upgrade acceptance (2026-11-15)
+
+The terminal bazel-provider-log-operator-vm-r1-20261114 result passes all
+34 checks and normal QEMU exit. Each of four phases (baseline, inactive install
+before activation, new boot and rollback) passes 13 manifest-derived boot units,
+seven ordinary-session operations and both installed operators. Log performs an
+actual emit, flush and exact-record query. The separate review verifies every
+one of the 147 root-output hashes, source and serial hashes, image/helper
+captures and phase reports. Signed 450-package upgrade, actual new-kernel boot,
+positive/negative authentication, explicit shared-file persistence and unused-BE
+deletion pass; that guest reclaims 2,828,566,528 bytes. Application schema rollback,
+complete provider operations, Secure Boot and comparative performance are not
+proved. Evidence: bazel-provider-log-operator-vm-review-r1-20261115.
+
+Frontend review: existing format-5 targets/image inputs, VM service-policy
+format 3 and normal maintained backend carry this case. No frontend, signing,
+publication or production-default change is required. Make remains production.
+
 ### Installed operator full-upgrade acceptance (2026-11-14)
 
 The complete bazel-provider-operator-vm-r1-20261114 scenario now passes all
@@ -33,8 +51,8 @@ persistence and unused-boot-environment deletion all pass. The final report bind
 captures; the separate review rechecks every root-output hash and all four
 service-phase reports. Both added operators pass in every phase; complete
 provider operation coverage remains explicitly false. No host installation,
-reboot or publication occurred. The fresh Log-enabled superset VM is running
-and has no acceptance claim yet.
+reboot or publication occurred. The fresh Log-enabled superset VM now also passes; see the 2026-11-15
+acceptance below.
 
 
 ### Refreshed bin, module-tool and emulated math checkpoint (2026-11-14)
@@ -131,10 +149,11 @@ reclaiming 2,828,836,864 bytes in that guest. Each phase has 13 ready boot units
 six ordinary cases and both installed operators. Baseline enumeration returns
 43 ready extension policy records and both TCP/UDP numeric endpoints. Review:
 bazel-provider-operator-vm-review-r1-20261114. A fresh Log-enabled superset request
-and VM are under bazel-provider-log-operator-{request,vm}-r1-20261114; acceptance
-remains pending. No complete-provider, Secure Boot or performance claim is made. It repeats the original six ordinary cases and both operators at
-all four phases. The newly implemented Log helper is not in this older captured
-helper and still needs native capture and VM acceptance. All-provider coverage
+and VM are under bazel-provider-log-operator-{request,vm}-r1-20261114; both
+native capture and all four live Log phases now pass. No complete-provider,
+Secure Boot or performance claim is made. This superset runs seven ordinary
+cases and both operators at all four phases; the older operator-only helper
+retains its narrower six-case scope. All-provider coverage
 remains explicitly false; Trace, Crypto, Audit, authorized Device and Filesystem
 need their legitimate contexts and useful operations.
 
