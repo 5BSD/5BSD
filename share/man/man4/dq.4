@@ -3169,7 +3169,8 @@ A controller that has given up root
 .Pq Xr setuid 2
 hands over files opened without privilege: all three treatments above are
 the ordinary ones, also when its user is not the requester's.
-This is the only step that changes how the file behaves.
+This is the only step that gives the requester the ordinary treatment
+on all three counts.
 .It jail
 A controller that has entered a jail
 .Pq Xr jail_attach 2
@@ -3193,7 +3194,10 @@ Capability mode does not change the credential.
 .Pp
 The queue is opened first, since that needs privilege, and keeps working
 afterwards: no operation on the queue descriptor checks privilege, the
-jail or capability mode again, and the queue belongs to the process that
+jail or capability mode again, except that
+.Dv DQ_IOC_ATTACH
+checks the right to debug its target with the controller's present
+credential (step 2 below), and the queue belongs to the process that
 opened it, not to a credential.
 The same process must do all of it; the queue does not survive
 .Xr execve 2 .
@@ -3206,10 +3210,16 @@ the confinement to come.
 Create the program, let it enter its own jail and change its own user,
 and attach it while it waits.
 .Dv DQ_IOC_ATTACH
-needs the right to debug the target, which an unprivileged controller
-does not have over a process that changed its user
+needs the right to debug the target.
+A controller that has given up root cannot attach anything it creates: a
+child forked after the change of user inherits its set-ID mark and is
+refused
 .Pq Er EPERM ,
-and a jailed one does not have over a process outside its jail
+and one that has called
+.Xr execve 2
+is refused
+.Pq Er EBUSY .
+A jailed controller cannot attach a process outside its jail
 .Pq Er ESRCH .
 A program created after the controller entered capability mode is itself
 in capability mode and is never offered a swap.

@@ -1699,9 +1699,10 @@ user, as with `SCM_RIGHTS`. What bounds what a supervisor can hand back is
 its own confinement (owner decision, 2026-11-14): it opens the queue and
 attaches the program as root, then enters a jail, gives up root and
 enters capability mode, and only then opens the files it hands over. Only
-the uid drop changes how a handed-over file behaves (set-ID bits kept on
-write, reserved blocks, quota exemption follow the opener's privilege); a
-jail or capability mode bounds what the supervisor can reach.
+the uid drop gives the program the ordinary treatment (set-ID bits,
+reserved blocks and the quota exemption follow the opener's privilege;
+root in a jail loses only the quota exemption); a jail or capability mode
+bounds what the supervisor can reach.
 `dq(4)` "The substituted file and the confined controller" gives the
 order and the rules; `tests/sys/dq/dq_confined_test` and the `dqswap`
 example show them. A kernel check that a handed-over file's credential

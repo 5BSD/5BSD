@@ -1344,21 +1344,32 @@ where that fits
 and only then the
 .Xr open 2
 of each file it hands over.
-Every function of this library except
+The event, reply, mint, attach and statistics functions work after that.
 .Fn dq_open
 and
-.Fn dq_observe_connect ,
-which open a device by path, works after that.
-In capability mode the library cannot read the sysctls it consults and
-assumes their default values:
-.Va kern.dq.max_io
-for the buffer of
-.Fn dq_dispatch ,
+.Fn dq_observe_connect
+open a device by path and must come first.
+.Fn dq_tree_create
 and
+.Fn dq_serve_tree
+use the controller's own namespace for names outside the prefix and for
+the backing tree's path: create the tree before entering a jail, and do
+not serve names outside the prefix from capability mode.
+A tree created inside a jail records its backing path relative to the
+jail's root, and a
+.Dv DQ_RESOLVE_REAL
+answer built from it names another file for a requester outside the
+jail.
+In capability mode the library cannot read
+.Va kern.dq.max_io ,
 .Va vfs.lookup_cap_dotdot
-and
+or
 .Va vfs.lookup_cap_dotdot_nonlocal
-for the served trees.
+and assumes their defaults; call
+.Fn dq_dispatch
+once, or create the tree, before
+.Xr cap_enter 2
+if the system changes them.
 The order, and what each confinement bounds, is in
 .Xr dq 4 ,
 .Sx The substituted file and the confined controller .
