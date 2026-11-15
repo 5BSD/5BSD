@@ -439,10 +439,10 @@ ATF_TC_BODY(nonroot_open_behind_mode, tc)
 	struct lg_res res;
 
 	LG_ROOT();
-	ATF_REQUIRE_EQ(0, chmod(DQ_DEVICE, 0666));
+	dqt_mode_save_set(DQ_DEVICE, 0666);
 	memset(&res, 0, sizeof(res));
 	dqt_run_child(child_nobody_open, NULL, &res, sizeof(res));
-	ATF_REQUIRE_EQ(0, chmod(DQ_DEVICE, 0600));
+	ATF_REQUIRE(dqt_mode_restore(DQ_DEVICE));
 	CHECK_ERR(res.r[0], EPERM);
 	CHECK_ERR(res.r[1], EPERM);
 	CHECK_ERR(res.r[2], EPERM);
@@ -452,7 +452,7 @@ ATF_TC_BODY(nonroot_open_behind_mode, tc)
 ATF_TC_CLEANUP(nonroot_open_behind_mode, tc)
 {
 
-	(void)chmod(DQ_DEVICE, 0600);
+	(void)dqt_mode_restore(DQ_DEVICE);
 }
 
 struct jail_arg {
@@ -1792,34 +1792,6 @@ owner_arg_init(struct owner_arg *a, bool nobody, int jid)
 		a->t[i] = -1;
 }
 
-static void
-proc_debug_save(void)
-{
-	FILE *f;
-	u_int old;
-
-	ATF_REQUIRE(dqt_sysctl_get_uint(PROC_DEBUG, &old));
-	f = fopen("proc_debug.save", "w");
-	ATF_REQUIRE(f != NULL);
-	fprintf(f, "%u\n", old);
-	ATF_REQUIRE_EQ(0, fclose(f));
-}
-
-static void
-proc_debug_restore(void)
-{
-	FILE *f;
-	u_int old;
-
-	f = fopen("proc_debug.save", "r");
-	if (f != NULL) {
-		if (fscanf(f, "%u", &old) == 1)
-			(void)sysctlbyname(PROC_DEBUG, NULL, NULL, &old,
-			    sizeof(old));
-		(void)fclose(f);
-	}
-}
-
 /*
  * Preserve (attach errno order; design 15.3, review 4 N1), on the process
  * that opened the queue: argument errors (EINVAL), a target that is gone
@@ -1852,8 +1824,7 @@ ATF_TC_BODY(owner_dropped_attach, tc)
 	int jid, notpd, status;
 
 	LG_ROOT();
-	proc_debug_save();
-	dqt_sysctl_set_uint(PROC_DEBUG, 1);
+	dqt_sysctl_save_set_uint(PROC_DEBUG, 1);
 	jid = make_jail("dq_lg_owner_target");
 
 	notpd = open("/dev/null", O_RDONLY);
@@ -1912,12 +1883,12 @@ ATF_TC_BODY(owner_dropped_attach, tc)
 	idle_end(&plain);
 	idle_end(&jailed);
 	ATF_REQUIRE_EQ(0, jail_remove(jid));
-	proc_debug_restore();
+	(void)dqt_sysctl_restore(PROC_DEBUG);
 }
 ATF_TC_CLEANUP(owner_dropped_attach, tc)
 {
 
-	proc_debug_restore();
+	(void)dqt_sysctl_restore(PROC_DEBUG);
 	(void)jail_remove(jail_getid("dq_lg_owner_target"));
 }
 

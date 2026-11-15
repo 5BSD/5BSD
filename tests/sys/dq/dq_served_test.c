@@ -43,6 +43,13 @@
 
 #define	SRV_MAX_SEEN	256
 
+/* Global knobs some cases change; each such case restores them. */
+#define	MAX_OBJECTS		"kern.dq.max_objects"
+#define	FAIL_BIND_ENFILE	"debug.dq.fail_bind_enfile"
+#define	FAIL_LINK_CLOSING	"debug.dq.fail_link_closing"
+#define	FAIL_VM_CREATE		"debug.dq.fail_vm_create"
+#define	DROP_COMPLETION		"debug.dqres.drop_completion"
+
 struct srv;
 /* A hook returns 1 when it answered the event itself. */
 typedef int (*srv_hook_t)(struct srv *, const struct dq_event *,
@@ -1022,7 +1029,7 @@ ATF_TC_BODY(post_reply_enfile, tc)
  * The same ENFILE through debug.dq.fail_bind_enfile: dq_file_bind fails
  * as falloc would, the object retires with exactly one CLOSE.
  */
-ATF_TC(post_reply_enfile_inject);
+ATF_TC_WITH_CLEANUP(post_reply_enfile_inject);
 ATF_TC_HEAD(post_reply_enfile_inject, tc)
 {
 
@@ -1032,22 +1039,24 @@ ATF_TC_BODY(post_reply_enfile_inject, tc)
 {
 	struct srv s;
 	struct dq_stats2 st;
-	u_int one = 1, zero = 0;
 	int r[RES_MAX];
 
 	srv_start(&s, 0);
 	s.hook = h_fd_close;
-	ATF_REQUIRE(sysctlbyname("debug.dq.fail_bind_enfile", NULL, NULL,
-	    &one, sizeof(one)) == 0);
+	dqt_knob_arm(FAIL_BIND_ENFILE, 1);
 	run_child(&s, c_enfile, r);
-	(void)sysctlbyname("debug.dq.fail_bind_enfile", NULL, NULL, &zero,
-	    sizeof(zero));
+	dqt_knob_check_consumed(FAIL_BIND_ENFILE);
 	ATF_CHECK_EQ(ENFILE, r[0]);
 	ATF_CHECK_EQ(0, srv_wait_live(&s, 0));
 	srv_stats(&s, &st);
 	ATF_CHECK_EQ(1, st.ds2_resolve_retired);
 	ATF_CHECK_EQ(1, srv_wait_closes(&s, 1));
 	srv_stop(&s);
+}
+ATF_TC_CLEANUP(post_reply_enfile_inject, tc)
+{
+
+	dqt_knob_disarm(FAIL_BIND_ENFILE);
 }
 
 /*
@@ -1067,7 +1076,7 @@ c_stat_one(struct srv *s, int *r)
 	r[1] = ERR(stat(path, &st));	/* the next one completes */
 }
 
-ATF_TC(dropped_completion_eio);
+ATF_TC_WITH_CLEANUP(dropped_completion_eio);
 ATF_TC_HEAD(dropped_completion_eio, tc)
 {
 
@@ -1076,18 +1085,20 @@ ATF_TC_HEAD(dropped_completion_eio, tc)
 ATF_TC_BODY(dropped_completion_eio, tc)
 {
 	struct srv s;
-	u_int one = 1, zero = 0;
 	int r[RES_MAX];
 
 	srv_start(&s, 0);
-	ATF_REQUIRE(sysctlbyname("debug.dqres.drop_completion", NULL, NULL,
-	    &one, sizeof(one)) == 0);
+	dqt_knob_arm(DROP_COMPLETION, 1);
 	run_child(&s, c_stat_one, r);
-	(void)sysctlbyname("debug.dqres.drop_completion", NULL, NULL, &zero,
-	    sizeof(zero));
+	dqt_knob_check_consumed(DROP_COMPLETION);
 	ATF_CHECK_EQ(EIO, r[0]);
 	ATF_CHECK_EQ(0, r[1]);
 	srv_stop(&s);
+}
+ATF_TC_CLEANUP(dropped_completion_eio, tc)
+{
+
+	dqt_knob_disarm(DROP_COMPLETION);
 }
 
 /* The reply's pager object cannot be made: ENOMEM, event in flight. */
@@ -1109,15 +1120,15 @@ h_vmfail(struct srv *s, const struct dq_event *ev,
 	strlcpy(sf.f_mntonname, "/", sizeof(sf.f_mntonname));
 	(void)dq_ident_from_stat(&id, path, &st, &sf, -1);
 	dq_policy_default(&pol);
-	(void)sysctlbyname("debug.dq.fail_vm_create", NULL, NULL, &one,
-	    sizeof(one));
+	/* Armed here, so that only this reply's object creation fails. */
+	(void)sysctlbyname(FAIL_VM_CREATE, NULL, NULL, &one, sizeof(one));
 	if (dq_reply_resolve_fd(s->q, ev->de_id, DQ_KIND_FILE, 0, &id, &pol,
 	    &oid, NULL) != 0)
 		s->hook_errno = errno;
 	return (0);
 }
 
-ATF_TC(vm_create_enomem);
+ATF_TC_WITH_CLEANUP(vm_create_enomem);
 ATF_TC_HEAD(vm_create_enomem, tc)
 {
 
@@ -1128,13 +1139,20 @@ ATF_TC_BODY(vm_create_enomem, tc)
 	struct srv s;
 	int r[RES_MAX];
 
+	dqt_knob_save(FAIL_VM_CREATE);
 	srv_start(&s, 0);
 	s.hook = h_vmfail;
 	run_child(&s, c_open, r);
+	dqt_knob_check_consumed(FAIL_VM_CREATE);
 	ATF_CHECK_EQ(ENOMEM, s.hook_errno);
 	ATF_CHECK_EQ(0, r[0]);		/* the tree's answer completed it */
 	ATF_CHECK_EQ(0, srv_wait_live(&s, 0));
 	srv_stop(&s);
+}
+ATF_TC_CLEANUP(vm_create_enomem, tc)
+{
+
+	dqt_knob_disarm(FAIL_VM_CREATE);
 }
 
 /*
@@ -1804,15 +1822,15 @@ h_enxio(struct srv *s, const struct dq_event *ev,
 		return (0);
 	srv_ident(s, "a", path, &id);
 	dq_policy_default(&pol);
-	(void)sysctlbyname("debug.dq.fail_link_closing", NULL, NULL, &one,
-	    sizeof(one));
+	/* Armed here, so that only this reply's link fails. */
+	(void)sysctlbyname(FAIL_LINK_CLOSING, NULL, NULL, &one, sizeof(one));
 	if (dq_reply_resolve_fd(s->q, ev->de_id, DQ_KIND_FILE, 0, &id, &pol,
 	    &oid, NULL) != 0)
 		s->hook_errno = errno;
 	return (0);	/* the event is still in flight: the tree answers */
 }
 
-ATF_TC(link_enospc_enxio);
+ATF_TC_WITH_CLEANUP(link_enospc_enxio);
 ATF_TC_HEAD(link_enospc_enxio, tc)
 {
 
@@ -1824,33 +1842,41 @@ ATF_TC_BODY(link_enospc_enxio, tc)
 	struct dq_policy pol;
 	struct dq_ident_file id;
 	char cwd[PATH_MAX], name[PATH_MAX];
-	u_int one = 1, save;
-	size_t len;
 	uint64_t oid;
 	int r[RES_MAX], mfd;
 
+	dqt_knob_save(FAIL_LINK_CLOSING);
 	srv_start(&s, 0);
 	ATF_REQUIRE(getcwd(cwd, sizeof(cwd)) != NULL);
 	snprintf(name, sizeof(name), "%s/backing/a", cwd);
 	srv_ident(&s, "a", name, &id);
 	dq_policy_default(&pol);
 	ATF_REQUIRE(dq_mint_file(s.q, &id, &pol, &oid, &mfd, NULL) == 0);
-	len = sizeof(save);
-	ATF_REQUIRE(sysctlbyname("kern.dq.max_objects", &save, &len, &one,
-	    sizeof(one)) == 0);
+	/*
+	 * The limit is global: every queue on the system, Capsule's and
+	 * SwitchBoard's too, is held at one object until it is restored,
+	 * at once here and by the cleanup should the body stop early.
+	 */
+	dqt_sysctl_save_set_uint(MAX_OBJECTS, 1);
 	run_child(&s, c_open, r);
-	(void)sysctlbyname("kern.dq.max_objects", NULL, NULL, &save,
-	    sizeof(save));
+	ATF_REQUIRE(dqt_sysctl_restore(MAX_OBJECTS));
 	ATF_CHECK_EQ(EIO, r[0]);	/* ENOSPC to the tree, EIO after */
 	close(mfd);
 	ATF_CHECK_EQ(0, srv_wait_live(&s, 0));
 
 	s.hook = h_enxio;
 	run_child(&s, c_open, r);
+	dqt_knob_check_consumed(FAIL_LINK_CLOSING);
 	ATF_CHECK_EQ(ENXIO, s.hook_errno);
 	ATF_CHECK_EQ(0, r[0]);
 	ATF_CHECK_EQ(0, srv_wait_live(&s, 0));
 	srv_stop(&s);
+}
+ATF_TC_CLEANUP(link_enospc_enxio, tc)
+{
+
+	(void)dqt_sysctl_restore(MAX_OBJECTS);
+	dqt_knob_disarm(FAIL_LINK_CLOSING);
 }
 
 /*

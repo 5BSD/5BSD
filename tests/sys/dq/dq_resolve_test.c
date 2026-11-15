@@ -845,7 +845,9 @@ make_setid_copy(void)
 	ATF_REQUIRE_EQ(0, chmod("rt-id", 04755));
 }
 
-ATF_TC(i5_no_new_privileges);
+#define	I5_JAIL	"dqt_i5"
+
+ATF_TC_WITH_CLEANUP(i5_no_new_privileges);
 ATF_TC_HEAD(i5_no_new_privileges, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "I5: a set-user-id image exec'd "
@@ -863,8 +865,9 @@ ATF_TC_BODY(i5_no_new_privileges, tc)
 
 	make_setid_copy();
 	memset(&a, 0, sizeof(a));
-	a.jid = jail_setv(JAIL_CREATE, "path", "/", "name", "dqt_i5",
+	a.jid = jail_setv(JAIL_CREATE, "path", "/", "name", I5_JAIL,
 	    "persist", NULL, NULL);
+	ATF_REQUIRE_MSG(a.jid > 0, "jail %s: %s", I5_JAIL, jail_errmsg);
 	a.coredir = 1;
 	memset(&o, 0, sizeof(o));
 	dqt_run_child(child_i5, &a, &o, sizeof(o));
@@ -873,25 +876,30 @@ ATF_TC_BODY(i5_no_new_privileges, tc)
 	dqt_attach_spawn(&c, &ch, child_i5, &a);
 	memset(&r, 0, sizeof(r));
 	dqt_attach_collect(&ch, &r, sizeof(r));
-	if (strcmp(o.idout, "65534\n") == 0)
-		ATF_CHECK_STREQ("0\n", r.idout);
-	else
-		fprintf(stderr, "the work directory ignores set-id bits "
-		    "(unattached run printed \"%s\"): exec row not checked\n",
-		    o.idout);
+	/* The oracle: unattached, the set-id copy runs as its owner. */
+	ATF_REQUIRE_STREQ_MSG("65534\n", o.idout, "the work directory "
+	    "ignores set-id bits: the exec row cannot be taken");
+	ATF_CHECK_STREQ("0\n", r.idout);
 	ATF_CHECK_EQ(-1, r.setcred.rv);
 	ATF_CHECK_EQ(EPERM, r.setcred.err);
-	if (a.jid > 0) {
-		ATF_CHECK_EQ(-1, r.jail_attach.rv);
-		ATF_CHECK_EQ(EPERM, r.jail_attach.err);
-		(void)jail_remove(a.jid);
-	}
+	ATF_CHECK_EQ(-1, r.jail_attach.rv);
+	ATF_CHECK_EQ(EPERM, r.jail_attach.err);
+	ATF_CHECK_EQ(0, jail_remove(a.jid));
 	ATF_CHECK_EQ(0, r.nnp.rv);
 	ATF_CHECK_EQ(PROC_NO_NEW_PRIVS_ENABLE, r.nnp.err);
 	ATF_CHECK(WIFSIGNALED(r.core_status));
 	ATF_CHECK_MSG(!WCOREDUMP(r.core_status), "an attached process dumped "
 	    "core");
 	dqt_fini(&c);
+}
+ATF_TC_CLEANUP(i5_no_new_privileges, tc)
+{
+	int jid;
+
+	/* A persistent jail left behind would refuse the next run's create. */
+	jid = jail_getid(I5_JAIL);
+	if (jid > 0)
+		(void)jail_remove(jid);
 }
 
 /*

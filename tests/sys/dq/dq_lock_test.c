@@ -634,9 +634,8 @@ lastclose_round(int how)
 	struct dqt_child ch;
 	struct lastclose_arg a;
 	struct lastclose_res r;
-	size_t len;
 	uint64_t owner;
-	u_int left, n;
+	u_int left;
 	int status;
 	char b;
 
@@ -653,18 +652,14 @@ lastclose_round(int how)
 	(void)close(f.o->fd);
 	f.o->fd = -1;
 	/* The next reply about an open file is the lock's. */
-	n = 1;
-	ATF_REQUIRE_EQ_MSG(0, sysctlbyname(DELAY_NOTIFY, NULL, NULL, &n,
-	    sizeof(n)), "%s: %s", DELAY_NOTIFY, strerror(errno));
+	dqt_knob_arm(DELAY_NOTIFY, 1);
 	b = 'g';
 	ATF_REQUIRE_EQ(1, write(a.go[1], &b, 1));
 	(void)close(a.go[1]);
 	memset(&r, 0, sizeof(r));
 	status = dqt_wait(&ch, &r, sizeof(r));
-	len = sizeof(left);
-	ATF_REQUIRE_EQ(0, sysctlbyname(DELAY_NOTIFY, &left, &len, NULL, 0));
-	n = 0;
-	(void)sysctlbyname(DELAY_NOTIFY, NULL, NULL, &n, sizeof(n));
+	ATF_REQUIRE(dqt_sysctl_get_uint(DELAY_NOTIFY, &left));
+	dqt_knob_disarm(DELAY_NOTIFY);
 	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
 	    "how %#x: the requester: status %#x", how, status);
 	ATF_CHECK_EQ_MSG(0, left, "how %#x: no reply was delayed", how);
@@ -708,21 +703,14 @@ ATF_TC_HEAD(flock_gone_when_last_close_returns, tc)
 }
 ATF_TC_BODY(flock_gone_when_last_close_returns, tc)
 {
-	size_t len;
-	u_int v;
 
-	len = sizeof(v);
-	if (sysctlbyname(DELAY_NOTIFY, &v, &len, NULL, 0) != 0 &&
-	    errno == ENOENT)
-		atf_tc_skip("this kernel has no %s", DELAY_NOTIFY);
 	lastclose_round(LOCK_EX | LOCK_NB);
 	lastclose_round(LOCK_EX);
 }
 ATF_TC_CLEANUP(flock_gone_when_last_close_returns, tc)
 {
-	u_int zero = 0;
 
-	(void)sysctlbyname(DELAY_NOTIFY, NULL, NULL, &zero, sizeof(zero));
+	dqt_knob_disarm(DELAY_NOTIFY);
 }
 
 struct norm_res {

@@ -283,6 +283,31 @@ void	dqt_umount_fdesc(void);
 bool	dqt_sysctl_get_uint(const char *name, u_int *value);
 void	dqt_sysctl_set_uint(const char *name, u_int value);
 
+/*
+ * Global state a case changes (dqt_sysctl.c).  The body saves the value it
+ * finds into its work directory before changing it (only the first save of
+ * a name counts, so it is the original); the case is ATF_TC_WITH_CLEANUP
+ * and its cleanup restores that value.  The restore routines make no ATF
+ * calls and do nothing for a name that was never saved.
+ *
+ * A fault-injection counter (debug.dq.fail_*, debug.dqres.*) is armed only
+ * from 0, checked consumed (0 again) at the end of the body, and disarmed
+ * by the cleanup: an unconsumed count fails some later, unrelated queue.
+ * dqt_knob_save is for a counter that a controller thread arms itself at
+ * the right moment: it checks the counter is 0 and saves it.
+ */
+void	dqt_sysctl_save(const char *name);
+void	dqt_sysctl_save_set_uint(const char *name, u_int value);
+void	dqt_sysctl_save_set_int(const char *name, int value);
+bool	dqt_sysctl_restore(const char *name);
+void	dqt_knob_save(const char *name);
+void	dqt_knob_arm(const char *name, u_int n);
+void	dqt_knob_check_consumed(const char *name);
+void	dqt_knob_disarm(const char *name);
+/* The mode of a file, such as /dev/dq. */
+void	dqt_mode_save_set(const char *file, mode_t mode);
+bool	dqt_mode_restore(const char *file);
+
 /* Field-by-field oracle comparisons (ATF_CHECK_EQ_MSG per field). */
 void	dqt_check_stat_eq(const struct stat *served, const struct stat *want);
 void	dqt_check_statfs_eq(const struct statfs *served,

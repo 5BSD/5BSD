@@ -89,20 +89,20 @@ get_allow(void)
 	return (v);
 }
 
+/* The first change saves the value found; the cleanup restores it. */
 static void
 set_allow(int v)
 {
 
-	ATF_REQUIRE(sysctlbyname(ALLOW, NULL, NULL, &v, sizeof(v)) == 0);
+	dqt_sysctl_save_set_int(ALLOW, v);
 }
 
-/* Cleanups put the sysctl back to its default; bodies restore it too. */
+/* Cleanups put back the value the body found; bodies restore it too. */
 static void
 reset_allow(void)
 {
-	int v = 1;
 
-	(void)sysctlbyname(ALLOW, NULL, NULL, &v, sizeof(v));
+	(void)dqt_sysctl_restore(ALLOW);
 }
 
 /*
