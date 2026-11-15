@@ -27,42 +27,33 @@
  * Socket label lifecycle
  */
 
+/*
+ * A socket holds its creator's label, a connection its listener's (none
+ * for an unlabelled creator: NULL, type=unlabeled).
+ */
 int
-abac_socket_init_label(struct label *label, int flag)
+abac_socket_init_label(struct label *label, int flag __unused)
 {
-	struct abac_label *vl;
 
-	vl = abac_label_alloc(flag == M_WAITOK ? M_WAITOK : M_NOWAIT);
-	if (vl == NULL)
-		return (ENOMEM);
-	SLOT_SET(label, vl);
+	SLOT_SET(label, NULL);
 	return (0);
 }
 
 void
 abac_socket_destroy_label(struct label *label)
 {
-	struct abac_label *vl;
 
-	vl = SLOT(label);
-	if (vl != NULL)
-		abac_label_free(vl);
+	abac_label_free(SLOT(label));
 	SLOT_SET(label, NULL);
 }
 
 void
 abac_socket_copy_label(struct label *src, struct label *dest)
 {
-	struct abac_label *srcvl, *dstvl;
 
 	if (src == NULL || dest == NULL)
 		return;
-
-	srcvl = SLOT(src);
-	dstvl = SLOT(dest);
-
-	if (srcvl != NULL && dstvl != NULL)
-		abac_label_copy(srcvl, dstvl);
+	abac_label_share(dest, abac_slot, SLOT(src));
 }
 
 /*
@@ -72,16 +63,10 @@ void
 abac_socket_create(struct ucred *cred, struct socket *so,
     struct label *solabel)
 {
-	struct abac_label *credlabel, *slabel;
 
 	if (cred == NULL || cred->cr_label == NULL || solabel == NULL)
 		return;
-
-	credlabel = SLOT(cred->cr_label);
-	slabel = SLOT(solabel);
-
-	if (credlabel != NULL && slabel != NULL)
-		abac_label_copy(credlabel, slabel);
+	abac_label_share(solabel, abac_slot, SLOT(cred->cr_label));
 }
 
 /*
@@ -91,16 +76,10 @@ void
 abac_socket_newconn(struct socket *oldso, struct label *oldsolabel,
     struct socket *newso, struct label *newsolabel)
 {
-	struct abac_label *oldlabel, *newlabel;
 
 	if (oldsolabel == NULL || newsolabel == NULL)
 		return;
-
-	oldlabel = SLOT(oldsolabel);
-	newlabel = SLOT(newsolabel);
-
-	if (oldlabel != NULL && newlabel != NULL)
-		abac_label_copy(oldlabel, newlabel);
+	abac_label_share(newsolabel, abac_slot, SLOT(oldsolabel));
 }
 
 /*
@@ -329,27 +308,20 @@ abac_socket_check_send(struct ucred *cred, struct socket *so,
  *   allow connect type=client -> type=server
  */
 
+/* A peer label is set from the peer; no rule reads it. */
 int
-abac_socketpeer_init_label(struct label *label, int flag)
+abac_socketpeer_init_label(struct label *label, int flag __unused)
 {
-	struct abac_label *vl;
 
-	vl = abac_label_alloc(flag == M_WAITOK ? M_WAITOK : M_NOWAIT);
-	if (vl == NULL)
-		return (ENOMEM);
-	/* Peer labels default to empty (unlabeled) until set */
-	SLOT_SET(label, vl);
+	SLOT_SET(label, NULL);
 	return (0);
 }
 
 void
 abac_socketpeer_destroy_label(struct label *label)
 {
-	struct abac_label *vl;
 
-	vl = SLOT(label);
-	if (vl != NULL)
-		abac_label_free(vl);
+	abac_label_free(SLOT(label));
 	SLOT_SET(label, NULL);
 }
 
@@ -366,16 +338,11 @@ void
 abac_socketpeer_set_from_mbuf(struct mbuf *m, struct label *mlabel,
     struct socket *so, struct label *sopeerlabel)
 {
-	struct abac_label *mbuflabel, *peerlabel;
 
-	if (mlabel == NULL || sopeerlabel == NULL)
+	/* mac_abac labels no mbuf: the peer keeps what it has. */
+	if (mlabel == NULL || sopeerlabel == NULL || SLOT(mlabel) == NULL)
 		return;
-
-	mbuflabel = SLOT(mlabel);
-	peerlabel = SLOT(sopeerlabel);
-
-	if (mbuflabel != NULL && peerlabel != NULL)
-		abac_label_copy(mbuflabel, peerlabel);
+	abac_label_share(sopeerlabel, abac_slot, SLOT(mlabel));
 }
 
 /*
@@ -393,16 +360,10 @@ abac_socketpeer_set_from_socket(struct socket *oldso,
     struct label *oldsolabel, struct socket *newso,
     struct label *newsopeerlabel)
 {
-	struct abac_label *oldlabel, *peerlabel;
 
 	if (oldsolabel == NULL || newsopeerlabel == NULL)
 		return;
-
-	oldlabel = SLOT(oldsolabel);
-	peerlabel = SLOT(newsopeerlabel);
-
-	if (oldlabel != NULL && peerlabel != NULL)
-		abac_label_copy(oldlabel, peerlabel);
+	abac_label_share(newsopeerlabel, abac_slot, SLOT(oldsolabel));
 }
 
 /*

@@ -58,7 +58,7 @@ abac_sysvmsg_cleanup(struct label *msglabel)
 
 	vl = SLOT(msglabel);
 	if (vl != NULL)
-		memset(vl, 0, sizeof(*vl));
+		abac_label_clear(vl);
 }
 
 void
@@ -73,8 +73,10 @@ abac_sysvmsg_create(struct ucred *cred, struct msqid_kernel *msqkptr,
 	credlabel = SLOT(cred->cr_label);
 	mlabel = SLOT(msglabel);
 
-	if (credlabel != NULL && mlabel != NULL)
-		abac_label_copy(credlabel, mlabel);
+	/* An unlabelled creator gives the default label, as it always did. */
+	if (mlabel != NULL)
+		abac_label_copy(credlabel != NULL ? credlabel :
+		    &abac_default_subject, mlabel);
 }
 
 /*
@@ -110,7 +112,7 @@ abac_sysvmsq_cleanup(struct label *msqlabel)
 
 	vl = SLOT(msqlabel);
 	if (vl != NULL)
-		memset(vl, 0, sizeof(*vl));
+		abac_label_clear(vl);
 }
 
 void
@@ -125,8 +127,10 @@ abac_sysvmsq_create(struct ucred *cred, struct msqid_kernel *msqkptr,
 	credlabel = SLOT(cred->cr_label);
 	mlabel = SLOT(msqlabel);
 
-	if (credlabel != NULL && mlabel != NULL)
-		abac_label_copy(credlabel, mlabel);
+	/* An unlabelled creator gives the default label, as it always did. */
+	if (mlabel != NULL)
+		abac_label_copy(credlabel != NULL ? credlabel :
+		    &abac_default_subject, mlabel);
 }
 
 int
@@ -376,7 +380,7 @@ abac_sysvsem_cleanup(struct label *semalabel)
 
 	vl = SLOT(semalabel);
 	if (vl != NULL)
-		memset(vl, 0, sizeof(*vl));
+		abac_label_clear(vl);
 }
 
 void
@@ -391,8 +395,10 @@ abac_sysvsem_create(struct ucred *cred, struct semid_kernel *semakptr,
 	credlabel = SLOT(cred->cr_label);
 	slabel = SLOT(semalabel);
 
-	if (credlabel != NULL && slabel != NULL)
-		abac_label_copy(credlabel, slabel);
+	/* An unlabelled creator gives the default label, as it always did. */
+	if (slabel != NULL)
+		abac_label_copy(credlabel != NULL ? credlabel :
+		    &abac_default_subject, slabel);
 }
 
 int
@@ -537,7 +543,7 @@ abac_sysvshm_cleanup(struct label *shmlabel)
 
 	vl = SLOT(shmlabel);
 	if (vl != NULL)
-		memset(vl, 0, sizeof(*vl));
+		abac_label_clear(vl);
 }
 
 void
@@ -552,8 +558,10 @@ abac_sysvshm_create(struct ucred *cred, struct shmid_kernel *shmsegptr,
 	credlabel = SLOT(cred->cr_label);
 	slabel = SLOT(shmlabel);
 
-	if (credlabel != NULL && slabel != NULL)
-		abac_label_copy(credlabel, slabel);
+	/* An unlabelled creator gives the default label, as it always did. */
+	if (slabel != NULL)
+		abac_label_copy(credlabel != NULL ? credlabel :
+		    &abac_default_subject, slabel);
 }
 
 int

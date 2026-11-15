@@ -559,7 +559,7 @@ struct abac_label {
 	uint32_t		vl_hash;			/* Quick compare hash */
 	uint32_t		vl_npairs;			/* Number of valid pairs */
 	uint32_t		vl_flags;			/* ABAC_LABEL_* flags */
-	uint32_t		vl_reserved;			/* Padding for alignment */
+	u_int			vl_refs;			/* Holders; see abac_label_hold() */
 	struct abac_pair	vl_pairs[ABAC_MAX_PAIRS];	/* Parsed key=value pairs */
 };
 
@@ -720,6 +720,9 @@ void abac_label_init(void);
 void abac_label_destroy(void);
 struct abac_label *abac_label_alloc(int flags);
 void abac_label_free(struct abac_label *vl);
+void abac_label_hold(struct abac_label *vl);
+void abac_label_clear(struct abac_label *vl);
+void abac_label_share(struct label *dst, int slot, struct abac_label *vl);
 int abac_label_parse(const char *str, size_t len, struct abac_label *out);
 void abac_label_copy(const struct abac_label *src, struct abac_label *dst);
 void abac_label_set_default(struct abac_label *vl, bool is_subject);

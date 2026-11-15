@@ -32,50 +32,43 @@
  * Credential label lifecycle
  */
 
+/*
+ * A credential nobody labelled has no label (NULL: type=unlabeled).  A
+ * copy shares its source's label, which is never modified while shared;
+ * a relabel points the new credential at the requested label.
+ */
 void
 abac_cred_init_label(struct label *label)
 {
-	struct abac_label *vl;
 
-	vl = abac_label_alloc(M_WAITOK);
-	if (vl != NULL) {
-		abac_label_set_default(vl, true);  /* true = subject label */
-		/* DTrace: default subject label assigned */
-		SDT_PROBE1(abac, label, extattr, default, 1);
-	}
-	SLOT_SET(label, vl);
+	SLOT_SET(label, NULL);
 }
 
 void
 abac_cred_destroy_label(struct label *label)
 {
-	struct abac_label *vl;
 
-	vl = SLOT(label);
-	if (vl != NULL)
-		abac_label_free(vl);
+	abac_label_free(SLOT(label));
 	SLOT_SET(label, NULL);
 }
 
 void
 abac_cred_copy_label(struct label *src, struct label *dest)
 {
-	struct abac_label *srcvl, *dstvl;
 
 	if (src == NULL || dest == NULL)
 		return;
-
-	srcvl = SLOT(src);
-	dstvl = SLOT(dest);
-
-	if (srcvl != NULL && dstvl != NULL)
-		abac_label_copy(srcvl, dstvl);
+	abac_label_share(dest, abac_slot, SLOT(src));
 }
 
+/*
+ * newlabel is the label internalized from the request; with no mac_abac
+ * element it has no label, which (as the default label it used to be
+ * initialized with) makes the credential unlabelled.
+ */
 void
 abac_cred_relabel(struct ucred *cred, struct label *newlabel)
 {
-	struct abac_label *vl, *newvl;
 
 	/*
 	 * Credentials created before this policy was loaded have no MAC label.
@@ -84,12 +77,7 @@ abac_cred_relabel(struct ucred *cred, struct label *newlabel)
 	 */
 	if (cred == NULL || cred->cr_label == NULL || newlabel == NULL)
 		return;
-
-	vl = SLOT(cred->cr_label);
-	newvl = SLOT(newlabel);
-
-	if (vl != NULL && newvl != NULL)
-		abac_label_copy(newvl, vl);
+	abac_label_share(cred->cr_label, abac_slot, SLOT(newlabel));
 }
 
 int
@@ -115,7 +103,9 @@ abac_cred_externalize_label(struct label *label, char *element_name,
 		return (0);
 
 	vl = SLOT(label);
-	if (vl == NULL || vl->vl_npairs == 0)
+	if (vl == NULL)
+		vl = &abac_default_subject;
+	if (vl->vl_npairs == 0)
 		return (0);
 
 	/* Reconstruct label string */
@@ -153,9 +143,14 @@ abac_cred_internalize_label(struct label *label, char *element_name,
 
 	(*claimed)++;
 
+	/* A label holding the request, private until a relabel shares it. */
 	vl = SLOT(label);
-	if (vl == NULL)
-		return (ENOMEM);
+	if (vl == NULL) {
+		vl = abac_label_alloc(M_WAITOK);
+		if (vl == NULL)
+			return (ENOMEM);
+		SLOT_SET(label, vl);
+	}
 
 	/*
 	 * Convert from comma-separated format (user input) to
@@ -199,8 +194,9 @@ abac_cred_check_relabel(struct ucred *cred, struct label *newlabel)
 
 	cur = (cred->cr_label != NULL) ? SLOT(cred->cr_label) : NULL;
 	newvl = SLOT(newlabel);
+	/* No mac_abac element: the request is the default label. */
 	if (newvl == NULL)
-		return (0);
+		newvl = &abac_default_subject;
 
 	return (abac_label_check_relabel(cred, cur, newvl, "cred"));
 }
@@ -224,6 +220,9 @@ abac_label_check_relabel(struct ucred *cred, const struct abac_label *cur,
 {
 	int error;
 
+	/* An unlabelled subject has the default label. */
+	if (cur == NULL)
+		cur = &abac_default_subject;
 	/* Preserve compatibility with calls that leave our label unchanged. */
 	if (abac_label_equal(cur, newlabel))
 		return (0);

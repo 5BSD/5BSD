@@ -62,8 +62,10 @@ abac_posixshm_create(struct ucred *cred, struct shmfd *shmfd,
 	credlabel = SLOT(cred->cr_label);
 	slabel = SLOT(shmlabel);
 
-	if (credlabel != NULL && slabel != NULL)
-		abac_label_copy(credlabel, slabel);
+	/* An unlabelled creator gives the default label, as it always did. */
+	if (slabel != NULL)
+		abac_label_copy(credlabel != NULL ? credlabel :
+		    &abac_default_subject, slabel);
 }
 
 /*
