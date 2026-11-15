@@ -773,8 +773,7 @@ revoke_parent(void *arg)
 	(void)dq_revoke(s->q, s->rootid);
 	(void)write(a->tochild[1], "g", 1);
 	(void)read(a->toparent[0], &c, 1);
-	s->stop = 1;
-	pthread_join(s->thr, NULL);
+	dqt_server_stop(&s->server);	/* no ATF call: a helper thread */
 	close(s->q);
 	s->q = -1;
 	(void)write(a->tochild[1], "g", 1);

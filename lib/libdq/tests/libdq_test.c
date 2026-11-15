@@ -348,8 +348,7 @@ ATF_TC_BODY(errno_allow_lists, tc)
 struct ctl {
 	int		 q;
 	int		 backing;
-	pthread_t	 thr;
-	volatile bool	 stop;
+	struct dqt_server server;	/* the controller thread */
 	struct dq_serve_state *st;
 	struct dq_ident_file ident;
 	struct dq_serve_opts opts;
@@ -360,44 +359,23 @@ struct ctl {
 	pthread_mutex_t	 mtx;
 };
 
-static void *
-serve_loop(void *arg)
+/* Every record to dq_serve_file(), counted by operation. */
+static int
+serve_one(int q, const struct dq_event *ev, const void *body, size_t bodylen,
+    void *arg)
 {
 	struct ctl *c = arg;
-	const struct dq_event *ev;
-	struct pollfd pfd;
-	const void *body;
-	size_t bodylen, size;
-	ssize_t got;
-	char *buf;
 
-	size = 256 * 1024;
-	buf = malloc(size);
-	while (!c->stop) {
-		pfd.fd = c->q;
-		pfd.events = POLLIN;
-		pfd.revents = 0;
-		if (poll(&pfd, 1, 50) <= 0)
-			continue;
-		if (dq_read_events(c->q, buf, size, &got) != 0)
-			continue;
-		for (ev = dq_event_first(buf, (size_t)got); ev != NULL;
-		    ev = dq_event_next(buf, (size_t)got, ev)) {
-			body = dq_event_body(ev, &bodylen);
-			pthread_mutex_lock(&c->mtx);
-			if (ev->de_op <= DQ_OP_REPLY)
-				c->ops[ev->de_op]++;
-			pthread_mutex_unlock(&c->mtx);
-			if (dq_serve_file(c->q, ev, body, bodylen, c->backing,
-			    &c->opts) != 0) {
-				pthread_mutex_lock(&c->mtx);
-				c->failures++;
-				pthread_mutex_unlock(&c->mtx);
-			}
-		}
+	pthread_mutex_lock(&c->mtx);
+	if (ev->de_op <= DQ_OP_REPLY)
+		c->ops[ev->de_op]++;
+	pthread_mutex_unlock(&c->mtx);
+	if (dq_serve_file(q, ev, body, bodylen, c->backing, &c->opts) != 0) {
+		pthread_mutex_lock(&c->mtx);
+		c->failures++;
+		pthread_mutex_unlock(&c->mtx);
 	}
-	free(buf);
-	return (NULL);
+	return (0);
 }
 
 static char backing_path[PATH_MAX];
@@ -409,7 +387,7 @@ ctl_start(struct ctl *c, unsigned seed, uint32_t events)
 	struct statfs sfs;
 	struct stat sb;
 	size_t i;
-	int fd, flags, reason;
+	int fd, reason;
 
 	memset(c, 0, sizeof(*c));
 	for (i = 0; i < sizeof(data); i++)
@@ -438,17 +416,14 @@ ctl_start(struct ctl *c, unsigned seed, uint32_t events)
 	c->opts.so_ident = &c->ident;
 	c->opts.so_flags = DQ_SERVE_F_SYNC_IDENT;
 	ATF_REQUIRE_EQ(0, pthread_mutex_init(&c->mtx, NULL));
-	flags = fcntl(c->q, F_GETFL);
-	ATF_REQUIRE_EQ(0, fcntl(c->q, F_SETFL, flags | O_NONBLOCK));
-	ATF_REQUIRE_EQ(0, pthread_create(&c->thr, NULL, serve_loop, c));
+	dqt_server_start(&c->server, c->q, serve_one, c);
 }
 
 static void
 ctl_stop(struct ctl *c)
 {
 
-	c->stop = true;
-	(void)pthread_join(c->thr, NULL);
+	dqt_server_stop(&c->server);
 	ATF_CHECK_EQ_MSG(0, c->failures, "dq_serve_file failed %u times",
 	    c->failures);
 	(void)close(c->fd);

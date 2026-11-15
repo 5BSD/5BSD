@@ -61,22 +61,6 @@ ts_handler(int q, const struct dq_event *ev, const void *body,
 	return (0);
 }
 
-static void *
-ts_main(void *arg)
-{
-	struct ts *s = arg;
-	struct pollfd pfd;
-
-	while (!s->stop) {
-		pfd.fd = s->q;
-		pfd.events = POLLIN;
-		if (poll(&pfd, 1, 50) <= 0)
-			continue;
-		(void)dq_dispatch(s->q, ts_handler, s);
-	}
-	return (NULL);
-}
-
 /* A file with contents under dir. */
 void
 ts_file(const char *dir, const char *name, const char *data)
@@ -144,15 +128,14 @@ ts_start(struct ts *s, const char *dir, uint32_t flags)
 	ATF_REQUIRE_MSG(s->tree != NULL, "dq_tree_create: %s",
 	    strerror(errno));
 	ATF_REQUIRE(dq_tree_root(s->tree, &s->sroot, &s->rootid) == 0);
-	ATF_REQUIRE(pthread_create(&s->thr, NULL, ts_main, s) == 0);
+	dqt_server_start(&s->server, s->q, ts_handler, s);
 }
 
 void
 ts_stop(struct ts *s)
 {
 
-	s->stop = 1;
-	pthread_join(s->thr, NULL);
+	dqt_server_stop(&s->server);
 	if (s->sroot >= 0)
 		close(s->sroot);
 	dq_tree_destroy(s->tree);

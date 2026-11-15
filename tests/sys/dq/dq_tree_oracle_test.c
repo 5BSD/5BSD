@@ -228,8 +228,7 @@ script(int D, struct out *o)
 
 struct srv {
 	int		 q;
-	pthread_t	 thr;
-	volatile int	 stop;
+	struct dqt_server server;	/* the controller thread */
 	struct dq_tree	*tree;
 };
 
@@ -242,22 +241,6 @@ srv_handler(int q, const struct dq_event *ev, const void *body,
 	(void)q;
 	(void)dq_serve_tree(s->tree, ev, body, bodylen);
 	return (0);
-}
-
-static void *
-srv_main(void *arg)
-{
-	struct srv *s = arg;
-	struct pollfd pfd;
-
-	while (!s->stop) {
-		pfd.fd = s->q;
-		pfd.events = POLLIN;
-		if (poll(&pfd, 1, 50) <= 0)
-			continue;
-		(void)dq_dispatch(s->q, srv_handler, s);
-	}
-	return (NULL);
 }
 
 /* One tree: a, l -> a, d/f, a FIFO p and a listening socket "sock". */
@@ -324,7 +307,7 @@ ATF_TC_BODY(tree_oracle, tc)
 	    DQ_TREE_F_SERVED | DQ_TREE_F_WRITE);
 	ATF_REQUIRE(s.tree != NULL);
 	ATF_REQUIRE(dq_tree_root(s.tree, &sroot, &rootid) == 0);
-	ATF_REQUIRE(pthread_create(&s.thr, NULL, srv_main, &s) == 0);
+	dqt_server_start(&s.server, s.q, srv_handler, &s);
 
 	served = calloc(1, sizeof(*served));
 	real = calloc(1, sizeof(*real));
@@ -358,8 +341,7 @@ ATF_TC_BODY(tree_oracle, tc)
 		printf("--- real\n%s--- served\n%s", real->buf, served->buf);
 		atf_tc_fail("the served transcript differs from the real one");
 	}
-	s.stop = 1;
-	pthread_join(s.thr, NULL);
+	dqt_server_stop(&s.server);
 	close(sroot);
 	dq_tree_destroy(s.tree);
 	close(s.q);

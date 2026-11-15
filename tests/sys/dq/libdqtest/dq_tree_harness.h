@@ -67,8 +67,7 @@ struct ts {
 	int		 sroot;		/* the minted root (controller's fd) */
 	uint64_t	 rootid;
 	struct dq_tree	*tree;
-	pthread_t	 thr;
-	volatile int	 stop;
+	struct dqt_server server;	/* the controller thread */
 	char		 backing[PATH_MAX];	/* its real path = the prefix */
 	pthread_mutex_t	 mtx;
 	int		 nev;

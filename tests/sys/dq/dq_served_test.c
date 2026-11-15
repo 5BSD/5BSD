@@ -57,9 +57,8 @@ typedef int (*srv_hook_t)(struct srv *, const struct dq_event *,
 
 struct srv {
 	int		 q;
-	pthread_t	 thr;
+	struct dqt_server server;	/* the controller thread */
 	pthread_mutex_t	 mtx;
-	volatile int	 stop;
 	int		 rootfd;		/* the backing tree */
 	char		 backing[PATH_MAX];
 	char		 prefix[PATH_MAX];	/* its real-namespace name */
@@ -135,22 +134,6 @@ srv_handler(int q, const struct dq_event *ev, const void *body,
 	return (0);
 }
 
-static void *
-srv_main(void *arg)
-{
-	struct srv *s = arg;
-	struct pollfd pfd;
-
-	while (!s->stop && s->q >= 0) {
-		pfd.fd = s->q;
-		pfd.events = POLLIN;
-		if (poll(&pfd, 1, 50) <= 0)
-			continue;
-		(void)dq_dispatch(s->q, srv_handler, s);
-	}
-	return (NULL);
-}
-
 /*
  * A backing tree in the test's work directory with a file "a" (bytes
  * "served\n"), a directory "d" and a symlink "l" -> "a"; the prefix is a
@@ -179,15 +162,14 @@ srv_start(struct srv *s, uint32_t flags)
 	s->q = dqt_open_queue();
 	s->tree = dq_tree_create(s->q, s->rootfd, s->prefix, flags);
 	ATF_REQUIRE(s->tree != NULL);
-	ATF_REQUIRE(pthread_create(&s->thr, NULL, srv_main, s) == 0);
+	dqt_server_start(&s->server, s->q, srv_handler, s);
 }
 
 static void
 srv_stop(struct srv *s)
 {
 
-	s->stop = 1;
-	pthread_join(s->thr, NULL);
+	dqt_server_stop(&s->server);
 	dq_tree_destroy(s->tree);
 	if (s->q >= 0)
 		close(s->q);
@@ -1768,7 +1750,7 @@ h_close(struct srv *s, const struct dq_event *ev,
 	    &id, &pol, &oid, NULL) == 0 ? 0 : errno;
 	q = s->q;
 	s->q = -1;
-	s->stop = 1;
+	dqt_server_stop_async(&s->server);
 	close(q);
 	return (1);
 }

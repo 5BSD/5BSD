@@ -8,7 +8,7 @@ load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
 cc_binary(name = "libdq_test", srcs = ["libdq_test.c"],
     deps = ["//lib/libdq:dq", "//lib/libthr:thr", "//lib/atf/libatf-c:atf_c",
-        "//tests/sys/dq/libdqtest:access"],
+        "//tests/sys/dq/libdqtest:support"],
     linkopts = ["-static"], linkstatic = True, visibility = ["//visibility:public"])
 _CASES = ["walk_padded_records", "accessor_bounds", "errno_allow_lists", "serve_each_op", "serve_locks",
     "async_accessors", "serve_mmap_writeback", "resolve_accessor"]

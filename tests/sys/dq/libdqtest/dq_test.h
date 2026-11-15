@@ -342,6 +342,26 @@ bool	dqt_wait_stats(struct dqt_ctl *c, dqt_stats_pred pred, uintptr_t arg,
 	    int ms);
 
 /*
+ * A controller thread handing every record of q to handler through
+ * dq_dispatch() (dqt_server.c).  The queue is made non-blocking.  A
+ * handler may close the queue and call dqt_server_stop_async; the thread
+ * then ends, and dqt_server_stop joins it.
+ */
+struct dqt_server {
+	int		 q;
+	dq_handler_t	 handler;
+	void		*arg;
+	pthread_t	 thr;
+	_Atomic(bool)	 stop;
+	bool		 running;
+	int		 wake[2];
+};
+void	dqt_server_start(struct dqt_server *sv, int q, dq_handler_t handler,
+	    void *arg);
+void	dqt_server_stop_async(struct dqt_server *sv);
+void	dqt_server_stop(struct dqt_server *sv);
+
+/*
  * A descriptor over a UNIX domain socket (SCM_RIGHTS) with one byte of
  * data, for requesters (no ATF call).  dqt_send_fd returns 0 or -1;
  * dqt_recv_fd returns the descriptor, or -1 with errno set (EBADMSG for a
