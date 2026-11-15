@@ -208,7 +208,7 @@ ATF_TC_BODY(write_after_acceptance, tc)
 	struct rd_arg a;
 	struct rd_res r;
 	unsigned reads;
-	int backing, status;
+	int backing;
 
 	dqt_fill(data, sizeof(data), 3);
 	backing = dqt_make_oracle("backing", data, sizeof(data), path,
@@ -233,8 +233,7 @@ ATF_TC_BODY(write_after_acceptance, tc)
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
 	ATF_REQUIRE_EQ(DQ_OP_WRITE, c.held[0].op);
 	ATF_REQUIRE_EQ(0, dq_reply(c.q, c.held[0].id, EIO, NULL, 0));
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(EIO, r.r.err);
 	dqt_hold(&c, false);
 	do_io(o->fd, 0, 10, 1, 0, &r);

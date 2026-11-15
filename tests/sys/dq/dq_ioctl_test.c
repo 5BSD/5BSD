@@ -240,7 +240,7 @@ ATF_TC_BODY(reply_rules, tc)
 	struct dqt_out out;
 	struct statfs sfs;
 	struct stat sb;
-	int oracle, status;
+	int oracle;
 
 	dqt_fill(data, sizeof(data), 2);
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), path,
@@ -274,8 +274,7 @@ ATF_TC_BODY(reply_rules, tc)
 	ATF_CHECK_EQ(EINVAL, errno);
 	ATF_CHECK_EQ(0, dq_reply_ioctl(c.q, c.held[0].id, 0, &out,
 	    sizeof(out)));
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(0, r.rv);
 
 	a.cmd = DQT_IOC_IN;
@@ -287,8 +286,7 @@ ATF_TC_BODY(reply_rules, tc)
 	ATF_CHECK_EQ(-1, dq_reply_ioctl(c.q, c.held[1].id, 0, &out, 8));
 	ATF_CHECK_EQ(EINVAL, errno);
 	ATF_CHECK_EQ(0, dq_reply_ioctl(c.q, c.held[1].id, EPIPE, NULL, 0));
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(EIO, r.err);
 	dqt_hold(&c, false);
 	dqt_fini(&c);

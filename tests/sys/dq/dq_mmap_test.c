@@ -305,7 +305,6 @@ ATF_TC_BODY(private_cow_and_revoke, tc)
 	} a;
 	struct dqt_child ch;
 	struct cow_res r;
-	int status;
 
 	setup(&f, 3);
 	dqt_sync_init(&a.s);
@@ -314,8 +313,7 @@ ATF_TC_BODY(private_cow_and_revoke, tc)
 	ATF_REQUIRE(dqt_sync_wait(a.s.toparent[0], DQT_WAIT_MS));
 	ATF_REQUIRE_EQ(0, dq_revoke(f.c.q, f.o->id));
 	dqt_sync_post(a.s.tochild[1]);
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(0, r.sig_cow);
 	ATF_CHECK_EQ(0x5a, r.cow);
 	ATF_CHECK_EQ(SIGBUS, r.sig_new);
@@ -455,7 +453,6 @@ ATF_TC_BODY(munmap_close_writes_back, tc)
 	struct wb_arg a;
 	struct wb_res r;
 	unsigned char got[2];
-	int status;
 
 	policy_shared(&pol, DQ_EVENTS_CLOSE, DQ_DEADLINE_DEFAULT);
 	setup_pol(&f, 6, &pol, DQ_MINT_F_WRITE);
@@ -466,8 +463,7 @@ ATF_TC_BODY(munmap_close_writes_back, tc)
 	/* The child holds the only other reference: the last close is its. */
 	(void)close(f.o->fd);
 	f.o->fd = -1;
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_REQUIRE(dqt_wait_events(&f.c, DQ_OP_CLOSE, 1, 4 * DQT_WAIT_MS));
 	pthread_mutex_lock(&f.c.mtx);
 	ATF_CHECK(f.c.events[DQ_OP_WRITE_ASYNC] >= 1);
@@ -626,7 +622,6 @@ ATF_TC_BODY(fault_survives_signals, tc)
 	struct fixture f;
 	struct dqt_child ch;
 	struct i12_res r;
-	int status;
 
 	setup(&f, 9);
 	dqt_hold(&f.c, true);
@@ -642,8 +637,7 @@ ATF_TC_BODY(fault_survives_signals, tc)
 	ATF_CHECK_EQ(0, f.c.ninterrupted);
 	ATF_REQUIRE_EQ(0, dq_reply(f.c.q, f.c.held[0].id, 0, data,
 	    MIN(f.c.held[0].len, sizeof(data))));
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ_MSG(0, r.sig, "signal %d", r.sig);
 	ATF_CHECK_MSG(r.alarms >= 1, "handlers ran %d times", r.alarms);
 	ATF_CHECK_EQ(data[7], r.v);
@@ -747,7 +741,6 @@ ATF_TC_BODY(invalidate_through_mapping, tc)
 	struct inval_res r;
 	unsigned char nb;
 	unsigned reads;
-	int status;
 
 	setup(&f, 11);
 	dqt_sync_init(&a.s);
@@ -760,8 +753,7 @@ ATF_TC_BODY(invalidate_through_mapping, tc)
 	ATF_REQUIRE_MSG(dq_push_invalidate(f.c.q, f.o->id, 0, 0) == 0,
 	    "INVALIDATE: %s", strerror(errno));
 	dqt_sync_post(a.s.tochild[1]);
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(0, r.sig);
 	ATF_CHECK_EQ(data[9], r.before);
 	ATF_CHECK_EQ(nb, r.after);
@@ -810,7 +802,6 @@ ATF_TC_BODY(fork_mapping_revoke, tc)
 	} a;
 	struct dqt_child ch;
 	struct bus_res r;
-	int status;
 
 	setup(&f, 12);
 	dqt_sync_init(&a.s);
@@ -819,8 +810,7 @@ ATF_TC_BODY(fork_mapping_revoke, tc)
 	ATF_REQUIRE(dqt_sync_wait(a.s.toparent[0], DQT_WAIT_MS));
 	ATF_REQUIRE_EQ(0, dq_revoke(f.c.q, f.o->id));
 	dqt_sync_post(a.s.tochild[1]);
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(SIGBUS, r.sig_err);
 	teardown(&f);
 }

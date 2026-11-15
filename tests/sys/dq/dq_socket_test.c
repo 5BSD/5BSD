@@ -157,13 +157,11 @@ ATF_TC_BODY(protocol_resolved, tc)
 	struct dqt_achild ch;
 	struct sock_res r;
 	struct dq_stats2 st;
-	int status;
 
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ch, child_protocols, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_MSG(r.r[0].rv >= 0, "socket: %s", strerror(r.r[0].err));
 	ATF_CHECK((r.fdflags & FD_CLOEXEC) != 0);
 	ATF_CHECK((r.flflags & O_NONBLOCK) != 0);
@@ -226,7 +224,6 @@ ATF_TC_BODY(socketpair_one_event, tc)
 	struct dqt_ctl c;
 	struct dqt_achild ch;
 	struct sock_res o, r;
-	int status;
 
 	memset(&o, 0, sizeof(o));
 	dqt_run_child(child_pair, NULL, &o, sizeof(o));
@@ -234,8 +231,7 @@ ATF_TC_BODY(socketpair_one_event, tc)
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ch, child_pair, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(0, r.r[0].rv);
 	ATF_CHECK((r.fdflags & FD_CLOEXEC) != 0);
 	ATF_CHECK_EQ(3, r.r[2].rv);
@@ -286,13 +282,11 @@ ATF_TC_BODY(capmode_no_event, tc)
 	struct dqt_ctl c;
 	struct dqt_achild ch;
 	struct sock_res r;
-	int status;
 
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ch, child_capmode, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.r[0].rv);
 	ATF_CHECK_EQ(ECAPMODE, r.r[0].err);
 	ATF_CHECK_EQ(0, count_events(&c, DQ_ROP_SOCKET, AF_INET, SOCK_RAW));
@@ -456,15 +450,13 @@ ATF_TC_BODY(errno_answers, tc)
 	struct dqt_achild ch;
 	struct sock_res r;
 	struct dq_stats2 st;
-	int status;
 
 	dqt_init(&c);
 	c.resolve_errno[DQ_ROP_SOCKET] = EACCES;
 	c.resolve_errno[DQ_ROP_SOCKETPAIR] = EPERM;
 	dqt_attach_spawn(&c, &ch, child_one_socket, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.r[0].rv);
 	ATF_CHECK_EQ(EACCES, r.r[0].err);
 	ATF_CHECK_EQ(-1, r.r[1].rv);
@@ -479,8 +471,7 @@ ATF_TC_BODY(errno_answers, tc)
 	c.resolve_errno[DQ_ROP_SOCKETPAIR] = EINTR;	/* not on the list */
 	dqt_attach_spawn(&c, &ch, child_one_socket, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(EIO, r.r[0].err);
 	ATF_CHECK_EQ(EIO, r.r[1].err);
 	dqt_stats2(&c, &st);
@@ -545,7 +536,7 @@ ATF_TC_BODY(no_fd_slot_while_waiting, tc)
 	struct dq_resolve_reply rr;
 	uint64_t id;
 	bool has;
-	int tell[2], next, n1, n2, status;
+	int tell[2], next, n1, n2;
 
 	ATF_REQUIRE_EQ(0, pipe(tell));
 	a.tellfd = tell[1];
@@ -578,8 +569,7 @@ ATF_TC_BODY(no_fd_slot_while_waiting, tc)
 	pthread_mutex_unlock(&c.mtx);
 	ATF_CHECK_EQ(0, dq_reply_resolve_pass(c.q, id));
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(next, r.r[0].rv);
 	ATF_CHECK_EQ(1, count_events(&c, DQ_ROP_SOCKET, -1, -1));
 	(void)close(tell[0]);
@@ -698,7 +688,6 @@ dead_controller(uint64_t *delta, bool trace, char *why, size_t whylen)
 	char prog[256];
 	uint64_t before;
 	long n;
-	int status;
 
 	dqt_init(&c);
 	c.resolve_hold_op = DQ_ROP_SOCKET;
@@ -715,8 +704,7 @@ dead_controller(uint64_t *delta, bool trace, char *why, size_t whylen)
 	}
 	dqt_close_queue(&c);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.r[0].rv);
 	ATF_CHECK_EQ_MSG(EACCES, r.r[0].err, "waiting socket: %s",
 	    strerror(r.r[0].err));
@@ -795,7 +783,6 @@ ATF_TC_BODY(deadline_counts_failclosed, tc)
 	struct dq_stats2 st;
 	FILE *f;
 	u_int saved;
-	int status;
 
 	ATF_REQUIRE(dqt_sysctl_get_uint("kern.dq.default_deadline_ms", &saved));
 	f = fopen(DEADLINE_SAVED, "w");
@@ -807,8 +794,7 @@ ATF_TC_BODY(deadline_counts_failclosed, tc)
 	c.resolve_hold_op = DQ_ROP_SOCKET;
 	dqt_attach_spawn(&c, &ch, child_one_socket, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(EIO, r.r[0].err);
 	ATF_CHECK_EQ(0, r.r[1].rv);	/* socketpair is not held */
 	dqt_stats2(&c, &st);
@@ -958,7 +944,7 @@ ATF_TC_BODY(full_table_attached, tc)
 	struct dqt_achild ch;
 	struct full_arg a;
 	struct sock_res o, r;
-	int i, status;
+	int i;
 
 	a.capmode = false;
 	memset(&o, 0, sizeof(o));
@@ -966,8 +952,7 @@ ATF_TC_BODY(full_table_attached, tc)
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ch, child_full, &a);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	check_full(&r, false, "attached");
 	for (i = 0; i < 7; i++) {
 		ATF_CHECK_EQ_MSG(o.r[i].err, r.r[i].err, "row %d: unattached "
@@ -985,8 +970,7 @@ ATF_TC_BODY(full_table_attached, tc)
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ch, child_full, &a);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	check_full(&r, true, "attached");
 	ATF_CHECK_EQ(0, count_events(&c, DQ_ROP_SOCKET, -1, -1));
 	ATF_CHECK_EQ(0, count_events(&c, DQ_ROP_SOCKETPAIR, -1, -1));
@@ -1071,7 +1055,7 @@ ATF_TC_BODY(jail_af_before_consult, tc)
 	struct dqt_ctl c;
 	struct dqt_achild ch;
 	struct sock_res o, r;
-	int jid, status;
+	int jid;
 
 	jid = jail_setv(JAIL_CREATE, "path", "/", "name", JAILNAME,
 	    "ip4", "disable", "persist", NULL, NULL);
@@ -1081,16 +1065,14 @@ ATF_TC_BODY(jail_af_before_consult, tc)
 	/* The oracle: the same jail, unattached. */
 	spawn_jailed(NULL, &ch, jid, child_jail_inet);
 	memset(&o, 0, sizeof(o));
-	status = dqt_attach_wait(&ch, &o, sizeof(o));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &o, sizeof(o));
 	ATF_REQUIRE_EQ_MSG(EPROTONOSUPPORT, o.r[0].err, "unattached jailed "
 	    "socket(AF_INET): %s", strerror(o.r[0].err));
 
 	dqt_init(&c);
 	spawn_jailed(&c, &ch, jid, child_jail_inet);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.r[0].rv);
 	ATF_CHECK_EQ(EPROTONOSUPPORT, r.r[0].err);
 	ATF_CHECK(r.r[1].rv >= 0);
@@ -1103,8 +1085,7 @@ ATF_TC_BODY(jail_af_before_consult, tc)
 	c.resolve_errno[DQ_ROP_SOCKET] = EACCES;
 	spawn_jailed(&c, &ch, jid, child_jail_inet);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(EPROTONOSUPPORT, r.r[0].err);
 	ATF_CHECK_EQ(EACCES, r.r[1].err);
 	ATF_CHECK_EQ(0, count_events(&c, DQ_ROP_SOCKET, AF_INET, -1));
@@ -1157,7 +1138,6 @@ ATF_TC_BODY(kernel_socreate_not_consulted, tc)
 	struct dq_stats2 st;
 	FILE *f;
 	u_int v;
-	int status;
 
 	if (!dqt_sysctl_get_uint(TUNPORT, &v))
 		atf_tc_skip("no " TUNPORT);
@@ -1171,8 +1151,7 @@ ATF_TC_BODY(kernel_socreate_not_consulted, tc)
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ch, child_tunport, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	if (r.r[0].rv == -1 && r.r[0].err == EADDRINUSE) {
 		dqt_fini(&c);
 		atf_tc_skip("UDP port %d is in use", TUNPORT_VALUE);
@@ -1248,15 +1227,14 @@ ATF_TC_BODY(abstract_names, tc)
 	struct dqt_achild ch;
 	struct sock_res o, r;
 	struct dq_stats2 st;
-	int i, status;
+	int i;
 
 	memset(&o, 0, sizeof(o));
 	dqt_run_child(child_abstract, NULL, &o, sizeof(o));
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ch, child_abstract, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	for (i = 0; i < 2; i++) {
 		ATF_CHECK_EQ(o.r[i].rv, r.r[i].rv);
 		ATF_CHECK_EQ(o.r[i].err, r.r[i].err);

@@ -202,7 +202,8 @@ ts_child_ex(struct ts *s, int rootfd, int cwdfd, bool keep_sroot,
     bool close_before_go, ts_child_fn fn, void *arg, void *out, size_t outlen)
 {
 	int ready[2], go[2], back[2], pd, status;
-	ssize_t n;
+	char sbuf[64];
+	size_t got;
 	pid_t pid;
 	char c;
 
@@ -216,14 +217,24 @@ ts_child_ex(struct ts *s, int rootfd, int cwdfd, bool keep_sroot,
 		/* The backing tree is the controller's, never the child's. */
 		if (s->bfd >= 0)
 			close(s->bfd);
+		close(ready[0]);
+		close(go[1]);
+		close(back[0]);
 		(void)write(ready[1], "r", 1);
 		if (read(go[0], &c, 1) != 1)
 			_exit(1);
 		fn(arg, out);
-		(void)write(back[1], out, outlen);
-		_exit(0);
+		_exit(write(back[1], out, outlen) == (ssize_t)outlen ? 0 : 3);
 	}
-	ATF_REQUIRE(read(ready[0], &c, 1) == 1);
+	/*
+	 * Only the child holds the write ends: a child that dies is an EOF
+	 * here at once, not a hang until the case's timeout.
+	 */
+	close(ready[1]);
+	close(go[0]);
+	close(back[1]);
+	ATF_REQUIRE_MSG(read(ready[0], &c, 1) == 1, "the child died before "
+	    "attaching");
 	ATF_REQUIRE_MSG(dq_attach_starts(s->q, pd, rootfd, cwdfd) == 0,
 	    "attach: %s", strerror(errno));
 	if (close_before_go && s->sroot >= 0) {
@@ -232,13 +243,18 @@ ts_child_ex(struct ts *s, int rootfd, int cwdfd, bool keep_sroot,
 		s->sroot = -1;
 	}
 	ATF_REQUIRE(write(go[1], "g", 1) == 1);
-	n = read(back[0], out, outlen);
+	got = dqt_read_full(back[0], out, outlen);
 	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
-	if (n != (ssize_t)outlen)
+	if (got != outlen) {
+		/* Never trust part of a result. */
 		memset(out, 0, outlen);
-	close(ready[0]); close(ready[1]);
-	close(go[0]); close(go[1]);
-	close(back[0]); close(back[1]);
+		ATF_REQUIRE_MSG(!WIFEXITED(status) || WEXITSTATUS(status) != 0,
+		    "child exited 0 with %zu of %zu result bytes (%s)", got,
+		    outlen, dqt_status_str(status, sbuf, sizeof(sbuf)));
+	}
+	close(ready[0]);
+	close(go[1]);
+	close(back[0]);
 	close(pd);
 	return (status);
 }

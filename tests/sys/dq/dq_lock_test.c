@@ -164,13 +164,11 @@ holder_release(struct holder_arg *a, struct dqt_child *ch,
     struct holder_res *r)
 {
 	char b;
-	int status;
 
 	b = 'g';
 	(void)write(a->go[1], &b, 1);
 	(void)close(a->go[1]);
-	status = dqt_wait(ch, r, sizeof(*r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_collect(ch, r, sizeof(*r));
 }
 
 /* A second requester's attempts, each on both files. */
@@ -453,8 +451,7 @@ ATF_TC_BODY(setlkw_no_deadline, tc)
 	ATF_CHECK_EQ(0, st.ds2_deadline_misses);
 	ATF_CHECK(st.ds2_locks >= 2);
 	holder_release(&h, &hch, &hr);
-	status = dqt_wait(&wch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_collect(&wch, &r, sizeof(r));
 	ATF_CHECK_EQ_MSG(0, r.rv, "F_SETLKW: %s", strerror(r.err));
 	teardown(&f);
 }
@@ -478,7 +475,7 @@ ATF_TC_BODY(setlkw_interrupt, tc)
 	struct probe_arg pa;
 	struct probe_res pr;
 	struct dqt_rr r;
-	int k, status;
+	int k;
 
 	setup(&f, 3);
 	memset(&h, 0, sizeof(h));
@@ -495,8 +492,7 @@ ATF_TC_BODY(setlkw_interrupt, tc)
 		ATF_REQUIRE(dqt_wait_locks(&f.c, f.o, 2 + k, DQT_WAIT_MS));
 		dqt_msleep(50);
 		ATF_REQUIRE_EQ(0, kill(wch.pid, SIGUSR1));
-		status = dqt_wait(&wch, &r, sizeof(r));
-		ATF_CHECK(WIFEXITED(status));
+		dqt_collect(&wch, &r, sizeof(r));
 		ATF_CHECK_EQ(-1, r.rv);
 		ATF_CHECK_EQ(EINTR, r.err);
 		ATF_CHECK(dqt_wait_interrupts(&f.c, k + 1, DQT_WAIT_MS));
@@ -931,7 +927,7 @@ ATF_TC_BODY(posix_spans_siblings, tc)
 	struct sib_arg s;
 	struct sib_res r;
 	struct probe_res pr;
-	int k, ob, status;
+	int k, ob;
 
 	for (k = 0; k < 2; k++) {
 		setup(&f, 10 + k);
@@ -972,8 +968,7 @@ ATF_TC_BODY(posix_spans_siblings, tc)
 		}
 		(void)close(s.go[1]);
 		(void)close(s.ready[0]);
-		status = dqt_wait(&ch, &r, sizeof(r));
-		ATF_CHECK(WIFEXITED(status));
+		dqt_collect(&ch, &r, sizeof(r));
 		ATF_CHECK_EQ(0, r.sa.rv);
 		ATF_CHECK_EQ(0, r.oa.rv);
 		if (k == 0) {
@@ -1084,7 +1079,7 @@ ATF_TC_BODY(unlock_all_over_depth, tc)
 	struct dqt_rr r;
 	struct dq_stats st;
 	struct dq_stats2 st2;
-	int oracle, status;
+	int oracle;
 
 	dqt_fill(data, sizeof(data), 13);
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
@@ -1114,8 +1109,7 @@ ATF_TC_BODY(unlock_all_over_depth, tc)
 	ATF_CHECK_EQ(1, st2.ds2_overdepth);
 
 	dqt_resume(&c);
-	status = dqt_wait(&rch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_collect(&rch, &r, sizeof(r));
 	ATF_CHECK_EQ(16, r.rv);
 	ATF_CHECK(dqt_wait_events(&c, DQ_OP_UNLOCK_ALL, 1, DQT_WAIT_MS));
 	ATF_CHECK_EQ(1, count_unlocks(o, DQ_LOCK_POSIX, (uint64_t)hr.pid));

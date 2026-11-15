@@ -220,7 +220,7 @@ ATF_TC_BODY(route_slot_inherited, tc)
 	struct mac_cap_process_info mine;
 	struct slot_res r;
 	char tag_a[] = "attached", tag_u[] = "unattached";
-	int pair[2], status;
+	int pair[2];
 
 	pin_require_plane();
 	ATF_REQUIRE_MSG(chan_create(pair) == 0, "channel: %s",
@@ -233,8 +233,7 @@ ATF_TC_BODY(route_slot_inherited, tc)
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ach, slot_child, tag_a);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ach, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ach, &r, sizeof(r));
 	slot_check("attached", &r, &mine, pair[1], tag_a);
 
 	memset(&r, 0, sizeof(r));
@@ -351,7 +350,6 @@ lookup_pair(bool clear)
 	struct dqt_achild ach;
 	struct mac_cap_process_info mine;
 	struct lookup_res r;
-	int status;
 
 	/* A pin does not skip: without a route there is nothing to pin. */
 	ATF_REQUIRE_EQ_MSG(0, cap_proc(MAC_CAP_PROCESS_INFO, -1, &mine),
@@ -363,8 +361,7 @@ lookup_pair(bool clear)
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ach, lookup_child, &clear);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ach, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ach, &r, sizeof(r));
 	lookup_check("attached", &r, clear);
 	dqt_fini(&c);
 

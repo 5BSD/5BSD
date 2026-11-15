@@ -22,6 +22,7 @@
 #include <pthread.h>
 #include <setjmp.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -813,6 +814,82 @@ dqt_object_by_id(struct dqt_ctl *c, uint64_t id)
  * Requesters
  */
 
+/*
+ * The child's half: run fn, send the whole result and exit 0, or exit
+ * DQT_EXIT_NORESULT when the result could not be sent.  A child that dies
+ * in fn never writes, and its parent sees a short result.
+ */
+static void
+dqt_child_run(int resfd, dqt_child_fn fn, void *arg)
+{
+	char result[DQT_RESULT_MAX];
+
+	memset(result, 0, sizeof(result));
+	fn(arg, result);
+	_exit(write(resfd, result, sizeof(result)) == (ssize_t)sizeof(result) ?
+	    0 : DQT_EXIT_NORESULT);
+}
+
+size_t
+dqt_read_full(int fd, void *buf, size_t len)
+{
+	char *p;
+	ssize_t n;
+	size_t off;
+
+	p = buf;
+	for (off = 0; off < len; off += (size_t)n) {
+		n = read(fd, p + off, len - off);
+		if (n == -1 && errno == EINTR) {
+			n = 0;
+			continue;
+		}
+		if (n <= 0)
+			break;
+	}
+	return (off);
+}
+
+const char *
+dqt_status_str(int status, char *buf, size_t len)
+{
+
+	if (WIFEXITED(status))
+		snprintf(buf, len, "exit %d", WEXITSTATUS(status));
+	else if (WIFSIGNALED(status))
+		snprintf(buf, len, "signal %d%s", WTERMSIG(status),
+		    WCOREDUMP(status) ? " (core dumped)" : "");
+	else
+		snprintf(buf, len, "status %#x", status);
+	return (buf);
+}
+
+void
+dqt_require_exit0(int status, const char *what)
+{
+	char sbuf[64];
+
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "%s: %s", what, dqt_status_str(status, sbuf, sizeof(sbuf)));
+}
+
+/*
+ * The parent's half of collecting a result: got bytes arrived out of
+ * resultlen.  A result is only trusted whole; a short one is zeroed so
+ * that no assertion reads stale bytes.  A child that exited 0 without its
+ * whole result is a harness failure, whatever the caller expects.
+ */
+static void
+dqt_result_check(int status, size_t got, void *result, size_t resultlen)
+{
+
+	if (got == resultlen)
+		return;
+	memset(result, 0, resultlen);
+	ATF_REQUIRE_MSG(!WIFEXITED(status) || WEXITSTATUS(status) != 0,
+	    "requester exited 0 with %zu of %zu result bytes", got, resultlen);
+}
+
 void
 dqt_spawn(struct dqt_child *ch, dqt_child_fn fn, void *arg)
 {
@@ -822,14 +899,8 @@ dqt_spawn(struct dqt_child *ch, dqt_child_fn fn, void *arg)
 	ch->pid = fork();
 	ATF_REQUIRE_MSG(ch->pid != -1, "fork: %s", strerror(errno));
 	if (ch->pid == 0) {
-		char result[4096];
-
 		(void)close(pfd[0]);
-		memset(result, 0, sizeof(result));
-		fn(arg, result);
-		/* The parent reads what it expects; the rest is ignored. */
-		(void)write(pfd[1], result, sizeof(result));
-		_exit(0);
+		dqt_child_run(pfd[1], fn, arg);
 	}
 	(void)close(pfd[1]);
 	ch->pipefd = pfd[0];
@@ -838,35 +909,33 @@ dqt_spawn(struct dqt_child *ch, dqt_child_fn fn, void *arg)
 int
 dqt_wait(struct dqt_child *ch, void *result, size_t resultlen)
 {
-	char *p;
-	ssize_t n;
-	size_t off;
+	size_t got;
 	int status;
 
-	ATF_REQUIRE(resultlen <= 4096);
-	p = result;
-	for (off = 0; off < resultlen; off += (size_t)n) {
-		n = read(ch->pipefd, p + off, resultlen - off);
-		if (n <= 0)
-			break;
-	}
+	ATF_REQUIRE(resultlen <= DQT_RESULT_MAX);
+	got = dqt_read_full(ch->pipefd, result, resultlen);
 	(void)close(ch->pipefd);
 	ch->pipefd = -1;
 	ATF_REQUIRE_MSG(waitpid(ch->pid, &status, 0) == ch->pid, "waitpid: %s",
 	    strerror(errno));
+	dqt_result_check(status, got, result, resultlen);
 	return (status);
+}
+
+void
+dqt_collect(struct dqt_child *ch, void *result, size_t resultlen)
+{
+
+	dqt_require_exit0(dqt_wait(ch, result, resultlen), "requester");
 }
 
 void
 dqt_run_child(dqt_child_fn fn, void *arg, void *result, size_t resultlen)
 {
 	struct dqt_child ch;
-	int status;
 
 	dqt_spawn(&ch, fn, arg);
-	status = dqt_wait(&ch, result, resultlen);
-	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
-	    "requester child failed, status %#x", status);
+	dqt_collect(&ch, result, resultlen);
 }
 
 /*
@@ -1203,16 +1272,11 @@ dqt_attach_spawn(struct dqt_ctl *c, struct dqt_achild *ch, dqt_child_fn fn,
 	ch->pid = pdfork(&ch->pd, 0);
 	ATF_REQUIRE_MSG(ch->pid != -1, "pdfork: %s", strerror(errno));
 	if (ch->pid == 0) {
-		char result[4096];
-
 		(void)close(go[1]);
 		(void)close(res[0]);
 		if (read(go[0], &b, 1) != 1)
-			_exit(2);
-		memset(result, 0, sizeof(result));
-		fn(arg, result);
-		(void)write(res[1], result, sizeof(result));
-		_exit(0);
+			_exit(DQT_EXIT_NOGO);
+		dqt_child_run(res[1], fn, arg);
 	}
 	(void)close(go[0]);
 	(void)close(res[1]);
@@ -1227,25 +1291,37 @@ dqt_attach_spawn(struct dqt_ctl *c, struct dqt_achild *ch, dqt_child_fn fn,
 int
 dqt_attach_wait(struct dqt_achild *ch, void *result, size_t resultlen)
 {
-	char *p;
-	ssize_t n;
-	size_t off;
+	size_t got;
 	int status;
 
-	ATF_REQUIRE(resultlen <= 4096);
-	p = result;
-	for (off = 0; off < resultlen; off += (size_t)n) {
-		n = read(ch->pipefd, p + off, resultlen - off);
-		if (n <= 0)
-			break;
-	}
+	ATF_REQUIRE(resultlen <= DQT_RESULT_MAX);
+	got = dqt_read_full(ch->pipefd, result, resultlen);
 	(void)close(ch->pipefd);
 	ch->pipefd = -1;
 	ATF_REQUIRE_MSG(pdwait(ch->pd, &status, WEXITED, NULL, NULL) == 0,
 	    "pdwait: %s", strerror(errno));
 	(void)close(ch->pd);
 	ch->pd = -1;
+	dqt_result_check(status, got, result, resultlen);
 	return (status);
+}
+
+void
+dqt_attach_collect(struct dqt_achild *ch, void *result, size_t resultlen)
+{
+
+	dqt_require_exit0(dqt_attach_wait(ch, result, resultlen),
+	    "attached requester");
+}
+
+void
+dqt_attach_run(struct dqt_ctl *c, dqt_child_fn fn, void *arg, void *result,
+    size_t resultlen)
+{
+	struct dqt_achild ch;
+
+	dqt_attach_spawn(c, &ch, fn, arg);
+	dqt_attach_collect(&ch, result, resultlen);
 }
 
 int

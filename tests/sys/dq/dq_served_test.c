@@ -263,6 +263,7 @@ static void
 run_child_as(struct srv *s, child_fn_t fn, int *res, uid_t uid, bool attach)
 {
 	int go[2], back[2], pd, status;
+	size_t got;
 	pid_t pid;
 	char c;
 
@@ -281,18 +282,23 @@ run_child_as(struct srv *s, child_fn_t fn, int *res, uid_t uid, bool attach)
 		if (read(go[0], &c, 1) != 1)
 			_exit(1);
 		fn(s, r);
-		(void)write(back[1], r, sizeof(r));
-		_exit(0);
+		_exit(write(back[1], r, sizeof(r)) == (ssize_t)sizeof(r) ?
+		    0 : DQT_EXIT_NORESULT);
 	}
+	/* Only the child holds the write ends: its death is an EOF here. */
+	close(go[0]);
+	close(back[1]);
 	if (attach)
 		ATF_REQUIRE_MSG(dq_attach(s->q, pd) == 0, "attach: %s",
 		    strerror(errno));
 	ATF_REQUIRE(write(go[1], "g", 1) == 1);
-	ATF_REQUIRE_EQ((ssize_t)(sizeof(int) * RES_MAX),
-	    read(back[0], res, sizeof(int) * RES_MAX));
+	got = dqt_read_full(back[0], res, sizeof(int) * RES_MAX);
 	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
 	close(pd);
-	close(go[0]); close(go[1]); close(back[0]); close(back[1]);
+	close(go[1]);
+	close(back[0]);
+	dqt_require_exit0(status, "requester");
+	ATF_REQUIRE_EQ(sizeof(int) * RES_MAX, got);
 }
 
 static void

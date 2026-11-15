@@ -209,7 +209,7 @@ ATF_TC_BODY(threads_replies_reversed, tc)
 	struct threads_arg a;
 	struct threads_res r;
 	struct dqt_child ch;
-	int i, oracle, status;
+	int i, oracle;
 
 	dqt_fill(data, sizeof(data), 61);
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
@@ -226,8 +226,7 @@ ATF_TC_BODY(threads_replies_reversed, tc)
 	dqt_spawn(&ch, child_threads, &a);
 	ATF_CHECK(dqt_wait_stats(&c, posted_or_dropped_is, NTHREADS, DQT_WAIT_MS));
 	dqt_resume(&c);
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_collect(&ch, &r, sizeof(r));
 	for (i = 0; i < NTHREADS; i++) {
 		ATF_CHECK_EQ_MSG(4096, r.rv[i], "thread %d: %ld (errno %d)", i,
 		    r.rv[i], r.err[i]);
@@ -365,7 +364,7 @@ ATF_TC_BODY(depth_exhausted, tc)
 	struct one_read_res r[3], r4;
 	struct dqt_child ch[3];
 	struct dq_stats st;
-	int i, neio, nok, oracle, status;
+	int i, neio, nok, oracle;
 
 	dqt_fill(data, sizeof(data), 64);
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
@@ -398,8 +397,7 @@ ATF_TC_BODY(depth_exhausted, tc)
 	dqt_resume(&c);
 	neio = nok = 0;
 	for (i = 0; i < 3; i++) {
-		status = dqt_wait(&ch[i], &r[i], sizeof(r[i]));
-		ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+		dqt_collect(&ch[i], &r[i], sizeof(r[i]));
 		if (r[i].rr.rv == 100)
 			nok++;
 		else if (r[i].rr.rv == -1 && r[i].rr.err == EIO)
@@ -562,7 +560,7 @@ ATF_TC_BODY(inflight_bound, tc)
 	struct dq_stats st;
 	FILE *fp;
 	u_int old;
-	int i, oracle, status;
+	int i, oracle;
 
 	ATF_REQUIRE(dqt_sysctl_get_uint(inflight_sysctl, &old));
 	fp = fopen(inflight_saved, "w");
@@ -603,8 +601,7 @@ ATF_TC_BODY(inflight_bound, tc)
 #undef INFL_ARGS
 	dqt_resume(&c);
 	for (i = 0; i < 3; i++) {
-		status = dqt_wait(&ch[i], &r[i], sizeof(r[i]));
-		ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+		dqt_collect(&ch[i], &r[i], sizeof(r[i]));
 		ATF_CHECK_EQ_MSG(100, r[i].rr.rv, "child %d: %ld errno %d", i,
 		    r[i].rr.rv, r[i].rr.err);
 	}
@@ -705,7 +702,7 @@ ATF_TC_BODY(efault_mid_batch, tc)
 	size_t pagesize;
 	ssize_t got;
 	uint64_t ids[2], seqs[2];
-	int i, oracle, status, waited;
+	int i, oracle, waited;
 
 	pagesize = (size_t)getpagesize();
 	dqt_fill(data, sizeof(data), 69);
@@ -777,8 +774,7 @@ ATF_TC_BODY(efault_mid_batch, tc)
 
 	ATF_CHECK_EQ(0, dq_reply(c.q, ids[1], 0, data, 100));
 	for (i = 0; i < 2; i++) {
-		status = dqt_wait(&ch[i], &r[i], sizeof(r[i]));
-		ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+		dqt_collect(&ch[i], &r[i], sizeof(r[i]));
 		ATF_CHECK_EQ(100, r[i].rr.rv);
 	}
 	(void)munmap(map, 2 * pagesize);

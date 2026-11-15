@@ -274,7 +274,7 @@ ATF_TC_BODY(revoke_wakes_waiter, tc)
 	struct dqt_child ch;
 	struct dqt_rr r;
 	struct dq_stats st;
-	int oracle, status;
+	int oracle;
 
 	dqt_fill(data, sizeof(data), 54);
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
@@ -288,8 +288,7 @@ ATF_TC_BODY(revoke_wakes_waiter, tc)
 	dqt_spawn(&ch, child_one_read, &a);
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
 	ATF_REQUIRE_EQ(0, dq_revoke(c.q, o->id));
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.rv);
 	ATF_CHECK_EQ(EIO, r.err);
 

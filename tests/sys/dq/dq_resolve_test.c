@@ -140,6 +140,8 @@ chroot_child(const char *dir)
 	int status;
 
 	pid = fork();
+	if (pid == -1)
+		return (-1);
 	if (pid == 0)
 		_exit(chroot(dir) == 0 ? 0 : errno);
 	if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status))
@@ -247,7 +249,7 @@ ATF_TC_BODY(families, tc)
 	struct fam_res o, a;
 	struct dq_stats2 st;
 	struct stat sb;
-	int i, k, status;
+	int i, k;
 
 	ATF_REQUIRE_EQ(0, mkdir("oracle", 0755));
 	ATF_REQUIRE_EQ(0, mkdir("attached", 0755));
@@ -258,8 +260,7 @@ ATF_TC_BODY(families, tc)
 	dqt_attach_spawn(&c, &ch, child_families,
 	    __DECONST(void *, "attached"));
 	memset(&a, 0, sizeof(a));
-	status = dqt_attach_wait(&ch, &a, sizeof(a));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &a, sizeof(a));
 	for (k = 0; k < S_NSTEPS; k++) {
 		ATF_CHECK_EQ_MSG(o.rv[k], a.rv[k], "step %d (%s): rv attached "
 		    "%ld unattached %ld", k, expects[k].tag, a.rv[k], o.rv[k]);
@@ -354,7 +355,6 @@ ATF_TC_BODY(errno_answers, tc)
 	struct dqt_achild ch;
 	struct one_res r;
 	struct dq_stats2 st;
-	int status;
 
 	dqt_init(&c);
 	(void)strlcpy(c.resolve_fail_match, "rt-deny",
@@ -362,8 +362,7 @@ ATF_TC_BODY(errno_answers, tc)
 	c.resolve_fail_errno = EACCES;
 	dqt_attach_spawn(&c, &ch, child_deny, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(EACCES, r.r[0].err);
 	ATF_CHECK_EQ(EACCES, r.r[1].err);
 	ATF_CHECK_EQ(ENOENT, r.r[2].err);
@@ -372,7 +371,7 @@ ATF_TC_BODY(errno_answers, tc)
 	c.resolve_fail_errno = EPIPE;	/* not on the list */
 	dqt_attach_spawn(&c, &ch, child_deny, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(EIO, r.r[1].err);
 	dqt_stats2(&c, &st);
 	ATF_CHECK(st.ds2_bad_replies >= 2);
@@ -395,7 +394,6 @@ ATF_TC_BODY(reply_validation, tc)
 	struct dq_resolve_reply rr;
 	char big[16];
 	uint64_t id;
-	int status;
 
 	dqt_init(&c);
 	(void)strlcpy(c.resolve_hold_match, "rt-deny",
@@ -431,8 +429,7 @@ ATF_TC_BODY(reply_validation, tc)
 	pthread_mutex_unlock(&c.mtx);
 	ATF_CHECK_EQ(0, dq_reply_resolve_errno(c.q, id, EROFS));
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(EROFS, r.r[0].err);
 	dqt_fini(&c);
 }
@@ -473,7 +470,6 @@ ATF_TC_BODY(deadline_eio, tc)
 	struct one_res r;
 	u_int saved;
 	FILE *fp;
-	int status;
 
 	ATF_REQUIRE(dqt_sysctl_get_uint("kern.dq.default_deadline_ms", &saved));
 	fp = fopen(DEADLINE_SAVED, "w");
@@ -488,8 +484,7 @@ ATF_TC_BODY(deadline_eio, tc)
 	dqt_attach_spawn(&c, &ch, child_hold_stat,
 	    __DECONST(void *, "rt-hold"));
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(EIO, r.r[0].err);
 	ATF_CHECK_MSG(r.elapsed_ms >= 400 && r.elapsed_ms < 5000,
 	    "waited %ld ms", r.elapsed_ms);
@@ -527,7 +522,6 @@ ATF_TC_BODY(controller_exit_fails_closed, tc)
 	struct dqt_ctl c;
 	struct dqt_achild ch;
 	struct one_res r;
-	int status;
 
 	dqt_init(&c);
 	(void)strlcpy(c.resolve_hold_match, "rt-exit",
@@ -537,8 +531,7 @@ ATF_TC_BODY(controller_exit_fails_closed, tc)
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
 	dqt_close_queue(&c);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(EIO, r.r[0].err);
 	ATF_CHECK_EQ(EIO, r.r[1].err);
 	ATF_CHECK_EQ(EIO, r.r[2].err);
@@ -589,7 +582,6 @@ static void
 signal_during(struct dqt_ctl *c, struct dqt_achild *ch, struct sig_arg *a,
     const char *match, struct one_res *r)
 {
-	int status;
 
 	(void)strlcpy(c->resolve_hold_match, match,
 	    sizeof(c->resolve_hold_match));
@@ -600,8 +592,7 @@ signal_during(struct dqt_ctl *c, struct dqt_achild *ch, struct sig_arg *a,
 	pthread_mutex_unlock(&c->mtx);
 	ATF_REQUIRE_EQ(0, pdkill(ch->pd, SIGUSR1));
 	memset(r, 0, sizeof(*r));
-	status = dqt_attach_wait(ch, r, sizeof(*r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_attach_collect(ch, r, sizeof(*r));
 	ATF_CHECK(dqt_wait_interrupts(c, 1, DQT_WAIT_MS));
 	ATF_CHECK_EQ(c->held[0].id, c->interrupted[0]);
 }
@@ -735,7 +726,6 @@ ATF_TC_BODY(depth_exhausted, tc)
 	struct depth_arg a;
 	struct one_res r;
 	struct dq_stats st;
-	int status;
 
 	dqt_init(&c);
 	ATF_REQUIRE_EQ(0, dq_set_queue_depth(c.q, 1));
@@ -750,8 +740,7 @@ ATF_TC_BODY(depth_exhausted, tc)
 	ATF_CHECK(st.ds_events_dropped >= 1);
 	dqt_resume(&c);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(EIO, r.r[0].err);
 	ATF_CHECK_EQ(ENOENT, r.r[1].rv);
 	dqt_fini(&c);
@@ -784,6 +773,11 @@ run_id(char *out, size_t outlen)
 	if (pipe(p) != 0)
 		return;
 	pid = fork();
+	if (pid == -1) {
+		(void)close(p[0]);
+		(void)close(p[1]);
+		return;
+	}
 	if (pid == 0) {
 		(void)dup2(p[1], STDOUT_FILENO);
 		execl("./rt-id", "rt-id", "-u", (char *)NULL);
@@ -793,7 +787,10 @@ run_id(char *out, size_t outlen)
 	n = read(p[0], out, outlen - 1);
 	out[n > 0 ? n : 0] = '\0';
 	(void)close(p[0]);
-	(void)waitpid(pid, &status, 0);
+	/* A child that did not exit 0 has printed no answer. */
+	if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) ||
+	    WEXITSTATUS(status) != 0)
+		out[0] = '\0';
 }
 
 static void
@@ -863,7 +860,6 @@ ATF_TC_BODY(i5_no_new_privileges, tc)
 	struct dqt_achild ch;
 	struct i5_arg a;
 	struct i5_res o, r;
-	int status;
 
 	make_setid_copy();
 	memset(&a, 0, sizeof(a));
@@ -876,8 +872,7 @@ ATF_TC_BODY(i5_no_new_privileges, tc)
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ch, child_i5, &a);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	if (strcmp(o.idout, "65534\n") == 0)
 		ATF_CHECK_STREQ("0\n", r.idout);
 	else
@@ -976,7 +971,7 @@ ATF_TC_BODY(two_path_calls, tc)
 	struct dqt_ctl c;
 	struct dqt_achild ch;
 	struct two_res o, a;
-	int i, k, n, status;
+	int i, k, n;
 
 	ATF_REQUIRE_EQ(0, mkdir("oracle", 0755));
 	ATF_REQUIRE_EQ(0, mkdir("attached", 0755));
@@ -987,8 +982,7 @@ ATF_TC_BODY(two_path_calls, tc)
 	dqt_attach_spawn(&c, &ch, child_two_path,
 	    __DECONST(void *, "attached"));
 	memset(&a, 0, sizeof(a));
-	status = dqt_attach_wait(&ch, &a, sizeof(a));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &a, sizeof(a));
 	for (k = 0; k < T_NSTEPS; k++) {
 		ATF_CHECK_EQ_MSG(o.rv[k], a.rv[k], "%s: rv attached %ld "
 		    "unattached %ld", two_tag[k], a.rv[k], o.rv[k]);
@@ -1075,7 +1069,7 @@ ATF_TC_BODY(slot_revalidation, tc)
 	struct dqt_achild ch;
 	struct rv_arg a;
 	struct one_res r;
-	int i, status;
+	int i;
 
 	dqt_init(&c);
 	dqt_sync_init(&a.s);
@@ -1096,8 +1090,7 @@ ATF_TC_BODY(slot_revalidation, tc)
 	pthread_mutex_unlock(&c.mtx);
 	ATF_REQUIRE_EQ(0, dq_reply_resolve_pass(c.q, c.held[0].id));
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	i = dqt_find_resolve(&c, "rt-sv-B2", DQ_ROP_RENAME, 0);
 	ATF_CHECK_MSG(i != -1, "the new second path was never consulted");
 	ATF_CHECK_EQ(1, dqt_count_resolve(&c, "rt-sv-B1", DQ_ROP_RENAME));
@@ -1246,7 +1239,7 @@ ATF_TC_BODY(kernel_consumer_rows, tc)
 	struct kc_res r;
 	char cwd[PATH_MAX], out[64], cmd[PATH_MAX + 64];
 	FILE *fp;
-	int fd, status;
+	int fd;
 
 	ATF_REQUIRE(getcwd(cwd, sizeof(cwd)) != NULL);
 	memset(&a, 0, sizeof(a));
@@ -1281,8 +1274,7 @@ ATF_TC_BODY(kernel_consumer_rows, tc)
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ch, child_kconsumers, &a);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 
 	if (a.md[0] != '\0') {
 		ATF_CHECK_EQ_MSG(0, r.swapon.rv, "swapon %s: %s", a.md,
@@ -1421,7 +1413,7 @@ ATF_TC_BODY(attached_kernel_paths, tc)
 	struct r5_arg a;
 	struct r5_res r;
 	size_t len;
-	int fd, i, status;
+	int fd, i;
 
 	memset(&a, 0, sizeof(a));
 	fd = open("rt-mdfile", O_CREAT | O_RDWR, 0600);
@@ -1445,8 +1437,7 @@ ATF_TC_BODY(attached_kernel_paths, tc)
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ch, child_round5, &a);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	if (r.mdattach.rv == -2)
 		fprintf(stderr, "no /dev/mdctl (%s): md row skipped\n",
 		    strerror(r.mdattach.err));
@@ -1560,7 +1551,7 @@ ATF_TC_BODY(swapon_consult_ahead, tc)
 	struct one_res r;
 	char out[64];
 	FILE *fp;
-	int fd, k, status;
+	int fd, k;
 
 	fd = open("rt-ahead-swap", O_CREAT | O_RDWR, 0600);
 	ATF_REQUIRE(fd != -1);
@@ -1591,8 +1582,7 @@ ATF_TC_BODY(swapon_consult_ahead, tc)
 		pthread_mutex_unlock(&c.mtx);
 		ATF_REQUIRE_EQ(0, dq_reply_resolve_pass(c.q, c.held[0].id));
 		memset(&r, 0, sizeof(r));
-		status = dqt_attach_wait(&ch, &r, sizeof(r));
-		ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+		dqt_attach_collect(&ch, &r, sizeof(r));
 		ATF_CHECK_EQ_MSG(-1, r.r[0].rv, "%s variant: swapon succeeded",
 		    k ? "chdir" : "rewrite");
 		ATF_CHECK_EQ_MSG(EIO, r.r[0].err, "%s variant: %s",
@@ -1641,7 +1631,6 @@ ATF_TC_BODY(unmount_refused, tc)
 	struct one_res r;
 	struct statfs sfs;
 	char out[128];
-	int status;
 
 	ATF_REQUIRE_EQ(0, mkdir("rt-umnt", 0755));
 	if (run_cmd("mount -t tmpfs tmpfs rt-umnt 2>&1", out, sizeof(out)) != 0)
@@ -1652,8 +1641,7 @@ ATF_TC_BODY(unmount_refused, tc)
 	c.resolve_fail_errno = EACCES;
 	dqt_attach_spawn(&c, &ch, child_unmount_refused, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.r[0].rv);
 	ATF_CHECK_EQ_MSG(EACCES, r.r[0].err, "unmount: %s",
 	    strerror(r.r[0].err));
@@ -1691,7 +1679,7 @@ ATF_TC_BODY(link_eagain_eio, tc)
 	struct dqt_ctl c;
 	struct dqt_achild ch;
 	struct one_res r;
-	int fd, status;
+	int fd;
 
 	fd = open("rt-lagain-src", O_CREAT | O_WRONLY, 0644);
 	ATF_REQUIRE(fd != -1);
@@ -1702,8 +1690,7 @@ ATF_TC_BODY(link_eagain_eio, tc)
 	c.resolve_fail_errno = EAGAIN;
 	dqt_attach_spawn(&c, &ch, child_link_again, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.r[0].rv);
 	ATF_CHECK_EQ_MSG(EIO, r.r[0].err, "link: %s", strerror(r.r[0].err));
 	ATF_CHECK_EQ(1, dqt_count_resolve(&c, "rt-lagain", DQ_ROP_LINK));

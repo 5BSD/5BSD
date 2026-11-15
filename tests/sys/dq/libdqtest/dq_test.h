@@ -221,11 +221,19 @@ void	dqt_policy_write(struct dq_policy *pol);
 struct dqt_object *dqt_object_by_id(struct dqt_ctl *c, uint64_t id);
 
 /*
- * Requesters.  fn runs in a forked child and fills result (resultlen
- * bytes), which the parent receives over a pipe.  dqt_run_child does the
- * whole round trip and requires a clean exit; the spawn/wait pair lets a
- * test run several children at once or signal one.
+ * Requesters.  fn runs in a forked child and fills result (resultlen bytes,
+ * at most DQT_RESULT_MAX), which the parent receives over a pipe whose
+ * write end only the child holds: a child that dies is seen at once, never
+ * as a timeout.  A result is trusted only whole; dqt_wait zeroes a short
+ * one, and fails when a child exited 0 without sending it.
+ *
+ * dqt_run_child spawns and collects; dqt_collect requires a clean exit
+ * (status 0).  dqt_wait returns the wait status for a test that expects
+ * the child to die, and must check it.
  */
+#define	DQT_RESULT_MAX		4096
+#define	DQT_EXIT_NORESULT	3	/* the child could not send its result */
+#define	DQT_EXIT_NOGO		2	/* the child got no go byte */
 typedef void (*dqt_child_fn)(void *arg, void *result);
 struct dqt_child {
 	pid_t		 pid;
@@ -233,8 +241,15 @@ struct dqt_child {
 };
 void	dqt_spawn(struct dqt_child *ch, dqt_child_fn fn, void *arg);
 int	dqt_wait(struct dqt_child *ch, void *result, size_t resultlen);
+void	dqt_collect(struct dqt_child *ch, void *result, size_t resultlen);
 void	dqt_run_child(dqt_child_fn fn, void *arg, void *result,
 	    size_t resultlen);
+/* Read until len bytes, EOF or an error; returns the bytes read. */
+size_t	dqt_read_full(int fd, void *buf, size_t len);
+/* "exit N" or "signal N" for a wait status. */
+const char *dqt_status_str(int status, char *buf, size_t len);
+/* Fail unless status is a normal exit with 0. */
+void	dqt_require_exit0(int status, const char *what);
 
 /* A system call result: return value and errno. */
 struct dqt_rr {
@@ -296,10 +311,12 @@ bool	dqt_sync_wait(int fd, int ms);
  * Resolution (1c).  dqt_attach_spawn pdforks a requester, attaches it to
  * the controller's queue before it runs fn (a child that has not exec'd,
  * holding no queue descriptor: no child has one), and returns its
- * process descriptor; dqt_attach_wait collects the result and the exit
- * status.  dqt_find_resolve returns the index (from `from`) of the first
- * recorded RESOLVE whose path or second path contains match, of op (0:
- * any), or -1; dqt_count_resolve counts them.
+ * process descriptor; dqt_attach_wait collects the result and returns the
+ * exit status, under dqt_wait's rules; dqt_attach_collect requires a clean
+ * exit and dqt_attach_run does the whole round trip.  dqt_find_resolve
+ * returns the index (from `from`) of the first recorded RESOLVE whose path
+ * or second path contains match, of op (0: any), or -1; dqt_count_resolve
+ * counts them.
  */
 struct dqt_achild {
 	pid_t		 pid;
@@ -309,6 +326,10 @@ struct dqt_achild {
 void	dqt_attach_spawn(struct dqt_ctl *c, struct dqt_achild *ch,
 	    dqt_child_fn fn, void *arg);
 int	dqt_attach_wait(struct dqt_achild *ch, void *result, size_t resultlen);
+void	dqt_attach_collect(struct dqt_achild *ch, void *result,
+	    size_t resultlen);
+void	dqt_attach_run(struct dqt_ctl *c, dqt_child_fn fn, void *arg,
+	    void *result, size_t resultlen);
 int	dqt_find_resolve(struct dqt_ctl *c, const char *match, uint32_t op,
 	    int from);
 int	dqt_count_resolve(struct dqt_ctl *c, const char *match, uint32_t op);

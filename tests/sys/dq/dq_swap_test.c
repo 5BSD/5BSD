@@ -500,7 +500,7 @@ ATF_TC_BODY(swap_only_for_open, tc)
 	const char *path;
 	char *buf;
 	ssize_t got;
-	int fd, nstat, nchdir, status;
+	int fd, nstat, nchdir;
 	bool hup;
 
 	dqt_require_plane();
@@ -546,8 +546,7 @@ ATF_TC_BODY(swap_only_for_open, tc)
 			}
 		}
 	}
-	status = dqt_attach_wait(&ch, &res, sizeof(res));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &res, sizeof(res));
 	ATF_CHECK(nstat >= 1);
 	ATF_CHECK(nchdir >= 1);
 	ATF_CHECK_EQ(0, res.r[0].rv);
@@ -1137,7 +1136,7 @@ ATF_TC_BODY(swap_supervisor_gone_before_install, tc)
 	struct sw_res res;
 	struct dqt_achild ch;
 	char *buf;
-	int lockfd, status;
+	int lockfd;
 
 	sw_write_file("orig", "ORIGINAL", 0644);
 	sw_write_file("subst", "SUBSTITUTE", 0644);
@@ -1155,9 +1154,7 @@ ATF_TC_BODY(swap_supervisor_gone_before_install, tc)
 
 	dqt_close_queue(&x.c);
 	ATF_REQUIRE_EQ(0, flock(lockfd, LOCK_UN));
-	status = dqt_attach_wait(&ch, &res, sizeof(res));
-	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
-	    "the program failed, status %#x", status);
+	dqt_attach_collect(&ch, &res, sizeof(res));
 	ATF_CHECK_EQ(1, x.answered);
 	ATF_CHECK_EQ_MSG(-1, res.r[0].rv, "the open returned %ld", res.r[0].rv);
 	ATF_CHECK_EQ(EIO, res.r[0].err);
@@ -1204,7 +1201,7 @@ ATF_TC_BODY(swap_supervisor_gone_after_trunc, tc)
 	struct dqt_achild ch;
 	char *buf;
 	char text[64];
-	int lockfd, status;
+	int lockfd;
 
 	sw_write_file("orig", "ORIGINAL", 0644);
 	sw_write_file("subst", "SUBSTITUTE", 0644);
@@ -1225,9 +1222,7 @@ ATF_TC_BODY(swap_supervisor_gone_after_trunc, tc)
 
 	dqt_close_queue(&x.c);
 	ATF_REQUIRE_EQ(0, flock(lockfd, LOCK_UN));
-	status = dqt_attach_wait(&ch, &res, sizeof(res));
-	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
-	    "the program failed, status %#x", status);
+	dqt_attach_collect(&ch, &res, sizeof(res));
 	ATF_CHECK_EQ_MSG(-1, res.r[0].rv, "the open returned %ld", res.r[0].rv);
 	ATF_CHECK_EQ(EIO, res.r[0].err);
 	ATF_CHECK_EQ(-1, res.r[4].rv);
@@ -1445,17 +1440,13 @@ sw_race_round(char *buf, int pass, int i, int *installed, int *refused)
 	struct sw x;
 	struct sw_res res;
 	struct dqt_achild ch;
-	int status;
 
 	sw_init(&x, "orig", a_quick);
 	ATF_REQUIRE(fcntl(x.c.q, F_SETFL, O_NONBLOCK) != -1);
 	dqt_attach_spawn(&x.c, &ch, p_race_open, NULL);
 	sw_serve_answered(&x, buf, 1);
 	dqt_close_queue(&x.c);
-	status = dqt_attach_wait(&ch, &res, sizeof(res));
-	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
-	    "pass %d round %d: the program failed, status %#x", pass, i,
-	    status);
+	dqt_attach_collect(&ch, &res, sizeof(res));
 	if (res.r[0].rv >= 0) {
 		(*installed)++;
 		ATF_REQUIRE_EQ_MSG(10, res.r[2].rv,

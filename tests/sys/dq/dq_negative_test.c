@@ -524,7 +524,6 @@ ATF_TC_BODY(reply_errors, tc)
 	struct dqt_rr r;
 	struct stat_res sr;
 	u_int max_io;
-	int status;
 
 	setup(&f, 103);
 	ATF_REQUIRE(dqt_sysctl_get_uint("kern.dq.max_io", &max_io));
@@ -587,8 +586,7 @@ ATF_TC_BODY(reply_errors, tc)
 	dqt_stats(&f.c, &st);
 	ATF_CHECK_EQ(1, st.ds_inflight);	/* a refused reply changes nothing */
 	ATF_CHECK_EQ(0, dq_reply(f.c.q, f.c.held[0].id, EACCES, NULL, 0));
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.rv);
 	ATF_CHECK_EQ(EACCES, r.err);
 	/* Answered: a second reply is late. */
@@ -617,8 +615,7 @@ ATF_TC_BODY(reply_errors, tc)
 	*bad = f.ident;
 	bad->di_size = 4242;
 	ATF_CHECK_EQ(0, dq_reply(f.c.q, f.c.held[1].id, 0, bad, sizeof(*bad)));
-	status = dqt_wait(&ch, &sr, sizeof(sr));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_collect(&ch, &sr, sizeof(sr));
 	ATF_CHECK_EQ(0, sr.rr.rv);
 	ATF_CHECK_EQ(4242, sr.st.st_size);	/* the reply became the identity */
 	free(bad);
@@ -653,7 +650,7 @@ ATF_TC_BODY(control_errors, tc)
 	char buf[256];
 	const size_t recsize = sizeof(struct dq_event) + sizeof(struct dq_read_body);
 	ssize_t got;
-	int flags, status, type;
+	int flags, type;
 
 	setup(&f, 104);
 	o = dqt_mint_ident(&f.c, &f.ident, &f.pol, data, sizeof(data));
@@ -774,8 +771,7 @@ ATF_TC_BODY(control_errors, tc)
 	ATF_CHECK_EQ(getpid(), ev->de_caller.dc_ppid);
 	ATF_CHECK_EQ(0, ev->de_caller.dc_flags & DQ_CALLER_F_KERNEL);
 	ATF_CHECK_EQ(0, dq_reply(f.c.q, ev->de_id, 0, data, 100));
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(100, r.rv);
 
 	free(id);

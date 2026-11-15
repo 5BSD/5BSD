@@ -563,6 +563,7 @@ ATF_TC_BODY(fchroot_served, tc)
 	struct nest n, real;
 	char dir[PATH_MAX];
 	int i, p[2], saved, status;
+	size_t got;
 	pid_t pid;
 
 	_Static_assert(sizeof(struct nest) <= sizeof(r.data), "nest fits");
@@ -604,11 +605,15 @@ ATF_TC_BODY(fchroot_served, tc)
 		memset(&real, 0, sizeof(real));
 		if (chroot(dir) == 0 && chdir("/") == 0)
 			nested_names(&real);
-		(void)write(p[1], &real, sizeof(real));
-		_exit(0);
+		_exit(write(p[1], &real, sizeof(real)) ==
+		    (ssize_t)sizeof(real) ? 0 : DQT_EXIT_NORESULT);
 	}
-	ATF_REQUIRE(read(p[0], &real, sizeof(real)) == sizeof(real));
+	(void)close(p[1]);
+	got = dqt_read_full(p[0], &real, sizeof(real));
+	(void)close(p[0]);
 	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	dqt_require_exit0(status, "the chroot(2) oracle");
+	ATF_REQUIRE_EQ(sizeof(real), got);
 	for (i = 0; i < NNEST; i++) {
 		ATF_CHECK_EQ_MSG(real.err[i], n.err[i], "name %d: errno", i);
 		ATF_CHECK_EQ_MSG(real.ino[i], n.ino[i], "name %d: inode", i);
@@ -826,17 +831,28 @@ fork_fn(void *arg __unused, void *out)
 		return;
 	}
 	pid = fork();
+	if (pid == -1) {
+		r->err[1] = errno;
+		return;
+	}
 	if (pid == 0) {
 		memset(&g, 0, sizeof(g));
 		kcwd(g.cwd[0], &g.err[0]);
 		g.err[1] = TS_ERR(stat("f", &st));
 		g.err[2] = TS_ERR(stat("/a", &st));
-		(void)write(p[1], &g, sizeof(g));
-		_exit(0);
+		_exit(write(p[1], &g, sizeof(g)) == (ssize_t)sizeof(g) ? 0 :
+		    DQT_EXIT_NORESULT);
 	}
+	(void)close(p[1]);
 	memset(&g, 0, sizeof(g));
-	(void)read(p[0], &g, sizeof(g));
-	(void)waitpid(pid, &status, 0);
+	/* A grandchild that did not report is an error the test sees. */
+	if (dqt_read_full(p[0], &g, sizeof(g)) != sizeof(g) ||
+	    waitpid(pid, &status, 0) != pid || !WIFEXITED(status) ||
+	    WEXITSTATUS(status) != 0) {
+		memset(&g, 0, sizeof(g));
+		r->err[1] = ECHILD;
+	}
+	(void)close(p[0]);
 	strlcpy(r->cwd[0], g.cwd[0], PATH_MAX);
 	r->err[2] = g.err[0];
 	r->err[3] = g.err[1];

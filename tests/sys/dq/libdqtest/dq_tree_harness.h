@@ -31,6 +31,8 @@
 
 #include <libdq.h>
 
+#include "dq_test.h"
+
 #define	TS_TC_HEAD_BODY(name)						\
 	ATF_TC_HEAD(name, tc)						\
 	{								\

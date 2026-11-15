@@ -453,7 +453,7 @@ ATF_TC_BODY(nonparent_attach, tc)
 	struct idle s;
 	struct kevent kev;
 	struct timespec ts = { 120, 0 };
-	int kq, sv[2], status;
+	int kq, sv[2];
 
 	pin_require_plane();
 	/* (a) SCM_RIGHTS: the actor exists before the target does. */
@@ -463,8 +463,7 @@ ATF_TC_BODY(nonparent_attach, tc)
 	idle_spawn(&s, 0, NULL);
 	ATF_REQUIRE_EQ(0, send_fd(sv[0], s.pd));
 	memset(&r, 0, sizeof(r));
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_collect(&ch, &r, sizeof(r));
 	ROW("received by SCM_RIGHTS: dq_open", r.open, 0);
 	ROW("received by SCM_RIGHTS: attach", r.attach, 0);
 	ROW("received by SCM_RIGHTS: ds2_attached", r.attached, 1);
@@ -579,7 +578,6 @@ ATF_TC_BODY(shielded_attach, tc)
 	struct act_res r;
 	struct idle s;
 	char b;
-	int status;
 
 	pin_require_plane();
 	dqt_init_manual(&c);
@@ -603,8 +601,7 @@ ATF_TC_BODY(shielded_attach, tc)
 
 	ATF_REQUIRE_EQ(1, write(pa.go[1], "g", 1));
 	memset(&pr, 0, sizeof(pr));
-	status = dqt_wait(&ch, &pr, sizeof(pr));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_collect(&ch, &pr, sizeof(pr));
 	ROW("CP_OP_PROTECT", pr.shield, 0);
 	ROW("protector: attach", pr.act.attach, 0);
 	ROW("protector: ds2_attached", pr.act.attached, 1);
@@ -728,7 +725,7 @@ ATF_TC_BODY(shield_not_inherited, tc)
 	struct sp_arg sa;
 	struct sp_res sr, dummy;
 	struct act_res r;
-	int pd, status, sv[2];
+	int pd, sv[2];
 
 	pin_require_plane();
 	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
@@ -752,8 +749,7 @@ ATF_TC_BODY(shield_not_inherited, tc)
 	ROW("fork: ds2_attached", r.attached, 1);
 
 	ATF_REQUIRE_EQ(1, write(sv[0], "x", 1));
-	status = dqt_wait(&ch, &dummy, sizeof(dummy));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_collect(&ch, &dummy, sizeof(dummy));
 	(void)close(pd);
 	(void)close(sv[0]);
 	(void)close(sv[1]);

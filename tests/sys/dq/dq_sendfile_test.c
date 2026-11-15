@@ -78,7 +78,7 @@ send_and_collect(int fd, unsigned char *buf, size_t cap, struct sf_res *r)
 	struct pollfd pfd;
 	size_t got;
 	ssize_t n;
-	int sv[2], status;
+	int sv[2];
 
 	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
 	a.fd = fd;
@@ -102,9 +102,7 @@ send_and_collect(int fd, unsigned char *buf, size_t cap, struct sf_res *r)
 			break;
 	}
 	(void)close(sv[1]);
-	status = dqt_wait(&ch, r, sizeof(*r));
-	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
-	    "sender status %#x", status);
+	dqt_collect(&ch, r, sizeof(*r));
 	return (got);
 }
 
@@ -170,7 +168,7 @@ ATF_TC_BODY(revoke_eio, tc)
 	struct sf_res r;
 	unsigned char buf[4096];
 	int gop[2];
-	int oracle, status, sv[2];
+	int oracle, sv[2];
 
 	dqt_fill(data, sizeof(data), 2);
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
@@ -194,8 +192,7 @@ ATF_TC_BODY(revoke_eio, tc)
 	while (read(sv[1], buf, sizeof(buf)) > 0)
 		continue;
 	(void)close(sv[1]);
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_collect(&ch, &r, sizeof(r));
 	/*
 	 * The pages are filled asynchronously: a failed fill aborts the
 	 * transfer and the socket reports EIO (so_error).  The call itself may

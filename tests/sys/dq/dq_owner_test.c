@@ -641,7 +641,7 @@ ATF_TC_BODY(sharer_outlives_opener, tc)
 	struct ops_res opener, sharer;
 	struct outlive_eof eof;
 	u_int before;
-	int go[2], rep[2], status;
+	int go[2], rep[2];
 	char b;
 
 	dqt_require_test_access();
@@ -659,9 +659,7 @@ ATF_TC_BODY(sharer_outlives_opener, tc)
 	/* The sharer alone holds these ends, so its death is end of file. */
 	(void)close(go[0]);
 	(void)close(rep[1]);
-	status = dqt_wait(&ch, &opener, sizeof(opener));
-	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
-	    "opener: status %#x", status);
+	dqt_collect(&ch, &opener, sizeof(opener));
 	ATF_REQUIRE_MSG(opener.done && opener.id != 0,
 	    "the opener has no queue");
 

@@ -364,15 +364,14 @@ ATF_TC_BODY(append_two_writers, tc)
 	struct stat st;
 	unsigned char *buf;
 	off_t off;
-	int i, status;
+	int i;
 
 	setup(&f, 4);
 	ATF_REQUIRE_EQ(0, fcntl(f.o->fd, F_SETFL, O_APPEND));
 	for (i = 0; i < 2; i++)
 		dqt_spawn(&ch[i], child_appender, &f.o->fd);
 	for (i = 0; i < 2; i++) {
-		status = dqt_wait(&ch[i], &r[i], sizeof(r[i]));
-		ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+		dqt_collect(&ch[i], &r[i], sizeof(r[i]));
 		ATF_CHECK_EQ_MSG(0, r[i].rv, "appender %d: %s", i,
 		    strerror(r[i].err));
 	}
@@ -502,7 +501,6 @@ ATF_TC_BODY(short_write, tc)
 	struct dqt_rr r;
 	struct stat st;
 	u_int max_io;
-	int status;
 
 	ATF_REQUIRE(dqt_sysctl_get_uint("kern.dq.max_io", &max_io));
 	setup(&f, 6);
@@ -518,8 +516,7 @@ ATF_TC_BODY(short_write, tc)
 	    (uint64_t)max_io + 1, 0));
 	ATF_CHECK_EQ(EINVAL, errno);
 	answer_write(&f, 0, 5, 0);
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(5, r.rv);
 	dqt_msleep(100);
 	ATF_CHECK_EQ(1, f.c.nheld);	/* no second chunk */
@@ -545,7 +542,6 @@ ATF_TC_BODY(eintr_mid_chunk, tc)
 	struct big_arg a;
 	struct dqt_rr r;
 	u_int max_io;
-	int status;
 
 	ATF_REQUIRE(dqt_sysctl_get_uint("kern.dq.max_io", &max_io));
 	setup(&f, 7);
@@ -563,8 +559,7 @@ ATF_TC_BODY(eintr_mid_chunk, tc)
 	ATF_REQUIRE_EQ(0, kill(ch.pid, SIGUSR1));
 	ATF_CHECK(dqt_wait_interrupts(&f.c, 1, DQT_WAIT_MS));
 	ATF_CHECK_EQ(f.c.held[1].id, f.c.interrupted[0]);
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ_MSG((long)max_io, r.rv, "rv %ld errno %d", r.rv, r.err);
 	/* The late reply to the abandoned chunk is ESRCH. */
 	errno = 0;
@@ -727,7 +722,6 @@ ATF_TC_BODY(controller_errnos, tc)
 	struct big_arg a;
 	struct dqt_rr r;
 	struct dq_stats2 st;
-	int status;
 
 	setup(&f, 11);
 	dqt_hold(&f.c, true);
@@ -737,8 +731,7 @@ ATF_TC_BODY(controller_errnos, tc)
 	dqt_spawn(&ch, child_big_pwrite, &a);
 	ATF_REQUIRE(dqt_wait_held(&f.c, 1, DQT_WAIT_MS));
 	ATF_REQUIRE_EQ(0, dq_reply(f.c.q, f.c.held[0].id, ENOSPC, NULL, 0));
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(ENOSPC, r.err);
 	dqt_spawn(&ch, child_big_pwrite, &a);
 	ATF_REQUIRE(dqt_wait_held(&f.c, 2, DQT_WAIT_MS));
@@ -756,8 +749,7 @@ ATF_TC_BODY(controller_errnos, tc)
 		ATF_CHECK_EQ(EINVAL, errno);
 	}
 	ATF_REQUIRE_EQ(0, dq_reply(f.c.q, f.c.held[1].id, EPIPE, NULL, 0));
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_CHECK_MSG(WIFEXITED(status), "status %#x (SIGPIPE?)", status);
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.rv);
 	ATF_CHECK_EQ(EIO, r.err);
 	dqt_stats2(&f.c, &st);
@@ -797,7 +789,6 @@ ATF_TC_BODY(edeadlk_while_held, tc)
 	struct dqt_rr r;
 	struct timespec t0;
 	char buf[8];
-	int status;
 
 	setup(&f, 12);
 	dqt_hold(&f.c, true);
@@ -827,8 +818,7 @@ ATF_TC_BODY(edeadlk_while_held, tc)
 	ATF_CHECK_EQ(1, f.c.nwr);
 
 	answer_write(&f, 0, 10, 0);
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(10, r.rv);
 	dqt_hold(&f.c, false);
 	teardown(&f);
@@ -849,7 +839,6 @@ ATF_TC_BODY(reply_offset_and_zero, tc)
 	struct dqt_child ch;
 	struct big_arg a;
 	struct dqt_rr r;
-	int status;
 
 	setup(&f, 13);
 	dqt_hold(&f.c, true);
@@ -865,8 +854,7 @@ ATF_TC_BODY(reply_offset_and_zero, tc)
 	ATF_CHECK_EQ(EINVAL, errno);
 	/* Still in flight: the correct offset with nothing written. */
 	ATF_CHECK_EQ(0, dq_reply_write(f.c.q, f.c.held[0].id, 0, 100));
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.rv);
 	ATF_CHECK_EQ(EIO, r.err);
 	dqt_hold(&f.c, false);

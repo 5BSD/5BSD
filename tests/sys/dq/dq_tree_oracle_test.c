@@ -32,6 +32,8 @@
 
 #include <libdq.h>
 
+#include "dq_test.h"
+
 /* Every case is root (a controller of /dev/dq) and bounded in time. */
 #define	DQ_TC_HEAD_BODY(name)						\
 	ATF_TC_HEAD(name, tc)						\
@@ -303,6 +305,7 @@ ATF_TC_BODY(tree_oracle, tc)
 	struct out *real, *served;
 	char cwd[PATH_MAX], prefix[PATH_MAX], bpath[PATH_MAX];
 	int go[2], back[2], pd, status, ofd, bfd, sroot, ls1, ls2, fd;
+	size_t got;
 	uint64_t rootid;
 	pid_t pid;
 	char c;
@@ -337,15 +340,21 @@ ATF_TC_BODY(tree_oracle, tc)
 		if (read(go[0], &c, 1) != 1)
 			_exit(1);
 		script(sroot, served);
-		(void)write(back[1], served, sizeof(*served));
-		_exit(0);
+		_exit(write(back[1], served, sizeof(*served)) ==
+		    (ssize_t)sizeof(*served) ? 0 : DQT_EXIT_NORESULT);
 	}
+	/* Only the child holds the write ends: its death is an EOF here. */
+	close(go[0]);
+	close(back[1]);
 	ATF_REQUIRE_MSG(dq_attach(s.q, pd) == 0, "attach: %s",
 	    strerror(errno));
 	ATF_REQUIRE(write(go[1], "g", 1) == 1);
-	ATF_REQUIRE_EQ((ssize_t)sizeof(*served),
-	    read(back[0], served, sizeof(*served)));
+	got = dqt_read_full(back[0], served, sizeof(*served));
 	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	dqt_require_exit0(status, "the served script");
+	ATF_REQUIRE_EQ(sizeof(*served), got);
+	close(go[1]);
+	close(back[0]);
 
 	script(ofd, real);
 	if (strcmp(real->buf, served->buf) != 0) {

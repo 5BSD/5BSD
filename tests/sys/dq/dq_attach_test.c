@@ -68,13 +68,12 @@ ATF_TC_BODY(attach_basic, tc)
 	struct dqt_achild ch;
 	struct basic_res r;
 	struct dq_stats2 st;
-	int i, status;
+	int i;
 
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ch, child_basic, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(ENOENT, r.probe);		/* PASS: the real answer */
 	ATF_CHECK_EQ(0, r.nnp_rv);
 	ATF_CHECK_EQ(PROC_NO_NEW_PRIVS_ENABLE, r.nnp);
@@ -353,13 +352,12 @@ ATF_TC_BODY(inheritance, tc)
 	struct dqt_achild ch;
 	struct inh_res r;
 	char tag[64];
-	int i, k, status;
+	int i, k;
 
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ch, child_inherit, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	for (k = 0; k < INH_NKINDS; k++) {
 		(void)snprintf(tag, sizeof(tag), "dqt-probe-%s", inh_tag[k]);
 		ATF_CHECK_EQ_MSG(ENOENT, r.probe[k], "%s: probe %d", inh_tag[k],

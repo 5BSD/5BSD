@@ -586,15 +586,13 @@ ATF_TC_BODY(attached_root_open, tc)
 	struct dqt_achild ch;
 	struct dq_stats st;
 	struct lg_res res;
-	int status;
 
 	LG_ROOT();
 	dqt_init(&c);
 	dqt_stats(&c, &st);
 	memset(&res, 0, sizeof(res));
 	dqt_attach_spawn(&c, &ch, child_open_stats, NULL);
-	status = dqt_attach_wait(&ch, &res, sizeof(res));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &res, sizeof(res));
 	CHECK_OK(res.r[0]);
 	CHECK_OK(res.r[1]);
 	ATF_CHECK(res.id != 0 && res.id != st.ds_queue_id);
@@ -1599,7 +1597,6 @@ ATF_TC_BODY(attach_without_authority, tc)
 	struct dqt_ctl c;
 	struct dqt_achild ch;
 	struct lg_res res;
-	int status;
 
 	LG_ROOT();
 	memset(&before, 0xff, sizeof(before));
@@ -1610,8 +1607,7 @@ ATF_TC_BODY(attach_without_authority, tc)
 	dqt_init(&c);
 	memset(&res, 0xff, sizeof(res));
 	dqt_attach_spawn(&c, &ch, child_authority_info, NULL);
-	status = dqt_attach_wait(&ch, &res, sizeof(res));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &res, sizeof(res));
 	CHECK_OK(res.r[0]);
 	ATF_CHECK_EQ(0, res.r[1].rv);
 	ATF_CHECK_EQ(0, res.r[2].rv);
