@@ -65,7 +65,7 @@ struct dqt_object {
 	struct dq_ident_file ident;	/* the GETATTR answer / serve copy */
 	int		 read_errno;	/* 0: serve bytes; else this errno */
 	int		 serve_errno;	/* != 0: answer every 1b event with it */
-	bool		 fence;		/* a fence sentinel (dqt_fence) */
+	bool		 fence;		/* a fence sentinel */
 	int		 backing;	/* -1, or the file dq_serve_file serves */
 	struct dq_serve_state *lockstate;	/* the queue's (dqt_ctl), shared */
 	struct dq_serve_opts sopts;
@@ -113,13 +113,14 @@ struct dqt_ctl {
 	int		 q;		/* the queue, -1 once closed */
 	pthread_t	 thr[DQT_READERS_MAX];
 	struct dqt_reader_arg rarg[DQT_READERS_MAX];
-	unsigned	 thr_batches[DQT_READERS_MAX];	/* batches per reader */
+	/* Batches each reader thread read. */
+	unsigned	 thr_batches[DQT_READERS_MAX];
 	int		 nthr;
 	pthread_mutex_t	 mtx;
 	pthread_cond_t	 cv;
 	bool		 stop;
 	bool		 paused;	/* do not read the queue */
-	int		 inbatch;	/* readers between read(2) and replies */
+	int		 inbatch;	/* readers in a batch */
 	bool		 hold_replies;	/* read, record, do not answer */
 	int		 reply_delay_ms;
 	enum dqt_order	 order;
@@ -273,8 +274,8 @@ struct dqt_object *dqt_object_by_id(struct dqt_ctl *c, uint64_t id);
  * the child to die, and must check it.
  */
 #define	DQT_RESULT_MAX		4096
-#define	DQT_EXIT_NORESULT	3	/* the child could not send its result */
-#define	DQT_EXIT_NOGO		2	/* the child got no go byte */
+#define	DQT_EXIT_NORESULT	3	/* the result could not be sent */
+#define	DQT_EXIT_NOGO		2	/* no go byte arrived */
 typedef void (*dqt_child_fn)(void *arg, void *result);
 struct dqt_child {
 	pid_t		 pid;
@@ -334,8 +335,8 @@ void	dqt_msleep(int ms);
  */
 bool	dqt_wait_wmesg(pid_t pid, const char *wmesg, int ms);
 /* The kernel's wait channel messages a test waits for (dq_queue.c). */
-#define	DQT_WMESG_REPLY		"dqwait"	/* a delivered event's reply */
-#define	DQT_WMESG_INFLIGHT	"dqinfl"	/* the per-object in-flight bound */
+#define	DQT_WMESG_REPLY		"dqwait"	/* waiting for a reply */
+#define	DQT_WMESG_INFLIGHT	"dqinfl"	/* the in-flight bound */
 /* Poll the queue's statistics until pred(st, arg) holds or ms elapse. */
 typedef bool (*dqt_stats_pred)(const struct dq_stats *st, uintptr_t arg);
 bool	dqt_wait_stats(struct dqt_ctl *c, dqt_stats_pred pred, uintptr_t arg,
@@ -375,7 +376,8 @@ int	dqt_recv_fd(int sock);
  * programs the Makefile builds) into the work directory as name, mode
  * 0755.  A missing program is a failure.
  */
-void	dqt_copy_helper(const atf_tc_t *tc, const char *prog, const char *name);
+void	dqt_copy_helper(const atf_tc_t *tc, const char *prog,
+	    const char *name);
 
 /*
  * A private fdescfs instance at DQT_FDESC_DIR in the test's work directory

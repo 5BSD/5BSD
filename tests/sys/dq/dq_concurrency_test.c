@@ -140,7 +140,7 @@ struct one_read_arg {
 	int		 fd;
 	size_t		 len;
 	int		 alarm_us;	/* 0: no timer */
-	bool		 catch_alrm;	/* catch SIGALRM (no SA_RESTART) */
+	bool		 catch_alrm;	/* catch SIGALRM, no SA_RESTART */
 };
 
 struct one_read_res {
