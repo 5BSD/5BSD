@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_test_install_archive")
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+cc_library(name = "soxstack", srcs = ["soxstack.c"], deps = ["//lib/libprocstat:procstat"],
+    features = ["bsd_small_pic"], linkstatic = True, target_compatible_with = _PLATFORM)
+# Executable-stack behavior is the subject of the test, not a global hardening exception.
+cc_shared_library(name = "soxstack_shared", deps = [":soxstack"],
+    dynamic_deps = ["//lib/libprocstat:procstat_shared"], shared_lib_name = "libsoxstack.so",
+    user_link_flags = ["-Wl,-soname,libsoxstack.so", "-Wl,-z,execstack"],
+    target_compatible_with = _PLATFORM, visibility = ["//tests/sys/vm/stack:__pkg__"])
+utility_installation(name = "install_manifest", program = "libsoxstack.so", binary = ":soxstack_shared", manual = None,
+    package = "tests", bindir = "/usr/tests/sys/vm/stack", binary_mode = "0444")
+bsd_test_install_archive(name = "install_archive", directory = "/usr/tests/sys/vm/stack",
+    manifests = [":install_manifest"], debug = True, visibility = ["//tests/sys/vm:__pkg__"])

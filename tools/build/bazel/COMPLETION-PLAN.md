@@ -182,6 +182,45 @@ related groups must preserve ATF/plain/TAP metadata and script transformations,
 not just build a C source glob. Whole installation/runtime and all six gates
 remain open.
 
+The header/VM group completes native R6 and final R7 through the same complete
+audit endpoint. Ten source owners add 31 compiled programs, five scripts and
+one shared-library fixture: include macros, rc.d routing, release integrity,
+sys data structures/time, sound conversion, VFS and the complete VM/stack
+subtree. Source-owned macro and PCM header targets expose the actual interfaces;
+included test C bodies are declared textual inputs. Script-only suites do not
+claim split-debug directories. The etc parent uses the original maintained
+auto-discovery Kyuafile, and the VM parent includes stack without registering its
+helper library as a test.
+
+Independent review checks 76 suite file claims, 32 directory claims, original
+Make registrations and script payloads, and 31 program/debug pairs. The separate
+fixture review checks its library/debug pair and exact Make ELF metadata,
+including imports/exports/versions and dependency ordering. Both stack consumers
+pass the maintained program comparator with their explicit installed search
+path. The fixture deliberately requires an executable stack, matching Make;
+the general shared-object hardening verifier still rejects it. Whole tests-on
+package acceptance therefore also requires a source-owned, explicit fixture
+contract mechanism; do not add pathname-based exclusions or waive hardening for
+other payloads. Existing soxstack source emits a procstat count-pointer signedness
+warning; no suppression or test-source rewrite was introduced to hide it.
+
+Final R7 also executes all nine declared header-macro ATF cases through the
+normal native test adapter with declared source-built libc/libsys/ATF runtime.
+All nine and the three selected build-tool targets pass. The capture review
+verifies all 4,305 output records; all ten installation archives and their request
+metadata remain byte-identical to the independently reviewed R6 capture. Evidence
+under /usr/obj/usr/src: `bazel-installed-tests-world-native-amd64-r7-20261115`,
+`bazel-installed-tests-world-capture-review-r7-20261115`,
+`bazel-header-vm-test-installation-review-r2-20261115`,
+`bazel-vm-test-fixture-review-r1-20261115` and
+`bazel-header-vm-test-capture-identity-r1-20261115`. The premature review attempt
+before the terminal receipt existed was rejected and remains retained. Kernel,
+policy and hardware cases are built, not executed on the host; current image/VM,
+remaining suites, full installation/configuration parity and all six gates stay
+open. The existing format-5 labels/test selectors and maintained world backend
+carry these additions; the frontend C interface, signing/publication policy and
+manual behavior require no new option.
+
 The concurrent OpenES merge a7d37e2855a changed kernel and test sources during
 R1. R2 incorporated its world dependencies; five archive hashes changed for real
 library/header/manual payload changes. Neither run is a controlled incremental

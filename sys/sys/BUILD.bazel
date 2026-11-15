@@ -239,3 +239,9 @@ public_header_installation(name = "public_flat_sys_install", directory = "sys",
 
 public_header_installation(name = "public_flat_sys_disk_install", directory = "sys/disk",
     files = {header: header.split("/")[-1] for header in glob(["disk/*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")
+
+# Public macro interfaces exercised by the source-owned header tests.
+cc_library(name = "header_test_headers",
+    hdrs = ["_endian.h", "_visible.h", "ckdint.h", "endian.h", "arb.h", "_bitset.h", "bitset.h",
+        "bitstring.h", "buf_ring.h", "qmath.h", "queue.h", "tree.h", "time.h"],
+    strip_include_prefix = "/sys", visibility = ["//include:__pkg__", "//tests/sys/sys:__pkg__"])

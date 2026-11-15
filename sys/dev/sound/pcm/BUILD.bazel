@@ -203,3 +203,7 @@ amd64_generic_module_objects(name = "sound_sound_module", srcs = ["sound.c"],
 amd64_generic_module_objects(name = "sound_vchan_module", srcs = ["vchan.c"],
     deps = ["//sys/dev/sound/pcm:device_io_kernel_channel_headers", "//sys/vm:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/dev/sound/pcm:channel_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:device_io_kernel_opt_snd_header"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+# Userland sample-conversion tests do not import the kernel-only header closure.
+cc_library(name = "userland_test_headers", hdrs = ["sound.h", "pcm.h", "g711.h"],
+    strip_include_prefix = "/sys", visibility = ["//tests/sys/sound:__pkg__"])
