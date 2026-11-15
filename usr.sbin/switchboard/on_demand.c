@@ -581,7 +581,16 @@ svc_launch_or_await(struct svc_runtime *svc, int kq)
 {
 	svc_reclaim_mark_dirty();	/* a launch changes the running set */
 
-	return (svc_exec(svc, kq));
+	if (svc_exec(svc, kq) == -1)
+		return (-1);
+	/*
+	 * A unit that died is relaunched by a backoff timer
+	 * (schedule_restart()), but a lookup, an activation or a reload may
+	 * start it first.  That launch is the restart the timer was waiting
+	 * for: drop the timer, or it fires at a unit that is already up.
+	 */
+	svc_cancel_restart(svc, kq);
+	return (0);
 }
 
 static int

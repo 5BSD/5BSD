@@ -28,6 +28,8 @@ static bool cleanup_mock;
 static uint32_t cleanup_phase;
 static unsigned runtime_removals;
 static unsigned slot_removals, launch_calls;
+/* When set, the svc_exec() stub refuses as execute.c's svc_exec() does. */
+static bool exec_refuses_started;
 
 static int
 cleanup_test_status(int fd, struct capability_coalition_status *state)
@@ -102,12 +104,21 @@ svc_reregister_kevents(int kq)
 	(void)kq;
 }
 
+void
+svc_reclaim_mark_dirty(void)
+{
+}
+
 int
 svc_exec(struct svc_runtime *svc, int kq)
 {
 
+	if (exec_refuses_started &&
+	    (svc->state != SVC_STATE_STOPPED || svc->launch != NULL)) {
+		errno = EALREADY;
+		return (-1);
+	}
 	launch_calls++;
-	(void)svc;
 	(void)kq;
 	return (0);
 }
@@ -450,6 +461,96 @@ ATF_TC_BODY(circuit_breaker_blocks_on_demand_relaunch, tc)
 	/* A fresh runtime and an explicitly reset counter remain launchable. */
 	svc.restart_count = 0;
 	ATF_CHECK(!on_demand_circuit_open(&svc));
+}
+
+/*
+ * A unit that died waits for its backoff restart timer; a lookup (or an
+ * activation, or a reload) may start it before the timer fires.  That launch
+ * supersedes the restart: the timer must be dropped.
+ */
+ATF_TC_WITHOUT_HEAD(restart_superseded_by_launch);
+ATF_TC_BODY(restart_superseded_by_launch, tc)
+{
+	struct timespec zero = { 0, 0 };
+	struct kevent kev;
+	struct svc_runtime svc;
+	int kq;
+
+	(void)tc;
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	switchboard_kq = kq;
+	exec_refuses_started = true;
+	runtime_init(&svc, "org.test.relaunched", 0, 0);
+	svc.pd_fd = svc.channel_fd = svc.coalition_fd = -1;
+	svc.manifest.max_failures = 10;
+	svc.state = SVC_STATE_STOPPED;
+	svc.restart_count = 1;
+	schedule_restart(&svc, kq);
+	ATF_REQUIRE(svc.restart_pending);
+	ATF_REQUIRE(svc.timer_ident != 0);
+
+	launch_calls = 0;
+	ATF_REQUIRE_EQ(0, svc_launch_or_await(&svc, kq));
+	ATF_CHECK_EQ(1, launch_calls);
+	ATF_CHECK_MSG(!svc.restart_pending,
+	    "the restart timer outlived the launch that superseded it");
+	ATF_CHECK_EQ(0, svc.timer_ident);
+	/* And it is gone from the kqueue, not only from the runtime. */
+	ATF_CHECK_EQ(0, kevent(kq, NULL, 0, &kev, 1, &zero));
+
+	exec_refuses_started = false;
+	switchboard_kq = -1;
+	(void)close(kq);
+}
+
+/*
+ * dA2 (2026-11-15): a restart timer that fires for a unit that is already up
+ * again was counted as an exec failure ("svc_exec ...: not stopped (state
+ * 2)"), re-armed, and after max_failures the running unit was disabled and
+ * marked STOPPED.  Firing at a started unit is not a failure and launches
+ * nothing.
+ */
+ATF_TC_WITHOUT_HEAD(restart_timer_for_started_unit);
+ATF_TC_BODY(restart_timer_for_started_unit, tc)
+{
+	struct kevent kev;
+	struct svc_runtime svc;
+	unsigned i;
+	int kq;
+
+	(void)tc;
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	switchboard_kq = kq;
+	exec_refuses_started = true;
+	runtime_init(&svc, "org.test.running", 1234, 7);
+	svc.pd_fd = svc.channel_fd = svc.coalition_fd = -1;
+	svc.manifest.max_failures = 3;
+	svc.restart_count = 1;
+	launch_calls = 0;
+	for (i = 0; i < 2 * svc.manifest.max_failures; i++) {
+		svc.state = i % 2 == 0 ? SVC_STATE_RUNNING : SVC_STATE_STARTING;
+		svc.restart_pending = true;
+		svc.timer_ident = 0x100 + i;
+		memset(&kev, 0, sizeof(kev));
+		kev.ident = svc.timer_ident;
+		kev.filter = EVFILT_TIMER;
+		kev.udata = &svc;
+		supervisor_handle_timer(&kev);
+		ATF_CHECK_EQ(1, svc.restart_count);
+		ATF_CHECK(svc.state == SVC_STATE_RUNNING ||
+		    svc.state == SVC_STATE_STARTING);
+		ATF_CHECK(!svc.restart_pending);
+		/* Nothing re-armed: drain the kqueue to be sure. */
+		svc_cancel_restart(&svc, kq);
+	}
+	ATF_CHECK_EQ(0, launch_calls);
+	ATF_CHECK_EQ(1234, svc.pid);
+
+	exec_refuses_started = false;
+	switchboard_kq = -1;
+	(void)close(kq);
 }
 
 /*
@@ -1738,6 +1839,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, timer_identifiers);
 	ATF_TP_ADD_TC(tp, timer_registration_failure);
 	ATF_TP_ADD_TC(tp, circuit_breaker_blocks_on_demand_relaunch);
+	ATF_TP_ADD_TC(tp, restart_superseded_by_launch);
+	ATF_TP_ADD_TC(tp, restart_timer_for_started_unit);
 	ATF_TP_ADD_TC(tp, idle_timer_arm_cancel);
 	ATF_TP_ADD_TC(tp, idle_timer_ident_range);
 	ATF_TP_ADD_TC(tp, idle_timer_fire_stops_provider);
