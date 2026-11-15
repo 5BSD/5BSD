@@ -417,6 +417,64 @@ struct holder_res {
 	int		 attached;	/* PROC_NO_NEW_PRIVS_STATUS: ATTACH sets it */
 };
 
+/*
+ * The supervisor's queue and object, in a forked child: libdq only, and an
+ * exit status (60 + step) where a body would have failed.
+ */
+static int
+sup_mint(int oracle, int *qp)
+{
+	struct dq_ident_file ident;
+	struct dq_policy pol;
+	struct statfs sfs;
+	struct stat st;
+	uint64_t id;
+	int fd, q;
+
+	q = dq_open();
+	if (q == -1)
+		_exit(60);
+	if (fstat(oracle, &st) != 0 || fstatfs(oracle, &sfs) != 0 ||
+	    dq_ident_from_stat(&ident, oracle_path, &st, &sfs, oracle) != 0)
+		_exit(61);
+	dq_policy_default(&pol);
+	if (dq_mint_file(q, &ident, &pol, &id, &fd, NULL) != 0)
+		_exit(62);
+	*qp = q;
+	return (fd);
+}
+
+/* Answer the first READ on q from data; any other waited event EIO. */
+static int
+sup_serve_read(int q)
+{
+	static char buf[65536];
+	const struct dq_read_body *rb;
+	const struct dq_event *ev;
+	ssize_t got;
+	size_t len;
+
+	for (;;) {
+		if (dq_read_events(q, buf, sizeof(buf), &got) != 0)
+			return (-1);
+		for (ev = dq_event_first(buf, (size_t)got); ev != NULL;
+		    ev = dq_event_next(buf, (size_t)got, ev)) {
+			if (ev->de_op != DQ_OP_READ) {
+				if (ev->de_id != 0)
+					(void)dq_reply(q, ev->de_id, EIO, NULL,
+					    0);
+				continue;
+			}
+			if (dq_event_read(ev, &rb) != 0)
+				return (-1);
+			len = rb->dr_offset >= sizeof(data) ? 0 :
+			    MIN(rb->dr_len, sizeof(data) - rb->dr_offset);
+			return (dq_reply(q, ev->de_id, 0,
+			    data + (len != 0 ? rb->dr_offset : 0), len));
+		}
+	}
+}
+
 ATF_TC(unattached_holder_survives);
 ATF_TC_HEAD(unattached_holder_survives, tc)
 {
@@ -429,15 +487,13 @@ ATF_TC_HEAD(unattached_holder_survives, tc)
 }
 ATF_TC_BODY(unattached_holder_survives, tc)
 {
-	struct dqt_ctl c;
-	struct dqt_object *o;
 	struct holder_res r;
 	struct procctl_reaper_status rs;
 	struct stat sb;
 	unsigned char buf[100];
 	sigset_t all, pend;
 	pid_t holder, sup;
-	int go[2], hp[2], oracle, ready[2], res[2], sig, status;
+	int fd, go[2], hp[2], oracle, q, ready[2], res[2], sig, status;
 	char b;
 
 	dqt_require_plane();
@@ -458,10 +514,12 @@ ATF_TC_BODY(unattached_holder_survives, tc)
 	sup = fork();
 	ATF_REQUIRE_MSG(sup != -1, "fork: %s", strerror(errno));
 	if (sup == 0) {
-		/* The supervisor: a queue, one object, one reader thread. */
-		dqt_init(&c);
-		o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data),
-		    NULL);
+		/*
+		 * The supervisor: a queue and one object, made with libdq
+		 * alone (no ATF call in a forked child); it answers the
+		 * holder's first read itself.
+		 */
+		fd = sup_mint(oracle, &q);
 		holder = fork();
 		if (holder == -1)
 			_exit(70);
@@ -473,7 +531,7 @@ ATF_TC_BODY(unattached_holder_survives, tc)
 			sigfillset(&all);
 			(void)sigprocmask(SIG_BLOCK, &all, NULL);
 			memset(&r, 0, sizeof(r));
-			r.before.rv = read(o->fd, buf, sizeof(buf));
+			r.before.rv = read(fd, buf, sizeof(buf));
 			r.before.err = r.before.rv == -1 ? errno : 0;
 			if (procctl(P_PID, getpid(), PROC_NO_NEW_PRIVS_STATUS,
 			    &r.attached) != 0)
@@ -482,11 +540,11 @@ ATF_TC_BODY(unattached_holder_survives, tc)
 				_exit(71);
 			if (read(go[0], &b, 1) != 1)
 				_exit(72);
-			r.after.rv = pread(o->fd, buf, sizeof(buf), 4096);
+			r.after.rv = pread(fd, buf, sizeof(buf), 4096);
 			r.after.err = r.after.rv == -1 ? errno : 0;
-			r.st.rv = fstat(o->fd, &sb);
+			r.st.rv = fstat(fd, &sb);
 			r.st.err = r.st.rv == -1 ? errno : 0;
-			r.cl.rv = close(o->fd);
+			r.cl.rv = close(fd);
 			r.cl.err = r.cl.rv == -1 ? errno : 0;
 			if (write(res[1], &r, sizeof(r)) != sizeof(r))
 				_exit(73);
@@ -502,6 +560,8 @@ ATF_TC_BODY(unattached_holder_survives, tc)
 		if (write(hp[1], &holder, sizeof(holder)) != sizeof(holder))
 			_exit(74);
 		/* Serve the holder's first read, then exit: not a close. */
+		if (sup_serve_read(q) != 0)
+			_exit(76);
 		if (read(ready[0], &b, 1) != 1)
 			_exit(75);
 		_exit(0);
