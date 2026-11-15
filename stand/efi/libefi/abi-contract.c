@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #include <efi.h>
 _Static_assert(sizeof(CHAR16) == 2, "UEFI CHAR16 ABI");
 _Static_assert(sizeof(EFI_GUID) == 16, "UEFI GUID ABI");

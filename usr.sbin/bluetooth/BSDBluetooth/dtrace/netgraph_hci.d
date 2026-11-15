@@ -1,4 +1,10 @@
 #!/usr/sbin/dtrace -s
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * netgraph_hci.d - trace the kernel HCI layer (ng_hci) via the `bluetooth`
  * SDT provider.

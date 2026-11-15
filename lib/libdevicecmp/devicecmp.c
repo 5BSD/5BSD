@@ -1,4 +1,5 @@
 /*- SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * system.Device client: open a named /dev leaf and receive a Capsicum-narrowed
  * descriptor, using the generated bsd.device.v1 bindings (devicecmp.fidl).

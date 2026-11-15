@@ -1,4 +1,5 @@
 /*- SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef _BSDCRYPTO_POLICY_H_
 #define _BSDCRYPTO_POLICY_H_
 

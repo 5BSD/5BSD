@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 provider fidl_bsd {
 	probe request__start(uintptr_t connection, uint32_t txid, uint64_t ordinal,
 	    uint64_t bytes, uint64_t descriptors);

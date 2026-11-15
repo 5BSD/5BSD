@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef SWITCHBOARD_NSS_PROTOCOL_H
 #define SWITCHBOARD_NSS_PROTOCOL_H
 #include <sys/param.h>

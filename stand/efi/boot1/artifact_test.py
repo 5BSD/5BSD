@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Inspect real firmware artifacts without executing target code."""
 import argparse
 import json

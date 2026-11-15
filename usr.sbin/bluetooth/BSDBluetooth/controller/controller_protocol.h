@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef BLUED_CONTROLLER_PROTOCOL_H
 #define BLUED_CONTROLLER_PROTOCOL_H
 #include <stdint.h>

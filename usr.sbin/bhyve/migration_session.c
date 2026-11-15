@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Live-migration control plane: wire codec, capability/topology negotiation,
  * an injectable transport (with a thin fd/stream adapter), and the source and
  * destination session state machines.

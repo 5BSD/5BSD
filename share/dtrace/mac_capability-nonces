@@ -2,6 +2,8 @@
 /*
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * mac_capability-nonces -- trace MAC_CAPABILITY credential nonce lifecycle.
  */
 

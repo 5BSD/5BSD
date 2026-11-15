@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef _BSDSYSCTL_INTERFACES_H_
 #define _BSDSYSCTL_INTERFACES_H_
 #include <stddef.h>

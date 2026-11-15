@@ -2,6 +2,8 @@
 /*
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * capwatch.d -- observe capability mediation: in-kernel Capsicum denials and
  *		 process-descriptor signalling, plus the userland Casper broker
  *		 allow/deny decisions.

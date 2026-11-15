@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 FILENAME == ARGV[1] {
     if ($1 == "#define" && $2 == "VERSION") version = $3
     next

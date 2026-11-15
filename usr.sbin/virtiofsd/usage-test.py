@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Reject incomplete command lines before opening an export or socket."""
 import argparse
 import os

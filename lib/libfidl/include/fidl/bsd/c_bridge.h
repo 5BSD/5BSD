@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef FIDL_BSD_C_BRIDGE_H
 #define FIDL_BSD_C_BRIDGE_H
 #include <sys/capsicum.h>

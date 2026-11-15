@@ -1,4 +1,10 @@
 #!/usr/sbin/dtrace -s
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * power.d - trace LE Power Control (BT 5.2) in blued: path-loss zone
  * transitions, TX power reports, and the enhanced/remote TX power reads and

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Generate libfetch protocol tables from their maintained source inventory."""
 import argparse
 import json

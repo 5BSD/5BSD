@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * sysctlcmpctl: command-line client for the system.Sysctl capability.
  *   sysctlcmpctl get <name>
  *   sysctlcmpctl set <name> <string-value>

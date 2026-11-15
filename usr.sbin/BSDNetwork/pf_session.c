@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * The PF endpoint belongs to BSDNetwork, but its sessions use dedicated
  * workers.  The parent requests /dev/pf from BSDFilesystem.  Each worker
  * inherits only a descriptor narrowed to one read-only state-export ioctl,

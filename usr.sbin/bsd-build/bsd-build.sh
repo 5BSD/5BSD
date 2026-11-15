@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # 5BSD build orchestration. Installation is an explicit separate command.
 set -eu
 set -o pipefail
