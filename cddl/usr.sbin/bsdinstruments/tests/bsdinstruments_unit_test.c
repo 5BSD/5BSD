@@ -194,6 +194,24 @@ ATF_TC_BODY(descriptions, tc)
 		{ "/*\n *\n *   \n */", "" },
 		{ "/*\n * \tFirst line.  \n * second\n */", "First line." },
 		{ "/* inline */", "inline" },
+		/* An empty first comment still ends the search. */
+		{ "/**/\n/* second */", "" },
+		/* A licence header is skipped... */
+		{ "/*-\n * SPDX-License-Identifier: BSD-2-Clause\n *\n"
+		  " * Copyright (c) 2026 Kory Heard\n */\n\n/* Real one. */\n",
+		  "Real one." },
+		{ "/* SPDX-License-Identifier: BSD-2-Clause */\n"
+		  "/* Copyright (c) 2026 Kory Heard */\nprovider p {};\n"
+		  "/* After code. */", "After code." },
+		/* ...also inside the descriptive comment itself... */
+		{ "/* SPDX-License-Identifier: BSD-2-Clause\n *\n"
+		  " * Copyright (c) 2026 Kory Heard\n *\n * Tagged.\n */",
+		  "Tagged." },
+		{ "/* Described first.\n * SPDX-License-Identifier: "
+		  "BSD-2-Clause */", "Described first." },
+		/* ...and a header with nothing after it describes nothing. */
+		{ "/*-\n * SPDX-License-Identifier: BSD-2-Clause\n */", "" },
+		{ "/* Copyright (c) 2026 Kory Heard */ /* never closed", "" },
 	};
 	struct profile *p;
 	size_t i;

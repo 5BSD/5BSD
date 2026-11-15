@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Run only in an empty disposable VNET. */
 #include <sys/types.h>
 #include <sys/ioctl.h>

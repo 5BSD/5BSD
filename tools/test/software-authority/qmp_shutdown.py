@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Record QMP lifecycle events without requesting guest shutdown.
 
 QEMU's SHUTDOWN guest/reason fields distinguish guest power-off from a host

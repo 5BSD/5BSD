@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * gattprobe: a throwaway unit that opens blued over the capability plane
  * (ble_open_plane: its stamped identity reaches the daemon), registers one

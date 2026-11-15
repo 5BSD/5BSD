@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Compile both languages and inspect emitted ELF architecture without a linker. */
 #include <sys/types.h>
 #include <sys/wait.h>

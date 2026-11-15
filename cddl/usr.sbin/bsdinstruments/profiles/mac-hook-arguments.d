@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Raw MAC callback argument slots, in mac_policy.h declaration order.
  * See tools/test/system-tracing/mac-hook-arguments.json for names/types.
  * Pointer values are identities. By-value structures are borrowed addresses

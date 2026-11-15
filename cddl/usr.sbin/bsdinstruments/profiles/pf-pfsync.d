@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * pfsync traffic - pfsync packets sent and received, and pflow flow
  * records exported (dtrace_pf(4)).

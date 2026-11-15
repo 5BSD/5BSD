@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Disposable BSD VM only; /proc must already be linprocfs.
 set -eu
 cp /root/proc_native /tmp/proc_native

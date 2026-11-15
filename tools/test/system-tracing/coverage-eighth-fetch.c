@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Local socketpair only: readiness, timeout, interruption and peer closure. */
 #include <sys/param.h>
 #include <sys/socket.h>

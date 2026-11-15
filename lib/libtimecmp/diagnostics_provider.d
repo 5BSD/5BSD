@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 provider timecmp {
 	probe wait__start(uintptr_t a0);
 	probe wait__done(uintptr_t a0, int a1, int a2);

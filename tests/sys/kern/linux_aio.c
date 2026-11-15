@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Freestanding x86_64 Linux legacy AIO ABI regression. */
 typedef unsigned long u64;
 typedef unsigned int u32;

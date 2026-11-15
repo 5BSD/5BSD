@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * The rlimits FreeBSD does not have (RLIMIT_NICE, RTPRIO, RTTIME, LOCKS,
  * SIGPENDING, MSGQUEUE) through getrlimit/setrlimit/prlimit64, plus the

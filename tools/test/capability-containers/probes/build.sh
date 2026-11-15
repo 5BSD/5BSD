@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Build the probe units against the world in /usr/obj (run from a buildenv:
 #   make buildenv BUILDENV_SHELL="sh tools/test/capability-containers/probes/build.sh"
 # ).  They link against the sysroot's libservice/liblogcmp/libcryptocmp.

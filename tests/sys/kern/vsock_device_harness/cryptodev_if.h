@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Stand-in for the kobj-generated cryptodev_if.h so virtio_crypto_guest_test.c
  * can include the guest driver; the test defines every cryptodev symbol the

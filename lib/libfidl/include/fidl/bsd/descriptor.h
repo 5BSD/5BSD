@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef FIDL_BSD_DESCRIPTOR_H
 #define FIDL_BSD_DESCRIPTOR_H
 #include <lib/fidl/cpp/natural_coding_traits.h>

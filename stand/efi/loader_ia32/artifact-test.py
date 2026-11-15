@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Inspect the actual IA32 loader artifacts; does not execute firmware."""
 import argparse
 import json

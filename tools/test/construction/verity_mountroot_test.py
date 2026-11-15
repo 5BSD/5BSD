@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual mountroot token/verity parser; injected preload and GEOM operations."""
 from pathlib import Path
 import subprocess,tempfile,unittest

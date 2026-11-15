@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Falsification tests for lib9p's on-the-wire marshalling (pack.c).  These
  * drive the production packer/unpacker through l9p_pufcall()/l9p_pudirent()
  * and assert byte-exact round trips.  They cover gaps that four prior

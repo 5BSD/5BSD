@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * vsock-conntest — open N concurrent AF_VSOCK connections to <cid>:<port>,
  * send a per-connection token, verify the echo, and print a single

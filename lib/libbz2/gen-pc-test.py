@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Source-driven pkg-config generation regression tests."""
 import importlib.util
 from pathlib import Path

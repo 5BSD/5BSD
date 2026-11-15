@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Run only as init_rc or from rc.local in a disposable VM.
 set -eu
 PATH=/sbin:/bin:/usr/sbin:/usr/bin

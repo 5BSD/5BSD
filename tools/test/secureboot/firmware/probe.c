@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Disposable firmware execution probe; never installed on the host. */
 #include <efi.h>
 #include <Guid/GlobalVariable.h>

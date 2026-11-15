@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Execute real userboot harness error paths; shared-loader callback execution is separate."""
 import argparse
 from pathlib import Path

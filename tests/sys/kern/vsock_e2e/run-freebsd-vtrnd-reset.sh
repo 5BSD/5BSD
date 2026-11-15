@@ -1,5 +1,9 @@
 #!/bin/sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Exercise the FreeBSD virtio-rng driver's VIRTIO_F_RING_RESET detach path.
 # Run this inside a disposable FreeBSD bhyve guest whose entropy device uses
 # bhyve's modern virtio-rng transport.

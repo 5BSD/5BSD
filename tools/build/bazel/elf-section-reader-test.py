@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Section range validation, streaming and rejection of incomplete tool metadata."""
 import hashlib
 import importlib.util

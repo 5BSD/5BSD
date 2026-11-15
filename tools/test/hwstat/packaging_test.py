@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check package selection and staged file ownership without publishing/installing.
 
 Build and stage hwstat first; HWSTAT_STAGE can select an existing staging tree.

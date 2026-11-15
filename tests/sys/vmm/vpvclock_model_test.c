@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Model test for the host KVM-compatible paravirtual clock.  It exercises the
  * pure ABI math and protocol that the host runs (the very code in
  * sys/amd64/vmm/io/vpvclock.h) against an independent, first-principles

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Filesystem/receipt tests; execution and jail lifecycle are mocked explicitly."""
 import hashlib
 import importlib.util

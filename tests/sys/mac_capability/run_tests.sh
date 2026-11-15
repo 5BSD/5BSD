@@ -1,5 +1,9 @@
 #!/bin/sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # mac_capability test runner.  Loads service modules, runs ATF tests.
 # Must be run as root.
 #

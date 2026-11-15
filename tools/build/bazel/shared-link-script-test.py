@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Ensure shared script lowering cannot admit undeclared linker inputs."""
 from pathlib import Path
 import tempfile

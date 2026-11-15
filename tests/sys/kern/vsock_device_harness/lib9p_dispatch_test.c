@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Dispatch-layer falsification tests for lib9p's request.c.  A minimal
  * connection is wired to a recording backend so the dispatcher can be driven
  * without a real transport or filesystem.  These pin down two prior bugs:

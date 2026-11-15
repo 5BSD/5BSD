@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise mailwrapper's real existing LOCALBASE configuration interface.
 
 Every case supplies an existing private mailer.conf; none may enter the host

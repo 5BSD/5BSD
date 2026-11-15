@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * EXTERNAL REFERENCE ORACLE: Enhanced ATT bearers (EATT, Bluetooth 5.2) --
  * bearer establishment preconditions, ATT_MTU derivation, the per-bearer

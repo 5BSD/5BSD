@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Optional source checkout for the installed system; never a pkg catalogue URL.
 set -eu
 : "${BSDINSTALL_CHROOT:?set BSDINSTALL_CHROOT to the installation root}"

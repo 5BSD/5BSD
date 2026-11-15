@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check metadata-derived symlink semantics before stage reconciliation."""
 import importlib.util
 from pathlib import Path

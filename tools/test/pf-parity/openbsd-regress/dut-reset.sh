@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Reset a panicked/hung disposable DUT from ddb and wait for ssh.
 set -u
 cd /usr/obj/5BSD-pf-parity/vms

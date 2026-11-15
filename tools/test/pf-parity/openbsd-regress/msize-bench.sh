@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Forwarding microbenchmark through the DUT, run from the host.
 # usage: msize-bench.sh LABEL OUTFILE [nopf|pf]
 #   nopf (default): pf disabled.  pf: pf enabled with a stateful pass

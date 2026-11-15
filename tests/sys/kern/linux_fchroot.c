@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Freestanding amd64 Linux ABI test for fchroot(2), syscall 472. */
 #define AT_FDCWD (-100)
 #define O_RDONLY 0

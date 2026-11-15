@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Qualify declared ATF module staging, loader identity and dynamic dependency changes."""
 import argparse,collections,json,os,shutil,subprocess
 from pathlib import Path

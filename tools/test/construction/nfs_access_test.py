@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual NFS access helper: request credentials, mandatory denial, DAC fallback."""
 from pathlib import Path
 import resource,subprocess,tempfile,unittest

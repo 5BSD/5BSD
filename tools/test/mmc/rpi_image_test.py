@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise real Pi image hooks with offline fixtures and optional real DTBs.
 
 --boot-assets /path/to/rpi-firmware also applies and checks both board overlays.

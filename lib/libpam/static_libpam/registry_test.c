@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Inspect registration only. Never invoke PAM handlers or load a module. */
 #include <sys/types.h>
 #include <sys/linker_set.h>

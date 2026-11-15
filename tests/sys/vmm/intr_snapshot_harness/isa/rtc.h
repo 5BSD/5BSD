@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Relay to the tree's real MC146818 RTC register definitions.  The register
  * constants are outside the header's _KERNEL guard, so the harness gets the
  * exact production values without the in-kernel function prototypes.

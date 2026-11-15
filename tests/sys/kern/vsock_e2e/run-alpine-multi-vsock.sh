@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Run two complete kernel-backed VirtIO-vsock guests concurrently.  Each VM
 # uses a distinct CID, console endpoint, work directory, and AF_VSOCK port
 # range.  Both exercise reset/rebind while the other provider remains active.

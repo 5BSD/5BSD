@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check the FIDL binding sets that buildworld generates.
 
 Every binding set named by a FIDL_BINDINGS entry in a lib/ or usr.sbin/

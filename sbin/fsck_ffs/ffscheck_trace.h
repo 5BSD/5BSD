@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef _FFSCHECK_TRACE_H_
 #define _FFSCHECK_TRACE_H_
 

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * The dq.observe service (D90): the system's view of every queue and
  * object, reached through /dev/mac_capability by a credential that may
  * open /dev/dq itself (stage 1a admission; the capsule rule is stage 4).

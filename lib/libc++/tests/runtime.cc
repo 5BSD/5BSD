@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Public-API integration checks for the native libc++ shared-library closure. */
 #include <charconv>
 #include <cstdlib>

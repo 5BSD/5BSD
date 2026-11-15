@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Compare complete native hints with original directory behavior and failure paths."""
 import hashlib
 import json

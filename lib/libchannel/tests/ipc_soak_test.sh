@@ -1,6 +1,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # A short bidirectional soak on every test run; run ipc_soak directly with a
 # longer duration (for example 3600 seconds) for sustained validation.
 

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Linux amd64 rseq per-mm concurrency-ID contract, without libc. */
 typedef unsigned long u64;
 typedef unsigned int u32;

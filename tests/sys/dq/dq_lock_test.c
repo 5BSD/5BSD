@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Locks (D98, B6, N11): fcntl(2) record locks, OFD locks and flock(2) on a
  * served file are LOCK events the requester waits for without a deadline;
  * close and exit release them with UNLOCK_ALL, posted without waiting and

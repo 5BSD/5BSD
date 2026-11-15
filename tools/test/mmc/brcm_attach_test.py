@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Inject failures into real cfg80211 and bus attach paths."""
 import sys
 sys.dont_write_bytecode = True

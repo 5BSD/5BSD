@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Shared helpers for the capability-container VM proofs.  Sourced by every
 # script under ../scripts.  Requires the rig in ../rig (qemu boot, console
 # command bridge, image builder) and a guest root staged by installworld.

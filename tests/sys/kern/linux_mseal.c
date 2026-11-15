@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * mseal(2): a sealed mapping cannot be unmapped, remapped, re-protected,
  * replaced by MAP_FIXED, or destructively advised (EPERM, contents intact),

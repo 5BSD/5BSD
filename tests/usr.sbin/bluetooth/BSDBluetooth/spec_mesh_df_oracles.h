@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Test-only Directed Forwarding assignments and endpoints transcribed from
  * Mesh Protocol 1.1 §3.6.6 and Mesh Model 1.1.1 §§4.3.4, 4.4.2.
  * This header intentionally includes no libmesh production headers.

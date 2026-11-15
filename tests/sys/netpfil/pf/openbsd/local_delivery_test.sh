@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-# Copyright (c) 2026 The 5BSD Project
+# Copyright (c) 2026 Kory Heard
 # Exercise the additional local-delivery hook, not normal loopback output.
 . $(atf_get_srcdir)/../../../common/vnet.subr
 

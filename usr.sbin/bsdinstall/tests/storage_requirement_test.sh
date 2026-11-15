@@ -1,4 +1,8 @@
 #!/usr/bin/env atf-sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
 
 # Source-only fixtures (the manual page source and the release tooling) are
 # installed beneath srctree/ next to this program; the installer scripts are

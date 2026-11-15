@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Reject incomplete or ambiguous allocation-to-generation mappings."""
 import copy
 import importlib.util

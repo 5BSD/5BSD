@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check the declared local-account provisioning against its complete baseline."""
 FIELDS = ('name', 'password', 'uid', 'gid', 'class', 'change', 'expire',
           'gecos', 'home', 'shell')

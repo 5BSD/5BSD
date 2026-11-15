@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Directory reads of a mounted mqueuefs(4): getdirentries(2) and
  * readdir(3) of the root, with no queues of ours and with several, with
  * large, single-entry and too-small buffers, read to the end and past it,

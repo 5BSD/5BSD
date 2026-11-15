@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # /dev/pf descriptor helper for the 5BSD seam tests (vnet_dev.sh).
 #
 #   pf_devhelper.py send SOCKPATH

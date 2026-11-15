@@ -1,4 +1,7 @@
 -- SPDX-License-Identifier: BSD-2-Clause
+--
+-- Copyright (c) 2026 Kory Heard
+--
 -- Use the existing production test-root interface; never default to host paths.
 local root = assert(os.getenv('NUAGE_FAKE_ROOTDIR'))
 assert(root:sub(1, 1) == '/' and root ~= '/')

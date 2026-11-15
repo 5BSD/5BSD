@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Linuxulator procfs/sysfs virtual files that real runtimes read:
  * /proc/self/cgroup (cgroup v2 "0::/"), /proc/self/cpuset ("/"), and

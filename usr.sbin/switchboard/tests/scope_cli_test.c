@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* Parser-only: no RPC, filesystem edits or service changes. */
 int switchboardctl_test_main(int, char **);
 #define main switchboardctl_test_main

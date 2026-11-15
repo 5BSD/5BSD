@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Compose declared pkgbase fields and run the maintained UCL generator."""
 import argparse
 import json

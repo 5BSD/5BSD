@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise real CLI preflight without touching images or launching QEMU."""
 import pathlib
 import subprocess

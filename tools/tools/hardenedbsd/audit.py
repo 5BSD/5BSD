@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Inventory a pinned HardenedBSD tree delta without modifying any checkout.
 
 The base must be the FreeBSD revision merged into the HardenedBSD snapshot.

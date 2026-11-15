@@ -1,5 +1,9 @@
 #!/bin/sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Regenerate the profile/supplement conformance catalogues from the Bluetooth
 # SIG profile specification texts.  This is the companion of
 # spec_conf_generate.sh, which covers the Core Specification only.
@@ -37,7 +41,7 @@ mode=generate
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 	--check) mode=check; shift ;;
-	-h|--help) sed -n '2,25p' "$0"; exit 0 ;;
+	-h|--help) sed -n '6,29p' "$0"; exit 0 ;;
 	*) echo "usage: $0 [--check]" >&2; exit 64 ;;
 	esac
 done

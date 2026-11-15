@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Inspect real boot data and font artifacts; never execute a target program."""
 import gzip
 import os

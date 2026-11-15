@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Inspect a shared fixture and prove its selected static archive is required.
 
 Replays the recorded link response with exactly that archive removed and a fresh

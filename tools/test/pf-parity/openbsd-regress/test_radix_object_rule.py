@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Exercise the configured vendor radix recipe beside native radix.c."""
 from pathlib import Path
 import os

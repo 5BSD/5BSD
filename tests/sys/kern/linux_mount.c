@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * mount(2)/umount2(2) flag handling (root): MS_BIND as a nullfs mount,
  * MS_MGC_VAL masking, the accepted no-op flags, propagation-only calls,

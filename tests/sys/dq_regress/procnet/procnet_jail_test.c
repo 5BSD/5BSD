@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * jail_set(2) with a path and jail_attach(2) of unattached processes, as
  * before stage 1c.
  *

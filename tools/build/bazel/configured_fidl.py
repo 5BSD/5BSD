@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Emit native FIDL rules from the maintained component configuration contract."""
 from pathlib import Path
 import component_labels

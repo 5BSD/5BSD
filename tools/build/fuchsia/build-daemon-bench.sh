@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # build-daemon-bench.sh -- build the pre-migration ("legacy") latency_bench
 # for a capability daemon, for comparison with the in-tree FIDL bench in the
 # same VM (tools/build/fuchsia/DAEMONS.md, "Latency").
@@ -16,7 +21,7 @@
 # two binaries differ only in the protocol implementation.  Runs the compile
 # inside "make buildenv" so it links against the built world, not the host.
 set -eu
-[ $# = 4 ] || { sed -n '2,/^set -eu/p' "$0" | sed -e '/^set -eu/d' -e 's/^# \{0,1\}//' >&2; exit 64; }
+[ $# = 4 ] || { sed -n '7,/^set -eu/p' "$0" | sed -e '/^set -eu/d' -e 's/^# \{0,1\}//' >&2; exit 64; }
 src=$(cd "$1" && pwd) rev=$2 daemon=$3 out=$4
 mkdir -p "$out"
 out=$(cd "$out" && pwd)

@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 #ifndef FIVEBSD_FIPS_BUILD_H
 #define FIVEBSD_FIPS_BUILD_H
 /* This is a 5BSD integration build, not a validated cryptographic module. */

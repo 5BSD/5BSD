@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Read back allocated dataset identities from a hash-bound, read-only VM disk."""
 import hashlib
 import importlib.util

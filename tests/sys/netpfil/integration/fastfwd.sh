@@ -1,6 +1,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # pf on FreeBSD's IPv6 fast forwarding path.  With net.inet6.ip6.redirect=0
 # a forwarding host hands packets to ip6_tryforward(), which runs the pfil
 # hooks itself (inbound, then outbound with PFIL_FWD) instead of

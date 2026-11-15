@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #include "linux_test.h"
 /*
  * open(2)/openat(2) flag handling: every O_* flag is accepted where Linux

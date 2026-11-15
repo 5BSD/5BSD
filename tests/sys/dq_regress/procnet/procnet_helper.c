@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * The image the procnet exec, core and syscall cases run.  The mode is
  * argv[1]; as a #! interpreter that is the script's option string, so
  * modes match by prefix.

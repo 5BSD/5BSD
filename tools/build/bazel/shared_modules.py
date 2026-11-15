@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Map configured shared-only modules to ordered PIC compilation inputs."""
 import shlex
 from pathlib import PurePosixPath

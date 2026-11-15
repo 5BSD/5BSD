@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifdef WITH_DTRACE
 #include <sys/sdt.h>
 #endif

@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Keep object-tree libcapbundle tests paired with a matching switchboardctl ABI.
 
 helper_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)

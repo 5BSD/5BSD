@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Materialize and read back a UFS2 generation image in a trusted builder.
 
 Inputs/receipts are unsigned. This does not authorize signing, boot or activation.

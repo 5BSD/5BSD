@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Native build qualification: text/wire round trips and truncated records. */
 #include <ldns/ldns.h>
 #include <stdio.h>

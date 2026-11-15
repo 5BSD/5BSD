@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Real-kernel session lifetime tests; invoked by the fixture's PID 1. */
 #include <sys/types.h>
 #include <sys/cap_authority.h>

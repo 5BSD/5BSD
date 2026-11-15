@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # vm-daemons.sh -- guest-side checks for capability daemons migrated to FIDL
 # (tools/build/fuchsia/DAEMONS.md).  Pass it to vm-provider.sh as
 # EXTRA_SCRIPT; it runs as root on the console after the plane converges,

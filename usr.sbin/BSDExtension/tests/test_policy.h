@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Explicit test input, independent of the installed deployment policy. */
 static void
 test_base_policy(struct sysext_config *cfg)

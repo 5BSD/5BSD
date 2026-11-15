@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 provider libchannel {
 	probe request__start(uintptr_t channel, uint64_t token, uint64_t bytes,
 	    uint64_t fds);

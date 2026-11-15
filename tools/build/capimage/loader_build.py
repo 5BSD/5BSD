@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Build an unsigned EFI loader with explicit generation trust in a trusted builder."""
 import argparse
 import hashlib

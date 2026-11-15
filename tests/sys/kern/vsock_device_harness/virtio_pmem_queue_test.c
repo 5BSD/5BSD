@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* Independent descriptor-shape tests for VirtIO 1.4 PMEM section 5.19.7. */
 #include <sys/uio.h>
 

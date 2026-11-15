@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Run full construction in private disk-backed storage in a disposable VM."""
 import argparse
 import importlib.util

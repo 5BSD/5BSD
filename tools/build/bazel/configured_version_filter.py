@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Capture explicitly declared sed-generated version maps without recipe parsing."""
 from pathlib import Path
 import re

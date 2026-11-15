@@ -1,5 +1,9 @@
 #!/bin/sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Prove that the compact rootless checkpoint runner rejects an ATF protocol
 # result other than "passed".  Test a temporary source copy: this is a guard
 # against a later simplification which retains a successful process exit but

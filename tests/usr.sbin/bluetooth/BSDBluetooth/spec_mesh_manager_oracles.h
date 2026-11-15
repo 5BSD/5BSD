@@ -1,5 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Independent Mesh Protocol 1.1 manager/configuration wire oracles.
  *
  * Sources: MshPRT 1.1 §§3.4.2.2.1, 3.6.5, 4.2-4.4 and Bluetooth

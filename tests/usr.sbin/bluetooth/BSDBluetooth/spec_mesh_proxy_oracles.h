@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Test-only Bluetooth Mesh Proxy specification oracles.  This header has no
  * production includes; values are transcribed from Mesh Protocol 1.1 and are
  * intentionally independent of libmesh constants and layouts.

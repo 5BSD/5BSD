@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Read the maintained version before expanding the upstream pkg-config template.
 FILENAME == ARGV[1] {
     if ($1 == "#define" && $2 == "PACKAGE_VERSION") {

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Only source-verified parser paths which return before open_dtraced()."""
 import os
 from pathlib import Path

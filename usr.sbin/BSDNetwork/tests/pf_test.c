@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * system.Network.PF over bsd.network.v1 NetworkPf: the real worker
  * (pf_session.c network_pf_serve) on a real capability channel, driven by
  * the real libnetworkcmp function (its source, with discovery replaced by

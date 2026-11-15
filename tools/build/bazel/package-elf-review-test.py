@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Bounded regression cases for the reviewer's archive streaming boundary."""
 import importlib.util
 import io

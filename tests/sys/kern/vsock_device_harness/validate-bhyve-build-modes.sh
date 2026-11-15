@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Verify that the bhyve/bhyvectl/libvmmapi interface builds consistently with
 # the optional snapshot facility both absent and present.  Fresh object roots
 # prove each mode in isolation; a second no->yes->no pass reuses one root so

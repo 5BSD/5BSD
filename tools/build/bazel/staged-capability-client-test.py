@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Compile ordinary clients against captured staged capability library payloads.
 
 Checks installed-archive selection and shared loading; not live channel IPC.

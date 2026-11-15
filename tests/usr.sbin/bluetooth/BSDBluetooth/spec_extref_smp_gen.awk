@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Generate the EXTERNAL reference SMP vector header from two external sources:
 #
 #   1. Bluetooth Core Specification 6.3 plain text

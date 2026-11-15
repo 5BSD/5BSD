@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Private-directory libfuse integration fixture, disposable guests only. */
 #define FUSE_USE_VERSION 31
 #define _GNU_SOURCE

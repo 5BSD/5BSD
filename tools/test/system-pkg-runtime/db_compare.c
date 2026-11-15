@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Compare logical db(3) records without modifying either database. */
 #include <sys/types.h>
 #include <db.h>

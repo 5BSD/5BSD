@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Native declaration checks, not Bazel action analysis or guest qualification."""
 import argparse, ast, importlib.util, json, tempfile, unittest
 from pathlib import Path

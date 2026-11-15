@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Reconcile raw mtree diagnostics only against independently exercised changes."""
 import re
 

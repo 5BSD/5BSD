@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Linux amd64 legacy-AIO completion-count boundary regression. */
 typedef unsigned long u64;
 typedef unsigned int u32;

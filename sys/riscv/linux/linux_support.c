@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* User-memory atomics for Linux FUTEX_WAKE_OP on RISC-V. */
 
 #include <sys/param.h>

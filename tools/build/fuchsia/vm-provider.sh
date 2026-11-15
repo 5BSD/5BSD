@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # vm-provider.sh -- FIDL provider validation in a disposable plane-on guest.
 # Derived from the plane-on Kyua runner described in
 # docs/book/src/develop/testing.md ("VM, plane on").  Before Kyua it exercises
@@ -61,7 +66,7 @@
 # still skip here by design: they need a guest with no Capsule running.
 set -eu
 
-usage() { sed -n '2,/^set -eu/p' "$0" | sed -e '/^set -eu/d' -e 's/^# \{0,1\}//' >&2; exit 64; }
+usage() { sed -n '7,/^set -eu/p' "$0" | sed -e '/^set -eu/d' -e 's/^# \{0,1\}//' >&2; exit 64; }
 [ $# -ge 3 ] && [ $# -le 4 ] || usage
 stage=$1 work=$2 suites=$3 timeout=${4:-10800}
 # First runnable emulator: $QEMU, the local build carrying the X86Access

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Map explicitly declared extra variant objects to maintained source inputs."""
 from pathlib import Path
 import shlex

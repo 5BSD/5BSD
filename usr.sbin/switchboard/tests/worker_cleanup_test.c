@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Registry revocation tests use a syscall double and real owned descriptors.
  * These check bookkeeping and fatal error handling, not kernel enforcement. */
 #include <sys/types.h>

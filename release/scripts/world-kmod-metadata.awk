@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Kernel and DTB payloads use their own packaging paths. Only explicit world
 # package assignments belong in world staging and its generated plists.
 /^[^#]/ {

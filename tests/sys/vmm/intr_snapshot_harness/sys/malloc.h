@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Userspace harness shadow of the kernel <sys/malloc.h>.  The kernel
  * malloc/free spellings are macros, so test code that follows a DUT
  * inclusion must use the kmock_* names (or #undef) for libc allocation.

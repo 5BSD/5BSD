@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * latency_bench [N]: N Get("kern.ostype") round trips from libsysctlcmp to
  * BSDSysctl's real reactor over a capability channel (see

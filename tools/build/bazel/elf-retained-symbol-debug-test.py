@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check real retained-symbol artifacts and reject damaged split-debug pairs."""
 import argparse
 import importlib.util

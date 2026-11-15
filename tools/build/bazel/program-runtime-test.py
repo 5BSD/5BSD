@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Explicit native program runtimes must reach both linkage and load checks."""
 import unittest
 from library_dependencies import program_runtime_labels, program_runtime_selections

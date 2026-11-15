@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Arguments: lowercase name, uppercase name, template, copyright, output,
 # sed, cat, mv and rm executables. Tools and inputs are explicit for both builds.
 set -eu

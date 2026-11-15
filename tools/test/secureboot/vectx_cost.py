@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Native streaming-verifier cost probe; not firmware/performance acceptance."""
 import argparse
 import hashlib

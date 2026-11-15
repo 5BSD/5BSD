@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Private VM only: mutate one tmpfs bundle through the public reload API. */
 #include <sys/types.h>
 #include <sys/stat.h>

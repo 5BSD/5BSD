@@ -1,4 +1,10 @@
 #!/usr/sbin/dtrace -s
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * netgraph_l2cap.d - trace the kernel L2CAP layer (ng_l2cap) via the
  * `bluetooth` SDT provider.

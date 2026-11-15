@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Fatal diagnostics for normal-system qualification, including service startup."""
 import re
 

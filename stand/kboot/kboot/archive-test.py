@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Inspect the actual Linux-hosted loader; never execute its Linux syscalls here."""
 import argparse
 import json

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual jailed module-hints construction using explicitly synthetic packages."""
 import hashlib
 import io

@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Root-only, disposable Alpine ISO test: boot, provision over the serial
 # console, and run the requested transport test.
 set -eu

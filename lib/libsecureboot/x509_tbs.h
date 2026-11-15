@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef _VE_X509_TBS_H_
 #define _VE_X509_TBS_H_
 

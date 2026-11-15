@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Exercise real NLMv4 pending-request matching in an isolated test guest. */
 #include <sys/param.h>
 #include <sys/mount.h>

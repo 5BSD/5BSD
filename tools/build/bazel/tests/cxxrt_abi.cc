@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause
+// Copyright (c) 2026 Kory Heard
 // Exercise compiler-generated ABI calls without depending on libc++ headers.
 struct Base { virtual ~Base() {} };
 struct Derived : Base { int value = 42; };

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Regression: epoll temporary masks must not resurrect sigsuspend masks. */
 #include "linux_test.h"
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Boot the requested pre-staged guests and require complete Linux ABI gate results."""
 import argparse
 import json

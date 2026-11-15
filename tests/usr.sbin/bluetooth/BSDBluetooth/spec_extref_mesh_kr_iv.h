@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * EXTERNAL REFERENCE ORACLE: Bluetooth Mesh Key Refresh and IV Update --
  * per-phase key usage, the phase transition triggers, the IV Update timing
  * limits, and Table 3.86 (IV Index Recovery actions).

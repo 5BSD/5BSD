@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Run as the real root rc child in the authenticated provider fixture.
 set -e
 fail() { echo "RC_HOSTID_FAIL $*"; exit 1; }

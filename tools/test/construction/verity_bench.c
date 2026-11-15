@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Host component benchmark. Descriptor is an input, not an authenticated boot. */
 #include <sys/types.h>
 #include <sys/stat.h>

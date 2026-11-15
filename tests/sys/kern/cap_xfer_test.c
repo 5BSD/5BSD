@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The FreeBSD Foundation
+ * Copyright (c) 2026 Kory Heard
  *
  * Tests for cap_xfer_limit(2) and fde_xfer_state enforcement on
  * SCM_RIGHTS file descriptor passing.

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * system.Audit client, using the generated bsd.audit.v1 bindings
  * (auditcmp.fidl) over a native capability channel.
  */

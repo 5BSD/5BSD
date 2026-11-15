@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Run the scripted installer with disposable files and mocked disk operations."""
 import os
 from pathlib import Path

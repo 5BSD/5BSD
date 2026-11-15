@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Container-model IDLE STAGING-REAP proof (no reboot).
 #
 # The boot sweep only reclaims abandoned TXN staging clones at startup, so on a

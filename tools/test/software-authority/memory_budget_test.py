@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Guard declared RAM arguments; does not measure memory or prove VM boot."""
 import ast
 from pathlib import Path

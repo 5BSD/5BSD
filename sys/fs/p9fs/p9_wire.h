@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Small, allocation-free helpers for the 9P wire format.
  *
  * Keep this header usable by both the kernel implementation and rootless

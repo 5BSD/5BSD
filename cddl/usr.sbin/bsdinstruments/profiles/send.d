@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* Print every send(2) entry. FreeBSD's libc send() is a wrapper
  * around sendto() with NULL address args, so the kernel-level
  * probe is sendto — there is no syscall::send:entry on FreeBSD. */

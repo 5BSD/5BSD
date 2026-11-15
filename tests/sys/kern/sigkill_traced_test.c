@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * SIGKILL sent to a process that a debugger holds stopped.
  *
  * A tracer may hold a stopped tracee with SIGKILL pending for as long as

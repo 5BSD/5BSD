@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Build only; execute the outputs in disposable amd64 guests.
 # Usage: build-compat-next.sh /path/to/linux-musl-sysroot /path/to/output
 set -eu

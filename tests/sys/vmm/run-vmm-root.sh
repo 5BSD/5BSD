@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Run the complete VMM Kyua suite against one explicitly selected module.
 # On AMD, set hw.vmm.svm.kernel_startup_experimental=1 in the kernel
 # environment before this script loads vmm, and do not set

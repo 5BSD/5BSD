@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Whole-tree tracing macro census. Evidence is not semantic/live coverage."""
 import collections,json,re,subprocess
 from pathlib import Path

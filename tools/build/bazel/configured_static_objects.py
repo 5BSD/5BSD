@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Export explicit static archive source aliases from maintained Make metadata.
 
 STATICOBJ_SOURCE.<object> names the source alias used for compilation;

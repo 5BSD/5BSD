@@ -1,6 +1,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Bootstrap and channel protocol tests for capsule + switchboard.
 #
 # These verify that capsule starts switchboard as its child, the channel

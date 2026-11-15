@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * pf audit - packet verdicts by interface and direction, and pf
  * configuration changes (ioctls and ruleset transactions).

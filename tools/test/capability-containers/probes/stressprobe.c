@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * stressprobe: hammer the storage path a fresh boot exercises -- claim many
  * cache stores (each a dataset: create, refquota, anonymous mount), grow a
  * file in each across the record-size boundary (that changes the object's

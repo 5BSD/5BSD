@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # 5BSD real-hardware host test kit.
 #
 #   hosttest.sh [-n] [-o RESULTS_DIR] PHASE ...
@@ -39,7 +44,7 @@ HT_KIT=$(cd "$(dirname "$0")" && pwd -P)
 export HT_KIT
 HT_DRYRUN=no
 out=""
-usage() { sed -n '2,35p' "$0"; exit 2; }
+usage() { sed -n '7,40p' "$0"; exit 2; }
 while getopts no: opt; do
 	case $opt in
 	n) HT_DRYRUN=yes ;;

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Render ncurses pkg-config metadata from declared target inputs."""
 import argparse
 import json

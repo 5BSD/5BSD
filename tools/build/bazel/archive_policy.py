@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Resolve archive ancestors and identities from declared base policy sources."""
 from pathlib import Path, PurePosixPath
 import subprocess

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Issued authority is independent of discovery and UNIX credential privilege. */
 #include <sys/param.h>
 #include <sys/systm.h>

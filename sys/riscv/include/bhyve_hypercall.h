@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Guest-side HyperTrace SBI ABI.  The extension ID is experimental and is
  * advertised only by a 5BSD VMM that implements the matching probe call.
  */

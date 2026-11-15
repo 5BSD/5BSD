@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Freestanding Linux amd64 remap_file_pages reference and VM gate. */
 typedef unsigned long u64;
 static const char path[] = "remap-file-pages.tmp";

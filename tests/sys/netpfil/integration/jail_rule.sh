@@ -1,7 +1,7 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
-# Copyright (c) 2026 The 5BSD Project
+# Copyright (c) 2026 Kory Heard
 #
 # The 5BSD "jail <name|jid>" pf rule option (sys/netpfil/openbsd-pf/pf_jail.c)
 # in a VNET jail's own pf.  Each test creates a VNET jail "fw" with its own

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * copy_file_range(2) is answered by the input descriptor's fileops
  * (fo_copy_file_range).  Two regular files copy; a descriptor that cannot
  * copy ranges on either side returns EINVAL, as the f_vnode tests did; the

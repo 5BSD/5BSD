@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Linux64 USER-area, ARCH_PRCTL and hardware watchpoint oracle. */
 #include "linux_test.h"
 #define PTRACE 101

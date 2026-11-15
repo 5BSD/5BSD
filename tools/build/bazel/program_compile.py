@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Map configured program objects to native per-translation-unit actions."""
 import shlex
 

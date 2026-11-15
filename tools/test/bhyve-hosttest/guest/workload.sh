@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Tagged guest workload for HyperTrace: runs a uniquely named program in a
 # loop so host-side aggregations keyed on execname can be asserted.
 # usage: workload.sh TAG SECONDS

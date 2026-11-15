@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Phase 1: hwstat on the real AMD host.
 # RAPL package energy via cpuctl (cross-checked against raw MSRs read with
 # cpucontrol), per-core data, amdtemp/ACPI temperatures, `hwstat exec`

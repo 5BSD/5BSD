@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * EXTERNAL REFERENCE ORACLE: value ranges for LE Meta subevent fields whose
  * tables contain a SPECIAL value outside the ordinary range, or an explicit

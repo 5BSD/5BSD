@@ -1,5 +1,9 @@
 #!/bin/sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Expand every Kyua test case into a normative or implementation-contract
 # citation.  A suite-level reference is intentionally inherited by each case;
 # narrower per-case overrides can be added below as gaps are found.
