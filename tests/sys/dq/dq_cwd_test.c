@@ -884,6 +884,9 @@ ATF_TC_BODY(fork_inherits, tc)
  * sibling looks a name up; every event is consistent (a served start
  * names the root object, a real start is hinted with a real cwd).
  */
+#define	RACE_SWITCHES	150	/* chdir events: one each */
+#define	RACE_LOOKUPS	250	/* stat events: one each */
+
 struct race_arg {
 	int		sroot;
 	char		real[PATH_MAX];
@@ -897,7 +900,7 @@ race_switcher(void *arg)
 	struct race_arg *a = arg;
 	int i;
 
-	for (i = 0; i < 300; i++) {
+	for (i = 0; i < RACE_SWITCHES; i++) {
 		(void)fchdir(a->sroot);
 		(void)chdir(a->real);
 	}
@@ -912,12 +915,14 @@ race_fn(void *arg, void *out)
 	struct res *r = out;
 	struct stat st;
 	pthread_t thr;
+	int n;
 
 	if (pthread_create(&thr, NULL, race_switcher, a) != 0) {
 		r->err[0] = errno;
 		return;
 	}
-	while (!a->stop)
+	/* Bounded, so that every event fits the harness's record (TS_NEV). */
+	for (n = 0; !a->stop && n < RACE_LOOKUPS; n++)
 		(void)stat("a", &st);
 	pthread_join(thr, NULL);
 }
@@ -945,6 +950,9 @@ ATF_TC_BODY(cwd_switch_stress, tc)
 	TS_CHECK_ERRNO(0, r.err[0], "thread");
 	nserved = nreal = 0;
 	pthread_mutex_lock(&s.mtx);
+	/* A full record may have lost the later starts. */
+	ATF_CHECK_MSG(s.nev < TS_NEV, "the event record is full (%d)",
+	    s.nev);
 	for (i = 0; i < s.nev; i++) {
 		e = &s.ev[i];
 		if (e->op != DQ_ROP_STAT || strcmp(e->path, "a") != 0)
