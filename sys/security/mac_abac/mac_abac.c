@@ -330,6 +330,7 @@ abac_dq_check(struct ucred *active_cred, struct file *fp, uint32_t op)
 
 	if (fp->f_type != DTYPE_DQ)
 		return (0);
+	ABAC_CHECK_LIVE(op);
 	ABAC_CHECK_ENABLED();
 	qcred = dq_file_cred(fp);
 	if (qcred == NULL)

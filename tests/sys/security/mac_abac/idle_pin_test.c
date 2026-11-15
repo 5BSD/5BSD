@@ -19,7 +19,7 @@
 #include "idle_common.h"
 
 #ifndef ABAC_IDLE_GATED
-#define	ABAC_IDLE_GATED	0	/* kernel predates the idle gates */
+#define	ABAC_IDLE_GATED	1	/* unnamed operations return at their gate */
 #endif
 
 static void

@@ -91,6 +91,7 @@ abac_kld_check_load(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_EXEC);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -129,6 +130,7 @@ abac_kld_check_stat(struct ucred *cred)
 	struct abac_label *subj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_STAT);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -158,6 +160,7 @@ abac_system_check_reboot(struct ucred *cred, int howto)
 	struct abac_label *subj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -191,6 +194,7 @@ abac_system_check_sysctl(struct ucred *cred, struct sysctl_oid *oidp,
 	uint32_t op;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_READ | ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -225,6 +229,7 @@ abac_system_check_acct(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -261,6 +266,7 @@ abac_system_check_swapon(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -297,6 +303,7 @@ abac_system_check_swapoff(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -333,6 +340,7 @@ abac_mount_check_stat(struct ucred *cred, struct mount *mp,
 	struct abac_label *subj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_STAT);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -369,6 +377,7 @@ abac_system_check_audit(struct ucred *cred, void *record, int length)
 	struct abac_label *subj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_AUDIT);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -398,6 +407,7 @@ abac_system_check_auditctl(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_AUDIT);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -433,6 +443,7 @@ abac_system_check_auditon(struct ucred *cred, int cmd)
 	struct abac_label *subj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_AUDIT);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)

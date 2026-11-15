@@ -39,6 +39,7 @@ abac_proc_check_debug(struct ucred *cred, struct proc *p)
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_DEBUG);
 	ABAC_CHECK_ENABLED();
 
 	/* Get subject (debugger) label from credential */
@@ -78,6 +79,7 @@ abac_proc_check_sched(struct ucred *cred, struct proc *p)
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_SCHED);
 	ABAC_CHECK_ENABLED();
 
 	/* Get subject label */
@@ -115,6 +117,7 @@ abac_proc_check_signal(struct ucred *cred, struct proc *p, int signum)
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_SIGNAL);
 	ABAC_CHECK_ENABLED();
 
 	/* Get subject label */
@@ -153,6 +156,7 @@ abac_proc_check_wait(struct ucred *cred, struct proc *p)
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WAIT);
 	ABAC_CHECK_ENABLED();
 
 	/* Get subject label */

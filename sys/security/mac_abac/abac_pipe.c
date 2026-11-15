@@ -97,6 +97,7 @@ abac_pipe_check_read(struct ucred *cred, struct pipepair *pp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_READ);
 	ABAC_CHECK_ENABLED();
 
 	/* Get subject label from credential */
@@ -140,6 +141,7 @@ abac_pipe_check_stat(struct ucred *cred, struct pipepair *pp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_STAT);
 	ABAC_CHECK_ENABLED();
 
 	/* Get subject label from credential */
@@ -173,6 +175,7 @@ abac_pipe_check_write(struct ucred *cred, struct pipepair *pp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	/* Get subject label from credential */

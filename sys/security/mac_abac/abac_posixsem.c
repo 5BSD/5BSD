@@ -76,6 +76,7 @@ abac_posixsem_check_getvalue(struct ucred *active_cred,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_READ);
 	ABAC_CHECK_ENABLED();
 
 	if (active_cred == NULL || active_cred->cr_label == NULL)
@@ -105,6 +106,7 @@ abac_posixsem_check_open(struct ucred *cred, struct ksem *ks,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_OPEN);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -134,6 +136,7 @@ abac_posixsem_check_post(struct ucred *active_cred,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	if (active_cred == NULL || active_cred->cr_label == NULL)
@@ -164,6 +167,7 @@ abac_posixsem_check_setmode(struct ucred *cred, struct ksem *ks,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -193,6 +197,7 @@ abac_posixsem_check_setowner(struct ucred *cred, struct ksem *ks,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -222,6 +227,7 @@ abac_posixsem_check_stat(struct ucred *active_cred,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_STAT);
 	ABAC_CHECK_ENABLED();
 
 	if (active_cred == NULL || active_cred->cr_label == NULL)
@@ -251,6 +257,7 @@ abac_posixsem_check_unlink(struct ucred *cred, struct ksem *ks,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_UNLINK);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -280,6 +287,7 @@ abac_posixsem_check_wait(struct ucred *active_cred,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_READ);
 	ABAC_CHECK_ENABLED();
 
 	if (active_cred == NULL || active_cred->cr_label == NULL)

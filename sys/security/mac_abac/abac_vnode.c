@@ -324,6 +324,7 @@ abac_vnode_check_access(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_ACCESS);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -360,6 +361,7 @@ abac_vnode_check_chdir(struct ucred *cred, struct vnode *dvp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_CHDIR);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -392,6 +394,7 @@ abac_vnode_check_chroot(struct ucred *cred, struct vnode *dvp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_CHDIR);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -425,6 +428,7 @@ abac_vnode_check_create(struct ucred *cred, struct vnode *dvp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_CREATE);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -458,6 +462,7 @@ abac_vnode_check_deleteacl(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -547,6 +552,7 @@ abac_vnode_check_exec(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_EXEC);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -585,6 +591,7 @@ abac_vnode_check_getacl(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_STAT);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -666,6 +673,7 @@ abac_vnode_check_link(struct ucred *cred, struct vnode *dvp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_LINK);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -699,6 +707,7 @@ abac_vnode_check_listextattr(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_GETEXTATTR);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -732,6 +741,7 @@ abac_vnode_check_lookup(struct ucred *cred, struct vnode *dvp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_LOOKUP);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -764,6 +774,7 @@ abac_vnode_check_mmap(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_MMAP);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -825,6 +836,7 @@ abac_proc_check_mprotect(struct ucred *cred, vm_offset_t addr,
 	struct vnode *vp;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_MPROTECT);
 	ABAC_CHECK_ENABLED();
 
 	/* Get subject label from credential */
@@ -874,6 +886,7 @@ abac_vnode_check_open(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_OPEN);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -910,6 +923,7 @@ abac_vnode_check_poll(struct ucred *active_cred, struct ucred *file_cred,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_READ);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -943,6 +957,7 @@ abac_vnode_check_read(struct ucred *active_cred, struct ucred *file_cred,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_READ);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -979,6 +994,7 @@ abac_vnode_check_readdir(struct ucred *cred, struct vnode *dvp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_READDIR);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -1011,6 +1027,7 @@ abac_vnode_check_readlink(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_READ);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -1092,6 +1109,7 @@ abac_vnode_check_rename_from(struct ucred *cred, struct vnode *dvp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_RENAME);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -1126,6 +1144,7 @@ abac_vnode_check_rename_to(struct ucred *cred, struct vnode *dvp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_RENAME);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -1159,6 +1178,7 @@ abac_vnode_check_revoke(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -1192,6 +1212,7 @@ abac_vnode_check_setacl(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -1291,6 +1312,7 @@ abac_vnode_check_setflags(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -1324,6 +1346,7 @@ abac_vnode_check_setmode(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -1357,6 +1380,7 @@ abac_vnode_check_setowner(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -1390,6 +1414,7 @@ abac_vnode_check_setutimes(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -1423,6 +1448,7 @@ abac_vnode_check_stat(struct ucred *active_cred, struct ucred *file_cred,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_STAT);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -1456,6 +1482,7 @@ abac_vnode_check_unlink(struct ucred *cred, struct vnode *dvp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_UNLINK);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -1489,6 +1516,7 @@ abac_vnode_check_write(struct ucred *active_cred, struct ucred *file_cred,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */

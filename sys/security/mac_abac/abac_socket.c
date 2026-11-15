@@ -119,6 +119,7 @@ abac_socket_check_accept(struct ucred *cred, struct socket *so,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_ACCEPT);
 	ABAC_CHECK_ENABLED();
 
 	/* Get subject label from credential */
@@ -152,6 +153,7 @@ abac_socket_check_bind(struct ucred *cred, struct socket *so,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_BIND);
 	ABAC_CHECK_ENABLED();
 
 	/* Get subject label from credential */
@@ -185,6 +187,7 @@ abac_socket_check_connect(struct ucred *cred, struct socket *so,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_CONNECT);
 	ABAC_CHECK_ENABLED();
 
 	/* Get subject label from credential */
@@ -218,6 +221,7 @@ abac_socket_check_listen(struct ucred *cred, struct socket *so,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_LISTEN);
 	ABAC_CHECK_ENABLED();
 
 	/* Get subject label from credential */
@@ -251,6 +255,7 @@ abac_socket_check_receive(struct ucred *cred, struct socket *so,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_RECEIVE);
 	ABAC_CHECK_ENABLED();
 
 	/* Get subject label from credential */
@@ -284,6 +289,7 @@ abac_socket_check_send(struct ucred *cred, struct socket *so,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_SEND);
 	ABAC_CHECK_ENABLED();
 
 	/* Get subject label from credential */
@@ -422,6 +428,7 @@ abac_socket_check_deliver(struct socket *so, struct label *solabel,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_DELIVER);
 	ABAC_CHECK_ENABLED();
 
 	/*

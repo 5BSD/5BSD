@@ -77,6 +77,7 @@ abac_posixshm_check_mmap(struct ucred *cred, struct shmfd *shmfd,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_MMAP);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -106,6 +107,7 @@ abac_posixshm_check_open(struct ucred *cred, struct shmfd *shmfd,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_OPEN);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -135,6 +137,7 @@ abac_posixshm_check_read(struct ucred *active_cred, struct ucred *file_cred,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_READ);
 	ABAC_CHECK_ENABLED();
 
 	if (active_cred == NULL || active_cred->cr_label == NULL)
@@ -164,6 +167,7 @@ abac_posixshm_check_setmode(struct ucred *cred, struct shmfd *shmfd,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -194,6 +198,7 @@ abac_posixshm_check_setowner(struct ucred *cred, struct shmfd *shmfd,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -224,6 +229,7 @@ abac_posixshm_check_stat(struct ucred *active_cred, struct ucred *file_cred,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_STAT);
 	ABAC_CHECK_ENABLED();
 
 	if (active_cred == NULL || active_cred->cr_label == NULL)
@@ -253,6 +259,7 @@ abac_posixshm_check_truncate(struct ucred *active_cred,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	if (active_cred == NULL || active_cred->cr_label == NULL)
@@ -282,6 +289,7 @@ abac_posixshm_check_unlink(struct ucred *cred, struct shmfd *shmfd,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_UNLINK);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -311,6 +319,7 @@ abac_posixshm_check_write(struct ucred *active_cred, struct ucred *file_cred,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	if (active_cred == NULL || active_cred->cr_label == NULL)

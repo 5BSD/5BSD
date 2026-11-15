@@ -137,6 +137,7 @@ abac_sysvmsq_check_msgmsq(struct ucred *cred, struct msg *msgptr,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -166,6 +167,7 @@ abac_sysvmsq_check_msgrcv(struct ucred *cred, struct msg *msgptr,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_READ);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -195,6 +197,7 @@ abac_sysvmsq_check_msgrmid(struct ucred *cred, struct msg *msgptr,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_UNLINK);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -224,6 +227,7 @@ abac_sysvmsq_check_msqget(struct ucred *cred, struct msqid_kernel *msqkptr,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_OPEN);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -254,6 +258,7 @@ abac_sysvmsq_check_msqctl(struct ucred *cred, struct msqid_kernel *msqkptr,
 	int error;
 	uint32_t op;
 
+	ABAC_CHECK_LIVE(ABAC_OP_STAT | ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -285,6 +290,7 @@ abac_sysvmsq_check_msqrcv(struct ucred *cred, struct msqid_kernel *msqkptr,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_READ);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -314,6 +320,7 @@ abac_sysvmsq_check_msqsnd(struct ucred *cred, struct msqid_kernel *msqkptr,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -396,6 +403,7 @@ abac_sysvsem_check_semctl(struct ucred *cred, struct semid_kernel *semakptr,
 	int error;
 	uint32_t op;
 
+	ABAC_CHECK_LIVE(ABAC_OP_STAT | ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -440,6 +448,7 @@ abac_sysvsem_check_semget(struct ucred *cred, struct semid_kernel *semakptr,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_OPEN);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -470,6 +479,7 @@ abac_sysvsem_check_semop(struct ucred *cred, struct semid_kernel *semakptr,
 	int error;
 	uint32_t op;
 
+	ABAC_CHECK_LIVE(ABAC_OP_READ | ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -554,6 +564,7 @@ abac_sysvshm_check_shmat(struct ucred *cred, struct shmid_kernel *shmsegptr,
 	int error;
 	uint32_t op;
 
+	ABAC_CHECK_LIVE(ABAC_OP_READ | ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -586,6 +597,7 @@ abac_sysvshm_check_shmctl(struct ucred *cred, struct shmid_kernel *shmsegptr,
 	int error;
 	uint32_t op;
 
+	ABAC_CHECK_LIVE(ABAC_OP_STAT | ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -617,6 +629,7 @@ abac_sysvshm_check_shmdt(struct ucred *cred, struct shmid_kernel *shmsegptr,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_READ);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -647,6 +660,7 @@ abac_sysvshm_check_shmget(struct ucred *cred, struct shmid_kernel *shmsegptr,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_OPEN);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
