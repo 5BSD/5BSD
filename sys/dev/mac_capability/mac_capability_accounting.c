@@ -337,6 +337,16 @@ accounting_call(struct mac_capability_instance *s __unused,
 
 	hdr = (const struct acct_charge_request *)req;
 
+#ifdef RACCT
+	/*
+	 * kern.racct.enable=0: no process has racct state (p_racct is NULL)
+	 * and rctl refuses to run.  Refuse every operation as rctl(2) refuses
+	 * its system calls, before reaching either.
+	 */
+	if (!racct_enable)
+		return (ENOSYS);
+#endif
+
 	/*
 	 * No Capsicum rights check on the attached procdesc.
 	 * Authority comes from holding the accounting service fd.
@@ -397,6 +407,11 @@ accounting_connect(struct ucred *cred, void *arg __unused,
 		    cred->cr_uid, EPERM);
 		return (EPERM);
 	}
+#ifdef RACCT
+	/* Refused as every operation is, see accounting_call(). */
+	if (!racct_enable)
+		return (ENOSYS);
+#endif
 	return (0);
 }
 
