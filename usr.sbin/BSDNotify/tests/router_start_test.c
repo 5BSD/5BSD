@@ -29,9 +29,6 @@ int bsdnotify_main(void);
 #include "../bsdnotify.c"
 #undef main
 
-/* Provider wait: longer than any router deadline exercised below. */
-#define	TEST_READY_TIMEOUT_MS	60000U
-
 static int audit_error;		/* errno of a failing lookup */
 static int audit_failures;	/* failing lookups before success; -1 never */
 static unsigned audit_delay_ms;	/* time one failing lookup takes */
@@ -118,7 +115,8 @@ run_router(int32_t *statusp, int *exitp, uint64_t *elapsedp)
 	event.size = sizeof(event);
 	event.data = &ready;
 	event.capacity = sizeof(ready);
-	options.timeout_ms = TEST_READY_TIMEOUT_MS;
+	/* As main() waits: a router that overruns surfaces as this timeout. */
+	options.timeout_ms = NOTIFY_ROUTER_START_TIMEOUT_MS;
 	rc = service_session_receive_event(session, &event, &options);
 	error = errno;
 	*elapsedp = now_ms() - start;
