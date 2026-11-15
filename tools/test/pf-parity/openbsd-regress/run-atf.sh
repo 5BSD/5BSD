@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Copy 5BSD ATF test scripts for OpenBSD PF to the disposable DUT and run
 # their cases with atf-sh (body, then cleanup).
 # usage: run-atf.sh <test_script.sh> [case ...]

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Executed by the real NSS child setup. Check state in an executable
  * constructor, before the main request loop. Does not claim to inspect every
  * shared-library constructor or to establish a nonempty parent authority. */

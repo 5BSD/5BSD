@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * posix_fadvise(2) is answered by the descriptor's fileops (fo_fadvise)
  * once the system call has validated the range and advice and refused
  * unseekable descriptors with ESPIPE.  Regular files accept every advice;

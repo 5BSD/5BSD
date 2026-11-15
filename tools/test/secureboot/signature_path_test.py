@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Production signature-path parsing with guarded memory, no cryptography seams claimed."""
 from pathlib import Path
 import subprocess

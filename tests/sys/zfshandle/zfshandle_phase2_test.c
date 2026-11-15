@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * TrustedZFS Phase 2 tests, driven through libtrustedzfs: dataset
  * lifecycle (create/rename/clone/destroy), replication streams, holds,
  * and the zvol block bridge.

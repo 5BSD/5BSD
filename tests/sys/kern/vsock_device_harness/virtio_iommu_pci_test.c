@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Independent VirtIO 1.4 sections 2.6.4 and 5.13 PCI callback-lifecycle
  * tests.  The IOMMU receives DMA-idle and fault edges from other device

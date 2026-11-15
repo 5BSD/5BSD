@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Qualify input invalidation in a private, prepared FIDL Bazel workspace.
 
 Cases are explicit JSON inputs: name, path (workspace-relative), old, new,

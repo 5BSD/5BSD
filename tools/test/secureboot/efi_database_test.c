@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Exercise the actual freestanding loader object with a fake firmware transport. */
 #include <sys/types.h>
 #include <sys/wait.h>

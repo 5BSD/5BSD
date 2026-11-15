@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Component packages must preserve distinct identities and safe output paths."""
 import unittest
 from component_labels import package, label, artifact, generated_directory, relative

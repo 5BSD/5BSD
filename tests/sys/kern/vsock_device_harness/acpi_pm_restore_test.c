@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * ACPI state a bhyve checkpoint restore or live migration presents to the
  * guest, against the real amd64/pm.c and vmgenc.c: the ACPI event registers
  * (with the SIGTERM power button that ACPI enable registers) and the VM

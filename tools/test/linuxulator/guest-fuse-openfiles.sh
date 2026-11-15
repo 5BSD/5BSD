@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Disposable guest only. Requires the matching kernel/modules and Linux probe.
 set -eu
 trap 'rc=$?; echo OPENFILES_EXIT "$rc"; /sbin/halt -p' EXIT

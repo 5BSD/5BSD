@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Independently check retained builder output mounted read-only.
 
 This verifies post-shutdown consistency, not release authentication or policy

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #include "linux_test.h"
 /*
  * clone(2)/clone3(2) flag handling and the wait4/waitid __WALL/__WCLONE/

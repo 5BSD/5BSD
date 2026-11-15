@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Freestanding Linux amd64 swapoff reference and disposable VM gate. */
 static const char linux_device[] = "/dev/vdb";
 static const char freebsd_device[] = "/dev/vtbd1";

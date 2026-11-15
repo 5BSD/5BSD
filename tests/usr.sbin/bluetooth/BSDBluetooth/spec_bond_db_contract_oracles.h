@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Independent test copy of blued's documented private bond-store contract.
  * These are implementation oracles, not Bluetooth SIG wire assignments, and
  * this file deliberately includes no production header.

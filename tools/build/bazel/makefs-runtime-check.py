@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Run the complete native makefs ATF inventory inside an explicit private guest root."""
 import argparse
 import collections

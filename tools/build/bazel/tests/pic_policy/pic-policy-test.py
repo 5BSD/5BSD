@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Inspect actual compiler-produced PIC values, without executing target objects."""
 import os
 from pathlib import Path

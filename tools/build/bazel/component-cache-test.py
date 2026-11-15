@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Qualify same-name component cache isolation on a maintained emitted graph.
 
 Only the private emitted source snapshot is changed. The selected program is

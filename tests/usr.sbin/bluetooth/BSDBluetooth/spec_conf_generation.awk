@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Attribute every extracted Core requirement to the Bluetooth generation that
 # introduced the feature it governs.
 #

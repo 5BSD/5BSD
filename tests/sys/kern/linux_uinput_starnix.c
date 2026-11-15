@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Starnix uinput_test.cc test ideas, revision
  * 8a938a3224e768f6254ee12d240b6492361ebccf; rewritten for native uinput.
  * Creates a private synthetic device; delivery tests inject events. VM only. */

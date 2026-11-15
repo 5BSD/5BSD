@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Run the two maintained tzdata AWK passes with the declared version input."""
 import argparse
 import os

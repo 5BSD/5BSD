@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Compare a captured ELF64 object's CTF metadata with an explicit Make object."""
 import argparse
 import hashlib

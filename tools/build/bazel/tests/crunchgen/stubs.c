@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Side-effect-free fixture entries for the original generated dispatcher. */
 #include <stdio.h>
 int fixture_alpha(int, char **, char **);

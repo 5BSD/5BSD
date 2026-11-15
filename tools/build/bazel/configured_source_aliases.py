@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Export source aliases declared by the same variables used in Make rules."""
 from pathlib import Path
 from libmd_environment import digest

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Scripted system.Log provider for the liblogcmp client tests.  It replaces
  * libservice's service_open(): each call creates a real capability channel
  * served by a bsd.log.v1 server on its own thread, which maps an attached

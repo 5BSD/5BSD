@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise default TLS trust and local CA lifecycle inside an owned guest."""
 import hashlib
 import json

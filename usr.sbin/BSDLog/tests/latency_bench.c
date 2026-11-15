@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * latency_bench [N]: N statistics round trips (STATS, now GetStats) from the
  * liblogcmp process client to BSDLog's real session code over a capability

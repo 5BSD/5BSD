@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Prove rule-owned environment exists before the ATF harness enters main. */
 #include <atf-c.h>
 #include <stdlib.h>

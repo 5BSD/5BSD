@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #include "tools/build/bazel/tests/dtrace_archive/archiveprobe_provider.h"
 
 /* Keep initialization observable; otherwise clang folds it into static data. */

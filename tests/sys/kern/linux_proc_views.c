@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Freestanding Linux64 procfs/sysfs checks. Run only in disposable guests. */
 #include "linux_test.h"
 

@@ -1,5 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Independent Core 6.3 Vol 4 Part E periodic advertising/PAST/DF oracles.
  * No production HCI header is included.
  */

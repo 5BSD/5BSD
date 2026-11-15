@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * A MAP_PRIVATE mapping of a descriptor without the CAP_MMAP_W right may be
  * PROT_WRITE when the descriptor's fileops carry DFLAG_PRIVWRITE (the
  * writes are copy-on-write and never reach the object): vnode files, devfs

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * linux_fdops: the Linux-ABI system calls whose descriptor handling
  * DescriptorQueue stage 0 rewired (sys/compat/linux, 3b9f9873d291..), on

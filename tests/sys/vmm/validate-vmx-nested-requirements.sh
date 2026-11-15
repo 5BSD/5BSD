@@ -1,5 +1,9 @@
 #!/bin/sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Validate the Intel nested-VMX requirement-to-code-to-test ledger without
 # deriving any architectural values from the implementation.
 

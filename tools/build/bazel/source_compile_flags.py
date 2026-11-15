@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Map exported effective source/variant contexts to native compilation inputs."""
 from pathlib import Path
 from compile_context import compile_flags

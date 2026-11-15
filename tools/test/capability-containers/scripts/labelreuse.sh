@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Label reuse (doc "Edge cases"): reinstalling the same bundle within the grace
 # (remove + re-add before any reap) INHERITS its container; reinstalling after
 # a removal was confirmed and reaped starts FRESH.  reclaimprobe appends one

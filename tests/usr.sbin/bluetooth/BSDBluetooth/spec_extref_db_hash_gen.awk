@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Generate the external GATT Database Hash reference oracle directly from the
 # Bluetooth Core 6.3 text.  Nothing here is derived from blued: the message
 # blocks M0..M6 and the resulting hash are parsed out of Vol 3, Part G,

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Inspect executable relocations in the real guard initializer and control object."""
 import argparse
 from pathlib import Path

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Build BSDTime's FIDL migration and run its host-safe C provider tests."""
 import argparse
 import concurrent.futures

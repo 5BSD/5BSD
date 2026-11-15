@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Emit native C/C++ consumers and Kyua-backed TAP tests against selected libraries."""
 import shlex
 import json

@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* Client error/cleanup tests with a deliberately fake kernel transport.
  * These do not assert that native execution provides kernel text pinning. */
 #include <sys/types.h>

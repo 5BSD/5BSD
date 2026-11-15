@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Bound a newly created private sparse guest disk; never operate on host devices."""
 import json
 import math

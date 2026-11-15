@@ -1,5 +1,9 @@
 #!/bin/sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Validate the mutable output of the external nested-VMX L1 runner before the
 # privileged host wrapper hashes or changes the mode of any artifact.  This is
 # intentionally separate from the completed-evidence validator: staging files

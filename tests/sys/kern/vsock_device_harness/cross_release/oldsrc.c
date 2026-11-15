@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Rootless v0.1.0 migration producer.  The runner compiles this against
  * migration_session.c and headers extracted from that exact release tag.
  */

@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Storage-TCB robustness stress: several units churn the transaction machinery in
 # parallel (begin + abort, an occasional heavy commit, and periodic snapshot/
 # list/open_version/rollback) while the daemon's reconcile reaper runs its idle

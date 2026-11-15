@@ -1,4 +1,7 @@
 -- SPDX-License-Identifier: BSD-2-Clause
+--
+-- Copyright (c) 2026 Kory Heard
+--
 -- Adapt the maintained generator module API to explicitly declared outputs.
 -- Parsing, compatibility selection and generated contents remain upstream APIs.
 assert(#arg >= 5 and (#arg - 3) % 2 == 0,

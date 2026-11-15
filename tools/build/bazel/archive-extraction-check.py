@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check BSD tar extraction of a trusted build-produced installation archive.
 
 The private extraction does not apply root ownership. Numeric identities are

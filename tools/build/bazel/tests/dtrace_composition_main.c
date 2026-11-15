@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 int composition_normal(int);
 extern const char __bsd_dof_anchor_dtrace_composition;
 static const void *volatile anchor;

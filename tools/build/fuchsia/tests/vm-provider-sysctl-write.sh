@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # SYSCTL_WRITE: the image's system.Sysctl policy gets the given names as the
 # default write list, nothing else changes, and a policy without an empty
 # default write list is refused rather than left as shipped.

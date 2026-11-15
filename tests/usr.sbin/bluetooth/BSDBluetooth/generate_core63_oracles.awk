@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Generate test-only C oracles directly from the Bluetooth Core 6.3 text.
 # The implementation-symbol mapping contains names only; all values are parsed
 # from the normative tables and validated before output.

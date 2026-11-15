@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Refusals: every MINT reason, the policy set outside stage 1a, reply and
  * control ioctl errors, a non-root open, and the module refusing to unload.
  * Expected values follow dq_ident_validate, dq_policy_validate,

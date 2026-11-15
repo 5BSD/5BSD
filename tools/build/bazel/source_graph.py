@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Run maintained BUILD targets through the build-bsd qualification frontend."""
 import fcntl
 import hashlib

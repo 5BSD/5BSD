@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Linux64 binary UNIX-domain names. Disposable VM only. */
 #include "linux_test.h"
 #define EADDRINUSE 98

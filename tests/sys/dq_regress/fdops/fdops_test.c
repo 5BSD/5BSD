@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * fdops_test: every system call DescriptorQueue stage 0 rewired through the
  * new per-descriptor operations of struct fileops (fo_pathconf, fo_statfs,
  * fo_fsync, fo_setattr, fo_fadvise, fo_readdir, fo_copy_file_range, fo_acl,

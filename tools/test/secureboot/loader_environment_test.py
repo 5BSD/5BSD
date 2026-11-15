@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual loader environment/current-device transaction with allocation faults."""
 from pathlib import Path
 import subprocess

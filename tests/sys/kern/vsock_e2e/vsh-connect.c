@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * vsh-connect — host→guest connector through the bhyve vsock device's
  * control socket (e2e suite version).

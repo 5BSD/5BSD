@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Actual kernel operations, only in disposable Secure Boot guests. */
 #include <sys/types.h>
 #include <sys/param.h>

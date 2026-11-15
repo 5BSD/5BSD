@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Verify native stage content and metadata against reconciled Make policy."""
 from collections import deque
 import hashlib

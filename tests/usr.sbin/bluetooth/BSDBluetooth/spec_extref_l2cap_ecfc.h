@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * EXTERNAL REFERENCE ORACLE: L2CAP Enhanced Credit Based Flow Control mode
  * (Bluetooth 5.2) -- the L2CAP_CREDIT_BASED_* signalling commands (0x17-0x1A),

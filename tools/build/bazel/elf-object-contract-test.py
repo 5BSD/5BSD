@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise the inspector against real ELF32/64 outputs and changed code/debug data."""
 import argparse
 import importlib.util

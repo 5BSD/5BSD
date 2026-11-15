@@ -1,5 +1,9 @@
 #!/bin/sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Validate the immutable reference metadata without downloading or importing
 # external source code.  If an artifact directory is supplied, require one
 # authenticated regular file for every catalog row and no extra artifacts.

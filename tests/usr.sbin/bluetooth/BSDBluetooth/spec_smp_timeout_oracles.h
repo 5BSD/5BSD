@@ -1,5 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Independent SMP timeout oracles; no production header is included.
  */
 #ifndef TESTS_BLUETOOTH_SPEC_SMP_TIMEOUT_ORACLES_H

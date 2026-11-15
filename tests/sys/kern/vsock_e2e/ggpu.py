@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Linux guest end-to-end verifier for bhyve's VirtIO GPU 2D device."""
 
 # VIRTIO_ACTIVATION_ASSERTION: active-checkpoint-gpu-framebuffer

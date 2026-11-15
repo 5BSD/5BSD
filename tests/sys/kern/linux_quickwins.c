@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Starnix-inspired ABI regressions, checked against Linux semantics.
  * Run in a disposable guest: NO_NEW_PRIVS is irreversible in the child.

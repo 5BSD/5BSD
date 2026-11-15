@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * TrustedZFS negative tests: the failure paths a capability system lives
  * or dies by.  Every gated verb must refuse without its right, every
  * argument boundary must be enforced, cross-type verbs must be rejected,

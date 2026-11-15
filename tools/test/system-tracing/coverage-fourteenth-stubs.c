@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Test-only link wrappers: never change the real kernel environment or root. */
 #include <sys/types.h>
 #include <errno.h>

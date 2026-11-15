@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * EXTERNAL REFERENCE ORACLE: ATT / GATT on-the-wire PDU scripts.
  *
  * Hand-transcribed, byte for byte, from the unit test suites of two

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise actual subprocess completion, failure, deadline and stale-log handling."""
 import argparse
 import hashlib

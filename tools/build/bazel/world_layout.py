@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Serialize the complete source distrib-dirs layout without inventing ownership."""
 import json
 from pathlib import Path

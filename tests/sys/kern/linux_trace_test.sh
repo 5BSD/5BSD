@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # The new Linuxulator syscalls are visible to every tracing tool: truss
 # (typed decoders), ktrace/kdump (names), the DTrace syscall::linux provider
 # (regenerated systrace args) and the linuxulator SDT probes on the

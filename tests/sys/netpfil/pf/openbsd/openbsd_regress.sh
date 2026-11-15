@@ -1,6 +1,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Run the imported OpenBSD PF regress suites (contrib/openbsd-pf) unchanged
 # through OpenBSD's bsd.regress.mk.  Each upstream target is reported in
 # REGRESS_LOG; the ATF case fails when any target fails and lists them.

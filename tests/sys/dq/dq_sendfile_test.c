@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * sendfile(2) of a served file (D104): the pages are filled by READ_ASYNC
  * events (answered as READ), sent from the dq pager object.  The oracle is
  * sendfile of a real file of the same length over the same kind of socket;

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Compose independently exported plans without changing their input bindings."""
 import json
 from pathlib import Path

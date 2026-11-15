@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Freestanding amd64 Linux syscall test for readahead(2),
  * restart_syscall(2) and the arch_prctl(2) feature-query codes: no Linux

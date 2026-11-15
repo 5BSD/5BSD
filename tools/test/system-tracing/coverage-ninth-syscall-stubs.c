@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Link-only test replacements. Never call the actual module/sync syscalls. */
 #include <sys/types.h>
 #include <errno.h>

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Test-only capture oracles.  The BTSnoop container values are independently
  * cross-checked against BlueZ tools/btsnoop.c and src/shared/btsnoop.h.  H4
  * packet indicators and HCI Reset are from Bluetooth Core 6.3 Vol 4 Part A

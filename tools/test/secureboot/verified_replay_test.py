@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Require streaming verification to reject changed bytes on a backward read.
 
 Uses actual vectx read/seek/close and BearSSL SHA-256 with real temporary-file

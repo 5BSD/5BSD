@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Prepared native amd64 alternate-option builds, without changing kernel config."""
 from pathlib import Path
 import concurrent.futures,json,os,shlex,subprocess

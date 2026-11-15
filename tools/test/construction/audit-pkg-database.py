@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Demonstrate raw-manifest blind spots using private copies of a pkg database.
 
 Evidence only: this is not a generation verifier. Source databases are never

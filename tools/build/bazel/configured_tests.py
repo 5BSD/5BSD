@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Register configured native ATF programs with declared runtime library checks."""
 import json
 from collections import deque

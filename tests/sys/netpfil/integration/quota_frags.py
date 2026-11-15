@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Fragment helper for the 5BSD seam tests (quotas.sh).
 #
 #   quota_frags.py SRC DST COUNT

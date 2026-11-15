@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual gzip/bzip/xz/zstd readers and source admission, native file I/O and codecs.
 
 Device identities are injected; this does not boot an ELF or authenticate a disk.

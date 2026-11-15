@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Explicit two-phase state provisioning in an exclusive offline trusted builder.
 
 Receipts are construction evidence, not authentication or activation authority.

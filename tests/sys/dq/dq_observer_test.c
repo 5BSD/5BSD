@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Observer descriptors (design 7.2): a copy of every event and every reply
  * on a queue (lengths always, bytes only to a DQ_OBS_F_DATA observer), on a
  * descriptor that can read and ask for statistics and nothing else.

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Real signed pkg upgrade, BE boot/rollback/removal in the owned disposable VM."""
 import functools
 import http.server

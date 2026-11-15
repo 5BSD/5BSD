@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # The installer's adduser step offers the local hardware groups (audio,
 # video) as the default additional groups, and BSDINSTALL_ADDUSER_GROUPS
 # overrides or empties that default.  chroot(8) is replaced by a recorder.

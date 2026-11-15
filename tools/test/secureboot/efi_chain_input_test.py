@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual EFI chain command with native firmware/I/O admission fixtures."""
 from pathlib import Path
 import subprocess,tempfile

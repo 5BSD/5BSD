@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* Mock of bhyve mevent.h for the vsock device harness. */
 #ifndef MOCK_MEVENT_H
 #define MOCK_MEVENT_H

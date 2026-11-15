@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Run a staged FUSE VM and verify every case against its build manifest."""
 import argparse
 from collections import Counter

@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Cross-build a real Linux64 libfuse daemon; never execute it on the host.
 set -eu
 out=${1:?usage: build-fuse-client.sh output-directory}

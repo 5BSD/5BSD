@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Pure-unit tests for bsdnamespace(8)'s jail-name derivation and descriptor parsing.
  *
  * The headline invariant is INJECTIVITY: jail_name_from_label() must map two

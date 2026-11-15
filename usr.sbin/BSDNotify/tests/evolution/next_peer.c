@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * system.Notify peer built from evolution/notify_next.fidl at bsd:2 (one
  * method more than the production bsd:1 schema).  session_test pairs it

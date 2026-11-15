@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Copy rebuilt kernel/programs into the disposable 5BSD DUT and reboot.
 # usage: push-files.sh [kernel] [pf] [prog:OBJREL:DEST ...]
 set -eu

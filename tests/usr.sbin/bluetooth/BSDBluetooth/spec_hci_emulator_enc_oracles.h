@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Test-only HCI encryption, timeout, and power-control oracles from Bluetooth
  * Core 6.3 Vol 4 Part E §§7.7.5, 7.7.8, 7.7.15, 7.7.65.5,
  * 7.7.65.32-7.7.65.33, 7.8.24-7.8.26, and 7.8.118-7.8.120.

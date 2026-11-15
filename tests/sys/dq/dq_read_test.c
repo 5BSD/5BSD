@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Data: read(2) and its relatives on a served file are READ events the
  * controller answers from memory, and the requester cannot tell them from
  * the real file holding the same bytes.  Requesters run in forked children

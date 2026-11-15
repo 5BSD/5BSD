@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Synthetic host evidence tests, not ZFS or VM qualification."""
 import hashlib
 import json

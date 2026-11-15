@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Validate fio workload completion, not performance acceptance or provenance."""
 import argparse
 import configparser

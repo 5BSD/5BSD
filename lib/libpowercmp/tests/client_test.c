@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * libpowercmp client semantics against a scripted bsd.power.v1 server over a
  * real capability channel: negotiation, terminal transport/protocol errors,

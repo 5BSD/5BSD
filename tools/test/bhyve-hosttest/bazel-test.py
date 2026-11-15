@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Run unprivileged qualification against the declared Bazel helpers."""
 import os
 from pathlib import Path

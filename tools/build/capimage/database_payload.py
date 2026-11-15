@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Compare pkg schema-42/1000 records with archive inventory.
 
 Complements structural preflight. Does not yet verify all database tables,

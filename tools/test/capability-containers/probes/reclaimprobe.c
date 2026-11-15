@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * reclaimprobe: a throwaway capability unit for the container-model lifecycle
  * test.  It enters capability mode (switchboard's readiness boundary), claims
  * persistent storage from system.Filesystem -- which materialises its per-bundle

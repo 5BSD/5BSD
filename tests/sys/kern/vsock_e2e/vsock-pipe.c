@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * vsock-pipe — netcat-style AF_VSOCK tool for the e2e suite (guest side).
  *

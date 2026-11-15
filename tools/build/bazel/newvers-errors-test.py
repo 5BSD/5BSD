@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Version generation must reject failed metadata producers before publishing C."""
 import os
 from pathlib import Path

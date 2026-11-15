@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Regression tests for TrustedZFS security hardening.  These deliberately
  * exercise raw ioctl ABI boundaries and shared-object races in addition to
  * the public libtrustedzfs API.

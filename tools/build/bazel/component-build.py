@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Emit native C/C++ library and C program compilation from selected component metadata.
 
 Installation, generated files and package completeness are separate gates.

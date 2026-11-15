@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Run base utility ATF suites against this round's built binaries, no install."""
 from pathlib import Path
 import json,os,subprocess,tempfile,shutil

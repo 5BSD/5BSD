@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Declared Bazel targets for the protobuf stack, compared with Make.
 
 Builds Abseil (libprivateabsl.a and .so.2501), the protobuf C++ runtime

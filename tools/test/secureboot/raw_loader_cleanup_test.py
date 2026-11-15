@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise actual raw-loader cleanup with fault-injected verification and I/O.
 
 The verifier stub implements vectx_close's ownership contract. This tests loader

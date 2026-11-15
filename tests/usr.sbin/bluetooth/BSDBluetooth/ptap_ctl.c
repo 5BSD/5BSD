@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* White-box build of ctl.c for defensive registry/worker coverage. */
 #include "ctl.c"
 

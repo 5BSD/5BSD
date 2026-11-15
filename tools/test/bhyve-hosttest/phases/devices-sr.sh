@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Phase devices-sr (dm): bhyve checkpoint/suspend/restore for every emulated
 # device with save/restore support that a FreeBSD guest can drive. Separate
 # from the hardware "devices" phase; runs alone and in any order.

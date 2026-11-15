@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * statx(2)/newfstatat(2) additions: AT_STATX_* sync hints accepted,
  * STATX_MNT_ID reported when asked for, STATX_ATTR_IMMUTABLE/APPEND/NODUMP

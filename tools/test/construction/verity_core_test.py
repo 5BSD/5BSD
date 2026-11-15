@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Native C verifier tests using the independent Python tree builder."""
 import ctypes as C
 import errno

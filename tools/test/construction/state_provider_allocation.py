@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Extend an exported allocation on a private output disk; never write the input."""
 import hashlib
 import importlib.util

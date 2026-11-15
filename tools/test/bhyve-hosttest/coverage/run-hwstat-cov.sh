@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Run the coverage-instrumented hwstat: unit tests, the atf CLI suite and the
 # real-hardware invocations, then merge and report.
 #   usage: run-hwstat-cov.sh OUTDIR

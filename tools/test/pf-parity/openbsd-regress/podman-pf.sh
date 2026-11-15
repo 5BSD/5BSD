@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # podman container networking through 5BSD's OpenBSD PF, end to end.
 # The DUT runs podman with the 5BSD containernetworking-plugins (portmap
 # patched for OpenBSD PF) and the port's pf.conf.sample; the OpenBSD helper

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Independent Bluetooth Core 6.3 LE SMP Secure Connections assignments.
  * No production SMP header is included.
  */

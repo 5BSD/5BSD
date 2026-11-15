@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Native-created descriptor rights across exec into a Linux64 probe. */
 #ifdef LINUX_PROBE
 __asm__(".text\n.globl _start\n_start:\n"

@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Scale: twelve bundles installed in ONE burst into Apps/, then removed in one
 # burst.  The watch must settle the burst into one load, every unit must run
 # and claim, every marker and container must appear; the removal must unload

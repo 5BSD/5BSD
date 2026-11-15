@@ -1,4 +1,9 @@
 #!/usr/bin/env python3.12
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Reproduce pinned upstream imports into an EMPTY contrib staging directory.
 
 The lock file records URLs and SHA256 values. Local patches are applied only
