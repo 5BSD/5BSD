@@ -64,6 +64,19 @@ notes(int kq, int ms)
 	return (got);
 }
 
+/*
+ * Nothing arrived but the fence: a note pushed to o now.  The kqueue is
+ * EV_CLEAR and accumulates; a note raised before the push is reported
+ * with it.
+ */
+static u_int
+notes_fenced(int kq, struct dqt_ctl *c, struct dqt_object *o)
+{
+
+	ATF_REQUIRE_EQ(0, dq_push_vnode_note(c->q, o->id, NOTE_ATTRIB));
+	return (notes(kq, 500));
+}
+
 static int backing;
 
 static struct dqt_object *
@@ -235,13 +248,13 @@ ATF_TC_BODY(siblings, tc)
 	other = dqt_mint_ident(&c, id, &pol, data, sizeof(data));
 	(void)close(other->fd);
 	other->fd = -1;
-	ATF_CHECK_EQ(0, notes(kq, 300));
+	ATF_CHECK_EQ(NOTE_ATTRIB, notes_fenced(kq, &c, o));
 	/* The same identity on another queue: nothing. */
 	dqt_init(&c2);
 	far = dqt_mint_ident(&c2, &o->ident, &pol, data, sizeof(data));
 	(void)close(far->fd);
 	far->fd = -1;
-	ATF_CHECK_EQ(0, notes(kq, 300));
+	ATF_CHECK_EQ(NOTE_ATTRIB, notes_fenced(kq, &c, o));
 	dqt_fini(&c2);
 	free(id);
 	(void)close(kq);
@@ -330,9 +343,9 @@ ATF_TC_BODY(push_refusals, tc)
 	pa.dp_op = 99;
 	REFUSED(ioctl(c.q, DQ_IOC_PUSH, &pa), EINVAL);
 #undef REFUSED
-	ATF_CHECK_EQ(0, notes(kq, 300));
+	ATF_CHECK_EQ(NOTE_ATTRIB, notes_fenced(kq, &c, o));
 	dqt_stats2(&c, &st);
-	ATF_CHECK_EQ(0, st.ds2_pushes);
+	ATF_CHECK_EQ(1, st.ds2_pushes);		/* the fence's */
 	/* An observer cannot push: its ioctl set is the stats commands. */
 	{
 		int obs = dq_mint_observer(c.q, 0);
