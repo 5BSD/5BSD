@@ -3,7 +3,7 @@
 .\"
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd September 25, 2026
+.Dd November 15, 2026
 .Dt MAC_CAPABILITY_CAPPROTECT 4
 .Os
 .Sh NAME
@@ -147,7 +147,10 @@ file descriptor transfers over local-domain sockets.
 This flag removes ambient descriptor receipt; it does not block attachments
 received over a previously held
 .Xr mac_capability_channel 4
-endpoint.
+endpoint, nor descriptors returned in the reply to a
+.Dv MAC_CAPABILITY_CALL
+on such an endpoint, such as the token minted by
+.Dv CP_OP_MINT .
 Such attachments remain subject to the channel's explicit authority,
 descriptor-transfer limit, close-on-exec state, and close-on-fork state.
 .It Dv CP_SF_NOEXEC Pq 0x2000
