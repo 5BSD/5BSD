@@ -16,9 +16,13 @@
 
 #include "test_idle_common.h"
 
-/* Collect up to n events of type ev from pid; returns how many. */
+/*
+ * Collect up to n events of type ev, and up to n2 of type ev2 into out2,
+ * from pid; returns how many of ev.
+ */
 static int
-collect(int fd, pid_t pid, oes_event_type_t ev, oes_message_t **out, int n,
+collect2(int fd, pid_t pid, oes_event_type_t ev, oes_message_t **out, int n,
+    oes_event_type_t ev2, oes_message_t **out2, int n2, int *got2,
     int timeout_ms)
 {
 	struct timespec start;
@@ -26,17 +30,31 @@ collect(int fd, pid_t pid, oes_event_type_t ev, oes_message_t **out, int n,
 	int got;
 
 	got = 0;
+	*got2 = 0;
 	clock_gettime(CLOCK_MONOTONIC, &start);
-	while (got < n && idle_elapsed_ms(&start) < timeout_ms) {
+	while ((got < n || *got2 < n2) && idle_elapsed_ms(&start) < timeout_ms) {
 		if (test_wait_event(fd, &buf.msg, 50) != 0)
 			continue;
-		if (buf.msg.em_event != ev || buf.msg.em_process.ep_pid != pid)
+		if (buf.msg.em_process.ep_pid != pid)
 			continue;
-		out[got] = malloc(buf.msg.em_size);
-		memcpy(out[got], &buf.msg, buf.msg.em_size);
-		got++;
+		if (buf.msg.em_event == ev && got < n) {
+			out[got] = malloc(buf.msg.em_size);
+			memcpy(out[got++], &buf.msg, buf.msg.em_size);
+		} else if (buf.msg.em_event == ev2 && *got2 < n2) {
+			out2[*got2] = malloc(buf.msg.em_size);
+			memcpy(out2[(*got2)++], &buf.msg, buf.msg.em_size);
+		}
 	}
 	return (got);
+}
+
+static int
+collect(int fd, pid_t pid, oes_event_type_t ev, oes_message_t **out, int n,
+    int timeout_ms)
+{
+	int none;
+
+	return (collect2(fd, pid, ev, out, n, 0, NULL, 0, &none, timeout_ms));
 }
 
 static void
@@ -81,8 +99,8 @@ i1_pipe_ids(void)
 	(void)write(go[1], "g", 1);
 	ASSERT_MSG(waitpid(pid, &status, 0) == pid && WIFEXITED(status) &&
 	    WEXITSTATUS(status) == 0, "child status %#x", status);
-	nw = collect(fd, pid, OES_EVENT_NOTIFY_PIPE_WRITE, w, 4, 5000);
-	nr = collect(fd, pid, OES_EVENT_NOTIFY_PIPE_READ, r, 4, 5000);
+	nw = collect2(fd, pid, OES_EVENT_NOTIFY_PIPE_WRITE, w, 4,
+	    OES_EVENT_NOTIFY_PIPE_READ, r, 4, &nr, 5000);
 	ASSERT_MSG(nw == 4 && nr == 4, "%d write and %d read records", nw, nr);
 	if (nw == 4 && nr == 4) {
 		uint64_t a = w[0]->em_event_data.pipe.pipe_id;
