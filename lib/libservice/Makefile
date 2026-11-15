@@ -11,7 +11,7 @@ MLINKS+= service_runtime.3 service_bootstrap_parent.3
     service_budget_end service_budget_timeout service_drain_wait \
     service_channels_wait service_lease_set_create service_lease_set_destroy \
     service_lease_acquire service_lease_release service_lease_release_owner \
-    service_lease_count service_processes_stop
+    service_lease_count service_processes_stop service_retry_activation
 MLINKS+= service_runtime.3 ${api}.3
 .endfor
 MLINKS+=	libservice.3 service_acquire.3

@@ -382,3 +382,29 @@ service_bootstrap_parent(int fd, uint32_t timeout_ms)
 		return (errno = EINVAL, -1);
 	return (service_drain_wait(bootstrap_step, &state, timeout_ms));
 }
+
+int
+service_retry_activation(int (*attempt)(void *), void *arg,
+    uint32_t attempt_ms)
+{
+	uint64_t deadline;
+
+	if (attempt == NULL || attempt_ms == 0)
+		return (errno = EINVAL, -1);
+	deadline = add_ms(service_monotime_ms(),
+	    SERVICE_ACTIVATION_WAIT_MS((uint64_t)attempt_ms));
+	for (;;) {
+		errno = 0;
+		if (attempt(arg) == 0)
+			return (0);
+		if (errno == 0)
+			errno = EIO;
+		/* Start no attempt that could end after the deadline. */
+		if (errno != ETIMEDOUT ||
+		    add_ms(service_monotime_ms(), (uint64_t)attempt_ms +
+		    SERVICE_ACTIVATION_RETRY_PAUSE_MS) > deadline)
+			return (-1);
+		/* An attempt that timed out at once must not spin. */
+		(void)usleep(SERVICE_ACTIVATION_RETRY_PAUSE_MS * 1000);
+	}
+}

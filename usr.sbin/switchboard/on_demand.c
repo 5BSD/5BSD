@@ -31,6 +31,7 @@
 
 #include <libcapbundle.h>
 #include <channel.h>
+#include <service_runtime.h>
 
 #include "switchboard.h"
 #include "authority.h"
@@ -38,7 +39,6 @@
 #include "switchboard_probes.h"
 #include "switchboard_svc_proto.h"
 
-#define	ON_DEMAND_TIMEOUT_SEC	10
 #define	ON_DEMAND_TIMER_BIT	((uintptr_t)1 << (sizeof(uintptr_t) * 8 - 2))
 #define	ON_DEMAND_MAX_PENDING	64
 
@@ -179,7 +179,8 @@ arm_timeout(int kq, struct pending_lookup *pending)
 	if (pending->timeout_ident == 0)
 		return (-1);
 	EV_SET(&kev, pending->timeout_ident, EVFILT_TIMER,
-	    EV_ADD | EV_ONESHOT, NOTE_SECONDS, ON_DEMAND_TIMEOUT_SEC, pending);
+	    EV_ADD | EV_ONESHOT, NOTE_MSECONDS, SERVICE_ACTIVATION_TIMEOUT_MS,
+	    pending);
 	return (kevent(kq, &kev, 1, NULL, 0, NULL));
 }
 

@@ -66,5 +66,22 @@ int service_processes_stop(struct service_process **);
  * then send byte 1 on success. One deadline; no FD close or child cleanup.
  * timeout_ms must be nonzero and less than UINT32_MAX. */
 int service_bootstrap_parent(int, uint32_t);
+/*
+ * Switchboard lets an on-demand activation take up to
+ * SERVICE_ACTIVATION_TIMEOUT_MS before it answers ETIMEDOUT itself, while one
+ * lookup gives up sooner (SERVICE_LOOKUP_TIMEOUT_MS).  A process that must
+ * open a session before it confines itself (it cannot defer the lookup)
+ * repeats one that timed out with service_retry_activation(): attempt(arg)
+ * returns 0, or -1 with errno; ETIMEDOUT is repeated after a pause of
+ * SERVICE_ACTIVATION_RETRY_PAUSE_MS, but no attempt is started that could end
+ * after SERVICE_ACTIVATION_WAIT_MS(attempt_ms), attempt_ms being the bound of
+ * one attempt.  Every other error, and the last timeout, is returned as -1
+ * with that attempt's errno.
+ */
+#define	SERVICE_ACTIVATION_TIMEOUT_MS		10000U
+#define	SERVICE_ACTIVATION_RETRY_PAUSE_MS	100U
+#define	SERVICE_ACTIVATION_WAIT_MS(attempt_ms)				\
+	(SERVICE_ACTIVATION_TIMEOUT_MS + (attempt_ms))
+int service_retry_activation(int (*)(void *), void *, uint32_t);
 __END_DECLS
 #endif
