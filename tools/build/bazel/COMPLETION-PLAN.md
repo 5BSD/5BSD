@@ -165,6 +165,23 @@ The rest of the 239-owner review queue, a matched full Make installation,
 current kernel/modules/image, actual security-suite execution and the six gates
 remain open. Continue related test groups through the complete audit endpoint.
 
+The following core OS group also passes the complete audit endpoint (native R5):
+AIO, FIFO, file operations, mqueue, POSIX shared memory and enclosure services.
+Its 43 compiled programs/helpers and three scripts have explicit native source,
+header and library dependencies; all six helper binaries are installed without
+being falsely registered as tests. Independent review matches the six original
+Make Kyuafiles, all three installed script payloads, 95 installed file claims,
+30 explicit directory claims and all 43 compiled binary/debug pairs. This is
+build/install evidence; no host kernel or enclosure test is executed. Evidence:
+`bazel-core-test-installation-review-r1-20261115`,
+`bazel-installed-tests-world-native-amd64-r5-20261115` and its capture review.
+The same maintained frontend/settings/archive helpers apply; no new frontend,
+signing, validation or publication option is needed. The existing manual and
+production guard still describe the incomplete tests hierarchy. Subsequent
+related groups must preserve ATF/plain/TAP metadata and script transformations,
+not just build a C source glob. Whole installation/runtime and all six gates
+remain open.
+
 The concurrent OpenES merge a7d37e2855a changed kernel and test sources during
 R1. R2 incorporated its world dependencies; five archive hashes changed for real
 library/header/manual payload changes. Neither run is a controlled incremental

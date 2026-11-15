@@ -10,6 +10,12 @@ load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
 # Audit contributions only. No root Kyuafile claims that these partial suites
 # constitute the complete /usr/tests hierarchy.
 _INSTALLATION_CANDIDATES = [
+    "//tests/sys/aio:install_archive",
+    "//tests/sys/fifo:install_archive",
+    "//tests/sys/file:install_archive",
+    "//tests/sys/mqueue:install_archive",
+    "//tests/sys/posixshm:install_archive",
+    "//tests/sys/ses:install_archive",
     "//tests/sys/common:install_archive",
     "//tests/sys/kern:descriptor_install_archive",
     "//tests/sys/netinet/libalias:install_archive",
