@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/cddl/zfs:suite.bzl", "zfs_test_suite")
+
+zfs_test_suite(
+    files = ['zpool_detach.cfg', 'zpool_detach_001_neg.ksh', 'cleanup.ksh', 'setup.ksh'],
+    tests = {'zpool_detach_test': {'required_user': 'root', 'is_exclusive': True, 'required_programs': 'ksh93'}},
+)

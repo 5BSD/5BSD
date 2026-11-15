@@ -8,7 +8,7 @@ import tempfile
 import unittest
 root = Path(os.environ["TEST_SRCDIR"]) / os.environ["TEST_WORKSPACE"] if "TEST_SRCDIR" in os.environ else Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(root / "tools/build/bazel"))
-from service_health import operation_settings, operation_result, inventory, manager_states, required_services, load, exercise
+from service_health import operation_settings, operation_result, inventory, manager_states, required_services, load, exercise, installed_settings, installed_result
 
 
 def document():
@@ -101,6 +101,7 @@ class ServiceCoverage(unittest.TestCase):
     def test_operations_reject_wrong_context_and_unbounded_inputs(self):
         good=dict(qualification='/capture',target='//test:client',output='client',guest_directory='/tmp',cases=['time','device-denied'])
         self.assertEqual(operation_settings(good),good)
+        self.assertEqual(operation_settings(dict(good,cases=['log']))['cases'],['log'])
         for bad in [dict(good,cases=['device']),dict(good,cases=[]),
                     dict(good,cases=['time','time']),dict(good,cases='time'),
                     dict(good,cases=['unknown']),dict(good,guest_directory='/tmp/../root'),
@@ -159,6 +160,86 @@ class ServiceCoverage(unittest.TestCase):
             self.assertEqual(seen,['time','notify'])
             self.assertEqual(len(report['ordinary_operations']),2)
             self.assertEqual(report['status'],'passed')
+            self.assertFalse(report['all_provider_operations_qualified'])
+
+
+    def test_installed_operator_selection_requires_image_payload(self):
+        good = [dict(operation='network-resolve', program='/caps/network operator')]
+        self.assertEqual(installed_settings(good, {'/caps/network operator': 'image-hash'}), good)
+        for bad in ([], good * 2, [dict(good[0], program='/unpackaged')],
+                    [dict(good[0], operation='configtest')], [dict(good[0], session='root')]):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                installed_settings(bad, {'/caps/network operator': 'image-hash'})
+
+    def test_numeric_network_reply_is_complete_and_matches_input(self):
+        good = (b'count=1 ttl_seconds=0 canonname=192.0.2.1\n'
+                b'result[0].family=inet4 address=192.0.2.1 port=443 scope_id=0 socket_type=1 protocol=6\n')
+        self.assertEqual(installed_result(good, 'network-resolve')['results'],
+                         [dict(socket_type=1, protocol=6)])
+        for bad in (b'', good[:-1], good.replace(b'count=1', b'count=2'),
+                    good.replace(b'count=1', b'count=0'), good.replace(b'result[0]', b'result[1]'),
+                    good.replace(b'192.0.2.1 port', b'192.0.2.2 port'),
+                    good.replace(b'port=443', b'port=80'), good.replace(b'protocol=6', b'protocol=99'),
+                    good + b'unexpected\n'):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                installed_result(bad, 'network-resolve')
+
+    def test_extension_enumeration_requires_ready_consistent_provider_records(self):
+        good = (b'example: allowed, boot=enabled, loaded=no, installed=yes, policy=default\n'
+                b'other: denied, boot=blocked, loaded=undisclosed, installed=no, policy=override\n')
+        self.assertEqual(set(installed_result(good, 'system-extension-config')['modules']),
+                         {'example', 'other'})
+        for bad in (b'', good[:-1], good + good,
+                    good.replace(b'loaded=undisclosed', b'loaded=yes'),
+                    good.replace(b'boot=enabled', b'boot=blocked'),
+                    good.replace(b'policy=default', b'policy=default (bootstrap; persistent policy not ready)'),
+                    b'configuration valid\n'):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                installed_result(bad, 'system-extension-config')
+
+    def test_installed_tools_use_required_context_and_quote_program(self):
+        loaded = {'policy': dict(roots=['/caps'], control_program='/caps/control', deadline_seconds=1),
+                  'helper': Path('/fixture/inventory'), 'helper_binding': {'fixture': True},
+                  'installed_payload_sha256': {'/caps/network operator': 'network-hash', '/caps/ext': 'extension-hash'},
+                  'installed_operations': [dict(operation='network-resolve', program='/caps/network operator'),
+                                           dict(operation='system-extension-config', program='/caps/ext')]}
+        calls = []
+        def root(name, command, source=None):
+            calls.append(('root', name, command))
+            if name.endswith('-inventory'):return json.dumps(document()).encode()
+            if '-status-' in name:return status(['org.test/daemon running  pid 42 restart=on-failure mgmt=core'])
+            if name.endswith('-operator-system-extension-config'):
+                return b'example: allowed, boot=enabled, loaded=no, installed=yes, policy=default\n'
+            return b''
+        def ordinary(name, command):
+            calls.append(('ordinary', name, command))
+            return ('count=1 ttl_seconds=0 canonname=192.0.2.1\n'
+                    'result[0].family=inet4 address=192.0.2.1 port=443 scope_id=0 socket_type=1 protocol=6\n')
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, 'ordinary-session'):
+                exercise(loaded, root, Path(directory), 'missing-callback')
+            self.assertEqual(calls, [])
+            report = exercise(loaded, root, Path(directory), 'fixture', user_invoke=ordinary)
+            self.assertEqual(report['status'], 'passed')
+            self.assertFalse(report['all_provider_operations_qualified'])
+            self.assertEqual([item['session'] for item in report['installed_operations']], ['ordinary', 'root'])
+            self.assertIn(('ordinary', 'fixture-operator-network-resolve',
+                           "'/caps/network operator' resolve -4 192.0.2.1 443"), calls)
+            self.assertIn(('root', 'fixture-service-operator-system-extension-config', '/caps/ext config'), calls)
+
+    def test_failed_installed_operator_fails_service_phase(self):
+        loaded = {'policy': dict(roots=['/caps'], control_program='/caps/control', deadline_seconds=1),
+                  'helper': Path('/fixture/inventory'), 'helper_binding': {'fixture': True},
+                  'installed_payload_sha256': {'/caps/ext': 'extension-hash'},
+                  'installed_operations': [dict(operation='system-extension-config', program='/caps/ext')]}
+        def root(name, command, source=None):
+            if name.endswith('-inventory'):return json.dumps(document()).encode()
+            if '-status-' in name:return status(['org.test/daemon running  pid 42 restart=on-failure mgmt=core'])
+            return b''
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(ValueError):exercise(loaded, root, Path(directory), 'fixture')
+            report = json.loads((Path(directory) / 'fixture-service-health.json').read_text())
+            self.assertEqual(report['status'], 'failed')
             self.assertFalse(report['all_provider_operations_qualified'])
 
 

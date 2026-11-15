@@ -1,5 +1,50 @@
 # Kernel module debug qualification: proven scope and remaining work
 
+## Complete selected AMD64 package pairing (2026-11-15)
+
+The captured full R15 system package set now passes split-debug pairing for all
+1,803 declared pairs: 1,079 world files and 724 kernel/module files. The package
+inventory and all 450 indexed archives come from the public hash-verified native
+qualification capture. No filename allowlist selects the pairs. Every declared
+debug payload has exactly the same counterpart path as the independent complete
+Make reference; no expected pair is missing and no extra pair is present.
+
+The current maintained `elf-debug-check.py` checks actual packaged binary/debug
+bytes, ELF identity, installed debuglink lookup, CRC and GNU build-ID pairing.
+All 724 kernel/module pairs carry matching build IDs and retain loader symbols.
+The original Make world policy independently requires 1,077 ordinary binaries to
+be stripped and two userboot DSOs to retain static symbols; the native pairs obey
+those policies. A kernel/module record's default `reference_symbol_policy` flag
+is not an ordinary strip requirement: the verifier's kernel/module mode requires
+its loader symbol table. The independent kind-policy review reports these groups
+separately.
+
+Original Make reference bytes and all 1,803 pairs were rechecked with the current
+verifier because the saved world reference bound its older version. No original
+receipt was updated. The package audit uses private ordinal payload files and
+validated installed debuglink basenames; it never extracts member-named paths,
+executes payloads or changes package bytes. All 2,065,511,080 temporary logical
+payload bytes were removed after the audit. Independent review rechecks all 450
+public package bindings, report/driver hashes and original path/policy coverage.
+
+Evidence under `/usr/obj/usr/src/`:
+
+- `bazel-packaged-debug-pair-audit-r4-20261115/result.json` and
+  `review-kind-policy-r2.json`: passed pairing and independent binding review.
+- `bazel-closeout-system-native-r15-20261114`: the selected native package
+  snapshot; tests are disabled and tests support is enabled. This is not a new
+  current-head or tests-enabled world build.
+- `bazel-current-make-stage-r1-20261114`: original world/kernel stage references.
+
+R1's stale-verifier rejection, R2's diagnostic pipe-padding stall and R3's
+ordinal-basename diagnostic errors remain retained. R4 resolves those harness
+problems without changing the verifier or any package payload. The current
+full tests-enabled contribution build is separate and still running.
+
+This closes packaged pair binding for that selected snapshot. It does not prove
+Make/native DWARF semantics, debugger source/line lookup, complete object-code
+parity or the other six closeout gates. The requirements below remain in force.
+
 ## Scope correction (November 2, 2026)
 
 Some module qualification prose described CTF/debug payloads as matching Make

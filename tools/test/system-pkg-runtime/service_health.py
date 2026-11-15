@@ -102,7 +102,7 @@ def required_services(services, states):
     return sorted(required)
 
 
-USER_OPERATIONS = frozenset(('time', 'sysctl', 'notify', 'memory', 'power', 'device-denied'))
+USER_OPERATIONS = frozenset(('time', 'sysctl', 'notify', 'log', 'memory', 'power', 'device-denied'))
 
 
 def operation_settings(value):
@@ -131,6 +131,71 @@ def operation_result(data, expected):
     return record
 
 
+# These are installed operator interfaces, not authority granted to the uploaded
+# ordinary client. Their argument vectors exercise real provider methods.
+INSTALLED_OPERATIONS = {
+    'network-resolve': ('ordinary', ('resolve', '-4', '192.0.2.1', '443')),
+    'system-extension-config': ('root', ('config',)),
+}
+
+
+def installed_settings(value, payloads):
+    if not isinstance(value, list) or not value:
+        raise ValueError('nonempty installed operator selection required')
+    seen = set()
+    for item in value:
+        if not isinstance(item, dict) or set(item) != {'operation', 'program'}:
+            raise ValueError('exact installed operator selection required')
+        operation = item['operation']
+        if (not isinstance(operation, str) or operation not in INSTALLED_OPERATIONS or
+                operation in seen):
+            raise ValueError('distinct supported installed operations required')
+        seen.add(operation)
+        if absolute(item['program']) not in payloads:
+            raise ValueError('installed operator must be a regular image payload')
+    return value
+
+
+def installed_result(data, operation):
+    if isinstance(data, str):
+        data = data.encode('utf-8')
+    if not data.endswith(b'\n') or len(data) > 1024 * 1024:
+        raise ValueError('complete bounded installed operator output required')
+    lines = data.decode().splitlines()
+    if operation == 'network-resolve':
+        header = re.fullmatch(r'count=([0-9]+) ttl_seconds=([0-9]+) canonname=(.*)', lines[0])
+        if header is None or not 0 < int(header[1]) == len(lines) - 1:
+            raise ValueError('complete nonempty numeric resolution required')
+        # Numeric documentation address/service: no external DNS or peer needed.
+        results = []
+        for index, line in enumerate(lines[1:]):
+            row = re.fullmatch(r'result\[([0-9]+)\].family=inet4 address=192\.0\.2\.1 '
+                               r'port=443 scope_id=0 socket_type=([0-9]+) protocol=([0-9]+)', line)
+            if row is None or int(row[1]) != index:
+                raise ValueError('numeric resolve reply differs from requested endpoint')
+            if (int(row[2]), int(row[3])) not in ((1, 6), (2, 17)):
+                raise ValueError('numeric resolve requires TCP or UDP endpoint semantics')
+            results.append(dict(socket_type=int(row[2]), protocol=int(row[3])))
+        return dict(operation=operation, status='passed', results=results)
+    if operation == 'system-extension-config':
+        modules = {}
+        for line in lines:
+            row = re.fullmatch(r'([A-Za-z0-9_.-]+): (allowed|denied), '
+                               r'boot=(enabled|blocked|disabled), loaded=(yes|no|undisclosed), '
+                               r'installed=(yes|no|unknown), policy=(override|default)', line)
+            if row is None or row[1] in modules:
+                raise ValueError('complete unique ready extension policy records required')
+            if ((row[2] == 'denied' and (row[3] == 'enabled' or row[4] != 'undisclosed')) or
+                    (row[2] == 'allowed' and (row[3] == 'blocked' or row[4] == 'undisclosed'))):
+                raise ValueError('inconsistent extension policy reply')
+            modules[row[1]] = dict(allowed=row[2], boot=row[3], loaded=row[4],
+                                  installed=row[5], policy=row[6])
+        if not modules:
+            raise ValueError('nonempty extension policy enumeration required')
+        return dict(operation=operation, status='passed', modules=modules)
+    raise ValueError('unsupported installed operation')
+
+
 def load(path, report):
     from pathlib import Path
     from qualification_artifacts import resolve, digest
@@ -139,11 +204,13 @@ def load(path, report):
     policy = json.loads(policy_bytes)
     fields = {'format', 'qualification', 'target', 'output', 'roots',
               'control_program', 'deadline_seconds'}
-    if policy.get('format') == 2:fields.add('operations')
+    if policy.get('format') in (2, 3):fields.add('operations')
+    if policy.get('format') == 3:fields.add('installed_operations')
     if (set(policy) != fields or type(policy['format']) is not int or
-            policy['format'] not in (1, 2)):
-        raise ValueError('exact format-1/2 service qualification policy required')
-    operations = operation_settings(policy['operations']) if policy['format'] == 2 else None
+            policy['format'] not in (1, 2, 3)):
+        raise ValueError('exact format-1/2/3 service qualification policy required')
+    operations = operation_settings(policy['operations']) if policy['format'] >= 2 else None
+    installed = installed_settings(policy['installed_operations'], report['payload_sha256']) if policy['format'] == 3 else []
     roots = policy['roots']
     if (not isinstance(roots, list) or not roots or
             any(not isinstance(root, str) for root in roots) or
@@ -163,6 +230,7 @@ def load(path, report):
         bindings[str(operation_helper)] = digest(operation_helper)
     return dict(policy=policy, policy_bytes=policy_bytes, helper=helper,
                 helper_binding=binding, bindings=bindings, operations=operations,
+                installed_operations=installed, installed_payload_sha256={item['program']: report['payload_sha256'][item['program']] for item in installed},
                 operation_helper=operation_helper, operation_helper_binding=operation_binding)
 
 
@@ -172,7 +240,9 @@ def exercise(loaded, invoke, output, label, user_invoke=None):
     import uuid
     policy = loaded['policy']
     operations = loaded.get('operations')
-    if operations is not None and not callable(user_invoke):
+    installed = loaded.get('installed_operations', [])
+    needs_user = operations is not None or any(INSTALLED_OPERATIONS[item['operation']][0] == 'ordinary' for item in installed)
+    if needs_user and not callable(user_invoke):
         raise ValueError('authenticated ordinary-session operation callback required')
     work = '/root/.service-audit-' + uuid.uuid4().hex
     q = shlex.quote
@@ -184,6 +254,10 @@ def exercise(loaded, invoke, output, label, user_invoke=None):
         result.update(scope='Installed-manifest boot readiness plus selected ordinary-login operations; not complete provider operation coverage',
                       operation_helper=loaded['operation_helper_binding'], ordinary_operations=[],
                       all_provider_operations_qualified=False)
+    if installed:
+        result.update(installed_operations=[], installed_payload_sha256=loaded['installed_payload_sha256'],
+                      all_provider_operations_qualified=False,
+                      scope='Installed-manifest readiness, selected login operations and installed operator RPCs; not complete provider operation coverage')
     report = output / (label + '-service-health.json')
     def save():report.write_text(json.dumps(result, indent=2) + '\n')
     save()
@@ -225,6 +299,16 @@ def exercise(loaded, invoke, output, label, user_invoke=None):
                 result['ordinary_operations'].append(operation_result(raw, case))
                 save()
             command('operation-cleanup', '/bin/rm -rf -- ' + q(operation_work))
+        for item in installed:
+            operation = item['operation']
+            session, arguments = INSTALLED_OPERATIONS[operation]
+            text = ' '.join(q(arg) for arg in (item['program'], *arguments))
+            raw = (user_invoke(label + '-operator-' + operation, text) if session == 'ordinary'
+                   else command('operator-' + operation, text))
+            record = installed_result(raw, operation)
+            record.update(program=item['program'], session=session)
+            result['installed_operations'].append(record)
+            save()
         command('cleanup', '/bin/rm -rf -- ' + q(work))
         result.update(status='passed', attempts=attempt)
         result.pop('readiness_error', None)

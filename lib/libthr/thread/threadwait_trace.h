@@ -41,7 +41,67 @@ static const void * const threadwait_dtrace_anchor __attribute__((used, retain))
 	if (THREADWAIT_RWLOCK_DONE_ENABLED()) \
 		THREADWAIT_RWLOCK_DONE((uintptr_t)(a0), (int)(a1), (int)(a2)); \
 } while (0)
+#define TRACE_PLOCKSTAT_MUTEX__ACQUIRE(a0, a1, a2) do { \
+	if (PLOCKSTAT_MUTEX_ACQUIRE_ENABLED()) \
+		PLOCKSTAT_MUTEX_ACQUIRE((void *)(a0), (int)(a1), (int)(a2)); \
+} while (0)
+#define TRACE_PLOCKSTAT_MUTEX__RELEASE(a0, a1) do { \
+	if (PLOCKSTAT_MUTEX_RELEASE_ENABLED()) \
+		PLOCKSTAT_MUTEX_RELEASE((void *)(a0), (int)(a1)); \
+} while (0)
+#define TRACE_PLOCKSTAT_MUTEX__BLOCK(a0) do { \
+	if (PLOCKSTAT_MUTEX_BLOCK_ENABLED()) \
+		PLOCKSTAT_MUTEX_BLOCK((void *)(a0)); \
+} while (0)
+#define TRACE_PLOCKSTAT_MUTEX__SPIN(a0) do { \
+	if (PLOCKSTAT_MUTEX_SPIN_ENABLED()) \
+		PLOCKSTAT_MUTEX_SPIN((void *)(a0)); \
+} while (0)
+#define TRACE_PLOCKSTAT_MUTEX__SPUN(a0, a1, a2) do { \
+	if (PLOCKSTAT_MUTEX_SPUN_ENABLED()) \
+		PLOCKSTAT_MUTEX_SPUN((void *)(a0), (int)(a1), (int)(a2)); \
+} while (0)
+#define TRACE_PLOCKSTAT_MUTEX__BLOCKED(a0, a1) do { \
+	if (PLOCKSTAT_MUTEX_BLOCKED_ENABLED()) \
+		PLOCKSTAT_MUTEX_BLOCKED((void *)(a0), (int)(a1)); \
+} while (0)
+#define TRACE_PLOCKSTAT_MUTEX__ERROR(a0, a1) do { \
+	if (PLOCKSTAT_MUTEX_ERROR_ENABLED()) \
+		PLOCKSTAT_MUTEX_ERROR((void *)(a0), (int)(a1)); \
+} while (0)
+#define TRACE_PLOCKSTAT_RW__ACQUIRE(a0, a1) do { \
+	if (PLOCKSTAT_RW_ACQUIRE_ENABLED()) \
+		PLOCKSTAT_RW_ACQUIRE((void *)(a0), (int)(a1)); \
+} while (0)
+#define TRACE_PLOCKSTAT_RW__RELEASE(a0, a1) do { \
+	if (PLOCKSTAT_RW_RELEASE_ENABLED()) \
+		PLOCKSTAT_RW_RELEASE((void *)(a0), (int)(a1)); \
+} while (0)
+#define TRACE_PLOCKSTAT_RW__BLOCK(a0, a1) do { \
+	if (PLOCKSTAT_RW_BLOCK_ENABLED()) \
+		PLOCKSTAT_RW_BLOCK((void *)(a0), (int)(a1)); \
+} while (0)
+#define TRACE_PLOCKSTAT_RW__BLOCKED(a0, a1, a2) do { \
+	if (PLOCKSTAT_RW_BLOCKED_ENABLED()) \
+		PLOCKSTAT_RW_BLOCKED((void *)(a0), (int)(a1), (int)(a2)); \
+} while (0)
+#define TRACE_PLOCKSTAT_RW__ERROR(a0, a1, a2) do { \
+	if (PLOCKSTAT_RW_ERROR_ENABLED()) \
+		PLOCKSTAT_RW_ERROR((void *)(a0), (int)(a1), (int)(a2)); \
+} while (0)
 #else
+#define TRACE_PLOCKSTAT_MUTEX__ACQUIRE(a0, a1, a2) do { } while (0)
+#define TRACE_PLOCKSTAT_MUTEX__RELEASE(a0, a1) do { } while (0)
+#define TRACE_PLOCKSTAT_MUTEX__BLOCK(a0) do { } while (0)
+#define TRACE_PLOCKSTAT_MUTEX__SPIN(a0) do { } while (0)
+#define TRACE_PLOCKSTAT_MUTEX__SPUN(a0, a1, a2) do { } while (0)
+#define TRACE_PLOCKSTAT_MUTEX__BLOCKED(a0, a1) do { } while (0)
+#define TRACE_PLOCKSTAT_MUTEX__ERROR(a0, a1) do { } while (0)
+#define TRACE_PLOCKSTAT_RW__ACQUIRE(a0, a1) do { } while (0)
+#define TRACE_PLOCKSTAT_RW__RELEASE(a0, a1) do { } while (0)
+#define TRACE_PLOCKSTAT_RW__BLOCK(a0, a1) do { } while (0)
+#define TRACE_PLOCKSTAT_RW__BLOCKED(a0, a1, a2) do { } while (0)
+#define TRACE_PLOCKSTAT_RW__ERROR(a0, a1, a2) do { } while (0)
 #define TRACE_THREADWAIT_RWLOCK__START(a0, a1) do { } while (0)
 #define TRACE_THREADWAIT_RWLOCK__DONE(a0, a1, a2) do { } while (0)
 #define TRACE_THREADWAIT_MUTEX__START(a0) do { } while (0)

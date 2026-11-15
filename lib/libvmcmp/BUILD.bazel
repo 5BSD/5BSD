@@ -3,8 +3,7 @@ load("//tools/build/bazel:bsd_fidl.bzl", "bsd_fidl_ir", "bsd_fidl_bindings")
 exports_files(["vmcmp.fidl"])
 bsd_fidl_ir(name = "vm_ir", schemas = ["//lib/libfidl/tests:zx.fidl", "vmcmp.fidl"], available = "bsd:1",
     compiler = "//tools/build/fuchsia/fidlc:fidlc",
-    runtime_libraries = ["//lib/libmd:md_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared",
-        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"])
+    runtime_libraries = ["//tools/build/fuchsia/fidlc:runtime_libraries"])
 bsd_fidl_bindings(name = "vm_bindings", ir = ":vm_ir",
     generator = "//tools/build/fuchsia:fidlgen-build.py", modules = ["//tools/build/fuchsia:binding_modules"],
     templates = ["@fuchsia_runtime_src//:binding_templates"],
@@ -23,7 +22,10 @@ cc_library(name = "generated_bindings", srcs = [":binding_sources"],
     deps = [":generated_headers", "//lib/libfidl:headers", "//contrib/llvm-project/libcxx/include:headers"], copts = ["-std=c++20", "-nostdinc++"], linkstatic = True, visibility = ["//lib/libvmcmp/tests:__pkg__"])
 
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
-_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
 cc_library(name = "headers", hdrs = ["vmcmp.h"], strip_include_prefix = ".", deps = ["//lib/libservice:headers"], visibility = ["//visibility:public"])
 cc_library(name = "objects", srcs = ["vmcmp.c"], copts = ["-fPIC"], deps = [":headers", ":generated_headers", "//lib/libservice:headers", "//lib/libfidl:headers", "//lib/libcapsulert:vm_protocol_headers"], linkstatic = True, target_compatible_with = _PLATFORM)
 cc_library(name = "vmcmp", deps = [":objects", ":generated_bindings", "//lib/libservice:service", "//lib/libfidl:fidl", "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", "//lib/libthr:thr"], linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])

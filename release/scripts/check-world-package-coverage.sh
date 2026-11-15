@@ -18,14 +18,52 @@ names() {
         print $i
     }}'
 }
+
+jobs=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null) || jobs=1
+case $jobs in
+''|*[!0-9]*|0) jobs=1 ;;
+esac
+
+# Print the package names of the directories listed on standard input.  Each
+# directory needs its own make evaluation, so run them side by side.  Every
+# evaluation is waited for by process: one that is lost, not only one that
+# reports an error, must fail the check rather than shorten the list.
+query() {
+    rm -rf "$work/query"
+    mkdir "$work/query"
+    pids=
+    running=0
+    failed=0
+    while IFS= read -r directory; do
+        "$@" -C "$packages/$directory" -V '${_ALLPACKAGES}' \
+            > "$work/query/$directory" &
+        pids="$pids $!"
+        running=$((running + 1))
+        if [ "$running" -ge "$jobs" ]; then
+            for pid in $pids; do
+                wait "$pid" || failed=1
+            done
+            pids=
+            running=0
+        fi
+    done
+    for pid in $pids; do
+        wait "$pid" || failed=1
+    done
+    if [ "$failed" -ne 0 ]; then
+        echo "cannot evaluate the package makefiles" >&2
+        return 1
+    fi
+    for output in "$work/query"/*; do
+        [ -f "$output" ] || continue
+        names < "$output"
+    done
+}
+
 "$@" -C "$packages" -V '${SUBDIR}' > "$work/subdirs.raw"
 names < "$work/subdirs.raw" > "$work/subdirs"
 [ -s "$work/subdirs" ] || { echo "empty active package directory list" >&2; exit 1; }
-: > "$work/expected"
-while IFS= read -r directory; do
-    "$@" -C "$packages/$directory" -V '${_ALLPACKAGES}' > "$work/names.raw"
-    names < "$work/names.raw" >> "$work/expected"
-done < "$work/subdirs"
+query "$@" < "$work/subdirs" > "$work/expected"
 LC_ALL=C sort "$work/expected" > "$work/sorted"
 LC_ALL=C uniq -d "$work/sorted" > "$work/duplicates"
 if [ -s "$work/duplicates" ]; then
@@ -66,10 +104,43 @@ for plist in "$stage"/*.plist; do
 done
 [ -s "$work/staged" ] || { echo "no staged world package plists" >&2; exit 1; }
 LC_ALL=C sort "$work/staged" > "$work/staged.sorted"
-LC_ALL=C comm -23 "$work/staged.sorted" "$work/sorted" > "$work/missing"
+LC_ALL=C comm -23 "$work/staged.sorted" "$work/sorted" > "$work/unpackaged"
+# A plist of directories alone, for a package that exists in the tree but is
+# not built for this target, carries no payload.  The include mtree creates
+# /usr/include/libipt for libipt-dev on every architecture, while the libipt
+# package is built only on amd64.  Accept exactly that case; an orphan for a
+# package that exists nowhere (a mistyped tag) still fails, directories or not.
+: > "$work/missing"
+: > "$work/dironly"
+while IFS= read -r name; do
+    if grep -qv '^@dir([^)]*) ' "$stage/$name.plist"; then
+        printf '%s\n' "$name" >> "$work/missing"
+    else
+        printf '%s\n' "$name" >> "$work/dironly"
+    fi
+done < "$work/unpackaged"
+# The inactive package directories matter only to a directory-only orphan.
+: > "$work/inactive"
+if [ -s "$work/dironly" ]; then
+    : > "$work/inactive-dirs"
+    for makefile in "$packages"/*/Makefile; do
+        directory=${makefile%/Makefile}
+        directory=${directory##*/}
+        grep -qxF "$directory" "$work/subdirs" && continue
+        printf '%s\n' "$directory" >> "$work/inactive-dirs"
+    done
+    query "$@" < "$work/inactive-dirs" > "$work/inactive"
+fi
+while IFS= read -r name; do
+    if grep -qxF "$name" "$work/inactive"; then
+        echo "$name: package not built for this target (only @dir entries staged)" >&2
+    else
+        printf '%s\n' "$name" >> "$work/missing"
+    fi
+done < "$work/dironly"
 if [ -s "$work/missing" ]; then
     echo "staged payloads lack active world package targets:" >&2
-    cat "$work/missing" >&2
+    LC_ALL=C sort "$work/missing" >&2
     exit 1
 fi
 echo "WORLD_PACKAGE_COVERAGE verified active targets for staged plists"

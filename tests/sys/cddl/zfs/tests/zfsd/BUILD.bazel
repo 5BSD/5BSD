@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/cddl/zfs:suite.bzl", "zfs_test_suite")
+
+zfs_test_suite(
+    files = ['cleanup.ksh', 'hotspare_cleanup.ksh', 'hotspare_setup.ksh', 'setup.ksh', 'zfsd.cfg', 'zfsd.kshlib', 'zfsd_autoreplace_001_neg.ksh', 'zfsd_autoreplace_002_pos.ksh', 'zfsd_autoreplace_003_pos.ksh', 'zfsd_degrade_001_pos.ksh', 'zfsd_degrade_002_pos.ksh', 'zfsd_fault_001_pos.ksh', 'zfsd_fault_002_pos.ksh', 'zfsd_hotspare_001_pos.ksh', 'zfsd_hotspare_002_pos.ksh', 'zfsd_hotspare_003_pos.ksh', 'zfsd_hotspare_004_pos.ksh', 'zfsd_hotspare_005_pos.ksh', 'zfsd_hotspare_006_pos.ksh', 'zfsd_hotspare_007_pos.ksh', 'zfsd_hotspare_008_neg.ksh', 'zfsd_import_001_pos.ksh', 'zfsd_offline_001_neg.ksh', 'zfsd_offline_002_neg.ksh', 'zfsd_replace_001_pos.ksh', 'zfsd_replace_002_pos.ksh', 'zfsd_replace_003_pos.ksh', 'zfsd_replace_004_pos.ksh', 'zfsd_replace_005_pos.ksh'],
+    tests = {'zfsd_test': {'required_user': 'root', 'is_exclusive': True, 'required_programs': 'ksh93'}},
+)

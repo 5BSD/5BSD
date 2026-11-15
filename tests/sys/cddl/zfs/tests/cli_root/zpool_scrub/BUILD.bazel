@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/cddl/zfs:suite.bzl", "zfs_test_suite")
+
+zfs_test_suite(
+    files = ['zpool_scrub_001_neg.ksh', 'zpool_scrub_004_pos.ksh', 'cleanup.ksh', 'zpool_scrub_005_pos.ksh', 'zpool_scrub.cfg', 'zpool_scrub_003_pos.ksh', 'setup.ksh', 'zpool_scrub_002_pos.ksh'],
+    tests = {'zpool_scrub_test': {'required_user': 'root', 'is_exclusive': True, 'required_programs': 'ksh93'}},
+)

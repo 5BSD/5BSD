@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/cddl/zfs:suite.bzl", "zfs_test_suite")
+
+zfs_test_suite(
+    files = ['zfs_unshare_003_pos.ksh', 'setup.ksh', 'zfs_unshare_002_pos.ksh', 'zfs_unshare.cfg', 'cleanup.ksh', 'zfs_unshare_005_neg.ksh', 'zfs_unshare_001_pos.ksh', 'zfs_unshare_004_neg.ksh'],
+    tests = {'zfs_unshare_test': {'required_user': 'root', 'is_exclusive': True, 'required_programs': 'ksh93'}},
+)

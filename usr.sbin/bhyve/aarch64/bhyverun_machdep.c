@@ -110,7 +110,7 @@ bhyve_usage(int code)
 	progname = getprogname();
 
 	fprintf(stderr,
-	    "Usage: %s [-CDHhSW]\n"
+	    "Usage: %s [-CDdHhSW]\n"
 	    "       %*s [-c [[cpus=]numcpus][,sockets=n][,cores=n][,threads=n]]\n"
 	    "       %*s [-k config_file] [-m mem] [-o var=value]\n"
 	    "       %*s [-p vcpuN[-vcpuM]]:hostcpuX[-hostcpuY]\n"
@@ -118,6 +118,7 @@ bhyve_usage(int code)
 	    "       -C: include guest memory in core file\n"
 	    "       -c: number of CPUs and/or topology specification\n"
 	    "       -D: destroy on power-off\n"
+	    "       -d: enable HyperTrace\n"
 	    "       -G: start a debug server\n"
 	    "       -h: help\n"
 	    "       -k: key=value flat config file\n"
@@ -126,6 +127,9 @@ bhyve_usage(int code)
 	    "       -N: don't reboot while in monitor mode\n"
 	    "       -o: set config 'var' to 'value'\n"
 	    "       -p: pin 'vcpu' to 'hostcpu'\n"
+#ifdef BHYVE_SNAPSHOT
+	    "       -r: path to checkpoint file\n"
+#endif
 	    "       -S: guest memory cannot be swapped\n"
 	    "       -s: <slot,driver,configinfo> PCI slot config\n"
 	    "       -U: UUID\n"
@@ -141,9 +145,16 @@ bhyve_optparse(int argc, char **argv)
 	const char *optstr;
 	int c;
 
-	optstr = "hCDMNSWk:f:o:p:G:c:s:m:U:";
+#ifdef BHYVE_SNAPSHOT
+	optstr = "dhCDMNSWk:f:o:p:G:c:s:m:U:r:R:";
+#else
+	optstr = "dhCDMNSWk:f:o:p:G:c:s:m:U:";
+#endif
 	while ((c = getopt(argc, argv, optstr)) != -1) {
 		switch (c) {
+		case 'd':
+			set_config_bool("enable_hypertrace", true);
+			break;
 		case 'c':
 			if (bhyve_topology_parse(optarg) != 0) {
 				errx(EX_USAGE, "invalid cpu topology '%s'",
@@ -185,6 +196,21 @@ bhyve_optparse(int argc, char **argv)
 				    optarg);
 			}
 			break;
+#ifdef BHYVE_SNAPSHOT
+		case 'r':
+			restore_file = optarg;
+			break;
+		case 'R':
+			/*
+			 * Stand up as an inbound live-migration destination on an
+			 * already-connected stream descriptor (the operator/
+			 * monitor passes the accepted socket fd).  The guest is
+			 * configured normally but held fenced until the migration
+			 * commits and releases it.
+			 */
+			set_config_value("migrate.receive_fd", optarg);
+			break;
+#endif
 		case 's':
 			if (strncmp(optarg, "help", strlen(optarg)) == 0) {
 				pci_print_supported_devices();
@@ -472,12 +498,21 @@ bhyve_init_platform_late(struct vmctx *ctx, struct vcpu *bsp __unused)
 }
 
 int
-bhyve_resume_powered_cpus(struct vmctx *ctx __unused)
+bhyve_resume_powered_cpus(struct vmctx *ctx)
 {
+	cpuset_t suspended;
 	int error;
 
+	/*
+	 * A powered-on vCPU outside the debug set is already running, and
+	 * resuming it fails; that happens when a suspend failed before it
+	 * took effect.
+	 */
+	if (vm_debug_cpus(ctx, &suspended) != 0)
+		return (-1);
 	for (int vcpuid = 0; vcpuid < guest_ncpus; vcpuid++) {
-		if (!CPU_ISSET(vcpuid, &running_cpumask))
+		if (!CPU_ISSET(vcpuid, &running_cpumask) ||
+		    !CPU_ISSET(vcpuid, &suspended))
 			continue;
 		error = vm_resume_cpu(fbsdrun_vcpu(vcpuid));
 		if (error != 0)

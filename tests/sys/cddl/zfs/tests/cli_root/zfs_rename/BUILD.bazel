@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/cddl/zfs:suite.bzl", "zfs_test_suite")
+
+zfs_test_suite(
+    files = ['zfs_rename_002_pos.ksh', 'zfs_rename_006_pos.ksh', 'zfs_rename_012_neg.ksh', 'zfs_rename.cfg', 'zfs_rename_013_pos.ksh', 'zfs_rename_003_pos.ksh', 'zfs_rename_007_pos.ksh', 'zfs_rename_001_pos.ksh', 'zfs_rename_004_neg.ksh', 'zfs_rename_008_pos.ksh', 'zfs_rename_009_neg.ksh', 'setup.ksh', 'zfs_rename_005_neg.ksh', 'zfs_rename.kshlib', 'zfs_rename_010_neg.ksh', 'zfs_rename_011_pos.ksh', 'cleanup.ksh'],
+    tests = {'zfs_rename_test': {'required_user': 'root', 'is_exclusive': True, 'required_programs': 'ksh93'}},
+)

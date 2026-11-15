@@ -227,11 +227,14 @@ kb_vcpu_event_cleanup(void *vcpui __unused)
 	return (0);
 }
 
+long khx_vmm_getreg_calls;
+
 static int
 kb_getreg(void *vcpui, int num, uint64_t *retval)
 {
 	struct khx_vcpu *kv = vcpui;
 
+	khx_vmm_getreg_calls++;
 	if (kv->getreg_error != 0 &&
 	    (kv->getreg_only == 0 || kv->getreg_only == num + 1))
 		return (kv->getreg_error);
@@ -965,6 +968,8 @@ hypertrace_probe(const void *vmhdl, hypertrace_id_t id,
 	struct khx_ht_probe_record *r = &khx_ht_last;
 	const char *name;
 	uint64_t v;
+	long reads;
+	int reg;
 
 	KHX_CHECK(PMAP_LOCKED((pmap_t)((const struct vm_hdl *)vmhdl)->paging->pmap));
 	memset(r, 0, sizeof(*r));
@@ -978,6 +983,15 @@ hypertrace_probe(const void *vmhdl, hypertrace_id_t id,
 	if (vmm_getreg(vmhdl, VM_REG_GUEST_RAX, &r->rax) != 0)
 		r->rax = ~0ULL;
 	r->getreg_bad = vmm_getreg(vmhdl, -1, &v);
+	/* What the probe can read of the guest's registers, and at what cost
+	 * to the backend. */
+	_Static_assert(VM_REG_LAST <= nitems(r->regs), "probe record");
+	reads = khx_vmm_getreg_calls;
+	for (reg = 0; reg < VM_REG_LAST; reg++) {
+		if (vmm_getreg(vmhdl, reg, &r->regs[reg]) == 0)
+			r->regs_ok |= (uint64_t)1 << reg;
+	}
+	r->getreg_backend = khx_vmm_getreg_calls - reads;
 	r->vcpu = args->htr_curcpu;
 	r->args0 = args->htr_args[0];
 	r->args9 = args->htr_args[9];

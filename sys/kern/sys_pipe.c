@@ -195,6 +195,7 @@ static void pipe_wakeup(struct pipe *, int);
 struct pipeasync {
 	struct pipeasync *next;
 	struct file *fp;
+	struct pipe *pipe;
 	struct sigio *sigio;
 	int directions;
 	bool enabled;
@@ -560,6 +561,9 @@ kern_pipe_impl(struct thread *td, int fildes[2], int flags, struct filecaps *fca
 		/* Reserve both descriptions before publishing either descriptor. */
 		pp->pp_readers = pp->pp_writers = 1;
 		pp->pp_files = 2;
+	} else {
+		/* Each bidirectional endpoint initially has one description. */
+		rpipe->pipe_files = wpipe->pipe_files = 1;
 	}
 	error = falloc_caps(td, &rf, &fd, flags, fcaps1);
 	if (error) {
@@ -664,7 +668,8 @@ pipe_reopen_file(struct file *source, struct file *fp, int flags, struct thread 
 		return (EOPNOTSUPP);
 	MPASS(fp->f_ops == &badfileops);
 	pipe = source->f_data;
-	if ((pipe->pipe_type & PIPE_TYPE_UNIDIR) == 0)
+	/* Named pipes reopen through their vnode, not this descriptor path. */
+	if ((pipe->pipe_type & PIPE_TYPE_NAMED) != 0)
 		return (EOPNOTSUPP);
 	if ((flags & O_DIRECTORY) != 0)
 		return (ENOTDIR);
@@ -695,17 +700,29 @@ pipe_reopen_file(struct file *source, struct file *fp, int flags, struct thread 
 		return (error);
 	}
 #endif
-	pp->pp_files++;
-	if ((flags & FREAD) != 0)
-		pp->pp_readers++;
-	if ((flags & FWRITE) != 0)
-		pp->pp_writers++;
-	if (pp->pp_readers != 0 && pp->pp_writers != 0)
-		pipe->pipe_state &= ~PIPE_EOF;
-	else
-		pipe->pipe_state |= PIPE_EOF;
-	wakeup(pipe);
-	pipe_wakeup(pipe, 0);
+	if ((pipe->pipe_type & PIPE_TYPE_UNIDIR) != 0) {
+		pp->pp_files++;
+		if ((flags & FREAD) != 0)
+			pp->pp_readers++;
+		if ((flags & FWRITE) != 0)
+			pp->pp_writers++;
+		if (pp->pp_readers != 0 && pp->pp_writers != 0)
+			pipe->pipe_state &= ~PIPE_EOF;
+		else
+			pipe->pipe_state |= PIPE_EOF;
+		wakeup(pipe);
+		pipe_wakeup(pipe, 0);
+	} else {
+		/*
+		 * A native pipe is a bidirectional endpoint, not the Linux
+		 * one-way inode. Preserve its directions and peer: reopening
+		 * creates an independent description of that same endpoint.
+		 * The caller holds source, so its endpoint cannot be closing.
+		 */
+		MPASS(pipe->pipe_present == PIPE_ACTIVE);
+		MPASS(pipe->pipe_files != 0);
+		pipe->pipe_files++;
+	}
 	PIPE_UNLOCK(pipe);
 	finit(fp, flags & FMASK, DTYPE_PIPE, pipe, &pipeops);
 	return (0);
@@ -975,9 +992,13 @@ pipe_wakeup(struct pipe *cpipe, int directions)
 		if (!SEL_WAITING(&cpipe->pipe_sel))
 			cpipe->pipe_state &= ~PIPE_SEL;
 	}
-	if ((cpipe->pipe_type & PIPE_TYPE_UNIDIR) != 0) {
+	if ((cpipe->pipe_type & PIPE_TYPE_NAMED) == 0) {
 		for (pa = cpipe->pipe_pair->pp_async; pa != NULL; pa = pa->next)
-			if (pa->enabled && (pa->directions & directions) != 0)
+			if (pa->enabled &&
+			    ((pa->pipe == cpipe &&
+			    (pa->directions & directions & FREAD) != 0) ||
+			    (PIPE_PEER(pa->pipe) == cpipe &&
+			    (pa->directions & directions & FWRITE) != 0)))
 				pgsigio(&pa->sigio, SIGIO, 0);
 	} else if ((cpipe->pipe_state & PIPE_ASYNC) && cpipe->pipe_sigio)
 		pgsigio(&cpipe->pipe_sigio, SIGIO, 0);
@@ -1738,7 +1759,7 @@ pipe_ioctl(struct file *fp, u_long cmd, void *data, struct ucred *active_cred,
 	if ((fp->f_flag & O_PATH) != 0)
 		return (EBADF);
 	newpa = NULL;
-	if ((mpipe->pipe_type & PIPE_TYPE_UNIDIR) != 0 &&
+	if ((mpipe->pipe_type & PIPE_TYPE_NAMED) == 0 &&
 	    (cmd == FIOASYNC || cmd == FIOSETOWN || cmd == TIOCSPGRP))
 		newpa = malloc(sizeof(*newpa), M_TEMP, M_WAITOK | M_ZERO);
 	PIPE_LOCK(mpipe);
@@ -1754,7 +1775,7 @@ pipe_ioctl(struct file *fp, u_long cmd, void *data, struct ucred *active_cred,
 
 	pa = NULL;
 	sigio = &mpipe->pipe_sigio;
-	if ((mpipe->pipe_type & PIPE_TYPE_UNIDIR) != 0) {
+	if ((mpipe->pipe_type & PIPE_TYPE_NAMED) == 0) {
 		for (pa = mpipe->pipe_pair->pp_async; pa != NULL; pa = pa->next)
 			if (pa->fp == fp)
 				break;
@@ -1762,6 +1783,7 @@ pipe_ioctl(struct file *fp, u_long cmd, void *data, struct ucred *active_cred,
 			pa = newpa;
 			newpa = NULL;
 			pa->fp = fp;
+			pa->pipe = mpipe;
 			pa->directions = fp->f_flag & (FREAD | FWRITE);
 			pa->next = mpipe->pipe_pair->pp_async;
 			mpipe->pipe_pair->pp_async = pa;
@@ -1979,11 +2001,12 @@ pipe_close(struct file *fp, struct thread *td)
 {
 	struct pipe *pipe = fp->f_data;
 	struct pipeasync *pa, **prev;
+	bool destroy;
 
 	if (fp->f_vnode != NULL) 
 		return vnops.fo_close(fp, td);
 	fp->f_ops = &badfileops;
-	if ((pipe->pipe_type & PIPE_TYPE_UNIDIR) != 0) {
+	if ((pipe->pipe_type & PIPE_TYPE_NAMED) == 0) {
 		PIPE_LOCK(pipe);
 		for (prev = &pipe->pipe_pair->pp_async; (pa = *prev) != NULL;
 		    prev = &pa->next) {
@@ -1997,7 +2020,16 @@ pipe_close(struct file *fp, struct thread *td)
 			funsetown(&pa->sigio);
 			free(pa, M_TEMP);
 		}
-		pipe_unidir_drop(pipe, fp->f_flag);
+		if ((pipe->pipe_type & PIPE_TYPE_UNIDIR) != 0)
+			pipe_unidir_drop(pipe, fp->f_flag);
+		else {
+			PIPE_LOCK(pipe);
+			MPASS(pipe->pipe_files != 0);
+			destroy = --pipe->pipe_files == 0;
+			PIPE_UNLOCK(pipe);
+			if (destroy)
+				pipe_dtor(pipe);
+		}
 	} else
 		pipe_dtor(fp->f_data);
 	fp->f_data = NULL;

@@ -1,0 +1,290 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/fs:suite.bzl", "filesystem_test_suite")
+load("//tools/build/bazel:bsd_sed_output.bzl", "bsd_sed_output")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+_CXX_DEPS = ["//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", "//lib/msun:m"]
+_CXX_SHARED = ["//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared"]
+cc_library(name = "local_headers", hdrs = ["mockfs.hh", "utils.hh", "nfs_cookie_client.hh"],
+    deps = ["//sys/fs/fuse:test_headers", "//tests:suite_macros", "//contrib/googletest:bsd_mock_headers", "//contrib/llvm-project/libcxx/include:headers"])
+# All GTEST programs share the same compilation context for these two sources.
+cc_library(name = "mock_support", srcs = ["mockfs.cc", "utils.cc"], deps = [":local_headers"],
+    local_defines = ["GTEST_HAS_POSIX_RE=1", "GTEST_HAS_PTHREAD=1", "GTEST_HAS_STREAM_REDIRECTION=1"],
+    copts = ["-fPIE", "-nostdinc++", "-std=gnu++17", "-frtti", "-Wno-deprecated-copy", "-Wno-vla-cxx-extension"],
+    linkstatic = True, target_compatible_with = _PLATFORM)
+cc_binary(name = 'access', srcs = ['access.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'access_install', program = 'access', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'allow_other', srcs = ['allow_other.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'allow_other_install', program = 'allow_other', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'bad_server', srcs = ['bad_server.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'bad_server_install', program = 'bad_server', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'bmap', srcs = ['bmap.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'bmap_install', program = 'bmap', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'cache', srcs = ['cache.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'cache_install', program = 'cache', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'copy_file_range', srcs = ['copy_file_range.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'copy_file_range_install', program = 'copy_file_range', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'create', srcs = ['create.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'create_install', program = 'create', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'default_permissions', srcs = ['default_permissions.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'default_permissions_install', program = 'default_permissions', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'default_permissions_privileged', srcs = ['default_permissions_privileged.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'default_permissions_privileged_install', program = 'default_permissions_privileged', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'destroy', srcs = ['destroy.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'destroy_install', program = 'destroy', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'dev_fuse_poll', srcs = ['dev_fuse_poll.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'dev_fuse_poll_install', program = 'dev_fuse_poll', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'fallocate', srcs = ['fallocate.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'fallocate_install', program = 'fallocate', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'fifo', srcs = ['fifo.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'fifo_install', program = 'fifo', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'flush', srcs = ['flush.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'flush_install', program = 'flush', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'forget', srcs = ['forget.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'forget_install', program = 'forget', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'fsync', srcs = ['fsync.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'fsync_install', program = 'fsync', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'fsyncdir', srcs = ['fsyncdir.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'fsyncdir_install', program = 'fsyncdir', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'getattr', srcs = ['getattr.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'getattr_install', program = 'getattr', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'interrupt', srcs = ['interrupt.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'interrupt_install', program = 'interrupt', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'io', srcs = ['io.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'io_install', program = 'io', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'ioctl', srcs = ['ioctl.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'ioctl_install', program = 'ioctl', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'last_local_modify', srcs = ['last_local_modify.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'last_local_modify_install', program = 'last_local_modify', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'link', srcs = ['link.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'link_install', program = 'link', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'locks', srcs = ['locks.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'locks_install', program = 'locks', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'lookup', srcs = ['lookup.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'lookup_install', program = 'lookup', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'lseek', srcs = ['lseek.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'lseek_install', program = 'lseek', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'misc', srcs = ['misc.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'misc_install', program = 'misc', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'mkdir', srcs = ['mkdir.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'mkdir_install', program = 'mkdir', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'mknod', srcs = ['mknod.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'mknod_install', program = 'mknod', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'mount', srcs = ['mount.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'mount_install', program = 'mount', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'nfs', srcs = ['nfs.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'nfs_install', program = 'nfs', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'nfs_readdir', srcs = ['nfs_readdir.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'nfs_readdir_install', program = 'nfs_readdir', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'notify', srcs = ['notify.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'notify_install', program = 'notify', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'open', srcs = ['open.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'open_install', program = 'open', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'openfile', srcs = ['openfile.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'openfile_install', program = 'openfile', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'opendir', srcs = ['opendir.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'opendir_install', program = 'opendir', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'pre-init', srcs = ['pre-init.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'pre-init_install', program = 'pre-init', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'read', srcs = ['read.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'read_install', program = 'read', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'readdir', srcs = ['readdir.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti', '-Wno-cast-align'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'readdir_install', program = 'readdir', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'readlink', srcs = ['readlink.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'readlink_install', program = 'readlink', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'release', srcs = ['release.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'release_install', program = 'release', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'releasedir', srcs = ['releasedir.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'releasedir_install', program = 'releasedir', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'rename', srcs = ['rename.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'rename_install', program = 'rename', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'rmdir', srcs = ['rmdir.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'rmdir_install', program = 'rmdir', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'setattr', srcs = ['setattr.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'setattr_install', program = 'setattr', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'statfs', srcs = ['statfs.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'statfs_install', program = 'statfs', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'symlink', srcs = ['symlink.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'symlink_install', program = 'symlink', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'unlink', srcs = ['unlink.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'unlink_install', program = 'unlink', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'write', srcs = ['write.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'write_install', program = 'write', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'xattr', srcs = ['xattr.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':mock_support', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension', '-frtti'], local_defines = ['GTEST_HAS_POSIX_RE=1', 'GTEST_HAS_PTHREAD=1', 'GTEST_HAS_STREAM_REDIRECTION=1'],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'xattr_install', program = 'xattr', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+cc_binary(name = 'nfs_cookie_client', srcs = ['nfs_cookie_client.cc'],
+    deps = ['//lib/googletest/gmock:gmock', '//lib/googletest/gtest:gtest', '//lib/libutil:util', '//lib/libthr:thr', ':local_headers'] + _CXX_DEPS, dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libutil:util_shared', '//lib/libthr:thr_shared'] + _CXX_SHARED,
+    copts = ['-fPIE', '-nostdinc++', '-std=gnu++17', '-Wno-deprecated-copy', '-Wno-vla-cxx-extension'], local_defines = [],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'nfs_cookie_client_install', program = 'nfs_cookie_client', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/fusefs')
+
+filesystem_test_suite(directory = '/usr/tests/sys/fs/fusefs',
+    scripts = {'ctl': 'ctl.sh', 'ext2-misc': 'ext2-misc.sh'}, atf_shell = {'ctl': True, 'ext2-misc': True},
+    interfaces = {'access': 'plain', 'allow_other': 'plain', 'bad_server': 'plain', 'bmap': 'plain', 'cache': 'plain', 'copy_file_range': 'plain', 'create': 'plain', 'ctl': 'atf', 'default_permissions': 'plain', 'default_permissions_privileged': 'plain', 'destroy': 'plain', 'dev_fuse_poll': 'plain', 'ext2-misc': 'atf', 'fallocate': 'plain', 'fifo': 'plain', 'flush': 'plain', 'forget': 'plain', 'fsync': 'plain', 'fsyncdir': 'plain', 'getattr': 'plain', 'interrupt': 'plain', 'io': 'plain', 'ioctl': 'plain', 'last_local_modify': 'plain', 'link': 'plain', 'locks': 'plain', 'lookup': 'plain', 'lseek': 'plain', 'misc': 'plain', 'mkdir': 'plain', 'mknod': 'plain', 'mount': 'plain', 'nfs': 'plain', 'nfs_cookie_client': 'plain', 'nfs_readdir': 'plain', 'notify': 'plain', 'open': 'plain', 'opendir': 'plain', 'openfile': 'plain', 'pre-init': 'plain', 'read': 'plain', 'readdir': 'plain', 'readlink': 'plain', 'release': 'plain', 'releasedir': 'plain', 'rename': 'plain', 'rmdir': 'plain', 'setattr': 'plain', 'statfs': 'plain', 'symlink': 'plain', 'unlink': 'plain', 'write': 'plain', 'xattr': 'plain'}, metadata = {'access': {'timeout': 20, 'required_kmods': 'fusefs'}, 'allow_other': {'timeout': 20, 'required_kmods': 'fusefs'}, 'bad_server': {'timeout': 20, 'required_kmods': 'fusefs'}, 'bmap': {'timeout': 20, 'required_kmods': 'fusefs'}, 'cache': {'timeout': 20, 'required_kmods': 'fusefs'}, 'copy_file_range': {'timeout': 20, 'required_kmods': 'fusefs'}, 'create': {'timeout': 20, 'required_kmods': 'fusefs'}, 'ctl': {'timeout': 20, 'required_kmods': 'ctl fusefs', 'is_exclusive': 'true', 'required_user': 'root'}, 'default_permissions': {'timeout': 20, 'required_kmods': 'fusefs', 'required_user': 'unprivileged'}, 'default_permissions_privileged': {'timeout': 20, 'required_kmods': 'fusefs', 'required_user': 'root'}, 'destroy': {'timeout': 20, 'required_kmods': 'fusefs'}, 'dev_fuse_poll': {'timeout': 20, 'required_kmods': 'fusefs'}, 'ext2-misc': {'timeout': 20, 'required_kmods': 'fusefs'}, 'fallocate': {'timeout': 20, 'required_kmods': 'fusefs'}, 'fifo': {'timeout': 20, 'required_kmods': 'fusefs'}, 'flush': {'timeout': 20, 'required_kmods': 'fusefs'}, 'forget': {'timeout': 20, 'required_kmods': 'fusefs'}, 'fsync': {'timeout': 20, 'required_kmods': 'fusefs'}, 'fsyncdir': {'timeout': 20, 'required_kmods': 'fusefs'}, 'getattr': {'timeout': 20, 'required_kmods': 'fusefs'}, 'interrupt': {'timeout': 20, 'required_kmods': 'fusefs'}, 'io': {'timeout': 300, 'required_kmods': 'fusefs'}, 'ioctl': {'timeout': 20, 'required_kmods': 'fusefs'}, 'last_local_modify': {'timeout': 20, 'required_kmods': 'fusefs'}, 'link': {'timeout': 20, 'required_kmods': 'fusefs'}, 'locks': {'timeout': 20, 'required_kmods': 'fusefs'}, 'lookup': {'timeout': 20, 'required_kmods': 'fusefs'}, 'lseek': {'timeout': 20, 'required_kmods': 'fusefs'}, 'misc': {'timeout': 20, 'required_kmods': 'fusefs'}, 'mkdir': {'timeout': 20, 'required_kmods': 'fusefs'}, 'mknod': {'timeout': 20, 'required_kmods': 'fusefs', 'required_user': 'root'}, 'mount': {'timeout': 20, 'required_kmods': 'fusefs'}, 'nfs': {'timeout': 20, 'required_kmods': 'fusefs', 'required_user': 'root'}, 'nfs_cookie_client': {'timeout': 20, 'required_kmods': '', 'required_user': 'unprivileged'}, 'nfs_readdir': {'timeout': 120, 'required_kmods': 'fusefs', 'required_user': 'root', 'is_exclusive': 'true'}, 'notify': {'timeout': 20, 'required_kmods': 'fusefs'}, 'open': {'timeout': 20, 'required_kmods': 'fusefs'}, 'opendir': {'timeout': 20, 'required_kmods': 'fusefs'}, 'openfile': {'timeout': 20, 'required_kmods': 'fusefs'}, 'pre-init': {'timeout': 20, 'required_kmods': 'fusefs'}, 'read': {'timeout': 20, 'required_kmods': 'fusefs'}, 'readdir': {'timeout': 20, 'required_kmods': 'fusefs'}, 'readlink': {'timeout': 20, 'required_kmods': 'fusefs'}, 'release': {'timeout': 20, 'required_kmods': 'fusefs'}, 'releasedir': {'timeout': 20, 'required_kmods': 'fusefs'}, 'rename': {'timeout': 20, 'required_kmods': 'fusefs'}, 'rmdir': {'timeout': 20, 'required_kmods': 'fusefs'}, 'setattr': {'timeout': 20, 'required_kmods': 'fusefs'}, 'statfs': {'timeout': 20, 'required_kmods': 'fusefs'}, 'symlink': {'timeout': 20, 'required_kmods': 'fusefs'}, 'unlink': {'timeout': 20, 'required_kmods': 'fusefs'}, 'write': {'timeout': 20, 'required_kmods': 'fusefs'}, 'xattr': {'timeout': 20, 'required_kmods': 'fusefs'}},
+    extra_manifests = [':access_install', ':allow_other_install', ':bad_server_install', ':bmap_install', ':cache_install', ':copy_file_range_install', ':create_install', ':default_permissions_install', ':default_permissions_privileged_install', ':destroy_install', ':dev_fuse_poll_install', ':fallocate_install', ':fifo_install', ':flush_install', ':forget_install', ':fsync_install', ':fsyncdir_install', ':getattr_install', ':interrupt_install', ':io_install', ':ioctl_install', ':last_local_modify_install', ':link_install', ':locks_install', ':lookup_install', ':lseek_install', ':misc_install', ':mkdir_install', ':mknod_install', ':mount_install', ':nfs_install', ':nfs_readdir_install', ':notify_install', ':open_install', ':openfile_install', ':opendir_install', ':pre-init_install', ':read_install', ':readdir_install', ':readlink_install', ':release_install', ':releasedir_install', ':rename_install', ':rmdir_install', ':setattr_install', ':statfs_install', ':symlink_install', ':unlink_install', ':write_install', ':xattr_install', ':nfs_cookie_client_install'], debug = True,
+)
+
+load("//tools/build/bazel:bsd_program_test.bzl", "bsd_program_test")
+# This plain decoder self-test is independent of mounts, hardware and root.
+# The generic runner preserves its exit status; installed Kyua metadata above
+# retains the suite's own privilege and module prerequisites.
+bsd_program_test(name = "nfs_cookie_client_host_test", program = ":nfs_cookie_client", interface = "plain",
+    runner = "//tools/build/bazel:program_test_runner",
+    runtime_lib = ["//lib/libc:c_shared", "//lib/libsys:sys_shared", "//lib/libc++:cxx_shared",
+        "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "//lib/libthr:thr_shared", "//lib/libregex:regex_shared",
+        "//lib/googletest/gmock:gmock_shared", "//lib/googletest/gtest:gtest_shared", "//lib/libutil:util_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"], size = "small", visibility = ["//visibility:public"])

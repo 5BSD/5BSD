@@ -19,6 +19,17 @@ for user in root unprivileged; do
   [ "$rc" -eq 0 ] || failed=1
  done
 done
+# The unprivileged native parent must be able to exec the Linux child.
+mkdir -m 755 /tmp/pipe-reopen-tests
+install -m 555 /root/pipe-reopen-linux /tmp/pipe-reopen-tests/probe
+for user in root unprivileged; do
+ for case in inherited_flags inherited_reader inherited_writer inherited_epipe inherited_async inherited_churn inherited_permission; do
+  rc=0
+  /root/native-pipe-parent /tmp/pipe-reopen-tests/probe "$case" "$user" || rc=$?
+  echo PIPE_REOPEN_RESULT "$user" "$case" "$rc"
+  [ "$rc" -eq 0 ] || failed=1
+ done
+done
 zpool sync linuxgate
 zpool status -x
 echo PIPE_REOPEN_DONE

@@ -82,6 +82,29 @@ class LibraryInputs(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'under /usr/obj'):
             lib.safe_path('/tmp', True)
 
+    def test_recorded_system_compiler_alias_and_binding(self):
+        # Fixture writes stay in TEST_TMPDIR. The actual external compiler is
+        # exercised by the separately captured original cross-Make reference.
+        executable = self.compiler
+        alias = self.root / 'system-cc'
+        alias.symlink_to(executable)
+        environment = dict(compiler_selected=str(alias), compiler_executable=str(executable),
+            compiler_mode='system', input_sha256={str(executable): lib.digest(executable)})
+        selected, value = lib.reference_compiler(environment, self.compiler)
+        self.assertEqual(selected, executable)
+        self.assertEqual(value, lib.digest(executable))
+        other = self.root / 'other-compiler'
+        other.write_bytes(b'different compiler')
+        for changed in [dict(environment, compiler_executable=str(other)),
+                        dict(environment, input_sha256={}),
+                        dict(environment, compiler_mode='unknown'),
+                        dict(environment, compiler_mode='staged', compiler_selected='/tmp')]:
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                lib.reference_compiler(changed, self.compiler)
+        executable.write_bytes(b'changed system compiler')
+        with self.assertRaises(ValueError):
+            lib.reference_compiler(environment, self.compiler)
+
     def test_component_and_compiler_identity(self):
         original = copy.deepcopy(self.info)
         self.info['component'] = str(self.root)
@@ -91,7 +114,7 @@ class LibraryInputs(unittest.TestCase):
         self.info = original
         self.compiler.write_bytes(b'changed compiler')
         self.refresh()
-        with self.assertRaisesRegex(ValueError, 'compiler differs'):
+        with self.assertRaisesRegex(ValueError, 'compiler is not bound'):
             self.load()
 
     def test_regular_archive_and_symlink(self):

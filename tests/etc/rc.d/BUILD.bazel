@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Installed-system tests: building does not execute host kernel/device cases.
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_test_install_archive")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+_ATF = []
+_PLAIN = []
+_TAP = []
+_HELPERS = []
+_ATF_SHELL = ['routing_test']
+_TAP_SHELL = []
+_DEPS = {}
+_SHARED = {}
+_GLOBAL_DEPS = []
+_GLOBAL_SHARED = []
+_METADATA = {}
+_DIRECTORY = "/usr/tests/etc/rc.d"
+
+[cc_binary(name = program, srcs = [program + ".c"],
+    deps = _GLOBAL_DEPS + _DEPS.get(program, []) + (["//lib/atf/libatf-c:atf_c"] if program in _ATF else []),
+    dynamic_deps = _GLOBAL_SHARED + _SHARED.get(program, []) +
+        (["//lib/atf/libatf-c:atf_c_shared"] if program in _ATF else []),
+    copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True,
+    target_compatible_with = _PLATFORM)
+ for program in _ATF + _PLAIN + _TAP + _HELPERS]
+[utility_installation(name = program + "_install", program = program, manual = None,
+    package = "tests", bindir = _DIRECTORY) for program in _ATF + _PLAIN + _TAP + _HELPERS]
+
+[bsd_script_wrapper(name = program, body = program + ".sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"],
+    redirect = "@bsd_sdk//toolchain:stdout_redirect") for program in _ATF_SHELL]
+[bsd_install_file(name = program + "_install", src = ":" + program if program in _ATF_SHELL else program + ".sh",
+    destination = _DIRECTORY + "/" + program, owner = "root", group = "wheel", mode = "0555",
+    install_tags = ["package=tests"]) for program in _ATF_SHELL + _TAP_SHELL]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = sorted(_ATF + _PLAIN + _TAP + _ATF_SHELL + _TAP_SHELL),
+    interfaces = {p: "atf" for p in _ATF + _ATF_SHELL} | {p: "plain" for p in _PLAIN} | {p: "tap" for p in _TAP + _TAP_SHELL},
+    metadata = {p: json.encode(v) for p, v in _METADATA.items()})
+bsd_install_file(name = "kyuafile_install", src = ":kyuafile", destination = _DIRECTORY + "/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest",
+    entries = [":kyuafile_install"] + [":" + p + "_install" for p in _ATF_SHELL + _TAP_SHELL],
+    manifests = [":" + p + "_install" for p in _ATF + _PLAIN + _TAP + _HELPERS])
+bsd_test_install_archive(name = "install_archive", directory = _DIRECTORY,
+    manifests = [":install_manifest"], debug = False, visibility = ["//tests/etc:__pkg__"])

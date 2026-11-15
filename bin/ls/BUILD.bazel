@@ -17,7 +17,7 @@ cc_binary(
     }),
     copts = ["-fPIE"],
     linkopts = ["-pie"],
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    target_compatible_with = ["@platforms//os:freebsd"] + select({"@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [], "//conditions:default": ["@platforms//:incompatible"]}),
     visibility = ["//visibility:public"],
 )
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")

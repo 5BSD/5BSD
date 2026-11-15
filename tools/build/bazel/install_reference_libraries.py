@@ -21,6 +21,30 @@ def safe_path(value, object_path=False):
     return path
 
 
+def reference_compiler(environment, expected=None):
+    """Resolve the compiler already verified by the original Make environment.
+
+    Make can select SYSTEM_COMPILER, with an object-tree alias resolving outside
+    /usr/obj. Artifacts still require the object root; compiler inputs instead
+    require the recorded mode, executable identity and an actual digest binding.
+    """
+    mode = environment.get('compiler_mode', 'staged')
+    if mode not in ('staged', 'system'):
+        raise ValueError('unsupported original compiler mode')
+    selected = safe_path(environment.get('compiler_selected'), mode != 'system')
+    if mode == 'system':
+        executable = safe_path(environment.get('compiler_executable'))
+        if not selected.samefile(executable):
+            raise ValueError('recorded system compiler executable differs from selection')
+    compiler_sha = digest(selected)
+    if expected is not None and digest(expected) != compiler_sha:
+        raise ValueError('original compiler differs from selected compiler')
+    if not any(Path(name).is_file() and selected.samefile(name) and value == compiler_sha
+               for name, value in environment.get('input_sha256', {}).items()):
+        raise ValueError('original compiler is not bound by its reference')
+    return selected, compiler_sha
+
+
 def load(config_path, architecture, source_root, compiler):
     config_path = safe_path(str(config_path))
     before = digest(config_path)
@@ -52,11 +76,7 @@ def load(config_path, architecture, source_root, compiler):
         if not component.is_relative_to(source_root) or component == source_root:
             raise ValueError('original library component differs from source tree')
         environment = receipt.get('environment', {})
-        selected = safe_path(environment.get('compiler_selected'), True)
-        if digest(selected) != compiler_sha or not any(
-                Path(name).is_file() and selected.samefile(name) and expected == compiler_sha
-                for name, expected in environment.get('input_sha256', {}).items()):
-            raise ValueError('original library compiler differs from selected compiler')
+        selected, _ = reference_compiler(environment, compiler)
         relative = item['artifact']
         if (not isinstance(relative, str) or not relative or
                 PurePosixPath(relative).is_absolute() or '..' in relative.split('/') or

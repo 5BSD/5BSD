@@ -102,6 +102,11 @@ the jail's hierarchical name as seen from the host, which together identify
 the nested jail a record came from;
 .Dq jailname
 is the jail's host name.
+The kernel fills the process details of an exit record only if it can do so
+without waiting, so an exit record of a jailed process may carry
+.Dq jid
+0 and no jail names: do not attribute an exit record by its
+.Dq jid .
 .Pp
 The jail is resolved once, when
 .Nm

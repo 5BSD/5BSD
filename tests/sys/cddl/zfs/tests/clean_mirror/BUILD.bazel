@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/cddl/zfs:suite.bzl", "zfs_test_suite")
+
+zfs_test_suite(
+    files = ['clean_mirror_001_pos.ksh', 'clean_mirror_002_pos.ksh', 'clean_mirror_003_pos.ksh', 'clean_mirror_004_pos.ksh', 'clean_mirror_common.kshlib', 'cleanup.ksh', 'default.cfg', 'setup.ksh'],
+    tests = {'clean_mirror_test': {'required_user': 'root', 'is_exclusive': True, 'required_programs': 'ksh93'}},
+)

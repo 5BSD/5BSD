@@ -78,6 +78,7 @@ struct oes_softc {
 	u_int			sc_njail;	/* Clients on sc_jail_clients */
 	u_int			sc_nwide;	/* Open clients, not jail-scoped */
 	u_int			sc_jail_ending;	/* Clients with EC_JAIL_ENDING */
+	u_int			sc_jail_setters; /* Clients with ec_jail_setter_pr */
 	counter_u64_t		sc_jail_filtered; /* Dropped before allocation */
 	counter_u64_t		sc_jail_filtered_auth; /* AUTH events of those */
 };
@@ -145,7 +146,7 @@ struct oes_client {
 	uint32_t		ec_jail_flags;	/* NOCHILDREN, INBOUND, DEAD */
 	uint32_t		ec_jail_state;	/* EC_JAIL_*; sc_mtx */
 	int			ec_jail_jid;	/* As the setter named the jail */
-	bool			ec_jail_set_jailed; /* Setter was itself jailed */
+	struct prison		*ec_jail_setter_pr; /* Held; NULL: host, or removed */
 	char			ec_jail_name[MAXHOSTNAMELEN]; /* Likewise */
 	uint32_t		ec_mode;	/* OES_MODE_* */
 	uint32_t		ec_default_deadline_ms; /* Default AUTH deadline */

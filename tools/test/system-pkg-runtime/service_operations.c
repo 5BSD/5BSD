@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include <devicecmp.h>
+#include <logcmp.h>
 #include <powercmp.h>
 #include <notify.h>
 #include <notify_pressure.h>
@@ -111,6 +112,107 @@ notify_operation(void)
 	if (notify_unsubscribe(client, topic) == -1)
 		err(1, "notification unsubscribe");
 	notify_client_close(client);
+}
+
+/* Emit and retrieve the same record through the production Log protocol.
+ * Do not use logcmp_log(): its syslog fallback would not prove broker I/O. */
+static void
+log_operation(void)
+{
+	static const char subsystem[] = "org.5bsd.pkg-runtime";
+	static const char event_name[] = "provider-round-trip";
+	static const char message[] = "package runtime log round trip";
+	struct logcmp_client *client;
+	struct logcmp_logger *logger;
+	struct logcmp_emit_options emit = {0};
+	struct logcmp_query_options query = {0};
+	struct logcmp_query_cursor cursor;
+	const struct logcmp_record *record;
+	struct timespec now, until, delay = { .tv_nsec = 100000000 };
+	union {
+		max_align_t align;
+		unsigned char bytes[LOGCMP_MAX_RECORD];
+	} buffer;
+	const unsigned char *body;
+	char category[LOGCMP_MAX_CATEGORY + 1];
+	size_t length, category_length, payload_length;
+	int count, status;
+
+	count = snprintf(category, sizeof(category), "pkg-runtime.%jd.%08x",
+	    (intmax_t)getpid(), arc4random());
+	if (count < 0 || count >= (int)sizeof(category))
+		errx(1, "log category overflow");
+	category_length = (size_t)count;
+	payload_length = sizeof(subsystem) - 1 + category_length +
+	    sizeof(event_name) - 1 + sizeof(message) - 1;
+	if (logcmp_client_open(&client) == -1)
+		err(1, "log provider open");
+	if (logcmp_logger_create(client, subsystem, category, &logger) == -1)
+		err(1, "log logger create");
+	emit.size = sizeof(emit);
+	emit.severity = LOGCMP_SEVERITY_INFO;
+	emit.kind = LOGCMP_KIND_EVENT;
+	emit.message_privacy = LOGCMP_PRIVACY_PUBLIC;
+	emit.event_name = event_name;
+	emit.message = message;
+	if (logcmp_emit(logger, &emit) == -1)
+		err(1, "log emit");
+	if (logcmp_flush(client) == -1)
+		err(1, "log flush");
+	query.size = sizeof(query);
+	query.minimum_severity = LOGCMP_SEVERITY_INFO;
+	query.match_flags = LOGCMP_QUERY_MATCH_SUBSYSTEM_EXACT |
+	    LOGCMP_QUERY_MATCH_CATEGORY_EXACT;
+	query.subsystem = subsystem;
+	query.category = category;
+	if (clock_gettime(CLOCK_MONOTONIC, &until) == -1)
+		err(1, "log query deadline");
+	until.tv_sec += 10;
+	for (;;) {
+		/* Flush and persistent-query visibility are separate operations.
+		 * Restart this exact category scan until the record is committed. */
+		memset(&cursor, 0, sizeof(cursor));
+		status = logcmp_query_ex(client, &query, &cursor, buffer.bytes,
+		    sizeof(buffer.bytes), &length);
+		if (status == -1)
+			err(1, "log query");
+		if (status == 1)
+			break;
+		if (status != 0 || length != 0)
+			errx(1, "unexpected log query result");
+		if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+			err(1, "log query clock");
+		if (now.tv_sec > until.tv_sec || (now.tv_sec == until.tv_sec &&
+		    now.tv_nsec >= until.tv_nsec))
+			errx(1, "emitted log record did not become queryable");
+		if (nanosleep(&delay, NULL) == -1)
+			err(1, "log query wait");
+	}
+	if (length < sizeof(*record) || length > sizeof(buffer.bytes))
+		errx(1, "short or oversized log query record");
+	record = (const struct logcmp_record *)buffer.bytes;
+	/* Match every length before computing pointers into the variable body. */
+	if (record->subsystem_length != sizeof(subsystem) - 1 ||
+	    record->category_length != category_length ||
+	    record->event_name_length != sizeof(event_name) - 1 ||
+	    record->message_length != sizeof(message) - 1 ||
+	    record->attribute_count != 0 || record->attributes_length != 0 ||
+	    length != sizeof(*record) + payload_length ||
+	    record->severity != emit.severity || record->kind != emit.kind ||
+	    record->message_privacy != LOGCMP_PRIVACY_PUBLIC ||
+	    record->sequence == 0 || record->receive_timestamp_ns == 0 ||
+	    record->receive_monotonic_ns == 0)
+		errx(1, "unexpected log round-trip framing or metadata");
+	body = (const unsigned char *)(record + 1);
+	if (memcmp(body, subsystem, sizeof(subsystem) - 1) != 0 ||
+	    memcmp(body + sizeof(subsystem) - 1, category, category_length) != 0 ||
+	    memcmp(body + sizeof(subsystem) - 1 + category_length,
+	    event_name, sizeof(event_name) - 1) != 0 ||
+	    memcmp(body + sizeof(subsystem) - 1 + category_length +
+	    sizeof(event_name) - 1, message, sizeof(message) - 1) != 0)
+		errx(1, "log round trip differs or exact filters were not honored");
+	logcmp_logger_destroy(logger);
+	logcmp_client_close(client);
 }
 
 static void
@@ -232,7 +334,7 @@ int
 main(int argc, char **argv)
 {
 	if (argc != 2)
-		errx(64, "usage: service_operations time|sysctl|notify|memory|power|device|device-denied");
+		errx(64, "usage: service_operations time|sysctl|notify|log|memory|power|device|device-denied");
 	alarm(20);
 	if (strcmp(argv[1], "time") == 0)
 		clock_operation();
@@ -240,6 +342,8 @@ main(int argc, char **argv)
 		sysctl_operation();
 	else if (strcmp(argv[1], "notify") == 0)
 		notify_operation();
+	else if (strcmp(argv[1], "log") == 0)
+		log_operation();
 	else if (strcmp(argv[1], "memory") == 0)
 		memory_operation();
 	else if (strcmp(argv[1], "power") == 0)

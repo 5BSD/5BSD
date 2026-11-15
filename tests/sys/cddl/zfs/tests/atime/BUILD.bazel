@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/cddl/zfs:suite.bzl", "zfs_test_suite")
+
+zfs_test_suite(
+    files = ['atime.cfg', 'atime_001_pos.ksh', 'atime_002_neg.ksh', 'atime_common.kshlib', 'cleanup.ksh', 'setup.ksh'],
+    tests = {'atime_test': {'required_user': 'root', 'is_exclusive': True, 'required_programs': 'ksh93'}},
+)

@@ -1,6 +1,416 @@
 # Native Bazel completion plan
 
-## Current gate ledger (2026-11-14)
+## Execution reset: finish complete endpoints (2026-11-15)
+
+The six original gates and their acceptance scope are unchanged. Component
+porting has become too fragmented: repeated private Make references, SDK refreshes
+and per-component narratives do not establish a qualified complete system.
+The following execution order supersedes the incremental component queue:
+
+1. Finish and commit the currently running provider-client batch; do not discard
+   live work or restart it because an observation times out.
+2. Produce one consolidated remaining-work inventory from configured Make
+   recursion/component metadata and actual configured Bazel dependencies for
+   AMD64 and ARM64. Separate direct incompatible declarations, missing CPU source/
+   header selections, generators/execution ABI, link/install metadata and genuine
+   unsupported features. An ancestor marked incompatible is not another missing
+   program. Resolve omissions in larger related groups through full aggregate
+   analysis/builds. Do not repeatedly rediscover the same inventory.
+3. Drive the AMD64 end-to-end endpoint through gates 1 and 2: complete provider
+   operations in legitimate contexts and whole world/kernel/modules/pkgbase
+   comparison, including debug/install contracts and required configurations.
+   Preserve the already accepted full upgrade/authentication/rollback/BE-removal
+   evidence; rerun that scenario when a relevant change invalidates it. Use one
+   complete profile-bound Make world/kernel/stage/package reference for aggregate
+   comparisons. Rebuild a component separately only for a concrete mismatch or
+   an invalidated source/profile/input boundary.
+4. Complete gate 3 using the native package/compiler output as the next SDK seed
+   and prove the second-stage build, explicit tool/runtime/input closure,
+   invalidation/cache/reproducibility and actual filesystem isolation. The existing
+   format-2 explicit SDK boundary and captured compiler/runtime probes are starting
+   evidence, not completed native bootstrap. Keep unrelated mutable Make object
+   roots from becoming accidental native-build inputs.
+5. Use those complete endpoints for the controlled clean/incremental CPU,
+   aggregate RAM, disk I/O, retained footprint and cache/compression comparisons
+   in gate 4, then qualify the normal frontend, Make ports/hardware and verified
+   combined repository publication in gate 5. Do not switch production default
+   before these gates pass.
+6. Finish ARM64 Tier 1 against the same complete-build acceptance matrix, filling
+   its identified implementation gaps in larger groups along the way. RISC-V
+   remains nonblocking Tier 2. ARM64 component success is not ARM64 system success.
+
+After this batch, prefer complete aggregate builds with keep-going diagnostics
+and one categorized failure report. Keep strict inventory/metadata checks;
+reduce repeated setup and redundant testing rather than weakening acceptance.
+Add focused tests for concrete regressions and new behavior; use maintained
+Bazel tests and full endpoint checks for routine coverage. Source-owned build
+metadata stays in Bazel: Make remains the independent reference and ports build
+system, never a hidden production action-graph generator or fallback.
+
+Keep the SDK seed stable across the complete endpoint runs. The current full
+installed-test candidate uses SDK R15; the earlier full system R15 capture used
+SDK R6. Those are different seed generations, so the current compilation is not
+an incremental timing comparison. Finish this endpoint and its final source
+review before changing the shared Make object profile. Native package-derived
+SDK construction in gate 3 must remove that mutable Make-floor dependency;
+never edit an old receipt or omit its input checks to reuse it after mutation.
+
+Sandbox setup cost must be measured from the completed profile before tuning.
+Bazel 9.3.1 already defaults to directory reuse; its process-wrapper strategy
+uses the shared symlinked-sandbox implementation. The optional in-memory stash
+can trade extra JVM memory for less directory I/O. Compare it only if profiling
+shows a relevant cost, measuring aggregate RAM and disk I/O as well as CPU/time.
+No performance flag is changed here, and process-wrapper reuse does not provide
+filesystem isolation. Version-bound upstream references:
+[SandboxOptions](https://github.com/bazelbuild/bazel/blob/9.3.1/src/main/java/com/google/devtools/build/lib/sandbox/SandboxOptions.java),
+[ProcessWrapperSandboxedSpawnRunner](https://github.com/bazelbuild/bazel/blob/9.3.1/src/main/java/com/google/devtools/build/lib/sandbox/ProcessWrapperSandboxedSpawnRunner.java)
+and [SymlinkedSandboxedSpawn](https://github.com/bazelbuild/bazel/blob/9.3.1/src/main/java/com/google/devtools/build/lib/sandbox/SymlinkedSandboxedSpawn.java).
+
+Every implementation group must still review build-bsd and its maintained
+backend/helpers/tests/manual, retain scope-bound evidence, update this short
+current plan and commit incremental changes. Detailed component evidence belongs
+in linked reports/history rather than expanding the current gate ledger into a
+conversion diary. No new architecture or BIP scope, host installation, upgrade or
+reboot is authorized. No completion date or percentage is inferred from counts.
+
+### Explicit executable contracts for security test installation
+
+The original audit suite deliberately sets MK_PIE=no because its private audit
+archive is not position independent. The maintained ELF comparison helper now
+supports an explicit non-PIE dynamic contract, mutually exclusive with its static
+contract. Default comparison still requires PIE; both artifacts must satisfy the
+selected type, interpreter, RELRO/NOW, safe segment, dependency order and symbol
+contracts. No path-based exceptions or runtime/build policy changes are added.
+
+All 39 focused regression cases pass through normal build-bsd/Bazel. Independent
+capture review verifies the terminal receipt, payload and test log/XML hashes.
+The contract also accepts all fifteen existing Make audit artifacts in explicit
+self-comparisons and rejects them with the default PIE contract; these checks do
+not establish native audit parity or execute audit operations. Evidence under
+/usr/obj/usr/src: bazel-nonpie-program-contract-r1-20261115,
+bazel-nonpie-program-contract-native-r1-20261115 and
+bazel-nonpie-program-contract-capture-review-r1-20261115.
+
+The normal frontend's existing format-5 test workflow is sufficient; build-bsd.c,
+staging, signing and publication semantics need no new option. The maintained
+manual and helper documentation describe the explicit comparison selection.
+Other native security suites and source-owned whole-package contracts for
+deliberate fixtures (including executable-stack helpers) remain open. All six
+system closeout gates remain open, with Make the production default.
+
+### Complete audit and auditpipe installation contributions
+
+Both original suites now have source-owned native build/install declarations:
+fifteen audit executables retain static private auditd linkage and deliberate
+non-PIE dynamic linking; auditpipe retains PIE. Header-only dependencies do not
+inject link inputs. The parent uses the existing audit setting exactly as Make:
+WITHOUT_AUDIT excludes audit, while auditpipe remains selected. Normal build-bsd
+qualification of that disabled selection passes. No new frontend C option,
+staging, signing or publication behavior is needed; the manual records scope.
+
+Final aggregate R15 passes fourteen selected safe test targets (77 nested Python
+cases, nine header ATF cases, the pure NFS decoder and hardlink target). Capture
+review verifies all 4,760 logical outputs / 4,154 unique payloads. Independent
+Make review passes all sixteen ELF/dependency-order contracts, sixteen debug
+pairs, both original Kyuafiles, 34 file records and ten directory claims. Evidence
+under /usr/obj/usr/src: bazel-audit-test-payload-inventory-r1-20261115,
+bazel-audit-test-installation-review-r1-20261115,
+bazel-audit-test-disabled-variant-r1-20261115,
+bazel-installed-tests-world-native-amd64-r15-20261115 and
+bazel-installed-tests-world-capture-review-r15-20261115. R13/R14 retain earlier
+successful graph captures before metadata factoring and conditional selection.
+
+No audit body executes on the host: global auditing state, device access and
+exclusive execution require a disposable guest. Existing process-control.c
+cap_getmode signed-pointer warnings remain visible, without new suppression.
+Native audit remains explicitly AMD64-only because libauditd and the served-dq
+dependency still restrict their architecture; auditpipe declares both Tier 1
+architectures, without claiming ARM execution. Other OS suites, whole-package
+fixture contracts, matched complete system installation, current kernel/VM and
+all six closeout gates remain open. The tests-on production guard stays intact.
+
+### First consolidated configured inventory
+
+The completed four-query matrix uses the full endpoint's reproducible build
+settings and explicit per-architecture SDK/triples/FDT. AMD64 tests-off reports
+109,499 configured records and zero incompatible records; this is analysis,
+not a new build acceptance. AMD64 tests-on is blocked by 20 incompatible
+aggregate/ancestor records, including deliberate incomplete-installed-test guards
+in lib, cddl, secure and usr.sbin. Those 20 are not 20 missing programs and the
+guards stay until complete installed-test inventory is proved.
+
+ARM64 tests-off reports 2,814 incompatible configured records. Literal direct
+AMD64-only restrictions identify 299 declarations across 243 source packages;
+these are a review frontier, not 243 missing or necessarily required programs.
+Dynamic restrictions and propagated ancestors remain separately unclassified.
+Tests-on reports 1,351 incompatible records, with a smaller traversed graph due
+to aggregate guards; fewer records do not mean better coverage. The complete
+Make source/profile inventory now completes 2,135 AMD64 and 2,094 ARM64
+directories without query failures. Its recorded configurations determine the
+review queue; they are not a shared Make/Bazel profile or build acceptance. Evidence:
+bazel-closeout-consolidated-bazel-inventory-r2-20261115 and
+bazel-closeout-consolidated-make-inventory-r2-20261115 under /usr/obj/usr/src.
+Earlier missing-loader-input and incorrect metadata CLI diagnostics remain
+retained; no failed query is used for complete inventory counts.
+
+### Complete selected package debug pairing
+
+All 1,803 split-debug pairs in the captured 450-package R15 system now pass the
+current maintained verifier and independent public-payload/path/policy review.
+The original Make reference pairs were rechecked with that verifier, rather
+than accepting its older verifier binding. This closes pair binding for the
+selected snapshot, not full DWARF semantics, source lookup or current-head
+world/package acceptance. See MODULE-DEBUG-QUALIFICATION.md and
+`bazel-packaged-debug-pair-audit-r4-20261115` under /usr/obj/usr/src. Failed
+diagnostic attempts remain retained; temporary extracted payloads are removed.
+
+### Tests-enabled contribution audit and OS test installation gap
+
+The previously selected installed-test contribution graph completes native R1
+and final-graph R2 through `//:world_installation_candidates`. R2 captures 4,230
+logical output records (3,633 unique payloads); the capture review verifies them
+and the three build-tool test results (38 nested Python cases plus the hardlink
+target). Configured boundary checks prove the audit root remains available with
+tests on while production guards reject that incomplete profile; with tests off,
+both roots expose identical archive paths. These are contribution/build-tool
+checks, not complete installed-test, finalized-world or pkgbase acceptance.
+Evidence: `bazel-installed-tests-world-native-amd64-r2-20261115`,
+`bazel-installed-tests-world-capture-review-r2-20261115` and
+`bazel-installed-tests-aggregate-boundaries-r1-20261115` under /usr/obj/usr/src.
+
+The whole-endpoint audit found that this graph omitted the top-level `tests/`
+family entirely. A public Bazel loading query joined with the existing completed
+Make inventory finds 239 selected test source owners, only ten with any native
+rules and three installation archives before the new security suite work. Rule
+presence includes partial/non-installed harnesses and is not complete conversion.
+Evidence: `bazel-installed-test-loading-inventory-r1-20261115/review.json`.
+Connect those source-owned archives through the normal world audit root, convert
+missing suites in related groups and compare a matched-profile full Make test
+installation. Keep production guards; never substitute a small root Kyuafile
+that pretends unconverted directories do not exist.
+
+The first connected security-subtree batch now completes native aggregate R4
+through the normal build-bsd format-5 path. All 58 programs are declared: 51 plain
+OES C programs, its ATF C program and ATF shell program, plus four MAC ABAC ATF
+C programs and its ATF shell program. Included example/logger code and the
+reader implementation are explicit dependencies; no source-tree visibility or
+Make action fallback was introduced. The parent security Kyuafile includes both
+complete children; incomplete tests/sys and tests roots do not manufacture a
+complete registration.
+
+The independent review matches all three security Kyuafiles to current original
+Make registrations, checks 117 installed file records and explicit package-owned
+directory claims, and verifies all 56 compiled binary/debug pairs. It does not
+execute integration tests or prove Make/native instruction or DWARF equivalence.
+The final aggregate capture verifies all 4,248 output records and the same three
+build-tool test targets. Real configured boundary checks retain the tests-on
+production rejection and exactly equal 1,284 tests-off archive paths. R3's missing
+included logger source and two reviewer diagnostics remain retained; no input or
+metadata check was waived. Evidence under /usr/obj/usr/src:
+`bazel-installed-tests-world-native-amd64-r4-20261115`,
+`bazel-installed-tests-world-capture-review-r4-20261115`,
+`bazel-security-test-installation-review-r3-20261115` and
+`bazel-installed-tests-aggregate-boundaries-r2-20261115`.
+
+Frontend review: the maintained world backend selects these archives using the
+existing tests setting and format-5 labels; no new C option is needed. The manual
+now states top-level test coverage remains incomplete and kernel/policy-changing
+tests require an isolated VM. Signing/publication helpers are unchanged because
+this batch adds native test payloads, not trust policy or publication semantics.
+The rest of the 239-owner review queue, a matched full Make installation,
+current kernel/modules/image, actual security-suite execution and the six gates
+remain open. Continue related test groups through the complete audit endpoint.
+
+The following core OS group also passes the complete audit endpoint (native R5):
+AIO, FIFO, file operations, mqueue, POSIX shared memory and enclosure services.
+Its 43 compiled programs/helpers and three scripts have explicit native source,
+header and library dependencies; all six helper binaries are installed without
+being falsely registered as tests. Independent review matches the six original
+Make Kyuafiles, all three installed script payloads, 95 installed file claims,
+30 explicit directory claims and all 43 compiled binary/debug pairs. This is
+build/install evidence; no host kernel or enclosure test is executed. Evidence:
+`bazel-core-test-installation-review-r1-20261115`,
+`bazel-installed-tests-world-native-amd64-r5-20261115` and its capture review.
+The same maintained frontend/settings/archive helpers apply; no new frontend,
+signing, validation or publication option is needed. The existing manual and
+production guard still describe the incomplete tests hierarchy. Subsequent
+related groups must preserve ATF/plain/TAP metadata and script transformations,
+not just build a C source glob. Whole installation/runtime and all six gates
+remain open.
+
+The header/VM group completes native R6 and final R7 through the same complete
+audit endpoint. Ten source owners add 31 compiled programs, five scripts and
+one shared-library fixture: include macros, rc.d routing, release integrity,
+sys data structures/time, sound conversion, VFS and the complete VM/stack
+subtree. Source-owned macro and PCM header targets expose the actual interfaces;
+included test C bodies are declared textual inputs. Script-only suites do not
+claim split-debug directories. The etc parent uses the original maintained
+auto-discovery Kyuafile, and the VM parent includes stack without registering its
+helper library as a test.
+
+Independent review checks 76 suite file claims, 32 directory claims, original
+Make registrations and script payloads, and 31 program/debug pairs. The separate
+fixture review checks its library/debug pair and exact Make ELF metadata,
+including imports/exports/versions and dependency ordering. Both stack consumers
+pass the maintained program comparator with their explicit installed search
+path. The fixture deliberately requires an executable stack, matching Make;
+the general shared-object hardening verifier still rejects it. Whole tests-on
+package acceptance therefore also requires a source-owned, explicit fixture
+contract mechanism; do not add pathname-based exclusions or waive hardening for
+other payloads. Existing soxstack source emits a procstat count-pointer signedness
+warning; no suppression or test-source rewrite was introduced to hide it.
+
+Final R7 also executes all nine declared header-macro ATF cases through the
+normal native test adapter with declared source-built libc/libsys/ATF runtime.
+All nine and the three selected build-tool targets pass. The capture review
+verifies all 4,305 output records; all ten installation archives and their request
+metadata remain byte-identical to the independently reviewed R6 capture. Evidence
+under /usr/obj/usr/src: `bazel-installed-tests-world-native-amd64-r7-20261115`,
+`bazel-installed-tests-world-capture-review-r7-20261115`,
+`bazel-header-vm-test-installation-review-r2-20261115`,
+`bazel-vm-test-fixture-review-r1-20261115` and
+`bazel-header-vm-test-capture-identity-r1-20261115`. The premature review attempt
+before the terminal receipt existed was rejected and remains retained. Kernel,
+policy and hardware cases are built, not executed on the host; current image/VM,
+remaining suites, full installation/configuration parity and all six gates stay
+open. The existing format-5 labels/test selectors and maintained world backend
+carry these additions; the frontend C interface, signing/publication policy and
+manual behavior require no new option.
+
+The complete selected CDDL/ZFS hierarchy now passes the world audit endpoint
+(native R9): 113 source owners, 104 ATF/ksh93 wrappers, 27 utility scripts,
+17 compiled helpers, 1,144 data/configuration payloads and 112 Kyuafiles. The
+family macro consumes explicit source-owned BUILD lists; it neither walks the
+filesystem nor queries Make during Bazel actions. Native AWK/sed actions generate
+commands.cfg/default.cfg, and script installation preserves Make's extension
+removal and ksh93 interpreter/prerequisite metadata. Missing file_common.h inputs
+in the first run are fixed with a declared shared header dependency, not broader
+source access or warning suppression.
+
+Independent review checks all 1,421 regular file records, 126 explicit directory
+claims, original script/data/generated configuration bytes and all Kyuafile
+registrations. Every helper passes the maintained Make ELF contract comparator
+(including dependency ordering/imports/exports) and split-debug verifier. Real
+configured queries match Make with defaults, WITHOUT_ZFS_TESTS and WITHOUT_ZFS;
+normal build-bsd construction of both disabled variants proves their parent
+Kyuafiles contain no dangling child references or captured child outputs. The
+new zfs_tests setting defaults on, follows required tests/ZFS selections, and is
+documented in the normal frontend manual; no new C option or signing/publication
+policy is needed. The full R9 capture verifies 4,644 output records and all 12
+selected native test targets. Destructive ZFS cases are not executed on the host.
+
+Evidence under /usr/obj/usr/src: `bazel-zfs-test-payload-inventory-r1-20261115`,
+`bazel-zfs-test-installation-review-r1-20261115`,
+`bazel-zfs-test-selection-review-r1-20261115`,
+`bazel-zfs-test-disabled-variants-r1-20261115`,
+`bazel-installed-tests-world-native-amd64-r9-20261115` and its capture review.
+These are selected hierarchy build/install contracts, not current full-world
+installation, instruction/DWARF equivalence, destructive runtime or ARM64
+qualification. In the existing 239-owner Make review queue, 97 owners still lack
+a local BUILD file; presence elsewhere includes partial suites and does not
+establish completion. Continue those related groups, fixture contract inputs,
+matched whole-system references and actual current image/runtime qualification.
+All six gates and the tests-on production guard remain open; Make stays default.
+
+The filesystem/GEOM/pjdfstest group now completes native R12 through the same
+whole audit endpoint: 37 source owners, 59 compiled programs/helpers and 295
+scripts. Its 36 installation archives preserve 463 file/link records, 67 explicit
+directory claims, 35 Kyuafiles, all inherited NetBSD sed transformations and the
+pjdfstest compatibility symlink. The original Make filesystem root registered
+fdescfs twice; remove that duplicate in Make and regenerate its Kyuafile. Both
+Make and native declarations now use the corrected order. Metadata overrides
+retain Make's last-property-wins behavior, including FUSE timeouts and the plain
+NFS cookie client's empty module prerequisite.
+
+FUSE mockfs/utils share one native compilation context. Their header target now
+carries header-only dependencies; actual framework/runtime libraries belong to
+the final cc_binary dependencies. Correct those declarations and the ATF library
+precedence rather than weakening ELF checks: all 59 Make ELF contracts, including
+ordered dependencies/imports/exports/versions and hardening, and all 59 split-debug
+pairs pass. The earlier failed package-boundary labels and 54 dependency-order
+mismatches remain retained. Neither program source nor payload bytes were patched
+to manufacture agreement.
+
+All 13 selected native test targets pass, including the unchanged pure NFS cookie
+decoder and nine header ATF cases. The decoder uses declared runtime runfiles,
+including the existing seed libgcc_s; this is not independent bootstrap or a
+hermetic runtime assertion. The capture review verifies all 4,753 output records.
+Normal build-bsd construction with googletest disabled and with OpenSSL disabled
+matches actual Make child lists, produces no dangling child registrations and
+captures no excluded FUSE/ELI outputs. No kernel, mount, disk or privileged test
+body is executed on the host.
+
+Evidence under /usr/obj/usr/src: `bazel-filesystem-test-payload-inventory-r1-20261115`,
+`bazel-filesystem-test-root-registration-r1-20261115`,
+`bazel-filesystem-test-installation-review-r2-20261115`,
+`bazel-filesystem-test-disabled-variants-r1-20261115`,
+`bazel-installed-tests-world-native-amd64-r12-20261115` and its capture review.
+The existing format-5 settings/selectors and world backend carry this group; no
+new frontend C option, signing/publication policy or manual behavior is added.
+Sixty selected test source owners still lack a local BUILD; existing owners also
+include partial suites. Whole installation/configuration/runtime, fixture ELF
+contracts, bootstrap/isolation/performance/publication and ARM64 remain open;
+Make remains default and the production tests-on guard stays in place.
+
+The concurrent OpenES merge a7d37e2855a changed kernel and test sources during
+R1. R2 incorporated its world dependencies; five archive hashes changed for real
+library/header/manual payload changes. Neither run is a controlled incremental
+benchmark or a reproducible snapshot of unchanged source. Refresh current-source
+kernel/modules/image and VM acceptance; the older VM proof remains evidence for
+its recorded snapshot only.
+
+The consolidated AMD64 Make metadata query completes all 2,135 configured
+directories without query failures. The maintained native-presence survey binds
+those records and reports 1,656 local BUILD owners and 479 ancestor-owned
+components. These are directory ownership review counts, not converted program
+counts or installation coverage. ARM64 completes all 2,094 directories without
+query failures: 1,617 local BUILD owners and 477 ancestor-owned components.
+Complete profile-bound Make installation metadata is still required for parity.
+
+The ARM64 literal-constraint frontier is now joined to those completed Make
+owners in `aarch64/constraint-frontier-join.json`. Its 299 declarations comprise
+109 binaries, 57 C/C++ library rules, 70 shared libraries, 47 component archives
+and 16 parent/archive groups across 243 source owners. These are distinct rule
+kinds, not 299 missing programs. Four declarations have no exact owner in the
+recorded Make configuration (mail/update features differ); they remain explicit
+review items, not exclusions. Dynamic constraints and propagated incompatibilities
+remain in the original query's separate queue. The next ARM64 work must review
+real source/header/define selections as well as compatibility: libssl, for example,
+still imports AMD64_DEFINES and cannot be ported by removing its CPU guard alone.
+
+The previous provider-client batch now passes both native builds and all 28
+original Make references: fourteen static/shared-library contracts and 344
+complete install metadata records per architecture, plus five static DTrace
+providers with 36 locations each. Captured reports and output hashes verify.
+See CAPABILITY-FIDL-CROSS-QUALIFICATION.md. No additional component campaign is
+started; the consolidated inventory and complete endpoints determine next work.
+
+### Execution-host and ARM64 image boundaries confirmed by source review
+
+The current SDK adapter treats AMD64 as the native execution host:
+`libmd-stage-tools.py` rejects a separate execution SDK for an AMD64 target and
+requires an AMD64 execution receipt for foreign targets; `userland_sdk.py`
+validates that same assumption. `source_graph.py` classifies every non-AMD64
+target as foreign, and `tools/build/fuchsia/fidlc/BUILD.bazel` restricts the
+build-only compiler to AMD64. Thus current ARM64 evidence describes cross builds
+from AMD64, not an ARM64-hosted build or self-bootstrap. Keep those existing
+cross-build results; do not remove checks or mark foreign binaries executable
+to manufacture native-host coverage.
+
+Gate 3/6 must represent the actual execution CPU/SDK separately from the target,
+carry that distinction through generators, C/C++ runtime/toolchain selection and
+test adapters, and qualify ARM64-hosted execution. The normal frontend and SDK
+receipt path must carry it; a private ARM64 wrapper is insufficient. Target and
+execution OS/runtime compatibility also needs explicit review when the source
+and running host differ, even with the same CPU.
+
+The existing whole-pkgbase image builder `pkg_image.py` additionally requires
+BIOS/ZFS policy. Its AMD64 VM evidence cannot qualify ARM64 boot. The maintained
+ARM64 EFI image/VM path remains required within Tier 1 completion. This records
+existing implementation boundaries; it adds no architecture, BIP or authority
+scope and changes no running build inputs.
+
+## Current gate ledger (2026-11-15)
 
 All six gates remain open. Update this ledger when evidence changes; dated
 execution notes below retain history and do not override these current rows.
@@ -9,18 +419,242 @@ is not authorized.
 
 | Gate | Current evidence and remaining work |
 | --- | --- |
-| 1. Runtime and upgrade | Fresh R11 VM R3 passes all 34 checks, normal shutdown, signed 450-package upgrade/new kernel, authentication, rollback, shared-file persistence and unused-BE deletion. It checks 13 manifest-derived boot services and six selected ordinary-session operations; all-provider operation coverage is explicitly false and remains open. Earlier timeout failures remain retained. |
-| 2. AMD64 parity/configurations | Full R15 passes 32 selected verification tests and captures 450 packages with tests=false and tests_support=yes; it does not qualify the installed OS test suite. The general-helper identity corrections are included. Its 14 general-helper archives match independently Make-qualified focused AMD64 bytes; native static/shared libc smoke probes pass. Focused kernel matches Make's allocated contracts, loader symbols and CTF; native split-debug binding passes. Seven corrected modules match except reported GNU build-ID digests, with exact CTF. Complete current package/debug/install contracts and required configuration selections remain open. |
+| 1. Runtime and upgrade | Fresh R11 VM R3 passes all 34 checks, normal shutdown, signed 450-package upgrade/new kernel, authentication, rollback, shared-file persistence and unused-BE deletion. It checks 13 manifest-derived boot services and six selected ordinary-session operations; all-provider operation coverage is explicitly false and remains open. The fresh Log-enabled superset VM now passes all 34 checks and normal shutdown, including seven ordinary operations (actual Log emit/flush/query), NetworkControl and SystemExtension in all four phases. Its 147 root-operation outputs, source/serial and phase reports independently verify. Complete-provider coverage stays false; authorized Device, Filesystem, Crypto, Trace and Audit delivery remain open. Earlier timeout failures remain retained. |
+| 2. AMD64 parity/configurations | Full R15 passes 32 selected verification tests and captures 450 packages with tests=false and tests_support=yes; it does not qualify the installed OS test suite. The general-helper identity corrections are included. Its 14 general-helper archives match independently Make-qualified focused AMD64 bytes; native static/shared libc smoke probes pass. Focused kernel matches Make's allocated contracts, loader symbols and CTF; native split-debug binding passes. Seven corrected modules match except reported GNU build-ID digests, with exact CTF. All 1,803 packaged split-debug pairs from that capture now pass current-verifier pairing against the complete original Make path/policy inventory (1,079 world, 724 kernel/module), with all 450 package hashes independently reverified. Complete current package/install contracts, DWARF/source lookup and required configuration selections remain open. |
 | 3. Bootstrap/dependencies/cache/sandbox | Narrow target/execution compiler roles and actual ABI tests pass. Public target-configuration queries resolve alias ambiguity without ignoring duplicates. Actual configured queries now collapse ordinary/NOSSP consumers to one normal host DTrace bootstrap, preserving all 13 selected ARM64 outputs byte-for-byte. Earlier AMD64 R11 and ARM64 R7 snapshots verified all 8,345/16,682 files and actual target/execution ELF roles before the dev header merge; their current source bindings are stale. Fresh AMD64 R12 and ARM64 R8 materializations pass with direct copy bindings; the fresh AMD64 SDK/loader run passes four selected targets (39 Python checks plus one host ATF case), with hash-verified reports and 82 captured files; the fresh ARM64 run also passes three host-artifact targets (39 Python checks) and captures 75 files. Earlier native R3 runs both host-test scripts (25 cases) and preserves all ten startup objects per architecture against independent Make contracts. These are Make-built seeds; independent native bootstrap, copied-payload/source mutation checks, complete invalidation/reproducibility and filesystem isolation remain required. |
 | 4. Resources/performance | A source-owned reaper supervisor now accounts complete private-server descendant CPU/block operations and sampled aggregate RSS; seven real process regressions and maintained AMD64 qualification pass. Normal frontend timings explicitly identify their client-only scope. This qualifies instrumentation, not performance. Command/QEMU observations exist, including R2 staying below its 4 GiB process-RSS and 8 GiB overlay budgets. Controlled clean/incremental CPU, aggregate RAM, disk I/O and retained-footprint comparisons remain required. Full R15 uses an explicit 32 GiB qualification-cache budget; this is not a production default or a performance result. |
 | 5. Production frontend/publication | Maintained format-5 qualification works; Make stays the normal backend. Qualified Bazel world/kernel/pkgbase integration, Make ports coverage, separate hardware identity checks and verified combined publication under /usr/obj/usr/src/repo remain required. |
-| 6. ARM64 Tier 1 | Complete libc static/PIC archives and DSO build in optimized-production and portable-debug profiles with exact Make order/non-provider object contracts and shared metadata. Nonshared now matches all 12 Make objects and its install contract; public/shared and static ARM64 clients link, NOSSP matches 1,437 ordered members apart from retained provider differences, all NOSSP probe sites and six loader-extracted objects validate. Native R3 passes the explicit host-only symbol visibility test; no ARM64 client is executed. The refreshed production Make world at 4f0683e6286 and its recorded profile complete, including tests. The earlier R7/startup comparison is dated evidence; refreshed SDK, all ten startup-object contracts and focused loader metadata/install/provider comparisons now pass; raw source-path/provider/debug differences remain recorded. Focused five-library/descriptor builds now pass on ARM64 and AMD64, with 240 original Make install metadata records per architecture matching. C++/unwind component builds also pass on both platforms, with 1,681 original Make install metadata records per architecture matching and byte-identical generated ABI maps. AMD64 demangling, native backtrace and static/shared C++ runtime tests pass. Focused libm/static-unwind builds now pass on both platforms: all 277 ARM64 and 280 AMD64 math object contracts and both ABI maps match Make; 322 component install metadata records match per architecture. AMD64 static/shared math smoke tests pass. The 47-program original math suite now builds/installs on both platforms, with all 463 AMD64 ATF bodies passing and complete program ELF metadata matching Make on both platforms. ARM64 math execution remains open. Current five-component crypto/compression builds and crypt test installs also match Make archive/ELF/ABI-map and 188 install metadata records per architecture. ARM64 target execution remains unqualified. Eight selected data/configuration/ATF libraries and 14 installed test programs now match focused Make archive/ELF/map/install contracts (121 metadata records each platform); AMD64 reports 160 passing results and one ASan-only skip. The datagram sysctl case remains VM-only. Five device/output libraries, the CSV plugin and two original CAM test programs now match focused Make archive/ELF/install contracts (215 records each platform); AMD64 parsing/formatting/plugin/string checks pass, while live device/I/O and ARM64 execution remain unqualified. Locale/termcap generation now uses shared explicit target byte-order selection and execution-runtime dependencies: four complete component archives match all 785 original Make metadata records and every 184 regular payloads on each Tier 1 architecture. Library aggregate traversal now admits both Tier 1 architectures and follows Make for x86 vgl/Intel PT versus ARM OpenCSD, including PMC on/off. Focused PMC/OpenCSD/internal support builds match 123 install metadata records each, byte-identical generated event tables and archive/shared contracts, with diagnostic-path differences retained. Full ARM64 world R3 still rejects incompatible transitive children; the earlier 1,534-record diagnostic predates aggregate traversal and is not a remaining-program count. Full loader runtime, full DWARF, native world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V stays nonblocking Tier 2. |
+| 6. ARM64 Tier 1 | Current build-host/SDK/FIDL support remains AMD64-only; ARM64 self-hosting and a maintained EFI whole-system image/VM path remain open. Selected libc/CSU/loader, C++/math, portable and capability libraries, locale data, /bin and module-tool contracts pass; detailed dated evidence follows. All 29 FIDL IR consumers now build with the correct execution ABI. The 462 emulated math bodies match Make outcomes (448 passed, 13 expected failures, one skip). Complete ARM64 world/kernel/modules/pkgbase/configuration and VM/runtime qualification remain open. Incompatible configured ancestors are not a remaining-program count. RISC-V stays nonblocking Tier 2. |
 
 Latest full capture: /usr/obj/usr/src/bazel-closeout-system-native-r15-20261114.
 Runtime failure: /usr/obj/usr/src/bazel-current-upgrade-vm-r2-20261114/result.json.
 Kernel proof: /usr/obj/usr/src/bazel-current-kernel-parity-r5-20261114.
 Module diagnostics: /usr/obj/usr/src/bazel-module-source-identity-review-r1-20261114.
 ARM64 CSU proof: /usr/obj/usr/src/bazel-arm64-csu-parity-r1-20261114.
+
+
+### Capability libraries and FIDL execution ABI (2026-11-15)
+
+Nine capability library producers now build for both Tier 1 targets. The first
+actual ARM64 Crypto IR generation failed because a raw target-SDK libgcc_s file
+entered the host compiler runtime despite cfg=exec. All 29 consumers now share
+the compiler-owned execution runtime: configured source-built libmd/C++/math/
+unwind DSOs and the existing explicit execution-SDK C runtime alias. Both
+maintained qualifications now build every IR. Actual configured ARM64 action
+review verifies all 29 host compilers and seven runtime DSOs as AMD64 ELF.
+All IRs match across architectures; all nine Crypto generated source/header
+files per architecture match original Make bytes. No receipt or artifact is
+rewritten to obtain equality. See CAPABILITY-FIDL-CROSS-QUALIFICATION.md.
+
+All 18 original Make references pass. Nine archives/nine shared ELF contracts
+and all 344 install metadata records per architecture match. Five static-library
+DTrace providers use the existing explicit object-ABI selector before execution
+transition; their schemas, 65 symbol-relative locations and target patch
+instructions match Make on each platform. Raw compiled payload differences
+remain retained, without full code/DWARF or live provider-firing claims.
+ARM64 captures 86 files and passes 40 Python checks in three host targets;
+AMD64 captures 87 files and adds the passing native wire-format runtime test.
+All captured payload and test log/XML hashes independently verify.
+
+Frontend review: existing normal format-5 inputs and maintained backend carry
+the shared compiler runtime and all selected producers. No new CLI, signing,
+stage verification, hardware identity or publication interface is required.
+Complete ARM64 world, provider runtime and other closeout gates remain open;
+Make remains production/default and BIP stays excluded.
+
+### Portable library and fresh-account Tier 1 checkpoint (2026-11-15)
+
+Ten additional library producers now admit ARM64 and AMD64, with other CPUs
+still explicitly incompatible: libopenbsd, libdiff, libpe, libelftc, libstdbuf,
+libkiconv, libdevctl, libkldelf, libmixer and libusbhid. The already portable libc
+and libmd installation aggregates also admit ARM64. Original Make recipes have
+no CPU-specific source selection for these ten libraries; their normal and
+internal PIE variants, private-library names, ABI maps, source order and installed
+manual aliases remain intact. The source-owned declarations change compatibility
+only. AMD64-only executable tests retain their execution restriction.
+
+All 24 independent original Make component references pass (12 per platform).
+Fourteen normal/internal-PIE archives per platform match member order and symbols;
+six DSOs match ELF metadata, dependencies and hardening; mixer ABI maps match in
+bytes. All 107 archive member ELF machines are correct. Allocated/symbol/relocation
+contracts match in 77 objects; the remaining 30 differ only in diagnostic strings
+with the canonical /usr/src/ prefix. Raw artifacts, contracts and strings remain
+retained; no bytes are rewritten and full DWARF equality is not claimed.
+
+Seven library component archives match all 102 Make install metadata records per
+platform; libmd adds 127 matching records. The complete libc installconfig
+reference includes three untagged fresh-system files (/etc/passwd, pwd.db and
+spwd.db), produced by Make's install-passwd hook. These are already intentionally
+separate from package/upgrade payloads in the native world design. Enabling the
+existing declared account generator's ARM64 data output, with pwd_mkdb still an
+execution-platform tool, allows all 1,508 libc/reference entries to reconcile.
+The three generated files match Make bytes, ownership/modes and absence of package
+tags. Canonical hardlink chains match actual reference inodes, including regfree
+through regexec to regex; a diagnostic that required direct link spelling is
+retained. Thus all 1,737 selected install records per platform match. Compiled
+archive/DSO/debug byte differences remain recorded.
+
+Final maintained frontend qualification: ARM64 R3 passes three host-artifact test
+targets (40 Python cases), with 54 logical outputs / 53 unique payloads; AMD64 R2
+passes those checks plus the actual elftc API and stdbuf buffering runtime tests,
+with 56 logical outputs / 55 payloads. All captured output and test-log/XML hashes
+independently verify. Final ARM64 preserves all 51 earlier selected output records
+byte-for-byte while adding separate account state. This is not complete ARM64
+world, tests-enabled installation, live device use or independent bootstrap.
+
+Evidence under /usr/obj/usr/src: bazel-portable-libraries-native-aarch64-r3-20261115,
+bazel-portable-libraries-native-amd64-r2-20261115, portable-library Make references,
+per-platform parity/install-parity/object-contracts/literal-review/capture-review,
+libmd-install-parity and libc-install-parity records. The corrected private-library
+review filename, rejected nonexistent target and reference reconciliation
+failures remain retained. Full ARM64 configured world R4 still rejects incompatible
+transitive children; its 3,109 incompatible configured records are not a count of
+remaining programs and precede this batch.
+
+Frontend integration review: normal build-bsd format-5 target/test/SDK inputs carry
+all producers and the separate fresh-account state. No new CLI, normal backend,
+signing/stage verification, hardware identity or publication interface is required.
+Account state remains excluded from package upgrade replacements. Make remains
+production/default, BIP is excluded, and all six closeout gates remain open.
+
+### Log-enabled full-upgrade acceptance (2026-11-15)
+
+The terminal bazel-provider-log-operator-vm-r1-20261114 result passes all
+34 checks and normal QEMU exit. Each of four phases (baseline, inactive install
+before activation, new boot and rollback) passes 13 manifest-derived boot units,
+seven ordinary-session operations and both installed operators. Log performs an
+actual emit, flush and exact-record query. The separate review verifies every
+one of the 147 root-output hashes, source and serial hashes, image/helper
+captures and phase reports. Signed 450-package upgrade, actual new-kernel boot,
+positive/negative authentication, explicit shared-file persistence and unused-BE
+deletion pass; that guest reclaims 2,828,566,528 bytes. Application schema rollback,
+complete provider operations, Secure Boot and comparative performance are not
+proved. Evidence: bazel-provider-log-operator-vm-review-r1-20261115.
+
+Frontend review: existing format-5 targets/image inputs, VM service-policy
+format 3 and normal maintained backend carry this case. No frontend, signing,
+publication or production-default change is required. Make remains production.
+
+### Installed operator full-upgrade acceptance (2026-11-14)
+
+The complete bazel-provider-operator-vm-r1-20261114 scenario now passes all
+34 checks and normal QEMU shutdown. Signed 450-package inactive upgrade, actual
+new-kernel boot, positive/negative login/PAM/SSH/su, rollback, explicit shared-file
+persistence and unused-boot-environment deletion all pass. The final report binds
+147 successful root operations, source/serial hashes and immutable image/helper
+captures; the separate review rechecks every root-output hash and all four
+service-phase reports. Both added operators pass in every phase; complete
+provider operation coverage remains explicitly false. No host installation,
+reboot or publication occurred. The fresh Log-enabled superset VM now also passes; see the 2026-11-15
+acceptance below.
+
+
+### Refreshed bin, module-tool and emulated math checkpoint (2026-11-14)
+
+The shared development world selected SYSTEM_COMPILER and debug malloc. Its
+final metadata epilogue, then subsequent incremental world updates, invalidated
+older SDK source bindings. R13/native R1 and ARM SDK R9/R10 failures remain
+retained; no receipt or copied tool was repaired in place. R14 is the seed used
+by the accepted AMD64 bin/helper run, while its original live metadata binding
+subsequently became stale. Fresh native R15 and composite ARM64 R11 materialize
+8,342/16,679 snapshot files with 8,338/16,674 bound copies. These are Make-produced
+seed floors, not production-malloc world or independent bootstrap evidence.
+
+Maintained frontend bazel-bin-service-native-amd64-r2-20261114 passes five targets
+containing 59 Python checks and captures 133 logical outputs / 103 unique files,
+including the Log-enabled service helper. Complete receipt/manifest/payload and
+test-log/XML hashes verify in bazel-bin-service-review-amd64-r1-20261114.
+An independently rebuilt original Make /bin parent uses the recorded system
+compiler, 16 CPUs, explicit NIS/sendmail/tcsh on, tests off and a fresh bound
+libsm reference. Both build-tools and full build/install/installconfig pass.
+This component reference explicitly selects production malloc; it does not
+qualify a complete production world or publication. Evidence:
+bazel-bin-current-make-amd64-r1-20261114.
+
+Both current complete /bin captures match all 1,469 original Make installation
+records with zero missing/extra objects, exact numeric ownership/modes/flags/
+tags/links and matching script/data payloads. All 41 ELF programs per platform
+match metadata, imports, NEEDED order and hardening; all 22 instrumented programs
+match linked provider schemas and 70 locations. The 82 regular ELF/debug payload
+byte differences per platform remain retained; this is not full code/DWARF or
+live provider-firing qualification. See bazel-bin-current-{install,program}-parity-
+{amd64,aarch64}-r1-20261114.
+
+Kldconfig, kldload, kldstat and kldunload now admit both Tier 1 CPUs. Their Make
+recipes have no differing CPU source selection. The three traced tools use the
+shared explicit target-object-ABI DTrace selector before the execution transition.
+Fresh maintained bazel-bin-kld-native-aarch64-r1-20261114 passes all three host
+provenance targets (40 Python cases), captures 141 logical outputs / 108 files
+and builds the complete /bin aggregate plus all four tool installation archives.
+All four independent original Make references pass; complete component inventory
+and metadata match in 16 records. Four executable ELF contracts pass; kldconfig's
+matching provider absence and two linked locations each in the other three tools
+are retained. No module load/unload, linked ARM64 patch-instruction validation,
+audit delivery or live probe-firing claim is made. Evidence: bazel-kld-make-
+references-aarch64-r1-20261114, bazel-kld-install-parity-aarch64-r1-20261114,
+bazel-kld-program-parity-aarch64-r1-20261114 and
+bazel-bin-kld-review-aarch64-r1-20261114.
+
+The installed QEMU BSD user emulator also executes all 47 captured ARM64 math
+programs and all 462 actual registered bodies. Native Bazel and independent
+original Make programs/libm/libutil produce identical results: 448 passed,
+13 source-declared expected failures and one skip for unavailable FP trapping.
+All result diagnostics match after only the explicit /usr/src/ source-root
+prefix normalization. The strict all-passed exploratory reports remain failed;
+the separate comparison reports matched original Make outcomes, not repaired
+math bugs. Ninety-four actual loader startup traces bind all reported DSOs to the selected
+private target runtime. Missing target ATF fails execution; the loader attempts
+a host default directory and rejects its AMD64 library as unsupported machine.
+This does not establish filesystem confinement. See
+ARM64-USER-MATH-QUALIFICATION.md. Maintained Bazel emulated-test integration and
+full ARM64 kernel/VM qualification remain open; do not relabel these as host
+artifact-only tests. No target-OS or host installation was performed.
+
+Frontend review: existing format-5 architecture/SDK/target/test inputs cover the
+component builds and helper capture. Backend recipe inputs, manual, runtime
+README and observability ledger are updated together. No new C CLI dispatch,
+signing, staging, publication or production-backend change is required. All six
+gates remain open, Make remains production/default, and BIP stays excluded.
+
+
+### Installed operator qualification checkpoint (2026-11-14)
+
+Service policy format 3 extends the maintained normal-runtime runner with
+explicit installed operator/program inputs bound to authenticated image payloads.
+NetworkControl performs numeric address/service resolution as the actual ordinary
+SSH user through its existing software attributes; sysextctl config enumerates
+persistent policy through the normal root read-only query view. Complete output,
+endpoint semantics, unique ready policy records and required caller contexts are
+checked. No provider visibility, attributes or guest policy is changed. Paths
+come from the request and must be regular image payloads. Configuration syntax
+checks, local module lists and UID 0 alone do not substitute for provider RPCs.
+
+Sixteen direct service-policy/parser/control-flow checks pass, including
+truncation, wrong endpoint/transport, unready/inconsistent policy, duplicate
+records, unauthorized program substitution, missing ordinary callback and failed
+operation propagation. The request under bazel-provider-operator-request-r1-20261114
+resolves both operator payloads and the two uploaded helpers against immutable
+passing qualification receipts. The fresh full upgrade VM scenario under
+bazel-provider-operator-vm-r1-20261114 now passes both operators at baseline,
+post-inactive-install, new boot and rollback, then shuts down normally.
+All 34 checks and 147 root-operation records verify, with signed 450-package
+upgrade/new kernel, authentication, shared-file persistence and unused-BE deletion
+reclaiming 2,828,836,864 bytes in that guest. Each phase has 13 ready boot units,
+six ordinary cases and both installed operators. Baseline enumeration returns
+43 ready extension policy records and both TCP/UDP numeric endpoints. Review:
+bazel-provider-operator-vm-review-r1-20261114. A fresh Log-enabled superset request
+and VM are under bazel-provider-log-operator-{request,vm}-r1-20261114; both
+native capture and all four live Log phases now pass. No complete-provider,
+Secure Boot or performance claim is made. This superset runs seven ordinary
+cases and both operators at all four phases; the older operator-only helper
+retains its narrower six-case scope. All-provider coverage
+remains explicitly false; Trace, Crypto, Audit, authorized Device and Filesystem
+need their legitimate contexts and useful operations.
+
+Frontend integration review: existing build-bsd format-5 image/target/test inputs
+and VM plan format 5 carry this policy; the maintained backend and frontend
+manual document format 3. No C dispatch, signing, staging, publication or
+production-backend change is required. All six gates remain open.
 
 
 ### Descendant resource accounting checkpoint (2026-11-14)
@@ -182,6 +816,127 @@ these producers. The maintained original Make reference helper, its native tests
 manual and observability ledger are updated. No new CLI/C dispatch, staging,
 security policy, signing or publication semantics. Make remains production/default;
 all six gates stay open and BIP remains excluded.
+
+
+### Complete ARM64 /bin construction and reference checkpoint (2026-11-14)
+
+All direct /bin declarations now admit both Tier 1 architectures. The batch also
+admits the required libedit, tinfo and internal sendmail library producers. This
+is an entire aggregate request, not a selected list of convenient programs:
+NIS/sendmail/tcsh are all explicitly enabled, installed tests disabled, and
+DTrace/dynamic-root enabled. The original Make reference uses the same component
+selections against its unchanged production SDK/profile.
+
+Zsh's MACHTYPE now follows the target instead of always saying amd64. The shared
+target_dtrace_bootstrap selector chooses the object ABI before execution-tool
+transition, for all 22 traced utilities and their existing related declarations.
+It has explicit AMD64/ARM64 cases and rejects unmapped ABIs. Shell signal/errno
+preprocessing and terminal/editor generators retain their declared source/tool
+pipelines. No production C, shell implementation, provider or audit source is
+rewritten by this batch.
+
+Maintained build-bsd qualification bazel-bin-native-aarch64-r1-20261114 passes
+and captures all 126 logical outputs (96 unique payloads) from 42 installation
+archives. The complete independent original Make parent reference passes at
+bazel-bin-make-aarch64-r4-20261114, using 16 CPUs and maintained recursive all,
+install and installconfig. Installation comparison preserves the source archive
+order: all 1,469 logical paths and metadata match, with no missing/extra paths.
+Ownership/numeric IDs, modes, tags, flags, links and all ordinary data/script
+payloads match. Exactly 82 compiled/debug regular payloads differ and are retained.
+
+Every regular installed /bin executable is compared: all 41 match Make ELF
+class/machine, imports, NEEDED order and hardening. The remaining program component
+is the byte-identical freebsd-version script; hard-link aliases are checked in
+installation metadata. Linked provider names/schemas and location counts match
+in all 41 ELFs, including explicit matching absence in 19 programs. The 22 traced
+programs retain 70 locations. This does not check linked ARM64 instruction patches,
+registration/firing, full program code/DWARF equality or target execution.
+
+Reference-tool fixes were necessary and are retained with failed evidence:
+- Original Make may select SYSTEM_COMPILER: an object-root cc alias can resolve
+  to /usr/bin/cc. Library/generator/drti validators now share recorded compiler
+  mode/executable/digest validation; actual artifacts must still stay under
+  /usr/obj. Unsupported modes, mismatched executables and unbound/changed digests
+  are rejected. The successful cross reference actually uses that external compiler.
+- A recursive parent need not define LIBSM search-directory metadata itself.
+  Explicit verified library directory bindings now propagate to descendants;
+  the actual rmail link recipe witnesses the separately built Make libsm_pie.a.
+- Isolated cross compilation must run native build tools first. The maintained
+  reference helper adds explicit --build-tools, invoking Makefile.inc1's original
+  _build-tools inventory/environment in fresh reference objects, using the source
+  Make include path and existing verified SDK. Normal BUILD_TOOLS_META=.NOMETA
+  prevents target flags from rebuilding those native tools during metadata builds.
+  Five checked shell/terminal generator executables are actually AMD64 ELF, while
+  every compared installed program is actually ARM64 ELF. No copied/fake generator
+  or replacement C implementation is used.
+
+Direct maintained provenance regressions pass 23 library, ten generator and seven
+drti cases. Their fixtures stay in the declared test temporary directory. These
+three metadata suites are now explicitly host-artifact rules. The requested native
+rerun has NOT passed: the other live AMD64 buildworld job refreshed shared tool
+inputs, invalidating old SDK source bindings. Fresh AMD64 /bin qualification also
+stopped before output creation on its missing original compiler input. Source
+verification remains strict. Regenerate/reverify SDKs after the shared build is
+stable, then finish both native reruns; do not treat the direct tests as equivalent.
+
+Evidence under /usr/obj/usr/src:
+- bazel-bin-declarations-r1-20261114 (44 before/after declaration bindings)
+- bazel-bin-make-references-r1-20261114 (internal library references and failed attempts)
+- bazel-bin-make-aarch64-r{2,3,4}-20261114 (failed/successful reference history)
+- bazel-bin-install-parity-aarch64-r2-20261114
+- bazel-bin-program-parity-aarch64-r2-20261114
+- bazel-bin-reference-review-r2-20261114 (40 direct provenance tests)
+- bazel-bin-review-r1-20261114 (immutable capture/hash and actual tool-role review)
+
+Frontend review: existing format-5 target/architecture/settings inputs construct
+the aggregate. The maintained reference backend, its tests, DTrace selection,
+manual and observability ledger are updated. No new build-bsd C dispatch or CLI,
+security, signing, publication or normal Make behavior. Concurrent PF edits/build
+are other work and are preserved. Make remains production/default. All six gates,
+including full ARM64 world/kernel/modules/pkgbase/options/runtime, remain open.
+
+
+### Ordinary Log operation implementation (2026-11-14)
+
+The VM-only service_operations client now has a log mode using explicit
+liblogcmp open/create/emit/flush/query calls. It publishes one public event to a
+fresh category, then queries within its own label with exact subsystem/category
+filters. It validates every length before computing body pointers, and requires
+the expected event/message/severity/privacy plus provider receive clocks and
+sequence. A zero-result scan may be retried for up to ten seconds for commit
+visibility; transport/permission/framing errors are failures, not absent records.
+The process-wide 20-second deadline remains. No syslog fallback, visibility
+change, identity grant, root shortcut or new transport is used.
+
+The existing format-2 case list accepts log; positive Device remains rejected in
+ordinary contexts. Declared native dependencies include liblogcmp. Strict host
+C syntax checking (-Wall/-Wextra/-Werror) and all 11 direct service-policy tests
+pass. This is implementation evidence, NOT a native link or VM result. The
+review at /usr/obj/usr/src/bazel-provider-log-review-r1-20261114 explicitly records
+native_log_operation_qualified=false and vm_log_operation_qualified=false.
+The other live AMD64 buildworld remains responsible for changing shared SDK
+inputs; source verification is not bypassed while it runs.
+
+The runtime README is reconciled: its old 'runner does not invoke the helper'
+and 'format 2 VM pending' paragraphs were stale. The retained current upgrade R3
+really passes the original six ordinary operations in all four phases. It does
+not contain the new log mode. The eight implemented helper modes are distinct
+from the seven allowed ordinary cases (positive Device is SYSTEM-only).
+
+Next runtime steps remain: capture this updated native helper after SDK refresh,
+run log in baseline/active-before-activation/new-boot/rollback, and exercise
+restricted providers through existing approved operator binaries where suitable
+or normal builder-authorized signed SYSTEM/attribute test units where necessary.
+Trace's declared software requirement and SystemExtension/Device/Network scope
+must remain enforced; ordinary UID/root identity must not stand in for authority.
+Filesystem container qualification needs a real bundle identity. Required
+readiness remains installed-manifest-derived. Complete provider-operation
+coverage, runtime acceptance and the six closeout gates remain open.
+
+Frontend review: maintained format-5 targets and format-2 operation inputs cover
+the new mode. Backend C client/dependencies, policy validation/tests, runtime
+README and manual are updated together. No build-bsd C dispatch/CLI, security,
+signing or publication change. Make remains production/default; BIP excluded.
 
 
 ### Focused math and static unwind checkpoint (2026-11-14)
@@ -8114,3 +8869,10 @@ bazel-cxx-native-amd64-r1-20261114, bazel-cxx-parity-{aarch64,amd64}-r1-20261114
 bazel-cxx-install-parity-r1-20261114, bazel-cxx-make-references-r1-20261114 and
 bazel-arm64-cxx-declarations-r2-20261114. All six gates remain open, Make remains
 production/default, and no host installation or reboot occurred.
+
+### Historical ARM64 component ledger before execution reset
+
+The former detailed current row is retained here for evidence history; the
+short current ledger and execution sequence above govern the remaining work.
+
+| 6. ARM64 Tier 1 | Complete libc static/PIC archives and DSO build in optimized-production and portable-debug profiles with exact Make order/non-provider object contracts and shared metadata. Nonshared now matches all 12 Make objects and its install contract; public/shared and static ARM64 clients link, NOSSP matches 1,437 ordered members apart from retained provider differences, all NOSSP probe sites and six loader-extracted objects validate. Native R3 passes the explicit host-only symbol visibility test; no ARM64 client is executed. The refreshed production Make world at 4f0683e6286 and its recorded profile complete, including tests. The earlier R7/startup comparison is dated evidence; refreshed SDK, all ten startup-object contracts and focused loader metadata/install/provider comparisons now pass; raw source-path/provider/debug differences remain recorded. Focused five-library/descriptor builds now pass on ARM64 and AMD64, with 240 original Make install metadata records per architecture matching. C++/unwind component builds also pass on both platforms, with 1,681 original Make install metadata records per architecture matching and byte-identical generated ABI maps. AMD64 demangling, native backtrace and static/shared C++ runtime tests pass. Focused libm/static-unwind builds now pass on both platforms: all 277 ARM64 and 280 AMD64 math object contracts and both ABI maps match Make; 322 component install metadata records match per architecture. AMD64 static/shared math smoke tests pass. The 47-program original math suite now builds/installs on both platforms, with all 463 AMD64 ATF bodies passing and complete program ELF metadata matching Make on both platforms. The 462 ARM64 math bodies now execute under BSD user-mode QEMU with identical original Make outcomes: 448 passed, 13 existing expected failures and one unsupported-FP-trap skip. Full ARM64 VM/kernel qualification remains open. Current five-component crypto/compression builds and crypt test installs also match Make archive/ELF/ABI-map and 188 install metadata records per architecture. Target execution outside the focused emulated math scope remains unqualified. Eight selected data/configuration/ATF libraries and 14 installed test programs now match focused Make archive/ELF/map/install contracts (121 metadata records each platform); AMD64 reports 160 passing results and one ASan-only skip. The datagram sysctl case remains VM-only. Five device/output libraries, the CSV plugin and two original CAM test programs now match focused Make archive/ELF/install contracts (215 records each platform); AMD64 parsing/formatting/plugin/string checks pass, while live device/I/O and ARM64 execution remain unqualified. Locale/termcap generation now uses shared explicit target byte-order selection and execution-runtime dependencies: four complete component archives match all 785 original Make metadata records and every 184 regular payloads on each Tier 1 architecture. Library aggregate traversal now admits both Tier 1 architectures and follows Make for x86 vgl/Intel PT versus ARM OpenCSD, including PMC on/off. Focused PMC/OpenCSD/internal support builds match 123 install metadata records each, byte-identical generated event tables and archive/shared contracts, with diagnostic-path differences retained. Full ARM64 world R3 still rejects incompatible transitive children; the earlier 1,534-record diagnostic predates aggregate traversal and is not a remaining-program count. The entire all-options-on /bin aggregate now builds on ARM64: 42 archives, exact 1,469-path Make install inventory/metadata, 41 passing executable ELF comparisons, and matching linked DTrace schemas/counts in 22 programs / 70 locations. No ARM64 /bin program executes in that aggregate run. Fresh AMD64 bin/helper qualification now passes five test targets / 59 Python cases and captures 103 unique files. Fresh ARM64 bin plus four module-tool archives pass three host targets / 40 Python cases and capture 108 files; both complete bin installation and 41-program ELF/provider comparisons pass. The four ARM64 module tools match 16 component install records and all ELF/provider contracts. Ten further portable libraries, libc/libmd installation aggregates and declared fresh-account ARM64 data now pass focused qualification: 14 archive/six DSO contracts and 1,737 complete Make install records per platform; AMD64 elftc/stdbuf runtime tests pass. The capability/FIDL stack adds nine focused archive/shared/install comparisons (344 records per platform), all 29 cross-target IRs and five static DTrace providers (65 locations each platform); its real host/target runtime defect is corrected. These are selected component checkpoints, not complete world or native bootstrap qualification. Full loader runtime, full DWARF, native world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V stays nonblocking Tier 2. |

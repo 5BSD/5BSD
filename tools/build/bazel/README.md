@@ -3,6 +3,41 @@
 See [BUILD-OPTIONS.md](BUILD-OPTIONS.md) for GENERIC/NODEBUG, diagnostics versus
 debug symbols, native option boundaries and remaining Make compatibility.
 
+## Capability libraries and FIDL cross builds
+
+Nine capability libraries now build for both Tier 1 targets, matching Make's
+checked archive/shared contracts and 344 complete install records per platform.
+A real FIDL host/target runtime mix is fixed for all 29 IR consumers using one
+compiler-owned execution runtime. Every IR builds and matches across targets;
+Crypto generated files match Make bytes. Five static DTrace providers match
+schemas/sites/patch instructions (65 locations per platform). The AMD64 wire
+runtime test passes. See [CAPABILITY-FIDL-CROSS-QUALIFICATION.md](CAPABILITY-FIDL-CROSS-QUALIFICATION.md)
+for the actual failure, fix, retained evidence and remaining limits.
+
+## Portable libraries on both Tier 1 architectures
+
+Ten further portable library producers plus libc/libmd installation aggregates
+now admit ARM64. Focused builds match Make's 14 archive/six shared-library
+contracts and all 1,737 selected installation records per platform. The latter
+includes three separately generated fresh account files, byte-identical to Make;
+these remain fresh-image state, excluded from package upgrade replacements.
+Forty provenance Python checks pass on both platforms; AMD64 also executes the
+elftc API and stdbuf buffering tests. See the 2026-11-15 checkpoint in
+[COMPLETION-PLAN.md](COMPLETION-PLAN.md) for captures, raw differences and limits.
+Full ARM64 world and all six closeout gates remain open.
+
+## Current provider and upgrade acceptance
+
+The Log-enabled full-upgrade VM passes all 34 checks and normal shutdown.
+All four phases check 13 manifest-derived boot units, seven ordinary RPC cases
+(including Log emit/flush/query), NetworkControl and SystemExtension operations.
+Signed 450-package inactive upgrade/new kernel, login/PAM/SSH/su, rollback,
+shared-file persistence and unused-BE removal pass. Hash-bound review:
+`bazel-provider-log-operator-vm-review-r1-20261115` under `/usr/obj/usr/src`.
+Authorized Device, Filesystem, Crypto, Trace and Audit delivery remain open;
+this is not complete-provider, Secure Boot or performance qualification.
+Make remains production/default; see [COMPLETION-PLAN.md](COMPLETION-PLAN.md).
+
 ## Resource measurement boundary
 
 Normal frontend time-l timings measure the client and omit an existing Bazel
@@ -12,6 +47,17 @@ lifecycle, including adopted descendants, with CPU/block counters and sampled
 aggregate RSS. Maintained native qualification passes its seven real process
 regressions. This qualifies instrumentation; controlled performance comparisons
 remain open. See [RESOURCE-ACCOUNTING.md](RESOURCE-ACCOUNTING.md).
+
+## Complete ARM64 /bin checkpoint
+
+The whole /bin aggregate builds with NIS/sendmail/tcsh enabled: 42 archives match
+all 1,469 original Make installation records, and all 41 installed ELF programs
+match checked executable metadata. Linked DTrace schemas/counts match (22 programs,
+70 locations); ARM64 execution and full code/DWARF remain open. The reference
+helper supports Make's own native build-tools phase and verified system compiler
+aliases. Forty direct provenance checks pass. Fresh AMD64/native-test qualification
+awaits stable shared SDK inputs after concurrent buildworld. See
+[COMPLETION-PLAN.md](COMPLETION-PLAN.md) for exact evidence and outstanding work.
 
 ## Library architecture selections
 
@@ -43720,7 +43766,12 @@ Layout:
   RELRO/NOW, TEXTREL, RPATH/RUNPATH, stack, W+X, NEEDED set, imported and
   exported dynamic symbols with versions, version requirements per provider)
   and archives (member order, defined and undefined symbols per member), and
-  records per-section hashes. `elf-artifact-check-test.py` has six
+  records per-section hashes. Dynamic PIE is the default; explicit mutually
+  exclusive `--static-program` and `--non-pie-program` contracts model deliberate
+  test fixtures. Non-PIE dynamic comparison still requires the interpreter,
+  RELRO/NOW, safe segment permissions and matching dynamic dependencies/symbols.
+  These flags do not waive checks based on file names or alter runtime policy.
+  `elf-artifact-check-test.py` has six
   positive/negative cases (program metadata drift, missing member, member
   order, renamed symbol).
 

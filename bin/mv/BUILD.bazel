@@ -1,16 +1,18 @@
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_selected_objects")
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_dtrace_bootstrap.bzl", "target_dtrace_bootstrap")
+_DTRACE_BOOTSTRAP = target_dtrace_bootstrap()
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_import")
-_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_PLATFORM = ["@platforms//os:freebsd"] + select({"@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [], "//conditions:default": ["@platforms//:incompatible"]})
 load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_header", "bsd_dtrace_cc_objects")
 _TRACE = "//tools/build/bazel/config:dtrace_enabled"
 bsd_dtrace_header(
     name = "provider", source = "moveio_provider.d", output = "moveio_provider.h",
     flags = ["-C", "-x", "nolibs"], object_path_mode = "relative",
-    dtrace = "//cddl/usr.sbin/dtrace:bootstrap", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    dtrace = _DTRACE_BOOTSTRAP.tool, cpp = "@bsd_sdk//toolchain:bin/cpp",
     linker = "@bsd_sdk//toolchain:bin/ld.lld", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
     drti = "//cddl/lib/drti:drti",
-    runtime_libraries = ["//cddl/usr.sbin/dtrace:bootstrap_runtime"],
+    runtime_libraries = _DTRACE_BOOTSTRAP.runtime,
     tool_inputs = [ "@bsd_sdk//toolchain:compile_inputs",
         "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"], static_anchor = False,
 )
@@ -55,7 +57,7 @@ bsd_install_archive(
 cc_library(name = "rescue_objects", srcs = ['mv.c', 'moveio_trace.h'],
     local_defines = select({_TRACE: ['WITH_COVERAGE_DTRACE'], "//conditions:default": []}) + ['RESCUE'], deps = select({_TRACE: [':provider_headers'], "//conditions:default": []}),
     copts = ['-pipe', '-fno-common', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wall', '-Wno-format-y2k', '-W', '-Wno-unused-parameter', '-Wstrict-prototypes', '-Wmissing-prototypes', '-Wpointer-arith', '-Wreturn-type', '-Wcast-qual', '-Wwrite-strings', '-Wswitch', '-Wshadow', '-Wunused-parameter', '-Wcast-align', '-Wchar-subscripts', '-Wnested-externs', '-Wold-style-definition', '-Wno-pointer-sign', '-Wdate-time', '-Wmissing-variable-declarations', '-Wthread-safety', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Qunused-arguments'],
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+    target_compatible_with = ["@platforms//os:freebsd"] + select({"@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [], "//conditions:default": ["@platforms//:incompatible"]}))
 bsd_dtrace_cc_objects(name = "rescue_traced_objects", library = ":rescue_objects", provider = ":provider",
     provider_object = 'moveio_provider', copy_runner = "//tools/build/bazel:dtrace_copy_runner")
 load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_transformed_objects")

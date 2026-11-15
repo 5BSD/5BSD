@@ -1557,7 +1557,7 @@ static int64_t
 dtrace_strtoll(const void *vmhdl, char *input, int base, size_t limit)
 {
 	uintptr_t pos = (uintptr_t)input;
-	uint64_t val = 0, maxval;
+	uint64_t val = 0;
 	int x;
 	boolean_t neg = B_FALSE;
 	char c, cc, ccc;
@@ -1598,8 +1598,6 @@ dtrace_strtoll(const void *vmhdl, char *input, int base, size_t limit)
 		if (DTRACE_CPUFLAG_ISSET(CPU_DTRACE_FAULT))
 			return (0);
 	}
-	maxval = neg ? (uint64_t)INT64_MAX + 1 : INT64_MAX;
-
 	/*
 	 * Check for an explicit hexadecimal prefix ("0x" or "0X") and skip it
 	 * if present.
@@ -1620,13 +1618,12 @@ dtrace_strtoll(const void *vmhdl, char *input, int base, size_t limit)
 	}
 
 	/*
-	 * Read in contiguous digits until the first non-digit character.
+	 * Read in contiguous digits until the first non-digit character.  An
+	 * out-of-range value wraps modulo 2^64, as in illumos and FreeBSD;
+	 * accumulate unsigned so that the wrap is defined.
 	 */
 	for (; c != '\0' && lisalnum(c) && (x = DIGIT(c)) < base;) {
-		if (val > (maxval - x) / base)
-			val = maxval;
-		else
-			val = val * base + x;
+		val = val * base + x;
 		if (++pos == end)
 			break;
 		c = dtrace_load8(vmhdl, pos);
@@ -1634,9 +1631,7 @@ dtrace_strtoll(const void *vmhdl, char *input, int base, size_t limit)
 			return (0);
 	}
 
-	if (neg && val == (uint64_t)INT64_MAX + 1)
-		return (INT64_MIN);
-	return (neg ? -(int64_t)val : (int64_t)val);
+	return ((int64_t)(neg ? 0 - val : val));
 }
 
 /*
@@ -10116,6 +10111,13 @@ struct dtrace_probe_cookie {
 	uint8_t inprobe;
 };
 
+/*
+ * Set before the recursion panic below.  panic() can itself be an fbt
+ * probe that fires before KERNEL_PANICKED() holds, and firing it would
+ * recurse again until the kernel stack overflows, losing the message.
+ */
+static volatile bool dtrace_probe_recursed;
+
 /* ERROR probes belong to the host even when a guest DIF action faults. */
 static const void *
 dtrace_probe_vmhdl(dtrace_id_t id)
@@ -10159,8 +10161,10 @@ dtrace_probe_enter(uint16_t vmid, dtrace_id_t id)
 	 * assertion, a new case should be added.
 	 */
 	if (cookie.inprobe != 0 &&
-	    (vmid != HYPERTRACE_HOSTID || id != dtrace_probeid_error))
+	    (vmid != HYPERTRACE_HOSTID || id != dtrace_probeid_error)) {
+		dtrace_probe_recursed = true;
 		panic("Recursing into dtrace_probe().");
+	}
 
 	curthread->t_dtrace_inprobe = 1;
 
@@ -10204,7 +10208,7 @@ dtrace_probe(dtrace_id_t id, uintptr_t _arg0, uintptr_t _arg1, uintptr_t _arg2,
 	int xlate;
 	const void *vmhdl;
 
-	if (KERNEL_PANICKED())
+	if (KERNEL_PANICKED() || dtrace_probe_recursed)
 		return;
 
 #ifdef illumos

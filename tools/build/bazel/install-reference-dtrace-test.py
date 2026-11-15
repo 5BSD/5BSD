@@ -63,7 +63,7 @@ class RuntimeInputs(unittest.TestCase):
     def test_wrong_compiler_binding(self):
         self.info['environment']['input_sha256'][str(self.compiler)] = '0' * 64
         self.refresh()
-        with self.assertRaisesRegex(ValueError, 'compiler differs'):
+        with self.assertRaisesRegex(ValueError, 'compiler is not bound'):
             self.load()
 
     def test_changed_receipt_or_object_digest(self):

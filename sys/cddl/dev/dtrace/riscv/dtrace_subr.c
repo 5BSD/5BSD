@@ -202,14 +202,25 @@ dtrace_trap(struct trapframe *frame, u_int type)
 	return (0);
 }
 
+/*
+ * dtrace_probe() takes five arguments, so the ERROR probe's sixth reaches
+ * dtrace_getarg() from here.  Probe context keeps this CPU to itself.
+ */
+struct dtrace_error_arg dtrace_error_arg[MAXCPU];
+
 void
 dtrace_probe_error(dtrace_state_t *state, dtrace_epid_t epid, int which,
-    int fault, int fltoffs, uintptr_t illval)
+    int fltoffs, int fault, uintptr_t illval)
 {
+	struct dtrace_error_arg *ea;
 
+	ea = &dtrace_error_arg[curcpu];
+	ea->illval = illval;
+	ea->active = true;
 	dtrace_probe(dtrace_probeid_error, (uint64_t)(uintptr_t)state,
 	    (uintptr_t)epid,
-	    (uintptr_t)which, (uintptr_t)fault, (uintptr_t)fltoffs);
+	    (uintptr_t)which, (uintptr_t)fltoffs, (uintptr_t)fault);
+	ea->active = false;
 }
 
 static int

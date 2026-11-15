@@ -236,13 +236,18 @@ _ARCHIVES = _ARCHIVES + ["//lib/libdiff:installation_archives"] + select({
 
 # Traverse both Tier 1 graphs; incompatible children still reject the root.
 # Installed tests remain incomplete and must not become a silent subset.
-_PLATFORM = ["@platforms//os:freebsd"] + select({
+_INSTALL_PLATFORM = ["@platforms//os:freebsd"] + select({
     "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
     "//conditions:default": ["@platforms//:incompatible"],
-}) + select({
+})
+_PLATFORM = _INSTALL_PLATFORM + select({
     "//tools/build/bazel/config:tests_enabled": ["@platforms//:incompatible"],
     "//conditions:default": [],
 })
+# Qualification artifact only: audit every currently selected contribution.
+# The production target below still rejects the incomplete installed-test mode.
+bsd_install_archive_set(name = "installation_candidates", archives = _ARCHIVES,
+    target_compatible_with = _INSTALL_PLATFORM, visibility = ["//visibility:public"])
 bsd_install_archive_set(name = "production_installation_archives", archives = _ARCHIVES,
     target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 filegroup(name = "production_libraries", srcs = [":production_installation_archives"] + _BUILD_ONLY,

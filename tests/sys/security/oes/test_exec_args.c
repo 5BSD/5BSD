@@ -319,9 +319,7 @@ test_notify_embedded_args(void)
 	oes_event_type_t events[] = { OES_EVENT_NOTIFY_EXEC };
 	test_msg_buf _msg_buf;
 	oes_message_t *msg = &_msg_buf.msg;
-	struct pollfd pfd;
 	pid_t pid;
-	ssize_t n;
 	int status;
 	int got_event = 0;
 	int found_notify_arg = 0;
@@ -365,38 +363,39 @@ test_notify_embedded_args(void)
 		_exit(127);
 	}
 
-	/* Parent - wait for NOTIFY_EXEC event */
-	pfd.fd = fd;
-	pfd.events = POLLIN;
+	/*
+	 * Parent - wait for the child's NOTIFY_EXEC event.  The client is
+	 * global and a read returns every event that fits, so the child's
+	 * exec is looked for among all the messages of every read rather
+	 * than taken to be the first message of the first one.
+	 */
+	test_forget_event_reader(fd);
+	if (test_wait_event_pid_full(fd, pid, OES_EVENT_NOTIFY_EXEC, 3000,
+	    msg) == 0) {
+		oes_event_exec_t *exec = &msg->em_event_data.exec;
+		const char *argv_data;
+		got_event = 1;
 
-	if (poll(&pfd, 1, 3000) > 0 && (pfd.revents & POLLIN)) {
-		n = read(fd, msg, OES_MSG_MAX_SIZE);
-		if (n >= (ssize_t)sizeof(oes_message_t) && msg->em_event == OES_EVENT_NOTIFY_EXEC) {
-			oes_event_exec_t *exec = &msg->em_event_data.exec;
-			const char *argv_data;
-			got_event = 1;
+		printf("    INFO: NOTIFY argc=%u, argv_len=%u\n",
+		    exec->argc, exec->argv_len);
 
-			printf("    INFO: NOTIFY argc=%u, argv_len=%u\n",
-			    exec->argc, exec->argv_len);
-
-			argv_data = event_data(msg, exec->argv_off, exec->argv_len);
-			if (exec->argv_len > 0 && argv_data != NULL) {
-				size_t pos = 0;
-				int argc = 0;
-				while (pos < exec->argv_len && argc < 5) {
-					const char *arg = argv_data + pos;
-					size_t len = strnlen(arg, exec->argv_len - pos);
-					if (len == exec->argv_len - pos)
-						break;
-					if (len > 0) {
-						printf("    INFO: argv[%d] = '%s'\n",
-						    argc, arg);
-						if (strcmp(arg, "notify_test") == 0)
-							found_notify_arg = 1;
-						argc++;
-					}
-					pos += len + 1;
+		argv_data = event_data(msg, exec->argv_off, exec->argv_len);
+		if (exec->argv_len > 0 && argv_data != NULL) {
+			size_t pos = 0;
+			int argc = 0;
+			while (pos < exec->argv_len && argc < 5) {
+				const char *arg = argv_data + pos;
+				size_t len = strnlen(arg, exec->argv_len - pos);
+				if (len == exec->argv_len - pos)
+					break;
+				if (len > 0) {
+					printf("    INFO: argv[%d] = '%s'\n",
+					    argc, arg);
+					if (strcmp(arg, "notify_test") == 0)
+						found_notify_arg = 1;
+					argc++;
 				}
+				pos += len + 1;
 			}
 		}
 	}

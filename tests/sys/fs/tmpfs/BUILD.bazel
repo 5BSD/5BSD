@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/fs:suite.bzl", "filesystem_test_suite")
+load("//tools/build/bazel:bsd_sed_output.bzl", "bsd_sed_output")
+bsd_sed_output(name = 'adapted_mknod_test', template = '//contrib/netbsd-tests:fs/tmpfs/t_mknod.sh', output = 'adapted_mknod_test.out',
+    arguments = ['-e', 's,mknod pipe p,mkfifo pipe,g', '-e', 's,mknod dir/pipe p,mkfifo dir/pipe,g'], sed = "@bsd_sdk//toolchain:sed", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:sed_runtime"])
+bsd_sed_output(name = 'adapted_mount_test', template = '//contrib/netbsd-tests:fs/tmpfs/t_mount.sh', output = 'adapted_mount_test.out',
+    arguments = ['-e', 's,-o -g,-o gid=,g', '-e', 's,-o -m,-o mode=,g', '-e', 's,-o -s,-o size=,g', '-e', 's,-o -u,-o uid=,g', '-e', 's,mount_tmpfs,mount -t tmpfs,g'], sed = "@bsd_sdk//toolchain:sed", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:sed_runtime"])
+bsd_sed_output(name = 'adapted_readdir_test', template = '//contrib/netbsd-tests:fs/tmpfs/t_readdir.sh', output = 'adapted_readdir_test.out',
+    arguments = ['-e', 's,mknod fifo p,mkfifo fifo,g'], sed = "@bsd_sdk//toolchain:sed", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:sed_runtime"])
+bsd_sed_output(name = 'adapted_sizes_test', template = '//contrib/netbsd-tests:fs/tmpfs/t_sizes.sh', output = 'adapted_sizes_test.out',
+    arguments = ['-e', 's,-o -s,-o size=,g'], sed = "@bsd_sdk//toolchain:sed", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:sed_runtime"])
+bsd_sed_output(name = 'adapted_statvfs_test', template = '//contrib/netbsd-tests:fs/tmpfs/t_statvfs.sh', output = 'adapted_statvfs_test.out',
+    arguments = ['-e', 's,-o -s,-o size=,g'], sed = "@bsd_sdk//toolchain:sed", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:sed_runtime"])
+bsd_sed_output(name = 'adapted_vnd_test', template = '//contrib/netbsd-tests:fs/tmpfs/t_vnd.sh', output = 'adapted_vnd_test.out',
+    arguments = ['-e', 's,vndconfig -u /dev/vnd3,mdconfig -d -u $md_dev,g', '-e', 's,/dev/vnd3,/dev/$md_dev,g'], sed = "@bsd_sdk//toolchain:sed", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:sed_runtime"])
+bsd_sed_output(name = 'adapted_vnode_leak_test', template = '//contrib/netbsd-tests:fs/tmpfs/t_vnode_leak.sh', output = 'adapted_vnode_leak_test.out',
+    arguments = ['-e', 's,-o -s,-o size=,g'], sed = "@bsd_sdk//toolchain:sed", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:sed_runtime"])
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+cc_binary(name = 'h_tools', srcs = ['//contrib/netbsd-tests:fs/tmpfs/h_tools.c'],
+    deps = [], dynamic_deps = [],
+    copts = ['-fPIE'], local_defines = [],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'h_tools_install', program = 'h_tools', manual = None, package = "tests", bindir = '/usr/tests/sys/fs/tmpfs')
+
+filesystem_test_suite(directory = '/usr/tests/sys/fs/tmpfs',
+    files = {'h_funcs.subr': '//contrib/netbsd-tests:fs/tmpfs/h_funcs.subr'},
+    scripts = {'create_test': '//contrib/netbsd-tests:fs/tmpfs/t_create.sh', 'read_write_test': '//contrib/netbsd-tests:fs/tmpfs/t_read_write.sh', 'dots_test': '//contrib/netbsd-tests:fs/tmpfs/t_dots.sh', 'exec_test': '//contrib/netbsd-tests:fs/tmpfs/t_exec.sh', 'link_test': '//contrib/netbsd-tests:fs/tmpfs/t_link.sh', 'mkdir_test': '//contrib/netbsd-tests:fs/tmpfs/t_mkdir.sh', 'mknod_test': ':adapted_mknod_test', 'mount_test': ':adapted_mount_test', 'trail_slash_test': '//contrib/netbsd-tests:fs/tmpfs/t_trail_slash.sh', 'readdir_test': ':adapted_readdir_test', 'remove_test': '//contrib/netbsd-tests:fs/tmpfs/t_remove.sh', 'rename_test': '//contrib/netbsd-tests:fs/tmpfs/t_rename.sh', 'rmdir_test': '//contrib/netbsd-tests:fs/tmpfs/t_rmdir.sh', 'setattr_test': '//contrib/netbsd-tests:fs/tmpfs/t_setattr.sh', 'sizes_test': ':adapted_sizes_test', 'sockets_test': '//contrib/netbsd-tests:fs/tmpfs/t_sockets.sh', 'statvfs_test': ':adapted_statvfs_test', 'symlink_test': '//contrib/netbsd-tests:fs/tmpfs/t_symlink.sh', 'times_test': '//contrib/netbsd-tests:fs/tmpfs/t_times.sh', 'truncate_test': '//contrib/netbsd-tests:fs/tmpfs/t_truncate.sh', 'vnd_test': ':adapted_vnd_test', 'vnode_leak_test': ':adapted_vnode_leak_test'}, atf_shell = {'create_test': True, 'read_write_test': True, 'dots_test': True, 'exec_test': True, 'link_test': True, 'mkdir_test': True, 'mknod_test': True, 'mount_test': True, 'trail_slash_test': True, 'readdir_test': True, 'remove_test': True, 'rename_test': True, 'rmdir_test': True, 'setattr_test': True, 'sizes_test': True, 'sockets_test': True, 'statvfs_test': True, 'symlink_test': True, 'times_test': True, 'truncate_test': True, 'vnd_test': True, 'vnode_leak_test': True},
+    interfaces = {'create_test': 'atf', 'dots_test': 'atf', 'exec_test': 'atf', 'link_test': 'atf', 'mkdir_test': 'atf', 'mknod_test': 'atf', 'mount_test': 'atf', 'read_write_test': 'atf', 'readdir_test': 'atf', 'remove_test': 'atf', 'rename_test': 'atf', 'rmdir_test': 'atf', 'setattr_test': 'atf', 'sizes_test': 'atf', 'sockets_test': 'atf', 'statvfs_test': 'atf', 'symlink_test': 'atf', 'times_test': 'atf', 'trail_slash_test': 'atf', 'truncate_test': 'atf', 'vnd_test': 'atf', 'vnode_leak_test': 'atf'}, metadata = {'create_test': {}, 'dots_test': {}, 'exec_test': {}, 'link_test': {}, 'mkdir_test': {}, 'mknod_test': {}, 'mount_test': {}, 'read_write_test': {}, 'readdir_test': {}, 'remove_test': {}, 'rename_test': {}, 'rmdir_test': {}, 'setattr_test': {}, 'sizes_test': {}, 'sockets_test': {}, 'statvfs_test': {}, 'symlink_test': {}, 'times_test': {}, 'trail_slash_test': {}, 'truncate_test': {}, 'vnd_test': {}, 'vnode_leak_test': {}},
+    extra_manifests = [':h_tools_install'], debug = True,
+)

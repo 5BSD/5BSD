@@ -12,3 +12,7 @@ clang --target=x86_64-linux-musl --sysroot="$r" -fuse-ld=lld -static \
  "$src/tests/sys/kern/linux_pipe_reopen.c" -L"$r/usr/lib" -lc \
  "$r/usr/lib/crtn.o" -o "$out/pipe-reopen-linux"
 brandelf -t Linux "$out/pipe-reopen-linux"
+
+# Native parent preserves the host ABI when creating inherited endpoints.
+${CC:-cc} -static -O2 -Wall -Wextra -Werror \
+ "$src/tests/sys/kern/native_pipe_parent.c" -o "$out/native-pipe-parent"

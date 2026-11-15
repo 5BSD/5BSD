@@ -335,7 +335,7 @@ static void
 oes_client_dtor(void *data)
 {
 	struct oes_client *ec = data;
-	struct prison *pr;
+	struct prison *pr, *setter_pr;
 
 	if (ec == NULL)
 		return;
@@ -360,11 +360,18 @@ oes_client_dtor(void *data)
 			pr = oes_client_jail_detach_locked(ec);
 	} else
 		atomic_subtract_int(&oes_softc.sc_nwide, 1);
+	/* Kept past the end of the scope: GET still answers then. */
+	setter_pr = ec->ec_jail_setter_pr;
+	ec->ec_jail_setter_pr = NULL;
+	if (setter_pr != NULL)
+		atomic_subtract_int(&oes_softc.sc_jail_setters, 1);
 	EC_UNLOCK(ec);
 	atomic_subtract_int(&oes_softc.sc_nclients, 1);
 	OES_UNLOCK();
 	if (pr != NULL)
 		prison_free(pr);
+	if (setter_pr != NULL)
+		prison_free(setter_pr);
 
 	/* Wake any waiters and clean up */
 	oes_client_free(ec);

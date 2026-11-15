@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/fs:suite.bzl", "filesystem_test_suite")
+load("//tools/build/bazel:bsd_sed_output.bzl", "bsd_sed_output")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+cc_library(name = "vector_headers", hdrs = ["testvect.h"])
+cc_binary(name = 'unaligned_io', srcs = ['unaligned_io.c'],
+    deps = [], dynamic_deps = [],
+    copts = ['-fPIE'], local_defines = [],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'unaligned_io_install', program = 'unaligned_io', manual = None, package = "tests", bindir = '/usr/tests/sys/geom/class/eli')
+cc_binary(name = 'pbkdf2_test', srcs = ['hmac_test.c', '//sys/geom/eli:g_eli_crypto.c', '//sys/geom/eli:g_eli_hmac.c', '//sys/geom/eli:pkcs5v2.c', '//sys/crypto/sha2:sha512c.c', '//sys/crypto/sha2:sha256c.c'],
+    deps = ['//lib/atf/libatf-c:atf_c', '//secure/lib/libcrypto:crypto', ':vector_headers', '//sys/geom/eli:headers', '//sys/crypto/sha2:headers'], dynamic_deps = ['//lib/atf/libatf-c:atf_c_shared', '//secure/lib/libcrypto:crypto_shared'],
+    copts = ['-fPIE'], local_defines = [],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'pbkdf2_test_install', program = 'pbkdf2_test', manual = None, package = "tests", bindir = '/usr/tests/sys/geom/class/eli')
+
+filesystem_test_suite(directory = '/usr/tests/sys/geom/class/eli',
+    files = {'conf.sh': 'conf.sh'},
+    scripts = {'attach_test': 'attach_test.sh', 'configure_test': 'configure_test.sh', 'delkey_test': 'delkey_test.sh', 'detach_test': 'detach_test.sh', 'init_test': 'init_test.sh', 'integrity_test': 'integrity_test.sh', 'kill_test': 'kill_test.sh', 'misc_test': 'misc_test.sh', 'onetime_test': 'onetime_test.sh', 'online_resize_test': 'online_resize_test.sh', 'reentrancy_test': 'reentrancy_test.sh', 'resize_test': 'resize_test.sh', 'setkey_test': 'setkey_test.sh'}, atf_shell = {'attach_test': True, 'configure_test': True, 'delkey_test': True, 'detach_test': True, 'init_test': True, 'integrity_test': True, 'kill_test': True, 'misc_test': True, 'onetime_test': True, 'online_resize_test': True, 'reentrancy_test': True, 'resize_test': True, 'setkey_test': True},
+    interfaces = {'attach_test': 'atf', 'configure_test': 'atf', 'delkey_test': 'atf', 'detach_test': 'atf', 'init_test': 'atf', 'integrity_test': 'atf', 'kill_test': 'atf', 'misc_test': 'atf', 'onetime_test': 'atf', 'online_resize_test': 'atf', 'pbkdf2_test': 'atf', 'reentrancy_test': 'atf', 'resize_test': 'atf', 'setkey_test': 'atf'}, metadata = {'attach_test': {}, 'configure_test': {}, 'delkey_test': {}, 'detach_test': {}, 'init_test': {}, 'integrity_test': {}, 'kill_test': {}, 'misc_test': {}, 'onetime_test': {}, 'online_resize_test': {}, 'pbkdf2_test': {}, 'reentrancy_test': {}, 'resize_test': {}, 'setkey_test': {}},
+    extra_manifests = [':unaligned_io_install', ':pbkdf2_test_install'], debug = True,
+)

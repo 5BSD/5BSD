@@ -1027,6 +1027,9 @@ struct oes_scope_args {
  * readable; then read(2) returns 0, poll(2) reports POLLHUP and an
  * EVFILT_READ kevent carries EV_EOF.  Like every scope it must be selected
  * before the mode or any subscription and can never be changed.
+ *
+ * Event records are not adjusted for the reader: a jailed reader sees the
+ * jail IDs and hierarchical jail names of the host's view.
  */
 #define OES_SCOPE_JAIL			2
 
@@ -1057,7 +1060,8 @@ struct oes_jail_scope_args {
  * OES_IOC_GET_JAIL_SCOPE fails with ENOENT for a client without a jail
  * scope.  It reports the jid and name as the caller that set the scope
  * named the jail ("0" and jid 0 for its own jail); they are left zero for
- * a jailed caller reading a scope that was set from outside any jail.
+ * a jailed caller that is not in the jail the scope was set from, a scope
+ * set from outside any jail included.
  */
 #define OES_IOC_SET_JAIL_SCOPE	_IOW('E', 43, struct oes_jail_scope_args)
 #define OES_IOC_GET_JAIL_SCOPE	_IOR('E', 44, struct oes_jail_scope_args)
@@ -1333,7 +1337,7 @@ struct oes_stats {
 #define OES_IOCTLS_THIRD_PARTY_INIT \
 	{ OES_IOC_SUBSCRIBE, OES_IOC_SUBSCRIBE_BITMAP, \
 	  OES_IOC_GET_SUBSCRIPTIONS, \
-	  OES_IOC_GET_SCOPE, \
+	  OES_IOC_GET_SCOPE, OES_IOC_GET_JAIL_SCOPE, \
 	  OES_IOC_GET_MODE, \
 	  OES_IOC_SET_DEADLINE_MAX, OES_IOC_GET_DEADLINE_MAX, \
 	  OES_IOC_SET_DEADLINE_MIN, OES_IOC_GET_DEADLINE_MIN, \

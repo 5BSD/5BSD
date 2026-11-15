@@ -643,8 +643,11 @@ __Tthr_mutex_trylock(pthread_mutex_t *mutex)
 		enqueue_mutex(curthread, m, ret);
 		if (ret == EOWNERDEAD)
 			m->m_lock.m_flags |= UMUTEX_NONCONSISTENT;
+		TRACE_PLOCKSTAT_MUTEX__ACQUIRE(m, 0, 0);
 	} else if (PMUTEX_OWNER_ID(m) == id) {
 		ret = mutex_self_trylock(m);
+		if (ret == 0)
+			TRACE_PLOCKSTAT_MUTEX__ACQUIRE(m, 1, 0);
 	} /* else {} */
 	if (robust)
 		_mutex_leave_robust(curthread, m);
@@ -659,11 +662,18 @@ mutex_lock_sleep(struct pthread *curthread, struct pthread_mutex *m,
     const struct timespec *abstime)
 {
 	uint32_t id, owner;
-	int count, ret;
+	int count, ret, spins;
 
+	spins = 0;
 	id = TID(curthread);
-	if (PMUTEX_OWNER_ID(m) == id)
-		return (mutex_self_lock(m, abstime));
+	if (PMUTEX_OWNER_ID(m) == id) {
+		ret = mutex_self_lock(m, abstime);
+		if (ret == 0)
+			TRACE_PLOCKSTAT_MUTEX__ACQUIRE(m, 1, 0);
+		else
+			TRACE_PLOCKSTAT_MUTEX__ERROR(m, ret);
+		return (ret);
+	}
 
 	/*
 	 * For adaptive mutexes, spin for a bit in the expectation
@@ -678,18 +688,23 @@ mutex_lock_sleep(struct pthread *curthread, struct pthread_mutex *m,
 	if (!_thr_is_smp)
 		goto yield_loop;
 
+	TRACE_PLOCKSTAT_MUTEX__SPIN(m);
 	count = m->m_spinloops;
 	while (count--) {
 		owner = m->m_lock.m_owner;
 		if ((owner & ~UMUTEX_CONTESTED) == 0) {
 			if (atomic_cmpset_acq_32(&m->m_lock.m_owner, owner,
 			    id | owner)) {
+				spins = m->m_spinloops - count;
+				TRACE_PLOCKSTAT_MUTEX__SPUN(m, 1, spins);
 				ret = 0;
 				goto done;
 			}
 		}
 		CPU_SPINWAIT;
 	}
+	spins = m->m_spinloops;
+	TRACE_PLOCKSTAT_MUTEX__SPUN(m, 0, spins);
 
 yield_loop:
 	count = m->m_yieldloops;
@@ -706,6 +721,7 @@ yield_loop:
 	}
 
 sleep_in_kernel:
+	TRACE_PLOCKSTAT_MUTEX__BLOCK(m);
 	if (abstime == NULL)
 		ret = __thr_umutex_lock(&m->m_lock, id);
 	else if (__predict_false(abstime->tv_nsec < 0 ||
@@ -713,12 +729,15 @@ sleep_in_kernel:
 		ret = EINVAL;
 	else
 		ret = __thr_umutex_timedlock(&m->m_lock, id, abstime);
+	TRACE_PLOCKSTAT_MUTEX__BLOCKED(m, ret == 0 || ret == EOWNERDEAD);
 done:
 	if (ret == 0 || ret == EOWNERDEAD) {
 		enqueue_mutex(curthread, m, ret);
 		if (ret == EOWNERDEAD)
 			m->m_lock.m_flags |= UMUTEX_NONCONSISTENT;
-	}
+		TRACE_PLOCKSTAT_MUTEX__ACQUIRE(m, 0, spins);
+	} else
+		TRACE_PLOCKSTAT_MUTEX__ERROR(m, ret);
 	return (ret);
 }
 
@@ -740,6 +759,7 @@ mutex_lock_common(struct pthread_mutex *m, const struct timespec *abstime,
 		enqueue_mutex(curthread, m, ret);
 		if (ret == EOWNERDEAD)
 			m->m_lock.m_flags |= UMUTEX_NONCONSISTENT;
+		TRACE_PLOCKSTAT_MUTEX__ACQUIRE(m, 0, 0);
 	} else {
 		TRACE_THREADWAIT_MUTEX__START(m);
 		ret = mutex_lock_sleep(curthread, m, abstime);
@@ -988,7 +1008,9 @@ mutex_unlock_common(struct pthread_mutex *m, bool cv, int *mtx_defer)
 	if (__predict_false(PMUTEX_TYPE(m->m_flags) ==
 	    PTHREAD_MUTEX_RECURSIVE && m->m_count > 0)) {
 		m->m_count--;
+		TRACE_PLOCKSTAT_MUTEX__RELEASE(m, 1);
 	} else {
+		TRACE_PLOCKSTAT_MUTEX__RELEASE(m, 0);
 		if ((m->m_flags & PMUTEX_FLAG_DEFERRED) != 0) {
 			deferred = 1;
 			m->m_flags &= ~PMUTEX_FLAG_DEFERRED;

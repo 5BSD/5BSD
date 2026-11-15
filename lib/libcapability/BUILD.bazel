@@ -2,7 +2,10 @@
 load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_library_installation_archives")
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
-_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
 cc_library(name = "headers", hdrs = ["capability.h"], strip_include_prefix = ".", visibility = ["//visibility:public"])
 cc_library(name = "capability", srcs = ["capability.c"], deps = [":headers"], implementation_deps = ["//sys/dev/mac_capability:ioctl_headers"],
     linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])

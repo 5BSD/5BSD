@@ -281,7 +281,7 @@ contracts remain required work for the closeout goal. Host parser/validator test
 are separate from native Bazel and VM acceptance. Use the normal format-5 frontend
 target/test inputs for `service_inventory_test` and `service_health_test`.
 
-## Native provider-operation client (VM execution pending)
+## Native provider-operation client
 
 `//tools/test/system-pkg-runtime:service_operations` is a PIE consumer binary
 built through the maintained format-5 frontend target selection. It is not a
@@ -298,6 +298,13 @@ Select one operation per invocation:
   length with the guest kernel's value.
 * `notify`: subscribe to a fresh private user.* topic, publish a payload,
   receive and validate the exact framed topic/payload, then unsubscribe.
+* `log`: create a logger with a fresh private category, emit a public event,
+  flush, then query the same label through exact subsystem/category filters.
+  Require the exact event/message, validated lengths and trusted receive clocks.
+  Persistent-query visibility is polled for at most ten seconds; transport or
+  permission errors fail immediately. This calls the explicit Log API, with no
+  syslog fallback. It is implemented and syntax-checked; native/VM acceptance
+  remains pending.
 * `memory`: observe BSDMemory's reserved memory-pressure state through BSDNotify.
   Wait at most ten seconds for an actual normal/warning/critical sample; missing
   or unknown is never normal. Require attempts to set/clear that reserved state
@@ -324,8 +331,12 @@ Shared dependencies are declared through native cc_binary.dynamic_deps.
 
 Native compilation and PIE/shared linking pass in
 `bazel-current-closure-native-r1-20261111`; strict host syntax checks also pass.
-VM operations remain unqualified, and the runner does not yet invoke this helper. The seven operation modes do not cover all providers. BSDMemory is a
-memory-pressure sampler/publisher, not a memory-allocation factory; its manifest
+The existing six ordinary modes have passed all four phases in
+`/usr/obj/usr/src/bazel-current-upgrade-vm-r3-20261114`: baseline, active system
+before activation, new boot and rollback. Positive SYSTEM Device access and the
+new Log mode have not been qualified. The eight implemented modes do not cover
+all providers. BSDMemory is a memory-pressure sampler/publisher, not a
+memory-allocation factory; its manifest
 intentionally has no IPC endpoint. The earlier factory wording was incorrect.
 The memory probe exercises the actual Sysctl-to-Memory-to-Notify path, but does
 not inject pressure, stop/restart providers or prove periodic publication over
@@ -340,8 +351,8 @@ format-1 field and adds `operations`, with exact fields `qualification`, `target
 native service_operations binary. `guest_directory` is an explicit canonical
 absolute guest staging parent (the current fixture selects /tmp).
 
-`cases` is a distinct nonempty list drawn from time, sysctl, notify, memory, power
-and device-denied. Positive Device enumeration is deliberately rejected here:
+`cases` is a distinct nonempty list drawn from time, sysctl, notify, log, memory,
+power and device-denied. Positive Device enumeration is deliberately rejected here:
 it requires a legitimate SYSTEM context, not an ordinary login or changed
 visibility policy. The selected helper is hash-bound alongside the inventory
 helper. Root creates a fresh owned staging directory and read/execute-only
@@ -362,5 +373,53 @@ passed ordinary-operation subset explicitly records
 `all_provider_operations_qualified=false`; it does not qualify the other
 providers, authorized Device access, every provider method or fault recovery.
 The goal remains open until all required operation contexts are qualified.
-Native service_health/inventory/upgrade-policy targets pass; actual VM acceptance
-of format 2 remains pending at this update.
+Earlier native service_health/inventory/upgrade-policy targets and the six-case
+format-2 VM scenario pass. The Log extension now has native capture acceptance
+in bazel-bin-service-native-amd64-r2-20261114: five targets / 59 Python cases,
+including 16 service policy checks. All four live Log phases remain pending.
+Source-input and immutable capture verification remain required.
+
+Restricted provider coverage must use its normal authorization paths: existing
+approved operator binaries where they exercise the required operation, or
+builder-authorized signed test units when a SYSTEM service context is needed.
+In particular, Trace requires its declared software attribute; UID 0 alone is not
+substitute authority. Do not widen provider visibility or disable enforcement to
+make an ordinary helper reach SYSTEM services. Filesystem container operations
+also need a legitimate bundle identity, even though discovery is user-visible.
+Required boot-unit readiness stays manifest-derived, and operation coverage must
+continue to report incomplete until every required context has real evidence.
+
+
+## Installed operator operations (service policy format 3)
+
+Format 3 retains every format-2 field and adds a nonempty `installed_operations`
+list. Each item has exact fields `operation` and `program`. Programs must be
+canonical paths to regular payloads in the authenticated image report; their
+baseline payload hashes are retained with each phase report. Paths are inputs,
+not backend guesses or compatibility-symlink substitutions.
+
+* `network-resolve`: execute the installed NetworkControl operator as the actual
+  ordinary SSH user, with `resolve -4 192.0.2.1 443`. This invokes Network.Admin
+  through the executable's existing software attributes. Require complete,
+  nonempty result rows, exact address/port/family/scope and TCP/UDP semantics.
+  The numeric documentation address requires no external DNS or reachable peer.
+  This tests the authorized admin resolver, not USER visibility, real traffic,
+  DNS, Network.State or PF.
+* `system-extension-config`: execute the installed `sysextctl config` as root.
+  Require nonempty, complete, unique, consistent policy records with persistent
+  policy ready. The normal read-only root-query view permits enumeration;
+  this does not grant load/unload or policy mutation authority. A local kernel
+  module listing or a configuration syntax check cannot substitute for its
+  provider `Info` enumeration RPC.
+
+The runner uses each operation's required context, quotes its explicit program
+path, fails the phase on launch/protocol/output errors and repeats the operation
+at all four upgrade phases. Existing deadlines apply. This adds no guest policy,
+attributes, signed test units, provider fallback or altered service visibility.
+Complete-provider coverage remains explicitly false. Operator VM R1 has passed
+both installed operations at baseline, after inactive installation, after new
+boot and after rollback. All 34 upgrade/authentication/shared-file/BE-removal
+checks and normal shutdown pass, with 147 verified root operations. The native
+Log helper is captured and its fresh superset VM is running; live Log acceptance
+is still pending. Parser/control-flow tests alone do not
+establish runtime success.

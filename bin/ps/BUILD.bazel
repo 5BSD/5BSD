@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 cc_binary(name = "ps", srcs = ["fmt.c", "keyword.c", "nlist.c", "print.c", "ps.c", "ps.h", "extern.h"], deps = ["//lib/msun:m", "//lib/libkvm:kvm", "//lib/libjail:jail", "//lib/libxo/libxo:xo"], dynamic_deps = ["//lib/msun:m_shared", "//lib/libkvm:kvm_shared", "//lib/libjail:jail_shared", "//lib/libxo/libxo:xo_shared"], local_defines = select({"//tools/build/bazel/config:ps_check_keywords_enabled": ["PS_CHECK_KEYWORDS"], "//conditions:default": []}), copts = ["-fPIE"], linkopts = ["-pie"],
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+    target_compatible_with = ["@platforms//os:freebsd"] + select({"@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [], "//conditions:default": ["@platforms//:incompatible"]}), visibility = ["//visibility:public"])
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 utility_installation(name = "install_manifest", program = "ps", manual = "ps.1", package = "runtime", bindir = "/bin")
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")

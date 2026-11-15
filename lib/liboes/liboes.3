@@ -64,6 +64,8 @@ and is inspected with
 which reports the jail ID and name the scope was set with and fails with
 .Er ENOENT
 for a client that has no jail scope.
+They are zero for a jailed caller that is not in the jail the scope was set
+from.
 The kernel holds the jail itself: a jail created later with the same ID or
 name is a different jail and is never matched.
 When the jail is removed, the events its processes generated before that can
@@ -75,6 +77,12 @@ and
 .Fn oes_get_jail_scope
 reports
 .Dv OES_JAIL_SCOPE_DEAD .
+A read that returns no data was reported as
+.Er EIO
+before jail scopes existed; a caller that tested for
+.Er EIO
+to recognize it must now test for
+.Er ENXIO .
 Selecting the scope fails with
 .Er ENOENT
 if the jail does not exist, is being removed, or is not the caller's jail or

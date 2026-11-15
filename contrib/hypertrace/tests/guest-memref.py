@@ -30,6 +30,7 @@ fixture = r'''
 #include <stdio.h>
 #include <string.h>
 
+#define ASSERT(x) assert(x)
 #define DIF_SUBR_MEMREF 1
 #define DIF_SUBR_MEMSTR 2
 #define DTRACEACT_PRINTM 3

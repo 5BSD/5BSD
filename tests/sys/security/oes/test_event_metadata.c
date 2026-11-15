@@ -135,14 +135,28 @@ run_post_exec_child(void)
 	return (0);
 }
 
+/*
+ * Compare the file record of an event with what stat(2) said of the file.
+ *
+ * sb was taken before the event.  With after == NULL nothing may have
+ * touched the file in between and every attribute must be equal.  An
+ * executable is different in one attribute: the kernel reads the image
+ * while it executes it (the MAC_VERIEXEC integrity check does so before
+ * OES is asked), which is an access like any other, and the record is made
+ * from the vnode as it is when the event is generated.  Its access time
+ * therefore lies between the one before the exec and the one read back
+ * once the child has run, given in after.
+ */
 static int
-check_file_metadata(const oes_file_t *file, const struct stat *sb)
+check_file_metadata(const char *what, const oes_file_t *file,
+    const struct stat *sb, const struct stat *after)
 {
+	struct timespec atime;
 	int errors = 0;
 
 #define FILE_CHECK(_cond, _name) do { \
 	if (!(_cond)) { \
-		fprintf(stderr, "  FAIL: file metadata: %s\n", (_name)); \
+		fprintf(stderr, "  FAIL: %s metadata: %s\n", what, (_name)); \
 		errors++; \
 	} \
 } while (0)
@@ -171,9 +185,20 @@ check_file_metadata(const oes_file_t *file, const struct stat *sb)
 	FILE_CHECK(file->ef_flags == sb->st_flags, "flags mismatch");
 	FILE_CHECK(file->ef_nlink == sb->st_nlink, "link count mismatch");
 	FILE_CHECK(file->ef_type == EF_TYPE_REG, "file type is not regular");
-	FILE_CHECK(file->ef_atime == sb->st_atim.tv_sec &&
-	    file->ef_atime_nsec == sb->st_atim.tv_nsec,
-	    "access timestamp mismatch");
+	atime.tv_sec = file->ef_atime;
+	atime.tv_nsec = file->ef_atime_nsec;
+	if (after == NULL)
+		FILE_CHECK(timespec_cmp(&atime, &sb->st_atim) == 0,
+		    "access timestamp mismatch");
+	else
+		FILE_CHECK(timespec_cmp(&atime, &sb->st_atim) >= 0 &&
+		    timespec_cmp(&atime, &after->st_atim) <= 0,
+		    "access timestamp outside the exec");
+	if (timespec_cmp(&atime, &sb->st_atim) != 0)
+		fprintf(stderr, "  %s: access time %jd.%09ld before the event, "
+		    "%jd.%09ld in the record\n", what,
+		    (intmax_t)sb->st_atim.tv_sec, sb->st_atim.tv_nsec,
+		    (intmax_t)atime.tv_sec, atime.tv_nsec);
 	FILE_CHECK(file->ef_mtime == sb->st_mtim.tv_sec &&
 	    file->ef_mtime_nsec == sb->st_mtim.tv_nsec,
 	    "modification timestamp mismatch");
@@ -372,7 +397,7 @@ main(int argc, char **argv)
 		OES_EVENT_NOTIFY_FORK,
 	};
 	struct timespec mono_before, mono_after, wall_before, wall_after, start;
-	struct stat temp_stat, exec_stat;
+	struct stat temp_stat, exec_stat, exec_stat_after;
 	char test_path[PATH_MAX], exec_path[PATH_MAX];
 	char temp_path[] = "/tmp/oes-metadata.XXXXXX";
 	const char payload[] = "OES metadata fixture\n";
@@ -503,10 +528,16 @@ main(int argc, char **argv)
 	clock_gettime(CLOCK_REALTIME, &wall_after);
 	(void)waitpid(child, &status, 0);
 	close(fd);
+	errors = 0;
+	if (stat(exec_path, &exec_stat_after) != 0) {
+		fprintf(stderr, "  FAIL: stat of the executable after the exec: "
+		    "%s\n", strerror(errno));
+		exec_stat_after = exec_stat;
+		errors++;
+	}
 	unlink(temp_path);
 	unlink(exec_path);
 
-	errors = 0;
 	if (!got_open) {
 		fprintf(stderr, "  FAIL: matching NOTIFY_OPEN was not received\n");
 		errors++;
@@ -526,10 +557,11 @@ main(int argc, char **argv)
 	if (!got_open || !got_exec || !got_fork)
 		return (1);
 
-	errors += check_file_metadata(&open_event.msg.em_event_data.open.file,
-	    &temp_stat);
-	errors += check_file_metadata(
-	    &exec_event.msg.em_event_data.exec.executable, &exec_stat);
+	errors += check_file_metadata("opened file",
+	    &open_event.msg.em_event_data.open.file, &temp_stat, NULL);
+	errors += check_file_metadata("executable",
+	    &exec_event.msg.em_event_data.exec.executable, &exec_stat,
+	    &exec_stat_after);
 	errors += check_process_metadata(&open_event.msg,
 	    &open_event.msg.em_process, child, parent, test_path);
 	errors += check_event_clocks(&open_event.msg, &mono_before, &mono_after,

@@ -32,7 +32,7 @@ fi
 dtrace=$1
 
 $dtrace -Eln 'syscall:freebsd:*$1:entry' read | \
-	awk '{print $(NF-1),$NF}' | grep -v -E 'compat.\.' | sort
+	awk '{print $(NF-1),$NF}' | grep -v -E 'compat.\.|obs_freebsd[0-9]+_' | sort
 $dtrace -Eln 'syscall:freebsd:$1*:entry' read | awk '{print $(NF-1),$NF}' | sort
 $dtrace -Eln 'syscall:freebsd:re$1*:entry' ad | awk '{print $(NF-1),$NF}' | sort
 $dtrace -Eln 'syscall:freebsd:$1l*:entry' read | awk '{print $(NF-1),$NF}' | sort

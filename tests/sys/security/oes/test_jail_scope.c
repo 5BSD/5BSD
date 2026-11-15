@@ -8,8 +8,13 @@
  * must arrive, not against a timeout alone.
  */
 #include <sys/types.h>
+#include <sys/capsicum.h>
 #include <sys/event.h>
 #include <sys/mman.h>
+#include <sys/ptrace.h>
+#include <sys/resource.h>
+#include <sys/select.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
 
@@ -381,7 +386,7 @@ membership(int fd, const char *what, const int *jids, const bool *expect,
  * The descriptor must not have been read through test_wait_event().
  */
 static int
-read_to_eof(int fd, pid_t pid, int *exits, int *events)
+read_to_eof_ms(int fd, pid_t pid, int *exits, int *events, long limit_ms)
 {
 	static uint8_t buf[OES_MSG_MAX_SIZE * 4];
 	struct timespec start;
@@ -392,7 +397,7 @@ read_to_eof(int fd, pid_t pid, int *exits, int *events)
 
 	*exits = *events = 0;
 	clock_gettime(CLOCK_MONOTONIC, &start);
-	while (jt_elapsed_ms(&start) < WAIT_MS) {
+	while (jt_elapsed_ms(&start) < limit_ms) {
 		pfd.fd = fd;
 		pfd.events = POLLIN;
 		pfd.revents = 0;
@@ -420,6 +425,13 @@ read_to_eof(int fd, pid_t pid, int *exits, int *events)
 	return (ETIMEDOUT);
 }
 
+static int
+read_to_eof(int fd, pid_t pid, int *exits, int *events)
+{
+
+	return (read_to_eof_ms(fd, pid, exits, events, WAIT_MS));
+}
+
 static bool
 wait_jail_gone(const char *name)
 {
@@ -441,6 +453,14 @@ remove_jail(int jid)
 	if (jail_remove(jid) != 0)
 		TEST_FAIL("jail_remove(%d): %s", jid, strerror(errno));
 	jt_forget_jail(jid);
+}
+
+static int
+scratch_jail(const char *suffix, char *name, size_t len, const char *jid)
+{
+
+	jt_name(name, len, "oesjs", suffix);
+	return (jt_make_jail(name, "oesjs-scratch", jid, "4"));
 }
 
 /* ------------------------------------------- arguments and ordering -- */
@@ -558,6 +578,39 @@ test_arguments(void)
 	EXPECT_ERRNO(set_jail(fd, 999999, NULL, 0), EPERM,
 	    "EPERM before ENOENT (descendants)");
 	EXPECT_ERRNO(get_jail(fd, &args), ENOENT, "GET on descendants");
+	close(fd);
+}
+
+/*
+ * A descriptor handed to a third party is limited to
+ * OES_IOCTLS_THIRD_PARTY_INIT.  Its holder must be able to ask whether a
+ * jail scope is dead, the only way to tell the end of a scope from other
+ * failures, and must not be able to set one.
+ */
+static void
+test_third_party_ioctls(void)
+{
+	static const cap_ioctl_t allowed[] = OES_IOCTLS_THIRD_PARTY_INIT;
+	struct oes_jail_scope_args args;
+	int fd;
+
+	TEST_BEGIN("T-CAP the third-party ioctl set can read a jail scope");
+	fd = test_open_oes();
+	EXPECT_OK(cap_ioctls_limit(fd, allowed, nitems(allowed)),
+	    "cap_ioctls_limit");
+	EXPECT_ERRNO(get_jail(fd, &args), ENOENT, "GET, no jail scope");
+	EXPECT_ERRNO(set_jail(fd, j_a, NULL, 0), ENOTCAPABLE,
+	    "SET through the limited descriptor");
+	close(fd);
+
+	fd = test_open_oes();
+	EXPECT_OK(set_jail(fd, j_a, NULL, 0), "set");
+	EXPECT_OK(cap_ioctls_limit(fd, allowed, nitems(allowed)),
+	    "cap_ioctls_limit");
+	EXPECT_OK(get_jail(fd, &args), "GET through the limited descriptor");
+	ASSERT_MSG(args.ejs_jid == j_a && args.ejs_flags == 0,
+	    "GET: jid %d flags 0x%x", args.ejs_jid, args.ejs_flags);
+	ASSERT_MSG(jt_get_scope(fd) == OES_SCOPE_JAIL, "GET_SCOPE");
 	close(fd);
 }
 
@@ -956,6 +1009,100 @@ out:
 	close(fd);
 }
 
+static int
+fn_ptrace_attach(void *arg)
+{
+	pid_t pid = *(pid_t *)arg;
+	int status;
+
+	if (ptrace(PT_ATTACH, pid, NULL, 0) != 0)
+		return (61);
+	if (waitpid(pid, &status, 0) != pid || !WIFSTOPPED(status))
+		return (62);
+	if (ptrace(PT_DETACH, pid, (caddr_t)1, 0) != 0)
+		return (63);
+	return (0);
+}
+
+static int
+fn_renice(void *arg)
+{
+
+	return (setpriority(PRIO_PROCESS, *(pid_t *)arg, 5) == 0 ? 0 : 64);
+}
+
+/*
+ * As inbound_case(), for the other two kinds of event that have a target
+ * process: a host process attaches to (NOTIFY_PTRACE) or renices
+ * (NOTIFY_PROC_SCHED) a process in victim_jid.  The marker is the same
+ * operation done inside jail A on a process inside it.
+ */
+static void
+inbound_proc_case(const char *what, oes_event_type_t event,
+    int (*act)(void *), uint32_t flags, int victim_jid, bool expect_seen)
+{
+	struct kid victim, inside, actor, marker;
+	struct timespec start;
+	const oes_process_t *tp;
+	test_msg_buf buf;
+	long left;
+	int fd, seen;
+	bool marked;
+
+	fd = jclient(j_a, flags, &event, 1);
+	if (fd < 0)
+		return;
+	victim.pid = inside.pid = -1;
+	victim.go = inside.go = -1;
+	if (kid_start(&victim, victim_jid, fn_pause, NULL, false) != 0 ||
+	    kid_start(&inside, j_a, fn_pause, NULL, false) != 0 ||
+	    kid_start(&actor, -1, act, &victim.pid, false) != 0) {
+		TEST_FAIL("%s: cannot start the processes", what);
+		goto out;
+	}
+	ASSERT_MSG(kid_finish(&actor) == 0, "%s: host actor failed", what);
+	if (kid_start(&marker, j_a, act, &inside.pid, false) != 0) {
+		TEST_FAIL("%s: cannot start the marker", what);
+		goto out;
+	}
+	ASSERT_MSG(kid_finish(&marker) == 0, "%s: marker actor failed", what);
+
+	seen = 0;
+	marked = false;
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	while (!marked && (left = WAIT_MS - jt_elapsed_ms(&start)) > 0) {
+		if (test_wait_event(fd, &buf.msg, left > 100 ? 100 :
+		    (int)left) != 0 || buf.msg.em_event != event)
+			continue;
+		tp = event == OES_EVENT_NOTIFY_PTRACE ?
+		    &buf.msg.em_event_data.ptrace.target :
+		    &buf.msg.em_event_data.proc_sched.target;
+		if (buf.msg.em_process.ep_pid == actor.pid) {
+			seen++;
+			ASSERT_MSG(tp->ep_pid == victim.pid &&
+			    tp->ep_jid == victim_jid &&
+			    (tp->ep_flags & EP_FLAG_JAILED) != 0,
+			    "%s: target %d jid %d flags 0x%x, want %d in "
+			    "jail %d", what, tp->ep_pid, tp->ep_jid,
+			    tp->ep_flags, victim.pid, victim_jid);
+		} else if (buf.msg.em_process.ep_pid == marker.pid &&
+		    tp->ep_pid == inside.pid)
+			marked = true;
+	}
+	if (!marked)
+		TEST_FAIL("%s: the operation inside the jail not delivered",
+		    what);
+	else if (expect_seen)
+		ASSERT_MSG(seen >= 1, "%s: inbound event not delivered", what);
+	else
+		ASSERT_MSG(seen == 0, "%s: outside actor was delivered (%d)",
+		    what, seen);
+out:
+	kid_kill(&victim);
+	kid_kill(&inside);
+	close(fd);
+}
+
 static void
 test_inbound(void)
 {
@@ -973,6 +1120,27 @@ test_inbound(void)
 	TEST_BEGIN("T-IN-4 INBOUND with NOCHILDREN: nested target not covered");
 	inbound_case("T-IN-4", OES_JAIL_SCOPE_INBOUND |
 	    OES_JAIL_SCOPE_NOCHILDREN, j_b, false);
+
+	TEST_BEGIN("T-IN-6 INBOUND: ptrace attach from outside the jail");
+	inbound_proc_case("T-IN-6", OES_EVENT_NOTIFY_PTRACE, fn_ptrace_attach,
+	    OES_JAIL_SCOPE_INBOUND, j_a, true);
+	inbound_proc_case("T-IN-6 nested", OES_EVENT_NOTIFY_PTRACE,
+	    fn_ptrace_attach, OES_JAIL_SCOPE_INBOUND, j_c, true);
+	TEST_BEGIN("T-IN-6b default: ptrace from outside is not delivered");
+	inbound_proc_case("T-IN-6b", OES_EVENT_NOTIFY_PTRACE,
+	    fn_ptrace_attach, 0, j_a, false);
+	inbound_proc_case("T-IN-6b sibling", OES_EVENT_NOTIFY_PTRACE,
+	    fn_ptrace_attach, OES_JAIL_SCOPE_INBOUND, j_s, false);
+	TEST_BEGIN("T-IN-7 INBOUND: scheduling change from outside the jail");
+	inbound_proc_case("T-IN-7", OES_EVENT_NOTIFY_PROC_SCHED, fn_renice,
+	    OES_JAIL_SCOPE_INBOUND, j_a, true);
+	inbound_proc_case("T-IN-7 nested", OES_EVENT_NOTIFY_PROC_SCHED,
+	    fn_renice, OES_JAIL_SCOPE_INBOUND, j_c, true);
+	TEST_BEGIN("T-IN-7b default: scheduling from outside is not delivered");
+	inbound_proc_case("T-IN-7b", OES_EVENT_NOTIFY_PROC_SCHED, fn_renice,
+	    0, j_a, false);
+	inbound_proc_case("T-IN-7b sibling", OES_EVENT_NOTIFY_PROC_SCHED,
+	    fn_renice, OES_JAIL_SCOPE_INBOUND, j_s, false);
 }
 
 /* ------------------------------------------------------ jailed caller -- */
@@ -1094,6 +1262,635 @@ test_jailed_caller(void)
 	close(go[1]);
 }
 
+/*
+ * OES_IOC_GET_JAIL_SCOPE reports the jail as the setter named it, which is
+ * the view of the setter's own jail.  The descriptor is shared by fork, so
+ * one process sets the scope from inside jail A and others read it from the
+ * host, from A and from jails that are not A.
+ */
+struct scope_io {
+	int		fd;
+	int		jid;		/* To set, or expected */
+	const char	*name;		/* To set by name (NULL: by jid), or expected */
+};
+
+static int
+fn_set_scope(void *arg)
+{
+	struct scope_io *io = arg;
+
+	return (set_jail(io->fd, io->jid, io->name, 0) == 0 ? 0 : 70);
+}
+
+static int
+fn_get_scope(void *arg)
+{
+	struct oes_jail_scope_args args;
+	struct scope_io *io = arg;
+
+	if (get_jail(io->fd, &args) != 0)
+		return (71);
+	if (args.ejs_jid != io->jid)
+		return (72);
+	if (strcmp(args.ejs_name, io->name) != 0)
+		return (73);
+	return (0);
+}
+
+static int
+run_in_jail(int jid, int (*fn)(void *), void *arg)
+{
+	struct kid k;
+
+	if (kid_start(&k, jid, fn, arg, false) != 0)
+		return (-1);
+	return (kid_finish(&k));
+}
+
+static void
+test_getter_views(void)
+{
+	struct oes_jail_scope_args args;
+	struct scope_io io;
+	char pname[64], cname[80];
+	int fd, jid_c, jid_p, rc;
+
+	TEST_BEGIN("T-GET-2 the setter's view is shown in the setter's jail only");
+	fd = test_open_oes();
+	io.fd = fd;
+	io.jid = j_b;
+	io.name = NULL;
+	rc = run_in_jail(j_a, fn_set_scope, &io);
+	ASSERT_MSG(rc == 0, "set from inside jail A: status %d", rc);
+	/* Jail A calls its child "b" and knows its jid. */
+	io.name = "b";
+	EXPECT_OK(get_jail(fd, &args), "GET from the host");
+	ASSERT_MSG(args.ejs_jid == j_b && strcmp(args.ejs_name, "b") == 0,
+	    "host reader: jid %d name '%s'", args.ejs_jid, args.ejs_name);
+	rc = run_in_jail(j_a, fn_get_scope, &io);
+	ASSERT_MSG(rc == 0, "reader in the setter's jail: step %d", rc);
+	/* Nobody else is shown it: not a sibling, not the scoped jail itself. */
+	io.jid = 0;
+	io.name = "";
+	rc = run_in_jail(j_s, fn_get_scope, &io);
+	ASSERT_MSG(rc == 0, "reader in a sibling jail: step %d "
+	    "(72: it was shown the jid, 73: the name)", rc);
+	rc = run_in_jail(j_b, fn_get_scope, &io);
+	ASSERT_MSG(rc == 0, "reader in the scoped jail: step %d", rc);
+	close(fd);
+
+	TEST_BEGIN("T-GET-3 remembering the setter's jail does not keep it");
+	jid_p = scratch_jail("gp", pname, sizeof(pname), NULL);
+	snprintf(cname, sizeof(cname), "%s.kid", pname);
+	jid_c = jt_make_jail(cname, "oesjs-scratch", NULL, "1");
+	fd = test_open_oes();
+	if (jid_p == -1 || jid_c == -1 || fd < 0)
+		return;
+	io.fd = fd;
+	io.jid = jid_c;
+	io.name = NULL;
+	rc = run_in_jail(jid_p, fn_set_scope, &io);
+	ASSERT_MSG(rc == 0, "set from inside the scratch jail: status %d", rc);
+	/* The scope ends first; its setter's jail is still there. */
+	remove_jail(jid_c);
+	ASSERT_MSG(wait_jail_gone(cname), "removed scope jail still exists");
+	io.name = "kid";
+	rc = run_in_jail(jid_p, fn_get_scope, &io);
+	ASSERT_MSG(rc == 0, "setter's jail reading the dead scope: step %d",
+	    rc);
+	/* Then the setter's jail goes, with the descriptor still open. */
+	remove_jail(jid_p);
+	ASSERT_MSG(wait_jail_gone(pname),
+	    "the setter's jail still exists (dying) while the client is open");
+	EXPECT_OK(get_jail(fd, &args), "GET from the host afterwards");
+	ASSERT_MSG((args.ejs_flags & OES_JAIL_SCOPE_DEAD) != 0 &&
+	    args.ejs_jid == jid_c, "host reader afterwards: flags 0x%x jid %d",
+	    args.ejs_flags, args.ejs_jid);
+	close(fd);
+
+	/* The same when the setter scoped its own jail. */
+	jid_p = scratch_jail("go", pname, sizeof(pname), NULL);
+	fd = test_open_oes();
+	if (jid_p == -1 || fd < 0)
+		return;
+	io.fd = fd;
+	io.jid = 0;
+	io.name = NULL;
+	rc = run_in_jail(jid_p, fn_set_scope, &io);
+	ASSERT_MSG(rc == 0, "set own jail from inside: status %d", rc);
+	remove_jail(jid_p);
+	ASSERT_MSG(wait_jail_gone(pname),
+	    "the setter's own jail still exists while the client is open");
+	close(fd);
+}
+
+/*
+ * The jail a scope was set from is remembered by the client and given up
+ * by close or by that jail's removal, whichever comes first, while readers
+ * compare against it.  Race all four.
+ */
+struct gstress {
+	int		fd;
+	int		jid;
+	volatile int	stop;
+};
+
+static void *
+gstress_getter(void *arg)
+{
+	struct oes_jail_scope_args args;
+	struct gstress *g = arg;
+
+	while (!g->stop)
+		(void)ioctl(g->fd, OES_IOC_GET_JAIL_SCOPE, &args);
+	return (NULL);
+}
+
+static void *
+gstress_remover(void *arg)
+{
+	struct gstress *g = arg;
+
+	usleep((useconds_t)(arc4random_uniform(2000)));
+	(void)jail_remove(g->jid);
+	return (NULL);
+}
+
+static void
+test_getter_stress(void)
+{
+	char pname[64], cname[80];
+	struct scope_io io;
+	struct gstress g;
+	pthread_t th[2];
+	pid_t child;
+	int i, jid_c, sets;
+
+	TEST_BEGIN("T-GET-STRESS set, read, close and remove the setter's "
+	    "jail, concurrently");
+	jt_name(pname, sizeof(pname), "oesjs", "gs");
+	snprintf(cname, sizeof(cname), "%s.kid", pname);
+	sets = 0;
+	for (i = 0; i < 200; i++) {
+		memset(&g, 0, sizeof(g));
+		g.jid = jail_setv(JAIL_CREATE, "name", pname, "path", "/",
+		    "children.max", "2", "persist", NULL, NULL);
+		jid_c = g.jid == -1 ? -1 : jail_setv(JAIL_CREATE, "name",
+		    cname, "path", "/", "persist", NULL, NULL);
+		g.fd = test_open_oes();
+		if (g.jid == -1 || jid_c == -1 || g.fd < 0) {
+			TEST_FAIL("round %d: setup: %s", i, jail_errmsg);
+			if (g.jid != -1)
+				(void)jail_remove(g.jid);
+			break;
+		}
+		io.fd = g.fd;
+		io.jid = jid_c;
+		io.name = NULL;
+		fflush(NULL);
+		child = fork();
+		if (child == 0) {
+			if (jail_attach(g.jid) != 0)
+				_exit(101);
+			_exit(fn_set_scope(&io));
+		}
+		if (pthread_create(&th[0], NULL, gstress_getter, &g) != 0 ||
+		    pthread_create(&th[1], NULL, gstress_remover, &g) != 0) {
+			TEST_FAIL("pthread_create");
+			(void)jt_reap(child);
+			break;
+		}
+		usleep((useconds_t)(arc4random_uniform(3000)));
+		/* The getter may still be in its ioctl: that is the point. */
+		g.stop = 1;
+		close(g.fd);
+		pthread_join(th[0], NULL);
+		pthread_join(th[1], NULL);
+		if (jt_reap(child) == 0)
+			sets++;
+		/* The removal may have lost to nothing; make sure of it. */
+		(void)jail_remove(g.jid);
+		if (!wait_jail_gone(cname) || !wait_jail_gone(pname)) {
+			TEST_FAIL("round %d: a removed jail still exists "
+			    "(dying) after the close", i);
+			break;
+		}
+	}
+	printf("    %d of %d scopes were set before the jail went\n", sets,
+	    i);
+	ASSERT_MSG(sets > 0, "no scope was ever set: the race never ran");
+}
+
+/* ------------------------------------------------- more kinds of subject -- */
+
+struct kinds {
+	pid_t	pid;
+	int	forks, sockets, pipes, exits;
+};
+
+static int
+fn_kinds(void *arg __unused)
+{
+	pid_t pid;
+	int p[2], s;
+
+	pid = fork();
+	if (pid < 0)
+		return (90);
+	if (pid == 0)
+		_exit(0);
+	if (jt_reap(pid) != 0)
+		return (91);
+	s = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (s < 0)
+		return (92);
+	close(s);
+	if (pipe(p) != 0 || write(p[1], "x", 1) != 1)
+		return (93);
+	return (0);
+}
+
+static void
+test_event_kinds(void)
+{
+	oes_event_type_t evs[] = { OES_EVENT_NOTIFY_FORK,
+	    OES_EVENT_NOTIFY_SOCKET_CREATE, OES_EVENT_NOTIFY_PIPE_WRITE,
+	    OES_EVENT_NOTIFY_EXIT };
+	struct kinds seen[2], *k;
+	struct timespec start;
+	test_msg_buf buf;
+	long left;
+	int fd, i, rc;
+
+	TEST_BEGIN("T-KIND fork, socket and pipe events of a jailed subject");
+	fd = jclient(j_a, 0, evs, nitems(evs));
+	if (fd < 0)
+		return;
+	memset(seen, 0, sizeof(seen));
+	for (i = 0; i < 2; i++) {
+		/*
+		 * The host process first: its events must not arrive.  No
+		 * kid_start() here: its handshake is itself a pipe write.
+		 */
+		fflush(NULL);
+		seen[i].pid = fork();
+		if (seen[i].pid == 0) {
+			if (i == 1 && jail_attach(j_a) != 0)
+				_exit(101);
+			_exit(fn_kinds(NULL));
+		}
+		rc = jt_reap(seen[i].pid);
+		ASSERT_MSG(rc == 0, "subject %d: status %d", i, rc);
+	}
+	/* All four are queued in order: the jailed exit is the last. */
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	while (seen[1].exits == 0 &&
+	    (left = WAIT_MS - jt_elapsed_ms(&start)) > 0) {
+		if (test_wait_event(fd, &buf.msg, left > 100 ? 100 :
+		    (int)left) != 0)
+			continue;
+		for (i = 0; i < 2; i++) {
+			k = &seen[i];
+			if (buf.msg.em_process.ep_pid != k->pid)
+				continue;
+			switch (buf.msg.em_event) {
+			case OES_EVENT_NOTIFY_FORK:
+				k->forks++;
+				break;
+			case OES_EVENT_NOTIFY_SOCKET_CREATE:
+				k->sockets++;
+				ASSERT_MSG(buf.msg.em_event_data.socket_create.
+				    domain == AF_UNIX, "socket domain %d",
+				    buf.msg.em_event_data.socket_create.domain);
+				break;
+			case OES_EVENT_NOTIFY_PIPE_WRITE:
+				k->pipes++;
+				break;
+			case OES_EVENT_NOTIFY_EXIT:
+				k->exits++;
+				break;
+			default:
+				break;
+			}
+		}
+	}
+	ASSERT_MSG(seen[1].exits == 1, "exit of the jailed subject not seen");
+	ASSERT_MSG(seen[1].forks == 1 && seen[1].sockets == 1 &&
+	    seen[1].pipes == 1, "jailed subject: %d fork, %d socket, %d pipe "
+	    "events, want one each", seen[1].forks, seen[1].sockets,
+	    seen[1].pipes);
+	ASSERT_MSG(seen[0].forks == 0 && seen[0].sockets == 0 &&
+	    seen[0].pipes == 0 && seen[0].exits == 0,
+	    "host subject delivered: %d fork, %d socket, %d pipe, %d exit",
+	    seen[0].forks, seen[0].sockets, seen[0].pipes, seen[0].exits);
+	close(fd);
+}
+
+/*
+ * One thread of a process enters the jail.  The credential belongs to the
+ * process; another thread takes it up when it next enters the kernel, so
+ * what that thread does afterwards is in scope too.
+ */
+static int mt_go[2], mt_ready[2];
+
+static void *
+mt_thread(void *arg __unused)
+{
+	char c;
+	int fd;
+
+	fd = open(file2, O_RDONLY | O_CLOEXEC);		/* Before: outside */
+	if (fd < 0)
+		return ((void *)1);
+	close(fd);
+	if (write(mt_ready[1], "R", 1) != 1 || read(mt_go[0], &c, 1) != 1)
+		return ((void *)2);
+	fd = open(file1, O_RDONLY | O_CLOEXEC);		/* After: inside */
+	if (fd < 0)
+		return ((void *)3);
+	close(fd);
+	return (NULL);
+}
+
+static int
+fn_mt_attach(void *arg __unused)
+{
+	pthread_t th;
+	void *res;
+	char c;
+	int fd;
+
+	if (pipe(mt_go) != 0 || pipe(mt_ready) != 0 ||
+	    pthread_create(&th, NULL, mt_thread, NULL) != 0)
+		return (80);
+	/* The other thread is now blocked in read(2), outside the jail. */
+	if (read(mt_ready[0], &c, 1) != 1)
+		return (81);
+	usleep(50000);
+	if (jail_attach(j_a) != 0)
+		return (82);
+	fd = open(file1, O_RDONLY | O_CLOEXEC);
+	if (fd < 0)
+		return (83);
+	close(fd);
+	if (write(mt_go[1], "G", 1) != 1 || pthread_join(th, &res) != 0)
+		return (84);
+	return (res == NULL ? 0 : 85);
+}
+
+static void
+test_multithreaded_attach(void)
+{
+	oes_event_type_t evs[] = { OES_EVENT_NOTIFY_OPEN,
+	    OES_EVENT_NOTIFY_EXIT };
+	struct kid k;
+	struct rec r;
+	int fd, rc;
+
+	TEST_BEGIN("T-MT one thread of a process enters the jail");
+	fd = jclient(j_a, 0, evs, 2);
+	if (fd < 0)
+		return;
+	if (kid_start(&k, -1, fn_mt_attach, NULL, false) != 0) {
+		TEST_FAIL("cannot start the process");
+		close(fd);
+		return;
+	}
+	rc = kid_finish(&k);
+	ASSERT_MSG(rc == 0, "threaded child status %d", rc);
+	memset(&r, 0, sizeof(r));
+	r.pid = k.pid;
+	if (scan(fd, k.pid, OES_EVENT_NOTIFY_EXIT, &r, 1) != 0)
+		TEST_FAIL("exit of the threaded process not delivered");
+	ASSERT_MSG(r.open2 == 0,
+	    "opens made before the attach were delivered: %d", r.open2);
+	ASSERT_MSG(r.open1 == 2, "opens after the attach, one by each "
+	    "thread: %d delivered, want 2", r.open1);
+	close(fd);
+}
+
+/*
+ * A jail with its own root directory.  Every other jail here is on "/".
+ * The subject names its files relative to its root, and that is the path
+ * the record carries and the path a mute is matched against; the file's
+ * identity is the same from wherever it is looked at.
+ */
+static int
+copy_file(const char *from, const char *to, mode_t mode)
+{
+	static char buf[65536];
+	ssize_t n;
+	int in, out, rc;
+
+	in = open(from, O_RDONLY | O_CLOEXEC);
+	out = open(to, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, mode);
+	rc = (in < 0 || out < 0) ? -1 : 0;
+	while (rc == 0 && (n = read(in, buf, sizeof(buf))) > 0) {
+		if (write(out, buf, (size_t)n) != n)
+			rc = -1;
+	}
+	if (rc == 0 && n < 0)
+		rc = -1;
+	if (in >= 0)
+		close(in);
+	if (out >= 0)
+		close(out);
+	return (rc);
+}
+
+static int
+fn_exec_path(void *arg)
+{
+
+	/* A copy of the rescue binary, which acts by the name it is given. */
+	execl((const char *)arg, "sleep", "0", (char *)NULL);
+	return (102);
+}
+
+static int
+mute_path(int fd, const char *path)
+{
+	struct oes_mute_path_args args;
+
+	memset(&args, 0, sizeof(args));
+	strlcpy(args.emp_path, path, sizeof(args.emp_path));
+	args.emp_type = OES_MUTE_PATH_LITERAL;
+	return (ioctl(fd, OES_IOC_MUTE_PATH, &args));
+}
+
+/* Run a path in the jail; was its exec delivered before the marker's? */
+static int
+rooted_run(int fd, int jid, const char *path, const char *marker_path,
+    test_msg_buf *out)
+{
+	struct timespec start;
+	struct kid k, m;
+	test_msg_buf buf;
+	long left;
+	int rc, seen;
+
+	rc = kid_start(&k, jid, fn_exec_path, __DECONST(char *, path),
+	    false) == 0 ? kid_finish(&k) : -1;
+	if (rc != 0) {
+		TEST_FAIL("exec of %s in the rooted jail: status %d", path, rc);
+		return (-1);
+	}
+	rc = kid_start(&m, jid, fn_exec_path, __DECONST(char *, marker_path),
+	    false) == 0 ? kid_finish(&m) : -1;
+	if (rc != 0) {
+		TEST_FAIL("exec of the marker %s: status %d", marker_path, rc);
+		return (-1);
+	}
+	seen = 0;
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	while ((left = WAIT_MS - jt_elapsed_ms(&start)) > 0) {
+		if (test_wait_event(fd, &buf.msg, left > 100 ? 100 :
+		    (int)left) != 0 ||
+		    buf.msg.em_event != OES_EVENT_NOTIFY_EXEC)
+			continue;
+		if (buf.msg.em_process.ep_pid == k.pid) {
+			seen++;
+			if (out != NULL)
+				memcpy(out->raw, buf.raw, buf.msg.em_size);
+		} else if (buf.msg.em_process.ep_pid == m.pid)
+			return (seen);
+	}
+	TEST_FAIL("exec of the marker %s not delivered", marker_path);
+	return (-1);
+}
+
+static void
+test_rooted_jail(void)
+{
+	oes_event_type_t ev = OES_EVENT_NOTIFY_EXEC;
+	char root[] = "/tmp/oesjs-root.XXXXXX";
+	char host1[96], host2[96], name[64];
+	const oes_event_exec_t *ex;
+	test_msg_buf buf;
+	struct stat sb;
+	int fd, jid, n;
+
+	TEST_BEGIN("T-ROOT a jail whose root is not /");
+	if (mkdtemp(root) == NULL) {
+		TEST_FAIL("mkdtemp: %s", strerror(errno));
+		return;
+	}
+	(void)chmod(root, 0755);
+	snprintf(host1, sizeof(host1), "%s/oesjs-prog", root);
+	snprintf(host2, sizeof(host2), "%s/oesjs-mark", root);
+	/* A static binary: the jail has nothing else in it. */
+	if (copy_file("/rescue/sleep", host1, 0555) != 0 ||
+	    copy_file("/rescue/sleep", host2, 0555) != 0 ||
+	    stat(host1, &sb) != 0) {
+		TEST_FAIL("cannot populate %s: %s", root, strerror(errno));
+		goto out;
+	}
+	jt_name(name, sizeof(name), "oesjs", "root");
+	jid = jail_setv(JAIL_CREATE, "name", name, "path", root,
+	    "host.hostname", "oesjs-root", "persist", NULL, NULL);
+	if (jid == -1) {
+		TEST_FAIL("jail_setv(%s): %s", name, jail_errmsg);
+		goto out;
+	}
+	if (jt_njails < JT_MAXJAILS)
+		jt_jails[jt_njails++] = jid;
+
+	fd = jclient(jid, 0, &ev, 1);
+	if (fd >= 0) {
+		n = rooted_run(fd, jid, "/oesjs-prog", "/oesjs-mark", &buf);
+		ASSERT_MSG(n == 1, "exec in the rooted jail: %d events", n);
+		if (n == 1) {
+			ex = &buf.msg.em_event_data.exec;
+			ASSERT_MSG(ex->target.ep_jid == jid, "ep_jid %d, want "
+			    "%d", ex->target.ep_jid, jid);
+			ASSERT_MSG(ex->executable.ef_ino == (uint64_t)sb.st_ino &&
+			    ex->executable.ef_dev == (uint64_t)sb.st_dev,
+			    "executable identity %ju/%ju, want %ju/%ju",
+			    (uintmax_t)ex->executable.ef_dev,
+			    (uintmax_t)ex->executable.ef_ino,
+			    (uintmax_t)sb.st_dev, (uintmax_t)sb.st_ino);
+			ASSERT_MSG(strcmp(oes_msg_string(&buf.msg,
+			    ex->executable.ef_path_off), "/oesjs-prog") == 0 &&
+			    strcmp(oes_msg_string(&buf.msg,
+			    ex->target.ep_path_off), "/oesjs-prog") == 0,
+			    "paths in the record: executable '%s' target '%s', "
+			    "want the subject's own '/oesjs-prog'",
+			    oes_msg_string(&buf.msg, ex->executable.ef_path_off),
+			    oes_msg_string(&buf.msg, ex->target.ep_path_off));
+		}
+
+		TEST_BEGIN("T-ROOT-2 a path mute matches the path in the record");
+		/* The host's name for the file is not what the record says. */
+		EXPECT_OK(mute_path(fd, host1), "mute by the host path");
+		n = rooted_run(fd, jid, "/oesjs-prog", "/oesjs-mark", NULL);
+		ASSERT_MSG(n == 1, "muted by the host's path: %d events", n);
+		EXPECT_OK(mute_path(fd, "/oesjs-prog"), "mute by the jail path");
+		n = rooted_run(fd, jid, "/oesjs-prog", "/oesjs-mark", NULL);
+		ASSERT_MSG(n == 0, "not muted by the path in the record: %d "
+		    "events", n);
+		close(fd);
+	}
+	remove_jail(jid);
+out:
+	unlink(host1);
+	unlink(host2);
+	rmdir(root);
+}
+
+/* Jail scopes on different jails and a descendants scope, all at once. */
+static void
+test_scopes_together(void)
+{
+	oes_event_type_t ev = OES_EVENT_NOTIFY_EXIT;
+	struct rec recs[3];
+	pid_t pa, ps, ph, ma, ms, mh;
+	int fa, fs, fd;
+
+	TEST_BEGIN("T-MULTI-2 two jail scopes and a descendants scope at once");
+	fa = exit_client(j_a, 0);
+	fs = exit_client(j_s, 0);
+	fd = test_open_oes();
+	if (fa < 0 || fs < 0 || fd < 0 || test_set_descendants_scope(fd) != 0 ||
+	    jt_notify_setup(fd, &ev, 1) != 0) {
+		TEST_FAIL("setup");
+		goto out;
+	}
+	pa = jt_run_true(j_b);
+	ps = jt_run_true(j_s);
+	ph = jt_run_true(-1);
+	ma = jt_run_true(j_a);
+	ms = jt_run_true(j_s);
+	mh = jt_run_true(-1);
+	if (pa <= 0 || ps <= 0 || ph <= 0 || ma <= 0 || ms <= 0 || mh <= 0) {
+		TEST_FAIL("cannot run the subjects");
+		goto out;
+	}
+#define	THREE(_fd, _marker, _what, _ea, _es, _eh) do {			\
+	memset(recs, 0, sizeof(recs));					\
+	recs[0].pid = pa;						\
+	recs[1].pid = ps;						\
+	recs[2].pid = ph;						\
+	if (scan((_fd), (_marker), OES_EVENT_NOTIFY_EXIT, recs, 3) != 0) \
+		TEST_FAIL("%s: marker not delivered", (_what));		\
+	ASSERT_MSG(recs[0].exits == (_ea) && recs[1].exits == (_es) &&	\
+	    recs[2].exits == (_eh), "%s: exits seen: A.b %d, S %d, "	\
+	    "host %d; want %d, %d, %d", (_what), recs[0].exits,		\
+	    recs[1].exits, recs[2].exits, (_ea), (_es), (_eh));		\
+} while (0)
+	THREE(fa, ma, "scope A", 1, 0, 0);
+	THREE(fs, ms, "scope S", 0, 1, 0);
+	/* Descendants are followed into whatever jail they enter. */
+	THREE(fd, mh, "descendants scope", 1, 1, 1);
+#undef THREE
+out:
+	if (fa >= 0)
+		close(fa);
+	if (fs >= 0)
+		close(fs);
+	if (fd >= 0)
+		close(fd);
+}
+
 /* ------------------------------------------------- removal and reuse -- */
 
 struct reader {
@@ -1124,14 +1921,6 @@ reader_wait(struct reader *r)
 	while (!r->done && jt_elapsed_ms(&start) < WAIT_MS)
 		usleep(20000);
 	return (r->done != 0);
-}
-
-static int
-scratch_jail(const char *suffix, char *name, size_t len, const char *jid)
-{
-
-	jt_name(name, len, "oesjs", suffix);
-	return (jt_make_jail(name, "oesjs-scratch", jid, "4"));
 }
 
 static void
@@ -1212,6 +2001,231 @@ test_dead_queued(void)
 	ASSERT_MSG(exits == 1, "exit before the removal: %d events (of %d)",
 	    exits, events);
 	ASSERT_MSG(is_dead(fd), "not dead after end of file");
+	close(fd);
+	ASSERT_MSG(wait_jail_gone(name), "removed jail still exists");
+}
+
+/*
+ * What a waiting consumer is told once the scope is dead: while events are
+ * still queued the descriptor is both readable and hung up; once they are
+ * read it is hung up only, and a read that would otherwise block or fail
+ * with EAGAIN returns end of file.
+ */
+static void
+test_dead_poll_select(void)
+{
+	static uint8_t buf[OES_MSG_MAX_SIZE * 4];
+	struct timeval tv = { 0, 0 };
+	const oes_message_t *msg;
+	struct timespec start;
+	struct pollfd pfd;
+	fd_set rfds;
+	char name[64];
+	ssize_t n;
+	size_t off;
+	pid_t pid;
+	int exits, fd, jid, rc;
+
+	TEST_BEGIN("T-DEAD-8 poll, select and non-blocking read on a dead scope");
+	jid = scratch_jail("r8", name, sizeof(name), NULL);
+	fd = exit_client(jid, 0);
+	if (jid == -1 || fd < 0)
+		return;
+	pid = jt_run_true(jid);
+	remove_jail(jid);
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	while (!is_dead(fd) && jt_elapsed_ms(&start) < WAIT_MS)
+		usleep(20000);
+	ASSERT_MSG(is_dead(fd), "scope not dead after the removal");
+
+	/* The exit is still queued. */
+	pfd.fd = fd;
+	pfd.events = POLLIN;
+	pfd.revents = 0;
+	rc = poll(&pfd, 1, 0);
+	ASSERT_MSG(rc == 1 && (pfd.revents & (POLLIN | POLLHUP)) ==
+	    (POLLIN | POLLHUP), "poll with an event queued: rc %d revents "
+	    "0x%x, want POLLIN|POLLHUP", rc, pfd.revents);
+	FD_ZERO(&rfds);
+	FD_SET(fd, &rfds);
+	rc = select(fd + 1, &rfds, NULL, NULL, &tv);
+	ASSERT_MSG(rc == 1 && FD_ISSET(fd, &rfds),
+	    "select with an event queued: rc %d", rc);
+
+	/* Non-blocking reads: the events, then end of file, never EAGAIN. */
+	exits = 0;
+	while ((n = read(fd, buf, sizeof(buf))) > 0) {
+		for (off = 0; off + sizeof(*msg) <= (size_t)n;
+		    off += msg->em_size) {
+			msg = (const oes_message_t *)(const void *)(buf + off);
+			if (msg->em_size < sizeof(*msg))
+				break;
+			if (msg->em_event == OES_EVENT_NOTIFY_EXIT &&
+			    msg->em_process.ep_pid == pid)
+				exits++;
+		}
+	}
+	ASSERT_MSG(n == 0, "non-blocking read after the events: %zd errno %d "
+	    "(%s), want end of file", n, n < 0 ? errno : 0,
+	    n < 0 ? strerror(errno) : "-");
+	ASSERT_MSG(exits == 1, "exit queued before the removal: %d", exits);
+
+	/* Drained: hung up, no longer readable data. */
+	pfd.revents = 0;
+	rc = poll(&pfd, 1, 0);
+	ASSERT_MSG(rc == 1 && (pfd.revents & (POLLIN | POLLHUP)) == POLLHUP,
+	    "poll once drained: rc %d revents 0x%x, want POLLHUP alone", rc,
+	    pfd.revents);
+	FD_ZERO(&rfds);
+	FD_SET(fd, &rfds);
+	tv.tv_sec = tv.tv_usec = 0;
+	rc = select(fd + 1, &rfds, NULL, NULL, &tv);
+	ASSERT_MSG(rc == 1 && FD_ISSET(fd, &rfds),
+	    "select once drained: rc %d (end of file must be readable)", rc);
+	n = read(fd, buf, sizeof(buf));
+	ASSERT_MSG(n == 0, "second non-blocking read: %zd errno %d", n,
+	    n < 0 ? errno : 0);
+	close(fd);
+	ASSERT_MSG(wait_jail_gone(name), "removed jail still exists");
+}
+
+/*
+ * The end of a scope must not wait for the deferred queue to be empty: on a
+ * busy system it never is.  With the queue kept full by other processes the
+ * removal must still be followed by end of file, and by the release of the
+ * removed jail, within a bounded number of deliveries.
+ */
+static void
+test_dead_under_load(void)
+{
+	struct timespec start;
+	struct jt_load load;
+	uint64_t d0, d1;
+	char name[64];
+	long ms;
+	int events, exits, fd, jid, rc;
+	pid_t pid;
+
+	TEST_BEGIN("T-DEAD-LOAD the scope ends while the deferred queue is busy");
+	jid = scratch_jail("ld", name, sizeof(name), NULL);
+	fd = exit_client(jid, 0);
+	if (jid == -1 || fd < 0)
+		return;
+	/*
+	 * Before the load: an event generated while the queue is full may
+	 * be discarded, and this one must be found queued at the end.
+	 */
+	pid = jt_run_true(jid);
+	if (jt_load_start(&load, fd) != 0) {
+		TEST_FAIL("cannot keep the deferred queue full");
+		close(fd);
+		return;
+	}
+	d0 = jt_nosleep_drops(fd);
+	remove_jail(jid);
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	rc = read_to_eof_ms(fd, pid, &exits, &events, load.limit_ms);
+	ms = jt_elapsed_ms(&start);
+	d1 = jt_nosleep_drops(fd);
+	if (!jt_load_still_full(fd))
+		printf("    note: the queue was no longer full after the "
+		    "wait\n");
+	ASSERT_MSG(rc == 0, "no end of file %ld ms after the removal while "
+	    "the deferred queue was kept full (%ju more events discarded at "
+	    "its limit meanwhile): %d", ms, (uintmax_t)(d1 - d0), rc);
+	if (rc == 0) {
+		printf("    end of file %ld ms after the removal; %ju events "
+		    "were discarded at the full queue meanwhile\n", ms,
+		    (uintmax_t)(d1 - d0));
+		ASSERT_MSG(exits == 1, "exit before the removal: %d events",
+		    exits);
+		ASSERT_MSG(is_dead(fd), "not dead after end of file");
+		/* Still under load: the dead scope must not keep the jail. */
+		ASSERT_MSG(wait_jail_gone(name),
+		    "removed jail still exists while the load continues");
+	}
+	jt_load_stop(&load);
+	if (rc != 0) {
+		rc = read_to_eof(fd, pid, &exits, &events);
+		printf("    after the load stopped: %s\n", rc == 0 ?
+		    "end of file" : "still no end of file");
+	}
+	close(fd);
+	ASSERT_MSG(wait_jail_gone(name), "removed jail still exists");
+}
+
+/*
+ * The other half of the bound: the scope must not end early either.  An
+ * event that sits behind a full queue when the jail is removed is still
+ * delivered before end of file.  The writers are stopped while the event is
+ * generated, so that it is queued behind the backlog rather than discarded
+ * at the limit, and started again before the removal.
+ */
+static void
+test_dead_behind_backlog(void)
+{
+	struct oes_stats st;
+	struct jt_load load;
+	uint64_t da, db;
+	char name[64];
+	int events, exits, fd, jid, rc, try;
+	pid_t pid;
+	bool behind;
+
+	TEST_BEGIN("T-DEAD-LOAD-2 an event behind a deep queue precedes end "
+	    "of file");
+	jid = scratch_jail("ld2", name, sizeof(name), NULL);
+	fd = exit_client(jid, 0);
+	if (jid == -1 || fd < 0)
+		return;
+	if (jt_load_start(&load, fd) != 0) {
+		TEST_FAIL("cannot keep the deferred queue full");
+		close(fd);
+		return;
+	}
+	pid = -1;
+	behind = false;
+	for (try = 0; try < 5 && !behind; try++) {
+		if (try != 0) {
+			/* Fill the queue again. */
+			da = jt_nosleep_drops(fd);
+			jt_load_signal(&load, SIGCONT);
+			for (rc = 0; rc < 200 &&
+			    jt_nosleep_drops(fd) == da; rc++)
+				usleep(50000);
+		}
+		jt_load_signal(&load, SIGSTOP);
+		usleep(20000);		/* Let the writers come to rest. */
+		get_stats(fd, &st);
+		da = jt_nosleep_drops(fd);
+		pid = jt_run_true(jid);
+		db = jt_nosleep_drops(fd);
+		/*
+		 * Nothing discarded: the exit is queued.  Nothing new on
+		 * the scoped client: it is still behind the backlog.
+		 */
+		rc = (int)st.es_events_received;
+		get_stats(fd, &st);
+		behind = pid > 0 && da == db &&
+		    (int)st.es_events_received == rc;
+	}
+	jt_load_signal(&load, SIGCONT);
+	if (!behind) {
+		TEST_FAIL("could not queue an event behind the backlog in "
+		    "five attempts");
+		jt_load_stop(&load);
+		close(fd);
+		return;
+	}
+	remove_jail(jid);
+	rc = read_to_eof_ms(fd, pid, &exits, &events, load.limit_ms);
+	if (!jt_load_still_full(fd))
+		printf("    note: the queue was no longer full after the "
+		    "wait\n");
+	jt_load_stop(&load);
+	ASSERT_MSG(rc == 0, "no end of file: %d", rc);
+	ASSERT_MSG(exits == 1, "the exit queued behind the backlog: %d "
+	    "events before end of file (attempt %d)", exits, try);
 	close(fd);
 	ASSERT_MSG(wait_jail_gone(name), "removed jail still exists");
 }
@@ -2279,19 +3293,29 @@ main(void)
 	test_cache_invalidation();
 
 	test_arguments();
+	test_third_party_ioctls();
 	test_membership();
 	test_passive();
 	test_entering();
+	test_multithreaded_attach();
+	test_event_kinds();
+	test_scopes_together();
+	test_rooted_jail();
 	test_rename_jail();
 	test_linux();
 	test_inbound();
 	test_jailed_caller();
+	test_getter_views();
+	test_getter_stress();
 	test_mutes();
 	test_self_mute();
 	test_auth();
 
 	test_dead_blocked_reader();
 	test_dead_queued();
+	test_dead_poll_select();
+	test_dead_under_load();
+	test_dead_behind_backlog();
 	test_dead_last_exit();
 	test_dead_kqueue();
 	test_dead_with_process();

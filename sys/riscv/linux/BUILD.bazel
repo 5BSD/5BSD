@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Generated syscall tables that systrace_linux compiles in.
+bsd_source_headers(name = "systrace_headers", hdrs = ["linux.h", "linux_proto.h", "linux_syscall.h"],
+    visibility = ["//sys/cddl/dev/systrace:__pkg__"])
+exports_files(["linux_syscalls.c", "linux_systrace_args.c"], visibility = ["//sys/cddl/dev/systrace:__pkg__"])

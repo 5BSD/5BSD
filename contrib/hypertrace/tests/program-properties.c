@@ -1494,7 +1494,11 @@ case_exec(void)
 		    dtrace_errno(dtp) != map[i].out)
 			ok = 0;
 	}
-	CHECK("exec-errno-mapping", ok && V.enables == 5);
+	/*
+	 * E2BIG grows the description buffer from 4096 to the 4M cap: six
+	 * ENABLE calls, one each for the other errors.
+	 */
+	CHECK("exec-errno-mapping", ok && V.enables == 10);
 	V.enable_errno = 0;
 
 	/* Reported descriptions become the program's enabled probes. */

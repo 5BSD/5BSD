@@ -57,8 +57,7 @@ load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
 load("//tools/build/bazel:bsd_fidl.bzl", "bsd_fidl_ir", "bsd_fidl_bindings")
 bsd_fidl_ir(name = "next_ir", schemas = ["evolution/auditcmp_next.fidl"], available = "bsd:2",
     compiler = "//tools/build/fuchsia/fidlc:fidlc",
-    runtime_libraries = ["//lib/libmd:md_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared",
-        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"])
+    runtime_libraries = ["//tools/build/fuchsia/fidlc:runtime_libraries"])
 bsd_fidl_bindings(name = "next_bindings", ir = ":next_ir",
     generator = "//tools/build/fuchsia:fidlgen-build.py", modules = ["//tools/build/fuchsia:binding_modules"],
     templates = ["@fuchsia_runtime_src//:binding_templates"],
