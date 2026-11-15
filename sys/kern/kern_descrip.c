@@ -4874,6 +4874,15 @@ sys_flock(struct thread *td, struct flock_args *uap)
 	if (lf.l_type == F_UNLCK) {
 		atomic_clear_int(&fp->f_flag, FHASLOCK);
 		error = fo_advlock(fp, (caddr_t)fp, F_UNLCK, &lf, F_FLOCK, td);
+		/*
+		 * The mark is cleared before the unlock so that a request
+		 * granted meanwhile, which marks the file again, keeps its
+		 * mark.  An unlock that fails may leave the lock held, and the
+		 * last close releases only a marked file: mark it again.  A
+		 * mark without a lock costs one unlock at close.
+		 */
+		if (error != 0)
+			atomic_set_int(&fp->f_flag, FHASLOCK);
 		goto done;
 	}
 	atomic_set_int(&fp->f_flag, FHASLOCK);
@@ -4889,10 +4898,8 @@ sys_flock(struct thread *td, struct flock_args *uap)
 		 * file, so a lock granted to an unmarked one would stay on
 		 * the vnode with no open file to release it.  A LOCK_UN that
 		 * clears the mark set here goes on to unlock after this
-		 * grant; a mark without a lock costs one unlock at close.
-		 * One clear is not covered: that of a LOCK_UN whose unlock
-		 * then fails, which leaves the lock unmarked as it always
-		 * has.
+		 * grant, and one whose unlock fails marks the file again; a
+		 * mark without a lock costs one unlock at close.
 		 */
 		atomic_set_int(&fp->f_flag, FHASLOCK);
 	}
