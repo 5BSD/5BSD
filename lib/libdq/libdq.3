@@ -351,7 +351,10 @@ opens
 .Pa /dev/dq
 with
 .Dv O_RDWR | O_CLOEXEC | O_CLOFORK
-and returns the queue descriptor.
+and returns the queue descriptor; on success it also reads
+.Va kern.dq.max_io
+once, to size the buffer of
+.Fn dq_dispatch .
 One open is one queue, owned by the calling process: the descriptor is in
 no child and no exec'd image and cannot be sent, whatever its flags say,
 only the calling process operates the queue, and the queue dies when that
@@ -1338,9 +1341,9 @@ controller's
 and the rights of
 .Fa fd ,
 also when the controller is another user.
-A file opened by root keeps set-ID bits on write, may fill the reserved
-blocks and is not held to a quota in the requester's hands; the kernel
-does not prevent that.
+A file opened by root keeps set-ID bits on write and, on ufs, may fill
+the reserved blocks and is not held to a quota in the requester's hands;
+the kernel does not prevent that.
 A controller therefore restricts itself before it answers:
 .Fn dq_open ,
 .Fn dq_attach ,
@@ -1373,16 +1376,18 @@ jail's root, and a
 .Dv DQ_RESOLVE_REAL
 answer built from it names another file for a requester outside the
 jail.
-In capability mode the library cannot read
+The sysctls the library reads,
 .Va kern.dq.max_io ,
 .Va vfs.lookup_cap_dotdot
-or
-.Va vfs.lookup_cap_dotdot_nonlocal
-and assumes their defaults; call
+and
+.Va vfs.lookup_cap_dotdot_nonlocal ,
+are readable in capability mode, and
+.Fn dq_open
+sizes the buffer of
 .Fn dq_dispatch
-once, or create the tree, before
-.Xr cap_enter 2
-if the system changes them.
+from
+.Va kern.dq.max_io
+before the controller restricts itself.
 The order, and what each restriction bounds, is in
 .Xr dq 4 ,
 .Sx The substituted file and the restricted Capability Broker .

@@ -27,11 +27,21 @@
  * Queue
  */
 
+static size_t	dq_dispatch_bufsize(void);
+
 int
 dq_open(void)
 {
+	int q;
 
-	return (open(DQ_DEVICE, O_RDWR | O_CLOEXEC | O_CLOFORK));
+	q = open(DQ_DEVICE, O_RDWR | O_CLOEXEC | O_CLOFORK);
+	/*
+	 * Size dq_dispatch()'s buffer now: a queue is opened before the
+	 * controller restricts itself, and the size is kept for the process.
+	 */
+	if (q != -1)
+		(void)dq_dispatch_bufsize();
+	return (q);
 }
 
 int
@@ -687,7 +697,8 @@ dq_reply_ioctl(int q, uint64_t id, int error, const void *out, size_t len)
 /*
  * The largest record a queue can post is a header, a WRITE body and
  * kern.dq.max_io data bytes; the dispatch buffer is sized once from the
- * sysctl so a single read never answers ENOBUFS.
+ * sysctl so a single read never answers ENOBUFS.  dq_open() fills the cache
+ * first, before any cap_enter(2) (kern.dq.max_io is CTLFLAG_CAPRD as well).
  */
 static size_t
 dq_dispatch_bufsize(void)
