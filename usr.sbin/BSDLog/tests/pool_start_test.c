@@ -20,20 +20,19 @@ int pool_start_daemon_main(void);
 #include "../logcmp.c"
 #undef main
 
-/* Parent wait: longer than any worker deadline exercised below. */
-#define	TEST_BOOTSTRAP_TIMEOUT_MS	60000U
-
 static int audit_error;		/* errno of a failing lookup */
 static int audit_failures;	/* failing lookups before success; -1 never */
 static unsigned audit_delay_ms;	/* time one failing lookup takes */
-static int audit_calls;
+static unsigned storage_delay_ms;	/* time the storage attach takes */
+static _Atomic int *audit_calls;	/* lookups made, seen by the parent */
 
 int
 mock_auditcmp_client_open(struct auditcmp_client **clientp)
 {
+	int call;
 
-	audit_calls++;
-	if (audit_failures < 0 || audit_calls <= audit_failures) {
+	call = atomic_fetch_add(audit_calls, 1) + 1;
+	if (audit_failures < 0 || call <= audit_failures) {
 		if (audit_delay_ms != 0)
 			usleep(audit_delay_ms * 1000);
 		return (errno = audit_error, -1);
@@ -53,6 +52,8 @@ int
 mock_storage_session_activate(struct logcmp_storage_session *session __unused)
 {
 
+	if (storage_delay_ms != 0)
+		usleep(storage_delay_ms * 1000);
 	return (0);
 }
 
@@ -66,8 +67,9 @@ mock_storage_flush(struct logcmp_storage_session *session __unused,
 
 /*
  * Run pool_worker() in a child; return service_bootstrap_parent()'s result
- * (errno in *errorp), then end the worker by closing its control socket and
- * collect its exit status.
+ * (errno in *errorp), waiting as start_pool() does
+ * (LOGCMP_POOL_START_TIMEOUT_MS), then end the worker by closing its control
+ * socket and collect its exit status.
  */
 static int
 run_worker(int *errorp, int *statusp, uint64_t *elapsedp)
@@ -79,6 +81,10 @@ run_worker(int *errorp, int *statusp, uint64_t *elapsedp)
 	uint64_t start;
 	pid_t pid;
 
+	audit_calls = mmap(NULL, sizeof(*audit_calls), PROT_READ | PROT_WRITE,
+	    MAP_ANON | MAP_SHARED, -1, 0);
+	ATF_REQUIRE(audit_calls != MAP_FAILED);
+	atomic_init(audit_calls, 0);
 	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, control));
 	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, store));
 	logcmp_config_default(&config);
@@ -97,7 +103,7 @@ run_worker(int *errorp, int *statusp, uint64_t *elapsedp)
 	}
 	close(control[1]);
 	close(store[1]);
-	rc = service_bootstrap_parent(control[0], TEST_BOOTSTRAP_TIMEOUT_MS);
+	rc = service_bootstrap_parent(control[0], LOGCMP_POOL_START_TIMEOUT_MS);
 	*errorp = rc == -1 ? errno : 0;
 	*elapsedp = service_monotime_ms() - start;
 	close(control[0]);
@@ -148,9 +154,9 @@ ATF_TC_BODY(audit_lookup_deadline, tc)
 	int error, status;
 
 	/*
-	 * Lookups that keep timing out are repeated only for as long as
-	 * switchboard itself lets an activation take (10 s) plus one lookup,
-	 * then the worker reports the timeout.
+	 * Lookups that keep timing out are repeated, but none is started
+	 * that could end after switchboard's activation bound plus one
+	 * lookup; then the worker reports the timeout.
 	 */
 	audit_error = ETIMEDOUT;
 	audit_failures = -1;
@@ -158,8 +164,66 @@ ATF_TC_BODY(audit_lookup_deadline, tc)
 	ATF_CHECK_EQ(-1, run_worker(&error, &status, &elapsed));
 	ATF_CHECK_MSG(error == ETIMEDOUT, "bootstrap error %d (%s)", error,
 	    strerror(error));
-	ATF_CHECK_MSG(elapsed >= 10000 && elapsed < 30000,
+	ATF_CHECK_MSG(elapsed >= LOGCMP_POOL_AUDIT_TIMEOUT_MS -
+	    SERVICE_LOOKUP_TIMEOUT_MS - LOGCMP_POOL_AUDIT_PAUSE_MS &&
+	    elapsed <= LOGCMP_POOL_AUDIT_TIMEOUT_MS + 500,
 	    "worker gave up after %ju ms", (uintmax_t)elapsed);
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 1);
+}
+
+/*
+ * The worst case: the storage attach takes its whole bound, and every Audit
+ * lookup fails only after nearly its own bound.  No attempt may start that
+ * could end after the lookup deadline, and the parent, waiting as long as
+ * start_pool() does, still receives the worker's ETIMEDOUT rather than
+ * timing out itself.
+ */
+ATF_TC(audit_last_attempt_within_deadline);
+ATF_TC_HEAD(audit_last_attempt_within_deadline, tc)
+{
+	atf_tc_set_md_var(tc, "timeout", "120");
+}
+ATF_TC_BODY(audit_last_attempt_within_deadline, tc)
+{
+	uint64_t elapsed;
+	int error, status;
+
+	storage_delay_ms = LOGCMP_STORAGE_TIMEOUT_MS;
+	audit_error = ETIMEDOUT;
+	audit_failures = -1;
+	audit_delay_ms = SERVICE_LOOKUP_TIMEOUT_MS - 100;
+	ATF_CHECK_EQ(-1, run_worker(&error, &status, &elapsed));
+	ATF_CHECK_MSG(error == ETIMEDOUT, "bootstrap error %d (%s)", error,
+	    strerror(error));
+	ATF_CHECK_MSG(elapsed <= LOGCMP_STORAGE_TIMEOUT_MS +
+	    LOGCMP_POOL_AUDIT_TIMEOUT_MS + 500,
+	    "worker reported after %ju ms", (uintmax_t)elapsed);
+	ATF_CHECK_MSG(elapsed < LOGCMP_POOL_START_TIMEOUT_MS,
+	    "the parent's own wait ended first (%ju ms)", (uintmax_t)elapsed);
+	/* The worker reported and exited; it was not killed by the parent. */
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 1);
+}
+
+/* A lookup that times out at once is not repeated in a tight loop. */
+ATF_TC(audit_fast_failures_paced);
+ATF_TC_HEAD(audit_fast_failures_paced, tc)
+{
+	atf_tc_set_md_var(tc, "timeout", "120");
+}
+ATF_TC_BODY(audit_fast_failures_paced, tc)
+{
+	uint64_t elapsed;
+	int error, status;
+
+	audit_error = ETIMEDOUT;
+	audit_failures = -1;
+	audit_delay_ms = 0;
+	ATF_CHECK_EQ(-1, run_worker(&error, &status, &elapsed));
+	ATF_CHECK_MSG(error == ETIMEDOUT, "bootstrap error %d (%s)", error,
+	    strerror(error));
+	ATF_CHECK_MSG(atomic_load(audit_calls) <=
+	    (int)(LOGCMP_POOL_AUDIT_TIMEOUT_MS / LOGCMP_POOL_AUDIT_PAUSE_MS) + 1,
+	    "%d lookups", atomic_load(audit_calls));
 	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 1);
 }
 
@@ -168,5 +232,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, start_error_reaches_parent);
 	ATF_TP_ADD_TC(tp, audit_activation_waited_out);
 	ATF_TP_ADD_TC(tp, audit_lookup_deadline);
+	ATF_TP_ADD_TC(tp, audit_last_attempt_within_deadline);
+	ATF_TP_ADD_TC(tp, audit_fast_failures_paced);
 	return (atf_no_error());
 }

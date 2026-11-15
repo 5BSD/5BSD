@@ -22,10 +22,12 @@ These process titles describe shared roles, not per-client authority.
 Each worker opens its own
 .Dq system.Audit
 session before it confines itself; a lookup that times out while
-switchboard is still activating that provider is repeated for as long as
-switchboard lets an activation take, plus one lookup.
-Pool startup uses a twenty-second status-and-release handshake, and a
-worker that cannot start reports its error through it.
+switchboard is still activating that provider is repeated, with a short
+pause between attempts, but no attempt is started that could end later
+than switchboard's activation bound plus one lookup.
+Pool startup uses a status-and-release handshake whose wait is the sum of
+the storage attach, that lookup bound and a few seconds of slack, so a
+worker that cannot start always reports its own error through it.
 A failed pool is terminated and reaped before startup reports the error.
 The client sends an edge-coalesced wakeup when a shared ring changes from
 empty to nonempty, and the worker drains the burst through
