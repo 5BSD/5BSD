@@ -2558,11 +2558,16 @@ oes_proc_event_exit(void *arg __unused, struct proc *p)
 	if (oes_event_unobserved(false, false, NULL))
 		return;
 
+	/*
+	 * Built under the process lock: oes_pending_init() only tries for it,
+	 * and without it leaves the credential fields zero (uid 0, jail 0),
+	 * so a uid or gid mute would not match.  The parent reaping in
+	 * wait(2) holds the lock often enough for that to be seen.
+	 */
 	PROC_LOCK(p);
 	xexit = p->p_xexit;
-	PROC_UNLOCK(p);
-
 	ep = oes_pending_alloc(OES_EVENT_NOTIFY_EXIT, p);
+	PROC_UNLOCK(p);
 	if (ep == NULL)
 		return;
 
