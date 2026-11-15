@@ -133,8 +133,111 @@ entry_close_body()
 	    "/bin/sh -c 'cat /etc/passwd >/dev/null'" $OES_IDLE_ENTRY no
 }
 
+# The security.mac.fastpath snapshot (see mac_framework.c), saved in fp.txt.
+fp_snapshot()
+{
+	sysctl -n security.mac.fastpath > fp.txt ||
+	    atf_fail "security.mac.fastpath is not readable"
+	awk '/^hook /' fp.txt > fp.hooks
+	awk '/^policy /' fp.txt > fp.policies
+	[ -s fp.hooks ] && [ -s fp.policies ] ||
+	    atf_fail "malformed snapshot: $(cat fp.txt)"
+}
+
+fp_flags()
+{
+	awk '/^flags / { print $2 }' fp.txt
+}
+
+# fp_bit hook: the hook's bit number (its line among the hook lines).
+fp_bit()
+{
+	awk -v h="$1" '$2 == h { print NR - 1; f = 1 } END { exit !f }' \
+	    fp.hooks || atf_fail "no hook $1 in the snapshot"
+}
+
+# fp_policy_field policy field: "inactive", "active" or "implemented".
+fp_policy_field()
+{
+	awk -v p="$1" -v f="$2" '$2 == p {
+		for (i = 3; i < NF; i += 2) if ($i == f) print $(i + 1)
+		found = 1
+	} END { exit !found }' fp.policies || atf_fail "no policy $1"
+}
+
+# fp_check_invariants: flags is the OR of every policy's active set, each
+# count is the number of policies counting that hook, and no policy counts
+# a hook it does not implement.
+fp_check_invariants()
+{
+	local or flags a impl name cnt bit n
+
+	or=0
+	while read -r _ name _ _ _ a _ impl; do
+		or=$((or | a))
+		[ $((a & ~impl)) -eq 0 ] ||
+		    atf_fail "policy $name counts unimplemented hooks: $a/$impl"
+	done < fp.policies
+	flags=$(fp_flags)
+	[ $((flags)) -eq $or ] ||
+	    atf_fail "flags $flags is not the OR of the policies ($(printf \
+	    '0x%016x' $or))"
+	bit=0
+	while read -r _ name _ cnt; do
+		n=0
+		while read -r _ _ _ _ _ a _ _; do
+			[ $(((a >> bit) & 1)) -eq 1 ] && n=$((n + 1))
+		done < fp.policies
+		[ $n -eq $cnt ] ||
+		    atf_fail "hook $name: count $cnt, $n policies count it"
+		[ $(((flags >> bit) & 1)) -eq $((cnt > 0)) ] ||
+		    atf_fail "hook $name: count $cnt, flag $(((flags >> bit) & 1))"
+		bit=$((bit + 1))
+	done < fp.hooks
+}
+
+atf_test_case f1_snapshot_invariants
+f1_snapshot_invariants_head()
+{
+	atf_set descr "F-1: security.mac.fastpath is self-consistent"
+	atf_set require.user root
+}
+f1_snapshot_invariants_body()
+{
+	fp_snapshot
+	cat fp.txt
+	fp_check_invariants
+}
+
+atf_test_case f2_lockless_lookup_export
+f2_lockless_lookup_export_head()
+{
+	atf_set descr "F-2: vfs.cache.param.fast_lookup_active follows the" \
+	    "knob and the lookup and readlink fast-path flags"
+	atf_set require.user root
+}
+f2_lockless_lookup_export_body()
+{
+	local active knob flags lk rl want
+
+	fp_snapshot
+	active=$(sysctl -n vfs.cache.param.fast_lookup_active) ||
+	    atf_fail "vfs.cache.param.fast_lookup_active is not readable"
+	knob=$(sysctl -n vfs.cache.param.fast_lookup)
+	flags=$(fp_flags)
+	lk=$(((flags >> $(fp_bit vnode_check_lookup)) & 1))
+	rl=$(((flags >> $(fp_bit vnode_check_readlink)) & 1))
+	want=0
+	[ "$knob" -eq 1 ] && [ $lk -eq 0 ] && [ $rl -eq 0 ] && want=1
+	echo "knob $knob lookup $lk readlink $rl active $active"
+	[ "$active" -eq $want ] ||
+	    atf_fail "fast_lookup_active $active, expected $want"
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case f1_snapshot_invariants
+	atf_add_test_case f2_lockless_lookup_export
 	atf_add_test_case pin_lookup_walk
 	atf_add_test_case entry_file_read
 	atf_add_test_case entry_pipe_write
