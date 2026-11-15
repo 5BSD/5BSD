@@ -15,6 +15,8 @@
 # fplookup, core dumps).
 #
 
+. "$(atf_get_srcdir)/dq_suites.subr"
+
 dqpass()
 {
 	"$(atf_get_srcdir)/dqpass" "$@"
@@ -22,7 +24,7 @@ dqpass()
 
 require_dq()
 {
-	[ -c /dev/dq ] || atf_skip "/dev/dq is absent"
+	[ -c /dev/dq ] || atf_fail "/dev/dq is absent"
 	[ -x "$(atf_get_srcdir)/dqpass" ] || atf_fail "dqpass is not installed"
 }
 
@@ -88,14 +90,6 @@ commands_body()
 	same_both_ways /bin/sh -c 'cd work && rm -f ns && { nc -lU ns > got & } && i=0 && while [ ! -S ns ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done && echo hi | nc -NU ns && wait && cat got && rm -f ns got'
 }
 
-# kyua's per-case results, normalized: "program:case result", sorted.
-results()
-{
-	kyua report --results-file="$1" \
-	    --results-filter=passed,skipped,xfail,broken,failed 2>/dev/null |
-	    sed -n -e 's/^\([^ ]*:[^ ]*\)  *->  *\([a-z_]*\).*/\1 \2/p' | sort
-}
-
 atf_test_case suites
 suites_head()
 {
@@ -106,7 +100,7 @@ suites_head()
 }
 suites_body()
 {
-	local suite kf expected tagged
+	local suite kf expected tagged nsuites rc
 
 	require_dq
 	# The fixture without its comments and blank lines (an empty pattern
@@ -122,20 +116,29 @@ suites_body()
 		atf_fail "dqpass.expected has an entry without a" \
 		    "\"# owner: cause\" tag"
 	fi
-	sed -e 's/[[:space:]]*#.*$//' -e '/^[[:space:]]*$/d' \
-	    "$(atf_get_srcdir)/dqpass.expected" > "${expected}"
+	dq_patterns "${expected}" "$(atf_get_srcdir)/dqpass.expected"
 	: ${DQ_ORACLE_SUITES:="sys/file sys/kern/execve sys/dq_regress"}
+	nsuites=0
 	for suite in ${DQ_ORACLE_SUITES}; do
 		kf="/usr/tests/${suite}/Kyuafile"
-		if [ ! -f "${kf}" ]; then
-			echo "suite ${suite} not installed: skipped" >&2
-			continue
+		# A suite that is not there compared nothing: not a pass.
+		[ -f "${kf}" ] || atf_fail "suite ${suite} is not installed"
+		dq_kyua_test plain.db "${kf}" || true
+		rc=0
+		dq_kyua_test pass.db "${kf}" dqpass -o pass.report || rc=$?
+		if [ "${rc}" -eq 125 ]; then
+			cat pass.report >&2
+			atf_fail "${suite}: dqpass saw a dropped, failed-closed" \
+			    "or unmarked consultation"
 		fi
-		kyua test --results-file="plain.db" -k "${kf}" >/dev/null 2>&1
-		dqpass -o "pass.report" kyua test --results-file="pass.db" \
-		    -k "${kf}" >/dev/null 2>&1
-		results plain.db | grep -v -E -f "${expected}" > plain.res
-		results pass.db | grep -v -E -f "${expected}" > pass.res
+		[ -s pass.report ] || atf_fail "${suite}: dqpass wrote no report"
+		dq_results plain.db plain.all
+		dq_results pass.db pass.all
+		echo "=== ${suite}: cases dqpass.expected excludes" >&2
+		dq_excluded "${expected}" plain.all pass.all
+		grep -v -E -f "${expected}" plain.all > plain.res
+		grep -v -E -f "${expected}" pass.all > pass.res
+		[ -s plain.res ] || atf_fail "${suite}: every case is excluded"
 		if ! diff -u plain.res pass.res >&2; then
 			cat pass.report >&2
 			# The attached run's output of each case that differs.
@@ -149,8 +152,11 @@ suites_body()
 			cat pass.report >&2
 			atf_fail "${suite}: unmarked user-space lookups (ledger failure)"
 		fi
-		rm -f plain.db pass.db plain.res pass.res pass.report
+		rm -f plain.db pass.db plain.res pass.res pass.report plain.all* \
+		    pass.all*
+		nsuites=$((nsuites + 1))
 	done
+	[ "${nsuites}" -gt 0 ] || atf_fail "no suite was compared"
 }
 
 atf_init_test_cases()

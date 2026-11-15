@@ -130,6 +130,8 @@ LIBADD.dqpass=	dq
 MAN.dqpass=
 BINDIR.dqpass=	${TESTSDIR}
 ${PACKAGE}FILES+=	dqpass.expected
+# The shell functions dq_oracle_test and dq_tree_suites_test share.
+${PACKAGE}FILES+=	dq_suites.subr
 
 # The served-root controller the suites oracle runs kyua under, and the
 # differences from chroot(8) it expects (stage 1c-iii-c).

@@ -1,0 +1,100 @@
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Shared by dq_oracle_test and dq_tree_suites_test, which run kyua suites
+# twice and compare the per-case results apart from the expected
+# differences (dqpass.expected, dqtree.expected).  A comparison must have
+# compared something: every function here fails rather than let an empty
+# or missing result pass.
+#
+
+# kyua test, whose status must be 0 (all passed) or 1 (some did not):
+# anything else is kyua failing, and its results cannot be trusted.  A
+# prefix command (dqpass, dqtree) may instead exit 125: the suite ran, but
+# the controller saw a dropped, failed-closed or unmarked consultation or
+# a malformed reply.  Returns the status: 0, 1 or 125.
+# usage: dq_kyua_test RESULTS_FILE KYUAFILE [prefix command ...]
+dq_kyua_test()
+{
+	local db kf rc
+
+	db="$1"; kf="$2"; shift 2
+	"$@" kyua test --results-file="${db}" -k "${kf}" >/dev/null 2>&1
+	rc=$?
+	case "${rc}" in
+	0|1)	;;
+	125)	[ $# -gt 0 ] ||
+		    atf_fail "kyua test of ${kf} exited ${rc}" ;;
+	*)	atf_fail "kyua test of ${kf}${1:+ under $1} exited ${rc}" ;;
+	esac
+	return "${rc}"
+}
+
+# kyua's per-case results of a results file, normalized and sorted:
+# "program:case result".  Fails when kyua report fails or finds no case.
+# usage: dq_results RESULTS_FILE OUT
+dq_results()
+{
+
+	kyua report --results-file="$1" \
+	    --results-filter=passed,skipped,xfail,broken,failed \
+	    > "$2.kyua" 2> "$2.err" ||
+	    atf_fail "kyua report $1: $(cat "$2.err")"
+	sed -n -e 's/^\([^ ]*:[^ ]*\)  *->  *\([a-z_]*\).*/\1 \2/p' \
+	    "$2.kyua" | sort > "$2"
+	[ -s "$2" ] || atf_fail "kyua report $1: no case results"
+}
+
+# Check an expected-differences file: every entry is anchored to one
+# program and case ("^program:case[[:space:]]", the case part may be an
+# alternation) and carries an owner tag ("# owner: cause").  An unanchored
+# word excludes every case whose name merely contains it, and hides real
+# differences in them.
+# usage: dq_check_expected FILE...
+dq_check_expected()
+{
+	local bad
+
+	bad=$(grep -h -v -E '^[[:space:]]*(#|$)' "$@" | awk '
+	{
+		line = $0
+		i = index(line, "#")
+		p = i > 0 ? substr(line, 1, i - 1) : line
+		sub(/[[:space:]]+$/, "", p)
+		if (i == 0 || substr(line, i + 1) !~ /^[[:space:]]*[^[:space:]:]+[^:]*:/)
+			print "untagged: " line
+		else if (p !~ /^\^[A-Za-z0-9_]+:[^[:space:]]+\[\[:space:\]\]/)
+			print "unanchored: " p
+	}')
+	[ -z "${bad}" ] || {
+		printf '%s\n' "${bad}" >&2
+		atf_fail "expected differences must be \"^program:case[[:space:]]" \
+		    "# owner: cause\""
+	}
+}
+
+# The patterns of expected-differences files, without comments.
+# usage: dq_patterns OUT FILE...
+dq_patterns()
+{
+	local out
+
+	out="$1"; shift
+	sed -e 's/[[:space:]]*#.*$//' -e '/^[[:space:]]*$/d' "$@" > "${out}"
+	[ -s "${out}" ] || atf_fail "no expected-difference patterns"
+}
+
+# Report, for the record, the cases the patterns excluded and how each
+# run ended: an excluded case whose results agree hides nothing, one that
+# differs is the expected difference.
+# usage: dq_excluded PATTERNS A B
+dq_excluded()
+{
+
+	cat "$2" "$3" | grep -E -f "$1" | cut -d ' ' -f 1 | sort -u |
+	    while read -r c; do
+		printf 'excluded %s: %s / %s\n' "${c}" \
+		    "$(grep "^${c} " "$2" | cut -d ' ' -f 2)" \
+		    "$(grep "^${c} " "$3" | cut -d ' ' -f 2)"
+	done >&2
+}

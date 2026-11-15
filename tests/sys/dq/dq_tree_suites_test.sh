@@ -15,16 +15,11 @@
 # results are printed beside them for reference.
 #
 
+. "$(atf_get_srcdir)/dq_suites.subr"
+
 dqtree()
 {
 	"$(atf_get_srcdir)/dqtree" "$@"
-}
-
-results()
-{
-	kyua report --results-file="$1" \
-	    --results-filter=passed,skipped,xfail,broken,failed 2>/dev/null |
-	    sed -n -e 's/^\([^ ]*:[^ ]*\)  *->  *\([a-z_]*\).*/\1 \2/p' | sort
 }
 
 # The fixtures' patterns, one per line, with each line's owner tag: the
@@ -135,15 +130,15 @@ suites_head()
 }
 suites_body()
 {
-	local root suite kf expected env failed sampler stalled
+	local root suite kf expected env failed sampler stalled nsuites rc
 
-	[ -c /dev/dq ] || atf_skip "/dev/dq is absent"
+	[ -c /dev/dq ] || atf_fail "/dev/dq is absent"
 	[ -x "$(atf_get_srcdir)/dqtree" ] || atf_fail "dqtree is not installed"
 	if [ -n "${DQ_TREE_ROOT}" ]; then
 		root="${DQ_TREE_ROOT}"
 	else
 		root="/usr/obj/dqtree-root.$$"
-		assemble "${root}" || atf_skip "cannot assemble ${root}"
+		assemble "${root}" || atf_fail "cannot assemble ${root}"
 	fi
 	expected=patterns
 	tagged_patterns "$(atf_get_srcdir)/dqtree.expected" \
@@ -160,32 +155,41 @@ suites_body()
 	failed=
 	env="env -i HOME=/tmp PATH=/bin:/sbin:/usr/bin:/usr/sbin TMPDIR=/tmp"
 	: ${DQ_TREE_SUITES:="sys/file lib/libc/gen bin/ls usr.bin/find"}
+	nsuites=0
 	for suite in ${DQ_TREE_SUITES}; do
 		kf="/usr/tests/${suite}/Kyuafile"
-		if [ ! -f "${root}${kf}" ]; then
-			echo "suite ${suite} not in ${root}: skipped" >&2
-			continue
-		fi
+		# A suite that is not there compared nothing: not a pass.
+		[ -f "${root}${kf}" ] ||
+		    atf_fail "suite ${suite} is not in ${root}"
 		rm -f "${root}/tmp/chroot.db" "${root}/tmp/tree.db"
-		${env} chroot "${root}" kyua test \
-		    --results-file=/tmp/chroot.db -k "${kf}" >/dev/null 2>&1
+		dq_kyua_test /tmp/chroot.db "${kf}" ${env} chroot "${root}" ||
+		    true
 		: > stalls
 		stalled=
 		stall_sampler stalls &
 		sampler=$!
-		${env} "$(atf_get_srcdir)/dqtree" -o tree.report "${root}" \
-		    kyua test --results-file=/tmp/tree.db -k "${kf}" \
-		    >/dev/null 2>&1
+		rc=0
+		dq_kyua_test /tmp/tree.db "${kf}" ${env} \
+		    "$(atf_get_srcdir)/dqtree" -o tree.report "${root}" || rc=$?
+		if [ "${rc}" -eq 125 ]; then
+			fail_later "${suite}: dqtree saw a dropped, failed-closed" \
+			    "or unmarked consultation or a malformed reply"
+		fi
 		kill "${sampler}" 2>/dev/null
 		wait "${sampler}" 2>/dev/null
-		kyua test --results-file=plain.db -k "${kf}" >/dev/null 2>&1
-		results "${root}/tmp/chroot.db" > chroot.all
-		results "${root}/tmp/tree.db" > tree.all
+		[ -s tree.report ] || atf_fail "${suite}: dqtree wrote no report"
+		dq_kyua_test plain.db "${kf}" || true
+		dq_results "${root}/tmp/chroot.db" chroot.all
+		dq_results "${root}/tmp/tree.db" tree.all
+		echo "=== ${suite}: cases the expected differences exclude" >&2
+		dq_excluded "${expected}" chroot.all tree.all
 		grep -v -E -f "${expected}" chroot.all > chroot.res
 		grep -v -E -f "${expected}" tree.all > tree.res
+		[ -s chroot.res ] || atf_fail "${suite}: every case is excluded"
 		echo "=== ${suite}: expected differences by owner" >&2
 		count_by_tag chroot.all tree.all tags >&2
-		results plain.db | grep -v -E -f "${expected}" > plain.res
+		dq_results plain.db plain.all
+		grep -v -E -f "${expected}" plain.all > plain.res
 		echo "=== ${suite}: unattached vs chroot (reference)" >&2
 		diff -u plain.res chroot.res >&2 || true
 		cat tree.report >&2
@@ -216,13 +220,15 @@ suites_body()
 		grep -q 'objects 0$' tree.report ||
 		    fail_later "${suite}: served objects left live"
 		rm -f plain.db chroot.res tree.res plain.res tree.report \
-		    chroot.all tree.all stalls
+		    chroot.all* tree.all* plain.all* stalls
+		nsuites=$((nsuites + 1))
 	done
+	[ "${nsuites}" -gt 0 ] || atf_fail "no suite was compared"
 	[ -z "${failed}" ] || atf_fail "${failed}"
 }
 suites_cleanup()
 {
-	local m
+	local m r
 
 	if [ -f mounts ]; then
 		sort -r mounts | while read -r m; do
@@ -230,7 +236,16 @@ suites_cleanup()
 		done
 	fi
 	if [ -f root.made ]; then
-		rm -rf "$(cat root.made)" 2>/dev/null
+		r="$(cat root.made)"
+		# Never remove through a mount that is still there: the
+		# read-only views are of the system's own /bin, /usr and /etc.
+		if mount -p | awk -v r="${r}" '
+		    $2 == r || index($2, r "/") == 1 { found = 1 }
+		    END { exit !found }'; then
+			echo "${r}: still mounted, left in place" >&2
+		else
+			rm -rf "${r}" 2>/dev/null
+		fi
 	fi
 	return 0
 }
