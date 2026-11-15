@@ -145,6 +145,31 @@ providers with 36 locations each. Captured reports and output hashes verify.
 See CAPABILITY-FIDL-CROSS-QUALIFICATION.md. No additional component campaign is
 started; the consolidated inventory and complete endpoints determine next work.
 
+### Execution-host and ARM64 image boundaries confirmed by source review
+
+The current SDK adapter treats AMD64 as the native execution host:
+`libmd-stage-tools.py` rejects a separate execution SDK for an AMD64 target and
+requires an AMD64 execution receipt for foreign targets; `userland_sdk.py`
+validates that same assumption. `source_graph.py` classifies every non-AMD64
+target as foreign, and `tools/build/fuchsia/fidlc/BUILD.bazel` restricts the
+build-only compiler to AMD64. Thus current ARM64 evidence describes cross builds
+from AMD64, not an ARM64-hosted build or self-bootstrap. Keep those existing
+cross-build results; do not remove checks or mark foreign binaries executable
+to manufacture native-host coverage.
+
+Gate 3/6 must represent the actual execution CPU/SDK separately from the target,
+carry that distinction through generators, C/C++ runtime/toolchain selection and
+test adapters, and qualify ARM64-hosted execution. The normal frontend and SDK
+receipt path must carry it; a private ARM64 wrapper is insufficient. Target and
+execution OS/runtime compatibility also needs explicit review when the source
+and running host differ, even with the same CPU.
+
+The existing whole-pkgbase image builder `pkg_image.py` additionally requires
+BIOS/ZFS policy. Its AMD64 VM evidence cannot qualify ARM64 boot. The maintained
+ARM64 EFI image/VM path remains required within Tier 1 completion. This records
+existing implementation boundaries; it adds no architecture, BIP or authority
+scope and changes no running build inputs.
+
 ## Current gate ledger (2026-11-15)
 
 All six gates remain open. Update this ledger when evidence changes; dated
@@ -159,7 +184,7 @@ is not authorized.
 | 3. Bootstrap/dependencies/cache/sandbox | Narrow target/execution compiler roles and actual ABI tests pass. Public target-configuration queries resolve alias ambiguity without ignoring duplicates. Actual configured queries now collapse ordinary/NOSSP consumers to one normal host DTrace bootstrap, preserving all 13 selected ARM64 outputs byte-for-byte. Earlier AMD64 R11 and ARM64 R7 snapshots verified all 8,345/16,682 files and actual target/execution ELF roles before the dev header merge; their current source bindings are stale. Fresh AMD64 R12 and ARM64 R8 materializations pass with direct copy bindings; the fresh AMD64 SDK/loader run passes four selected targets (39 Python checks plus one host ATF case), with hash-verified reports and 82 captured files; the fresh ARM64 run also passes three host-artifact targets (39 Python checks) and captures 75 files. Earlier native R3 runs both host-test scripts (25 cases) and preserves all ten startup objects per architecture against independent Make contracts. These are Make-built seeds; independent native bootstrap, copied-payload/source mutation checks, complete invalidation/reproducibility and filesystem isolation remain required. |
 | 4. Resources/performance | A source-owned reaper supervisor now accounts complete private-server descendant CPU/block operations and sampled aggregate RSS; seven real process regressions and maintained AMD64 qualification pass. Normal frontend timings explicitly identify their client-only scope. This qualifies instrumentation, not performance. Command/QEMU observations exist, including R2 staying below its 4 GiB process-RSS and 8 GiB overlay budgets. Controlled clean/incremental CPU, aggregate RAM, disk I/O and retained-footprint comparisons remain required. Full R15 uses an explicit 32 GiB qualification-cache budget; this is not a production default or a performance result. |
 | 5. Production frontend/publication | Maintained format-5 qualification works; Make stays the normal backend. Qualified Bazel world/kernel/pkgbase integration, Make ports coverage, separate hardware identity checks and verified combined publication under /usr/obj/usr/src/repo remain required. |
-| 6. ARM64 Tier 1 | Selected libc/CSU/loader, C++/math, portable and capability libraries, locale data, /bin and module-tool contracts pass; detailed dated evidence follows. All 29 FIDL IR consumers now build with the correct execution ABI. The 462 emulated math bodies match Make outcomes (448 passed, 13 expected failures, one skip). Complete ARM64 world/kernel/modules/pkgbase/configuration and VM/runtime qualification remain open. Incompatible configured ancestors are not a remaining-program count. RISC-V stays nonblocking Tier 2. |
+| 6. ARM64 Tier 1 | Current build-host/SDK/FIDL support remains AMD64-only; ARM64 self-hosting and a maintained EFI whole-system image/VM path remain open. Selected libc/CSU/loader, C++/math, portable and capability libraries, locale data, /bin and module-tool contracts pass; detailed dated evidence follows. All 29 FIDL IR consumers now build with the correct execution ABI. The 462 emulated math bodies match Make outcomes (448 passed, 13 expected failures, one skip). Complete ARM64 world/kernel/modules/pkgbase/configuration and VM/runtime qualification remain open. Incompatible configured ancestors are not a remaining-program count. RISC-V stays nonblocking Tier 2. |
 
 Latest full capture: /usr/obj/usr/src/bazel-closeout-system-native-r15-20261114.
 Runtime failure: /usr/obj/usr/src/bazel-current-upgrade-vm-r2-20261114/result.json.
