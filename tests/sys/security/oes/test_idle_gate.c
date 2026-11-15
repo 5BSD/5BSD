@@ -19,7 +19,7 @@
 #include "test_idle_common.h"
 
 #ifndef OES_IDLE_LEVEL
-#define	OES_IDLE_LEVEL	1
+#define	OES_IDLE_LEVEL	2
 #endif
 
 #define	GATE_MAX	128

@@ -2429,6 +2429,8 @@ oes_proc_event_fork(void *arg __unused, struct proc *p1,
 {
 	struct oes_pending *ep;
 
+	OES_GATE_VOID(OES_H_EV_FORK);
+
 	if (!oes_softc.sc_active)
 		return;
 	if (oes_event_unobserved(false, false, NULL))
@@ -2465,10 +2467,13 @@ oes_proc_event_exit(void *arg __unused, struct proc *p)
 	struct oes_pending *ep;
 	int xexit;
 
+	/* Snapshots of the exiting process go even while nobody listens. */
+	if (atomic_load_acq_int(&oes_rename_cache_populated) != 0)
+		oes_rename_cache_purge_pid(p->p_pid);
+	OES_GATE_VOID(OES_H_EV_EXIT);
+
 	if (!oes_softc.sc_active)
 		return;
-
-	oes_rename_cache_purge_pid(p->p_pid);
 
 	if (oes_event_unobserved(false, false, NULL))
 		return;
@@ -2498,6 +2503,8 @@ oes_vfs_event_mounted(void *arg __unused, struct mount *mp,
 	struct ucred *cred;
 	struct proc *p;
 	struct statfs *sp;
+
+	OES_GATE_VOID(OES_H_EV_MOUNTED);
 
 	if (!oes_softc.sc_active)
 		return;
@@ -2558,6 +2565,8 @@ oes_vfs_event_unmounted(void *arg __unused, struct mount *mp,
 	struct proc *p;
 	struct statfs *sp;
 
+	OES_GATE_VOID(OES_H_EV_UNMOUNTED);
+
 	if (!oes_softc.sc_active)
 		return;
 	if (td == NULL || td->td_proc == NULL)
@@ -2614,6 +2623,8 @@ oes_kld_event_unload(void *arg __unused, const char *name, caddr_t addr __unused
 	struct oes_pending *ep;
 	struct ucred *cred;
 	struct proc *p;
+
+	OES_GATE_VOID(OES_H_EV_KLDUNLOAD);
 
 	if (!oes_softc.sc_active)
 		return;
@@ -4003,6 +4014,9 @@ oes_mac_vnode_check_exec(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, struct image_params *imgp,
     struct label *execlabel)
 {
+
+	OES_GATE(OES_H_VNODE_CHECK_EXEC);
+
 	return (oes_generate_exec_event(cred, vp, imgp));
 }
 
@@ -4013,7 +4027,10 @@ static int
 oes_mac_vnode_check_open(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, accmode_t accmode)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_OPEN);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.accmode = accmode;
@@ -4029,7 +4046,10 @@ static int
 oes_mac_vnode_check_close(struct ucred *cred, struct vnode *vp,
     struct label *vplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_CLOSE);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 
@@ -4052,6 +4072,8 @@ oes_mac_file_check_read(struct ucred *active_cred, struct ucred *file_cred,
 {
 	struct oes_vnode_event_info info;
 
+	OES_GATE(OES_H_FILE_CHECK_READ);
+
 	if (fp->f_type != DTYPE_DQ)
 		return (0);
 	info = OES_VNODE_INFO_INIT(active_cred);
@@ -4066,6 +4088,8 @@ oes_mac_file_check_stat(struct ucred *active_cred, struct ucred *file_cred,
 {
 	struct oes_vnode_event_info info;
 
+	OES_GATE(OES_H_FILE_CHECK_STAT);
+
 	if (fp->f_type != DTYPE_DQ)
 		return (0);
 	info = OES_VNODE_INFO_INIT(active_cred);
@@ -4078,6 +4102,8 @@ static void
 oes_mac_file_notify_close(struct ucred *cred, struct file *fp, int fd)
 {
 	struct oes_vnode_event_info info;
+
+	OES_GATE_VOID(OES_H_FILE_NOTIFY_CLOSE);
 
 	if (fp->f_type != DTYPE_DQ)
 		return;
@@ -4097,6 +4123,8 @@ oes_mac_file_notify_reply(struct ucred *controller, struct file *fp, int op,
     int error, size_t count)
 {
 	struct oes_vnode_event_info info;
+
+	OES_GATE_VOID(OES_H_FILE_NOTIFY_REPLY);
 
 	if (fp->f_type != DTYPE_DQ)
 		return;
@@ -4122,6 +4150,8 @@ oes_mac_file_check_write(struct ucred *active_cred, struct ucred *file_cred,
 {
 	struct oes_vnode_event_info info;
 
+	OES_GATE(OES_H_FILE_CHECK_WRITE);
+
 	if (fp->f_type != DTYPE_DQ)
 		return (0);
 	info = OES_VNODE_INFO_INIT(active_cred);
@@ -4135,6 +4165,8 @@ oes_mac_file_check_setattr(struct ucred *cred, struct file *fp, int fd,
     struct vattr *vap)
 {
 	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_FILE_CHECK_SETATTR);
 
 	if (fp->f_type != DTYPE_DQ)
 		return (0);
@@ -4150,6 +4182,8 @@ oes_mac_file_check_fsync(struct ucred *cred, struct file *fp)
 {
 	struct oes_vnode_event_info info;
 
+	OES_GATE(OES_H_FILE_CHECK_FSYNC);
+
 	if (fp->f_type != DTYPE_DQ)
 		return (0);
 	info = OES_VNODE_INFO_INIT(cred);
@@ -4163,6 +4197,8 @@ oes_mac_file_check_lock(struct ucred *cred, struct file *fp, int fd, int op,
     struct flock *fl)
 {
 	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_FILE_CHECK_LOCK);
 
 	if (fp->f_type != DTYPE_DQ)
 		return (0);
@@ -4180,6 +4216,8 @@ oes_mac_file_check_ioctl(struct ucred *cred, struct file *fp, int fd,
 {
 	struct oes_vnode_event_info info;
 
+	OES_GATE(OES_H_FILE_CHECK_IOCTL);
+
 	if (fp->f_type != DTYPE_DQ)
 		return (0);
 	info = OES_VNODE_INFO_INIT(cred);
@@ -4194,6 +4232,8 @@ oes_mac_file_check_mmap(struct ucred *cred, struct file *fp, int fd, int prot,
     int flags, vm_offset_t addr, vm_size_t size)
 {
 	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_FILE_CHECK_MMAP);
 
 	if (fp->f_type != DTYPE_DQ)
 		return (0);
@@ -4214,7 +4254,10 @@ static int
 oes_mac_vnode_check_create(struct ucred *cred, struct vnode *dvp,
     struct label *dvplabel, struct componentname *cnp, struct vattr *vap)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_CREATE);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.dvp = dvp;
 	info.cnp = cnp;
@@ -4231,7 +4274,10 @@ oes_mac_vnode_check_unlink(struct ucred *cred, struct vnode *dvp,
     struct label *dvplabel, struct vnode *vp, struct label *vplabel,
     struct componentname *cnp)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_UNLINK);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.dvp = dvp;
@@ -4248,12 +4294,25 @@ oes_mac_vnode_check_rename_from(struct ucred *cred, struct vnode *dvp,
     struct label *dvplabel, struct vnode *vp, struct label *vplabel,
     struct componentname *cnp)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+	struct oes_rename_ctx *ctx;
 
+	/*
+	 * Idle: as with no client, discard an aborted rename's snapshot so a
+	 * later rename of this thread cannot take it for its own (one load
+	 * when there is none).
+	 */
+	if (__predict_true(!OES_HOOK_LIVE(OES_H_VNODE_CHECK_RENAME_FROM))) {
+		ctx = oes_rename_cache_take(curthread);
+		if (ctx != NULL)
+			free(ctx, M_OES);
+		return (0);
+	}
+	counter_u64_add(oes_softc.sc_gate_passes, 1);
+	info = OES_VNODE_INFO_INIT(cred);
 	info.vp = vp;
 	info.dvp = dvp;
 	info.cnp = cnp;
-
 
 	return (oes_rename_cache_store(curthread, &info));
 }
@@ -4268,14 +4327,22 @@ oes_mac_vnode_check_rename_to(struct ucred *cred, struct vnode *dvp,
 {
 	int error;
 	struct oes_rename_ctx *ctx;
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
 
+	(void)samedir;
+	/* Idle: consume this thread's snapshot, if any, as with no client. */
+	if (__predict_true(!OES_HOOK_LIVE(OES_H_VNODE_CHECK_RENAME_TO))) {
+		ctx = oes_rename_cache_take(curthread);
+		if (ctx != NULL)
+			free(ctx, M_OES);
+		return (0);
+	}
+	counter_u64_add(oes_softc.sc_gate_passes, 1);
+	info = OES_VNODE_INFO_INIT(cred);
 	info.vp = vp;
 	info.dvp = dvp;
 	info.cnp = cnp;
 
-
-	(void)samedir;
 	ctx = oes_rename_cache_take(curthread);
 	info.rename_ctx = ctx;
 	if (ctx == NULL) {
@@ -4297,7 +4364,10 @@ oes_mac_vnode_check_link(struct ucred *cred, struct vnode *dvp,
     struct label *dvplabel, struct vnode *vp, struct label *vplabel,
     struct componentname *cnp)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_LINK);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.dvp = dvp;
@@ -4313,7 +4383,10 @@ static int
 oes_mac_vnode_check_access(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, accmode_t accmode)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_ACCESS);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.accmode = accmode;
@@ -4328,7 +4401,10 @@ static int
 oes_mac_vnode_check_read(struct ucred *active_cred, struct ucred *file_cred,
     struct vnode *vp, struct label *vplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(active_cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_READ);
+	info = OES_VNODE_INFO_INIT(active_cred);
 
 	info.vp = vp;
 
@@ -4342,7 +4418,10 @@ static int
 oes_mac_vnode_check_write(struct ucred *active_cred, struct ucred *file_cred,
     struct vnode *vp, struct label *vplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(active_cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_WRITE);
+	info = OES_VNODE_INFO_INIT(active_cred);
 
 	info.vp = vp;
 
@@ -4354,8 +4433,11 @@ static int
 oes_mac_vnode_check_truncate(struct ucred *cred, struct vnode *vp,
     struct label *vplabel)
 {
-	oes_file_token_t token = { 0 };
+	oes_file_token_t token;
 	struct vattr va;
+
+	OES_GATE(OES_H_VNODE_CHECK_TRUNCATE);
+	memset(&token, 0, sizeof(token));
 
 	(void)vplabel;
 	if (!oes_softc.sc_active ||
@@ -4379,7 +4461,10 @@ static int
 oes_mac_vnode_check_stat(struct ucred *active_cred, struct ucred *file_cred,
     struct vnode *vp, struct label *vplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(active_cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_STAT);
+	info = OES_VNODE_INFO_INIT(active_cred);
 
 	info.vp = vp;
 
@@ -4393,7 +4478,10 @@ static int
 oes_mac_vnode_check_poll(struct ucred *active_cred, struct ucred *file_cred,
     struct vnode *vp, struct label *vplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(active_cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_POLL);
+	info = OES_VNODE_INFO_INIT(active_cred);
 
 	info.vp = vp;
 
@@ -4407,7 +4495,10 @@ static int
 oes_mac_vnode_check_readdir(struct ucred *cred, struct vnode *dvp,
     struct label *dvplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_READDIR);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.dvp = dvp;
 
@@ -4421,7 +4512,10 @@ static int
 oes_mac_vnode_check_readlink(struct ucred *cred, struct vnode *vp,
     struct label *vplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_READLINK);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 
@@ -4435,7 +4529,10 @@ static int
 oes_mac_vnode_check_revoke(struct ucred *cred, struct vnode *vp,
     struct label *vplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_REVOKE);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 
@@ -4449,7 +4546,10 @@ static int
 oes_mac_vnode_check_lookup(struct ucred *cred, struct vnode *dvp,
     struct label *dvplabel, struct componentname *cnp)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_LOOKUP);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.dvp = dvp;
 	info.cnp = cnp;
@@ -4464,7 +4564,10 @@ static int
 oes_mac_vnode_check_setmode(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, mode_t mode)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_SETMODE);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.mode = mode;
@@ -4479,7 +4582,10 @@ static int
 oes_mac_vnode_check_setowner(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, uid_t uid, gid_t gid)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_SETOWNER);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.owner_uid = uid;
@@ -4495,7 +4601,10 @@ static int
 oes_mac_vnode_check_setflags(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, u_long flags)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_SETFLAGS);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.fflags = flags;
@@ -4510,7 +4619,10 @@ static int
 oes_mac_vnode_check_setutimes(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, struct timespec atime, struct timespec mtime)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_SETUTIMES);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.atime = atime;
@@ -4526,7 +4638,10 @@ static int
 oes_mac_vnode_check_chdir(struct ucred *cred, struct vnode *dvp,
     struct label *dvplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_CHDIR);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.dvp = dvp;
 
@@ -4540,7 +4655,10 @@ static int
 oes_mac_vnode_check_chroot(struct ucred *cred, struct vnode *dvp,
     struct label *dvplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_CHROOT);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.dvp = dvp;
 
@@ -4554,7 +4672,10 @@ static int
 oes_mac_vnode_check_mmap(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, int prot, int flags, int maxprot __unused)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_MMAP);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.prot = prot;
@@ -4585,10 +4706,13 @@ static int
 oes_mac_proc_check_mprotect(struct ucred *cred, vm_offset_t addr,
     vm_size_t size __unused, int prot)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
 	struct proc *p = curthread->td_proc;
 	struct vnode *vp;
 	int error;
+
+	OES_GATE(OES_H_PROC_CHECK_MPROTECT);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	/*
 	 * Decide that nobody can observe this before the map lookup and the
@@ -4622,7 +4746,10 @@ static int
 oes_mac_vnode_check_setextattr(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, int attrnamespace, const char *name)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_SETEXTATTR);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.attrnamespace = attrnamespace;
@@ -4638,7 +4765,10 @@ static int
 oes_mac_vnode_check_getextattr(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, int attrnamespace, const char *name)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_GETEXTATTR);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.attrnamespace = attrnamespace;
@@ -4654,7 +4784,10 @@ static int
 oes_mac_vnode_check_deleteextattr(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, int attrnamespace, const char *name)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_DELETEEXTATTR);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.attrnamespace = attrnamespace;
@@ -4670,7 +4803,10 @@ static int
 oes_mac_vnode_check_listextattr(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, int attrnamespace)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_LISTEXTATTR);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.attrnamespace = attrnamespace;
@@ -4685,7 +4821,10 @@ static int
 oes_mac_vnode_check_getacl(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, acl_type_t type)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_GETACL);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.acl_type = type;
@@ -4700,7 +4839,10 @@ static int
 oes_mac_vnode_check_setacl(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, acl_type_t type, struct acl *acl)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_SETACL);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.acl_type = type;
@@ -4717,7 +4859,10 @@ static int
 oes_mac_vnode_check_deleteacl(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, acl_type_t type)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_DELETEACL);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.acl_type = type;
@@ -4732,7 +4877,10 @@ static int
 oes_mac_vnode_check_relabel(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, struct label *newlabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_RELABEL);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 
@@ -4748,7 +4896,10 @@ static int
 oes_mac_kld_check_load(struct ucred *cred, struct vnode *vp,
     struct label *vplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_KLD_CHECK_LOAD);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 
@@ -4763,6 +4914,8 @@ oes_mac_proc_check_signal(struct ucred *cred, struct proc *p, int signum)
 {
 	struct oes_pending *ep;
 	struct proc *curp = curthread->td_proc;
+
+	OES_GATE(OES_H_PROC_CHECK_SIGNAL);
 
 	/*
 	 * The caller can hold the target's PROC_LOCK.  Even M_NOWAIT
@@ -4812,6 +4965,8 @@ oes_mac_cred_check_setuid(struct ucred *cred, uid_t uid)
 	struct oes_pending *ep;
 	struct proc *curp = curthread->td_proc;
 
+	OES_GATE(OES_H_CRED_CHECK_SETUID);
+
 	if (!oes_softc.sc_active ||
 	    atomic_load_acq_int(&oes_softc.sc_nclients) == 0)
 		return (0);
@@ -4836,6 +4991,8 @@ oes_mac_cred_check_setgid(struct ucred *cred, gid_t gid)
 {
 	struct oes_pending *ep;
 	struct proc *curp = curthread->td_proc;
+
+	OES_GATE(OES_H_CRED_CHECK_SETGID);
 
 	if (!oes_softc.sc_active ||
 	    atomic_load_acq_int(&oes_softc.sc_nclients) == 0)
@@ -4865,6 +5022,8 @@ oes_mac_proc_check_debug(struct ucred *cred, struct proc *p)
 {
 	struct oes_pending *ep;
 	struct proc *curp = curthread->td_proc;
+
+	OES_GATE(OES_H_PROC_CHECK_DEBUG);
 
 	if (!oes_softc.sc_active ||
 	    atomic_load_acq_int(&oes_softc.sc_nclients) == 0)
@@ -4982,7 +5141,11 @@ static int
 oes_mac_socket_check_connect(struct ucred *cred, struct socket *so,
     struct label *solabel, struct sockaddr *sa)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_SOCKET_CHECK_CONNECT);
+	info = OES_VNODE_INFO_INIT(cred);
+
 	(void)solabel;
 
 	info.socket = so;
@@ -5000,7 +5163,11 @@ static int
 oes_mac_socket_check_bind(struct ucred *cred, struct socket *so,
     struct label *solabel, struct sockaddr *sa)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_SOCKET_CHECK_BIND);
+	info = OES_VNODE_INFO_INIT(cred);
+
 	(void)solabel;
 
 	info.socket = so;
@@ -5018,7 +5185,11 @@ static int
 oes_mac_socket_check_listen(struct ucred *cred, struct socket *so,
     struct label *solabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_SOCKET_CHECK_LISTEN);
+	info = OES_VNODE_INFO_INIT(cred);
+
 	(void)solabel;
 
 	info.socket = so;
@@ -5035,7 +5206,10 @@ static int
 oes_mac_socket_check_create(struct ucred *cred, int domain, int type,
     int protocol)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_SOCKET_CHECK_CREATE);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.socket_domain = domain;
 	info.socket_type = type;
@@ -5053,7 +5227,11 @@ static int
 oes_mac_socket_check_accept(struct ucred *cred, struct socket *so,
     struct label *solabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_SOCKET_CHECK_ACCEPT);
+	info = OES_VNODE_INFO_INIT(cred);
+
 	(void)solabel;
 
 	info.socket = so;
@@ -5070,7 +5248,11 @@ static int
 oes_mac_socket_check_send(struct ucred *cred, struct socket *so,
     struct label *solabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_SOCKET_CHECK_SEND);
+	info = OES_VNODE_INFO_INIT(cred);
+
 	(void)solabel;
 
 	info.socket = so;
@@ -5087,7 +5269,11 @@ static int
 oes_mac_socket_check_receive(struct ucred *cred, struct socket *so,
     struct label *solabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_SOCKET_CHECK_RECEIVE);
+	info = OES_VNODE_INFO_INIT(cred);
+
 	(void)solabel;
 
 	info.socket = so;
@@ -5104,7 +5290,11 @@ static int
 oes_mac_socket_check_stat(struct ucred *cred, struct socket *so,
     struct label *solabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_SOCKET_CHECK_STAT);
+	info = OES_VNODE_INFO_INIT(cred);
+
 	(void)solabel;
 
 	info.socket = so;
@@ -5121,7 +5311,11 @@ static int
 oes_mac_socket_check_poll(struct ucred *cred, struct socket *so,
     struct label *solabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_SOCKET_CHECK_POLL);
+	info = OES_VNODE_INFO_INIT(cred);
+
 	(void)solabel;
 
 	info.socket = so;
@@ -5137,7 +5331,10 @@ oes_mac_socket_check_poll(struct ucred *cred, struct socket *so,
 static int
 oes_mac_system_check_reboot(struct ucred *cred, int howto)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_SYSTEM_CHECK_REBOOT);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.reboot_howto = howto;
 	info.nosleep = true;
@@ -5153,8 +5350,11 @@ static int
 oes_mac_system_check_sysctl(struct ucred *cred, struct sysctl_oid *oidp,
     void *arg1, int arg2, struct sysctl_req *req)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
 	char name[256];
+
+	OES_GATE(OES_H_SYSTEM_CHECK_SYSCTL);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	/* Build the sysctl name from OID path */
 	if (oidp != NULL && oidp->oid_name != NULL) {
@@ -5194,7 +5394,10 @@ oes_mac_system_check_sysctl(struct ucred *cred, struct sysctl_oid *oidp,
 static int
 oes_mac_kenv_check_set(struct ucred *cred, char *name, char *value)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_KENV_CHECK_SET);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	(void)value;
 	info.kenv_name = name;
@@ -5211,7 +5414,10 @@ oes_mac_kenv_check_set(struct ucred *cred, char *name, char *value)
 static int
 oes_mac_kenv_check_unset(struct ucred *cred, char *name)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_KENV_CHECK_UNSET);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.kenv_name = name;
 	info.kenv_op = 2;  /* unset */
@@ -5228,9 +5434,12 @@ static int
 oes_mac_pipe_check_read(struct ucred *cred, struct pipepair *pp,
     struct label *pplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
-	struct oes_pipe_label *epl =
-	    pplabel != NULL ? PIPE_SLOT(pplabel) : NULL;
+	struct oes_vnode_event_info info;
+	struct oes_pipe_label *epl;
+
+	OES_GATE(OES_H_PIPE_CHECK_READ);
+	info = OES_VNODE_INFO_INIT(cred);
+	epl = pplabel != NULL ? PIPE_SLOT(pplabel) : NULL;
 
 	info.pipepair = pp;
 	info.pipe_id = epl != NULL ? epl->epl_id : 0;
@@ -5247,9 +5456,12 @@ static int
 oes_mac_pipe_check_write(struct ucred *cred, struct pipepair *pp,
     struct label *pplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
-	struct oes_pipe_label *epl =
-	    pplabel != NULL ? PIPE_SLOT(pplabel) : NULL;
+	struct oes_vnode_event_info info;
+	struct oes_pipe_label *epl;
+
+	OES_GATE(OES_H_PIPE_CHECK_WRITE);
+	info = OES_VNODE_INFO_INIT(cred);
+	epl = pplabel != NULL ? PIPE_SLOT(pplabel) : NULL;
 
 	info.pipepair = pp;
 	info.pipe_id = epl != NULL ? epl->epl_id : 0;
@@ -5266,9 +5478,12 @@ static int
 oes_mac_pipe_check_stat(struct ucred *cred, struct pipepair *pp,
     struct label *pplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
-	struct oes_pipe_label *epl =
-	    pplabel != NULL ? PIPE_SLOT(pplabel) : NULL;
+	struct oes_vnode_event_info info;
+	struct oes_pipe_label *epl;
+
+	OES_GATE(OES_H_PIPE_CHECK_STAT);
+	info = OES_VNODE_INFO_INIT(cred);
+	epl = pplabel != NULL ? PIPE_SLOT(pplabel) : NULL;
 
 	info.pipepair = pp;
 	info.pipe_id = epl != NULL ? epl->epl_id : 0;
@@ -5285,9 +5500,12 @@ static int
 oes_mac_pipe_check_poll(struct ucred *cred, struct pipepair *pp,
     struct label *pplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
-	struct oes_pipe_label *epl =
-	    pplabel != NULL ? PIPE_SLOT(pplabel) : NULL;
+	struct oes_vnode_event_info info;
+	struct oes_pipe_label *epl;
+
+	OES_GATE(OES_H_PIPE_CHECK_POLL);
+	info = OES_VNODE_INFO_INIT(cred);
+	epl = pplabel != NULL ? PIPE_SLOT(pplabel) : NULL;
 
 	info.pipepair = pp;
 	info.pipe_id = epl != NULL ? epl->epl_id : 0;
@@ -5304,9 +5522,13 @@ static int
 oes_mac_pipe_check_ioctl(struct ucred *cred, struct pipepair *pp,
     struct label *pplabel, unsigned long cmd, void *data)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
-	struct oes_pipe_label *epl =
-	    pplabel != NULL ? PIPE_SLOT(pplabel) : NULL;
+	struct oes_vnode_event_info info;
+	struct oes_pipe_label *epl;
+
+	OES_GATE(OES_H_PIPE_CHECK_IOCTL);
+	info = OES_VNODE_INFO_INIT(cred);
+	epl = pplabel != NULL ? PIPE_SLOT(pplabel) : NULL;
+
 	(void)data;
 
 	info.pipepair = pp;
@@ -5325,7 +5547,11 @@ static int
 oes_mac_mount_check_stat(struct ucred *cred, struct mount *mp,
     struct label *mplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_MOUNT_CHECK_STAT);
+	info = OES_VNODE_INFO_INIT(cred);
+
 	(void)mplabel;
 
 	info.mp = mp;
@@ -5341,7 +5567,10 @@ oes_mac_mount_check_stat(struct ucred *cred, struct mount *mp,
 static int
 oes_mac_priv_check(struct ucred *cred, int priv)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_PRIV_CHECK);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.priv = priv;
 	info.nosleep = true;
@@ -5356,7 +5585,10 @@ oes_mac_priv_check(struct ucred *cred, int priv)
 static int
 oes_mac_proc_check_sched(struct ucred *cred, struct proc *p)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_PROC_CHECK_SCHED);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.target_proc = p;
 	info.nosleep = true;
@@ -5374,7 +5606,10 @@ static int
 oes_mac_system_check_swapon(struct ucred *cred, struct vnode *vp,
     struct label *vplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_SYSTEM_CHECK_SWAPON);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 
@@ -5390,7 +5625,10 @@ static int
 oes_mac_system_check_swapoff(struct ucred *cred, struct vnode *vp,
     struct label *vplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_SYSTEM_CHECK_SWAPOFF);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 

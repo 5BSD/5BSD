@@ -25,7 +25,7 @@
 #include "test_idle_common.h"
 
 #ifndef OES_IDLE_GATED
-#define	OES_IDLE_GATED	0	/* kernel predates the idle gates */
+#define	OES_IDLE_GATED	1	/* hooks return at their gate when idle */
 #endif
 
 #define	FORKS		1000
