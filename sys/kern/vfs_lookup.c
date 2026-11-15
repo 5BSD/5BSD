@@ -190,7 +190,7 @@ nameiinit(void *dummy __unused)
 SYSINIT(vfs, SI_SUB_VFS, SI_ORDER_SECOND, nameiinit, NULL);
 
 static int lookup_cap_dotdot = 1;
-SYSCTL_INT(_vfs, OID_AUTO, lookup_cap_dotdot, CTLFLAG_RWTUN,
+SYSCTL_INT(_vfs, OID_AUTO, lookup_cap_dotdot, CTLFLAG_RWTUN | CTLFLAG_CAPRD,
     &lookup_cap_dotdot, 0,
     "enables \"..\" components in path lookup in capability mode");
 
@@ -203,7 +203,8 @@ namei_cap_dotdot(void)
 }
 
 static int lookup_cap_dotdot_nonlocal = 1;
-SYSCTL_INT(_vfs, OID_AUTO, lookup_cap_dotdot_nonlocal, CTLFLAG_RWTUN,
+SYSCTL_INT(_vfs, OID_AUTO, lookup_cap_dotdot_nonlocal,
+    CTLFLAG_RWTUN | CTLFLAG_CAPRD,
     &lookup_cap_dotdot_nonlocal, 0,
     "enables \"..\" components in path lookup in capability mode "
     "on non-local mount");

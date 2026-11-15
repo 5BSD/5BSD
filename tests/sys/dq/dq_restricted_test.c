@@ -164,14 +164,24 @@ cf_limrights(cap_rights_t *r)
 static int
 cf_drop(uid_t uid)
 {
-	gid_t gid;
+	uid_t ruid, euid, suid;
+	gid_t gid, rgid, egid, sgid;
 
 	gid = (gid_t)uid;
 	if (setgroups(1, &gid) == -1 || setgid(gid) == -1 ||
 	    setuid(uid) == -1)
 		return (-1);
-	if (getuid() != uid || geteuid() != uid || getgid() != gid ||
-	    getegid() != gid) {
+	if (getresuid(&ruid, &euid, &suid) == -1 ||
+	    getresgid(&rgid, &egid, &sgid) == -1)
+		return (-1);
+	if (ruid != uid || euid != uid || suid != uid || rgid != gid ||
+	    egid != gid || sgid != gid) {
+		errno = EPERM;
+		return (-1);
+	}
+	/* It must not come back. */
+	if (setuid(0) != -1 || seteuid(0) != -1 || setgid(0) != -1 ||
+	    setegid(0) != -1) {
 		errno = EPERM;
 		return (-1);
 	}
@@ -206,6 +216,8 @@ cf_program(const struct cf_scene *sc, int readyw, int gor, int resw)
 	char name[8], b;
 	int fd, fds[CF_NROW], k, x;
 
+	/* T's result pipe is S's alone. */
+	(void)close(3);
 	memset(pr, 0, sizeof(pr));
 	if (sc->kind == CF_JAIL_B6 && jail_attach(sc->jid_b) == -1)
 		_exit(120);
@@ -628,6 +640,7 @@ cf_attach_another(struct cf_srv *s, int slot, int probe)
 		return;
 	}
 	if (pid == 0) {
+		(void)close(3);
 		(void)close(w[1]);
 		if (read(w[0], &b, 1) == 1 && b == 'o') {
 			fd = openat(s->dfull, "ok", O_RDONLY | O_CLOEXEC);
@@ -737,7 +750,8 @@ cf_supervisor(const struct cf_scene *sc, int resfd)
 
 	if (sc->kind == CF_JAIL) {
 		/* J0 (pin): an open directory refuses the jail entry. */
-		x = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+		CF_RR(res.extra_rv[6], res.extra_errno[6],
+		    x = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC));
 		CF_RR(res.extra_rv[0], res.extra_errno[0],
 		    jail_attach(sc->jid_a));
 		if (x != -1)
@@ -766,6 +780,7 @@ cf_supervisor(const struct cf_scene *sc, int resfd)
 		/* H: on the host, root, never attached by P's setup (J9). */
 		pid = pdfork(&hpd, PD_CLOEXEC);
 		if (pid == 0) {
+			(void)close(3);
 			/* Hold no end of P's pipes: P must see S close. */
 			(void)close(go[1]);
 			(void)close(ready[0]);
@@ -910,7 +925,7 @@ out:
 static void
 cf_run(struct cf_scene *sc, struct cf_res *res)
 {
-	ssize_t n;
+	ssize_t got, n;
 	pid_t pid;
 	int p[2], status;
 
@@ -923,7 +938,12 @@ cf_run(struct cf_scene *sc, struct cf_res *res)
 	}
 	(void)close(p[1]);
 	memset(res, 0, sizeof(*res));
-	n = read(p[0], res, sizeof(*res));
+	/* More than PIPE_BUF: it may come in pieces. */
+	for (n = 0; n < (ssize_t)sizeof(*res); n += got) {
+		got = read(p[0], (char *)res + n, sizeof(*res) - (size_t)n);
+		if (got <= 0)
+			break;
+	}
 	(void)close(p[0]);
 	ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
 	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
@@ -1000,6 +1020,8 @@ cf_make_jail(const char *dir, const char *name)
 	int jid;
 
 	ATF_REQUIRE(realpath(dir, path) != NULL);
+	/* A jail left by an aborted run. */
+	(void)jail_remove(jail_getid(name));
 	jid = jail_setv(JAIL_CREATE, "path", path, "name", name, "persist",
 	    NULL, NULL);
 	ATF_REQUIRE_MSG(jid != -1, "jail_setv %s: %s", name, jail_errmsg);
@@ -1160,6 +1182,7 @@ ATF_TC_BODY(restricted_jail, tc)
 	cf_prow(&sc, O_RDONLY, CF_OP_READ, NULL);	/* J7 */
 	cf_run(&sc, &res);
 	/* J0 (pin) */
+	CF_CHECK_OK("J0 open(.)", res.extra_rv[6], res.extra_errno[6]);
 	CF_CHECK_ERR("J0 jail_attach with a directory open", res.extra_rv[0],
 	    res.extra_errno[0], EPERM);
 	/* J1, J2 */
@@ -1277,6 +1300,8 @@ ATF_TC_BODY(restricted_capmode, tc)
 	    EACCES);
 	CF_CHECK_OK("C7 dq_attach in capability mode", res.extra_rv[2],
 	    res.extra_errno[2]);
+	ATF_CHECK_MSG(res.extra_errno[5] != 0, "C7: the capability-mode "
+	    "program's open posted no event");
 	/* A program created in capability mode is never offered a swap. */
 	ATF_CHECK_MSG(res.extra_rv[5] == 1, "C7: a capability-mode program's "
 	    "open was offered SWAP (accept %#x)", (u_int)res.extra_errno[5]);
@@ -1351,8 +1376,9 @@ ATF_TC_CLEANUP(restricted_all, tc)
  * restricted_capmode_sysctls: the sysctls libdq consults, read in
  * capability mode (libdq(3): kern.dq.max_io sizes dq_dispatch()'s buffer,
  * vfs.lookup_cap_dotdot and vfs.lookup_cap_dotdot_nonlocal decide what a
- * served tree allows under a restricted lookup).  A pin: today none of
- * them is CTLFLAG_CAPRD, and each read is ECAPMODE.
+ * served tree allows under a restricted lookup).  Each is CTLFLAG_CAPRD:
+ * the read succeeds and gives the value read outside capability mode
+ * (before that change each read was ECAPMODE).
  */
 static const char *const cf_sysctls[] = {
 	"kern.dq.max_io",
@@ -1372,7 +1398,7 @@ ATF_TC_HEAD(restricted_capmode_sysctls, tc)
 {
 
 	atf_tc_set_md_var(tc, "descr", "the sysctls libdq reads, read in "
-	    "capability mode (pin)");
+	    "capability mode");
 }
 ATF_TC_BODY(restricted_capmode_sysctls, tc)
 {
@@ -1410,8 +1436,11 @@ ATF_TC_BODY(restricted_capmode_sysctls, tc)
 	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
 	    "child status %#x", status);
 	ATF_REQUIRE_EQ((ssize_t)sizeof(res), n);
-	for (i = 0; i < CF_NSYSCTL; i++)
-		CF_CHECK_ERR(cf_sysctls[i], res.rv[i], res.err[i], ECAPMODE);
+	for (i = 0; i < CF_NSYSCTL; i++) {
+		CF_CHECK_OK(cf_sysctls[i], res.rv[i], res.err[i]);
+		ATF_CHECK_EQ_MSG(outside[i], res.val[i], "%s: %u in capability "
+		    "mode, %u outside", cf_sysctls[i], res.val[i], outside[i]);
+	}
 }
 
 ATF_TP_ADD_TCS(tp)
