@@ -77,12 +77,23 @@ chan_create(int fds[2])
 	return (syscall(no, fds));
 }
 
-/* Skip the test if the syscall/module isn't present. */
-static int
-chan_create_or_skip(int fds[2])
+/*
+ * The channel service and its pair syscall are compiled in (conf/files,
+ * standard): a missing syscall module is a failure, never a skip.
+ */
+static void
+require_chan_sysno(void)
 {
-	if (chan_sysno() < 0)
-		atf_tc_skip("mac_capability_channel module not loaded");
+
+	ATF_REQUIRE_MSG(chan_sysno() >= 0,
+	    "syscall module sys/mac_capability_channel_create not found");
+}
+
+static int
+chan_create_required(int fds[2])
+{
+
+	require_chan_sysno();
 	return (chan_create(fds));
 }
 
@@ -184,7 +195,7 @@ ATF_TC_BODY(create_pair, tc)
 {
 	int fds[2] = { -1, -1 };
 
-	ATF_REQUIRE_MSG(chan_create_or_skip(fds) == 0,
+	ATF_REQUIRE_MSG(chan_create_required(fds) == 0,
 	    "create: %s", strerror(errno));
 	ATF_CHECK(fds[0] >= 0);
 	ATF_CHECK(fds[1] >= 0);
@@ -210,7 +221,7 @@ ATF_TC_BODY(bidirectional, tc)
 	static const char a2b[] = "ping-a-to-b";
 	static const char b2a[] = "pong-b-to-a";
 
-	ATF_REQUIRE(chan_create_or_skip(fds) == 0);
+	ATF_REQUIRE(chan_create_required(fds) == 0);
 
 	/* A -> B */
 	ATF_REQUIRE_MSG(chan_send(fds[0], a2b, sizeof(a2b)) == 0,
@@ -252,8 +263,7 @@ ATF_TC_BODY(carries_nonce, tc)
 	char rxbuf[32];
 	static const char msg[] = "nonce-check";
 
-	if (chan_sysno() < 0)
-		atf_tc_skip("mac_capability_channel module not loaded");
+	require_chan_sysno();
 
 	mine = self_nonce();
 	ATF_REQUIRE(mine != 0);
@@ -290,8 +300,7 @@ ATF_TC_BODY(child_exec_fresh_nonce, tc)
 	int status;
 	pid_t pid;
 
-	if (chan_sysno() < 0)
-		atf_tc_skip("mac_capability_channel module not loaded");
+	require_chan_sysno();
 
 	snprintf(helper, sizeof(helper), "%s/mac_capability_channel_helper",
 	    atf_tc_get_config_var(tc, "srcdir"));
@@ -327,9 +336,8 @@ ATF_TC_BODY(create_in_capmode, tc)
 	int no, status;
 	pid_t pid;
 
+	require_chan_sysno();
 	no = chan_sysno();
-	if (no < 0)
-		atf_tc_skip("mac_capability_channel module not loaded");
 
 	pid = fork();
 	ATF_REQUIRE(pid >= 0);
@@ -366,9 +374,8 @@ ATF_TC_BODY(create_efault, tc)
 {
 	int no;
 
+	require_chan_sysno();
 	no = chan_sysno();
-	if (no < 0)
-		atf_tc_skip("mac_capability_channel module not loaded");
 
 	ATF_CHECK_ERRNO(EFAULT, syscall(no, (int *)(uintptr_t)0x1) == -1);
 	ATF_CHECK_ERRNO(EFAULT, syscall(no, (int *)NULL) == -1);
@@ -400,7 +407,7 @@ ATF_TC_BODY(endpoint_grants_no_authority, tc)
 	uint32_t rxop, replybuf;
 	struct mac_capability_recvmsg_args ra;
 
-	ATF_REQUIRE(chan_create_or_skip(fds) == 0);
+	ATF_REQUIRE(chan_create_required(fds) == 0);
 
 	/*
 	 * GETINFO must show this is the plain "channel" service with NO
@@ -475,9 +482,8 @@ ATF_TC_BODY(create_null_ptr, tc)
 {
 	int no, r;
 
+	require_chan_sysno();
 	no = chan_sysno();
-	if (no < 0)
-		atf_tc_skip("mac_capability_channel module not loaded");
 
 	r = syscall(no, (int *)NULL);
 	ATF_CHECK_MSG(r == -1, "NULL fds unexpectedly succeeded");
@@ -505,11 +511,9 @@ ATF_TC_BODY(fd_exhaustion, tc)
 	struct rlimit saved, rl;
 	int store[1024];
 	int fds[2];
-	int no, n, r, i;
+	int n, r, i;
 
-	no = chan_sysno();
-	if (no < 0)
-		atf_tc_skip("mac_capability_channel module not loaded");
+	require_chan_sysno();
 
 	ATF_REQUIRE(getrlimit(RLIMIT_NOFILE, &saved) == 0);
 	rl = saved;
@@ -568,8 +572,7 @@ ATF_TC_BODY(many_pairs_no_leak, tc)
 	int fds[2];
 	int base, after, i;
 
-	if (chan_sysno() < 0)
-		atf_tc_skip("mac_capability_channel module not loaded");
+	require_chan_sysno();
 
 	base = lowest_free_fd();
 	for (i = 0; i < 1000; i++) {
@@ -604,8 +607,7 @@ ATF_TC_BODY(close_orders, tc)
 	uint32_t rxlen;
 	static const char msg[] = "queued";
 
-	if (chan_sysno() < 0)
-		atf_tc_skip("mac_capability_channel module not loaded");
+	require_chan_sysno();
 
 	/* Subcase 1: close A first; B is the survivor. */
 	ATF_REQUIRE(chan_create(fds) == 0);
@@ -654,8 +656,7 @@ ATF_TC_BODY(peer_death, tc)
 	int fds[2];
 	char rx[16];
 
-	if (chan_sysno() < 0)
-		atf_tc_skip("mac_capability_channel module not loaded");
+	require_chan_sysno();
 
 	ATF_REQUIRE(chan_create(fds) == 0);
 	ATF_REQUIRE(close(fds[0]) == 0);	/* kill the peer */
@@ -693,8 +694,7 @@ ATF_TC_BODY(fork_inherit_refcount, tc)
 	static const char fromchild[] = "hello-from-child";
 	static const char afterchild[] = "parent-still-alive";
 
-	if (chan_sysno() < 0)
-		atf_tc_skip("mac_capability_channel module not loaded");
+	require_chan_sysno();
 
 	ATF_REQUIRE(chan_create(fds) == 0);
 
@@ -759,8 +759,7 @@ ATF_TC_BODY(fd_passing, tc)
 	static const char note[] = "carrier";
 	static const char thru[] = "through-passed-endpoint";
 
-	if (chan_sysno() < 0)
-		atf_tc_skip("mac_capability_channel module not loaded");
+	require_chan_sysno();
 
 	ATF_REQUIRE(chan_create(P) == 0);
 	ATF_REQUIRE(chan_create(Q) == 0);
@@ -829,8 +828,7 @@ ATF_TC_BODY(capmode_full_roundtrip, tc)
 	int status;
 	pid_t pid;
 
-	if (chan_sysno() < 0)
-		atf_tc_skip("mac_capability_channel module not loaded");
+	require_chan_sysno();
 
 	snprintf(helper, sizeof(helper), "%s/mac_capability_channel_helper",
 	    atf_tc_get_config_var(tc, "srcdir"));
@@ -872,9 +870,8 @@ ATF_TC_BODY(concurrent_creates, tc)
 	pid_t pids[8];
 	int no, i, j, status;
 
+	require_chan_sysno();
 	no = chan_sysno();
-	if (no < 0)
-		atf_tc_skip("mac_capability_channel module not loaded");
 
 	for (i = 0; i < nchild; i++) {
 		pids[i] = fork();
@@ -972,7 +969,7 @@ ATF_TC_BODY(ordering_mixed_paths, tc)
 	uint32_t seq = 0, want = 0, rxlen;
 	int P[2], batch, i, saved;
 
-	ATF_REQUIRE(chan_create_or_skip(P) == 0);
+	ATF_REQUIRE(chan_create_required(P) == 0);
 	saved = set_direct(1);
 	for (batch = 0; batch < 40; batch++) {
 		/* Alternate paths between batches when the knob is available. */
@@ -1011,7 +1008,7 @@ ATF_TC_BODY(burst_fallback_ordering, tc)
 	uint32_t seq, want, rxlen;
 	int P[2], fl, tries;
 
-	ATF_REQUIRE(chan_create_or_skip(P) == 0);
+	ATF_REQUIRE(chan_create_required(P) == 0);
 	fl = fcntl(P[0], F_GETFL);
 	ATF_REQUIRE(fcntl(P[0], F_SETFL, fl | O_NONBLOCK) == 0);
 	/* Fill until the transport pushes back with EAGAIN/ENOBUFS. */
@@ -1076,7 +1073,7 @@ ATF_TC_BODY(recv_status_flags, tc)
 	uint32_t flags;
 	int P[2];
 
-	ATF_REQUIRE(chan_create_or_skip(P) == 0);
+	ATF_REQUIRE(chan_create_required(P) == 0);
 	ATF_REQUIRE(chan_send(P[0], "one", 3) == 0);
 	ATF_REQUIRE(chan_send(P[0], "two", 3) == 0);
 	ATF_REQUIRE(recv_flags(P[1], buf, sizeof(buf), 0, 0, &flags) == 0);
@@ -1104,7 +1101,7 @@ ATF_TC_BODY(recv_wait_timeout_and_args, tc)
 	double ms;
 	int P[2], fl;
 
-	ATF_REQUIRE(chan_create_or_skip(P) == 0);
+	ATF_REQUIRE(chan_create_required(P) == 0);
 	fl = fcntl(P[1], F_GETFL);
 	ATF_REQUIRE(fcntl(P[1], F_SETFL, fl | O_NONBLOCK) == 0);
 	/* A wait on a non-blocking descriptor still waits, then times out. */
@@ -1148,7 +1145,7 @@ ATF_TC_BODY(recv_wait_wakes, tc)
 	pid_t child;
 	int P[2], status;
 
-	ATF_REQUIRE(chan_create_or_skip(P) == 0);
+	ATF_REQUIRE(chan_create_required(P) == 0);
 	child = fork();
 	ATF_REQUIRE(child >= 0);
 	if (child == 0) {
@@ -1181,7 +1178,7 @@ ATF_TC_BODY(xfer_once_direct, tc)
 	int P[2], pipefd[2], rfds[MAC_CAPABILITY_MAX_FDS];
 	char rx[16], byte;
 
-	ATF_REQUIRE(chan_create_or_skip(P) == 0);
+	ATF_REQUIRE(chan_create_required(P) == 0);
 	ATF_REQUIRE(pipe(pipefd) == 0);
 	ATF_REQUIRE(cap_xfer_limit(pipefd[1], CAP_XFER_ONCE) == 0);
 	memset(&sa, 0, sizeof(sa));
@@ -1463,7 +1460,7 @@ ATF_TC_BODY(fd_payload_sizes, tc)
 	unsigned i, j;
 	char byte;
 
-	ATF_REQUIRE(chan_create_or_skip(P) == 0);
+	ATF_REQUIRE(chan_create_required(P) == 0);
 	base = lowest_free_fd();
 	for (i = 0; i < nitems(sizes); i++) {
 		for (j = 0; j < 3; j++) {
@@ -1586,7 +1583,7 @@ ATF_TC_BODY(sendmsg_v2_atomic, tc)
 	int P[2], pipefd[2], fds[2], rfds[MAC_CAPABILITY_MAX_FDS];
 	uint32_t nfds;
 
-	ATF_REQUIRE(chan_create_or_skip(P) == 0);
+	ATF_REQUIRE(chan_create_required(P) == 0);
 	/* Probe for "nothing queued" without blocking. */
 	ATF_REQUIRE(fcntl(P[1], F_SETFL, O_NONBLOCK) == 0);
 	ATF_REQUIRE(pipe(pipefd) == 0);
@@ -1672,7 +1669,7 @@ ATF_TC_BODY(sendmsg_v2_move_lock_paths, tc)
 	uint32_t nfds;
 	char byte;
 
-	ATF_REQUIRE(chan_create_or_skip(P) == 0);
+	ATF_REQUIRE(chan_create_required(P) == 0);
 	saved = set_direct(1);
 	for (pass = 0; pass < 2; pass++) {
 		if (saved >= 0)
@@ -1750,8 +1747,8 @@ ATF_TC_BODY(recvmsg_v4_info, tc)
 	uint32_t nfds;
 	int i;
 
-	ATF_REQUIRE(chan_create_or_skip(P) == 0);
-	ATF_REQUIRE(chan_create_or_skip(Q) == 0);
+	ATF_REQUIRE(chan_create_required(P) == 0);
+	ATF_REQUIRE(chan_create_required(Q) == 0);
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
 	fds[0] = sv[0];
 	fds[1] = sv[1];
@@ -1819,7 +1816,7 @@ ATF_TC_BODY(peer_close_race, tc)
 	for (round = 0; round < 400; round++) {
 		if (saved >= 0)
 			(void)set_direct(round % 2);
-		ATF_REQUIRE(chan_create_or_skip(P) == 0);
+		ATF_REQUIRE(chan_create_required(P) == 0);
 		ATF_REQUIRE(fcntl(P[0], F_SETFL, O_NONBLOCK) == 0);
 		ATF_REQUIRE(fcntl(P[1], F_SETFL, O_NONBLOCK) == 0);
 		child = fork();

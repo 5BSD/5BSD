@@ -6903,7 +6903,8 @@ ATF_TC(revoke_send_on_sync);
 ATF_TC_HEAD(revoke_send_on_sync, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "REVOKE_SEND on sync service — SENDMSG already EOPNOTSUPP");
+	    "REVOKE_SEND on a sync service: SENDMSG answers EACCES, the "
+	    "revocation being checked before the service type");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
 }
 ATF_TC_BODY(revoke_send_on_sync, tc)
@@ -6917,12 +6918,11 @@ ATF_TC_BODY(revoke_send_on_sync, tc)
 	/* Revoke send on a sync service. */
 	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_REVOKE_SEND, NULL) == 0);
 
-	/* SENDMSG was already EOPNOTSUPP, now it's EACCES. */
+	/* SENDMSG was EOPNOTSUPP; RF_NO_SEND is checked first: EACCES. */
 	memset(&sa, 0, sizeof(sa));
 	sa.payload = "x";
 	sa.payload_len = 1;
-	ATF_CHECK(ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) == -1);
-	ATF_CHECK(errno == EACCES || errno == EOPNOTSUPP);
+	ATF_CHECK_ERRNO(EACCES, ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) == -1);
 
 	close(fd);
 }
@@ -6931,7 +6931,8 @@ ATF_TC(revoke_call_on_async);
 ATF_TC_HEAD(revoke_call_on_async, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "REVOKE_CALL on async service — CALL already EOPNOTSUPP");
+	    "REVOKE_CALL on an async service: CALL answers EACCES, the "
+	    "revocation being checked before the service type");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
 }
 ATF_TC_BODY(revoke_call_on_async, tc)
@@ -6947,8 +6948,8 @@ ATF_TC_BODY(revoke_call_on_async, tc)
 	memset(&ca, 0, sizeof(ca));
 	ca.req = "x";
 	ca.req_len = 1;
-	ATF_CHECK(ioctl(fd, MAC_CAPABILITY_CALL, &ca) == -1);
-	ATF_CHECK(errno == EACCES || errno == EOPNOTSUPP);
+	/* CALL was EOPNOTSUPP; RF_NO_CALL is checked first: EACCES. */
+	ATF_CHECK_ERRNO(EACCES, ioctl(fd, MAC_CAPABILITY_CALL, &ca) == -1);
 
 	close(fd);
 }

@@ -12,6 +12,7 @@
 #include <sys/ioctl.h>
 #include <sys/procdesc.h>
 #include <sys/procctl.h>
+#include <sys/rctl.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/sysctl.h>
@@ -292,6 +293,27 @@ ATF_TC_BODY(node_affinity_get_self, tc)
 	close(fd);
 }
 
+/* racct(9) usage of resource name (rctl(8) spelling) for pid. */
+static int64_t
+racct_usage(pid_t pid, const char *name)
+{
+	char filter[32], out[4096], *entry, *rest;
+	size_t namelen;
+
+	snprintf(filter, sizeof(filter), "process:%d", (int)pid);
+	ATF_REQUIRE_MSG(rctl_get_racct(filter, strlen(filter) + 1, out,
+	    sizeof(out)) == 0, "rctl_get_racct(%s): %s", filter,
+	    strerror(errno));
+	namelen = strlen(name);
+	rest = out;
+	while ((entry = strsep(&rest, ",")) != NULL) {
+		if (strncmp(entry, name, namelen) == 0 &&
+		    entry[namelen] == '=')
+			return (strtoll(entry + namelen + 1, NULL, 10));
+	}
+	atf_tc_fail("rctl_get_racct(%s) does not report %s", filter, name);
+}
+
 ATF_TC(node_racct_get_self);
 ATF_TC_HEAD(node_racct_get_self, tc)
 {
@@ -313,11 +335,10 @@ ATF_TC_BODY(node_racct_get_self, tc)
 	req.resource = RACCT_NOFILE;
 	ATF_REQUIRE(node_call_raw(fd, &req, sizeof(req), NULL, 0,
 	    &reply, sizeof(reply)) == 0);
-	if (reply.status == NODE_STATUS_ERR)
-		atf_tc_skip("RACCT not compiled into kernel");
 	ATF_CHECK_EQ(reply.status, NODE_STATUS_OK);
 	ATF_CHECK_EQ(reply.resource, RACCT_NOFILE);
-	ATF_CHECK(reply.usage >= 0);
+	/* The snapshot is the process's racct(9) counter (rctl's openfiles). */
+	ATF_CHECK_EQ(reply.usage, racct_usage(getpid(), "openfiles"));
 
 	close(fd);
 }
@@ -850,8 +871,6 @@ ATF_TC_BODY(node_racct_get_child, tc)
 	req.resource = RACCT_NOFILE;
 	ATF_REQUIRE(node_call_raw(fd, &req, sizeof(req), &pd, 1,
 	    &reply, sizeof(reply)) == 0);
-	if (reply.status == NODE_STATUS_ERR)
-		atf_tc_skip("RACCT not compiled into kernel");
 	ATF_CHECK_EQ(reply.status, NODE_STATUS_OK);
 
 	pdkill(pd, SIGKILL);
@@ -1461,10 +1480,8 @@ ATF_TC_BODY(node_rlimit_max_values, tc)
 	sreq.rlim_max = large_val;
 	ATF_REQUIRE(node_call_raw(fd, &sreq, sizeof(sreq), NULL, 0,
 	    &reply, sizeof(reply)) == 0);
-	if (reply.status != NODE_STATUS_OK) {
-		close(fd);
-		atf_tc_skip("kernel rejected large rlimit value");
-	}
+	/* kern_proc_setrlimit() clamps NOFILE to kern.maxfilesperproc. */
+	ATF_REQUIRE_EQ(reply.status, NODE_STATUS_OK);
 
 	/* Verify via GET */
 	memset(&greq, 0, sizeof(greq));
@@ -1473,8 +1490,8 @@ ATF_TC_BODY(node_rlimit_max_values, tc)
 	ATF_REQUIRE(node_call_raw(fd, &greq, sizeof(greq), NULL, 0,
 	    &reply, sizeof(reply)) == 0);
 	ATF_CHECK_EQ(reply.status, NODE_STATUS_OK);
-	ATF_CHECK(reply.rlim_cur >= expected_val);
-	ATF_CHECK(reply.rlim_max >= expected_val);
+	ATF_CHECK_EQ(reply.rlim_cur, expected_val);
+	ATF_CHECK_EQ(reply.rlim_max, expected_val);
 
 	/* Restore original limits */
 	sreq.rlim_cur = (int64_t)orig.rlim_cur;
@@ -1547,7 +1564,8 @@ ATF_TC(node_stat_zombie);
 ATF_TC_HEAD(node_stat_zombie, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "NODE_OP_STAT on zombie child reports PRS_ZOMBIE state");
+	    "NODE_OP_STAT on an exited, unreaped child reports "
+	    "NODE_STATUS_DEAD");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_node");
 }
 ATF_TC_BODY(node_stat_zombie, tc)
@@ -1565,11 +1583,13 @@ ATF_TC_BODY(node_stat_zombie, tc)
 	if (pid == 0)
 		_exit(0);
 
-	/*
-	 * Don't waitpid — let the child become a zombie.
-	 * Give it a moment to exit and transition to zombie state.
-	 */
-	usleep(100000);
+	/* Wait for the exit without reaping: the child stays a zombie. */
+	{
+		siginfo_t si;
+
+		ATF_REQUIRE(waitid(P_PID, pid, &si, WEXITED | WNOWAIT) == 0);
+		ATF_REQUIRE_EQ(si.si_pid, pid);
+	}
 
 	memset(&req, 0, sizeof(req));
 	req.op = NODE_OP_STAT;
@@ -1577,19 +1597,14 @@ ATF_TC_BODY(node_stat_zombie, tc)
 	    &reply, sizeof(reply)) == 0);
 
 	/*
-	 * The zombie is not yet reaped, so it should still be visible
-	 * via procdesc.  Check that state indicates zombie (PRS_ZOMBIE=2)
-	 * or that the service reports NODE_STATUS_DEAD.
+	 * The zombie is not yet reaped, but it has P_WEXIT set:
+	 * mac_capability_resolve_proc() refuses it, so the service answers
+	 * NODE_STATUS_DEAD rather than a PRS_ZOMBIE snapshot.
 	 */
-	if (reply.status == NODE_STATUS_OK) {
-		ATF_CHECK_EQ(reply.pid, (int32_t)pid);
-		ATF_CHECK_EQ(reply.state, 2); /* PRS_ZOMBIE */
-	} else {
-		ATF_CHECK_EQ(reply.status, NODE_STATUS_DEAD);
-	}
+	ATF_CHECK_EQ(reply.status, NODE_STATUS_DEAD);
 
 	/* Reap the zombie */
-	waitpid(pid, NULL, 0);
+	ATF_REQUIRE_EQ(waitpid(pid, NULL, 0), pid);
 	close(pd);
 	close(fd);
 }
@@ -2136,14 +2151,17 @@ ATF_TC_BODY(node_reap_kill_children, tc)
 	/* Fork two children */
 	c1 = fork();
 	ATF_REQUIRE(c1 >= 0);
-	if (c1 == 0) { sleep(60); _exit(0); }
+	if (c1 == 0) {
+		for (;;)
+			pause();
+	}
 
 	c2 = fork();
 	ATF_REQUIRE(c2 >= 0);
-	if (c2 == 0) { sleep(60); _exit(0); }
-
-	/* Let children start */
-	usleep(50000);
+	if (c2 == 0) {
+		for (;;)
+			pause();
+	}
 
 	/* Kill all children via reaper */
 	memset(&kreq, 0, sizeof(kreq));
@@ -2152,20 +2170,28 @@ ATF_TC_BODY(node_reap_kill_children, tc)
 	kreq.rk_flags = REAPER_KILL_CHILDREN;
 	ATF_REQUIRE(node_call_raw(fd, &kreq, sizeof(kreq), NULL, 0,
 	    &kreply, sizeof(kreply)) == 0);
-	ATF_CHECK(kreply.status == NODE_STATUS_OK ||
-	    kreply.status == NODE_STATUS_ERR);
-	if (kreply.status == NODE_STATUS_OK)
-		ATF_CHECK(kreply.rk_killed >= 2);
+	ATF_CHECK_EQ(kreply.status, NODE_STATUS_OK);
+	/* Both children are direct children of the reaper. */
+	ATF_CHECK_EQ(kreply.rk_killed, 2);
 
-	/* Reap children */
-	waitpid(c1, &status, 0);
-	waitpid(c2, &status, 0);
+	if (kreply.status != NODE_STATUS_OK) {
+		/* Do not leave the children behind a failed REAP_KILL. */
+		(void)kill(c1, SIGKILL);
+		(void)kill(c2, SIGKILL);
+	}
+
+	/* Reap children; only REAP_KILL's SIGKILL ends them. */
+	ATF_REQUIRE_EQ(waitpid(c1, &status, 0), c1);
+	ATF_CHECK(WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL);
+	ATF_REQUIRE_EQ(waitpid(c2, &status, 0), c2);
+	ATF_CHECK(WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL);
 
 	/* Release reaper */
 	memset(&req, 0, sizeof(req));
 	req.op = NODE_OP_REAP_RELEASE;
-	node_call_raw(fd, &req, sizeof(req), NULL, 0,
-	    &areply, sizeof(areply));
+	ATF_REQUIRE(node_call_raw(fd, &req, sizeof(req), NULL, 0,
+	    &areply, sizeof(areply)) == 0);
+	ATF_CHECK_EQ(areply.status, NODE_STATUS_OK);
 
 	close(fd);
 }

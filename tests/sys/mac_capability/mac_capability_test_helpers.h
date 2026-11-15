@@ -22,15 +22,16 @@
 
 #include "mac_capability_ioctl.h"
 
-/* Helper: open /dev/mac_capability or skip */
+/*
+ * Helper: open /dev/mac_capability.  The capability plane is compiled into
+ * every kernel (conf/files: standard), so a missing device is a failure.
+ */
 static inline int
 mac_capability_open(void)
 {
 	int fd;
 
 	fd = open("/dev/mac_capability", O_RDWR);
-	if (fd < 0 && errno == ENOENT)
-		atf_tc_skip("mac_capability module not loaded");
 	ATF_REQUIRE_MSG(fd >= 0, "open /dev/mac_capability: %s", strerror(errno));
 	return (fd);
 }
@@ -71,13 +72,9 @@ require_isolation_enforced(void)
 	int enforce;
 
 	len = sizeof(enforce);
-	if (sysctlbyname("kern.mac_capability_isolation.enforce", &enforce,
-	    &len, NULL, 0) == -1) {
-		if (errno == ENOENT)
-			atf_tc_skip("isolation service not loaded");
-		atf_tc_fail("sysctl kern.mac_capability_isolation.enforce: %s",
-		    strerror(errno));
-	}
+	ATF_REQUIRE_MSG(sysctlbyname("kern.mac_capability_isolation.enforce",
+	    &enforce, &len, NULL, 0) == 0,
+	    "sysctl kern.mac_capability_isolation.enforce: %s", strerror(errno));
 	if (enforce == 0)
 		atf_tc_skip("DEFERRED_ENFORCED_TIER: "
 		    "kern.mac_capability_isolation.enforce=0: the isolation "

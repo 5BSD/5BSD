@@ -10,7 +10,9 @@
 #include <sys/capsicum.h>
 #include <sys/ioctl.h>
 #include <sys/procdesc.h>
+#include <sys/rctl.h>
 #include <sys/resource.h>
+#include <sys/sysctl.h>
 #include <sys/wait.h>
 
 #include <errno.h>
@@ -59,6 +61,57 @@ acct_call_raw(int fd, const void *req, size_t reqlen,
 	return (ioctl(fd, MAC_CAPABILITY_CALL, &ca));
 }
 
+/*
+ * Connect to the accounting service.  The service is compiled in, so a
+ * failed connect is a failure.  It reports racct(9)/rctl results and needs
+ * kern.racct.enable=1, the default of a kernel with options RACCT; a kernel
+ * booted with racct disabled is named here instead of being inferred from a
+ * service error.
+ */
+static int
+acct_connect(void)
+{
+	size_t len;
+	int enabled, fd;
+
+	enabled = 0;
+	len = sizeof(enabled);
+	ATF_REQUIRE_MSG(sysctlbyname("kern.racct.enable", &enabled, &len,
+	    NULL, 0) == 0, "sysctl kern.racct.enable: %s", strerror(errno));
+	if (enabled == 0)
+		atf_tc_skip("kern.racct.enable=0: the accounting service "
+		    "needs racct enabled");
+	fd = mac_capability_connect("accounting");
+	ATF_REQUIRE_MSG(fd >= 0, "connect accounting: %s", strerror(errno));
+	return (fd);
+}
+
+/*
+ * The racct(9) usage of resource name (as rctl(8) spells it) for pid, read
+ * with rctl_get_racct(2): proves that a CHARGE, RELEASE or SET took effect.
+ */
+static int64_t
+racct_usage(pid_t pid, const char *name)
+{
+	char filter[32], out[4096], *entry, *rest, *value;
+	size_t namelen;
+
+	snprintf(filter, sizeof(filter), "process:%d", (int)pid);
+	ATF_REQUIRE_MSG(rctl_get_racct(filter, strlen(filter) + 1, out,
+	    sizeof(out)) == 0, "rctl_get_racct(%s): %s", filter,
+	    strerror(errno));
+	namelen = strlen(name);
+	rest = out;
+	while ((entry = strsep(&rest, ",")) != NULL) {
+		if (strncmp(entry, name, namelen) != 0 ||
+		    entry[namelen] != '=')
+			continue;
+		value = entry + namelen + 1;
+		return (strtoll(value, NULL, 10));
+	}
+	atf_tc_fail("rctl_get_racct(%s) does not report %s", filter, name);
+}
+
 static bool
 acct_rules_has(const struct acct_rules_reply *reply, uint32_t resource,
     uint32_t action, uint32_t signal, uint64_t limit)
@@ -99,9 +152,10 @@ ATF_TC_BODY(acct_charge_self, tc)
 	struct acct_reply reply;
 	int fd;
 
-	fd = mac_capability_connect("accounting");
-	if (fd < 0)
-		atf_tc_skip("accounting service not available (RACCT disabled?)");
+	int64_t before;
+
+	fd = acct_connect();
+	before = racct_usage(getpid(), "memorylocked");
 
 	memset(&req, 0, sizeof(req));
 	req.op = ACCT_OP_CHARGE;
@@ -109,8 +163,8 @@ ATF_TC_BODY(acct_charge_self, tc)
 	req.amount = 4096;
 	ATF_REQUIRE(acct_call_raw(fd, &req, sizeof(req), NULL, 0,
 	    &reply, sizeof(reply)) == 0);
-	ATF_CHECK(reply.status == ACCT_STATUS_OK ||
-	    reply.status == ACCT_STATUS_ERR);  /* ERR if RACCT disabled */
+	ATF_CHECK_EQ(reply.status, ACCT_STATUS_OK);
+	ATF_CHECK_EQ(racct_usage(getpid(), "memorylocked"), before + 4096);
 
 	close(fd);
 }
@@ -130,17 +184,20 @@ ATF_TC_BODY(acct_release_self, tc)
 	struct acct_reply reply;
 	int fd;
 
-	fd = mac_capability_connect("accounting");
-	if (fd < 0)
-		atf_tc_skip("accounting service not available");
+	int64_t before;
+
+	fd = acct_connect();
+	before = racct_usage(getpid(), "memorylocked");
 
 	/* Charge first */
 	memset(&creq, 0, sizeof(creq));
 	creq.op = ACCT_OP_CHARGE;
 	creq.resource = RACCT_MEMLOCK;
 	creq.amount = 4096;
-	acct_call_raw(fd, &creq, sizeof(creq), NULL, 0,
-	    &reply, sizeof(reply));
+	ATF_REQUIRE(acct_call_raw(fd, &creq, sizeof(creq), NULL, 0,
+	    &reply, sizeof(reply)) == 0);
+	ATF_REQUIRE_EQ(reply.status, ACCT_STATUS_OK);
+	ATF_REQUIRE_EQ(racct_usage(getpid(), "memorylocked"), before + 4096);
 
 	/* Release */
 	memset(&rreq, 0, sizeof(rreq));
@@ -149,8 +206,8 @@ ATF_TC_BODY(acct_release_self, tc)
 	rreq.amount = 4096;
 	ATF_REQUIRE(acct_call_raw(fd, &rreq, sizeof(rreq), NULL, 0,
 	    &reply, sizeof(reply)) == 0);
-	ATF_CHECK(reply.status == ACCT_STATUS_OK ||
-	    reply.status == ACCT_STATUS_ERR);
+	ATF_CHECK_EQ(reply.status, ACCT_STATUS_OK);
+	ATF_CHECK_EQ(racct_usage(getpid(), "memorylocked"), before);
 
 	close(fd);
 }
@@ -170,9 +227,7 @@ ATF_TC_BODY(acct_set_self, tc)
 	struct acct_reply reply;
 	int fd;
 
-	fd = mac_capability_connect("accounting");
-	if (fd < 0)
-		atf_tc_skip("accounting service not available");
+	fd = acct_connect();
 
 	memset(&req, 0, sizeof(req));
 	req.op = ACCT_OP_SET;
@@ -180,8 +235,8 @@ ATF_TC_BODY(acct_set_self, tc)
 	req.amount = 8192;
 	ATF_REQUIRE(acct_call_raw(fd, &req, sizeof(req), NULL, 0,
 	    &reply, sizeof(reply)) == 0);
-	ATF_CHECK(reply.status == ACCT_STATUS_OK ||
-	    reply.status == ACCT_STATUS_ERR);
+	ATF_CHECK_EQ(reply.status, ACCT_STATUS_OK);
+	ATF_CHECK_EQ(racct_usage(getpid(), "memorylocked"), 8192);
 
 	close(fd);
 }
@@ -203,9 +258,7 @@ ATF_TC_BODY(acct_rule_lifecycle_self, tc)
 	struct acct_rules_reply rules;
 	int fd;
 
-	fd = mac_capability_connect("accounting");
-	if (fd < 0)
-		atf_tc_skip("accounting service not available");
+	fd = acct_connect();
 
 	memset(&rreq, 0, sizeof(rreq));
 	rreq.op = ACCT_OP_ADD_RULE;
@@ -214,8 +267,6 @@ ATF_TC_BODY(acct_rule_lifecycle_self, tc)
 	rreq.limit = 123456;
 	ATF_REQUIRE(acct_call_raw(fd, &rreq, sizeof(rreq), NULL, 0,
 	    &reply, sizeof(reply)) == 0);
-	if (reply.status == ACCT_STATUS_ERR)
-		atf_tc_skip("RCTL rule support not available");
 	ATF_CHECK_EQ(reply.status, ACCT_STATUS_OK);
 
 	memset(&greq, 0, sizeof(greq));
@@ -255,9 +306,7 @@ ATF_TC_BODY(acct_rule_invalid_signal, tc)
 	struct acct_reply reply;
 	int fd;
 
-	fd = mac_capability_connect("accounting");
-	if (fd < 0)
-		atf_tc_skip("accounting service not available");
+	fd = acct_connect();
 
 	memset(&req, 0, sizeof(req));
 	req.op = ACCT_OP_ADD_RULE;
@@ -289,32 +338,32 @@ ATF_TC_BODY(acct_charge_child, tc)
 {
 	struct acct_charge_request req;
 	struct acct_reply reply;
+	int64_t before;
 	int fd, pd, status;
 	pid_t pid;
 
-	fd = mac_capability_connect("accounting");
-	if (fd < 0)
-		atf_tc_skip("accounting service not available");
+	fd = acct_connect();
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
 	if (pid == 0) {
 		close(fd);
-		sleep(10);
-		_exit(0);
+		for (;;)
+			pause();
 	}
 
 	memset(&req, 0, sizeof(req));
 	req.op = ACCT_OP_CHARGE;
 	req.resource = RACCT_MEMLOCK;
 	req.amount = 4096;
+	before = racct_usage(pid, "memorylocked");
 	ATF_REQUIRE(acct_call_raw(fd, &req, sizeof(req), &pd, 1,
 	    &reply, sizeof(reply)) == 0);
-	ATF_CHECK(reply.status == ACCT_STATUS_OK ||
-	    reply.status == ACCT_STATUS_ERR);
+	ATF_CHECK_EQ(reply.status, ACCT_STATUS_OK);
+	ATF_CHECK_EQ(racct_usage(pid, "memorylocked"), before + 4096);
 
-	pdkill(pd, SIGKILL);
-	waitpid(pid, &status, 0);
+	ATF_REQUIRE_EQ(pdkill(pd, SIGKILL), 0);
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
 	close(pd);
 	close(fd);
 }
@@ -335,9 +384,7 @@ ATF_TC_BODY(acct_dead_child, tc)
 	int fd, pd, status;
 	pid_t pid;
 
-	fd = mac_capability_connect("accounting");
-	if (fd < 0)
-		atf_tc_skip("accounting service not available");
+	fd = acct_connect();
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
@@ -371,33 +418,39 @@ ATF_TC_BODY(acct_release_child, tc)
 {
 	struct acct_charge_request req;
 	struct acct_reply reply;
+	int64_t before;
 	int fd, pd, status;
 	pid_t pid;
 
-	fd = mac_capability_connect("accounting");
-	if (fd < 0)
-		atf_tc_skip("accounting service not available");
+	fd = acct_connect();
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	/* Charge then release */
 	memset(&req, 0, sizeof(req));
 	req.op = ACCT_OP_CHARGE;
 	req.resource = RACCT_MEMLOCK;
 	req.amount = 4096;
-	acct_call_raw(fd, &req, sizeof(req), &pd, 1,
-	    &reply, sizeof(reply));
+	before = racct_usage(pid, "memorylocked");
+	ATF_REQUIRE(acct_call_raw(fd, &req, sizeof(req), &pd, 1,
+	    &reply, sizeof(reply)) == 0);
+	ATF_REQUIRE_EQ(reply.status, ACCT_STATUS_OK);
+	ATF_REQUIRE_EQ(racct_usage(pid, "memorylocked"), before + 4096);
 
 	req.op = ACCT_OP_RELEASE;
 	ATF_REQUIRE(acct_call_raw(fd, &req, sizeof(req), &pd, 1,
 	    &reply, sizeof(reply)) == 0);
-	ATF_CHECK(reply.status == ACCT_STATUS_OK ||
-	    reply.status == ACCT_STATUS_ERR);
+	ATF_CHECK_EQ(reply.status, ACCT_STATUS_OK);
+	ATF_CHECK_EQ(racct_usage(pid, "memorylocked"), before);
 
-	pdkill(pd, SIGKILL);
-	waitpid(pid, &status, 0);
+	ATF_REQUIRE_EQ(pdkill(pd, SIGKILL), 0);
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
 	close(pd);
 	close(fd);
 }
@@ -418,13 +471,15 @@ ATF_TC_BODY(acct_set_child, tc)
 	int fd, pd, status;
 	pid_t pid;
 
-	fd = mac_capability_connect("accounting");
-	if (fd < 0)
-		atf_tc_skip("accounting service not available");
+	fd = acct_connect();
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	memset(&req, 0, sizeof(req));
 	req.op = ACCT_OP_SET;
@@ -432,11 +487,11 @@ ATF_TC_BODY(acct_set_child, tc)
 	req.amount = 8192;
 	ATF_REQUIRE(acct_call_raw(fd, &req, sizeof(req), &pd, 1,
 	    &reply, sizeof(reply)) == 0);
-	ATF_CHECK(reply.status == ACCT_STATUS_OK ||
-	    reply.status == ACCT_STATUS_ERR);
+	ATF_CHECK_EQ(reply.status, ACCT_STATUS_OK);
+	ATF_CHECK_EQ(racct_usage(pid, "memorylocked"), 8192);
 
-	pdkill(pd, SIGKILL);
-	waitpid(pid, &status, 0);
+	ATF_REQUIRE_EQ(pdkill(pd, SIGKILL), 0);
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
 	close(pd);
 	close(fd);
 }
@@ -459,13 +514,15 @@ ATF_TC_BODY(acct_rule_child, tc)
 	int fd, pd, status;
 	pid_t pid;
 
-	fd = mac_capability_connect("accounting");
-	if (fd < 0)
-		atf_tc_skip("accounting service not available");
+	fd = acct_connect();
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	/* Add rule on child */
 	memset(&rreq, 0, sizeof(rreq));
@@ -475,8 +532,6 @@ ATF_TC_BODY(acct_rule_child, tc)
 	rreq.limit = 999;
 	ATF_REQUIRE(acct_call_raw(fd, &rreq, sizeof(rreq), &pd, 1,
 	    &reply, sizeof(reply)) == 0);
-	if (reply.status == ACCT_STATUS_ERR)
-		atf_tc_skip("RCTL not available");
 	ATF_CHECK_EQ(reply.status, ACCT_STATUS_OK);
 
 	/* Query rules on child */
@@ -491,8 +546,8 @@ ATF_TC_BODY(acct_rule_child, tc)
 	ATF_REQUIRE(acct_call_raw(fd, &rreq, sizeof(rreq), &pd, 1,
 	    &reply, sizeof(reply)) == 0);
 
-	pdkill(pd, SIGKILL);
-	waitpid(pid, &status, 0);
+	ATF_REQUIRE_EQ(pdkill(pd, SIGKILL), 0);
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
 	close(pd);
 	close(fd);
 }
@@ -515,9 +570,7 @@ ATF_TC_BODY(acct_invalid_resource, tc)
 	struct acct_reply reply;
 	int fd;
 
-	fd = mac_capability_connect("accounting");
-	if (fd < 0)
-		atf_tc_skip("accounting service not available");
+	fd = acct_connect();
 
 	memset(&req, 0, sizeof(req));
 	req.op = ACCT_OP_CHARGE;
@@ -544,9 +597,7 @@ ATF_TC_BODY(acct_bad_op, tc)
 	struct acct_reply reply;
 	int fd;
 
-	fd = mac_capability_connect("accounting");
-	if (fd < 0)
-		atf_tc_skip("accounting service not available");
+	fd = acct_connect();
 
 	memset(&req, 0, sizeof(req));
 	req.op = 99;
@@ -573,9 +624,7 @@ ATF_TC_BODY(acct_wrong_fd_type, tc)
 	struct acct_reply reply;
 	int fd, pipefd[2];
 
-	fd = mac_capability_connect("accounting");
-	if (fd < 0)
-		atf_tc_skip("accounting service not available");
+	fd = acct_connect();
 	ATF_REQUIRE(pipe(pipefd) == 0);
 
 	memset(&req, 0, sizeof(req));
@@ -605,16 +654,13 @@ ATF_TC_BODY(acct_get_rules_self, tc)
 	struct acct_rules_reply reply;
 	int fd;
 
-	fd = mac_capability_connect("accounting");
-	if (fd < 0)
-		atf_tc_skip("accounting service not available");
+	fd = acct_connect();
 
 	memset(&req, 0, sizeof(req));
 	req.op = ACCT_OP_GET_RULES;
 	ATF_REQUIRE(acct_call_raw(fd, &req, sizeof(req), NULL, 0,
 	    &reply, sizeof(reply)) == 0);
-	ATF_CHECK(reply.status == ACCT_STATUS_OK ||
-	    reply.status == ACCT_STATUS_ERR);
+	ATF_CHECK_EQ(reply.status, ACCT_STATUS_OK);
 
 	close(fd);
 }
@@ -640,9 +686,7 @@ ATF_TC_BODY(acct_rule_signal, tc)
 	struct acct_rules_reply rules;
 	int fd;
 
-	fd = mac_capability_connect("accounting");
-	if (fd < 0)
-		atf_tc_skip("accounting service not available");
+	fd = acct_connect();
 
 	memset(&rreq, 0, sizeof(rreq));
 	rreq.op = ACCT_OP_ADD_RULE;
@@ -652,8 +696,6 @@ ATF_TC_BODY(acct_rule_signal, tc)
 	rreq.limit = 500;
 	ATF_REQUIRE(acct_call_raw(fd, &rreq, sizeof(rreq), NULL, 0,
 	    &reply, sizeof(reply)) == 0);
-	if (reply.status == ACCT_STATUS_ERR)
-		atf_tc_skip("RCTL rule support not available");
 	ATF_CHECK_EQ(reply.status, ACCT_STATUS_OK);
 
 	memset(&greq, 0, sizeof(greq));
@@ -689,9 +731,7 @@ ATF_TC_BODY(acct_rule_throttle, tc)
 	struct acct_rules_reply rules;
 	int fd;
 
-	fd = mac_capability_connect("accounting");
-	if (fd < 0)
-		atf_tc_skip("accounting service not available");
+	fd = acct_connect();
 
 	memset(&rreq, 0, sizeof(rreq));
 	rreq.op = ACCT_OP_ADD_RULE;
@@ -735,9 +775,7 @@ ATF_TC_BODY(acct_multiple_rules, tc)
 	struct acct_rules_reply rules;
 	int fd;
 
-	fd = mac_capability_connect("accounting");
-	if (fd < 0)
-		atf_tc_skip("accounting service not available");
+	fd = acct_connect();
 
 	/* Rule 1: DENY on RACCT_NOFILE */
 	memset(&rreq, 0, sizeof(rreq));
@@ -747,8 +785,6 @@ ATF_TC_BODY(acct_multiple_rules, tc)
 	rreq.limit = 100;
 	ATF_REQUIRE(acct_call_raw(fd, &rreq, sizeof(rreq), NULL, 0,
 	    &reply, sizeof(reply)) == 0);
-	if (reply.status == ACCT_STATUS_ERR)
-		atf_tc_skip("RCTL rule support not available");
 	ATF_CHECK_EQ(reply.status, ACCT_STATUS_OK);
 
 	/* Rule 2: LOG on RACCT_MEMLOCK */
@@ -823,20 +859,20 @@ ATF_TC_BODY(acct_charge_zero, tc)
 {
 	struct acct_charge_request req;
 	struct acct_reply reply;
+	int64_t before;
 	int fd;
 
-	fd = mac_capability_connect("accounting");
-	if (fd < 0)
-		atf_tc_skip("accounting service not available");
+	fd = acct_connect();
 
 	memset(&req, 0, sizeof(req));
 	req.op = ACCT_OP_CHARGE;
 	req.resource = RACCT_MEMLOCK;
 	req.amount = 0;
+	before = racct_usage(getpid(), "memorylocked");
 	ATF_REQUIRE(acct_call_raw(fd, &req, sizeof(req), NULL, 0,
 	    &reply, sizeof(reply)) == 0);
-	ATF_CHECK(reply.status == ACCT_STATUS_OK ||
-	    reply.status == ACCT_STATUS_ERR);  /* ERR if RACCT disabled */
+	ATF_CHECK_EQ(reply.status, ACCT_STATUS_OK);
+	ATF_CHECK_EQ(racct_usage(getpid(), "memorylocked"), before);
 
 	close(fd);
 }
@@ -858,17 +894,14 @@ ATF_TC_BODY(acct_set_then_get_rules, tc)
 	struct acct_rules_reply rules_before, rules_after;
 	int fd;
 
-	fd = mac_capability_connect("accounting");
-	if (fd < 0)
-		atf_tc_skip("accounting service not available");
+	fd = acct_connect();
 
 	/* Get rules before SET */
 	memset(&greq, 0, sizeof(greq));
 	greq.op = ACCT_OP_GET_RULES;
 	ATF_REQUIRE(acct_call_raw(fd, &greq, sizeof(greq), NULL, 0,
 	    &rules_before, sizeof(rules_before)) == 0);
-	if (rules_before.status == ACCT_STATUS_ERR)
-		atf_tc_skip("RCTL/RACCT not available");
+	ATF_REQUIRE_EQ(rules_before.status, ACCT_STATUS_OK);
 
 	/* SET a resource value */
 	memset(&sreq, 0, sizeof(sreq));
@@ -893,7 +926,8 @@ ATF_TC(acct_remove_nonexistent_rule);
 ATF_TC_HEAD(acct_remove_nonexistent_rule, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "ACCT_OP_REMOVE_RULE on a rule that was never added returns OK (idempotent)");
+	    "ACCT_OP_REMOVE_RULE on a rule that was never added returns ERR "
+	    "(rctl finds no rule: ESRCH)");
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_accounting");
 	atf_tc_set_md_var(tc, "require.user", "root");
@@ -904,9 +938,7 @@ ATF_TC_BODY(acct_remove_nonexistent_rule, tc)
 	struct acct_reply reply;
 	int fd;
 
-	fd = mac_capability_connect("accounting");
-	if (fd < 0)
-		atf_tc_skip("accounting service not available");
+	fd = acct_connect();
 
 	memset(&rreq, 0, sizeof(rreq));
 	rreq.op = ACCT_OP_REMOVE_RULE;
@@ -915,8 +947,8 @@ ATF_TC_BODY(acct_remove_nonexistent_rule, tc)
 	rreq.limit = 77777;
 	ATF_REQUIRE(acct_call_raw(fd, &rreq, sizeof(rreq), NULL, 0,
 	    &reply, sizeof(reply)) == 0);
-	ATF_CHECK(reply.status == ACCT_STATUS_OK ||
-	    reply.status == ACCT_STATUS_ERR);  /* ERR if RCTL disabled */
+	/* rctl_rule_remove() answers ESRCH when no rule matched. */
+	ATF_CHECK_EQ(reply.status, ACCT_STATUS_ERR);
 
 	close(fd);
 }
