@@ -31,7 +31,7 @@
  *			command attached as root; then both give up root,
  *			and only then is a substitute opened.  A swapped file
  *			keeps the credential of the open that made it (dq(4),
- *			"The substituted file and the confined controller"):
+ *			"The substituted file and the restricted controller"):
  *			one opened by root would keep set-ID bits and ignore
  *			quotas in the command's hands.  The user may not be
  *			root.
@@ -351,7 +351,7 @@ main(int argc, char **argv)
 	argv += optind;
 	if (argc < 1)
 		usage();
-	/* While unconfined and before any fork: the lookup reads /etc. */
+	/* While root and outside any jail, before any fork: the lookup reads /etc. */
 	pw = getpwnam(user);
 	if (pw == NULL) {
 		errno = 0;

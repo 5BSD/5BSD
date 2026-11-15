@@ -3045,16 +3045,16 @@ comes before this last test.
 The file keeps the credential of the controller's open
 .Pq Va f_cred
 and the rights of the controller's descriptor; see
-.Sx The substituted file and the confined controller .
+.Sx The substituted file and the restricted controller .
 .Pp
 .Sy Duties of a swapping controller .
 .Bl -bullet -compact
 .It
-Confine yourself before you answer: open the queue, attach the program,
+Restrict yourself before you answer: open the queue, attach the program,
 then give up privilege
 .Pq and enter a jail or capability mode where that fits ,
 and only then open the files you hand over
-.Pq Sx The substituted file and the confined controller .
+.Pq Sx The substituted file and the restricted controller .
 Hold no descriptor from before that you will hand over.
 .It
 Open the file afresh for each answer, with the request's access mode and
@@ -3106,7 +3106,7 @@ Attached processes are not killed when the queue dies: a requester that
 outlives its controller keeps every swapped descriptor, and is given no
 new one.
 .El
-.Ss The substituted file and the confined controller
+.Ss The substituted file and the restricted controller
 A swap hands over the controller's open file exactly as it is.
 The requester's descriptor is the same open file, with the credential the
 controller's thread had when it opened the file
@@ -3162,7 +3162,7 @@ A file opened by root therefore gives the requester root's treatment: its
 writes keep set-ID bits, may fill the reserved blocks and are not held to
 a quota.
 The kernel does not prevent this.
-.Sy The bound on what a controller can hand over is the controller's own confinement :
+.Sy The bound on what a controller can hand over is what the controller itself can still open :
 .Bl -tag -width "capability mode"
 .It unprivileged user
 A controller that has given up root
@@ -3205,7 +3205,7 @@ The order is:
 .Bl -enum -compact
 .It
 Open the queue, and anything else that needs privilege or a path outside
-the confinement to come.
+the restrictions to come.
 .It
 Create the program, let it enter its own jail and change its own user,
 and attach it while it waits.
@@ -3242,7 +3242,7 @@ Enter capability mode.
 Let the program run, and open each file handed over only now.
 .El
 .Pp
-A descriptor the controller opened before it confined itself keeps the
+A descriptor the controller opened before it restricted itself keeps the
 credential and the reach of that earlier open and can still be handed
 over; hold none that you will answer with.
 Between jails, a directory handed to a requester in another jail with

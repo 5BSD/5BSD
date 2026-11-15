@@ -4,7 +4,7 @@
 # Copyright (c) 2026 Kory Heard <koryheard@icloud.com>
 #
 # dqswap (share/examples/dq), installed beside this test, shows the
-# confined controller of dq(4): it opens the queue and attaches the
+# restricted controller of dq(4): it opens the queue and attaches the
 # command as root, then it and the command give up root (-u, default
 # nobody), and only then does it open a substitute.  What it hands over
 # is what that user can open, with that user's credential.

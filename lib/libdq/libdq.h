@@ -321,7 +321,7 @@ int	dq_reply_resolve_ok(int q, uint64_t id);
  * stays open in every case.  EBUSY (the open file has another reference,
  * possibly a transient one of another thread) is retried once.
  * The file keeps the credential of this process's open and the rights
- * of fd (descriptor substitution): confine this process (setuid,
+ * of fd (descriptor substitution): restrict this process (setuid,
  * jail_attach, cap_enter) after dq_open and dq_attach and before
  * opening what it hands over (dq(4)).
  */

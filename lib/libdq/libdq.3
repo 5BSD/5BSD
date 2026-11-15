@@ -1328,7 +1328,7 @@ also when the controller is another user.
 A file opened by root keeps set-ID bits on write, may fill the reserved
 blocks and is not held to a quota in the requester's hands; the kernel
 does not prevent that.
-A controller therefore confines itself before it answers:
+A controller therefore restricts itself before it answers:
 .Fn dq_open ,
 .Fn dq_attach ,
 then
@@ -1370,9 +1370,9 @@ and assumes their defaults; call
 once, or create the tree, before
 .Xr cap_enter 2
 if the system changes them.
-The order, and what each confinement bounds, is in
+The order, and what each restriction bounds, is in
 .Xr dq 4 ,
-.Sx The substituted file and the confined controller .
+.Sx The substituted file and the restricted controller .
 .Pp
 .Fn dq_event_readdir
 returns a

@@ -3,18 +3,18 @@
  *
  * Copyright (c) 2026 Kory Heard <koryheard@icloud.com>
  *
- * A supervisor that confines itself after it opened the queue (dq(4),
- * "The substituted file and the confined controller"): it gives up root,
+ * A supervisor that restricts itself after it opened the queue (dq(4),
+ * "The substituted file and the restricted controller"): it gives up root,
  * enters a jail, enters capability mode, or all three, and keeps serving,
  * SWAP included.  A swapped file is handed over as it is, with the
- * credential of the open that made it, so what a confined supervisor can
+ * credential of the open that made it, so what a restricted supervisor can
  * hand over is what it can still open.
  *
  * Three processes per scene:
  *   T  the ATF test process: files, jails, every check;
  *   S  the supervisor, a fork() child of T.  S opens its own queue (a
  *      queue is not inherited across fork), creates P, attaches it,
- *      confines itself, serves, and writes one struct cf_res to T;
+ *      restricts itself, serves, and writes one struct cf_res to T;
  *   P  the program, a pdfork() child of S, attached while it waits.  It
  *      opens t0, t1, ... in its working directory and reports to S.
  * S and P never call ATF or the dqt_* harness: they record what happened
@@ -92,12 +92,12 @@ enum {
 
 /* The scenes; each is one run of S. */
 enum cf_kind {
-	CF_UID,		/* confined_uid: S drops to CF_UID_S */
-	CF_UID_ROOT,	/* confined_uid, row U-root: S keeps root */
-	CF_JAIL,	/* confined_jail: S enters jail A */
-	CF_JAIL_B6,	/* confined_jail, row J6: P in jail B, S in jail A */
-	CF_CAPMODE,	/* confined_capmode: S root in capability mode */
-	CF_ALL		/* confined_all: jail A, CF_UID_S, capability mode */
+	CF_UID,		/* restricted_uid: S drops to CF_UID_S */
+	CF_UID_ROOT,	/* restricted_uid, row U-root: S keeps root */
+	CF_JAIL,	/* restricted_jail: S enters jail A */
+	CF_JAIL_B6,	/* restricted_jail, row J6: P in jail B, S in jail A */
+	CF_CAPMODE,	/* restricted_capmode: S root in capability mode */
+	CF_ALL		/* restricted_all: jail A, CF_UID_S, capability mode */
 };
 
 /* What P does with each name, after its open. */
@@ -783,7 +783,7 @@ cf_supervisor(const struct cf_scene *sc, int resfd)
 	if (rv == -1)
 		goto reap;
 
-	/* Confinement, in the order of dq(4). */
+	/* Restriction, in the order of dq(4). */
 	if (sc->kind == CF_JAIL || sc->kind == CF_JAIL_B6 ||
 	    sc->kind == CF_ALL) {
 		CF_RR(rv, x, jail_attach(sc->jid_a));
@@ -936,7 +936,7 @@ cf_require_setup(const struct cf_res *res)
 {
 	static const char *const what[8] = { "dq_open", "pdfork",
 	    "dq_attach", "jail_attach", "privilege drop", "directory opens",
-	    "cap_enter", "first read of the queue after the confinement" };
+	    "cap_enter", "first read of the queue after the restriction" };
 	int i;
 
 	for (i = 0; i < 8; i++)
@@ -1030,11 +1030,11 @@ cf_prow(struct cf_scene *sc, int flags, enum cf_op op, const char *arg)
 }
 
 /*
- * confined_uid: the supervisor gives up root after the ATTACH and keeps
+ * restricted_uid: the supervisor gives up root after the ATTACH and keeps
  * serving every kind of answer; what it hands over is what it can open.
  */
-ATF_TC(confined_uid);
-ATF_TC_HEAD(confined_uid, tc)
+ATF_TC(restricted_uid);
+ATF_TC_HEAD(restricted_uid, tc)
 {
 
 	atf_tc_set_md_var(tc, "descr", "a supervisor that gave up root "
@@ -1043,7 +1043,7 @@ ATF_TC_HEAD(confined_uid, tc)
 	    "bits (pin)");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(confined_uid, tc)
+ATF_TC_BODY(restricted_uid, tc)
 {
 	struct cf_scene sc;
 	struct cf_res res;
@@ -1121,11 +1121,11 @@ ATF_TC_BODY(confined_uid, tc)
 }
 
 /*
- * confined_jail: the supervisor enters a jail after the ATTACH; it hands
+ * restricted_jail: the supervisor enters a jail after the ATTACH; it hands
  * over what is under the jail's root, and what it held from before.
  */
-ATF_TC_WITH_CLEANUP(confined_jail);
-ATF_TC_HEAD(confined_jail, tc)
+ATF_TC_WITH_CLEANUP(restricted_jail);
+ATF_TC_HEAD(restricted_jail, tc)
 {
 
 	atf_tc_set_md_var(tc, "descr", "a supervisor in a jail serves SWAP "
@@ -1134,7 +1134,7 @@ ATF_TC_HEAD(confined_jail, tc)
 	    "handed over (pin); ATTACH reaches only its own jail");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(confined_jail, tc)
+ATF_TC_BODY(restricted_jail, tc)
 {
 	struct cf_scene sc;
 	struct cf_res res;
@@ -1204,7 +1204,7 @@ ATF_TC_BODY(confined_jail, tc)
 	ATF_CHECK_EQ(0, jail_remove(jid_a));
 	ATF_CHECK_EQ(0, jail_remove(jid_b));
 }
-ATF_TC_CLEANUP(confined_jail, tc)
+ATF_TC_CLEANUP(restricted_jail, tc)
 {
 
 	(void)jail_remove(jail_getid(CF_JAIL_A));
@@ -1212,12 +1212,12 @@ ATF_TC_CLEANUP(confined_jail, tc)
 }
 
 /*
- * confined_capmode: a root supervisor in capability mode.  The queue
+ * restricted_capmode: a root supervisor in capability mode.  The queue
  * serves; what it hands over has the rights of the directory it was
  * opened beneath.
  */
-ATF_TC(confined_capmode);
-ATF_TC_HEAD(confined_capmode, tc)
+ATF_TC(restricted_capmode);
+ATF_TC_HEAD(restricted_capmode, tc)
 {
 
 	atf_tc_set_md_var(tc, "descr", "a supervisor in capability mode "
@@ -1225,7 +1225,7 @@ ATF_TC_HEAD(confined_capmode, tc)
 	    "the rights of the directory descriptor it was opened beneath");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(confined_capmode, tc)
+ATF_TC_BODY(restricted_capmode, tc)
 {
 	struct cf_scene sc;
 	struct cf_res res;
@@ -1288,19 +1288,19 @@ ATF_TC_BODY(confined_capmode, tc)
 }
 
 /*
- * confined_all: dq(4)'s order: open, attach, jail, drop, directory,
+ * restricted_all: dq(4)'s order: open, attach, jail, drop, directory,
  * capability mode, serve.
  */
-ATF_TC_WITH_CLEANUP(confined_all);
-ATF_TC_HEAD(confined_all, tc)
+ATF_TC_WITH_CLEANUP(restricted_all);
+ATF_TC_HEAD(restricted_all, tc)
 {
 
-	atf_tc_set_md_var(tc, "descr", "a supervisor confined in the order "
+	atf_tc_set_md_var(tc, "descr", "a supervisor restricted in the order "
 	    "of dq(4) (jail, unprivileged user, capability mode) serves "
 	    "SWAP; a write through its file clears set-ID bits");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(confined_all, tc)
+ATF_TC_BODY(restricted_all, tc)
 {
 	struct cf_scene sc;
 	struct cf_res res;
@@ -1340,7 +1340,7 @@ ATF_TC_BODY(confined_all, tc)
 
 	ATF_CHECK_EQ(0, jail_remove(jid_a));
 }
-ATF_TC_CLEANUP(confined_all, tc)
+ATF_TC_CLEANUP(restricted_all, tc)
 {
 
 	(void)jail_remove(jail_getid(CF_JAIL_A));
@@ -1349,9 +1349,9 @@ ATF_TC_CLEANUP(confined_all, tc)
 ATF_TP_ADD_TCS(tp)
 {
 
-	ATF_TP_ADD_TC(tp, confined_uid);
-	ATF_TP_ADD_TC(tp, confined_jail);
-	ATF_TP_ADD_TC(tp, confined_capmode);
-	ATF_TP_ADD_TC(tp, confined_all);
+	ATF_TP_ADD_TC(tp, restricted_uid);
+	ATF_TP_ADD_TC(tp, restricted_jail);
+	ATF_TP_ADD_TC(tp, restricted_capmode);
+	ATF_TP_ADD_TC(tp, restricted_all);
 	return (atf_no_error());
 }
