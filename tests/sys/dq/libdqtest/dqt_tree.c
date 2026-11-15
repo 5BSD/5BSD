@@ -68,7 +68,8 @@ ts_file(const char *dir, const char *name, const char *data)
 	char path[PATH_MAX];
 	int fd;
 
-	snprintf(path, sizeof(path), "%s/%s", dir, name);
+	ATF_REQUIRE((size_t)snprintf(path, sizeof(path), "%s/%s", dir, name) <
+	    sizeof(path));
 	fd = open(path, O_CREAT | O_TRUNC | O_WRONLY, 0644);
 	ATF_REQUIRE_MSG(fd >= 0, "%s: %s", path, strerror(errno));
 	ATF_REQUIRE(write(fd, data, strlen(data)) == (ssize_t)strlen(data));
@@ -80,7 +81,8 @@ ts_mkdir(const char *dir, const char *name)
 {
 	char path[PATH_MAX];
 
-	snprintf(path, sizeof(path), "%s/%s", dir, name);
+	ATF_REQUIRE((size_t)snprintf(path, sizeof(path), "%s/%s", dir, name) <
+	    sizeof(path));
 	ATF_REQUIRE_MSG(mkdir(path, 0755) == 0, "%s: %s", path,
 	    strerror(errno));
 }
@@ -90,7 +92,8 @@ ts_symlink(const char *dir, const char *name, const char *target)
 {
 	char path[PATH_MAX];
 
-	snprintf(path, sizeof(path), "%s/%s", dir, name);
+	ATF_REQUIRE((size_t)snprintf(path, sizeof(path), "%s/%s", dir, name) <
+	    sizeof(path));
 	ATF_REQUIRE(symlink(target, path) == 0);
 }
 

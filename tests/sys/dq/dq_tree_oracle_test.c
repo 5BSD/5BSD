@@ -49,6 +49,7 @@
 struct out {
 	char	buf[OUT_MAX];
 	size_t	len;
+	bool	truncated;	/* a line or a listing did not fit */
 };
 
 static void
@@ -60,6 +61,8 @@ emit(struct out *o, const char *fmt, ...)
 	va_start(ap, fmt);
 	n = vsnprintf(o->buf + o->len, sizeof(o->buf) - o->len, fmt, ap);
 	va_end(ap);
+	if (n < 0 || o->len + (size_t)n >= sizeof(o->buf))
+		o->truncated = true;
 	if (n > 0)
 		o->len = MIN(o->len + (size_t)n, sizeof(o->buf) - 1);
 }
@@ -89,9 +92,13 @@ listing(struct out *o, int d)
 	while ((n = getdirentries(d, buf, sizeof(buf), &base)) > 0) {
 		for (p = buf; p < buf + n; p += dp->d_reclen) {
 			dp = (struct dirent *)(void *)p;
-			if (k < 64)
-				asprintf(&names[k++], "%s:%u", dp->d_name,
-				    dp->d_type);
+			if (k == (int)nitems(names))
+				o->truncated = true;
+			else if (asprintf(&names[k], "%s:%u", dp->d_name,
+			    dp->d_type) == -1)
+				o->truncated = true;
+			else
+				k++;
 		}
 	}
 	if (n < 0)
@@ -337,6 +344,10 @@ ATF_TC_BODY(tree_oracle, tc)
 	close(back[0]);
 
 	script(ofd, real);
+	/* Two transcripts cut at the same length compare nothing past it. */
+	ATF_REQUIRE_MSG(!real->truncated && !served->truncated, "a transcript "
+	    "was truncated (real %d, served %d): raise OUT_MAX",
+	    real->truncated, served->truncated);
 	if (strcmp(real->buf, served->buf) != 0) {
 		printf("--- real\n%s--- served\n%s", real->buf, served->buf);
 		atf_tc_fail("the served transcript differs from the real one");
