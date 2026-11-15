@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Complete OES directory installation. Integration tests run in an isolated VM,
+# never as implicit host tests: they can observe or authorize system-wide events.
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_test_install_archive")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+_PLAIN = ['test_close_event', 'test_multi_process_clients', 'test_event_abi', 'test_event_reader', 'test_liboes_reader', 'test_oeslogger_output', 'test_descendants_client', 'test_nested_descendants', 'test_jail_pins', 'test_jail_scope', 'test_oeslogger_jail', 'test_vnode_events', 'test_process_events', 'test_multi_client_auth', 'test_multi_client_notify', 'test_auth_responses', 'test_auth_timeout', 'test_decision_cache', 'test_mute', 'test_path_mute', 'test_per_event_muting', 'test_default_muting', 'test_mute_inversion', 'test_uid_gid_mute', 'test_query_muted', 'test_unmute_all', 'test_flags_response', 'test_unmount_event', 'test_kldunload_event', 'test_signal_events', 'test_socket_events', 'test_extattr_acl_events', 'test_mmap_mprotect_events', 'test_chdir_chroot_events', 'test_exec_args', 'test_process_info', 'test_event_metadata', 'test_path_metadata', 'test_hook_coverage', 'test_event_delivery', 'test_mode_timeout_api', 'test_timeout_deadlines', 'test_fd_handling', 'test_bad_ioctls', 'test_error_conditions', 'test_edge_cases', 'test_passive_mode', 'test_memory_pressure', 'test_stress', 'rename_concurrent', 'signal_concurrent']
+_ATF = ["test_contract_matrix"]
+_READERS = ["test_liboes_reader", "test_oeslogger_output", "test_descendants_client", "test_nested_descendants"]
+_JAIL = ["test_jail_pins", "test_jail_scope", "test_oeslogger_jail"]
+_DIRECTORY = "/usr/tests/sys/security/oes"
+
+cc_library(name = "harness", hdrs = ["test_common.h", "test_jail_common.h"],
+    deps = ["//lib/liboes:headers"])
+
+[cc_binary(name = program, srcs = [program + ".c"],
+    deps = [":harness", "//lib/libthr:thr"] +
+        (["//lib/liboes:reader_test_objects"] if program in _READERS else []) +
+        (["//share/examples/oes:json_emitter_test_source"] if program == "test_oeslogger_output" else []) +
+        (["//lib/libjail:jail"] if program in _JAIL else []) +
+        (["//lib/libdq:dq"] if program == "test_hook_coverage" else []) +
+        (["//lib/atf/libatf-c:atf_c"] if program in _ATF else []),
+    dynamic_deps = ["//lib/libthr:thr_shared"] +
+        (["//lib/libjail:jail_shared"] if program in _JAIL else []) +
+        (["//lib/libdq:dq_shared"] if program == "test_hook_coverage" else []) +
+        (["//lib/atf/libatf-c:atf_c_shared"] if program in _ATF else []),
+    copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True,
+    target_compatible_with = _PLATFORM)
+ for program in _PLAIN + _ATF]
+
+[utility_installation(name = program + "_install", program = program, manual = None,
+    package = "oes-tests", bindir = _DIRECTORY) for program in _PLAIN + _ATF]
+
+bsd_script_wrapper(name = "test_unsupported_32bit", body = "test_unsupported_32bit.sh",
+    interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat",
+    cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_install_file(name = "script_install", src = ":test_unsupported_32bit",
+    destination = _DIRECTORY + "/test_unsupported_32bit", owner = "root", group = "wheel",
+    mode = "0555", install_tags = ["package=oes-tests"])
+
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD",
+    names = sorted(_PLAIN + _ATF + ["test_unsupported_32bit"]),
+    interfaces = {program: "plain" for program in _PLAIN} |
+        {program: "atf" for program in _ATF + ["test_unsupported_32bit"]},
+    metadata = {program: json.encode({"is_exclusive": "true"})
+        for program in _PLAIN + _ATF + ["test_unsupported_32bit"]})
+bsd_install_file(name = "kyuafile_install", src = ":kyuafile", destination = _DIRECTORY + "/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=oes-tests"])
+bsd_install_manifest(name = "install_manifest",
+    entries = [":script_install", ":kyuafile_install"],
+    manifests = [":" + program + "_install" for program in _PLAIN + _ATF])
+bsd_test_install_archive(name = "install_archive", directory = _DIRECTORY,
+    manifests = [":install_manifest"], debug = True, package = "oes-tests",
+    visibility = ["//tests/sys/security:__pkg__"])

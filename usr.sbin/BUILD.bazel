@@ -227,8 +227,12 @@ script_install_archive(name = "manual_install_archive", manifest = ":manual_mani
 
 # Missing optional subtrees and installed tests remain explicit migration work.
 # Reject their selection rather than silently omitting their Make-owned outputs.
-_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
-_PLATFORM = _PLATFORM + select({"//tools/build/bazel/config:tests_enabled": ["@platforms//:incompatible"], "//conditions:default": []})
+_INSTALL_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_PLATFORM = _INSTALL_PLATFORM + select({"//tools/build/bazel/config:tests_enabled": ["@platforms//:incompatible"], "//conditions:default": []})
+# Qualification artifact only: audit every currently selected contribution.
+# The production target below still rejects the incomplete installed-test mode.
+bsd_install_archive_set(name = "installation_candidates", archives = _ARCHIVES,
+    target_compatible_with = _INSTALL_PLATFORM, visibility = ["//visibility:public"])
 bsd_install_archive_set(name = "production_installation_archives", archives = _ARCHIVES,
     target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 

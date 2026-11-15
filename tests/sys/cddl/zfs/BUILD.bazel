@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/cddl/zfs:suite.bzl", "zfs_test_suite")
+
+zfs_test_suite(
+    subdirectories = ['tests', 'include'],
+    child_archives = ['//tests/sys/cddl/zfs/bin:installation_archives', '//tests/sys/cddl/zfs/tests:installation_archives', '//tests/sys/cddl/zfs/include:installation_archives'],
+)

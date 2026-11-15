@@ -70,6 +70,9 @@ Packages defaults to a production world/kernel build and invokes
 system-packages,
 which checks production malloc and kernel/hardware identity, stages base and
 hardware separately, and publishes one combined repository.
+A target whose hardware profile contains only no-hardware-ports is published
+with its base packages and sealed kernel identity and without hardware
+packages; the plan reports that as the kernel-identity-only hardware backend.
 World package creation rejects conflicting installation metadata before
 sorting METALOG and generating package lists.
 Each invocation selects fresh world, kernel and source package stages beneath
@@ -1407,6 +1410,19 @@ publisher's responsibility.
 Hardware port selection for build/packages, passed as HARDWARE_PORT_LIST.
 Defaults to the maintained hardware-ports file for the target architecture.
 The profile and ports checkout are checked before compilation.
+A profile whose only entry is no-hardware-ports selects no hardware ports:
+the kernel package is sealed with its identity as usual, no hardware package
+is built or published, and the ports checkout and distfiles settings are not
+used.
+The entry appears once and cannot be combined with ports.
+A profile is ASCII text with one entry per line; a number sign starts a
+comment, and an empty profile or an entry that is not a port origin is refused
+before compilation.
+The hardware stage reads the profile again by the same rules and receives the
+planned backend as HARDWARE_BACKEND; it refuses a profile that no longer
+selects that backend.
+The maintained arm64 profile is such a profile until arm64 hardware builds are
+added.
 .It Fl -distfiles Ar directory
 Absolute ports download-cache directory for build/packages.
 Defaults to distfiles beneath the selected ports checkout.
@@ -1571,15 +1587,31 @@ The tool reports permission failures instead of relocating output to a home
 directory.
 Inherited make output-directory overrides are cleared.
 .Pp
-Complete hardware publication currently requires a native target and an
+Publication with hardware ports currently requires a native target and an
 installed hardware profile.
-Foreign targets are rejected before compilation; stage remains available
-for cross-compiling a private world/kernel image.
+A foreign target with such a profile is rejected before compilation; stage
+remains available for cross-compiling a private world/kernel image.
+A foreign target is published only when its profile selects no hardware
+ports, because nothing is then compiled outside the cross-built world and
+kernel.
+That publication carries the same production-malloc, single-kernel and
+kernel-object identity checks; it makes no statement about hardware support
+on the target.
+The profile is selected by architecture, so an arm64 board kernel is published
+the same way.
+Such a generation holds no hardware packages for
+.Xr fwget 8
+to install: on a machine where a device selects one, hardware installation
+fails rather than fetching a foreign module, and a scripted installation
+there needs BSDINSTALL_SKIP_FIRMWARE.
 .Sh MACHINE-READABLE PLANS
 The plan-only option
 .Fl -format Cm json
 emits newline-delimited JSON records with schema org.5bsd.build-plan.v1.
 The first record describes the selected request and backend identifiers.
+The hardware_backend field is native-ports, or kernel-identity-only when a
+packages request uses a profile without hardware ports; the text plan then
+adds a hardware line saying that no hardware packages are compiled.
 The verification_scope field is packages-bundles-and-filesystem for deploy,
 offline-filesystem-reconciliation for reconcile, trusted-builder-construction
 for construct, and system-bundles for other
@@ -7691,8 +7723,22 @@ qualification interface remains in use; Make stays the default system backend.
 Selected AMD64 general libc tests and execve/spawn children include sixty-seven
 original executables, the test DSO and 143 installed records matching Make.
 The login-record program retains fully static fixed-address linking. The ELF
-comparison helper supports explicit --static-program mode; dynamic PIE checks
-remain the default. All 239 case registrations and metadata match. Thirty-six
+comparison helper supports mutually exclusive --static-program and
+--non-pie-program contracts; dynamic PIE checks remain the default.
+The non-PIE dynamic contract retains interpreter, dependency, RELRO, immediate
+binding and non-executable-stack checks on both compared artifacts.
+These comparison options do not change build or runtime policy.
+.Pp
+Native audit and auditpipe installation contributions retain all sixteen original
+programs, their debug pairs and Kyua registrations.
+Audit uses static private auditd linkage and the original non-PIE dynamic model;
+auditpipe uses PIE.
+The existing audit build setting excludes audit when disabled, while retaining
+auditpipe as Make does.
+This is AMD64 build/install qualification, not audit runtime acceptance.
+Global-state audit cases require exclusive disposable-guest execution.
+The current native audit dependency chain remains AMD64-only; the complete
+installed-test production guard and default Make backend remain in place. All 239 case registrations and metadata match. Thirty-six
 selected host cases pass and two retain original architecture skips; 201 cases
 remain unexecuted. Spawn fixture copies preserve original bytes and executable
 modes with declared tools. This uses the existing explicit Bazel-input workflow
@@ -7956,6 +8002,29 @@ contains untagged construction state, not package payloads or an existing-system
 update overlay. Current selected AMD64 whole production contribution construction
 passes; installed authentication, account preservation during upgrades and full
 world/package/runtime/performance qualification remain open. Make remains default.
+.Pp
+The explicit
+.Cm //:world_installation_candidates
+qualification target composes the selected world installation contributions,
+including currently declared installed tests when the tests setting is enabled.
+This includes the source-owned top-level tests installation candidates;
+that hierarchy remains incomplete and its production aggregate is guarded.
+Integration tests that change kernel or authorization state are built and
+packaged here, but must execute in an isolated qualification VM.
+The
+.Cm //tools/build/bazel/config:zfs_tests
+boolean setting selects the maintained ZFS test hierarchy, corresponding to
+MK_ZFS_TESTS. It defaults to enabled and is effective only with tests and the
+required ZFS components enabled. Its shell tests retain the ksh93 prerequisite;
+building the payload does not execute destructive pool or disk operations.
+It uses the same family and feature selections as world_contributions.
+The normal format-5 targets list selects it; no additional frontend option is
+required. It does not provide finalized manual databases, fresh account state,
+world layout, package reconciliation or package archives.
+Successful analysis or construction does not establish that every original Make
+test, fixture or installation record is present, nor does it execute the installed
+OS tests. The normal production roots retain their incomplete-installed-test
+guards until independent complete installation comparison succeeds.
 .Pp
 The native package qualification driver preserves declared file and directory
 flags using standard pkg plist attributes. Temporary build and inspection

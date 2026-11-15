@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/cddl/zfs:suite.bzl", "zfs_test_suite")
+
+zfs_test_suite(
+    files = ['bootfs.cfg', 'bootfs_001_pos.ksh', 'bootfs_002_neg.ksh', 'bootfs_003_pos.ksh', 'bootfs_004_neg.ksh', 'bootfs_005_neg.ksh', 'bootfs_006_pos.ksh', 'bootfs_007_pos.ksh', 'bootfs_008_neg.ksh', 'bootfs_009_neg.ksh'],
+    tests = {'bootfs_test': {'required_user': 'root', 'is_exclusive': True, 'required_programs': 'ksh93'}},
+)

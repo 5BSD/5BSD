@@ -15,9 +15,9 @@ bsd_dtrace_spec(name = "provider", source = "diagnostics_provider.d", output = "
     tool_inputs = [ "@bsd_sdk//toolchain:compile_inputs",
         "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"])
 
-exports_files(["parse_line.c", "parse_ucl.c"], visibility = ["//usr.sbin/mac_abac_ctl:__pkg__"])
+exports_files(["parse_line.c", "parse_ucl.c"], visibility = ["//usr.sbin/mac_abac_ctl:__pkg__", "//tests/sys/security/mac_abac:__pkg__"])
 cc_library(name = "parser_headers", hdrs = ["mac_abacd.h"], strip_include_prefix = ".",
-    deps = ["//sys/security/mac_abac:abi_headers"], visibility = ["//usr.sbin/mac_abac_ctl:__pkg__"])
+    deps = ["//sys/security/mac_abac:abi_headers"], visibility = ["//usr.sbin/mac_abac_ctl:__pkg__", "//tests/sys/security/mac_abac:__pkg__"])
 
 _LIBRARIES = ['//lib/libucl:ucl', '//lib/libutil:util']
 cc_library(name = "headers", hdrs = ['mac_abacd.h', 'diagnostics.h'], strip_include_prefix = ".", deps = ['//sys/security/mac_abac:abi_headers'])

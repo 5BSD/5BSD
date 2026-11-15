@@ -21,6 +21,7 @@ fixture = r'''
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+#define ASSERT(x) assert(x)
 #define PAGE_SIZE 4096
 #define PAGE_MASK (PAGE_SIZE - 1)
 #define MIN(a,b) ((a) < (b) ? (a) : (b))

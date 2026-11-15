@@ -27,8 +27,8 @@
 #pragma ident	"%Z%%M%	%I%	%E% SMI"
 
 /*
- * ASSERTION: The size of the inbuilt variable NULL is the same as that of an
- * integer.
+ * ASSERTION: The size of the inbuilt variable NULL is the same as that of a
+ * long, as libdtrace defines it ("inline long NULL = 0").
  *
  * SECTION: Structs and Unions/Member Sizes and Offsets
  *
@@ -42,7 +42,7 @@ BEGIN
 }
 
 END
-/4 != sizeof (NULL)/
+/sizeof (long) != sizeof (NULL)/
 {
 	exit(1);
 }

@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Build/install only: these tests change global auditing state and require a VM.
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_test_install_archive")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+
+# The current native auditd library is AMD64-only; do not claim ARM64 support.
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+# Keep header dependencies separate from link inputs to preserve Make link order.
+cc_library(name = "headers", hdrs = ["utils.h"],
+    deps = ["//contrib/openbsm:headers", "//tests:suite_macros"])
+_PROGRAMS = ['file-attribute-access', 'file-attribute-modify', 'file-create', 'file-delete', 'file-close', 'file-write', 'file-read', 'open', 'ioctl', 'network', 'inter-process', 'administrative', 'process-control', 'miscellaneous', 'dq_served']
+_DIRECTORY = "/usr/tests/sys/audit"
+_METADATA = {"is_exclusive": "true", "required_files": "/etc/rc.d/auditd /dev/auditpipe", "required_user": "root", "timeout": "30"}
+
+[cc_binary(name = program, srcs = [program + ".c", "utils.c"],
+    deps = [":headers", "//lib/libbsm:bsm", "//lib/libutil:util", "//lib/atf/libatf-c:atf_c"] +
+        (["//lib/libdq:dq", "//lib/libthr:thr"] if program == "dq_served" else []) +
+        ["//lib/libauditd:auditd"],
+    dynamic_deps = ["//lib/libbsm:bsm_shared", "//lib/libutil:util_shared", "//lib/atf/libatf-c:atf_c_shared"] +
+        (["//lib/libdq:dq_shared", "//lib/libthr:thr_shared"] if program == "dq_served" else []),
+    # Original MK_PIE=no: libprivateauditd.a is linked statically.
+    copts = ["-fno-pie"], linkopts = ["-no-pie"], linkstatic = True,
+    target_compatible_with = _PLATFORM) for program in _PROGRAMS]
+[utility_installation(name = program + "_install", program = program, manual = None,
+    package = "tests", bindir = _DIRECTORY) for program in _PROGRAMS]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = sorted(_PROGRAMS),
+    interfaces = {program: "atf" for program in _PROGRAMS},
+    metadata = {program: json.encode(_METADATA) for program in _PROGRAMS})
+bsd_install_file(name = "kyuafile_install", src = ":kyuafile", destination = _DIRECTORY + "/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", entries = [":kyuafile_install"],
+    manifests = [":" + program + "_install" for program in _PROGRAMS])
+bsd_test_install_archive(name = "install_archive", directory = _DIRECTORY,
+    manifests = [":install_manifest"], debug = True, visibility = ["//tests:__pkg__"])

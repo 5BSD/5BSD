@@ -58,6 +58,7 @@ void *khx_vq_take(struct virtqueue *vq, int *readable, int *writable,
 void khx_vq_complete(struct virtqueue *vq, void *cookie, uint32_t len);
 long khx_vq_notifies(struct virtqueue *vq);
 int khx_vq_intr_enabled(struct virtqueue *vq);
+int khx_vq_sdt_disabled(struct virtqueue *vq);
 /* Invoke the interrupt handler the driver registered for this queue. */
 void khx_vq_interrupt(struct virtqueue *vq);
 /* Fail the nth subsequent virtqueue_enqueue with error. */

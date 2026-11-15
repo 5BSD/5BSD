@@ -46,6 +46,7 @@ fixture = r'''
 #define VM_REG_GUEST_A0 0
 #define VM_REG_GUEST_A1 1
 #define KASSERT(test, message) assert(test)
+#define __diagused
 #define SBI_CALL0(ext, fn) sbi_call0((ext), (fn))
 typedef int hypertrace_id_t;
 typedef struct { uint64_t value; unsigned htr_curcpu;

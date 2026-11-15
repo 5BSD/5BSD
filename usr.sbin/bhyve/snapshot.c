@@ -4301,7 +4301,12 @@ checkpoint_vcpu_pause(struct vmctx *ctx, bool *runnable, bool *owned)
 	*owned = true;
 	if (vm_suspend_all_cpus(ctx) != 0) {
 		error = errno != 0 ? errno : EIO;
+#ifdef __amd64__
 		if (vm_resume_all_cpus(ctx) == 0) {
+#else
+		/* Never start a vCPU the guest has not powered on. */
+		if (bhyve_resume_powered_cpus(ctx) == 0) {
+#endif
 			checkpoint_active = false;
 			pthread_cond_broadcast(&vcpus_can_run);
 			*runnable = true;

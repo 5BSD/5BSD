@@ -122,3 +122,5 @@ exports_files(["ucl/dq-tests-all.ucl"], visibility = ["//packages/dq-tests:__pkg
 exports_files(["ucl/libfidl-all.ucl", "ucl/libfidl-tools.ucl"], visibility = ["//packages/libfidl:__pkg__"])
 
 exports_files(["ucl/kernel-all.ucl"], visibility = ["//sys/amd64/conf:__pkg__"])
+
+exports_files(["base-integrity.sh"], visibility = ["//tests/release:__pkg__"])

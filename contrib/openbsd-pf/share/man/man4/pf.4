@@ -92,6 +92,25 @@ considered invalid; if used in an ioctl,
 .Er EINVAL
 will be returned.
 .\" 5BSD: VNET
+.Ss Local IP delivery
+The per-VNET
+.Xr sysctl 8
+.Va net.pf.filter_local
+is disabled by default.
+When set to 1, packets being delivered to the local IPv4 or IPv6 stack
+undergo an additional output filter pass on
+.Pa lo0 .
+This includes packets received through another interface and destined
+for a local socket.
+It does not enable PF itself; the filter must also be enabled with
+.Xr pfctl 8 .
+.Pp
+Changing this setting takes effect without restarting PF or flushing states.
+Existing state lookup still applies during the additional pass.
+Rulesets which filter output on
+.Pa lo0
+must account for this additional path before enabling the setting.
+The setting is independent in each VNET and starts disabled in a new VNET.
 .Ss Virtual network stacks
 On 5BSD every
 .Xr vnet 9

@@ -310,6 +310,12 @@ CLANG_OPT_SMALL+= -mllvm -simplifycfg-dup-ret
 CLANG_OPT_SMALL+= -mllvm -enable-load-pre=false
 CFLAGS.clang+=	 -Qunused-arguments
 
+# DTrace walks user stacks by frame pointer, which clang omits here by default.
+.if ${MACHINE_CPUARCH} == "riscv"
+CFLAGS+=	-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer
+CXXFLAGS+=	-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer
+.endif
+
 .if ${MK_SSP} != "no"
 # Don't use -Wstack-protector as it breaks world with -Werror.
 .if ${COMPILER_FEATURES:Mstackclash}

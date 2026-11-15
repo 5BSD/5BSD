@@ -61,6 +61,7 @@ def descriptor_tests():
     bsd_install_manifest(name = "descriptor_install_manifest", manifests = manifests,
         visibility = ["//visibility:public"])
     bsd_test_install_archive(name = "descriptor_install_archive", directory = "/usr/tests/sys/kern",
-        manifests = [":descriptor_install_manifest"], debug = True)
+        manifests = [":descriptor_install_manifest"], debug = True,
+        visibility = ["//tests:__pkg__"])
     native.test_suite(name = "descriptor_host_tests", tests = [":jaildesc_get_invalid_base_descriptor_runtime"],
         visibility = ["//visibility:public"])

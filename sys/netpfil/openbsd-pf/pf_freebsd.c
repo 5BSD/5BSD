@@ -402,6 +402,19 @@ pf_fbsd_delay_drain(void)
 	mtx_unlock(&pf_fbsd_delay_mtx);
 }
 
+/*
+ * FreeBSD's local-delivery pfil heads are separate from normal interface
+ * output. Keep the additional pass opt-in and local to each VNET. The
+ * hooks stay registered for the VNET lifetime, so changing this setting
+ * does not require stopping PF or discarding its states.
+ */
+VNET_DEFINE_STATIC(bool, pf_filter_local) = false;
+#define V_pf_filter_local VNET(pf_filter_local)
+SYSCTL_DECL(_net_pf);
+SYSCTL_BOOL(_net_pf, OID_AUTO, filter_local, CTLFLAG_VNET | CTLFLAG_RW,
+    &VNET_NAME(pf_filter_local), false,
+    "Enable PF output filtering before delivery to the local IP stack");
+
 /* ------------------------------------------------------------------ */
 /* pfil hooks                                                          */
 /* ------------------------------------------------------------------ */
@@ -648,6 +661,27 @@ pf_fbsd_check_out(struct mbuf **m, struct ifnet *ifp, int flags,
 		in_proto_cksum_out(n, ifp);
 	return (rv);
 }
+
+static pfil_return_t
+pf_fbsd_check_local(struct mbuf **m, struct ifnet *ifp, int flags,
+    void *ruleset, struct inpcb *inp)
+{
+	if (!V_pf_filter_local)
+		return (PFIL_PASS);
+	if (!pf_fbsd_pullup(AF_INET, m))
+		return (PFIL_CONSUMED);
+	/*
+	 * Local delivery has no subsequent hardware checksum stage.  A
+	 * looped TSO segment has lost CSUM_TSO in looutput(), but may still
+	 * carry the lengthless pseudo-header seed from outbound filtering.
+	 * Finalise from scratch rather than treating that seed as a normal
+	 * delayed checksum.  No segmentation remains to be performed here.
+	 */
+	if ((*m)->m_pkthdr.csum_flags & (CSUM_IP_TCP | CSUM_IP_UDP))
+		in_proto_cksum_out(*m, ifp);
+	(*m)->m_pkthdr.csum_flags &= ~CSUM_TSO;
+	return (pf_fbsd_check_out(m, ifp, flags, ruleset, inp));
+}
 #endif
 
 #ifdef INET6
@@ -714,6 +748,27 @@ pf_fbsd_check6_out(struct mbuf **m, struct ifnet *ifp, int flags,
 	} else if (n->m_pkthdr.csum_flags & (CSUM_IP6_TCP | CSUM_IP6_UDP))
 		in6_proto_cksum_out(n, ifp);
 	return (rv);
+}
+
+static pfil_return_t
+pf_fbsd_check6_local(struct mbuf **m, struct ifnet *ifp, int flags,
+    void *ruleset, struct inpcb *inp)
+{
+	if (!V_pf_filter_local)
+		return (PFIL_PASS);
+	if (!pf_fbsd_pullup(AF_INET6, m))
+		return (PFIL_CONSUMED);
+	/*
+	 * Local delivery has no subsequent hardware checksum stage.  A
+	 * looped TSO segment has lost CSUM_TSO in looutput(), but may still
+	 * carry the lengthless pseudo-header seed from outbound filtering.
+	 * Finalise from scratch rather than treating that seed as a normal
+	 * delayed checksum.  No segmentation remains to be performed here.
+	 */
+	if ((*m)->m_pkthdr.csum_flags & (CSUM_IP6_TCP | CSUM_IP6_UDP))
+		in6_proto_cksum_out(*m, ifp);
+	(*m)->m_pkthdr.csum_flags &= ~CSUM_TSO;
+	return (pf_fbsd_check6_out(m, ifp, flags, ruleset, inp));
 }
 #endif
 
@@ -807,12 +862,16 @@ pf_fbsd_pfsync6_input(struct mbuf **mp, int *offp, int proto)
 
 VNET_DEFINE_STATIC(pfil_hook_t, pf_ip4_in_hook);
 VNET_DEFINE_STATIC(pfil_hook_t, pf_ip4_out_hook);
+VNET_DEFINE_STATIC(pfil_hook_t, pf_ip4_local_hook);
 VNET_DEFINE_STATIC(pfil_hook_t, pf_ip6_in_hook);
 VNET_DEFINE_STATIC(pfil_hook_t, pf_ip6_out_hook);
+VNET_DEFINE_STATIC(pfil_hook_t, pf_ip6_local_hook);
 #define	pf_ip4_in_hook	VNET(pf_ip4_in_hook)
 #define	pf_ip4_out_hook	VNET(pf_ip4_out_hook)
+#define	pf_ip4_local_hook	VNET(pf_ip4_local_hook)
 #define	pf_ip6_in_hook	VNET(pf_ip6_in_hook)
 #define	pf_ip6_out_hook	VNET(pf_ip6_out_hook)
+#define	pf_ip6_local_hook	VNET(pf_ip6_local_hook)
 
 static void
 pf_fbsd_hook(void)
@@ -846,6 +905,13 @@ pf_fbsd_hook(void)
 	pla.pa_hook = pf_ip4_out_hook;
 	ret = pfil_link(&pla);
 	MPASS(ret == 0);
+	pha.pa_mbuf_chk = pf_fbsd_check_local;
+	pha.pa_rulname = "local-out4";
+	pf_ip4_local_hook = pfil_add_hook(&pha);
+	pla.pa_head = V_inet_local_pfil_head;
+	pla.pa_hook = pf_ip4_local_hook;
+	ret = pfil_link(&pla);
+	MPASS(ret == 0);
 #endif
 #ifdef INET6
 	pha.pa_type = PFIL_TYPE_IP6;
@@ -867,6 +933,13 @@ pf_fbsd_hook(void)
 	pla.pa_hook = pf_ip6_out_hook;
 	ret = pfil_link(&pla);
 	MPASS(ret == 0);
+	pha.pa_mbuf_chk = pf_fbsd_check6_local;
+	pha.pa_rulname = "local-out6";
+	pf_ip6_local_hook = pfil_add_hook(&pha);
+	pla.pa_head = V_inet6_local_pfil_head;
+	pla.pa_hook = pf_ip6_local_hook;
+	ret = pfil_link(&pla);
+	MPASS(ret == 0);
 #endif
 }
 
@@ -876,10 +949,12 @@ pf_fbsd_unhook(void)
 #ifdef INET
 	pfil_remove_hook(pf_ip4_in_hook);
 	pfil_remove_hook(pf_ip4_out_hook);
+	pfil_remove_hook(pf_ip4_local_hook);
 #endif
 #ifdef INET6
 	pfil_remove_hook(pf_ip6_in_hook);
 	pfil_remove_hook(pf_ip6_out_hook);
+	pfil_remove_hook(pf_ip6_local_hook);
 #endif
 }
 

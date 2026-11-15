@@ -219,9 +219,47 @@ make -j$(sysctl -n hw.ncpu) system-packages KERNCONF=GENERIC-NODEBUG \
 
 `PORTSDIR` must contain the custom `https://github.com/5BSD/5BSD-ports.git`
 checkout, not a second hardware ports collection. `HARDWARE_PORT_LIST` selects a list of ports within that tree;
-it defaults to `release/tools/hardware-ports.${MACHINE_ARCH}`. `DISTDIR` can
+it defaults to `release/tools/hardware-ports.<arch>` for the target
+architecture. `DISTDIR` can
 select an existing distfiles cache. Ports verifies fetched/cached distfiles.
 All hardware compilation uses the available logical CPUs.
+
+A target without hardware ports has a profile whose only entry is
+`no-hardware-ports`; `release/tools/hardware-ports.aarch64` is one until arm64
+hardware builds are added. The hardware stage then compiles nothing and needs
+no ports checkout: it performs the same single-kernel and kernel-object checks,
+seals the kernel package with its identity, and `publish-packages` publishes
+the base packages with that kernel and no hardware packages. `publication.json`
+records the scope as `complete base generation with kernel identity; no
+hardware packages`. Only such a profile is accepted for a cross-built target,
+for example:
+
+```sh
+make -j$(sysctl -n hw.ncpu) buildworld TARGET=arm64 TARGET_ARCH=aarch64 \
+    WITH_MALLOC_PRODUCTION=yes
+make -j$(sysctl -n hw.ncpu) buildkernel TARGET=arm64 TARGET_ARCH=aarch64 \
+    KERNCONF=GENERIC-NODEBUG
+make -j$(sysctl -n hw.ncpu) system-packages TARGET=arm64 TARGET_ARCH=aarch64 \
+    KERNCONF=GENERIC-NODEBUG
+```
+
+A cross build names the repository after the target package ABI, read from the
+target world in the object tree. Set `TARGET` and `TARGET_ARCH` together; one
+without the other is refused. A profile that lists ports still requires a
+target-native builder.
+
+A profile is ASCII text with one entry per line and `#` comments. `build-bsd`
+and the hardware stage read it by the same rules and refuse an empty profile,
+an entry that is not a port origin, and `no-hardware-ports` given twice or
+next to ports. `build-bsd` also passes the backend its plan reported as
+`HARDWARE_BACKEND`, and the hardware stage refuses a profile that no longer
+selects it.
+
+A generation without hardware packages has nothing for `fwget` to install. On
+a machine where a device selects a hardware package, hardware installation
+fails instead of fetching a foreign module; a scripted installation on such a
+machine needs `BSDINSTALL_SKIP_FIRMWARE`. Virtual machines without such
+devices are unaffected.
 
 If base packages already exist, avoid repackaging them:
 
@@ -267,8 +305,9 @@ whenever pkgbase is in use, builds the world's repository with the same
 `/usr/5bsd-packages/offline` together with
 `release/scripts/5BSD-base-offline.conf`, so the installer never needs a
 network for the base system. `release/scripts/pkgbase-stage.lua` selects the
-packages and must list `5BSD-kernel-generic`, as must
-`usr.sbin/bsdinstall/scripts/pkgbase.in`. The knobs:
+packages, among them the kernel package: `5BSD-kernel-<name>` for the first
+configuration in `KERNCONF`, or the only kernel in the repository when
+`KERNCONF` is not set. The knobs:
 
 | Variable | Meaning |
 |---|---|
@@ -331,6 +370,10 @@ Everything above is committed. Known rough edges: src.conf(5) still prints
 i386 and armv7 defaults that the 64-bit-only universe never uses; the
 repository is unsigned unless you set `PKG_REPO_SIGNING_KEY`; and while
 `make packages` cuts one `5BSD-kernel-<name>` package per configuration in
-`KERNCONF` (`Makefile.inc1`, `create-kernel-packages`), the installer and
-`release/scripts/pkgbase-stage.lua` only know `5BSD-kernel-generic`, so a
-custom kernel is installable with `pkg` but not selectable in `bsdinstall`.
+`KERNCONF` (`Makefile.inc1`, `create-kernel-packages`; `<name>` is the
+configuration name in lower case with a hyphen for each underscore), a
+repository with several kernels needs the kernel named: media that
+`release/Makefile` assembles from the repository it builds take the first
+word of `KERNCONF` (passed to `release/scripts/pkgbase-stage.lua`), and
+`bsdinstall` takes `BSDINSTALL_KERNEL`. The installer has no menu to choose
+a kernel.

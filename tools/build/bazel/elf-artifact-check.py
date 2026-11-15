@@ -175,7 +175,11 @@ def sections(objcopy, readelf, artifact, scratch):
     return result
 
 
-def compare_program(readelf, objcopy, candidate, reference, scratch, *, expected_search_paths=None, static=False):
+def compare_program(readelf, objcopy, candidate, reference, scratch, *, expected_search_paths=None, static=False, non_pie=False):
+    if type(static) is not bool or type(non_pie) is not bool:
+        raise ValueError('executable contract selections must be boolean')
+    if static and non_pie:
+        raise ValueError('static and non-PIE dynamic contracts are mutually exclusive')
     records = {}
     for key, path in (('candidate', candidate), ('make_reference', reference)):
         text = run([readelf, '-h', '-l', '-d', '-W', '--dyn-syms', '--version-info', path])
@@ -191,6 +195,9 @@ def compare_program(readelf, objcopy, candidate, reference, scratch, *, expected
         if static:
             if record['type'] != 'EXEC' or record['pie']:
                 raise ValueError(label + ': fixed static executable required')
+        elif non_pie:
+            if record['type'] != 'EXEC' or record['pie']:
+                raise ValueError(label + ': fixed non-PIE dynamic executable required')
         elif record['type'] != 'DYN' or not record['pie']:
             raise ValueError(label + ': PIE executable required')
         if not record['relro'] or (not static and not record['now']):
@@ -209,7 +216,7 @@ def compare_program(readelf, objcopy, candidate, reference, scratch, *, expected
                          json.dumps({'candidate': a['needed_order'], 'make': b['needed_order']}))
     sa, sb = records['candidate']['sections'], records['make_reference']['sections']
     differing = sorted(n for n in set(sa) | set(sb) if sa.get(n) != sb.get(n))
-    return {'scope': 'program-metadata-comparison', 'linkage': 'static' if static else 'dynamic', 'expected_search_paths': expected, 'readelf_sha256': sha(readelf),
+    return {'scope': 'program-metadata-comparison', 'linkage': 'static' if static else 'dynamic', 'position_independent': not (static or non_pie), 'expected_search_paths': expected, 'readelf_sha256': sha(readelf),
             **records, 'needed_order_equal': a['needed_order'] == b['needed_order'],
             'byte_identical': sha(candidate) == sha(reference),
             'section_names_equal': sorted(sa) == sorted(sb), 'differing_sections': differing,
@@ -510,12 +517,14 @@ def main():
     selection.add_argument('--qualification', type=Path, help='completed native qualification directory')
     p.add_argument('--target', help='explicit captured target label')
     p.add_argument('--output-suffix', help='unique literal suffix of its captured output name')
-    p.add_argument('--static-program', action='store_true', help='require a fixed static executable with no interpreter or dynamic dependencies')
+    executable = p.add_mutually_exclusive_group()
+    executable.add_argument('--non-pie-program', action='store_true', help='require a fixed dynamically linked executable; preserve interpreter, dependency and hardening checks')
+    executable.add_argument('--static-program', action='store_true', help='require a fixed static executable with no interpreter or dynamic dependencies')
     p.add_argument('--expected-search-path', action='append', default=[],
                    help='explicit expected program RPATH/RUNPATH value; candidate and Make tags must still agree')
     a = p.parse_args()
-    if a.kind != 'program' and a.static_program:
-        p.error('--static-program requires program comparison')
+    if a.kind != 'program' and (a.static_program or a.non_pie_program):
+        p.error('executable contract selection requires program comparison')
     if a.kind != 'program' and a.expected_search_path:
         p.error('--expected-search-path requires program comparison')
     if a.qualification is not None:
@@ -529,7 +538,7 @@ def main():
     if a.kind == 'program':
         scratch = a.output.with_suffix('.scratch')
         scratch.mkdir()
-        result = compare_program(a.readelf, a.objcopy, a.candidate, a.make_artifact, scratch, expected_search_paths=a.expected_search_path, static=a.static_program)
+        result = compare_program(a.readelf, a.objcopy, a.candidate, a.make_artifact, scratch, expected_search_paths=a.expected_search_path, static=a.static_program, non_pie=a.non_pie_program)
         scratch.rmdir()
     else:
         result = compare_archive(a.nm, a.ar, a.candidate, a.make_artifact)

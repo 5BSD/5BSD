@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/cddl/zfs:suite.bzl", "zfs_test_suite")
+
+zfs_test_suite(
+    files = ['config015.cfg', 'config012.cfg', 'state007.cfg', 'state009.cfg', 'config020.cfg', 'state024.cfg', 'state023.cfg', 'state018.cfg', 'state016.cfg', 'cleanup.ksh', 'config003.cfg', 'state011.cfg', 'config004.cfg', 'config021.cfg', 'state008.cfg', 'config013.cfg', 'state006.cfg', 'config014.cfg', 'state001.cfg', 'state010.cfg', 'config005.cfg', 'state017.cfg', 'config002.cfg', 'state019.cfg', 'state022.cfg', 'state014.cfg', 'config001.cfg', 'state013.cfg', 'config006.cfg', 'config008.cfg', 'inherit_001_pos.ksh', 'state021.cfg', 'config022.cfg', 'config019.cfg', 'config017.cfg', 'state002.cfg', 'config010.cfg', 'state005.cfg', 'state020.cfg', 'inherit.kshlib', 'config009.cfg', 'state012.cfg', 'config007.cfg', 'state015.cfg', 'config011.cfg', 'inherit.cfg', 'state004.cfg', 'config016.cfg', 'state003.cfg', 'config018.cfg', 'config023.cfg', 'config024.cfg'],
+    tests = {'inheritance_test': {'required_user': 'root', 'is_exclusive': True, 'required_programs': 'ksh93'}},
+)

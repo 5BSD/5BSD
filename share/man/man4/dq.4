@@ -1233,12 +1233,14 @@ reopens included.
 Then its id is retired,
 .Dv DQ_OP_CLOSE
 is posted if asked for, and nothing waits for the controller.
-The reply path holds the object's file while it runs the
+The reply path runs the
 .Fn mac_file_notify_reply
-hook, so when the requester closed meanwhile that drop is the last
-reference and the
-.Dv DQ_OP_CLOSE
-record then carries the controller as its caller.
+hook without a reference on the object's file, so a requester that
+closes meanwhile still makes the last close: that close waits for the
+hook to return (kernel code on the controller's thread, nothing the
+controller does) and then releases the
+.Xr flock 2
+and OFD locks before it returns, as the last close of a vnode does.
 When the queue dies
 .Po
 its owner exits, execs or leaves a shared descriptor table, or its last
@@ -4281,6 +4283,11 @@ answer fail as if no file could be allocated
 .Er ( ENFILE ) ;
 the object retires with its
 .Dv DQ_OP_CLOSE .
+.It Va debug.dq.delay_reply_notify
+The next N replies about an object with an open file sleep one second after
+the requester is released and before the
+.Fn mac_file_notify_reply
+hook runs, so that a test can close the file in that window.
 .It Va debug.dq.fail_link_closing
 The next N
 .Dv DQ_RESOLVE_FD

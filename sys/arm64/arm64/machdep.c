@@ -469,9 +469,18 @@ bool
 arm64_get_writable_addr(void *addr, void **out)
 {
 	vm_paddr_t pa;
+	register_t intr;
+	uint64_t par;
 
-	/* Check if the page is writable */
-	if (PAR_SUCCESS(arm64_address_translate_s1e1w((vm_offset_t)addr))) {
+	/*
+	 * Check if the page is writable.  An interrupt between the
+	 * translation and the PAR_EL1 read can run another one, as
+	 * pmap_klookup() does from a fault, and replace the result.
+	 */
+	intr = intr_disable();
+	par = arm64_address_translate_s1e1w((vm_offset_t)addr);
+	intr_restore(intr);
+	if (PAR_SUCCESS(par)) {
 		*out = addr;
 		return (true);
 	}
@@ -488,8 +497,10 @@ arm64_get_writable_addr(void *addr, void **out)
 	 */
 	if (PHYS_IN_DMAP_RANGE(pa)) {
 		addr = PHYS_TO_DMAP(pa);
-		if (PAR_SUCCESS(arm64_address_translate_s1e1w(
-		    (vm_offset_t)addr))) {
+		intr = intr_disable();
+		par = arm64_address_translate_s1e1w((vm_offset_t)addr);
+		intr_restore(intr);
+		if (PAR_SUCCESS(par)) {
 			*out = addr;
 			return (true);
 		}

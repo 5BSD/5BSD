@@ -424,7 +424,7 @@ pf_quota_setlimit(struct pfioc_limit *pl)
 /* ------------------------------------------------------------------ */
 
 SYSCTL_DECL(_net);
-static SYSCTL_NODE(_net, OID_AUTO, pf, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
+SYSCTL_NODE(_net, OID_AUTO, pf, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
     "pf(4)");
 
 /* A host-only percentage (arg2: the maximum). */

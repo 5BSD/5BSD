@@ -57,7 +57,7 @@ typedef struct kdtrace_thread {
 					/* Handling a return probe. */
 			uint8_t		_td_dtrace_ast;
 					/* Saved ast flag. */
-#ifdef __amd64__
+#if defined(__amd64__) || defined(__aarch64__)
 			uint8_t		_td_dtrace_reg;
 #endif
 		} _tds;
@@ -76,7 +76,7 @@ typedef struct kdtrace_thread {
 					/* DTrace per-thread scratch location. */
 	uintptr_t	td_dtrace_astpc;
 					/* DTrace return sequence location. */
-#ifdef __amd64__
+#if defined(__amd64__) || defined(__aarch64__)
 	uintptr_t	td_dtrace_regv;
 #endif
 	uintptr_t	td_dtrace_sdt_arg[1];	/* Space for extra SDT args */

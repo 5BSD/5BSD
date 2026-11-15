@@ -55,6 +55,16 @@
 #define howmany(x, y) (((x) + (y) - 1) / (y))
 
 typedef uint64_t vm_paddr_t;
+typedef int vm_prot_t;
+#define VM_PROT_READ 1
+typedef struct pmap *pmap_t;
+/* vmmops_gla2gpa() walks with held pages; the locked walk is never taken. */
+static void *
+dtrace_vmm_s2_map(pmap_t pmap, uint64_t ipa, vm_prot_t prot)
+{
+    (void)pmap; (void)ipa; (void)prot;
+    abort();
+}
 struct vcpu { int unused; };
 struct hypctx { struct vcpu *vcpu; };
 struct vm_guest_paging {

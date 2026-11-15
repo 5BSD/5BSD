@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/cddl/zfs:suite.bzl", "zfs_test_suite")
+
+zfs_test_suite(
+    files = ['setup.ksh', 'zpool_upgrade_003_pos.ksh', 'zpool_upgrade_007_pos.ksh', 'zpool_upgrade_006_neg.ksh', 'zpool_upgrade_002_pos.ksh', 'zpool_upgrade.cfg', 'zpool_upgrade_004_pos.ksh', 'zpool_upgrade_008_pos.ksh', 'zpool_upgrade_005_neg.ksh', 'zpool_upgrade_009_neg.ksh', 'zpool_upgrade.kshlib', 'cleanup.ksh', 'zpool_upgrade_001_pos.ksh'],
+    tests = {'zpool_upgrade_test': {'required_user': 'root', 'is_exclusive': True, 'required_programs': 'ksh93'}},
+    child_archives = ['//tests/sys/cddl/zfs/tests/cli_root/zpool_upgrade/blockfiles:installation_archives'],
+)

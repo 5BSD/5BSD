@@ -6,7 +6,6 @@ PACKAGE=		tests
 TESTSDIR=		${TESTSBASE}/sys/fs
 
 TESTSRC=		${SRCTOP}/contrib/netbsd-tests/fs
-TESTS_SUBDIRS+=		fdescfs
 
 TESTS_SUBDIRS+=		fdescfs
 #TESTS_SUBDIRS+=	nullfs	# XXX: needs rump

@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("//cddl:production.bzl", "production_archives")
-production_archives(["//cddl/lib:production_installation_archives", "//cddl/sbin:production_installation_archives", "//cddl/share:production_installation_archives", "//cddl/usr.bin:production_installation_archives", "//cddl/usr.libexec:production_installation_archives", "//cddl/usr.sbin:production_installation_archives"])
+_FAMILIES = ["//cddl/lib", "//cddl/sbin", "//cddl/share", "//cddl/usr.bin", "//cddl/usr.libexec", "//cddl/usr.sbin"]
+production_archives([family + ":production_installation_archives" for family in _FAMILIES],
+    candidates = [family + ":installation_candidates" for family in _FAMILIES])
 filegroup(name = "production_products", srcs = [":production_installation_archives", "//cddl/lib:production_libraries"], visibility = ["//visibility:public"])

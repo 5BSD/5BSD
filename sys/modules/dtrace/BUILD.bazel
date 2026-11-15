@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # Native inventory corresponding to the maintained DTrace module directory.
 _COMMON = ["dtaudit", "dtmalloc", "dtnfscl", "dtrace", "dtraceall", "dtrace_test", "hypertrace", "fbt", "profile", "prototype", "sdt", "systrace"]
-_AMD64_ONLY = ["fasttrap", "systrace_linux"]
+_USERLAND = ["fasttrap", "systrace_linux"]
 
 # These explicit component targets represent the directory itself; parent
 # system selection is responsible for the CDDL/DTrace build choices.
 [filegroup(name = prefix + name,
     srcs = ["//sys/modules/dtrace/" + module + ":" + prefix + target for module in modules],
     visibility = ["//visibility:public"])
- for prefix, modules in [("", _COMMON + _AMD64_ONLY + ["kinst"]),
-     ("arm64_", _COMMON + ["kinst"]), ("riscv_", _COMMON + ["kinst"])]
+ for prefix, modules in [("", _COMMON + _USERLAND + ["kinst"]),
+     ("arm64_", _COMMON + _USERLAND + ["kinst"]), ("riscv_", _COMMON + _USERLAND + ["kinst"])]
  for name, target in [("generic_modules", "generic_module"), ("generic_debug", "generic_debug"), ("install_manifests", "install_manifest")]]
 
 load("//tools/build/bazel:bsd_kernel_module_installation.bzl", "bsd_kernel_module_set", "bsd_kernel_module_installation")

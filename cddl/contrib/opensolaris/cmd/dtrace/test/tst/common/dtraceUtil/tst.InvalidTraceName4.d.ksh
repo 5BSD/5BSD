@@ -43,7 +43,9 @@ fi
 
 dtrace=$1
 
-$dtrace -n begin
+# Probe names are case-sensitive: the dtrace provider has BEGIN, not begin.
+# Qualify the provider, as other providers may have a probe named begin.
+$dtrace -n dtrace:::begin
 
 status=$?
 

@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/fs:suite.bzl", "filesystem_test_suite")
+load("//tools/build/bazel:bsd_sed_output.bzl", "bsd_sed_output")
+
+filesystem_test_suite(directory = '/usr/tests/sys/geom/class',
+    files = {'geom_subr.sh': 'geom_subr.sh', 'zoned_subr.sh': 'zoned_subr.sh'},
+    subdirectories = select({"//tools/build/bazel/config:openssl_enabled": ["eli"], "//conditions:default": []}) + ['gate', 'label', 'mirror', 'multipath', 'nop', 'part', 'uzip', 'zoned'],
+    child_archives = select({"//tools/build/bazel/config:openssl_enabled": ["//tests/sys/geom/class/eli:installation_archives"], "//conditions:default": []}) + ['//tests/sys/geom/class/gate:installation_archives', '//tests/sys/geom/class/label:installation_archives', '//tests/sys/geom/class/mirror:installation_archives', '//tests/sys/geom/class/multipath:installation_archives', '//tests/sys/geom/class/nop:installation_archives', '//tests/sys/geom/class/part:installation_archives', '//tests/sys/geom/class/uzip:installation_archives', '//tests/sys/geom/class/zoned:installation_archives'],
+)
+
+

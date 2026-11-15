@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Exercise coverage queries with real makefiles and kernel metadata separation."""
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -117,6 +118,102 @@ class Coverage(unittest.TestCase):
         (self.packages / 'first/Makefile').write_text('.error invalid package configuration\n')
         result = self.run_check()
         self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn('WORLD_PACKAGE_COVERAGE', result.stdout)
+
+    def test_lost_make_query(self):
+        """An evaluation that dies without a word still fails the check."""
+        make = self.root / 'make'
+        make.write_text('#!/bin/sh\ncase "$*" in\n*/first\\ *) kill -KILL $$ ;;\n'
+                        'esac\nexec make "$@"\n')
+        make.chmod(0o755)
+        result = subprocess.run(['sh', str(CHECK), str(self.stage),
+            str(self.packages), str(make)], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('cannot evaluate the package makefiles', result.stderr)
+        self.assertNotIn('WORLD_PACKAGE_COVERAGE', result.stdout)
+
+    def many_directories(self):
+        """More active directories than the check evaluates at once."""
+        count = 2 * os.cpu_count() + 3
+        names = ['many%03d' % number for number in range(count)]
+        (self.packages / 'Makefile').write_text('SUBDIR= first ' + ' '.join(names) + '\n')
+        for name in names:
+            (self.packages / name).mkdir()
+            (self.packages / name / 'Makefile').write_text('_ALLPACKAGES= ' + name + '\n')
+            (self.stage / (name + '.plist')).write_text('/bin/' + name + '\n')
+        return names
+
+    def test_every_directory_is_evaluated(self):
+        names = self.many_directories()
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # Each of them is needed: without its makefile its plist is an orphan.
+        for name in (names[0], names[len(names) // 2], names[-1]):
+            makefile = self.packages / name / 'Makefile'
+            makefile.write_text('_ALLPACKAGES=\n')
+            result = self.run_check()
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.stderr.splitlines()[1:], [name])
+            makefile.write_text('_ALLPACKAGES= ' + name + '\n')
+
+    def test_one_failed_query_among_many(self):
+        names = self.many_directories()
+        for name in (names[0], names[len(names) // 2], names[-1]):
+            makefile = self.packages / name / 'Makefile'
+            makefile.write_text('.error invalid package configuration\n')
+            result = self.run_check()
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('cannot evaluate the package makefiles', result.stderr)
+            self.assertNotIn('WORLD_PACKAGE_COVERAGE', result.stdout)
+            makefile.write_text('_ALLPACKAGES= ' + name + '\n')
+
+    def test_directories_of_a_package_not_built_here(self):
+        """Directories alone, for a package the tree has but this target
+        does not build, are not a payload."""
+        (self.stage / 'beta.plist').write_text(
+            '@dir(root,wheel,0755,) /usr/include/beta\n')
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('beta: package not built for this target', result.stderr)
+        # A file is a payload.
+        (self.stage / 'beta.plist').write_text(
+            '@dir(root,wheel,0755,) /usr/include/beta\n/usr/include/beta/b.h\n')
+        result = self.run_check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stderr.splitlines()[1:], ['beta'])
+
+    def test_directories_of_an_unknown_package(self):
+        (self.stage / 'gamma.plist').write_text(
+            '@dir(root,wheel,0755,) /usr/include/gamma\n')
+        (self.stage / 'zeta.plist').write_text('/bin/zeta\n')
+        (self.stage / 'aaa.plist').write_text(
+            '@dir(root,wheel,0755,) /usr/include/aaa\n')
+        (self.stage / 'beta.plist').write_text(
+            '@dir(root,wheel,0755,) /usr/include/beta\n')
+        result = self.run_check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stderr.splitlines(), [
+            'beta: package not built for this target (only @dir entries staged)',
+            'staged payloads lack active world package targets:',
+            'aaa', 'gamma', 'zeta'])
+
+    def test_inactive_makefiles_are_read_only_for_directory_orphans(self):
+        (self.packages / 'second/Makefile').write_text(
+            '.error invalid package configuration\n')
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # A payload orphan is refused without them, too.
+        (self.stage / 'zeta.plist').write_text('/bin/zeta\n')
+        result = self.run_check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stderr.splitlines()[1:], ['zeta'])
+        (self.stage / 'zeta.plist').unlink()
+        # Whether directories alone are acceptable depends on them.
+        (self.stage / 'beta.plist').write_text(
+            '@dir(root,wheel,0755,) /usr/include/beta\n')
+        result = self.run_check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('cannot evaluate the package makefiles', result.stderr)
         self.assertNotIn('WORLD_PACKAGE_COVERAGE', result.stdout)
 
     def test_invalid_plist_and_empty_stage(self):

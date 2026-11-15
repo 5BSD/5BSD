@@ -96,6 +96,8 @@ TEST_METADATA.dq_mac_test+=	is_exclusive="true"
 TEST_METADATA.dq_async_test+=	is_exclusive="true"
 # Changes kern.dq.default_deadline_ms and creates a jail: run alone.
 TEST_METADATA.dq_resolve_test+=	is_exclusive="true"
+# debug.dq.delay_reply_notify acts on every queue.
+TEST_METADATA.dq_lock_test+=	is_exclusive="true"
 # Creates a jail, sets kern.dq.default_deadline_ms and
 # net.inet.tcp.udp_tunneling_port, traces with dtrace: run alone.
 TEST_METADATA.dq_socket_test+=	is_exclusive="true"
