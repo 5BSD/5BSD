@@ -388,32 +388,6 @@ actor_scm(void *arg, void *result)
 	actor(&a, result);
 }
 
-static int
-send_fd(int sock, int fd)
-{
-	struct msghdr mh;
-	struct iovec iov;
-	union {
-		struct cmsghdr	 hdr;
-		char		 buf[CMSG_SPACE(sizeof(int))];
-	} cm;
-	char b = 'f';
-
-	memset(&mh, 0, sizeof(mh));
-	memset(&cm, 0, sizeof(cm));
-	iov.iov_base = &b;
-	iov.iov_len = 1;
-	mh.msg_iov = &iov;
-	mh.msg_iovlen = 1;
-	mh.msg_control = cm.buf;
-	mh.msg_controllen = sizeof(cm.buf);
-	cm.hdr.cmsg_len = CMSG_LEN(sizeof(int));
-	cm.hdr.cmsg_level = SOL_SOCKET;
-	cm.hdr.cmsg_type = SCM_RIGHTS;
-	memcpy(CMSG_DATA(&cm.hdr), &fd, sizeof(int));
-	return (sendmsg(sock, &mh, 0) == 1 ? 0 : -1);
-}
-
 ATF_TC(nonparent_attach);
 ATF_TC_HEAD(nonparent_attach, tc)
 {
@@ -441,7 +415,7 @@ ATF_TC_BODY(nonparent_attach, tc)
 	ra.sock = sv[1];
 	dqt_spawn(&ch, actor_scm, &ra);
 	idle_spawn(&s, 0, NULL);
-	ATF_REQUIRE_EQ(0, send_fd(sv[0], s.pd));
+	ATF_REQUIRE_EQ(0, dqt_send_fd(sv[0], s.pd));
 	memset(&r, 0, sizeof(r));
 	dqt_collect(&ch, &r, sizeof(r));
 	ROW("received by SCM_RIGHTS: dq_open", r.open, 0);
@@ -653,38 +627,13 @@ shielded_parent(void *arg, void *result)
 		_exit(0);
 	}
 	r->child = s.pid;
-	if (send_fd(sa->sock, s.pd) != 0)
+	if (dqt_send_fd(sa->sock, s.pd) != 0)
 		_exit(6);
 	if (write(sa->sock, r, sizeof(*r)) != (ssize_t)sizeof(*r))
 		_exit(7);
 	/* Stay, shielded, until the test has looked at both processes. */
 	(void)read(sa->sock, &b, 1);
 	idle_end(&s);
-}
-
-static int
-recv_fd(int sock)
-{
-	struct msghdr mh;
-	struct iovec iov;
-	union {
-		struct cmsghdr	 hdr;
-		char		 buf[CMSG_SPACE(sizeof(int))];
-	} cm;
-	char b;
-	int fd;
-
-	memset(&mh, 0, sizeof(mh));
-	iov.iov_base = &b;
-	iov.iov_len = 1;
-	mh.msg_iov = &iov;
-	mh.msg_iovlen = 1;
-	mh.msg_control = cm.buf;
-	mh.msg_controllen = sizeof(cm.buf);
-	if (recvmsg(sock, &mh, 0) != 1 || cm.hdr.cmsg_type != SCM_RIGHTS)
-		return (-1);
-	memcpy(&fd, CMSG_DATA(&cm.hdr), sizeof(int));
-	return (fd);
 }
 
 ATF_TC(shield_not_inherited);
@@ -711,7 +660,7 @@ ATF_TC_BODY(shield_not_inherited, tc)
 	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
 	sa.sock = sv[1];
 	dqt_spawn(&ch, shielded_parent, &sa);
-	pd = recv_fd(sv[0]);
+	pd = dqt_recv_fd(sv[0]);
 	ATF_REQUIRE_MSG(pd != -1, "no process descriptor from the parent");
 	ATF_REQUIRE_EQ((ssize_t)sizeof(sr), read(sv[0], &sr, sizeof(sr)));
 	ROW("CP_OP_SHIELD", sr.shield, 0);

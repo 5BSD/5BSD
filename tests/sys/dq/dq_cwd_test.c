@@ -1146,55 +1146,6 @@ ATF_TC_CLEANUP(root_escape_race, tc)
  * from it are outside the tree, refused EACCES by dq_serve_tree by
  * default and PASSed with DQ_TREE_F_OUTSIDE_PASS.
  */
-static int
-recv_fd(int so)
-{
-	struct msghdr msg;
-	struct iovec iov;
-	struct cmsghdr *cm;
-	char c, cbuf[CMSG_SPACE(sizeof(int))];
-	int fd;
-
-	memset(&msg, 0, sizeof(msg));
-	iov.iov_base = &c;
-	iov.iov_len = 1;
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	msg.msg_control = cbuf;
-	msg.msg_controllen = sizeof(cbuf);
-	if (recvmsg(so, &msg, 0) != 1)
-		return (-1);
-	cm = CMSG_FIRSTHDR(&msg);
-	if (cm == NULL || cm->cmsg_type != SCM_RIGHTS)
-		return (-1);
-	memcpy(&fd, CMSG_DATA(cm), sizeof(fd));
-	return (fd);
-}
-
-static void
-send_fd(int so, int fd)
-{
-	struct msghdr msg;
-	struct iovec iov;
-	struct cmsghdr *cm;
-	char c = 'f', cbuf[CMSG_SPACE(sizeof(int))];
-
-	memset(&msg, 0, sizeof(msg));
-	memset(cbuf, 0, sizeof(cbuf));
-	iov.iov_base = &c;
-	iov.iov_len = 1;
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	msg.msg_control = cbuf;
-	msg.msg_controllen = sizeof(cbuf);
-	cm = CMSG_FIRSTHDR(&msg);
-	cm->cmsg_level = SOL_SOCKET;
-	cm->cmsg_type = SCM_RIGHTS;
-	cm->cmsg_len = CMSG_LEN(sizeof(int));
-	memcpy(CMSG_DATA(cm), &fd, sizeof(fd));
-	(void)sendmsg(so, &msg, 0);
-}
-
 struct realfd_arg {
 	int	so;
 	int	realfd;
@@ -1205,7 +1156,7 @@ realfd_sender(void *arg)
 {
 	struct realfd_arg *a = arg;
 
-	send_fd(a->so, a->realfd);
+	(void)dqt_send_fd(a->so, a->realfd);
 	return (NULL);
 }
 
@@ -1217,7 +1168,7 @@ realfd_fn(void *arg, void *out)
 	struct stat st;
 	int fd;
 
-	fd = recv_fd(a->so);
+	fd = dqt_recv_fd(a->so);
 	r->err[0] = fd < 0 ? EBADF : 0;
 	r->err[1] = TS_ERR(fstatat(fd, "x", &st, 0));
 	r->err[2] = TS_ERR(fchdir(fd));
@@ -1330,7 +1281,7 @@ guard_fn(void *arg, void *out)
 	r->err[0] = TS_ERR(stat("/boundary", &st));
 	fd = open("/outfd", O_RDONLY);
 	r->err[1] = fd < 0 ? errno : 0;
-	fd = recv_fd(a->so);
+	fd = dqt_recv_fd(a->so);
 	r->err[2] = fd < 0 ? EBADF : TS_ERR(fstatat(fd, "rx", &st, 0));
 }
 

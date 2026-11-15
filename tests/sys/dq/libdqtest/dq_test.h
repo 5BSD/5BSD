@@ -342,6 +342,15 @@ bool	dqt_wait_stats(struct dqt_ctl *c, dqt_stats_pred pred, uintptr_t arg,
 	    int ms);
 
 /*
+ * A descriptor over a UNIX domain socket (SCM_RIGHTS) with one byte of
+ * data, for requesters (no ATF call).  dqt_send_fd returns 0 or -1;
+ * dqt_recv_fd returns the descriptor, or -1 with errno set (EBADMSG for a
+ * message without exactly one descriptor).
+ */
+int	dqt_send_fd(int sock, int fd);
+int	dqt_recv_fd(int sock);
+
+/*
  * Copy a program installed beside the tests (srcdir: the foreign-ABI
  * programs the Makefile builds) into the work directory as name, mode
  * 0755.  A missing program is a failure.

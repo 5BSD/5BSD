@@ -9,6 +9,7 @@
 LIB=		dqtest
 INTERNALLIB=
 SRCS=		dqt_access.c \
+		dqt_fd.c \
 		dqt_harness.c \
 		dqt_sysctl.c \
 		dqt_tree.c
