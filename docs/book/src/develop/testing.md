@@ -21,7 +21,7 @@ is not a pass.
 |---|---|---|
 | In-session | protocol encoding, parsers, client libraries, device models with mocked rings; root cases skip | `kyua test` in the object tree or `/usr/tests` |
 | VM, plane on | providers over a real channel, capsule and switchboard lifecycle, software attributes, container reclaim | a guest booted with capsule as PID 1 and `kern.mac_capability_isolation.enforce=0` |
-| VM, plane off | kernel `mac_capability` services, TrustedZFS handles, raw provider transports that must own `/dev/mac_capability` | `capability_plane="NO"` in loader.conf, stock init runs |
+| VM, plane off | kernel `mac_capability` services, isolation-policy denials (enforce=1), TrustedZFS handles, raw provider transports that must own `/dev/mac_capability` | `capability_plane="NO"` in loader.conf, stock init runs, `kern.mac_capability_isolation.enforce=1` |
 | QEMU or bhyve gate | Linux ABI, OES, mac_abac, WASPNest devices; the host builds, the guest is the only evidence | `tools/test/*-qemu`, `tools/test/linuxulator`, `tests/waspnest` |
 
 A test is written for one tier and skips cleanly in the others, naming the
@@ -245,6 +245,21 @@ own. A device-suite test that claims `/dev/mac_capability` is plane-off; an
 integration test that talks to a running switchboard is plane-on. One guest
 image serves both, rebuilt with or without `CAPLANE_OFF=1`.
 
+`tests/sys/mac_capability` runs in both VM tiers with
+`tools/build/fuchsia/vm-provider.sh STAGE WORK "sys/mac_capability"`. The
+plane-on run is the standard one. Its isolation cases that expect the policy
+to refuse an access (all of `mac_capability_isolation_test`'s denial cases
+and `mac_capability_system_test:sysctl_isolation_union_and_subtract`) call
+`require_isolation_enforced()` and skip there, naming
+`kern.mac_capability_isolation.enforce=0`, because that tier's test mode only
+traces such denials. They run in the enforced tier, the same command with
+`PLANE_OFF=1`: the runner boots `capability_plane="NO"` with
+`kern.mac_capability_isolation.enforce=1` (the plane-off default of
+`ISOLATION_ENFORCE`) and reports `PLANEOFF_READY` only if the booted value
+is the one asked for. The enforced tier is an addition to the plane-on run,
+never a substitute: run both. Enforcing with the plane on is not a tier;
+Capsule's claim then refuses the test its own `/dev/mac_capability`.
+
 The other plane-free runner is `tools/test/capability-qemu/run.sh`, which
 stages kernel, modules, libraries and test binaries onto a CD image, boots a
 `-snapshot` guest, installs from the CD, reboots into single-user mode and
@@ -367,7 +382,7 @@ differs (the Bluetooth fuzz count is the Makefile's).
 | Component libs + ctl tools | `lib/*/tests`, `usr.sbin/*ctl/tests` | protocol, parser, client API | in-session (root cases skip) | ~40 dirs / ~700 cases |
 | Daemon suites (BSD*) | `usr.sbin/BSD*/tests` | provider policy, sessions, bundles | in-session unprivileged; full = VM plane-on | 15 dirs / ~600 cases |
 | Capsule + switchboard | `usr.sbin/{capsule,switchboard}/tests` | boot, lifecycle, management, rc adoption | VM plane-on (`run_capsule_switchboard_capability_tests.sh`) | 36 programs / ~370 cases |
-| mac_capability | `tests/sys/mac_capability` | kernel capability services | VM plane-off (`capability_plane="NO"`, `run_tests.sh`) | 10 programs / ~506 cases |
+| mac_capability | `tests/sys/mac_capability` | kernel capability services | VM plane-on (`vm-provider.sh`) plus the enforced plane-off tier (`PLANE_OFF=1`, enforce=1), or plane-off `run_tests.sh` | 10 programs / ~506 cases |
 | zfshandle / tzfs | `tests/sys/{zfshandle,tzfs}` | TrustedZFS handles, config | VM plane-off / trustedzfs-qemu | 11 programs / ~66 cases |
 | Capsicum/descriptor rights | `tests/sys/kern`, `tests/sys/capsicum` | new rights + envfd + capmode exec | in-session (root); envfd exclusive | ~10 programs / ~340 cases |
 | Linuxulator | `tests/sys/kern/linux_*` + `tools/test/linuxulator` | Linux ABI, ptrace, rseq | QEMU gate (ZFS-root guest) | 58 sh programs; 1,146 option runs |
