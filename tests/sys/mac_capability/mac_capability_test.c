@@ -6455,6 +6455,35 @@ ATF_TC_BODY(cap_pro_nofdrecv_channel_attachment, tc)
 	ATF_REQUIRE(write(pipe_channel[1], "x", 1) == 1);
 	ATF_CHECK(read(received_fd, &byte, 1) == 1 && byte == 'x');
 
+	/*
+	 * The channel receipt left nothing behind: SCM_RIGHTS is still
+	 * refused after it.
+	 */
+	memset(&message, 0, sizeof(message));
+	memset(&control, 0, sizeof(control));
+	byte = 'v';
+	iov.iov_base = &byte;
+	iov.iov_len = sizeof(byte);
+	message.msg_iov = &iov;
+	message.msg_iovlen = 1;
+	message.msg_control = control.data;
+	message.msg_controllen = sizeof(control.data);
+	cmsg = CMSG_FIRSTHDR(&message);
+	cmsg->cmsg_level = SOL_SOCKET;
+	cmsg->cmsg_type = SCM_RIGHTS;
+	cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+	memcpy(CMSG_DATA(cmsg), &pipe_unix[0], sizeof(int));
+	ATF_REQUIRE(sendmsg(ordinary[0], &message, 0) == sizeof(byte));
+	memset(&message, 0, sizeof(message));
+	memset(&control, 0, sizeof(control));
+	iov.iov_base = &byte;
+	iov.iov_len = sizeof(byte);
+	message.msg_iov = &iov;
+	message.msg_iovlen = 1;
+	message.msg_control = control.data;
+	message.msg_controllen = sizeof(control.data);
+	ATF_CHECK_ERRNO(EACCES, recvmsg(ordinary[1], &message, 0) == -1);
+
 	close(received_fd);
 	close(shield_fd);
 	close(pipe_channel[0]);

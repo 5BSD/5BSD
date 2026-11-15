@@ -115,7 +115,10 @@ const struct fileops mac_capability_instance_ops = {
  * capability channel: a message attachment or a CALL reply (I6).  The thread
  * is marked for the duration of the check so that a policy can tell this
  * receipt from ambient SCM_RIGHTS receipt; capprotect's CP_SF_NOFDRECV
- * removes only the latter (mac_capability_capprotect(4)).
+ * removes only the latter (mac_capability_capprotect(4)).  Nothing may wait
+ * for a supervisor, substitute a descriptor or receive another one while
+ * the flag is set: whatever ran here would inherit the exemption.
+ * fdswap_receive() and syscall return assert that it never leaks.
  */
 static int
 mac_capability_check_receive(struct thread *td, struct file *fp)

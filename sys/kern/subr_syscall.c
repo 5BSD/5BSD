@@ -294,6 +294,9 @@ syscallret(struct thread *td)
 	    ("EDQRESOLVED reached syscallret, syscall %d", td->td_sa.code));
 	KASSERT(td->td_dqintent == NULL,
 	    ("dq intent left published by syscall %d", td->td_sa.code));
+	KASSERT((td->td_pflags2 & TDP2_CAPCHAN_RECV) == 0,
+	    ("capability channel receive flag leaked by syscall %d",
+	    td->td_sa.code));
 
 	p = td->td_proc;
 	sa = &td->td_sa;
