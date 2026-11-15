@@ -94,9 +94,40 @@ bazel-nonpie-program-contract-capture-review-r1-20261115.
 The normal frontend's existing format-5 test workflow is sufficient; build-bsd.c,
 staging, signing and publication semantics need no new option. The maintained
 manual and helper documentation describe the explicit comparison selection.
-Native security-suite installation and source-owned whole-package contracts for
+Other native security suites and source-owned whole-package contracts for
 deliberate fixtures (including executable-stack helpers) remain open. All six
 system closeout gates remain open, with Make the production default.
+
+### Complete audit and auditpipe installation contributions
+
+Both original suites now have source-owned native build/install declarations:
+fifteen audit executables retain static private auditd linkage and deliberate
+non-PIE dynamic linking; auditpipe retains PIE. Header-only dependencies do not
+inject link inputs. The parent uses the existing audit setting exactly as Make:
+WITHOUT_AUDIT excludes audit, while auditpipe remains selected. Normal build-bsd
+qualification of that disabled selection passes. No new frontend C option,
+staging, signing or publication behavior is needed; the manual records scope.
+
+Final aggregate R15 passes fourteen selected safe test targets (77 nested Python
+cases, nine header ATF cases, the pure NFS decoder and hardlink target). Capture
+review verifies all 4,760 logical outputs / 4,154 unique payloads. Independent
+Make review passes all sixteen ELF/dependency-order contracts, sixteen debug
+pairs, both original Kyuafiles, 34 file records and ten directory claims. Evidence
+under /usr/obj/usr/src: bazel-audit-test-payload-inventory-r1-20261115,
+bazel-audit-test-installation-review-r1-20261115,
+bazel-audit-test-disabled-variant-r1-20261115,
+bazel-installed-tests-world-native-amd64-r15-20261115 and
+bazel-installed-tests-world-capture-review-r15-20261115. R13/R14 retain earlier
+successful graph captures before metadata factoring and conditional selection.
+
+No audit body executes on the host: global auditing state, device access and
+exclusive execution require a disposable guest. Existing process-control.c
+cap_getmode signed-pointer warnings remain visible, without new suppression.
+Native audit remains explicitly AMD64-only because libauditd and the served-dq
+dependency still restrict their architecture; auditpipe declares both Tier 1
+architectures, without claiming ARM execution. Other OS suites, whole-package
+fixture contracts, matched complete system installation, current kernel/VM and
+all six closeout gates remain open. The tests-on production guard stays intact.
 
 ### First consolidated configured inventory
 

@@ -7695,7 +7695,18 @@ comparison helper supports mutually exclusive --static-program and
 --non-pie-program contracts; dynamic PIE checks remain the default.
 The non-PIE dynamic contract retains interpreter, dependency, RELRO, immediate
 binding and non-executable-stack checks on both compared artifacts.
-These comparison options do not change build or runtime policy. All 239 case registrations and metadata match. Thirty-six
+These comparison options do not change build or runtime policy.
+.Pp
+Native audit and auditpipe installation contributions retain all sixteen original
+programs, their debug pairs and Kyua registrations.
+Audit uses static private auditd linkage and the original non-PIE dynamic model;
+auditpipe uses PIE.
+The existing audit build setting excludes audit when disabled, while retaining
+auditpipe as Make does.
+This is AMD64 build/install qualification, not audit runtime acceptance.
+Global-state audit cases require exclusive disposable-guest execution.
+The current native audit dependency chain remains AMD64-only; the complete
+installed-test production guard and default Make backend remain in place. All 239 case registrations and metadata match. Thirty-six
 selected host cases pass and two retain original architecture skips; 201 cases
 remain unexecuted. Spawn fixture copies preserve original bytes and executable
 modes with declared tools. This uses the existing explicit Bazel-input workflow
