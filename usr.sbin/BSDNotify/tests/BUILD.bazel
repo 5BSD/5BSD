@@ -19,20 +19,20 @@ load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
 [cc_binary(name = name + "_test", srcs = [name + "_test.c"] +
         ["//usr.sbin/BSDNotify:" + source + ".c" for source in ["broker", "policy", "transport"]],
     deps = ["//usr.sbin/BSDNotify:test_headers", "//lib/libauditcmp:auditcmp", "//lib/libchannel:channel",
-        "//lib/libfidl:fidl"] + (["//lib/liblogcmp:logcmp"] if name == "session" else []) +
+        "//lib/libfidl:fidl"] + (["//lib/liblogcmp:logcmp"] if name != "dispatcher" else []) +
         ["//lib/libnotify:notify", "//lib/libthr:thr", "//lib/libservice:service", "//lib/libucl:ucl", "//lib/atf/libatf-c:atf_c"],
     copts = ["-Wno-unused-function"], linkopts = ["-static"], linkstatic = True)
- for name in ["dispatcher", "session"]]
+ for name in ["dispatcher", "session", "router_start"]]
 [bsd_kyua_test(name = name + "_test_run", program = ":" + name + "_test", interface = "atf",
     suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
     suite_files = {":next_peer": "next_peer"} if name == "session" else {},
-    case_timeout = 120 if name == "session" else 60,
-    test_metadata = '{"required_user":"root"}' if name == "session" else '{}',
-    tags = ["manual", "requires-matching-kernel"] if name == "session" else [],
+    case_timeout = 120 if name != "dispatcher" else 60,
+    test_metadata = '{"required_user":"root"}' if name != "dispatcher" else '{}',
+    tags = ["manual", "requires-matching-kernel"] if name != "dispatcher" else [],
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
     size = "medium", visibility = ["//visibility:public"])
- for name in ["dispatcher", "session"]]
+ for name in ["dispatcher", "session", "router_start"]]
 
 load("//tools/build/bazel:bsd_fidl.bzl", "bsd_fidl_ir", "bsd_fidl_bindings")
 bsd_fidl_ir(name = "next_ir", schemas = ["evolution/notify_next.fidl"], available = "bsd:2",
@@ -92,7 +92,7 @@ load(":installation.bzl", "TESTDIR", "ATF_PROGRAMS", "BINARIES", "SOURCE_FIXTURE
     package = "bsdnotify-tests", bindir = TESTDIR) for p in BINARIES]
 bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ATF_PROGRAMS,
     interfaces = {p: "atf" for p in ATF_PROGRAMS},
-    metadata = {"session_test": '{"required_user":"root","timeout":"120"}'})
+    metadata = {p: '{"required_user":"root","timeout":"120"}' for p in ["session_test", "router_start_test"]})
 _FILES = [(":kyuafile", TESTDIR + "/Kyuafile", "0444"),
     (":bundle_test", TESTDIR + "/bundle_test", "0555")] + [
     (source, TESTDIR + "/srctree/" + dest, "0444") for source, dest in SOURCE_FIXTURES.items()] + [

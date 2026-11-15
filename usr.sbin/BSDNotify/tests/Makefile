@@ -71,6 +71,14 @@ CFLAGS.session_test+=	-I${SRCTOP}/lib/libauditcmp -I${SRCTOP}/lib/libchannel \
 LIBADD.session_test+=	auditcmp channel fidl_bsd logcmp notify pthread service ucl
 TEST_METADATA.session_test+= required_user="root" timeout="120"
 
+# The router's start: its Audit lookup during activation and the ready
+# status it owes the provider (plane-on tier).
+ATF_TESTS_C+=	router_start_test
+SRCS.router_start_test=	router_start_test.c broker.c policy.c transport.c
+CFLAGS.router_start_test+=	${CFLAGS.session_test}
+LIBADD.router_start_test+=	${LIBADD.session_test}
+TEST_METADATA.router_start_test+= required_user="root" timeout="120"
+
 # Schema evolution: next_peer is built from evolution/notify_next.fidl at
 # bsd:2 (its own bindings).
 PROGS+= next_peer

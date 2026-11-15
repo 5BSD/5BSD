@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # Native installation inventory shared by leaf and aggregate targets.
 TESTDIR = "/usr/tests/usr.sbin/BSDNotify"
-ATF_PROGRAMS = ["broker_test", "bundle_test", "dispatcher_test", "policy_test", "session_test", "transport_test"]
+ATF_PROGRAMS = ["broker_test", "bundle_test", "dispatcher_test", "policy_test", "router_start_test", "session_test", "transport_test"]
 BINARIES = [p for p in ATF_PROGRAMS if p != "bundle_test"] + ["next_peer", "latency_bench"]
 SOURCE_FIXTURES = {
     "//cddl/usr.sbin/bsdinstruments/profiles:capability-services.d": "cddl/usr.sbin/bsdinstruments/profiles/capability-services.d",
