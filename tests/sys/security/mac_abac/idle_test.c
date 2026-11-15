@@ -284,7 +284,7 @@ IDLE_TC(a10_force_hooks_counts,
     "A-10: force_hooks restores evaluation of unnamed operations")
 {
 	struct stat sb;
-	uint64_t c0, c1, c2;
+	uint64_t c0, c1, c2, c3;
 	int i, v;
 
 	(void)tc;
@@ -301,13 +301,18 @@ IDLE_TC(a10_force_hooks_counts,
 	v = 0;
 	ATF_REQUIRE(sysctlbyname("security.mac.mac_abac.force_hooks", NULL,
 	    NULL, &v, sizeof(v)) == 0);
+	/*
+	 * The write itself is checked while force_hooks is still 1 (a
+	 * sysctl(3) write is two sysctl calls): count from after it.
+	 */
+	c2 = idle_sysctl_u64("security.mac.mac_abac.checks");
 	for (i = 0; i < 1000; i++)
 		ATF_REQUIRE(stat(idle_obj, &sb) == 0);
-	c2 = idle_sysctl_u64("security.mac.mac_abac.checks");
+	c3 = idle_sysctl_u64("security.mac.mac_abac.checks");
 	ATF_CHECK_MSG(c1 - c0 >= 1000, "force_hooks: %ju evaluations",
 	    (uintmax_t)(c1 - c0));
-	ATF_CHECK_EQ_MSG(c1, c2, "idle again: %ju evaluations",
-	    (uintmax_t)(c2 - c1));
+	ATF_CHECK_EQ_MSG(c2, c3, "idle again: %ju evaluations",
+	    (uintmax_t)(c3 - c2));
 }
 #endif
 
