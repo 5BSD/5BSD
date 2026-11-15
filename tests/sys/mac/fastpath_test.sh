@@ -65,6 +65,26 @@ pin_lookup_walk_cleanup()
 	:
 }
 
+# fp_expect_called hook policy: "yes" if the snapshot in fp.txt has the
+# hook's flag set and the policy implementing it, else "no".
+fp_expect_called()
+{
+	local bit flags impl
+
+	awk '/^hook /' fp.txt > fp.hooks
+	awk '/^policy /' fp.txt > fp.policies
+	bit=$(awk -v h="$1" '$2 == h { print NR - 1 }' fp.hooks)
+	flags=$(awk '/^flags / { print $2 }' fp.txt)
+	impl=$(awk -v p="$2" '$2 == p { print $8 }' fp.policies)
+	if [ -n "$bit" ] && [ -n "$impl" ] &&
+	    [ $(((flags >> bit) & 1)) -eq 1 ] &&
+	    [ $(((impl >> bit) & 1)) -eq 1 ]; then
+		echo yes
+	else
+		echo no
+	fi
+}
+
 # entry_case name hook "command" oes-expected abac-expected
 # expected: "yes" (the policy's hook runs) or "no".
 entry_check()
@@ -72,6 +92,13 @@ entry_check()
 	local hook=$1 cmd=$2 want_oes=$3 want_abac=$4
 
 	require_dtrace
+	if sysctl -n security.mac.fastpath > fp.txt 2>/dev/null; then
+		# The framework is entered for a hook iff its flag is set,
+		# and then calls every policy that implements the hook.
+		want_oes=$(fp_expect_called $hook oes)
+		want_abac=$(fp_expect_called $hook mac_abac)
+		echo "$hook: expect oes $want_oes, mac_abac $want_abac"
+	fi
 	hooks_called "$cmd"
 	if called "$hook" oes; then got=yes; else got=no; fi
 	[ "$got" = "$want_oes" ] ||
@@ -82,9 +109,14 @@ entry_check()
 }
 
 # Whether OES and mac_abac are reached with nobody listening, as the
-# kernel under test must answer: "yes yes" before the idle gates.
-: ${OES_IDLE_ENTRY:=yes}
-: ${ABAC_IDLE_ENTRY:=yes}
+# kernel under test must answer: "yes yes" before the idle gates; OES
+# counts its fast-path hooks only while live from commit O3 on.
+# Hooks both implement are reached by both while either counts the flag
+# (an idle policy is still called, and returns at its gate); hooks only OES
+# implements are reached only while OES counts them.
+: ${SHARED_IDLE_ENTRY:=yes}
+: ${OES_ONLY_IDLE_ENTRY:=no}
+: ${FP_INACTIVE_POLICIES:=oes}
 
 atf_test_case entry_file_read
 entry_file_read_head()
@@ -98,7 +130,7 @@ entry_file_read_body()
 {
 	entry_check file_check_read \
 	    "/bin/sh -c 'cat /etc/passwd >/dev/null'" \
-	    $OES_IDLE_ENTRY $ABAC_IDLE_ENTRY
+	    $SHARED_IDLE_ENTRY $SHARED_IDLE_ENTRY
 }
 
 atf_test_case entry_pipe_write
@@ -113,7 +145,7 @@ entry_pipe_write_body()
 {
 	entry_check pipe_check_write \
 	    "/bin/sh -c 'echo x | cat >/dev/null'" \
-	    $OES_IDLE_ENTRY $ABAC_IDLE_ENTRY
+	    $SHARED_IDLE_ENTRY $SHARED_IDLE_ENTRY
 }
 
 atf_test_case entry_close
@@ -128,9 +160,9 @@ entry_close_body()
 {
 	# Only OES implements the close hooks.
 	entry_check vnode_check_close \
-	    "/bin/sh -c 'cat /etc/passwd >/dev/null'" $OES_IDLE_ENTRY no
+	    "/bin/sh -c 'cat /etc/passwd >/dev/null'" $OES_ONLY_IDLE_ENTRY no
 	entry_check file_notify_close \
-	    "/bin/sh -c 'cat /etc/passwd >/dev/null'" $OES_IDLE_ENTRY no
+	    "/bin/sh -c 'cat /etc/passwd >/dev/null'" $OES_ONLY_IDLE_ENTRY no
 }
 
 # The security.mac.fastpath snapshot (see mac_framework.c), saved in fp.txt.
@@ -252,8 +284,29 @@ f3_new_flags_body()
 	done
 }
 
+atf_test_case f4_inactive_policies
+f4_inactive_policies_head()
+{
+	atf_set descr "F-4: oes registers fast-path inactive and counts nothing"\
+	    "while nobody listens"
+	atf_set require.user root
+}
+f4_inactive_policies_body()
+{
+	local p
+
+	fp_snapshot
+	for p in $FP_INACTIVE_POLICIES; do
+		[ "$(fp_policy_field $p inactive)" = 1 ] ||
+		    atf_fail "policy $p is not fast-path inactive"
+		[ $(($(fp_policy_field $p active))) -eq 0 ] ||
+		    atf_fail "policy $p counts $(fp_policy_field $p active)"
+	done
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case f4_inactive_policies
 	atf_add_test_case f3_new_flags
 	atf_add_test_case f1_snapshot_invariants
 	atf_add_test_case f2_lockless_lookup_export

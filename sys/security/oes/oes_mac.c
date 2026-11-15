@@ -349,8 +349,6 @@ static u_long oes_hooks_live[OES_GATE_WORDS] __read_mostly;
 /* Defined, with its operations, at the end of this file. */
 static struct mac_policy_conf oes_mac_policy_conf;
 
-/* False until the fast-path flags follow liveness. */
-static bool oes_gate_fp = false;
 
 /* Is event (AUTH: words 0-1, NOTIFY: words 2-3) in the bitmap sub? */
 static bool
@@ -377,7 +375,8 @@ oes_gate_reconcile_locked(bool force_strict)
 	uint64_t sub[4];
 	u_int non, noff, w;
 	bool cache, strict, was, now;
-	int error, h, i;
+	int error __diagused;
+	int h, i;
 
 	sx_assert(&oes_softc.sc_gate_sx, SA_XLOCKED);
 	strict = force_strict || oes_require_auth_clients != 0 ||
@@ -432,14 +431,10 @@ oes_gate_reconcile_locked(bool force_strict)
 	 */
 	for (w = 0; w < OES_GATE_WORDS; w++)
 		atomic_store_long(&oes_hooks_live[w], old[w] | want[w]);
-	if (oes_gate_fp) {
-		error = mac_policy_fastpath_set(&oes_mac_policy_conf, on, non,
-		    true);
-		KASSERT(error == 0, ("oes gate on: %d", error));
-		error = mac_policy_fastpath_set(&oes_mac_policy_conf, off, noff,
-		    false);
-		KASSERT(error == 0, ("oes gate off: %d", error));
-	}
+	error = mac_policy_fastpath_set(&oes_mac_policy_conf, on, non, true);
+	KASSERT(error == 0, ("oes gate on: %d", error));
+	error = mac_policy_fastpath_set(&oes_mac_policy_conf, off, noff, false);
+	KASSERT(error == 0, ("oes gate off: %d", error));
 	for (w = 0; w < OES_GATE_WORDS; w++)
 		atomic_store_long(&oes_hooks_live[w], want[w]);
 	atomic_thread_fence_seq_cst();
@@ -459,6 +454,38 @@ oes_gate_reconcile(void)
 	sx_xlock(&oes_softc.sc_gate_sx);
 	oes_gate_reconcile_locked(false);
 	sx_xunlock(&oes_softc.sc_gate_sx);
+}
+
+/*
+ * Every fast-path hook OES implements must have a table entry: one without
+ * would never be counted, and its events would be lost whenever no other
+ * policy held the flag.  An uncovered hook is counted for good instead,
+ * which costs time and never enforcement; INVARIANTS kernels stop.
+ */
+static void
+oes_gate_check_coverage(void)
+{
+	u_short hooks[64];
+	u_int i, n;
+	int error __diagused;
+	int h;
+
+	n = mac_policy_fastpath_hooks(&oes_mac_policy_conf, hooks,
+	    nitems(hooks));
+	KASSERT(n <= nitems(hooks), ("oes: %u fast-path hooks", n));
+	for (i = 0; i < MIN(n, nitems(hooks)); i++) {
+		for (h = 0; h < OES_H_COUNT; h++)
+			if (oes_hook_desc[h].ohd_fp == hooks[i])
+				break;
+		if (h < OES_H_COUNT)
+			continue;
+		printf("oes: fast-path hook %u has no gate entry; kept active\n",
+		    hooks[i]);
+		error = mac_policy_fastpath_set(&oes_mac_policy_conf, &hooks[i],
+		    1, true);
+		KASSERT(false, ("oes: fast-path hook %u not gated (%d)",
+		    hooks[i], error));
+	}
 }
 
 /*
@@ -5766,13 +5793,19 @@ static struct mac_policy_ops oes_mac_ops = {
  * because we're part of the oes module, not a standalone MAC policy module.
  * The outer module handler enforces boot-only loading because OES initializes
  * in SI_SUB_DRIVERS, after the MAC framework's late-load boundary.  Omitting
- * UNLOADOK makes the policy non-unloadable as an additional safeguard.
+ * UNLOADOK makes the policy non-unloadable as an additional safeguard: OES
+ * never unloads, and the idle gates rely on its hooks, tables and locks
+ * staying.  Its hooks count toward the framework's fast-path flags only
+ * while live (oes_gate_reconcile()).
  */
+#define	OES_MPC_FLAGS	MPC_LOADTIME_FLAG_FP_INACTIVE
+_Static_assert((OES_MPC_FLAGS & MPC_LOADTIME_FLAG_UNLOADOK) == 0,
+    "OES must never be unloadable");
 static struct mac_policy_conf oes_mac_policy_conf = {
 	.mpc_name = "oes",
 	.mpc_fullname = "Endpoint Security Capabilities",
 	.mpc_ops = &oes_mac_ops,
-	.mpc_loadtime_flags = 0,
+	.mpc_loadtime_flags = OES_MPC_FLAGS,
 	.mpc_field_off = &oes_slot,
 	.mpc_runtime_flags = 0,
 };
@@ -5876,6 +5909,7 @@ oes_mac_init(void)
 	EVENTHANDLER_REGISTER(kld_unload,
 	    oes_kld_event_unload, NULL, EVENTHANDLER_PRI_LAST);
 
+	oes_gate_check_coverage();
 	/* Nothing listens yet: every hook starts idle. */
 	oes_gate_reconcile();
 
