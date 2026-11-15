@@ -4,7 +4,7 @@ load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 cc_library(name = "kiconv", srcs = ["kiconv_sysctl.c", "xlat16_iconv.c", "xlat16_sysctl.c", "quirks.c", "quirks.h"],
     deps = ["//sys/sys:iconv_headers"],
     local_defines = select({"//tools/build/bazel/config:iconv_enabled": [], "//conditions:default": ["ICONV_DLOPEN"]}),
-    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd"] + select({"@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [], "//conditions:default": ["@platforms//:incompatible"]}), visibility = ["//visibility:public"])
 bsd_component_archive(name = "static_archive", groups = [":kiconv"], visibility = ["//visibility:public"])
 cc_shared_library(name = "kiconv_shared", deps = [":kiconv"], shared_lib_name = "libkiconv.so.4", user_link_flags = ["-Wl,-soname,libkiconv.so.4", "-Wl,-z,defs"], visibility = ["//visibility:public"])
 load(":installation.bzl", "library_installation")

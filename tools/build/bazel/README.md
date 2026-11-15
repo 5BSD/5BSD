@@ -3,6 +3,18 @@
 See [BUILD-OPTIONS.md](BUILD-OPTIONS.md) for GENERIC/NODEBUG, diagnostics versus
 debug symbols, native option boundaries and remaining Make compatibility.
 
+## Portable libraries on both Tier 1 architectures
+
+Ten further portable library producers plus libc/libmd installation aggregates
+now admit ARM64. Focused builds match Make's 14 archive/six shared-library
+contracts and all 1,737 selected installation records per platform. The latter
+includes three separately generated fresh account files, byte-identical to Make;
+these remain fresh-image state, excluded from package upgrade replacements.
+Forty provenance Python checks pass on both platforms; AMD64 also executes the
+elftc API and stdbuf buffering tests. See the 2026-11-15 checkpoint in
+[COMPLETION-PLAN.md](COMPLETION-PLAN.md) for captures, raw differences and limits.
+Full ARM64 world and all six closeout gates remain open.
+
 ## Current provider and upgrade acceptance
 
 The Log-enabled full-upgrade VM passes all 34 checks and normal shutdown.

@@ -7,7 +7,7 @@ load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
         deps = ["//contrib/libdiff/include:headers"],
         implementation_deps = ["//contrib/libdiff/lib:headers", "//contrib/libdiff/compat/include:headers"],
         copts = flags, linkstatic = True,
-        target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+        target_compatible_with = ["@platforms//os:freebsd"] + select({"@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [], "//conditions:default": ["@platforms//:incompatible"]}), visibility = ["//visibility:public"])
     for suffix, flags in [("", []), ("_pie", ["-fPIE", "-DPIC"])]
 ]
 # INTERNAL library, without a public installed API or shared library.
@@ -19,4 +19,4 @@ load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
 bsd_install_archive_set(name = "installation_archives", archives = [] + select({
     "//tools/build/bazel/config:tests_enabled": ["//lib/libdiff/tests:install_archive"],
     "//conditions:default": [],
-}), target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+}), target_compatible_with = ["@platforms//os:freebsd"] + select({"@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [], "//conditions:default": ["@platforms//:incompatible"]}), visibility = ["//visibility:public"])

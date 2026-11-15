@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
-_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_PLATFORM = ["@platforms//os:freebsd"] + select({"@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [], "//conditions:default": ["@platforms//:incompatible"]})
 cc_library(name = "headers", hdrs = ["usbhid.h"], strip_include_prefix = ".", visibility = ["//visibility:public"])
 cc_library(name = "usbhid", srcs = ["descr.c", "descr_compat.c", "parse.c", "usage.c", "data.c", "usbvar.h"], deps = [":headers"],
     linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
