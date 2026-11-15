@@ -311,8 +311,10 @@ lookup_child(void *arg, void *result)
 /*
  * What each consumer returns: with the route, and with it cleared.
  *
- * notify_client_open() is 0 with the route since the BSDNotify
- * NOFDRECV repair (5b1325c979a); before it both rows were EPIPE.
+ * notify_client_open() is 0 with the route: BSDNotify's acceptor and router
+ * run with NOFDRECV and still receive client descriptors over their
+ * channels (cec56341aeb).  On a kernel that refused those as ambient
+ * receipt, both rows were EPIPE.
  */
 struct lookup_want {
 	int			 open_notify, open_log, open_sysctl;

@@ -117,7 +117,7 @@ security_contract_body()
 	require_srctree
 	source="${SRCTREE}/usr.sbin/BSDNotify/bsdnotify.c"
 	for token in service_worker_enter_capability_mode \
-	    service_provider_enter_capability_mode SERVICE_PROTECT_NOFORK \
+	    service_provider_enter_capability_mode SERVICE_PROTECT_NOFDRECV \
 	    SERVICE_HARDEN_XFER_ONCE \
 	    auditcmp_client_prepare auditcmp_client_adopt auditcmp_submit \
 	    service_listener_accept EVFILT_TIMER
@@ -317,6 +317,8 @@ worker_channel_contract_body()
 	# router lands at CAP_XFER_NONE without a kernel-baked multi-hop budget.
 	atf_check -s exit:0 -o match:'SERVICE_HARDEN_XFER_ONCE' \
 	    grep SERVICE_HARDEN_XFER_ONCE "${source}"
+	atf_check -s exit:0 -o match:'SERVICE_PROTECT_NOFDRECV' \
+	    grep SERVICE_PROTECT_NOFDRECV "${source}"
 	atf_check -s exit:0 -o match:'router_admission_classify' \
 	    grep router_admission_classify "${source}"
 	atf_check -s exit:0 -o match:'SWITCHBOARD_PROBE_WORKER_CHANNEL' \

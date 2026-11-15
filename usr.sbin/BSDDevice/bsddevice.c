@@ -476,9 +476,12 @@ main(void)
 		goto out;
 
 	/*
-	 * Self-harden the accept/fork parent.  It must still pdfork workers and
-	 * receive connection descriptors, so NOFORK/NOFDRECV are not applied;
-	 * NOPRIVS is safe because /dev is already open (mirrors bsdcrypto).
+	 * Self-harden the accept/fork parent.  It must still pdfork workers, so
+	 * NOFORK is not applied; NOPRIVS is safe because /dev is already open
+	 * (mirrors bsdcrypto).  NOFDRECV would not stop the connection
+	 * descriptors it receives over its capability channels
+	 * (mac_capability_capprotect(4)); applying it here is left to a change
+	 * that tests it.
 	 */
 	if (devdir < 0 || service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||

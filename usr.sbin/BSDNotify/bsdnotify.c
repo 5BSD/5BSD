@@ -1290,8 +1290,8 @@ router_main(int control, const struct notify_policy_db *policy_db)
 	router.control_source.type = ROUTER_EVENT_CONTROL;
 	router.broker = notify_broker_create();
 	router.kq = kqueue();
-	/* Obtain the router's own invocation-bound Audit session before NOIPC.
-	 * A parent's non-forwardable session is not worker admission. */
+	/* Obtain the router's own invocation-bound Audit session before NOIPC
+	 * and NOFDRECV. A parent's non-forwardable session is not worker admission. */
 	if (router.broker == NULL || router.kq == -1 ||
 	    auditcmp_client_open(&router.audit) == -1 ||
 	    harden_channel(control, CAP_CLOFORK_LOCKED) == -1 ||
@@ -1306,13 +1306,9 @@ router_main(int control, const struct notify_policy_db *policy_db)
 	    router_change(&router, router.control, EVFILT_WRITE,
 	    EV_ADD | EV_DISABLE, 0, 0, &router.control_source) == -1)
 		return (1);
-	/* The router receives newly admitted client descriptors over its private
-	 * control channel for its entire lifetime, so NOFDRECV is incompatible
-	 * with this role. Client FIDL sessions reject descriptors separately via
-	 * max_queued_fds = 0; the acceptor attenuates each forwarded descriptor. */
 	if (service_worker_enter_capability_mode(SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
-	    SERVICE_PROTECT_NOIPC |
+	    SERVICE_PROTECT_NOIPC | SERVICE_PROTECT_NOFDRECV |
 	    SERVICE_PROTECT_NOEXEC |
 	    SERVICE_PROTECT_NOSOCK) == -1)
 		return (1);
@@ -1901,11 +1897,9 @@ main(void)
 		goto fail_router;
 	}
 	watcher_started = true;
-	/* The provider must continue receiving Switchboard's new-client
-	 * descriptors. NOFDRECV would stop that admission after readiness. */
 	if (service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
-	    SERVICE_PROTECT_NOIPC |
+	    SERVICE_PROTECT_NOIPC | SERVICE_PROTECT_NOFDRECV |
 	    SERVICE_PROTECT_NOEXEC |
 	    SERVICE_PROTECT_NOSOCK) == -1 ||
 	    service_provider_expose(provider, listener_names[NOTIFY_TIER_OPEN],
