@@ -4795,6 +4795,16 @@ cache_can_fplookup(struct cache_fpl *fpl)
 		cache_fpl_aborted_early(fpl);
 		return (false);
 	}
+	/*
+	 * namei() answers ENOENT for "" without EMPTYPATH before it looks at
+	 * the start directory; the walk below would answer ENOTDIR for a
+	 * descriptor that is not a directory.  Leave it to namei().
+	 */
+	if (__predict_false(cnp->cn_pnbuf[0] == '\0' &&
+	    (cnp->cn_flags & EMPTYPATH) == 0)) {
+		cache_fpl_aborted_early(fpl);
+		return (false);
+	}
 	return (true);
 }
 
