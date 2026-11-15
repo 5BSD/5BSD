@@ -77,6 +77,7 @@ PLAIN_TESTS_C=	\
 	test_memory_pressure \
 	test_idle_pins \
 	test_idle_gate \
+	test_idle_storm \
 	test_stress \
 	rename_concurrent \
 	signal_concurrent
