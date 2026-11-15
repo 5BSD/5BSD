@@ -10,7 +10,6 @@
 #include <sys/capsicum.h>
 #include <sys/ioctl.h>
 #include <sys/procdesc.h>
-#include <sys/rctl.h>
 #include <sys/resource.h>
 #include <sys/sysctl.h>
 #include <sys/wait.h>
@@ -63,53 +62,19 @@ acct_call_raw(int fd, const void *req, size_t reqlen,
 
 /*
  * Connect to the accounting service.  The service is compiled in, so a
- * failed connect is a failure.  It reports racct(9)/rctl results and needs
- * kern.racct.enable=1, the default of a kernel with options RACCT; a kernel
- * booted with racct disabled is named here instead of being inferred from a
- * service error.
+ * failed connect is a failure.  It reports racct(9)/rctl results: without
+ * racct (or rctl) every operation answers ERR, which is named as a skip here
+ * instead of being inferred from a service error.
  */
 static int
 acct_connect(void)
 {
-	size_t len;
-	int enabled, fd;
+	int fd;
 
-	enabled = 0;
-	len = sizeof(enabled);
-	ATF_REQUIRE_MSG(sysctlbyname("kern.racct.enable", &enabled, &len,
-	    NULL, 0) == 0, "sysctl kern.racct.enable: %s", strerror(errno));
-	if (enabled == 0)
-		atf_tc_skip("kern.racct.enable=0: the accounting service "
-		    "needs racct enabled");
+	require_racct(true);
 	fd = mac_capability_connect("accounting");
 	ATF_REQUIRE_MSG(fd >= 0, "connect accounting: %s", strerror(errno));
 	return (fd);
-}
-
-/*
- * The racct(9) usage of resource name (as rctl(8) spells it) for pid, read
- * with rctl_get_racct(2): proves that a CHARGE, RELEASE or SET took effect.
- */
-static int64_t
-racct_usage(pid_t pid, const char *name)
-{
-	char filter[32], out[4096], *entry, *rest, *value;
-	size_t namelen;
-
-	snprintf(filter, sizeof(filter), "process:%d", (int)pid);
-	ATF_REQUIRE_MSG(rctl_get_racct(filter, strlen(filter) + 1, out,
-	    sizeof(out)) == 0, "rctl_get_racct(%s): %s", filter,
-	    strerror(errno));
-	namelen = strlen(name);
-	rest = out;
-	while ((entry = strsep(&rest, ",")) != NULL) {
-		if (strncmp(entry, name, namelen) != 0 ||
-		    entry[namelen] != '=')
-			continue;
-		value = entry + namelen + 1;
-		return (strtoll(value, NULL, 10));
-	}
-	atf_tc_fail("rctl_get_racct(%s) does not report %s", filter, name);
 }
 
 static bool

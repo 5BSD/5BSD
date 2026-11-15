@@ -8,6 +8,8 @@
 
 #include <sys/types.h>
 #include <sys/ioctl.h>
+#include <sys/linker.h>
+#include <sys/module.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
 
@@ -27,6 +29,25 @@
 /* ----------------------------------------------------------------
  * Helpers
  * ---------------------------------------------------------------- */
+
+/*
+ * Skip, naming it, when the kernel has no fs: neither compiled in nor
+ * loaded, nor a module the mount could load.  GENERIC compiles in tmpfs,
+ * devfs and fdescfs, so there the mount must succeed.
+ */
+static void
+require_fs(const char *fs)
+{
+	struct xvfsconf vfc;
+	char path[64];
+
+	if (getvfsbyname(fs, &vfc) == 0 || modfind(fs) >= 0)
+		return;
+	snprintf(path, sizeof(path), "/boot/kernel/%s.ko", fs);
+	if (access(path, F_OK) == 0)
+		return;
+	atf_tc_skip("%s is not available in this kernel", fs);
+}
 
 static int
 mount_connect(void)
@@ -238,6 +259,7 @@ ATF_TC_BODY(mount_tmpfs, tc)
 	char mntpath[MOUNT_MAXPATH];
 	int fd;
 
+	require_fs("tmpfs");
 	snprintf(mntpath, sizeof(mntpath),
 	    "/tmp/mac_capability_mount_test.%d", (int)getpid());
 	ATF_REQUIRE(mkdir(mntpath, 0755) == 0 || errno == EEXIST);
@@ -352,6 +374,7 @@ ATF_TC_BODY(mount_devfs, tc)
 	char mntpath[MOUNT_MAXPATH];
 	char devnull[MOUNT_MAXPATH + 16];
 
+	require_fs("devfs");
 	snprintf(mntpath, sizeof(mntpath),
 	    "/tmp/mac_capability_devfs_test.%d", (int)getpid());
 	ATF_REQUIRE(mkdir(mntpath, 0755) == 0 || errno == EEXIST);
@@ -403,6 +426,7 @@ ATF_TC_BODY(mount_tmpfs_with_opts, tc)
 	struct mount_reply reply;
 	char mntpath[MOUNT_MAXPATH];
 
+	require_fs("tmpfs");
 	snprintf(mntpath, sizeof(mntpath),
 	    "/tmp/mac_capability_opts_test.%d", (int)getpid());
 	ATF_REQUIRE(mkdir(mntpath, 0755) == 0 || errno == EEXIST);
@@ -485,6 +509,7 @@ ATF_TC_BODY(mount_fdescfs, tc)
 	char mntpath[MOUNT_MAXPATH];
 	char fd0path[MOUNT_MAXPATH + 8];
 
+	require_fs("fdescfs");
 	snprintf(mntpath, sizeof(mntpath),
 	    "/tmp/mac_capability_fdescfs_test.%d", (int)getpid());
 	ATF_REQUIRE(mkdir(mntpath, 0755) == 0 || errno == EEXIST);

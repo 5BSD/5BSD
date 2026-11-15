@@ -122,4 +122,51 @@ require_isolation_enforced(void)
 		    "runs in the enforced (plane-off) tier");
 }
 
+/*
+ * Skip, naming the reason, when racct(9) (and, with need_rctl, rctl(8)) is
+ * not available: a kernel built without options RACCT or RCTL, or booted with
+ * kern.racct.enable=0.  GENERIC has both, enabled.
+ */
+static inline void
+require_racct(bool need_rctl)
+{
+	size_t len;
+	int enabled;
+
+	if (!feature_present("racct"))
+		atf_tc_skip("kernel built without options RACCT");
+	enabled = 0;
+	len = sizeof(enabled);
+	ATF_REQUIRE_MSG(sysctlbyname("kern.racct.enable", &enabled, &len,
+	    NULL, 0) == 0, "sysctl kern.racct.enable: %s", strerror(errno));
+	if (enabled == 0)
+		atf_tc_skip("kern.racct.enable=0: racct is disabled");
+	if (need_rctl && !feature_present("rctl"))
+		atf_tc_skip("kernel built without options RCTL");
+}
+
+/*
+ * The racct(9) usage of resource name (as rctl(8) spells it) for pid, read
+ * with rctl_get_racct(2); needs require_racct(true) and root.
+ */
+static inline int64_t
+racct_usage(pid_t pid, const char *name)
+{
+	char filter[32], out[4096], *entry, *rest;
+	size_t namelen;
+
+	snprintf(filter, sizeof(filter), "process:%d", (int)pid);
+	ATF_REQUIRE_MSG(rctl_get_racct(filter, strlen(filter) + 1, out,
+	    sizeof(out)) == 0, "rctl_get_racct(%s): %s", filter,
+	    strerror(errno));
+	namelen = strlen(name);
+	rest = out;
+	while ((entry = strsep(&rest, ",")) != NULL) {
+		if (strncmp(entry, name, namelen) == 0 &&
+		    entry[namelen] == '=')
+			return (strtoll(entry + namelen + 1, NULL, 10));
+	}
+	atf_tc_fail("rctl_get_racct(%s) does not report %s", filter, name);
+}
+
 #endif /* _MAC_CAPABILITY_TEST_HELPERS_H_ */

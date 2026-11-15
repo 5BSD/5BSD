@@ -12,7 +12,6 @@
 #include <sys/ioctl.h>
 #include <sys/procdesc.h>
 #include <sys/procctl.h>
-#include <sys/rctl.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/sysctl.h>
@@ -293,33 +292,13 @@ ATF_TC_BODY(node_affinity_get_self, tc)
 	close(fd);
 }
 
-/* racct(9) usage of resource name (rctl(8) spelling) for pid. */
-static int64_t
-racct_usage(pid_t pid, const char *name)
-{
-	char filter[32], out[4096], *entry, *rest;
-	size_t namelen;
-
-	snprintf(filter, sizeof(filter), "process:%d", (int)pid);
-	ATF_REQUIRE_MSG(rctl_get_racct(filter, strlen(filter) + 1, out,
-	    sizeof(out)) == 0, "rctl_get_racct(%s): %s", filter,
-	    strerror(errno));
-	namelen = strlen(name);
-	rest = out;
-	while ((entry = strsep(&rest, ",")) != NULL) {
-		if (strncmp(entry, name, namelen) == 0 &&
-		    entry[namelen] == '=')
-			return (strtoll(entry + namelen + 1, NULL, 10));
-	}
-	atf_tc_fail("rctl_get_racct(%s) does not report %s", filter, name);
-}
-
 ATF_TC(node_racct_get_self);
 ATF_TC_HEAD(node_racct_get_self, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "NODE_OP_GET_RACCT on self returns a racct snapshot");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_node");
+	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(node_racct_get_self, tc)
 {
@@ -327,6 +306,7 @@ ATF_TC_BODY(node_racct_get_self, tc)
 	struct node_racct_reply reply;
 	int fd;
 
+	require_racct(true);
 	fd = mac_capability_connect("node");
 	ATF_REQUIRE(fd >= 0);
 
@@ -867,6 +847,7 @@ ATF_TC_HEAD(node_racct_get_child, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "NODE_OP_GET_RACCT on child via procdesc returns usage");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_node");
+	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(node_racct_get_child, tc)
 {
@@ -875,6 +856,7 @@ ATF_TC_BODY(node_racct_get_child, tc)
 	int fd, pd, status;
 	pid_t pid;
 
+	require_racct(false);
 	fd = mac_capability_connect("node");
 	ATF_REQUIRE(fd >= 0);
 
