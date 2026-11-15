@@ -49,13 +49,16 @@ ATF_TESTS_SH+=	dq_testopen_test
 ATF_TESTS_SH+=	dq_oracle_test
 ATF_TESTS_SH+=	dq_tree_suites_test
 
-# Every program is a controller: the shared harness is part of each.
+# Every program is a controller: each links the support library
+# (libdqtest), which the libdqtest subdirectory builds first.
+SUBDIR=		libdqtest
 .for _t in ${ATF_TESTS_C}
-SRCS.${_t}=	${_t}.c dq_test.c
+LIBADD.${_t}+=	dqtest
 .endfor
 
-# ABI header <dev/dq/dq.h> and the library's own header.
-CFLAGS+=	-I${SRCTOP}/sys -I${SRCTOP}/lib/libdq
+# ABI header <dev/dq/dq.h>, the library's own header and the support
+# library's.
+CFLAGS+=	-I${SRCTOP}/sys -I${SRCTOP}/lib/libdq -I${.CURDIR}/libdqtest
 
 # The OES client side of dq_oes_test (<security/oes/oes.h>, liboes.h).
 CFLAGS.dq_oes_test+=	-I${SRCTOP}/lib/liboes
@@ -170,3 +173,8 @@ BINDIR.dq_sockprog=	${TESTSDIR}
 WARNS?=		6
 
 .include <bsd.test.mk>
+
+# The programs link libdqtest.a: build the subdirectory before them.
+.for _t in ${ATF_TESTS_C}
+.ORDER: all_subdir_${DIRPRFX}libdqtest ${_t}
+.endfor
