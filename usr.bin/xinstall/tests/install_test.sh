@@ -597,6 +597,59 @@ stdin_body() {
 	atf_check cmp -s dst/file src
 }
 
+# The source named "-" or /dev/stdin is described by fstat(2) of standard
+# input: its flags and (with -p) its times are copied as for a named file.
+# Before, they were read from an uninitialised struct stat.
+atf_test_case stdin_metadata cleanup
+stdin_metadata_head() {
+	atf_set "descr" "Install from stdin copies the flags and times of" \
+	    "standard input, and no flags from a pipe"
+}
+stdin_metadata_body() {
+	local i
+
+	echo "The Magic Words are Squeamish Ossifrage" >src
+	atf_check env TZ=UTC touch -t 200001020304.05 src
+	atf_check chflags uarch src
+	atf_check -o save:flags stat -f %Sf src
+	atf_check -o inline:"946782245\n" stat -f %m src
+	atf_check install -p - dst <src
+	atf_check cmp -s dst src
+	atf_check -o file:flags stat -f %Sf dst
+	atf_check -o inline:"946782245\n" stat -f %m dst
+	atf_check install /dev/stdin dst2 <src
+	atf_check -o file:flags stat -f %Sf dst2
+	# A pipe has no flags.
+	i=0
+	while [ $i -lt 16 ]; do
+		cat src | install - pipe$i ||
+		    atf_fail "install from a pipe failed"
+		atf_check -o inline:"0\n" stat -f %f pipe$i
+		i=$((i + 1))
+	done
+}
+stdin_metadata_cleanup() {
+	chflags -R 0 . 2>/dev/null || true
+}
+
+# With -p, a time is logged only when one was taken from the source: not
+# for /dev/null, and not when -C finds the target unchanged.  Before, an
+# uninitialised timespec was logged in both cases.
+atf_test_case metalog_preserve_time
+metalog_preserve_time_head() {
+	atf_set "descr" "install -p -M logs no time it did not set"
+}
+metalog_preserve_time_body() {
+	echo "data" >src
+	atf_check env TZ=UTC touch -t 200001020304.05 src
+	atf_check install -M metalog -D "$PWD" -p /dev/null empty
+	atf_check -s exit:1 grep -q time= metalog
+	atf_check install -M metalog2 -D "$PWD" -p src copy
+	atf_check -o match:"time=946782245\.000000000" cat metalog2
+	atf_check install -M metalog3 -D "$PWD" -C -p src copy
+	atf_check -s exit:1 grep -q time= metalog3
+}
+
 atf_init_test_cases() {
 	atf_add_test_case incompatible_opts
 	atf_add_test_case copy_to_empty
@@ -647,4 +700,6 @@ atf_init_test_cases() {
 	atf_add_test_case digest
 	atf_add_test_case null
 	atf_add_test_case stdin
+	atf_add_test_case stdin_metadata
+	atf_add_test_case metalog_preserve_time
 }

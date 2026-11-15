@@ -25,7 +25,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd July 19, 2026
+.Dd November 15, 2026
 .Dt INSTALL 1
 .Os
 .Sh NAME
@@ -291,6 +291,10 @@ Installing
 or
 .Sy -
 copies data from standard input to the target.
+The file flags and, with
+.Fl p ,
+the access and modification times copied to the target are those of
+the file standard input refers to; a pipe has no file flags.
 .Sh ENVIRONMENT
 The
 .Nm
