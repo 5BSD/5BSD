@@ -81,3 +81,36 @@ These are component/generator checkpoints. Complete ARM64 world, tests-enabled
 system installation, capability service runtime, full kernel/modules/pkgbase,
 independent bootstrap, filesystem isolation and controlled performance remain
 open. Make remains production/default and BIP is excluded.
+
+## Provider-client batch and consolidated closeout (2026-11-15)
+
+The last component batch before the execution reset adds ARM64 declarations for
+libauditcmp, libdevicecmp, libextensioncmp, libfilesystemcmp, liblogcmp,
+libnamespacecmp, libnetworkcmp, libnotify, liboes, libpowercmp, libsysctlcmp,
+libtimecmp, libvmcmp and libbsdfilesystem. Existing source inventories and the
+ordinary/PIE variants remain unchanged. Five instrumented clients use the same
+explicit DTrace object-ABI selection as the foundation libraries.
+
+Both maintained native runs pass three provenance targets (40 Python cases) and
+capture 73 files each. All 28 original Make references pass. Fourteen static
+archives and fourteen shared ELF contracts per architecture match; all 344
+complete install records per platform match ownership/IDs/modes/flags/tags/links.
+The 42 compiled payload differences per platform remain retained. Five static
+providers match schemas, 36 symbol-relative locations and target patch
+instructions per platform. No ARM64 execution, complete application protocol,
+OpenES/mac_abac runtime, full DWARF or live DTrace claim is made.
+
+Evidence under /usr/obj/usr/src: bazel-provider-clients-native-aarch64-r2-20261115,
+bazel-provider-clients-native-amd64-r1-20261115, provider-client-make-references,
+per-platform parity/install-parity/provider-parity and capture-review records.
+The first request incorrectly assumed archive target names; the corrected one
+binds the actual parent library contribution declarations. Premature AMD64
+reference-review failures remain retained; final R2 comparisons use all completed
+references. The strict frontend inventory and comparison rules are unchanged.
+
+The Trace client remains a separate identified dependency gap: libdtrace needs
+its actual ARM64 ISA source/header inventory and supporting libraries. This
+batch does not remove that restriction or replace it with target-independent
+x86 implementation files. Existing format-5 inputs carry these declaration
+changes; frontend/backend/signing/hardware/publication interfaces do not change.
+Further work follows the complete-endpoint execution order in COMPLETION-PLAN.md.
