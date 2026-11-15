@@ -20,6 +20,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -2193,8 +2194,9 @@ ATF_TC_BODY(node_reap_kill_children, tc)
 	struct node_status_reply areply;
 	struct node_reap_kill_req kreq;
 	struct node_reap_kill_reply kreply;
-	int fd, status;
-	pid_t c1, c2;
+	int fd, i, status;
+	bool fallback;
+	pid_t c1, c2, r;
 
 	fd = mac_capability_connect("node");
 	ATF_REQUIRE(fd >= 0);
@@ -2232,17 +2234,34 @@ ATF_TC_BODY(node_reap_kill_children, tc)
 	/* Both children are direct children of the reaper. */
 	ATF_CHECK_EQ(kreply.rk_killed, 2);
 
-	if (kreply.status != NODE_STATUS_OK) {
-		/* Do not leave the children behind a failed REAP_KILL. */
-		(void)kill(c1, SIGKILL);
-		(void)kill(c2, SIGKILL);
-	}
+	/*
+	 * Only an answer claiming both kills is checked against the children;
+	 * otherwise kill them here so the case fails instead of hanging.
+	 */
+	fallback = kreply.status != NODE_STATUS_OK || kreply.rk_killed != 2;
+	for (i = 0; i < 2; i++) {
+		pid_t c = i == 0 ? c1 : c2;
+		bool reaped = false;
 
-	/* Reap children; only REAP_KILL's SIGKILL ends them. */
-	ATF_REQUIRE_EQ(waitpid(c1, &status, 0), c1);
-	ATF_CHECK(WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL);
-	ATF_REQUIRE_EQ(waitpid(c2, &status, 0), c2);
-	ATF_CHECK(WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL);
+		for (int t = 0; !fallback && t < 1000 && !reaped; t++) {
+			r = waitpid(c, &status, WNOHANG);
+			ATF_REQUIRE(r == 0 || r == c);
+			if (r == c)
+				reaped = true;
+			else
+				usleep(10000);
+		}
+		if (!reaped) {
+			ATF_CHECK_MSG(fallback,
+			    "child %d still alive 10 s after REAP_KILL", (int)c);
+			(void)kill(c, SIGKILL);
+			ATF_REQUIRE_EQ(waitpid(c, &status, 0), c);
+			continue;
+		}
+		/* Only REAP_KILL's SIGKILL ends a child blocked in pause(). */
+		ATF_CHECK_MSG(WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL,
+		    "child %d status %#x", (int)c, status);
+	}
 
 	/* Release reaper */
 	memset(&req, 0, sizeof(req));

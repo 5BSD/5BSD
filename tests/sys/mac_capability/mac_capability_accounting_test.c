@@ -905,14 +905,23 @@ ATF_TC_BODY(acct_remove_nonexistent_rule, tc)
 
 	fd = acct_connect();
 
+	/* Positive control: the same rule, added, removes with OK. */
 	memset(&rreq, 0, sizeof(rreq));
-	rreq.op = ACCT_OP_REMOVE_RULE;
+	rreq.op = ACCT_OP_ADD_RULE;
 	rreq.resource = RACCT_NOFILE;
 	rreq.action = ACCT_RULE_DENY;
 	rreq.limit = 77777;
 	ATF_REQUIRE(acct_call_raw(fd, &rreq, sizeof(rreq), NULL, 0,
 	    &reply, sizeof(reply)) == 0);
-	/* rctl_rule_remove() answers ESRCH when no rule matched. */
+	ATF_REQUIRE_EQ(reply.status, ACCT_STATUS_OK);
+	rreq.op = ACCT_OP_REMOVE_RULE;
+	ATF_REQUIRE(acct_call_raw(fd, &rreq, sizeof(rreq), NULL, 0,
+	    &reply, sizeof(reply)) == 0);
+	ATF_REQUIRE_EQ(reply.status, ACCT_STATUS_OK);
+
+	/* Now it no longer exists: rctl_rule_remove() answers ESRCH. */
+	ATF_REQUIRE(acct_call_raw(fd, &rreq, sizeof(rreq), NULL, 0,
+	    &reply, sizeof(reply)) == 0);
 	ATF_CHECK_EQ(reply.status, ACCT_STATUS_ERR);
 
 	close(fd);

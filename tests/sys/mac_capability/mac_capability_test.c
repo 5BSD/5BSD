@@ -4152,10 +4152,12 @@ ATF_TC_BODY(xfer_recvmsg_unlimited_preserved, tc)
 	recv_fd = channel_pass_fd(pipefd[0]);
 
 	/*
-	 * Received fd should be UNLIMITED — can tighten to ONCE,
-	 * proving it wasn't degraded.
+	 * The received fd must still be UNLIMITED: only an UNLIMITED
+	 * descriptor accepts UNLIMITED (kern_cap_xfer_limit() refuses any
+	 * loosening), so a downgrade to ONCE or NONE fails here.
 	 */
-	ATF_CHECK(cap_xfer_limit(recv_fd, CAP_XFER_ONCE) == 0);
+	ATF_CHECK_MSG(cap_xfer_limit(recv_fd, CAP_XFER_UNLIMITED) == 0,
+	    "received descriptor is not UNLIMITED: %s", strerror(errno));
 	close(recv_fd);
 
 	close(pipefd[0]);
@@ -4536,6 +4538,21 @@ capprotect_shield(uint32_t flags)
 }
 
 /*
+ * Release a child waiting on fd.  When a missing shield let a probe kill the
+ * child, the release finds the peer gone: report that through the child's
+ * exit status (checked by the caller), not as a SIGPIPE that turns the case
+ * "broken".
+ */
+static void
+release_child(int fd, char byte)
+{
+
+	if (send(fd, &byte, 1, MSG_NOSIGNAL) != 1)
+		ATF_REQUIRE_MSG(errno == EPIPE || errno == ECONNRESET,
+		    "release: %s", strerror(errno));
+}
+
+/*
  * Fork a child that shields itself with flags and then waits for the parent.
  * Return only once the child has reported that CP_OP_SHIELD succeeded: a
  * child that could not shield fails the case here, so the foreign probes
@@ -4581,7 +4598,7 @@ shield_child_finish(pid_t pid, int sv[2])
 {
 	int status;
 
-	ATF_REQUIRE(write(sv[0], "g", 1) == 1);
+	release_child(sv[0], 'g');
 	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
 	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
 	    "shielded child exited abnormally (status %#x)", status);
@@ -4655,7 +4672,7 @@ procdesc_child_finish(int pd, int sv[2])
 {
 	int status;
 
-	ATF_REQUIRE(write(sv[0], "g", 1) == 1);
+	release_child(sv[0], 'g');
 	status = 0;
 	ATF_REQUIRE_EQ(pdwait(pd, &status, WEXITED, NULL, NULL), 0);
 	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
@@ -5159,10 +5176,7 @@ ATF_TC_BODY(cap_pro_foreign_sigcont_blocked, tc)
 	ATF_REQUIRE_MSG(result == 0,
 	    "shield helper sigcont failed with status %d for pid %d",
 	    result, (int)pid);
-	do {
-		nbytes = write(sv[0], "g", 1);
-	} while (nbytes < 0 && errno == EINTR);
-	ATF_REQUIRE_MSG(nbytes == 1, "could not release shielded child");
+	release_child(sv[0], 'g');
 	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
 	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
 	    "shielded child exited abnormally (status %#x)", status);
@@ -5287,12 +5301,12 @@ ATF_TC_BODY(cap_pro_close_does_not_unshield, tc)
 	ATF_REQUIRE_MSG(read(sv[0], &buf, 1) == 1 && buf == 's',
 	    "child did not report a successful CP_OP_SHIELD");
 	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
-	ATF_REQUIRE(write(sv[0], "g", 1) == 1);
+	release_child(sv[0], 'g');
 	ATF_REQUIRE_MSG(read(sv[0], &buf, 1) == 1 && buf == 'u',
 	    "child did not close its shield descriptor");
 	/* Still blocked after the descriptor is closed (exit is the bound). */
 	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
-	ATF_REQUIRE(write(sv[0], "x", 1) == 1);
+	release_child(sv[0], 'x');
 	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
 	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
 	    "shielded child exited abnormally (status %#x)", status);
@@ -5535,7 +5549,7 @@ ATF_TC_BODY(cap_pro_fork_not_inherited, tc)
 	/* The shielded process is protected; its fork child is NOT. */
 	ATF_CHECK_EQ(run_shield_helper("ptrace", child_pid), 0);
 	ATF_CHECK_EQ(run_shield_helper("ptrace", grandchild_pid), 1);
-	ATF_REQUIRE(write(sv[0], "g", 1) == 1);
+	release_child(sv[0], 'g');
 	ATF_REQUIRE_EQ(waitpid(child_pid, &status, 0), child_pid);
 	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
 	    "shielded child exited abnormally (status %#x)", status);
@@ -5591,8 +5605,17 @@ ATF_TC_HEAD(cap_pro_foreign_ktrace_blocked, tc)
 }
 ATF_TC_BODY(cap_pro_foreign_ktrace_blocked, tc)
 {
-	int sv[2];
-	pid_t pid;
+	int pd, sv[2], sv2[2];
+	pid_t pid, pid2;
+
+	/*
+	 * ktrace(2) reports every refusal as EPERM, the ordinary
+	 * p_candebug one too: first show the helper may trace an unshielded
+	 * child, so its refusal below is the shield's.
+	 */
+	pid2 = procdesc_child_start(&pd, sv2);
+	ATF_CHECK_EQ(run_shield_helper("ktrace", pid2), 1);
+	procdesc_child_finish(pd, sv2);
 
 	pid = shield_child_start(CP_SF_KTRACE, sv);
 	ATF_CHECK_EQ(run_shield_helper("ktrace", pid), 0);
@@ -5663,7 +5686,7 @@ ATF_TC_BODY(cap_pro_foreign_core_blocked, tc)
 	 * Tell child to abort.  The MAC hook should suppress the
 	 * core dump, but the process still dies from SIGABRT.
 	 */
-	ATF_REQUIRE(write(sv[0], "g", 1) == 1);
+	release_child(sv[0], 'g');
 	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
 	ATF_CHECK(WIFSIGNALED(status));
 	ATF_CHECK_EQ(WTERMSIG(status), SIGABRT);
@@ -5915,7 +5938,7 @@ ATF_TC_BODY(cap_pro_delegated_access, tc)
 	ATF_CHECK_EQ(run_shield_helper("ptrace", target), 0);
 
 	/* Clean up. */
-	ATF_REQUIRE(write(sv[0], "g", 1) == 1);
+	release_child(sv[0], 'g');
 	ATF_REQUIRE_EQ(waitpid(target, &status, 0), target);
 	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
 	    "shielded target exited abnormally (status %#x)", status);
@@ -5976,14 +5999,14 @@ ATF_TC_BODY(cap_pro_multi_fd_close_keeps_shield, tc)
 	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
 
 	/* Tell child to close first fd. */
-	ATF_REQUIRE(write(sv[0], "g", 1) == 1);
+	release_child(sv[0], 'g');
 	ATF_REQUIRE(read(sv[0], &buf, 1) == 1 && buf == '1');
 
 	/* Still blocked (refcount > 0). */
 	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
 
 	/* Tell child to close second fd. */
-	ATF_REQUIRE(write(sv[0], "g", 1) == 1);
+	release_child(sv[0], 'g');
 	ATF_REQUIRE(read(sv[0], &buf, 1) == 1 && buf == '2');
 
 	/*
@@ -5992,7 +6015,7 @@ ATF_TC_BODY(cap_pro_multi_fd_close_keeps_shield, tc)
 	 */
 	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
 
-	ATF_REQUIRE(write(sv[0], "x", 1) == 1);
+	release_child(sv[0], 'x');
 	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
 	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
 	    "shielded child exited abnormally (status %#x)", status);

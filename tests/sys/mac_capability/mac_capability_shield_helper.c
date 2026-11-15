@@ -234,19 +234,11 @@ try_ktrace(pid_t pid)
 	size_t len;
 
 	/*
-	 * ktrace silently skips processes that fail ktrcanset (returns 0,
-	 * no error).  Instead of calling ktrace(), check if the target
-	 * is visible via sysctl — the MAC cred_check_visible hook hides
-	 * shielded processes.  If CP_SF_KTRACE is set, CP_SF_VISIBLE
-	 * should also be set (CP_SF_ALL includes both).  But if only
-	 * CP_SF_KTRACE is set, we need a different approach.
-	 *
-	 * Use p_candebug semantics: ptrace(PT_ATTACH) goes through
-	 * mac_proc_check_debug.  ktrace goes through the same
-	 * p_candebug AND our new mac_proc_check_ktrace.  Since the
-	 * ktrace syscall doesn't propagate the error, we verify by
-	 * attempting ktrace and then checking if the process's trace
-	 * flag was actually set.
+	 * ktrace(2) answers EPERM for a target that fails ktrcanset(), which
+	 * includes mac_proc_check_ktrace() (capprotect's CP_SF_KTRACE) and the
+	 * ordinary p_candebug() refusal alike; the caller pairs this probe
+	 * with an unshielded control.  On success, confirm the trace flag was
+	 * actually set on the target.
 	 */
 	char tmpf[] = "/tmp/mac_capability_ktrace.XXXXXX";
 	int fd, ret;
@@ -284,7 +276,7 @@ try_ktrace(pid_t pid)
 		return (1);
 	}
 
-	return (0);	/* tracing not set — shield blocked it */
+	return (2);	/* ktrace succeeded but set nothing: unexpected */
 }
 
 static int

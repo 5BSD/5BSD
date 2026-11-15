@@ -35,6 +35,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <atf-c.h>
@@ -4987,32 +4988,39 @@ ATF_TC_BODY(watchdog_reset_extends, tc)
 	struct coalition_stat_reply sr;
 	struct coalition_reply rpl;
 	int cfd;
+	struct timespec t0, t1;
+	long elapsed_ms;
 	int32_t status;
 
 	cfd = mac_capability_connect("coalition");
 	ATF_REQUIRE(cfd >= 0);
 
-	/* Set watchdog with 200ms timeout */
+	/*
+	 * A 2 s watchdog, a heartbeat at 1 s and a check at 2.5 s: wide
+	 * margins, because a loaded guest can oversleep by hundreds of ms.
+	 * The sleeps are periods, not synchronisation: the case asserts that
+	 * the watchdog has NOT fired 2.5 s after arming because the heartbeat
+	 * moved it.
+	 */
+	ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &t0) == 0);
 	wr.op = COALITION_OP_SET_WATCHDOG;
-	wr.timeout_ms = 200;
+	wr.timeout_ms = 2000;
 	ATF_REQUIRE(coalition_call(cfd, &wr, sizeof(wr), NULL, 0,
 	    &rpl, sizeof(rpl)) == 0);
 	ATF_CHECK_EQ(rpl.status, 0);
 
-	/*
-	 * At 100ms, send a heartbeat to reset the timer.  These two sleeps are
-	 * periods, not synchronisation: the case asserts that the watchdog has
-	 * NOT fired 250 ms after arming because the heartbeat moved it.
-	 */
-	usleep(100000);
+	usleep(1000000);
 	ATF_REQUIRE(coalition_op(cfd, COALITION_OP_HEARTBEAT, &status) == 0);
+	ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &t1) == 0);
 	ATF_CHECK_EQ(status, 0);
+	elapsed_ms = (t1.tv_sec - t0.tv_sec) * 1000 +
+	    (t1.tv_nsec - t0.tv_nsec) / 1000000;
+	if (elapsed_ms >= 1800)
+		atf_tc_skip("heartbeat sent %ld ms after arming a 2000 ms "
+		    "watchdog: the window was missed", elapsed_ms);
 
-	/*
-	 * At 250ms total (150ms after heartbeat), the coalition should
-	 * still be alive because the heartbeat extended the 200ms window.
-	 */
-	usleep(150000);
+	/* 1.5 s after the heartbeat, inside its fresh 2 s window. */
+	usleep(1500000);
 
 	ATF_REQUIRE(coalition_stat(cfd, &sr) == 0);
 	ATF_CHECK(sr.flags & COF_WATCHDOG_ACTIVE);
