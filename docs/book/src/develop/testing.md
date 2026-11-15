@@ -259,6 +259,10 @@ traces such denials. They run in the enforced tier, the same command with
 is the one asked for. The enforced tier is an addition to the plane-on run,
 never a substitute: run both. Enforcing with the plane on is not a tier;
 Capsule's claim then refuses the test its own `/dev/mac_capability`.
+The runner's own checks (the tier selection and gate above, the stage root
+metadata preflight, the extra-script status) are shell scripts under
+`tools/build/fuchsia/tests/`; `make -C tools/build/fuchsia check-runner`
+runs them on the build host without booting a guest, and `check` includes it.
 
 The other plane-free runner is `tools/test/capability-qemu/run.sh`, which
 stages kernel, modules, libraries and test binaries onto a CD image, boots a
