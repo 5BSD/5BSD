@@ -17,12 +17,15 @@
 #include <sys/param.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
+#include <sys/time.h>
 #include <sys/wait.h>
 
 #include <atf-c.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -580,6 +583,152 @@ ATF_TC_BODY(flock_owners_and_release, tc)
 	teardown(&f);
 }
 
+/*
+ * The reply ioctl releases the requester and then tells the MAC policies
+ * about the requester's file.  debug.dq.delay_reply_notify makes it sleep
+ * one second between the two, in which the requester here closes the last
+ * descriptor of the open file it just locked and asks for the lock through
+ * another open file.
+ */
+#define	DELAY_NOTIFY	"debug.dq.delay_reply_notify"
+#define	LASTCLOSE_MIN_MS	100	/* of the second the reply sleeps */
+
+struct lastclose_arg {
+	int		 sfd, sfd2;
+	int		 how;
+	int		 go[2];
+};
+
+struct lastclose_res {
+	struct dqt_rr	 lock, close, probe, unlock;
+	long		 close_ms;	/* how long close(2) took */
+};
+
+static void
+child_lastclose(void *arg, void *result)
+{
+	struct lastclose_arg *a = arg;
+	struct lastclose_res *r = result;
+	struct timespec t0, t1;
+	char b;
+
+	/* Wait until this process has the only descriptor of sfd's file. */
+	(void)close(a->go[1]);
+	if (read(a->go[0], &b, 1) != 1)
+		_exit(3);
+	r->lock.rv = flock(a->sfd, a->how);
+	r->lock.err = r->lock.rv == -1 ? errno : 0;
+	(void)clock_gettime(CLOCK_MONOTONIC, &t0);
+	r->close.rv = close(a->sfd);
+	r->close.err = r->close.rv == -1 ? errno : 0;
+	(void)clock_gettime(CLOCK_MONOTONIC, &t1);
+	timespecsub(&t1, &t0, &t1);
+	r->close_ms = t1.tv_sec * 1000 + t1.tv_nsec / 1000000;
+	r->probe.rv = flock(a->sfd2, LOCK_EX | LOCK_NB);
+	r->probe.err = r->probe.rv == -1 ? errno : 0;
+	r->unlock.rv = flock(a->sfd2, LOCK_UN);
+	r->unlock.err = r->unlock.rv == -1 ? errno : 0;
+}
+
+static void
+lastclose_round(int how)
+{
+	struct fixture f;
+	struct dqt_object *o2;
+	struct dqt_child ch;
+	struct lastclose_arg a;
+	struct lastclose_res r;
+	size_t len;
+	uint64_t owner;
+	u_int left, n;
+	int status;
+	char b;
+
+	setup(&f, 9);
+	o2 = dqt_mint_backing(&f.c, f.backing, backing_path, NULL,
+	    DQ_MINT_F_WRITE);
+	memset(&a, 0, sizeof(a));
+	a.sfd = f.o->fd;
+	a.sfd2 = o2->fd;
+	a.how = how;
+	ATF_REQUIRE_EQ(0, pipe(a.go));
+	dqt_spawn(&ch, child_lastclose, &a);
+	(void)close(a.go[0]);
+	(void)close(f.o->fd);
+	f.o->fd = -1;
+	/* The next reply about an open file is the lock's. */
+	n = 1;
+	ATF_REQUIRE_EQ_MSG(0, sysctlbyname(DELAY_NOTIFY, NULL, NULL, &n,
+	    sizeof(n)), "%s: %s", DELAY_NOTIFY, strerror(errno));
+	b = 'g';
+	ATF_REQUIRE_EQ(1, write(a.go[1], &b, 1));
+	(void)close(a.go[1]);
+	memset(&r, 0, sizeof(r));
+	status = dqt_wait(&ch, &r, sizeof(r));
+	len = sizeof(left);
+	ATF_REQUIRE_EQ(0, sysctlbyname(DELAY_NOTIFY, &left, &len, NULL, 0));
+	n = 0;
+	(void)sysctlbyname(DELAY_NOTIFY, NULL, NULL, &n, sizeof(n));
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "how %#x: the requester: status %#x", how, status);
+	ATF_CHECK_EQ_MSG(0, left, "how %#x: no reply was delayed", how);
+	ATF_CHECK_EQ_MSG(0, r.lock.rv, "how %#x: flock: errno %d", how,
+	    r.lock.err);
+	ATF_CHECK_EQ_MSG(0, r.close.rv, "how %#x: close: errno %d", how,
+	    r.close.err);
+	ATF_CHECK_EQ_MSG(0, r.probe.rv, "how %#x: the lock outlived the last "
+	    "close of its open file: flock through another open file: %s",
+	    how, strerror(r.probe.err));
+	ATF_CHECK_EQ_MSG(0, r.unlock.rv, "how %#x: unlock: errno %d", how,
+	    r.unlock.err);
+	/*
+	 * The close was made inside the delayed reply only if it waited
+	 * for it: a close that returned at once and a probe that got the
+	 * lock would show nothing (the reply was done before the close).
+	 */
+	printf("how %#x: close(2) took %ld ms\n", how, r.close_ms);
+	if (r.probe.rv == 0)
+		ATF_CHECK_MSG(r.close_ms >= LASTCLOSE_MIN_MS, "how %#x: the "
+		    "close took %ld ms: it did not meet the delayed reply, "
+		    "so the round shows nothing", how, r.close_ms);
+	pthread_mutex_lock(&f.c.mtx);
+	ATF_REQUIRE(f.o->nlocks >= 1);
+	owner = f.o->locks[0].dl_owner;
+	pthread_mutex_unlock(&f.c.mtx);
+	ATF_CHECK_EQ(1, count_unlocks(f.o, DQ_LOCK_FLOCK, owner));
+	teardown(&f);
+}
+
+ATF_TC_WITH_CLEANUP(flock_gone_when_last_close_returns);
+ATF_TC_HEAD(flock_gone_when_last_close_returns, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a flock is released by the last "
+	    "close of its open file before that close returns, as on a real "
+	    "file: the next request through another open file gets the lock "
+	    "even when the reply that granted the first is still telling the "
+	    "MAC policies about the closed file (the first request "
+	    "non-blocking, then blocking)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(flock_gone_when_last_close_returns, tc)
+{
+	size_t len;
+	u_int v;
+
+	len = sizeof(v);
+	if (sysctlbyname(DELAY_NOTIFY, &v, &len, NULL, 0) != 0 &&
+	    errno == ENOENT)
+		atf_tc_skip("this kernel has no %s", DELAY_NOTIFY);
+	lastclose_round(LOCK_EX | LOCK_NB);
+	lastclose_round(LOCK_EX);
+}
+ATF_TC_CLEANUP(flock_gone_when_last_close_returns, tc)
+{
+	u_int zero = 0;
+
+	(void)sysctlbyname(DELAY_NOTIFY, NULL, NULL, &zero, sizeof(zero));
+}
+
 struct norm_res {
 	struct dqt_rr	 r[6];
 };
@@ -981,6 +1130,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, setlkw_no_deadline);
 	ATF_TP_ADD_TC(tp, setlkw_interrupt);
 	ATF_TP_ADD_TC(tp, flock_owners_and_release);
+	ATF_TP_ADD_TC(tp, flock_gone_when_last_close_returns);
 	ATF_TP_ADD_TC(tp, normalisation_and_errnos);
 	ATF_TP_ADD_TC(tp, posix_spans_siblings);
 	ATF_TP_ADD_TC(tp, getlk_creates_no_owner);

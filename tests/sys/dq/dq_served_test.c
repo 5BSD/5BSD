@@ -232,6 +232,28 @@ srv_wait_live(struct srv *s, uint64_t n)
 }
 
 /*
+ * Wait (up to 5 s) for the controller to have read n CLOSE records, and
+ * return how many it has.  The object leaves the live count before its
+ * CLOSE is posted (from dq_taskq) and read, so the count is not sampled
+ * right after srv_wait_live.
+ */
+static int
+srv_wait_closes(struct srv *s, int n)
+{
+	int closes, i;
+
+	for (i = 0; i < 500; i++) {
+		pthread_mutex_lock(&s->mtx);
+		closes = s->closes;
+		pthread_mutex_unlock(&s->mtx);
+		if (closes >= n)
+			break;
+		usleep(10000);
+	}
+	return (closes);
+}
+
+/*
  * Run fn in an attached child; its int results come back over a pipe.
  */
 #define	RES_MAX		32
@@ -772,9 +794,7 @@ ATF_TC_BODY(post_reply_emfile, tc)
 	srv_stats(&s, &st);
 	ATF_CHECK_EQ(1, st.ds2_objects_total);
 	/* Retired through the file's last close, with its CLOSE. */
-	pthread_mutex_lock(&s.mtx);
-	ATF_CHECK_EQ(1, s.closes);
-	pthread_mutex_unlock(&s.mtx);
+	ATF_CHECK_EQ(1, srv_wait_closes(&s, 1));
 	ATF_CHECK_EQ(0, dq_tree_objects(s.tree));
 	srv_stop(&s);
 }
@@ -799,32 +819,75 @@ h_fd_close(struct srv *s, const struct dq_event *ev,
 }
 
 /*
- * ENFILE: the hook answers FD itself (the controller opens nothing) right
- * after lowering kern.maxfiles to the current kern.openfiles + 1, so the
- * requester's falloc is the one refused; the body restores the limit as
- * soon as the child is done, and the cleanup again (root).
+ * ENFILE: the file table is filled, not bounded.  falloc refuses a caller
+ * without PRIV_MAXFILES once kern.openfiles reaches kern.maxfiles less a
+ * twentieth (falloc_noinstall), and the requester here has no privilege.
+ * kern.maxfiles is not written: the capability plane lets only its sysctl
+ * provider write it (mac_capability_system.c, sys_check_sysctl).
+ *
+ * Root fillers open /dev/null up to ENFILE_BELOW short of that bound
+ * before the open, so the requester's own falloc succeeds; the hook, with
+ * the RESOLVE in hand, opens the rest and ENFILE_OVER more and answers FD
+ * (the controller opens nothing for the answer), so the falloc of the
+ * bind is the one refused.  Other unprivileged processes are refused
+ * meanwhile, from the hook until the body closes the hook's files.
  */
-static int enfile_save = -1;
+#define	ENFILE_UID	65534
+#define	ENFILE_BELOW	256
+#define	ENFILE_OVER	64
+#define	ENFILE_HOOKMAX	1024
+#define	ENFILE_FILLERS	64
+
+static int enfile_bound;		/* refused at kern.openfiles >= this */
+static int enfile_fds[ENFILE_HOOKMAX];
+static int enfile_nfds;
 static int enfile_err;
 
-static void
-enfile_restore(void)
+static int
+enfile_openfiles(void)
 {
-	FILE *f;
-	int v;
+	size_t len;
+	int n;
 
-	if (enfile_save > 0) {
-		(void)sysctlbyname("kern.maxfiles", NULL, NULL, &enfile_save,
-		    sizeof(enfile_save));
-		return;
+	len = sizeof(n);
+	if (sysctlbyname("kern.openfiles", &n, &len, NULL, 0) != 0)
+		return (-1);
+	return (n);
+}
+
+/*
+ * A process that opens up to n files and holds them until it is killed
+ * (the close of its process descriptor does that, so the files go with
+ * the test however it ends).  Returns how many it holds.
+ */
+static int
+enfile_filler(int n, int *pdp)
+{
+	struct rlimit rl;
+	pid_t pid;
+	int got, i, p[2];
+
+	ATF_REQUIRE_EQ(0, pipe(p));
+	pid = pdfork(pdp, 0);
+	ATF_REQUIRE_MSG(pid != -1, "pdfork: %s", strerror(errno));
+	if (pid == 0) {
+		(void)close(p[0]);
+		rl.rlim_cur = rl.rlim_max = RLIM_INFINITY;
+		(void)setrlimit(RLIMIT_NOFILE, &rl);
+		for (i = 0; i < n; i++) {
+			if (open("/dev/null", O_RDONLY) == -1)
+				break;
+		}
+		if (write(p[1], &i, sizeof(i)) != sizeof(i))
+			_exit(1);
+		for (;;)
+			(void)pause();
 	}
-	f = fopen("maxfiles.save", "r");
-	if (f != NULL) {
-		if (fscanf(f, "%d", &v) == 1 && v > 0)
-			(void)sysctlbyname("kern.maxfiles", NULL, NULL, &v,
-			    sizeof(v));
-		fclose(f);
-	}
+	(void)close(p[1]);
+	got = 0;
+	ATF_REQUIRE_EQ((ssize_t)sizeof(got), read(p[0], &got, sizeof(got)));
+	(void)close(p[0]);
+	return (got);
 }
 
 static int
@@ -834,8 +897,7 @@ h_enfile(struct srv *s, const struct dq_event *ev,
 	struct dq_ident_file id;
 	struct dq_policy pol;
 	uint64_t oid;
-	int open_files, lim;
-	size_t len;
+	int fd, need, now;
 
 	if (rb->drs_op != DQ_ROP_OPEN || strstr(path, "/a") == NULL ||
 	    s->hook_state != 0)
@@ -843,21 +905,33 @@ h_enfile(struct srv *s, const struct dq_event *ev,
 	srv_ident(s, "a", path, &id);
 	dq_policy_default(&pol);
 	pol.dp_events = DQ_EVENTS_CLOSE;
-	len = sizeof(open_files);
-	if (sysctlbyname("kern.openfiles", &open_files, &len, NULL, 0) != 0) {
-		enfile_err = errno;
-		return (0);
-	}
-	lim = open_files + 1;
-	if (sysctlbyname("kern.maxfiles", NULL, NULL, &lim, sizeof(lim)) != 0) {
-		enfile_err = errno;
-		return (0);
+	/* Twice: other processes open and close files meanwhile. */
+	for (;;) {
+		now = enfile_openfiles();
+		if (now == -1) {
+			enfile_err = errno;
+			return (0);
+		}
+		need = enfile_bound + ENFILE_OVER - now;
+		if (need <= 0)
+			break;
+		while (need-- > 0) {
+			fd = -1;
+			if (enfile_nfds < ENFILE_HOOKMAX)
+				fd = open("/dev/null", O_RDONLY);
+			if (fd == -1) {
+				enfile_err = enfile_nfds < ENFILE_HOOKMAX ?
+				    errno : E2BIG;
+				return (0);
+			}
+			enfile_fds[enfile_nfds++] = fd;
+		}
 	}
 	s->hook_state = 1;
 	if (dq_reply_resolve_fd(s->q, ev->de_id, DQ_KIND_FILE, 0, &id, &pol,
 	    &oid, NULL) != 0)
 		s->hook_errno = errno;
-	/* Restored by the body once the child's open is done. */
+	/* The body closes the files once the child's open is done. */
 	return (1);
 }
 
@@ -872,56 +946,70 @@ c_enfile(struct srv *s, int *r)
 	r[0] = fd < 0 ? errno : 0;
 }
 
-ATF_TC_WITH_CLEANUP(post_reply_enfile);
+ATF_TC(post_reply_enfile);
 ATF_TC_HEAD(post_reply_enfile, tc)
 {
 
 	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "600");
 }
 ATF_TC_BODY(post_reply_enfile, tc)
 {
 	struct srv s;
 	struct dq_stats2 st;
-	FILE *f;
 	size_t len;
-	int r[RES_MAX];
+	int filler[ENFILE_FILLERS], got, i, maxfiles, nfillers, now, want;
+	int r[RES_MAX], status;
 
-	len = sizeof(enfile_save);
-	ATF_REQUIRE(sysctlbyname("kern.maxfiles", &enfile_save, &len, NULL,
+	len = sizeof(maxfiles);
+	ATF_REQUIRE(sysctlbyname("kern.maxfiles", &maxfiles, &len, NULL,
 	    0) == 0);
-	f = fopen("maxfiles.save", "w");
-	ATF_REQUIRE(f != NULL);
-	fprintf(f, "%d\n", enfile_save);
-	fclose(f);
+	enfile_bound = maxfiles - maxfiles / 20;
+	ATF_REQUIRE_MSG(maxfiles - enfile_bound > 2 * ENFILE_OVER &&
+	    enfile_bound > 2 * ENFILE_BELOW, "kern.maxfiles %d is too small "
+	    "for this case", maxfiles);
 	srv_start(&s, 0);
+	ATF_REQUIRE(chmod(".", 0755) == 0);
 	s.hook = h_enfile;
-	run_child(&s, c_enfile, r);
-	enfile_restore();
-	if (s.hook_state != 1) {
-		srv_stop(&s);
-		/*
-		 * Under the capability plane a SYSCTL claim of another nonce
-		 * isolates kern.maxfiles (mac_capability_system.c
-		 * sys_check_sysctl: EPERM); post_reply_enfile_inject drives
-		 * the same bind path.
-		 */
-		atf_tc_skip("kern.maxfiles write refused (%s): the capability "
-		    "plane's SYSCTL gate isolates it", strerror(enfile_err));
+	for (nfillers = 0;; nfillers++) {
+		now = enfile_openfiles();
+		ATF_REQUIRE(now != -1);
+		want = enfile_bound - ENFILE_BELOW - now;
+		if (want <= 0)
+			break;
+		ATF_REQUIRE_MSG(nfillers < ENFILE_FILLERS, "%d fillers left "
+		    "kern.openfiles at %d of %d", nfillers, now, enfile_bound);
+		got = enfile_filler(want, &filler[nfillers]);
+		ATF_REQUIRE_MSG(got > 0, "a filler could open nothing "
+		    "(kern.openfiles %d of %d)", now, enfile_bound);
 	}
+	printf("kern.maxfiles %d, bound %d, %d fillers, kern.openfiles %d\n",
+	    maxfiles, enfile_bound, nfillers, now);
+	run_child_as(&s, c_enfile, r, ENFILE_UID, true);
+	now = enfile_openfiles();
+	for (i = 0; i < enfile_nfds; i++)
+		(void)close(enfile_fds[i]);
+	/*
+	 * The fillers are waited for: closing a quarter of a million files
+	 * takes them a while, and the case does not leave that running
+	 * under the next one.
+	 */
+	for (i = 0; i < nfillers; i++) {
+		(void)pdkill(filler[i], SIGKILL);
+		(void)pdwait(filler[i], &status, WEXITED, NULL, NULL);
+		(void)close(filler[i]);
+	}
+	printf("the hook opened %d files; kern.openfiles was %d\n",
+	    enfile_nfds, now);
+	ATF_REQUIRE_MSG(s.hook_state == 1, "the hook did not answer: %s",
+	    strerror(enfile_err));
 	ATF_CHECK_EQ(0, s.hook_errno);
 	ATF_CHECK_EQ(ENFILE, r[0]);
 	ATF_CHECK_EQ(0, srv_wait_live(&s, 0));
 	srv_stats(&s, &st);
 	ATF_CHECK_EQ(1, st.ds2_resolve_retired);
-	pthread_mutex_lock(&s.mtx);
-	ATF_CHECK_EQ(1, s.closes);
-	pthread_mutex_unlock(&s.mtx);
+	ATF_CHECK_EQ(1, srv_wait_closes(&s, 1));
 	srv_stop(&s);
-}
-ATF_TC_CLEANUP(post_reply_enfile, tc)
-{
-
-	enfile_restore();
 }
 
 /*
@@ -952,9 +1040,7 @@ ATF_TC_BODY(post_reply_enfile_inject, tc)
 	ATF_CHECK_EQ(0, srv_wait_live(&s, 0));
 	srv_stats(&s, &st);
 	ATF_CHECK_EQ(1, st.ds2_resolve_retired);
-	pthread_mutex_lock(&s.mtx);
-	ATF_CHECK_EQ(1, s.closes);
-	pthread_mutex_unlock(&s.mtx);
+	ATF_CHECK_EQ(1, srv_wait_closes(&s, 1));
 	srv_stop(&s);
 }
 
@@ -1646,9 +1732,7 @@ ATF_TC_BODY(revoke_before_bind, tc)
 	printf("revoke_before_bind: %s branch (retired %ju)\n",
 	    r[0] == EIO ? "bind" : "use", (uintmax_t)st.ds2_resolve_retired);
 	ATF_CHECK_EQ(r[0] == EIO ? 1 : 0, st.ds2_resolve_retired);
-	pthread_mutex_lock(&s.mtx);
-	ATF_CHECK_EQ(1, s.closes);
-	pthread_mutex_unlock(&s.mtx);
+	ATF_CHECK_EQ(1, srv_wait_closes(&s, 1));
 	srv_stop(&s);
 }
 

@@ -1550,6 +1550,10 @@ the same backend; of a real file, the same predicate.
 6. Contexts that never wait (I11): `fo_close`, `pgo_dealloc`,
    `pgo_putpages` from `pageproc`/laundry, `vm_object_terminate`, anything
    under `exit1`. They post and continue; the queue owns the result.
+   `fo_close` does wait for a reply ioctl that is inside
+   `mac_file_notify_reply` with the file (`o_notify`): kernel code on the
+   controller's thread, bounded by the hook's contract and run with stops
+   deferred.
 7. Queue full → `EIO` at once.
 8. `REVOKE` and queue close per I10: wake waiters with `EIO`, unmap and
    drop pages, flush socket buffers, clear knotes, mark revoked, complete
@@ -1610,6 +1614,22 @@ the same operation on a real object and a served object presenting its
 identity, results compared field by field (`struct stat`, `struct statfs`,
 `kinfo_file`, `kinfo_vmentry`, `pathconf`, errno, `revents`, `kevent`,
 bytes). WITNESS must stay clean throughout.
+
+For a run with nothing skipped the runner is given three things besides
+the suites. `LOADER_EXTRA` preloads `mac_test_hooks` (with `linux64`,
+`linprocfs`, `linsysfs`, `fdescfs`, `mqueuefs` and `dtraceall`): the plane
+refuses a module load after boot, and `dq_socket_test:mac_denial_no_event`
+needs the policy's `socket_check_create` toggle.
+`KYUA_VARS=test_suites.FreeBSD.allow_sysctl_side_effects=1` lets
+`sys/kern/kern_descrip_test:kern_maxfiles__increase` run, and
+`SYSCTL_WRITE=kern.maxfiles` lets it raise the limit: the plane reserves
+`kern.maxfiles` for the `system.Sysctl` provider, the shipped policy lets
+no client write it, and the test asks the provider when its own write is
+refused. `SYSCTL_WRITE` changes the test image's `sysctl.conf` only; it
+lets every client of that guest's provider write the names given. The
+provider matches names as prefixes on a component boundary and has no
+exact-match form, so a name also grants the subtree under it;
+`kern.maxfiles` is a leaf, so the recipe grants that one variable.
 
 | Group | Tests |
 |---|---|
@@ -1816,7 +1836,7 @@ and a proxy over a real object is to use that same state.
 | D86 | 2026-11-07 | Stage 1a delivery of a minted descriptor: inheritance. Without `RESOLVE` (1c) the controller is the only receiver; it opens the queue `O_CLOFORK`, mints and forks, so the child holds the object and not the queue and the `EDEADLK` rule does not trip. The minted fd is `finstall_prop`'d with `CAP_XFER_NONE` (no `SCM_RIGHTS` transfer until an attachment exists to bound one — the I6 row for 1a/1b), `O_CLOEXEC`, rights = `dp_rights`. `fp->f_cred` of a minted object is the controller's credential (visible to `mac_file_check_*`'s `file_cred`); declared in `dq(4)`, revisited when `RESOLVE` installs | plan review | a served fd must cross `fork` to reach a requester before 1c |
 | D87 | 2026-11-07 | What a 1a object answers (`dq(4)` STAGE 1A): `MINT` accepts `dp_write/exec/mmap_shared_write/ioctl = DENY`, `dp_lock = EVENT`, `dp_cache ∈ {NONE, ATTR}`, `dp_events ⊆ {GETATTR, CLOSE}`, else `EINVAL` with `dm_reason`; no `FWRITE`, so `write`/`fallocate`/`fspacectl` are the generic layer's `EBADF` and `ftruncate` its `EINVAL` (`kern_ftruncate`); `fchmod`/`fchown`/`futimens`/`fchflags`/`F_SET_RW_HINT` `EPERM` (the non-owner's answer; `SETATTR` events in 1b); `fsync` 0; `mmap` `ENODEV` (pager 1b); `sendfile` `EINVAL` (1b); `copy_file_range` default `EINVAL`; ACL/extattr `EOPNOTSUPP`; `getdirentries` `ENOTDIR`; `FIOBMAP2` `EOPNOTSUPP` (no `VOP_BMAP`); `fstatfs` unfiltered by `prison_enforce_statfs` (no mount exists); locks refused by the stage 0 capability flags. Every answer pinned by `dq_stage1a_test` | plan | a read-only descriptor's answers are the honest 1a answers |
 | D88 | 2026-11-07 | Plane facts for 1c/4: `MAC_CAPABILITY_SVC_NO_ATTACHED` (D61) does not exist (flags are `NOTIFY`, `MINTABLE`, `REFATTACH`); the caller trailer is a pinned 24-byte ABI with three pad bytes after `abi`, so `attached` goes there additively or through a new ioctl; `CAPSULE_OP_DELEGATE_SERVICE` names are ≤ 16 bytes and allowlisted in capsule | exploration | recorded so 1c does not re-derive them |
-| D89 | 2026-11-07 | OES file events for served descriptors (14): `AUTH_FILE_READ 0x002B`, `AUTH_FILE_STAT 0x002C` (NOTIFY `0x1043`, `0x1044`), `NOTIFY_FILE_CLOSE 0x1045`, `NOTIFY_DQ_REPLY 0x1046`, within the subscription bitmap's 128-per-class bound; `FILE_OPEN` waits for a requester-side open (`RESOLVE`, 1c) — `MINT` is not an open. OES implements `mpo_file_check_read/stat`, `mpo_file_notify_close` and the new `mpo_file_notify_reply`, each returning at once unless `f_type == DTYPE_DQ` (the documented served-mark use; registering the fast-path hooks turns them on system-wide). Payload from `dq_file_ident()` with `OES_FILE_META_PRESENTED`, object id and controller nonce; `NOTIFY_DQ_REPLY` carries a count, never content (D41). New MAC hook `mac_file_notify_reply(controller, fp, op, error, count)` (`MAC_POLICY_PERFORM`, `docs/macf-new-hooks.md` 3.14), posted from the reply path with the object's file held | plan | the audit trail needs the controller's answers, not their bytes |
+| D89 | 2026-11-07 | OES file events for served descriptors (14): `AUTH_FILE_READ 0x002B`, `AUTH_FILE_STAT 0x002C` (NOTIFY `0x1043`, `0x1044`), `NOTIFY_FILE_CLOSE 0x1045`, `NOTIFY_DQ_REPLY 0x1046`, within the subscription bitmap's 128-per-class bound; `FILE_OPEN` waits for a requester-side open (`RESOLVE`, 1c) — `MINT` is not an open. OES implements `mpo_file_check_read/stat`, `mpo_file_notify_close` and the new `mpo_file_notify_reply`, each returning at once unless `f_type == DTYPE_DQ` (the documented served-mark use; registering the fast-path hooks turns them on system-wide). Payload from `dq_file_ident()` with `OES_FILE_META_PRESENTED`, object id and controller nonce; `NOTIFY_DQ_REPLY` carries a count, never content (D41). New MAC hook `mac_file_notify_reply(controller, fp, op, error, count)` (`MAC_POLICY_PERFORM`, `docs/macf-new-hooks.md` 3.14), posted from the reply path with the object's file held (2026-11-14: pinned by `o_notify`, which the last close waits for, not referenced; a reference made the reply ioctl the last close and a `flock` outlive the program's) | plan | the audit trail needs the controller's answers, not their bytes |
 | D90 | 2026-11-07 | `dq.observe` is a `mac_capability` service (`MINTABLE`) registered by the device: `co_connect` admits a `PRIV_DRIVER` credential (the device's rule, D85) until stage 4's capsule admission under `system.dq.observe`; `co_call` ops `LIST_QUEUES`, `LIST_OBJECTS`, `SUBSCRIBE` (an observer descriptor in `reply_fds`, metadata-only, D41). Queues carry a kernel-wide id. The I9 row "uid-0 shell without the capability sees nothing" is therefore deferred to stage 4, not satisfied in 1a | plan | observation stays a capability (D21) even before the plane delivers it |
 | D91 | 2026-11-07 | Independent review of the stage 1a plan ("not yet", 19 items, then "code may begin") adopted in full: the fileop owns `foffset_lock_uio` (section 9 corrected); ABI constants and padding (`DQ_MNAMELEN` 1024, `f_nvnodelistsize`, explicit pads, `dp_rights_version` + `cap_rights_is_valid`, distinct `DENY/EVENT/ALLOW`, dense `DQ_PC_*` pathconf index with `dq_pc_names[]`, ioctl group `'j'`); `fo_close` with `td == NULL`; `de_caller` from `td_ucred` with the `P_KPROC`/no-thread rule, never `f_cred`; the `EDEADLK` scan only in operations that post, `FILEDESC_SLOCK` before `q_mtx`; `DEV_DQ opt_dq.h` with `device dq`; the waiter reads the event state before the wake reason; one reader at a time on a queue, dequeue after a successful copy, re-check after relock; observer records `M_NOWAIT`; `fhold` may fail before the reply hook; `SEEK_HOLE` past the end is `ENXIO`; the fileops table answers verified against the real file (`fo_cmp`, `EVFILT_WRITE`, `poll_no_poll`, `FIODTYPE`, `vn_fcntl`, `bzero` + `PAGE_SIZE` floor in `fstat`) | plan review 2026-11-07 | a design that names its locks and errnos can be reviewed before it is code |
 | D92 | 2026-11-07 | Stage 1a landed on `dev` as merge `b46b705b57a` (six commits `578eabbfcf9`..`fc4a63722fc` over the stage 0 quality pass). The merged GENERIC, built from `/usr/src`, booted the plane-on guest and passed `sys/dq` (70/70) and `sys/file`, 231/232 (run 9; the broken case is the pre-existing `devctl_device_test` metadata). Nothing installed on the host, no reboot. Later stages keep landing in order as each is built, reviewed and run | run 9 | stage 1a complete; stage 1b starts from 7.6 |

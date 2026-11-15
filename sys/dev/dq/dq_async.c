@@ -985,7 +985,7 @@ dq_object_close_deferred(struct dq_object *o)
 	VM_OBJECT_WLOCK(obj);
 	DQO_LOCK(o);
 	o->o_closed = true;
-	o->o_fp = NULL;		/* the file is about to be freed */
+	o->o_fp = NULL;		/* already (dq_object_close_begin) */
 	DQO_UNLOCK(o);
 	VM_OBJECT_WUNLOCK(obj);
 	o->o_destroy_deadline = 0;
