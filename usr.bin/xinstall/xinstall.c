@@ -1033,9 +1033,13 @@ install(const char *from_name, const char *to_name, u_long fset, u_int flags)
 	}
 
 	/*
-	 * Preserve the timestamp of the source file if necessary.
+	 * Preserve the timestamp of the source file if necessary.  A standard
+	 * input that is not a regular file (a pipe, a terminal) has no times
+	 * worth keeping: like /dev/null, it gets none, and none is logged, so
+	 * a -p -M install from a pipe stays reproducible.
 	 */
-	if (dopreserve && !files_match && !devnull) {
+	if (dopreserve && !files_match && !devnull &&
+	    (!ispipe || S_ISREG(from_sb.st_mode))) {
 		tsb[0] = from_sb.st_atim;
 		tsb[1] = from_sb.st_mtim;
 		(void)utimensat(AT_FDCWD, to_name, tsb, 0);

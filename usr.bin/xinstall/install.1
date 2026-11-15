@@ -294,7 +294,12 @@ copies data from standard input to the target.
 The file flags and, with
 .Fl p ,
 the access and modification times copied to the target are those of
-the file standard input refers to; a pipe has no file flags.
+the file standard input refers to.
+A pipe has no file flags, and a standard input that is not a regular
+file has no times to preserve: as with
+.Pa /dev/null ,
+the target keeps the time of its creation and the metadata log records
+none.
 .Sh ENVIRONMENT
 The
 .Nm

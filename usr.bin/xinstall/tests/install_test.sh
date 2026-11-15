@@ -610,7 +610,8 @@ stdin_metadata_body() {
 
 	echo "The Magic Words are Squeamish Ossifrage" >src
 	atf_check env TZ=UTC touch -t 200001020304.05 src
-	atf_check chflags uarch src
+	chflags uarch src 2>/dev/null ||
+	    atf_skip "the file system does not support file flags"
 	atf_check -o save:flags stat -f %Sf src
 	atf_check -o inline:"946782245\n" stat -f %m src
 	atf_check install -p - dst <src
@@ -633,8 +634,8 @@ stdin_metadata_cleanup() {
 }
 
 # With -p, a time is logged only when one was taken from the source: not
-# for /dev/null, and not when -C finds the target unchanged.  Before, an
-# uninitialised timespec was logged in both cases.
+# for /dev/null or a pipe, and not when -C finds the target unchanged.
+# Before, an uninitialised timespec (or a pipe's) was logged.
 atf_test_case metalog_preserve_time
 metalog_preserve_time_head() {
 	atf_set "descr" "install -p -M logs no time it did not set"
@@ -648,6 +649,11 @@ metalog_preserve_time_body() {
 	atf_check -o match:"time=946782245\.000000000" cat metalog2
 	atf_check install -M metalog3 -D "$PWD" -C -p src copy
 	atf_check -s exit:1 grep -q time= metalog3
+	# Nor from a pipe, which has no times to preserve.
+	cat src | install -M metalog4 -D "$PWD" -p - piped ||
+	    atf_fail "install from a pipe failed"
+	atf_check cmp -s src piped
+	atf_check -s exit:1 grep -q time= metalog4
 }
 
 atf_init_test_cases() {
