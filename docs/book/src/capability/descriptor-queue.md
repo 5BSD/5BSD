@@ -201,7 +201,7 @@ Open questions are in section 21, item 21.
 | supervisor, userspace supervisor | the controller. The owner's term since 2026-11-08; sections written earlier say controller |
 | supervisor queue | the queue |
 | proxy descriptor | an object: a descriptor whose operations the supervisor answers. Identifiers keep `dq_` and `DTYPE_DQ` |
-| swap | the supervisor's answer to an acquisition with a descriptor it controls, which the kernel installs in the requester (D303). The descriptor is a real object or, later, a proxy object |
+| swap | the supervisor's answer to an acquisition with a descriptor it controls, which the kernel installs in the requester (D303). The descriptor is a real object or, later, a proxy object. The feature is named Descriptor Substitution; code and ABI keep `SWAP` |
 | confinement | what a supervisor builds for a program from swapped and proxy descriptors, the supervisor queue, OpenES, Capsicum rights and the transfer controls (open item 18) |
 
 ## 3. Invariants
@@ -1690,6 +1690,22 @@ particular answer, which is best effort and not containment (D305). The
 program shares the open file the supervisor supplied, so the supervisor
 opens afresh for each answer and closes its own descriptor afterwards
 (D306).
+
+The swap ships as **Descriptor Substitution** (built; `DQ_RESOLVE_SWAP`,
+`dq_reply_resolve_swap(3)`). The open file is handed over exactly as it
+is: the credential of the supervisor's open (`f_cred`) and the Capsicum
+rights of its descriptor go with it, also when the supervisor is another
+user, as with `SCM_RIGHTS`. What bounds what a supervisor can hand back is
+its own confinement (owner decision, 2026-11-14): it opens the queue and
+attaches the program as root, then enters a jail, gives up root and
+enters capability mode, and only then opens the files it hands over. Only
+the uid drop changes how a handed-over file behaves (set-ID bits kept on
+write, reserved blocks, quota exemption follow the opener's privilege); a
+jail or capability mode bounds what the supervisor can reach.
+`dq(4)` "The substituted file and the confined controller" gives the
+order and the rules; `tests/sys/dq/dq_confined_test` and the `dqswap`
+example show them. A kernel check that a handed-over file's credential
+matches the program's is future work, opt-in per queue.
 
 ## 19. Alternatives considered
 
