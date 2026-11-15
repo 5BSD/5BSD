@@ -271,17 +271,6 @@ usr.sbin/BSDNotify sys/dq/dq_bootstrap_test`).  `tests/sys/mac_capability`
 drives the device itself and is not part of it.  A case of a deployed-tier
 suite that needs the device skips with `DEFERRED_DEVICE_TIER`, counted as
 `DEFERRED_TO_DEVICE_TIER=N`: it runs in the plane-on test tier.
-
-The keystore and kernelstore cases need the test-only fixture modules
-`mac_capability_test_keystore` and `mac_capability_test_kernelstore`, and the
-unload-ordering cases `mac_capability_test_cleanup`.  None of them is part of
-a world, a kernel or a package.
-`tools/build/fuchsia/build-capability-fixtures.sh KERNBUILDDIR OUTDIR`,
-run inside `make buildenv` of the tree whose kernel the stage carries, builds
-all three for that kernel; `CAPABILITY_FIXTURES_DIR=OUTDIR` makes
-`vm-provider.sh` install them in the image's `/boot/kernel` and preload the
-two services, in every tier.  Without it those cases skip ("Required kmods
-are not loaded", "private VM cleanup fixture is not staged").
 The runner's own checks (the tier selection and gate above, the stage root
 metadata preflight, the extra-script status) are shell scripts under
 `tools/build/fuchsia/tests/`; `make -C tools/build/fuchsia check-runner`
@@ -409,7 +398,7 @@ differs (the Bluetooth fuzz count is the Makefile's).
 | Component libs + ctl tools | `lib/*/tests`, `usr.sbin/*ctl/tests` | protocol, parser, client API | in-session (root cases skip) | ~40 dirs / ~700 cases |
 | Daemon suites (BSD*) | `usr.sbin/BSD*/tests` | provider policy, sessions, bundles | in-session unprivileged; full = VM plane-on | 15 dirs / ~600 cases |
 | Capsule + switchboard | `usr.sbin/{capsule,switchboard}/tests` | boot, lifecycle, management, rc adoption | VM plane-on (`run_capsule_switchboard_capability_tests.sh`) | 36 programs / ~370 cases |
-| mac_capability | `tests/sys/mac_capability` | kernel capability services | VM plane-on (`vm-provider.sh`) plus the enforced plane-off tier (`PLANE_OFF=1`, enforce=1), both with `CAPABILITY_FIXTURES_DIR`; or plane-off `run_tests.sh` | 10 programs / ~506 cases |
+| mac_capability | `tests/sys/mac_capability` | kernel capability services | VM plane-on (`vm-provider.sh`) plus the enforced plane-off tier (`PLANE_OFF=1`, enforce=1), or plane-off `run_tests.sh` | 10 programs / ~506 cases |
 | zfshandle / tzfs | `tests/sys/{zfshandle,tzfs}` | TrustedZFS handles, config | VM plane-off / trustedzfs-qemu | 11 programs / ~66 cases |
 | Capsicum/descriptor rights | `tests/sys/kern`, `tests/sys/capsicum` | new rights + envfd + capmode exec | in-session (root); envfd exclusive | ~10 programs / ~340 cases |
 | Linuxulator | `tests/sys/kern/linux_*` + `tools/test/linuxulator` | Linux ABI, ptrace, rseq | QEMU gate (ZFS-root guest) | 58 sh programs; 1,146 option runs |

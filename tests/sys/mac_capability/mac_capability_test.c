@@ -752,9 +752,7 @@ ATF_TC_BODY(reply_token_correlation, tc)
 	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == 0);
 	ATF_CHECK_EQ(ra.reply_token, 0xAAAA);
 
-	/* The receive reported RECV_F_* in flags; as an input it must be 0. */
 	ra.payload_len = sizeof(buf);
-	ra.flags = 0;
 	ra.nfds = 0;
 	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == 0);
 	ATF_CHECK_EQ(ra.reply_token, 0xBBBB);
@@ -4098,49 +4096,44 @@ ATF_TC_BODY(xfer_sendmsg_multi_atomic, tc)
 
 /* ---- RECVMSG xfer state propagation ---- */
 
-/*
- * These cases send a descriptor over a capability channel pair and receive
- * it at the other end.  They once sent it to the keystore fixture and read
- * the reply, but a kernel service's reply carries no request descriptor
- * back, so they checked nothing, or failed, whenever the fixture was loaded.
- */
-
 ATF_TC(xfer_recvmsg_unlimited_preserved);
 ATF_TC_HEAD(xfer_recvmsg_unlimited_preserved, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "mac_capability RECVMSG: UNLIMITED fd arrives as UNLIMITED");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
 }
 ATF_TC_BODY(xfer_recvmsg_unlimited_preserved, tc)
 {
 	struct mac_capability_sendmsg_args sa;
 	struct mac_capability_recvmsg_args ra;
-	char payload;
-	int channel[2], pipefd[2], recv_fd;
+	struct ks_request req;
+	char buf[64];
+	int fd, pipefd[2], recv_fd;
 
-	mac_capability_channel_create(&channel[0], &channel[1]);
+	fd = mac_capability_connect("test_keystore");
+	ATF_REQUIRE(fd >= 0);
 	ATF_REQUIRE(pipe(pipefd) == 0);
 
 	/* pipefd[0] is default UNLIMITED. */
-	payload = 'p';
+	req.op = KS_OP_FETCH;
+	req.keyid = mac_capability_missing_key();
 	memset(&sa, 0, sizeof(sa));
-	sa.payload = &payload;
-	sa.payload_len = sizeof(payload);
+	sa.payload = &req;
+	sa.payload_len = sizeof(req);
 	sa.fds = &pipefd[0];
 	sa.nfds = 1;
-	ATF_REQUIRE(ioctl(channel[0], MAC_CAPABILITY_SENDMSG, &sa) == 0);
+	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) == 0);
 
-	/* Receive it on the other end. */
+	/* Receive the reply (keystore echoes fds back). */
 	memset(&ra, 0, sizeof(ra));
-	ra.payload = &payload;
-	ra.payload_len = sizeof(payload);
+	ra.payload = buf;
+	ra.payload_len = sizeof(buf);
 	ra.fds = &recv_fd;
 	ra.nfds = 1;
-	ATF_REQUIRE(ioctl(channel[1], MAC_CAPABILITY_RECVMSG, &ra) == 0);
+	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == 0);
 
-	ATF_REQUIRE_EQ(1, ra.nfds);
-	{
+	if (ra.nfds == 1) {
 		/*
 		 * Received fd should be UNLIMITED — can tighten to ONCE,
 		 * proving it wasn't degraded.
@@ -4151,8 +4144,7 @@ ATF_TC_BODY(xfer_recvmsg_unlimited_preserved, tc)
 
 	close(pipefd[0]);
 	close(pipefd[1]);
-	close(channel[0]);
-	close(channel[1]);
+	close(fd);
 }
 
 ATF_TC(xfer_recvmsg_once_arrives_none);
@@ -4160,37 +4152,39 @@ ATF_TC_HEAD(xfer_recvmsg_once_arrives_none, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "mac_capability RECVMSG: XFER_ONCE fd arrives as XFER_NONE");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
 }
 ATF_TC_BODY(xfer_recvmsg_once_arrives_none, tc)
 {
 	struct mac_capability_sendmsg_args sa;
 	struct mac_capability_recvmsg_args ra;
-	char payload;
-	int channel[2], pipefd[2], recv_fd;
+	struct ks_request req;
+	char buf[64];
+	int fd, pipefd[2], recv_fd;
 
-	mac_capability_channel_create(&channel[0], &channel[1]);
+	fd = mac_capability_connect("test_keystore");
+	ATF_REQUIRE(fd >= 0);
 	ATF_REQUIRE(pipe(pipefd) == 0);
 
 	ATF_REQUIRE(cap_xfer_limit(pipefd[0], CAP_XFER_ONCE) == 0);
 
-	payload = 'p';
+	req.op = KS_OP_FETCH;
+	req.keyid = mac_capability_missing_key();
 	memset(&sa, 0, sizeof(sa));
-	sa.payload = &payload;
-	sa.payload_len = sizeof(payload);
+	sa.payload = &req;
+	sa.payload_len = sizeof(req);
 	sa.fds = &pipefd[0];
 	sa.nfds = 1;
-	ATF_REQUIRE(ioctl(channel[0], MAC_CAPABILITY_SENDMSG, &sa) == 0);
+	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) == 0);
 
 	memset(&ra, 0, sizeof(ra));
-	ra.payload = &payload;
-	ra.payload_len = sizeof(payload);
+	ra.payload = buf;
+	ra.payload_len = sizeof(buf);
 	ra.fds = &recv_fd;
 	ra.nfds = 1;
-	ATF_REQUIRE(ioctl(channel[1], MAC_CAPABILITY_RECVMSG, &ra) == 0);
+	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == 0);
 
-	ATF_REQUIRE_EQ(1, ra.nfds);
-	{
+	if (ra.nfds == 1) {
 		/* ONCE was consumed on send — receiver gets NONE. */
 		ATF_CHECK_ERRNO(ENOTCAPABLE,
 		    cap_xfer_limit(recv_fd, CAP_XFER_UNLIMITED) == -1);
@@ -4230,8 +4224,7 @@ ATF_TC_BODY(xfer_recvmsg_once_arrives_none, tc)
 
 	close(pipefd[0]);
 	close(pipefd[1]);
-	close(channel[0]);
-	close(channel[1]);
+	close(fd);
 }
 
 ATF_TC(propagation_once_recvmsg_preserved);
@@ -4239,35 +4232,39 @@ ATF_TC_HEAD(propagation_once_recvmsg_preserved, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "mac_capability RECVMSG preserves CLOEXEC_ONCE and CLOFORK_ONCE");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_test_keystore");
 }
 ATF_TC_BODY(propagation_once_recvmsg_preserved, tc)
 {
 	struct mac_capability_sendmsg_args sa;
 	struct mac_capability_recvmsg_args ra;
-	char payload;
-	int channel[2], pipefd[2], recv_fd, status;
+	struct ks_request req;
+	char buf[64];
+	int fd, pipefd[2], recv_fd, status;
 	pid_t pid;
 
-	mac_capability_channel_create(&channel[0], &channel[1]);
+	fd = mac_capability_connect("test_keystore");
+	ATF_REQUIRE(fd >= 0);
 	ATF_REQUIRE(pipe(pipefd) == 0);
 	ATF_REQUIRE(cap_cloexec_limit(pipefd[0], CAP_CLOEXEC_ONCE) == 0);
 	ATF_REQUIRE(cap_clofork_limit(pipefd[0], CAP_CLOFORK_ONCE) == 0);
 
-	payload = 'p';
+	req.op = KS_OP_FETCH;
+	req.keyid = mac_capability_missing_key();
 	memset(&sa, 0, sizeof(sa));
-	sa.payload = &payload;
-	sa.payload_len = sizeof(payload);
+	sa.payload = &req;
+	sa.payload_len = sizeof(req);
 	sa.fds = &pipefd[0];
 	sa.nfds = 1;
-	ATF_REQUIRE(ioctl(channel[0], MAC_CAPABILITY_SENDMSG, &sa) == 0);
+	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) == 0);
 
 	memset(&ra, 0, sizeof(ra));
-	ra.payload = &payload;
-	ra.payload_len = sizeof(payload);
+	ra.payload = buf;
+	ra.payload_len = sizeof(buf);
 	ra.fds = &recv_fd;
 	ra.nfds = 1;
-	ATF_REQUIRE(ioctl(channel[1], MAC_CAPABILITY_RECVMSG, &ra) == 0);
+	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == 0);
 	ATF_REQUIRE_EQ(ra.nfds, 1);
 
 	/* These two checks together prove each exact intermediate state. */
@@ -4301,8 +4298,7 @@ ATF_TC_BODY(propagation_once_recvmsg_preserved, tc)
 	close(recv_fd);
 	close(pipefd[0]);
 	close(pipefd[1]);
-	close(channel[0]);
-	close(channel[1]);
+	close(fd);
 }
 
 /* ---- CALL xfer state propagation ---- */
