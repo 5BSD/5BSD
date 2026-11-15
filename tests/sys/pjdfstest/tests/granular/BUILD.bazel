@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/fs:suite.bzl", "filesystem_test_suite")
+load("//tools/build/bazel:bsd_sed_output.bzl", "bsd_sed_output")
+
+filesystem_test_suite(directory = '/usr/tests/sys/pjdfstest/granular',
+    scripts = {'00': '//contrib/pjdfstest:tests/granular/00.t', '01': '//contrib/pjdfstest:tests/granular/01.t', '02': '//contrib/pjdfstest:tests/granular/02.t', '03': '//contrib/pjdfstest:tests/granular/03.t', '04': '//contrib/pjdfstest:tests/granular/04.t', '05': '//contrib/pjdfstest:tests/granular/05.t'}, atf_shell = {},
+    interfaces = {'00': 'tap', '01': 'tap', '02': 'tap', '03': 'tap', '04': 'tap', '05': 'tap'}, metadata = {'00': {'required_user': 'root'}, '01': {'required_user': 'root'}, '02': {'required_user': 'root'}, '03': {'required_user': 'root'}, '04': {'required_user': 'root'}, '05': {'required_user': 'root'}},
+)

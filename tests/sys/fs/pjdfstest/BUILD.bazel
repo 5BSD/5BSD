@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/fs:suite.bzl", "filesystem_test_suite")
+load("//tools/build/bazel:bsd_sed_output.bzl", "bsd_sed_output")
+
+filesystem_test_suite(directory = '/usr/tests/sys/fs/pjdfstest',
+    scripts = {'tmpfs': 'tmpfs.sh', 'ufs': 'ufs.sh', 'zfs': 'zfs.sh'}, atf_shell = {'tmpfs': True, 'ufs': True, 'zfs': True},
+    interfaces = {'tmpfs': 'atf', 'ufs': 'atf', 'zfs': 'atf'}, metadata = {'tmpfs': {}, 'ufs': {}, 'zfs': {}},
+)

@@ -256,6 +256,46 @@ establish completion. Continue those related groups, fixture contract inputs,
 matched whole-system references and actual current image/runtime qualification.
 All six gates and the tests-on production guard remain open; Make stays default.
 
+The filesystem/GEOM/pjdfstest group now completes native R12 through the same
+whole audit endpoint: 37 source owners, 59 compiled programs/helpers and 295
+scripts. Its 36 installation archives preserve 463 file/link records, 67 explicit
+directory claims, 35 Kyuafiles, all inherited NetBSD sed transformations and the
+pjdfstest compatibility symlink. The original Make filesystem root registered
+fdescfs twice; remove that duplicate in Make and regenerate its Kyuafile. Both
+Make and native declarations now use the corrected order. Metadata overrides
+retain Make's last-property-wins behavior, including FUSE timeouts and the plain
+NFS cookie client's empty module prerequisite.
+
+FUSE mockfs/utils share one native compilation context. Their header target now
+carries header-only dependencies; actual framework/runtime libraries belong to
+the final cc_binary dependencies. Correct those declarations and the ATF library
+precedence rather than weakening ELF checks: all 59 Make ELF contracts, including
+ordered dependencies/imports/exports/versions and hardening, and all 59 split-debug
+pairs pass. The earlier failed package-boundary labels and 54 dependency-order
+mismatches remain retained. Neither program source nor payload bytes were patched
+to manufacture agreement.
+
+All 13 selected native test targets pass, including the unchanged pure NFS cookie
+decoder and nine header ATF cases. The decoder uses declared runtime runfiles,
+including the existing seed libgcc_s; this is not independent bootstrap or a
+hermetic runtime assertion. The capture review verifies all 4,753 output records.
+Normal build-bsd construction with googletest disabled and with OpenSSL disabled
+matches actual Make child lists, produces no dangling child registrations and
+captures no excluded FUSE/ELI outputs. No kernel, mount, disk or privileged test
+body is executed on the host.
+
+Evidence under /usr/obj/usr/src: `bazel-filesystem-test-payload-inventory-r1-20261115`,
+`bazel-filesystem-test-root-registration-r1-20261115`,
+`bazel-filesystem-test-installation-review-r2-20261115`,
+`bazel-filesystem-test-disabled-variants-r1-20261115`,
+`bazel-installed-tests-world-native-amd64-r12-20261115` and its capture review.
+The existing format-5 settings/selectors and world backend carry this group; no
+new frontend C option, signing/publication policy or manual behavior is added.
+Sixty selected test source owners still lack a local BUILD; existing owners also
+include partial suites. Whole installation/configuration/runtime, fixture ELF
+contracts, bootstrap/isolation/performance/publication and ARM64 remain open;
+Make remains default and the production tests-on guard stays in place.
+
 The concurrent OpenES merge a7d37e2855a changed kernel and test sources during
 R1. R2 incorporated its world dependencies; five archive hashes changed for real
 library/header/manual payload changes. Neither run is a controlled incremental

@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/fs:suite.bzl", "filesystem_test_suite")
+load("//tools/build/bazel:bsd_sed_output.bzl", "bsd_sed_output")
+
+filesystem_test_suite(directory = '/usr/tests/sys/geom/class/mirror',
+    files = {'conf.sh': 'conf.sh'},
+    scripts = {'1_test': '1_test.sh', '2_test': '2_test.sh', '3_test': '3_test.sh', '4_test': '4_test.sh', '5_test': '5_test.sh', '6_test': '6_test.sh', '7_test': '7_test.sh', '8_test': '8_test.sh', '9_test': '9_test.sh', '10_test': '10_test.sh', '11_test': '11_test.sh', '12_test': '12_test.sh', '13_test': '13_test.sh', 'component_selection': 'component_selection.sh', 'sync_error': 'sync_error.sh'}, atf_shell = {'component_selection': True, 'sync_error': True},
+    interfaces = {'10_test': 'tap', '11_test': 'tap', '12_test': 'tap', '13_test': 'tap', '1_test': 'tap', '2_test': 'tap', '3_test': 'tap', '4_test': 'tap', '5_test': 'tap', '6_test': 'tap', '7_test': 'tap', '8_test': 'tap', '9_test': 'tap', 'component_selection': 'atf', 'sync_error': 'atf'}, metadata = {'10_test': {'is_exclusive': True, 'required_user': 'root'}, '11_test': {'is_exclusive': True, 'required_user': 'root'}, '12_test': {'is_exclusive': True, 'required_user': 'root'}, '13_test': {'is_exclusive': True, 'required_user': 'root'}, '1_test': {'is_exclusive': True, 'required_user': 'root'}, '2_test': {'is_exclusive': True, 'required_user': 'root'}, '3_test': {'is_exclusive': True, 'required_user': 'root'}, '4_test': {'is_exclusive': True, 'required_user': 'root'}, '5_test': {'is_exclusive': True, 'required_user': 'root'}, '6_test': {'is_exclusive': True, 'required_user': 'root'}, '7_test': {'is_exclusive': True, 'required_user': 'root'}, '8_test': {'is_exclusive': True, 'required_user': 'root'}, '9_test': {'is_exclusive': True, 'required_user': 'root'}, 'component_selection': {'is_exclusive': True}, 'sync_error': {'is_exclusive': True}},
+)

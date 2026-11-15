@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/fs:suite.bzl", "filesystem_test_suite")
+load("//tools/build/bazel:bsd_sed_output.bzl", "bsd_sed_output")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+cc_binary(name = 'pjdfstest', srcs = ['//contrib/pjdfstest:pjdfstest.c'],
+    deps = ['//tests/sys/pjdfstest:config_headers'], dynamic_deps = [],
+    copts = ['-fPIE'], local_defines = [],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'pjdfstest_install', program = 'pjdfstest', manual = None, package = "tests", bindir = '/usr/tests/sys/pjdfstest')
+
+filesystem_test_suite(directory = '/usr/tests/sys/pjdfstest',
+    extra_manifests = [':pjdfstest_install'], debug = True,
+    kyuafile = False,
+)

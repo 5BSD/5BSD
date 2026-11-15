@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/fs:suite.bzl", "filesystem_test_suite")
+load("//tools/build/bazel:bsd_sed_output.bzl", "bsd_sed_output")
+bsd_sed_output(name = 'functions_body', template = '//contrib/netbsd-tests:fs/h_funcs.subr', output = 'functions_body.out',
+    arguments = ['-e', '/atf_require_prog mount_${name}/d'], sed = "@bsd_sdk//toolchain:sed", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:sed_runtime"])
+
+filesystem_test_suite(directory = '/usr/tests/sys/fs',
+    files = {'h_funcs.subr': ':functions_body'},
+    subdirectories = ['fdescfs'] + select({"//tools/build/bazel/config:googletest_enabled": ["fusefs"], "//conditions:default": []}) + ['pjdfstest', 'tarfs', 'tmpfs', 'unionfs'],
+    child_archives = ['//tests/sys/fs/fdescfs:installation_archives', '//tests/sys/fs/pjdfstest:installation_archives', '//tests/sys/fs/tarfs:installation_archives', '//tests/sys/fs/tmpfs:installation_archives', '//tests/sys/fs/unionfs:installation_archives'] + select({"//tools/build/bazel/config:googletest_enabled": ["//tests/sys/fs/fusefs:installation_archives"], "//conditions:default": []}),
+)

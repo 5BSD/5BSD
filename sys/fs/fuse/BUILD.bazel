@@ -18,3 +18,5 @@ amd64_generic_module_objects(name = "fusefs_module", srcs = ["fuse_node.c", "fus
 [cross_generic_module_objects(arch = arch, name = "fusefs_module", srcs = ["fuse_node.c", "fuse_io.c", "fuse_device.c", "fuse_ipc.c", "fuse_file.c", "fuse_vfsops.c", "fuse_vnops.c", "fuse_internal.c", "fuse_main.c"],
     deps = ['//sys/ddb:kernel_headers', '//sys/compat/linux:fuse_errno_headers', ":filesystem_module_headers", "//sys/vm:kernel_headers", "//sys/contrib/ck:kernel_headers", "//sys/security/mac:framework_headers", "//sys/security/audit:kernel_headers", "//sys/crypto/siphash:kernel_headers"] + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in []], copts = [])
  for arch in ["arm64", "riscv"]]
+
+cc_library(name = "test_headers", hdrs = ["fuse_kernel.h"], strip_include_prefix = ".", visibility = ["//tests/sys/fs/fusefs:__pkg__"])

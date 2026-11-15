@@ -4,12 +4,15 @@ exports_files(["README"], visibility = ["//lib/libregex/tests:__pkg__"])
 exports_files(["Kyuafile"], visibility = ["//lib/atf/tests:__pkg__", "//lib/tests:__pkg__", "//usr.sbin/tests:__pkg__", "//lib/googletest/tests:__pkg__", "//libexec:__subpackages__", "//bin:__subpackages__", "//sbin:__subpackages__", "//usr.bin:__subpackages__", "//lib/libcasper/services/tests:__pkg__", "//tests/etc:__pkg__"])
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
-cc_library(name = "suite_macros", hdrs = ["freebsd_test_suite/macros.h"], includes = ["."], visibility = ["//lib/libc/tests/nss:__pkg__", "//lib/libcasper/services/cap_fileargs/tests:__pkg__", "//tests/sys/kern:__pkg__", "//tests/sys/vfs:__pkg__"])
+cc_library(name = "suite_macros", hdrs = ["freebsd_test_suite/macros.h"], includes = ["."], visibility = ["//lib/libc/tests/nss:__pkg__", "//lib/libcasper/services/cap_fileargs/tests:__pkg__", "//tests/sys/kern:__pkg__", "//tests/sys/vfs:__pkg__", "//tests/sys/fs/fusefs:__pkg__"])
 
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
 # Audit contributions only. No root Kyuafile claims that these partial suites
 # constitute the complete /usr/tests hierarchy.
 _INSTALLATION_CANDIDATES = [
+    "//tests/sys/fs:installation_archives",
+    "//tests/sys/geom:installation_archives",
+    "//tests/sys/pjdfstest:installation_archives",
     "//tests/include:install_archive",
     "//tests/etc:installation_archives",
     "//tests/release:install_archive",
