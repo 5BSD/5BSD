@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd October 11, 2026
+.Dd November 15, 2026
 .Dt BSDLOG 8
 .Os
 .Sh NAME
@@ -19,7 +19,13 @@ Workers display their pool number in
 .Xr ps 1 ,
 and the separate storage manager displays its storage role.
 These process titles describe shared roles, not per-client authority.
-Pool startup uses a five-second status-and-release handshake.
+Each worker opens its own
+.Dq system.Audit
+session before it confines itself; a lookup that times out while
+switchboard is still activating that provider is repeated for as long as
+switchboard lets an activation take, plus one lookup.
+Pool startup uses a twenty-second status-and-release handshake, and a
+worker that cannot start reports its error through it.
 A failed pool is terminated and reaped before startup reports the error.
 The client sends an edge-coalesced wakeup when a shared ring changes from
 empty to nonempty, and the worker drains the burst through

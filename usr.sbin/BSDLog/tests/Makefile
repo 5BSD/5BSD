@@ -85,6 +85,18 @@ LIBADD.pool_fairness_test+= auditcmp channel fidl_bsd logcmp filesystemcmp servi
 NO_SHARED.pool_fairness_test= yes
 
 
+ATF_TESTS_C+= pool_start_test
+SRCS.pool_start_test= pool_start_test.c config.c storage.c store.c \
+    pool_fairness_session.c
+CFLAGS.pool_start_test+= -I${SRCTOP}/lib/libauditcmp \
+    -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libcapsulert -I${SRCTOP}/sys \
+    -ffunction-sections -fdata-sections
+LDFLAGS.pool_start_test+= -Wl,--gc-sections
+LIBADD.pool_start_test+= auditcmp capreclaim capsulert channel fidl_bsd \
+    filesystemcmp logcmp md service shmring ucl pthread
+NO_SHARED.pool_start_test= yes
+TEST_METADATA.pool_start_test+= timeout="180"
+
 ATF_TESTS_C+= quota_test
 CFLAGS.quota_test+= -I${SRCTOP}/lib/libauditcmp -I${SRCTOP}/lib/libcapreclaim -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/liblogcmp -I${SRCTOP}/lib/libservice -I${SRCTOP}/lib/libshmring -I${SRCTOP}/contrib/libucl/include -I${SRCTOP}/sys -ffunction-sections -fdata-sections
 LDFLAGS.quota_test+= -Wl,--gc-sections

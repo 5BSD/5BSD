@@ -52,6 +52,18 @@
 #define	LOGCMP_POOL_WORK_BUDGET	128
 #define	LOGCMP_POOL_CONTROL_MAGIC 0x4c50434dU
 #define	LOGCMP_SHUTDOWN_TIMEOUT_MS 5000U
+/*
+ * A pool worker opens its own system.Audit session before it enters
+ * capability mode with NOIPC, so the session cannot be acquired lazily.  One
+ * ambient lookup gives up after SERVICE_LOOKUP_TIMEOUT_MS (2 s), while
+ * switchboard lets an on-demand activation take up to ten seconds before it
+ * answers ETIMEDOUT itself.  The worker therefore repeats a lookup that timed
+ * out until switchboard's own bound plus one attempt has passed, and the
+ * parent's bootstrap wait covers that, the ambient registration and the
+ * storage attach (LOGCMP_STORAGE_TIMEOUT_MS).
+ */
+#define	LOGCMP_POOL_AUDIT_TIMEOUT_MS	(10000U + SERVICE_LOOKUP_TIMEOUT_MS)
+#define	LOGCMP_POOL_START_TIMEOUT_MS	20000U
 
 enum pool_source_type {
 	POOL_SOURCE_SESSION = 1,
@@ -1468,6 +1480,25 @@ pool_add_session(struct pool_state *pool)
 	return (0);
 }
 
+/*
+ * Open the worker's system.Audit session, repeating a lookup that timed out
+ * while switchboard may still be activating the provider (see
+ * LOGCMP_POOL_AUDIT_TIMEOUT_MS).  Every other error is final.
+ */
+static int
+pool_audit_open(struct auditcmp_client **auditp)
+{
+	uint64_t deadline;
+
+	deadline = service_monotime_ms() + LOGCMP_POOL_AUDIT_TIMEOUT_MS;
+	for (;;) {
+		if (auditcmp_client_open(auditp) == 0)
+			return (0);
+		if (errno != ETIMEDOUT || service_monotime_ms() >= deadline)
+			return (-1);
+	}
+}
+
 static int
 pool_worker(int control_fd,
     struct logcmp_storage_session *storage, const struct logcmp_config *config,
@@ -1494,7 +1525,7 @@ pool_worker(int control_fd,
 	pool.kq = kqueuex(KQUEUE_CLOEXEC);
 	if (pool.kq == -1 || logcmp_storage_session_activate(storage) == -1 ||
 	    harden_worker_leaf_fd(storage->control_fd) == -1 ||
-	    auditcmp_client_open(&pool.audit) == -1 ||
+	    pool_audit_open(&pool.audit) == -1 ||
 	    harden_worker_leaf_fd(control_fd) == -1 ||
 	    harden_worker_leaf_fd(pool.kq) == -1 ||
 	    pool_change(&pool, control_fd, EVFILT_READ, EV_ADD | EV_ENABLE,
@@ -1503,13 +1534,21 @@ pool_worker(int control_fd,
 	    EV_ADD | EV_ENABLE, NOTE_MSECONDS, config->fallback_drain_ms,
 	    &pool.timer_source) == -1 ||
 	    pool_change(&pool, LOGCMP_POOL_WORK_IDENT, EVFILT_USER,
-	    EV_ADD | EV_CLEAR, 0, 0, &pool.work_source) == -1)
-		return (1);
-	if (service_worker_enter_capability_mode(SERVICE_PROTECT_EXTERNAL |
+	    EV_ADD | EV_CLEAR, 0, 0, &pool.work_source) == -1 ||
+	    service_worker_enter_capability_mode(SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
 	    SERVICE_PROTECT_NOIPC | SERVICE_PROTECT_NOEXEC |
-	    SERVICE_PROTECT_NOSOCK) == -1)
+	    SERVICE_PROTECT_NOSOCK) == -1) {
+		/*
+		 * Report the failure through the bootstrap status, as the
+		 * other providers' workers do.  Exiting without it leaves the
+		 * parent only end-of-file, which service_bootstrap_parent()
+		 * can report as nothing better than EIO.
+		 */
+		error = errno != 0 ? errno : EIO;
+		(void)write(control_fd, &error, sizeof(error));
 		return (1);
+	}
 	error = 0;
 	if (write(control_fd, &error, sizeof(error)) != sizeof(error) ||
 	    read(control_fd, &release, sizeof(release)) != sizeof(release) ||
@@ -1658,7 +1697,7 @@ start_pool(struct pool_parent *parent,
 	}
 	close(sockets[1]);
 	logcmp_storage_session_close(&storage);
-	if (service_bootstrap_parent(sockets[0], LOGCMP_STORAGE_TIMEOUT_MS) == -1) {
+	if (service_bootstrap_parent(sockets[0], LOGCMP_POOL_START_TIMEOUT_MS) == -1) {
 		error = errno;
 		(void)pdkill(pd, SIGKILL);
 		while (pdwait(pd, NULL, WEXITED, NULL, NULL) == -1 && errno == EINTR)
@@ -2019,8 +2058,13 @@ main(void)
 		pools[i].control_fd = -1;
 		pools[i].process_fd = -1;
 		if (start_pool(&pools[i], storage_control, &config,
-		    &admitted[i], capacity + (i < remainder ? 1 : 0), i) == -1)
+		    &admitted[i], capacity + (i < remainder ? 1 : 0), i) == -1) {
+			error = errno;
+			syslog(LOG_ERR, "ingress pool %u did not start: %m",
+			    (unsigned)i);
+			errno = error;
 			goto fail;
+		}
 		started_pools++;
 	}
 	if (service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL |
