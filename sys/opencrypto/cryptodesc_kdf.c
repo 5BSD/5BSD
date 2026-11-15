@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * RFC 5869 HKDF helpers for opaque CRYPTO descriptors.  Derived bytes are
  * only used to create an OpenCrypto session and are wiped before return.
  */
