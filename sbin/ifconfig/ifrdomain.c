@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The 5BSD Project
+ * Copyright (c) 2026 Kory Heard
  *
  * Routing domains (rdomain(4)) in OpenBSD ifconfig(8) syntax:
  * "rdomain N", "-rdomain" and the " rdomain N" field of the status line,

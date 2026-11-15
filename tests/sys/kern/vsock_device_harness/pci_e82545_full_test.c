@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The FreeBSD Foundation
+ * Copyright (c) 2026 Kory Heard
  *
  * TU-include harness for bhyve's Intel 82545EM (e1000) NIC model
  * (usr.sbin/bhyve/pci_e82545.c).  The production translation unit is compiled

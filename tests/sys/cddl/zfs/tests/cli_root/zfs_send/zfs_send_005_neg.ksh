@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: CDDL-1.0
 #
-# Copyright (c) 2026 The FreeBSD Foundation
+# Copyright (c) 2026 Kory Heard
 
 . $STF_SUITE/tests/cli_root/cli_common.kshlib
 
