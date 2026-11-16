@@ -33,7 +33,7 @@ dq_probes_present_body()
 	require_dtrace
 	for probe in queue-open queue-close mint revoke object-close \
 	    event-post event-deliver event-reply event-drop event-interrupt \
-	    event-deadline reply-late; do
+	    event-deadline reply-late attach resolve-post resolve-reply; do
 		atf_check -o ignore dtrace -l -n "dq:::${probe}"
 	done
 }
@@ -41,19 +41,29 @@ dq_probes_present_body()
 atf_test_case dq_probes_fire
 dq_probes_fire_head()
 {
-	atf_set "descr" "the dq probes fire: dqpass opens a queue, attaches " \
-	    "a command whose lookups are posted and answered, and closes it"
+	atf_set "descr" "the dq probes fire for dqpass's own queue: it opens " \
+	    "a queue, attaches a command whose lookups are posted and " \
+	    "answered, and closes it, and dqpass itself exits 0"
 	atf_set "require.user" "root"
 }
 dq_probes_fire_body()
 {
 	require_dtrace
+	# The traced command is a shell running dqpass: every probe counted
+	# is in that shell's progeny (dqpass, its attached command), never
+	# in Capsule's, SwitchBoard's or another supervisor's queue.  The
+	# shell records dqpass's exit status.  (dtrace -c splits its command
+	# on blanks, so the shell reads a script.)
+	printf '%s -o report /bin/test -e /\necho $? > status\n' \
+	    "$(atf_get_srcdir)/dqpass" > run.sh
 	atf_check -o save:fired -e ignore dtrace -q -n '
 	    dq:::queue-open, dq:::queue-close, dq:::attach,
 	    dq:::resolve-post, dq:::resolve-reply
+	    /progenyof($target)/
 	    { @n[probename] = count(); }
 	    END { printa("%s %@d\n", @n); }' \
-	    -c "$(atf_get_srcdir)/dqpass /bin/test -e /"
+	    -c "/bin/sh run.sh"
+	atf_check -o inline:"0\n" cat status
 	for probe in queue-open queue-close attach resolve-post \
 	    resolve-reply; do
 		atf_check -o ignore grep -Eq "^${probe} [1-9][0-9]*\$" fired
