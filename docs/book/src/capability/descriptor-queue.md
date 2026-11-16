@@ -1614,8 +1614,9 @@ the final run of each stage; `tests/sys/dq/` (kernel) and
 `tests/sys/dq/libdqtest`; `is_exclusive` where tunables change, and every
 global setting a case changes is saved and restored by its cleanup. One
 skip policy: a skip in a plane-on run is not a pass, so a missing device,
-module or program fails; the only skips are by architecture and a race a
-one-CPU machine cannot run. A test that asserts something did not happen
+module or program fails; the only skips are by architecture, a race a
+one-CPU machine cannot run, and a case deferred by name to another VM tier
+(`DEFERRED_DEVICE_TIER`, which the plane-on test tier never takes). A test that asserts something did not happen
 proves it with a fence (`dqt_fence`, `dqt_close_fence`), not a sleep, and a
 race case fails when the race was not exercised. Oracle method:
 the same operation on a real object and a served object presenting its

@@ -171,7 +171,7 @@ collect_ops(oes_client_t *client, oes_message_t *got[NOPS], pid_t pid,
 }
 
 static oes_client_t *
-client_or_skip(void)
+oes_client_open(void)
 {
 	struct oes_mute_args mute;
 	oes_client_t *client;
@@ -180,7 +180,7 @@ client_or_skip(void)
 	client = oes_client_create();
 	if (client == NULL) {
 		error = errno;
-		atf_tc_skip("/dev/oes: %s", strerror(error));
+		atf_tc_fail("/dev/oes: %s", strerror(error));
 	}
 	ATF_REQUIRE_MSG(oes_set_mode(client, OES_MODE_NOTIFY, 0, 0) == 0,
 	    "oes_set_mode: %s", strerror(errno));
@@ -314,7 +314,7 @@ ATF_TC_BODY(served_file_events, tc)
 	    sizeof(oracle_path));
 	dqt_init(&c);
 	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
-	client = client_or_skip();
+	client = oes_client_open();
 
 	/* The controller's identity nonce, as dq.observe reports it. */
 	have_nonce = false;
@@ -418,7 +418,7 @@ ATF_TC_BODY(served_ops_events, tc)
 	pol.dp_ioctl = DQ_EVENT;
 	pol.dp_mmap_shared_write = DQ_ALLOW;
 	o = dqt_mint_backing(&c, backing, oracle_path, &pol, DQ_MINT_F_WRITE);
-	client = client_or_skip();
+	client = oes_client_open();
 
 	a.fd = o->fd;
 	dqt_spawn(&ch, child_ops, &a);
@@ -487,14 +487,14 @@ ATF_TC_BODY(real_file_no_ops_events, tc)
 	size_t i;
 	int fd, q, status;
 
-	q = dqt_open_queue();	/* skip when the device is absent */
+	q = dqt_open_queue();	/* fails when the device is absent */
 	dqt_fill(data, sizeof(data), 114);
 	fd = dqt_make_oracle("real", data, sizeof(data), oracle_path,
 	    sizeof(oracle_path));
 	(void)close(fd);
 	fd = open(oracle_path, O_RDWR);
 	ATF_REQUIRE(fd != -1);
-	client = client_or_skip();
+	client = oes_client_open();
 
 	a.fd = fd;
 	dqt_spawn(&ch, child_ops, &a);
@@ -535,11 +535,11 @@ ATF_TC_BODY(real_file_no_events, tc)
 	oes_client_t *client;
 	int oracle, q, status;
 
-	q = dqt_open_queue();	/* skip when the device is absent */
+	q = dqt_open_queue();	/* fails when the device is absent */
 	dqt_fill(data, sizeof(data), 112);
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
 	    sizeof(oracle_path));
-	client = client_or_skip();
+	client = oes_client_open();
 
 	a.fd = oracle;
 	dqt_spawn(&ch, child_read_stat, &a);

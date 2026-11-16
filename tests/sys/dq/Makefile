@@ -5,8 +5,10 @@
 # requesters, so they need the dq(4) device and root.  One skip policy (see
 # libdqtest/dq_test.h): a missing device, module, program or other
 # prerequisite of the plane-on test guest is a failure, not a skip; the
-# skips left are by architecture (require.arch) and a race a one-CPU
-# machine cannot run.
+# skips left are by architecture (require.arch), a race a one-CPU machine
+# cannot run, and a case deferred by name to another VM tier
+# (DEFERRED_DEVICE_TIER in dq_bootstrap_test: never in the plane-on test
+# tier, where kern.mac_capability_isolation.enforce is 0).
 #
 PACKAGE=	dq-tests
 TESTSDIR=	${TESTSBASE}/sys/dq
