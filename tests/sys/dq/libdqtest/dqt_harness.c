@@ -1231,26 +1231,52 @@ dqt_idle_spawn(struct dqt_idle *s, int rfflags, int pdflags,
     const char *exec_path, const char *exec_arg, dqt_idle_prep prep,
     void *arg)
 {
+	ssize_t n;
 	char b;
-	int error;
+	int error, ready[2];
+	bool copied;
 
+	/* A table shared with the parent: rfork without RFFDG or RFCFDG. */
+	copied = rfflags == 0 || (rfflags & (RFFDG | RFCFDG)) != 0;
 	ATF_REQUIRE_EQ(0, pipe(s->go));
+	ATF_REQUIRE_EQ(0, pipe(ready));
 	if (rfflags != 0)
 		s->pid = pdrfork(&s->pd, pdflags, rfflags);
 	else
 		s->pid = pdfork(&s->pd, pdflags);
 	ATF_REQUIRE_MSG(s->pid != -1, "pdfork: %s", strerror(errno));
-	if (s->pid != 0)
+	if (s->pid != 0) {
+		/*
+		 * The target is what the caller asked for (in its jail, as
+		 * nobody) only once prep has run: wait for that.  In a
+		 * copied table the parent's write end goes first, so a child
+		 * that fails prep is an end of file here.
+		 */
+		if (copied)
+			(void)close(ready[1]);
+		n = dqt_read_full(ready[0], &b, 1);
+		(void)close(ready[0]);
+		if (!copied)
+			(void)close(ready[1]);
+		ATF_REQUIRE_MSG(n == 1, "the idle target ended before it was "
+		    "ready (prep failed)");
 		return;
+	}
 	/*
-	 * A copied table drops its write end, so a parent that dies is an
-	 * end of file.  A table shared with the parent (rfork without
-	 * RFFDG or RFCFDG) must keep it: the close would be the parent's.
+	 * A copied table drops its write ends, so a parent that dies is an
+	 * end of file.  A shared table must keep them: the close would be
+	 * the parent's.
 	 */
-	if ((rfflags & RFPROC) == 0 || (rfflags & (RFFDG | RFCFDG)) != 0)
+	if (copied) {
 		(void)close(s->go[1]);
+		(void)close(ready[0]);
+	}
 	if (prep != NULL && (error = prep(arg)) != 0)
 		_exit(error);
+	if (write(ready[1], "r", 1) != 1)
+		_exit(6);
+	if (copied)
+		(void)close(ready[1]);
 	/*
 	 * Not before the parent says so: a NOTE_EXEC filter added after the
 	 * exec never reports it.
