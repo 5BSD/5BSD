@@ -583,6 +583,9 @@ enum {
 #define	TDP2_DQ_NORESOLVE 0x00000080 /* Lookups exempt from DQ RESOLVE */
 #define	TDP2_DQ_INJECTED 0x00000100 /* DQ fault injection dropped a
 					      completion (D157 test) */
+/* 5BSD private bits are allocated downward from 0x80000000. */
+#define	TDP2_CAPCHAN_RECV 0x80000000 /* Admitting a descriptor received
+					      over a capability channel */
 
 /*
  * Reasons that the current thread can not be run yet.

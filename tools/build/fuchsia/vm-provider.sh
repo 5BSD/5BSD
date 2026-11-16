@@ -37,6 +37,8 @@
 #   loader.conf lines).
 #   ISOLATION_ENFORCE=1 retains production device isolation for deployment
 #   checks; the default 0 permits raw-device provider test fixtures.
+#   With PLANE_OFF=1 the default is 1 (the enforced tier, below), and the
+#   guest gate checks the booted value either way.
 #   SYSCTL_WRITE (space-separated sysctl names; default none): the image's
 #   system.Sysctl policy lets every client write these names through the
 #   provider (the policy matches prefixes: each name also covers the
@@ -46,6 +48,11 @@
 #   sys/kern/kern_descrip_test:kern_maxfiles__increase:
 #   SYSCTL_WRITE=kern.maxfiles with
 #   KYUA_VARS=test_suites.FreeBSD.allow_sysctl_side_effects=1.
+#
+# Two tiers run tests/sys/mac_capability (docs/book/src/develop/testing.md):
+# the plane-on run, where its isolation denial cases skip because the policy
+# only traces denials, and the enforced tier, PLANE_OFF=1 (enforce=1), which
+# runs them.  The second is an addition to the plane-on run, not a substitute.
 #
 # Why not /etc/rc.local: under Capsule, SwitchBoard runs /etc/rc as a oneshot
 # under a temporary boot grant and launches the native capability units only
@@ -85,7 +92,14 @@ kyua_vars=${KYUA_VARS:-}
 # EXTRA_DIR: a host directory whose regular files are installed executable in
 # the guest under /root/vm-extra.d (for example legacy latency benches).
 plane_off=${PLANE_OFF:-0}
-isolation=${ISOLATION_ENFORCE:-0}
+case "$plane_off" in 0|1) ;; *) echo "PLANE_OFF must be 0 or 1" >&2; exit 64;; esac
+# No Capsule claims the device with the plane off, so that tier enforces the
+# isolation policy unless told otherwise: its isolation suites need it.
+if [ "$plane_off" = 1 ]; then
+	isolation=${ISOLATION_ENFORCE:-1}
+else
+	isolation=${ISOLATION_ENFORCE:-0}
+fi
 case "$isolation" in 0|1) ;; *) echo "ISOLATION_ENFORCE must be 0 or 1" >&2; exit 64;; esac
 extra_script=${EXTRA_SCRIPT:-}
 [ -z "$extra_script" ] || [ -f "$extra_script" ] || die "no such EXTRA_SCRIPT: $extra_script"
@@ -181,10 +195,12 @@ EOF
 # booting stock init (plane off) and turning every provider test into a skip.
 printf 'init_path="/sbin/capsule"\n' > "$x/loader.conf.local"
 if [ "$plane_off" = 1 ]; then
-	# No Capsule claims the device with the plane off, so keep isolation
-	# enforced: the isolation suites run in this tier and need it.
+	# No Capsule claims the device with the plane off; the isolation
+	# setting chosen above (enforcing by default) is written as is.
 	sed -i '' '/^# Test mode:/,/^kern.mac_capability_isolation.enforce=/d' \
 	    "$x/loader.conf"
+	printf 'kern.mac_capability_isolation.enforce="%s"\n' "$isolation" \
+	    >> "$x/loader.conf"
 	printf 'capability_plane="NO"\n' >> "$x/loader.conf"
 	: > "$x/loader.conf.local"
 fi
@@ -271,7 +287,10 @@ mkdir -p "$R"
 echo KYUA_PLANEON_START
 if [ "$PLANE_OFF" = 1 ]; then
 echo "PLANEOFF_PID1=$(ps -o comm= -p 1 | tr -d ' ')"
-echo PLANEOFF_READY
+enf=$(sysctl -n kern.mac_capability_isolation.enforce 2>/dev/null || echo unset)
+echo "PLANEOFF_ISOLATION_ENFORCE=$enf"
+if [ "$enf" = "$ISOLATION_ENFORCE" ]; then echo PLANEOFF_READY; else
+	echo "PLANEOFF_GATE: kern.mac_capability_isolation.enforce=$enf (want $ISOLATION_ENFORCE)"; fi
 else
 gate=PASS
 pid1=$(ps -o comm= -p 1 | tr -d ' ')

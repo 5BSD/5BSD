@@ -118,6 +118,12 @@ fdswap_receive(struct thread *td, const struct fdswap *sw)
 {
 
 	KASSERT(sw->fs_fp != NULL, ("fdswap_receive: empty carrier"));
+	/*
+	 * Never inside a capability channel's receive check: a substituted
+	 * descriptor must not inherit that receipt's NOFDRECV exemption.
+	 */
+	KASSERT((td->td_pflags2 & TDP2_CAPCHAN_RECV) == 0,
+	    ("fdswap_receive within a capability channel receive"));
 #ifdef MAC
 	return (mac_file_check_receive(td->td_ucred, sw->fs_fp));
 #else
