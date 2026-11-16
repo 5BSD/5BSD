@@ -7692,9 +7692,13 @@ ATF_TC_BODY(kstore_multiproc, tc)
 		close(sv[0]);
 		close(owner_fd);
 		/* Child writes to the shared store. */
-		kstore_put(member_fd, "from_child", "hello", 5);
-		write(sv[1], "d", 1);
-		read(sv[1], &sig, 1);
+		if (kstore_put(member_fd, "from_child", "hello", 5) !=
+		    KSTORE_STATUS_OK)
+			_exit(10);
+		if (write(sv[1], "d", 1) != 1)
+			_exit(11);
+		if (read(sv[1], &sig, 1) != 1 || sig != 'x')
+			_exit(12);
 		close(member_fd);
 		close(sv[1]);
 		_exit(0);
@@ -7706,7 +7710,9 @@ ATF_TC_BODY(kstore_multiproc, tc)
 	/* Wait for child to write. */
 	{
 		char sig;
-		read(sv[0], &sig, 1);
+
+		ATF_REQUIRE_MSG(read(sv[0], &sig, 1) == 1 && sig == 'd',
+		    "child did not report its store");
 	}
 
 	/* Parent reads child's data. */
@@ -7715,7 +7721,7 @@ ATF_TC_BODY(kstore_multiproc, tc)
 	ATF_CHECK_EQ(len, 5);
 	ATF_CHECK(memcmp(buf, "hello", 5) == 0);
 
-	write(sv[0], "x", 1);
+	release_child(sv[0], 'x');
 	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
 	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
 	    "child exited abnormally (status %#x)", status);

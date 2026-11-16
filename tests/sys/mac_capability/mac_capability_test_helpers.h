@@ -61,9 +61,22 @@ require_fixture(const char *name)
 	if (modfind(name) >= 0)
 		return;
 	snprintf(path, sizeof(path), "%s/%s.ko", FIXTURE_DIR, name);
-	ATF_REQUIRE_MSG(kldload(path) >= 0 || errno == EEXIST,
-	    "kldload %s: %s (installed with mac-capability-tests)", path,
-	    strerror(errno));
+	if (kldload(path) < 0 && errno != EEXIST) {
+		int error, gate;
+		size_t len;
+
+		error = errno;
+		gate = 0;
+		len = sizeof(gate);
+		if ((error == EPERM || error == EACCES) &&
+		    sysctlbyname("kern.mac_capability_system.kld_gate", &gate,
+		    &len, NULL, 0) == 0 && gate != 0)
+			atf_tc_fail("kldload %s refused by the kld gate "
+			    "(kern.mac_capability_system.kld_gate=1): run the "
+			    "suite in a test guest", path);
+		atf_tc_fail("kldload %s: %s (installed with "
+		    "mac-capability-tests)", path, strerror(error));
+	}
 	ATF_REQUIRE_MSG(modfind(name) >= 0, "%s loaded but not registered",
 	    name);
 }

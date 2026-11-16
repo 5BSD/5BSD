@@ -17,4 +17,4 @@ _fixture_dirs: .PHONY
 	${INSTALL} -d -T ${KMODTAGS} -o root -g wheel -m 0755 \
 	    ${DESTDIR}${KMODDIR}
 	${INSTALL} -d -T ${KMODDBGTAGS} -o root -g wheel -m 0755 \
-	    ${DESTDIR}${DEBUGDIR}${KMODDIR}
+	    ${DESTDIR}${KERN_DEBUGDIR}${KMODDIR}

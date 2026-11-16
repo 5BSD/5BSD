@@ -7981,6 +7981,7 @@ OLD_FILES+=usr/lib/debug/usr/tests/sys/mac_capability/fixtures/mac_capability_te
 OLD_FILES+=usr/lib/debug/usr/tests/sys/mac_capability/fixtures/mac_capability_test_kernelstore.ko.debug
 OLD_FILES+=usr/lib/debug/usr/tests/sys/mac_capability/fixtures/mac_capability_test_keystore.ko.debug
 OLD_DIRS+=usr/lib/debug/usr/tests/sys/mac_capability/fixtures
+OLD_DIRS+=usr/lib/debug/usr/tests/sys/mac_capability
 
 # Test suite.
 . if exists(${DESTDIR}${TESTSBASE})
