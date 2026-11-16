@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The 5BSD Project
+ * Copyright (c) 2026 Kory Heard
  *
  * Implementations of the OpenBSD kernel services used by OpenBSD PF:
  * pool(9), timeout(9), task(9), cpumem/counters, refcnt, SMR read

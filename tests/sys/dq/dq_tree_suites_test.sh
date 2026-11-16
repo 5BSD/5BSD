@@ -1,6 +1,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # The served-root suites oracle (stage 1c-iii-c, D173): kyua suites run in
 # a served root made by dq_serve_tree() over a copy of the system's tree
 # (dqtree, installed beside this test) must give the per-case results

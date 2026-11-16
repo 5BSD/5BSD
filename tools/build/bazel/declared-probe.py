@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Native amd64 C/C++/assembly static pilot, not a system build backend."""
 import argparse
 import hashlib

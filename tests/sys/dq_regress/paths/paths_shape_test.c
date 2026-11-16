@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Path shapes against every path system call.
  *
  * Each operation of the table is run on a family of adversarial path

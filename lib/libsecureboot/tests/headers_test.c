@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #include <stddef.h>
 #include <string.h>
 #include "secureboot_config.h"

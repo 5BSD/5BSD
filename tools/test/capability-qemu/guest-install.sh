@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Install the kernel and userland pieces needed by the descriptor regression
 # payload.  The caller must reboot before invoking guest-run.sh.
 

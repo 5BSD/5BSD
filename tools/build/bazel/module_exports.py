@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Apply the maintained export transform's options without a shell or xargs."""
 from pathlib import Path
 import re

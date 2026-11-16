@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Describe selected package inventory for review, without assigning authority.
 
 This report does not authenticate archives, observe runtime accesses, reconcile

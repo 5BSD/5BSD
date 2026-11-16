@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * libnotify: the system.Notify client over the generated bsd.notify.v1
  * bindings (notify.fidl) on a native capability channel.  Calls on a client
  * are serialized.  A lost provider or a malformed reply drops the session;

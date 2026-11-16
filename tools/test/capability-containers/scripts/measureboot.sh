@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Boot-time measurement for the capability plane (native-launch / /etc/rc overlap).
 #
 # Stages reclaimprobe as a boot unit (it claims storage from the native

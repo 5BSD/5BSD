@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Only ntptime's help path: exits before reading or changing the host clock."""
 import argparse
 import os

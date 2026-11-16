@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise ATF runtime policy rejection against explicit qualification inputs."""
 import sys,json,copy,importlib.util,argparse
 from pathlib import Path

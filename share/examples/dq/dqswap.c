@@ -6,7 +6,8 @@
  * dqswap: run an unmodified command attached to a supervisor queue and
  * answer its opens three ways, side by side:
  *
- *   dqswap [-D] [-j jail] [-l log] -s path=substitute -p path command ...
+ *   dqswap [-D] [-j jail] [-l log] [-u user] -s path=substitute -p path
+ *	 command ...
  *
  *   -s path=substitute	an open of path is answered SWAP: this program
  *			opens substitute itself and the kernel installs that
@@ -14,7 +15,8 @@
  *			reach this program.
  *   -p path		an open of path is answered FD: the kernel mints a
  *			proxy descriptor; every read of it is a READ event
- *			answered here from memory.
+ *			answered here from memory.  path is opened as the -u
+ *			user to make the identity.
  *   anything else	PASS: the command's own lookup proceeds.
  *
  *   -D			pdfork with PD_DAEMON, so the command outlives this
@@ -25,6 +27,19 @@
  *			the jail later by other means is not attached).
  *   -l log		the event log (default stderr): one line per record
  *			read from the queue.
+ *   -u user		this program and the command run as this user
+ *			(default nobody; not root, nor a user whose group is
+ *			wheel).  The queue is opened as root; the command
+ *			gives up root and is then attached by this program,
+ *			still root, which gives up root before the command
+ *			runs and before it opens anything it hands over.
+ *			The command gets USER, LOGNAME and HOME of the user,
+ *			keeps the session's login name and has no
+ *			supplementary groups.  A swapped file
+ *			keeps the credential of the open that made it (dq(4),
+ *			"The substituted file and the restricted Capability
+ *			Broker"): one opened by root would keep set-ID bits
+ *			and ignore quotas in the command's hands.
  *
  * Paths are compared as strings with what the command passed to open(2):
  * give the absolute path and use it in the command.  stat(2) and every
@@ -41,8 +56,10 @@
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <grp.h>
 #include <jail.h>
 #include <poll.h>
+#include <pwd.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -59,6 +76,9 @@ static size_t proxy_len;
 static FILE *out;
 static unsigned long nrec;
 static const char *jailname;
+static uid_t drop_uid;
+static gid_t drop_gid;
+static char *drop_name, *drop_home;
 
 /* Who asked: the requesting process, its parent and its jail. */
 static const char *
@@ -253,12 +273,45 @@ drain_once(int q, char *buf)
 	fflush(out);
 }
 
+/*
+ * Give up root for good.  Called once in the supervisor, after the
+ * queue is open and the command attached, and once in the command
+ * before it says it is ready.  Returns 0, or -1 with errno set; on -1
+ * the caller must not continue.
+ */
+static int
+drop_privilege(void)
+{
+	uid_t ruid, euid, suid;
+	gid_t rgid, egid, sgid;
+
+	if (setgroups(1, &drop_gid) == -1 || setgid(drop_gid) == -1 ||
+	    setuid(drop_uid) == -1)
+		return (-1);
+	/* Real, effective and saved: all of them the user's. */
+	if (getresuid(&ruid, &euid, &suid) == -1 ||
+	    getresgid(&rgid, &egid, &sgid) == -1)
+		return (-1);
+	if (ruid != drop_uid || euid != drop_uid || suid != drop_uid ||
+	    rgid != drop_gid || egid != drop_gid || sgid != drop_gid) {
+		errno = EPERM;
+		return (-1);
+	}
+	/* It must not come back. */
+	if (setuid(0) != -1 || seteuid(0) != -1 || setgid(0) != -1 ||
+	    setegid(0) != -1) {
+		errno = EPERM;
+		return (-1);
+	}
+	return (0);
+}
+
 static void
 usage(void)
 {
 
-	fprintf(stderr, "usage: dqswap [-D] [-j jail] [-l log] [-s path=substitute] "
-	    "[-p path] command [argument ...]\n");
+	fprintf(stderr, "usage: dqswap [-D] [-j jail] [-l log] [-u user] "
+	    "[-s path=substitute] [-p path] command [argument ...]\n");
 	exit(2);
 }
 
@@ -266,13 +319,17 @@ int
 main(int argc, char **argv)
 {
 	struct pollfd pfd[2];
-	char *buf, *eq, b;
+	struct passwd *pw;
+	const char *user;
+	char *buf, *end, *eq, b;
+	unsigned long ul;
 	pid_t pid;
 	int ch, go[2], i, pd, pdflags, q, ready[2], status, rv;
 
 	out = stderr;
+	user = "nobody";
 	pdflags = PD_CLOEXEC;
-	while ((ch = getopt(argc, argv, "Dj:l:p:s:")) != -1) {
+	while ((ch = getopt(argc, argv, "Dj:l:p:s:u:")) != -1) {
 		switch (ch) {
 		case 'D':
 			pdflags |= PD_DAEMON;
@@ -296,6 +353,9 @@ main(int argc, char **argv)
 			swap_path = optarg;
 			swap_subst = eq + 1;
 			break;
+		case 'u':
+			user = optarg;
+			break;
 		default:
 			usage();
 		}
@@ -304,6 +364,27 @@ main(int argc, char **argv)
 	argv += optind;
 	if (argc < 1)
 		usage();
+	/* While root and outside any jail, before any fork: the lookup reads /etc. */
+	pw = getpwnam(user);
+	if (pw == NULL) {
+		errno = 0;
+		ul = strtoul(user, &end, 10);
+		if (*user != '\0' && *end == '\0' && errno == 0 &&
+		    ul <= UID_MAX)
+			pw = getpwuid((uid_t)ul);
+	}
+	if (pw == NULL)
+		errx(2, "-u %s: no such user", user);
+	if (pw->pw_uid == 0)
+		errx(2, "-u %s: the user must not be root", user);
+	if (pw->pw_gid == 0)
+		errx(2, "-u %s: the user's group must not be wheel", user);
+	drop_uid = pw->pw_uid;
+	drop_gid = pw->pw_gid;
+	drop_name = strdup(pw->pw_name);
+	drop_home = strdup(pw->pw_dir);
+	if (drop_name == NULL || drop_home == NULL)
+		err(2, "strdup");
 	proxy_len = (size_t)snprintf(proxy_data, sizeof(proxy_data),
 	    "PROXY CONTENT: these bytes exist only in dqswap (pid %d) memory\n",
 	    getpid());
@@ -337,6 +418,12 @@ main(int argc, char **argv)
 				_exit(125);
 			}
 		}
+		/* The command runs without root from before it is attached. */
+		if (drop_privilege() == -1) {
+			fprintf(stderr, "dqswap: command: give up root: %s\n",
+			    strerror(errno));
+			_exit(125);
+		}
 		/* In place (and in the jail): now the parent may attach. */
 		(void)close(ready[0]);
 		b = 'r';
@@ -348,6 +435,15 @@ main(int argc, char **argv)
 		if (read(go[0], &b, 1) != 1)
 			_exit(126);
 		(void)close(go[0]);
+		/*
+		 * The user's environment, not root's.  The login name stays
+		 * the session's: this process does not lead a session, and
+		 * setlogin(2) here would rename the invoking session.
+		 */
+		if (setenv("USER", drop_name, 1) == -1 ||
+		    setenv("LOGNAME", drop_name, 1) == -1 ||
+		    setenv("HOME", drop_home, 1) == -1)
+			_exit(126);
 		execvp(argv[0], argv);
 		fprintf(stderr, "dqswap: %s: %s\n", argv[0], strerror(errno));
 		_exit(errno == ENOENT ? 127 : 126);
@@ -363,6 +459,17 @@ main(int argc, char **argv)
 	fprintf(out, "dqswap: supervisor pid %d attached command pid %d%s%s\n",
 	    getpid(), pid, jailname != NULL ? " in jail " : "",
 	    jailname != NULL ? jailname : "");
+	/*
+	 * Attached (that needed root: the command changed its user).  Now
+	 * give up root, before the command runs and before any substitute
+	 * is opened: what this program can open from here on is all it can
+	 * hand over.
+	 */
+	if (drop_privilege() == -1)
+		err(2, "give up root");
+	fprintf(out, "dqswap: supervisor pid %d now uid %ju gid %ju; the "
+	    "queue was opened as root\n", getpid(), (uintmax_t)getuid(),
+	    (uintmax_t)getgid());
 	fflush(out);
 	b = 'g';
 	if (write(go[1], &b, 1) != 1)

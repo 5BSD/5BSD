@@ -3,10 +3,10 @@ load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
 # Make directly compiles the retained legacy validator for this test.
 cc_binary(name = "protocol_test", srcs = ["protocol_test.c", "//lib/libpowercmp:powercmp_legacy.c"],
-    deps = ["//lib/libpowercmp:headers", "//lib/atf/libatf-c:atf_c"],
+    deps = ["//tests:capability_tier", "//lib/libpowercmp:headers", "//lib/atf/libatf-c:atf_c"],
     linkopts = ["-static"], linkstatic = True)
 [cc_binary(name = name, srcs = [name + ".c"],
-    deps = ["//lib/libpowercmp:powercmp", "//lib/libpowercmp:generated_headers", "//lib/libfidl:fidl",
+    deps = ["//tests:capability_tier", "//lib/libpowercmp:powercmp", "//lib/libpowercmp:generated_headers", "//lib/libfidl:fidl",
         "//lib/libchannel:channel", "//lib/libservice:service", "//lib/atf/libatf-c:atf_c"] +
         (["//lib/libpowercmp:client_source_headers"] if name == "constructor_test" else []),
     linkopts = ["-static"], linkstatic = True)

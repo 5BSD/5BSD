@@ -246,7 +246,7 @@
     "cddl/usr.sbin/bsdinstruments/profiles/kqueue-resource-pressure.d": "b5af8a94f5d0e1c08a0d024671b9f009cc54fcce17c51c022ef3f0f7a2bc2302",
     "cddl/usr.sbin/bsdinstruments/profiles/mqueue-count-pressure.d": "6a39d6d468decb2350834e9a6875cf625d0a0f6cc7f9a841380883612ba5e428",
     "cddl/usr.sbin/bsdinstruments/profiles/pipe-buffer-pressure.d": "cf2b0f4269bf3d9b9a0c499ddcf1462e011d20dcbde716feceb564166e15d8bd",
-    "cddl/usr.sbin/bsdinstruments/profiles/shm-largepage-pressure.d": "cbb8e49772c95543ddd4bed28587b69e324afa9efac5462ab08e94b46dbda465",
+    "cddl/usr.sbin/bsdinstruments/profiles/shm-largepage-pressure.d": "41fd81f01fa850b26c35da27c671c1eefbb74c0455ef8a8db24ef8c034bd2621",
     "cddl/usr.sbin/bsdinstruments/profiles/sysv-ipc-pressure.d": "7f27ea83ea640cc2519b64da184d87a424946d3b0966c307fe33a46e14ef67b2",
     "sys/kern/kern_event.c": "05bdfbbde517f23f524a6d9dea973b48f8bde017643a25ed21cf8f07930f7af9",
     "sys/kern/sys_pipe.c": "8c2a67d34afa0a352b33f3e2de499e34e78d0802f220a26c4fbcc4036971400f",
@@ -256,15 +256,15 @@
     "sys/kern/uipc_mqueue.c": "58550db0abbefde80721cbbba67176aa7c200d7be3a2e7d0bda052e08ce7fefc",
     "sys/kern/uipc_shm.c": "f151411eb5ecf40376aa2a34d5517d4f7ee9b124fa25bf843e937cd4b1adae00",
     "tools/test/system-tracing/COVERAGE-SEVENTEENTH": "198338536903ffaa694a32287501c5c50431ed703d37f3e849d791308065b09a",
-    "tools/test/system-tracing/coverage-fourth-dof.py": "7a2fc9fc87d4b6d161c88f981ace9c7c6e8c1090cfab60f523b5a61e6730375a",
+    "tools/test/system-tracing/coverage-fourth-dof.py": "1ea0a00238895e7ccc03aa4671f2db856025956aca61660bfa69ea07d0a92428",
     "tools/test/system-tracing/coverage-seventeenth-build.json": "902edd69cb9a5d2b23be9e673df800b16d93bea76d9719972e7dba91a175de19",
-    "tools/test/system-tracing/coverage-seventeenth-check.py": "8f435c82cdd80c410e6f0d593e3882f6068f9b33be70a47643f43c8a3feece8e",
-    "tools/test/system-tracing/coverage-seventeenth-codegen.py": "2282cb9c06d672f67976f588b61f51e6f0e130e00c136bb84ab1ed363fa1fcec",
-    "tools/test/system-tracing/coverage-seventeenth-compile.py": "23d4a85cd6d20f98a08b2d404e49a4ef429d24776c942d7a52fc5cd04ce3b035",
-    "tools/test/system-tracing/coverage-seventeenth-linked.py": "d88a4164c4e9d95bee321c83c1047435c9a3a00a4c60a055143f6595740b5388",
-    "tools/test/system-tracing/coverage-seventeenth-modules.py": "29d6b630d5265b539f0f98de0989b10343e77572dd13f3b26a442e3d3ce18bae",
-    "tools/test/system-tracing/coverage-seventeenth-variants.py": "30c558bfc3c7893e5822d54a863dc78861ac5ed5f8a92867ca7e3fa6371f4663",
-    "tools/test/system-tracing/coverage-sixth-objects.py": "fc14488256457e044086c08f967c7a412060216d9d2b53a2c40b9be4405a965e",
-    "tools/test/system-tracing/coverage-third-profile-check.py": "6a63a690cbbf6970c52a90e234a701b64cd7e20d7745139d6e18977dfe71e0ae"
+    "tools/test/system-tracing/coverage-seventeenth-check.py": "212459f19b89d70b9b0f1e9b7f4c55b90fc65661db9e6ce202bf36d59505de21",
+    "tools/test/system-tracing/coverage-seventeenth-codegen.py": "e5fc2f71dd9d86df24cd654861135196f8ca309699a7779093b7c6f1d61988af",
+    "tools/test/system-tracing/coverage-seventeenth-compile.py": "364e6482ae56948e1128358f3e6c431c06732e9d638b807de3248cf6cfb889a3",
+    "tools/test/system-tracing/coverage-seventeenth-linked.py": "a8c748dfce993e324fbe6fdd051760aff844c5bc836fbd5a9aa0c107497d58f3",
+    "tools/test/system-tracing/coverage-seventeenth-modules.py": "8b07a040e24a7b3135a593a881babc1675b93c0a98fab5075bcd23ac4e166f71",
+    "tools/test/system-tracing/coverage-seventeenth-variants.py": "1676ca365e2e00aaa4d5eed32ccd7684a5619cb5c67ea5dabd2d98ed26076016",
+    "tools/test/system-tracing/coverage-sixth-objects.py": "5e4f9e3f0a680d5172e8eb425d2308c00d0c6276e38031fedd84b8f0ead5cbde",
+    "tools/test/system-tracing/coverage-third-profile-check.py": "ad4851d9e661053e26ae7ab18aab9e11e28415206c1674642da077178316628a"
   }
 }

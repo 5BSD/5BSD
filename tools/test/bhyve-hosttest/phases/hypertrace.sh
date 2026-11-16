@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Phase 2: HyperTrace on real bhyve.
 # Two 5BSD guests with virtio-dtrace + a guest dtraced minion; the host runs
 # dtraced as overlord. Checks: device/driver attach, forwarder registration,

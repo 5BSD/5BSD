@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # hosttest common library (sourced by hosttest.sh and phases/*.sh).
 # Conventions:
 #   check NAME PASS|FAIL|SKIP "detail"   records one result line

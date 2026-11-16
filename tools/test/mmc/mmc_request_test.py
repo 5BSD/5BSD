@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Validate LinuxKPI MMC requests before consuming an SDIO FIFO."""
 import sys
 sys.dont_write_bytecode = True

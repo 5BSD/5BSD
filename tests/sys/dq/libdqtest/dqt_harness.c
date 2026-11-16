@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * The controller harness of the DescriptorQueue tests: reader threads that
  * answer from memory or through dq_serve_file(), forked requesters, and the
  * waits and oracle comparisons the tests share; see dq_test.h.

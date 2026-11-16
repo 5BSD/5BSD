@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise SUNW CTF formats with an explicitly supplied amd64 fixture/tool.
 
 The baseline must be localization-audit.py's baseline.o. Big-endian cases

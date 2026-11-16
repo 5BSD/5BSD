@@ -1,5 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Independent Bluetooth Core 6.3 ATT server-negative oracles.
  * Vol 3 Part F §§3.2-3.4 and Part G §2.5.2.1. No production headers.
  */

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Qualify a configured component graph, native tests, stage and selected archives."""
 import json
 import os

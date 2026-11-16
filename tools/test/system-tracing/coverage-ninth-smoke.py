@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise real utility objects with module/sync/flag syscalls replaced at link time."""
 from pathlib import Path
 import errno,json,os,subprocess,tempfile

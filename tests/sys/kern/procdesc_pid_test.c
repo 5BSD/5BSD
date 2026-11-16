@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * The pid of a process that has a process descriptor.
  *
  * A process descriptor keeps the pid of its process allocated after the

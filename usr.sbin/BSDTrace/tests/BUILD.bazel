@@ -4,7 +4,7 @@ load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
 # Keep installed linkage identical to Make; only runtime variants use local RPATH.
 [cc_binary(name = name + suffix,
     srcs = [name + ".c", "//usr.sbin/BSDTrace:tracecmp_policy.c"],
-    deps = ["//usr.sbin/BSDTrace:policy_headers", "//lib/atf/libatf-c:atf_c"],
+    deps = ["//tests:capability_tier", "//usr.sbin/BSDTrace:policy_headers", "//lib/atf/libatf-c:atf_c"],
     dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
     copts = ["-fPIE"], linkopts = ["-pie"] + (["-Wl,--disable-new-dtags,-rpath,$ORIGIN"] if suffix else []))
  for name in ["policy_test"] for suffix in ["", "_runtime"]]
@@ -21,11 +21,11 @@ load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
 
 load("//tools/build/bazel:bsd_link_sequence.bzl", "bsd_link_sequence")
 # Preserve libcxxrt selection through libdtrace/libproc before libc++.
-bsd_link_sequence(name = "session_dependencies", deps = [
+bsd_link_sequence(name = "session_dependencies", deps = ["//tests:capability_tier", 
     "//lib/atf/libatf-c:atf_c", "//lib/libbsm:bsm", "//cddl/lib/libdtrace:dtrace",
     "//lib/libtracecmp:tracecmp", "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libservice:service"])
 cc_binary(name = "session_test", srcs = ["session_test.c", "//usr.sbin/BSDTrace:tracecmp.c"],
-    deps = [":session_dependencies", "//usr.sbin/BSDTrace:test_headers",
+    deps = ["//tests:capability_tier", ":session_dependencies", "//usr.sbin/BSDTrace:test_headers",
         "//lib/libtracecmp:generated_headers",
         "//lib/liblogcmp:headers", "//sys/dev/mac_capability:channel_headers", "//sys/dev/mac_capability:ioctl_headers"],
     local_defines = ["TRACECMP_TESTING"], linkstatic = True, linkopts = ["-static"])
@@ -36,17 +36,17 @@ bsd_kyua_test(name = "session_test_run", program = ":session_test", interface = 
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
     size = "medium", visibility = ["//visibility:public"])
 
-bsd_link_sequence(name = "lifecycle_dependencies", deps = [
+bsd_link_sequence(name = "lifecycle_dependencies", deps = ["//tests:capability_tier", 
     "//lib/atf/libatf-c:atf_c", "//lib/libbsm:bsm", "//cddl/lib/libdtrace:dtrace",
     "//lib/libtracecmp:tracecmp", "//lib/libfidl:fidl", "//lib/libchannel:channel",
     "//lib/libservice:service", "//lib/liblogcmp:logcmp"])
 [cc_binary(name = name, srcs = [name + ".c", "//usr.sbin/BSDTrace:tracecmp_policy.c"],
-    deps = [":lifecycle_dependencies", "//usr.sbin/BSDTrace:test_headers",
+    deps = ["//tests:capability_tier", ":lifecycle_dependencies", "//usr.sbin/BSDTrace:test_headers",
         "//lib/libtracecmp:generated_headers"],
     linkstatic = True, linkopts = ["-static"])
  for name in ["shutdown_test", "lifecycle_test", "bootstrap_test"]]
 cc_binary(name = "quota_test", srcs = ["quota_test.c"],
-    deps = ["//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDTrace:test_headers",
+    deps = ["//tests:capability_tier", "//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDTrace:test_headers",
         "//contrib/openbsm:headers", "//lib/libtracecmp:headers", "//lib/libtracecmp:generated_headers",
         "//lib/libfidl:headers", "//lib/libchannel:headers", "//lib/libservice:headers", "//lib/liblogcmp:headers"],
     copts = ["-ffunction-sections", "-fdata-sections"],
@@ -77,18 +77,18 @@ filegroup(name = "next_header_files", srcs = [":next_bindings"], output_group = 
 cc_library(name = "next_headers", hdrs = [":next_header_files"], strip_include_prefix = "next_bindings")
 # Make links all three generated objects directly into this standalone peer.
 cc_library(name = "next_codec", srcs = [":next_sources"],
-    deps = [":next_headers", "//lib/libfidl:headers", "//contrib/llvm-project/libcxx/include:headers"],
+    deps = ["//tests:capability_tier", ":next_headers", "//lib/libfidl:headers", "//contrib/llvm-project/libcxx/include:headers"],
     copts = ["-std=c++20", "-nostdinc++"], linkstatic = True, alwayslink = True)
 # The newer peer must never inherit the production bsd:1 generated headers.
 cc_binary(name = "next_peer", srcs = ["evolution/next_peer.c"],
-    deps = [":next_headers", ":next_codec", "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libc++:cxx"],
+    deps = ["//tests:capability_tier", ":next_headers", ":next_codec", "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libc++:cxx"],
     linkopts = ["-static"], linkstatic = True)
 
 cc_binary(name = "evolution_test", srcs = ["evolution_test.c", "evolution_test_provider.c", "//usr.sbin/BSDTrace:tracecmp_policy.c"],
-    deps = [":lifecycle_dependencies", "//usr.sbin/BSDTrace:test_headers", "//lib/libtracecmp:test_source_headers"],
+    deps = ["//tests:capability_tier", ":lifecycle_dependencies", "//usr.sbin/BSDTrace:test_headers", "//lib/libtracecmp:test_source_headers"],
     local_defines = ["TRACECMP_TESTING"], linkstatic = True, linkopts = ["-static"])
 cc_binary(name = "latency_bench", srcs = ["latency_bench.c", "latency_bench_provider.c", "//usr.sbin/BSDTrace:tracecmp_policy.c"],
-    deps = ["//usr.sbin/BSDTrace:test_headers", "//lib/libtracecmp:test_source_headers", "//tools/build/fuchsia:daemon_bench_headers",
+    deps = ["//tests:capability_tier", "//usr.sbin/BSDTrace:test_headers", "//lib/libtracecmp:test_source_headers", "//tools/build/fuchsia:daemon_bench_headers",
         "//lib/libbsm:bsm", "//lib/libtracecmp:tracecmp", "//cddl/lib/libdtrace:dtrace", "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libservice:service", "//lib/liblogcmp:logcmp"],
     dynamic_deps = ["//lib/libbsm:bsm_shared", "//lib/libtracecmp:tracecmp_shared", "//cddl/lib/libdtrace:dtrace_shared", "//lib/libfidl:fidl_shared", "//lib/libchannel:channel_shared", "//lib/libservice:service_shared", "//lib/liblogcmp:logcmp_shared"],
     local_defines = ["TRACECMP_TESTING"], copts = ["-fPIE"], linkopts = ["-pie"])

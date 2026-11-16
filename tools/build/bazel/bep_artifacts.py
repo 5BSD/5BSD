@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Freeze local default and installation-metadata output files from Bazel's completed BEP graph."""
 import hashlib
 import json

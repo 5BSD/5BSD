@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Derive the Core Specification Supplement Part A sections that are in scope
 # for this stack, from the AD types blued actually emits and parses.
 #

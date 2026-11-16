@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Adversarial file-API tests: openat2 RESOLVE_BENEATH fuzzing (5000
  * generated paths that must never escape the directory), O_PATH misuse,

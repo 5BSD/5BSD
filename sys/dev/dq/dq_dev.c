@@ -136,8 +136,8 @@ dq_sysctl_deadline(SYSCTL_HANDLER_ARGS)
 }
 
 SYSCTL_PROC(_kern_dq, OID_AUTO, max_io,
-    CTLTYPE_UINT | CTLFLAG_RWTUN | CTLFLAG_MPSAFE, &dq_max_io, PAGE_SIZE,
-    dq_sysctl_uint_min, "IU",
+    CTLTYPE_UINT | CTLFLAG_RWTUN | CTLFLAG_MPSAFE | CTLFLAG_CAPRD,
+    &dq_max_io, PAGE_SIZE, dq_sysctl_uint_min, "IU",
     "Largest I/O in one event; larger transfers are chunked in order");
 SYSCTL_PROC(_kern_dq, OID_AUTO, queue_depth,
     CTLTYPE_UINT | CTLFLAG_RWTUN | CTLFLAG_MPSAFE, &dq_queue_depth, 1,

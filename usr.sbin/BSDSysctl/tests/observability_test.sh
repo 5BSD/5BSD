@@ -1,4 +1,8 @@
 #!/usr/libexec/atf-sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
 
 atf_test_case dtrace_contract
 dtrace_contract_head()

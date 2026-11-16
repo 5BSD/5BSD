@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Userspace harness shadow of the kernel <sys/mutex.h>.  Single-threaded
  * tests only need recursion-depth bookkeeping so mtx_owned() assertions in
  * the device code stay meaningful.

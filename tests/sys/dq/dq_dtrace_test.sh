@@ -1,6 +1,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # The DescriptorQueue registers its DTrace provider (dq_dev.c): one probe per
 # queue open and close, mint, revoke and object close, and one per step of an
 # event's life (post, deliver, reply, drop, interrupt, deadline, late reply).

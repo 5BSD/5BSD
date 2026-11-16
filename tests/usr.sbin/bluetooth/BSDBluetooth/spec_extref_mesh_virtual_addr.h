@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * EXTERNAL REFERENCE ORACLE: Bluetooth Mesh addressing -- virtual addresses
  * and Label UUIDs, the fixed group addresses, and the address-validity
  * matrices (Table 3.9 and Table 3.10).

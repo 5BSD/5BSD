@@ -1,5 +1,9 @@
 #!/bin/sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Exercise the rebuilt FreeBSD VirtIO 9P transport's mount ownership and
 # detach/attach reconstruction contract.  Run inside a disposable bhyve guest.
 

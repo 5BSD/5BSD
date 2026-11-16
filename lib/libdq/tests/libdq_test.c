@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * libdq: the record walkers and typed accessors (no device needed), and
  * dq_serve_file() answering each stage 1b-i operation from a backing file
  * (needs /dev/dq; fails without it).  The controller is a thread of the

@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # amd64 Linux64 socket identity and native descriptor-right regressions.
 set -u
 cp /root/linux_socket_cookie /tmp/linux_socket_cookie || exit 1

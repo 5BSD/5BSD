@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Serial terminal protocol regression: arbitrary pipe fragmentation and bounds."""
 import unittest
 from serial_terminal import TerminalSizeResponder

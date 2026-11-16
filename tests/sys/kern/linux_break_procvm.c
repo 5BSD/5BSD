@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Adversarial process_vm_readv(2)/process_vm_writev(2): the cross-process
  * memory bridge.  Self round-trips, real cross-process read AND write to a

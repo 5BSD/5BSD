@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Build explicit release-anchor profiles and test native key rotation boundaries."""
 import argparse,hashlib,json,os,subprocess,tempfile
 from pathlib import Path

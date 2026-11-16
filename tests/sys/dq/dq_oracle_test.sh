@@ -1,6 +1,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # The pass-everything oracle (stage 1c-i): a program attached to a queue
 # whose controller answers every RESOLVE with PASS must behave as it does
 # unattached.  dqpass (installed beside this test) is that controller.

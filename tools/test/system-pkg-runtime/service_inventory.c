@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Read installed policy with the same public parser used by the manager. */
 #include <sys/types.h>
 

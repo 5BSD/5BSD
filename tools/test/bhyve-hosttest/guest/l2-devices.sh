@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # L2 only. Fixed test topology: vtbd0 boot; slots 5/6/7 scratch disks.
 set -u
 stage=${1:?before or after}

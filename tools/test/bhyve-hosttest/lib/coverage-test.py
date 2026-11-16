@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Unprivileged failure-path checks for actual guest scripts; no VMs/devices.
 import os
 from pathlib import Path

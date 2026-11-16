@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #include <stdckdint.h>
 _Static_assert(__STDC_HOSTED__ == 0, "freestanding compilation required");
 _Static_assert(sizeof(unsigned long) == __SIZEOF_POINTER__, "matching integer/pointer data model required");

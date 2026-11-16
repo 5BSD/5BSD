@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual digest comparison must consume a complete expected hash token."""
 from pathlib import Path
 import subprocess

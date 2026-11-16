@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * paths_statburst: stat(2) one path count times; the process
  * paths_fast_test traces with dtrace -c.
  *

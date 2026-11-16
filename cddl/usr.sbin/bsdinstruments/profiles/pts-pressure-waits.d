@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * See tools/test/system-tracing/COVERAGE-NINETEENTH for argument meanings.
  * No terminal characters, paths or credential data are collected.
  * Start before the workload; drops invalidate latency pairing.

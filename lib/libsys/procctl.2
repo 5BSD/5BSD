@@ -459,6 +459,22 @@ delivery failed, e.g., due to permission problems.
 If no such process exists, the
 .Fa rk_fpid
 field is set to \-1.
+.Pp
+With
+.Dv REAPER_KILL_CHILDREN ,
+the request returns zero when any child was signalled, even if others
+were refused; when none was signalled it returns the error of the first
+refusal, or
+.Er ESRCH
+if there was no child.
+Without it, refusals and deliveries are taken in the order the descendants
+are visited: a refusal met after a delivery is returned, and
+.Fa rk_fpid
+is set,
+but a later delivery returns the request to zero, and a refusal met before
+any delivery is neither returned nor recorded.
+In both modes a process the caller cannot see is never named in
+.Fa rk_fpid .
 .It Dv PROC_TRACE_CTL
 Enable or disable tracing of the specified process(es), according to the
 value of the integer argument.

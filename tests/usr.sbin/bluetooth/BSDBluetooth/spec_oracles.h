@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Test-only Bluetooth specification oracles.
  *
  * This file deliberately includes no production header.  Every value below

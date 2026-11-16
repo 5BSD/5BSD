@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Concurrency: replies in any order, interruption, a full queue, the
  * EDEADLK rule, the per-object in-flight bound, two queue readers, and a
  * fault in the controller's read buffer.  The in-flight bound case changes

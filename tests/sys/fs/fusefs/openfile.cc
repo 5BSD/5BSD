@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Per-open Linux-daemon handles; run exclusively in disposable guests. */
 extern "C" {
 #include <sys/mman.h>

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Real libc calls inside a disposable child chroot; never host login records. */
 #include <sys/types.h>
 #include <sys/time.h>

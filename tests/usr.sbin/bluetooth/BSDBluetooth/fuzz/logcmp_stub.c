@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Inert logcmp_log(3) for the ctl fuzz harnesses.  ctl_gatt.c logs its
  * reclaim events through the Log capability; a fuzzer is hermetic and links
  * no IPC libraries, so it stubs the sink out.  (The bsd.test.mk ctl tests

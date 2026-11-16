@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Disposable VM only: diagnostic and jail-scoping tests.
 set -eu
 trap 'rc=$?; echo DIAG_EXIT "$rc"; /sbin/halt -p' EXIT

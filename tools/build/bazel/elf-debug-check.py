@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check split ELF debug links, CRCs and optional GNU build-ID pairing."""
 import argparse
 import hashlib

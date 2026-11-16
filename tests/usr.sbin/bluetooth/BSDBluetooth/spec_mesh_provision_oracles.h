@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Test-only Mesh provisioning sizes and §8.7 sample values.  This header is
  * independent of mesh_provision.h and contains no production definitions.
  */

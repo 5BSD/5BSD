@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Synthetic relocatable module metadata: never load this object in a kernel. */
 #include <sys/param.h>
 #include <sys/module.h>

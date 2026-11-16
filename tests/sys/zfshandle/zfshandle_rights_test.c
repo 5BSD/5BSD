@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * TrustedZFS rights-matrix tests: every gated verb succeeds exactly when the
  * handle carries the corresponding right, implicit rights always work, and
  * non-handle fds are rejected.

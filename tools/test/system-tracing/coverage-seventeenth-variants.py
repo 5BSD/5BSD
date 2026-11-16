@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Compile IPC sources without RACCT and check remaining pressure probe sites."""
 from pathlib import Path
 import concurrent.futures,importlib.util,json,os,re,subprocess

@@ -1,4 +1,10 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
+/*-
  * Minimal bhyve snapshot interface for device unit tests.
  *
  * The production wire helpers are supplied by each test so malformed and

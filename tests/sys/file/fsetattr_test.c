@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * futimens(2), futimes(2) and fchflags(2) are answered by the descriptor's
  * fileops (fo_setattr).  Descriptors that carry a vnode set their times and
  * flags through it; descriptors with no vnode return EINVAL, as getvnode()

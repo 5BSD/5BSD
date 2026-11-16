@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check the signal/wait contracts needed by the Linux SDIO watchdog."""
 import sys
 sys.dont_write_bytecode = True

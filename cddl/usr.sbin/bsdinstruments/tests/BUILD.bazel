@@ -11,7 +11,8 @@ _OE_SHARED = ["//lib/libz:z_shared", "//secure/lib/libssl:ssl_shared", "//secure
 _BASE_RUNTIME = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared"]
 # cddl/usr.sbin/bsdinstruments/tests/Makefile (PACKAGE bsdinstruments-tests):
 # bsdinstruments_unit_test (profile.c and filter.c from .., -I.., WRAP_ALLOC),
-# bsdinstruments_test.sh and the mockdtrace.c fixture source.
+# bsdinstruments_test.sh, the mockdtrace.c fixture source and the
+# profile_descriptions.jsonl record of the base catalog's descriptions.
 cc_binary(name = "bsdinstruments_unit_test", srcs = ["bsdinstruments_unit_test.c", "//cddl/usr.sbin/bsdinstruments:profile.c", "//cddl/usr.sbin/bsdinstruments:filter.c"],
     deps = ["//cddl/usr.sbin/bsdinstruments:headers", "//lib/atf/libatf-c:atf_c"], dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
     copts = ["-fPIE"], linkopts = ["-pie"] + _WRAP_ALLOC, linkstatic = True, target_compatible_with = _PLATFORM)
@@ -21,9 +22,10 @@ _PACKAGE = "bsdinstruments-tests"
 bsd_script_wrapper(name = "bsdinstruments_test", body = "bsdinstruments_test.sh", interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
 bsd_install_file(name = "install_bsdinstruments_test", src = ":bsdinstruments_test", destination = _DIR + "/bsdinstruments_test", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=" + _PACKAGE])
 bsd_install_file(name = "install_file_0", src = "mockdtrace.c", destination = _DIR + "/mockdtrace.c", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=" + _PACKAGE])
+bsd_install_file(name = "install_file_1", src = "profile_descriptions.jsonl", destination = _DIR + "/profile_descriptions.jsonl", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=" + _PACKAGE])
 bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["bsdinstruments_test", "bsdinstruments_unit_test"], interfaces = {n: "atf" for n in ["bsdinstruments_test", "bsdinstruments_unit_test"]})
 bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = _DIR + "/Kyuafile", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=" + _PACKAGE])
-bsd_install_manifest(name = "install_manifest", entries = [":install_bsdinstruments_test", ":install_file_0", ":install_kyuafile"], manifests = [":install_" + name for name in ["bsdinstruments_unit_test"]], visibility = ["//visibility:public"])
+bsd_install_manifest(name = "install_manifest", entries = [":install_bsdinstruments_test", ":install_file_0", ":install_file_1", ":install_kyuafile"], manifests = [":install_" + name for name in ["bsdinstruments_unit_test"]], visibility = ["//visibility:public"])
 
 # filter_alloc_exit and filter_grow_exit expect exit(1) (atf_tc_expect_exit);
 # //tools/build/bazel:atf_runner accepts passed/skipped/expected_failure only,

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * DQ_IOC_ATTACH (stage 1c-i, D138, D147, D148, D150): who can be attached,
  * what the attachment does to the process, and how it is inherited.  An
  * attached process's lookups post RESOLVE events the harness answers PASS;

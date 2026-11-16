@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Lifecycle: CLOSE at the last reference, ids never reused, REVOKE, the
  * controller going away, and the transfer rule of a minted descriptor.
  */

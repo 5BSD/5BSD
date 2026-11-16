@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise the release media package selection with a package-command fixture."""
 import os
 from pathlib import Path

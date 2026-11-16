@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Copy a freshly built pf.ko (and optionally pfctl) into the 5BSD DUT and
 # reboot it (OpenBSD PF cannot be unloaded).  Disposable guests only.
 set -eu

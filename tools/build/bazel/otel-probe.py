@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Declared Bazel targets for the OTel components, compared with independent Make builds.
 
 Builds the OpenTelemetry components listed in targets/sources.json (the

@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Preserve per-case verdicts only for a complete, consistent helper result.
 [ "$#" -eq 3 ] || exit 2
 awk -v rc="$2" -v wanted="$3" '

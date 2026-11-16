@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Small, architecture-independent policy helpers for the SCMI VirtIO
  * transport's bounded non-sleeping poll path.
  */

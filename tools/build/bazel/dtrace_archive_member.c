@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Experimental section-associated static DTrace archive composition. */
 #include <sys/types.h>
 #include <sys/stat.h>

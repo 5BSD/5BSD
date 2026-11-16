@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* The same cases exercise native fcntl and both 64-bit Linux ABIs. */
 #ifdef LINUX_ABI
 #if defined(__x86_64__)

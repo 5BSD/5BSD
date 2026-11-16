@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Run only as a boot job in a disposable, otherwise idle ZFS-root VM.
 # FUSE's node counter misses reclaimed vnodes with leaked native references.
 set -eu

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Shared libmd digest-source and header-mapping metadata from maintained Make."""
 from pathlib import Path
 import re

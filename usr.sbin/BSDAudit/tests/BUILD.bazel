@@ -5,7 +5,7 @@ load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
 # declared candidate libraries next to the test executable. RPATH also covers
 # libc's transitive libsys dependency; the loader checker verifies all three.
 [cc_binary(name = name + suffix, srcs = [name + ".c", "//usr.sbin/BSDAudit:" + implementation],
-    deps = ["//usr.sbin/BSDAudit:test_headers", "//lib/atf/libatf-c:atf_c"],
+    deps = ["//tests:capability_tier", "//usr.sbin/BSDAudit:test_headers", "//lib/atf/libatf-c:atf_c"],
     dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
     copts = ["-fPIE"], linkopts = ["-pie"] + (["-Wl,--disable-new-dtags,-rpath,$ORIGIN"] if suffix else []))
  for name, implementation in [("policy_test", "auditcmp_policy.c"), ("submit_test", "auditcmp_submit.c")] for suffix in ["", "_runtime"]]
@@ -23,7 +23,7 @@ load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
 # Match Make's direct provider compilation in its AUDITCMP_TESTING mode.
 [cc_binary(name = name, srcs = [name + ".c", "//usr.sbin/BSDAudit:auditcmp.c",
         "//usr.sbin/BSDAudit:auditcmp_rate.c", "//usr.sbin/BSDAudit:auditcmp_submit.c"],
-    deps = ["//usr.sbin/BSDAudit:test_headers", "//lib/libauditcmp:auditcmp",
+    deps = ["//tests:capability_tier", "//usr.sbin/BSDAudit:test_headers", "//lib/libauditcmp:auditcmp",
         "//lib/libauditcmp:generated_headers", "//lib/libfidl:fidl", "//lib/libchannel:channel",
         "//lib/libservice:service", "//lib/liblogcmp:headers", "//contrib/openbsm:headers",
         "//lib/atf/libatf-c:atf_c", "//sys/dev/mac_capability:channel_headers",
@@ -41,7 +41,7 @@ load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
 # These maintained tests include the daemon with explicit fault-injection hooks.
 [cc_binary(name = name, srcs = [name + ".c", "//usr.sbin/BSDAudit:auditcmp_policy.c",
         "//usr.sbin/BSDAudit:auditcmp_rate.c", "//usr.sbin/BSDAudit:auditcmp_submit.c"],
-    deps = ["//usr.sbin/BSDAudit:test_headers", "//lib/libauditcmp:auditcmp",
+    deps = ["//tests:capability_tier", "//usr.sbin/BSDAudit:test_headers", "//lib/libauditcmp:auditcmp",
         "//lib/libauditcmp:generated_headers", "//lib/libbsm:bsm", "//lib/libfidl:fidl",
         "//lib/libchannel:channel", "//lib/libservice:service", "//lib/liblogcmp:logcmp",
         "//lib/atf/libatf-c:atf_c"], linkopts = ["-static"], linkstatic = True)
@@ -72,16 +72,16 @@ filegroup(name = "next_header_files", srcs = [":next_bindings"], output_group = 
 cc_library(name = "next_headers", hdrs = [":next_header_files"], strip_include_prefix = "next_bindings")
 # Make links all three generated objects directly into this standalone peer.
 cc_library(name = "next_codec", srcs = [":next_sources"],
-    deps = [":next_headers", "//lib/libfidl:headers", "//contrib/llvm-project/libcxx/include:headers"],
+    deps = ["//tests:capability_tier", ":next_headers", "//lib/libfidl:headers", "//contrib/llvm-project/libcxx/include:headers"],
     copts = ["-std=c++20", "-nostdinc++"], linkstatic = True, alwayslink = True)
 # The newer peer must never inherit the production bsd:1 generated headers.
 cc_binary(name = "next_peer", srcs = ["evolution/next_peer.c"],
-    deps = [":next_headers", ":next_codec", "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libc++:cxx"],
+    deps = ["//tests:capability_tier", ":next_headers", ":next_codec", "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libc++:cxx"],
     linkopts = ["-static"], linkstatic = True)
 
 cc_binary(name = "evolution_test", srcs = ["evolution_test.c", "evolution_test_provider.c",
         "//usr.sbin/BSDAudit:auditcmp_rate.c", "//usr.sbin/BSDAudit:auditcmp_submit.c"],
-    deps = ["//usr.sbin/BSDAudit:test_headers", "//lib/libauditcmp:auditcmp",
+    deps = ["//tests:capability_tier", "//usr.sbin/BSDAudit:test_headers", "//lib/libauditcmp:auditcmp",
         "//lib/libauditcmp:generated_headers", "//lib/libbsm:bsm", "//lib/libfidl:fidl",
         "//lib/libchannel:channel", "//lib/libservice:service", "//lib/liblogcmp:headers",
         "//lib/atf/libatf-c:atf_c"],
@@ -98,7 +98,7 @@ bsd_kyua_test(name = "evolution_test_run", program = ":evolution_test", interfac
 # so live measurements can observe its request probes.
 cc_binary(name = "latency_bench", srcs = ["latency_bench.c", "latency_bench_provider.c",
         "//usr.sbin/BSDAudit:auditcmp_rate.c", "//usr.sbin/BSDAudit:auditcmp_submit.c"],
-    deps = ["//usr.sbin/BSDAudit:test_headers", "//tools/build/fuchsia:daemon_bench_headers",
+    deps = ["//tests:capability_tier", "//usr.sbin/BSDAudit:test_headers", "//tools/build/fuchsia:daemon_bench_headers",
         "//lib/libauditcmp:client_source_headers", "//lib/libauditcmp:auditcmp",
         "//lib/libbsm:bsm", "//lib/libfidl:fidl", "//lib/libchannel:channel",
         "//lib/libservice:service", "//lib/liblogcmp:headers"],

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #include <lua.h>
 #include <lstd.h>
 _Static_assert(LUA_FLOAT_TYPE == LUA_FLOAT_INT64, "loader Lua uses integer numbers");

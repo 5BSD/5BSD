@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Per-open Linux FUSE semantics. Runtime only in disposable guests. */
 #define _GNU_SOURCE
 #define FUSE_USE_VERSION 31

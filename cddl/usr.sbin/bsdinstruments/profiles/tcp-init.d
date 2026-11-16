@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* Print every tcp connection initialization event (accept + connect lifecycle) */
 
 tcp:::accept-established,

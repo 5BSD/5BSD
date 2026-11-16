@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Reference counterpart of tests/sys/netpfil/pf/limiters.sh source_capacity_*.
 # Run only in a dedicated OpenBSD PF parity guest; this replaces its PF policy.
 set -eu

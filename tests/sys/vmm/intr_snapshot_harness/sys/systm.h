@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Userspace harness shadow of the kernel <sys/systm.h>.  Provides the
  * assertion, uptime, and callout surface the vmm interrupt/timer device
  * models rely on.  Uptime is fully test-controlled through 'kmock_uptime'

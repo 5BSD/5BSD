@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Reconcile native complete-suite ownership with the original maintained scripts."""
 import importlib.util
 import contextlib

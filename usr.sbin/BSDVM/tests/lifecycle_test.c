@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #include <atf-c.h>
 #undef VMD_TESTING
 int bsdvm_main(int, char **);

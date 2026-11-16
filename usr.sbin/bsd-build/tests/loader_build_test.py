@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Inspect actual amd64 make configuration for EFI/BIOS object isolation.
 
 This is a build-graph regression, not firmware or packaged-loader qualification.

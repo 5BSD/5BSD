@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * kqueue notes (D100, B7): the kernel raises EVFILT_VNODE notes on a served
  * object's own operations as the VOP post hooks do (READ, WRITE/EXTEND,
  * ATTRIB, REVOKE), NOTE_OPEN and NOTE_CLOSE/CLOSE_WRITE on the other objects

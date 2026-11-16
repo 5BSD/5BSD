@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Direct Linux preadv2(2)/pwritev2(2) RWF_* regression checks.
  * Exit status = failed check number.

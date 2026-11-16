@@ -1,4 +1,5 @@
 /*- SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * libsysctlcmp reply validation against a scripted bsd.sysctl.v1 server over
  * a real capability channel: semantic strings must be NUL-terminated and
@@ -22,6 +23,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "freebsd_test_suite/capability_tier.h"
 #include "sysctlcmp.h"
 
 static struct script {
@@ -122,8 +124,7 @@ client_create(void)
 
 	fd = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
 	if (fd < 0)
-		atf_tc_skip("capability plane unavailable: %s",
-		    strerror(errno));
+		capability_plane_skip(errno);
 	close(fd);
 	if (script == NULL) {
 		script = mmap(NULL, sizeof(*script), PROT_READ | PROT_WRITE,

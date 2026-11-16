@@ -2,7 +2,7 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
 cc_binary(name = "config_test", srcs = ["config_test.c"],
-    deps = ["//usr.sbin/BSDFilesystem:test_headers", "//lib/atf/libatf-c:atf_c", "//lib/libcapsulert:capsulert"],
+    deps = ["//tests:capability_tier", "//usr.sbin/BSDFilesystem:test_headers", "//lib/atf/libatf-c:atf_c", "//lib/libcapsulert:capsulert"],
     linkstatic = True, linkopts = ["-static"])
 bsd_kyua_test(name = "config_test_run", program = ":config_test", interface = "atf",
     suite = "FreeBSD", suite_files = {"//usr.sbin/BSDFilesystem:bsdfilesystem.ucl": "storage-policy.ucl"},
@@ -12,14 +12,14 @@ bsd_kyua_test(name = "config_test_run", program = ":config_test", interface = "a
     size = "small", visibility = ["//visibility:public"])
 
 cc_binary(name = "oes_factory_failure_test", srcs = ["oes_factory_failure_test.c"],
-    deps = ["//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDFilesystem:oes_test_headers"],
+    deps = ["//tests:capability_tier", "//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDFilesystem:oes_test_headers"],
     linkstatic = True, linkopts = ["-static"])
 cc_binary(name = "oes_factory_test", srcs = ["oes_factory_test.c", "//usr.sbin/BSDFilesystem:oes_factory.c"],
-    deps = ["//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDFilesystem:oes_test_headers", "//lib/libservice:service"],
+    deps = ["//tests:capability_tier", "//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDFilesystem:oes_test_headers", "//lib/libservice:service"],
     linkstatic = True, linkopts = ["-static"])
 [cc_binary(name = name, srcs = [name + ".c"] +
         (["//usr.sbin/BSDFilesystem:oes_session.c", "//usr.sbin/BSDFilesystem:oes_factory.c"] if name == "oes_handoff_test" else []),
-    deps = ["//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDFilesystem:oes_test_headers",
+    deps = ["//tests:capability_tier", "//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDFilesystem:oes_test_headers",
         "//lib/liboes:oes", "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libservice:service"],
     linkstatic = True, linkopts = ["-static"])
  for name in ["oes_session_test", "oes_handoff_test"]]
@@ -38,7 +38,7 @@ _DAEMON_LIBRARIES = ["//lib/libcapsulert:capsulert", "//lib/libtrustedzfs:truste
 _DAEMON_SOURCES = ["//usr.sbin/BSDFilesystem:" + p for p in
     ["request.c", "layout.c", "nvwalk.c", "oes_factory.c", "oes_session.c"]]
 [cc_binary(name = name, srcs = [name + ".c"] + _DAEMON_SOURCES,
-    deps = ["//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDFilesystem:request_test_headers"] + _DAEMON_LIBRARIES +
+    deps = ["//tests:capability_tier", "//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDFilesystem:request_test_headers"] + _DAEMON_LIBRARIES +
         (["//sys/dev/mac_capability:channel_headers", "//sys/dev/mac_capability:ioctl_headers"] if name == "provider_test" else []),
     local_defines = ["BSDFILESYSTEM_TESTING"], linkstatic = True, linkopts = ["-static"])
  for name in ["namespace_test", "provider_test"]]
@@ -54,7 +54,7 @@ _STORAGE_TESTS = ["cleanup_test", "quota_test", "lifecycle_test", "anchor_test",
 [cc_binary(name = name, srcs = [name + ".c", "//usr.sbin/BSDFilesystem:nvwalk.c"] +
         ([] if name == "persistent_retention_test" else ["//usr.sbin/BSDFilesystem:layout.c"]) +
         (["//usr.sbin/BSDFilesystem:oes_factory.c", "//usr.sbin/BSDFilesystem:oes_session.c"] if name == "lifecycle_test" else []),
-    deps = ["//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDFilesystem:request_test_headers"] + _DAEMON_LIBRARIES +
+    deps = ["//tests:capability_tier", "//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDFilesystem:request_test_headers"] + _DAEMON_LIBRARIES +
         (["//tests/sys/zfshandle:test_headers"] if name in ["anchor_test", "staging_recovery_test", "abort_test", "persistent_retention_test"] else []),
     local_defines = ["BSDFILESYSTEM_TESTING"],
     copts = ["-ffunction-sections", "-fdata-sections"] if name in ["quota_test", "lifecycle_test", "abort_test"] else [],
@@ -70,7 +70,7 @@ _STORAGE_TESTS = ["cleanup_test", "quota_test", "lifecycle_test", "anchor_test",
     size = "medium", visibility = ["//visibility:public"])
  for name in _STORAGE_TESTS]
 cc_binary(name = "manifest_test", srcs = ["manifest_test.c"],
-    deps = ["//lib/atf/libatf-c:atf_c", "//lib/libcapbundle:capbundle", "//lib/libcapbundle:internal_headers"],
+    deps = ["//tests:capability_tier", "//lib/atf/libatf-c:atf_c", "//lib/libcapbundle:capbundle", "//lib/libcapbundle:internal_headers"],
     linkstatic = True, linkopts = ["-static"])
 bsd_kyua_test(name = "manifest_test_run", program = ":manifest_test", interface = "atf",
     suite = "FreeBSD", suite_files = {"//usr.sbin/BSDFilesystem:capbundle/bsdfilesystem.ucl": "bsdfilesystem.ucl"},
@@ -98,20 +98,20 @@ filegroup(name = "next_header_files", srcs = [":next_bindings"], output_group = 
 cc_library(name = "next_headers", hdrs = [":next_header_files"], strip_include_prefix = "next_bindings")
 # Make links all three generated objects directly into this standalone peer.
 cc_library(name = "next_codec", srcs = [":next_sources"],
-    deps = [":next_headers", "//lib/libfidl:headers", "//contrib/llvm-project/libcxx/include:headers"],
+    deps = ["//tests:capability_tier", ":next_headers", "//lib/libfidl:headers", "//contrib/llvm-project/libcxx/include:headers"],
     copts = ["-std=c++20", "-nostdinc++"], linkstatic = True, alwayslink = True)
 # The newer peer must never inherit the production bsd:1 generated headers.
 cc_binary(name = "next_peer", srcs = ["evolution/next_peer.c"],
-    deps = [":next_headers", ":next_codec", "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libc++:cxx"],
+    deps = ["//tests:capability_tier", ":next_headers", ":next_codec", "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libc++:cxx"],
     linkopts = ["-static"], linkstatic = True)
 
 
 
 cc_binary(name = "evolution_test", srcs = ["evolution_test.c"] + _DAEMON_SOURCES,
-    deps = _DAEMON_LIBRARIES + ["//lib/libthr:thr", "//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDFilesystem:request_test_headers", "//lib/libfilesystemcmp:client_source_headers"],
+    deps = _DAEMON_LIBRARIES + ["//tests:capability_tier", "//lib/libthr:thr", "//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDFilesystem:request_test_headers", "//lib/libfilesystemcmp:client_source_headers"],
     local_defines = ["BSDFILESYSTEM_TESTING"], linkstatic = True, linkopts = ["-static"])
 cc_binary(name = "latency_bench", srcs = ["latency_bench.c"] + _DAEMON_SOURCES,
-    deps = _DAEMON_LIBRARIES + ["//lib/libthr:thr", "//usr.sbin/BSDFilesystem:request_test_headers", "//lib/libfilesystemcmp:client_source_headers", "//tools/build/fuchsia:daemon_bench_headers"],
+    deps = _DAEMON_LIBRARIES + ["//tests:capability_tier", "//lib/libthr:thr", "//usr.sbin/BSDFilesystem:request_test_headers", "//lib/libfilesystemcmp:client_source_headers", "//tools/build/fuchsia:daemon_bench_headers"],
     dynamic_deps = ["//lib/libcapsulert:capsulert_shared", "//lib/libtrustedzfs:trustedzfs_shared", "//lib/libucl:ucl_shared", "//cddl/lib/libnvpair:nvpair_shared", "//lib/libservice:service_shared", "//lib/libchannel:channel_shared", "//lib/libmd:md_shared", "//lib/libcapreclaim:capreclaim_shared", "//lib/liblogcmp:logcmp_shared", "//lib/libfilesystemcmp:filesystemcmp_shared", "//lib/liboes:oes_shared", "//lib/libfidl:fidl_shared", "//lib/libthr:thr_shared"],
     local_defines = ["BSDFILESYSTEM_TESTING"], copts = ["-fPIE"], linkopts = ["-pie"])
 bsd_kyua_test(name = "evolution_test_run", program = ":evolution_test", interface = "atf",

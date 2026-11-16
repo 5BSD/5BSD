@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Active Linux guest workloads for bhyve checkpoint qualification."""
 
 # VIRTIO_ACTIVATION_ASSERTION: active-checkpoint-network-traffic

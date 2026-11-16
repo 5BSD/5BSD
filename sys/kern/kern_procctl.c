@@ -496,10 +496,10 @@ reap_kill_children(struct thread *td, struct proc *reaper,
 		if ((p2->p_flag2 & P2_WEXIT) == 0) {
 			error1 = p_cansignal(td, p2, rk->rk_sig);
 			if (error1 != 0) {
-				if (*error == ESRCH) {
+				if (error1 != ESRCH && rk->rk_fpid == -1)
 					rk->rk_fpid = p2->p_pid;
+				if (*error == ESRCH)
 					*error = error1;
-				}
 
 				/*
 				 * Do not end the loop on error,
@@ -512,6 +512,17 @@ reap_kill_children(struct thread *td, struct proc *reaper,
 		}
 		PROC_UNLOCK(p2);
 	}
+
+	/*
+	 * The request succeeds if it signalled any process (procctl(2));
+	 * rk_fpid still names the first that could not be signalled, unless
+	 * the caller cannot see it (ESRCH), which, as on the subtree path, is
+	 * not named so that this cannot be used as a visibility oracle.  The
+	 * error stays ESRCH when there was no child, or the first refusal
+	 * when none could be signalled.
+	 */
+	if (rk->rk_killed > 0)
+		*error = 0;
 }
 
 static bool

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Writes (D95): write(2) and its relatives on a writable served file are
  * WRITE events, one per kern.dq.max_io chunk, answered here by
  * dq_serve_file() from a backing file.  The oracle is a second real file

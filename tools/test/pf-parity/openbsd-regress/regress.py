@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Run the imported OpenBSD PF regress suites against a DUT guest.
 
 The upstream Makefiles run unchanged through OpenBSD's bsd.regress.mk

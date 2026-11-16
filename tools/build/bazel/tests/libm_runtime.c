@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Bounded link/runtime checks; the maintained msun accuracy suite is separate. */
 #include <complex.h>
 #include <fenv.h>

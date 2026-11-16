@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Cross-component IPC volume and error summary for capability daemons.
  * Usage: bsdinstruments watch component-ipc

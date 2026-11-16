@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * pf fragment reassembly - reassembly calls by direction and the
  * fragment-related drop reasons (PFRES_FRAG 2, PFRES_SHORT 3,

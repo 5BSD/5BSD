@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef DTRACED_COLLECTOR_OWNER_H
 #define DTRACED_COLLECTOR_OWNER_H
 #include <array>

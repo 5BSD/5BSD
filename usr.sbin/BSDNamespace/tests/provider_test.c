@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Plane tests for bsdnamespace(8)'s per-client bsd.namespace.v1 server.
  *
  * A real capability channel is created through /dev/mac_capability; bsdnamespace's
@@ -46,6 +48,7 @@
 #include <fidl/bsd/sync_c.h>
 #include <libservice.h>
 
+#include "freebsd_test_suite/capability_tier.h"
 #include "bsdnamespace_proto.h"
 #include "bsdnamespace_test.h"
 
@@ -113,8 +116,7 @@ require_plane(void)
 
 	fd = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
 	if (fd < 0)
-		atf_tc_skip("capability plane unavailable: /dev/mac_capability: "
-		    "%s", strerror(errno));
+		capability_plane_skip(errno);
 	close(fd);
 }
 

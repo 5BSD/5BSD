@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 provider shmring {
 	probe create(uint64_t capacity, uint32_t shape, uint32_t mode,
 	    uint32_t max_record, int result);

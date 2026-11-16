@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Dynamic system-gate claim/release integration tests for capsule + switchboard.
 # Path and network capabilities are deliberately absent from service manifests:
 # filesystem access is brokered by bsdfilesystem and network access by bsdnetwork.

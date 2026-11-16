@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Linux legacy AIO ABI.  Context and ring state are Linuxulator-owned;
  * asynchronous file I/O may reuse native kernel mechanisms internally.
  */

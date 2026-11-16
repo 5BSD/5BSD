@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * EXTERNAL REFERENCE ORACLE: Bluetooth Mesh access-layer opcode encoding --
  * the one-, two- and three-octet forms, the reserved value, the vendor
  * company-identifier byte order, and the specification's own worked example.

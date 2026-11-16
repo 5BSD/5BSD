@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Shared harness of the DescriptorQueue tests.
  *
  * The controller is a thread of the test process serving one or more

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * dp_cache = DQ_CACHE_DATA (D103): read(2) is served from the object's
  * pages, a miss posts READ for whole pages, INVALIDATE drops clean pages,
  * an accepted WRITE updates the resident pages (a refused one does not),

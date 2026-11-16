@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check actual kernel FDT headers against native I2C/GPIO module selection."""
 import argparse
 import json

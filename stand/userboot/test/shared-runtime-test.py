@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Run both real userboot interpreters with the original hosted callback harness."""
 import argparse
 from pathlib import Path

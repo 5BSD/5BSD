@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # od decimal bytes in, target assembler out. No target executable is run.
 { for (i = 1; i <= NF; i++) {
     if ($i !~ /^[0-9]+$/ || $i > 255 || n >= 1048576) { bad = 1; exit 1 }

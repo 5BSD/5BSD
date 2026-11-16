@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Build a disposable seed image from a clean staged root and explicit test fixtures."""
 from pathlib import Path
 import shutil, os, subprocess, time, hashlib, json, argparse

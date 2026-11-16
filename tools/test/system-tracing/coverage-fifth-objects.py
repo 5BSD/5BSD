@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Verify this expansion's ELF64 amd64 SDT sites and inactive NOPs."""
 import argparse
 import hashlib

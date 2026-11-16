@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The 5BSD Project
+ * Copyright (c) 2026 Kory Heard
  *
  * DTrace SDT probes of OpenBSD PF.  Probe names and arguments are listed
  * in dtrace_pf(4).  Vendor files fire them through PF_SDTn()/REASON_SET

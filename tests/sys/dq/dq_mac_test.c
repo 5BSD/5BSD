@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * The MAC boundary of a served file (D93, D94, B9).
  *
  * fallocate and fspacectl: posix_fallocate(2) and fspacectl(2) now run

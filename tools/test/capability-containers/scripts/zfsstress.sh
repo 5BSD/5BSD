@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Reproduce the first-boot ZFS sync panic (VERIFY3U(dr->dr_dbuf->db_level,
 # ==, level)) and capture its dump: on a FRESH image each round, three
 # stressprobe units hammer claims/writes/destroys through bsdfilesystem while a shell

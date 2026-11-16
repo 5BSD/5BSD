@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Guard/errno fault injection for every new USDT header."""
 import collections,json,os,subprocess,tempfile
 from pathlib import Path

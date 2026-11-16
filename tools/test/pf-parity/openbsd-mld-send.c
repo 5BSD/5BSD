@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Independent raw-socket counterpart to the Scapy MLD group fixture. */
 #include <sys/types.h>
 #include <sys/socket.h>

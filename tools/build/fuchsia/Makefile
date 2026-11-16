@@ -67,7 +67,13 @@ generators:
 # that each evolution test's next schema is additive at bsd:1.
 check-bindings:
 	${PYTHON} ${.CURDIR}/test-bindings.py --src ${SRCTOP} --tools ${FIDL_TOOLS_OBJ}
-check: check-bindings
+# The guest runner's own checks: shell only, no guest is booted.
+check-runner:
+.for t in vm-provider-extra-status vm-provider-root-metadata \
+    vm-provider-plane-off-enforce vm-provider-deferred-tiers
+	sh ${.CURDIR}/tests/${t}.sh
+.endfor
+check: check-bindings check-runner
 	${PYTHON} ${.CURDIR}/tests/import_test.py
 	${PYTHON} ${.CURDIR}/tests/gotemplate_test.py
 	${PYTHON} ${.CURDIR}/build-fidl.py --src ${SRCTOP} --obj ${FIDL_TOOLS_OBJ} --test-only

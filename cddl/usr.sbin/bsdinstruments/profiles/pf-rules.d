@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * pf ruleset evaluation - pf_test_rule() latency, anchors entered and
  * logged rule hits by rule number (dtrace_pf(4)).

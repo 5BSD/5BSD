@@ -1,5 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
  */
 
 #include <sys/param.h>
@@ -19,6 +21,11 @@
 #include <sys/wait.h>
 
 #include <atf-c.h>
+
+#include <channel.h>
+
+#include "mac_capability_ioctl.h"
+#include "mac_capability_capprotect_proto.h"
 
 #include <sys/acl.h>
 #include <sys/resource.h>
@@ -840,9 +847,165 @@ ATF_TC_BODY(zfs_snapshot_checks, tc)
 	atf_tc_skip("Requires a ZFS pool");
 }
 
+/*
+ * Descriptors arriving over a capability channel pass the receiver's
+ * file_check_receive before they are installed (I6, fdbc6085418): a message
+ * attachment (RECVMSG) and a descriptor in a CALL reply.  A refusal fails
+ * the receive with the policy's error and installs nothing.
+ */
+static int
+cap_connect(const char *name)
+{
+	struct mac_capability_connect_args ca;
+	int ctl, saved;
+
+	ctl = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
+	if (ctl == -1)
+		atf_tc_skip("no /dev/mac_capability: %s", strerror(errno));
+	memset(&ca, 0, sizeof(ca));
+	strlcpy(ca.name, name, sizeof(ca.name));
+	if (ioctl(ctl, MAC_CAPABILITY_CONNECT, &ca) != 0) {
+		saved = errno;
+		close(ctl);
+		atf_tc_fail("connect %s: %s", name, strerror(saved));
+	}
+	close(ctl);
+	return (ca.fd);
+}
+
+/* The lowest free descriptor number: where a receive would install. */
+static int
+lowest_free_fd(void)
+{
+	int fd;
+
+	fd = open(_PATH_DEVNULL, O_RDONLY | O_CLOEXEC);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(close(fd) == 0);
+	return (fd);
+}
+
+ATF_TC(channel_attachment_receive_checked);
+ATF_TC_HEAD(channel_attachment_receive_checked, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "A descriptor attached to a capability "
+	    "channel message passes file_check_receive; a refusal installs "
+	    "nothing");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(channel_attachment_receive_checked, tc)
+{
+	struct mac_capability_recvmsg_args ra;
+	struct mac_capability_sendmsg_args sa;
+	char payload;
+	int before, ch[2], pipefd[2], received, lowest;
+
+	reset_denies();
+	if (mac_capability_channel_create(ch) == -1)
+		atf_tc_skip("no capability channels: %s", strerror(errno));
+	ATF_REQUIRE(pipe(pipefd) == 0);
+
+	for (int deny = 0; deny <= 1; deny++) {
+		payload = 'c';
+		memset(&sa, 0, sizeof(sa));
+		sa.payload = &payload;
+		sa.payload_len = sizeof(payload);
+		sa.fds = &pipefd[0];
+		sa.nfds = 1;
+		ATF_REQUIRE(ioctl(ch[0], MAC_CAPABILITY_SENDMSG, &sa) == 0);
+		received = -1;
+		memset(&ra, 0, sizeof(ra));
+		ra.payload = &payload;
+		ra.payload_len = sizeof(payload);
+		ra.fds = &received;
+		ra.nfds = 1;
+		lowest = lowest_free_fd();
+		before = counter("file_check_receive");
+		if (!deny) {
+			ATF_REQUIRE(ioctl(ch[1], MAC_CAPABILITY_RECVMSG,
+			    &ra) == 0);
+			ATF_REQUIRE_EQ(1, ra.nfds);
+			ATF_REQUIRE(received >= 0);
+			ATF_REQUIRE(close(received) == 0);
+		} else {
+			write_deny_value("file_check_receive", EPERM);
+			ATF_REQUIRE_ERRNO(EPERM, ioctl(ch[1],
+			    MAC_CAPABILITY_RECVMSG, &ra) == -1);
+			write_deny_value("file_check_receive", 0);
+			/*
+			 * ioctl(2) copies an argument back only on success,
+			 * so ra.nfds is not reported; the descriptor array
+			 * and the table are the evidence.
+			 */
+			ATF_CHECK_EQ(-1, received);
+			ATF_CHECK_EQ(lowest, lowest_free_fd());
+		}
+		require_counter_bump("file_check_receive", before);
+	}
+	close(pipefd[0]);
+	close(pipefd[1]);
+	close(ch[0]);
+	close(ch[1]);
+}
+
+ATF_TC(call_reply_receive_checked);
+ATF_TC_HEAD(call_reply_receive_checked, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "A descriptor in a capability CALL "
+	    "reply (a capprotect token) passes file_check_receive; a refusal "
+	    "fails the call and installs nothing");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(call_reply_receive_checked, tc)
+{
+	struct mac_capability_call_args ca;
+	struct cp_request req;
+	int before, fd, lowest, token;
+
+	reset_denies();
+	fd = cap_connect("capprotect");
+	/* A shield whose only effect is no core dump: MINT needs one. */
+	memset(&req, 0, sizeof(req));
+	req.op = CP_OP_SHIELD;
+	req.flags = CP_SF_CORE;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &req;
+	ca.req_len = sizeof(req);
+	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_CALL, &ca) == 0);
+
+	for (int deny = 0; deny <= 1; deny++) {
+		memset(&req, 0, sizeof(req));
+		req.op = CP_OP_MINT;
+		memset(&ca, 0, sizeof(ca));
+		ca.req = &req;
+		ca.req_len = sizeof(req);
+		token = -1;
+		ca.reply_fds = &token;
+		ca.reply_nfds = 1;
+		lowest = lowest_free_fd();
+		before = counter("file_check_receive");
+		if (!deny) {
+			ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_CALL, &ca) == 0);
+			ATF_REQUIRE(token >= 0);
+			ATF_REQUIRE(close(token) == 0);
+		} else {
+			write_deny_value("file_check_receive", EPERM);
+			ATF_REQUIRE_ERRNO(EPERM, ioctl(fd, MAC_CAPABILITY_CALL,
+			    &ca) == -1);
+			write_deny_value("file_check_receive", 0);
+			ATF_CHECK_EQ(-1, token);
+			ATF_CHECK_EQ(lowest, lowest_free_fd());
+		}
+		require_counter_bump("file_check_receive", before);
+	}
+	close(fd);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, channel_attachment_receive_checked);
+	ATF_TP_ADD_TC(tp, call_reply_receive_checked);
 	ATF_TP_ADD_TC(tp, proc_checks);
 	ATF_TP_ADD_TC(tp, proc_notifications);
 	ATF_TP_ADD_TC(tp, file_checks);

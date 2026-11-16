@@ -47,10 +47,12 @@ ATF_TESTS_C+=	dq_bootstrap_test
 ATF_TESTS_C+=	dq_legitimacy_test
 ATF_TESTS_C+=	dq_owner_test
 ATF_TESTS_C+=	dq_swap_test
+ATF_TESTS_C+=	dq_restricted_test
 ATF_TESTS_SH+=	dq_dtrace_test
 ATF_TESTS_SH+=	dq_testopen_test
 ATF_TESTS_SH+=	dq_oracle_test
 ATF_TESTS_SH+=	dq_tree_suites_test
+ATF_TESTS_SH+=	dq_dqswap_test
 
 # Every program is a controller: each links the support library
 # (libdqtest), which the libdqtest subdirectory builds first.
@@ -79,6 +81,8 @@ LIBADD.dq_bootstrap_test+=	notify logcmp sysctlcmp service
 LIBADD.dq_resolve_test+=	jail
 # jail_setv(3) for the address-family row.
 LIBADD.dq_socket_test+=	jail
+# jail_setv(3) and jail_remove(2) for the jailed supervisor.
+LIBADD.dq_restricted_test+=	jail
 
 # jail_setv(3) for the jailed rows; capability_service_connect(3) on a
 # device descriptor the caller did not open.
@@ -111,6 +115,10 @@ TEST_METADATA.dq_legitimacy_test+=	is_exclusive="true"
 TEST_METADATA.dq_owner_test+=	is_exclusive="true"
 # Sets vfs.lookup_cap_dotdot: run alone.
 TEST_METADATA.dq_start_test+=	is_exclusive="true"
+# Creates jails: run alone.
+TEST_METADATA.dq_restricted_test+=	is_exclusive="true"
+# Runs dqswap, which attaches its command: run alone.
+TEST_METADATA.dq_dqswap_test+=	is_exclusive="true"
 # Set kern.chroot_allow_open_directories, mount linprocfs, call acct(2),
 # ktrace(2), swapon(2) and kldload(2): run alone (1c-iii-c).
 TEST_METADATA.dq_cwd_test+=	is_exclusive="true"
@@ -132,6 +140,14 @@ BINDIR.dqpass=	${TESTSDIR}
 ${PACKAGE}FILES+=	dqpass.expected
 # The shell functions dq_oracle_test and dq_tree_suites_test share.
 ${PACKAGE}FILES+=	dq_suites.subr
+
+# dqswap (share/examples/dq): the example supervisor that gives up root
+# after the attach; dq_dqswap_test runs it.
+PROGS+=		dqswap
+SRCS.dqswap=	dqswap.c
+LIBADD.dqswap=	dq jail
+MAN.dqswap=
+BINDIR.dqswap=	${TESTSDIR}
 
 # The served-root controller the suites oracle runs kyua under, and the
 # differences from chroot(8) it expects (stage 1c-iii-c).

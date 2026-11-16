@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Qualify actual native symbol-map actions against Make and incremental changes.
 
 Requires a fresh disposable component workspace; leaves logs for every case.

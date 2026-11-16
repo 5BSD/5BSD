@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * fsync(2) and fdatasync(2) are answered by the descriptor's fileops
  * (fo_fsync).  Every descriptor that carries a vnode syncs through it;
  * descriptors with no vnode return EINVAL, as getvnode() did; an O_PATH

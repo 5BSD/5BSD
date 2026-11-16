@@ -2,6 +2,8 @@
 /*
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * trustedzfs-handles -- live TrustedZFS handle activity: mints, derives,
  * openats, and invalidations, with rights lineage.
  */

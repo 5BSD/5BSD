@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Mappings of a served file (D102, D103): the dq pager fills faulting pages
  * with READ events (page-aligned offsets, the run clipped at the presented
  * size and max_io, a short reply zero-filling to the end of the page),

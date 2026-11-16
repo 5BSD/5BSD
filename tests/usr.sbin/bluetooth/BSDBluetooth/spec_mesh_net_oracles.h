@@ -1,5 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Independent Mesh Protocol 1.1.1 network-layer oracles.
  */
 #ifndef TESTS_BLUETOOTH_SPEC_MESH_NET_ORACLES_H

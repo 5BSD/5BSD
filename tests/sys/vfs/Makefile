@@ -3,6 +3,7 @@ PACKAGE=	tests
 TESTSDIR=		${TESTSBASE}/sys/vfs
 
 ATF_TESTS_C+=	lookup_cap_dotdot
+ATF_TESTS_C+=	lookup_cap_dotdot_mount
 CFLAGS.lookup_cap_dotdot.c+=	-I${SRCTOP}/tests
 
 ATF_TESTS_SH+=	abi_root_symlink

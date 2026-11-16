@@ -130,7 +130,7 @@ cc_library(name = "domain_test_includes", textual_hdrs = ["anoint.c", "domain.c"
     visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
 
 cc_library(name = "on_demand_test_includes", textual_hdrs = ["on_demand.c", "supervisor.c", "svc_proto.c", "reload.c"], strip_include_prefix = ".",
-    deps = [":test_source_headers", "//lib/libcapimage:headers", "//sys/sys:envfd_header", "//sys/dev/mac_capability:ioctl_headers", "//sys/dev/mac_capability:channel_headers", "//sys/dev/mac_capability:system_headers"],
+    deps = [":test_source_headers", "//lib/libservice:headers", "//lib/libcapimage:headers", "//sys/sys:envfd_header", "//sys/dev/mac_capability:ioctl_headers", "//sys/dev/mac_capability:channel_headers", "//sys/dev/mac_capability:system_headers"],
     visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
 
 cc_library(name = "scope_storage_test_includes", textual_hdrs = ["lifecycle.c", "reclaim_publish.c"], strip_include_prefix = ".",

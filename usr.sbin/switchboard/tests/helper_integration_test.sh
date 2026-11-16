@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # End-to-end coverage for private helper sub-services (service_helper_open).
 # A parent unit opens a helper declared in its own bundle by short unit name;
 # switchboard resolves the synthetic bundle-local provider name

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Compile socket allocation failure branches under optional MAC/helper hooks."""
 from pathlib import Path
 import concurrent.futures,importlib.util,json,os,re,subprocess

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * The system.Device client against a scripted bsd.device.v1 server over a
  * real capability channel (service_open is faked to hand out a fresh
  * channel to a forked server).  Covers reply validation, session reuse,
@@ -23,6 +25,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+#include "freebsd_test_suite/capability_tier.h"
 
 static int fake_service_open(const char *, int *);
 #define service_open fake_service_open
@@ -201,8 +205,7 @@ setup(void)
 	int fd = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
 
 	if (fd < 0)
-		atf_tc_skip("capability plane unavailable: %s",
-		    strerror(errno));
+		capability_plane_skip(errno);
 	close(fd);
 	script = mmap(NULL, sizeof(*script), PROT_READ | PROT_WRITE,
 	    MAP_ANON | MAP_SHARED, -1, 0);

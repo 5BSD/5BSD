@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Linux proc/sysfs ABI regressions. Run only in disposable amd64 guests. */
 #include "linux_test.h"
 

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Invoke the shared version renderer without host metadata discovery."""
 import argparse
 from pathlib import Path

@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Extract normative requirements from a Bluetooth SIG profile/supplement
 # specification text (Mesh Protocol, Mesh Model, Core Specification Supplement,
 # HID Over GATT Profile, HID Service).

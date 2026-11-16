@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 set -eu
 kit=${1:?kit path}
 t=$(mktemp -d /tmp/nested-stall.XXXXXX)

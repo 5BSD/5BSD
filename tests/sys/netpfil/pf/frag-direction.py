@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Interleave equal-key IPv4/IPv6 fragments across PF input and output hooks."""
 import argparse
 import errno

@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Trace user-space malloc/free calls for a specific process.
  * Usage: bsdinstruments watch malloc-trace --param pid=<pid>

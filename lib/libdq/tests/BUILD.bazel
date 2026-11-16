@@ -3,7 +3,9 @@
 # Native runs of the libdq tests.  The walker cases need nothing; the
 # dq_serve_file() cases skip without /dev/dq.  Installation (the dq-tests
 # package, /usr/tests/lib/libdq) is the make build's; lib/libdq's install
-# archive does not yet carry a test manifest.
+# archive does not yet carry a test manifest.  libdq_link_test is make-only:
+# it checks the installed libdq.so.1 through dlopen(3), which a static
+# native run cannot exercise.
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
 cc_binary(name = "libdq_test", srcs = ["libdq_test.c"],

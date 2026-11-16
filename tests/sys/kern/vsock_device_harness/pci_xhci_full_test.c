@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The FreeBSD Foundation
+ * Copyright (c) 2026 Kory Heard
  *
  * TU-include coverage harness for bhyve's USB 3 xHCI controller
  * (usr.sbin/bhyve/pci_xhci.c).  The device source is compiled directly into the

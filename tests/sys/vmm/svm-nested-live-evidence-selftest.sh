@@ -1,5 +1,9 @@
 #!/bin/sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Exercise the rootless structural boundary of the privileged nested-SVM
 # evidence validator.  This does not manufacture hardware qualification; it
 # proves that a well-formed bundle is accepted and that filesystem aliases are

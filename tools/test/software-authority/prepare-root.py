@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Prepare disposable account and console fixtures in a clean NO_ROOT staging root."""
 from pathlib import Path
 import subprocess, argparse, hashlib, json

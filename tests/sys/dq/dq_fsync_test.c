@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * FSYNC (D97, N10): fsync(2), fdatasync(2) and aio_fsync(2) post FSYNC with
  * the fo_fsync mode word whenever the object's policy serves writes,
  * whatever the descriptor's own access mode; under dp_write = DENY nothing

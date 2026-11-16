@@ -4,7 +4,7 @@ load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
 # Keep the installed executable's linkage identical to Make. The runtime-only
 # variant resolves declared candidate libraries, including transitive libc deps.
 [cc_binary(name = "config_test" + suffix, srcs = ["config_test.c", "//usr.sbin/BSDPower:config.c"],
-    deps = ["//usr.sbin/BSDPower:test_headers", "//lib/libucl:ucl", "//lib/atf/libatf-c:atf_c"],
+    deps = ["//tests:capability_tier", "//usr.sbin/BSDPower:test_headers", "//lib/libucl:ucl", "//lib/atf/libatf-c:atf_c"],
     dynamic_deps = ["//lib/libucl:ucl_shared", "//lib/atf/libatf-c:atf_c_shared"],
     copts = ["-fPIE"], linkopts = ["-pie"] + (["-Wl,--disable-new-dtags,-rpath,$ORIGIN"] if suffix else []))
  for suffix in ["", "_runtime"]]
@@ -22,7 +22,7 @@ bsd_kyua_test(name = "config_test_run", program = ":config_test_runtime", interf
 # Preserve direct provider compilation and the maintained included-source fixtures.
 [cc_binary(name = name, srcs = [name + ".c", "//usr.sbin/BSDPower:config.c"] +
         (["//usr.sbin/BSDPower:BSDPower.c"] if name == "provider_test" else ["reactor_impl.c"] if name == "reactor_test" else []),
-    deps = ["//usr.sbin/BSDPower:test_headers", "//lib/libpowercmp:powercmp", "//lib/libpowercmp:generated_headers",
+    deps = ["//tests:capability_tier", "//usr.sbin/BSDPower:test_headers", "//lib/libpowercmp:powercmp", "//lib/libpowercmp:generated_headers",
         "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libservice:service", "//lib/libucl:ucl",
         "//lib/atf/libatf-c:atf_c", "//sys/dev/mac_capability:ioctl_headers", "//sys/dev/mac_capability:channel_headers"],
     local_defines = ["BSDPOWER_TESTING"] if name != "lease_test" else [],
@@ -57,16 +57,16 @@ filegroup(name = "next_header_files", srcs = [":next_bindings"], output_group = 
 cc_library(name = "next_headers", hdrs = [":next_header_files"], strip_include_prefix = "next_bindings")
 # Make links all three generated objects directly into this standalone peer.
 cc_library(name = "next_codec", srcs = [":next_sources"],
-    deps = [":next_headers", "//lib/libfidl:headers", "//contrib/llvm-project/libcxx/include:headers"],
+    deps = ["//tests:capability_tier", ":next_headers", "//lib/libfidl:headers", "//contrib/llvm-project/libcxx/include:headers"],
     copts = ["-std=c++20", "-nostdinc++"], linkstatic = True, alwayslink = True)
 # The newer peer must never inherit the production bsd:1 generated headers.
 cc_binary(name = "next_peer", srcs = ["evolution/next_peer.c"],
-    deps = [":next_headers", ":next_codec", "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libc++:cxx"],
+    deps = ["//tests:capability_tier", ":next_headers", ":next_codec", "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libc++:cxx"],
     linkopts = ["-static"], linkstatic = True)
 
 cc_binary(name = "evolution_test", srcs = ["evolution_test.c", "evolution_test_provider.c",
         "//usr.sbin/BSDPower:config.c"],
-    deps = ["//usr.sbin/BSDPower:test_headers", "//lib/libpowercmp:powercmp",
+    deps = ["//tests:capability_tier", "//usr.sbin/BSDPower:test_headers", "//lib/libpowercmp:powercmp",
         "//lib/libpowercmp:generated_headers", "//lib/libfidl:fidl",
         "//lib/libchannel:channel", "//lib/libservice:service", "//lib/libucl:ucl",
         "//lib/atf/libatf-c:atf_c"],
@@ -81,7 +81,7 @@ bsd_kyua_test(name = "evolution_test_run", program = ":evolution_test", interfac
 
 
 cc_binary(name = "latency_bench", srcs = ["latency_bench.c", "latency_bench_provider.c", "//usr.sbin/BSDPower:config.c"],
-    deps = ["//usr.sbin/BSDPower:test_headers", "//tools/build/fuchsia:daemon_bench_headers",
+    deps = ["//tests:capability_tier", "//usr.sbin/BSDPower:test_headers", "//tools/build/fuchsia:daemon_bench_headers",
         "//lib/libpowercmp:client_source_headers", "//lib/libpowercmp:powercmp",
         "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libservice:service", "//lib/libucl:ucl"],
     dynamic_deps = ["//lib/libpowercmp:powercmp_shared", "//lib/libfidl:fidl_shared", "//lib/libchannel:channel_shared",

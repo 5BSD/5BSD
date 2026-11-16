@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef CAPSULE_PROTECTED_STORAGE_H
 #define CAPSULE_PROTECTED_STORAGE_H
 #include "config.h"

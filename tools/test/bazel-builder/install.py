@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Offline full-package installation fixture, only inside a disposable VM."""
 import argparse
 import copy

@@ -1178,6 +1178,34 @@ ATF_TC_BODY(kernel_dir_from_boot_path, tc)
 	ATF_CHECK_EQ(ESTALE, sysext_kernel_dir_open());
 }
 
+static int
+confine_refused(void)
+{
+
+	errno = ENOTSUP;
+	return (-1);
+}
+
+/*
+ * A forked reader confines itself before it reads a byte; one that cannot
+ * reads nothing and reports why (the module metadata reader is the first),
+ * and the load is refused without a kernel call.
+ * (Every other case runs its readers in capability mode, the test's stand-in
+ * for the capprotect shield it has no descriptor for.)
+ */
+ATF_TC_WITHOUT_HEAD(reader_confine_failure_refused);
+ATF_TC_BODY(reader_confine_failure_refused, tc)
+{
+	int error;
+
+	fixture_dirs(tc);
+	sysext_test_child_confine = confine_refused;
+	ATF_CHECK_EQ(SYSEXT_DECISION_FAILED, load("rltest_a", &error));
+	ATF_CHECK_EQ(ENOTSUP, error);
+	ATF_CHECK_EQ(0, fake_loads);
+	ATF_CHECK(!fake_loaded("rltest_a.ko"));
+}
+
 ATF_TC_WITHOUT_HEAD(refuse_without_database);
 ATF_TC_BODY(refuse_without_database, tc)
 {
@@ -1893,6 +1921,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, kernel_dir_from_boot_path);
 	ATF_TP_ADD_TC(tp, driver_class_ensure);
 	ATF_TP_ADD_TC(tp, refuse_without_database);
+	ATF_TP_ADD_TC(tp, reader_confine_failure_refused);
 	ATF_TP_ADD_TC(tp, boot_replaced);
 	ATF_TP_ADD_TC(tp, boot_replaced_during_load);
 	ATF_TP_ADD_TC(tp, dependency_loaded_out_of_range);

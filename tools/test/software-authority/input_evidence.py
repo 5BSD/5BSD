@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Record staged VM inputs; this is provenance, not source/build attestation."""
 import hashlib
 import os

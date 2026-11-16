@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Real Linux64 libfuse CREATE flag probe. Disposable guests only. */
 #define _GNU_SOURCE
 #define FUSE_USE_VERSION 31

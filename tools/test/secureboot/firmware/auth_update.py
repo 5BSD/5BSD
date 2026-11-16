@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Build time-authenticated UEFI test updates; never submit host variables.
 
 UEFI 2.11 section 8.2.6 specifies the signed message and authentication wrapper.

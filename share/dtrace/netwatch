@@ -2,6 +2,8 @@
 /*
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * netwatch.d -- observe socket lifecycle and network-policy events: socket
  *		 creation/bind/listen/connect/accept/shutdown, security-relevant
  *		 setsockopt calls, listen-queue overflow drops, routing-table

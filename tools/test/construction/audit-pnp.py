@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise PNP metadata in real synthetic ELF objects, never kernel-load them."""
 import argparse
 import hashlib

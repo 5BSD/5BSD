@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * EXTERNAL REFERENCE ORACLE: the normative HID-Host rules of the HID Over
  * GATT Profile, reduced to machine-checkable predicates, each carried with
  * the verbatim sentence it was reduced from and the text line number it was

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual publication/rollback helper with fault seams; no live ZFS operations."""
 from pathlib import Path
 import subprocess

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * The presented identity: everything fstat(2), fstatfs(2), fpathconf(2),
  * F_KINFO, procstat and the /dev/fd links answer about a served file comes
  * from the identity the controller minted, and must equal what the real

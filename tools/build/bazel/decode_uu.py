@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Decode an explicit uuencoded fixture, optionally decompressing gzip."""
 import argparse
 import gzip

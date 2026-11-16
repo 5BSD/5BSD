@@ -1,5 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
  */
 
 #include <sys/ioctl.h>
@@ -24,6 +26,7 @@
 #include <logcmp_server.h>
 #include <shmring.h>
 
+#include "freebsd_test_suite/capability_tier.h"
 #include "logcmp_test.h"
 #include "logcmp_wakeup.h"
 
@@ -81,8 +84,7 @@ capability_connect(const char *name)
 	 * kern.mac_capability_isolation.enforce=0.  Skip naming the cause.
 	 */
 	if (control < 0)
-		atf_tc_skip("capability plane unavailable: /dev/mac_capability: "
-		    "%s", strerror(errno));
+		capability_plane_skip(errno);
 	memset(&connect, 0, sizeof(connect));
 	strlcpy(connect.name, name, sizeof(connect.name));
 	if (ioctl(control, MAC_CAPABILITY_CONNECT, &connect) == -1) {

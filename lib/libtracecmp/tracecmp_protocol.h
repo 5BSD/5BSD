@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * system.Trace constants (interface name, feature bits, statistics) and the
  * legacy pre-FIDL wire records.  The current client and provider speak
  * tracecmp.fidl (library bsd.trace.v1); the record layouts below are kept

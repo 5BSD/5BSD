@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* VM-only adapter: keep the maintained Python checker and original tests. */
 #include <sys/types.h>
 #include <sys/wait.h>

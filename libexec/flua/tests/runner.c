@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Test-only adapter: loader, program, script, case, libraries, --, modules.
  * --temp-env=NAME explicitly maps a fixture root variable to TEST_TMPDIR.
  */

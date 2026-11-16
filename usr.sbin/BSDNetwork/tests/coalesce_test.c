@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Resolver coalescing in the real BSDNetwork worker code: identical RESOLVE
  * requests join one lookup (bounded), a different one is refused with EBUSY,

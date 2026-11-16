@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #include "linux_test.h"
 /*
  * fallocate(2) modes: plain preallocation, FALLOC_FL_PUNCH_HOLE|KEEP_SIZE

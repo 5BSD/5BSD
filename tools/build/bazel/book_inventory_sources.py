@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Discover the regular-file inputs used by check-book.sh inventory modes.
 
 Only repository evaluation calls this scanner. Build actions consume the

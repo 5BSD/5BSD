@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Configure a 5BSD DUT ("PF" role) like setup-dut-openbsd.sh.  Disposable
 # guest only.  Interface names differ (vtnet); everything else is the same
 # topology.  The regress tree is expected at /usr/src/regress.

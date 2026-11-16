@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Audit whether ldconfig alone provides strict generation construction semantics.
 
 Only writes a fresh private work directory. A failed strict-construction gate

@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The 5BSD Project
+ * Copyright (c) 2026 Kory Heard
  *
  * "route show": print a routing table in the OpenBSD route(8) layout
  * (Destination, Gateway, Flags, Refs, Use, Mtu, Prio, Iface).

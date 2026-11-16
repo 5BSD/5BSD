@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Run the AMD nested-SVM ATF gate against installed, root-owned inputs.
 # Run POLICY_ONLY=1 on a separate boot with hw.vmm.svm.nested=0 set in the
 # kernel environment (the default is 1).

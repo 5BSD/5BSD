@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Firmware transport seams only; certificate parsing and verification are real. */
 #define NEED_BRSSL_H
 #include "libsecureboot-priv.h"

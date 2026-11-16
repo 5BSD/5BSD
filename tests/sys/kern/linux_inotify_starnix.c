@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Test ideas from Fuchsia Starnix inotify_test.cc at
  * 8a938a3224e768f6254ee12d240b6492361ebccf. Run in an empty writable directory.

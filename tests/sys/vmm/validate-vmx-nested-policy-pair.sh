@@ -1,5 +1,9 @@
 #!/bin/sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Validate the two immutable nested-VMX qualification transactions required
 # by the loader-only VPID policy.  Neither boot is sufficient by itself.
 #

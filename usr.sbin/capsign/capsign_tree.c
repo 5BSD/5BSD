@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Recursive operations on a new, private copy. No running bundle is modified. */
 #include <sys/types.h>
 #include <sys/stat.h>

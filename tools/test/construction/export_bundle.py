@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Fixed-member tar transport for an image, boot archive and their unsigned receipt.
 
 Never extract archive paths. The boot archive remains opaque here; its metadata

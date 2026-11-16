@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #include "linux_test.h"
 /*
  * mmap(2)/mprotect(2) flag semantics: MAP_FIXED_NOREPLACE, MAP_POPULATE,

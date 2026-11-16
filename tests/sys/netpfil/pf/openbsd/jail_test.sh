@@ -1,7 +1,7 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
-# Copyright (c) 2026 The 5BSD Project
+# Copyright (c) 2026 Kory Heard
 #
 # 5BSD pf extension: "jail <name|jid>" matches the jail of the local
 # socket of a TCP or UDP packet, also for jails that share the host's

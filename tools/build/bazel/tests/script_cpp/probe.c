@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #include <sys/param.h>
 #if defined(__x86_64__)
 BSD_CPP_CPU amd64

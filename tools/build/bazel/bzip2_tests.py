@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Emit the maintained bzip2 sample cases as declared native Bazel tests."""
 import json,shlex,shutil
 import component_labels

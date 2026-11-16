@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Sample the explicitly launched QEMU process; never infer complete peak usage."""
 import json
 import math

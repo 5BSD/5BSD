@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Exercise explicit shared libraries and verify the provider of each symbol. */
 #include <sys/param.h>
 #include <dlfcn.h>

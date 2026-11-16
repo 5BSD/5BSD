@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Link-only credential reference; never invoke setusercontext(). */
 #include <sys/types.h>
 #include <stdint.h>

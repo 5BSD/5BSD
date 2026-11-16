@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Real descriptor rejection and real ZFS provisioning; no ioctl doubles. */
 #include <sys/types.h>
 #include <sys/param.h>

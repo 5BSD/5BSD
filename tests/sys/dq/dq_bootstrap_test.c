@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * BS-0: pins of what a dq-attached process sees of its service lookup
  * route today, written before the bootstrap slices (BS-1 onward) put the
  * supervisor in front of it.  Every case records what the kernel and the
@@ -203,8 +205,25 @@ ATF_TC_BODY(route_slot_inherited, tc)
 	int pair[2];
 
 	dqt_require_plane();
-	ATF_REQUIRE_MSG(chan_create(pair) == 0, "channel: %s",
-	    strerror(errno));
+	if (chan_create(pair) == -1) {
+		int enforce, error;
+		size_t len;
+
+		/*
+		 * With the policy enforcing (the production tier) Capsule's
+		 * claim refuses /dev/mac_capability to this test; it runs
+		 * in the plane-on test tier.
+		 */
+		error = errno;
+		len = sizeof(enforce);
+		if ((error == EACCES || error == EPERM) &&
+		    sysctlbyname("kern.mac_capability_isolation.enforce",
+		    &enforce, &len, NULL, 0) == 0 && enforce != 0)
+			atf_tc_skip("DEFERRED_DEVICE_TIER: /dev/mac_capability "
+			    "is claimed by the enforcing plane; this case runs "
+			    "in the plane-on test tier");
+		atf_tc_fail("channel: %s", strerror(error));
+	}
 	ATF_REQUIRE_EQ_MSG(0, cap_proc(MAC_CAP_PROCESS_SET, pair[0], NULL),
 	    "MAC_CAP_PROCESS_SET: %s", strerror(errno));
 	ATF_REQUIRE_EQ(0, cap_proc(MAC_CAP_PROCESS_INFO, -1, &mine));
@@ -290,8 +309,10 @@ lookup_child(void *arg, void *result)
 /*
  * What each consumer returns: with the route, and with it cleared.
  *
- * notify_client_open() is 0 with the route since the BSDNotify
- * NOFDRECV repair (5b1325c979a); before it both rows were EPIPE.
+ * notify_client_open() is 0 with the route: BSDNotify's acceptor and router
+ * run with NOFDRECV and still receive client descriptors over their
+ * channels (cec56341aeb).  On a kernel that refused those as ambient
+ * receipt, both rows were EPIPE.
  */
 struct lookup_want {
 	int			 open_notify, open_log, open_sysctl;

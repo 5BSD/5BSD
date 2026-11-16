@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Minimal, dependency-free TPM2 guest probe for the 5BSD VM image.  It uses
  * the native tpm(4) character-device transaction interface and deliberately
  * implements only the two commands required by the qualification lane.

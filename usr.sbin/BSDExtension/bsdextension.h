@@ -316,6 +316,12 @@ extern const char *sysext_test_build_id;
 void	sysext_test_root_reset(void);
 /* Package database children forked (one per root load's plan). */
 extern int sysext_test_pkgdb_children;
+/*
+ * Confinement of a forked reader, run in the child before it touches the
+ * file.  The default is cap_enter(2) alone: an in-process test has no
+ * capprotect descriptor to shield with.  -1 with errno fails the read.
+ */
+extern int (*sysext_test_child_confine)(void);
 #else
 #define	SYSEXT_STATIC	static
 #endif /* BSDEXTENSION_TESTING */

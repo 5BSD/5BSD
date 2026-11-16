@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The FreeBSD Foundation
+ * Copyright (c) 2026 Kory Heard
  *
  * Shared test helpers for mac_capability test programs.
  */
@@ -11,6 +11,7 @@
 
 #include <sys/types.h>
 #include <sys/ioctl.h>
+#include <sys/sysctl.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -52,6 +53,36 @@ mac_capability_connect(const char *name)
 	}
 	close(ctl);
 	return (ca.fd);
+}
+
+/*
+ * Helper: skip a case that expects the isolation policy to refuse an access
+ * unless the policy enforces.  With kern.mac_capability_isolation.enforce=0,
+ * the boot-only test mode of the plane-on VM tier, a resource-access denial
+ * is traced and the access allowed, so such a case cannot pass there.  It
+ * runs in the enforced tier: a plane-off guest booted with enforce=1
+ * (tools/build/fuchsia/vm-provider.sh PLANE_OFF=1 ISOLATION_ENFORCE=1; see
+ * docs/book/src/develop/testing.md).
+ */
+static inline void
+require_isolation_enforced(void)
+{
+	size_t len;
+	int enforce;
+
+	len = sizeof(enforce);
+	if (sysctlbyname("kern.mac_capability_isolation.enforce", &enforce,
+	    &len, NULL, 0) == -1) {
+		if (errno == ENOENT)
+			atf_tc_skip("isolation service not loaded");
+		atf_tc_fail("sysctl kern.mac_capability_isolation.enforce: %s",
+		    strerror(errno));
+	}
+	if (enforce == 0)
+		atf_tc_skip("DEFERRED_ENFORCED_TIER: "
+		    "kern.mac_capability_isolation.enforce=0: the isolation "
+		    "policy allows what this case expects it to refuse; it "
+		    "runs in the enforced (plane-off) tier");
 }
 
 #endif /* _MAC_CAPABILITY_TEST_HELPERS_H_ */

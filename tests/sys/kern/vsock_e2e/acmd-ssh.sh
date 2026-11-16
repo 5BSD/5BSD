@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # ACMD adapter for run-linux.sh.  Configure ALPINE_HOST and, if needed,
 # ALPINE_USER/SSH_IDENTITY.
 set -eu

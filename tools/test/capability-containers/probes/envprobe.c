@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * envprobe: a throwaway unit for the shared-environment e2e.  Two units of one
  * bundle run it: "writer" claims the bundle-shared store "env" read-write and
  * writes env/settings; "reader" claims the read-only view through

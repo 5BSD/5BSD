@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Compare explicitly selected objcopy tools on one retained input.
 
 This is a sequential warm-cache microbenchmark, not a disk-throughput or

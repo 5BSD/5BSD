@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Qualify native libmd graph/test/stage construction from explicit prepared inputs."""
 import argparse
 import fcntl

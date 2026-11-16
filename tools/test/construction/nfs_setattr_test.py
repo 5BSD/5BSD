@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual NFS setattr helper with injected policy and metadata backends."""
 from pathlib import Path
 import resource,subprocess,tempfile,unittest

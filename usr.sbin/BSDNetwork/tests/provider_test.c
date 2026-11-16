@@ -1,5 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
  */
 
 #include <sys/capsicum.h>
@@ -26,6 +28,7 @@
 #include <networkcmp.h>
 #include <networkcmp_server.h>
 
+#include "freebsd_test_suite/capability_tier.h"
 #include "config.h"
 #include "networkcmp_test.h"
 #include "policy.h"
@@ -69,8 +72,7 @@ capability_connect(const char *name)
 	 * kern.mac_capability_isolation.enforce=0.  Skip naming the cause.
 	 */
 	if (control < 0)
-		atf_tc_skip("capability plane unavailable: /dev/mac_capability: "
-		    "%s", strerror(errno));
+		capability_plane_skip(errno);
 	memset(&connect, 0, sizeof(connect));
 	strlcpy(connect.name, name, sizeof(connect.name));
 	if (ioctl(control, MAC_CAPABILITY_CONNECT, &connect) == -1) {

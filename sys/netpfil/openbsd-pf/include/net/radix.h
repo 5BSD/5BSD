@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* 5BSD: OpenBSD radix trie for pf tables (contrib/openbsd-pf/sys/net/radix.c),
  * renamed so it does not clash with the 5BSD kernel radix code. */
 #ifndef _OBSD_RADIX_RENAME_H_

@@ -1,5 +1,9 @@
 #!/bin/sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Compile the production VMM kernel module used by Intel nested-VMX
 # qualification.  Model tests are valuable, but they must not hide an API,
 # warning, or link regression in the module that will run on the host.

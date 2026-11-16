@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * dq_served_test's Linux half of the O_PATH rows: a freestanding amd64
  * Linux program, built at buildworld time (Makefile) with
  *   clang --target=x86_64-linux-gnu -fuse-ld=lld -nostdlib -static ...

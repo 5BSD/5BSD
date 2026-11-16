@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Protect pkg configuration registration independently of payload byte checks."""
 import unittest
 import archive_verify

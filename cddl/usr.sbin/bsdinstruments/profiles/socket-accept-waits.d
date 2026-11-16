@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * See tools/test/system-tracing/COVERAGE-EIGHTEENTH for argument semantics.
  * Scalar arguments only, no payloads, addresses or credentials.
  * Start before the workload; dropped events invalidate latency pairing.

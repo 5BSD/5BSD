@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise real debug installation and METALOG output without root privileges."""
 from pathlib import Path
 import subprocess

@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Run a disposable software-authority VM using explicitly selected inputs."""
 from pathlib import Path
 import subprocess, os, time, json, socket, hashlib, argparse

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Native-only rights, introspection, and libc cancellation contracts. */
 #include <sys/types.h>
 #include <sys/capsicum.h>

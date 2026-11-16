@@ -1,5 +1,8 @@
 /* Embedded image integrity cost, including exec, O_VERIFY, descriptor checks
  * and executable-capable mmap. SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Source IDs: 0=exec, 1=O_VERIFY open, 2=descriptor check, 3=mmap.
  * Recognized means an EOF signature marker was found, not signer authority.
  * No paths, descriptor numbers, keys, policy bytes or pointers are recorded. */

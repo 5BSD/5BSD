@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # amd64 Linux64 pending signals, tracing reattach and multicast transitions.
 set -u
 sha256 /root/linux_ptrace_pending /root/linux_mcast_filter || exit 1

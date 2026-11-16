@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The FreeBSD Foundation
+ * Copyright (c) 2026 Kory Heard
  *
  * Tests for:
  *   - mac_capability_identity service (IDENTITY_OP_SELF, IDENTITY_OP_QUERY)

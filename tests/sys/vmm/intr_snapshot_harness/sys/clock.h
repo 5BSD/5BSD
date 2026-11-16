@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Userspace harness shadow of the kernel <sys/clock.h>.  The real header
  * hides 'struct clocktime' and the ct<->ts conversion prototypes behind
  * _KERNEL, so mirror just what vrtc.c consumes.  The test program supplies
