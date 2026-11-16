@@ -447,7 +447,7 @@ _DP_fetch=	md
 .if ${MK_OPENSSH} != "no"
 _DP_fido2+=	cbor crypto z
 .endif
-_DP_dqtest=	dq pthread util
+_DP_dqtest=	dq pthread util atf_c
 _DP_fifolog=	z
 _DP_formw=	ncursesw
 _DP_geom=	bsdxml sbuf
