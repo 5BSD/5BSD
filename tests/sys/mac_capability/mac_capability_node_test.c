@@ -20,6 +20,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -298,6 +299,7 @@ ATF_TC_HEAD(node_racct_get_self, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "NODE_OP_GET_RACCT on self returns a racct snapshot");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_node");
+	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(node_racct_get_self, tc)
 {
@@ -305,6 +307,7 @@ ATF_TC_BODY(node_racct_get_self, tc)
 	struct node_racct_reply reply;
 	int fd;
 
+	require_racct(true);
 	fd = mac_capability_connect("node");
 	ATF_REQUIRE(fd >= 0);
 
@@ -313,11 +316,10 @@ ATF_TC_BODY(node_racct_get_self, tc)
 	req.resource = RACCT_NOFILE;
 	ATF_REQUIRE(node_call_raw(fd, &req, sizeof(req), NULL, 0,
 	    &reply, sizeof(reply)) == 0);
-	if (reply.status == NODE_STATUS_ERR)
-		atf_tc_skip("RACCT not compiled into kernel");
 	ATF_CHECK_EQ(reply.status, NODE_STATUS_OK);
 	ATF_CHECK_EQ(reply.resource, RACCT_NOFILE);
-	ATF_CHECK(reply.usage >= 0);
+	/* The snapshot is the process's racct(9) counter (rctl's openfiles). */
+	ATF_CHECK_EQ(reply.usage, racct_usage(getpid(), "openfiles"));
 
 	close(fd);
 }
@@ -547,8 +549,8 @@ ATF_TC_BODY(node_stat_child, tc)
 	ATF_REQUIRE(pid >= 0);
 	if (pid == 0) {
 		close(fd);
-		sleep(10);
-		_exit(0);
+		for (;;)
+			pause();
 	}
 
 	memset(&req, 0, sizeof(req));
@@ -649,8 +651,8 @@ ATF_TC_BODY(node_procctl_set_child, tc)
 	ATF_REQUIRE(pid >= 0);
 	if (pid == 0) {
 		close(fd);
-		sleep(10);
-		_exit(0);
+		for (;;)
+			pause();
 	}
 
 	memset(&sreq, 0, sizeof(sreq));
@@ -696,7 +698,11 @@ ATF_TC_BODY(node_cred_child, tc)
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	memset(&req, 0, sizeof(req));
 	req.op = NODE_OP_CRED;
@@ -731,7 +737,11 @@ ATF_TC_BODY(node_rusage_child, tc)
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	memset(&req, 0, sizeof(req));
 	req.op = NODE_OP_RUSAGE;
@@ -766,7 +776,11 @@ ATF_TC_BODY(node_nice_set_child, tc)
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	/* Set child nice to +5 */
 	memset(&sreq, 0, sizeof(sreq));
@@ -809,7 +823,11 @@ ATF_TC_BODY(node_affinity_get_child, tc)
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	memset(&req, 0, sizeof(req));
 	req.op = NODE_OP_GET_AFFINITY;
@@ -830,6 +848,7 @@ ATF_TC_HEAD(node_racct_get_child, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "NODE_OP_GET_RACCT on child via procdesc returns usage");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_node");
+	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(node_racct_get_child, tc)
 {
@@ -838,20 +857,23 @@ ATF_TC_BODY(node_racct_get_child, tc)
 	int fd, pd, status;
 	pid_t pid;
 
+	require_racct(false);
 	fd = mac_capability_connect("node");
 	ATF_REQUIRE(fd >= 0);
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	memset(&req, 0, sizeof(req));
 	req.op = NODE_OP_GET_RACCT;
 	req.resource = RACCT_NOFILE;
 	ATF_REQUIRE(node_call_raw(fd, &req, sizeof(req), &pd, 1,
 	    &reply, sizeof(reply)) == 0);
-	if (reply.status == NODE_STATUS_ERR)
-		atf_tc_skip("RACCT not compiled into kernel");
 	ATF_CHECK_EQ(reply.status, NODE_STATUS_OK);
 
 	pdkill(pd, SIGKILL);
@@ -881,7 +903,11 @@ ATF_TC_BODY(node_set_cred_child, tc)
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	/* Set child to uid=65534, gid=65534 (nobody) */
 	memset(&sreq, 0, sizeof(sreq));
@@ -934,7 +960,11 @@ ATF_TC_BODY(node_set_cred_groups_child, tc)
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	memset(&sreq, 0, sizeof(sreq));
 	sreq.op = NODE_OP_SET_CRED;
@@ -1053,7 +1083,11 @@ ATF_TC_BODY(node_set_session_remote_rejected, tc)
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	memset(&req, 0, sizeof(req));
 	req.op = NODE_OP_SET_SESSION;
@@ -1086,7 +1120,11 @@ ATF_TC_BODY(node_set_pgrp_remote_rejected, tc)
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	memset(&sreq, 0, sizeof(sreq));
 	sreq.op = NODE_OP_SET_PGRP;
@@ -1169,7 +1207,11 @@ ATF_TC_BODY(node_set_login_child, tc)
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	/*
 	 * Set login name on the child's session.  The child inherits
@@ -1209,7 +1251,11 @@ ATF_TC_BODY(node_rlimit_get_child, tc)
 	ATF_REQUIRE(fd >= 0);
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	memset(&req, 0, sizeof(req));
 	req.op = NODE_OP_GET_RLIMIT;
@@ -1243,7 +1289,11 @@ ATF_TC_BODY(node_nice_get_child, tc)
 	ATF_REQUIRE(fd >= 0);
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	memset(&req, 0, sizeof(req));
 	req.op = NODE_OP_GET_NICE;
@@ -1276,7 +1326,11 @@ ATF_TC_BODY(node_affinity_set_child, tc)
 	ATF_REQUIRE(fd >= 0);
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	/* Get child's current affinity */
 	memset(&greq, 0, sizeof(greq));
@@ -1318,7 +1372,11 @@ ATF_TC_BODY(node_procctl_get_child, tc)
 	ATF_REQUIRE(fd >= 0);
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	memset(&req, 0, sizeof(req));
 	req.op = NODE_OP_GET_PROCCTL;
@@ -1352,7 +1410,11 @@ ATF_TC_BODY(node_umask_child, tc)
 	ATF_REQUIRE(fd >= 0);
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	/* Get child's umask */
 	memset(&greq, 0, sizeof(greq));
@@ -1461,10 +1523,8 @@ ATF_TC_BODY(node_rlimit_max_values, tc)
 	sreq.rlim_max = large_val;
 	ATF_REQUIRE(node_call_raw(fd, &sreq, sizeof(sreq), NULL, 0,
 	    &reply, sizeof(reply)) == 0);
-	if (reply.status != NODE_STATUS_OK) {
-		close(fd);
-		atf_tc_skip("kernel rejected large rlimit value");
-	}
+	/* kern_proc_setrlimit() clamps NOFILE to kern.maxfilesperproc. */
+	ATF_REQUIRE_EQ(reply.status, NODE_STATUS_OK);
 
 	/* Verify via GET */
 	memset(&greq, 0, sizeof(greq));
@@ -1473,8 +1533,8 @@ ATF_TC_BODY(node_rlimit_max_values, tc)
 	ATF_REQUIRE(node_call_raw(fd, &greq, sizeof(greq), NULL, 0,
 	    &reply, sizeof(reply)) == 0);
 	ATF_CHECK_EQ(reply.status, NODE_STATUS_OK);
-	ATF_CHECK(reply.rlim_cur >= expected_val);
-	ATF_CHECK(reply.rlim_max >= expected_val);
+	ATF_CHECK_EQ(reply.rlim_cur, expected_val);
+	ATF_CHECK_EQ(reply.rlim_max, expected_val);
 
 	/* Restore original limits */
 	sreq.rlim_cur = (int64_t)orig.rlim_cur;
@@ -1507,7 +1567,11 @@ ATF_TC_BODY(node_nice_boundary, tc)
 	/* Use a child so we don't permanently alter our own priority */
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	/* Set nice to 20 (lowest priority) */
 	memset(&sreq, 0, sizeof(sreq));
@@ -1547,7 +1611,8 @@ ATF_TC(node_stat_zombie);
 ATF_TC_HEAD(node_stat_zombie, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "NODE_OP_STAT on zombie child reports PRS_ZOMBIE state");
+	    "NODE_OP_STAT on an exited, unreaped child reports "
+	    "NODE_STATUS_DEAD");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_node");
 }
 ATF_TC_BODY(node_stat_zombie, tc)
@@ -1565,11 +1630,13 @@ ATF_TC_BODY(node_stat_zombie, tc)
 	if (pid == 0)
 		_exit(0);
 
-	/*
-	 * Don't waitpid — let the child become a zombie.
-	 * Give it a moment to exit and transition to zombie state.
-	 */
-	usleep(100000);
+	/* Wait for the exit without reaping: the child stays a zombie. */
+	{
+		siginfo_t si;
+
+		ATF_REQUIRE(waitid(P_PID, pid, &si, WEXITED | WNOWAIT) == 0);
+		ATF_REQUIRE_EQ(si.si_pid, pid);
+	}
 
 	memset(&req, 0, sizeof(req));
 	req.op = NODE_OP_STAT;
@@ -1577,19 +1644,14 @@ ATF_TC_BODY(node_stat_zombie, tc)
 	    &reply, sizeof(reply)) == 0);
 
 	/*
-	 * The zombie is not yet reaped, so it should still be visible
-	 * via procdesc.  Check that state indicates zombie (PRS_ZOMBIE=2)
-	 * or that the service reports NODE_STATUS_DEAD.
+	 * The zombie is not yet reaped, but it has P_WEXIT set:
+	 * mac_capability_resolve_proc() refuses it, so the service answers
+	 * NODE_STATUS_DEAD rather than a PRS_ZOMBIE snapshot.
 	 */
-	if (reply.status == NODE_STATUS_OK) {
-		ATF_CHECK_EQ(reply.pid, (int32_t)pid);
-		ATF_CHECK_EQ(reply.state, 2); /* PRS_ZOMBIE */
-	} else {
-		ATF_CHECK_EQ(reply.status, NODE_STATUS_DEAD);
-	}
+	ATF_CHECK_EQ(reply.status, NODE_STATUS_DEAD);
 
 	/* Reap the zombie */
-	waitpid(pid, NULL, 0);
+	ATF_REQUIRE_EQ(waitpid(pid, NULL, 0), pid);
 	close(pd);
 	close(fd);
 }
@@ -1615,7 +1677,11 @@ ATF_TC_BODY(node_cred_ngroups_zero, tc)
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	/* Set credentials with ngroups=0 (clear supplementary groups) */
 	memset(&sreq, 0, sizeof(sreq));
@@ -1977,7 +2043,11 @@ ATF_TC_BODY(node_pdeathsig_set_child, tc)
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	/* Set pdeathsig=SIGTERM on child */
 	memset(&sreq, 0, sizeof(sreq));
@@ -2047,7 +2117,11 @@ ATF_TC_BODY(node_protect_child, tc)
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	memset(&sreq, 0, sizeof(sreq));
 	sreq.op = NODE_OP_SET_PROCCTL;
@@ -2120,8 +2194,9 @@ ATF_TC_BODY(node_reap_kill_children, tc)
 	struct node_status_reply areply;
 	struct node_reap_kill_req kreq;
 	struct node_reap_kill_reply kreply;
-	int fd, status;
-	pid_t c1, c2;
+	int fd, i, status;
+	bool fallback;
+	pid_t c1, c2, r;
 
 	fd = mac_capability_connect("node");
 	ATF_REQUIRE(fd >= 0);
@@ -2136,14 +2211,17 @@ ATF_TC_BODY(node_reap_kill_children, tc)
 	/* Fork two children */
 	c1 = fork();
 	ATF_REQUIRE(c1 >= 0);
-	if (c1 == 0) { sleep(60); _exit(0); }
+	if (c1 == 0) {
+		for (;;)
+			pause();
+	}
 
 	c2 = fork();
 	ATF_REQUIRE(c2 >= 0);
-	if (c2 == 0) { sleep(60); _exit(0); }
-
-	/* Let children start */
-	usleep(50000);
+	if (c2 == 0) {
+		for (;;)
+			pause();
+	}
 
 	/* Kill all children via reaper */
 	memset(&kreq, 0, sizeof(kreq));
@@ -2152,20 +2230,45 @@ ATF_TC_BODY(node_reap_kill_children, tc)
 	kreq.rk_flags = REAPER_KILL_CHILDREN;
 	ATF_REQUIRE(node_call_raw(fd, &kreq, sizeof(kreq), NULL, 0,
 	    &kreply, sizeof(kreply)) == 0);
-	ATF_CHECK(kreply.status == NODE_STATUS_OK ||
-	    kreply.status == NODE_STATUS_ERR);
-	if (kreply.status == NODE_STATUS_OK)
-		ATF_CHECK(kreply.rk_killed >= 2);
+	ATF_CHECK_EQ(kreply.status, NODE_STATUS_OK);
+	/* Both children are direct children of the reaper. */
+	ATF_CHECK_EQ(kreply.rk_killed, 2);
 
-	/* Reap children */
-	waitpid(c1, &status, 0);
-	waitpid(c2, &status, 0);
+	/*
+	 * Only an answer claiming both kills is checked against the children;
+	 * otherwise kill them here so the case fails instead of hanging.
+	 */
+	fallback = kreply.status != NODE_STATUS_OK || kreply.rk_killed != 2;
+	for (i = 0; i < 2; i++) {
+		pid_t c = i == 0 ? c1 : c2;
+		bool reaped = false;
+
+		for (int t = 0; !fallback && t < 1000 && !reaped; t++) {
+			r = waitpid(c, &status, WNOHANG);
+			ATF_REQUIRE(r == 0 || r == c);
+			if (r == c)
+				reaped = true;
+			else
+				usleep(10000);
+		}
+		if (!reaped) {
+			ATF_CHECK_MSG(fallback,
+			    "child %d still alive 10 s after REAP_KILL", (int)c);
+			(void)kill(c, SIGKILL);
+			ATF_REQUIRE_EQ(waitpid(c, &status, 0), c);
+			continue;
+		}
+		/* Only REAP_KILL's SIGKILL ends a child blocked in pause(). */
+		ATF_CHECK_MSG(WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL,
+		    "child %d status %#x", (int)c, status);
+	}
 
 	/* Release reaper */
 	memset(&req, 0, sizeof(req));
 	req.op = NODE_OP_REAP_RELEASE;
-	node_call_raw(fd, &req, sizeof(req), NULL, 0,
-	    &areply, sizeof(areply));
+	ATF_REQUIRE(node_call_raw(fd, &req, sizeof(req), NULL, 0,
+	    &areply, sizeof(areply)) == 0);
+	ATF_CHECK_EQ(areply.status, NODE_STATUS_OK);
 
 	close(fd);
 }
@@ -2370,18 +2473,24 @@ ATF_TC_BODY(node_reap_getpids, tc)
 	/* Fork three children */
 	c1 = fork();
 	ATF_REQUIRE(c1 >= 0);
-	if (c1 == 0) { sleep(60); _exit(0); }
+	if (c1 == 0) {
+		for (;;)
+			pause();
+	}
 
 	c2 = fork();
 	ATF_REQUIRE(c2 >= 0);
-	if (c2 == 0) { sleep(60); _exit(0); }
+	if (c2 == 0) {
+		for (;;)
+			pause();
+	}
 
 	c3 = fork();
 	ATF_REQUIRE(c3 >= 0);
-	if (c3 == 0) { sleep(60); _exit(0); }
-
-	/* Let children start */
-	usleep(50000);
+	if (c3 == 0) {
+		for (;;)
+			pause();
+	}
 
 	/* Get descendant PIDs */
 	memset(&req, 0, sizeof(req));
@@ -2391,7 +2500,7 @@ ATF_TC_BODY(node_reap_getpids, tc)
 	    reply_buf, sizeof(reply_buf)) == 0);
 	gp = (struct node_reap_getpids_reply *)reply_buf;
 	ATF_CHECK_EQ(gp->status, NODE_STATUS_OK);
-	ATF_CHECK(gp->count >= 3);
+	ATF_CHECK_EQ(gp->count, 3);
 
 	/* Verify all three children appear in the list */
 	found1 = found2 = found3 = 0;
@@ -2461,15 +2570,22 @@ ATF_TC_BODY(node_signal_child, tc)
 		close(fd);
 		close(sv[0]);
 
-		/* Tell parent we're ready */
-		write(sv[1], "r", 1);
+		/*
+		 * Block SIGUSR1 before reporting ready: the parent signals as
+		 * soon as it reads the byte, and an unblocked SIGUSR1 would
+		 * kill the child with its default action.
+		 */
+		sigemptyset(&set);
+		sigaddset(&set, SIGUSR1);
+		if (sigprocmask(SIG_BLOCK, &set, NULL) != 0)
+			_exit(2);
+		if (write(sv[1], "r", 1) != 1)
+			_exit(3);
 		close(sv[1]);
 
 		/* Wait for SIGUSR1 */
-		sigemptyset(&set);
-		sigaddset(&set, SIGUSR1);
-		sigprocmask(SIG_BLOCK, &set, NULL);
-		sigwait(&set, &sig);
+		if (sigwait(&set, &sig) != 0)
+			_exit(4);
 
 		/* Exit 0 if we got SIGUSR1, 1 otherwise */
 		_exit(sig == SIGUSR1 ? 0 : 1);

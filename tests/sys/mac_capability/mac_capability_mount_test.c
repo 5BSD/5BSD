@@ -8,6 +8,8 @@
 
 #include <sys/types.h>
 #include <sys/ioctl.h>
+#include <sys/linker.h>
+#include <sys/module.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
 
@@ -28,6 +30,25 @@
  * Helpers
  * ---------------------------------------------------------------- */
 
+/*
+ * Skip, naming it, when the kernel has no fs: neither compiled in nor
+ * loaded, nor a module the mount could load.  GENERIC compiles in tmpfs,
+ * devfs and fdescfs, so there the mount must succeed.
+ */
+static void
+require_fs(const char *fs)
+{
+	struct xvfsconf vfc;
+	char path[64];
+
+	if (getvfsbyname(fs, &vfc) == 0 || modfind(fs) >= 0)
+		return;
+	snprintf(path, sizeof(path), "/boot/kernel/%s.ko", fs);
+	if (access(path, F_OK) == 0)
+		return;
+	atf_tc_skip("%s is not available in this kernel", fs);
+}
+
 static int
 mount_connect(void)
 {
@@ -37,11 +58,9 @@ mount_connect(void)
 	ctl = mac_capability_open();
 	memset(&ca, 0, sizeof(ca));
 	strlcpy(ca.name, "mount", sizeof(ca.name));
-	if (ioctl(ctl, MAC_CAPABILITY_CONNECT, &ca) != 0) {
-		if (errno == ENOENT)
-			atf_tc_skip("mount service not loaded");
-		ATF_REQUIRE_MSG(0, "connect mount: %s", strerror(errno));
-	}
+	/* The mount service is compiled in: a failed connect is a failure. */
+	ATF_REQUIRE_MSG(ioctl(ctl, MAC_CAPABILITY_CONNECT, &ca) == 0,
+	    "connect mount: %s", strerror(errno));
 	close(ctl);
 	return (ca.fd);
 }
@@ -159,21 +178,18 @@ ATF_TC_BODY(mount_allows_dotdot_in_name, tc)
 
 	/*
 	 * "/tmp/..hidden" has ".." in the directory name, not as a
-	 * path traversal component.  This should NOT be rejected.
-	 * The mount will likely fail with ENOENT (dir doesn't exist),
-	 * but it should not be rejected by path validation.
+	 * path traversal component.  Path validation must accept it, so the
+	 * mount reaches the lookup and fails there: the directory does not
+	 * exist (ENOENT), which the validation error (ERR) would hide.
 	 */
+	ATF_REQUIRE_ERRNO(ENOENT, access("/tmp/..hidden", F_OK) == -1);
 	memset(&req, 0, sizeof(req));
 	req.op = MOUNT_OP_MOUNT;
 	strlcpy(req.fstype, "tmpfs", sizeof(req.fstype));
 	strlcpy(req.fspath, "/tmp/..hidden", sizeof(req.fspath));
 	ATF_REQUIRE(mount_call_raw(fd, &req, sizeof(req),
 	    &reply, sizeof(reply)) == 0);
-	/* Should pass validation (not STATUS_ERR from path check).
-	 * Will fail with ENOENT or EPERM, not the validation error. */
-	ATF_CHECK(reply.status != MOUNT_STATUS_ERR ||
-	    reply.status == MOUNT_STATUS_ENOENT ||
-	    reply.status == MOUNT_STATUS_EPERM);
+	ATF_CHECK_EQ(reply.status, MOUNT_STATUS_ENOENT);
 
 	close(fd);
 }
@@ -243,6 +259,7 @@ ATF_TC_BODY(mount_tmpfs, tc)
 	char mntpath[MOUNT_MAXPATH];
 	int fd;
 
+	require_fs("tmpfs");
 	snprintf(mntpath, sizeof(mntpath),
 	    "/tmp/mac_capability_mount_test.%d", (int)getpid());
 	ATF_REQUIRE(mkdir(mntpath, 0755) == 0 || errno == EEXIST);
@@ -257,14 +274,12 @@ ATF_TC_BODY(mount_tmpfs, tc)
 	strlcpy(mreq.fspath, mntpath, sizeof(mreq.fspath));
 	ATF_REQUIRE(mount_call_raw(fd, &mreq, sizeof(mreq),
 	    &reply, sizeof(reply)) == 0);
-	if (reply.status != MOUNT_STATUS_OK) {
-		rmdir(mntpath);
-		close(fd);
-		atf_tc_skip("tmpfs mount not permitted");
-	}
+	/* tmpfs is compiled into GENERIC; the mount must succeed. */
+	ATF_REQUIRE_EQ_MSG(reply.status, MOUNT_STATUS_OK,
+	    "tmpfs mount: status %u", reply.status);
 
 	/* Verify we can create a file on it */
-	if (reply.status == MOUNT_STATUS_OK) {
+	{
 		char filepath[MOUNT_MAXPATH + 16];
 		int tfd;
 
@@ -359,6 +374,7 @@ ATF_TC_BODY(mount_devfs, tc)
 	char mntpath[MOUNT_MAXPATH];
 	char devnull[MOUNT_MAXPATH + 16];
 
+	require_fs("devfs");
 	snprintf(mntpath, sizeof(mntpath),
 	    "/tmp/mac_capability_devfs_test.%d", (int)getpid());
 	ATF_REQUIRE(mkdir(mntpath, 0755) == 0 || errno == EEXIST);
@@ -371,26 +387,14 @@ ATF_TC_BODY(mount_devfs, tc)
 	strlcpy(mreq.fspath, mntpath, sizeof(mreq.fspath));
 	ATF_REQUIRE(mount_call_raw(fd, &mreq, sizeof(mreq),
 	    &reply, sizeof(reply)) == 0);
-	if (reply.status != MOUNT_STATUS_OK) {
-		rmdir(mntpath);
-		close(fd);
-		atf_tc_skip("devfs mount not permitted (jail config?)");
-	}
+	/* devfs is compiled into GENERIC; the mount must succeed. */
+	ATF_REQUIRE_EQ_MSG(reply.status, MOUNT_STATUS_OK,
+	    "devfs mount: status %u", reply.status);
 
-	/* Verify /dev/null exists on the mount (may be absent in jail) */
+	/* A fresh devfs mount outside a jail applies no ruleset. */
 	snprintf(devnull, sizeof(devnull), "%s/null", mntpath);
-	if (stat(devnull, &sb) != 0) {
-		/* Clean up and skip — jail devfs_ruleset may hide /dev/null */
-		memset(&ureq, 0, sizeof(ureq));
-		ureq.op = MOUNT_OP_UNMOUNT;
-		ureq.flags = MOUNT_F_FORCE;
-		strlcpy(ureq.fspath, mntpath, sizeof(ureq.fspath));
-		mount_call_raw(fd, &ureq, sizeof(ureq), &reply, sizeof(reply));
-		rmdir(mntpath);
-		close(fd);
-		atf_tc_skip("devfs mounted but /dev/null absent "
-		    "(jail devfs_ruleset?)");
-	}
+	ATF_CHECK_MSG(stat(devnull, &sb) == 0, "stat %s: %s", devnull,
+	    strerror(errno));
 
 	memset(&ureq, 0, sizeof(ureq));
 	ureq.op = MOUNT_OP_UNMOUNT;
@@ -422,6 +426,7 @@ ATF_TC_BODY(mount_tmpfs_with_opts, tc)
 	struct mount_reply reply;
 	char mntpath[MOUNT_MAXPATH];
 
+	require_fs("tmpfs");
 	snprintf(mntpath, sizeof(mntpath),
 	    "/tmp/mac_capability_opts_test.%d", (int)getpid());
 	ATF_REQUIRE(mkdir(mntpath, 0755) == 0 || errno == EEXIST);
@@ -504,6 +509,7 @@ ATF_TC_BODY(mount_fdescfs, tc)
 	char mntpath[MOUNT_MAXPATH];
 	char fd0path[MOUNT_MAXPATH + 8];
 
+	require_fs("fdescfs");
 	snprintf(mntpath, sizeof(mntpath),
 	    "/tmp/mac_capability_fdescfs_test.%d", (int)getpid());
 	ATF_REQUIRE(mkdir(mntpath, 0755) == 0 || errno == EEXIST);
@@ -516,11 +522,9 @@ ATF_TC_BODY(mount_fdescfs, tc)
 	strlcpy(mreq.fspath, mntpath, sizeof(mreq.fspath));
 	ATF_REQUIRE(mount_call_raw(fd, &mreq, sizeof(mreq),
 	    &reply, sizeof(reply)) == 0);
-	if (reply.status != MOUNT_STATUS_OK) {
-		rmdir(mntpath);
-		close(fd);
-		atf_tc_skip("fdescfs mount not permitted");
-	}
+	/* fdescfs is compiled into GENERIC; the mount must succeed. */
+	ATF_REQUIRE_EQ_MSG(reply.status, MOUNT_STATUS_OK,
+	    "fdescfs mount: status %u", reply.status);
 
 	/* fd 0 (stdin) should exist */
 	snprintf(fd0path, sizeof(fd0path), "%s/0", mntpath);

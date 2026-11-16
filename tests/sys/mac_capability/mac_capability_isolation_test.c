@@ -54,12 +54,9 @@ fi_connect(void)
 	ctl = mac_capability_open();
 	memset(&ca, 0, sizeof(ca));
 	strlcpy(ca.name, "isolation", sizeof(ca.name));
-	if (ioctl(ctl, MAC_CAPABILITY_CONNECT, &ca) != 0) {
-		if (errno == ENOENT)
-			atf_tc_skip("isolation service not loaded");
-		ATF_REQUIRE_MSG(0, "connect isolation: %s",
-		    strerror(errno));
-	}
+	/* The isolation service is compiled in: a failed connect fails. */
+	ATF_REQUIRE_MSG(ioctl(ctl, MAC_CAPABILITY_CONNECT, &ca) == 0,
+	    "connect isolation: %s", strerror(errno));
 	close(ctl);
 	return (ca.fd);
 }

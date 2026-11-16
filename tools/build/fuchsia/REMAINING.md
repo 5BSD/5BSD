@@ -142,9 +142,9 @@ artifact (raw `.sh` copied over the atf-sh program), not a build defect.
 - Incremental world can keep stale objects; if C tests SIGBUS, suspect
   stale objects.  Other agents build in the same /usr/obj world objdir.
 - Run heavy builds and VMs one at a time (an earlier host hard reset).
-- Plane-off VM runs: `PLANE_OFF=1`; build `mac_capability_test_kernelstore`
-  from `tests/sys/mac_capability/fixtures`, ship it with `EXTRA_DIR` and
-  set `MAC_CAPABILITY_FIXTURE_DIR`.
+- Plane-off VM runs: `PLANE_OFF=1`.  The capability fixtures ship in
+  mac-capability-tests and the cases load them; see
+  docs/book/src/develop/testing.md.
 - Pre-existing, not FIDL: logctl_test `unavailable`/`severity_names` fail
   in any plane-on VM; BSDNetwork resolves `localhost` only if BSDFilesystem
   served /etc/hosts when it started.

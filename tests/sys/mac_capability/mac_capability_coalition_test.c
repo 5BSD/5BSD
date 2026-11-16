@@ -5,11 +5,9 @@
  *
  * Tests for mac_capability_coalition — capability-based resource group management.
  *
- * Requires:
- *   kldload mac_capability
- *   kldload mac_capability_coalition
- *   kldload mac_capability_test_keystore   (for mac_capability member tests)
- *   kldload mac_capability_channel            (for mac_capability member termination tests)
+ * The plane and its services are compiled in.  The member tests use the
+ * mac_capability_test_keystore fixture, which mac_capability_connect() loads
+ * from the test package (mac_capability_test_helpers.h).
  */
 
 #include <sys/param.h>
@@ -37,6 +35,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <atf-c.h>
@@ -126,6 +125,98 @@ coalition_stat(int fd, struct coalition_stat_reply *sr)
 	hdr.op = COALITION_OP_STAT;
 	return (coalition_call(fd, &hdr, sizeof(hdr), NULL, 0,
 	    sr, sizeof(*sr)));
+}
+
+/*
+ * Wait for an asynchronous kernel effect (a callout, a taskqueue task, the
+ * delivery of a signal) by polling the very condition the case then asserts,
+ * every 10 ms for at most 5 s.  Synchronous effects are asserted directly.
+ */
+#define	WAIT_STEP_US	10000
+#define	WAIT_STEPS	500
+#define	WAIT_UNTIL(cond) do {						\
+	for (unsigned _wait = 0; _wait < WAIT_STEPS && !(cond); _wait++)	\
+		usleep(WAIT_STEP_US);					\
+} while (0)
+
+static uint32_t
+coalition_flags(int fd)
+{
+	struct coalition_stat_reply sr;
+
+	ATF_REQUIRE(coalition_stat(fd, &sr) == 0);
+	return (sr.flags);
+}
+
+/*
+ * True once the instance behind fd is revoked, read from its kinfo_file
+ * record (":revoked"; mac_capability_instance_fill_kinfo) without sending.
+ */
+static bool
+instance_revoked(int fd)
+{
+	int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_FILEDESC, getpid() };
+	struct kinfo_file *kf;
+	char *buf, *bp, *end;
+	size_t len;
+	bool revoked;
+
+	len = 0;
+	ATF_REQUIRE(sysctl(mib, 4, NULL, &len, NULL, 0) == 0);
+	len = len * 4 / 3;
+	buf = malloc(len);
+	ATF_REQUIRE(buf != NULL);
+	ATF_REQUIRE(sysctl(mib, 4, buf, &len, NULL, 0) == 0);
+	revoked = false;
+	end = buf + len;
+	for (bp = buf; bp < end; bp += kf->kf_structsize) {
+		kf = (struct kinfo_file *)(void *)bp;
+		if (kf->kf_structsize == 0)
+			break;
+		if (kf->kf_fd == fd) {
+			revoked = strstr(kf->kf_path, ":revoked") != NULL;
+			break;
+		}
+	}
+	free(buf);
+	return (revoked);
+}
+
+/*
+ * Fork a child that stays alive until release_held_child(): a pipe it blocks
+ * on instead of a sleep that might end before the parent is done with it.
+ */
+static pid_t
+fork_held_child(int *releasefd)
+{
+	int gate[2];
+	pid_t pid;
+	char byte;
+
+	ATF_REQUIRE(pipe(gate) == 0);
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		close(gate[1]);
+		if (read(gate[0], &byte, 1) != 1)
+			_exit(2);
+		_exit(0);
+	}
+	close(gate[0]);
+	*releasefd = gate[1];
+	return (pid);
+}
+
+static void
+release_held_child(pid_t pid, int releasefd)
+{
+	int wstatus;
+
+	ATF_REQUIRE(write(releasefd, "x", 1) == 1);
+	close(releasefd);
+	ATF_REQUIRE_EQ(waitpid(pid, &wstatus, 0), pid);
+	ATF_CHECK_MSG(WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == 0,
+	    "held child exited abnormally (status %#x)", wstatus);
 }
 
 static int
@@ -240,7 +331,8 @@ wait_for_jail_removal(const char *name)
 	int i;
 	int jid;
 
-	for (i = 0; i < 50; i++) {
+	/* Jail teardown finishes in a task: poll for up to 5 s. */
+	for (i = 0; i < 250; i++) {
 		errno = 0;
 		jid = jail_getid(name);
 		if (jid < 0) {
@@ -513,7 +605,7 @@ ATF_TC_HEAD(enlist_mac_capability_member, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Enlist a mac_capability instance as member, verify STAT");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_coalition mac_capability_test_keystore");
+	    "mac_capability mac_capability_coalition");
 }
 ATF_TC_BODY(enlist_mac_capability_member, tc)
 {
@@ -544,7 +636,7 @@ ATF_TC_HEAD(terminate_revokes_mac_capability, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Terminating coalition revokes mac_capability members (ECONNRESET)");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_coalition mac_capability_test_keystore");
+	    "mac_capability mac_capability_coalition");
 }
 ATF_TC_BODY(terminate_revokes_mac_capability, tc)
 {
@@ -586,7 +678,7 @@ ATF_TC_HEAD(enlist_multiple_types, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Enlist socket and mac_capability, verify mixed STAT");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_coalition mac_capability_test_keystore");
+	    "mac_capability mac_capability_coalition");
 }
 ATF_TC_BODY(enlist_multiple_types, tc)
 {
@@ -756,7 +848,7 @@ ATF_TC_HEAD(terminate_cascades_nested, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Terminating parent cascades to nested child members");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_coalition mac_capability_test_keystore");
+	    "mac_capability mac_capability_coalition");
 }
 ATF_TC_BODY(terminate_cascades_nested, tc)
 {
@@ -1104,10 +1196,9 @@ ATF_TC_HEAD(fork_inherits_membership, tc)
 ATF_TC_BODY(fork_inherits_membership, tc)
 {
 	struct coalition_stat_reply sr;
-	int fd;
+	int fd, release;
 	int32_t status;
 	pid_t pid;
-	int wstatus;
 
 	fd = mac_capability_connect("coalition");
 	ATF_REQUIRE(fd >= 0);
@@ -1115,20 +1206,12 @@ ATF_TC_BODY(fork_inherits_membership, tc)
 	ATF_REQUIRE(coalition_op(fd, COALITION_OP_JOIN, &status) == 0);
 	ATF_CHECK_EQ(status, 0);
 
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		/* Child — sleep briefly and exit */
-		usleep(200000);
-		_exit(0);
-	}
-
-	/* Parent — child should be auto-enlisted */
-	usleep(50000);
+	/* The process_fork eventhandler enlists the child inside fork(2). */
+	pid = fork_held_child(&release);
 	ATF_REQUIRE(coalition_stat(fd, &sr) == 0);
-	ATF_CHECK(sr.process_count >= 2);
+	ATF_CHECK_EQ(sr.process_count, 2);
 
-	waitpid(pid, &wstatus, 0);
+	release_held_child(pid, release);
 	close(fd);
 }
 
@@ -1448,10 +1531,10 @@ ATF_TC_BODY(responsible_caller_and_procdesc, tc)
 		_exit(0);
 	}
 	/*
-	 * A pdfork child inherits its creator's membership, so its procdesc
-	 * resolves to 'mine' at once.
+	 * A pdfork child inherits its creator's membership inside pdfork(2)
+	 * (process_fork eventhandler), so its procdesc resolves to 'mine' at
+	 * once.
 	 */
-	usleep(50000);
 	ATF_REQUIRE(coalition_set_responsible(b, &pd, 0, &status) == 0);
 	ATF_CHECK_EQ(status, 0);
 	ATF_REQUIRE(coalition_stat(b, &sr) == 0);
@@ -1568,7 +1651,7 @@ ATF_TC_BODY(responsible_survives_parent_close, tc)
 		(void)wait_exit_bounded(pid, &wstatus);
 	}
 	close(pd);
-	usleep(100000);
+	/* The leader was reaped: its process_exit handler ran before. */
 	ATF_REQUIRE(coalition_stat(cfd, &child) == 0);
 	ATF_CHECK_EQ(child.responsible_id, parent.id);
 	ATF_CHECK_EQ(child.responsible_leader_pid, 0);
@@ -1648,18 +1731,20 @@ ATF_TC_BODY(responsible_kinfo_export, tc)
 		pause();
 		_exit(0);
 	}
-	usleep(50000);
+	/* Membership is inherited inside fork(2). */
 	ATF_REQUIRE(kinfo_of(child, &kp) == 0);
 	ATF_CHECK_EQ(kp.ki_coalition, mine.id);
 	ATF_CHECK_EQ(kp.ki_rcoalition, parent.id);
 	ATF_CHECK_EQ(kp.ki_rpid, leader);
-	kill(child, SIGKILL);
-	waitpid(child, &wstatus, 0);
+	ATF_REQUIRE_EQ(kill(child, SIGKILL), 0);
+	ATF_REQUIRE_EQ(waitpid(child, &wstatus, 0), child);
 
-	/* Leader exit: the responsible leader pid decays to 0. */
-	pdkill(ppd, SIGKILL);
-	waitpid(leader, &wstatus, 0);
-	usleep(100000);
+	/*
+	 * Leader exit: the responsible leader pid decays to 0.  The leader's
+	 * process_exit handler clears it before waitpid(2) can reap it.
+	 */
+	ATF_REQUIRE_EQ(pdkill(ppd, SIGKILL), 0);
+	ATF_REQUIRE_EQ(waitpid(leader, &wstatus, 0), leader);
 	ATF_REQUIRE(kinfo_of(getpid(), &kp) == 0);
 	ATF_CHECK_EQ(kp.ki_coalition, mine.id);
 	ATF_CHECK_EQ(kp.ki_rcoalition, parent.id);
@@ -2358,18 +2443,26 @@ ATF_TC_BODY(set_signal_zero_releases, tc)
 	ATF_REQUIRE(kinfo_of(pid, &kp) == 0);
 	ATF_CHECK(kp.ki_coalition != 0);
 
-	/* Explicit terminate: the member survives. */
+	/*
+	 * Explicit terminate: the member survives.  Signal 0 sends nothing,
+	 * so there is no event to wait for; a signal sent here would be
+	 * pending at once, which kinfo reports.
+	 */
 	ATF_REQUIRE(coalition_op(cfd, COALITION_OP_TERMINATE, &status) == 0);
 	ATF_CHECK_EQ(status, 0);
-	usleep(100000);
 	ATF_CHECK_EQ(waitpid(pid, &wstatus, WNOHANG), 0);
+	ATF_REQUIRE(kinfo_of(pid, &kp) == 0);
+	ATF_CHECK_MSG(!SIGNOTEMPTY(kp.ki_siglist),
+	    "terminate with signal 0 left a signal pending");
 	/* Close: the member survives and is no longer in any coalition. */
 	fprintf(stderr, "count before close=%u\n", coalition_count());
 	close(cfd);
-	usleep(200000);
+	WAIT_UNTIL(kinfo_of(pid, &kp) == 0 && kp.ki_coalition == 0);
 	fprintf(stderr, "count after close=%u\n", coalition_count());
 	ATF_CHECK_EQ(waitpid(pid, &wstatus, WNOHANG), 0);
 	ATF_REQUIRE(kinfo_of(pid, &kp) == 0);
+	ATF_CHECK_MSG(!SIGNOTEMPTY(kp.ki_siglist),
+	    "close with signal 0 left a signal pending");
 	ATF_CHECK_EQ_MSG(kp.ki_coalition, 0, "member still in coalition %ju "
 	    "after close (count=%u)", (uintmax_t)kp.ki_coalition,
 	    coalition_count());
@@ -2413,8 +2506,7 @@ ATF_TC_BODY(pdfork_inherits_and_rehomes, tc)
 		pause();
 		_exit(0);
 	}
-	usleep(50000);
-	/* Inherited: the child carries a's id. */
+	/* Inherited inside pdfork(2): the child carries a's id. */
 	ATF_REQUIRE(kinfo_of(pid, &kp) == 0);
 	ATF_CHECK_EQ(kp.ki_coalition, sa.id);
 	ATF_REQUIRE(coalition_stat(a, &sa) == 0);
@@ -2499,7 +2591,8 @@ ATF_TC_BODY(close_terminates_live_member, tc)
 		(void)wait_exit_bounded(pid, &wstatus);
 	}
 	close(pd);
-	usleep(200000);
+	/* The last reference may be dropped by a task: poll for the free. */
+	WAIT_UNTIL(coalition_count() == before);
 	after = coalition_count();
 	ATF_CHECK_EQ_MSG(after, before, "coalition not freed after close: "
 	    "before=%u after=%u", before, after);
@@ -3144,12 +3237,19 @@ ATF_TC_BODY(set_signal_zero_releases_joined, tc)
 	close(holder[1]);
 	ATF_REQUIRE(read(holder[0], &grandchild, sizeof(grandchild)) ==
 	    (ssize_t)sizeof(grandchild));
-	usleep(50000);
+	/* The grandchild inherited inside fork(2), before it was reported. */
 	ATF_REQUIRE(kinfo_of(grandchild, &kp) == 0);
 	ATF_CHECK(kp.ki_coalition != 0);
 
 	close(cfd);	/* last holder: the coalition ends */
-	usleep(300000);
+	WAIT_UNTIL(kinfo_of(grandchild, &kp) == 0 && kp.ki_coalition == 0);
+	/*
+	 * A signal sent by the close would be pending (or have killed) by
+	 * now: signal delivery to the target is done inside kill/psignal.
+	 */
+	ATF_REQUIRE(kinfo_of(grandchild, &kp) == 0);
+	ATF_CHECK_MSG(!SIGNOTEMPTY(kp.ki_siglist),
+	    "grandchild has a signal pending after close");
 	/*
 	 * The grandchild is not our child (waitpid cannot see it): judge
 	 * liveness by kill(0) plus a non-zombie kinfo state.
@@ -3284,7 +3384,7 @@ ATF_TC_HEAD(watchdog_fires_revokes_mac_capability, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Watchdog expiry revokes mac_capability members");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_coalition mac_capability_test_keystore");
+	    "mac_capability mac_capability_coalition");
 	atf_tc_set_md_var(tc, "timeout", "10");
 }
 ATF_TC_BODY(watchdog_fires_revokes_mac_capability, tc)
@@ -3311,7 +3411,8 @@ ATF_TC_BODY(watchdog_fires_revokes_mac_capability, tc)
 	    &rpl, sizeof(rpl)) == 0);
 	ATF_CHECK_EQ(rpl.status, 0);
 
-	usleep(300000);
+	/* The watchdog task revokes the member after the callout fires. */
+	WAIT_UNTIL(instance_revoked(member_fd));
 
 	memset(&sa, 0, sizeof(sa));
 	sa.payload = payload;
@@ -3329,7 +3430,7 @@ ATF_TC_HEAD(large_timeouts_do_not_fire, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Near-limit deadline and watchdog values do not fire immediately");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_coalition mac_capability_test_keystore");
+	    "mac_capability mac_capability_coalition");
 }
 ATF_TC_BODY(large_timeouts_do_not_fire, tc)
 {
@@ -3369,7 +3470,12 @@ ATF_TC_BODY(large_timeouts_do_not_fire, tc)
 	ATF_CHECK(sr.flags & COF_WATCHDOG_ACTIVE);
 	ATF_CHECK(sr.flags & COF_DEADLINE_ACTIVE);
 
+	/*
+	 * A period, not a synchronisation: a near-limit timeout that wrapped
+	 * to a few ticks would fire within it.
+	 */
 	usleep(100000);
+	ATF_CHECK(!instance_revoked(member_fd));
 
 	memset(&sa, 0, sizeof(sa));
 	sa.payload = payload;
@@ -3479,7 +3585,8 @@ ATF_TC_BODY(deadline_cancel_clears_grace, tc)
 	    &rpl, sizeof(rpl)) == 0);
 	ATF_CHECK_EQ(rpl.status, 0);
 
-	usleep(300000);
+	/* The deadline task enters grace after the 100 ms callout. */
+	WAIT_UNTIL((coalition_flags(cfd) & COF_DEADLINE_GRACE) != 0);
 
 	ATF_REQUIRE(coalition_stat(cfd, &sr) == 0);
 	ATF_CHECK(sr.flags & COF_DEADLINE_ACTIVE);
@@ -3557,7 +3664,7 @@ ATF_TC_HEAD(set_leader_mac_capability, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Mac_capability leader death (revoke) terminates coalition members");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_coalition mac_capability_test_keystore");
+	    "mac_capability mac_capability_coalition");
 }
 ATF_TC_BODY(set_leader_mac_capability, tc)
 {
@@ -3597,10 +3704,10 @@ ATF_TC_BODY(set_leader_mac_capability, tc)
 	ATF_REQUIRE(ioctl(leader_fd, MAC_CAPABILITY_TERMINATE, NULL) == 0);
 
 	/*
-	 * The leader monitor polls every 100ms.  Wait for it to
-	 * detect the dead leader and terminate the coalition.
+	 * The leader monitor polls every 100ms (a callout): wait for it to
+	 * detect the dead leader and revoke the other member.
 	 */
-	usleep(300000);	/* 300ms — enough for 2-3 poll cycles */
+	WAIT_UNTIL(instance_revoked(other_fd));
 
 	/* other_fd should be revoked (EPIPE on send) */
 	memset(&sa, 0, sizeof(sa));
@@ -3725,7 +3832,7 @@ ATF_TC_HEAD(close_terminates_members, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Closing coalition fd terminates all members via co_revoke");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_coalition mac_capability_test_keystore");
+	    "mac_capability mac_capability_coalition");
 }
 ATF_TC_BODY(close_terminates_members, tc)
 {
@@ -3914,20 +4021,26 @@ ATF_TC_HEAD(process_exit_decrements_count, tc)
 ATF_TC_BODY(process_exit_decrements_count, tc)
 {
 	struct coalition_stat_reply sr;
-	int cfd, proc_fd;
+	int cfd, gate[2], proc_fd, wstatus;
 	int32_t status;
 	pid_t pid;
 
 	cfd = mac_capability_connect("coalition");
 	ATF_REQUIRE(cfd >= 0);
 
+	ATF_REQUIRE(pipe(gate) == 0);
 	pid = pdfork(&proc_fd, 0);
 	ATF_REQUIRE(pid >= 0);
 	if (pid == 0) {
+		char byte;
+
 		close(cfd);
-		usleep(50000);	/* 50ms then exit */
+		close(gate[1]);
+		if (read(gate[0], &byte, 1) != 1)
+			_exit(2);
 		_exit(0);
 	}
+	close(gate[0]);
 
 	ATF_REQUIRE(coalition_enlist(cfd, proc_fd, &status) == 0);
 	ATF_CHECK_EQ(status, 0);
@@ -3935,9 +4048,11 @@ ATF_TC_BODY(process_exit_decrements_count, tc)
 	ATF_REQUIRE(coalition_stat(cfd, &sr) == 0);
 	ATF_CHECK_EQ(sr.process_count, 1);
 
-	/* Wait for child to exit */
-	waitpid(pid, NULL, 0);
-	usleep(100000);	/* Let exit handler run */
+	/* Let the child exit; its exit handlers run before waitpid returns. */
+	ATF_REQUIRE(write(gate[1], "x", 1) == 1);
+	close(gate[1]);
+	ATF_REQUIRE_EQ(waitpid(pid, &wstatus, 0), pid);
+	ATF_CHECK(WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == 0);
 
 	/* Exit handler removes member from TAILQ — count should be 0 */
 	ATF_REQUIRE(coalition_stat(cfd, &sr) == 0);
@@ -4051,7 +4166,7 @@ ATF_TC_BODY(graceful_terminate_clears_grace, tc)
 	ATF_CHECK_EQ(rpl.status, 0);
 
 	ATF_REQUIRE(waitpid(pid, NULL, 0) == pid);
-	usleep(100000);
+	WAIT_UNTIL((coalition_flags(cfd) & COF_GRACE_ACTIVE) == 0);
 
 	ATF_REQUIRE(coalition_stat(cfd, &sr) == 0);
 	ATF_CHECK_EQ(sr.flags & COF_GRACE_ACTIVE, 0);
@@ -4225,7 +4340,7 @@ ATF_TC_HEAD(graceful_terminate_revokes_mac_capability, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Graceful terminate revokes mac_capability members");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_coalition mac_capability_test_keystore");
+	    "mac_capability mac_capability_coalition");
 }
 ATF_TC_BODY(graceful_terminate_revokes_mac_capability, tc)
 {
@@ -4321,7 +4436,7 @@ ATF_TC_HEAD(deadline_fires_revokes_mac_capability, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Deadline expiry revokes mac_capability members");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_coalition mac_capability_test_keystore");
+	    "mac_capability mac_capability_coalition");
 	atf_tc_set_md_var(tc, "timeout", "10");
 }
 ATF_TC_BODY(deadline_fires_revokes_mac_capability, tc)
@@ -4350,7 +4465,8 @@ ATF_TC_BODY(deadline_fires_revokes_mac_capability, tc)
 	    &rpl, sizeof(rpl)) == 0);
 	ATF_CHECK_EQ(rpl.status, 0);
 
-	usleep(300000);
+	/* The deadline task revokes the member after the callout fires. */
+	WAIT_UNTIL(instance_revoked(member_fd));
 
 	memset(&sa, 0, sizeof(sa));
 	sa.payload = payload;
@@ -4629,7 +4745,7 @@ ATF_TC_HEAD(mac_capability_member_type_tracking, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Mac_capability members are tracked as DTYPE_MAC_CAPABILITY, not generic");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_coalition mac_capability_test_keystore");
+	    "mac_capability mac_capability_coalition");
 }
 ATF_TC_BODY(mac_capability_member_type_tracking, tc)
 {
@@ -4673,7 +4789,7 @@ ATF_TC_HEAD(mac_capability_member_multiple_services, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Multiple mac_capability members from different services are counted");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_coalition mac_capability_test_keystore mac_capability_channel");
+	    "mac_capability mac_capability_coalition mac_capability_channel");
 }
 ATF_TC_BODY(mac_capability_member_multiple_services, tc)
 {
@@ -4712,7 +4828,7 @@ ATF_TC_HEAD(terminate_revokes_multiple_services, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Termination revokes mac_capability members from different services");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_coalition mac_capability_test_keystore mac_capability_channel");
+	    "mac_capability mac_capability_coalition mac_capability_channel");
 }
 ATF_TC_BODY(terminate_revokes_multiple_services, tc)
 {
@@ -4846,14 +4962,14 @@ ATF_TC_BODY(deadline_zero_timeout, tc)
 	ATF_CHECK_EQ(rpl.status, 0);
 
 	/*
-	 * Give the callout time to fire.  A zero-timeout callout may
-	 * not fire synchronously — it gets scheduled for the next tick.
+	 * The callout fires on a following tick and its task terminates the
+	 * coalition (no grace): COF_DEADLINE_ACTIVE clears, COF_TERMINATING
+	 * is set (coalition_deadline_task_fn).
 	 */
-	usleep(200000);
-
-	/* Verify the deadline has progressed: either still active or terminating */
+	WAIT_UNTIL((coalition_flags(cfd) & COF_TERMINATING) != 0);
 	ATF_REQUIRE(coalition_stat(cfd, &sr) == 0);
-	ATF_CHECK(sr.flags & (COF_TERMINATING | COF_DEADLINE_ACTIVE));
+	ATF_CHECK(sr.flags & COF_TERMINATING);
+	ATF_CHECK_EQ(sr.flags & COF_DEADLINE_ACTIVE, 0);
 
 	close(cfd);
 }
@@ -4872,28 +4988,39 @@ ATF_TC_BODY(watchdog_reset_extends, tc)
 	struct coalition_stat_reply sr;
 	struct coalition_reply rpl;
 	int cfd;
+	struct timespec t0, t1;
+	long elapsed_ms;
 	int32_t status;
 
 	cfd = mac_capability_connect("coalition");
 	ATF_REQUIRE(cfd >= 0);
 
-	/* Set watchdog with 200ms timeout */
+	/*
+	 * A 2 s watchdog, a heartbeat at 1 s and a check at 2.5 s: wide
+	 * margins, because a loaded guest can oversleep by hundreds of ms.
+	 * The sleeps are periods, not synchronisation: the case asserts that
+	 * the watchdog has NOT fired 2.5 s after arming because the heartbeat
+	 * moved it.
+	 */
+	ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &t0) == 0);
 	wr.op = COALITION_OP_SET_WATCHDOG;
-	wr.timeout_ms = 200;
+	wr.timeout_ms = 2000;
 	ATF_REQUIRE(coalition_call(cfd, &wr, sizeof(wr), NULL, 0,
 	    &rpl, sizeof(rpl)) == 0);
 	ATF_CHECK_EQ(rpl.status, 0);
 
-	/* At 100ms, send a heartbeat to reset the timer */
-	usleep(100000);
+	usleep(1000000);
 	ATF_REQUIRE(coalition_op(cfd, COALITION_OP_HEARTBEAT, &status) == 0);
+	ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &t1) == 0);
 	ATF_CHECK_EQ(status, 0);
+	elapsed_ms = (t1.tv_sec - t0.tv_sec) * 1000 +
+	    (t1.tv_nsec - t0.tv_nsec) / 1000000;
+	if (elapsed_ms >= 1800)
+		atf_tc_skip("heartbeat sent %ld ms after arming a 2000 ms "
+		    "watchdog: the window was missed", elapsed_ms);
 
-	/*
-	 * At 250ms total (150ms after heartbeat), the coalition should
-	 * still be alive because the heartbeat extended the 200ms window.
-	 */
-	usleep(150000);
+	/* 1.5 s after the heartbeat, inside its fresh 2 s window. */
+	usleep(1500000);
 
 	ATF_REQUIRE(coalition_stat(cfd, &sr) == 0);
 	ATF_CHECK(sr.flags & COF_WATCHDOG_ACTIVE);
@@ -5207,7 +5334,8 @@ ATF_TC_BODY(jail_teardown_race, tc)
 
 		/* Child removes the jail; parent closes the coalition -- racing
 		 * the jail-side and coalition-side teardown of the same member.
-		 * Alternate which side is nudged first across rounds. */
+		 * Alternate which side is nudged first across rounds; the
+		 * usleep(1) calls are race jitter, not synchronisation. */
 		pid = fork();
 		ATF_REQUIRE(pid >= 0);
 		if (pid == 0) {
