@@ -913,13 +913,17 @@ oes_mac_vnode_execve_relabel(struct ucred *old, struct ucred *new,
 	 * The new credential still shares the old one's label (crcopy).  Give
 	 * it its own, with a fresh exec id and path and the inherited scopes.
 	 * Under the process lock: no sleeping.  If the allocation fails the
-	 * credential has no identity (exec id 0, no scopes), the failure mode
-	 * the allocation at every credential copy used to have.
+	 * credential keeps sharing the old label: the exec id and path stay
+	 * those of the previous image, but the scope markers stay too, so the
+	 * process does not leave a descendants scope at the moment it execs.
 	 */
 	old_ecl = SLOT(label);
 	ecl = oes_cred_label_alloc(M_NOWAIT);
-	if (ecl == NULL)
+	if (ecl == NULL) {
 		atomic_add_64(&oes_softc.sc_alloc_failures, 1);
+		if (old_ecl != NULL)
+			return;
+	}
 	if (ecl != NULL && old_ecl != NULL) {
 		oes_scope_meta_hold(old_ecl->ecl_scope_meta);
 		ecl->ecl_scope_meta = old_ecl->ecl_scope_meta;
@@ -2559,15 +2563,12 @@ oes_proc_event_exit(void *arg __unused, struct proc *p)
 		return;
 
 	/*
-	 * Built under the process lock: oes_pending_init() only tries for it,
-	 * and without it leaves the credential fields zero (uid 0, jail 0),
-	 * so a uid or gid mute would not match.  The parent reaping in
-	 * wait(2) holds the lock often enough for that to be seen.
+	 * Filled under the process lock: without it the credential fields
+	 * stay zero (uid 0, jail 0) and a uid or gid mute does not match.
+	 * The parent reaping in wait(2) holds the lock often enough for that
+	 * to be seen.
 	 */
-	PROC_LOCK(p);
-	xexit = p->p_xexit;
-	ep = oes_pending_alloc(OES_EVENT_NOTIFY_EXIT, p);
-	PROC_UNLOCK(p);
+	ep = oes_pending_alloc_exit(p, &xexit);
 	if (ep == NULL)
 		return;
 

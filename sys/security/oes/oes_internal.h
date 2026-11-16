@@ -604,6 +604,7 @@ bool	oes_client_cache_lookup(struct oes_client *ec,
 struct oes_pending *oes_pending_alloc(oes_event_type_t event, struct proc *p);
 void	oes_signal_reserve_prepare(void);
 struct oes_pending *oes_pending_alloc_signal(struct proc *p);
+struct oes_pending *oes_pending_alloc_exit(struct proc *p, int *xexitp);
 void	oes_pending_free(struct oes_pending *ep);
 void	oes_pending_hold(struct oes_pending *ep);
 void	oes_pending_rele(struct oes_pending *ep);
