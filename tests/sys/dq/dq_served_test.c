@@ -250,46 +250,26 @@ srv_wait_closes(struct srv *s, int n)
 #define	RES_MAX		32
 typedef void (*child_fn_t)(struct srv *, int *res);
 
+/* fn's s is the server; the call is made in the child. */
+struct run_arg {
+	struct srv	*s;
+	child_fn_t	 fn;
+};
+
+static void
+run_fn(void *arg, int *res)
+{
+	struct run_arg *ra = arg;
+
+	ra->fn(ra->s, res);
+}
+
 static void
 run_child_as(struct srv *s, child_fn_t fn, int *res, uid_t uid, bool attach)
 {
-	int go[2], back[2], pd, status;
-	size_t got;
-	pid_t pid;
-	char c;
+	struct run_arg ra = { s, fn };
 
-	memset(res, 0, sizeof(int) * RES_MAX);
-	ATF_REQUIRE(pipe(go) == 0 && pipe(back) == 0);
-	pid = pdfork(&pd, 0);
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		int r[RES_MAX];
-
-		close(s->q);
-		/* An attached process cannot change credentials (I5). */
-		if (uid != (uid_t)-1 && (setgid(uid) != 0 || setuid(uid) != 0))
-			_exit(2);
-		memset(r, 0, sizeof(r));
-		if (read(go[0], &c, 1) != 1)
-			_exit(1);
-		fn(s, r);
-		_exit(write(back[1], r, sizeof(r)) == (ssize_t)sizeof(r) ?
-		    0 : DQT_EXIT_NORESULT);
-	}
-	/* Only the child holds the write ends: its death is an EOF here. */
-	close(go[0]);
-	close(back[1]);
-	if (attach)
-		ATF_REQUIRE_MSG(dq_attach(s->q, pd) == 0, "attach: %s",
-		    strerror(errno));
-	ATF_REQUIRE(write(go[1], "g", 1) == 1);
-	got = dqt_read_full(back[0], res, sizeof(int) * RES_MAX);
-	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
-	close(pd);
-	close(go[1]);
-	close(back[0]);
-	dqt_require_exit0(status, "requester");
-	ATF_REQUIRE_EQ(sizeof(int) * RES_MAX, got);
+	dqt_run_ints(s->q, run_fn, &ra, res, RES_MAX, uid, attach);
 }
 
 static void

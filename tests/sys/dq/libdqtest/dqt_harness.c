@@ -1120,6 +1120,49 @@ dqt_status_str(int status, char *buf, size_t len)
 }
 
 void
+dqt_run_ints(int q, dqt_int_fn fn, void *arg, int *res, int nres, uid_t uid,
+    bool attach)
+{
+	int go[2], back[2], pd, status;
+	size_t got, len;
+	pid_t pid;
+	char c;
+
+	len = sizeof(int) * (size_t)nres;
+	memset(res, 0, len);
+	ATF_REQUIRE(pipe(go) == 0 && pipe(back) == 0);
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		int *r;
+
+		(void)close(q);
+		if (uid != (uid_t)-1 && (setgid(uid) != 0 || setuid(uid) != 0))
+			_exit(2);
+		r = calloc((size_t)nres, sizeof(int));
+		if (r == NULL || read(go[0], &c, 1) != 1)
+			_exit(1);
+		fn(arg, r);
+		_exit(write(back[1], r, len) == (ssize_t)len ? 0 :
+		    DQT_EXIT_NORESULT);
+	}
+	/* Only the child holds the write ends: its death is an EOF here. */
+	(void)close(go[0]);
+	(void)close(back[1]);
+	if (attach)
+		ATF_REQUIRE_MSG(dq_attach(q, pd) == 0, "attach: %s",
+		    strerror(errno));
+	ATF_REQUIRE(write(go[1], "g", 1) == 1);
+	got = dqt_read_full(back[0], res, len);
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	(void)close(pd);
+	(void)close(go[1]);
+	(void)close(back[0]);
+	dqt_require_exit0(status, "requester");
+	ATF_REQUIRE_EQ(len, got);
+}
+
+void
 dqt_require_exit0(int status, const char *what)
 {
 	char sbuf[64];

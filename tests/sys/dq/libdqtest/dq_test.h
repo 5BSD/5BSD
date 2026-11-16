@@ -349,6 +349,16 @@ size_t	dqt_read_full(int fd, void *buf, size_t len);
 const char *dqt_status_str(int status, char *buf, size_t len);
 /* Fail unless status is a normal exit with 0. */
 void	dqt_require_exit0(int status, const char *what);
+/*
+ * Run fn(arg, res) in a pdfork child that closes q, changes to uid unless
+ * it is (uid_t)-1 (before the attach: an attached process cannot), and is
+ * attached to q when attach is set before it starts.  The child's
+ * nres ints come back over a pipe; a child that exits without them, or
+ * not with 0, fails the case.
+ */
+typedef void (*dqt_int_fn)(void *arg, int *res);
+void	dqt_run_ints(int q, dqt_int_fn fn, void *arg, int *res, int nres,
+	    uid_t uid, bool attach);
 
 /* A system call result: return value and errno. */
 struct dqt_rr {
