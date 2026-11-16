@@ -8,7 +8,7 @@
  * the same headers and compiler policy as the daemons.
  *
  * The switchboard control plane is the "system.switchboard" capability discovery name
- * reached over the session's ambient lookup channel (SERVICE_LOOKUP_FD); the
+ * reached over the process's ambient lookup route (the kernel process slot); the
  * getpeereid control socket this fixture used to dial was retired.  Each verb
  * crafts a deliberately malformed sctl_request, sends it over the capability
  * channel, and prints the reply status so the test can assert the rejection.

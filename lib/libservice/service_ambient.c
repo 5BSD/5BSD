@@ -6,8 +6,7 @@
  * Process-held discovery helpers. The kernel holds the inherited channel;
  * working descriptors and private per-handle reply queues are temporary.
  * Approved software has separate protected authority, not another route.
- * Registration failure never falls back to a shared receive queue, and stale
- * environment variables never restore a cleared context.
+ * Registration failure never falls back to a shared receive queue.
  */
 
 #include <sys/types.h>

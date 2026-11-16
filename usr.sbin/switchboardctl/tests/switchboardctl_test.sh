@@ -39,7 +39,6 @@ require_ambient_control()
 {
 	[ "$(atf_config_get live_admin no)" = yes ] ||
 	    atf_skip "requires live_admin=yes in a disposable normal-plane VM"
-	[ -n "${SERVICE_LOOKUP_FD:-}" ] || atf_fail "root login has no discovery channel"
 	[ "$(ps -p 1 -o comm=)" = capsule ] || atf_fail "Capsule is not PID 1"
 	find_switchboardctl
 	touch .live-admin-mode

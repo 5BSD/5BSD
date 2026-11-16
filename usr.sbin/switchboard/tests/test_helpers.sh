@@ -200,8 +200,8 @@ require_mac_capability()
 #
 # switchboard's getpeereid control socket was retired
 # (docs/capability-authority-model.md): switchboardctl now issues control requests
-# over the ambient discovery channel a login session inherits
-# (SERVICE_LOOKUP_FD -- the same condition service_reachability_test detects via
+# over the ambient discovery route a login session inherits in its kernel
+# process slot (the condition service_reachability_test detects via
 # service_ambient_lookup_fd()).  The ATF harness provides no login session, so
 # there is no ambient channel here and these cases skip; on a live plane the
 # channel is inherited and they run for real.  Control is otherwise validated by

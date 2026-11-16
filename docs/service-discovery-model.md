@@ -4,6 +4,11 @@
 > See [Discovery and the Lookup Channel](book/src/plane/discovery-and-lookup.md)
 > and [Sessions](book/src/compat/sessions.md) for implementation behavior and
 > remaining restart-recovery limitations.
+>
+> Retirement note (2026-11-16): the environment route is gone from the tree.
+> No program reads or sets `SERVICE_LOOKUP_FD`, and `SERVICE_LOOKUP_ENV` and
+> `SERVICE_LOOKUP_FIXED_FD` no longer exist. Mentions of them below are
+> historical; the kernel per-process slot is the only discovery route.
 
 # Service discovery and management model
 
