@@ -13,29 +13,33 @@ concurrent_rules_exec_paths_changes_head()
     atf_set descr "Consistency of rules and exec paths changes on same jail"
 }
 
-# Write knob to v1, then to v2, and check that each write reads back.  One
-# sysctl(8) does it all: after each assignment it reads the knob again and
-# prints "name: old -> new".  The previous per-step atf-check(1), sed(1) and
-# sysctl(8) processes (nine execs a step) made the 2 x 1000 steps take about
-# 550 s in a 2-vCPU TCG guest (about 26 execs/s, steady progress, no thread
-# stuck in the kernel), past the 300 s timeout.
+# Step $2 of a concurrent loop: write knob $1 to $4, then to $5, with one
+# sysctl(8), which prints "name: old -> new" for each assignment, reading the
+# knob again after the write.  The knob must have held $3 (the previous step's
+# last value) just before, and each write must read back, so a write of the
+# other knob that clobbered this one at any point since the previous step
+# fails the step.  One process per step also keeps the case within its
+# timeout on emulated CPUs.
 set_and_read_back()
 {
-    local knob v1 v2 out l1 l2
+    local knob step prev v1 v2 out l1 l2
 
     knob=$1
-    v1=$2
-    v2=$3
+    step=$2
+    prev=$3
+    v1=$4
+    v2=$5
     if ! out=$(sysctl "$knob=$v1" "$knob=$v2"); then
-        echo "sysctl $knob=$v1 $knob=$v2 failed" >&2
+        echo "step $step: sysctl $knob=$v1 $knob=$v2 failed" >&2
         return 1
     fi
     { IFS= read -r l1; IFS= read -r l2; } <<EOF
 $out
 EOF
-    if [ "${l1##* -> }" != "$v1" ] || [ "${l2##* -> }" != "$v2" ]; then
-        echo "$knob: wrote '$v1' then '$v2', read back:" >&2
-        echo "$out" >&2
+    if [ "$l1" != "$knob: $prev -> $v1" ] ||
+        [ "$l2" != "$knob: $v1 -> $v2" ]; then
+        printf 'step %s: expected\n%s\n%s\ngot\n%s\n' "$step" \
+            "$knob: $prev -> $v1" "$knob: $v1 -> $v2" "$out" >&2
         return 1
     fi
 }
@@ -44,19 +48,25 @@ concurrent_rules_exec_paths_changes_body()
 {
     local rules exec_paths rules_es exec_paths_es
 
+    # Known values before the loops start, so that step 1 knows what its
+    # knob held.
+    sysctl_set_and_check_rules "uid=0>uid=1001"
+    sysctl_set_and_check_exec_paths /nowhere/nonexistent0
+
     # As sysctl_set_and_check_rules() and _exec_paths() do, each step writes
     # its knob twice, with the older in-rule separator (':') first (an exec
-    # path has none, so its two writes are equal), and checks each write,
-    # while the other loop changes the other knob.
+    # path has none, so its two writes are equal), while the other loop
+    # changes the other knob.
     for I in $(jot - 1 1000); do
-        set_and_read_back ${RULES_KNOB} "uid=$I:uid=1001" \
-            "uid=$I>uid=1001" || exit 1
+        set_and_read_back ${RULES_KNOB} $I "uid=$((I - 1))>uid=1001" \
+            "uid=$I:uid=1001" "uid=$I>uid=1001" || exit 1
     done &
     rules=$!
 
     for I in $(jot - 1 1000); do
-        set_and_read_back ${EXEC_PATHS_KNOB} /nowhere/nonexistent$I \
-            /nowhere/nonexistent$I || exit 1
+        set_and_read_back ${EXEC_PATHS_KNOB} $I \
+            /nowhere/nonexistent$((I - 1)) \
+            /nowhere/nonexistent$I /nowhere/nonexistent$I || exit 1
     done &
     exec_paths=$!
 
