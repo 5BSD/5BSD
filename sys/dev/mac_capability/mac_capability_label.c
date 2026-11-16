@@ -18,6 +18,7 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/cap_authority.h>
 #include <sys/imgact.h>
 #include <sys/kernel.h>
 #include <sys/libkern.h>
@@ -28,6 +29,7 @@
 #include <sys/proc.h>
 #include <sys/sdt.h>
 #include <sys/ucred.h>
+#include <sys/jail.h>
 #include <sys/vnode.h>
 
 #include <security/mac/mac_policy.h>
@@ -38,6 +40,16 @@ MALLOC_DECLARE(M_MAC_CAPABILITY);
 
 struct mac_capability_label {
 	uint64_t	cl_nonce;
+	/*
+	 * The software authority of the process the credential was made
+	 * for, as it was when the credential was last given it
+	 * (mac_capability_cred_set_authority()): referenced, its
+	 * generation, and whether it was usable.  Read without the
+	 * process lock, see mac_capability_cred_authority_stamp().
+	 */
+	struct cap_authority *cl_authority;
+	uint64_t	cl_auth_generation;
+	bool		cl_auth_valid;
 };
 
 static int mac_capability_label_slot;
@@ -97,7 +109,9 @@ mac_capability_cred_copy_label(struct label *src, struct label *dest)
 	if (dcl == NULL)
 		return;
 	if (scl != NULL) {
+		cap_authority_drop(dcl->cl_authority);
 		*dcl = *scl;
+		cap_authority_retain(dcl->cl_authority);
 		SDT_PROBE2(mac_capability_nonce, , , copy, scl->cl_nonce,
 		    dcl->cl_nonce);
 	} else {
@@ -114,6 +128,7 @@ mac_capability_cred_destroy_label(struct label *label)
 
 	cl = SLOT(label);
 	if (cl != NULL) {
+		cap_authority_drop(cl->cl_authority);
 		free(cl, M_MAC_CAPABILITY);
 		SLOT_SET(label, NULL);
 	}
@@ -205,3 +220,60 @@ static struct mac_policy_ops mac_capability_label_mac_ops = {
 
 MAC_POLICY_SET(&mac_capability_label_mac_ops, mac_mac_capability, "MAC_CAPABILITY credential nonce",
     MPC_LOADTIME_FLAG_NOTLATE, &mac_capability_label_slot);
+
+/*
+ * Record the process's software authority in a credential made for it and
+ * not yet shared, so that it can be read without the process lock: hooks
+ * such as the prison checks run with a jail mutex held, which orders
+ * after process locks.  Called with the process lock held, where the
+ * authority changes and the credential is installed (CAP_AUTH_INSTALL,
+ * CAP_AUTH_CLEAR, exec).  Without a label nothing is recorded, and the
+ * credential carries no authority.
+ */
+void
+mac_capability_cred_set_authority(struct ucred *cred, struct proc *p)
+{
+	struct mac_capability_label *cl;
+	struct cap_authority *old;
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	cl = SLOT(cred->cr_label);
+	if (cl == NULL)
+		return;
+	old = cl->cl_authority;
+	cl->cl_authority = p->p_cap_authority;
+	cap_authority_retain(cl->cl_authority);
+	cl->cl_auth_generation = p->p_cap_authority_generation;
+	cl->cl_auth_valid = !p->p_cap_authority_invalid &&
+	    !p->p_cap_authority_pending_exec;
+	cap_authority_drop(old);
+}
+
+/*
+ * The authority stamp of p, taken from the credential it acts with and
+ * without its process lock.  Every change to the process's authority
+ * advances p_cap_authority_generation under that lock: when the generation
+ * recorded in the credential is no longer the process's (a later strip,
+ * prison change or invalidation), the stamp is invalid, which only ever
+ * refuses.  The generation is read as one aligned 64-bit load and nothing
+ * of the process is dereferenced; the authority is the credential's own
+ * reference.  Revocation is read live from it.
+ */
+void
+mac_capability_cred_authority_stamp(struct ucred *cred, struct proc *p,
+    struct cap_authority_stamp *stamp)
+{
+	struct mac_capability_label *cl;
+
+	bzero(stamp, sizeof(*stamp));
+	if (cred == NULL || cred->cr_label == NULL)
+		return;
+	cl = SLOT(cred->cr_label);
+	if (cl == NULL || cl->cl_authority == NULL || !cl->cl_auth_valid)
+		return;
+	if (atomic_load_64(&p->p_cap_authority_generation) !=
+	    cl->cl_auth_generation)
+		return;
+	cap_authority_stamp_held(cl->cl_authority, cl->cl_auth_generation,
+	    cred->cr_prison, stamp);
+}

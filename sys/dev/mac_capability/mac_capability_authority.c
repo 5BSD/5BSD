@@ -379,6 +379,43 @@ cap_authority_stamp_locked(struct proc *p, struct cap_authority_stamp *stamp)
 	stamp->uid = info.uid;
 	stamp->valid = info.valid;
 }
+/*
+ * The stamp of an authority a credential holds a reference to: what
+ * cap_authority_stamp_locked() gives for a process whose authority it is,
+ * with the process-side conditions (invalidation, a pending exec, the
+ * generation) already checked by the caller against what the credential
+ * recorded.  Revocation and the issuer's prison are checked here.
+ */
+void
+cap_authority_stamp_held(struct cap_authority *a, uint64_t generation,
+    struct prison *pr, struct cap_authority_stamp *stamp)
+{
+	struct cap_authority_info info;
+
+	bzero(stamp, sizeof(*stamp));
+	if (a == NULL || atomic_load_acq_int(&a->revoked) ||
+	    atomic_load_acq_int(&a->issuer->revoked) ||
+	    a->issuer->cred->cr_prison != pr)
+		return;
+	authority_describe(a, &info);
+	stamp->issuer = info.issuer;
+	stamp->identity = info.identity;
+	stamp->generation = generation;
+	stamp->kind = info.kind;
+	stamp->uid = info.uid;
+	stamp->valid = 1;
+}
+
+/*
+ * Record p's authority in cred, a credential made for p and not yet shared
+ * (exec's new credential).  Process lock held.
+ */
+void
+cap_authority_cred_stamp(struct proc *p, struct ucred *cred)
+{
+
+	mac_capability_cred_set_authority(cred, p);
+}
 int
 cap_authority_check_locked(struct proc *p, struct cap_authority *bound)
 {
@@ -1372,6 +1409,7 @@ check_invocation(struct thread *td, int issuer_fd, void *data)
 int
 cap_authority_call(struct thread *td, int op, int fd, void *data)
 {
+	struct ucred *newcred, *oldcred;
 	struct cap_authority_spec spec;
 	struct cap_authority_info info;
 	struct authority_issuer *issuer;
@@ -1490,7 +1528,15 @@ cap_authority_call(struct thread *td, int op, int fd, void *data)
 		if (error != 0)
 			return (error);
 		a = fp->f_data;
+		/*
+		 * The authority travels with a credential of its own, so that
+		 * it can be read without the process lock (see
+		 * mac_capability_cred_set_authority()).  crcopysafe() may
+		 * drop the lock: copy before testing.
+		 */
+		newcred = crget();
 		PROC_LOCK(td->td_proc);
+		oldcred = crcopysafe(td->td_proc, newcred);
 		if ((td->td_proc->p_flag & P_TRACED) != 0 ||
 		    (td->td_proc->p_traceflag & KTRFAC_MASK) != 0 ||
 		    /* I5 (D137): no authority for an attached process. */
@@ -1511,14 +1557,20 @@ cap_authority_call(struct thread *td, int op, int fd, void *data)
 			td->td_proc->p_cap_authority_pending_exec = a->nexec != 0;
 			td->td_proc->p_cap_authority_stripped = false;
 			td->td_proc->p_cap_authority_generation++;
+			mac_capability_cred_set_authority(newcred, td->td_proc);
+			proc_set_cred(td->td_proc, newcred);
+			newcred = NULL;
 		} else
 			old = NULL;
 		PROC_UNLOCK(td->td_proc);
 		fdrop(fp, td);
 		cap_authority_drop(old);
+		crfree(newcred != NULL ? newcred : oldcred);
 		return (error);
 	case CAP_AUTH_CLEAR:
+		newcred = crget();
 		PROC_LOCK(td->td_proc);
+		oldcred = crcopysafe(td->td_proc, newcred);
 		cap_authority_invocation_invalidate_locked(td->td_proc);
 		old = td->td_proc->p_cap_authority;
 		td->td_proc->p_cap_authority = NULL;
@@ -1527,8 +1579,11 @@ cap_authority_call(struct thread *td, int op, int fd, void *data)
 		td->td_proc->p_cap_authority_pending_exec = false;
 		td->td_proc->p_cap_authority_stripped = false;
 		td->td_proc->p_cap_authority_generation++;
+		mac_capability_cred_set_authority(newcred, td->td_proc);
+		proc_set_cred(td->td_proc, newcred);
 		PROC_UNLOCK(td->td_proc);
 		cap_authority_drop(old);
+		crfree(oldcred);
 		return (0);
 	case CAP_AUTH_REVOKE:
 		error = copyin(data, &revoke, sizeof(revoke));

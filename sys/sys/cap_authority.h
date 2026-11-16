@@ -240,5 +240,9 @@ bool cap_authority_matches_stamp(const struct cap_authority *,
 int cap_authority_check(struct thread *, struct cap_authority *);
 int cap_authority_check_locked(struct proc *, struct cap_authority *);
 void cap_authority_stamp_locked(struct proc *, struct cap_authority_stamp *);
+struct prison;
+void cap_authority_stamp_held(struct cap_authority *, uint64_t, struct prison *,
+    struct cap_authority_stamp *);
+void cap_authority_cred_stamp(struct proc *, struct ucred *);
 #endif
 #endif
