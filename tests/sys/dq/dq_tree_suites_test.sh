@@ -117,8 +117,10 @@ assemble()
 		echo "${r}/${d}" >> mounts
 	done
 	mkdir -p "${r}/tmp" "${r}/dev" "${r}/var/run" "${r}/var/tmp"
-	mount -t tmpfs tmpfs "${r}/tmp" && echo "${r}/tmp" >> mounts
-	mount -t devfs devfs "${r}/dev" && echo "${r}/dev" >> mounts
+	mount -t tmpfs tmpfs "${r}/tmp" || return 1
+	echo "${r}/tmp" >> mounts
+	mount -t devfs devfs "${r}/dev" || return 1
+	echo "${r}/dev" >> mounts
 	chmod 1777 "${r}/tmp" "${r}/var/tmp"
 }
 
