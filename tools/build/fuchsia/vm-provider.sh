@@ -48,6 +48,21 @@
 #   sys/kern/kern_descrip_test:kern_maxfiles__increase:
 #   SYSCTL_WRITE=kern.maxfiles with
 #   KYUA_VARS=test_suites.FreeBSD.allow_sysctl_side_effects=1.
+#   KERNEL_TIER (main, test or auto; default auto): the kernel tier this run
+#   claims.  main is GENERIC (or any kernel without a test-kernel option),
+#   test is GENERIC-TEST; auto claims nothing and reports what it found.
+#
+# Kernel tier.  The main tiers boot a kernel without any option of the
+# test-kernel option ledger (sys/conf/test-options); the knob tier boots
+# GENERIC-TEST.  Which one a run had is proved, not taken from a name: on
+# the host, release/scripts/check-test-kernel.sh reads the stage's boot
+# directory (refused: a test kernel) and the kernel file's SHA-256 is
+# recorded; in the guest, the booted kern.bootfile must have that hash, and
+# the ledger's knobs for live options must exist exactly on a test kernel.
+# TEST_KERNEL=yes|no is printed only when both agree, and the run is not
+# clean otherwise.  The guest writes the proof, every knob's value, the
+# plane state and the MAC policy modules kldstat lists to tier.txt in the
+# results.
 #
 # Two tiers run tests/sys/mac_capability (docs/book/src/develop/testing.md):
 # the plane-on run, where its isolation denial cases skip because the policy
@@ -178,6 +193,43 @@ mkdir -p "$work"
 work=$(cd "$work" && pwd)
 [ ${#work} -le 80 ] || die "work path too long for the QMP UNIX socket: $work"
 
+# ------------------------------------------------------------ kernel tier ---
+# The binary check of the source tree this runner belongs to, against the
+# stage's boot directory: exit 0, no test-kernel option; 1 with "was built
+# with options X", a test kernel; anything else is a check that read
+# nothing, and the run stops.
+# --- kernel tier, host side (tests/vm-provider-test-kernel-proof.sh runs this block)
+kernel_tier=${KERNEL_TIER:-auto}
+case $kernel_tier in main|test|auto) ;; *) die "KERNEL_TIER must be main, test or auto";; esac
+src_root=$(cd "$(dirname "$0")/../../.." && pwd)
+tk_check=$src_root/release/scripts/check-test-kernel.sh
+tk_ledger=$src_root/sys/conf/test-options
+[ -f "$tk_check" ] && [ -f "$tk_ledger" ] ||
+    die "no release/scripts/check-test-kernel.sh or sys/conf/test-options in $src_root"
+tk_status=0
+sh "$tk_check" -l "$tk_ledger" -d "$stage" > "$work/test-kernel-check.out" \
+    2> "$work/test-kernel-check.err" || tk_status=$?
+case $tk_status in
+0)	test_kernel_host=no test_option=none ;;
+1)	test_option=$(sed -n 's/.* was built with options \([A-Z0-9_]*\), a test-kernel option$/\1/p' \
+	    "$work/test-kernel-check.err" | head -n 1)
+	[ -n "$test_option" ] || { cat "$work/test-kernel-check.err" >&2
+	    die "the test-kernel check could not read the stage's boot directory"; }
+	test_kernel_host=yes ;;
+*)	cat "$work/test-kernel-check.err" >&2
+	die "the test-kernel check failed (exit $tk_status)" ;;
+esac
+kernel_sha256=$(sha256 -q "$stage/boot/kernel/kernel") || die "cannot hash the stage's kernel"
+test_knobs=$(sh "$tk_check" -l "$tk_ledger" -L |
+    awk -F '|' '$2 == "live" && $6 != "-" { gsub(",", " ", $6); printf "%s ", $6 }')
+case $test_knobs in *[!a-z0-9_.\ ]*) die "unexpected knob names in the ledger";; esac
+echo "TEST_KERNEL_HOST: binary-check=$test_kernel_host option=$test_option kernel-sha256=$kernel_sha256"
+case $kernel_tier:$test_kernel_host in
+main:yes) die "KERNEL_TIER=main, but the stage's kernel was built with options $test_option";;
+test:no) die "KERNEL_TIER=test, but the stage's kernel carries no test-kernel option";;
+esac
+# --- end of the kernel tier, host side
+
 # ---------------------------------------------------------------- overlay ---
 x=$work/extra
 mkdir -p "$x"
@@ -280,11 +332,50 @@ REQUIRE_UNITS="$units"
 KYUA_VARS="$kyua_vars"
 PLANE_OFF=$plane_off
 ISOLATION_ENFORCE=$isolation
+KERNEL_TIER=$kernel_tier
+TEST_KERNEL_HOST=$test_kernel_host
+TEST_OPTION=$test_option
+KERNEL_SHA256=$kernel_sha256
+TEST_KNOBS="$test_knobs"
 EOF
 cat >> "$x/kyua-planeon.sh" <<'EOF'
 R=/tmp/kyua-results
 mkdir -p "$R"
 echo KYUA_PLANEON_START
+# --- test-kernel proof (tests/vm-provider-test-kernel-proof.sh runs this block)
+# The booted kernel must be the file the host checked, and the ledger's knobs
+# must exist exactly when the host found a test-kernel option.
+bootfile=$(sysctl -n kern.bootfile 2>/dev/null || echo unknown)
+booted_sha256=$(sha256 -q "$bootfile" 2>/dev/null || echo unreadable)
+present= absent=
+for k in $TEST_KNOBS; do
+	if sysctl -N "$k" > /dev/null 2>&1; then present="$present $k"; else absent="$absent $k"; fi
+done
+test_kernel=inconsistent
+if [ "$booted_sha256" = "$KERNEL_SHA256" ]; then
+	if [ "$TEST_KERNEL_HOST" = yes ] && [ -z "$absent" ]; then
+		test_kernel=yes
+	elif [ "$TEST_KERNEL_HOST" = no ] && [ -z "$present" ]; then
+		test_kernel=no
+	fi
+fi
+{
+	echo "KERNEL_TIER=$KERNEL_TIER"
+	echo "TEST_KERNEL=$test_kernel"
+	echo "test-kernel-binary-check host=$TEST_KERNEL_HOST option=$TEST_OPTION"
+	echo "kernel-sha256 host=$KERNEL_SHA256 booted=$booted_sha256 bootfile=$bootfile"
+	echo "kern.ident=$(sysctl -n kern.ident 2>/dev/null || echo unknown)"
+	for k in $TEST_KNOBS; do echo "knob $k=$(sysctl -n "$k" 2>/dev/null || echo absent)"; done
+	echo "plane-off=$PLANE_OFF pid1=$(ps -o comm= -p 1 | tr -d ' ') capability_plane=$(kenv -q capability_plane || echo unset)"
+	echo "kern.mac_capability_isolation.enforce=$(sysctl -n kern.mac_capability_isolation.enforce 2>/dev/null || echo unset)"
+	echo "mac-modules=$(kldstat -v 2>/dev/null | awk '$2 ~ /^mac_/ { print $2 }' | sort -u | tr '\n' ' ')"
+} > "$R/tier.txt"
+sed 's/^/TIER_INFO: /' "$R/tier.txt"
+case $KERNEL_TIER:$test_kernel in
+main:no|test:yes|auto:yes|auto:no) echo TEST_KERNEL_PROOF_PASS ;;
+*) echo "TEST_KERNEL_PROOF_FAIL: tier $KERNEL_TIER, booted kernel $test_kernel" ;;
+esac
+# --- end of the test-kernel proof
 if [ "$PLANE_OFF" = 1 ]; then
 echo "PLANEOFF_PID1=$(ps -o comm= -p 1 | tr -d ' ')"
 enf=$(sysctl -n kern.mac_capability_isolation.enforce 2>/dev/null || echo unset)
@@ -608,6 +699,7 @@ verdict=VM_NOT_CLEAN
 if [ $forced = 0 ] && [ $rc = 0 ] && [ $guest_off = 1 ] &&
     [ "$(cat "$work/results/kyua-results/kyua-test.status" 2>/dev/null)" = 0 ] &&
     tr -d '\r' < "$log" | grep -aqx 'KYUA_VM_DONE' &&
+    tr -d '\r' < "$log" | grep -aqx 'TEST_KERNEL_PROOF_PASS' &&
     { [ "$plane_off" = 1 ] && tr -d '\r' < "$log" | grep -aqx 'PLANEOFF_READY' ||
       { tr -d '\r' < "$log" | grep -aqx 'PLANEON_GATE_PASS' &&
         tr -d '\r' < "$log" | grep -aqx 'BSDTIME_LIFECYCLE_PASS'; }; } &&
@@ -617,7 +709,7 @@ if [ $forced = 0 ] && [ $rc = 0 ] && [ $guest_off = 1 ] &&
 	verdict=VM_CLEAN
 fi
 echo "qemu_exit=$rc forced=$forced guest_poweroff=$guest_off"
-tr -d '\r' < "$log" | grep -aE '^(PLANEON_GATE|PLANEOFF|KYUA_SUMMARY|PLANEON_PID1|PLANEON_ISOLATION|BSDTIME)' || true
+tr -d '\r' < "$log" | grep -aE '^(TIER_INFO: (KERNEL_TIER|TEST_KERNEL)=|TEST_KERNEL_PROOF|PLANEON_GATE|PLANEOFF|KYUA_SUMMARY|PLANEON_PID1|PLANEON_ISOLATION|BSDTIME)' || true
 nskip=$(tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c ' -> ' || true)
 echo "skipped=$nskip (a skip in a plane-on suite is not a pass; see KYUA_SKIPPED_LIST in $log)"
 # Cases that named the tier they belong to: the run is not complete without

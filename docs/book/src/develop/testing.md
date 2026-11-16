@@ -278,6 +278,24 @@ authority issuer (the `MAC_CAPABILITY_TEST_RELAX` option and
 `kern.mac_capability.test_relax=1` that `capd_test_harness.sh` names), which
 the tree does not provide yet; plane-off on GENERIC their units never launch.
 Until it exists they are not covered by any tier.
+
+Each of these tiers also has a kernel tier.  The main tiers boot a kernel
+without any test-kernel option (`GENERIC`); the knob tier boots
+`GENERIC-TEST`, which carries every live option of the test-kernel option
+ledger, `sys/conf/test-options` (today `DQ_TEST_OPEN`), and whose knobs the
+loader sets (`debug.dq.unverified_open="1"` through `LOADER_EXTRA`).
+`KERNEL_TIER=main` or `KERNEL_TIER=test` states which one a run claims;
+the default, `auto`, claims nothing.  The runner proves it rather than
+trusting a configuration name: on the host it runs
+`release/scripts/check-test-kernel.sh` on the stage's boot directory (a
+refusal means a test kernel) and records the kernel file's SHA-256; in the
+guest the booted `kern.bootfile` must have that hash and the ledger's knobs
+must exist exactly on a test kernel.  Only then does it print
+`TIER_INFO: TEST_KERNEL=yes` or `=no` and `TEST_KERNEL_PROOF_PASS`, and a run
+without that line is not `VM_CLEAN`.  The proof, every knob's value, the
+plane state and the loaded MAC policy modules (`kldstat -v`) are written to
+`tier.txt` in the results, next to the Kyua database.
+
 The runner's own checks (the tier selection and gate above, the stage root
 metadata preflight, the extra-script status) are shell scripts under
 `tools/build/fuchsia/tests/`; `make -C tools/build/fuchsia check-runner`
