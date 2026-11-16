@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * A controller thread that hands every record of a queue to a dq_handler_t
  * through dq_dispatch(): the loop the served-tree and served-start tests
  * each had a copy of.  See dq_test.h.

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * The freestanding amd64 Linux programs of the dq tests (dq_*_linux.c):
  * the system call numbers they use and the one system call shim, built
  * with them by the Makefile (no Linux headers or libc).

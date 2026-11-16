@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Global state a case changes, saved in its work directory and put back by
  * its cleanup: sysctl values, fault-injection counters and file modes.
  * The cleanup routines make no ATF calls (a cleanup may run after the body

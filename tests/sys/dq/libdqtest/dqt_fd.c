@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Passing a descriptor over a UNIX domain socket (SCM_RIGHTS) with one
  * byte of data, for requesters and helpers: no ATF call, errno set on
  * failure.  See dq_test.h.

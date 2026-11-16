@@ -1,6 +1,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Shared by dq_oracle_test and dq_tree_suites_test, which run kyua suites
 # twice and compare the per-case results apart from the expected
 # differences (dqpass.expected, dqtree.expected).  A comparison must have

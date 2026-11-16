@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Access to the queue device for the DescriptorQueue tests: the plane and
  * test-kernel checks, and the open that fails rather than skips.
  * lib/libdq/tests compiles this file too (see its Makefile).
