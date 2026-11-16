@@ -1246,11 +1246,11 @@ ATF_TC_BODY(constrain_reserved_words, tc)
  * Other ABIs
  */
 
-#define	LX_NRES		11
+#define	LX_NRES		8
 
 /*
- * Run dq_legitimacy_linux, which looks for a queue at descriptor LG_QFD and
- * since sc-q finds none; collect its answers.
+ * Run dq_legitimacy_linux and collect its answers.  The child checks,
+ * before the exec, that it has no queue of its parent's to hand on.
  */
 static void
 run_linux(int q, bool nobody, long *lr)
@@ -1298,8 +1298,8 @@ run_linux(int q, bool nobody, long *lr)
  * has no handler for the group.
  *
  * Changed in sc-q: the process is given no queue by its parent (it was,
- * and read it); descriptor LG_QFD is closed in it, EBADF for all three
- * calls.  Its own queue is its own: those rows are unchanged.
+ * and read it); run_linux checks that before the exec.  Its own queue is
+ * its own: those rows are unchanged.
  */
 ATF_TC(linux_open_ioctl);
 ATF_TC_HEAD(linux_open_ioctl, tc)
@@ -1331,16 +1331,11 @@ ATF_TC_BODY(linux_open_ioctl, tc)
 	ATF_CHECK_EQ_MSG(-LINUX_EAGAIN, lr[5], "read: %ld", lr[5]);
 	/*
 	 * That the child had no queue to hand on is checked in run_linux
-	 * before the exec (dup2 of the parent's number is EBADF); LG_QFD is
-	 * then closed, so these rows only pin the Linux ABI's EBADF on a
-	 * closed descriptor for the three calls.
+	 * before the exec (dup2 of the parent's number is EBADF).
 	 */
-	for (i = 6; i <= 8; i++)
-		ATF_CHECK_EQ_MSG(-LINUX_EBADF, lr[i], "closed descriptor, "
-		    "call %d: %ld", i, lr[i]);
-	ATF_CHECK_MSG(lr[9] >= 0, "open /dev/null: %ld", lr[9]);
-	ATF_CHECK_EQ_MSG(-LINUX_EINVAL, lr[10], "/dev/null ioctl: %ld",
-	    lr[10]);
+	ATF_CHECK_MSG(lr[6] >= 0, "open /dev/null: %ld", lr[6]);
+	ATF_CHECK_EQ_MSG(-LINUX_EINVAL, lr[7], "/dev/null ioctl: %ld",
+	    lr[7]);
 	(void)close(q);
 
 	/* A fresh queue: the first run left its descriptor non-blocking. */
@@ -1351,11 +1346,8 @@ ATF_TC_BODY(linux_open_ioctl, tc)
 	for (i = 1; i <= 5; i++)
 		ATF_CHECK_EQ_MSG(-LINUX_EBADF, lr[i], "call %d: %ld", i,
 		    lr[i]);
-	for (i = 6; i <= 8; i++)
-		ATF_CHECK_EQ_MSG(-LINUX_EBADF, lr[i], "closed descriptor, "
-		    "call %d: %ld", i, lr[i]);
-	ATF_CHECK_EQ_MSG(-LINUX_EINVAL, lr[10], "/dev/null ioctl: %ld",
-	    lr[10]);
+	ATF_CHECK_EQ_MSG(-LINUX_EINVAL, lr[7], "/dev/null ioctl: %ld",
+	    lr[7]);
 	(void)close(q);
 }
 

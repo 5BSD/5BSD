@@ -17,8 +17,7 @@
 
 #include "dq_linux.h"
 
-#define	QUEUE_FD		9
-#define	NRES			11
+#define	NRES			8
 
 #define	LINUX_O_RDWR		2
 #define	LINUX_FIONBIO		0x5421
@@ -55,14 +54,10 @@ _start(void)
 	r[4] = lx_ioctl(q, LINUX_FIONBIO, &on);
 	r[5] = linux_syscall(LINUX_SYS_read, q, (long)buf, sizeof(buf), 0, 0,
 	    0);
-	r[6] = lx_ioctl(QUEUE_FD, J7_LINUX_READ, buf);
-	r[7] = lx_ioctl(QUEUE_FD, LINUX_FIONBIO, &on);
-	r[8] = linux_syscall(LINUX_SYS_read, QUEUE_FD, (long)buf, sizeof(buf),
-	    0, 0, 0);
 	null = linux_syscall(LINUX_SYS_open, (long)"/dev/null", LINUX_O_RDWR,
 	    0, 0, 0, 0);
-	r[9] = null;
-	r[10] = lx_ioctl(null, J7_LINUX_READ, buf);
+	r[6] = null;
+	r[7] = lx_ioctl(null, J7_LINUX_READ, buf);
 	(void)linux_syscall(LINUX_SYS_write, 1, (long)r, sizeof(r), 0, 0, 0);
 	(void)linux_syscall(LINUX_SYS_exit_group, 0, 0, 0, 0, 0, 0);
 	for (;;)
