@@ -153,8 +153,9 @@ the name you are asking for.
 **Fix.** Publish the name in the provider's `activation.ipc` declaration,
 check its visibility and `requires` attributes, and check the approved client
 executable's `attributes` declaration. A copied or unregistered executable
-does not inherit the original's approval. An empty `SERVICE_LOOKUP_FD` does
-not show that discovery is missing: the route lives in kernel process state.
+does not inherit the original's approval. Discovery does not appear in the
+environment or the descriptor table: the route lives in kernel process state,
+which `service_process_info()` reports.
 For slow providers, let the client's retry run rather than treating the first
 timeout as fatal. See [Software Attributes](../plane/attributes.md) and
 [Discovery and the Lookup Channel](../plane/discovery-and-lookup.md).

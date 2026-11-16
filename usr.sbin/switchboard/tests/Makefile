@@ -94,6 +94,7 @@ CLEANFILES+=	test_helpers.sh capd_test_harness.sh
 .endif
 
 PROGS+=		capd_test_guardian
+PROGS+=		capd_lookup_exec
 PROGS+=		capd_service_fixture
 PROGS+=		capd_protocol_fixture
 PROGS+=		service_probe
@@ -235,6 +236,10 @@ CFLAGS.register_lookup_gate_test+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.register_lookup_gate_test+=	-I${SRCTOP}/sys
 
 
+# capd_lookup_exec (from capsule/tests): switchboardctl against the private stack.
+CFLAGS.capd_lookup_exec+=	-I${SRCTOP}/lib/libcapsulert
+CFLAGS.capd_lookup_exec+=	-I${SRCTOP}/lib/libservice
+LIBADD.capd_lookup_exec+=	service
 CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libservice
 LIBADD.capd_protocol_fixture+=	service channel capability

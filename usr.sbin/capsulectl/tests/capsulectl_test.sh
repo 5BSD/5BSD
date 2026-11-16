@@ -19,9 +19,10 @@ atf_test_case unavailable
 unavailable_body()
 {
 	tool="$(atf_get_srcdir)/capsulectl_test_bin"
+	# The route is the inherited kernel process slot; clear it for the child.
 	atf_check -s exit:69 \
 	    -e match:'cannot reach Capsule control capability' \
-	    env -u SERVICE_LOOKUP_FD "$tool" status 3>&-
+	    "$(atf_get_srcdir)/no_ambient_exec" "$tool" status
 }
 
 atf_test_case successful_commands

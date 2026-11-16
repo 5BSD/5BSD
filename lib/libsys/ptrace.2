@@ -493,6 +493,21 @@ or setgid executable.
 apply.)
 The tracing process will see the newly-traced process stop and may
 then control it as if it had been traced all along.
+.Pp
+A tracing process that is not the parent collects the exit status of the
+traced process with
+.Xr wait 2 .
+The process is then given back to its parent, which collects the status
+too, except for a process created with
+.Xr pdfork 2 :
+the debugger's
+.Xr wait 2
+takes the parent's, the parent's
+.Xr waitpid 2
+for it fails with
+.Er ECHILD ,
+and the status remains available through the process descriptor with
+.Xr pdwait 2 .
 .It Dv PT_DETACH
 This request is like PT_CONTINUE, except that it does not allow
 specifying an alternate place to continue execution, and after it

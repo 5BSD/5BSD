@@ -13,9 +13,10 @@ _KERNEL_CTF = select({
 })
 
 
-def amd64_generic_module(module, objects, exports = [], export_all = False, package = "kernel", object_order = [], aliases = [], ctf_object_paths = []):
+def amd64_generic_module(module, objects, exports = [], export_all = False, package = "kernel", object_order = [], aliases = [], ctf_object_paths = [], install_directory = ""):
     kernel_module_artifacts(module = module, objects = objects, exports = exports,
         export_all = export_all, package = package, object_order = object_order, aliases = aliases, ctf_object_paths = ctf_object_paths,
+        install_directory = install_directory,
         script = "//sys/conf:ldscript.kmod.amd64", emulation = "elf_x86_64_fbsd")
 
 def amd64_generic_module_objects(srcs, deps = [], name = "generic_module", copts = [], textual_hdrs = [], header_overrides = [], warning_flags = None, preinclude_headers = [], local_defines = [], additional_compiler_inputs = [], convert_ctf = True, kernel_flags = None, features = [], source_identity = None):

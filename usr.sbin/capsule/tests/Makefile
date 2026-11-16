@@ -21,10 +21,16 @@ TEST_METADATA.capsule_bootstrap_test+=	is_exclusive="true"
 
 PROGS+=		capd_test_guardian
 PROGS+=		capd_bootstrap_fixture
+PROGS+=		capd_lookup_exec
 BINDIR=		${TESTSDIR}
 
 CFLAGS.capd_bootstrap_fixture+=	-I${SRCTOP}/sys
 CFLAGS.capd_bootstrap_fixture+=	-I${SRCTOP}/lib/libcapsulert
+
+# Runs a command with a test-local stack's discovery route in its process slot.
+CFLAGS.capd_lookup_exec+=	-I${SRCTOP}/lib/libcapsulert
+CFLAGS.capd_lookup_exec+=	-I${SRCTOP}/lib/libservice
+LIBADD.capd_lookup_exec+=	service
 
 ${PACKAGE}FILES+=	capd_test_harness.sh loader-defaults.conf \
                 run_capsule_vm_boot_test.sh \

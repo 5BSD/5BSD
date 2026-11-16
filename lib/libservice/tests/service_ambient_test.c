@@ -4,7 +4,8 @@
  * Copyright (c) 2026 Kory Heard
  *
  * Process discovery authority/transport tests and session mint wire tests.
- * Legacy environment variables and fixed descriptors never grant discovery.
+ * Only the kernel process slot grants discovery; a channel merely held at a
+ * descriptor, including the retired fixed lookup descriptor 3, does not.
  */
 
 #include <sys/types.h>
@@ -164,22 +165,33 @@ isolate_ambient_lookup(void)
 {
 	if (service_clear_ambient_lookup() == -1)
 		atf_tc_skip("process discovery context unavailable");
-	ATF_REQUIRE_EQ(0, unsetenv(SERVICE_LOOKUP_ENV));
 }
 
-ATF_TC_WITHOUT_HEAD(environment_cannot_grant_discovery);
-ATF_TC_BODY(environment_cannot_grant_discovery, tc)
+ATF_TC_WITHOUT_HEAD(descriptor_cannot_grant_discovery);
+ATF_TC_BODY(descriptor_cannot_grant_discovery, tc)
 {
-	int pair[2];
-	char text[32];
+	int pair[2], saved;
 
 	(void)tc;
 	isolate_ambient_lookup();
 	ATF_REQUIRE_EQ(0, mac_capability_channel_create(pair));
-	snprintf(text, sizeof(text), "%d", pair[0]);
-	ATF_REQUIRE_EQ(0, setenv(SERVICE_LOOKUP_ENV, text, 1));
+	/*
+	 * Recreate the retired route exactly: a live channel at descriptor 3 and
+	 * the variable that named it.  Neither half may grant discovery.
+	 */
+	saved = fcntl(3, F_DUPFD_CLOEXEC, 10);
+	ATF_REQUIRE(saved >= 0 || errno == EBADF);
+	ATF_REQUIRE_EQ(3, dup2(pair[0], 3));
+	ATF_REQUIRE_EQ(0, setenv("SERVICE_LOOKUP_FD", "3", 1));
+	errno = 0;
 	ATF_CHECK_EQ(-1, service_ambient_lookup_fd());
 	ATF_CHECK_EQ(ENOENT, errno);
+	ATF_REQUIRE_EQ(0, unsetenv("SERVICE_LOOKUP_FD"));
+	ATF_REQUIRE_EQ(0, close(3));
+	if (saved >= 0) {
+		ATF_REQUIRE_EQ(3, dup2(saved, 3));
+		close(saved);
+	}
 	close(pair[0]);
 	close(pair[1]);
 }
@@ -209,7 +221,6 @@ ATF_TC_BODY(context_holds_reference, tc)
 	ATF_REQUIRE_EQ(0, mac_capability_channel_create(pair));
 	ATF_REQUIRE_EQ(0, service_install_ambient_lookup(pair[0]));
 	ATF_CHECK(fcntl(pair[0], F_GETFD) & FD_CLOEXEC);
-	ATF_CHECK(getenv(SERVICE_LOOKUP_ENV) == NULL);
 	close(pair[0]);
 	ATF_REQUIRE_EQ(0, service_process_info(&info));
 	ATF_CHECK_EQ(1, info.present);
@@ -243,7 +254,7 @@ ATF_TC_BODY(wrong_protocol_fails_closed, tc)
 ATF_TP_ADD_TCS(tp)
 {
 
-	ATF_TP_ADD_TC(tp, environment_cannot_grant_discovery);
+	ATF_TP_ADD_TC(tp, descriptor_cannot_grant_discovery);
 	ATF_TP_ADD_TC(tp, non_channel_install_rejected);
 	ATF_TP_ADD_TC(tp, context_holds_reference);
 	ATF_TP_ADD_TC(tp, wrong_protocol_fails_closed);

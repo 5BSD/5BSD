@@ -204,6 +204,7 @@ copy_test "$obj/usr.sbin/BSDFilesystem/tests/provider_test" bsdfilesystem_provid
 copy_test "$obj/usr.sbin/capsulectl/tests/capsulectl_test"
 cp "$obj/usr.sbin/capsulectl/tests/capsulectl_test_bin" \
 	"$obj/usr.sbin/capsulectl/tests/capsulectl_success_bin" \
+	"$obj/usr.sbin/capsulectl/tests/no_ambient_exec" \
 	"$payload/tests/"
 copy_test "$obj/usr.sbin/networkcmpctl/tests/networkcmpctl_test"
 cp "$obj/usr.sbin/networkcmpctl/tests/networkcmpctl_test_bin" \
@@ -298,7 +299,7 @@ do
 	to=${spec#*:}
 	copy_obj_helper "$obj/$from" "$to"
 done
-for helper in capd_test_guardian capd_protocol_fixture service_probe; do
+for helper in capd_test_guardian capd_lookup_exec capd_protocol_fixture service_probe; do
 	cp "$obj/usr.sbin/switchboard/tests/$helper" "$payload/tests/$helper"
 done
 cp "$obj/lib/libservice/tests/capd_service_fixture" \

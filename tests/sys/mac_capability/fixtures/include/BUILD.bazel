@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+# Wire protocols shared by the fixture services and the test programs.
+cc_library(name = "proto_headers", hdrs = ["mac_capability_test_kernelstore_proto.h", "mac_capability_test_keystore_proto.h"],
+    includes = ["."], visibility = ["//tests/sys/mac_capability/fixtures:__subpackages__"])

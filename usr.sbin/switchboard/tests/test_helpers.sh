@@ -42,6 +42,7 @@ write_config()
 pidfile = "$pidfile";
 control_socket = "$sockpath";
 control_socket_mode = "0700";
+lookup_route_export = true;
 service_manager = "$switchboard_bin";
 EOF
 	# Export bundle directory overrides so switchboard scans test-local paths.
@@ -160,7 +161,7 @@ cleanup_common()
 	capd_cleanup_stack || cleanup_status=1
 	sleep 0.2
 	rm -rf capsule.pid capsule.conf capsule.sock \
-	    switchboard.sock capsule.log lookup-name *.out *.pid *.sh *.c \
+	    switchboard.sock capsule.log lookup-name private-switchboardctl *.out *.pid *.sh *.c \
 	    provider_svc client_svc ready_svc squat_svc \
 	    lookup_client lookup_client.build.log ready_svc.build.log \
 	    *.target *.result *.ready
@@ -196,21 +197,69 @@ require_mac_capability()
 	capd_require_device
 }
 
-# Skip when switchboardctl cannot reach switchboard over the capability plane.
+# Point $SWITCHBOARDCTL at this case's private SwitchBoard.  Call before
+# start_stack.
 #
-# switchboard's getpeereid control socket was retired
-# (docs/capability-authority-model.md): switchboardctl now issues control requests
-# over the ambient discovery channel a login session inherits
-# (SERVICE_LOOKUP_FD -- the same condition service_reachability_test detects via
-# service_ambient_lookup_fd()).  The ATF harness provides no login session, so
-# there is no ambient channel here and these cases skip; on a live plane the
-# channel is inherited and they run for real.  Control is otherwise validated by
-# the VM boot smoke test.
-require_ambient_control()
+# switchboardctl reaches SwitchBoard only through the discovery route held in
+# its kernel process slot.  The test process inherits the system route on a
+# live plane and none with the plane off, so a bare switchboardctl would drive
+# the system SwitchBoard or nothing.  The private Capsule holds the route its
+# own SwitchBoard minted and hands it to a root client of its control socket
+# (CTL_OP_LOOKUP); capd_lookup_exec installs that route in the slot, replacing
+# the inherited one, and execs switchboardctl.
+#
+# The private SwitchBoard admits switchboardctl by software authority, not by
+# UID: the executable must be an application registered by the private stack's
+# issuer.  Install a copy of the shipped control bundle into the private bundle
+# root and run its image.  That needs a unit issuer (capd_require_unit_issuer).
+use_private_control()
 {
-	if ! switchboardctl status >/dev/null 2>&1; then
-		atf_skip "no ambient control channel in this harness (control is validated by the VM boot smoke test)"
+	local bundle source
+
+	capd_require_device
+	capd_require_unit_issuer
+	prepare_paths
+	capd_find_lookup_exec
+	# A build-tree run that selects its own switchboardctl must also select a
+	# bundle wrapping it; never fall back to the installed one silently.
+	if atf_config_has switchboardctl &&
+	    ! atf_config_has switchboardctl_bundle; then
+		atf_fail "switchboardctl is selected; select switchboardctl_bundle too"
 	fi
+	source=$(atf_config_get switchboardctl_bundle \
+	    /Capabilities/System/SwitchBoardControl.cap)
+	[ -d "$source" ] || atf_fail "control bundle is missing: $source"
+	bundle="${APPS_DIR}/$(basename "$source")"
+	cp -Rp "$source" "$bundle" || atf_fail "cannot install $source"
+	write_executable "${WORK}/private-switchboardctl" '#!/bin/sh' \
+	    "exec '$capd_lookup_exec_bin' -s '$CAPD_CAPSULE_SOCKET' '$bundle/Units/switchboardctl.unit/bin/switchboardctl' \"\$@\""
+	SWITCHBOARDCTL="${WORK}/private-switchboardctl"
+}
+
+# Register an executable as an application of the private stack (exec
+# activation), so that its requests carry the private issuer's software
+# authority.  Call after use_private_control and before start_stack.
+# Usage: install_exec_app <name> <binary>; prints the image to run.
+install_exec_app()
+{
+	local name="$1" bin="$2" dir
+
+	dir="${APPS_DIR}/${name}.cap"
+	mkdir -p "$dir/Units/$name.unit/bin" || return 1
+	cat > "$dir/Bundle.ucl" <<-UCL
+	schema = "org.5bsd.capability-bundle";
+	bundle_id = "org.test.${name}";
+	version = "1.0.0";
+	sequence = 1;
+	author = "test";
+	publisher = "org.test";
+	units = ["${name}"];
+	UCL
+	printf 'program = "%s";\nactivation { exec = true; }\n' "$name" > \
+	    "$dir/Units/$name.unit/Unit.ucl"
+	cp "$bin" "$dir/Units/$name.unit/bin/$name" || return 1
+	chmod 0555 "$dir/Units/$name.unit/bin/$name"
+	echo "$dir/Units/$name.unit/bin/$name"
 }
 
 capd_service_fixture=

@@ -74,14 +74,12 @@ main(int argc, char **argv)
 	int f[2], g[2], fd, token;
 	pid_t pid;
 	if (argc == 2 && strcmp(argv[1], "exec") == 0) {
-		CHECK(getenv("SERVICE_LOOKUP_FD") == NULL);
 		fd = get();
 		CHECK(fd >= 0);
 		CHECK(fcntl(fd, F_GETFD) & FD_CLOEXEC);
 		close(fd);
 		return 0;
 	}
-	unsetenv("SERVICE_LOOKUP_FD");
 	clear();
 	CHECK(get() < 0 && errno == ENOENT);
 	pair(f);

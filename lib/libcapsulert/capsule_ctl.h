@@ -54,6 +54,15 @@
 #define	CTL_OP_CATATONIA	14	/* stop new logins (was SIGTSTP) */
 
 /*
+ * Discovery route (root, daemon personality, opt-in).  With
+ * lookup_route_export set, a daemon instance replies with the route its own
+ * SwitchBoard minted, attached to the reply header as SCM_RIGHTS.  The route
+ * carries no authority.  ENOTSUP: not enabled.  EPERM: not root, or PID 1
+ * (which opens no control socket).  ENOENT: no route is held yet.
+ */
+#define	CTL_OP_LOOKUP		15	/* reply carries the discovery route */
+
+/*
  * Request header.  For variable-length commands, datalen bytes of
  * payload follow immediately after the header.
  */

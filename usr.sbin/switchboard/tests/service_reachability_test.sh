@@ -6,7 +6,7 @@
 # Per-component reachability integration tests.
 #
 # Confirm what a program run in a login session can reach over the ambient
-# lookup channel (SERVICE_LOOKUP_FD), including the on-demand activation a
+# lookup channel (the kernel process slot), including the on-demand activation a
 # lookup must trigger.  Reach is decided by the caller's software identity:
 # user-visible services (Notify, Log, Time, Power, Sysctl) are open to any
 # session, each provider's own policy still bounding what a caller may do;

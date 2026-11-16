@@ -1220,6 +1220,16 @@ capsule_engine_start(void)
 		config_init_defaults(&od.cfg);
 		if (config_load(&od.cfg, conffile) != 0)
 			capsule_fatal("Capsule: configuration rejected: %s", conffile);
+		/*
+		 * Daemon-personality keys (pidfile, control_socket, ...) are
+		 * accepted and unused here, so one file serves both
+		 * personalities and PID 1 never refuses to boot over one.
+		 * Unlike the paths, this one switches a feature on, so say
+		 * that it has no effect: PID 1 opens no control socket.
+		 */
+		if (od.cfg.lookup_route_export)
+			syslog(LOG_NOTICE, "%s: lookup_route_export ignored: "
+			    "PID 1 opens no control socket", conffile);
 		strlcpy(od.conffile, conffile, sizeof(od.conffile));
 
 		/*
@@ -1909,6 +1919,13 @@ capsule_set_ambient_lookup(int fd)
 	CAPSULE_PROBE_CAPSULE_AMBIENT_INSTALL(capsule_ambient_lookup_fd,
 	    (int)replaced);
 	return (0);
+}
+
+int
+capsule_ambient_lookup(void)
+{
+
+	return (capsule_ambient_lookup_fd);
 }
 
 static pid_t

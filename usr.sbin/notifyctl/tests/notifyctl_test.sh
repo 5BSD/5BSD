@@ -58,6 +58,7 @@ arguments_head()
 arguments_body()
 {
 	notifyctl="$(atf_get_srcdir)/notifyctl_test_bin"
+	noroute="$(atf_get_srcdir)/no_ambient_exec"
 	atf_check -s exit:64 -e match:'usage: notifyctl' "$notifyctl"
 	atf_check -s exit:64 -e match:'invalid state' \
 	    "$notifyctl" state-set org.5bsd.test.changed nope
@@ -91,7 +92,7 @@ arguments_body()
 	    '-s' '-x stats' '-s configtest' '-s configtest valid.conf' \
 	    '-s stats extra' '-s publish' 'stats -s'; do
 		atf_check -s exit:64 -e match:'usage: notifyctl' \
-		    env -u SERVICE_LOOKUP_FD "$notifyctl" $command 3>&-
+		    "$noroute" "$notifyctl" $command
 	done
 }
 
@@ -230,21 +231,21 @@ operation_failures_body()
 unavailable_body()
 {
 	notifyctl="$(atf_get_srcdir)/notifyctl_test_bin"
-	# Drop both the environment descriptor and the inherited kernel route.
+	# Drop the inherited kernel route.
 	noroute="$(atf_get_srcdir)/no_ambient_exec"
 	atf_check -s exit:69 -e match:'open system.Notify:' \
-	    env -u SERVICE_LOOKUP_FD "$noroute" "$notifyctl" stats 3>&-
+	    "$noroute" "$notifyctl" stats
 	atf_check -s exit:69 -e match:'open system.Notify.System:' \
-	    env -u SERVICE_LOOKUP_FD "$noroute" "$notifyctl" -s stats 3>&-
+	    "$noroute" "$notifyctl" -s stats
 	atf_check -s exit:69 -e match:'open system.Notify.System:' \
-	    env -u SERVICE_LOOKUP_FD "$noroute" "$notifyctl" -s publish user.x v 3>&-
+	    "$noroute" "$notifyctl" -s publish user.x v
 	for command in 'publish org.5bsd.test.changed value' \
 	    'state-get org.5bsd.test.changed' \
 	    'state-set org.5bsd.test.changed 18446744073709551615' \
 	    'timer 99 10 3 25' \
 	    'watch org.5bsd.test.changed 1'; do
 		atf_check -s exit:69 -e match:'open system.Notify' \
-		    env -u SERVICE_LOOKUP_FD "$noroute" "$notifyctl" $command 3>&-
+		    "$noroute" "$notifyctl" $command
 	done
 }
 
@@ -256,17 +257,18 @@ tier_option_usage_head()
 tier_option_usage_body()
 {
 	notifyctl="$(atf_get_srcdir)/notifyctl_test_bin"
+	noroute="$(atf_get_srcdir)/no_ambient_exec"
 	success="$(atf_get_srcdir)/notifyctl_success_bin"
 	cp "$(atf_get_srcdir)/valid.conf" valid.conf
 	topic=org.5bsd.test.changed
 	# -s with an unknown or missing subcommand is a usage error, exit 64,
-	# and it must fail before any endpoint is looked up (no lookup fd here).
+	# and it must fail before any endpoint is looked up (no route here).
 	for command in '-s' '-s unknown' '-s UNKNOWN' '-s Stats' '-s -x stats' \
 	    '-s publish' '-s state-get' '-s state-set a' '-s watch' \
 	    '-s timer' '-s timer 1' '-s stats extra' '-s watch a b c' \
 	    '-x' '-x -s stats' '-sx stats' '-s -' '- stats' '-s -- -s stats'; do
 		atf_check -s exit:64 -o empty -e match:'usage: notifyctl' \
-		    env -u SERVICE_LOOKUP_FD "$notifyctl" $command 3>&-
+		    "$noroute" "$notifyctl" $command
 	done
 	# configtest never connects, so -s is meaningless there: usage.
 	atf_check -s exit:64 -o empty -e match:'usage: notifyctl' \

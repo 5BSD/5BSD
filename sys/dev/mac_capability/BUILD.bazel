@@ -75,3 +75,8 @@ bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
         "mac_capability_label.h",
     ],
     includes = [], visibility = ["//sys/kern:__pkg__"])
+
+# The service KPI as the out-of-directory test fixtures include it
+# ("mac_capability.h"); tests/sys/mac_capability/fixtures only.
+cc_library(name = "fixture_kpi_headers", hdrs = ["mac_capability.h", "mac_capability_ioctl.h"], includes = ["."],
+    deps = [":kernel_headers"], visibility = ["//tests/sys/mac_capability/fixtures:__subpackages__"])

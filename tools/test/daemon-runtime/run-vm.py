@@ -122,7 +122,9 @@ if a.zfs:
  zfs_shared={str(Path(name).relative_to(root)): value for name,value in zfs_hashes.items() if Path(name).is_relative_to(root)}
 if a.cleanup_lifecycle:
  source=obj/'tools/test/daemon-runtime/cleanup-fixture/mac_capability_test_cleanup.ko'
- before=digest(source); dest=stage/'boot/kernel/mac_capability_test_cleanup.ko'
+ # The cases load it from the test package's directory (FIXTURE_DIR).
+ before=digest(source); dest=stage/'usr/tests/sys/mac_capability/fixtures/mac_capability_test_cleanup.ko'
+ dest.parent.mkdir(parents=True,exist_ok=True)
  shutil.copyfile(source,dest)
  if digest(source)!=before or digest(dest)!=before: p.error('cleanup fixture changed during staging')
  extra_hashes['cleanup_fixture_module']=before

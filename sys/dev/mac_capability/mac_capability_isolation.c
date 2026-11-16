@@ -3758,7 +3758,8 @@ fi_check_jail_common(struct ucred *cred, int32_t jid, const char *name,
 	denied_id = 0;
 	denied_nonce = 0;
 	denied_name[0] = '\0';
-	mac_capability_authorization_snapshot(curthread, &context);
+	/* The prison hooks run with the prison mutex held: no process lock. */
+	mac_capability_authorization_snapshot_cred(cred, &context);
 	rw_rlock(&fi_jail_lock);
 	if (caller_nonce != 0)
 		rw_rlock(&fi_auth_lock);

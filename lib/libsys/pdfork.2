@@ -297,6 +297,17 @@ See the description of the
 .Xr wait6 2
 system call for the behavior specification.
 .Pp
+When a tracing process that is not the parent has collected the exit
+status of the child with
+.Xr wait 2 ,
+the parent can no longer collect it with
+.Xr waitpid 2 ,
+which fails with
+.Er ECHILD ;
+.Fn pdwait
+on the process descriptor still returns it, and the last close of the
+descriptor releases the child.
+.Pp
 The
 .Fn pddupfd
 function allows the caller to duplicate a file descriptor

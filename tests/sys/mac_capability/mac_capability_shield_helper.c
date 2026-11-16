@@ -4,12 +4,24 @@
  * Copyright (c) 2026 Kory Heard
  *
  * Helper for shield tests.  Exec'd to get a different nonce, then
- * attempts an operation on a target pid.  Exits 0 if the operation
- * was denied (EACCES/ESRCH), 1 if it succeeded (shield didn't work),
- * 2 on usage error.
+ * attempts an operation on a target pid.  Exit status:
+ *
+ *   0  the operation was refused the way a capprotect shield refuses it:
+ *      EACCES (mac_capability_capprotect's verdict).  ktrace(2) reports
+ *      every ktrcanset() refusal as EPERM, so for "ktrace" EPERM (or a
+ *      silently skipped target) is the refusal;
+ *   1  the operation was allowed (the shield did not block it);
+ *   2  usage error, or an unexpected answer such as EPERM from the
+ *      p_noambient or ordinary p_candebug/p_cansignal checks, or ESRCH;
+ *   3  the target is not a live process (absent or a zombie), so nothing
+ *      was proved about its shield.
+ *
+ * The "visibility" probe is the exception: hiding answers ESRCH, so it
+ * counts ESRCH as the refusal.
  *
  * Usage: mac_capability_shield_helper <op> <pid>
- *   ops: ptrace, signal, sigkill, sigcont, wait, visibility, ktrace, suspend
+ *   ops: ptrace, signal, signal0, sigkill, sigcont, sched, wait,
+ *        visibility, ktrace, suspend
  */
 
 #include <sys/types.h>
@@ -23,6 +35,7 @@
 #include <sys/resource.h>
 
 #include <errno.h>
+#include <stdbool.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
@@ -75,6 +88,36 @@ report_self_nonce(int outfd)
 	    (ssize_t)sizeof(reply.nonce) ? 0 : 2);
 }
 
+/*
+ * The target must be a live process before a refusal can mean anything: a
+ * zombie or a reaped PID also refuses ptrace and signals (ESRCH).  The
+ * sysctl is not subject to the shield (CP_SF_VISIBLE is not enforced).
+ */
+static bool
+target_live(pid_t pid)
+{
+	struct kinfo_proc kp;
+	size_t len;
+	int mib[4];
+
+	mib[0] = CTL_KERN;
+	mib[1] = KERN_PROC;
+	mib[2] = KERN_PROC_PID;
+	mib[3] = pid;
+	len = sizeof(kp);
+	if (sysctl(mib, 4, &kp, &len, NULL, 0) != 0 || len != sizeof(kp))
+		return (false);
+	return (kp.ki_pid == pid && kp.ki_stat != SZOMB);
+}
+
+/* Map a refused call's errno: only the shield's EACCES proves the shield. */
+static int
+refusal(int error)
+{
+
+	return (error == EACCES ? 0 : 2);
+}
+
 static int
 try_ptrace(pid_t pid)
 {
@@ -85,20 +128,23 @@ try_ptrace(pid_t pid)
 		ptrace(PT_DETACH, pid, NULL, 0);
 		return (1);	/* succeeded — shield didn't block */
 	}
-	if (errno == EACCES || errno == ESRCH || errno == EPERM)
-		return (0);	/* denied or hidden — shield works */
-	return (2);		/* unexpected error */
+	return (refusal(errno));
+}
+
+static int
+try_kill(pid_t pid, int signum)
+{
+
+	if (kill(pid, signum) == 0)
+		return (1);
+	return (refusal(errno));
 }
 
 static int
 try_signal(pid_t pid)
 {
 
-	if (kill(pid, SIGUSR1) == 0)
-		return (1);
-	if (errno == EACCES || errno == EPERM || errno == ESRCH)
-		return (0);
-	return (2);
+	return (try_kill(pid, SIGUSR1));
 }
 
 /* Check signal permission without delivering (signum=0). */
@@ -106,33 +152,21 @@ static int
 try_signal0(pid_t pid)
 {
 
-	if (kill(pid, 0) == 0)
-		return (1);
-	if (errno == EACCES || errno == EPERM || errno == ESRCH)
-		return (0);
-	return (2);
+	return (try_kill(pid, 0));
 }
 
 static int
 try_sigkill(pid_t pid)
 {
 
-	if (kill(pid, SIGKILL) == 0)
-		return (1);
-	if (errno == EACCES || errno == EPERM || errno == ESRCH)
-		return (0);
-	return (2);
+	return (try_kill(pid, SIGKILL));
 }
 
 static int
 try_sigcont(pid_t pid)
 {
 
-	if (kill(pid, SIGCONT) == 0)
-		return (1);
-	if (errno == EACCES || errno == EPERM || errno == ESRCH)
-		return (0);
-	return (2);
+	return (try_kill(pid, SIGCONT));
 }
 
 static int
@@ -149,13 +183,11 @@ try_sched(pid_t pid)
 	errno = 0;
 	prio = getpriority(PRIO_PROCESS, pid);
 	if (prio == -1 && errno != 0)
-		return (errno == ESRCH ? 0 : 2); /* ESRCH = hidden by shield */
+		return (2);	/* p_cansee is not gated by CP_SF_SCHED */
 
 	if (setpriority(PRIO_PROCESS, pid, prio) == 0)
 		return (1);	/* allowed — shield didn't block */
-	if (errno == EACCES || errno == EPERM)
-		return (0);	/* denied — shield works */
-	return (2);
+	return (refusal(errno));
 }
 
 static int
@@ -204,19 +236,11 @@ try_ktrace(pid_t pid)
 	size_t len;
 
 	/*
-	 * ktrace silently skips processes that fail ktrcanset (returns 0,
-	 * no error).  Instead of calling ktrace(), check if the target
-	 * is visible via sysctl — the MAC cred_check_visible hook hides
-	 * shielded processes.  If CP_SF_KTRACE is set, CP_SF_VISIBLE
-	 * should also be set (CP_SF_ALL includes both).  But if only
-	 * CP_SF_KTRACE is set, we need a different approach.
-	 *
-	 * Use p_candebug semantics: ptrace(PT_ATTACH) goes through
-	 * mac_proc_check_debug.  ktrace goes through the same
-	 * p_candebug AND our new mac_proc_check_ktrace.  Since the
-	 * ktrace syscall doesn't propagate the error, we verify by
-	 * attempting ktrace and then checking if the process's trace
-	 * flag was actually set.
+	 * ktrace(2) answers EPERM for a target that fails ktrcanset(), which
+	 * includes mac_proc_check_ktrace() (capprotect's CP_SF_KTRACE) and the
+	 * ordinary p_candebug() refusal alike; the caller pairs this probe
+	 * with an unshielded control.  On success, confirm the trace flag was
+	 * actually set on the target.
 	 */
 	char tmpf[] = "/tmp/mac_capability_ktrace.XXXXXX";
 	int fd, ret;
@@ -230,7 +254,8 @@ try_ktrace(pid_t pid)
 	close(fd);
 
 	if (ret != 0) {
-		if (errno == EACCES || errno == EPERM)
+		/* ktrace(2) answers every ktrcanset() refusal with EPERM. */
+		if (errno == EPERM)
 			return (0);	/* denied */
 		return (2);
 	}
@@ -245,7 +270,7 @@ try_ktrace(pid_t pid)
 	mib[3] = pid;
 	len = sizeof(kp);
 	if (sysctl(mib, 4, &kp, &len, NULL, 0) != 0 || len == 0)
-		return (0);	/* can't see process — shield hiding it */
+		return (2);	/* CP_SF_VISIBLE is not enforced: unexpected */
 
 	if (kp.ki_traceflag & KTRFAC_SYSCALL) {
 		/* Tracing was set — shield didn't block. Clean up. */
@@ -253,7 +278,7 @@ try_ktrace(pid_t pid)
 		return (1);
 	}
 
-	return (0);	/* tracing not set — shield blocked it */
+	return (2);	/* ktrace succeeded but set nothing: unexpected */
 }
 
 static int
@@ -265,9 +290,7 @@ try_suspend(pid_t pid)
 		kill(pid, SIGCONT);
 		return (1);
 	}
-	if (errno == EACCES || errno == EPERM || errno == ESRCH)
-		return (0);	/* denied or hidden — shield works */
-	return (2);
+	return (refusal(errno));
 }
 
 /*
@@ -327,6 +350,12 @@ main(int argc, char **argv)
 	if (pid <= 0)
 		return (2);
 
+	/* Hiding is the expected refusal of "visibility": probe it as is. */
+	if (strcmp(argv[1], "visibility") == 0)
+		return (try_visibility(pid));
+	if (!target_live(pid))
+		return (3);
+
 	if (strcmp(argv[1], "ptrace") == 0)
 		return (try_ptrace(pid));
 	if (strcmp(argv[1], "signal") == 0)
@@ -341,8 +370,6 @@ main(int argc, char **argv)
 		return (try_sched(pid));
 	if (strcmp(argv[1], "wait") == 0)
 		return (try_wait(pid));
-	if (strcmp(argv[1], "visibility") == 0)
-		return (try_visibility(pid));
 	if (strcmp(argv[1], "ktrace") == 0)
 		return (try_ktrace(pid));
 	if (strcmp(argv[1], "suspend") == 0)

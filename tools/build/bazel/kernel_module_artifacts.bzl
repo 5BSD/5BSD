@@ -13,8 +13,17 @@ _KERNEL_CTF = select({"//tools/build/bazel/config:kernel_ctf_enabled": True, "//
 
 def kernel_module_artifacts(module, objects, emulation, script = None, linkopts = [], shared = False,
                             prefix = "", exports = [], export_all = False, package = "kernel",
-                            linker_inputs = ["@bsd_sdk//toolchain:link_inputs"], object_order = [], aliases = [], ctf_object_paths = []):
-    """Preserve the maintained link/CTF/export/debug/install stage ordering."""
+                            linker_inputs = ["@bsd_sdk//toolchain:link_inputs"], object_order = [], aliases = [], ctf_object_paths = [],
+                            install_directory = ""):
+    """Preserve the maintained link/CTF/export/debug/install stage ordering.
+
+    install_directory, when set, is the absolute directory the module installs
+    in instead of the configured kernel directory (KMODDIR for a test module
+    that must stay off the module path).
+    """
+    if install_directory and (not install_directory.startswith("/") or install_directory.endswith("/")):
+        fail("install_directory must be absolute without a trailing slash")
+    module_prefixes = [] if install_directory else ["//tools/build/bazel/config:kernel_directory"]
     if len(depset(aliases).to_list()) != len(aliases):
         fail("duplicate module installation alias")
     for alias in aliases:
@@ -58,16 +67,16 @@ def kernel_module_artifacts(module, objects, emulation, script = None, linkopts 
         package = package, aliases = aliases, file_metadata = _FILE_METADATA, alias_metadata = _ALIAS_METADATA,
         visibility = ["//visibility:public"])
 
-    bsd_install_file(name = prefix + "install_module", src = ":" + prefix + "generic_module", destination = "/%s.ko" % module,
-        destination_prefixes = ["//tools/build/bazel/config:kernel_directory"],
+    bsd_install_file(name = prefix + "install_module", src = ":" + prefix + "generic_module", destination = install_directory + "/%s.ko" % module,
+        destination_prefixes = module_prefixes,
         install_tags = ["package=" + package], **_FILE_METADATA)
-    bsd_install_file(name = prefix + "install_debug", src = ":" + prefix + "generic_debug", destination = "/%s.ko.debug" % module,
-        destination_prefixes = ["//tools/build/bazel/config:kernel_debug_directory", "//tools/build/bazel/config:kernel_directory"],
+    bsd_install_file(name = prefix + "install_debug", src = ":" + prefix + "generic_debug", destination = install_directory + "/%s.ko.debug" % module,
+        destination_prefixes = ["//tools/build/bazel/config:kernel_debug_directory"] + module_prefixes,
         install_tags = ["package=" + package, "dbg"], **_FILE_METADATA)
     for index, alias in enumerate(aliases):
         bsd_install_link(name = prefix + "install_alias_" + str(index),
-            destination = "/" + alias,
-            destination_prefixes = ["//tools/build/bazel/config:kernel_directory"],
+            destination = install_directory + "/" + alias,
+            destination_prefixes = module_prefixes,
             target = module + ".ko", kind = "symlink",
             install_tags = ["package=" + package], **_ALIAS_METADATA)
     bsd_install_manifest(name = prefix + "install_manifest",

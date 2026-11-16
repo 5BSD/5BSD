@@ -33,6 +33,17 @@ struct ucred;
  */
 uint64_t	mac_capability_proc_nonce(struct ucred *cred);
 
+struct cap_authority_stamp;
+struct proc;
+/*
+ * The process's software authority, recorded in a credential made for it
+ * (process lock held), and its stamp read back without the process lock.
+ */
+void		mac_capability_cred_set_authority(struct ucred *cred,
+		    struct proc *p);
+void		mac_capability_cred_authority_stamp(struct ucred *cred,
+		    struct proc *p, struct cap_authority_stamp *stamp);
+
 /*
  * Coalition identity of a process, for exporters (kinfo_proc, OES).
  *

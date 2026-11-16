@@ -1058,6 +1058,8 @@ ptrace_action_impl(struct thread *td, int req, bool pd_mode, pid_t pid, int pfd,
 	struct ptrace_kern_seize *pks;
 	struct ptrace_kern_interrupt *pki;
 	struct ptrace_kern_listen *pkl;
+	ksiginfo_t ksi;
+	bool sendproc;
 
 	seize = req == PT_KERN_SEIZE;
 	listen = req == PT_KERN_LISTEN;
@@ -1658,11 +1660,26 @@ ptrace_action_impl(struct thread *td, int req, bool pd_mode, pid_t pid, int pfd,
 		 * the process was just attached.
 		 *
 		 * Deliver any pending signal via the reporting thread.
+		 * Without one, the signal goes to the process once it is
+		 * resumed, below.
 		 */
+		sendproc = false;
 		if (p->p_xthread != NULL) {
 			p->p_xthread->td_dbgflags &= ~TDB_XSIG;
 			p->p_xthread->td_xsig = data;
 			p->p_xthread = NULL;
+		} else if (data != 0 && SV_CURPROC_ABI() != SV_ABI_LINUX) {
+			/*
+			 * No thread reported this stop: a transparent
+			 * PT_ATTACH stops each thread where it is, asleep
+			 * or not, and PT_KERN_INTERRUPT stops the process
+			 * from outside.  A Linux tracer is answered as Linux
+			 * answers it: the signal of a restart or a detach
+			 * outside a signal-delivery stop is ignored, whichever
+			 * native request (PT_DETACH, PT_CONTINUE on non-amd64,
+			 * PT_KERN_*) its request maps to.
+			 */
+			sendproc = true;
 		}
 		p->p_xsig = data;
 
@@ -1702,6 +1719,20 @@ ptrace_action_impl(struct thread *td, int req, bool pd_mode, pid_t pid, int pfd,
 		 * continuing the process.
 		 */
 		ptrace_unsuspend(p);
+
+		/*
+		 * Hand an unclaimed signal to the process as ptracestop()
+		 * hands a replaced one: KSI_PTRACE keeps the debugger from
+		 * being shown it again.  An interruptible sleeper is woken
+		 * to act on it, which with SIGKILL is what makes PT_KILL
+		 * work on a process stopped in its sleep.
+		 */
+		if (sendproc) {
+			ksiginfo_init(&ksi);
+			ksi.ksi_signo = data;
+			ksi.ksi_flags |= KSI_PTRACE;
+			pksignal(p, data, &ksi);
+		}
 		break;
 
 	case PT_WRITE_I:

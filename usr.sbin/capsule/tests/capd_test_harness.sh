@@ -9,6 +9,7 @@
 CAPD_LEASE_FD=9
 capd_guardian_pid=
 capd_guardian_bin=
+capd_lookup_exec_bin=
 capd_switchboard_bin=
 capd_capsule_bin=
 
@@ -116,6 +117,26 @@ capd_find_guardian()
 	atf_fail "capd_test_guardian is unavailable"
 }
 
+capd_find_lookup_exec()
+{
+	local candidate srcdir
+
+	if [ -n "$capd_lookup_exec_bin" ] && [ -x "$capd_lookup_exec_bin" ]; then
+		return 0
+	fi
+	srcdir=$(atf_get_srcdir 2>/dev/null || pwd)
+	for candidate in \
+	    "${srcdir}/capd_lookup_exec" \
+	    "$(command -v capd_lookup_exec 2>/dev/null)"
+	do
+		if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+			capd_lookup_exec_bin=$candidate
+			return 0
+		fi
+	done
+	atf_fail "capd_lookup_exec is unavailable"
+}
+
 capd_find_switchboard()
 {
 	local candidate selected machine machine_arch
@@ -190,6 +211,7 @@ capd_stack_prepare()
 pidfile = "$CAPD_PIDFILE";
 control_socket = "$CAPD_CAPSULE_SOCKET";
 control_socket_mode = "0700";
+lookup_route_export = true;
 service_manager = "$capd_switchboard_bin";
 EOF
 	export SWITCHBOARD_BUNDLE_DIR_SYSTEM="$CAPD_APPS_SYSTEM"

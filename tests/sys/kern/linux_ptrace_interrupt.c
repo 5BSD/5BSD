@@ -15,6 +15,7 @@
 #define PTRACE_EVENT_STOP 128
 #define SIGTRAP 5
 #define SIGUSR1 10
+#define SIGTERM 15
 #define SIGSTOP 19
 #define __WALL 0x40000000
 
@@ -78,6 +79,64 @@ wait_event(long pid, int expected)
 	if (sys4(SYS_wait4, pid, &status, __WALL, 0) != pid)
 		return (1);
 	return (status != expected);
+}
+
+/* A target that spends its time asleep in nanosleep(2). */
+static long
+spawn_sleeper(struct shared *s, int code)
+{
+	long pid;
+
+	pid = fork_process();
+	if (pid != 0)
+		return (pid);
+	while (!s->leave) {
+		s->ticks++;
+		sleep_ms(5);
+	}
+	sys1(SYS_exit, code);
+	return (0);
+}
+
+static int
+wait_ticks(struct shared *s, u64 past)
+{
+
+	for (int i = 0; i != 400 && s->ticks <= past; i++)
+		sleep_ms(5);
+	return (s->ticks <= past);
+}
+
+/*
+ * Linux injects a restart signal only in a signal-delivery stop: a
+ * PTRACE_DETACH with a signal from the stop PTRACE_INTERRUPT made leaves
+ * the signal out.  The target must survive a detach with SIGTERM.
+ */
+static int
+detach_signal_ignored(struct shared *s, int sleeper, int code)
+{
+	long pid;
+	u64 past;
+	int status;
+
+	s->ticks = 0;
+	s->leave = 0;
+	pid = sleeper ? spawn_sleeper(s, code) : spawn(s, code);
+	if (pid < 0 || wait_ticks(s, 8) != 0 ||
+	    trace(PTRACE_SEIZE, pid, 0, 0) != 0)
+		return (1);
+	if (trace(PTRACE_INTERRUPT, pid, 0, 0) != 0 ||
+	    wait_event(pid, PTRACE_EVENT_STOP << 16 | SIGTRAP << 8 | 0x7f) != 0)
+		return (2);
+	if (trace(PTRACE_DETACH, pid, 0, SIGTERM) != 0)
+		return (3);
+	past = s->ticks;
+	if (wait_ticks(s, past) != 0)
+		return (4);
+	s->leave = 1;
+	if (sys4(SYS_wait4, pid, &status, 0, 0) != pid || status != (code << 8))
+		return (5);
+	return (0);
 }
 
 static int
@@ -162,5 +221,11 @@ test(int argc, char **argv, char **envp)
 	s->leave = 1;
 	if (sys4(SYS_wait4, pid, &status, 0, 0) != pid || status != (23 << 8))
 		return (14);
+
+	/* A detach signal from an interrupt stop is not delivered. */
+	if (detach_signal_ignored(s, 0, 29) != 0)
+		return (19);
+	if (detach_signal_ignored(s, 1, 31) != 0)
+		return (20);
 	return (0);
 }
