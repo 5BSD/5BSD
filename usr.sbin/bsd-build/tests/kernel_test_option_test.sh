@@ -505,6 +505,61 @@ ledger_options_body()
         -e empty ./plan packages --kernel NOTROW
 }
 
+atf_test_case reconfigure_refused
+reconfigure_refused_head()
+{
+    atf_set descr 'KERNFAST and NO_KERNELCONFIG: packages and media refuse, other actions read nothing'
+}
+reconfigure_refused_body()
+{
+    setup
+    configuration PLAIN 'ident PLAIN' 'options FOO'
+    for spelling in 'KERNFAST=' 'KERNFAST=yes' 'NO_KERNELCONFIG=yes' \
+        '.if !defined(NO_KERNELCONFIG)' 'MAKEFLAGS+= -DKERNFAST'; do
+        printf '%s\n' "$spelling" > make.conf
+        atf_check -s exit:1 -o empty \
+            -e match:'defines (KERNFAST|NO_KERNELCONFIG): the kernel would not be reconfigured' \
+            ./plan packages --kernel PLAIN --make-conf "$PWD/make.conf"
+        atf_check -s exit:1 -o empty -e match:'would not be reconfigured' \
+            ./plan media --kernel PLAIN --make-conf "$PWD/make.conf"
+        atf_check -s exit:0 -o match:'kernel-test-option-configuration=not-read ' \
+            -e empty ./plan kernel --kernel PLAIN --make-conf "$PWD/make.conf"
+    done
+    # In a src configuration too.
+    printf 'KERNFAST=yes\n' > src.conf
+    atf_check -s exit:1 -o empty -e match:'would not be reconfigured' \
+        ./plan packages --kernel PLAIN --src-conf "$PWD/src.conf"
+    # Comments and longer names are not the variables.
+    printf '# KERNFAST=yes\nXKERNFAST=yes\nNO_KERNELCONFIGURE=1\n' > make.conf
+    atf_check -s exit:0 -o match:'kernel-test-option-configuration=absent ' \
+        -e empty ./plan packages --kernel PLAIN --make-conf "$PWD/make.conf"
+}
+
+atf_test_case kernel_configuration_directory
+kernel_configuration_directory_head()
+{
+    atf_set descr 'Every build step names KERNCONFDIR, so make.conf cannot choose another configuration'
+}
+kernel_configuration_directory_body()
+{
+    setup
+    configuration PLAIN 'ident PLAIN' 'options FOO'
+    printf 'KERNCONFDIR=/lg3/elsewhere\n' > make.conf
+    atf_check -s exit:0 -o save:plan.out -e empty \
+        ./plan packages --kernel PLAIN --make-conf "$PWD/make.conf"
+    for name in buildworld buildkernel system-packages; do
+        atf_check -s exit:0 -o ignore \
+            grep "^$name:.* KERNCONFDIR=$PWD/conf " plan.out
+    done
+    atf_check -s exit:1 -o empty -e empty grep 'KERNCONFDIR=/lg3' plan.out
+    # Without --kernel-dir, the tree's own directory, as Makefile.inc1
+    # would choose.
+    atf_check -s exit:0 -o save:plan.out -e empty env NO_KERNEL_DIR=1 \
+        ./plan kernel --kernel GENERIC --make-conf "$PWD/make.conf"
+    atf_check -s exit:0 -o ignore \
+        grep "^buildkernel:.* KERNCONFDIR=/usr/src/sys/$(uname -m)/conf " plan.out
+}
+
 atf_init_test_cases()
 {
     atf_add_test_case plan_option_configuration
@@ -516,4 +571,6 @@ atf_init_test_cases()
     atf_add_test_case hardware_check
     atf_add_test_case publish_refused
     atf_add_test_case ledger_options
+    atf_add_test_case reconfigure_refused
+    atf_add_test_case kernel_configuration_directory
 }

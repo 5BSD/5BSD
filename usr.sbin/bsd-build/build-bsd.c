@@ -289,6 +289,37 @@ kernel_option_file(const char *path,unsigned depth)
  if(ferror(fp) && result<KO_NOTREAD)result=KO_NOTREAD;
  free(line);fclose(fp);return result;
 }
+/*
+ * The make or src configuration (--src-conf, --make-conf, --src-env-conf)
+ * that names KERNFAST or NO_KERNELCONFIG outside a comment, or NULL.  A
+ * name counts wherever it stands, whatever make would make of it.  Files a
+ * configuration includes are not followed: the binary check still decides.
+ * A configuration that exists but cannot be read is returned too, with
+ * kernel_reconfigure_name NULL.
+ */
+static const char *kernel_reconfigure_name;
+static const char *
+kernel_not_reconfigured(void)
+{
+ const char *paths[]={"src-conf","make-conf","src-env-conf"},*names[]={"KERNFAST","NO_KERNELCONFIG"};
+ for(size_t i=0;i<nitems(paths);i++){
+  const char *path=get(paths[i]);char *line=NULL,*p,*word;size_t cap=0;ssize_t n;struct stat st;
+  if(!strcmp(path,"/dev/null"))continue;
+  int fd=open(path,O_RDONLY|O_NONBLOCK|O_CLOEXEC);
+  if(fd<0){if(errno==ENOENT)continue;kernel_reconfigure_name=NULL;return path;}
+  FILE *fp;
+  if(fstat(fd,&st)<0 || !S_ISREG(st.st_mode) || !(fp=fdopen(fd,"r"))){close(fd);kernel_reconfigure_name=NULL;return path;}
+  while((n=getline(&line,&cap,fp))>=0){
+   if((p=strchr(line,'#'))!=NULL)*p='\0';
+   p=line;
+   while((word=strsep(&p," \t\r\n=:?!+()\"'${}"))!=NULL)
+    for(size_t j=0;j<nitems(names);j++)if(!strcmp(word,names[j]) || (!strncmp(word,"-D",2) && !strcmp(word+2,names[j]))){kernel_reconfigure_name=names[j];free(line);fclose(fp);return path;}
+  }
+  if(ferror(fp)){kernel_reconfigure_name=NULL;free(line);fclose(fp);return path;}
+  free(line);fclose(fp);
+ }
+ return NULL;
+}
 static const char *
 kernel_option_configuration(void)
 {
@@ -444,7 +475,18 @@ validate(void)
  if(*get("kernel-dir")){canonical("kernel-dir");regular(format("%s/%s",get("kernel-dir"),get("kernel")),false);}
  /* Actions that build or carry the kernel of this configuration. */
  if(oneof(request.action,"build|kernel|stage|packages|media")){
-  kernel_option=!test_option_ledger()?KO_NOTREAD:kernel_option_include(get("kernel"),0);
+  /*
+   * KERNFAST and NO_KERNELCONFIG reuse an objdir configured earlier under
+   * the same KERNCONF name: the scan would describe a configuration that
+   * config(8) never ran on.  Packages and media refuse them; elsewhere the
+   * configuration is reported as not read.
+   */
+  const char *reconfigure=kernel_not_reconfigured();
+  if(reconfigure && (request.packages || action("media"))){
+   if(kernel_reconfigure_name)errx(1,"%s defines %s: the kernel would not be reconfigured, so its test-kernel options cannot be read; packages and media are refused",reconfigure,kernel_reconfigure_name);
+   errx(1,"%s cannot be read, so whether it defines KERNFAST or NO_KERNELCONFIG is unknown; packages and media are refused",reconfigure);
+  }
+  kernel_option=reconfigure?KO_NOTREAD:!test_option_ledger()?KO_NOTREAD:kernel_option_include(get("kernel"),0);
   if(kernel_option==KO_PRESENT && (request.packages || action("media")))errx(1,"the kernel configuration carries options %s, a test-kernel option (%s): a test kernel is never packaged or placed on media, and there is no override",kernel_option_name,TEST_OPTION_LEDGER);
  }
  if(*get("pkg-key") && !request.packages)fail("--pkg-key applies only to build or packages");
@@ -753,6 +795,17 @@ args(struct step *s,...)
 }
 static void
 assignment(struct step *s,const char *n,const char *v) { arg(s,format("%s=%s",n,v)); }
+/*
+ * Always name the kernel configuration directory, so that a make.conf that
+ * sets KERNCONFDIR cannot build another configuration than the one the scan
+ * read: a command-line assignment overrides make.conf.  Without
+ * --kernel-dir it is Makefile.inc1's own default, sys/<target>/conf.
+ */
+static void
+kernel_configuration_directory(struct step *s)
+{
+ assignment(s,"KERNCONFDIR",*get("kernel-dir")?get("kernel-dir"):format(SOURCE "/sys/%s/conf",request.target));
+}
 static void
 make_configuration(struct step *s)
 {
@@ -767,7 +820,7 @@ bsd_make(const char *name,bool signing)
  args(s,"env","MAKEOBJDIRPREFIX=" OBJECT,"make","-C",SOURCE,"-j",format("%u",request.jobs),NULL);
  assignment(s,"TARGET",request.target);assignment(s,"TARGET_ARCH",request.arch);
  assignment(s,"KERNCONF",get("kernel"));make_configuration(s);
- if(*get("kernel-dir"))assignment(s,"KERNCONFDIR",get("kernel-dir"));
+ kernel_configuration_directory(s);
  if(!strcmp(get("build-profile"),"debug"))arg(s,"DEBUG_FLAGS=-g");
  if(yes("allow-debug-publication"))arg(s,"ALLOW_DEBUG_MALLOC=yes");
  arg(s,request.production?"WITH_MALLOC_PRODUCTION=yes":"WITHOUT_MALLOC_PRODUCTION=yes");
@@ -911,7 +964,7 @@ plan(void)
   s=step("media-directory");args(s,"mkdir","-p",get("output"),NULL);
   s=step("media");args(s,"env","MAKEOBJDIRPREFIX=" OBJECT,"make","-C",SOURCE "/release","-j",format("%u",request.jobs),NULL);
   assignment(s,"HARDWARE_KLDXREF",format("%s/kldxref",request.native));assignment(s,"RELEASE_OBJDIR",get("output"));assignment(s,"TARGET",request.target);assignment(s,"TARGET_ARCH",request.arch);assignment(s,"KERNCONF",get("kernel"));make_configuration(s);assignment(s,"PORTSDIR",get("ports"));assignment(s,"PKGBASE_SIGNED_REPOSITORY",get("repository"));assignment(s,"PKGBASE_REPO_PUBLIC_KEY",get("pkg-public-key"));assignment(s,"PKGBASE_CODE_PUBLIC_KEY",get("public-key"));args(s,"HARDWARE_PYTHON=" PYTHON,"NOPKGBASE=","NODISTSETS=yes","NOPKG=yes",NULL);
-  if(*get("kernel-dir"))assignment(s,"KERNCONFDIR",get("kernel-dir"));
+  kernel_configuration_directory(s);
   if(strcmp(get("media-format"),"memstick"))arg(s,"disc1.iso");if(strcmp(get("media-format"),"iso"))arg(s,"memstick.img");return;
  }
  if(!action("kernel")){s=backend.make("buildworld",false);arg(s,yes("incremental")?"WITHOUT_CLEAN=yes":"WITH_CLEAN=yes");arg(s,"buildworld");}
@@ -1049,7 +1102,7 @@ media_checksums(void)
 static void
 sanitize(void)
 {
- const char *names[]={"MAKEFLAGS","MFLAGS","MAKEOVERRIDES","MAKELEVEL","MAKEOBJDIRPREFIX","DESTDIR","DISTDIR","SRCCONF","SRC_ENV_CONF","__MAKE_CONF","ALLOW_DEBUG_MALLOC","TARGET","TARGET_ARCH","PKG_REPO_SIGNING_KEY","HARDWARE_SIGNING_KEY","KERNCONFDIR","REPODIR","PUBLISH_REPODIR","BASE_REPOSITORY","HARDWARE_REPO","COMPLETE_REPOSITORY","HARDWARE_ABI","HARDWARE_ABI_FILE","HARDWARE_BACKEND","WSTAGEDIR","KSTAGEDIR","SSTAGEDIR"};
+ const char *names[]={"MAKEFLAGS","MFLAGS","MAKEOVERRIDES","MAKELEVEL","MAKEOBJDIRPREFIX","DESTDIR","DISTDIR","SRCCONF","SRC_ENV_CONF","__MAKE_CONF","ALLOW_DEBUG_MALLOC","TARGET","TARGET_ARCH","PKG_REPO_SIGNING_KEY","HARDWARE_SIGNING_KEY","KERNCONFDIR","KERNFAST","NO_KERNELCONFIG","REPODIR","PUBLISH_REPODIR","BASE_REPOSITORY","HARDWARE_REPO","COMPLETE_REPOSITORY","HARDWARE_ABI","HARDWARE_ABI_FILE","HARDWARE_BACKEND","WSTAGEDIR","KSTAGEDIR","SSTAGEDIR"};
  for(size_t i=0;i<nitems(names);i++)unsetenv(names[i]);
 }
 int
