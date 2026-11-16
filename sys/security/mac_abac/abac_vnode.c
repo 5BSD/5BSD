@@ -226,12 +226,29 @@ abac_vnode_refresh_label(struct vnode *vp, struct label *vplabel)
 struct abac_label *
 abac_vnode_obj_label(struct vnode *vp, struct label *vplabel)
 {
+
+	if (vplabel == NULL)
+		return (&abac_default_object);
+	if (vp != NULL) {
+		/* A loaded label is freed under the exclusive lock (SETLABEL). */
+		ASSERT_VOP_LOCKED(vp, __func__);
+		abac_vnode_lazy_load(vp, vplabel);
+	}
+	return (abac_vnode_obj_label_noload(vplabel));
+}
+
+/*
+ * As abac_vnode_obj_label(), without reading the extended attribute: a
+ * label not yet read counts as the default object label.  For the one hook
+ * that must not issue a VOP of its own (setextattr of the label attribute).
+ */
+struct abac_label *
+abac_vnode_obj_label_noload(struct label *vplabel)
+{
 	struct abac_label *vl;
 
 	if (vplabel == NULL)
 		return (&abac_default_object);
-	if (vp != NULL)
-		abac_vnode_lazy_load(vp, vplabel);
 	vl = SLOT(vplabel);
 	if (vl == NULL || vl == ABAC_LABEL_NEEDS_LOAD)
 		return (&abac_default_object);
@@ -1251,10 +1268,13 @@ abac_vnode_check_setextattr(struct ucred *cred, struct vnode *vp,
 		if (subj == NULL)
 			subj = &abac_default_subject;
 
-		/* Get object label from vnode */
+		/*
+		 * Get object label from vnode, as stored: not read here (see
+		 * above), so a label not yet read counts as the default.
+		 */
 		if (vplabel == NULL)
 			return (EPERM);
-		obj = abac_vnode_obj_label(vp, vplabel);
+		obj = abac_vnode_obj_label_noload(vplabel);
 
 		/*
 		 * This hook cannot inspect the value being written, so a confined
