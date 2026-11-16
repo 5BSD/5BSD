@@ -195,21 +195,60 @@ config(const char *path)
  if(ferror(fp))err(1,"read config");free(line);fclose(fp);
 }
 /*
- * The dq(4) test option (options DQ_TEST_OPEN) makes a test kernel, which
- * is never packaged or placed on media.  Read the kernel configuration from
- * every place config(8) could take it or its includes from (--kernel-dir,
- * sys/<target>/conf, sys/conf) and report whether the option is named in it:
- * present, absent, or not-read when any part of it could not be found or
- * read.  The name counts wherever it stands outside a comment, so nooptions
- * does not lift it.  This is an early refusal of a plain mistake.  The check
- * that decides reads the binaries: release/scripts/check-kernel-no-dq-test.sh.
- * Neither says anything about the boot chain of an installed system.
+ * A test-kernel option (a row of the source tree's ledger,
+ * sys/conf/test-options, for example options DQ_TEST_OPEN) makes a test
+ * kernel, which is never packaged or placed on media.  The ledger is read
+ * from SOURCE when the plan is made, never compiled in: an installed
+ * build-bsd older than the tree it builds still sees every option the tree
+ * defines.  A ledger that is missing, unreadable or malformed is reported as
+ * not-read.  Read the kernel configuration from every place config(8) could
+ * take it or its includes from (--kernel-dir, sys/<target>/conf, sys/conf)
+ * and report whether any ledger option is named in it: present, absent, or
+ * not-read when any part of it could not be found or read.  A name counts
+ * wherever it stands outside a comment, so nooptions does not lift it.  This
+ * is an early refusal of a plain mistake.  The check that decides reads the
+ * binaries: release/scripts/check-test-kernel.sh.  Neither says anything
+ * about the boot chain of an installed system.
  */
-#define KERNEL_TEST_OPTION "DQ_TEST_OPEN"
-#define KERNEL_TEST_CHECK SOURCE "/release/scripts/check-kernel-no-dq-test.sh"
+#define TEST_OPTION_LEDGER SOURCE "/sys/conf/test-options"
+#define TEST_OPTION_MAX 64
+#define KERNEL_TEST_CHECK SOURCE "/release/scripts/check-test-kernel.sh"
 enum kernel_option { KO_UNSCANNED, KO_ABSENT, KO_NOTREAD, KO_PRESENT };
 static enum kernel_option kernel_option;
+static const char *kernel_option_name;	/* the first ledger option found */
+static char *test_option[TEST_OPTION_MAX];
+static size_t test_options;
 static enum kernel_option kernel_option_file(const char *path,unsigned depth);
+/*
+ * Read the option names from the ledger: one row per option, six fields
+ * separated by "|"; the first is the option, the second live or reserved.
+ * The rest is the check script's (release/scripts/check-test-kernel.sh,
+ * which validates every field); a row this reader cannot take whole makes
+ * the ledger unread.  Returns false when nothing may be concluded.
+ */
+static bool
+test_option_ledger(void)
+{
+ char *line=NULL;size_t cap=0;ssize_t n;struct stat st;bool good=true;
+ int fd=open(TEST_OPTION_LEDGER,O_RDONLY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC);FILE *fp;
+ if(fd<0)return false;
+ if(fstat(fd,&st)<0 || !S_ISREG(st.st_mode) || !(fp=fdopen(fd,"r"))){close(fd);return false;}
+ while(good && (n=getline(&line,&cap,fp))>=0){
+  if((size_t)n!=strlen(line)){good=false;break;}
+  if(n && line[n-1]=='\n')line[--n]='\0';
+  if(!n || line[0]=='#')continue;
+  char *p=line,*field[6];size_t fields=0;
+  while(fields<nitems(field) && (field[fields]=strsep(&p,"|"))!=NULL)fields++;
+  if(fields!=nitems(field) || p!=NULL || !*field[0] || strspn(field[0],"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")!=strlen(field[0]) ||
+     (strcmp(field[1],"live") && strcmp(field[1],"reserved")) || test_options==TEST_OPTION_MAX){good=false;break;}
+  for(size_t i=0;i<test_options;i++)if(!strcmp(test_option[i],field[0]))good=false;
+  if(good && !(test_option[test_options++]=strdup(field[0])))err(1,"strdup");
+ }
+ if(ferror(fp) || !test_options)good=false;
+ free(line);fclose(fp);
+ if(!good){while(test_options)free(test_option[--test_options]);}
+ return good;
+}
 static enum kernel_option
 kernel_option_include(const char *name,unsigned depth)
 {
@@ -241,7 +280,7 @@ kernel_option_file(const char *path,unsigned depth)
   p=line;
   while((word=strsep(&p," \t\r\n,=\"<>"))!=NULL){
    if(!*word)continue;
-   if(!strcmp(word,KERNEL_TEST_OPTION))result=KO_PRESENT;
+   for(size_t i=0;i<test_options;i++)if(!strcmp(word,test_option[i])){result=KO_PRESENT;if(!kernel_option_name)kernel_option_name=test_option[i];}
    if(first){first=false;include=!strcmp(word,"include");continue;}
    if(include){include=false;r=kernel_option_include(word,depth+1);if(r>result)result=r;}
   }
@@ -405,8 +444,8 @@ validate(void)
  if(*get("kernel-dir")){canonical("kernel-dir");regular(format("%s/%s",get("kernel-dir"),get("kernel")),false);}
  /* Actions that build or carry the kernel of this configuration. */
  if(oneof(request.action,"build|kernel|stage|packages|media")){
-  kernel_option=kernel_option_include(get("kernel"),0);
-  if(kernel_option==KO_PRESENT && (request.packages || action("media")))fail("the kernel configuration carries options " KERNEL_TEST_OPTION ", the dq(4) test option: a test kernel is never packaged or placed on media, and there is no override");
+  kernel_option=!test_option_ledger()?KO_NOTREAD:kernel_option_include(get("kernel"),0);
+  if(kernel_option==KO_PRESENT && (request.packages || action("media")))errx(1,"the kernel configuration carries options %s, a test-kernel option (%s): a test kernel is never packaged or placed on media, and there is no override",kernel_option_name,TEST_OPTION_LEDGER);
  }
  if(*get("pkg-key") && !request.packages)fail("--pkg-key applies only to build or packages");
  if(selected("package-tool")) {

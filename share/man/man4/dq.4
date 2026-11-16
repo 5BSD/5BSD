@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 15, 2026
+.Dd November 16, 2026
 .Dt DQ 4
 .Os
 .Sh NAME
@@ -4304,10 +4304,13 @@ is a test kernel for the
 .Nm
 test suite.
 The configuration
-.Pa GENERIC-DQTEST
+.Pa GENERIC-TEST
 is
 .Pa GENERIC
-with the option.
+with the test-kernel options, this one among them; the test-kernel option
+ledger,
+.Pa sys/conf/test-options ,
+lists them.
 The option requires
 .Cd "device dq" ;
 it is not available to the
@@ -4315,8 +4318,8 @@ it is not available to the
 module, and no published configuration carries it.
 .Pp
 Such a kernel must never be published.
-.Pa release/scripts/check-kernel-no-dq-test.sh
-refuses a kernel or module built with the option where the maintained
+.Pa release/scripts/check-test-kernel.sh
+refuses a kernel or module built with any of them where the maintained
 package publication targets and the release media, virtual machine,
 Firecracker and arm image recipes run it, and
 .Xr build-bsd 8

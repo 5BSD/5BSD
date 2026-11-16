@@ -1081,7 +1081,7 @@ import json
 rows = [json.loads(line) for line in open('stage.jsonl')]
 assert rows[0]['verification_scope'] == 'boot-transport-makefs-input'
 assert len(rows) == 3 and [row['name'] for row in rows[1:]] == ['kernel-test-option-check', 'boot-stage']
-assert rows[1]['argv'][:3] == ['sh', '/usr/src/release/scripts/check-kernel-no-dq-test.sh', '-a']
+assert rows[1]['argv'][:3] == ['sh', '/usr/src/release/scripts/check-test-kernel.sh', '-a']
 assert rows[1]['argv'][3].endswith('/boot.tar') and len(rows[1]['argv']) == 4
 assert '--output' in rows[2]['argv']
 PYTHON
@@ -1125,7 +1125,7 @@ rows = [json.loads(line) for line in open('plan.jsonl')]
 assert rows[0]['verification_scope'] == 'trusted-builder-filesystem-image'
 assert rows[0]['boot_verification'] == 'not-performed'
 assert [r['name'] for r in rows[1:]] == ['kernel-test-option-check', 'image']
-assert rows[1]['argv'] == ['sh', '/usr/src/release/scripts/check-kernel-no-dq-test.sh', '-i', os.path.realpath('root')]
+assert rows[1]['argv'] == ['sh', '/usr/src/release/scripts/check-test-kernel.sh', '-i', os.path.realpath('root')]
 assert rows[0]['kernel_test_option_binary_check'] == 'requested' and rows[0]['kernel_test_option_configuration'] == 'not-performed'
 args = rows[2]['argv']
 assert args[1] == '/usr/src/tools/build/capimage/generation_image.py'
@@ -1443,7 +1443,7 @@ rows = [json.loads(line) for line in open('snapshot.jsonl')]
 assert len(rows) == 3
 assert rows[0]['verification_scope'] == 'signed-repository-snapshot'
 assert rows[1]['name'] == 'kernel-test-option-check'
-assert rows[1]['argv'] == ['sh', '/usr/src/release/scripts/check-kernel-no-dq-test.sh', '-r', os.getcwd() + '/source repository']
+assert rows[1]['argv'] == ['sh', '/usr/src/release/scripts/check-test-kernel.sh', '-r', os.getcwd() + '/source repository']
 assert rows[0]['kernel_test_option_binary_check'] == 'requested'
 argv = rows[2]['argv']
 assert argv[:3] == ['/usr/local/bin/python3.12', '/usr/src/release/scripts/hardware-packages.py', 'copy-signed-repository']

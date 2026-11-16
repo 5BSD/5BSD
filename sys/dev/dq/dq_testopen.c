@@ -11,10 +11,10 @@
  * build this file does not link.
  *
  * A kernel built with the option is a test kernel and must never be
- * published.  release/scripts/check-kernel-no-dq-test.sh refuses any
+ * published.  release/scripts/check-test-kernel.sh refuses any
  * kernel or module that carries the marker below or a dq_testopen_ symbol
- * name; both names are part of that contract.  Do not rename either
- * without changing the script and its tests in the same change.
+ * name; both are its row of sys/conf/test-options.  Do not rename either
+ * without changing the ledger in the same change.
  *
  * The option is not available to the dq module: sys/modules/dq/Makefile
  * writes its own opt_dq.h, so a module would silently lose the call site.
@@ -41,7 +41,10 @@
 #include <dev/dq/dq.h>
 #include <dev/dq/dq_var.h>
 
-/* The publication check searches kernels and modules for this string. */
+/*
+ * The publication check searches kernels and modules for this string (its
+ * row of sys/conf/test-options).
+ */
 static const char dq_testopen_marker[] __used =
     "@(#)5BSD DQ_TEST_OPEN test kernel: not for publication";
 
