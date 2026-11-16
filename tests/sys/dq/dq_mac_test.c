@@ -384,37 +384,36 @@ struct abac_ctl {
 	struct dq_serve_opts opts;
 };
 
+static bool
+abac_stopped(void *arg)
+{
+
+	return (((struct abac_ctl *)arg)->stop != 0);
+}
+
+static void
+abac_event(const struct dq_event *ev, void *arg)
+{
+	struct abac_ctl *a = arg;
+	const void *body;
+	size_t bodylen;
+
+	body = dq_event_body(ev, &bodylen);
+	(void)dq_serve_file(a->q, ev, body, bodylen, a->backing, &a->opts);
+}
+
 /* C's controller thread: every record to dq_serve_file. */
 static void *
 abac_serve(void *arg)
 {
 	struct abac_ctl *a = arg;
-	const struct dq_event *ev;
-	const void *body;
-	struct pollfd pfd;
-	size_t bodylen;
-	ssize_t got;
-	char *buf;
+	int error;
 
-	buf = malloc(256 * 1024);
-	if (buf == NULL)
-		return (NULL);
-	while (!a->stop) {
-		pfd.fd = a->q;
-		pfd.events = POLLIN;
-		pfd.revents = 0;
-		if (poll(&pfd, 1, 50) <= 0)
-			continue;
-		if (dq_read_events(a->q, buf, 256 * 1024, &got) != 0)
-			continue;
-		for (ev = dq_event_first(buf, (size_t)got); ev != NULL;
-		    ev = dq_event_next(buf, (size_t)got, ev)) {
-			body = dq_event_body(ev, &bodylen);
-			(void)dq_serve_file(a->q, ev, body, bodylen, a->backing,
-			    &a->opts);
-		}
-	}
-	free(buf);
+	/* Wake every 50 ms to see stop; only a real error ends it early. */
+	do {
+		error = dqt_serve_until(a->q, -1, abac_stopped, abac_event, a,
+		    50);
+	} while (error == ETIMEDOUT);
 	return (NULL);
 }
 

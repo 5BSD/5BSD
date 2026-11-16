@@ -452,34 +452,51 @@ sup_mint(int oracle, int *qp)
 }
 
 /* Answer the first READ on q from data; any other waited event EIO. */
+struct sup_read {
+	int		 q;
+	int		 error;		/* -1: not answered yet */
+};
+
+static bool
+sup_read_done(void *arg)
+{
+
+	return (((struct sup_read *)arg)->error != -1);
+}
+
+static void
+sup_read_event(const struct dq_event *ev, void *arg)
+{
+	struct sup_read *sr = arg;
+	const struct dq_read_body *rb;
+	size_t len;
+
+	if (sr->error != -1)
+		return;
+	if (ev->de_op != DQ_OP_READ) {
+		if (ev->de_id != 0)
+			(void)dq_reply(sr->q, ev->de_id, EIO, NULL, 0);
+		return;
+	}
+	if (dq_event_read(ev, &rb) != 0) {
+		sr->error = 1;
+		return;
+	}
+	len = rb->dr_offset >= sizeof(data) ? 0 :
+	    MIN(rb->dr_len, sizeof(data) - rb->dr_offset);
+	sr->error = dq_reply(sr->q, ev->de_id, 0,
+	    data + (len != 0 ? rb->dr_offset : 0), len) == 0 ? 0 : 1;
+}
+
 static int
 sup_serve_read(int q)
 {
-	static char buf[65536];
-	const struct dq_read_body *rb;
-	const struct dq_event *ev;
-	ssize_t got;
-	size_t len;
+	struct sup_read sr = { q, -1 };
 
-	for (;;) {
-		if (dq_read_events(q, buf, sizeof(buf), &got) != 0)
-			return (-1);
-		for (ev = dq_event_first(buf, (size_t)got); ev != NULL;
-		    ev = dq_event_next(buf, (size_t)got, ev)) {
-			if (ev->de_op != DQ_OP_READ) {
-				if (ev->de_id != 0)
-					(void)dq_reply(q, ev->de_id, EIO, NULL,
-					    0);
-				continue;
-			}
-			if (dq_event_read(ev, &rb) != 0)
-				return (-1);
-			len = rb->dr_offset >= sizeof(data) ? 0 :
-			    MIN(rb->dr_len, sizeof(data) - rb->dr_offset);
-			return (dq_reply(q, ev->de_id, 0,
-			    data + (len != 0 ? rb->dr_offset : 0), len));
-		}
-	}
+	if (dqt_serve_until(q, -1, sup_read_done, sup_read_event, &sr,
+	    30000) != 0)
+		return (-1);
+	return (sr.error == 0 ? 0 : -1);
 }
 
 ATF_TC(unattached_holder_survives);

@@ -270,40 +270,39 @@ run_child(struct srv *s, child_fn_t fn, int *res)
  * Drain an observer: the records of op, and the RESOLVE replies whose
  * answer (the first word of the reply data) is kind.
  */
+struct obs_count {
+	uint32_t	 op, kind;
+	int		 nop, nkind;
+};
+
+static void
+obs_event(const struct dq_event *ev, void *arg)
+{
+	struct obs_count *oc = arg;
+	const struct dq_reply_record *rr;
+	const void *data;
+	size_t len;
+
+	if (ev->de_op == oc->op)
+		oc->nop++;
+	if (ev->de_op == DQ_OP_REPLY &&
+	    dq_event_reply_record(ev, &rr, &data, &len) == 0 &&
+	    data != NULL && len >= sizeof(struct dq_resolve_reply) &&
+	    ((const struct dq_resolve_reply *)data)->drr_kind == oc->kind)
+		oc->nkind++;
+}
+
+/* Until the observer has been quiet for 200 ms. */
 static void
 obs_drain(int obs, uint32_t op, int *nop, uint32_t kind, int *nkind)
 {
-	const struct dq_event *ev;
-	const struct dq_reply_record *rr;
-	const void *data;
-	struct pollfd pfd;
-	char *buf;
-	ssize_t got;
-	size_t len;
+	struct obs_count oc = { op, kind, 0, 0 };
+	int error;
 
-	*nop = *nkind = 0;
-	buf = malloc(1 << 20);
-	ATF_REQUIRE(buf != NULL);
-	for (;;) {
-		pfd.fd = obs;
-		pfd.events = POLLIN;
-		if (poll(&pfd, 1, 200) <= 0)
-			break;
-		if (dq_read_events(obs, buf, 1 << 20, &got) != 0 || got <= 0)
-			break;
-		for (ev = dq_event_first(buf, (size_t)got); ev != NULL;
-		    ev = dq_event_next(buf, (size_t)got, ev)) {
-			if (ev->de_op == op)
-				(*nop)++;
-			if (ev->de_op == DQ_OP_REPLY &&
-			    dq_event_reply_record(ev, &rr, &data, &len) == 0 &&
-			    data != NULL && len >= sizeof(struct dq_resolve_reply) &&
-			    ((const struct dq_resolve_reply *)data)->drr_kind ==
-			    kind)
-				(*nkind)++;
-		}
-	}
-	free(buf);
+	error = dqt_serve_until(obs, -1, NULL, obs_event, &oc, 200);
+	ATF_REQUIRE_MSG(error == ETIMEDOUT, "observer: %s", strerror(error));
+	*nop = oc.nop;
+	*nkind = oc.nkind;
 }
 
 /* A directory's entries as "name:type" lines, sorted. */
