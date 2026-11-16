@@ -719,6 +719,111 @@ g6_no_record_lost(void)
 	(void)munmap(sh, sizeof(*sh));
 }
 
+/*
+ * G-6b: G-6 on a hook whose framework flag only OES holds.  With nothing
+ * listening no policy counts pipe_check_write, so the framework skips the
+ * hook entirely; SUBSCRIBE must count the flag before it returns, after
+ * marking the hook live (oes_gate_reconcile_locked()).  Workers write to a
+ * pipe of their own in a loop; every write a worker starts after seeing
+ * the generation published once the ioctl returned must be delivered.
+ */
+#define	G6B_WRITES	150
+
+struct g6b_shared {
+	volatile int	gen;
+	volatile int	go;
+	int		after[G6_WORKERS];	/* writes started after gen */
+};
+
+static void
+g6b_pipe_write_flag(void)
+{
+	oes_event_type_t ev = OES_EVENT_NOTIFY_PIPE_WRITE;
+	struct g6b_shared *sh;
+	test_msg_buf buf;
+	pid_t pids[G6_WORKERS];
+	int fd, i, k, p[2], status, need, have[G6_WORKERS], total;
+	char c;
+
+	TEST_BEGIN("G-6b every pipe write after SUBSCRIBE returns is delivered");
+	if (fp_hook_count("pipe_check_write") != 0) {
+		printf("    note: pipe_check_write is counted by another "
+		    "policy (%d); the flag ordering is not exercised\n",
+		    fp_hook_count("pipe_check_write"));
+	}
+	sh = mmap(NULL, sizeof(*sh), PROT_READ | PROT_WRITE,
+	    MAP_ANON | MAP_SHARED, -1, 0);
+	if (sh == MAP_FAILED) {
+		TEST_FAIL("memory");
+		return;
+	}
+	memset(sh, 0, sizeof(*sh));
+	fd = test_open_oes();
+	if (fd < 0 || test_set_descendants_scope(fd) != 0) {
+		TEST_FAIL("client: %s", strerror(errno));
+		return;
+	}
+	{
+		struct oes_mode_args ma;
+
+		memset(&ma, 0, sizeof(ma));
+		ma.ema_mode = OES_MODE_NOTIFY;
+		ma.ema_queue_size = 4096;
+		ASSERT_MSG(ioctl(fd, OES_IOC_SET_MODE, &ma) == 0, "mode: %s",
+		    strerror(errno));
+	}
+	for (i = 0; i < G6_WORKERS; i++) {
+		pids[i] = fork();
+		if (pids[i] == 0) {
+			(void)close(fd);
+			if (pipe(p) != 0)
+				_exit(1);
+			while (!sh->go)
+				;
+			for (k = 0; k < G6B_WRITES; k++) {
+				if (__atomic_load_n(&sh->gen,
+				    __ATOMIC_ACQUIRE) != 0)
+					sh->after[i]++;
+				if (write(p[1], "x", 1) != 1 ||
+				    read(p[0], &c, 1) != 1)
+					_exit(1);
+			}
+			_exit(0);
+		}
+	}
+	sh->go = 1;
+	idle_sleep_ms(5);
+	ASSERT_MSG(test_subscribe(fd, &ev, 1, OES_SUB_REPLACE) == 0,
+	    "subscribe: %s", strerror(errno));
+	__atomic_store_n(&sh->gen, 1, __ATOMIC_RELEASE);
+	for (i = 0; i < G6_WORKERS; i++) {
+		ASSERT_MSG(waitpid(pids[i], &status, 0) == pids[i] &&
+		    WIFEXITED(status) && WEXITSTATUS(status) == 0,
+		    "worker %d", i);
+		have[i] = 0;
+	}
+	while (test_wait_event(fd, &buf.msg, 300) == 0) {
+		if (buf.msg.em_event != OES_EVENT_NOTIFY_PIPE_WRITE)
+			continue;
+		for (i = 0; i < G6_WORKERS; i++)
+			if (buf.msg.em_process.ep_pid == pids[i])
+				have[i]++;
+	}
+	need = total = 0;
+	for (i = 0; i < G6_WORKERS; i++) {
+		need += sh->after[i];
+		total += have[i];
+		ASSERT_MSG(have[i] >= sh->after[i], "worker %d: %d writes after "
+		    "SUBSCRIBE returned, %d delivered", i, sh->after[i],
+		    have[i]);
+	}
+	printf("    %d pipe writes after SUBSCRIBE returned, %d delivered "
+	    "(earlier writes may also be)\n", need, total);
+	ASSERT_MSG(need > 0, "no write started after SUBSCRIBE returned");
+	(void)close(fd);
+	(void)munmap(sh, sizeof(*sh));
+}
+
 /* G-7: deny and allow alternate with subscribe and unsubscribe. */
 static void
 g7_auth_toggle(void)
@@ -904,6 +1009,7 @@ main(void)
 #if OES_IDLE_LEVEL >= 3
 	g5_lookup_count();
 	g6_no_record_lost();
+	g6b_pipe_write_flag();
 	g7_auth_toggle();
 #endif
 #if OES_IDLE_LEVEL >= 2
