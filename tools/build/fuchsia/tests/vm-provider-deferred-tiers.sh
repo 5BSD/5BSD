@@ -14,13 +14,15 @@ KYUA_SKIPPED_LIST_BEGIN
 sys/a:one  ->  skipped: DEFERRED_ENFORCED_TIER: enforce=0  [0.1s]
 sys/a:two  ->  skipped: DEFERRED_ENFORCED_TIER: enforce=0  [0.1s]
 sys/b:three  ->  skipped: DEFERRED_DEVICE_TIER: claimed  [0.1s]
+usr.sbin/x:five  ->  skipped: DEFERRED_PLANEOFF_TIER: test-local stack  [0.1s]
 sys/c:four  ->  skipped: something else  [0.1s]
 KYUA_SKIPPED_LIST_END
 EOS
 out=$(log=$log sh -c ". '$work/summary.sh'")
-echo "$out" | grep -q '^skipped=4 '
+echo "$out" | grep -q '^skipped=5 '
 echo "$out" | grep -q '^DEFERRED_TO_ENFORCED_TIER=2 '
 echo "$out" | grep -q '^DEFERRED_TO_DEVICE_TIER=1 '
+echo "$out" | grep -q '^DEFERRED_TO_PLANEOFF_TIER=1 '
 printf 'KYUA_SKIPPED_LIST_BEGIN\nKYUA_SKIPPED_LIST_END\n' > "$log"
 out=$(log=$log sh -c ". '$work/summary.sh'")
 if echo "$out" | grep -q DEFERRED_TO; then echo "FAIL: deferred line without deferred skips"; exit 1; fi

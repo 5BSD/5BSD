@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Schema evolution for system.Audit (evolve:1/evolve:2 pairing).  next_peer
  * is built from evolution/auditcmp_next.fidl at bsd:2, which adds a method to
@@ -22,6 +23,7 @@
 #include <auditcmp.h>
 #include <auditcmp_server.h>
 
+#include "freebsd_test_suite/capability_tier.h"
 #include "auditcmp_submit.h"
 #include "auditcmp_test.h"
 
@@ -64,8 +66,7 @@ require_plane(void)
 {
 	int fd = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
 	if (fd < 0)
-		atf_tc_skip("capability plane unavailable: %s",
-		    strerror(errno));
+		capability_plane_skip(errno);
 	close(fd);
 }
 

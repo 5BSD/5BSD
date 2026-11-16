@@ -1,5 +1,8 @@
 #!/usr/sbin/dtrace -s
 /* SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Count V1 and V2 packet-ID tag reuse, allocation, upgrade and failure.
  * Usage: mbufid-sidecar (Ctrl-C prints a summary)
  *        dtrace -s /usr/share/dtrace/mbufid-sidecar -c 'sleep 30'

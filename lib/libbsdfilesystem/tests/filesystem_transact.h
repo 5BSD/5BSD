@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Test double for lib/libfilesystemcmp/filesystem_transact.h: bsdfilesystem_test
  * compiles ../bsdfilesystem.c against this header, so the library's request

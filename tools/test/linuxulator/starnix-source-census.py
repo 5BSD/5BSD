@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Enumerate a pinned Starnix snapshot and check module/feature review coverage.
 
 This checks inventory coverage, not implementation correctness or test passes.

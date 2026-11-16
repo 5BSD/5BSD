@@ -1,5 +1,9 @@
 #!/bin/sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Run every rootless nested-VMX architectural model case.  Source-tree runs
 # use a private object tree by default so installed tests and another caller's
 # build do not race on generated interfaces or module artifacts.  A caller may

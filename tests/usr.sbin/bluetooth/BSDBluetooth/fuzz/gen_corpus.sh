@@ -1,6 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Generate seed corpora for the blued fuzz harnesses.  Seeds are valid
 # (or near-valid) PDUs so the fuzzer starts from meaningful coverage
 # instead of rediscovering the wire format byte by byte.

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Shared explicit Python/ELF staging for disposable verifier fixtures."""
 import hashlib
 from pathlib import Path

@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Build a bootable GPT/UFS raw image from a NO_ROOT tree (pkg METALOG or
 # installworld METALOG).  Entries on disk but absent from the METALOG (files
 # written by package scripts, e.g. pwd.db) are added as root:wheel with their

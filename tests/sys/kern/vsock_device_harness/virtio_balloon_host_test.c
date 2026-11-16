@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Independent tests for the architecture-neutral balloon PFN parser.
  * Wire bytes and expected addresses are transcribed from VirtIO 1.4 section

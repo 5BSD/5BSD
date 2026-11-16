@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Select a signing workflow for an unpublished NO_ROOT stage.
 set -eu
 umask 077

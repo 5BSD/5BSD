@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #if defined(__PIC__) != defined(PIC)
 #error compiler PIC mode and explicit PIC define disagree
 #endif

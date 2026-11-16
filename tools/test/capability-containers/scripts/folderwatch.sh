@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Container-model install-folder watch, end to end on a from-scratch image:
 # Test.cap (reclaimprobe + logprobe) ships in System/.  At runtime we CREATE
 # Apps/ (pkg would), MOVE the bundle there with NO reload -> switchboard's watch

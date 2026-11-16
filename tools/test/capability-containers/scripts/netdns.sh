@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Born-in-capmode DNS resolution proof (end to end, over a real network path).
 #
 # bsdnetwork's in-process resolver runs in capability mode.  Files resolution

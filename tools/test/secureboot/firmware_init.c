@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Firmware-variable mechanism fixture, only for a disposable VM as PID 1.
  * This does not qualify loader authentication, veriexec or root integrity. */
 #include <sys/types.h>

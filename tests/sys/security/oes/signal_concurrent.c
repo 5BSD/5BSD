@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Signal capture identity and recycling.  The client is descendants-scoped, so
  * signals sent by unrelated processes cannot perturb the counts.

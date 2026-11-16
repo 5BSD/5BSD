@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 set -eu
 here=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 work=$(mktemp -d /tmp/svm-nested-ledger.XXXXXX)

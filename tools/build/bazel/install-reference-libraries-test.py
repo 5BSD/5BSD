@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Original archive input schema/integrity contracts; no Make build is mocked."""
 import copy
 import json

@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Phase 4: VM save/restore and migration on the real host.
 #  a) checkpoint (VM keeps running) and suspend + restore of a running guest:
 #     a counter process must survive and keep counting, the private network

@@ -1,7 +1,7 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
-# Copyright (c) 2026 The 5BSD Project
+# Copyright (c) 2026 Kory Heard
 #
 # pfsync(4) (OpenBSD protocol) between two firewalls, each a vnet jail with
 # its own pf: states created on one appear on the other, and a TCP

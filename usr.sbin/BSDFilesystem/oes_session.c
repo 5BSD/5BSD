@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * The system.OES broker session (bsd.oes.v1, lib/liboes/oes_broker.fidl): an
  * admitted client negotiates and makes one OpenNotify, answered with a fresh

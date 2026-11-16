@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual default vnode counter code, with native atomics and injected vnode state.
 
 Includes actual vnode-pager write-count transitions with injected VM objects.

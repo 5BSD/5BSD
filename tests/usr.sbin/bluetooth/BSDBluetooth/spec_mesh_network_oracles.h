@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Test-only Bluetooth Mesh network/transport known-answer oracles.  No
  * production header is included; all values come from Mesh Protocol 1.1.
  */

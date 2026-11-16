@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Run a freshly built native codec-fuzz target and retain reproducible evidence.
 
 Build with build-runtime.py --fuzz, or use make check-fuzz. This runner does

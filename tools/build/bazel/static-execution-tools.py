@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Build explicitly selected native amd64 execution tools with maintained Make."""
 import argparse
 import hashlib

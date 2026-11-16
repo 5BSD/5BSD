@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check native kernel staging against an independent Make install inventory.
 
 The Make build must use the same declared compiler filename/config/version

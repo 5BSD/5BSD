@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Capture the maintained symbol-map generator and its configured preprocessor."""
 from pathlib import Path
 import shlex

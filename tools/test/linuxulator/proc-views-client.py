@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Execute using Linux Python, including GDB's embedded Python, inside a guest.
 import ctypes
 import os

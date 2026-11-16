@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Static Linux/RISC-V ELF smoke test; run inside a riscv64 5BSD guest. */
 #include "linux_test.h"
 

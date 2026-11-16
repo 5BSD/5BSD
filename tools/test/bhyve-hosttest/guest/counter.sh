@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Monotonic counter that must keep counting across checkpoint/restore and
 # migration. Writes "<n> <uptime-ish>" to /var/tmp/ht-counter every 0.2 s.
 # usage: counter.sh start|read|stop

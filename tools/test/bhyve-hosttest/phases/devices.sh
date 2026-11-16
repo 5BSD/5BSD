@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Phase 5: other real-hardware items touched by this work.
 #  audio (sndstat, 1 s tone on the default unit, mic level), uvideo camera
 #  (/dev/video0 + one frame), Bluetooth (ng_ubt + HCI), dock Ethernet (ure0

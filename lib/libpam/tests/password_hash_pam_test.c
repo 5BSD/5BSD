@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Real PAM/crypt dispatch with process-local account data, never host edits. */
 #include <sys/types.h>
 #include <sys/stat.h>

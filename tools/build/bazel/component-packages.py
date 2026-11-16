@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Create selected pkgbase archives from a verified native stage; never publish."""
 import argparse
 import json

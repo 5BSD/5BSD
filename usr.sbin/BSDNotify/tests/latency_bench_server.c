@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * The router half of latency_bench: one BSDNotify session served by the
  * router's own code on an in-process router.  NOTIFY_BENCH_LEGACY selects

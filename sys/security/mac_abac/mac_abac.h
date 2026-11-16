@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 ABAC Project
+ * Copyright (c) 2026 Kory Heard
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -718,16 +718,36 @@ int abac_rule_pattern_parse(const char *str, size_t len,
     struct abac_rule_pattern *pattern);
 
 /*
+ * The attributes a context constraint is matched against, taken once per
+ * check (abac_rules_check()) before abac_rules_lock is acquired, so that
+ * matching takes no lock at all.  A subject's come from the credential the
+ * hook is given and, for the controlling terminal, the calling process; an
+ * object process's from the target, under the process lock its MAC caller
+ * holds.
+ */
+struct abac_ctx_attrs {
+	bool		va_valid;		/* false: no context known */
+	bool		va_capmode;		/* Capsicum capability mode */
+	bool		va_has_tty;		/* P_CONTROLT */
+	int		va_jailid;		/* 0: host */
+	uid_t		va_uid;			/* Effective UID */
+	uid_t		va_ruid;		/* Real UID */
+	gid_t		va_gid;			/* Effective GID */
+};
+
+/*
  * Function prototypes - abac_match.c
  */
 bool abac_rule_pattern_match(const struct abac_label *label,
     const struct abac_rule_pattern *pattern);
-/* A non-NULL target proc is supplied with PROC_LOCK held by the MAC caller. */
+void abac_ctx_attrs_subject(struct abac_ctx_attrs *attrs, struct ucred *cred);
+void abac_ctx_attrs_object(struct abac_ctx_attrs *attrs, struct proc *p);
 bool abac_context_matches(const struct abac_context *ctx,
-    struct ucred *cred, struct proc *proc);
+    const struct abac_ctx_attrs *attrs);
 bool abac_rule_matches(const struct abac_rule *rule,
     const struct abac_label *subj, const struct abac_label *obj,
-    uint32_t op, struct ucred *subj_cred, struct proc *obj_proc);
+    uint32_t op, const struct abac_ctx_attrs *subj_attrs,
+    const struct abac_ctx_attrs *obj_attrs);
 size_t abac_rule_pattern_to_string(const struct abac_rule_pattern *pattern,
     char *buf, size_t buflen);
 int abac_convert_label_format(const char *src, char *dst, size_t dstlen);

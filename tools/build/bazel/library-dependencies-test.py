@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check alias resolution, ordering and rejection of unrepresented link semantics."""
 import copy
 import unittest

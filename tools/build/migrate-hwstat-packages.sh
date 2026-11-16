@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Prepare installed telemetry package identities for the hwstat upgrade.
 # Run after pkg update and immediately before pkg upgrade, in the target root.
 set -eu

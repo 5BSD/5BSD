@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Native ptrace regression, disposable amd64 VM only. */
 #include <sys/types.h>
 #include <sys/ptrace.h>

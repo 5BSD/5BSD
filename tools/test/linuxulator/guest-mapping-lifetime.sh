@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Disposable FreeBSD guest only. Linux64 mapping semantics, native regressions.
 set -eu
 trap 'rc=$?; echo MAPPING_EXIT "$rc"; sync; /sbin/halt -p' EXIT

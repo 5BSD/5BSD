@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check collected boot transport against its image receipt, without extraction.
 
 This is unsigned consistency verification, not release approval or boot proof.

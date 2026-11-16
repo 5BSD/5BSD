@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Inspect ELF loading metadata without executing the target or resolving paths.
 
 This is a construction primitive, not a loader, ABI validator, dependency

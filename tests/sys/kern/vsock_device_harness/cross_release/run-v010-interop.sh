@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Compile the tagged v0.1.0 source state machine and pair it with the current
 # destination over a local socket.  No VM, root privileges, or network listener.
 set -eu

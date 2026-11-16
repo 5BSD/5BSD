@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Decode private PCAP files without opening a live capture interface."""
 import ipaddress
 import argparse

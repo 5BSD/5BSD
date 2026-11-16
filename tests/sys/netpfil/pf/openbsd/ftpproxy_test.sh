@@ -1,7 +1,7 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
-# Copyright (c) 2026 The 5BSD Project
+# Copyright (c) 2026 Kory Heard
 #
 # ftp-proxy(8) (OpenBSD) on a NAT router: a client behind the router
 # fetches a file from a server outside in passive and active mode.  The

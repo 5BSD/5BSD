@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Bind original Make provider construction to an explicit Make-built drti."""
 import json
 from pathlib import Path, PurePosixPath

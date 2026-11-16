@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Explicit test module: never load on the build host as a build step. */
 #include <sys/param.h>
 #include <sys/systm.h>

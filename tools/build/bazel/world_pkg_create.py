@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Plan and create source-owned pkgbase outputs with package-local payload inputs."""
 import hashlib
 import json

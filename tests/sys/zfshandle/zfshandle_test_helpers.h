@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Shared helpers for TrustedZFS dataset-handle tests.
  *
  * Each test creates a private file-backed pool in the ATF work directory,

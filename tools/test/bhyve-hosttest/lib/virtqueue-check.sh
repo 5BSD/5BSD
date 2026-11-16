@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Validate the host-filtered aggregates from one HyperTrace session.
 set -eu
 case "${2:-no}" in

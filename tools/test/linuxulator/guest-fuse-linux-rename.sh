@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Disposable VM: native rename suite plus Linux64 NOREPLACE protocol checks.
 set -eu
 trap 'rc=$?; echo FUSE_PROTOCOL_EXIT "$rc"; /sbin/halt -p' EXIT

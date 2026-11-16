@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * latency_bench [N]: N tracecmp_open() calls against BSDTrace's real
  * per-session server over a capability channel (see

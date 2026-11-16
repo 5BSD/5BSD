@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Compatibility for local PAM configurations retained across package upgrades. */
 #include <sys/types.h>
 #define PAM_SM_AUTH

@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Prepare a private disk-backed directory in an explicitly disposable builder VM.
 
 The host must separately retain its private guest disk. This is trusted fixture

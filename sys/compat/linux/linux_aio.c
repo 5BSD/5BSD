@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Linux legacy AIO context and mmap ring.  File-I/O jobs use native AIO;
  * this file owns only the Linux address-space and completion ABI.
  */

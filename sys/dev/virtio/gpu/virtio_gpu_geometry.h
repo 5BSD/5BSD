@@ -1,5 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
  */
 
 #ifndef _DEV_VIRTIO_GPU_VIRTIO_GPU_GEOMETRY_H_

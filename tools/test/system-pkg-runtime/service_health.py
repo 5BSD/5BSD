@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Installed-manifest inventory and complete manager-state validation."""
 import json
 from pathlib import PurePosixPath

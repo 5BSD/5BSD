@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check advertised library coverage without consulting the builder's libraries.
 
 This does not replace dependency solving, ELF loading analysis, or authentication.

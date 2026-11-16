@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * unix(4) names, connections and descriptor passing of unattached
  * processes, as before stage 1c.
  *
@@ -565,35 +567,52 @@ race_rebind(void *arg __unused)
 ATF_TC(connect_unlink_race);
 ATF_TC_HEAD(connect_unlink_race, tc)
 {
-	atf_tc_set_md_var(tc, "descr", "connect(2)/sendto(2) while another "
-	    "thread binds, unlinks and closes the name: only success, "
-	    "ENOENT or ECONNREFUSED");
+	atf_tc_set_md_var(tc, "descr", "connect(2) while another thread "
+	    "binds, unlinks and closes the name: only success, ENOENT, "
+	    "ECONNREFUSED, or EPIPE for a connection the listener's close "
+	    "aborted before connect returned");
 	atf_tc_set_md_var(tc, "timeout", "300");
 }
 ATF_TC_BODY(connect_unlink_race, tc)
 {
 	pthread_t thr;
-	int i, e, s, ok, other;
+	int i, e, s, ok, aborted, other;
 
 	race_stop = false;
 	ATF_REQUIRE(pthread_create(&thr, NULL, race_rebind, NULL) == 0);
-	ok = other = 0;
+	ok = aborted = other = 0;
 	for (i = 0; i < 20000; i++) {
 		s = socket(AF_UNIX, SOCK_STREAM, 0);
 		ATF_REQUIRE(s >= 0);
 		e = connect_name(s, "racesock");
-		close(s);
 		if (e == 0)
 			ok++;
-		else if (e != ENOENT && e != ECONNREFUSED) {
+		else if (e == EPIPE) {
+			/*
+			 * The connection was made and the listener closed
+			 * before connect(2) looked at the socket again: the
+			 * close aborts what it never accepted (soclose(),
+			 * uipc_abort(), unp_drop() of the peer), which
+			 * leaves EPIPE as the connecting socket's pending
+			 * error, and kern_connectat() returns the pending
+			 * error of a socket that is no longer connecting.
+			 * FreeBSD does the same.  Nothing more is asked of
+			 * the socket: the abort is still in progress, and
+			 * whether it looks connected yet depends on how far
+			 * the other thread has got.
+			 */
+			aborted++;
+		} else if (e != ENOENT && e != ECONNREFUSED) {
 			other++;
 			fprintf(stderr, "connect: %s\n", strerror(e));
 		}
+		close(s);
 	}
 	race_stop = true;
 	ATF_REQUIRE(pthread_join(thr, NULL) == 0);
 	ATF_CHECK_EQ_MSG(0, other, "%d unexpected errors", other);
-	fprintf(stderr, "%d connections succeeded\n", ok);
+	fprintf(stderr, "%d connections succeeded, %d were aborted before "
+	    "connect returned\n", ok, aborted);
 }
 
 /* --- accept(2), accept4(2) ------------------------------------------- */

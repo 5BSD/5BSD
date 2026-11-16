@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Give a Linux exec child native pipe endpoints in a disposable guest. */
 #include <sys/types.h>
 #include <sys/wait.h>

@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Refresh the kit's helper binaries after the upgrade (ordinary user):
 # OTLP collector/validators from the world object tree, the C helpers and the
 # guest tools (vsock-pipe, srtool) rebuilt with the installed toolchain.

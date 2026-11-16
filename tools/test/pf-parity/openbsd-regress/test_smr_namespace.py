@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Keep the PF entry initializer distinct from native SMR startup."""
 from pathlib import Path
 import os

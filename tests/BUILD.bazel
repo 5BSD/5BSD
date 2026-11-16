@@ -5,6 +5,9 @@ exports_files(["Kyuafile"], visibility = ["//lib/atf/tests:__pkg__", "//lib/test
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "suite_macros", hdrs = ["freebsd_test_suite/macros.h"], includes = ["."], visibility = ["//lib/libc/tests/nss:__pkg__", "//lib/libcasper/services/cap_fileargs/tests:__pkg__", "//tests/sys/kern:__pkg__", "//tests/sys/vfs:__pkg__", "//tests/sys/audit:__pkg__", "//tests/sys/fs/fusefs:__pkg__"])
+# Skips that name their VM tier (DEFERRED_DEVICE_TIER); used by plane-on
+# provider and client tests across the tree.
+cc_library(name = "capability_tier", hdrs = ["freebsd_test_suite/capability_tier.h"], includes = ["."], visibility = ["//visibility:public"])
 
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
 # Audit contributions only. No root Kyuafile claims that these partial suites

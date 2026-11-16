@@ -1955,6 +1955,18 @@ sysext_serve(void)
 	if (service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL) == -1)
 		return (-1);
 	/*
+	 * The forked package and module readers of root loads confine
+	 * themselves with the capprotect descriptor (rootload.c,
+	 * child_confine()).  Without it every root load would fail; refuse to
+	 * start instead.
+	 */
+	if (!service_worker_protect_available()) {
+		syslog(LOG_ERR, "no capprotect descriptor: root-load readers "
+		    "could not confine themselves");
+		errno = ENOTSUP;
+		return (-1);
+	}
+	/*
 	 * Dup the delivered kldload/kldunload token before entering capmode;
 	 * fail-soft if none was delivered (loads then attempt the raw syscall).
 	 */

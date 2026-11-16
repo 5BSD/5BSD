@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * The Linux-ABI half of the boundary pins (dq-boundary design, part b0,
  * section 6.1 items 1-3, 6 and 18): what a Linux process that is NOT
  * attached to a dq(4) controller gets from the calls that name another

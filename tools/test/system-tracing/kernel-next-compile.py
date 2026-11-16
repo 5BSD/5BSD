@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Compile the probe expansion with/without hooks using a prepared kernel tree."""
 
 import argparse

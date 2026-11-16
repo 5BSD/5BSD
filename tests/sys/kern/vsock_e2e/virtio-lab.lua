@@ -1,5 +1,9 @@
 #!/usr/libexec/flua
 --
+-- SPDX-License-Identifier: BSD-2-Clause
+--
+-- Copyright (c) 2026 Kory Heard
+--
 -- Declarative bhyve VirtIO real-VM test orchestrator.
 --
 

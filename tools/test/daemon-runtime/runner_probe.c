@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Deliberately failing cases verify the VM runner, never product acceptance. */
 #include <sys/types.h>
 #include <sys/disk.h>

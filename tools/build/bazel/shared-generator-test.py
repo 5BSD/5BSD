@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Native FreeBSD amd64: ensure failed generation cannot become a reusable Make target."""
 import argparse
 import os

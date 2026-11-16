@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual uefisign digest routine against independent byte-range SHA256 vectors."""
 from pathlib import Path
 import hashlib,subprocess,tempfile,unittest

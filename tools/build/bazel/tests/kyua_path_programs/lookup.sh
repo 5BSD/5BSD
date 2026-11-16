@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 printf '1..1\n'
 if [ "$(uname)" = 'declared candidate selected' ]; then
     printf 'ok 1 - declared executable overrides host name\n'

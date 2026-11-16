@@ -1,5 +1,8 @@
 #!/usr/sbin/dtrace -s
 /* SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Kernel channel forwarding handler, all processes. Existing sbintime latency.
  */
 #pragma D option quiet

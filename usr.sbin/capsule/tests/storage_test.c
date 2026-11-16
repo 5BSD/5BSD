@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Run the disk test only in a disposable VM with an explicit scratch-device input. */
 #include <sys/types.h>
 #include <sys/capsicum.h>

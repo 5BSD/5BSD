@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * latency_bench [N]: N limit queries (HELLO, now GetLimits) from the shared
  * libnetworkcmp process client to BSDNetwork's real per-session worker over

@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * EXTERNAL REFERENCE ORACLE: which device addresses bind into the SMP
  * confirm/check value functions.

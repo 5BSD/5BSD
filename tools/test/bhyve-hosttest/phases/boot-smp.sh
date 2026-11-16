@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Compare identical four-vCPU guests with nested SVM hidden/exposed.
 phase_begin boot-smp
 need_root

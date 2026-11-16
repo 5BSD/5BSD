@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Retain exactly one original archive data member without a whole-archive link. */
 extern int BZ2_rNums[512];
 

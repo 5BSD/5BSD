@@ -638,6 +638,46 @@ ATF_TC_BODY(reaper_kill_normal, tc)
 	ATF_REQUIRE_EQ(0, r);
 }
 
+/*
+ * REAPER_KILL_CHILDREN signals the reaper's children only.  Signalling any
+ * process makes the request succeed (procctl(2)).
+ */
+ATF_TC_WITHOUT_HEAD(reaper_kill_children);
+ATF_TC_BODY(reaper_kill_children, tc)
+{
+	struct procctl_reaper_kill params;
+	pid_t parent, child[2], pid;
+	int r, status;
+
+	parent = getpid();
+	r = procctl(P_PID, parent, PROC_REAP_ACQUIRE, NULL);
+	ATF_REQUIRE_EQ(0, r);
+
+	for (int i = 0; i < 2; i++) {
+		child[i] = fork();
+		ATF_REQUIRE(child[i] != -1);
+		if (child[i] == 0) {
+			for (;;)
+				pause();
+		}
+	}
+
+	params.rk_sig = SIGTERM;
+	params.rk_flags = REAPER_KILL_CHILDREN;
+	params.rk_killed = 77;
+	params.rk_fpid = 77;
+	r = procctl(P_PID, parent, PROC_REAP_KILL, &params);
+	ATF_CHECK_EQ_MSG(0, r, "%s", r != 0 ? strerror(errno) : "");
+	ATF_CHECK_EQ(2, params.rk_killed);
+	ATF_CHECK_EQ(-1, params.rk_fpid);
+
+	for (int i = 0; i < 2; i++) {
+		pid = waitpid(child[i], &status, 0);
+		ATF_REQUIRE_EQ(child[i], pid);
+		ATF_CHECK(WIFSIGNALED(status) && WTERMSIG(status) == SIGTERM);
+	}
+}
+
 ATF_TC_WITHOUT_HEAD(reaper_kill_subtree);
 ATF_TC_BODY(reaper_kill_subtree, tc)
 {
@@ -787,6 +827,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, reaper_kill_sigzero);
 	ATF_TP_ADD_TC(tp, reaper_kill_empty);
 	ATF_TP_ADD_TC(tp, reaper_kill_normal);
+	ATF_TP_ADD_TC(tp, reaper_kill_children);
 	ATF_TP_ADD_TC(tp, reaper_kill_subtree);
 	ATF_TP_ADD_TC(tp, reaper_pdfork);
 	return (atf_no_error());

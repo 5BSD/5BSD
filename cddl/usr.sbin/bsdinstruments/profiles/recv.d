@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* Print every recv(2) entry. FreeBSD's libc recv() is a wrapper
  * around recvfrom() with NULL address args, so the kernel-level
  * probe is recvfrom — there is no syscall::recv:entry on FreeBSD. */

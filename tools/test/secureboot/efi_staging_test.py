@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Native regression of actual loader functions with simulated EFI allocation.
 
 This does not qualify firmware behavior or boot. Large copies are counted;

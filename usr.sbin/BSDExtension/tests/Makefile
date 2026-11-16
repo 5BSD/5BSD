@@ -83,6 +83,11 @@ SRCS.reclaim_test=	reclaim_test.c bsdextension.c policy.c reclaim.c \
 ATF_TESTS_C+=		rootload_test
 SRCS.rootload_test=	rootload_test.c bsdextension.c policy.c reclaim.c \
 	rootload.c kerneldir.c blake2b-ref.c ${KLDELF_SRCS}
+# rootload_live_test: a root load through the running broker (plane-on tier),
+# so that its forked metadata reader confines itself for real.
+ATF_TESTS_C+=		rootload_live_test
+TEST_METADATA.rootload_live_test+= required_user="root" timeout="60"
+
 RLMODULES=		rltest_a rltest_d rldep rltest_n rlbase rltest_v \
 			rltest_x mac_rltest rltest_k rlother
 RLMODULE_rltest_d=	-DDEP='"rldep"' -DDEPMIN=1 -DDEPMAX=1

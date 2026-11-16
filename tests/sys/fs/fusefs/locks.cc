@@ -239,6 +239,41 @@ TEST_F(FlockRemote, eopnotsupp_keeps_haslock)
 }
 
 /*
+ * flock(LOCK_UN) clears the mark before the filesystem is asked.  When the
+ * filesystem fails the unlock the lock may still be held, so the mark comes
+ * back, and the last close unlocks again.
+ */
+TEST_F(FlockRemote, failed_unlock_keeps_haslock)
+{
+	const char FULLPATH[] = "mountpoint/some_file.txt";
+	const char RELPATH[] = "some_file.txt";
+	const int fhaslock = 0x4000;
+	uint64_t ino = 42;
+	int fd;
+
+	expect_lookup(RELPATH, ino);
+	expect_open(ino, 0, 1);
+	expect_flush(ino, 1, ReturnErrno(0));
+	expect_release(ino, FH);
+	{
+		InSequence sequence;
+		expect_setlk(ino, F_WRLCK, 0);
+		expect_setlk(ino, F_UNLCK, EIO);
+		/* The last close. */
+		expect_setlk(ino, F_UNLCK, 0);
+	}
+
+	fd = open(FULLPATH, O_RDWR);
+	ASSERT_LE(0, fd) << strerror(errno);
+	ASSERT_EQ(0, flock(fd, LOCK_EX | LOCK_NB)) << strerror(errno);
+	ASSERT_EQ(fhaslock, fcntl(fd, F_GETFL) & fhaslock);
+	ASSERT_NE(0, flock(fd, LOCK_UN));
+	ASSERT_EQ(EIO, errno);
+	EXPECT_EQ(fhaslock, fcntl(fd, F_GETFL) & fhaslock);
+	ASSERT_EQ(0, close(fd)) << strerror(errno);
+}
+
+/*
  * If the fuse filesystem does not support posix file locks, then the kernel
  * should fall back to local locks.
  */

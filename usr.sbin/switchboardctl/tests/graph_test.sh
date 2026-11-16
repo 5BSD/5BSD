@@ -1,6 +1,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Tests for switchboardctl graph: the IPC attribute reach graph drawn from
 # the bundle registry on disk (docs/book/src/plane/attributes.md, rows G1-G3).
 # Purely static: no running plane, no root.

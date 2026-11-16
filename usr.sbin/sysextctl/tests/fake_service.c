@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * A scripted libextensioncmp for sysextctl's command-line tests: the session
  * calls answer from SYSEXT_TEST without a provider.  The wire protocol and the

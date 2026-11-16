@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Compose explicit top-level changes against an exact JSON base document.
 
 This is the semantic composition core, not a UCL parser or authority issuer.

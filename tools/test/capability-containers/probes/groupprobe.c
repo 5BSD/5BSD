@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * groupprobe: a throwaway unit for the group-container e2e.  It claims its
  * bundle-shared container (Data/<bundle>/shared/persistent/state) and the
  * cross-bundle group container Data/Shared/<GROUPPROBE_GROUP>/persistent/<claim>

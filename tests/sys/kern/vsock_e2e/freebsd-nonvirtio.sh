@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Resolve a 5BSD guest device through the newbus topology.  Every command
 # prints exactly one device name and fails when the lab topology is ambiguous.
 set -eu

@@ -1,4 +1,5 @@
 -- SPDX-License-Identifier: BSD-2-Clause
+-- Copyright (c) 2026 Kory Heard
 local case = arg[1]
 for i = 2, #arg, 2 do
   local name, path = arg[i], arg[i + 1]

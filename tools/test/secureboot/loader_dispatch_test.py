@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual common executable dispatch with controlled handoff and exec results."""
 from pathlib import Path
 import subprocess

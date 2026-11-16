@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The FreeBSD Foundation
+ * Copyright (c) 2026 Kory Heard
  *
  * responsibility_test — the responsible-parent decision (responsibility.c)
  * against the management model, plus the apply path's degradation, with the

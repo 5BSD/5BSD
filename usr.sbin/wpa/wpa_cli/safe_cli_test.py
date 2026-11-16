@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Only command-line branches that return before connecting to any service."""
 import argparse
 import os

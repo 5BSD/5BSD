@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * The pre-FIDL system.Audit record helpers (auditcmp_server.h).  The current
  * client and provider speak auditcmp.fidl; they still use
  * auditcmp_validate_message() on a locally built submit record, so the field

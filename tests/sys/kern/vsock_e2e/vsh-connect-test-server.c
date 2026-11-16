@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Minimal stand-in for bhyve's vsock control socket.  It validates one
  * CONNECT request, returns a data socket through SCM_RIGHTS, and echoes one
  * connection.  This lets the E2E rig prove vsh-connect without a VM.

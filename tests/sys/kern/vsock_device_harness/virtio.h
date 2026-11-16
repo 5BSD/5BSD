@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* Mock of bhyve virtio.h for the vsock device harness: only the surface the
  * device under test (pci_virtio_vsock.c) references. */
 #ifndef MOCK_VIRTIO_H

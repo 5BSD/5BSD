@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check real libc archive extraction and source-owned member identities."""
 import argparse
 from collections import Counter

@@ -118,4 +118,7 @@ FIDL_LIBRARY.sysctlcmp_next=	bsd.sysctl.v1
 FIDL_FLAGS.sysctlcmp_next=	--available bsd:2
 .include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 
+# freebsd_test_suite/capability_tier.h: skips that name their VM tier.
+CFLAGS+=	-I${SRCTOP}/tests
+
 .include <bsd.test.mk>

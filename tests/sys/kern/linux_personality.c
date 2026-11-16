@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #include "linux_test.h"
 /*
  * personality(2): query/set semantics, persistence across execve(2), and

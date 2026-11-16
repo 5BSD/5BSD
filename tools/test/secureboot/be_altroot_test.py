@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Native alternate-root semantics and guarded-buffer checks; no pool needed."""
 from pathlib import Path
 import subprocess

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* powercmp_client_open() descriptor ownership, with service_open faked. */
 #include <sys/types.h>
 

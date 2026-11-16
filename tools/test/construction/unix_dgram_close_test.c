@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Logging diagnostic: delivery after successful sends is the tested property,
  * not a claim that SOCK_DGRAM provides acknowledged delivery. */
 #include <sys/socket.h>

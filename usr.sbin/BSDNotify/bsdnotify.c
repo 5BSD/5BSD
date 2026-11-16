@@ -1,5 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
  */
 
 #include <sys/param.h>
@@ -1868,7 +1870,7 @@ main(void)
 	    SERVICE_CALL_OPTIONS_INITIALIZER;
 	struct auditcmp_client *accept_audit;
 	int accept_audit_fd, router_pair[2], router_pd, fd;
-	int watcher_error;
+	int fail_error, watcher_error;
 	bool watcher_started;
 	pid_t router_pid;
 
@@ -1935,18 +1937,22 @@ main(void)
 	ready_options.timeout_ms = NOTIFY_ROUTER_START_TIMEOUT_MS;
 	if (service_session_receive_event(router_session, &ready_event,
 	    &ready_options) == -1) {
-		logcmp_log(LOG_ERR, "router did not report: %m");
+		fail_error = errno;
+		logcmp_log(LOG_ERR, "router did not report: %s",
+		    strerror(fail_error));
+		errno = fail_error;
 		goto fail_router;
 	}
 	if (ready_event.length != sizeof(router_ready) ||
 	    ready_event.nfds != 0) {
-		errno = EPROTO;
 		logcmp_log(LOG_ERR, "router sent a malformed ready status");
+		errno = EPROTO;
 		goto fail_router;
 	}
 	if (router_ready.status != 0) {
+		logcmp_log(LOG_ERR, "router did not start: %s",
+		    strerror(router_ready.status));
 		errno = router_ready.status;
-		logcmp_log(LOG_ERR, "router did not start: %m");
 		goto fail_router;
 	}
 	watch_context.process_fd = router_pd;
@@ -2051,6 +2057,8 @@ main(void)
 	}
 
 fail_router:
+	/* The cleanup below may change errno; report the failure itself. */
+	fail_error = errno;
 	atomic_store_explicit(&watch_context.expected_exit, true,
 	    memory_order_release);
 	if (router_session != NULL)
@@ -2059,8 +2067,10 @@ fail_router:
 	if (watcher_started)
 		(void)pthread_join(watcher, NULL);
 	close(router_pd);
+	errno = fail_error;
 fail:
-	logcmp_log(LOG_ERR, "provider failed: %m");
+	fail_error = errno;
+	logcmp_log(LOG_ERR, "provider failed: %s", strerror(fail_error));
 	if (accept_kq >= 0)
 		close(accept_kq);
 	return (1);

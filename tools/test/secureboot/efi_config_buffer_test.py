@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual EFI configuration reader with injected firmware, I/O and verification."""
 from pathlib import Path
 import subprocess

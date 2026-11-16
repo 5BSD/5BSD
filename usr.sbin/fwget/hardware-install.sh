@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Shared by fwget and bsdinstall. Check the target kernel, not the host kernel.
 set -eu
 : ${FWGET_ROOT:=/}

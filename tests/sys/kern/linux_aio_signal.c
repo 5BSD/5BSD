@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Linux amd64 io_pgetevents temporary signal-mask regression. */
 typedef unsigned long u64;
 struct io_event {

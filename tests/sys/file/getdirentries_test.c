@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * getdirentries(2) is answered by the descriptor's fileops (fo_readdir).
  * Directories read entries; other vnode files return ENOTDIR; descriptors
  * with no vnode return EINVAL, as getvnode() did; O_PATH descriptors return

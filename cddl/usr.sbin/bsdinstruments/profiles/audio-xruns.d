@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * PCM xrun detections: direction 0 playback, 1 recording; channel trigger outcomes.
  *

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Userland build configuration for sys/contrib/libb2/blake2b-ref.c in
  * bsdextension(8) (pkg file checksums for root loads).  The kernel uses

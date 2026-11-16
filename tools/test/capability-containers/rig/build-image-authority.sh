@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # build-image-authority.sh — like build-image.sh, but boots Authority as PID 1.
 #
 # Differences from build-image.sh:

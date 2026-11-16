@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 provider moveio {
 	probe rename__start();
 	probe rename__done(int arg0, int arg1);

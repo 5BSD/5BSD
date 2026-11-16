@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Shared driver for the per-provider latency_bench programs
  * (tools/build/fuchsia/DAEMONS.md, "Latency").  A bench forks the provider's

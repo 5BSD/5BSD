@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Read-only checks in a disposable, signed, plane-on VM. Use as EXTRA_SCRIPT
 # with tools/build/fuchsia/vm-provider.sh, after its provider-convergence gate.
 set -eu

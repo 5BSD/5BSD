@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Direct userspace tests for the real guest VirtIO transport driver.
  * The socket-domain callbacks and virtqueues are instrumented, but the code

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Ordinary ELF signature verification on the exact descriptor being loaded. */
 #include <sys/types.h>
 #include <sys/stat.h>

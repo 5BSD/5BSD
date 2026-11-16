@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Install/remove THROUGH pkg(8): ship pkg-static + a real .pkg of a bundle into
 # the image; on the VM `pkg add` it (no reload) -> the watch loads the unit and
 # its container appears; `pkg delete` -> the watch unloads it; reboot -> reaped.

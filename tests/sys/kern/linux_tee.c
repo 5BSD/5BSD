@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * tee(2): duplicate pipe data to another pipe without consuming the source.
  * Verifies the source is unchanged after tee, the sink gets an exact copy,

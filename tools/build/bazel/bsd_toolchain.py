@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Stage the declared Bazel C/C++ toolchain package shared by the pilot probes.
 
 Bazel 9 or later only, with Bzlmod and rules_cc.  Bazel 5 and the WORKSPACE

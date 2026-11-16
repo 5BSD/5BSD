@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Client library for the system.Sysctl capability: read and (policy
  * permitting) write kernel sysctl variables by name through the provider,
  * instead of calling sysctl(3) directly or forking a Casper cap_sysctl helper.

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * The pre-FIDL NTFC record validators (notify_server.h), kept for ABI
  * compatibility, and the event rules both formats share.  The provider and
  * libnotify speak bsd.notify.v1 (notify.fidl).

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Strict standalone CTF v2/v3 type-layout and ELF symbol association comparison.
 
 Format definitions: sys/sys/ctf.h; symbol filtering: common/ctf/ctf_open.c.

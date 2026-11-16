@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * OES jail scope: a client limited to one jail, by jid or by name, with or
  * without the jails nested beneath it.

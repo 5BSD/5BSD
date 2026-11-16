@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 // Build against installed headers and a shared library, without source
 // includes.
 #include <cstdlib>

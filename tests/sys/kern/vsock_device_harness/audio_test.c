@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Exercise the shared bhyve OSS byte-stream boundary with injected short,
  * interrupted, and zero-progress system calls.  The production implementation
  * is included so the tests cover its exact retry loop.

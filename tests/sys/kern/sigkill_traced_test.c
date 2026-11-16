@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * SIGKILL sent to a process that a debugger holds stopped.
  *
  * A tracer may hold a stopped tracee with SIGKILL pending for as long as
@@ -68,7 +70,7 @@ enum rel {
 	R_EXIT,		/* the debugger exits */
 };
 
-enum op { OP_ATTACH, OP_WAIT, OP_CONT, OP_DETACH, OP_EXIT };
+enum op { OP_ATTACH, OP_WAIT, OP_CONT, OP_DETACH, OP_KILL, OP_EXIT };
 
 struct cmd {
 	int	op;
@@ -381,7 +383,10 @@ debugger(pid_t tgt, int cfd, int rfd)
 			r.rv = ptrace(PT_CONTINUE, tgt, (caddr_t)1, c.arg);
 			break;
 		case OP_DETACH:
-			r.rv = ptrace(PT_DETACH, tgt, (caddr_t)1, 0);
+			r.rv = ptrace(PT_DETACH, tgt, (caddr_t)1, c.arg);
+			break;
+		case OP_KILL:
+			r.rv = ptrace(PT_KILL, tgt, NULL, 0);
 			break;
 		default:
 			_exit(0);
@@ -807,6 +812,90 @@ CASE(mt_sleepers__kill__detach, "",
     K_MT_SLEEP, S_WAITED, H_KILL, R_DETACH, -1, -1)
 
 /*
+ * The signal a debugger passes when it lets a tracee go: PT_KILL, or the
+ * data of PT_CONTINUE or PT_DETACH.  A PT_ATTACH that wakes the sleeper
+ * leaves a thread that reported the stop to hand the signal to; a
+ * transparent one leaves each thread stopped where it slept, and the
+ * signal is the process's.  Either way the tracee takes it.
+ */
+static void
+run_pass(enum kind kind, enum op op, int sig, int transparent)
+{
+	struct fx fx;
+	struct reply r;
+	int status, want;
+
+	sysctl_change(TRANSPARENT, transparent);
+	want = op == OP_KILL ? SIGKILL : sig;
+
+	fx_start(&fx, kind, false);
+	STEP(dbg(&fx, OP_ATTACH, 0, &r) && r.rv == 0);
+	STEP(dbg(&fx, OP_WAIT, 0, &r) && STOPPED_AT(r, fx.tgt, SIGSTOP));
+	show("waited", fx.tgt);
+	STEP(dbg(&fx, op, sig, &r) && r.rv == 0);
+	show("passed", fx.tgt);
+	if (!wait_dead(fx.tgt)) {
+		show("alive", fx.tgt);
+		atf_tc_fail_nonfatal("the target outlived signal %d", want);
+		goto out;
+	}
+	if (op != OP_DETACH) {
+		/* The debugger collects the status and gives it back. */
+		STEP(dbg(&fx, OP_WAIT, 0, &r) && r.rv == fx.tgt &&
+		    WIFSIGNALED(r.status) && WTERMSIG(r.status) == want);
+	}
+	status = 0;
+	STEP(waitpid(fx.tgt, &status, 0) == fx.tgt && WIFSIGNALED(status) &&
+	    WTERMSIG(status) == want);
+out:
+	fx_end(&fx);
+	sysctl_restore(TRANSPARENT);
+}
+
+#define	PASS_CASE(name, descr, ...)					\
+ATF_TC_WITH_CLEANUP(name);						\
+ATF_TC_HEAD(name, tc)							\
+{									\
+	atf_tc_set_md_var(tc, "descr", descr);				\
+	atf_tc_set_md_var(tc, "require.user", "root");			\
+	atf_tc_set_md_var(tc, "is.exclusive", "true");			\
+}									\
+ATF_TC_BODY(name, tc)							\
+{									\
+	run_pass(__VA_ARGS__);						\
+}									\
+ATF_TC_CLEANUP(name, tc)						\
+{									\
+	cleanup();							\
+}
+
+PASS_CASE(waited__ptkill,
+    "PT_KILL kills a tracee stopped where it slept",
+    K_READ, OP_KILL, 0, 1)
+PASS_CASE(mt_sleepers__ptkill,
+    "PT_KILL kills a tracee with every thread stopped where it slept",
+    K_MT_SLEEP, OP_KILL, 0, 1)
+PASS_CASE(waited__continue_sigterm,
+    "The signal of PT_CONTINUE is delivered to a tracee stopped where it "
+    "slept",
+    K_READ, OP_CONT, SIGTERM, 1)
+PASS_CASE(waited__detach_sigterm,
+    "The signal of PT_DETACH is delivered to a tracee stopped where it "
+    "slept",
+    K_READ, OP_DETACH, SIGTERM, 1)
+PASS_CASE(legacy_attach__ptkill,
+    "PT_KILL kills a tracee after a PT_ATTACH that wakes the sleeper",
+    K_READ, OP_KILL, 0, 0)
+PASS_CASE(legacy_attach__continue_sigterm,
+    "The signal of PT_CONTINUE is delivered after a PT_ATTACH that wakes "
+    "the sleeper",
+    K_READ, OP_CONT, SIGTERM, 0)
+PASS_CASE(legacy_attach__detach_sigterm,
+    "The signal of PT_DETACH is delivered after a PT_ATTACH that wakes the "
+    "sleeper",
+    K_READ, OP_DETACH, SIGTERM, 0)
+
+/*
  * SIGKILL against PT_DETACH: whichever the kernel sees first, the target
  * dies.
  */
@@ -859,6 +948,49 @@ ATF_TC_CLEANUP(waited__kill_races_detach, tc)
 	cleanup();
 }
 
+/*
+ * A non-parent debugger collects the exit status of a pdfork(2) child it
+ * traces.  As in FreeBSD, that wait takes the parent's waitpid(2)
+ * reference: the parent's waitpid() fails with ECHILD, and the status stays
+ * available through the process descriptor (pdwait(2)).
+ */
+ATF_TC_WITH_CLEANUP(pdfork_debugger_reaps);
+ATF_TC_HEAD(pdfork_debugger_reaps, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "after a debugger reaps a pdfork child, waitpid is ECHILD and "
+	    "pdwait returns the status");
+}
+ATF_TC_BODY(pdfork_debugger_reaps, tc)
+{
+	struct fx fx;
+	struct reply r;
+	int status;
+
+	if (!transparent_attach())
+		atf_tc_skip(TRANSPARENT " is not set");
+	fx_start(&fx, K_READ, true);
+	STEP(dbg(&fx, OP_ATTACH, 0, &r) && r.rv == 0);
+	STEP(dbg(&fx, OP_WAIT, 0, &r) && STOPPED_AT(r, fx.tgt, SIGSTOP));
+	STEP(dbg(&fx, OP_CONT, 0, &r) && r.rv == 0);
+	STEP(wait_asleep(fx.tgt, 1, 1));
+	STEP(pdkill(fx.pd, SIGKILL) == 0);
+	STEP(dbg(&fx, OP_WAIT, 0, &r) && STOPPED_AT(r, fx.tgt, SIGKILL));
+	STEP(dbg(&fx, OP_CONT, SIGKILL, &r) && r.rv == 0);
+	STEP(dbg(&fx, OP_WAIT, 0, &r) && KILLED(r.rv, r.status, fx.tgt));
+	errno = 0;
+	STEP(waitpid(fx.tgt, &status, WNOHANG) == -1 && errno == ECHILD);
+	status = 0;
+	STEP(pdwait(fx.pd, &status, WEXITED, NULL, NULL) == 0);
+	STEP(WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL);
+out:
+	fx_end(&fx);
+}
+ATF_TC_CLEANUP(pdfork_debugger_reaps, tc)
+{
+	cleanup();
+}
+
 /* No debugger: SIGKILL ends a process stopped by SIGSTOP in its sleep. */
 ATF_TC_WITH_CLEANUP(untraced_stopped__kill);
 ATF_TC_HEAD(untraced_stopped__kill, tc)
@@ -902,6 +1034,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, waited__kill__debugger_exit_kills);
 	ATF_TP_ADD_TC(tp, vfork_parent__kill__detach);
 	ATF_TP_ADD_TC(tp, untraced_stopped__kill);
+	ATF_TP_ADD_TC(tp, pdfork_debugger_reaps);
 	ATF_TP_ADD_TC(tp, mt_spin_1st__kill__detach);
 	ATF_TP_ADD_TC(tp, mt_other_sigstop__kill__detach);
 	ATF_TP_ADD_TC(tp, legacy_mt_other_sigstop__kill__detach);
@@ -914,5 +1047,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, attached__kill__debugger_exit);
 	ATF_TP_ADD_TC(tp, mt_sleepers__kill__detach);
 	ATF_TP_ADD_TC(tp, waited__kill_races_detach);
+	ATF_TP_ADD_TC(tp, waited__ptkill);
+	ATF_TP_ADD_TC(tp, mt_sleepers__ptkill);
+	ATF_TP_ADD_TC(tp, waited__continue_sigterm);
+	ATF_TP_ADD_TC(tp, waited__detach_sigterm);
+	ATF_TP_ADD_TC(tp, legacy_attach__ptkill);
+	ATF_TP_ADD_TC(tp, legacy_attach__continue_sigterm);
+	ATF_TP_ADD_TC(tp, legacy_attach__detach_sigterm);
 	return (atf_no_error());
 }

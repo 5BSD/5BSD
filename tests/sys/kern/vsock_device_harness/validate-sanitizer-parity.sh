@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Ensure every non-VirtIO host model claimed by the coverage ledger is also
 # compiled and executed by the ASan/UBSan harness, not only by Kyua.
 set -eu

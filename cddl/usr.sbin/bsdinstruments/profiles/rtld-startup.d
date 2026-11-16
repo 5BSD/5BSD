@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Semantic DTrace coverage: see tools/test/system-tracing/COVERAGE-THIRD.
  * Durations are microseconds; pointers are identities, never dereferenced.
  * Start tracing before the workload. Missing starts are ignored. Nesting is

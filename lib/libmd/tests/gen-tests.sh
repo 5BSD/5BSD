@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Emit the common ATF body for an explicit maintained digest list.
 set -eu
 [ "$#" -gt 0 ] || { echo "digest list required" >&2; exit 1; }

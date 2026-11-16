@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * See tools/test/system-tracing/COVERAGE-THIRD for argument contracts.
  * Start/completion pairs are nested per thread. Missing starts are ignored.
  * Stopping tracing or nonlocal exits can leave unmatched operations.

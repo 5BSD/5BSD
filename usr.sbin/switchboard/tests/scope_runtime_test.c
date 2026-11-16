@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* Actual private implementation functions; unrelated branches discarded by ld. */
 #include "../naming.c"
 #include "../domain.c"

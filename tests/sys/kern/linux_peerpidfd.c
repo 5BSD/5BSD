@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * SO_PEERPIDFD (Linux 6.5), SOL_UDP option handling, IPC *_STAT_ANY and
  * the TIOCOUTQ/TCSBRK/TIOCSTI terminal ioctls.  Exit status = failed

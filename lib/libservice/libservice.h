@@ -382,6 +382,14 @@ int	service_activation_socket(const char *name);
 int	service_worker_protect(uint32_t flags);
 
 /*
+ * True while this process holds the capprotect descriptor that
+ * service_worker_protect() (and so service_worker_enter_capability_mode())
+ * needs: a provider that will confine forked workers can check it at start
+ * rather than fail every later request.
+ */
+bool	service_worker_protect_available(void);
+
+/*
  * Drop every descriptor authority retained internally by libservice.
  * A freshly forked component worker calls this after
  * service_worker_protect() and before cap_enter().  Application-owned

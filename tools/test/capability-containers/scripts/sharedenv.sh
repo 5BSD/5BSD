@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Shared environment e2e (docs "Storage and delivery": shared env descriptor).
 #  Env.cap: units envwriter (claims shared "env" rw, writes settings) and
 #  envreader (service_storage_open_env: read-only view) run TOGETHER:

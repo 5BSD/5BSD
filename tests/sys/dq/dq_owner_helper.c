@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * dq_owner_test's exec'd image: it reports, by its exit status, how many
  * of the descriptors it was started with are the queue device.  A queue
  * descriptor never survives an exec (sc-q), so the answer is 0; 100 stands

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Map maintained include flags without dropping or reordering them."""
 from pathlib import Path
 

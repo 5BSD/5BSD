@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #include "includes.h"
 #include <sys/wait.h>
 #include <atf-c.h>

@@ -1,4 +1,9 @@
 #!/usr/local/bin/python3.12
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Run native libservice maturity tests in a disposable, networkless VM."""
 import argparse, hashlib, json, os, re, shutil, subprocess, time
 from pathlib import Path

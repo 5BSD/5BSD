@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Real dynamic CSV encoding with explicit native artifacts; no host encoder."""
 import os
 from pathlib import Path

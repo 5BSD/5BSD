@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Native BSD natural C++ types from fidlc JSON IR.
 
 This replaces the Go fidlgen_cpp stage of the BSD bindings.  It ports the

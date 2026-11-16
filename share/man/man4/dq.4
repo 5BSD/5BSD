@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 14, 2026
+.Dd November 15, 2026
 .Dt DQ 4
 .Os
 .Sh NAME
@@ -71,6 +71,25 @@ This page describes the device as built through stage 1c-iii (served
 files, directories and symlinks, attachment, served lookups, working
 directory and root), and names every answer that differs from a real
 file.
+.Pp
+A controller that attaches programs
+.Pq Sx Attachment and resolution
+is their
+.Em Capability Broker :
+the kernel puts each capability an attached program is about to obtain
+to it first, at the
+.Em capability lifecycle hooks ,
+and it answers allow
+.Pq Dv DQ_RESOLVE_PASS ,
+deny
+.Pq an errno ,
+substitute
+.Pq Dv DQ_RESOLVE_SWAP , Sx Descriptor substitution
+or proxy
+.Pq Dv DQ_RESOLVE_FD , Sx Served answers .
+A Capability Broker is not one of the brokered system services, the
+providers that hand out capabilities on request.
+Code and this page keep the word controller.
 .Ss Opening the device
 .Pa /dev/dq
 is created mode 0600, owner root, group wheel.
@@ -1214,12 +1233,14 @@ reopens included.
 Then its id is retired,
 .Dv DQ_OP_CLOSE
 is posted if asked for, and nothing waits for the controller.
-The reply path holds the object's file while it runs the
+The reply path runs the
 .Fn mac_file_notify_reply
-hook, so when the requester closed meanwhile that drop is the last
-reference and the
-.Dv DQ_OP_CLOSE
-record then carries the controller as its caller.
+hook without a reference on the object's file, so a requester that
+closes meanwhile still makes the last close: that close waits for the
+hook to return (kernel code on the controller's thread, nothing the
+controller does) and then releases the
+.Xr flock 2
+and OFD locks before it returns, as the last close of a vnode does.
 When the queue dies
 .Po
 its owner exits, execs or leaves a shared descriptor table, or its last
@@ -1990,7 +2011,9 @@ A controller may
 a process to its queue.
 From then on every name the process resolves is posted to the queue as a
 .Dv DQ_OP_RESOLVE
-event before the lookup runs, and the controller decides: it answers
+event, the naming hook, one of the capability lifecycle hooks
+.Pq Sx DESCRIPTION ,
+before the lookup runs, and the controller decides: it answers
 .Dv DQ_RESOLVE_PASS
 and the lookup proceeds unchanged, or an errno and the system call fails
 with it.
@@ -2584,7 +2607,7 @@ is that path, and the lookup continues there from the real root
 .Vt struct dq_resolve_swap
 (32) naming a descriptor of the controller, whose open file becomes the
 result of the open
-.Pq Sx Swapped answers .
+.Pq Sx Descriptor substitution .
 .El
 .Pp
 A
@@ -2823,7 +2846,12 @@ from that object
 and takes
 .Dv DQ_RESOLVE_FD
 or an errno: the controller reopens it.
-.Ss Swapped answers
+.Ss Descriptor substitution
+Descriptor substitution is the substitute answer of a Capability Broker:
+it answers an open with a real open file of the
+controller's: the
+.Dv DQ_RESOLVE_SWAP
+answer, called a swap below.
 An open
 .Pq Dv DQ_ROP_OPEN
 that offers
@@ -3039,10 +3067,19 @@ An open that completed before the queue died keeps its descriptor.
 .Er EMFILE
 comes before this last test.
 The file keeps the credential of the controller's open
-.Pq Va f_cred .
+.Pq Va f_cred
+and the rights of the controller's descriptor; see
+.Sx The substituted file and the restricted Capability Broker .
 .Pp
 .Sy Duties of a swapping controller .
 .Bl -bullet -compact
+.It
+Restrict yourself before you answer: open the queue, attach the program,
+then give up privilege
+.Pq and enter a jail or capability mode where that fits ,
+and only then open the files you hand over
+.Pq Sx The substituted file and the restricted Capability Broker .
+Hold no descriptor from before that you will hand over.
 .It
 Open the file afresh for each answer, with the request's access mode and
 status flags and with
@@ -3093,6 +3130,177 @@ Attached processes are not killed when the queue dies: a requester that
 outlives its controller keeps every swapped descriptor, and is given no
 new one.
 .El
+.Ss The substituted file and the restricted Capability Broker
+A swap hands over the controller's open file exactly as it is.
+The requester's descriptor is the same open file, with the credential the
+controller's thread had when it opened the file
+.Pq Va f_cred
+and with the rights, the
+.Xr fcntl 2
+limit and the
+.Xr ioctl 2
+list of the controller's descriptor, limited by its transfer ceiling.
+This is also so when the controller is another user than the requester.
+It is what passing a descriptor over a socket does, and the kernel compares
+no credential.
+.Pp
+What the requester may open is still its own: the completion checks the
+requester's MAC and file permission on the object
+.Pq Sx Descriptor substitution ,
+unless
+.Dv DQ_SWAP_F_CREATED
+is honoured.
+What the file's credential decides afterwards is how the file system
+treats writes through the descriptor:
+.Bl -tag -width "tmpfs" -compact
+.It ufs
+Whether a write clears the set-user-ID and set-group-ID bits; whether
+blocks are allocated from the reserved space
+.Pq minfree ;
+whether the quota limits are enforced.
+.It tmpfs
+Whether a write clears the set-ID bits.
+.It zfs
+Whether a write clears the set-ID bits.
+.El
+.Pp
+The same credential is used for the truncation of
+.Dv O_TRUNC
+and for a later
+.Xr ftruncate 2 .
+Quota is charged to the owner of the file whatever the credential; on zfs
+the quota limits do not depend on the credential.
+Each
+.Xr read 2
+and
+.Xr write 2
+is checked by the MAC policies with the calling process's credential, and
+.Xr fchmod 2 ,
+.Xr fchown 2 ,
+.Xr fchflags 2
+and
+.Xr futimens 2
+use the calling process's credential, as for any descriptor.
+Other file systems
+.Pq nfs , fusefs
+are not described here.
+.Pp
+A file opened by root therefore gives the requester root's treatment: its
+writes keep set-ID bits, may fill the reserved blocks and are not held to
+a quota.
+The kernel does not prevent this.
+.Sy The bound on what a controller can hand over is what the controller itself can still open :
+.Bl -tag -width "capability mode"
+.It unprivileged user
+A controller that has given up root
+.Pq Xr setuid 2
+hands over files opened without privilege: all three treatments above are
+the ordinary ones, also when its user is not the requester's.
+This is the only step that gives the requester the ordinary treatment
+on all three counts.
+.It jail
+A controller that has entered a jail
+.Pq Xr jail_attach 2
+can open, and so hand over, only what is under the jail's root.
+Root in a jail still keeps set-ID bits and may use the reserve; only the
+quota exemption is gone.
+.It capability mode
+A controller in capability mode
+.Pq Xr cap_enter 2
+can open only beneath the directory descriptors it holds.
+The rights of such a directory descriptor are the rights of every file
+opened beneath it, and so of every descriptor handed over; include what
+the requesters need
+.Po
+for example
+.Dv CAP_READ , CAP_WRITE , CAP_SEEK , CAP_FSTAT , CAP_FCNTL , CAP_FLOCK ,
+.Dv CAP_MMAP_RW
+.Pc ,
+and
+.Dv CAP_LOOKUP ,
+which the controller's own
+.Xr openat 2
+beneath the directory needs, and
+.Dv CAP_CREATE
+when the controller creates the files it hands over.
+Capability mode does not change the credential.
+.El
+.Pp
+The queue is opened first, since that needs privilege, and keeps working
+afterwards: no operation on the queue descriptor checks privilege, the
+jail or capability mode again, except that
+.Dv DQ_IOC_ATTACH
+checks the right to debug its target with the controller's present
+credential (step 2 below), and the queue belongs to the process that
+opened it, not to a credential.
+The same process must do all of it; the queue does not survive
+.Xr execve 2 .
+The order is:
+.Bl -enum -compact
+.It
+Open the queue, and anything else that needs privilege or a path outside
+the restrictions to come.
+.It
+Create the program, let it enter its own jail and change its own user,
+and attach it while it waits.
+.Dv DQ_IOC_ATTACH
+needs the right to debug the target.
+A controller that has given up root cannot attach anything it creates: a
+child forked after the change of user inherits its set-ID mark and is
+refused
+.Pq Er EPERM ,
+and one that has called
+.Xr execve 2
+is refused
+.Pq Er EBUSY .
+A jailed controller cannot attach a process outside its jail
+.Pq Er ESRCH .
+A program created after the controller entered capability mode is itself
+in capability mode and is never offered a swap.
+.It
+Enter the jail.
+.Xr jail_attach 2
+fails with
+.Er EPERM
+while any directory descriptor is open.
+.It
+Give up privilege:
+.Xr setgroups 2 ,
+.Xr setgid 2 ,
+.Xr setuid 2 .
+.It
+Open the directory descriptors to serve from, and limit them.
+.It
+Enter capability mode.
+.It
+Let the program run, and open each file handed over only now.
+.El
+.Pp
+A descriptor the controller opened before it restricted itself keeps the
+credential and the reach of that earlier open and can still be handed
+over; hold none that you will answer with.
+Between jails, a directory handed to a requester in another jail with
+another root is installed
+.Dv O_RESOLVE_BENEATH ,
+by the jail of the credential that opened it; a regular file is handed
+over across jails without a jail test, and a requester on the host gets
+no such limit.
+.Pp
+The controller may run as the requester's user or as a user of its own;
+this page recommends neither.
+A controller that takes the requester's own user can be signalled by the
+requester.
+A requester that kills its controller keeps what it holds and obtains
+nothing new.
+A controller under a different unprivileged user avoids this; a file it
+creates is then not the requester's, and
+.Dv DQ_SWAP_F_CREATED
+is not honoured for it.
+.Pp
+The credential the queue reports for its controller
+.Pq to observers and to MAC policies
+is the one that opened the queue and does not change when the controller
+gives up privilege.
 .Ss Served directories and starts
 Stage 1c-iii-b serves directories and symbolic links and lets a served
 directory start lookups.
@@ -4075,6 +4283,11 @@ answer fail as if no file could be allocated
 .Er ( ENFILE ) ;
 the object retires with its
 .Dv DQ_OP_CLOSE .
+.It Va debug.dq.delay_reply_notify
+The next N replies about an object with an open file sleep one second after
+the requester is released and before the
+.Fn mac_file_notify_reply
+hook runs, so that a test can close the file in that window.
 .It Va debug.dq.fail_link_closing
 The next N
 .Dv DQ_RESOLVE_FD

@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Boot the actual BSDInstall target without media and verify installed identity.
 
 This gate does not replace the full login/SSH/authorization/BE suite.

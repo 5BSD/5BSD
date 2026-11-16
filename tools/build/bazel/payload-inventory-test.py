@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Execution-path identity survives symlink repositories and same-basename files."""
 import hashlib
 import os

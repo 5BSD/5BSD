@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Real Linux userland under the emulator: Alpine's musl-linked busybox
 # (staged at /compat/linux/bin/busybox with its loader in /compat/linux/lib)
 # runs a scripted workload that exercises fork/exec/pipes/signals/files/

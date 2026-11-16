@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * TrustedZFS guid-pinning tests: handles follow renames, observe destroys as
  * sticky ENXIO, revive across export/import, and report invalidation via
  * kqueue.

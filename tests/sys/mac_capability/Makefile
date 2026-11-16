@@ -14,6 +14,10 @@ ATF_TESTS_C+=	mac_capability_isolation_test
 ATF_TESTS_C+=	mac_capability_identity_test
 ATF_TESTS_C+=	mac_capability_node_test
 ATF_TESTS_C+=	mac_capability_accounting_test
+ATF_TESTS_C+=	mac_capability_accounting_racct_test
+ATF_TESTS_C+=	mac_capability_jail_lock_order_test
+LIBADD.mac_capability_jail_lock_order_test+=	jail
+TEST_METADATA.mac_capability_jail_lock_order_test+=	is_exclusive="true"
 ATF_TESTS_C+=	mac_capability_procdesc_test
 ATF_TESTS_C+=	mac_capability_mount_test
 ATF_TESTS_C+=	mac_capability_system_test

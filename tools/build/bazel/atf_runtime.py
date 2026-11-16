@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Stage explicit bootstrap ATF tools and emit native Bazel test targets."""
 import hashlib, json, shutil, os, tempfile
 from pathlib import Path

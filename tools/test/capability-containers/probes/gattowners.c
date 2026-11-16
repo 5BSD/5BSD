@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * gattowners: print blued's persisted runtime GATT artifacts from a directory
  * (the daemon's state store, exposed to the shell through a snapshot/clone):

@@ -1,5 +1,9 @@
 #!/bin/sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Orchestrate the hardware-only nested-VMX qualification contract.
 #
 # The L1 image is intentionally not provisioned by this script.  Its runner

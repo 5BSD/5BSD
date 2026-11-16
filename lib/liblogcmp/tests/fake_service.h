@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 
 #ifndef _LOGCMP_FAKE_SERVICE_H_
 #define _LOGCMP_FAKE_SERVICE_H_

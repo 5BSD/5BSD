@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Export maintained libmd configuration and generator actions; no compile wrapper."""
 import argparse
 import hashlib

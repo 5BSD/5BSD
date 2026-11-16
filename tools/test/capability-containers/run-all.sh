@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Run every container-model proof in sequence and summarize.  Each proof
 # rebuilds the image from $VM/guestroot and boots it; expect ~10 minutes each.
 #   sh tools/test/capability-containers/run-all.sh [proof ...]

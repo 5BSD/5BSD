@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Build glue for OpenBSD's regress/sbin/ifconfig/ifaddr.c on 5BSD.
  * Force-included by regress.py (CFLAGS); plumbing only, the test source

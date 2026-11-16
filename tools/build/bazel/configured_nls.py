@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Describe bsd.nls.mk catalogue inputs and emit native generation actions."""
 from pathlib import Path
 import shlex

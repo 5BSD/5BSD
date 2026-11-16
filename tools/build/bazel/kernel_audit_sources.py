@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Discover the DQ checker's source namespace during repository evaluation.
 
 The maintained checker scans C/header files across sys. Content filtering belongs

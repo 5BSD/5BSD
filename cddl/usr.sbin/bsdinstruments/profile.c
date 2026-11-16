@@ -5,7 +5,8 @@
  *
  * Profile loading and rendering.  A profile is a .d file with a name
  * (the filename minus .d), a one-line description (first block
- * comment), and raw D source.  The source may contain:
+ * comment, licence header skipped), and raw D source.  The source may
+ * contain:
  *
  *   /@ @bsdinstruments-predicate @/	 CLI filter predicate slot
  *   /@ @bsdinstruments-predicate-and @/ AND'd into an existing predicate
@@ -53,47 +54,80 @@ profile_origin_name(enum profile_origin origin)
 }
 
 /*
- * Parse the first block comment and return its first non-empty line
- * (leading '*' decoration stripped) as a malloc'd description.
+ * A licence-header line is not a description: the "-" of a "/@-" opener
+ * (/@ standing for the comment opener, as above), an
+ * SPDX-License-Identifier tag, or a Copyright line.
+ */
+static int
+header_line(const char *p, size_t len)
+{
+	static const char *const tags[] = {
+		"SPDX-License-Identifier:",
+		"Copyright",
+	};
+	size_t i, taglen;
+
+	if (len == 1 && *p == '-')
+		return (1);
+	for (i = 0; i < nitems(tags); i++) {
+		taglen = strlen(tags[i]);
+		if (len >= taglen && strncmp(p, tags[i], taglen) == 0)
+			return (1);
+	}
+	return (0);
+}
+
+/*
+ * Return the first non-empty line of the first block comment (leading
+ * '*' decoration stripped) as a malloc'd description.  Licence-header
+ * lines are skipped, and a comment that holds nothing else (the licence
+ * header itself) passes the search on to the next block comment, so a
+ * header in front of a profile leaves its description unchanged.
  */
 static char *
 parse_description(const char *source)
 {
-	const char *open, *close, *p, *line, *end;
+	const char *open, *close, *p, *line, *eol, *end;
 	char *descr;
 	size_t len;
+	int header;
 
-	open = strstr(source, "/*");
-	if (open == NULL)
-		return (strdup(""));
-	close = strstr(open + 2, "*/");
-	if (close == NULL)
-		return (strdup(""));
-
-	for (line = open + 2; line < close; line = end + 1) {
-		end = memchr(line, '\n', (size_t)(close - line));
-		if (end == NULL)
-			end = close;
-		p = line;
-		while (p < end && isspace((unsigned char)*p))
-			p++;
-		if (p < end && *p == '*')
-			p++;
-		while (p < end && isspace((unsigned char)*p))
-			p++;
-		/* Trim trailing whitespace. */
-		while (end > p && isspace((unsigned char)end[-1]))
-			end--;
-		if (p < end) {
-			len = (size_t)(end - p);
-			descr = malloc(len + 1);
-			if (descr == NULL)
-				return (strdup(""));
-			memcpy(descr, p, len);
-			descr[len] = '\0';
-			return (descr);
+	for (open = strstr(source, "/*"); open != NULL;
+	    open = strstr(close + 2, "/*")) {
+		close = strstr(open + 2, "*/");
+		if (close == NULL)
+			break;
+		header = 0;
+		for (line = open + 2; line < close; line = eol + 1) {
+			eol = memchr(line, '\n', (size_t)(close - line));
+			if (eol == NULL)
+				eol = close;
+			p = line;
+			while (p < eol && isspace((unsigned char)*p))
+				p++;
+			if (p < eol && *p == '*')
+				p++;
+			while (p < eol && isspace((unsigned char)*p))
+				p++;
+			/* Trim trailing whitespace. */
+			end = eol;
+			while (end > p && isspace((unsigned char)end[-1]))
+				end--;
+			if (p < end) {
+				len = (size_t)(end - p);
+				if (header_line(p, len)) {
+					header = 1;
+					continue;
+				}
+				descr = malloc(len + 1);
+				if (descr == NULL)
+					return (strdup(""));
+				memcpy(descr, p, len);
+				descr[len] = '\0';
+				return (descr);
+			}
 		}
-		if (end == close)
+		if (!header)
 			break;
 	}
 	return (strdup(""));

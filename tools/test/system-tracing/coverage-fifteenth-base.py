@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Build fifteenth-round native base programs with and without USDT."""
 import concurrent.futures,json,os,subprocess,shlex
 from pathlib import Path

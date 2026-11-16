@@ -23,9 +23,10 @@
  * it is cleared in the q_mtx section that sets DQ_Q_DEAD, so an owned queue
  * is never dead.  The flags obey DIED => CLOSING => DEAD; a queue leaves
  * dq_queues, and is freed, only once DIED.
- * Nothing sleeps under q_mtx or o_mtx except the waits that release q_mtx:
- * the ev_cv waits and the msleeps on o_inflight, q_requesters and
- * q_pending.  copyin, copyout, uiomove and M_WAITOK allocations happen
+ * Nothing sleeps under q_mtx or o_mtx except the waits that release q_mtx
+ * (the ev_cv waits and the msleeps on o_inflight, q_requesters and
+ * q_pending) and one that releases o_mtx: dq_close's wait for o_notify
+ * (below).  copyin, copyout, uiomove and M_WAITOK allocations happen
  * with neither held; observer records are M_NOWAIT and a failure is a
  * counted drop.  Knote filters run under the knlist's mutex (o_mtx for an
  * object, q_mtx for a queue or an observer) and never take the other.
@@ -48,7 +49,16 @@
  * (o_vmusers) are the only sleeps close, revoke and queue close add; the
  * task never waits for anything but the VM object lock and page busy, so
  * nothing in fo_close, pgo_dealloc, the page daemon or
- * vm_object_terminate waits for the controller (I11).  The per-queue
+ * vm_object_terminate waits for the controller (I11).  fo_close also
+ * waits for o_notify: a reply ioctl that is telling the MAC policies about
+ * the object's file (mac_file_notify_reply) does so without a reference
+ * on the file, which would make the reply ioctl, not the program's close,
+ * the last close whenever the program closed first, and the release of
+ * its flock and OFD locks late.  It counts itself in o_notify instead,
+ * while o_fp is set, and dq_close clears o_fp and waits for the count
+ * before anything else.  That wait is for kernel code in the hook, not
+ * for anything the controller does: it ends without the controller's
+ * help.  The per-queue
  * callout runs with q_mtx held (callout_init_mtx) and only hands expired
  * events to the task.  The task queue's own mutex ("dq_taskq") is a leaf:
  * taskqueue_enqueue runs under q_mtx (reply, deadline, revoke, close) and
@@ -286,7 +296,11 @@ enum dq_object_state {
 struct dq_object {
 	struct mtx		 o_mtx;
 	struct dq_queue		*o_queue;	/* holds a q_refs */
-	struct file		*o_fp;		/* weak; NULL after dq_close */
+	struct file		*o_fp;		/* weak; NULL once dq_close has
+						   begun */
+	u_int			 o_notify;	/* o_mtx: replies telling the
+						   policies about o_fp; dq_close
+						   waits for them */
 	u_int			 o_refs;
 	uint64_t		 o_id;
 	u_int			 o_kind;
@@ -574,6 +588,7 @@ bool	dq_object_vm_hold(struct dq_object *o, struct vm_object **objp);
 void	dq_object_vm_drop(struct dq_object *o);
 void	dq_object_vm_teardown(struct dq_object *o, bool close);
 void	dq_object_setsize(struct dq_object *o, off_t newsize);
+void	dq_object_close_begin(struct dq_object *o);
 void	dq_object_close_deferred(struct dq_object *o);
 void	dq_async_cut_locked(struct dq_queue *q, struct dq_object *o,
 	    off_t newsize);

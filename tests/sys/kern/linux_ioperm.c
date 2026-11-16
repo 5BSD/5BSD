@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Freestanding Linux amd64 ioperm reference and VM gate. */
 static long
 call(long n, long a, long b, long c)

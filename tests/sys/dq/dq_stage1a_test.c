@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * The read-only object (D87, as amended by stage 1b-i): a descriptor minted
  * without DQ_MINT_F_WRITE answers every mutating data operation exactly as
  * a read-only descriptor on a real file does, or the declared value.  None

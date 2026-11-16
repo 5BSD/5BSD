@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Compare complete linked kernels under identical declared compiler inputs.
 
 The Make control must use the same source filename/config/version policy. This

@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # release/scripts/check-kernel-no-dq-test.sh: the check that keeps a kernel
 # or module built with the dq(4) test option (options DQ_TEST_OPEN) out of
 # package repositories and release media.  The script is installed beside

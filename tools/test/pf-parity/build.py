@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Build one PF parity image and bind it to its staged test selection."""
 import argparse
 from pathlib import Path

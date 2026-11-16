@@ -129,4 +129,7 @@ FIDL_FLAGS.notify_next=	--available bsd:2
 # broker.o is shared by multiple tests; track the reserved-owner header.
 broker.o: ${SRCTOP}/lib/libnotify/notify_pressure.h
 
+# freebsd_test_suite/capability_tier.h: skips that name their VM tier.
+CFLAGS+=	-I${SRCTOP}/tests
+
 .include <bsd.test.mk>

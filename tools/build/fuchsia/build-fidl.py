@@ -1,4 +1,9 @@
 #!/usr/bin/env python3.12
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Build the imported upstream FIDL host tools and compiler tests on 5BSD."""
 import argparse
 import concurrent.futures

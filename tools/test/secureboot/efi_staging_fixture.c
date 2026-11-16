@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Simulated firmware allocation, with real small-payload memory moves. */
 
 #include <stdio.h>

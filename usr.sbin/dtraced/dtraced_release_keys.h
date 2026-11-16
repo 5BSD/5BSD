@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef DTRACED_RELEASE_KEYS_H
 #define DTRACED_RELEASE_KEYS_H
 

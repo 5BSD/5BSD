@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Rootless current migration destination for the v0.1.0 producer.
  */
 #include <sys/types.h>

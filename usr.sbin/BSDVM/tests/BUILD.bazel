@@ -3,7 +3,7 @@ load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
 # Compile the actual provider with Make's testing wrappers, without DTrace.
 [cc_binary(name = name, srcs = [name + ".c", "//usr.sbin/BSDVM:bsdvm.c"],
-    deps = ["//usr.sbin/BSDVM:test_headers", "//lib/libcapsulert:vm_protocol_headers",
+    deps = ["//tests:capability_tier", "//usr.sbin/BSDVM:test_headers", "//lib/libcapsulert:vm_protocol_headers",
         "//lib/libvmcmp:vmcmp", "//lib/libvmcmp:generated_headers", "//lib/libservice:service",
         "//lib/libchannel:channel", "//lib/libfidl:fidl", "//lib/libthr:thr", "//lib/atf/libatf-c:atf_c"] + (["//sys/dev/mac_capability:channel_headers", "//sys/dev/mac_capability:ioctl_headers"] if name == "provider_test" else []),
     local_defines = ["VMD_TESTING"], linkstatic = True, linkopts = ["-static"])
@@ -18,7 +18,7 @@ load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
  for name in ["registry_test", "provider_test"]]
 
 [cc_binary(name = name, srcs = [name + ".c"] + (["evolution_test_provider.c"] if name == "evolution_test" else []),
-    deps = ["//usr.sbin/BSDVM:test_headers", "//lib/libcapsulert:vm_protocol_headers", "//lib/libvmcmp:vmcmp", "//lib/libvmcmp:generated_headers", "//lib/libservice:service", "//lib/libchannel:channel", "//lib/libfidl:fidl", "//lib/libthr:thr"] + ["//lib/atf/libatf-c:atf_c"] + (["//lib/libvmcmp:client_source_headers"] if name == "evolution_test" else []),
+    deps = ["//tests:capability_tier", "//usr.sbin/BSDVM:test_headers", "//lib/libcapsulert:vm_protocol_headers", "//lib/libvmcmp:vmcmp", "//lib/libvmcmp:generated_headers", "//lib/libservice:service", "//lib/libchannel:channel", "//lib/libfidl:fidl", "//lib/libthr:thr"] + ["//lib/atf/libatf-c:atf_c"] + (["//lib/libvmcmp:client_source_headers"] if name == "evolution_test" else []),
     local_defines = ["VMD_TESTING"], linkstatic = True, linkopts = ["-static"])
  for name in ["lifecycle_test", "serve_test", "evolution_test"]]
 
@@ -40,15 +40,15 @@ filegroup(name = "next_header_files", srcs = [":next_bindings"], output_group = 
 cc_library(name = "next_headers", hdrs = [":next_header_files"], strip_include_prefix = "next_bindings")
 # Make links all three generated objects directly into this standalone peer.
 cc_library(name = "next_codec", srcs = [":next_sources"],
-    deps = [":next_headers", "//lib/libfidl:headers", "//contrib/llvm-project/libcxx/include:headers"],
+    deps = ["//tests:capability_tier", ":next_headers", "//lib/libfidl:headers", "//contrib/llvm-project/libcxx/include:headers"],
     copts = ["-std=c++20", "-nostdinc++"], linkstatic = True, alwayslink = True)
 # The newer peer must never inherit the production bsd:1 generated headers.
 cc_binary(name = "next_peer", srcs = ["evolution/next_peer.c"],
-    deps = [":next_headers", ":next_codec", "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libc++:cxx"],
+    deps = ["//tests:capability_tier", ":next_headers", ":next_codec", "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libc++:cxx"],
     linkopts = ["-static"], linkstatic = True)
 
 cc_binary(name = "latency_bench", srcs = ["latency_bench.c", "latency_bench_provider.c"],
-    deps = ["//usr.sbin/BSDVM:test_headers", "//lib/libcapsulert:vm_protocol_headers", "//lib/libvmcmp:vmcmp", "//lib/libvmcmp:generated_headers", "//lib/libservice:service", "//lib/libchannel:channel", "//lib/libfidl:fidl", "//lib/libthr:thr"] + ["//lib/libvmcmp:client_source_headers", "//tools/build/fuchsia:daemon_bench_headers"],
+    deps = ["//tests:capability_tier", "//usr.sbin/BSDVM:test_headers", "//lib/libcapsulert:vm_protocol_headers", "//lib/libvmcmp:vmcmp", "//lib/libvmcmp:generated_headers", "//lib/libservice:service", "//lib/libchannel:channel", "//lib/libfidl:fidl", "//lib/libthr:thr"] + ["//lib/libvmcmp:client_source_headers", "//tools/build/fuchsia:daemon_bench_headers"],
     dynamic_deps = ["//lib/libvmcmp:vmcmp_shared", "//lib/libservice:service_shared", "//lib/libchannel:channel_shared", "//lib/libfidl:fidl_shared", "//lib/libthr:thr_shared"],
     local_defines = ["VMD_TESTING"], copts = ["-fPIE"], linkopts = ["-pie"])
 [bsd_kyua_test(name = name + "_run", program = ":" + name, interface = "atf",

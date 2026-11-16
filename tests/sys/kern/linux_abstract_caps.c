@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Disposable amd64 BSD guest only. Build twice: the freestanding Linux probe
  * with -DLINUX_PROBE, and the static native parent without that define.

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Direct FIDL v2 wire encoders and decoders for the C ABI's structures.
 
 For every aggregate the C bindings expose, emit CWEnc_<name>() (C struct to

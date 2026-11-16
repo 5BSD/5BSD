@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The FreeBSD Foundation
+ * Copyright (c) 2026 Kory Heard
  *
  * Tests for the ungated SYF_CAPENABLED channel-pair-create syscall
  * (mac_capability_channel_create), registered dynamically by the

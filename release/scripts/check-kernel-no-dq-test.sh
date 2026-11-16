@@ -1,6 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Refuse to publish a kernel or kernel module built with the dq(4) test
 # option (options DQ_TEST_OPEN, sys/dev/dq/dq_testopen.c).  A kernel with
 # the option is for the test suite only: with the loader setting it opens

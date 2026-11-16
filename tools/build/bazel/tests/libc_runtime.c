@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Bounded libc/libsys smoke checks; the maintained libc suites remain required. */
 #include <sys/types.h>
 #include <sys/auxv.h>

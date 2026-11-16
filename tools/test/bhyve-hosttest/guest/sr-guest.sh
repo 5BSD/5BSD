@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Guest side of the save/restore checks (sr2). Every line it prints starts
 # with an SR* tag that lib/common.sh parses on the host.
 #   sr-guest.sh prep MB SEED        pattern file + memory holder (srtool hold)

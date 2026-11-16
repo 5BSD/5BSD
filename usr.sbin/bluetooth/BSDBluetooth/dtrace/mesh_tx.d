@@ -1,4 +1,10 @@
 #!/usr/sbin/dtrace -s
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * mesh_tx.d - trace a BLE Mesh message end-to-end through libmesh: upper
  * transport encrypt/decrypt, SAR segmentation/reassembly, network-layer

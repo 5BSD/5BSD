@@ -1,4 +1,9 @@
 #!/usr/bin/env python3.12
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Build and test upstream FIDL generators without fetching Go modules."""
 import argparse
 import os

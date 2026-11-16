@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Header-only helpers for synchronous C clients over the asynchronous
  * generated bindings: issue a call, then wait for its completion flag under

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * flock(2) locks belong to the open file, not to a descriptor or a
  * process: every descriptor of the open file, in every process that shares
  * it, locks and unlocks the same lock, and the last close releases it.

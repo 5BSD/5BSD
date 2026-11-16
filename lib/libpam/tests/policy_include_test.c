@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Real policy parser and pam_start; isolated policy paths and real modules. */
 #include <sys/types.h>
 #include <sys/resource.h>

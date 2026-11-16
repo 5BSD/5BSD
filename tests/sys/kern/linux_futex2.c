@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Freestanding amd64 Linux syscall test for the futex2 interface
  * (futex_wait(2), futex_wake(2), futex_requeue(2)) and the requeue

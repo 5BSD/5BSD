@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * latency_bench [N]: N Stat round trips from libextensioncmp to BSDExtension's
  * real per-session worker over a capability channel (see

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Backend staging must track added modules and preserve measured inputs."""
 import importlib.util
 from pathlib import Path

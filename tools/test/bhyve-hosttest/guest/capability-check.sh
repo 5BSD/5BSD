@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Runtime prerequisites for capability-plane-ON qualification, not a grant audit.
 set -eu
 if plane=$(kenv -q capability_plane 2>/dev/null); then

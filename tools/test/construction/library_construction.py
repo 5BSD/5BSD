@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Real jailed library-hints construction from explicitly synthetic packages."""
 import io
 import json

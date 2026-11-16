@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * TU-include ATF harness for bhyve's VirtIO crypto device.
  *
  * The generic virtqueue transport, PCI/virtio plumbing and the bhyve config

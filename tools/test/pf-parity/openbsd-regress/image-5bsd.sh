@@ -1,6 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Build a disposable 5BSD DUT disk image (UFS, GPT) for the OpenBSD-regress
 # topology from an already completed buildworld/buildkernel, without root:
 # installworld/installkernel/distribution use -DNO_ROOT and the METALOG.

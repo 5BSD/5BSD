@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Qualify record-coverage rejection using private copies of a real pkg database.
 
 Negative cases deliberately update the test schema contract to prove that a schema

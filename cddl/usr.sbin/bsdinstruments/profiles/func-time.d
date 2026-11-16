@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Measure time spent in a user-space function.
  * Usage: bsdinstruments watch func-time --param pid=<pid> --param func=<function>

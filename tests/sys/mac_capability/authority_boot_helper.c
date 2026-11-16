@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* VM-only PID 1 fixture. No production issuer bypass is used by these tests. */
 #include <sys/param.h>
 #include <sys/jail.h>
@@ -13,6 +14,7 @@
 #include <sys/stat.h>
 #include <sys/uio.h>
 #include <sys/reboot.h>
+#include <sys/socket.h>
 #include <sys/ptrace.h>
 #include <sys/procdesc.h>
 #include <sys/procctl.h>
@@ -1998,6 +2000,186 @@ binding_lifetime_test(void)
 	pass("binding-ownership-and-failed-publication");
 }
 
+/* Send or receive one descriptor over a UNIX-domain socket. */
+static void
+pass_fd(int sock, int fd)
+{
+	char cbuf[CMSG_SPACE(sizeof(int))], byte = 'f';
+	struct iovec iov = { &byte, 1 };
+	struct msghdr msg = { .msg_iov = &iov, .msg_iovlen = 1,
+	    .msg_control = cbuf, .msg_controllen = sizeof(cbuf) };
+	struct cmsghdr *cmsg;
+
+	memset(cbuf, 0, sizeof(cbuf));
+	cmsg = CMSG_FIRSTHDR(&msg);
+	cmsg->cmsg_level = SOL_SOCKET;
+	cmsg->cmsg_type = SCM_RIGHTS;
+	cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+	memcpy(CMSG_DATA(cmsg), &fd, sizeof(int));
+	CHECK(sendmsg(sock, &msg, 0) == 1);
+}
+static int
+receive_fd(int sock)
+{
+	char cbuf[CMSG_SPACE(sizeof(int))], byte;
+	struct iovec iov = { &byte, 1 };
+	struct msghdr msg = { .msg_iov = &iov, .msg_iovlen = 1,
+	    .msg_control = cbuf, .msg_controllen = sizeof(cbuf) };
+	struct cmsghdr *cmsg;
+	int fd;
+
+	CHECK(recvmsg(sock, &msg, 0) == 1);
+	cmsg = CMSG_FIRSTHDR(&msg);
+	CHECK(cmsg != NULL && cmsg->cmsg_type == SCM_RIGHTS);
+	memcpy(&fd, CMSG_DATA(cmsg), sizeof(int));
+	return (fd);
+}
+static bool
+jail_present(int jid)
+{
+	char key[] = "jid";
+	struct iovec iov[] = { { key, sizeof(key) }, { &jid, sizeof(jid) } };
+
+	return (jail_get(iov, nitems(iov), JAIL_DYING) == jid);
+}
+
+/*
+ * A credential records its process's authority without keeping the
+ * authority alive.  An authority pins its executables (text), its library
+ * directories (open files, here on a tmpfs and opened in a jail) and its
+ * issuer; credentials are copied into every file and socket a process
+ * makes.  A service installs an authority, hands a socket it created to
+ * PID 1 and exits, so the socket's credential is the only thing left of
+ * it.  Once the token is closed too, the authority must be gone: its
+ * executable opens for writing, the tmpfs unmounts and the jail finishes
+ * dying, while the socket is still open.  The same after CAP_AUTH_CLEAR
+ * by a service that stays alive.
+ */
+static void
+credential_lifetime_test(int issuer, bool clear)
+{
+	char fstype[] = "tmpfs", mountpoint[] = "/authority-cred-tmpfs";
+	char fstype_key[] = "fstype", fspath_key[] = "fspath";
+	struct iovec iov[] = {
+	    { fstype_key, sizeof(fstype_key) }, { fstype, sizeof(fstype) },
+	    { fspath_key, sizeof(fspath_key) }, { mountpoint, sizeof(mountpoint) }
+	};
+	char root[] = "/", name[] = "authority-cred-jail";
+	struct jail prison = { .version = JAIL_API_VERSION, .path = root,
+	    .hostname = name, .jailname = name };
+	struct cap_authority_constraint constraint = { .nexec = 1 };
+	struct cap_authority_libdirs dirs = { .count = 1 };
+	const char *image_path = "/authority-cred-image";
+	char buf[8192], byte;
+	cap_rights_t rights;
+	int sp[2], gate[2], in, image, directory, token, sock, jid, fd, i;
+	unsigned refs;
+	ssize_t n;
+	pid_t child;
+
+	CHECK(mkdir(mountpoint, 0755) == 0);
+	CHECK(nmount(iov, nitems(iov), 0) == 0);
+	in = open("/sbin/authority-test", O_RDONLY); CHECK(in >= 0);
+	image = open(image_path, O_RDWR | O_CREAT | O_EXCL, 0755);
+	CHECK(image >= 0);
+	while ((n = read(in, buf, sizeof(buf))) > 0)
+		CHECK(write(image, buf, n) == n);
+	CHECK(n == 0);
+	close(in);
+	close(image);
+	CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
+
+	/* The library directory is opened in a jail that then empties. */
+	child = fork(); CHECK(child >= 0);
+	if (child == 0) {
+		jid = jail(&prison);
+		CHECK(jid > 0);
+		CHECK(write(sp[1], &jid, sizeof(jid)) == sizeof(jid));
+		directory = open(mountpoint, O_RDONLY | O_DIRECTORY);
+		CHECK(directory >= 0);
+		pass_fd(sp[1], directory);
+		_exit(0);
+	}
+	CHECK(read(sp[0], &jid, sizeof(jid)) == sizeof(jid));
+	directory = receive_fd(sp[0]);
+	wait_ok(child);
+	CHECK(jail_present(jid));
+	CHECK(cap_rights_limit(directory, cap_rights_init(&rights,
+	    CAP_LOOKUP, CAP_READ, CAP_FSTAT)) == 0);
+
+	image = open(image_path, O_RDONLY); CHECK(image >= 0);
+	token = issue(issuer, CAP_AUTH_MANAGED, 0);
+	constraint.token_fd = token;
+	constraint.executable_fds[0] = image;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &constraint) == 0);
+	dirs.token_fd = token;
+	dirs.directory_fds[0] = directory;
+	CHECK(op(CAP_AUTH_SET_LIBDIRS, issuer, &dirs) == 0);
+	close(directory);
+	close(image);
+	CHECK(open(image_path, O_WRONLY) == -1 && errno == ETXTBSY);
+	CHECK(unmount(mountpoint, 0) == -1 && errno == EBUSY);
+
+	CHECK(pipe(gate) == 0);
+	child = fork(); CHECK(child >= 0);
+	if (child == 0) {
+		close(gate[1]);
+		CHECK(op(CAP_AUTH_INSTALL, token, NULL) == 0);
+		CHECK(info().identity == token_info(token).identity);
+		/* The inherited token would keep the authority by itself. */
+		close(token);
+		/* Made with the credential that records the authority. */
+		fd = socket(AF_UNIX, SOCK_DGRAM, 0);
+		CHECK(fd >= 0);
+		pass_fd(sp[1], fd);
+		close(fd);
+		if (clear) {
+			CHECK(op(CAP_AUTH_CLEAR, -1, NULL) == 0);
+			CHECK(write(sp[1], "c", 1) == 1);
+			/* Stay alive until PID 1 has checked, then see EOF. */
+			CHECK(read(gate[0], &byte, 1) == 0);
+		}
+		_exit(0);
+	}
+	close(gate[0]);
+	sock = receive_fd(sp[0]);
+	if (clear)
+		CHECK(read(sp[0], &byte, 1) == 1);
+	else
+		wait_ok(child);
+	/* The token's own reference is the last: no credential holds one. */
+	refs = token_info(token).references;
+	printf("authority-credential-lifetime clear=%d references=%u\n",
+	    clear, refs);
+	close(token);
+	/* The authority's release finishes on a taskqueue. */
+	for (i = 0; i < 500; i++) {
+		fd = open(image_path, O_WRONLY);
+		if (fd >= 0 || errno != ETXTBSY)
+			break;
+		usleep(10000);
+	}
+	CHECK(fd >= 0);
+	close(fd);
+	CHECK(unmount(mountpoint, 0) == 0);
+	for (i = 0; i < 500 && jail_present(jid); i++)
+		usleep(10000);
+	CHECK(!jail_present(jid));
+	if (clear) {
+		close(gate[1]);
+		wait_ok(child);
+	} else
+		close(gate[1]);
+	CHECK(refs == 1);
+	/* The socket made under the authority is still open. */
+	CHECK(fcntl(sock, F_GETFD) >= 0);
+	close(sock);
+	close(sp[0]);
+	close(sp[1]);
+	CHECK(unlink(image_path) == 0);
+	CHECK(rmdir(mountpoint) == 0);
+}
+
 /* Real parent authority and kernel-held discovery state; no mock clear calls.
  * This fixture is PID 1 in the disposable VM and already owns a real issuer. */
 static void
@@ -2092,6 +2274,9 @@ run_tests(void)
 	pass("root-is-not-an-issuer");
 
 	binding_lifetime_test();
+	credential_lifetime_test(issuer, false);
+	credential_lifetime_test(issuer, true);
+	pass("credential-does-not-pin-authority");
 
 	prison_transition_tests(issuer);
 	pass("prison-transition-invalidates-authority");

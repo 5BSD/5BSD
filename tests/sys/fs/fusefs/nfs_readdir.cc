@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Kernel NFSv3 server coverage of the FUSE READDIRPLUS cookie array. */
 #include <sys/param.h>
 #include <sys/mount.h>

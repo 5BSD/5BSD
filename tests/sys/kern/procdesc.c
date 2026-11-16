@@ -102,7 +102,16 @@ wait_for_naptime(pid_t pid, const char *wmesg)
  * Whether this same anti-recycling behavior is used with pdwait() is
  * unimportant, because pdwait _always_ uses a process descriptor.
  */
-ATF_TC_WITHOUT_HEAD(pid_recycle);
+ATF_TC(pid_recycle);
+ATF_TC_HEAD(pid_recycle, tc)
+{
+	/*
+	 * kern.pid_max (99999) vforks.  They took 69 to 146 s in emulated
+	 * guests and passed the default 300 s once, on two CPUs beside other
+	 * guests with a loadable MAC policy counting every fork and exit.
+	 */
+	atf_tc_set_md_var(tc, "timeout", "1200");
+}
 ATF_TC_BODY(pid_recycle, tc)
 {
 	size_t len;

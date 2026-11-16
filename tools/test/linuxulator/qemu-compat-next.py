@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Validate the four compatibility batches plus the proc/filesystem stress gate.
 
 Accepts the same arguments as qemu-proc-views.py; use --stress. The guest image

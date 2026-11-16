@@ -5,16 +5,16 @@ load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
 # Maintained static test programs. No WITH_DTRACE is added to test sources:
 # their Makefile compiles the implementations directly without that definition.
 cc_binary(name = "config_test", srcs = ["config_test.c", "//usr.sbin/BSDLog:config.c"],
-    deps = ["//usr.sbin/BSDLog:test_headers", "//lib/libucl:ucl", "//lib/atf/libatf-c:atf_c"],
+    deps = ["//tests:capability_tier", "//usr.sbin/BSDLog:test_headers", "//lib/libucl:ucl", "//lib/atf/libatf-c:atf_c"],
     linkopts = ["-static"], linkstatic = True)
 cc_binary(name = "session_test", srcs = ["session_test.c", "//usr.sbin/BSDLog:session.c"],
-    deps = ["//usr.sbin/BSDLog:test_headers", "//lib/liblogcmp:logcmp", "//lib/libshmring:shmring", "//lib/atf/libatf-c:atf_c"],
+    deps = ["//tests:capability_tier", "//usr.sbin/BSDLog:test_headers", "//lib/liblogcmp:logcmp", "//lib/libshmring:shmring", "//lib/atf/libatf-c:atf_c"],
     linkopts = ["-static"], linkstatic = True)
 cc_binary(name = "store_test", srcs = ["store_test.c", "//usr.sbin/BSDLog:store.c"],
-    deps = ["//usr.sbin/BSDLog:test_headers", "//lib/liblogcmp:logcmp", "//lib/libmd:md_link", "//lib/atf/libatf-c:atf_c"],
+    deps = ["//tests:capability_tier", "//usr.sbin/BSDLog:test_headers", "//lib/liblogcmp:logcmp", "//lib/libmd:md_link", "//lib/atf/libatf-c:atf_c"],
     linkopts = ["-static", "-Wl,--wrap=writev", "-Wl,--wrap=ftruncate", "-Wl,--wrap=lseek"], linkstatic = True)
 cc_binary(name = "store_limit_test", srcs = ["store_limit_test.c", "store_limit_impl.c"],
-    deps = ["//usr.sbin/BSDLog:test_headers", "//lib/liblogcmp:logcmp", "//lib/libmd:md_link", "//lib/atf/libatf-c:atf_c"],
+    deps = ["//tests:capability_tier", "//usr.sbin/BSDLog:test_headers", "//lib/liblogcmp:logcmp", "//lib/libmd:md_link", "//lib/atf/libatf-c:atf_c"],
     local_defines = ["STORE_RECLAIM_MAX=4", "STORE_OWNER_MAP_MAX=2"],
     linkopts = ["-static"], linkstatic = True)
 [bsd_kyua_test(name = name + "_run", program = ":" + name, interface = "atf",
@@ -41,30 +41,30 @@ cc_binary(name = "storage_barrier_test", srcs = ["storage_barrier_test.c", "//us
     size = "medium", visibility = ["//visibility:public"])
  for name in ["storage_test", "storage_barrier_test"]]
 
-cc_library(name = "provider_headers", deps = ["//usr.sbin/BSDLog:test_headers",
+cc_library(name = "provider_headers", deps = ["//tests:capability_tier", "//usr.sbin/BSDLog:test_headers",
     "//lib/libauditcmp:headers", "//lib/libcapreclaim:headers", "//lib/libchannel:headers",
     "//lib/liblogcmp:generated_headers", "//lib/liblogcmp:wakeup_headers",
     "//lib/libfidl:headers", "//lib/libfilesystemcmp:headers", "//lib/libservice:headers"])
 [cc_binary(name = name, srcs = [name + ".c"],
-    deps = [":provider_headers", "//lib/atf/libatf-c:atf_c"],
+    deps = ["//tests:capability_tier", ":provider_headers", "//lib/atf/libatf-c:atf_c"],
     copts = ["-ffunction-sections", "-fdata-sections"],
     linkopts = ["-static", "-Wl,--gc-sections"], linkstatic = True)
  for name in ["store_fallback_test", "quota_test"]]
 cc_binary(name = "pool_fairness_test", srcs = ["pool_fairness_test.c", "pool_fairness_session.c"],
-    deps = [":provider_headers", "//lib/libauditcmp:auditcmp", "//lib/libchannel:channel", "//lib/libfidl:fidl",
+    deps = ["//tests:capability_tier", ":provider_headers", "//lib/libauditcmp:auditcmp", "//lib/libchannel:channel", "//lib/libfidl:fidl",
         "//lib/liblogcmp:logcmp", "//lib/libfilesystemcmp:filesystemcmp", "//lib/libservice:service",
         "//lib/libshmring:shmring", "//lib/libthr:thr", "//lib/atf/libatf-c:atf_c"],
     copts = ["-ffunction-sections", "-fdata-sections"], linkopts = ["-static", "-Wl,--gc-sections"], linkstatic = True)
 # The real pool_worker() with the Audit lookup, storage session and confinement replaced.
 cc_binary(name = "pool_start_test", srcs = ["pool_start_test.c", "pool_fairness_session.c", "//usr.sbin/BSDLog:config.c",
         "//usr.sbin/BSDLog:storage.c", "//usr.sbin/BSDLog:store.c"],
-    deps = [":provider_headers", "//lib/libauditcmp:auditcmp", "//lib/libcapreclaim:capreclaim", "//lib/libcapsulert:capsulert",
+    deps = ["//tests:capability_tier", ":provider_headers", "//lib/libauditcmp:auditcmp", "//lib/libcapreclaim:capreclaim", "//lib/libcapsulert:capsulert",
         "//lib/libchannel:channel", "//lib/libfidl:fidl", "//lib/liblogcmp:logcmp", "//lib/libfilesystemcmp:filesystemcmp",
         "//lib/libmd:md_link", "//lib/libservice:service", "//lib/libshmring:shmring", "//lib/libucl:ucl",
         "//lib/libthr:thr", "//lib/atf/libatf-c:atf_c"],
     copts = ["-ffunction-sections", "-fdata-sections"], linkopts = ["-static", "-Wl,--gc-sections"], linkstatic = True)
 cc_binary(name = "provider_test", srcs = ["provider_test.c", "//usr.sbin/BSDLog:logcmp.c", "//usr.sbin/BSDLog:session.c"],
-    deps = [":provider_headers", "//sys/dev/mac_capability:channel_headers", "//sys/dev/mac_capability:ioctl_headers",
+    deps = ["//tests:capability_tier", ":provider_headers", "//sys/dev/mac_capability:channel_headers", "//sys/dev/mac_capability:ioctl_headers",
         "//lib/libchannel:channel", "//lib/libfidl:fidl", "//lib/liblogcmp:logcmp",
         "//lib/libfilesystemcmp:filesystemcmp", "//lib/libservice:service", "//lib/libshmring:shmring", "//lib/atf/libatf-c:atf_c"],
     local_defines = ["LOGCMP_TESTING"], linkopts = ["-static"], linkstatic = True)
@@ -94,15 +94,15 @@ filegroup(name = "next_header_files", srcs = [":next_bindings"], output_group = 
 cc_library(name = "next_headers", hdrs = [":next_header_files"], strip_include_prefix = "next_bindings")
 # Make links all three generated objects directly into this standalone peer.
 cc_library(name = "next_codec", srcs = [":next_sources"],
-    deps = [":next_headers", "//lib/libfidl:headers", "//contrib/llvm-project/libcxx/include:headers"],
+    deps = ["//tests:capability_tier", ":next_headers", "//lib/libfidl:headers", "//contrib/llvm-project/libcxx/include:headers"],
     copts = ["-std=c++20", "-nostdinc++"], linkstatic = True, alwayslink = True)
 # The newer peer must never inherit the production bsd:1 generated headers.
 cc_binary(name = "next_peer", srcs = ["evolution/next_peer.c"],
-    deps = [":next_headers", ":next_codec", "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libc++:cxx"],
+    deps = ["//tests:capability_tier", ":next_headers", ":next_codec", "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libc++:cxx"],
     linkopts = ["-static"], linkstatic = True)
 cc_binary(name = "evolution_test", srcs = ["evolution_test.c", "evolution_test_provider.c",
         "//usr.sbin/BSDLog:session.c", "//lib/liblogcmp:logcmp_wakeup.c"],
-    deps = [":provider_headers", "//lib/liblogcmp:test_private_headers", "//lib/libchannel:channel",
+    deps = ["//tests:capability_tier", ":provider_headers", "//lib/liblogcmp:test_private_headers", "//lib/libchannel:channel",
         "//lib/libfidl:fidl", "//lib/liblogcmp:logcmp", "//lib/libfilesystemcmp:filesystemcmp",
         "//lib/libservice:service", "//lib/libshmring:shmring", "//lib/atf/libatf-c:atf_c"],
     local_defines = ["LOGCMP_TESTING"], linkopts = ["-static"], linkstatic = True)
@@ -117,7 +117,7 @@ bsd_kyua_test(name = "evolution_test_run", program = ":evolution_test", interfac
 # Keep the maintained shared linkage: libchannel supplies the USDT probes.
 cc_binary(name = "latency_bench", srcs = ["latency_bench.c", "latency_bench_provider.c",
         "//usr.sbin/BSDLog:session.c", "//lib/liblogcmp:logcmp_wakeup.c"],
-    deps = [":provider_headers", "//tools/build/fuchsia:daemon_bench_headers",
+    deps = ["//tests:capability_tier", ":provider_headers", "//tools/build/fuchsia:daemon_bench_headers",
         "//lib/liblogcmp:test_private_headers", "//lib/libchannel:channel", "//lib/libfidl:fidl",
         "//lib/liblogcmp:logcmp", "//lib/libfilesystemcmp:filesystemcmp",
         "//lib/libservice:service", "//lib/libshmring:shmring"],

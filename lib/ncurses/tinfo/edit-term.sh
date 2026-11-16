@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # The upstream editor modifies its input; stage only this action's scratch copy.
 set -eu
 [ "$#" -eq 3 ] || exit 64

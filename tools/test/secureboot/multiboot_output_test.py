@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise actual EFI Multiboot2 tag writers with guarded output capacities."""
 from pathlib import Path
 import subprocess

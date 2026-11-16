@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The FreeBSD Foundation
+ * Copyright (c) 2026 Kory Heard
  *
  * Rootless model test for the bhyve pvpanic event register ABI and host
  * reaction policy.  Exercises the pure logic shared with pvpanic.c via

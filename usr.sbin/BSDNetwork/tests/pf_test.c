@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * system.Network.PF over bsd.network.v1 NetworkPf: the real worker
  * (pf_session.c network_pf_serve) on a real capability channel, driven by
  * the real libnetworkcmp function (its source, with discovery replaced by
@@ -34,6 +36,8 @@
 #include <libservice.h>
 #include <networkcmp.h>
 
+#include "freebsd_test_suite/capability_tier.h"
+
 static int test_client_fd = -1;
 
 static int
@@ -59,8 +63,7 @@ capability_connect(const char *name)
 
 	control = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
 	if (control < 0)
-		atf_tc_skip("capability plane unavailable: /dev/mac_capability: "
-		    "%s", strerror(errno));
+		capability_plane_skip(errno);
 	memset(&connect, 0, sizeof(connect));
 	strlcpy(connect.name, name, sizeof(connect.name));
 	if (ioctl(control, MAC_CAPABILITY_CONNECT, &connect) == -1) {

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Linux inet_diag wire ABI for NETLINK_SOCK_DIAG. */
 #include "opt_inet.h"
 #include "opt_inet6.h"

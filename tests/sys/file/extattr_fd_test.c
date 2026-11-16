@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * The extattr_*_fd(2) family is answered by the descriptor's fileops
  * (fo_extattr).  A vnode file answers as the same call on its path does,
  * whether the filesystem supports extended attributes or not; descriptors

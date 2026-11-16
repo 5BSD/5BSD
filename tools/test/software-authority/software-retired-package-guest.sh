@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 set -eux
 [ "$(hostname)" = auth-policy-vm ]
 [ "$(mount -p | awk '$2 == "/" {print $1}')" = policyvm/ROOT/default ]

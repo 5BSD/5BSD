@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Clean-break Bundle.ucl/Unit.ucl contract tests.  Each matrix row is an
 # independent parser invocation so one rejection cannot mask another.
 

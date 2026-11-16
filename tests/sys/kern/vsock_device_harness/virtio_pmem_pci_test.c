@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Direct composition and lifecycle tests for the VirtIO 1.4 PMEM device.
  */
 #include <sys/endian.h>

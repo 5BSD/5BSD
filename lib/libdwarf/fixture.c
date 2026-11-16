@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #line 101 "dwarf_fixture.c"
 int dwarf_fixture_value = 7;
 int dwarf_fixture_answer(void) { return dwarf_fixture_value + 35; }

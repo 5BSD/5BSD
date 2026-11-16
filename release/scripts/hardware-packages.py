@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Build a release-specific hardware repository; never consume upstream kmods.
 
 The build root must be a disposable, native-architecture 5BSD build jail with

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * EXTERNAL REFERENCE ORACLE: HID over GATT characteristic inventory, the
  * per-Report-Type characteristic property matrix, and the enumerated values
  * of the control-point-like characteristics.
