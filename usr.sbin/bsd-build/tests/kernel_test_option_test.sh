@@ -46,13 +46,23 @@ private_tree()
     for script in "$here"/check-*.sh; do
         cp "$script" src/release/scripts/
     done
+    # pkg stands in for pkg(8): it answers the package ABI question
+    # Makefile.hardware asks when it is read, and every other call succeeds.
+    cat > pkg <<'SCRIPT'
+#!/bin/sh
+case "$*" in
+*"config ABI") echo "FreeBSD:16:$(uname -p)" ;;
+esac
+exit 0
+SCRIPT
+    chmod +x pkg
     # atf_check runs programs, not shell functions.
     # HARDWARE_BUILDER stands in for the hardware build and check program
     # (default: one that fails).
     cat > recipe <<SCRIPT
 #!/bin/sh
 exec make -C "$PWD/src" -f release/Makefile.hardware \\
-    PKG_CMD=/usr/bin/true HARDWARE_PYTHON="\${HARDWARE_BUILDER:-/usr/bin/false}" \\
+    PKG_CMD="$PWD/pkg" HARDWARE_PYTHON="\${HARDWARE_BUILDER:-/usr/bin/false}" \\
     BASE_REPOSITORY="$PWD/base" HARDWARE_REPO="$PWD/hardware" \\
     COMPLETE_REPOSITORY="$PWD/published/complete" "\$@"
 SCRIPT

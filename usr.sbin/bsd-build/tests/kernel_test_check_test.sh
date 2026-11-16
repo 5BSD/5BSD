@@ -193,6 +193,11 @@ archive_body()
 }
 
 atf_test_case repository
+repository_head()
+{
+    # Every archive is listed and extracted: minutes on a small guest.
+    atf_set timeout 1800
+}
 repository_body()
 {
     setup
