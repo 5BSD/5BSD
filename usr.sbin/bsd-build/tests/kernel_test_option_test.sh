@@ -643,7 +643,8 @@ release_recipes_body()
     atf_check -s exit:0 -o match:'^sh /usr/src/release/scripts/check-test-kernel.sh -d ' \
         -e ignore env MAKEOBJDIRPREFIX="$PWD/obj" \
         make -C /usr/src/release -V MEDIA_KERNEL_TEST_OPTION_CHECK
-    atf_check -s exit:1 -o empty -e empty grep -r -l -e check-kernel-no-dq-test \
+    # This file names the old script itself, so the tests directory is left out.
+    atf_check -s exit:1 -o empty -e empty grep -r -l --exclude-dir=tests -e check-kernel-no-dq-test \
         /usr/src/release /usr/src/usr.sbin/bsd-build
 }
 
