@@ -415,6 +415,9 @@ bsd_kernel_module_set(
     ], "//conditions:default": []})
     + select({":policy_tests": [
         "//sys/modules/ktest:module_product",
+        "//sys/modules/mac_capability_test_cleanup:module_product",
+        "//sys/modules/mac_capability_test_kernelstore:module_product",
+        "//sys/modules/mac_capability_test_keystore:module_product",
     ], "//conditions:default": []})
     + select({":policy_usb": [
         "//sys/modules/rtwn_usb:module_product",

@@ -1,0 +1,20 @@
+# Included by sys/modules/mac_capability_test_* before <bsd.kmod.mk>: the
+# test-only capability services travel with the test suite
+# (mac-capability-tests) and install beside it, off the kernel module path,
+# so a production kldload by name never finds them.  The test cases load them
+# by absolute path (require_fixture() in mac_capability_test_helpers.h).
+PACKAGE=	mac-capability-tests
+KMODDIR=	/usr/tests/sys/mac_capability/fixtures
+NO_XREF=	yes
+
+CFLAGS+=	-I${SRCTOP}/sys/dev/mac_capability \
+		-I${SRCTOP}/tests/sys/mac_capability/fixtures/include
+
+# A kernel stage has no /usr/tests: create the directories the module and its
+# debug file install in.
+beforeinstall: _fixture_dirs
+_fixture_dirs: .PHONY
+	${INSTALL} -d -T ${KMODTAGS} -o root -g wheel -m 0755 \
+	    ${DESTDIR}${KMODDIR}
+	${INSTALL} -d -T ${KMODDBGTAGS} -o root -g wheel -m 0755 \
+	    ${DESTDIR}${KERN_DEBUGDIR}${KMODDIR}

@@ -32,17 +32,23 @@ find_switchboardctl()
 	atf_skip "switchboardctl binary not found"
 }
 
-# These cases deliberately exercise the manager belonging to the root login.
-# An inherited channel cannot address an independently started fixture manager.
+# These cases deliberately exercise the manager the root login's inherited route
+# reaches.  Cases that need a private manager install that stack's route instead
+# (use_private_control in usr.sbin/switchboard/tests).
 # Opt in only in a disposable VM: the service cases install one temporary bundle.
 require_ambient_control()
 {
+	local out
+
 	[ "$(atf_config_get live_admin no)" = yes ] ||
 	    atf_skip "requires live_admin=yes in a disposable normal-plane VM"
-	[ -n "${SERVICE_LOOKUP_FD:-}" ] || atf_fail "root login has no discovery channel"
 	[ "$(ps -p 1 -o comm=)" = capsule ] || atf_fail "Capsule is not PID 1"
 	find_switchboardctl
 	touch .live-admin-mode
+	# The login's route is the inherited process slot; name that precondition
+	# when it is missing instead of reporting a bare status failure.
+	out=$("$switchboardctl_bin" status 2>&1) ||
+	    atf_fail "root login cannot reach SwitchBoard through its inherited discovery route: $out"
 	atf_check -s exit:0 -o match:"switchboard: running" "$switchboardctl_bin" status
 }
 

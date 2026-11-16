@@ -7975,6 +7975,14 @@ OLD_FILES+=usr/share/mk/plain.test.mk
 OLD_FILES+=usr/share/mk/suite.test.mk
 OLD_FILES+=usr/share/mk/tap.test.mk
 
+# Capability test fixtures (sys/modules/mac_capability_test_*): the modules
+# live under TESTSBASE (removed below), their debug files do not.
+OLD_FILES+=usr/lib/debug/usr/tests/sys/mac_capability/fixtures/mac_capability_test_cleanup.ko.debug
+OLD_FILES+=usr/lib/debug/usr/tests/sys/mac_capability/fixtures/mac_capability_test_kernelstore.ko.debug
+OLD_FILES+=usr/lib/debug/usr/tests/sys/mac_capability/fixtures/mac_capability_test_keystore.ko.debug
+OLD_DIRS+=usr/lib/debug/usr/tests/sys/mac_capability/fixtures
+OLD_DIRS+=usr/lib/debug/usr/tests/sys/mac_capability
+
 # Test suite.
 . if exists(${DESTDIR}${TESTSBASE})
 TESTS_DIRS!=find ${DESTDIR}${TESTSBASE} -type d | sed -e 's,^${DESTDIR}/,,'; echo

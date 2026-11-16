@@ -1,3 +1,8 @@
+# Run the suite in disposable QEMU guests with
+# tools/build/fuchsia/vm-provider.sh (plane-on tier, and PLANE_OFF=1 for the
+# enforced tier; docs/book/src/develop/testing.md).  The fixture services the
+# keystore/kernelstore cases require are built from sys/modules and shipped in
+# this package; see fixtures/README.
 PACKAGE=	mac-capability-tests
 TESTSDIR=	${TESTSBASE}/sys/mac_capability
 SCRIPTSDIR=	${TESTSDIR}
@@ -61,7 +66,6 @@ CFLAGS.authority_boot_helper+= -I${SRCTOP}/usr.sbin/switchboard
 CFLAGS.authority_session_helper+= -I${SRCTOP}/sys -I${SRCTOP}/lib/libservice
 CFLAGS.authority_session_helper+= -I${SRCTOP}/lib/libcapsulert
 LIBADD.authority_session_helper+= service
-SCRIPTS+=	run_tests.sh
 BINDIR=		${TESTSDIR}
 
 CFLAGS+=	-I${SRCTOP}/sys -I${SRCTOP}/sys/dev/mac_capability
@@ -73,7 +77,3 @@ LIBADD.mac_capability_isolation_test+=	jail
 LIBADD.mac_capability_isolation_helper+=	jail
 
 .include <bsd.test.mk>
-
-# Opt-in fixture build; not reached by all/install/world or system packages.
-fixtures: .PHONY
-	${MAKE} -C ${.CURDIR}/fixtures all

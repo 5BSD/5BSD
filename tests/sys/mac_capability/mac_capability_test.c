@@ -173,7 +173,7 @@ ATF_TC(connect_service);
 ATF_TC_HEAD(connect_service, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "Connect to keystore service");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(connect_service, tc)
 {
@@ -188,7 +188,7 @@ ATF_TC_HEAD(descriptor_kinfo, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC capability descriptors expose service identity to process tools");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_test_keystore");
+	    "mac_capability");
 }
 ATF_TC_BODY(descriptor_kinfo, tc)
 {
@@ -251,7 +251,7 @@ ATF_TC_HEAD(fcntl_cloexec_flag, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "F_GETFD/F_SETFD work on mac_capability instance fds");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(fcntl_cloexec_flag, tc)
 {
@@ -277,7 +277,7 @@ ATF_TC_HEAD(cloexec_on_exec, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "FD_CLOEXEC closes a mac_capability instance fd across exec");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(cloexec_on_exec, tc)
 {
@@ -314,7 +314,7 @@ ATF_TC_HEAD(fcntl_nonblock_recvmsg, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "fcntl(O_NONBLOCK) enables nonblocking MAC_CAPABILITY_RECVMSG");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(fcntl_nonblock_recvmsg, tc)
 {
@@ -346,7 +346,7 @@ ATF_TC_HEAD(capsicum_ioctl_limit, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "cap_ioctls_limit restricts MAC_CAPABILITY instance ioctls");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(capsicum_ioctl_limit, tc)
 {
@@ -404,7 +404,7 @@ ATF_TC_HEAD(capsicum_fcntl_limit, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "cap_fcntls_limit restricts fcntl operations on mac_capability fds");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(capsicum_fcntl_limit, tc)
 {
@@ -431,7 +431,7 @@ ATF_TC_HEAD(capsicum_event_limit, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "CAP_EVENT gates kqueue registration on mac_capability instance fds");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(capsicum_event_limit, tc)
 {
@@ -472,7 +472,7 @@ ATF_TC_HEAD(capmode_existing_instance, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Existing mac_capability instances keep working after cap_enter");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(capmode_existing_instance, tc)
 {
@@ -518,7 +518,7 @@ ATF_TC_HEAD(write_read, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_SENDMSG enqueues async, MAC_CAPABILITY_RECVMSG gets reply");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(write_read, tc)
 {
@@ -563,7 +563,7 @@ ATF_TC(fetch_notfound);
 ATF_TC_HEAD(fetch_notfound, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "Fetch nonexistent key returns NOTFOUND");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(fetch_notfound, tc)
 {
@@ -590,7 +590,7 @@ ATF_TC_HEAD(concurrent_instances, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Multiple instances to same service work independently");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(concurrent_instances, tc)
 {
@@ -611,7 +611,7 @@ ATF_TC_HEAD(zero_length_write_noop, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_SENDMSG with payload_len=0 sends a zero-length message");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(zero_length_write_noop, tc)
 {
@@ -645,7 +645,7 @@ ATF_TC_HEAD(nonblock_read_eagain, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "O_NONBLOCK MAC_CAPABILITY_RECVMSG with no pending messages returns EAGAIN");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(nonblock_read_eagain, tc)
 {
@@ -674,7 +674,7 @@ ATF_TC_HEAD(recvmsg_basic, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_RECVMSG dequeues reply with payload and reply token");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(recvmsg_basic, tc)
 {
@@ -718,7 +718,7 @@ ATF_TC_HEAD(reply_token_correlation, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Reply tokens correlate requests to responses in FIFO order");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(reply_token_correlation, tc)
 {
@@ -752,9 +752,12 @@ ATF_TC_BODY(reply_token_correlation, tc)
 	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == 0);
 	ATF_CHECK_EQ(ra.reply_token, 0xAAAA);
 
+	/* RECVMSG returns flags (RECV_F_STATUS); an input must be 0. */
+	memset(&ra, 0, sizeof(ra));
+	ra.payload = buf;
 	ra.payload_len = sizeof(buf);
-	ra.nfds = 0;
-	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == 0);
+	ATF_REQUIRE_MSG(ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == 0,
+	    "RECVMSG: %s", strerror(errno));
 	ATF_CHECK_EQ(ra.reply_token, 0xBBBB);
 
 	close(fd);
@@ -803,7 +806,7 @@ ATF_TC_HEAD(fd_passing_single, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "SENDMSG with pipe, socket, and /dev/null fd attachments");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(fd_passing_single, tc)
 {
@@ -838,7 +841,7 @@ ATF_TC_HEAD(fd_passing_multiple, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "SENDMSG with pipe + socket + file fds in one message");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(fd_passing_multiple, tc)
 {
@@ -886,7 +889,7 @@ ATF_TC_HEAD(fd_too_many, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Sending > MAC_CAPABILITY_MAX_FDS fds fails EINVAL");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(fd_too_many, tc)
 {
@@ -920,7 +923,7 @@ ATF_TC_HEAD(kqueue_read, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "kqueue EVFILT_READ fires when reply available");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(kqueue_read, tc)
 {
@@ -955,7 +958,7 @@ ATF_TC_HEAD(kqueue_evfilt_write, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "kqueue EVFILT_WRITE fires when RX queue has space");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(kqueue_evfilt_write, tc)
 {
@@ -993,7 +996,7 @@ ATF_TC(instance_fstat);
 ATF_TC_HEAD(instance_fstat, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "fstat on instance fd reports TX queue len");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(instance_fstat, tc)
 {
@@ -1036,7 +1039,7 @@ ATF_TC_HEAD(queue_ordering, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Multiple replies dequeued in FIFO order");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(queue_ordering, tc)
 {
@@ -1085,7 +1088,7 @@ ATF_TC_HEAD(capability_delegation, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Instance fd inherited by child process works");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(capability_delegation, tc)
 {
@@ -1129,7 +1132,7 @@ ATF_TC_HEAD(scm_rights_passing, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "SCM_RIGHTS preserves a mac_capability fd ioctl allowlist");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(scm_rights_passing, tc)
 {
@@ -1225,7 +1228,7 @@ ATF_TC_HEAD(multiproc_store_fetch, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Parent stores key, child fetches via separate instance");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(multiproc_store_fetch, tc)
 {
@@ -1288,7 +1291,7 @@ ATF_TC_HEAD(multiproc_concurrent_writers, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Multiple processes write concurrently to separate instances");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(multiproc_concurrent_writers, tc)
 {
@@ -1351,7 +1354,7 @@ ATF_TC_HEAD(close_during_pending, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Closing instance with pending messages does not panic");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(close_during_pending, tc)
 {
@@ -1377,7 +1380,7 @@ ATF_TC_HEAD(rapid_fire, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Rapid fire 100 requests, recv all 100 replies");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(rapid_fire, tc)
 {
@@ -1422,7 +1425,7 @@ ATF_TC_HEAD(write_oversized, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_SENDMSG with payload > MAC_CAPABILITY_MAX_MSG returns EMSGSIZE");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(write_oversized, tc)
 {
@@ -1448,7 +1451,7 @@ ATF_TC_HEAD(sendmsg_bad_fd, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "SENDMSG with invalid fd number fails EBADF");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(sendmsg_bad_fd, tc)
 {
@@ -1476,7 +1479,7 @@ ATF_TC_HEAD(read_buffer_too_small, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_RECVMSG with buffer smaller than message returns EMSGSIZE");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(read_buffer_too_small, tc)
 {
@@ -1518,7 +1521,7 @@ ATF_TC_HEAD(recvmsg_buffer_too_small, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "RECVMSG with small buffer returns EMSGSIZE and required size");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(recvmsg_buffer_too_small, tc)
 {
@@ -1558,7 +1561,7 @@ ATF_TC_HEAD(recvmsg_empty_nonblock, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "RECVMSG on empty queue with O_NONBLOCK returns EAGAIN");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(recvmsg_empty_nonblock, tc)
 {
@@ -1585,7 +1588,7 @@ ATF_TC_HEAD(dup_shared_instance, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "dup() shares instance �� write on one, read on the other");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(dup_shared_instance, tc)
 {
@@ -1635,7 +1638,7 @@ ATF_TC_HEAD(instance_ioctl_bad_cmd, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Unknown ioctl on instance fd returns ENOTTY");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(instance_ioctl_bad_cmd, tc)
 {
@@ -1652,7 +1655,7 @@ ATF_TC_HEAD(connect_on_instance_fd, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_CONNECT on a instance fd returns ENOTTY");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(connect_on_instance_fd, tc)
 {
@@ -1673,7 +1676,7 @@ ATF_TC_HEAD(write_after_close_child, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_SENDMSG after peer process closes shared fd still works");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(write_after_close_child, tc)
 {
@@ -1714,7 +1717,7 @@ ATF_TC_HEAD(sendmsg_zero_payload_with_fds, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "SENDMSG with zero payload but attached fds works");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(sendmsg_zero_payload_with_fds, tc)
 {
@@ -1754,7 +1757,7 @@ ATF_TC_HEAD(getinfo, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_GETINFO returns service identity and basic metadata");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(getinfo, tc)
 {
@@ -1883,7 +1886,7 @@ ATF_TC_HEAD(channel_forwards_metadata, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Channel forwarding preserves badge, reply token, and trailer");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_channel mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_channel");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(channel_forwards_metadata, tc)
@@ -1932,7 +1935,7 @@ ATF_TC_HEAD(channel_forwards_fds_and_metadata, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Channel forwarding preserves attached fds and metadata");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_channel mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_channel");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(channel_forwards_fds_and_metadata, tc)
@@ -2148,7 +2151,7 @@ ATF_TC_HEAD(channel_crossproc_forwards_metadata, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Channel forwarding preserves child sender metadata across fork");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_channel mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_channel");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(channel_crossproc_forwards_metadata, tc)
@@ -2233,7 +2236,7 @@ ATF_TC_HEAD(getinfo_limits, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_GETINFO returns real limits and feature bits");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(getinfo_limits, tc)
 {
@@ -2262,7 +2265,7 @@ ATF_TC_HEAD(credential_trailer, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "RECVMSG trailer is zeroed on kernel reply path");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(credential_trailer, tc)
 {
@@ -2313,7 +2316,7 @@ ATF_TC_HEAD(call_no_handler, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_CALL on async-only service returns EOPNOTSUPP");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(call_no_handler, tc)
 {
@@ -2339,7 +2342,7 @@ ATF_TC_HEAD(call_flags_nonzero, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_CALL with unknown flags returns EINVAL on sync service");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(call_flags_nonzero, tc)
 {
@@ -2365,7 +2368,7 @@ ATF_TC_HEAD(terminate_instance, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_TERMINATE kills the instance for all holders");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(terminate_instance, tc)
 {
@@ -2396,7 +2399,7 @@ ATF_TC_HEAD(terminate_then_send, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "SENDMSG after revoke-via-token returns EPIPE");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(terminate_then_send, tc)
 {
@@ -2421,7 +2424,7 @@ ATF_TC_HEAD(terminate_sync_service, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_TERMINATE works on sync-only service");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(terminate_sync_service, tc)
 {
@@ -2454,7 +2457,7 @@ ATF_TC_HEAD(normal_ops_no_terminate, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Normal operations do not terminate");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(normal_ops_no_terminate, tc)
 {
@@ -2486,7 +2489,7 @@ ATF_TC_HEAD(sendmsg_on_sync_service, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_SENDMSG on sync-only service returns EOPNOTSUPP");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(sendmsg_on_sync_service, tc)
 {
@@ -2507,7 +2510,7 @@ ATF_TC_HEAD(call_on_async_service, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_CALL on async-only service returns EOPNOTSUPP");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(call_on_async_service, tc)
 {
@@ -2540,7 +2543,7 @@ ATF_TC_HEAD(getinfo_async_features, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Async service reports SENDMSG+KQUEUE but not CALL");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(getinfo_async_features, tc)
 {
@@ -2564,7 +2567,7 @@ ATF_TC_HEAD(getinfo_sync_features, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Sync service reports CALL but not SENDMSG or KQUEUE");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(getinfo_sync_features, tc)
 {
@@ -3031,7 +3034,7 @@ ATF_TC_HEAD(keystore_max_keys, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Keystore enforces max key limit");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 	atf_tc_set_md_var(tc, "timeout", "30");
 }
 ATF_TC_BODY(keystore_max_keys, tc)
@@ -3077,7 +3080,7 @@ ATF_TC_HEAD(keystore_overwrite, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Storing to an existing key overwrites the value");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(keystore_overwrite, tc)
 {
@@ -3117,7 +3120,7 @@ ATF_TC_HEAD(keystore_uid_isolation, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Different UIDs cannot see each other's keys");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(keystore_uid_isolation, tc)
@@ -3185,7 +3188,7 @@ ATF_TC_HEAD(keystore_badge_unique, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Each keystore instance gets a unique badge");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(keystore_badge_unique, tc)
 {
@@ -3224,7 +3227,7 @@ ATF_TC_HEAD(xfer_keystore_ok, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Transferable capability can be passed via SCM_RIGHTS");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(xfer_keystore_ok, tc)
 {
@@ -3344,7 +3347,7 @@ ATF_TC_HEAD(revoke_blocks_operations, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_REVOKE_{SEND,RECV,CALL} each block their operation");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_test_keystore mac_capability_test_kernelstore");
+	    "mac_capability");
 }
 ATF_TC_BODY(revoke_blocks_operations, tc)
 {
@@ -3423,7 +3426,7 @@ ATF_TC_HEAD(revoke_send_recv_both, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Revoking both send and recv blocks both");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(revoke_send_recv_both, tc)
 {
@@ -3462,7 +3465,7 @@ ATF_TC_HEAD(revoke_is_permanent, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Revoke is one-way — calling it again is harmless");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(revoke_is_permanent, tc)
 {
@@ -3489,7 +3492,7 @@ ATF_TC_HEAD(revoke_affects_all_dups, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Revoke on one handle affects all dups (same instance)");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(revoke_affects_all_dups, tc)
 {
@@ -3518,7 +3521,7 @@ ATF_TC_HEAD(terminate_after_revoke_send, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_TERMINATE works even after MAC_CAPABILITY_REVOKE_SEND");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(terminate_after_revoke_send, tc)
 {
@@ -3555,7 +3558,7 @@ ATF_TC_HEAD(call_reply_fds_zero, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_CALL with reply_nfds=0 works normally");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(call_reply_fds_zero, tc)
 {
@@ -3589,7 +3592,7 @@ ATF_TC_HEAD(call_reply_fds_buf_no_fds, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_CALL with reply_fds buffer but handler returns 0 fds");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(call_reply_fds_buf_no_fds, tc)
 {
@@ -3624,7 +3627,7 @@ ATF_TC_HEAD(call_reply_nfds_too_many, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_CALL with reply_nfds > MAC_CAPABILITY_MAX_FDS returns EINVAL");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(call_reply_nfds_too_many, tc)
 {
@@ -3653,7 +3656,7 @@ ATF_TC_HEAD(call_reply_preserves_ioctl_limit, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_CALL reply fd preserves its ioctl allowlist");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_test_kernelstore");
+	    "mac_capability");
 }
 ATF_TC_BODY(call_reply_preserves_ioctl_limit, tc)
 {
@@ -3703,7 +3706,7 @@ ATF_TC_HEAD(xfer_none_prevents_transfer, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "CAP_XFER_NONE prevents SCM_RIGHTS transfer");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(xfer_none_prevents_transfer, tc)
 {
@@ -3790,7 +3793,7 @@ ATF_TC_HEAD(xfer_none_still_usable, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "CAP_XFER_NONE capability still works for messaging");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(xfer_none_still_usable, tc)
 {
@@ -3823,7 +3826,7 @@ ATF_TC_HEAD(xfer_none_trampoline, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Trampoline receives capability, sets CAP_XFER_NONE, cannot forward");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(xfer_none_trampoline, tc)
 {
@@ -3948,7 +3951,7 @@ ATF_TC_HEAD(xfer_sendmsg_none_blocks, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "mac_capability SENDMSG rejects attached fd with CAP_XFER_NONE");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(xfer_sendmsg_none_blocks, tc)
 {
@@ -3983,7 +3986,7 @@ ATF_TC_HEAD(xfer_sendmsg_once_consumed, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "mac_capability SENDMSG with XFER_ONCE: first succeeds, second fails");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(xfer_sendmsg_once_consumed, tc)
 {
@@ -4034,7 +4037,7 @@ ATF_TC_HEAD(xfer_sendmsg_multi_atomic, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "mac_capability SENDMSG multi-fd with one NONE rejects atomically");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(xfer_sendmsg_multi_atomic, tc)
 {
@@ -4096,55 +4099,69 @@ ATF_TC_BODY(xfer_sendmsg_multi_atomic, tc)
 
 /* ---- RECVMSG xfer state propagation ---- */
 
-ATF_TC(xfer_recvmsg_unlimited_preserved);
-ATF_TC_HEAD(xfer_recvmsg_unlimited_preserved, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "mac_capability RECVMSG: UNLIMITED fd arrives as UNLIMITED");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
-}
-ATF_TC_BODY(xfer_recvmsg_unlimited_preserved, tc)
+/*
+ * Pass pass_fd from one end of a channel pair to the other and return the
+ * descriptor the peer received: a channel delivers the sender's descriptors
+ * with their transfer and propagation state (the test keystore never returns
+ * one, which left these cases vacuous).
+ */
+static int
+channel_pass_fd(int pass_fd)
 {
 	struct mac_capability_sendmsg_args sa;
 	struct mac_capability_recvmsg_args ra;
-	struct ks_request req;
-	char buf[64];
-	int fd, pipefd[2], recv_fd;
+	char byte, buf[8];
+	int fd_a, fd_b, recv_fd;
 
-	fd = mac_capability_connect("test_keystore");
-	ATF_REQUIRE(fd >= 0);
-	ATF_REQUIRE(pipe(pipefd) == 0);
-
-	/* pipefd[0] is default UNLIMITED. */
-	req.op = KS_OP_FETCH;
-	req.keyid = mac_capability_missing_key();
+	mac_capability_channel_create(&fd_a, &fd_b);
+	byte = 'f';
 	memset(&sa, 0, sizeof(sa));
-	sa.payload = &req;
-	sa.payload_len = sizeof(req);
-	sa.fds = &pipefd[0];
+	sa.payload = &byte;
+	sa.payload_len = sizeof(byte);
+	sa.fds = &pass_fd;
 	sa.nfds = 1;
-	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) == 0);
-
-	/* Receive the reply (keystore echoes fds back). */
+	ATF_REQUIRE_MSG(ioctl(fd_a, MAC_CAPABILITY_SENDMSG, &sa) == 0,
+	    "SENDMSG: %s", strerror(errno));
 	memset(&ra, 0, sizeof(ra));
 	ra.payload = buf;
 	ra.payload_len = sizeof(buf);
 	ra.fds = &recv_fd;
 	ra.nfds = 1;
-	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == 0);
+	ATF_REQUIRE_MSG(ioctl(fd_b, MAC_CAPABILITY_RECVMSG, &ra) == 0,
+	    "RECVMSG: %s", strerror(errno));
+	ATF_REQUIRE_EQ_MSG(ra.nfds, 1, "peer received %u descriptors", ra.nfds);
+	close(fd_a);
+	close(fd_b);
+	return (recv_fd);
+}
 
-	if (ra.nfds == 1) {
-		/*
-		 * Received fd should be UNLIMITED — can tighten to ONCE,
-		 * proving it wasn't degraded.
-		 */
-		ATF_CHECK(cap_xfer_limit(recv_fd, CAP_XFER_ONCE) == 0);
-		close(recv_fd);
-	}
+ATF_TC(xfer_recvmsg_unlimited_preserved);
+ATF_TC_HEAD(xfer_recvmsg_unlimited_preserved, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "mac_capability RECVMSG: UNLIMITED fd arrives as UNLIMITED");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_channel");
+}
+ATF_TC_BODY(xfer_recvmsg_unlimited_preserved, tc)
+{
+	int pipefd[2], recv_fd;
+
+	ATF_REQUIRE(pipe(pipefd) == 0);
+
+	/* pipefd[0] is default UNLIMITED. */
+	recv_fd = channel_pass_fd(pipefd[0]);
+
+	/*
+	 * The received fd must still be UNLIMITED: only an UNLIMITED
+	 * descriptor accepts UNLIMITED (kern_cap_xfer_limit() refuses any
+	 * loosening), so a downgrade to ONCE or NONE fails here.
+	 */
+	ATF_CHECK_MSG(cap_xfer_limit(recv_fd, CAP_XFER_UNLIMITED) == 0,
+	    "received descriptor is not UNLIMITED: %s", strerror(errno));
+	close(recv_fd);
 
 	close(pipefd[0]);
 	close(pipefd[1]);
-	close(fd);
 }
 
 ATF_TC(xfer_recvmsg_once_arrives_none);
@@ -4152,79 +4169,56 @@ ATF_TC_HEAD(xfer_recvmsg_once_arrives_none, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "mac_capability RECVMSG: XFER_ONCE fd arrives as XFER_NONE");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_channel");
 }
 ATF_TC_BODY(xfer_recvmsg_once_arrives_none, tc)
 {
-	struct mac_capability_sendmsg_args sa;
-	struct mac_capability_recvmsg_args ra;
-	struct ks_request req;
-	char buf[64];
-	int fd, pipefd[2], recv_fd;
+	int pipefd[2], recv_fd;
 
-	fd = mac_capability_connect("test_keystore");
-	ATF_REQUIRE(fd >= 0);
 	ATF_REQUIRE(pipe(pipefd) == 0);
 
 	ATF_REQUIRE(cap_xfer_limit(pipefd[0], CAP_XFER_ONCE) == 0);
 
-	req.op = KS_OP_FETCH;
-	req.keyid = mac_capability_missing_key();
-	memset(&sa, 0, sizeof(sa));
-	sa.payload = &req;
-	sa.payload_len = sizeof(req);
-	sa.fds = &pipefd[0];
-	sa.nfds = 1;
-	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) == 0);
+	recv_fd = channel_pass_fd(pipefd[0]);
 
-	memset(&ra, 0, sizeof(ra));
-	ra.payload = buf;
-	ra.payload_len = sizeof(buf);
-	ra.fds = &recv_fd;
-	ra.nfds = 1;
-	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == 0);
+	/* ONCE was consumed on send — receiver gets NONE. */
+	ATF_CHECK_ERRNO(ENOTCAPABLE,
+	    cap_xfer_limit(recv_fd, CAP_XFER_UNLIMITED) == -1);
+	/* Cannot forward. */
+	{
+		struct msghdr msgh;
+		struct iovec iov;
+		union {
+			struct cmsghdr hdr;
+			char cbuf[CMSG_SPACE(sizeof(int))];
+		} cmsgbuf;
+		struct cmsghdr *cmsg;
+		char dummy = 'x';
+		int sv[2];
 
-	if (ra.nfds == 1) {
-		/* ONCE was consumed on send — receiver gets NONE. */
-		ATF_CHECK_ERRNO(ENOTCAPABLE,
-		    cap_xfer_limit(recv_fd, CAP_XFER_UNLIMITED) == -1);
-		/* Cannot forward. */
-		{
-			struct msghdr msgh;
-			struct iovec iov;
-			union {
-				struct cmsghdr hdr;
-				char cbuf[CMSG_SPACE(sizeof(int))];
-			} cmsgbuf;
-			struct cmsghdr *cmsg;
-			char dummy = 'x';
-			int sv[2];
-
-			ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0,
-			    sv) == 0);
-			memset(&msgh, 0, sizeof(msgh));
-			iov.iov_base = &dummy;
-			iov.iov_len = 1;
-			msgh.msg_iov = &iov;
-			msgh.msg_iovlen = 1;
-			msgh.msg_control = cmsgbuf.cbuf;
-			msgh.msg_controllen = sizeof(cmsgbuf.cbuf);
-			cmsg = CMSG_FIRSTHDR(&msgh);
-			cmsg->cmsg_level = SOL_SOCKET;
-			cmsg->cmsg_type = SCM_RIGHTS;
-			cmsg->cmsg_len = CMSG_LEN(sizeof(int));
-			memcpy(CMSG_DATA(cmsg), &recv_fd, sizeof(int));
-			ATF_CHECK_MSG(sendmsg(sv[0], &msgh, 0) == -1,
-			    "forwarding NONE fd should fail");
-			close(sv[0]);
-			close(sv[1]);
-		}
-		close(recv_fd);
+		ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0,
+		    sv) == 0);
+		memset(&msgh, 0, sizeof(msgh));
+		iov.iov_base = &dummy;
+		iov.iov_len = 1;
+		msgh.msg_iov = &iov;
+		msgh.msg_iovlen = 1;
+		msgh.msg_control = cmsgbuf.cbuf;
+		msgh.msg_controllen = sizeof(cmsgbuf.cbuf);
+		cmsg = CMSG_FIRSTHDR(&msgh);
+		cmsg->cmsg_level = SOL_SOCKET;
+		cmsg->cmsg_type = SCM_RIGHTS;
+		cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+		memcpy(CMSG_DATA(cmsg), &recv_fd, sizeof(int));
+		ATF_CHECK_MSG(sendmsg(sv[0], &msgh, 0) == -1,
+		    "forwarding NONE fd should fail");
+		close(sv[0]);
+		close(sv[1]);
 	}
+	close(recv_fd);
 
 	close(pipefd[0]);
 	close(pipefd[1]);
-	close(fd);
 }
 
 ATF_TC(propagation_once_recvmsg_preserved);
@@ -4233,39 +4227,18 @@ ATF_TC_HEAD(propagation_once_recvmsg_preserved, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "mac_capability RECVMSG preserves CLOEXEC_ONCE and CLOFORK_ONCE");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_test_keystore");
+	    "mac_capability mac_capability_channel");
 }
 ATF_TC_BODY(propagation_once_recvmsg_preserved, tc)
 {
-	struct mac_capability_sendmsg_args sa;
-	struct mac_capability_recvmsg_args ra;
-	struct ks_request req;
-	char buf[64];
-	int fd, pipefd[2], recv_fd, status;
+	int pipefd[2], recv_fd, status;
 	pid_t pid;
 
-	fd = mac_capability_connect("test_keystore");
-	ATF_REQUIRE(fd >= 0);
 	ATF_REQUIRE(pipe(pipefd) == 0);
 	ATF_REQUIRE(cap_cloexec_limit(pipefd[0], CAP_CLOEXEC_ONCE) == 0);
 	ATF_REQUIRE(cap_clofork_limit(pipefd[0], CAP_CLOFORK_ONCE) == 0);
 
-	req.op = KS_OP_FETCH;
-	req.keyid = mac_capability_missing_key();
-	memset(&sa, 0, sizeof(sa));
-	sa.payload = &req;
-	sa.payload_len = sizeof(req);
-	sa.fds = &pipefd[0];
-	sa.nfds = 1;
-	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) == 0);
-
-	memset(&ra, 0, sizeof(ra));
-	ra.payload = buf;
-	ra.payload_len = sizeof(buf);
-	ra.fds = &recv_fd;
-	ra.nfds = 1;
-	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == 0);
-	ATF_REQUIRE_EQ(ra.nfds, 1);
+	recv_fd = channel_pass_fd(pipefd[0]);
 
 	/* These two checks together prove each exact intermediate state. */
 	ATF_REQUIRE_ERRNO(ENOTCAPABLE,
@@ -4298,7 +4271,6 @@ ATF_TC_BODY(propagation_once_recvmsg_preserved, tc)
 	close(recv_fd);
 	close(pipefd[0]);
 	close(pipefd[1]);
-	close(fd);
 }
 
 /* ---- CALL xfer state propagation ---- */
@@ -4308,7 +4280,7 @@ ATF_TC_HEAD(xfer_call_none_rejected, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "mac_capability CALL rejects request fd with CAP_XFER_NONE");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(xfer_call_none_rejected, tc)
 {
@@ -4347,7 +4319,7 @@ ATF_TC_HEAD(xfer_call_once_consumed, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "mac_capability CALL with XFER_ONCE: consumed, second call fails");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(xfer_call_once_consumed, tc)
 {
@@ -4566,6 +4538,74 @@ capprotect_shield(uint32_t flags)
 }
 
 /*
+ * Release a child waiting on fd.  When a missing shield let a probe kill the
+ * child, the release finds the peer gone: report that through the child's
+ * exit status (checked by the caller), not as a SIGPIPE that turns the case
+ * "broken".
+ */
+static void
+release_child(int fd, char byte)
+{
+
+	if (send(fd, &byte, 1, MSG_NOSIGNAL) != 1)
+		ATF_REQUIRE_MSG(errno == EPIPE || errno == ECONNRESET,
+		    "release: %s", strerror(errno));
+}
+
+/*
+ * Fork a child that shields itself with flags and then waits for the parent.
+ * Return only once the child has reported that CP_OP_SHIELD succeeded: a
+ * child that could not shield fails the case here, so the foreign probes
+ * never run against an unshielded child or a zombie.
+ */
+static pid_t
+shield_child_start(uint32_t flags, int sv[2])
+{
+	ssize_t n;
+	pid_t pid;
+	char ack;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		int fd;
+
+		close(sv[0]);
+		fd = capprotect_shield(flags);
+		if (fd < 0)
+			_exit(10);
+		if (write(sv[1], "s", 1) != 1)
+			_exit(11);
+		if (read(sv[1], &ack, 1) != 1 || ack != 'g')
+			_exit(12);
+		close(fd);
+		_exit(0);
+	}
+	close(sv[1]);
+	do {
+		n = read(sv[0], &ack, 1);
+	} while (n == -1 && errno == EINTR);
+	ATF_REQUIRE_MSG(n == 1 && ack == 's',
+	    "child %d did not report a successful CP_OP_SHIELD (flags %#x)",
+	    (int)pid, flags);
+	return (pid);
+}
+
+/* Release a shield_child_start() child and require its clean exit. */
+static void
+shield_child_finish(pid_t pid, int sv[2])
+{
+	int status;
+
+	release_child(sv[0], 'g');
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "shielded child exited abnormally (status %#x)", status);
+	close(sv[0]);
+}
+
+/*
  * Launcher-applied protection: shield the process behind procdesc_fd (a
  * pdfork(2) descriptor).  The returned capprotect fd is the protector's
  * authority and is kept open by the caller.
@@ -4593,6 +4633,52 @@ capprotect_protect(int procdesc_fd, uint32_t flags)
 		return (-1);
 	}
 	return (fd);
+}
+
+/*
+ * pdfork a child that does not shield itself and waits for the parent; its
+ * launcher (the test) protects it with CP_OP_PROTECT.
+ */
+static pid_t
+procdesc_child_start(int *pdp, int sv[2])
+{
+	ssize_t n;
+	pid_t pid;
+	char ack;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	pid = pdfork(pdp, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		close(sv[0]);
+		if (write(sv[1], "r", 1) != 1)
+			_exit(11);
+		if (read(sv[1], &ack, 1) != 1 || ack != 'g')
+			_exit(12);
+		_exit(0);
+	}
+	close(sv[1]);
+	do {
+		n = read(sv[0], &ack, 1);
+	} while (n == -1 && errno == EINTR);
+	ATF_REQUIRE_MSG(n == 1 && ack == 'r', "child %d did not start",
+	    (int)pid);
+	return (pid);
+}
+
+/* Release a procdesc_child_start() child and require its clean exit. */
+static void
+procdesc_child_finish(int pd, int sv[2])
+{
+	int status;
+
+	release_child(sv[0], 'g');
+	status = 0;
+	ATF_REQUIRE_EQ(pdwait(pd, &status, WEXITED, NULL, NULL), 0);
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "protected child exited abnormally (status %#x)", status);
+	close(pd);
+	close(sv[0]);
 }
 
 ATF_TC(cap_pro_shield_basic);
@@ -4626,20 +4712,8 @@ ATF_TC_BODY(cap_pro_protector_can_act, tc)
 	int sv[2], pd, cfd;
 	pid_t pid;
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	pid = pdfork(&pd, 0);
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		char buf;
-		close(sv[0]);
-		/* The child does NOT shield itself; its launcher protects it. */
-		write(sv[1], "r", 1);
-		read(sv[1], &buf, 1);
-		close(sv[1]);
-		_exit(0);
-	}
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	/* The child does NOT shield itself; its launcher protects it. */
+	pid = procdesc_child_start(&pd, sv);
 
 	cfd = capprotect_protect(pd, CP_SF_SIGNAL);
 	ATF_REQUIRE(cfd >= 0);
@@ -4649,10 +4723,8 @@ ATF_TC_BODY(cap_pro_protector_can_act, tc)
 	/* A foreign process may not. */
 	ATF_CHECK_EQ(run_shield_helper("signal", pid), 0);
 
-	write(sv[0], "g", 1);
+	procdesc_child_finish(pd, sv);
 	close(cfd);
-	close(pd);		/* reaps the procdesc-owned child */
-	close(sv[0]);
 }
 
 ATF_TC(cap_pro_selfshield_blocks_parent);
@@ -4666,33 +4738,17 @@ ATF_TC_HEAD(cap_pro_selfshield_blocks_parent, tc)
 }
 ATF_TC_BODY(cap_pro_selfshield_blocks_parent, tc)
 {
-	int sv[2], status;
+	int sv[2];
 	pid_t pid;
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		char buf;
-		int fd;
-		close(sv[0]);
-		fd = capprotect_shield(CP_SF_SIGNAL);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
-		close(fd); close(sv[1]); _exit(0);
-	}
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	pid = shield_child_start(CP_SF_SIGNAL, sv);
 
 	/* Parent is not the protector; the shield blocks it too. */
 	errno = 0;
 	ATF_CHECK(kill(pid, 0) == -1);
 	ATF_CHECK_EQ(errno, EACCES);
 
-	write(sv[0], "g", 1);
-	waitpid(pid, &status, 0);
-	close(sv[0]);
+	shield_child_finish(pid, sv);
 }
 
 ATF_TC(cap_pro_protect_via_procdesc);
@@ -4709,18 +4765,7 @@ ATF_TC_BODY(cap_pro_protect_via_procdesc, tc)
 	int sv[2], pd, cfd;
 	pid_t pid;
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	pid = pdfork(&pd, 0);
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		char buf;
-		close(sv[0]);
-		write(sv[1], "r", 1);
-		read(sv[1], &buf, 1);
-		close(sv[1]); _exit(0);
-	}
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	pid = procdesc_child_start(&pd, sv);
 
 	/* Before protection, a foreign process can ptrace the child. */
 	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 1);
@@ -4731,8 +4776,8 @@ ATF_TC_BODY(cap_pro_protect_via_procdesc, tc)
 	/* After launcher protection, the foreign ptrace is blocked. */
 	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
 
-	write(sv[0], "g", 1);
-	close(cfd); close(pd); close(sv[0]);
+	procdesc_child_finish(pd, sv);
+	close(cfd);
 }
 
 ATF_TC(cap_pro_foreign_ptrace_blocked);
@@ -4745,28 +4790,12 @@ ATF_TC_HEAD(cap_pro_foreign_ptrace_blocked, tc)
 }
 ATF_TC_BODY(cap_pro_foreign_ptrace_blocked, tc)
 {
-	int sv[2], status;
+	int sv[2];
 	pid_t pid;
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		char buf;
-		int fd;
-		close(sv[0]);
-		fd = capprotect_shield(CP_SF_PTRACE);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
-		close(fd); close(sv[1]); _exit(0);
-	}
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	pid = shield_child_start(CP_SF_PTRACE, sv);
 	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
-	write(sv[0], "g", 1);
-	waitpid(pid, &status, 0);
-	close(sv[0]);
+	shield_child_finish(pid, sv);
 }
 
 ATF_TC(cap_pro_foreign_signal_blocked);
@@ -4779,28 +4808,12 @@ ATF_TC_HEAD(cap_pro_foreign_signal_blocked, tc)
 }
 ATF_TC_BODY(cap_pro_foreign_signal_blocked, tc)
 {
-	int sv[2], status;
+	int sv[2];
 	pid_t pid;
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		char buf;
-		int fd;
-		close(sv[0]);
-		fd = capprotect_shield(CP_SF_SIGNAL);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
-		close(fd); close(sv[1]); _exit(0);
-	}
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	pid = shield_child_start(CP_SF_SIGNAL, sv);
 	ATF_CHECK_EQ(run_shield_helper("signal", pid), 0);
-	write(sv[0], "g", 1);
-	waitpid(pid, &status, 0);
-	close(sv[0]);
+	shield_child_finish(pid, sv);
 }
 
 ATF_TC(cap_pro_foreign_sigkill_blocked);
@@ -4813,28 +4826,12 @@ ATF_TC_HEAD(cap_pro_foreign_sigkill_blocked, tc)
 }
 ATF_TC_BODY(cap_pro_foreign_sigkill_blocked, tc)
 {
-	int sv[2], status;
+	int sv[2];
 	pid_t pid;
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		char buf;
-		int fd;
-		close(sv[0]);
-		fd = capprotect_shield(CP_SF_SIGKILL);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
-		close(fd); close(sv[1]); _exit(0);
-	}
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	pid = shield_child_start(CP_SF_SIGKILL, sv);
 	ATF_CHECK_EQ(run_shield_helper("sigkill", pid), 0);
-	write(sv[0], "g", 1);
-	waitpid(pid, &status, 0);
-	close(sv[0]);
+	shield_child_finish(pid, sv);
 }
 
 /*
@@ -5179,10 +5176,7 @@ ATF_TC_BODY(cap_pro_foreign_sigcont_blocked, tc)
 	ATF_REQUIRE_MSG(result == 0,
 	    "shield helper sigcont failed with status %d for pid %d",
 	    result, (int)pid);
-	do {
-		nbytes = write(sv[0], "g", 1);
-	} while (nbytes < 0 && errno == EINTR);
-	ATF_REQUIRE_MSG(nbytes == 1, "could not release shielded child");
+	release_child(sv[0], 'g');
 	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
 	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
 	    "shielded child exited abnormally (status %#x)", status);
@@ -5194,30 +5188,17 @@ ATF_TC(cap_pro_visible_flag_not_enforced);
 ATF_TC_HEAD(cap_pro_visible_flag_not_enforced, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Shield with SF_VISIBLE hides from foreign process");
+	    "Shield with SF_VISIBLE should hide the process from a foreign "
+	    "one; not enforced, so the hiding check is an expected failure");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_capprotect");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(cap_pro_visible_flag_not_enforced, tc)
 {
-	int sv[2], status;
+	int sv[2];
 	pid_t pid;
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		char buf;
-		int fd;
-		close(sv[0]);
-		fd = capprotect_shield(CP_SF_VISIBLE);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
-		close(fd); close(sv[1]); _exit(0);
-	}
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	pid = shield_child_start(CP_SF_VISIBLE, sv);
 	/*
 	 * Known gap, documented in mac_capability_capprotect(4): the
 	 * per-process model cannot enforce CP_SF_VISIBLE because
@@ -5230,9 +5211,7 @@ ATF_TC_BODY(cap_pro_visible_flag_not_enforced, tc)
 	    "model; see mac_capability_capprotect(4)");
 	ATF_CHECK_EQ(run_shield_helper("visibility", pid), 0);
 	atf_tc_expect_pass();
-	write(sv[0], "g", 1);
-	waitpid(pid, &status, 0);
-	close(sv[0]);
+	shield_child_finish(pid, sv);
 }
 
 ATF_TC(cap_pro_selective_flags);
@@ -5245,30 +5224,14 @@ ATF_TC_HEAD(cap_pro_selective_flags, tc)
 }
 ATF_TC_BODY(cap_pro_selective_flags, tc)
 {
-	int sv[2], status;
+	int sv[2];
 	pid_t pid;
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		char buf;
-		int fd;
-		close(sv[0]);
-		fd = capprotect_shield(CP_SF_PTRACE);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
-		close(fd); close(sv[1]); _exit(0);
-	}
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	pid = shield_child_start(CP_SF_PTRACE, sv);
 	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
 	/* Use signal0 — real signals would kill the unshielded child. */
 	ATF_CHECK_EQ(run_shield_helper("signal0", pid), 1);
-	write(sv[0], "g", 1);
-	waitpid(pid, &status, 0);
-	close(sv[0]);
+	shield_child_finish(pid, sv);
 }
 
 ATF_TC(cap_pro_all_flags_blocks_all);
@@ -5281,24 +5244,10 @@ ATF_TC_HEAD(cap_pro_all_flags_blocks_all, tc)
 }
 ATF_TC_BODY(cap_pro_all_flags_blocks_all, tc)
 {
-	int sv[2], status;
+	int sv[2];
 	pid_t pid;
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		char buf;
-		int fd;
-		close(sv[0]);
-		fd = capprotect_shield(CP_SF_PROTECT);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
-		close(fd); close(sv[1]); _exit(0);
-	}
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	pid = shield_child_start(CP_SF_PROTECT, sv);
 	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
 	ATF_CHECK_EQ(run_shield_helper("signal", pid), 0);
 	ATF_CHECK_EQ(run_shield_helper("sigkill", pid), 0);
@@ -5309,9 +5258,7 @@ ATF_TC_BODY(cap_pro_all_flags_blocks_all, tc)
 	atf_tc_expect_pass();
 	ATF_CHECK_EQ(run_shield_helper("ktrace", pid), 0);
 	ATF_CHECK_EQ(run_shield_helper("suspend", pid), 0);
-	write(sv[0], "g", 1);
-	waitpid(pid, &status, 0);
-	close(sv[0]);
+	shield_child_finish(pid, sv);
 }
 
 ATF_TC(cap_pro_close_does_not_unshield);
@@ -5327,32 +5274,42 @@ ATF_TC_BODY(cap_pro_close_does_not_unshield, tc)
 {
 	int sv[2], status;
 	pid_t pid;
+	char buf;
 
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
 	pid = fork();
 	ATF_REQUIRE(pid >= 0);
 	if (pid == 0) {
-		char buf;
 		int fd;
+
 		close(sv[0]);
 		fd = capprotect_shield(CP_SF_PTRACE);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
+		if (fd < 0)
+			_exit(10);
+		if (write(sv[1], "s", 1) != 1)
+			_exit(11);
+		if (read(sv[1], &buf, 1) != 1 || buf != 'g')
+			_exit(12);
 		close(fd);		/* closing the fd must NOT unshield */
-		write(sv[1], "u", 1);
-		sleep(5);
-		close(sv[1]); _exit(0);
+		if (write(sv[1], "u", 1) != 1)
+			_exit(13);
+		if (read(sv[1], &buf, 1) != 1 || buf != 'x')
+			_exit(14);
+		_exit(0);
 	}
 	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1);
-	  ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
-	  write(sv[0], "g", 1);
-	  read(sv[0], &buf, 1); }
+	ATF_REQUIRE_MSG(read(sv[0], &buf, 1) == 1 && buf == 's',
+	    "child did not report a successful CP_OP_SHIELD");
+	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
+	release_child(sv[0], 'g');
+	ATF_REQUIRE_MSG(read(sv[0], &buf, 1) == 1 && buf == 'u',
+	    "child did not close its shield descriptor");
 	/* Still blocked after the descriptor is closed (exit is the bound). */
 	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
-	kill(pid, SIGKILL);
-	waitpid(pid, &status, 0);
+	release_child(sv[0], 'x');
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "shielded child exited abnormally (status %#x)", status);
 	close(sv[0]);
 }
 
@@ -5561,30 +5518,41 @@ ATF_TC_BODY(cap_pro_fork_not_inherited, tc)
 	child_pid = fork();
 	ATF_REQUIRE(child_pid >= 0);
 	if (child_pid == 0) {
-		int shield_fd;
+		int gcstatus, shield_fd;
 		pid_t gc;
 		char buf;
+
 		close(sv[0]);
 		shield_fd = capprotect_shield(CP_SF_PTRACE);
-		if (shield_fd < 0) _exit(10);
+		if (shield_fd < 0)
+			_exit(10);
 		gc = fork();		/* child born after the parent shielded */
-		if (gc < 0) _exit(11);
-		if (gc == 0) { close(shield_fd); sleep(5); _exit(0); }
-		write(sv[1], &gc, sizeof(gc));
-		read(sv[1], &buf, 1);
-		kill(gc, SIGKILL);
-		waitpid(gc, NULL, 0);
-		close(shield_fd); close(sv[1]); _exit(0);
+		if (gc < 0)
+			_exit(11);
+		if (gc == 0) {
+			for (;;)
+				pause();
+		}
+		if (write(sv[1], &gc, sizeof(gc)) != (ssize_t)sizeof(gc))
+			_exit(12);
+		if (read(sv[1], &buf, 1) != 1 || buf != 'g')
+			_exit(13);
+		if (kill(gc, SIGKILL) != 0 || waitpid(gc, &gcstatus, 0) != gc ||
+		    !WIFSIGNALED(gcstatus) || WTERMSIG(gcstatus) != SIGKILL)
+			_exit(14);
+		_exit(0);
 	}
 	close(sv[1]);
-	ATF_REQUIRE(read(sv[0], &grandchild_pid, sizeof(grandchild_pid))
-	    == (ssize_t)sizeof(grandchild_pid));
-	usleep(200000);
+	ATF_REQUIRE_MSG(read(sv[0], &grandchild_pid, sizeof(grandchild_pid))
+	    == (ssize_t)sizeof(grandchild_pid),
+	    "child did not shield and fork");
 	/* The shielded process is protected; its fork child is NOT. */
 	ATF_CHECK_EQ(run_shield_helper("ptrace", child_pid), 0);
 	ATF_CHECK_EQ(run_shield_helper("ptrace", grandchild_pid), 1);
-	write(sv[0], "g", 1);
-	waitpid(child_pid, &status, 0);
+	release_child(sv[0], 'g');
+	ATF_REQUIRE_EQ(waitpid(child_pid, &status, 0), child_pid);
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "shielded child exited abnormally (status %#x)", status);
 	close(sv[0]);
 }
 
@@ -5598,28 +5566,12 @@ ATF_TC_HEAD(cap_pro_foreign_sched_blocked, tc)
 }
 ATF_TC_BODY(cap_pro_foreign_sched_blocked, tc)
 {
-	int sv[2], status;
+	int sv[2];
 	pid_t pid;
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		char buf;
-		int fd;
-		close(sv[0]);
-		fd = capprotect_shield(CP_SF_SCHED);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
-		close(fd); close(sv[1]); _exit(0);
-	}
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	pid = shield_child_start(CP_SF_SCHED, sv);
 	ATF_CHECK_EQ(run_shield_helper("sched", pid), 0);
-	write(sv[0], "g", 1);
-	waitpid(pid, &status, 0);
-	close(sv[0]);
+	shield_child_finish(pid, sv);
 }
 
 ATF_TC(cap_pro_foreign_wait_blocked);
@@ -5632,30 +5584,15 @@ ATF_TC_HEAD(cap_pro_foreign_wait_blocked, tc)
 }
 ATF_TC_BODY(cap_pro_foreign_wait_blocked, tc)
 {
-	int sv[2], status;
+	int sv[2];
 	pid_t pid;
 
+	pid = shield_child_start(CP_SF_WAIT, sv);
 	atf_tc_expect_fail("waitpid on non-child returns ECHILD before "
 	    "MAC hook is consulted — hook only gates child visibility");
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		char buf;
-		int fd;
-		close(sv[0]);
-		fd = capprotect_shield(CP_SF_WAIT);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
-		close(fd); close(sv[1]); _exit(0);
-	}
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
 	ATF_CHECK_EQ(run_shield_helper("wait", pid), 0);
-	write(sv[0], "g", 1);
-	waitpid(pid, &status, 0);
-	close(sv[0]);
+	atf_tc_expect_pass();
+	shield_child_finish(pid, sv);
 }
 
 ATF_TC(cap_pro_foreign_ktrace_blocked);
@@ -5668,28 +5605,21 @@ ATF_TC_HEAD(cap_pro_foreign_ktrace_blocked, tc)
 }
 ATF_TC_BODY(cap_pro_foreign_ktrace_blocked, tc)
 {
-	int sv[2], status;
-	pid_t pid;
+	int pd, sv[2], sv2[2];
+	pid_t pid, pid2;
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		char buf;
-		int fd;
-		close(sv[0]);
-		fd = capprotect_shield(CP_SF_KTRACE);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
-		close(fd); close(sv[1]); _exit(0);
-	}
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	/*
+	 * ktrace(2) reports every refusal as EPERM, the ordinary
+	 * p_candebug one too: first show the helper may trace an unshielded
+	 * child, so its refusal below is the shield's.
+	 */
+	pid2 = procdesc_child_start(&pd, sv2);
+	ATF_CHECK_EQ(run_shield_helper("ktrace", pid2), 1);
+	procdesc_child_finish(pd, sv2);
+
+	pid = shield_child_start(CP_SF_KTRACE, sv);
 	ATF_CHECK_EQ(run_shield_helper("ktrace", pid), 0);
-	write(sv[0], "g", 1);
-	waitpid(pid, &status, 0);
-	close(sv[0]);
+	shield_child_finish(pid, sv);
 }
 
 ATF_TC(cap_pro_foreign_suspend_blocked);
@@ -5702,28 +5632,12 @@ ATF_TC_HEAD(cap_pro_foreign_suspend_blocked, tc)
 }
 ATF_TC_BODY(cap_pro_foreign_suspend_blocked, tc)
 {
-	int sv[2], status;
+	int sv[2];
 	pid_t pid;
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		char buf;
-		int fd;
-		close(sv[0]);
-		fd = capprotect_shield(CP_SF_SIGNAL);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
-		close(fd); close(sv[1]); _exit(0);
-	}
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	pid = shield_child_start(CP_SF_SIGNAL, sv);
 	ATF_CHECK_EQ(run_shield_helper("suspend", pid), 0);
-	write(sv[0], "g", 1);
-	waitpid(pid, &status, 0);
-	close(sv[0]);
+	shield_child_finish(pid, sv);
 }
 
 ATF_TC(cap_pro_foreign_core_blocked);
@@ -5752,20 +5666,28 @@ ATF_TC_BODY(cap_pro_foreign_core_blocked, tc)
 		rl.rlim_max = RLIM_INFINITY;
 		setrlimit(RLIMIT_CORE, &rl);
 		fd = capprotect_shield(CP_SF_CORE);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
+		if (fd < 0)
+			_exit(10);
+		if (write(sv[1], "s", 1) != 1)
+			_exit(11);
 		/* Wait for parent, then abort to trigger core dump. */
-		read(sv[1], &buf, 1);
+		if (read(sv[1], &buf, 1) != 1)
+			_exit(12);
 		abort();
 	}
 	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	{
+		char buf;
+
+		ATF_REQUIRE_MSG(read(sv[0], &buf, 1) == 1 && buf == 's',
+		    "child did not report a successful CP_OP_SHIELD");
+	}
 	/*
 	 * Tell child to abort.  The MAC hook should suppress the
 	 * core dump, but the process still dies from SIGABRT.
 	 */
-	write(sv[0], "g", 1);
-	waitpid(pid, &status, 0);
+	release_child(sv[0], 'g');
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
 	ATF_CHECK(WIFSIGNALED(status));
 	ATF_CHECK_EQ(WTERMSIG(status), SIGABRT);
 	/* Core flag should NOT be set — dump was suppressed. */
@@ -5785,28 +5707,11 @@ ATF_TC_BODY(cap_pro_authorize_grants_access, tc)
 {
 	struct mac_capability_call_args ca;
 	struct cp_request req;
-	int sv[2], status;
+	int sv[2];
 	pid_t pid;
 	int shield_fd, token_fd, reply_fds[1];
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-
-	if (pid == 0) {
-		char buf;
-		int fd;
-		close(sv[0]);
-		fd = capprotect_shield(CP_SF_PTRACE);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
-		close(fd); close(sv[1]); _exit(0);
-	}
-
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	pid = shield_child_start(CP_SF_PTRACE, sv);
 
 	/* Foreign helper is blocked. */
 	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
@@ -5865,9 +5770,7 @@ ATF_TC_BODY(cap_pro_authorize_grants_access, tc)
 	close(token_fd);
 	close(shield_fd);
 
-	write(sv[0], "g", 1);
-	waitpid(pid, &status, 0);
-	close(sv[0]);
+	shield_child_finish(pid, sv);
 }
 
 ATF_TC(cap_pro_token_close_revokes);
@@ -6023,7 +5926,7 @@ ATF_TC_BODY(cap_pro_delegated_access, tc)
 		    "authorize_ptrace", fdstr, pidstr, NULL);
 		_exit(2);
 	}
-	waitpid(helper, &status, 0);
+	ATF_REQUIRE_EQ(waitpid(helper, &status, 0), helper);
 	ATF_REQUIRE(WIFEXITED(status));
 	/* Helper authorized itself and ptrace succeeded. */
 	ATF_CHECK_EQ(WEXITSTATUS(status), 0);
@@ -6035,8 +5938,10 @@ ATF_TC_BODY(cap_pro_delegated_access, tc)
 	ATF_CHECK_EQ(run_shield_helper("ptrace", target), 0);
 
 	/* Clean up. */
-	write(sv[0], "g", 1);
-	waitpid(target, &status, 0);
+	release_child(sv[0], 'g');
+	ATF_REQUIRE_EQ(waitpid(target, &status, 0), target);
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "shielded target exited abnormally (status %#x)", status);
 	close(sv[0]);
 }
 
@@ -6053,52 +5958,56 @@ ATF_TC_BODY(cap_pro_multi_fd_close_keeps_shield, tc)
 {
 	int sv[2], status;
 	pid_t pid;
+	char buf;
 
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
 	pid = fork();
 	ATF_REQUIRE(pid >= 0);
 	if (pid == 0) {
-		char buf;
 		int fd1, fd2;
+
 		close(sv[0]);
 
 		/* Open two shield fds. */
 		fd1 = capprotect_shield(CP_SF_PTRACE);
-		if (fd1 < 0) _exit(10);
+		if (fd1 < 0)
+			_exit(10);
 		fd2 = capprotect_shield(CP_SF_PTRACE);
-		if (fd2 < 0) _exit(11);
+		if (fd2 < 0)
+			_exit(11);
 
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
+		if (write(sv[1], "s", 1) != 1 || read(sv[1], &buf, 1) != 1)
+			_exit(12);
 
 		/* Close first fd — should still be protected. */
 		close(fd1);
-		write(sv[1], "1", 1);
-		read(sv[1], &buf, 1);
+		if (write(sv[1], "1", 1) != 1 || read(sv[1], &buf, 1) != 1)
+			_exit(13);
 
 		/* Close second fd — still protected until process exit. */
 		close(fd2);
-		write(sv[1], "2", 1);
-
-		sleep(5);
-		close(sv[1]); _exit(0);
+		if (write(sv[1], "2", 1) != 1 || read(sv[1], &buf, 1) != 1 ||
+		    buf != 'x')
+			_exit(14);
+		_exit(0);
 	}
 	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	ATF_REQUIRE_MSG(read(sv[0], &buf, 1) == 1 && buf == 's',
+	    "child did not report two successful CP_OP_SHIELD calls");
 
 	/* Both fds open — blocked. */
 	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
 
 	/* Tell child to close first fd. */
-	write(sv[0], "g", 1);
-	{ char buf; read(sv[0], &buf, 1); }
+	release_child(sv[0], 'g');
+	ATF_REQUIRE(read(sv[0], &buf, 1) == 1 && buf == '1');
 
 	/* Still blocked (refcount > 0). */
 	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
 
 	/* Tell child to close second fd. */
-	write(sv[0], "g", 1);
-	{ char buf; read(sv[0], &buf, 1); }
+	release_child(sv[0], 'g');
+	ATF_REQUIRE(read(sv[0], &buf, 1) == 1 && buf == '2');
 
 	/*
 	 * Still blocked: a shield is per-process and persists across
@@ -6106,8 +6015,10 @@ ATF_TC_BODY(cap_pro_multi_fd_close_keeps_shield, tc)
 	 */
 	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
 
-	kill(pid, SIGKILL);
-	waitpid(pid, &status, 0);
+	release_child(sv[0], 'x');
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "shielded child exited abnormally (status %#x)", status);
 	close(sv[0]);
 }
 
@@ -6238,7 +6149,7 @@ ATF_TC_BODY(cap_pro_noexec_blocks_exec, tc)
 	}
 	close(sv[1]);
 	{ char buf; read(sv[0], &buf, 1); }
-	waitpid(pid, &status, 0);
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
 	close(sv[0]);
 	ATF_CHECK(WIFEXITED(status));
 	ATF_CHECK_EQ(WEXITSTATUS(status), 0);
@@ -6270,7 +6181,7 @@ ATF_TC_BODY(cap_pro_noexec_survives_close, tc)
 		/* Exec failed; it must have been the shield's EPERM. */
 		_exit(errno == EPERM ? 0 : 1);
 	}
-	waitpid(pid, &status, 0);
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
 	ATF_CHECK(WIFEXITED(status));
 	ATF_CHECK_EQ(WEXITSTATUS(status), 0);
 }
@@ -6303,7 +6214,7 @@ ATF_TC_BODY(cap_pro_nosock_blocks_socket, tc)
 		close(fd);
 		_exit(errno == EPERM ? 0 : 2);
 	}
-	waitpid(pid, &status, 0);
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
 	ATF_CHECK(WIFEXITED(status));
 	ATF_CHECK_EQ(WEXITSTATUS(status), 0);
 }
@@ -6337,7 +6248,7 @@ ATF_TC_BODY(cap_pro_nosock_survives_close, tc)
 		}
 		_exit(errno == EPERM ? 0 : 2);
 	}
-	waitpid(pid, &status, 0);
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
 	ATF_CHECK(WIFEXITED(status));
 	ATF_CHECK_EQ(WEXITSTATUS(status), 0);
 }
@@ -6370,7 +6281,7 @@ ATF_TC_BODY(cap_pro_nosock_socketpair_blocked, tc)
 		close(fd);
 		_exit(errno == EPERM ? 0 : 2);
 	}
-	waitpid(pid, &status, 0);
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
 	ATF_CHECK(WIFEXITED(status));
 	ATF_CHECK_EQ(WEXITSTATUS(status), 0);
 }
@@ -6509,7 +6420,7 @@ ATF_TC_HEAD(kqueue_eof_on_terminate, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "kqueue fires EV_EOF when instance is terminated");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(kqueue_eof_on_terminate, tc)
 {
@@ -6544,7 +6455,7 @@ ATF_TC_HEAD(max_payload_size, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Send exactly MAC_CAPABILITY_MAX_MSG bytes, verify round trip");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(max_payload_size, tc)
 {
@@ -6578,7 +6489,7 @@ ATF_TC_HEAD(payload_over_max, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Send MAC_CAPABILITY_MAX_MSG+1 bytes returns EMSGSIZE");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(payload_over_max, tc)
 {
@@ -6697,7 +6608,7 @@ ATF_TC_HEAD(terminate_twice, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_TERMINATE twice is harmless");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(terminate_twice, tc)
 {
@@ -6739,7 +6650,7 @@ ATF_TC_HEAD(call_req_oversized, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MAC_CAPABILITY_CALL with req_len > max returns EMSGSIZE");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(call_req_oversized, tc)
 {
@@ -6841,7 +6752,7 @@ ATF_TC_HEAD(rapid_connect_disconnect, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Rapid connect and close 100 times does not leak");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(rapid_connect_disconnect, tc)
 {
@@ -6917,7 +6828,7 @@ ATF_TC_HEAD(sendmsg_flags_nonzero, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "SENDMSG with nonzero flags returns EINVAL");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(sendmsg_flags_nonzero, tc)
 {
@@ -6941,7 +6852,7 @@ ATF_TC_HEAD(recvmsg_flags_nonzero, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "RECVMSG with nonzero flags returns EINVAL");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(recvmsg_flags_nonzero, tc)
 {
@@ -6966,7 +6877,7 @@ ATF_TC_HEAD(xfer_none_idempotent, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "CAP_XFER_NONE twice is harmless");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(xfer_none_idempotent, tc)
 {
@@ -6985,8 +6896,9 @@ ATF_TC(revoke_send_on_sync);
 ATF_TC_HEAD(revoke_send_on_sync, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "REVOKE_SEND on sync service — SENDMSG already EOPNOTSUPP");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	    "REVOKE_SEND on a sync service: SENDMSG answers EACCES, the "
+	    "revocation being checked before the service type");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(revoke_send_on_sync, tc)
 {
@@ -6999,12 +6911,11 @@ ATF_TC_BODY(revoke_send_on_sync, tc)
 	/* Revoke send on a sync service. */
 	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_REVOKE_SEND, NULL) == 0);
 
-	/* SENDMSG was already EOPNOTSUPP, now it's EACCES. */
+	/* SENDMSG was EOPNOTSUPP; RF_NO_SEND is checked first: EACCES. */
 	memset(&sa, 0, sizeof(sa));
 	sa.payload = "x";
 	sa.payload_len = 1;
-	ATF_CHECK(ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) == -1);
-	ATF_CHECK(errno == EACCES || errno == EOPNOTSUPP);
+	ATF_CHECK_ERRNO(EACCES, ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) == -1);
 
 	close(fd);
 }
@@ -7013,8 +6924,9 @@ ATF_TC(revoke_call_on_async);
 ATF_TC_HEAD(revoke_call_on_async, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "REVOKE_CALL on async service — CALL already EOPNOTSUPP");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	    "REVOKE_CALL on an async service: CALL answers EACCES, the "
+	    "revocation being checked before the service type");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(revoke_call_on_async, tc)
 {
@@ -7029,8 +6941,8 @@ ATF_TC_BODY(revoke_call_on_async, tc)
 	memset(&ca, 0, sizeof(ca));
 	ca.req = "x";
 	ca.req_len = 1;
-	ATF_CHECK(ioctl(fd, MAC_CAPABILITY_CALL, &ca) == -1);
-	ATF_CHECK(errno == EACCES || errno == EOPNOTSUPP);
+	/* CALL was EOPNOTSUPP; RF_NO_CALL is checked first: EACCES. */
+	ATF_CHECK_ERRNO(EACCES, ioctl(fd, MAC_CAPABILITY_CALL, &ca) == -1);
 
 	close(fd);
 }
@@ -7040,7 +6952,7 @@ ATF_TC_HEAD(close_during_blocked_recv, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Close fd from another thread while RECVMSG blocks");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(close_during_blocked_recv, tc)
 {
@@ -7085,7 +6997,7 @@ ATF_TC_HEAD(getinfo_after_terminate, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "GETINFO on terminated instance still returns metadata");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(getinfo_after_terminate, tc)
 {
@@ -7110,7 +7022,7 @@ ATF_TC_HEAD(capsicum_gates_terminate, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "cap_ioctls_limit can block MAC_CAPABILITY_TERMINATE");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(capsicum_gates_terminate, tc)
 {
@@ -7231,7 +7143,7 @@ ATF_TC_HEAD(nonce_nonzero, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Program nonce is non-zero in credential trailer");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(nonce_nonzero, tc)
@@ -7279,7 +7191,9 @@ ATF_TC_BODY(nonce_nonzero, tc)
 	ATF_CHECK_MSG(child_nonce != 0,
 	    "process nonce should be non-zero");
 
-	waitpid(pid, &status, 0);
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "child exited abnormally (status %#x)", status);
 	close(fd);
 	close(sv[0]);
 }
@@ -7289,7 +7203,7 @@ ATF_TC_HEAD(nonce_inherits_fork, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Forked child inherits parent's process nonce");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(nonce_inherits_fork, tc)
@@ -7350,7 +7264,9 @@ ATF_TC_BODY(nonce_inherits_fork, tc)
 	    "child nonce 0x%lx should equal parent nonce 0x%lx",
 	    (unsigned long)child_nonce, (unsigned long)parent_nonce);
 
-	waitpid(pid, &status, 0);
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "child exited abnormally (status %#x)", status);
 	close(fd);
 	close(sv[0]);
 }
@@ -7360,7 +7276,7 @@ ATF_TC_HEAD(nonce_trailer_zero_on_reply, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Kernel replies have zero nonce in trailer");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(nonce_trailer_zero_on_reply, tc)
@@ -7502,7 +7418,7 @@ ATF_TC_HEAD(kstore_put_get, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Put and get a value from kernelstore");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(kstore_put_get, tc)
 {
@@ -7527,7 +7443,7 @@ ATF_TC_HEAD(kstore_get_notfound, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Get on missing key returns NOTFOUND");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(kstore_get_notfound, tc)
 {
@@ -7549,7 +7465,7 @@ ATF_TC_HEAD(kstore_delete, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Delete removes a key");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(kstore_delete, tc)
 {
@@ -7573,7 +7489,7 @@ ATF_TC_HEAD(kstore_overwrite, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Put overwrites existing value");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(kstore_overwrite, tc)
 {
@@ -7599,7 +7515,7 @@ ATF_TC_HEAD(kstore_mint_shared, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Minted member sees same data as owner");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(kstore_mint_shared, tc)
 {
@@ -7641,7 +7557,7 @@ ATF_TC_HEAD(kstore_member_no_mint, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Members cannot mint");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(kstore_member_no_mint, tc)
 {
@@ -7665,7 +7581,7 @@ ATF_TC_HEAD(kstore_close_destroys, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Closing all fds destroys the store");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(kstore_close_destroys, tc)
 {
@@ -7702,7 +7618,7 @@ ATF_TC_HEAD(kstore_separate_stores, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Two connects create separate stores");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(kstore_separate_stores, tc)
 {
@@ -7731,7 +7647,7 @@ ATF_TC_HEAD(kstore_delete_notfound, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Delete on missing key returns NOTFOUND");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(kstore_delete_notfound, tc)
 {
@@ -7750,7 +7666,7 @@ ATF_TC_HEAD(kstore_multiproc, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Child process writes, parent reads via shared store");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(kstore_multiproc, tc)
@@ -7776,9 +7692,13 @@ ATF_TC_BODY(kstore_multiproc, tc)
 		close(sv[0]);
 		close(owner_fd);
 		/* Child writes to the shared store. */
-		kstore_put(member_fd, "from_child", "hello", 5);
-		write(sv[1], "d", 1);
-		read(sv[1], &sig, 1);
+		if (kstore_put(member_fd, "from_child", "hello", 5) !=
+		    KSTORE_STATUS_OK)
+			_exit(10);
+		if (write(sv[1], "d", 1) != 1)
+			_exit(11);
+		if (read(sv[1], &sig, 1) != 1 || sig != 'x')
+			_exit(12);
 		close(member_fd);
 		close(sv[1]);
 		_exit(0);
@@ -7790,7 +7710,9 @@ ATF_TC_BODY(kstore_multiproc, tc)
 	/* Wait for child to write. */
 	{
 		char sig;
-		read(sv[0], &sig, 1);
+
+		ATF_REQUIRE_MSG(read(sv[0], &sig, 1) == 1 && sig == 'd',
+		    "child did not report its store");
 	}
 
 	/* Parent reads child's data. */
@@ -7799,8 +7721,10 @@ ATF_TC_BODY(kstore_multiproc, tc)
 	ATF_CHECK_EQ(len, 5);
 	ATF_CHECK(memcmp(buf, "hello", 5) == 0);
 
-	write(sv[0], "x", 1);
-	waitpid(pid, &status, 0);
+	release_child(sv[0], 'x');
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "child exited abnormally (status %#x)", status);
 	close(owner_fd);
 	close(sv[0]);
 }
@@ -7810,7 +7734,7 @@ ATF_TC_HEAD(kstore_revoke_member, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Owner can revoke member via MAC_CAPABILITY_TERMINATE");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability");
 }
 ATF_TC_BODY(kstore_revoke_member, tc)
 {
@@ -7846,7 +7770,22 @@ ATF_TC_BODY(kstore_revoke_member, tc)
 	close(owner_fd);
 }
 
-/* This module is staged only in the isolated lifecycle VM. */
+/*
+ * mac_capability_test_cleanup ships with this suite (mac-capability-tests,
+ * built from sys/modules, installed in FIXTURE_DIR); these cases load and
+ * unload it themselves by absolute path.
+ */
+#define	CLEANUP_FIXTURE	FIXTURE_DIR "/mac_capability_test_cleanup.ko"
+
+static void
+require_cleanup_fixture(void)
+{
+
+	ATF_REQUIRE_MSG(access(CLEANUP_FIXTURE, R_OK) == 0,
+	    "%s: %s (installed with mac-capability-tests)", CLEANUP_FIXTURE,
+	    strerror(errno));
+}
+
 ATF_TC(unload_waits_for_cleanup_callback);
 ATF_TC_HEAD(unload_waits_for_cleanup_callback, tc)
 {
@@ -7875,9 +7814,8 @@ check_unload_waits_for_cleanup(bool last_close)
 	char go = 1;
 	pid_t terminator, unloader, observed = 0;
 
-	if (access("/boot/kernel/mac_capability_test_cleanup.ko", R_OK) != 0)
-		atf_tc_skip("private VM cleanup fixture is not staged");
-	module = kldload("/boot/kernel/mac_capability_test_cleanup.ko");
+	require_cleanup_fixture();
+	module = kldload(CLEANUP_FIXTURE);
 	ATF_REQUIRE_MSG(module >= 0, "load cleanup fixture: %s", strerror(errno));
 	fd = mac_capability_connect("test_cleanup");
 	ATF_REQUIRE(fd >= 0);
@@ -7953,7 +7891,7 @@ check_unload_waits_for_admission(unsigned stage, bool fail, bool mint)
 
 	ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",
 	    &before, &len, NULL, 0));
-	module = kldload("/boot/kernel/mac_capability_test_cleanup.ko");
+	module = kldload(CLEANUP_FIXTURE);
 	ATF_REQUIRE(module >= 0);
 	cleanup_fixture_set("debug.capability_cleanup_test.release", 1);
 	if (mint) {
@@ -7999,10 +7937,21 @@ check_unload_waits_for_admission(unsigned stage, bool fail, bool mint)
 		ATF_CHECK_ERRNO(ECONNABORTED, channel_mint_instance(fd) == -1);
 		ATF_REQUIRE_EQ(0, close(fd));
 	}
-	len = sizeof(after);
-	ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",
-	    &after, &len, NULL, 0));
-	ATF_CHECK_EQ(before, after);
+	/*
+	 * An instance's last reference can be dropped by a task after close
+	 * and unload return: poll (at most 5 s) for the count to settle.
+	 */
+	for (unsigned i = 0; i < 500; i++) {
+		len = sizeof(after);
+		ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",
+		    &after, &len, NULL, 0));
+		if (after == before)
+			break;
+		usleep(10000);
+	}
+	ATF_CHECK_EQ_MSG(before, after, "instances before %ju after %ju "
+	    "(stage %u fail=%d mint=%d)", (uintmax_t)before, (uintmax_t)after,
+	    stage, fail, mint);
 }
 
 ATF_TC(unload_waits_for_admission);
@@ -8014,8 +7963,7 @@ ATF_TC_HEAD(unload_waits_for_admission, tc)
 }
 ATF_TC_BODY(unload_waits_for_admission, tc)
 {
-	if (access("/boot/kernel/mac_capability_test_cleanup.ko", R_OK) != 0)
-		atf_tc_skip("private VM cleanup fixture is not staged");
+	require_cleanup_fixture();
 	for (unsigned stage = 1; stage <= 2; stage++)
 		for (unsigned fail = 0; fail <= 1; fail++)
 			for (unsigned mint = 0; mint <= 1; mint++)
@@ -8036,9 +7984,8 @@ ATF_TC_BODY(failed_init_completes_cleanup, tc)
 	unsigned fail = 1, release = 1;
 	int module, fd;
 
-	if (access("/boot/kernel/mac_capability_test_cleanup.ko", R_OK) != 0)
-		atf_tc_skip("private VM cleanup fixture is not staged");
-	module = kldload("/boot/kernel/mac_capability_test_cleanup.ko");
+	require_cleanup_fixture();
+	module = kldload(CLEANUP_FIXTURE);
 	ATF_REQUIRE(module >= 0);
 	len = sizeof(before);
 	ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",

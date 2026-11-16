@@ -259,10 +259,11 @@ plane: a named endpoint that userland connects to through
 delivering each message with the sender's credential attached. The nine
 production services (isolation, system, coalition, capprotect, node, mount,
 accounting, identity, channel) are compiled into every kernel as
-`standard` in `sys/conf/files`; the two test fixtures
+`standard` in `sys/conf/files`; the test fixtures
 `mac_capability_test_keystore` and `mac_capability_test_kernelstore` are
-loadable, test-only examples under `tests/sys/mac_capability/fixtures`;
-they require an explicit fixture build and are excluded from system packages. The KPI is `sys/dev/mac_capability/mac_capability.h`
+loadable, test-only examples with sources under
+`tests/sys/mac_capability/fixtures`, built from `sys/modules` when tests are
+enabled and packaged with `mac-capability-tests`, never with the kernel. The KPI is `sys/dev/mac_capability/mac_capability.h`
 and `docs/mac_capability-architecture.md` has the full callback contract.
 
 A service fills a `struct mac_capability_ops`. `co_connect` runs when a
@@ -383,9 +384,10 @@ state by uid or nonce without trusting the payload; `queue_depth`,
 1024 instances) are the resource ceilings; a service that pushes unsolicited
 messages sets `MAC_CAPABILITY_SVC_NOTIFY` and uses `mac_capability_notify`;
 and `MODULE_DEPEND` on `mac_capability` is required. The kernel-side tests
-in `tests/sys/mac_capability` load the fixtures with `kldload` on a
-plane-off boot, which is how you would test a new service before there is a
-userland provider in front of it (see [Testing](testing.md)).
+in `tests/sys/mac_capability` kldload the fixtures by absolute path from
+`/usr/tests/sys/mac_capability/fixtures`, which is how you would test a new
+service before there is a userland provider in front of it (see
+[Testing](testing.md)).
 
 ## KPI changes to know about
 

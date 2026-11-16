@@ -55,6 +55,7 @@ struct capsule_config {
 	char		pidfile[PATH_MAX];
 	char		control_socket[PATH_MAX];
 	mode_t		control_socket_mode;
+	bool		lookup_route_export;	/* answer CTL_OP_LOOKUP (daemon only) */
 
 	/* Integrity — capprotect shield bitmask (CP_SF_* flags) */
 	uint32_t	integrity_flags;

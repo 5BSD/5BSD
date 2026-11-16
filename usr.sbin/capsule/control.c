@@ -6,7 +6,8 @@
  * Control socket for capsule.
  *
  * Provides a unix domain socket at /var/run/capsule.sock for
- * administrative commands (status, shutdown, reload).  System
+ * administrative commands (status, shutdown, reload, and the discovery route
+ * for a root client of a daemon instance).  System
  * operations (kldload, reboot) are here temporarily and will
  * move to separate service programs in Phase 2.
  *
@@ -21,6 +22,7 @@
 #include <sys/queue.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/uio.h>
 #include <sys/un.h>
 
 #include <errno.h>
@@ -81,6 +83,7 @@ struct ctl_conn {
 	char			summary[CTL_SUMMARY_MAX];
 	uint32_t		summary_len;
 	int			action;
+	int			pass_fd;	/* owned; sent with the reply header */
 
 	uintptr_t		timer_ident;
 	struct timespec		accept_ts;	/* monotonic time at accept */
@@ -125,6 +128,8 @@ conn_destroy(struct ctl_conn *c)
 		(void)kevent(event_kq, &kev, 1, NULL, 0, NULL);
 	}
 
+	if (c->pass_fd >= 0)
+		close(c->pass_fd);
 	close(c->fd);
 	TAILQ_REMOVE(&conn_list, c, entry);
 	nconns--;
@@ -154,6 +159,7 @@ conn_dispatch(struct ctl_conn *c)
 	struct ctl_request *req;
 	struct ctl_reply *reply;
 	struct kevent kev[2];
+	int fd;
 
 	req = &c->req;
 	reply = &c->reply;
@@ -188,6 +194,31 @@ conn_dispatch(struct ctl_conn *c)
 		}
 		cmd_reload(c->euid, reply,
 		    c->summary, sizeof(c->summary));
+		break;
+	case CTL_OP_LOOKUP:
+		/* Off unless configured: answer as for an unknown op. */
+		if (!od.cfg.lookup_route_export) {
+			reply->status = ENOTSUP;
+			break;
+		}
+		if (req->datalen != 0) {
+			reply->status = EINVAL;
+			break;
+		}
+		fd = cmd_lookup(c->euid, reply);
+		if (fd < 0)
+			break;
+		/*
+		 * Hold a duplicate: the route may be replaced (and its
+		 * descriptor closed) before the reply is written.
+		 */
+		c->pass_fd = fcntl(fd, F_DUPFD_CLOEXEC, 0);
+		if (c->pass_fd == -1) {
+			reply->status = errno;
+			syslog(LOG_WARNING, "control: lookup dup: %m");
+			break;
+		}
+		syslog(LOG_INFO, "control: lookup route uid %u", c->euid);
 		break;
 	case CTL_OP_REBOOT:
 	case CTL_OP_HALT:
@@ -271,6 +302,38 @@ conn_handle_read(struct ctl_conn *c)
 	}
 }
 
+/*
+ * Write reply bytes with fd attached as SCM_RIGHTS.  The rights travel with
+ * the first byte that is accepted, so the caller attaches them only until a
+ * write succeeds.
+ */
+static ssize_t
+conn_send_fd(int s, const void *buf, size_t len, int fd)
+{
+	union {
+		struct cmsghdr	hdr;
+		char		buf[CMSG_SPACE(sizeof(int))];
+	} control;
+	struct cmsghdr *cmsg;
+	struct msghdr msg;
+	struct iovec iov;
+
+	memset(&control, 0, sizeof(control));
+	memset(&msg, 0, sizeof(msg));
+	iov.iov_base = __DECONST(void *, buf);
+	iov.iov_len = len;
+	msg.msg_iov = &iov;
+	msg.msg_iovlen = 1;
+	msg.msg_control = control.buf;
+	msg.msg_controllen = sizeof(control.buf);
+	cmsg = CMSG_FIRSTHDR(&msg);
+	cmsg->cmsg_level = SOL_SOCKET;
+	cmsg->cmsg_type = SCM_RIGHTS;
+	cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+	memcpy(CMSG_DATA(cmsg), &fd, sizeof(int));
+	return (sendmsg(s, &msg, MSG_NOSIGNAL));
+}
+
 static void
 conn_handle_write(struct ctl_conn *c)
 {
@@ -292,12 +355,22 @@ conn_handle_write(struct ctl_conn *c)
 		return;
 	}
 
-	n = write(c->fd, src, total - c->offset);
+	if (c->state == CTL_CONN_WRITING_REPLY && c->pass_fd >= 0)
+		n = conn_send_fd(c->fd, src, total - c->offset, c->pass_fd);
+	else
+		n = write(c->fd, src, total - c->offset);
 	if (n == -1) {
 		if (errno == EINTR || errno == EAGAIN)
 			return;
+		if (c->pass_fd >= 0)
+			syslog(LOG_WARNING, "control: lookup reply: %m");
 		c->state = CTL_CONN_DONE;
 		return;
+	}
+	if (n > 0 && c->pass_fd >= 0) {
+		/* Sent: the client holds its own reference now. */
+		close(c->pass_fd);
+		c->pass_fd = -1;
 	}
 	if (n == 0) {
 		c->state = CTL_CONN_DONE;
@@ -459,6 +532,7 @@ ctl_accept(void)
 
 	c->fd = cfd;
 	c->euid = euid;
+	c->pass_fd = -1;
 	c->state = CTL_CONN_READING_HDR;
 	clock_gettime(CLOCK_MONOTONIC, &c->accept_ts);
 

@@ -4,6 +4,7 @@ ATF_TESTS_SH=	networkcmpctl_test
 
 PROGS+=		networkcmpctl_test_bin
 PROGS+=		networkcmpctl_success_bin
+PROGS+=		no_ambient_exec
 BINDIR_networkcmpctl_test_bin=	${TESTSDIR}
 SRCS.networkcmpctl_test_bin=	networkcmpctl.c
 NO_SHARED.networkcmpctl_test_bin=	yes
@@ -16,6 +17,12 @@ SRCS.networkcmpctl_success_bin=	networkcmpctl_success_impl.c \
 NO_SHARED.networkcmpctl_success_bin=	yes
 CFLAGS.networkcmpctl_success_bin+=	-I${SRCTOP}/lib/libnetworkcmp
 
-.PATH:	${SRCTOP}/usr.sbin/networkcmpctl
+# no_ambient_exec clears the inherited discovery route for the child.
+BINDIR_no_ambient_exec=	${TESTSDIR}
+NO_SHARED.no_ambient_exec=	yes
+CFLAGS.no_ambient_exec+=	-I${SRCTOP}/lib/libservice
+LIBADD.no_ambient_exec+=	service
+
+.PATH:	${SRCTOP}/usr.sbin/networkcmpctl ${SRCTOP}/usr.sbin/notifyctl/tests
 
 .include <bsd.test.mk>

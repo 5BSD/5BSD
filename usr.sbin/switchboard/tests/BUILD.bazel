@@ -226,19 +226,21 @@ bsd_program_test(name = "verified_handle_consumer_test_run", program = ":verifie
 # guardian; Capsule's existing static guardian is a different build variant.
 _FIXTURE_LIBS = {
     "capd_test_guardian": [],
+    "capd_lookup_exec": ["service"],
     "capd_service_fixture": ["capability", "channel", "service", "capsulert", "thr"],
     "capd_protocol_fixture": ["service", "channel", "capability"],
     "service_probe": ["service", "channel", "thr"],
 }
 _FIXTURE_SOURCES = {
     "capd_test_guardian": "//usr.sbin/capsule/tests:capd_test_guardian.c",
+    "capd_lookup_exec": "//usr.sbin/capsule/tests:capd_lookup_exec.c",
     "capd_service_fixture": "//lib/libservice/tests:capd_service_fixture.c",
     "capd_protocol_fixture": "capd_protocol_fixture.c",
     "service_probe": "service_probe.c",
 }
 [cc_binary(name = program, srcs = [_FIXTURE_SOURCES[program]],
     deps = ["//lib/lib" + lib + ":" + lib for lib in libs] +
-        (["//usr.sbin/switchboard:test_source_headers"] if program == "service_probe" else ["//lib/libservice:managed_fixture_headers"] if program == "capd_service_fixture" else ["//lib/libcapsulert:headers"] if program == "capd_protocol_fixture" else []),
+        (["//usr.sbin/switchboard:test_source_headers"] if program == "service_probe" else ["//lib/libservice:managed_fixture_headers"] if program == "capd_service_fixture" else ["//lib/libcapsulert:headers"] if program in ("capd_protocol_fixture", "capd_lookup_exec") else []),
     dynamic_deps = ["//lib/lib" + lib + ":" + lib + "_shared" for lib in libs],
     copts = ["-fPIE", "-ffunction-sections", "-fdata-sections"], linkopts = ["-pie"],
     visibility = ["//visibility:public"]) for program, libs in _FIXTURE_LIBS.items()]

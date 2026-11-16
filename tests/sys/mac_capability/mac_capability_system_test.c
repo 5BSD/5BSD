@@ -46,12 +46,9 @@ sys_connect(void)
 	ctl = mac_capability_open();
 	memset(&ca, 0, sizeof(ca));
 	strlcpy(ca.name, "system", sizeof(ca.name));
-	if (ioctl(ctl, MAC_CAPABILITY_CONNECT, &ca) != 0) {
-		if (errno == ENOENT)
-			atf_tc_skip("mac_capability_system not loaded");
-		ATF_REQUIRE_MSG(0, "connect system: %s",
-		    strerror(errno));
-	}
+	/* The system service is compiled in: a failed connect is a failure. */
+	ATF_REQUIRE_MSG(ioctl(ctl, MAC_CAPABILITY_CONNECT, &ca) == 0,
+	    "connect system: %s", strerror(errno));
 	close(ctl);
 	return (ca.fd);
 }
@@ -875,7 +872,7 @@ ATF_TC_BODY(capmode_kld_enumeration_open, tc)
 	pid_t pid;
 	int status, svc;
 
-	/* Claim the module-management gates; also skips if unloaded. */
+	/* Claim the module-management gates. */
 	svc = sys_connect();
 	ATF_REQUIRE(sys_call_claim(svc,
 	    SYS_GATE_KLDLOAD | SYS_GATE_KLDUNLOAD) == 0);
@@ -1050,7 +1047,7 @@ ATF_TC_BODY(claim_reverts_on_claimant_death, tc)
 	int svc, rel, status;
 	pid_t pid;
 
-	/* Connect (skips if the system service is not loaded); we hold no
+	/* Connect; we hold no
 	 * claim ourselves — only the planted child claims KENV. */
 	svc = sys_connect();
 
@@ -1139,7 +1136,7 @@ ATF_TC_BODY(sysctl_gate_scopes_writes_not_name_lookup, tc)
 /*
  * Nonce identity: fork PRESERVES the program nonce while exec ROTATES it, and
  * two independently exec'd children get DISTINCT nonces.  Read directly via the
- * identity service (IDENTITY_OP_SELF); skips if that service is not loaded.
+ * identity service (IDENTITY_OP_SELF).
  */
 ATF_TC(nonce_identity_fork_preserve_exec_rotate);
 ATF_TC_HEAD(nonce_identity_fork_preserve_exec_rotate, tc)
@@ -1155,9 +1152,9 @@ ATF_TC_BODY(nonce_identity_fork_preserve_exec_rotate, tc)
 	int pfd[2], status;
 	pid_t pid;
 
-	/* Parent's own nonce (skips if the identity service is unavailable). */
-	if (read_identity_self_nonce(&parent_nonce) != 0)
-		atf_tc_skip("mac_capability_identity not loaded");
+	/* Parent's own nonce (the identity service is compiled in). */
+	ATF_REQUIRE_MSG(read_identity_self_nonce(&parent_nonce) == 0,
+	    "identity IDENTITY_OP_SELF failed");
 	ATF_CHECK(parent_nonce != 0);
 
 	/* fork WITHOUT exec: the child must observe the SAME nonce. */
@@ -1226,9 +1223,9 @@ ATF_TC_BODY(auth_entries_globally_capped, tc)
 	int svc, t[3], i, rc;
 
 	sz = sizeof(saved_max);
-	if (sysctlbyname("kern.mac_capability_system.max_auth", &saved_max,
-	    &sz, NULL, 0) != 0)
-		atf_tc_skip("mac_capability_system not loaded");
+	ATF_REQUIRE_MSG(sysctlbyname("kern.mac_capability_system.max_auth",
+	    &saved_max, &sz, NULL, 0) == 0,
+	    "sysctl kern.mac_capability_system.max_auth: %s", strerror(errno));
 	sz = sizeof(cur);
 	ATF_REQUIRE(sysctlbyname("kern.mac_capability_system.auth_count", &cur,
 	    &sz, NULL, 0) == 0);

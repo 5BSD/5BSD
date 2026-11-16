@@ -7,6 +7,8 @@ cc_binary(name = "capsulectl_test_bin", srcs = ["//usr.sbin/capsulectl:capsulect
 cc_binary(name = "capsulectl_success_bin", srcs = ["capsulectl_success_impl.c", "fake_service.c"], deps = ["//usr.sbin/capsulectl:test_source", "//lib/libservice:headers", "//lib/libcapsulert:headers"], linkstatic = True, linkopts = ["-static"])
 utility_installation(name = "install_test", program = "capsulectl_test_bin", manual = "", package = "capsulectl-tests", bindir = "/usr/tests/usr.sbin/capsulectl")
 utility_installation(name = "install_success", program = "capsulectl_success_bin", manual = "", package = "capsulectl-tests", bindir = "/usr/tests/usr.sbin/capsulectl")
+cc_binary(name = "no_ambient_exec", srcs = ["//usr.sbin/notifyctl/tests:no_ambient_exec.c"], deps = ["//lib/libservice:service"], linkstatic = True, linkopts = ["-static"])
+utility_installation(name = "install_noroute", program = "no_ambient_exec", manual = "", package = "capsulectl-tests", bindir = "/usr/tests/usr.sbin/capsulectl")
 bsd_script_wrapper(name = "capsulectl_test", body = "capsulectl_test.sh", interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
 bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["capsulectl_test"], interfaces = {"capsulectl_test": "atf"})
 [bsd_install_file(name = name, src = source, destination = "/usr/tests/usr.sbin/capsulectl/" + file, owner = "root", group = "wheel", mode = mode, install_tags = ["package=capsulectl-tests"])

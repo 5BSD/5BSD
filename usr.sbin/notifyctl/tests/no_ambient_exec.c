@@ -1,10 +1,9 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 Kory Heard */
 /*
- * Run a command without the process's ambient service lookup route.  Under a
- * live plane the route is a kernel per-process slot inherited across exec,
- * so removing SERVICE_LOOKUP_FD from the environment alone does not make a
- * broker unavailable.
+ * Run a command without the process's ambient service lookup route.  The
+ * route is a kernel per-process slot inherited across fork and exec, so the
+ * only way to make a broker unreachable for a child is to clear that slot.
  */
 #include <err.h>
 #include <errno.h>

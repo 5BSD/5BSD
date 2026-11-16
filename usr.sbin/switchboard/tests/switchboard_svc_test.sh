@@ -301,7 +301,7 @@ managed_quiesce_roundtrip_head()
 }
 managed_quiesce_roundtrip_body()
 {
-	require_ambient_control
+	use_private_control
 	find_capd_service_fixture
 	prepare_paths
 	make_svc_bin system org.test.quiesce \
@@ -313,7 +313,7 @@ arguments = [\"quiesce\", \"org.test.quiesce\", \"$(pwd)/quiesce.ready\", \"$(pw
 	start_stack
 	wait_for_file quiesce.ready || atf_fail "quiesce provider did not become ready"
 	atf_check -s exit:0 -o match:"stopping" \
-	    switchboardctl stop org.test.quiesce/quiesce
+	    "$SWITCHBOARDCTL" stop org.test.quiesce/quiesce
 	wait_for_file quiesce.result || {
 		cat "$logfile" 2>/dev/null
 		atf_fail "provider did not complete managed quiesce"
@@ -426,7 +426,7 @@ service_descriptor_limit_inheritance_head()
 }
 service_descriptor_limit_inheritance_body()
 {
-	require_ambient_control
+	use_private_control
 	prepare_paths
 	make_fixture_svc system fd-limit '' \
 	    lifecycle-rlimit "${WORK}/fd-limit.out"
@@ -444,7 +444,7 @@ service_descriptor_limit_inheritance_body()
 	[ "$(wc -l < fd-limit.out)" -eq 2 ] ||
 	    atf_fail "service did not finish reporting descriptor limits"
 	atf_check -s exit:0 -o save:fd-status.out \
-	    switchboardctl status
+	    "$SWITCHBOARDCTL" status
 
 	inherited=$(sed -n '1p' fd-limit.out)
 	lowered=$(sed -n '2p' fd-limit.out)
@@ -748,7 +748,7 @@ capmode_is_authoritative_readiness_head()
 }
 capmode_is_authoritative_readiness_body()
 {
-	require_ambient_control
+	use_private_control
 	local i pid
 
 	find_capd_service_fixture
@@ -766,9 +766,9 @@ capmode_is_authoritative_readiness_body()
 		atf_fail "fixture did not send the READY message"
 	fi
 	atf_check -s exit:0 -o match:"org.test.capmode.gate.*starting" \
-	    switchboardctl status
+	    "$SWITCHBOARDCTL" status
 	atf_check -s exit:0 -o not-match:"org.test.capmode.gate.*running" \
-	    switchboardctl status
+	    "$SWITCHBOARDCTL" status
 
 	pid=$(sed -n 's/^pid=\([0-9][0-9]*\).*/\1/p' protocol-ready.out)
 	[ -n "$pid" ] || atf_fail "fixture did not report its pid"
@@ -779,7 +779,7 @@ capmode_is_authoritative_readiness_body()
 	fi
 	i=0
 	while [ "$i" -lt 100 ]; do
-		if switchboardctl status |
+		if "$SWITCHBOARDCTL" status |
 		    grep -q "org.test.capmode.gate.*running"; then
 			break
 		fi
@@ -810,7 +810,7 @@ idle_stop_and_relaunch_head()
 }
 idle_stop_and_relaunch_body()
 {
-	require_ambient_control
+	use_private_control
 	local pid1 pid2
 
 	find_capd_service_fixture
@@ -833,9 +833,9 @@ arguments = [\"idle-provider\", \"org.test.idle.svc\", \"1\", \"$(pwd)/idlep\"];
 	    "i=0; while ! grep -q 'org.test.idle.svc.*idle timeout, stopping' '$logfile' && [ \$i -lt 200 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'idle timeout, stopping' '$logfile'"
 	# It must not still be running, and must not have been removed entirely.
 	atf_check -s exit:0 -o not-match:"org.test.idle.svc.*running" \
-	    switchboardctl status
+	    "$SWITCHBOARDCTL" status
 	atf_check -s exit:0 -o match:"org.test.idle.svc" \
-	    switchboardctl status
+	    "$SWITCHBOARDCTL" status
 
 	# A lookup relaunches it on demand and succeeds.
 	if ! run_lookup_client org.test.idle.svc 15; then
@@ -870,7 +870,7 @@ idle_busy_keeps_provider_head()
 }
 idle_busy_keeps_provider_body()
 {
-	require_ambient_control
+	use_private_control
 	local pid1 pid2
 
 	find_capd_service_fixture
@@ -896,7 +896,7 @@ arguments = [\"idle-busy\", \"org.test.idle.busy\", \"$(pwd)/idlebusy.out\"];" \
 	[ -n "$pid1" ] && [ "$pid1" = "$pid2" ] ||
 	    atf_fail "provider changed across declined idle stop"
 	atf_check -s exit:0 -o match:"org.test.idle.busy.*running" \
-	    switchboardctl status
+	    "$SWITCHBOARDCTL" status
 	assert_stack_alive
 }
 idle_busy_keeps_provider_cleanup()
@@ -918,7 +918,7 @@ idle_demand_cancels_stop_head()
 }
 idle_demand_cancels_stop_body()
 {
-	require_ambient_control
+	use_private_control
 	find_capd_service_fixture
 	prepare_paths
 	make_svc_bin system org.test.idle.demand \
@@ -945,7 +945,7 @@ arguments = [\"idle-provider\", \"org.test.idle.demand\", \"5\", \"$(pwd)/idled\
 	atf_check -s not-exit:0 \
 	    grep 'org.test.idle.demand.*idle timeout, stopping' "$logfile"
 	atf_check -s exit:0 -o match:"org.test.idle.demand.*running" \
-	    switchboardctl status
+	    "$SWITCHBOARDCTL" status
 	[ ! -f idled.launch2 ] ||
 	    atf_fail "provider was relaunched despite demand keeping it alive"
 	assert_stack_alive
@@ -969,7 +969,7 @@ idle_cancel_keeps_running_head()
 }
 idle_cancel_keeps_running_body()
 {
-	require_ambient_control
+	use_private_control
 	find_capd_service_fixture
 	prepare_paths
 	make_svc_bin system org.test.idle.cancel \
@@ -988,7 +988,7 @@ arguments = [\"idle-cancel\", \"org.test.idle.cancel\", \"1\", \"$(pwd)/idlec.re
 	atf_check -s not-exit:0 \
 	    grep 'org.test.idle.cancel.*idle timeout, stopping' "$logfile"
 	atf_check -s exit:0 -o match:"org.test.idle.cancel.*running" \
-	    switchboardctl status
+	    "$SWITCHBOARDCTL" status
 	assert_stack_alive
 }
 idle_cancel_keeps_running_cleanup()
@@ -1000,9 +1000,8 @@ idle_cancel_keeps_running_cleanup()
 # Control-request input validation over the capability plane: switchboard must
 # reject a request with a nonzero reserved flags field or an embedded NUL in the
 # text payload (EINVAL=22).  capd_protocol_fixture crafts the malformed request
-# and sends it over system.switchboard; the reply status is the rejection.  Skips
-# when this harness has no ambient control channel (control is also validated by
-# the VM boot smoke test).
+# and sends it over system.switchboard of the private stack, through the route
+# use_private_control provides; the reply status is the rejection.
 atf_test_case sctl_rejects_malformed_requests cleanup
 sctl_rejects_malformed_requests_head()
 {
@@ -1013,16 +1012,63 @@ sctl_rejects_malformed_requests_head()
 }
 sctl_rejects_malformed_requests_body()
 {
+	local fixture
+
+	use_private_control
+	# The fixture speaks as a registered application of the private stack.
+	fixture=$(install_exec_app ctlfixture \
+	    "$(atf_get_srcdir)/capd_protocol_fixture") ||
+	    atf_fail "cannot install the protocol fixture"
 	start_stack
-	require_ambient_control
 	for kind in flags nul; do
 		atf_check -s exit:0 -o match:"status=22" \
-		    "$(atf_get_srcdir)/capd_protocol_fixture" \
-		    control-invalid "$kind"
+		    "$capd_lookup_exec_bin" -s "$CAPD_CAPSULE_SOCKET" \
+		    "$fixture" control-invalid "$kind"
 	done
 	assert_stack_alive
 }
 sctl_rejects_malformed_requests_cleanup()
+{
+	cleanup_common
+}
+
+# The route use_private_control relies on, on any kernel: the private Capsule
+# hands out the route its own SwitchBoard minted, and a program run with it
+# reaches that SwitchBoard.  service_probe opens a private lookup handle first,
+# which needs a live SwitchBoard to adopt it and acknowledge (exit 2 when there
+# is no route); the absent name then fails with ENOENT from that SwitchBoard.
+# No unit authority is needed, so this runs without a unit issuer.  An
+# unattributed caller's out-of-scope lookup is also reported as ENOENT by
+# design, so switchboardctl's own admission is covered by the
+# use_private_control cases instead.
+atf_test_case private_control_route cleanup
+private_control_route_head()
+{
+	atf_set "descr" \
+	    "a program reaches the private SwitchBoard only through its Capsule's route"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+}
+private_control_route_body()
+{
+	local probe
+
+	probe="$(atf_get_srcdir)/service_probe"
+	prepare_paths
+	capd_find_lookup_exec
+	start_stack
+	# A test-local stack runs only with the plane off, where this process
+	# inherited no route: a plain program reaches no SwitchBoard.
+	atf_check -s exit:2 -o match:"no-ambient-channel" \
+	    "$probe" org.test.route.absent
+	# Through the private Capsule's route the handle is adopted and the
+	# lookup is answered.
+	atf_check -s exit:1 -o match:"^FAIL org.test.route.absent errno=2 " \
+	    "$capd_lookup_exec_bin" -s "$CAPD_CAPSULE_SOCKET" \
+	    "$probe" org.test.route.absent
+	assert_stack_alive
+}
+private_control_route_cleanup()
 {
 	cleanup_common
 }
@@ -1196,6 +1242,7 @@ atf_init_test_cases()
 	atf_add_test_case svc_name_claim_state_machine
 	atf_add_test_case svc_withdraw_cancels_activation
 	atf_add_test_case sctl_rejects_malformed_requests
+	atf_add_test_case private_control_route
 	atf_add_test_case capmode_is_authoritative_readiness
 
 	# Provider-driven idle shutdown

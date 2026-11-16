@@ -107,7 +107,6 @@ ATF_TC_BODY(component_binding, tc)
 
 	/* Isolate this case from the test runner's ambient login channel. */
 	ATF_REQUIRE_EQ(0, unsetenv(SERVICE_BOOTSTRAP_ENV));
-	ATF_REQUIRE_EQ(0, unsetenv(SERVICE_LOOKUP_ENV));
 	if (service_clear_ambient_lookup() == -1)
 		atf_tc_skip("kernel process context is unavailable");
 
