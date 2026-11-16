@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exact allocated ELF32/ELF64 object data and symbolic relocation contracts.
 
 No binary bytes or relocation addends are normalized. Symbol indices are resolved

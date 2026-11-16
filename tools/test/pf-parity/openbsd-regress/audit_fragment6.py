@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Audit Ethernet captures of the unchanged pf_fragment/frag6_ext.py fixture.
 
 The echo-only fixture can pass while extra malformed packets are emitted.

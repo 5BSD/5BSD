@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Real nm must retain DTrace aliases, including AArch64 special symbols."""
 import argparse
 import importlib.util

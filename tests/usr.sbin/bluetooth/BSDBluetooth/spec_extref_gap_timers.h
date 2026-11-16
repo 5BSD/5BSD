@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * EXTERNAL REFERENCE ORACLE: GAP timers and constants (the TGAP table).
  *

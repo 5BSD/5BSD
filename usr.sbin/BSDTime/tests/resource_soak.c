@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Opt-in, host-safe soak of the actual C client and provider session reactor.
  */
 #include <sys/capsicum.h>

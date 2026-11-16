@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Fault injection for the small HardenedBSD defensive ports (FreeBSD host)."""
 
 import argparse

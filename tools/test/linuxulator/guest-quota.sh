@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Disposable amd64 ZFS-root guest only; called by guest-gate.sh.
 PATH=/sbin:/bin:/usr/sbin:/usr/bin
 export PATH

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * AF_VSOCK (Linux family 40) through the emulator: stream loopback via
  * VMADDR_CID_LOCAL, datagram, getsockname/getpeername translation,

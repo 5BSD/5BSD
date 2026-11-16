@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Page operations without a waiting requester (B1-B5, I11): WRITE_ASYNC
  * from msync, close and the page daemon, bounded per queue by
  * kern.dq.max_inflight_bytes, each with a deadline the queue enforces; the

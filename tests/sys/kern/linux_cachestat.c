@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * cachestat(2): page-cache residency for a file range.  Validation (flags,
  * bad fd, non-regular fd, EFAULT on the range and result pointers), and

@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Finalize a private NO_ROOT stage after stripping. Never run on a live root.
 set -eu
 usage() { echo 'usage: sign-stage.sh [-e] -r stage -k private.pem' >&2; exit 64; }

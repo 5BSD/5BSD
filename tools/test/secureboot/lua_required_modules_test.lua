@@ -1,5 +1,7 @@
 -- SPDX-License-Identifier: BSD-2-Clause
 --
+-- Copyright (c) 2026 Kory Heard
+--
 -- The loader's required modules (stand/lua/config.lua): actual loader.conf
 -- parsing and config.loadelf(); the loader, file system and kernel are
 -- injected.  Usage: flua lua_required_modules_test.lua .../config.lua

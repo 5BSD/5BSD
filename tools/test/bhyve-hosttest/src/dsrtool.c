@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * dsrtool: helpers for the devices-sr (device save/restore) phase.
  * Built static; the guest copy lives in guest-bin/ and the host uses the

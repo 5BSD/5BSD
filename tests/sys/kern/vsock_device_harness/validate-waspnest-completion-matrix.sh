@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Validate the dated diagnostic counts in the WASPNest completion matrix.
 # The TSV ledgers remain authoritative; this check prevents the human-facing
 # entry point from silently drifting away from them.

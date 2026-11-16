@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #include <atf-c.h>
 int bsdmemory_test_main(void);
 #define main bsdmemory_test_main

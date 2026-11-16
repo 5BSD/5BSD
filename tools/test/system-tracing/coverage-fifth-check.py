@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check expansion contracts, installed profile selection and offline D syntax.
 
 This is not live provider/workload qualification. No DTrace device is needed.

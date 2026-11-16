@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Exercise the production limiter without an ioctl test double.
  */
 #include <sys/types.h>

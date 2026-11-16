@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Direct calls exercise archive members, including amd64 assembly conversions. */
 extern __int128 __divti3(__int128, __int128);
 extern __int128 __modti3(__int128, __int128);

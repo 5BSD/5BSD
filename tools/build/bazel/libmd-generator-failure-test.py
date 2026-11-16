@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Ensure failed shared generation cannot become an up-to-date partial Make target."""
 import argparse
 import os

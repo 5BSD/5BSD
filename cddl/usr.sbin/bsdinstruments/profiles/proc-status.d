@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* Print every proc lifecycle status event (exec-success, exec-failure, exit) */
 
 proc:::exec-success,

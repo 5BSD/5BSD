@@ -1,4 +1,9 @@
 #!/usr/local/bin/python3.12
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Refresh 5BSD zsh build inputs and remove tests for excluded modules."""
 from pathlib import Path
 import re, shutil, sys, shlex

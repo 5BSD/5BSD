@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Linux guest helper and strict preflight for bhyve virtio-vsock E2E."""
 
 import array

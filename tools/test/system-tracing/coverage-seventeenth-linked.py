@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Verify this round's contracts survive real module linking at executable NOPs."""
 from pathlib import Path
 import importlib.util,json,re,subprocess

@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Trace Node.js HTTP server requests via USDT probes.
  * Requires Node.js built with --with-dtrace.

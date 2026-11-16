@@ -1,5 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Independent Bluetooth Core 6.3 Vol 4 Part E §5.4.5 ISO data oracles.
  * No production HCI or socket header is included.
  */

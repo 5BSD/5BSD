@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise the source-verified help path before any device/service operation."""
 import argparse
 import os

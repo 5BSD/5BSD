@@ -1,5 +1,9 @@
 #!/bin/sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Compile every in-tree 5BSD VirtIO guest module used by the live matrix.
 # This is deliberately VM-free: it catches guest-driver API and warning
 # regressions before an immutable test image is booted.

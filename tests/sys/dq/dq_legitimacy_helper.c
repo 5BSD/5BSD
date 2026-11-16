@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * dq_legitimacy_test's parent of an attach target.  Descriptor 9 is a local
  * socket, over which it sends the process descriptor of an idle child.  The
  * child of a program that has exec'd under its final credential is the only

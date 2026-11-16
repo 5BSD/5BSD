@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # The maintained property supplies a C string; reject ambiguous input.
 /^[ \t]*freebsd,dts-version[ \t]*=/ {
     count++

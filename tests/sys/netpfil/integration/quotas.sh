@@ -1,6 +1,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # 5BSD seam tests: per-VNET pf resource quotas.
 #
 # pf's pools are shared by every VNET, but each VNET counts its own items

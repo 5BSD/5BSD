@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # The Linux-ABI half of procnet_control_test: linux_procctl.c is a
 # freestanding static amd64 Linux program (no Linux libc) built here, as
 # fdops/linux_fdops.c is, and run under linux64.ko.  Every row expects the

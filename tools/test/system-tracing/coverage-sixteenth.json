@@ -1148,15 +1148,15 @@
     "sys/vm/vm_pageout.c": "869dcc4a82711fcef931e7f2a577c7615e3e690090f4d8be253f20b777b9da24",
     "sys/vm/vm_reserv.c": "796b04e99a95ecebc116de393ddd83760b17eebc78512024cd0c7f838bb99104",
     "tools/test/system-tracing/COVERAGE-SIXTEENTH": "170b397cf6b486873f6b4098b7817dc2f97fe14aead30c144d995deb9de28b90",
-    "tools/test/system-tracing/coverage-fourth-dof.py": "7a2fc9fc87d4b6d161c88f981ace9c7c6e8c1090cfab60f523b5a61e6730375a",
+    "tools/test/system-tracing/coverage-fourth-dof.py": "1ea0a00238895e7ccc03aa4671f2db856025956aca61660bfa69ea07d0a92428",
     "tools/test/system-tracing/coverage-sixteenth-build.json": "80d9d736f0a989675d5e95f4681aacfe4e745cb3d90373c192ecad7b26a3d13b",
-    "tools/test/system-tracing/coverage-sixteenth-check.py": "98f6115687e7544c27e346fe22198b649c0d5782197fc1124ec17fedb57a277a",
-    "tools/test/system-tracing/coverage-sixteenth-codegen.py": "6a0b34681a5b4debdd61e88f5c3879dbf81450888b26e3f8feec520331e22a08",
-    "tools/test/system-tracing/coverage-sixteenth-compile.py": "836f4889c40b7fddcb3b6bcb27c6b25172bb7fe1df6a7e0f673ff74eeed298d5",
-    "tools/test/system-tracing/coverage-sixteenth-linked.py": "84d55dc7f3579a262515615bddb267c333eb339fbdf24ace7102d4914b95f023",
-    "tools/test/system-tracing/coverage-sixteenth-modules.py": "a856f09f289c90e46f472d9d3af8953e652fe7c3ca85258654c7ee26d12a02fb",
-    "tools/test/system-tracing/coverage-sixteenth-variants.py": "aff61bc5d7d12140419b861dc0978c6b1f2bd2ecc1f5ea8a83a08692ef1a5fb6",
-    "tools/test/system-tracing/coverage-sixth-objects.py": "fc14488256457e044086c08f967c7a412060216d9d2b53a2c40b9be4405a965e",
-    "tools/test/system-tracing/coverage-third-profile-check.py": "6a63a690cbbf6970c52a90e234a701b64cd7e20d7745139d6e18977dfe71e0ae"
+    "tools/test/system-tracing/coverage-sixteenth-check.py": "a2223ee1fb1dafa794b58b8d7d401af63f0af471bb2114a329aeb9656d1ce913",
+    "tools/test/system-tracing/coverage-sixteenth-codegen.py": "458f45f6d0b7a739062b6adff26485cc4bb7e6e1d729e201ac231d3e79ee64e1",
+    "tools/test/system-tracing/coverage-sixteenth-compile.py": "cf698e946d1dd08f4e42b2143a35ce2aebef11f1aa488305e0394a790bfc5376",
+    "tools/test/system-tracing/coverage-sixteenth-linked.py": "6b45ef6ca598c4fef2e82155a6910af8982aec97c25098db678591169c99fffe",
+    "tools/test/system-tracing/coverage-sixteenth-modules.py": "08c1d85eeba374f57da1d76b74e65b162353e24b2cc048010a48039dcfc0bbb8",
+    "tools/test/system-tracing/coverage-sixteenth-variants.py": "4c07c175af675f0eba4990a02de7ab422aa54896b6c38ed566a4f6096c419f78",
+    "tools/test/system-tracing/coverage-sixth-objects.py": "5e4f9e3f0a680d5172e8eb425d2308c00d0c6276e38031fedd84b8f0ead5cbde",
+    "tools/test/system-tracing/coverage-third-profile-check.py": "ad4851d9e661053e26ae7ab18aab9e11e28415206c1674642da077178316628a"
   }
 }

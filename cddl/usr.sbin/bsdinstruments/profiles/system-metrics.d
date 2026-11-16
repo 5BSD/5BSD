@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * System metrics — the conservative default set behind the otel_dtrace
  * rc.d service (see rc.conf(5) and otel.conf(5)).

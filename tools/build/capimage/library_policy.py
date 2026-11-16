@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Compile explicit library search inputs for an isolated, trusted builder.
 
 This is not runtime storage authorization or authentication of policy/packages.

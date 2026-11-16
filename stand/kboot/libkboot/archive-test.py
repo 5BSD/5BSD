@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Inspect Linux-hosted kboot support; this does not execute Linux syscalls."""
 import argparse
 from pathlib import Path

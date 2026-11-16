@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Capture raw pfctl -nv output for every pfNN.in/pfailNN.in of the imported
 # corpus (parse only, no kernel changes) for offline gap classification.
 # usage: capture-pfctl.sh REGRESSDIR OUTDIR [extra pfctl flags]

@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Verify a pkgbase snapshot, then explicitly launch the interactive installer."""
 import argparse
 import importlib.util

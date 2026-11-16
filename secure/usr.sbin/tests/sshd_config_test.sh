@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # These checks do not start listeners or authenticate users.
 atf_test_case versions
 versions_body()

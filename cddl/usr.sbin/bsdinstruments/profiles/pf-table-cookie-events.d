@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Contracts: tools/test/system-tracing/COVERAGE-FIFTEENTH.
  * Scalar metadata only; opaque identities must not be dereferenced.
  * Start before the workload. Lost events invalidate latency pairing.

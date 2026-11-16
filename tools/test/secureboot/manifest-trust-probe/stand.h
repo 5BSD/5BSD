@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Native declarations for compiling the actual verified_root.c reader. */
 #include <sys/types.h>
 #include <sys/stat.h>

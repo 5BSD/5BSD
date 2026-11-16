@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Unit tests for gotemplate.py and fidlgen_natural.py's Go-compatible parts.
 
 Expected strings are what Go's text/template and regexp produce for the same

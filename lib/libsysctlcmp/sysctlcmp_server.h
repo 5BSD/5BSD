@@ -1,4 +1,5 @@
 /*- SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef _SYSCTLCMP_SERVER_H_
 #define	_SYSCTLCMP_SERVER_H_
 #include <sys/types.h>

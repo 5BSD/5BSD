@@ -1,5 +1,9 @@
 #!/bin/sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # OES Audit Integration Verification Script
 #
 # This script demonstrates how to verify that OES audit records are being

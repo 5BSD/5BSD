@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * unix(4) names, connections and descriptor passing of unattached
  * processes, as before stage 1c.
  *

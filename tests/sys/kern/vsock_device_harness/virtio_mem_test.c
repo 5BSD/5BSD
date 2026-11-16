@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* Device-composition tests for bhyve's VirtIO 1.4 memory device. */
 #include <sys/endian.h>
 #include <sys/param.h>

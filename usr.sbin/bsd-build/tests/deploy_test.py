@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 import copy
 from contextlib import redirect_stdout
 import importlib.util

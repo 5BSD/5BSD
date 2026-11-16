@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Disposable root guest only; cwd must be a dedicated quota-enabled filesystem. */
 #include "linux_test.h"
 #define SYS_quotactl 179

@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The 5BSD Project
+ * Copyright (c) 2026 Kory Heard
  *
  * 5BSD attachment of OpenBSD PF: module lifecycle, /dev/pf, pfil(9)
  * hooks into the IPv4/IPv6 input and output paths, interface and

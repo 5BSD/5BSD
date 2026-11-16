@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * pf queueing and delay - packets delayed by "set delay" rules, by
  * queue id and requested delay, and their release on the interface

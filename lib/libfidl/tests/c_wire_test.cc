@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * The C bindings' direct wire codec (<fidl/bsd/c_wire.h>, generated
  * CWEnc_/CWDec_ functions) against the upstream natural codec it replaces:

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Freestanding amd64 Linux filesystem ABI checks; run only in a guest. */
 #include "linux_test.h"
 

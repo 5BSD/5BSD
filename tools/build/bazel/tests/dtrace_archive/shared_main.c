@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 extern int shared_initialization_ok(void);
 extern int shared_first(int);
 extern int shared_second(int);

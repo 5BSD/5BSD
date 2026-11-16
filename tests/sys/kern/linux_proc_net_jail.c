@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Native VNET/credential fixture for Linux64 socket tables. Guest only. */
 #include <sys/param.h>
 #include <sys/jail.h>

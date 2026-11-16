@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Drive a disposable PF parity guest's serial console (expect/send).
 
 Usage: console.py SOCKET [--log FILE] STEP...

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Retained pre-FIDL system.Sysctl record helpers (sysctlcmp_server.h) for ABI
  * compatibility.  The current client and provider use sysctlcmp.fidl and do
  * not use these; the provider rejects these records.

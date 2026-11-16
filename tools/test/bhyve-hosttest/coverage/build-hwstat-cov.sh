@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Build a coverage-instrumented hwstat (clang source-based coverage) for the
 # real-hardware run in phase "hwstat". Run as an ordinary user, before or
 # after upgrading; rebuild after upgrading if /usr/src moved.

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * TU-include ATF harness for the guest virtio_crypto(4) driver.
  *
  * The kernel headers the driver includes are suppressed through their include

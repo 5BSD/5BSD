@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * fpathconf(2) is answered by the descriptor's fileops (fo_pathconf).
  * Every descriptor that carries a vnode must answer exactly as pathconf(2)
  * on its path does; pipes and sockets know only _PC_PIPE_BUF; descriptors

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Build package outputs cold, restore from disk cache, then rebuild independently."""
 from package_index import packages as indexed_packages
 import argparse

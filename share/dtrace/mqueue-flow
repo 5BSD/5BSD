@@ -2,6 +2,8 @@
 /*
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * mqueue-flow -- POSIX message-queue observability: open/access/unlink,
  *		  send and receive (including the full/empty and block paths),
  *		  and asynchronous notification register/deliver/remove -- the

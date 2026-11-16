@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Retained pre-FIDL system.Trace record helpers (tracecmp_server.h) for ABI
  * compatibility.  The current client and provider use tracecmp.fidl and do
  * not use these; the provider rejects these records.

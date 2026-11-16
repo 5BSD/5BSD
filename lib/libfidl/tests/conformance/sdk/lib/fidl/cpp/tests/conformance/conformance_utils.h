@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * 5BSD replacement for upstream conformance_utils.h. The cases run through
  * the same natural codec entry points as fidl::bsd::Outgoing::Encode and

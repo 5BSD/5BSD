@@ -2,6 +2,8 @@
 /*
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * jailwatch.d -- observe jail lifecycle, per-jail privilege denials, jail
  *		  descriptor operations, and TrustedZFS handle-op outcomes.
  *

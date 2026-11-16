@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Clone an existing 5BSD test image and run the complete vsock matrix against
 # opt-in modern and default (option omitted) legacy VirtIO PCI transports.
 set -eu

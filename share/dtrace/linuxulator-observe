@@ -1,5 +1,8 @@
 #!/usr/sbin/dtrace -s
 /* SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Load Linux ABI systrace modules first. Covers linux and linux32 modules.
  * All Linux processes; errors are native kernel errno values before Linux ABI translation.
  */

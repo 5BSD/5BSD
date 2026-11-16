@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* Minimal network backend interface for the VirtIO net device harness. */
 #ifndef MOCK_NET_BACKENDS_H
 #define MOCK_NET_BACKENDS_H

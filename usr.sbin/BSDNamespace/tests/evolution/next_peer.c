@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * system.Namespace peer built from evolution/namespacecmp_next.fidl at bsd:2
  * (one method more than the production bsd:1 schema).  evolution_test pairs it

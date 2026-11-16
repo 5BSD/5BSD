@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Guest side of the devices-sr phase (device save/restore matrix).
 # Every answer is one tagged line ("DSR<KIND> key=value ...") that
 # lib/common.sh parses with sr_val/dsr_* helpers. Status files live on the

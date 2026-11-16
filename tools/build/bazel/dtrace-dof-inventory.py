@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Inventory emitted DOF provider/probe schemas and site offsets in linked ELF.
 
 This checks metadata coverage, not loader registration or live probe firing.

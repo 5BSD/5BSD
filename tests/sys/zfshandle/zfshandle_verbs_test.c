@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * TrustedZFS extended-verb tests: enumeration (children/snaps/holds/
  * bookmarks), single-property get, inherit, promote, bookmarks, wait,
  * and send-once semantics.  Driven through libtrustedzfs.

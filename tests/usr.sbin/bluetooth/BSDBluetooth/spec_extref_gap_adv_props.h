@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * EXTERNAL REFERENCE ORACLE: Advertising_Event_Properties -- the legal
  * connectable / scannable / directed combinations, and the restrictions the

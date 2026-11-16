@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Linux64 kernel-origin uevents. Disposable guests only. */
 #define _GNU_SOURCE
 #include <sys/socket.h>

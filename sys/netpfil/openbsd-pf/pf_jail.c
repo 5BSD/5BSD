@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The 5BSD Project
+ * Copyright (c) 2026 Kory Heard
  *
  * The 5BSD "jail <name>" rule option: a rule that names its jail matches
  * whatever jail currently has that name.  The rule keeps the jail's full

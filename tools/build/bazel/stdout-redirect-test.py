@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check the declared generator launcher, including failure propagation."""
 import argparse
 from pathlib import Path

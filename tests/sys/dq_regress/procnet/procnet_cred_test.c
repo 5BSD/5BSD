@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Credential changes of unattached processes, as before stage 1c.
  *
  * Stage 1c refuses setcred(2), NODE_OP_SET_CRED and __mac_set_proc(2) with

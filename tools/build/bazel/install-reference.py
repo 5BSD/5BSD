@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Build and stage a Make component as a Bazel comparison baseline.
 
 This does not import Bazel outputs or establish package/runtime parity.

@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Compare retained dmesg suffix with the next snapshot; fail on lost continuity.
 [ "$#" -eq 3 ] || exit 2
 for f in "$@"; do [ -r "$f" ] || { echo "UNREADABLE: $f"; exit 2; }; done

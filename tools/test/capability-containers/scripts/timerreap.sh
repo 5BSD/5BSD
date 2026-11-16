@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # The TIMER path of the reconcile, live (no reboot): with short cadences
 # (bsdfilesystem reclaim_interval=20, BSDLOG_RECLAIM_INTERVAL=15, CRYPTO_RECLAIM_INTERVAL=20)
 #  1. a removal undone within one interval is NEVER reaped (seen gone once):

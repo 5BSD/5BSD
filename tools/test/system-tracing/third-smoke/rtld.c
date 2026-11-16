@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #include <dlfcn.h>
 #include <assert.h>
 int main(int argc,char **argv) {

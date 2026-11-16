@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef _GZIPSTREAM_TRACE_H_
 #define _GZIPSTREAM_TRACE_H_
 #ifdef WITH_COVERAGE_DTRACE

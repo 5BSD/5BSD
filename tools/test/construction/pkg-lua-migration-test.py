@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Qualify Lua occurrence migration using private copies of a schema-42 database.
 
 Does not run hooks or select the host database. Legacy order is the stored row

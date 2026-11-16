@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 provider ddio {
 	probe read__start(int arg0, uint64_t arg1);
 	probe read__done(int arg0, int64_t arg1, int arg2);

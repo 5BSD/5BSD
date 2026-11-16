@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Hash exactly the declared execution paths, preserving repository aliases."""
 import hashlib
 import json

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Bazel test adapter: compare declared output bytes and normal exit status. */
 #include <sys/types.h>
 #include <sys/wait.h>

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Self-owned process discovery and independent responsible-process identity.
  * A held channel survives descriptor cleanup and exec. Installing it never
  * creates authority: the caller must already hold the channel. Working fds

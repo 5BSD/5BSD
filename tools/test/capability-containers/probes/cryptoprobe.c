@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * cryptoprobe: a throwaway capability unit for the bsdcrypto container-model
  * reclaim test.  It enters capability mode, mints a NAMED key in the kernel
  * keystore through system.Crypto (bsdcrypto keys the store by the unit's

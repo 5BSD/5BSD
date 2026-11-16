@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 from pathlib import Path
 import subprocess,threading,http.server,socket,os,json,time
 W=Path('/usr/obj/5bsd-dtrace-third-validation/userspace');D=W/'smoke';D.mkdir(exist_ok=True);S=Path(__file__).resolve().parent;results=[]

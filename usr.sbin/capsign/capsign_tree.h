@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef CAPSIGN_TREE_H
 #define CAPSIGN_TREE_H
 #include <stdbool.h>

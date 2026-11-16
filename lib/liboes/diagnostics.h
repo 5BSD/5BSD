@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef LIB_LIBOES_DIAGNOSTICS_H
 #define LIB_LIBOES_DIAGNOSTICS_H
 #ifdef WITH_DTRACE

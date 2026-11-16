@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * resolver.c - capability-mode-safe getaddrinfo(3) replacement for the
  * bsdnetwork daemon.

@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* Exercise actual private registry helpers without needing root-owned trees.
  * Files are real parsed bundles; only filesystem-owner scanning is bypassed.
  * Supplied UIDs model independently authenticated scanner owners. */

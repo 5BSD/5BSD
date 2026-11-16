@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Shared Make/Bazel transformation of the configured NSS template.
 set -eu
 [ "$#" -eq 5 ] || exit 64

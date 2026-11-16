@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * The system.OES broker session (bsdfilesystem_oes_serve, bsd.oes.v1) over a
  * real capability channel with a scripted descriptor factory: negotiation is

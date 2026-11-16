@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Starnix socket_test.cc SndRcvBufSockOpt.DoubledOnGet, rewritten and
  * extended with native-limit, alias and failure-atomicity checks.
  * Reference: 8a938a3224e768f6254ee12d240b6492361ebccf. */

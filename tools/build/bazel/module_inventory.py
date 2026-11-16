@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Audit Make-selected kernel module leaves against native Bazel descriptions."""
 import argparse
 import ast

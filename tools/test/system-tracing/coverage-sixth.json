@@ -325,7 +325,7 @@
     "sys/kern/vfs_bio.c": "3268a65cc2934a7733978aa6564f099a00fa665352fc47faecf67d2cd7673b03",
     "sys/ufs/ufs/ufs_quota.c": "ad7c0e996372707d6acca7d03626c44f1bb06e4b042441a070191a04d7f660dd",
     "usr.sbin/cron/cron/cron_provider.d": "d4c2fc6700cbf9951750d58798e0285dd3a951d7515353b20f88829e20a0a5d4",
-    "usr.sbin/cron/cron/cron_trace.h": "d30d37b3dd2582078085c64006778a7fa3eec99391b5bbbafbc045d2354d9ef2",
+    "usr.sbin/cron/cron/cron_trace.h": "d2e515245f6588d431a80a6f24aa38fa69db23eb91adabcbaf653cbdfd1c0bd2",
     "usr.sbin/cron/cron/do_command.c": "fd397625a3e10973f00a15a4e976678db49dbd70497ac2af334bce7a6ccae020",
     "usr.sbin/cron/cron/cron_probes.h": "4b93213e59937d347f94faacae3de8394a8ba089f0e9a4f8746a04553b4bc4f9"
   },

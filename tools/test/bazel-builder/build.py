@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Build a selected port in an initialized disposable builder, on separate disks."""
 import argparse
 import hashlib

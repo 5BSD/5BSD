@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #include <gssrpc/types.h>
 #include <gssrpc/xdr.h>
 #include <string.h>

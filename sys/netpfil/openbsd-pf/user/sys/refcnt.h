@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The 5BSD Project
+ * Copyright (c) 2026 Kory Heard
  *
  * OpenBSD <sys/refcnt.h> for userland: the type embedded in <net/pfvar.h>
  * structures.  The kernel's definition is in sys/netpfil/openbsd-pf.

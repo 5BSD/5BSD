@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Contracts: tools/test/system-tracing/COVERAGE-FOURTEENTH.
  * No paths, payloads, credentials or pointer dereferences. Start before the
  * workload; event loss invalidates pairing. Elapsed time includes preemption.

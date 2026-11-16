@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Explicit host paths for an alternate-root pkg operation; no host defaults."""
 from pathlib import Path
 

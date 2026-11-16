@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Apply the shipped overlays to actual firmware DTBs before boot testing. */
 #include <assert.h>
 #include <stdbool.h>

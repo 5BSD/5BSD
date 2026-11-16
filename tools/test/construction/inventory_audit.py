@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Compatibility entrypoint for the maintained build backend inventory audit."""
 import importlib.util
 from pathlib import Path

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * dq_legitimacy_test's 32-bit image: a freestanding i386 program the test
  * builds twice, as a FreeBSD and as a Linux executable,
  *   clang --target=i386-unknown-freebsd -fuse-ld=lld -nostdlib -static ...

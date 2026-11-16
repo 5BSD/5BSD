@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Emit a checked C ABI over the same generated natural types and BSD runtime."""
 
 def generate_c(ir, root, cpp, dependencies=()):

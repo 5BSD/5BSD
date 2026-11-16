@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Real Linux binaries (Rocky Linux 9 coreutils and util-linux, staged as
 # test data under /compat/linux, never in base) against the descriptor
 # kinds a shell can hand them, through /dev/fd/N (fdescfs mounted on

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Select and hash-check only declared package outputs; ignore stale neighbors."""
 import hashlib
 import json

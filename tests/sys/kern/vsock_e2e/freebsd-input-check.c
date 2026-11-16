@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Rebuilt-FreeBSD guest verifier for the bhyve VirtIO input device.
  */
 

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * prctl(2) options added in the option-level review: PR_GET_AUXV,
  * PR_CAP_AMBIENT, PR_CAPBSET_READ, PR_SET_MDWE/PR_GET_MDWE (with

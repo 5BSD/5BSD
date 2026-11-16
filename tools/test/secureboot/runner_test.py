@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Host cleanup is allowed only after complete guest assertion evidence."""
 import unittest
 from program_report import program_results, provider_continuity

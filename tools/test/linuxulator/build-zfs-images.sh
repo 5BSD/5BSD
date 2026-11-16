@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Create private ZFS-root images without importing a pool into the host kernel.
 set -eu
 if [ "$#" -ne 3 ]; then

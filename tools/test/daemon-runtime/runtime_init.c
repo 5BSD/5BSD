@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Disposable VM PID 1 only. Never invoke as the host's init. */
 #include <sys/types.h>
 #include <sys/procctl.h>

@@ -1,5 +1,9 @@
 #!/bin/sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Validate the bhyve VirtIO USDT provider without requiring a bhyve link.
 # This catches provider syntax errors and wrapper/provider name drift in the
 # rootless sanitizer gate, rather than deferring both to buildworld.

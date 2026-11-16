@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #include <atf-c.h>
 int network_daemon_main(void);
 #define main network_daemon_main

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Partition every declared world installation record without reading host state."""
 import json
 from pathlib import Path, PurePosixPath

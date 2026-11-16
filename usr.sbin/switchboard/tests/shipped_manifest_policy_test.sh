@@ -1,4 +1,8 @@
 #!/usr/bin/env atf-sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
 
 # The test package installs the shipped manifests (and reload.c) beneath
 # srctree/, so the installed test needs no build machine source tree.

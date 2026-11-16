@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual buffer verifier and digest comparison with real BearSSL hashes.
 
 Manifest lookup is stubbed; signature trust and boot handoff are separate gates.

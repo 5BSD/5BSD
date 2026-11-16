@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Ensure configuration comparison rejects missing work and altered inputs."""
 import copy
 import importlib.util

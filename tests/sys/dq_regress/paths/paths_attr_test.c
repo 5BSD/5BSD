@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Attribute and query path calls: chmod/lchmod/fchmodat, chown/lchown/
  * fchownat, chflags/lchflags/chflagsat (including flags above 32 bits,
  * VNOVAL and UF/SF flags as root), utimes/lutimes/futimesat/utimensat,

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef SECUREBOOT_SYSTEM_GATE_TEST_H
 #define SECUREBOOT_SYSTEM_GATE_TEST_H
 int system_gate_test(void);

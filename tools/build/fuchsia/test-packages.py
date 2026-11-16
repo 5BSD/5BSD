@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Create and inspect FIDL pkgbase archives from an existing native SDK stage.
 
 This is a native-host packaging check, not a world/release publication. It

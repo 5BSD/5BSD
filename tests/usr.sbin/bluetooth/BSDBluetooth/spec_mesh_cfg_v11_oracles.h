@@ -1,5 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Independent Mesh Protocol 1.1 Configuration-model wire oracles.
  * Sources: MshPRT 1.1 §§4.2.29-.30, 4.2.44-.47, 4.3.5-.12;
  * Bluetooth SIG Assigned Numbers message opcodes.  No production header.

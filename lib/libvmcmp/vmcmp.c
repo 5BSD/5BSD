@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * The system.VM client: service_vsock_listen(3), service_vsock_connect(3) and
  * service_vsock_list(3) over bsd.vm.v1 (vmcmp.fidl).

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * The socket commands of dq_oracle_test: socket(2) and socketpair(2) of a
  * few kinds, printed so that a run under dqpass can be compared with an
  * unattached one.

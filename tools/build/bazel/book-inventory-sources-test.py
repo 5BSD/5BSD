@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Selection and no-follow traversal checks for book inventory discovery."""
 from pathlib import Path
 import subprocess

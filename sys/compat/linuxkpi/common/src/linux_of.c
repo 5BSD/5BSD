@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Linux OF property access over snapshots of the native boot device tree. */
 #include "opt_platform.h"
 #include <sys/param.h>

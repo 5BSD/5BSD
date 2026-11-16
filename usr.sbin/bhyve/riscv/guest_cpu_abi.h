@@ -1,5 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
  */
 #ifndef _BHYVE_RISCV_GUEST_CPU_ABI_H_
 #define _BHYVE_RISCV_GUEST_CPU_ABI_H_

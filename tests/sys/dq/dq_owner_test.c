@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Who may operate a queue, and what its descriptor does in the descriptor
  * table (sc-q).
  *

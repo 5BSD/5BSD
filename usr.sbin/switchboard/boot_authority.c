@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Bounded, data-only parsers for the software-authority policies:
  * the temporary rc authority (boot-authority.ucl), the lasting grants of

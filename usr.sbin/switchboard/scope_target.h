@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef SWITCHBOARD_SCOPE_TARGET_H
 #define SWITCHBOARD_SCOPE_TARGET_H
 #include <sys/types.h>

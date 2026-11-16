@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Independent Bluetooth Mesh IV Update test oracles.  This header does not
  * include mesh_iv.h; values here come from the adopted specification and its
  * qualification test suite, except for the explicitly labelled local policy.

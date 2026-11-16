@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Mutate one disposable textual C input and check native incremental action scope.
 
 Always restores the source, then rebuilds the original graph. This exercises the

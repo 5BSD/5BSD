@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef SWITCHBOARD_RUN_CONTAINER_IDENTITY_H
 #define SWITCHBOARD_RUN_CONTAINER_IDENTITY_H
 #include <sys/types.h>

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Preserve the unsigned input contract of share/mk/capimage.awk. */
 #include <err.h>
 #include <stdio.h>

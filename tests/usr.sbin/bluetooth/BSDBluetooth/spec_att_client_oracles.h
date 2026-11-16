@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Test-only ATT client wire oracles from Bluetooth Core 6.3 Vol 3,
  * Part F §§3.3-3.4 and Table 3.42, Vol 3 Part G §5.3, and Assigned Numbers.
  * No production headers are included.

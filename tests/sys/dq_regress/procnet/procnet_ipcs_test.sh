@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # ipcs(1) as an unattached process sees System V IPC today (dq-boundary
 # design, part b0, section 6.1 item 18; oracle of T13).  ipcs -a reads
 # the three listing sysctls.  The slice that gives each queue its own

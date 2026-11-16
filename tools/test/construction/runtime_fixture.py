@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """VM checks of real package declarations and executable bytes with explicit site inputs."""
 import hashlib
 import io

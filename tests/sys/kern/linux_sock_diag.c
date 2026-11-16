@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Linux64 NETLINK_SOCK_DIAG probe. Run only in disposable guests. */
 #define _GNU_SOURCE
 #include <sys/socket.h>

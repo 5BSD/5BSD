@@ -1,4 +1,10 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
+/*-
  * pty_askpass PASSWORD CMD [ARG ...] -- run CMD on a pseudo-terminal, wait
  * for its password prompt, then type PASSWORD once.
  *

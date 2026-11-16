@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Inventory package payloads without extraction or executing package scripts.
 
 Authentication is the caller's responsibility: deployment calls this only on

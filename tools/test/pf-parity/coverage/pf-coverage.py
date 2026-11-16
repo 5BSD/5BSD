@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Live function coverage of OpenBSD PF on 5BSD, measured with DTrace.
 
   pf-coverage.py run   HOST OUT.json [--skip A.json,B.json] SUITE...

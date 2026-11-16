@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Linux amd64 sysfs(2) enumeration and error-order regression. */
 typedef unsigned long word;
 #define SYS_SYSFS 139

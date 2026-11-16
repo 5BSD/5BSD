@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Inputs: explicit BSD policy, upstream dist.mk, then one template.
 function reject(message) { print message > "/dev/stderr"; failed=1; exit 1 }
 BEGIN {

@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 #include "kmock.h"
 struct vnet _thevnet = { 0 };
 struct vnet *curvnet = &_thevnet;

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise coverage queries with real makefiles and kernel metadata separation."""
 import os
 from pathlib import Path

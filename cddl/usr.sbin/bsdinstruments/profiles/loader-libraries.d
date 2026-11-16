@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Requested library names and load outcomes; requires rtldtrace support.
  * Uses normal DTrace permissions, including protected-process restrictions. */
 #pragma D option quiet

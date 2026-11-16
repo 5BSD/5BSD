@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check actual Bazel execution evidence for the declared libmd archive variants.
 
 Inputs are logs from fresh builds (not cached executions) of fastbuild, dbg and

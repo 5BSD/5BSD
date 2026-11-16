@@ -1,6 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Derive a new 5BSD DUT image from an existing image root (image-5bsd.sh
 # output) by reinstalling the kernel and selected programs from the
 # current object tree, without root (NO_ROOT METALOG).

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Capsicum and beneath-only lookups on the path calls.
  *
  * What it tries to break: namei_setup gained a consultation after "every

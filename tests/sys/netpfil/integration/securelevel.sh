@@ -1,7 +1,7 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
-# Copyright (c) 2026 The 5BSD Project
+# Copyright (c) 2026 Kory Heard
 #
 # pf follows OpenBSD at securelevel 2: rule, option and state changes
 # fail with EPERM while reads, table address changes and statistics still

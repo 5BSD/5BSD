@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Source-discovery coverage and unsupported-topology failure tests."""
 from pathlib import Path
 import os

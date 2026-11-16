@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * The helper image of the boundary pins (procnet_boundary_test,
  * procnet_outside_test, procnet_ipcs_test).  A target must have exec'd
  * after it changed its credentials: P_SUGID, which setuid(2) sets, makes

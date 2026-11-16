@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual packaged startup with real Lua contract parsing and injected loader calls."""
 import argparse
 import hashlib

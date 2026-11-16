@@ -1,6 +1,8 @@
 /*
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Scripted system.Audit provider for the libauditcmp client tests.  It
  * replaces libservice's service_open() (each call creates a real capability
  * channel served by a bsd.audit.v1 server on its own thread) and

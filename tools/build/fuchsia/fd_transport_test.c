@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Transport feasibility test, not a generated FIDL binding or runtime.
  * FIDL wire bytes and handles remain separate: only kernel-transferred

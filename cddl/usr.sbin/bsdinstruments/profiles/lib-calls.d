@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Trace calls to a shared library function across a process.
  * Usage: bsdinstruments watch lib-calls --param pid=<pid> --param lib=<lib> --param func=<func>

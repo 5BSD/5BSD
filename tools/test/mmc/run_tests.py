@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Run Pi Wi-Fi host regressions; requires FreeBSD make/config and a C compiler.
 
 The fixtures compile production function bodies with fake hardware dependencies.

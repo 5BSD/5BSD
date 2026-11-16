@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Native transition decoder against generated wire bytes; not authentication."""
 import copy
 import ctypes as C

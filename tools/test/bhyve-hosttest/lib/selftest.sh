@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Unprivileged self-test of lib/common.sh logic (results, cleanup ordering,
 # dry-run refusals, ht_session fan-out, workload parsing). Uses stubs for
 # dtrace and the guest console; no VMs, no root.

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check linked USDT providers and enabled offsets in all three base programs."""
 import argparse
 import importlib.util

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check DTrace object identity across roots, distinct paths and invalid aliases.
 
 The object must contain a probe site for the supplied provider. No live tracing

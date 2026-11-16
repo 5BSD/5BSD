@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Shared preamble for freestanding amd64/arm64/riscv64 Linux syscall tests: no Linux
  * libc or sysroot is required.  A test is one static binary whose exit

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise the production authpf selection function without host PF or privileges.
 
 Compile the actual change_filter body with injected NSS, privilege and exec

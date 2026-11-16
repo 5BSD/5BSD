@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual client unlink/collect code with worker/session/descriptor seams."""
 from pathlib import Path
 import subprocess

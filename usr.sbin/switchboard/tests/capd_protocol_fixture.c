@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Purpose-built protocol peer for capability-daemon integration tests.
  * Keeping malformed-wire behavior here makes it part of the normal build, with
  * the same headers and compiler policy as the daemons.

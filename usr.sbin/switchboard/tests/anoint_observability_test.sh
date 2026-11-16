@@ -1,5 +1,9 @@
 #!/usr/libexec/atf-sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Observability contract for software attributes (docs/book/src/plane/attributes.md):
 # the switchboard anoint-* probes, the shipped share/dtrace/switchboard-anoint
 # script, and the bsdinstruments profile clauses that consume them.  The

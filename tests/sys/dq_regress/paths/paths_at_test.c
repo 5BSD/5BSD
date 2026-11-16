@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Directory descriptors and AT_EMPTY_PATH for every *at path call.
  *
  * What it tries to break: fgetvp_lookup became fgetvp_lookup_start, which

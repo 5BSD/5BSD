@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 provider bsdextension {
 	/* Scalar wire operation/result and reply transport errno; no payloads. */
 	probe request__done(uint32_t opcode, int status, int transport_error);

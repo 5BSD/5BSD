@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * signalfd(2)/signalfd4(2): creation and flag validation, reading pending
  * signals with full siginfo (kill, sigqueue value, SIGCHLD status, timer),

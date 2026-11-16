@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* Print every sendto/sendmsg entry and recvfrom/recvmsg return.
  * FreeBSD's libc send()/recv() are wrappers around sendto()/recvfrom()
  * with NULL address args, so there is no kernel-level send or recv —

@@ -2,6 +2,8 @@
 /*
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * wxwatch.d -- writable->executable and executable-anonymous memory watch.
  *
  * Surfaces the classic building blocks of JIT-spray, shellcode staging and

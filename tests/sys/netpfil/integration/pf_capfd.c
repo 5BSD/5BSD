@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The 5BSD Project
+ * Copyright (c) 2026 Kory Heard
  *
  * Open /dev/pf the way BSDNetwork's system.Network.PF service does
  * (usr.sbin/BSDNetwork/pf_session.c): read-only, rights limited to READ,

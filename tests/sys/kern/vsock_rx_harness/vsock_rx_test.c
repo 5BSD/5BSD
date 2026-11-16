@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Guest-side vsock unit test: drives the REAL kernel socket domain + RX state
  * machine from sys/kern/uipc_vsock.c in userspace (via kmock.h), with a mock

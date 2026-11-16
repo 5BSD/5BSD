@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check module exports in make inputs and, optionally, built ELF artifacts.
 
 Example: python3 tools/test/mmc/module_symbols_test.py --artifacts /path/to/if_brcmfmac.ko \

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual kboot/OFW readin functions with allocation, mapping and I/O faults."""
 from pathlib import Path
 import subprocess,tempfile,unittest

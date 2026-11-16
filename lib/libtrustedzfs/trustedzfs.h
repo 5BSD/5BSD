@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * libtrustedzfs: userland API over TrustedZFS dataset handles.
  *
  * A handle is a file descriptor over the ZFS management plane, carrying a

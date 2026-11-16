@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Match Make's name extraction and exact-line uniqueness check.
 /^[_A-Z]/ {
     sub(/,$/, "")

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise kernel debug checks against real split artifacts, including rejection."""
 import argparse
 import importlib.util

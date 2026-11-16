@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Full topology/transport matrix.  Keep the single-topology runner small and
 # make isolation an explicit part of the acceptance test.
 set -eu

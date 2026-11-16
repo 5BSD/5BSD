@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Install a TrustedZFS test payload into a disposable QEMU guest, then reboot
 # so the replacement ZFS module is loaded from a clean boot.
 

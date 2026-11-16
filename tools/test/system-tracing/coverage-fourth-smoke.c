@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Functional regression checks, not evidence that DTrace probes fire live. */
 #include <sys/socket.h>
 #include <sys/stat.h>

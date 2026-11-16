@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Export only test additions from a qualified fresh VM for BSDInstall testing.
 
 Production programs, authentication files and kernel/modules are never copied.

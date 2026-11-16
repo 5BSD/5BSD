@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The FreeBSD Foundation
+ * Copyright (c) 2026 Kory Heard
  *
  * VirtIO sound (virtio-snd) guest driver -- wire protocol definitions.
  *

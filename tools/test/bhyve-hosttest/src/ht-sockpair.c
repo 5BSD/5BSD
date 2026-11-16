@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * ht-sockpair: connect a bhyve migration destination and source over one
  * AF_UNIX SOCK_STREAM socketpair (the same-host plaintext_unix opt-in, or

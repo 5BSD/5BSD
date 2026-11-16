@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Contracts: tools/test/system-tracing/COVERAGE-TENTH.
  * Synchronous per-thread pairs; elapsed times include preemption.
  * Start before workload; lost events invalidate pairing. No string/pointer reads.
