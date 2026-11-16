@@ -9,8 +9,6 @@
 #include <sys/cap_process.h>
 #include <sys/cap_authority.h>
 
-#define SERVICE_LOOKUP_ENV "SERVICE_LOOKUP_FD"
-
 __BEGIN_DECLS
 /* Return an owned close-on-exec descriptor from process state. */
 int service_ambient_lookup_fd(void);

@@ -50,8 +50,9 @@ choice, not an implicit property of login.
 
 ## What a shell holds
 
-A shell may have only descriptors 0, 1, and 2 and still have discovery. An empty
-`SERVICE_LOOKUP_FD` is expected. `service_process_info()` reports process context;
+A shell may have only descriptors 0, 1, and 2 and still have discovery: the
+route is held in the kernel process slot, not in a descriptor or an environment
+variable. `service_process_info()` reports process context;
 `service_ambient_lookup_fd()` returns an owned working lookup channel, which the
 caller closes after use. Independent working handles have private reply queues.
 

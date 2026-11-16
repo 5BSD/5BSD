@@ -285,6 +285,13 @@ authority issuer (the `MAC_CAPABILITY_TEST_RELAX` option and
 `kern.mac_capability.test_relax=1` that `capd_test_harness.sh` names), which
 the tree does not provide yet; plane-off on GENERIC their units never launch.
 Until it exists they are not covered by any tier.
+Cases that drive their private SwitchBoard with `switchboardctl` call
+`use_private_control` (`usr.sbin/switchboard/tests/test_helpers.sh`): it runs
+`switchboardctl` through `capd_lookup_exec`, which installs the private
+Capsule's discovery route (control operation `CTL_OP_LOOKUP`) in the process
+slot in place of the inherited one, so a test can never drive the system
+SwitchBoard.  The private SwitchBoard admits a copy of the shipped control
+bundle registered by the test-local issuer.
 The runner's own checks (the tier selection and gate above, the stage root
 metadata preflight, the extra-script status) are shell scripts under
 `tools/build/fuchsia/tests/`; `make -C tools/build/fuchsia check-runner`

@@ -27,7 +27,7 @@ system_bundle_startup_head() {
 	require_capsule_stack_kmods
 }
 system_bundle_startup_body() {
-	require_ambient_control
+	use_private_control
 	local bundle
 
 	prepare_paths
@@ -61,7 +61,7 @@ on_demand_launch_head() {
 	require_capsule_stack_kmods
 }
 on_demand_launch_body() {
-	require_ambient_control
+	use_private_control
 	prepare_paths
 	build_lookup_client
 	create_user_bundle "LazyApp" "org.test.lazy" "lazyd" \
@@ -124,7 +124,7 @@ stop_service_head() {
 	require_capsule_stack_kmods
 }
 stop_service_body() {
-	require_ambient_control
+	use_private_control
 	local bundle
 
 	prepare_paths
@@ -178,7 +178,7 @@ stop_nonexistent_head() {
 	require_capsule_stack_kmods
 }
 stop_nonexistent_body() {
-	require_ambient_control
+	use_private_control
 	prepare_paths
 	start_stack
 
@@ -199,7 +199,7 @@ reload_new_service_head() {
 	require_capsule_stack_kmods
 }
 reload_new_service_body() {
-	require_ambient_control
+	use_private_control
 	local bundle
 
 	prepare_paths
@@ -237,7 +237,7 @@ reload_remove_service_head() {
 	require_capsule_stack_kmods
 }
 reload_remove_service_body() {
-	require_ambient_control
+	use_private_control
 	local bundle
 
 	prepare_paths
@@ -275,14 +275,24 @@ missing_system_bundle_optional_head() {
 	require_capsule_stack_kmods
 }
 missing_system_bundle_optional_body() {
-	require_ambient_control
+	local missing
+
 	prepare_paths
-	# Remove the system dir
-	rmdir "${APPS_DIR}" 2>/dev/null || true
+	write_config
+	# Point the system bundle root at a directory that does not exist.
+	# start_stack keeps this configuration (the config file is already
+	# written) but recreates APPS_DIR, so APPS_DIR itself cannot be the
+	# missing directory.
+	missing="${WORK}/NoSystemBundles"
+	[ ! -e "$missing" ] || atf_fail "$missing unexpectedly exists"
+	export SWITCHBOARD_BUNDLE_DIR_SYSTEM="$missing"
 
 	start_stack
-	atf_check -s exit:0 -o match:"switchboard: running" \
-	    "$SWITCHBOARDCTL" status
+	[ ! -e "$missing" ] || atf_fail "the stack created $missing"
+	atf_check -s exit:0 -o ignore grep "switchboard ready" "$logfile"
+	capd_guardian_is_running || atf_fail "Capsule exited"
+	capd_capsule_ctl "$sockpath" status | grep -q running ||
+	    atf_fail "Capsule status request failed"
 }
 missing_system_bundle_optional_cleanup() {
 	cleanup_common
@@ -321,7 +331,7 @@ dtrace_probes_head() {
 	atf_set "timeout" "60"
 }
 dtrace_probes_body() {
-	require_ambient_control
+	use_private_control
 	local bundle i switchboard_pid
 
 	prepare_paths
@@ -450,7 +460,7 @@ reload_changed_bundle_head() {
 	require_capsule_stack_kmods
 }
 reload_changed_bundle_body() {
-	require_ambient_control
+	use_private_control
 	local bundle
 
 	prepare_paths
@@ -491,7 +501,7 @@ reload_changed_core_refused_head() {
 	require_capsule_stack_kmods
 }
 reload_changed_core_refused_body() {
-	require_ambient_control
+	use_private_control
 	local bundle unit
 
 	prepare_paths
@@ -545,7 +555,7 @@ stop_already_stopped_head() {
 	require_capsule_stack_kmods
 }
 stop_already_stopped_body() {
-	require_ambient_control
+	use_private_control
 	local bundle
 
 	prepare_paths
@@ -580,7 +590,7 @@ coalition_kill_on_timeout_head() {
 	require_capsule_stack_kmods
 }
 coalition_kill_on_timeout_body() {
-	require_ambient_control
+	use_private_control
 	prepare_paths
 
 	# A service that ignores SIGTERM.  Units run born in capability mode, so
@@ -630,7 +640,7 @@ on_demand_crash_relaunch_head() {
 	require_capsule_stack_kmods
 }
 on_demand_crash_relaunch_body() {
-	require_ambient_control
+	use_private_control
 	prepare_paths
 	build_lookup_client
 	build_ready_svc
@@ -697,7 +707,7 @@ multi_binary_bundle_activation_head() {
 	require_capsule_stack_kmods
 }
 multi_binary_bundle_activation_body() {
-	require_ambient_control
+	use_private_control
 	local bundle endpoint
 
 	prepare_paths
@@ -889,7 +899,7 @@ multiple_provides_secondary_activation_head() {
 	require_capsule_stack_kmods
 }
 multiple_provides_secondary_activation_body() {
-	require_ambient_control
+	use_private_control
 	local bundle first lookup_pid second p1 p2
 
 	prepare_paths
@@ -1070,7 +1080,7 @@ reload_noop_head() {
 	require_capsule_stack_kmods
 }
 reload_noop_body() {
-	require_ambient_control
+	use_private_control
 	local bundle
 
 	prepare_paths
@@ -1565,7 +1575,7 @@ reload_attribution_head() {
 	require_capsule_stack_kmods
 }
 reload_attribution_body() {
-	require_ambient_control
+	use_private_control
 	local bundle
 
 	prepare_paths

@@ -1298,6 +1298,135 @@ control_socket_services_any_user_cleanup()
 	capd_cleanup_stack
 }
 
+# --- discovery route for a root client ---
+
+atf_test_case control_socket_lookup_route cleanup
+control_socket_lookup_route_head()
+{
+	atf_set "descr" "CTL_OP_LOOKUP hands root the route the daemon's SwitchBoard minted"
+	atf_set "require.user" "root"
+	capd_require_stack_kmods
+}
+control_socket_lookup_route_body()
+{
+	require_pidfile
+	capd_find_lookup_exec
+	# SwitchBoard mints its route even though a fixture skips /etc/rc, and
+	# hands it to this Capsule before reporting ready.
+	atf_check -s exit:0 -o ignore \
+	    grep "capsule_proto: ambient lookup channel installed" "$CAPD_LOG"
+	# The reply carries one descriptor that the kernel accepts as a
+	# discovery route (a non-channel is refused with EINVAL).
+	atf_check -s exit:0 -o empty -e empty \
+	    "$capd_lookup_exec_bin" -s "$capsule_sock" /usr/bin/true
+	# Existing operations are unchanged.
+	capsule_ctl_expect status "running"
+}
+control_socket_lookup_route_cleanup()
+{
+	capd_cleanup_stack
+}
+
+atf_test_case control_socket_lookup_root_only cleanup
+control_socket_lookup_root_only_head()
+{
+	atf_set "descr" "CTL_OP_LOOKUP refuses a non-root peer even when it can connect"
+	atf_set "require.user" "root"
+	atf_set "require.progs" "su"
+	capd_require_stack_kmods
+}
+control_socket_lookup_root_only_body()
+{
+	local sock
+
+	capd_stack_prepare
+	capd_find_lookup_exec
+	# A socket every user can reach, so the refusal comes from the euid
+	# check rather than from the file mode.
+	sock=/tmp/capd-lookup-$$.sock
+	echo "$sock" > lookup-socket
+	CAPD_CAPSULE_SOCKET=$sock
+	sed -i '' -e "s|^control_socket = .*|control_socket = \"$sock\";|" \
+	    -e 's|^control_socket_mode = .*|control_socket_mode = "0777";|' \
+	    "$CAPD_CONFIG"
+	capd_start_stack
+	atf_check -s exit:69 -e match:"Operation not permitted" \
+	    su -m nobody -c "'$capd_lookup_exec_bin' -s '$sock' /usr/bin/true"
+	atf_check -s exit:0 "$capd_lookup_exec_bin" -s "$sock" /usr/bin/true
+	atf_check -s exit:0 -o ignore grep "control: lookup denied uid 65534" "$CAPD_LOG"
+}
+control_socket_lookup_root_only_cleanup()
+{
+	local sock
+
+	sock=$(cat lookup-socket 2>/dev/null)
+	if [ -n "$sock" ] && [ -S "$sock" ]; then
+		capd_capsule_ctl "$sock" shutdown >/dev/null 2>&1 || true
+	fi
+	capd_cleanup_stack
+	[ -z "$sock" ] || rm -f "$sock"
+}
+
+# First reply word (status) of op 15 sent with a 4-byte payload, in decimal.
+lookup_status_with_payload()
+{
+	{
+		printf '\017\000\000\000'
+		printf '\000\000\000\000'
+		printf '\004\000\000\000'
+		printf 'JUNK'
+	} | nc -U "$1" | od -A n -t u4 -N 4 | awk '{ print $1 }'
+}
+
+atf_test_case control_socket_lookup_disabled cleanup
+control_socket_lookup_disabled_head()
+{
+	atf_set "descr" "without lookup_route_export, CTL_OP_LOOKUP answers ENOTSUP like an unknown op"
+	atf_set "require.user" "root"
+	capd_require_stack_kmods
+}
+control_socket_lookup_disabled_body()
+{
+	capd_stack_prepare
+	capd_find_lookup_exec
+	sed -i '' -e '/^lookup_route_export = /d' "$CAPD_CONFIG"
+	atf_check -s exit:1 grep lookup_route_export "$CAPD_CONFIG"
+	capd_start_stack
+	capsule_sock=$CAPD_CAPSULE_SOCKET
+	atf_check -s exit:0 -o ignore \
+	    grep "config: lookup_route_export=false" "$CAPD_LOG"
+	# Root, with a route held: still refused, and no descriptor attached
+	# (a refusal carrying one would exit 76).
+	atf_check -s exit:69 -e match:"Operation not supported" \
+	    "$capd_lookup_exec_bin" -s "$capsule_sock" /usr/bin/true
+	# Same answer as an unknown operation, payload or not (ENOTSUP = 45).
+	[ "$(lookup_status_with_payload "$capsule_sock")" = 45 ] ||
+	    atf_fail "a disabled lookup with a payload did not answer ENOTSUP"
+}
+control_socket_lookup_disabled_cleanup()
+{
+	capd_cleanup_stack
+}
+
+atf_test_case control_socket_lookup_payload_rejected cleanup
+control_socket_lookup_payload_rejected_head()
+{
+	atf_set "descr" "an enabled CTL_OP_LOOKUP with a payload answers EINVAL"
+	atf_set "require.user" "root"
+	capd_require_stack_kmods
+}
+control_socket_lookup_payload_rejected_body()
+{
+	require_pidfile
+	[ "$(lookup_status_with_payload "$capsule_sock")" = 22 ] ||
+	    atf_fail "a lookup with a payload was not refused with EINVAL"
+	capsule_ctl_expect status "running"
+}
+control_socket_lookup_payload_rejected_cleanup()
+{
+	capd_cleanup_stack
+}
+
 atf_test_case config_claims_files_alias cleanup
 config_claims_files_alias_head()
 {
@@ -1391,6 +1520,10 @@ atf_init_test_cases()
 	atf_add_test_case sighup_during_status
 	atf_add_test_case sighup_during_reload
 	atf_add_test_case control_socket_services_any_user
+	atf_add_test_case control_socket_lookup_route
+	atf_add_test_case control_socket_lookup_root_only
+	atf_add_test_case control_socket_lookup_disabled
+	atf_add_test_case control_socket_lookup_payload_rejected
 
 	# Configuration
 	atf_add_test_case config_explicit_missing_rejected

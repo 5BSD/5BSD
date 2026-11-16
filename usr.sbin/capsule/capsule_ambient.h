@@ -6,12 +6,13 @@
  * Capsule §21 ambient-lookup fd hygiene.
  *
  * The SYSTEM ambient lookup channel switchboard forwards to PID 1 must survive the
- * getty fork(2) (so the child can dup2 it onto the fixed lookup fd) yet close on
- * the getty child's execve(2), and installing a replacement must not leak the
- * previously pinned descriptor.  That imperative hygiene is factored out of
- * capsule.c capsule_set_ambient_lookup() here so it operates on a caller-owned
- * slot rather than the PID-1 file-static, making it exercisable with ordinary
- * descriptors under ATF without linking the init state machine.  The logic is
+ * getty fork(2) (so the child can install it in its kernel process slot) yet
+ * close on the getty child's execve(2), and installing a replacement must not
+ * leak the previously pinned descriptor.  That imperative hygiene is factored
+ * out of capsule.c capsule_set_ambient_lookup() here so it operates on a
+ * caller-owned slot rather than the PID-1 file-static, making it exercisable
+ * with ordinary descriptors under ATF without linking the init state machine.
+ * The logic is
  * identical to the original in-line body — this is a behavior-preserving
  * extraction, not a change.
  */
@@ -30,8 +31,8 @@
  *
  *  - fd < 0 is rejected with EBADF (nothing is touched);
  *  - CAP_CLOFORK is unlocked so the descriptor survives the getty fork(2);
- *  - FD_CLOEXEC is (re)asserted so the master itself closes on execve(2) and
- *    only the dup2'd copy at the fixed fd reaches login;
+ *  - FD_CLOEXEC is (re)asserted so the master itself closes on execve(2); login
+ *    receives the route only through the kernel process slot;
  *  - any descriptor already in *slot is closed before the new one is stored.
  *
  * On any syscall failure fd is closed and the original errno is restored, and

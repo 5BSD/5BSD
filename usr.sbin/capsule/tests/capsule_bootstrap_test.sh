@@ -83,6 +83,7 @@ write_config()
 pidfile = "$pidfile";
 control_socket = "$sockpath";
 control_socket_mode = "0700";
+lookup_route_export = true;
 service_manager = "$switchboard_bin";
 EOF
 	if $disable_signal_shields; then
@@ -210,6 +211,33 @@ bootstrap_starts_switchboard_body()
 	    atf_fail "Capsule status request failed"
 }
 bootstrap_starts_switchboard_cleanup()
+{
+	cleanup_common
+}
+
+atf_test_case lookup_without_route cleanup
+lookup_without_route_head()
+{
+	atf_set "descr" "CTL_OP_LOOKUP answers ENOENT, with no descriptor, while no route is held"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+}
+lookup_without_route_body()
+{
+	build_mock_switchboard
+	capd_find_lookup_exec
+	start_capsule
+	# This service-manager double never sends CAPSULE_OP_SET_AMBIENT_LOOKUP.
+	if ! wait_for_file switchboard-started.out; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "bootstrap fixture did not start"
+	fi
+	# A refusal that carried a descriptor would exit 76 (EX_PROTOCOL).
+	atf_check -s exit:69 -e match:"No such file or directory" \
+	    "$capd_lookup_exec_bin" -s "$sockpath" /usr/bin/true
+	atf_check -s exit:0 -o ignore grep "control: lookup: no route held" "$logfile"
+}
+lookup_without_route_cleanup()
 {
 	cleanup_common
 }
@@ -511,6 +539,7 @@ atf_init_test_cases()
 {
 	atf_add_test_case bootstrap_starts_switchboard
 	atf_add_test_case bootstrap_channel_ping
+	atf_add_test_case lookup_without_route
 	atf_add_test_case control_reload_reaches_switchboard
 	atf_add_test_case bootstrap_channel_loss_kills_switchboard
 	atf_add_test_case bootstrap_ready_logged

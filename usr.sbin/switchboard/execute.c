@@ -832,7 +832,7 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 		unsigned source, dest = 0;
 		const char *const fd_vars[] = { SERVICE_BOOTSTRAP_ENV,
 		    SERVICE_CONFIG_FD_ENV, SERVICE_DIR_FDS_ENV,
-		    SERVICE_LOOKUP_ENV, "LD_LIBRARY_PATH_FDS" };
+		    "LD_LIBRARY_PATH_FDS" };
 
 		/* Keep ordinary environment, route, and context; discard bootstrap FDs. */
 		for (source = 0; env[source] != NULL; source++) {
@@ -1108,7 +1108,6 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[], bool for_stop)
 		if (lookup_fd >= 0 && service_install_ambient_lookup(lookup_fd) == -1)
 			_exit(126);
 		closefrom(STDERR_FILENO + 1);
-		(void)unsetenv(SERVICE_LOOKUP_ENV);
 
 		if (svc_user_credentials_match(svc->owner_uid, uid, have_creds) == -1)
 			_exit(126);

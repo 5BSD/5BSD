@@ -807,7 +807,7 @@ The userland plane is the process spine that turns the kernel's mac_capability p
 - Config: `bsdnetwork.conf` (UCL) in the unit dir; bundle manifests `crypto.ucl`, `bsdnetwork.ucl`.
 - Sockets: `<sys/un.h>` `LOCAL_CAP_CONNECT`, `LOCAL_CAPMODE_SERVER`, `LOCAL_CAP_REQ`; `SO_PEERCAPMODE`; `bindat(2)/connectat(2)` with a real fd from capmode; Linux abstract names and `NETLINK_SOCK_DIAG` under the Linuxulator.
 - `lib/libnetmap/libnetmap.h`: `nmport_register_fd()`.
-- sshd/session: env `SERVICE_LOOKUP_FD` at `SERVICE_LOOKUP_FIXED_FD` (from `<service_bootstrap.h>`).
+- sshd/session: discovery is the kernel per-process lookup slot (`<libservice_session.h>`), inherited across fork and exec; there is no environment-variable or fixed-descriptor route.
 - Sysctls: `kern.crypto.cryptokey_objects` (read), `cryptokey_max_objects`, `cryptokey_max_owner_objects`.
 
 ### Upstream code changed
@@ -827,7 +827,7 @@ The userland plane is the process spine that turns the kernel's mac_capability p
 6. Writing `bsdnetwork.conf`: default vs per-label blocks, the six booleans, the `internal` SSRF guard, fail-soft semantics, admin bypass.
 7. Why capmode INET bind/connect needed `bindat/connectat` with a real fd, and how the resolver works without Casper (files via BSDFilesystem).
 8. UNIX-socket capability semantics: SCM_RIGHTS attenuation and transfer limits, `LOCAL_CAP_*`/`SO_PEERCAPMODE`, and the MAC bind/connect/receive hooks.
-9. How an ssh login obtains its ambient lookup channel (listener -> per-connection channel -> monitor mint via `system.Auth`), and the `SERVICE_LOOKUP_FD` contract sessions inherit.
+9. How an ssh login obtains its ambient lookup channel (listener -> per-connection channel -> monitor mint via `system.Auth`), and the kernel process slot through which sessions inherit it.
 10. Linux compatibility networking additions (sock_diag, uevent, abstract names, multicast filters, unidirectional pipes) as a short reference, pointing to `docs/linuxulator-*.md`.
 11. Observability: USDT providers in BSDCrypto, BSDNetwork, libnetworkcmp and every PAM module; OpenBSM audit of session/resolve decisions.
 12. Gaps to flag: `libcryptodesc.3` exists since 4b24f728d376, but `cryptodesc_named_list()` loses entries when `max` < CRYPTODESC_NAMED_LIST_MAX (section 14, open finding 4); asymmetric RSA/ECDSA and certificate validation remain design-only.

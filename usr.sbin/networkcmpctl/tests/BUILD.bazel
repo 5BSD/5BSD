@@ -8,6 +8,8 @@ cc_binary(name = "networkcmpctl_test_bin", srcs = ["//usr.sbin/networkcmpctl:net
 cc_binary(name = "networkcmpctl_success_bin", srcs = ["networkcmpctl_success_impl.c", "fake_networkcmp.c"], deps = [":fake_inputs"], linkopts = ["-static"], linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
 utility_installation(name = "install_real", program = "networkcmpctl_test_bin", manual = None, package = "bsdnetwork-tests", bindir = "/usr/tests/usr.sbin/networkcmpctl")
 utility_installation(name = "install_fake", program = "networkcmpctl_success_bin", manual = None, package = "bsdnetwork-tests", bindir = "/usr/tests/usr.sbin/networkcmpctl")
+cc_binary(name = "no_ambient_exec", srcs = ["//usr.sbin/notifyctl/tests:no_ambient_exec.c"], deps = ["//lib/libservice:service"], linkopts = ["-static"], linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+utility_installation(name = "install_noroute", program = "no_ambient_exec", manual = None, package = "bsdnetwork-tests", bindir = "/usr/tests/usr.sbin/networkcmpctl")
 bsd_script_wrapper(name = "networkcmpctl_test", body = "networkcmpctl_test.sh", interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
 bsd_install_file(name = "install_shell", src = ":networkcmpctl_test", destination = "/usr/tests/usr.sbin/networkcmpctl/networkcmpctl_test", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=bsdnetwork-tests"])
 bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["networkcmpctl_test"], interfaces = {"networkcmpctl_test": "atf"})
