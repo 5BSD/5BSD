@@ -240,9 +240,34 @@ bool cap_authority_matches_stamp(const struct cap_authority *,
 int cap_authority_check(struct thread *, struct cap_authority *);
 int cap_authority_check_locked(struct proc *, struct cap_authority *);
 void cap_authority_stamp_locked(struct proc *, struct cap_authority_stamp *);
+/*
+ * What a credential records of its process's authority, for checks that may
+ * not take the process lock (mac_capability_cred_authority_stamp()).  It
+ * holds the authority's fields by value and a reference only to the
+ * authority's revocation state, never to the authority itself: an authority
+ * pins executables, library directories and its issuer's credential, and a
+ * credential is copied into every file, socket and mount its process makes,
+ * so a reference from the credential would keep those alive after the
+ * process has gone.  issuer_prison is compared, never dereferenced.
+ */
+struct cap_authority_revocation;
 struct prison;
-void cap_authority_stamp_held(struct cap_authority *, uint64_t, struct prison *,
-    struct cap_authority_stamp *);
+struct cap_authority_record {
+	struct cap_authority_revocation *rv;
+	const struct prison *issuer_prison;
+	uint64_t issuer;
+	uint64_t identity;
+	uint64_t generation;
+	uint32_t kind;
+	uid_t uid;
+	bool valid;
+};
+void cap_authority_record_set(struct cap_authority_record *, struct proc *);
+void cap_authority_record_copy(struct cap_authority_record *,
+    const struct cap_authority_record *);
+void cap_authority_record_clear(struct cap_authority_record *);
+void cap_authority_record_stamp(const struct cap_authority_record *,
+    const struct prison *, struct cap_authority_stamp *);
 void cap_authority_cred_stamp(struct proc *, struct ucred *);
 #endif
 #endif

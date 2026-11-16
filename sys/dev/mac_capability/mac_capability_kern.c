@@ -1129,7 +1129,9 @@ mac_capability_authorization_snapshot(struct thread *td,
  * lock, for hooks that may not take it: the prison checks run with the
  * prison's mutex held, which orders after process locks.  The authority is
  * what the credential recorded (mac_capability_cred_authority_stamp());
- * the process identity is constant once assigned at fork.
+ * the process identity is constant once assigned at fork.  The credential
+ * must be the calling thread's: its stamp is checked against curproc's
+ * generation and paired with curproc's identity.
  */
 void
 mac_capability_authorization_snapshot_cred(struct ucred *cred,
@@ -1137,6 +1139,9 @@ mac_capability_authorization_snapshot_cred(struct ucred *cred,
 {
 	struct proc *p = curproc;
 
+	KASSERT(cred == curthread->td_ucred,
+	    ("%s: credential %p is not the caller's %p", __func__, cred,
+	    curthread->td_ucred));
 	mac_capability_cred_authority_stamp(cred, p, &context->authority);
 	context->process_identity = atomic_load_64(&p->p_cap_identity);
 	context->execution_nonce = mac_capability_proc_nonce(cred);

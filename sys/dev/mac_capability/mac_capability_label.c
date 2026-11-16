@@ -43,13 +43,11 @@ struct mac_capability_label {
 	/*
 	 * The software authority of the process the credential was made
 	 * for, as it was when the credential was last given it
-	 * (mac_capability_cred_set_authority()): referenced, its
-	 * generation, and whether it was usable.  Read without the
-	 * process lock, see mac_capability_cred_authority_stamp().
+	 * (mac_capability_cred_set_authority()), by value with a reference
+	 * to its revocation state only.  Read without the process lock, see
+	 * mac_capability_cred_authority_stamp().
 	 */
-	struct cap_authority *cl_authority;
-	uint64_t	cl_auth_generation;
-	bool		cl_auth_valid;
+	struct cap_authority_record cl_auth;
 };
 
 static int mac_capability_label_slot;
@@ -109,9 +107,8 @@ mac_capability_cred_copy_label(struct label *src, struct label *dest)
 	if (dcl == NULL)
 		return;
 	if (scl != NULL) {
-		cap_authority_drop(dcl->cl_authority);
-		*dcl = *scl;
-		cap_authority_retain(dcl->cl_authority);
+		dcl->cl_nonce = scl->cl_nonce;
+		cap_authority_record_copy(&dcl->cl_auth, &scl->cl_auth);
 		SDT_PROBE2(mac_capability_nonce, , , copy, scl->cl_nonce,
 		    dcl->cl_nonce);
 	} else {
@@ -128,7 +125,7 @@ mac_capability_cred_destroy_label(struct label *label)
 
 	cl = SLOT(label);
 	if (cl != NULL) {
-		cap_authority_drop(cl->cl_authority);
+		cap_authority_record_clear(&cl->cl_auth);
 		free(cl, M_MAC_CAPABILITY);
 		SLOT_SET(label, NULL);
 	}
@@ -234,19 +231,12 @@ void
 mac_capability_cred_set_authority(struct ucred *cred, struct proc *p)
 {
 	struct mac_capability_label *cl;
-	struct cap_authority *old;
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 	cl = SLOT(cred->cr_label);
 	if (cl == NULL)
 		return;
-	old = cl->cl_authority;
-	cl->cl_authority = p->p_cap_authority;
-	cap_authority_retain(cl->cl_authority);
-	cl->cl_auth_generation = p->p_cap_authority_generation;
-	cl->cl_auth_valid = !p->p_cap_authority_invalid &&
-	    !p->p_cap_authority_pending_exec;
-	cap_authority_drop(old);
+	cap_authority_record_set(&cl->cl_auth, p);
 }
 
 /*
@@ -256,8 +246,8 @@ mac_capability_cred_set_authority(struct ucred *cred, struct proc *p)
  * recorded in the credential is no longer the process's (a later strip,
  * prison change or invalidation), the stamp is invalid, which only ever
  * refuses.  The generation is read as one aligned 64-bit load and nothing
- * of the process is dereferenced; the authority is the credential's own
- * reference.  Revocation is read live from it.
+ * else of the process is read.  Revocation is read live from the
+ * revocation state the credential references.
  */
 void
 mac_capability_cred_authority_stamp(struct ucred *cred, struct proc *p,
@@ -269,11 +259,10 @@ mac_capability_cred_authority_stamp(struct ucred *cred, struct proc *p,
 	if (cred == NULL || cred->cr_label == NULL)
 		return;
 	cl = SLOT(cred->cr_label);
-	if (cl == NULL || cl->cl_authority == NULL || !cl->cl_auth_valid)
+	if (cl == NULL)
 		return;
 	if (atomic_load_64(&p->p_cap_authority_generation) !=
-	    cl->cl_auth_generation)
+	    cl->cl_auth.generation)
 		return;
-	cap_authority_stamp_held(cl->cl_authority, cl->cl_auth_generation,
-	    cred->cr_prison, stamp);
+	cap_authority_record_stamp(&cl->cl_auth, cred->cr_prison, stamp);
 }

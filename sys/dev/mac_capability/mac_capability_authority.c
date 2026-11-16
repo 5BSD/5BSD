@@ -41,9 +41,24 @@
 FEATURE(cap_authority, "Protected process authority independent of discovery");
 MALLOC_DEFINE(M_CAP_AUTHORITY, "cap_authority", "issued process authority");
 
+/*
+ * The revocation state of an issuer or an authority, separate from the
+ * object so that a credential can follow revocation
+ * (struct cap_authority_record) without keeping the object, and what it
+ * pins, alive.  An authority's refers to its issuer's.  revoked is set
+ * together with the owner's own flag and never cleared.  Freeing does not
+ * sleep: it is reached from crfree().
+ */
+struct cap_authority_revocation {
+	volatile u_int refs;
+	volatile u_int revoked;
+	struct cap_authority_revocation *issuer;
+};
+
 struct authority_issuer {
 	volatile u_int refs;
 	volatile u_int revoked;
+	struct cap_authority_revocation *rv;
 	struct mtx lock;
 	struct ucred *cred;
 	struct task cleanup;
@@ -55,6 +70,7 @@ struct cap_authority {
 	volatile u_int refs;
 	volatile u_int consumed;
 	volatile u_int revoked;
+	struct cap_authority_revocation *rv;
 	struct authority_issuer *issuer;
 	uint64_t identity;
 	uint32_t kind;
@@ -178,11 +194,53 @@ application_remove_locked(struct cap_authority *a)
 }
 
 
+static struct cap_authority_revocation *
+revocation_alloc(struct cap_authority_revocation *issuer)
+{
+	struct cap_authority_revocation *rv;
+
+	rv = malloc(sizeof(*rv), M_CAP_AUTHORITY, M_WAITOK | M_ZERO);
+	refcount_init(&rv->refs, 1);
+	if (issuer != NULL)
+		refcount_acquire(&issuer->refs);
+	rv->issuer = issuer;
+	return (rv);
+}
+
+static void
+revocation_drop(struct cap_authority_revocation *rv)
+{
+	struct cap_authority_revocation *issuer;
+
+	if (rv == NULL || !refcount_release(&rv->refs))
+		return;
+	issuer = rv->issuer;
+	free(rv, M_CAP_AUTHORITY);
+	if (issuer != NULL && refcount_release(&issuer->refs))
+		free(issuer, M_CAP_AUTHORITY);
+}
+
+static void
+revocation_revoke(struct cap_authority_revocation *rv)
+{
+
+	atomic_store_rel_int(&rv->revoked, 1);
+}
+
+static bool
+revocation_revoked(const struct cap_authority_revocation *rv)
+{
+
+	return (atomic_load_acq_int(&rv->revoked) != 0 ||
+	    (rv->issuer != NULL && atomic_load_acq_int(&rv->issuer->revoked) != 0));
+}
+
 static void
 issuer_free(void *context, int pending __unused)
 {
 	struct authority_issuer *issuer = context;
 
+	revocation_drop(issuer->rv);
 	crfree(issuer->cred);
 	mtx_destroy(&issuer->lock);
 	free(issuer, M_CAP_AUTHORITY);
@@ -217,6 +275,7 @@ authority_free(void *context, int pending __unused)
 		fdrop(a->libdirs[i], curthread);
 		filecaps_free(&a->libcaps[i]);
 	}
+	revocation_drop(a->rv);
 	issuer_drop(a->issuer);
 	free(a, M_CAP_AUTHORITY);
 }
@@ -380,29 +439,81 @@ cap_authority_stamp_locked(struct proc *p, struct cap_authority_stamp *stamp)
 	stamp->valid = info.valid;
 }
 /*
- * The stamp of an authority a credential holds a reference to: what
- * cap_authority_stamp_locked() gives for a process whose authority it is,
- * with the process-side conditions (invalidation, a pending exec, the
- * generation) already checked by the caller against what the credential
- * recorded.  Revocation and the issuer's prison are checked here.
+ * Record p's authority in rec (struct cap_authority_record), replacing what
+ * rec held.  The process lock is held, so p's authority is stable.  The
+ * authority's identifying fields are immutable once it is installed.
  */
 void
-cap_authority_stamp_held(struct cap_authority *a, uint64_t generation,
-    struct prison *pr, struct cap_authority_stamp *stamp)
+cap_authority_record_set(struct cap_authority_record *rec, struct proc *p)
 {
-	struct cap_authority_info info;
+	struct cap_authority_revocation *old;
+	struct cap_authority *a;
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	old = rec->rv;
+	a = p->p_cap_authority;
+	if (a == NULL) {
+		bzero(rec, sizeof(*rec));
+	} else {
+		refcount_acquire(&a->rv->refs);
+		rec->rv = a->rv;
+		rec->issuer_prison = a->issuer->cred->cr_prison;
+		rec->issuer = a->issuer->identity;
+		rec->identity = a->identity;
+		rec->kind = a->kind;
+		rec->uid = a->uid;
+		rec->valid = !p->p_cap_authority_invalid &&
+		    !p->p_cap_authority_pending_exec;
+	}
+	rec->generation = p->p_cap_authority_generation;
+	revocation_drop(old);
+}
+
+/* dst, which may hold a record, takes a copy of src. */
+void
+cap_authority_record_copy(struct cap_authority_record *dst,
+    const struct cap_authority_record *src)
+{
+	struct cap_authority_revocation *old;
+
+	old = dst->rv;
+	*dst = *src;
+	if (dst->rv != NULL)
+		refcount_acquire(&dst->rv->refs);
+	revocation_drop(old);
+}
+
+void
+cap_authority_record_clear(struct cap_authority_record *rec)
+{
+
+	revocation_drop(rec->rv);
+	bzero(rec, sizeof(*rec));
+}
+
+/*
+ * The stamp a record gives, for a credential in prison pr: what
+ * cap_authority_stamp_locked() gave when the record was made, while the
+ * authority is not revoked and its issuer is in pr.  The caller checks the
+ * record's generation against the process.  The prison is compared before
+ * revocation is read: an issuer that is not revoked has not been closed, so
+ * its credential, and the prison the record names, were still alive at the
+ * comparison.
+ */
+void
+cap_authority_record_stamp(const struct cap_authority_record *rec,
+    const struct prison *pr, struct cap_authority_stamp *stamp)
+{
 
 	bzero(stamp, sizeof(*stamp));
-	if (a == NULL || atomic_load_acq_int(&a->revoked) ||
-	    atomic_load_acq_int(&a->issuer->revoked) ||
-	    a->issuer->cred->cr_prison != pr)
+	if (rec->rv == NULL || !rec->valid || rec->issuer_prison != pr ||
+	    revocation_revoked(rec->rv))
 		return;
-	authority_describe(a, &info);
-	stamp->issuer = info.issuer;
-	stamp->identity = info.identity;
-	stamp->generation = generation;
-	stamp->kind = info.kind;
-	stamp->uid = info.uid;
+	stamp->issuer = rec->issuer;
+	stamp->identity = rec->identity;
+	stamp->generation = rec->generation;
+	stamp->kind = rec->kind;
+	stamp->uid = rec->uid;
 	stamp->valid = 1;
 }
 
@@ -608,6 +719,7 @@ issuer_close(struct file *fp, struct thread *td __unused)
 	/* Losing the issuer revokes grants and removes its executable catalogue. */
 	mtx_lock(&application_lock);
 	atomic_store_rel_int(&issuer->revoked, 1);
+	revocation_revoke(issuer->rv);
 	for (unsigned i = 0; i < AUTH_APP_BUCKETS; i++) {
 		LIST_FOREACH_SAFE(a, &applications[i], application_link, next) {
 			if (a->issuer != issuer)
@@ -1464,6 +1576,7 @@ cap_authority_call(struct thread *td, int op, int fd, void *data)
 			return (error);
 		issuer = malloc(sizeof(*issuer), M_CAP_AUTHORITY, M_WAITOK | M_ZERO);
 		refcount_init(&issuer->refs, 1);
+		issuer->rv = revocation_alloc(NULL);
 		mtx_init(&issuer->lock, "authority issuer", NULL, MTX_DEF);
 		LIST_INIT(&issuer->leases);
 		issuer->cred = crhold(td->td_ucred);
@@ -1496,6 +1609,7 @@ cap_authority_call(struct thread *td, int op, int fd, void *data)
 		TASK_INIT(&a->cleanup, 0, authority_free, a);
 		a->issuer = issuer;
 		refcount_acquire(&issuer->refs);
+		a->rv = revocation_alloc(issuer->rv);
 		a->kind = spec.kind;
 		a->uid = spec.uid;
 		mtx_lock(&issuer->lock);
@@ -1606,6 +1720,7 @@ cap_authority_call(struct thread *td, int op, int fd, void *data)
 		else {
 			mtx_lock(&application_lock);
 			atomic_store_rel_int(&a->revoked, 1);
+			revocation_revoke(a->rv);
 			old = a->registered ? a : NULL;
 			if (old != NULL)
 				application_remove_locked(old);
