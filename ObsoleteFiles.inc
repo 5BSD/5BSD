@@ -1,3 +1,7 @@
+# 20261116: the test-kernel check became release/scripts/check-test-kernel.sh,
+# which reads the ledger sys/conf/test-options.
+OLD_FILES+= usr/tests/usr.sbin/bsd-build/check-kernel-no-dq-test.sh
+
 # 20261029: the local OpenTelemetry agent (Fluent Bit) is no longer part
 # of the base system.
 OLD_FILES+= etc/rc.d/fluentbit

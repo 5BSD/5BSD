@@ -621,6 +621,32 @@ kernel_configuration_directory_body()
         grep "^buildkernel:.* KERNCONFDIR=/usr/src/sys/$(uname -m)/conf " plan.out
 }
 
+atf_test_case release_recipes
+release_recipes_head()
+{
+    atf_set descr 'The release media recipes run the test-kernel check from the source tree'
+    atf_set require.progs make
+}
+release_recipes_body()
+{
+    setup
+    mkdir obj
+    # A dry run of the kernel distribution: the check reads what was
+    # distributed and every archive made, with the tree's script.
+    atf_check -s exit:0 -o save:kernel.out -e ignore \
+        env MAKEOBJDIRPREFIX="$PWD/obj" make -C /usr/src/release -n kernel.txz
+    atf_check -s exit:0 -o ignore grep -E \
+        '^sh /usr/src/release/scripts/check-test-kernel.sh -d .*/kernel$' kernel.out
+    atf_check -s exit:0 -o ignore grep -F \
+        'sh /usr/src/release/scripts/check-test-kernel.sh -a "$archive"' kernel.out
+    # The media trees' check.
+    atf_check -s exit:0 -o match:'^sh /usr/src/release/scripts/check-test-kernel.sh -d ' \
+        -e ignore env MAKEOBJDIRPREFIX="$PWD/obj" \
+        make -C /usr/src/release -V MEDIA_KERNEL_TEST_OPTION_CHECK
+    atf_check -s exit:1 -o empty -e empty grep -r -l -e check-kernel-no-dq-test \
+        /usr/src/release /usr/src/usr.sbin/bsd-build
+}
+
 atf_init_test_cases()
 {
     atf_add_test_case plan_option_configuration
@@ -635,4 +661,5 @@ atf_init_test_cases()
     atf_add_test_case ledger_unreadable
     atf_add_test_case reconfigure_refused
     atf_add_test_case kernel_configuration_directory
+    atf_add_test_case release_recipes
 }

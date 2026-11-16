@@ -59,6 +59,42 @@ package()
     tar -cf "$repository/$name" -C "$from" "$@"
 }
 
+atf_test_case default_ledger
+default_ledger_head()
+{
+    atf_set descr 'Without -l the script finds the ledger of its own source tree, however it is invoked'
+}
+default_ledger_body()
+{
+    setup
+    # A copied WORLDDIR: what the release and image recipes run, as
+    # sh ${WORLDDIR}/release/scripts/check-test-kernel.sh (arm.subr does so
+    # inside a chroot, where the path is just as absolute).
+    mkdir -p world/release/scripts world/sys/conf
+    cp "$script" world/release/scripts/check-test-kernel.sh
+    cp "$ledger" world/sys/conf/test-options
+    tree good
+    tree bad
+    printf 'ELF\0%s\0' "$MARKER" > bad/boot/kernel/kernel
+    w=$PWD/world
+    # Absolute path, path relative to the current directory, bare name.
+    atf_check -s exit:0 -o match:'no test-kernel option$' -e empty \
+        ./raw "$w/release/scripts/check-test-kernel.sh" -d "$PWD/good"
+    atf_check -s exit:1 -o empty -e match:"$REFUSED" \
+        ./raw "$w/release/scripts/check-test-kernel.sh" -d "$PWD/bad"
+    atf_check -s exit:0 -o match:'no test-kernel option$' -e empty \
+        sh -c "cd '$w' && TMPDIR='$PWD/tmp' sh release/scripts/check-test-kernel.sh -d '$PWD/good'"
+    atf_check -s exit:1 -o empty -e match:"$REFUSED" \
+        sh -c "cd '$w' && TMPDIR='$PWD/tmp' sh release/scripts/check-test-kernel.sh -d '$PWD/bad'"
+    atf_check -s exit:0 -o match:'no test-kernel option$' -e empty \
+        sh -c "cd '$w/release/scripts' && TMPDIR='$PWD/tmp' sh check-test-kernel.sh -d '$PWD/good'"
+    # The tree's own ledger, not another one: without it, a refusal.
+    mv world/sys/conf/test-options world/sys/conf/moved
+    atf_check -s exit:1 -o empty -e match:'ledger cannot be read' \
+        ./raw "$w/release/scripts/check-test-kernel.sh" -d "$PWD/good"
+    clean
+}
+
 atf_test_case usage
 usage_body()
 {
@@ -625,6 +661,7 @@ symbolic_links_body()
 atf_init_test_cases()
 {
     atf_add_test_case usage
+    atf_add_test_case default_ledger
     atf_add_test_case ledger
     atf_add_test_case staged_tree
     atf_add_test_case object_directory

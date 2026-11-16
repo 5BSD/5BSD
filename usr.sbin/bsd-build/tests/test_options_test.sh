@@ -14,7 +14,7 @@ LEDGER=/usr/src/sys/conf/test-options
 
 setup()
 {
-    [ -f /usr/src/Makefile ] || atf_fail 'these cases read the source tree in /usr/src'
+    [ -f /usr/src/Makefile ] || atf_skip 'source build frontend requires /usr/src'
     [ -f "$LEDGER" ] || atf_fail "$LEDGER is missing"
     check="$(atf_get_srcdir)/check-test-kernel.sh"
     [ -f "$check" ] || atf_fail 'check-test-kernel.sh not installed beside the test'
@@ -28,6 +28,13 @@ field()
     cut -d '|' -f "$1" rows
 }
 
+# LINT configurations config(8) cannot read on this tree, by architecture:
+# amd64 LINT names options and devices the retired subsystems took away
+# (/home/koryheard/5bsd-issues/2026-11-16-amd64-lint-does-not-configure.md).
+# Their text is still checked.  An entry that starts to configure fails, so
+# the list cannot go stale.
+LINT_UNCONFIGURABLE='amd64'
+
 atf_test_case config_sweep
 config_sweep_head()
 {
@@ -38,9 +45,13 @@ config_sweep_head()
 config_sweep_body()
 {
     setup
+    # config(8) is the guest world's.  The world and the tree under test are
+    # one build (the same sources as kernel-toolchain's config), and a
+    # config(8) older than the tree refuses it (%VERSREQ), which fails here.
     : > configured
     : > failed
-    : > notes-family
+    : > unconfigurable
+    : > fragments
     for confdir in /usr/src/sys/*/conf; do
         [ -d "$confdir" ] || continue
         arch=${confdir%/conf}
@@ -49,21 +60,44 @@ config_sweep_body()
             name=${file##*/}
             [ -f "$file" ] || continue
             [ -r "$file" ] || atf_fail "cannot read $file"
-            # A configuration has its own ident line.  NOTES lists every
-            # option for compile tests and is read through LINT; the LINT
-            # family is not read here (ledger_tree checks NOTES instead).
+            # Named non-configurations: NOTES is checked as text in
+            # ledger_tree, the rest are not kernel configurations.
             case $name in
             NOTES|DEFAULTS|*.hints|*.env|Makefile|BUILD.bazel) continue ;;
-            LINT|LINT-*) echo "$arch/$name" >> notes-family; continue ;;
             esac
-            grep -q '^[[:space:]]*ident[[:space:]]' "$file" || continue
+            lint=no
+            case $name in LINT|LINT-*) lint=yes ;; esac
+            if [ $lint = no ] && ! grep -q '^[[:space:]]*ident[[:space:]]' "$file"; then
+                # A fragment: some configuration or fragment includes it.
+                grep -l -E "^[[:space:]]*include[[:space:]]+\"?([^\"]*/)?$name\"?[[:space:]]*(#.*)?\$" \
+                    /usr/src/sys/*/conf/* /usr/src/sys/conf/* 2>/dev/null |
+                    grep -qv "^$file\$" ||
+                    atf_fail "$arch/$name has no ident and nothing includes it: neither a configuration nor a fragment"
+                echo "$arch/$name" >> fragments
+                continue
+            fi
+            if [ $lint = yes ]; then
+                # The LINT files' own text names no ledger option.
+                sed -e 's/#.*//' "$file" | tr ' \t,=' '\n\n\n\n' > lint-words
+                for option in $(field 1); do
+                    ! grep -qx "$option" lint-words ||
+                        atf_fail "$arch/$name names options $option"
+                done
+            fi
             out=$PWD/out/$arch/$name
             mkdir -p "$out"
             if ! (cd "$confdir" && config -s /usr/src/sys -d "$out" \
                 -I "$confdir" "$file") > "$out.log" 2>&1; then
+                case " $LINT_UNCONFIGURABLE " in
+                *" $arch "*) [ $lint = yes ] && { echo "$arch/$name" >> unconfigurable; continue; } ;;
+                esac
                 echo "$arch/$name" >> failed
                 continue
             fi
+            case " $LINT_UNCONFIGURABLE " in
+            *" $arch "*) [ $lint = no ] ||
+                atf_fail "$arch/$name configures: remove $arch from LINT_UNCONFIGURABLE" ;;
+            esac
             echo "$arch/$name" >> configured
             # The options it defines, from every generated header.
             cat "$out"/opt_*.h 2>/dev/null |
@@ -88,8 +122,13 @@ config_sweep_body()
     fi
     [ -s configured ] || atf_fail 'no configuration was read'
     echo "configurations read by config(8): $(wc -l < configured | tr -d ' ')"
-    [ ! -s notes-family ] ||
-        echo "NOT READ by config(8) (NOTES through LINT; see ledger_tree): $(tr '\n' ' ' < notes-family)"
+    echo "fragments (included, not read alone): $(tr '\n' ' ' < fragments)"
+    for arch in $LINT_UNCONFIGURABLE; do
+        grep -q "^$arch/" unconfigurable ||
+            atf_fail "$arch is in LINT_UNCONFIGURABLE but has no LINT that fails"
+    done
+    [ ! -s unconfigurable ] ||
+        echo "NOT READ by config(8) (recorded as unconfigurable; text checked): $(tr '\n' ' ' < unconfigurable)"
     # Each allowed configuration exists and was read.
     for option in $(field 1); do
         status=$(awk -F '|' -v o="$option" '$1 == o { print $2 }' rows)
@@ -123,8 +162,9 @@ ledger_tree_body()
         fi
     done
 
-    # NOTES (read through LINT, which config_sweep does not read) names
-    # no ledger option: a test-kernel option is never compile-tested there.
+    # NOTES names no ledger option: a test-kernel option is never
+    # compile-tested through LINT, which config_sweep reads only where it
+    # configures.
     for notes in /usr/src/sys/conf/NOTES /usr/src/sys/*/conf/NOTES; do
         [ -f "$notes" ] || continue
         sed -e 's/#.*//' "$notes" | tr ' \t,=' '\n\n\n\n' > notes-words
