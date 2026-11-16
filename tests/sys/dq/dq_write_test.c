@@ -464,10 +464,9 @@ static void
 answer_write(struct dqt_fixture *f, int i, uint64_t n, uint64_t off)
 {
 
-	dqt_lock(&f->c);
-	ATF_REQUIRE_MSG(dq_reply_write(f->c.q, f->c.held[i].id, n, off) == 0,
+	ATF_REQUIRE_MSG(dq_reply_write(f->c.q, dqt_held_id(&f->c, i), n,
+	    off) == 0,
 	    "dq_reply_write: %s", strerror(errno));
-	dqt_unlock(&f->c);
 }
 
 ATF_TC(short_write);
@@ -500,10 +499,8 @@ ATF_TC_BODY(short_write, tc)
 	ATF_CHECK_EQ(DQ_OP_WRITE, f.c.held[0].op);
 	dqt_unlock(&f.c);
 	errno = 0;
-	dqt_lock(&f.c);
-	ATF_CHECK_EQ(-1, dq_reply_write(f.c.q, f.c.held[0].id,
+	ATF_CHECK_EQ(-1, dq_reply_write(f.c.q, dqt_held_id(&f.c, 0),
 	    (uint64_t)max_io + 1, 0));
-	dqt_unlock(&f.c);
 	ATF_CHECK_EQ(EINVAL, errno);
 	answer_write(&f, 0, 5, 0);
 	dqt_collect(&ch, &r, sizeof(r));
@@ -560,9 +557,8 @@ ATF_TC_BODY(eintr_mid_chunk, tc)
 	ATF_CHECK_EQ_MSG((long)max_io, r.rv, "rv %ld errno %d", r.rv, r.err);
 	/* The late reply to the abandoned chunk is ESRCH. */
 	errno = 0;
-	dqt_lock(&f.c);
-	ATF_CHECK_EQ(-1, dq_reply_write(f.c.q, f.c.held[1].id, max_io, max_io));
-	dqt_unlock(&f.c);
+	ATF_CHECK_EQ(-1, dq_reply_write(f.c.q, dqt_held_id(&f.c, 1), max_io,
+	    max_io));
 	ATF_CHECK_EQ(ESRCH, errno);
 	dqt_hold(&f.c, false);
 	dqt_fixture_fini(&f);
@@ -733,9 +729,8 @@ ATF_TC_BODY(controller_errnos, tc)
 	a.off = 0;
 	dqt_spawn(&ch, child_big_pwrite, &a);
 	ATF_REQUIRE(dqt_wait_held(&f.c, 1, DQT_WAIT_MS));
-	dqt_lock(&f.c);
-	ATF_REQUIRE_EQ(0, dq_reply(f.c.q, f.c.held[0].id, ENOSPC, NULL, 0));
-	dqt_unlock(&f.c);
+	ATF_REQUIRE_EQ(0, dq_reply(f.c.q, dqt_held_id(&f.c, 0), ENOSPC, NULL,
+	    0));
 	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(ENOSPC, r.err);
 	dqt_spawn(&ch, child_big_pwrite, &a);
@@ -745,21 +740,18 @@ ATF_TC_BODY(controller_errnos, tc)
 		struct dq_write_reply wr = { 0, 0 };
 
 		errno = 0;
-		dqt_lock(&f.c);
-		ATF_CHECK_EQ(-1, dq_reply(f.c.q, f.c.held[1].id, ENOSPC, &wr,
+		ATF_CHECK_EQ(-1, dq_reply(f.c.q, dqt_held_id(&f.c, 1), ENOSPC,
+		    &wr,
 		    sizeof(wr)));
-		dqt_unlock(&f.c);
 		ATF_CHECK_EQ(EINVAL, errno);
 		/* So is a reply body of the wrong size. */
 		errno = 0;
-		dqt_lock(&f.c);
-		ATF_CHECK_EQ(-1, dq_reply(f.c.q, f.c.held[1].id, 0, &wr, 8));
-		dqt_unlock(&f.c);
+		ATF_CHECK_EQ(-1, dq_reply(f.c.q, dqt_held_id(&f.c, 1), 0, &wr,
+		    8));
 		ATF_CHECK_EQ(EINVAL, errno);
 	}
-	dqt_lock(&f.c);
-	ATF_REQUIRE_EQ(0, dq_reply(f.c.q, f.c.held[1].id, EPIPE, NULL, 0));
-	dqt_unlock(&f.c);
+	ATF_REQUIRE_EQ(0, dq_reply(f.c.q, dqt_held_id(&f.c, 1), EPIPE, NULL,
+	    0));
 	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.rv);
 	ATF_CHECK_EQ(EIO, r.err);
@@ -865,14 +857,10 @@ ATF_TC_BODY(reply_offset_and_zero, tc)
 	ATF_CHECK_EQ(0, f.c.wr[0].flags & DQ_WRITE_F_APPEND);
 	dqt_unlock(&f.c);
 	errno = 0;
-	dqt_lock(&f.c);
-	ATF_CHECK_EQ(-1, dq_reply_write(f.c.q, f.c.held[0].id, 10, 101));
-	dqt_unlock(&f.c);
+	ATF_CHECK_EQ(-1, dq_reply_write(f.c.q, dqt_held_id(&f.c, 0), 10, 101));
 	ATF_CHECK_EQ(EINVAL, errno);
 	/* Still in flight: the correct offset with nothing written. */
-	dqt_lock(&f.c);
-	ATF_CHECK_EQ(0, dq_reply_write(f.c.q, f.c.held[0].id, 0, 100));
-	dqt_unlock(&f.c);
+	ATF_CHECK_EQ(0, dq_reply_write(f.c.q, dqt_held_id(&f.c, 0), 0, 100));
 	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.rv);
 	ATF_CHECK_EQ(EIO, r.err);

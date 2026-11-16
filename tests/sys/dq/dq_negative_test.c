@@ -570,14 +570,10 @@ ATF_TC_BODY(reply_errors, tc)
 	ATF_CHECK_EQ(DQ_OP_READ, f.c.held[0].op);
 	dqt_unlock(&f.c);
 	errno = 0;
-	dqt_lock(&f.c);
-	ATF_CHECK_EQ(-1, dq_reply(f.c.q, f.c.held[0].id, 0, data, 101));
-	dqt_unlock(&f.c);
+	ATF_CHECK_EQ(-1, dq_reply(f.c.q, dqt_held_id(&f.c, 0), 0, data, 101));
 	ATF_CHECK_EQ(EINVAL, errno);
 	errno = 0;
-	dqt_lock(&f.c);
-	ATF_CHECK_EQ(-1, dq_reply(f.c.q, f.c.held[0].id, EIO, data, 1));
-	dqt_unlock(&f.c);
+	ATF_CHECK_EQ(-1, dq_reply(f.c.q, dqt_held_id(&f.c, 0), EIO, data, 1));
 	ATF_CHECK_EQ(EINVAL, errno);
 	dqt_stats(&f.c, &st);
 	dqt_lock(&f.c);
@@ -589,9 +585,7 @@ ATF_TC_BODY(reply_errors, tc)
 	ATF_CHECK_EQ(EACCES, r.err);
 	/* Answered: a second reply is late. */
 	errno = 0;
-	dqt_lock(&f.c);
-	ATF_CHECK_EQ(-1, dq_reply(f.c.q, f.c.held[0].id, 0, NULL, 0));
-	dqt_unlock(&f.c);
+	ATF_CHECK_EQ(-1, dq_reply(f.c.q, dqt_held_id(&f.c, 0), 0, NULL, 0));
 	ATF_CHECK_EQ(ESRCH, errno);
 
 	/* A GETATTR in flight: exactly one identity that validates. */
@@ -605,26 +599,21 @@ ATF_TC_BODY(reply_errors, tc)
 	ATF_REQUIRE(bad != NULL);
 	*bad = f.ident;
 	errno = 0;
-	dqt_lock(&f.c);
-	ATF_CHECK_EQ(-1, dq_reply(f.c.q, f.c.held[1].id, 0, bad, 10));
-	dqt_unlock(&f.c);
+	ATF_CHECK_EQ(-1, dq_reply(f.c.q, dqt_held_id(&f.c, 1), 0, bad, 10));
 	ATF_CHECK_EQ(EINVAL, errno);
 	bad->di_mode = S_IFDIR | 0755;
 	errno = 0;
-	dqt_lock(&f.c);
-	ATF_CHECK_EQ(-1, dq_reply(f.c.q, f.c.held[1].id, 0, bad, sizeof(*bad)));
-	dqt_unlock(&f.c);
+	ATF_CHECK_EQ(-1, dq_reply(f.c.q, dqt_held_id(&f.c, 1), 0, bad,
+	    sizeof(*bad)));
 	ATF_CHECK_EQ(EINVAL, errno);
 	errno = 0;
-	dqt_lock(&f.c);
-	ATF_CHECK_EQ(-1, dq_reply(f.c.q, f.c.held[1].id, EIO, bad, sizeof(*bad)));
-	dqt_unlock(&f.c);
+	ATF_CHECK_EQ(-1, dq_reply(f.c.q, dqt_held_id(&f.c, 1), EIO, bad,
+	    sizeof(*bad)));
 	ATF_CHECK_EQ(EINVAL, errno);
 	*bad = f.ident;
 	bad->di_size = 4242;
-	dqt_lock(&f.c);
-	ATF_CHECK_EQ(0, dq_reply(f.c.q, f.c.held[1].id, 0, bad, sizeof(*bad)));
-	dqt_unlock(&f.c);
+	ATF_CHECK_EQ(0, dq_reply(f.c.q, dqt_held_id(&f.c, 1), 0, bad,
+	    sizeof(*bad)));
 	dqt_collect(&ch, &sr, sizeof(sr));
 	ATF_CHECK_EQ(0, sr.rr.rv);
 	ATF_CHECK_EQ(4242, sr.st.st_size);	/* the reply became the identity */

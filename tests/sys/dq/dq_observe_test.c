@@ -169,9 +169,8 @@ ATF_TC_BODY(list_queues, tc)
 		ATF_REQUIRE(find_queue(svc, st.ds_queue_id, &qi));
 		ATF_CHECK_EQ(0, qi.qi_pending);
 		ATF_CHECK_EQ(1, qi.qi_inflight);
-		dqt_lock(&c);
-		ATF_REQUIRE_EQ(0, dq_reply(c.q, c.held[0].id, 0, data, 100));
-		dqt_unlock(&c);
+		ATF_REQUIRE_EQ(0, dq_reply(c.q, dqt_held_id(&c, 0), 0, data,
+		    100));
 		status = dqt_wait(&ch, &r, sizeof(r));
 		ATF_CHECK(status == 0);
 		ATF_CHECK_EQ(100, r.rv);

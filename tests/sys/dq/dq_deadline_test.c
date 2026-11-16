@@ -104,9 +104,7 @@ ATF_TC_BODY(small_deadline_eio, tc)
 	ATF_CHECK_EQ(1, c.events[DQ_OP_INTERRUPT]);
 	dqt_unlock(&c);
 	errno = 0;
-	dqt_lock(&c);
-	ATF_CHECK_EQ(-1, dq_reply(c.q, c.held[0].id, 0, data, 100));
-	dqt_unlock(&c);
+	ATF_CHECK_EQ(-1, dq_reply(c.q, dqt_held_id(&c, 0), 0, data, 100));
 	ATF_CHECK_EQ(ESRCH, errno);
 	dqt_fini(&c);
 	(void)close(oracle);

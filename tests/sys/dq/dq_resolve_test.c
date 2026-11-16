@@ -1088,9 +1088,7 @@ ATF_TC_BODY(slot_revalidation, tc)
 	/* Refusal first, then release: no consultation slips through. */
 	dqt_resolve_fail(&c, "rt-sv-B2", EACCES);
 	dqt_resolve_hold(&c, "", 0);
-	dqt_lock(&c);
-	ATF_REQUIRE_EQ(0, dq_reply_resolve_pass(c.q, c.held[0].id));
-	dqt_unlock(&c);
+	ATF_REQUIRE_EQ(0, dq_reply_resolve_pass(c.q, dqt_held_id(&c, 0)));
 	memset(&r, 0, sizeof(r));
 	dqt_attach_collect(&ch, &r, sizeof(r));
 	i = dqt_find_resolve(&c, "rt-sv-B2", DQ_ROP_RENAME, 0);
@@ -1675,9 +1673,8 @@ ATF_TC_BODY(swapon_consult_ahead, tc)
 		dqt_sync_post(a.s.tochild[1]);
 		ATF_REQUIRE(dqt_sync_wait(a.s.toparent[0], DQT_WAIT_MS));
 		dqt_resolve_hold(&c, "", 0);
-		dqt_lock(&c);
-		ATF_REQUIRE_EQ(0, dq_reply_resolve_pass(c.q, c.held[0].id));
-		dqt_unlock(&c);
+		ATF_REQUIRE_EQ(0, dq_reply_resolve_pass(c.q, dqt_held_id(&c,
+		    0)));
 		memset(&r, 0, sizeof(r));
 		dqt_attach_collect(&ch, &r, sizeof(r));
 		ATF_CHECK_EQ_MSG(-1, r.r[0].rv, "%s variant: swapon succeeded",

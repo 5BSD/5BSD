@@ -267,25 +267,17 @@ ATF_TC_BODY(reply_rules, tc)
 	dqt_unlock(&c);
 	memset(&out, 0, sizeof(out));
 	errno = 0;
-	dqt_lock(&c);
-	ATF_CHECK_EQ(-1, dq_reply_ioctl(c.q, c.held[0].id, 0, &out, 8));
-	dqt_unlock(&c);
+	ATF_CHECK_EQ(-1, dq_reply_ioctl(c.q, dqt_held_id(&c, 0), 0, &out, 8));
 	ATF_CHECK_EQ(EINVAL, errno);
 	errno = 0;
-	dqt_lock(&c);
-	ATF_CHECK_EQ(-1, dq_reply_ioctl(c.q, c.held[0].id, 0, NULL, 0));
-	dqt_unlock(&c);
+	ATF_CHECK_EQ(-1, dq_reply_ioctl(c.q, dqt_held_id(&c, 0), 0, NULL, 0));
 	ATF_CHECK_EQ(EINVAL, errno);
 	errno = 0;
-	dqt_lock(&c);
-	ATF_CHECK_EQ(-1, dq_reply_ioctl(c.q, c.held[0].id, ENXIO, &out,
+	ATF_CHECK_EQ(-1, dq_reply_ioctl(c.q, dqt_held_id(&c, 0), ENXIO, &out,
 	    sizeof(out)));
-	dqt_unlock(&c);
 	ATF_CHECK_EQ(EINVAL, errno);
-	dqt_lock(&c);
-	ATF_CHECK_EQ(0, dq_reply_ioctl(c.q, c.held[0].id, 0, &out,
+	ATF_CHECK_EQ(0, dq_reply_ioctl(c.q, dqt_held_id(&c, 0), 0, &out,
 	    sizeof(out)));
-	dqt_unlock(&c);
 	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(0, r.rv);
 
@@ -297,13 +289,10 @@ ATF_TC_BODY(reply_rules, tc)
 	ATF_CHECK_EQ(sizeof(struct dqt_in), o->last_ioctl.dio_len);
 	dqt_unlock(&c);
 	errno = 0;
-	dqt_lock(&c);
-	ATF_CHECK_EQ(-1, dq_reply_ioctl(c.q, c.held[1].id, 0, &out, 8));
-	dqt_unlock(&c);
+	ATF_CHECK_EQ(-1, dq_reply_ioctl(c.q, dqt_held_id(&c, 1), 0, &out, 8));
 	ATF_CHECK_EQ(EINVAL, errno);
-	dqt_lock(&c);
-	ATF_CHECK_EQ(0, dq_reply_ioctl(c.q, c.held[1].id, EPIPE, NULL, 0));
-	dqt_unlock(&c);
+	ATF_CHECK_EQ(0, dq_reply_ioctl(c.q, dqt_held_id(&c, 1), EPIPE, NULL,
+	    0));
 	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(EIO, r.err);
 	dqt_hold(&c, false);

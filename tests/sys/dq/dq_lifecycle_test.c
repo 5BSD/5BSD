@@ -313,9 +313,7 @@ ATF_TC_BODY(revoke_wakes_waiter, tc)
 
 	/* The event left the in-flight tree with the revoke. */
 	errno = 0;
-	dqt_lock(&c);
-	ATF_CHECK_EQ(-1, dq_reply(c.q, c.held[0].id, 0, data, 100));
-	dqt_unlock(&c);
+	ATF_CHECK_EQ(-1, dq_reply(c.q, dqt_held_id(&c, 0), 0, data, 100));
 	ATF_CHECK_EQ(ESRCH, errno);
 	dqt_stats(&c, &st);
 	ATF_CHECK_EQ(1, st.ds_late_replies);

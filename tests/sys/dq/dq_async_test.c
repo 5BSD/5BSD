@@ -389,7 +389,7 @@ ATF_TC_BODY(shrink_fails_pending, tc)
 	struct dirty_res r;
 	struct dq_ident_file *id;
 	uint32_t op;
-	int status;
+	int error, rv, status;
 
 	setup(&f, 5, DQ_DEADLINE_DEFAULT, 0);
 	memset(&a, 0, sizeof(a));
@@ -418,10 +418,12 @@ ATF_TC_BODY(shrink_fails_pending, tc)
 	free(id);
 	errno = 0;
 	dqt_lock(&f.c);
-	ATF_CHECK_EQ(-1, dq_reply_write(f.c.q, f.c.held[0].id,
-	    f.c.held[0].len, f.c.held[0].offset));
+	rv = dq_reply_write(f.c.q, f.c.held[0].id, f.c.held[0].len,
+	    f.c.held[0].offset);
+	error = errno;		/* before the unlock can change it */
 	dqt_unlock(&f.c);
-	ATF_CHECK_EQ(ESRCH, errno);
+	ATF_CHECK_EQ(-1, rv);
+	ATF_CHECK_EQ(ESRCH, error);
 	ATF_CHECK(dqt_wait_interrupts(&f.c, 1, DQT_WAIT_MS));
 	dqt_lock(&f.c);
 	ATF_CHECK_EQ(f.c.held[0].id, f.c.interrupted[0]);
