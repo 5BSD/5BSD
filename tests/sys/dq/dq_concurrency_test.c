@@ -335,12 +335,15 @@ ATF_TC_BODY(reply_racing_signal, tc)
 	dqt_init(&c);
 	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
 
+	/*
+	 * The reply leaves about 2 ms after the READ is read, and the timers
+	 * run from 1 ms to 4.5 ms: some fire before the reply and some after,
+	 * however fast the guest answers.  More rounds until both outcomes
+	 * have been seen.
+	 */
+	c.reply_delay_ms = 2;
 	ndata = neintr = 0;
 	memset(&a, 0, sizeof(a));
-	/*
-	 * Timers from 1 ms up, so that some fire before the reply and some
-	 * after; more rounds until both outcomes have been seen.
-	 */
 	for (i = 0; i < RACE_ROUNDS_MAX && (i < 20 || ndata == 0 ||
 	    neintr == 0); i++) {
 		a.fd = o->fd;
