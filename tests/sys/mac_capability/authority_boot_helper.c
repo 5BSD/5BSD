@@ -2126,6 +2126,8 @@ credential_lifetime_test(int issuer, bool clear)
 		close(gate[1]);
 		CHECK(op(CAP_AUTH_INSTALL, token, NULL) == 0);
 		CHECK(info().identity == token_info(token).identity);
+		/* The inherited token would keep the authority by itself. */
+		close(token);
 		/* Made with the credential that records the authority. */
 		fd = socket(AF_UNIX, SOCK_DGRAM, 0);
 		CHECK(fd >= 0);
