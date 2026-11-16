@@ -33,8 +33,8 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	built by buildkernel again when tests are enabled and ship with the
 	mac-capability-tests package, never with the kernel package.  They
 	install in /usr/tests/sys/mac_capability/fixtures, off the kernel
-	module path (the 20261011 exclusion from /boot/kernel stands), and the
-	test cases load them by absolute path; MAC_CAPABILITY_FIXTURE_DIR and
+	module path (the 20261011 exclusion from /boot/kernel stands; owner
+	decision, 2026-11-16), and the test cases load them by absolute path; MAC_CAPABILITY_FIXTURE_DIR and
 	the explicit "make fixtures" build are gone.  The stale plane-free
 	tests/sys/mac_capability/run_tests.sh is retired; the suite runs under
 	kyua in the VM tiers (docs/book/src/develop/testing.md).

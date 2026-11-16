@@ -11,6 +11,11 @@ they install in /usr/tests/sys/mac_capability/fixtures, off the kernel
 module path, and are packaged in mac-capability-tests, never in a kernel
 package.  Production code does not include their headers.
 
+Location: owner decision, 2026-11-16 -- the fixtures stay under
+/usr/tests/sys/mac_capability/fixtures and are never installed in
+/boot/kernel or anywhere else on the kernel module path (this keeps the
+20261011 exclusion of e9540002d5e).
+
 The cases load them by absolute path; no loader configuration is needed.
 A keystore or kernelstore case loads its fixture the first time it connects
 (require_fixture() in mac_capability_test_helpers.h), and the fixture stays
