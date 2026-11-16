@@ -1367,17 +1367,6 @@ control_socket_lookup_root_only_cleanup()
 	[ -z "$sock" ] || rm -f "$sock"
 }
 
-# First reply word (status) of op 15 sent with a 4-byte payload, in decimal.
-lookup_status_with_payload()
-{
-	{
-		printf '\017\000\000\000'
-		printf '\000\000\000\000'
-		printf '\004\000\000\000'
-		printf 'JUNK'
-	} | nc -U "$1" | od -A n -t u4 -N 4 | awk '{ print $1 }'
-}
-
 atf_test_case control_socket_lookup_disabled cleanup
 control_socket_lookup_disabled_head()
 {
@@ -1399,9 +1388,9 @@ control_socket_lookup_disabled_body()
 	# (a refusal carrying one would exit 76).
 	atf_check -s exit:69 -e match:"Operation not supported" \
 	    "$capd_lookup_exec_bin" -s "$capsule_sock" /usr/bin/true
-	# Same answer as an unknown operation, payload or not (ENOTSUP = 45).
-	[ "$(lookup_status_with_payload "$capsule_sock")" = 45 ] ||
-	    atf_fail "a disabled lookup with a payload did not answer ENOTSUP"
+	# Same answer as an unknown operation, with a payload too.
+	atf_check -s exit:69 -e match:"Operation not supported" \
+	    "$capd_lookup_exec_bin" -P -s "$capsule_sock" /usr/bin/true
 }
 control_socket_lookup_disabled_cleanup()
 {
@@ -1418,8 +1407,10 @@ control_socket_lookup_payload_rejected_head()
 control_socket_lookup_payload_rejected_body()
 {
 	require_pidfile
-	[ "$(lookup_status_with_payload "$capsule_sock")" = 22 ] ||
-	    atf_fail "a lookup with a payload was not refused with EINVAL"
+	capd_find_lookup_exec
+	# EINVAL, with no descriptor attached (a refusal carrying one exits 76).
+	atf_check -s exit:69 -e match:"Invalid argument" \
+	    "$capd_lookup_exec_bin" -P -s "$capsule_sock" /usr/bin/true
 	capsule_ctl_expect status "running"
 }
 control_socket_lookup_payload_rejected_cleanup()
