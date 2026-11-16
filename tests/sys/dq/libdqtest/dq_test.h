@@ -16,9 +16,11 @@
  * the preloaded modules (linux64, dtraceall, mac_test_hooks, ...) and the
  * programs they need are present, and a skip there is not a pass.  A
  * missing prerequisite fails.  The only skips are by architecture
- * (require.arch), "race not exercised" on a one-CPU machine, and a case
+ * (require.arch), "race not exercised" on a one-CPU machine, a case
  * deferred to another VM tier that says so by name (DEFERRED_*_TIER, as
- * in dq_bootstrap_test), each taken before any check (atf_tc_skip after
+ * in dq_bootstrap_test), and a kernel option the test kernel is not built
+ * with (dq_resolve kernel_consumer_quotaon: options QUOTA), each taken
+ * before any check (atf_tc_skip after
  * a failed ATF_CHECK reports the case skipped and hides the failure).
  *
  * The oracle is a real temporary file holding the same bytes, whose

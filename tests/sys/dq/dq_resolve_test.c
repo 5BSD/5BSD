@@ -1108,10 +1108,10 @@ ATF_TC_BODY(slot_revalidation, tc)
 
 /*
  * Kernel-consumer paths (class 2): swapon/swapoff of an md vnode device,
- * quotactl(Q_QUOTAON)'s quota file, unmount of a tmpfs, a nullfs mount's
+ * unmount of a tmpfs, a nullfs mount's
  * mount point and target, extattrctl with a NULL file name.  A row whose
  * prerequisite is missing fails (one skip policy: a row not taken is not a
- * pass), except quotactl's, which needs a file system with quotas.
+ * pass).  quotactl(Q_QUOTAON)'s quota file is kernel_consumer_quotaon.
  */
 #define	KC_MD_SAVED	"rt-md.unit"
 
@@ -1123,8 +1123,8 @@ struct kc_arg {
 };
 
 struct kc_res {
-	struct dqt_rr	 swapon, swapoff, quotaon, unmount, nullmount,
-			 nullunmount, extattrctl;
+	struct dqt_rr	 swapon, swapoff, unmount, nullmount, nullunmount,
+			 extattrctl;
 };
 
 static int
@@ -1158,8 +1158,6 @@ child_kconsumers(void *arg, void *result)
 		if (r->swapon.rv == 0)
 			DQT_RR(r->swapoff, swapoff(a->md, 0));
 	}
-	DQT_RR(r->quotaon, quotactl(".", QCMD(Q_QUOTAON, USRQUOTA), 0,
-	    __DECONST(char *, "rt-quota.user")));
 	if (a->tmpfs[0] != '\0')
 		DQT_RR(r->unmount, unmount(a->tmpfs, 0));
 	DQT_RR(r->nullmount, nullfs_mount(a->nullsrc, a->nullmnt));
@@ -1228,9 +1226,9 @@ ATF_TC_WITH_CLEANUP(kernel_consumer_rows);
 ATF_TC_HEAD(kernel_consumer_rows, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "class-2 consultations: swapon and "
-	    "swapoff of an md device, quotactl Q_QUOTAON's quota file (UFS), "
-	    "unmount of a tmpfs, a nullfs mount's mount point and target, "
-	    "extattrctl with a NULL file name (no EFAULT)");
+	    "swapoff of an md device, unmount of a tmpfs, a nullfs mount's "
+	    "mount point and target, extattrctl with a NULL file name (no "
+	    "EFAULT)");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(kernel_consumer_rows, tc)
@@ -1292,18 +1290,6 @@ ATF_TC_BODY(kernel_consumer_rows, tc)
 			    "swapoff's)", a.md, count_kconsumer(&c, a.md + 5, 0));
 		}
 	}
-	/*
-	 * The quota file is opened by the file system's quotaon (ufs_quota.c),
-	 * so the row needs UFS with options QUOTA.  The work directory of
-	 * the test guests has no quotas: this row is not taken there, and
-	 * says so in the output.
-	 */
-	if (r.quotaon.rv == -1 && (r.quotaon.err == EOPNOTSUPP ||
-	    r.quotaon.err == EINVAL))
-		printf("row not taken: quotas unavailable here (%s)\n",
-		    strerror(r.quotaon.err));
-	else
-		check_kconsumer(&c, "rt-quota.user", "quotactl Q_QUOTAON");
 	if (a.tmpfs[0] != '\0') {
 		ATF_CHECK_EQ_MSG(0, r.unmount.rv, "unmount: %s",
 		    strerror(r.unmount.err));
@@ -1332,6 +1318,108 @@ ATF_TC_CLEANUP(kernel_consumer_rows, tc)
 	(void)system("swapoff /dev/$(cat " KC_MD_SAVED " 2>/dev/null) "
 	    "2>/dev/null");
 	fp = fopen(KC_MD_SAVED, "r");
+	if (fp == NULL)
+		return;
+	if (fscanf(fp, "%31s", unit) == 1) {
+		(void)snprintf(cmd, sizeof(cmd), "mdconfig -d -u %s", unit);
+		(void)system(cmd);
+	}
+	(void)fclose(fp);
+}
+
+/*
+ * kernel_consumer_quotaon: the quota file named to quotactl(Q_QUOTAON) is
+ * opened by the file system (ufs_quota.c quotaon), a class-2 consumer.
+ * It needs a kernel with options QUOTA, which the GENERIC test kernel does
+ * not have; that is the case's one skip, taken before anything is done
+ * (kern.features.ufs_quota, set by options QUOTA).  With it, the case
+ * makes its own UFS (md swap, newfs, mount -o userquota) and accepts only
+ * success.
+ */
+#define	QC_MD_SAVED	"rt-qmd.unit"
+#define	QC_MNT		"rt-qmnt"
+
+struct qc_arg {
+	char		 mnt[PATH_MAX];
+	char		 qfile[PATH_MAX];
+};
+
+struct qc_res {
+	struct dqt_rr	 quotaon, quotaoff;
+};
+
+static void
+child_quotaon(void *arg, void *result)
+{
+	struct qc_arg *a = arg;
+	struct qc_res *r = result;
+
+	DQT_RR(r->quotaon, quotactl(a->mnt, QCMD(Q_QUOTAON, USRQUOTA), 0,
+	    a->qfile));
+	if (r->quotaon.rv == 0)
+		DQT_RR(r->quotaoff, quotactl(a->mnt, QCMD(Q_QUOTAOFF,
+		    USRQUOTA), 0, NULL));
+}
+
+ATF_TC_WITH_CLEANUP(kernel_consumer_quotaon);
+ATF_TC_HEAD(kernel_consumer_quotaon, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "class-2 consultation: the quota file "
+	    "of quotactl Q_QUOTAON on a UFS mounted with userquota (needs "
+	    "options QUOTA)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.progs", "mdconfig newfs");
+}
+ATF_TC_BODY(kernel_consumer_quotaon, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_achild ch;
+	struct qc_arg a;
+	struct qc_res r;
+	char cwd[PATH_MAX], out[64], cmd[PATH_MAX + 64];
+	size_t len;
+	int fd, on;
+
+	len = sizeof(on);
+	if (sysctlbyname("kern.features.ufs_quota", &on, &len, NULL, 0) != 0)
+		atf_tc_skip("kernel without options QUOTA (no "
+		    "kern.features.ufs_quota): quotaon cannot open a file");
+	ATF_REQUIRE(getcwd(cwd, sizeof(cwd)) != NULL);
+	ATF_REQUIRE_EQ_MSG(0, run_cmd("mdconfig -a -t swap -s 32m", out,
+	    sizeof(out)), "mdconfig: %s", out);
+	ATF_REQUIRE_MSG(strncmp(out, "md", 2) == 0, "mdconfig: %s", out);
+	atf_utils_create_file(QC_MD_SAVED, "%s\n", out);
+	(void)snprintf(cmd, sizeof(cmd), "newfs -U /dev/%s >/dev/null", out);
+	ATF_REQUIRE_EQ_MSG(0, system(cmd), "%s", cmd);
+	ATF_REQUIRE_EQ(0, mkdir(QC_MNT, 0755));
+	(void)snprintf(cmd, sizeof(cmd), "mount -o userquota /dev/%s %s", out,
+	    QC_MNT);
+	ATF_REQUIRE_EQ_MSG(0, system(cmd), "%s", cmd);
+	memset(&a, 0, sizeof(a));
+	(void)snprintf(a.mnt, sizeof(a.mnt), "%s/%s", cwd, QC_MNT);
+	(void)snprintf(a.qfile, sizeof(a.qfile), "%s/rt-quota.user", a.mnt);
+	fd = open(a.qfile, O_CREAT | O_RDWR, 0600);
+	ATF_REQUIRE_MSG(fd != -1, "%s: %s", a.qfile, strerror(errno));
+	(void)close(fd);
+
+	dqt_init(&c);
+	dqt_attach_spawn(&c, &ch, child_quotaon, &a);
+	memset(&r, 0, sizeof(r));
+	dqt_attach_collect(&ch, &r, sizeof(r));
+	ATF_CHECK_EQ_MSG(0, r.quotaon.rv, "quotactl Q_QUOTAON: %s",
+	    strerror(r.quotaon.err));
+	ATF_CHECK_EQ_MSG(0, r.quotaoff.rv, "quotactl Q_QUOTAOFF: %s",
+	    strerror(r.quotaoff.err));
+	check_kconsumer(&c, "rt-quota.user", "quotactl Q_QUOTAON");
+	dqt_fini(&c);
+}
+ATF_TC_CLEANUP(kernel_consumer_quotaon, tc)
+{
+	char unit[32], cmd[128];
+	FILE *fp;
+
+	(void)system("umount -f " QC_MNT " 2>/dev/null");
+	fp = fopen(QC_MD_SAVED, "r");
 	if (fp == NULL)
 		return;
 	if (fscanf(fp, "%31s", unit) == 1) {
@@ -1718,6 +1806,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, two_path_calls);
 	ATF_TP_ADD_TC(tp, slot_revalidation);
 	ATF_TP_ADD_TC(tp, kernel_consumer_rows);
+	ATF_TP_ADD_TC(tp, kernel_consumer_quotaon);
 	ATF_TP_ADD_TC(tp, attached_kernel_paths);
 	ATF_TP_ADD_TC(tp, swapon_consult_ahead);
 	ATF_TP_ADD_TC(tp, unmount_refused);
