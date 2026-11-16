@@ -798,19 +798,44 @@ ATF_TC_HEAD(kldunload_refused, tc)
 	atf_tc_set_md_var(tc, "descr", "the dq module never unloads");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
+/* Whether module modid belongs to linker file fileid. */
+static bool
+module_in_file(int fileid, int modid)
+{
+	int m;
+
+	for (m = kldfirstmod(fileid); m > 0; m = modfnext(m))
+		if (m == modid)
+			return (true);
+	return (false);
+}
+
 ATF_TC_BODY(kldunload_refused, tc)
 {
-	int fileid, q;
+	int fileid, modid, q;
 
 	q = dqt_open_queue();
-	ATF_REQUIRE_MSG(modfind("dq") != -1, "no dq module is registered: %s",
+	modid = modfind("dq");
+	ATF_REQUIRE_MSG(modid != -1, "no dq module is registered: %s",
 	    strerror(errno));
 	fileid = kldfind("dq.ko");
 	if (fileid == -1) {
-		/* Compiled in: there is no file to unload. */
+		/*
+		 * Compiled in: no file holds dq but the kernel, whose own
+		 * unload is refused before any module is asked.  What can be
+		 * checked is that dq is the kernel's: the module list of the
+		 * kernel file contains it.  This is the GENERIC case; the
+		 * EBUSY of MOD_UNLOAD is checked when dq is a module.
+		 */
 		ATF_CHECK_EQ_MSG(ENOENT, errno, "kldfind dq.ko: %s",
 		    strerror(errno));
-		printf("dq is compiled into the kernel\n");
+		fileid = kldfind("kernel");
+		ATF_REQUIRE_MSG(fileid != -1, "kldfind kernel: %s",
+		    strerror(errno));
+		ATF_CHECK_MSG(module_in_file(fileid, modid), "dq (module %d) "
+		    "is neither dq.ko's nor the kernel's", modid);
+		printf("dq is compiled into the kernel: MOD_UNLOAD not "
+		    "reachable\n");
 	} else {
 		/*
 		 * Loaded from dq.ko: MOD_UNLOAD answers EBUSY.  An EPERM
