@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # The Linux-ABI half of the fdops regression test: linux_fdops.c is a
 # freestanding static amd64 Linux program (no Linux libc) built here, as the
 # tests/sys/kern/linux_*_test.sh programs are, and run under linux64.ko.

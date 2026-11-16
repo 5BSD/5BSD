@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Anonymous-pipe open-description tests. Disposable guests only. */
 #define _GNU_SOURCE
 #include <sys/stat.h>

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * RESOLVE for sockets (stage 1c-ii, D139, D155): socket(2) and
  * socketpair(2) of an attached process post one event each, after the
  * protocol lookup, the capability-mode test and the jail's address-family

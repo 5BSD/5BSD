@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Compare package-local hardlink serialization with pkg over a shared stage."""
 import argparse
 import hashlib

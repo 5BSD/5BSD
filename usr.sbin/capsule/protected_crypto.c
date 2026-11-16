@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Original PID 1 supplies only the recipient selected by boot policy. */
 #include <sys/types.h>
 #include <sys/capsicum.h>

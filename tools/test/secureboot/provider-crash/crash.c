@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Controlled failure only. Never compiled into the installed provider. */
 #include <sys/types.h>
 #include <sys/event.h>

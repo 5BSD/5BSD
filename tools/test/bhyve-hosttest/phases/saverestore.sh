@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Phase saverestore (sr2): bhyve save/restore in depth, vendor-neutral.
 #  A) ht-sr1 (2 vCPU, 1 GiB): guest holds HT_SR_MB (256) MiB of a seeded
 #     pattern in one process and on disk; suspend -> checkpoint A; two

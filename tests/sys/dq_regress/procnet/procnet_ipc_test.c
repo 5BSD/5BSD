@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Named IPC as processes that are NOT attached to a dq(4) controller see
  * it today (dq-boundary design, part b0, section 6.1 items 10, 14, 18).
  *

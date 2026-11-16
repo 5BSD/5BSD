@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Link-retention checks; this does not establish live DTrace probe firing. */
 #include <sys/types.h>
 #include <sys/wait.h>

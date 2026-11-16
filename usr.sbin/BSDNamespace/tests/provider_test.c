@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Plane tests for bsdnamespace(8)'s per-client bsd.namespace.v1 server.
  *
  * A real capability channel is created through /dev/mac_capability; bsdnamespace's

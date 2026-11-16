@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Dedicated disposable-VM adapter; never mount or run its body on the host. */
 #include <sys/types.h>
 #include <sys/wait.h>

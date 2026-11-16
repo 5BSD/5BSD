@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Pins for the supervisor-legitimacy work (slice lg-0).  Every case records
  * what the kernel does today with /dev/dq, a queue descriptor held by a
  * process that did not open it, the dq.observe connect gate and the

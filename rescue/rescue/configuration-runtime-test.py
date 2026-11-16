@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Configured rescue dispatcher and basic private-input behavior.
 
 The configuration is an explicit declared input, not inferred from whichever

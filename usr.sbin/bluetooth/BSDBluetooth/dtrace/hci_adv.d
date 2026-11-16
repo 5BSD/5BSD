@@ -1,4 +1,10 @@
 #!/usr/sbin/dtrace -s
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * hci_adv.d - trace the LE advertising and scanning lifecycle in blued.
  *

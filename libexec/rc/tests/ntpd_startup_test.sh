@@ -1,6 +1,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # rc.d/ntpd must start a non-root ntpd without su(1): su -m runs root's login
 # shell, which switchboard's ntpd grant does not pin, so mac_ntpd(4) would
 # refuse the clock to that ntpd.  daemon(8) -u executes ntpd directly.  With

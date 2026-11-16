@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 set -eu
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT HUP INT TERM

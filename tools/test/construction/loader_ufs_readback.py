@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Native loader UFS readback helper for construction tests; no boot claims.
 
 The test wraps its transport in a newly generated verity tree solely to reuse

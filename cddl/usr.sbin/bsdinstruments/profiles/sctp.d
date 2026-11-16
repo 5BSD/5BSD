@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* Print every SCTP send and receive event with IP payload length. */
 
 sctp:::send

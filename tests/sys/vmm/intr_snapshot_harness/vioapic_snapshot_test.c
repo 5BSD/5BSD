@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Model tests for the STRUCT_VIOAPIC snapshot codec: the guest-writable
  * 'id' register must round-trip, records predating the 'id' field must be
  * rejected outright (current-only unreleased-format policy), and restore

@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Device-level ATF test for the bhyve virtio-vsock TX ingress state machine.
  * Drives the real (static) vtvsock_process_tx_pkt() from pci_virtio_vsock.c

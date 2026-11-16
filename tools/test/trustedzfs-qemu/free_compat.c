@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Compatibility shim for running ports packages built with C23 sized-free
  * calls on an older host userland.  This is needed only by the disposable
  * QEMU test runner; the size and alignment are allocator hints.

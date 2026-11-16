@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The 5BSD Project
+ * Copyright (c) 2026 Kory Heard
  *
  * pfctl(8) side of the 5BSD "jail" rule option: print the option.  A rule
  * that names its jail prints the name (the kernel keeps the jail id in

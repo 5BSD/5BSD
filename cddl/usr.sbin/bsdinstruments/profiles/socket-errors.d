@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Socket errors — network syscall failures by process and errno.
  *

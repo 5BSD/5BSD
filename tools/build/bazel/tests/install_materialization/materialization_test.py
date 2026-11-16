@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Verify physical links and canonical archive metadata as separate contracts."""
 import argparse
 import os

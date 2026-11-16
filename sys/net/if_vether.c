@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The 5BSD Project
+ * Copyright (c) 2026 Kory Heard
  *
  * vether(4): virtual Ethernet interface, as on OpenBSD.  A vether
  * interface looks like a normal Ethernet interface (link-layer address,

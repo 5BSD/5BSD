@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Validate the fixed AMD L1/L2 hardware qualification contract.
 set -eu
 ledger=${1:?usage: validate-svm-nested-live-ledger.sh ledger.tsv}

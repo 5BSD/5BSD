@@ -1,5 +1,8 @@
 #!/usr/sbin/dtrace -s
 /* SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Imported Matter IDL tooling ONLY; there is no Matter daemon in this tree.
  * Usage: dtrace -s matter-idl-observe -c 'python3.12 ...IDL command...'
  * This profiles process syscalls and exit status, not Matter commissioning.

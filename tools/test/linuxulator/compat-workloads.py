@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Run using Linux Python (including GDB's embedded Python) in a disposable VM.
 # Finite application workloads; this is not Electron qualification.
 def compatibility_workloads():

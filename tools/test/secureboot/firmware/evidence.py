@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """OVMF console evidence for a guest with exactly one bootable EFI disk."""
 import re
 

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Freestanding Linux amd64 swap-priority probe; build with -DSWAP_CLEANUP for phase 2. */
 static const char linux_low[] = "/dev/vdb";
 static const char linux_high[] = "/dev/vdc";

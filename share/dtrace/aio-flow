@@ -2,6 +2,8 @@
 /*
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * aio-flow -- full POSIX asynchronous-I/O pipeline tracer.  Follows a job
  *	       from submit -> queue -> schedule -> start -> complete, times the
  *	       submit->complete service latency, and surfaces the cancel/error

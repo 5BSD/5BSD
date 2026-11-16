@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Explicit configuration creation and replacement in an offline trusted builder.
 
 Package configuration membership is inventory, never runtime write authority.

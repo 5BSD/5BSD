@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Check public-only PEM framing before any input is embedded in the loader.
 # Certificate decoding and trust validation remain the verifier's responsibility.
 function reject() {

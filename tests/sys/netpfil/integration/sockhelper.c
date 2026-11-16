@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The 5BSD Project
+ * Copyright (c) 2026 Kory Heard
  *
  * Socket helper for the 5BSD PF seam tests (sockets.sh, rdomain.sh,
  * stress.sh): the OpenBSD socket interfaces that 5BSD adds to the FreeBSD

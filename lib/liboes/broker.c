@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * oes_client_create_brokered(3): obtain a notify-mode OES client from the
  * system.OES broker over bsd.oes.v1 (oes_broker.fidl): one session, negotiated,

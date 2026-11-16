@@ -1,5 +1,9 @@
 #!/bin/sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Regenerate spec_conf_requirements_generated.tsv from the Bluetooth Core
 # Specification text.  The output is a pure function of:
 #
@@ -37,7 +41,7 @@ while [ "$#" -gt 0 ]; do
 	case "$1" in
 	--check) mode=check; shift ;;
 	-o) out=$2; shift 2 ;;
-	-h|--help) sed -n '2,25p' "$0"; exit 0 ;;
+	-h|--help) sed -n '6,29p' "$0"; exit 0 ;;
 	*) echo "usage: $0 [--check] [-o FILE]" >&2; exit 64 ;;
 	esac
 done

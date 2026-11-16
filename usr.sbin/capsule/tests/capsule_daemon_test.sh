@@ -3,6 +3,8 @@ PATH="$(dirname "$(atf_get_srcdir)"):${PATH}"
 export PATH
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 
 # Lifecycle cases must not consume the installed machine's policy.
 prepare_lifecycle()

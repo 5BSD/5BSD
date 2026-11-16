@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #include "composition.h"
 struct first { int value; };
 struct first first_data = {17};

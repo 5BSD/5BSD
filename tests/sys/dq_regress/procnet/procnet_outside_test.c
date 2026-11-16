@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * The process boundary today, the half that needs a queue (dq-boundary
  * design, part b0, section 6.1 items 2, 9, 12, 13 and the queue ABI rows
  * of 18): what an UNATTACHED process gets when the process it names is

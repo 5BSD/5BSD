@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Map reconciled library installation policy to declared Bazel artifacts."""
 import hashlib
 import json

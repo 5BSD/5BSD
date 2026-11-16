@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Adversarial signalfd(2): four readers draining one descriptor while four
  * senders queue value-carrying RT signals (every value read exactly once,

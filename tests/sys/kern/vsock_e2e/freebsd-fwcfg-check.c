@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Guest-side QEMU fw_cfg port-I/O probe.  The active mode deliberately
  * leaves the shared data cursor between two reads so a VM checkpoint must
  * preserve both the selected item and its byte offset.

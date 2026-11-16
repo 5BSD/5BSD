@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * EXTERNAL REFERENCE ORACLE: Bluetooth Mesh IV Index Recovery, and the
  * acceptance window for a Secure Network beacon's IV Index.

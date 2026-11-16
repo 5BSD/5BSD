@@ -1,5 +1,8 @@
 #!/usr/sbin/dtrace -s
 /* SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Usage: dtrace -s channel-observe -p PID (or -c command).
  * Request timing includes user-space queueing until completion delivery.
  * Callback/dispatch timing is inclusive elapsed ns, not exclusive CPU time.

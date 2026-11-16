@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Link-only stubs for virtio_iommu_post_init_test.c.  The production VirtIO
  * core references MSI-X table emulation, administration-queue bindings, and

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Resolve simple installed GROUP members to configured native artifacts.
 
 Resolution preserves the linker sequence. It does not lower GROUP to ordinary

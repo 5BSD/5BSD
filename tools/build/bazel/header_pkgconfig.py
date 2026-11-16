@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Render pkg-config metadata using a version captured from a declared header."""
 import argparse
 import json

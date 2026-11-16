@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Bazel compile pilot and Make installation reference; no system backend selection.
 
 Bazel 9 or later only (Bzlmod, rules_cc, offline module inputs); the

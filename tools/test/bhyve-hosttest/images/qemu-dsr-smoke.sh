@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Unprivileged QEMU/TCG smoke of the devices-sr guest side (authoring aid;
 # bhyve needs root and vmm). Boots the kit image with the QEMU counterparts
 # of the bhyve devices the phase exercises and runs the same dsr-guest.sh

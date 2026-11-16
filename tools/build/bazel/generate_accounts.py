@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Run pwd_mkdb on a private copy; never mutate the declared account input."""
 import os
 from pathlib import Path

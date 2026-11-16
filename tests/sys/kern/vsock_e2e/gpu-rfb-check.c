@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Verify that bhyve's external framebuffer presents the pixels written by
  * the VirtIO GPU guest test.  This deliberately implements only the small,
  * unencrypted RFB 3.8/raw-encoding subset used by the test fixture.

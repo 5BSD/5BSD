@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Exercise unmodified C and assembly members from the pilot archive. */
 #include <stdio.h>
 #include <stdlib.h>

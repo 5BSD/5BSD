@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Provider death: system.Filesystem (bsdfilesystem) is killed under running units.
 #  - the stores stay mounted (bsdfilesystem's per-connection workers are plain
 #    children and outlive it; the kernel keeps the mount while anchors exist):

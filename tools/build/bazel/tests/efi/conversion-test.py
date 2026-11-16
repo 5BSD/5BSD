@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual native action versus the original nm/elfcopy recipe; not a boot test."""
 import argparse
 import hashlib

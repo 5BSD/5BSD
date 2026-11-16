@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Synthetic input devices: run in disposable guests only.
 evdev_head()
 {

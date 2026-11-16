@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * boottimeprobe: a boot unit that records, into its storage container, the
  * kernel uptime (CLOCK_UPTIME, monotonic from boot) at the instant the native
  * BSDFilesystem provider first serves it a storage claim.  That value is the

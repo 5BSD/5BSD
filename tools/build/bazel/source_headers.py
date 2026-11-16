@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Collect supported source-tree header inputs for declared include roots.
 
 This is a conservative source snapshot, not compiler dependency discovery.

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Minimal zxtest compatibility for GIDL-generated conformance tests.
  * Only the assertion forms emitted for host (non-__Fuchsia__) cases and used

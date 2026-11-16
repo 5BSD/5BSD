@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Allocate explicitly selected state datasets on a fresh disposable VM disk.
 
 Leaves an exported pool for subsequent construction, not accepted runtime state.

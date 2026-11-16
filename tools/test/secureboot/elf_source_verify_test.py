@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual ELF header loader with native files and injected source/manifest admission."""
 from pathlib import Path
 import subprocess

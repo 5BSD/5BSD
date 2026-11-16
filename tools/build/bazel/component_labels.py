@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Bazel package/label and output identities derived from source components."""
 from pathlib import PurePosixPath
 

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Bounded ELF note reader and domain-separated Ed25519/SHA-256 signatures.
  * Verification must precede policy parsing. Callers retain/pin the verified
  * vnode before granting authority; a successful check is not a write lock. */

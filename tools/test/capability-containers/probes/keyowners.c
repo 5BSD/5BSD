@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* keyowners: list the distinct owners holding NAMED keys in the kernel
  * keystore (CIOCGCRYPTOOWNERLIST via libcryptodesc), for the container-model
  * key-reap e2e observer.  Root, outside capability mode. */

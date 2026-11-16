@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Probe Bazel's native C toolchain; this is not a BSD system backend.
 
 Bazel 9 or later with Bzlmod: rules_cc's autodetected host toolchain,

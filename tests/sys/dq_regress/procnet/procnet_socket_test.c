@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * socket(2) and socketpair(2) of unattached processes.
  *
  * Stage 1c-ii split socreate() into socreate_find() (protocol lookup and

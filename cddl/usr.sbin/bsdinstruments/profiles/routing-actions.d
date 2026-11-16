@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Contracts and context restrictions: tools/test/system-tracing/COVERAGE-FIFTH.
  * Elapsed microseconds include preemption/blocking, not CPU execution time.
  * Pointer arguments are identities only. Pairing uses per-thread nesting.

@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Run inside the L1 guest: boot the L2 guest from the second disk (vtbd1)
 # with bhyve and wait for its marker on an nmdm console.
 #   l2-boot.sh MARKER [MEM]      run L2 (prints L2-OK or L2-FAIL at the end)

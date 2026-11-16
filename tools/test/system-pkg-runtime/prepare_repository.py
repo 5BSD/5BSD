@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Prepare a signed, complete captured-package repository for disposable VM tests.
 
 Never publishes a system repository, changes latest, or installs packages.

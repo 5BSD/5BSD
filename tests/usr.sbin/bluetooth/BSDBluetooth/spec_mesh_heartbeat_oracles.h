@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Test-only Heartbeat oracles transcribed from Mesh Protocol 1.1 Sections
  * 3.6.7 and 4.2.18-4.3.2.66, Tables 3.47-3.50, 4.36-4.45, and
  * 4.143-4.148, plus Bluetooth Assigned Numbers.  No production includes.

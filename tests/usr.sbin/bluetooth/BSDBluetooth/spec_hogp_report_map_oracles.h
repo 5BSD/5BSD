@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Independent HID/HOGP report-map assignments and canonical descriptors.
  * No production Bluetooth or blued header is included.
  */

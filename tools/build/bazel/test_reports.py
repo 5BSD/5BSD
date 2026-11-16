@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Retain BEP test reports and distinguish action status from case outcomes."""
 import collections
 import json

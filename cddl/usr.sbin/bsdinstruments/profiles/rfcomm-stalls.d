@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Bluetooth RFCOMM flow control, credits, drop reasons and closure outcomes.
  *

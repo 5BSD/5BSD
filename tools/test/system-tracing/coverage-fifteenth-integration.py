@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check unchanged base source tokens, Makefile selection, and alternate USB guard."""
 from pathlib import Path
 import json,re,subprocess

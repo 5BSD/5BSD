@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Independent test constants for blued's local bond-secret storage contract.
  * This is an implementation security contract, not a Bluetooth SIG wire
  * requirement: a 256-bit root is stored as exactly 32 raw octets in an

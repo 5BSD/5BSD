@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Reject ambiguous or unaccounted extra variant source mappings."""
 import tempfile,unittest
 from pathlib import Path

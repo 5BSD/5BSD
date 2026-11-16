@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Linux64 rseq and I/O bitmap ptrace query oracle. */
 #include "linux_test.h"
 static unsigned char area[32] __attribute__((aligned(32)));

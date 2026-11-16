@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Invoke the maintained loader version script with declared build inputs."""
 import argparse
 import json

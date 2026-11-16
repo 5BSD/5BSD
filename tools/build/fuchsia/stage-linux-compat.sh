@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # stage-linux-compat.sh -- copy the minimal Rocky Linux 9 userland the
 # fdops linux_compat_test needs from the host's /compat/linux
 # (linux_base-rl9) into a test-data overlay under /usr/obj.  Test data

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Change only the shared packet-delay limit; never reload root PF policy. */
 #include <sys/types.h>
 #include <sys/ioctl.h>

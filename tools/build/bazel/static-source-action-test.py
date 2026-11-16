@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Qualify static-only runtime sources in an existing disposable native graph.
 
 The explicit ABI source must exercise the configured runtime. This checks native

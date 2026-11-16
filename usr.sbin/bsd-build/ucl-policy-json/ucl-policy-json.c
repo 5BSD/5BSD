@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Bounded, self-contained UCL policy normalization; no authority is assigned. */
 #include <sys/types.h>
 #include <sys/capsicum.h>

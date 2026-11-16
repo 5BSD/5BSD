@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Independent synthetic ELF policies and real command-output failure checks."""
 from pathlib import Path
 import struct

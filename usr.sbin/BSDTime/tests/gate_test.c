@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Real clock-gate coverage: run only in a disposable capability-plane VM. */
 #include <sys/capsicum.h>
 #include <sys/ioctl.h>

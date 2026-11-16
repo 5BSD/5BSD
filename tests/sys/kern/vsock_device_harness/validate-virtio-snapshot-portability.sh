@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Verify that the rootless checkpoint tests still exercise the portable,
 # pointer-free state boundary rather than a host ABI convenience path.
 # TEST-ANCHOR: destination-restore-transaction

@@ -1,5 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 
 # Reproducible LLVM coverage runner for the locally executable Bluetooth
 # stack.  Hardware-only ATF cases remain part of the Kyua run and report an

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise a prepared native DTrace Bazel graph without rebuilding its SDK.
 
 The command JSON supplies an explicit Bazel test argv. The workspace must be a

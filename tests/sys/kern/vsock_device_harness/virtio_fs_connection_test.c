@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* Event-loop composition tests for a mediated virtio-fs connection. */
 #include <sys/endian.h>
 #include <sys/socket.h>

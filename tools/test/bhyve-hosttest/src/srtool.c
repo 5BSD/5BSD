@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * srtool: guest-side save/restore probes for the hosttest kit (sr2).
  * Built static so the same binary runs in the guest and on the host (the

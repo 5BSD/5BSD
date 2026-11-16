@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 provider logcmp {
 	probe component__open(const char *name, int result);
 	probe message__send(uint16_t opcode, uint32_t length, uint32_t nfds,

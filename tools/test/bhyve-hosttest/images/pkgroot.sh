@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Install a published pkgbase generation into an unprivileged NO_ROOT tree with
 # a METALOG (INSTALL_AS_USER + METALOG, as release/tools/vmimage.subr does).
 # Adapted from hostfix-work/vm/pkgroot.sh. Runs as an ordinary user.

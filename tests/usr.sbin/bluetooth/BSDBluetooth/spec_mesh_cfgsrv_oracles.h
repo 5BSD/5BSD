@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Independent Mesh Model 1.1.1 Configuration Server wire oracles.
  * No production Mesh header is included.
  */

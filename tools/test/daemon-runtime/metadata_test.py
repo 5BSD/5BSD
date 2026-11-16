@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 import unittest
 import json
 from atf_metadata import parse_listing, cases_completed, apply_case_budgets, parse_runtime_description

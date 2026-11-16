@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Exercise the production block backend's WRITE ZEROES primitive on a real
  * file.  Including the implementation keeps static request processing in
  * scope while --gc-sections discards unrelated bhyve integration paths.

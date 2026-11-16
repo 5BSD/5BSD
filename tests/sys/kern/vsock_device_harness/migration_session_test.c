@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Rootless ATF coverage for the bhyve live-migration control plane:
  *
  *   - the fixed-width little-endian wire codec (round-trip, truncation, crc,

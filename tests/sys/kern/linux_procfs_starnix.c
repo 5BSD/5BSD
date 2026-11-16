@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Starnix procfs_test.cc uptime and boot-id test ideas, rewritten.
  * Reference revision 8a938a3224e768f6254ee12d240b6492361ebccf. */
 #include "linux_test.h"

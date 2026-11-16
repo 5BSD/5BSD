@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Linux sysfs(2) filesystem-type enumeration for x86 Linux ABIs.
  */
 

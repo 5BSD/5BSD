@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Freestanding amd64 Linux syscall test for the socket option translation:
  * no Linux libc or sysroot required.  Exit status identifies the failed

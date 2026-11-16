@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Transport validation with real tar/media bytes; not boot acceptance."""
 import copy
 import importlib.util

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Qualify dynamic module resolution without using host conversion data. */
 #include <sys/param.h>
 #include <dlfcn.h>

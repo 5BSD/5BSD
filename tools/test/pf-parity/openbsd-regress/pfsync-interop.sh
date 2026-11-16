@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # pfsync(4) interoperability between the 5BSD DUT and the OpenBSD helper
 # over their shared link (DUT vtnet1, helper vio1).  Each side skips the
 # interface the other side's test connection uses, so a state can only

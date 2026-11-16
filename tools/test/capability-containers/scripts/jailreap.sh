@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Jail reclaim (bsdnamespace as a reconcile client): two bundles, J1 and J2, each
 # run a unit that enters a PERSISTENT jail (wj_<hash>) -- the kind that by
 # design outlives its unit.  With a short cadence (BSDNAMESPACE_RECLAIM_INTERVAL=15)

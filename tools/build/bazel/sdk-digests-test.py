@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Content verification, corrupt-input rejection and bounded hash concurrency."""
 import hashlib
 import os

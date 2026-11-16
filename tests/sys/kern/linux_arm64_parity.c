@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Freestanding Linux/AArch64 checks for recently shared syscall paths. */
 #define SYS_io_setup 0
 #define SYS_io_destroy 1

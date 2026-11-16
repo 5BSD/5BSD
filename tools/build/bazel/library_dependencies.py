@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Resolve configured LIBADD aliases to selected native component targets."""
 import shlex
 import component_labels

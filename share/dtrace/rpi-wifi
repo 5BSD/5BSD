@@ -2,6 +2,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Pi Wi-Fi native SDIO and LinuxKPI events. Run as root after kldload sdt.
  * Start before loading if_brcmfmac to capture attachment and firmware loading.
  * SDIO command timings are aggregated; packet contents are never printed.

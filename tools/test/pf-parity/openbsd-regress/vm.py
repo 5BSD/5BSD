@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Start or stop the two disposable guests of the OpenBSD-regress topology.
 
 Roles:

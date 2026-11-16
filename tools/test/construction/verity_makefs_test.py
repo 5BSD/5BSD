@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Real UFS image alignment and fsck; no mounts, device creation or boot."""
 import argparse
 import hashlib

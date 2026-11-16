@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise NLS export using the maintained Make rules and temporary sources."""
 from pathlib import Path
 import subprocess

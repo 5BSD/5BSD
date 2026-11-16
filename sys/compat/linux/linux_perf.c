@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Linux perf_event_open(2), software counting subset.
  */
 #include <sys/param.h>

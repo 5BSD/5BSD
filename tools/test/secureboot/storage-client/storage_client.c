@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Exercises the installed provider through normal signed bundle launch. */
 #include <sys/types.h>
 #include <sys/capsicum.h>

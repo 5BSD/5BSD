@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * txnstressprobe: hammer the transaction machinery of one unit's claim in a
  * tight loop -- begin, write, and commit or abort; periodically snapshot, list
  * versions, open a version read-only, and roll back.  Several of these units run

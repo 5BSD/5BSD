@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 Project5BSD
+ * Copyright (c) 2026 Kory Heard
  *
  * Tests for procdesc lifecycle events (NOTE_FORK, NOTE_EXEC, NOTE_EXIT).
  */

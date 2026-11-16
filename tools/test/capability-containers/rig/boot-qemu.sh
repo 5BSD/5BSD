@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # boot-qemu.sh IMG [rw] — boot a guest image under the home-dir qemu (TCG),
 # serial on tcp 4321.  Default is snapshot mode (image untouched); pass "rw"
 # as the second argument to persist writes.  EXTRA="-drive ..." appends

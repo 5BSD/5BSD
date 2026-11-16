@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # vcmd.sh "<command>" [timeout_s] — run a command on the guest serial
 # console and print exactly its stdout.
 #

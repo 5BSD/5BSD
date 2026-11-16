@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #include <openssl/provider.h>
 #include <openssl/evp.h>
 #include <openssl/err.h>

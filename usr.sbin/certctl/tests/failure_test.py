@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise the real certificate tool, crypto parser, filesystem and write errors."""
 import os
 from pathlib import Path

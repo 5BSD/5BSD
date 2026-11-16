@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* VM-only full-suite adapter; all filesystem mutations stay in fresh guest disks. */
 #include <sys/types.h>
 #include <sys/mount.h>

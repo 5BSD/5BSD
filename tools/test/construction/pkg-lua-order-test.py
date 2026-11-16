@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Require Lua hook order to survive real package creation/private registration.
 
 All hooks are disabled. Fixtures have no payload. The selected pkg is a trusted

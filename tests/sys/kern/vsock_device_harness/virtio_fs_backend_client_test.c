@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* Event-driven client tests for the private virtio-fs backend handshake. */
 #include <sys/socket.h>
 #include <sys/types.h>

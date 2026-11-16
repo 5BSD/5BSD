@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Loader replay/cache-eviction integrity and backing-read bounds; no timing claim."""
 import hashlib
 import importlib.util

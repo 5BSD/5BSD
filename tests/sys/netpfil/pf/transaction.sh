@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 . $(atf_get_srcdir)/utils.subr
 transaction_head_common() { atf_set require.user root; atf_set is.exclusive true; }
 transaction_check() {

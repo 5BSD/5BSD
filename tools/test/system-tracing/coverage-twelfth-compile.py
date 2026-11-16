@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Compile exact module sources with native options and hooks on/off."""
 from pathlib import Path
 import concurrent.futures,json,os,shlex,subprocess

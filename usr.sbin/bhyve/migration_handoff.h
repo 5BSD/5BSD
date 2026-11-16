@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Handoff journal for ordinary (non-HyperTrace) migrations.
  *
  * A HyperTrace fresh-session migration keeps the HMR2 phase record, whose

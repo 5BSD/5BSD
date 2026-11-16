@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Materialize explicit userland target and native execution SDK inputs.
 
 This does not replace the execution OS: dynamic interpreters and loaded libraries

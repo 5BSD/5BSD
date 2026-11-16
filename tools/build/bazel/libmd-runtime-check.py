@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Run an explicit maintained digest-driver inventory against a private library."""
 import argparse
 import hashlib

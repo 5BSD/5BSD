@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Root-shell qualification of package add/check/delete in a fresh /usr/obj root."""
 from package_index import packages as indexed_packages
 import argparse

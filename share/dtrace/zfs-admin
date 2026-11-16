@@ -2,6 +2,8 @@
 /*
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * zfs-admin -- ZFS administrative and access-control observability across the
  *		two ZFS SDT providers on this 5BSD fork:
  *		  - zfs:::ioc     every /dev/zfs control ioctl (mount, snapshot,

@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * See tools/test/system-tracing/COVERAGE-SIXTEENTH for argument semantics.
  * No pointer dereferences, payloads, paths, addresses or credentials.
  * Start before the workload. Lost events invalidate latency pairing.

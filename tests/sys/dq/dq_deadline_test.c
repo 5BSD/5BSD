@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Deadlines (design 15, D3): an unanswered event fails the requester with
  * EIO when the object's deadline passes; dp_deadline_ms = 0 waits for the
  * reply; SIGKILL always breaks a wait (I12).

@@ -1,5 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Independent Bluetooth Mesh relay/configuration oracles.
  */
 #ifndef TESTS_BLUETOOTH_SPEC_MESH_RELAY_ORACLES_H

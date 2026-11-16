@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The FreeBSD Foundation
+ * Copyright (c) 2026 Kory Heard
  *
  * TU-include harness for bhyve's Intel HD Audio controller (pci_hda.c).
  *

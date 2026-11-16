@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Freestanding amd64 Linux syscall test for file-syscall option coverage:
  * renameat2(2) flags, fcntl(2) commands (OFD locks, seals, pipe size,

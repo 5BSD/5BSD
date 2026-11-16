@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * TrustedZFS security-model tests: capability mode, per-command ioctl
  * allowlists, SCM_RIGHTS delegation, and the central asymmetry (handles
  * work sandboxed; minting does not).

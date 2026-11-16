@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * ht-audio: minimal OSS playback/capture check.
  *   ht-audio play DEVICE SECONDS   (440 Hz sine, s16le stereo 48 kHz, -12 dBFS)

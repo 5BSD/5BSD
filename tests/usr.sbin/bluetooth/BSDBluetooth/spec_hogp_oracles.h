@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Independent Report Reference descriptor oracles from HID over GATT Profile
  * 1.1.1 §4.6: Input=1, Output=2, Feature=3.  No production headers included.
  */

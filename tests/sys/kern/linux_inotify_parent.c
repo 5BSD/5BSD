@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Parent-path identity regression. Run only in disposable guests. */
 #define _GNU_SOURCE
 #include <sys/inotify.h>

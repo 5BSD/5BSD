@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Linux SDIO drivers over the native CAM SDIO bus. */
 #include <sys/param.h>
 #include <sys/queue.h>

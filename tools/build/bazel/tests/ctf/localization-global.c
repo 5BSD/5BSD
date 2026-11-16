@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 struct global_payload { int value; };
 struct exported_payload { char value[16]; };
 struct exported_payload exported_data = { "exported" };

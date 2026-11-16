@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Check removal boundaries through kernel configuration and build selection."""
 from pathlib import Path
 import subprocess

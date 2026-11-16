@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 set -eux
 [ "$(hostname)" = auth-policy-vm ]
 [ "$(kenv vfs.root.mountfrom)" = ufs:/dev/vtbd0p2 ]

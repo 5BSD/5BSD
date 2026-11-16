@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Execute explicit installed ATF programs inside a private prepared guest root."""
 import argparse
 import hashlib

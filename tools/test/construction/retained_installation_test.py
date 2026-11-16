@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Native retained policy-binding checks; not read-only mount or boot qualification."""
 import copy
 import hashlib

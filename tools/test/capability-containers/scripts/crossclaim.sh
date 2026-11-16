@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Container-model TXN ORIGIN-BINDING (cross-claim commit) proof.
 #
 # A staging transaction opened on claim A must not be committable over a

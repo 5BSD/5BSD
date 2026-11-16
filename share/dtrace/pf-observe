@@ -1,5 +1,8 @@
 #!/usr/sbin/dtrace -s
 /* SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * PF (OpenBSD PF on 5BSD) performance and functional summary.
  * Usage: pf-observe (Ctrl-C prints summary)
  *        dtrace -s /usr/share/dtrace/pf-observe -c 'sleep 30'

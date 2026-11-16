@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Native synthetic input fixture. Run only in a disposable guest. */
 #include <sys/types.h>
 #include <sys/ioctl.h>

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* VM-only PID 1 fixture. No production issuer bypass is used by these tests. */
 #include <sys/param.h>
 #include <sys/jail.h>

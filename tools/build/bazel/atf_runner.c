@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Execute one declared ATF shell or program case under the Bazel test protocol. */
 #include <sys/types.h>
 #include <sys/stat.h>

@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Observe negotiated root queue mode and actual I/O before/after restore.
 set -eu
 case "${1:-no}" in no) mode=0 ;; yes) mode=1 ;; *) exit 2 ;; esac

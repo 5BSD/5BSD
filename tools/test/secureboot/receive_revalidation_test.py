@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual receive revalidation with storage/I/O seams; no ZFS or VM execution."""
 from pathlib import Path
 import subprocess

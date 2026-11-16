@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * execve(2)/fexecve(2) of unattached processes, as before stage 1c.
  *
  * Stage 1c reads the attached state once in do_execve() under P_INEXEC,

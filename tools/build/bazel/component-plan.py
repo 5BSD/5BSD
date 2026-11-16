@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Export selected component metadata using a shared world configuration session.
 
 This is configuration evidence, not a native build or package coverage claim.

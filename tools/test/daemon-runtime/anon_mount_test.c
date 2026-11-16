@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Disposable VM only: real ZFS handle mounts and a rejecting MAC policy. */
 #include <sys/types.h>
 #include <sys/linker.h>

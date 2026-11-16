@@ -413,12 +413,12 @@
   ],
   "dependencies": [],
   "sources": {
-    "cddl/usr.sbin/bsdinstruments/profiles/kernel-counterfd-io.d": "5c58141ac5f414a9ae5b02d9062b01e69b6ba1e7a125451525ce2caf6e6b7a5f",
-    "cddl/usr.sbin/bsdinstruments/profiles/kernel-counterfd-waits.d": "2b4abe9929895220e0cd8854e30ef03565c2535036ab2ba871f82f3f7f50b3a1",
-    "cddl/usr.sbin/bsdinstruments/profiles/kernel-sem-decisions.d": "e98ef27de72a4eba265f30e56038a7a4831201238b0c4db9438b9f19e6d96f61",
-    "cddl/usr.sbin/bsdinstruments/profiles/kernel-sem-resources.d": "b2cc742c4e47cf302477304fb05c462080e93034d6fdd188efa0265fdc8c4488",
-    "cddl/usr.sbin/bsdinstruments/profiles/kernel-sem-waits.d": "4747e85803ad6ac9f24b44a4a01cc8f3b1b92c6dbe6c2f4438c45e081284c594",
-    "cddl/usr.sbin/bsdinstruments/profiles/kernel-tunnel-controls.d": "8d2196b44d27788ce300112b6a1e8e120023ac7faf7eeb74604822fc16f3f597",
+    "cddl/usr.sbin/bsdinstruments/profiles/kernel-counterfd-io.d": "c96eb26bb9d34a01affd331850c8c32a15cc63198ae316165d363c7094935cff",
+    "cddl/usr.sbin/bsdinstruments/profiles/kernel-counterfd-waits.d": "53022bb8467af8f1a912d932c60a62242dc7e287bfe5435ad821bfbdb9c50511",
+    "cddl/usr.sbin/bsdinstruments/profiles/kernel-sem-decisions.d": "fbf7bb5f1526edadba35e1cc5ec856c547d28f068f542d0e349d13779c918716",
+    "cddl/usr.sbin/bsdinstruments/profiles/kernel-sem-resources.d": "10c6433a125b64a56006531d7dc21c7fa1028c2b79efc50c98285aa00b6944c7",
+    "cddl/usr.sbin/bsdinstruments/profiles/kernel-sem-waits.d": "b8488b528fa64d07dfb934fec174694c31c9bacb440bfeead8cd1a27c7afa6be",
+    "cddl/usr.sbin/bsdinstruments/profiles/kernel-tunnel-controls.d": "4f68cf2912b255a81bd285fb3f6b89f5f9534939f89d26a13c7f3a07d20fc0e4",
     "sys/kern/sys_eventfd.c": "f39d51ecd862adb9f3720a4eb96cf674ebc661024a8592bd998654ccb4d88e15",
     "sys/kern/sys_timerfd.c": "d4503b34953271aa75f1cbde9182b824c0df4909785d31dc41a9b5ef6733b37d",
     "sys/kern/uipc_sem.c": "1629931cd04f9424179e06506bf3e2f6dce4cb570e70bd03ae5e1fe548cbec5d",
@@ -427,10 +427,10 @@
     "sys/net/if_vxlan.c": "c594c50d91e1e236cfe544ecf9fc0ba82cba2a60e06ed73a0134de0a0baeb99a",
     "tools/test/system-tracing/COVERAGE-ELEVENTH": "513bab3aecef394297dc8b864e3913b90b8b7f078a9ceecbe083213e611c6c61",
     "tools/test/system-tracing/README": "011f0caff563b1fb213d881bd81a812aa6ef0d0526c0ce60026809a857f9d304",
-    "tools/test/system-tracing/coverage-eleventh-check.py": "c01a6d49c27d9b6948c161afae654c1ac33c9c8030072727be4b37b762485652",
-    "tools/test/system-tracing/coverage-eleventh-compile.py": "027a59f90bbe95e3e99679e9ca280460d72437093674a5ce0100e1eb69fcff82",
-    "tools/test/system-tracing/coverage-eleventh-modules.py": "3beb49e7bbc4332b5e18213a97084884cc189deae67621878667345d902b7aa0",
-    "tools/test/system-tracing/coverage-eleventh-variants.py": "4a810f97074bd5a7a1e7b57b595b6ce2b0dd3677bd6ecc18ea70fea76d727733"
+    "tools/test/system-tracing/coverage-eleventh-check.py": "d93d7a2492bbc1e9929ec15ba4155014b4562d26b258180964c5da2a4ae891de",
+    "tools/test/system-tracing/coverage-eleventh-compile.py": "d754e4d61bd685bd21c35986632c4136fc458579cab6c8f5cd65acb1ca2b70f0",
+    "tools/test/system-tracing/coverage-eleventh-modules.py": "39ead95319971f38cc6c7f2ce4f4054a5c537894132373c88bdf7414a6a8d206",
+    "tools/test/system-tracing/coverage-eleventh-variants.py": "c9f3b514d5ccd94897d103b01b740cf1e5bb4b123fa8ccc394a2e1bd3343028a"
   },
   "categories": {
     "lifecycle": [

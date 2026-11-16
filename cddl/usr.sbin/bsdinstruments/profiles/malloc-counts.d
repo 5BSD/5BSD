@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Count malloc/realloc/calloc/free calls by size bucket for a process.
  * Usage: bsdinstruments watch malloc-counts --param pid=<pid>

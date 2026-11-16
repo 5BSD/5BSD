@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Independent Mesh Remote Provisioning 1.1 wire assignments.
  * No production Mesh header is included.
  */

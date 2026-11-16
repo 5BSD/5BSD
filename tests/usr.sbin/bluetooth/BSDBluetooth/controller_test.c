@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #define main controller_main_unused
 #include "controller/controller.c"
 #undef main

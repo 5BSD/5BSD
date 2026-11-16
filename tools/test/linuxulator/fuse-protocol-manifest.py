@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Record the exact native FUSE cases and artifacts to stage in a test VM."""
 import argparse
 import hashlib

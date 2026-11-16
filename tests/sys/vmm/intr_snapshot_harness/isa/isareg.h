@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Relay to the tree's real ISA register definitions.
  */
 #ifndef _KMOCK_ISA_ISAREG_H_

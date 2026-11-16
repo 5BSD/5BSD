@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Recursive clone ownership checks with native libzfs seams, without a pool."""
 from pathlib import Path
 import subprocess

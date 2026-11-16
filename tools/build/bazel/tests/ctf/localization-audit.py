@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Reproduce CTF symbol localization errors with explicitly selected tools.
 
 This diagnostic builds no installed software. A failure remains a failure:

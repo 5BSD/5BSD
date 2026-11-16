@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Metadata contract negatives; real TLS program comparisons are separate evidence."""
 import importlib.util
 from pathlib import Path

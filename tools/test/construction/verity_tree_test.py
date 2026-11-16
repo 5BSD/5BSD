@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Host component tests only; no kernel, VM or authenticated boot claim."""
 import importlib.util
 import hashlib
