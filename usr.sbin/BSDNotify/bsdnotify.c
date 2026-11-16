@@ -1,5 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
  */
 
 #include <sys/param.h>
@@ -46,6 +48,22 @@
 #define	ROUTER_EVENT_USER_TIMER	3
 #define	ROUTER_EVENT_NEXT_TIMER	4
 #define	ROUTER_MAX_SESSIONS	65536U
+/*
+ * The router opens its own system.Audit session before it confines itself
+ * with NOIPC, while switchboard may still be activating BSDAudit; it repeats
+ * a lookup that timed out with service_retry_activation(3), which ends
+ * within NOTIFY_ROUTER_AUDIT_TIMEOUT_MS.  The provider's wait for the
+ * router's ready status covers that, the pause before the last attempt and
+ * slack for the channel setup, the confinement and scheduling.
+ */
+#define	NOTIFY_ROUTER_AUDIT_TIMEOUT_MS	\
+	SERVICE_ACTIVATION_WAIT_MS(SERVICE_LOOKUP_TIMEOUT_MS)
+#define	NOTIFY_ROUTER_START_SLACK_MS	3000U
+#define	NOTIFY_ROUTER_START_TIMEOUT_MS	(NOTIFY_ROUTER_AUDIT_TIMEOUT_MS + \
+		SERVICE_ACTIVATION_RETRY_PAUSE_MS + NOTIFY_ROUTER_START_SLACK_MS)
+_Static_assert(NOTIFY_ROUTER_START_TIMEOUT_MS >=
+    NOTIFY_ROUTER_AUDIT_TIMEOUT_MS + SERVICE_ACTIVATION_RETRY_PAUSE_MS + 1000U,
+    "the router start wait must cover the router's Audit lookups");
 
 union notify_buffer {
 	max_align_t align;
@@ -1272,6 +1290,26 @@ router_event(struct router *router, struct event_source *source,
 		router_remove_session(router, session);
 }
 
+/* One Audit lookup, for service_retry_activation(). */
+static int
+router_audit_attempt(void *arg)
+{
+
+	return (auditcmp_client_open(arg));
+}
+
+/*
+ * Open the router's system.Audit session, repeating a lookup that timed out
+ * while switchboard may still be activating the provider.
+ */
+static int
+router_audit_open(struct auditcmp_client **auditp)
+{
+
+	return (service_retry_activation(router_audit_attempt, auditp,
+	    SERVICE_LOOKUP_TIMEOUT_MS));
+}
+
 static int
 router_main(int control, const struct notify_policy_db *policy_db)
 {
@@ -1290,32 +1328,40 @@ router_main(int control, const struct notify_policy_db *policy_db)
 	router.control_source.type = ROUTER_EVENT_CONTROL;
 	router.broker = notify_broker_create();
 	router.kq = kqueue();
-	/* Obtain the router's own invocation-bound Audit session before NOIPC.
-	 * A parent's non-forwardable session is not worker admission. */
+	/* Without the control channel there is nothing to report through. */
 	if (router.broker == NULL || router.kq == -1 ||
-	    auditcmp_client_open(&router.audit) == -1 ||
 	    harden_channel(control, CAP_CLOFORK_LOCKED) == -1 ||
 	    channel_create(control, &control_options,
-	    &router.control_channel) == -1 ||
-	    channel_set_request_handler(router.control_channel,
+	    &router.control_channel) == -1)
+		return (1);
+	/* Obtain the router's own invocation-bound Audit session before NOIPC
+	 * and NOFDRECV. A parent's non-forwardable session is not worker admission. */
+	if (channel_set_request_handler(router.control_channel,
 	    router_control_request, &router) == -1 ||
 	    (router.control = channel_fd(router.control_channel)) == -1 ||
 	    router_change(&router, router.control, EVFILT_READ,
 	    EV_ADD | EV_ENABLE,
 	    0, 0, &router.control_source) == -1 ||
 	    router_change(&router, router.control, EVFILT_WRITE,
-	    EV_ADD | EV_DISABLE, 0, 0, &router.control_source) == -1)
-		return (1);
-	/* The router receives newly admitted client descriptors over its private
-	 * control channel for its entire lifetime, so NOFDRECV is incompatible
-	 * with this role. Client FIDL sessions reject descriptors separately via
-	 * max_queued_fds = 0; the acceptor attenuates each forwarded descriptor. */
-	if (service_worker_enter_capability_mode(SERVICE_PROTECT_EXTERNAL |
+	    EV_ADD | EV_DISABLE, 0, 0, &router.control_source) == -1 ||
+	    router_audit_open(&router.audit) == -1 ||
+	    service_worker_enter_capability_mode(SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
-	    SERVICE_PROTECT_NOIPC |
+	    SERVICE_PROTECT_NOIPC | SERVICE_PROTECT_NOFDRECV |
 	    SERVICE_PROTECT_NOEXEC |
-	    SERVICE_PROTECT_NOSOCK) == -1)
+	    SERVICE_PROTECT_NOSOCK) == -1) {
+		/*
+		 * Tell the provider why, as its ready status.  Exiting without
+		 * one leaves it only the end of the channel, and the cause is
+		 * lost.
+		 */
+		ready.status = errno != 0 ? errno : EIO;
+		(void)channel_send_event(router.control_channel,
+		    &(struct channel_outgoing)CHANNEL_OUTGOING_INITIALIZER(
+		    &ready, sizeof(ready)));
+		(void)channel_flush(router.control_channel);
 		return (1);
+	}
 	ready.status = 0;
 	if (channel_send_event(router.control_channel,
 	    &(struct channel_outgoing)CHANNEL_OUTGOING_INITIALIZER(&ready,
@@ -1824,7 +1870,7 @@ main(void)
 	    SERVICE_CALL_OPTIONS_INITIALIZER;
 	struct auditcmp_client *accept_audit;
 	int accept_audit_fd, router_pair[2], router_pd, fd;
-	int watcher_error;
+	int fail_error, watcher_error;
 	bool watcher_started;
 	pid_t router_pid;
 
@@ -1888,11 +1934,27 @@ main(void)
 	ready_event.size = sizeof(ready_event);
 	ready_event.data = &router_ready;
 	ready_event.capacity = sizeof(router_ready);
-	ready_options.timeout_ms = 5000;
+	ready_options.timeout_ms = NOTIFY_ROUTER_START_TIMEOUT_MS;
 	if (service_session_receive_event(router_session, &ready_event,
-	    &ready_options) == -1 || ready_event.length != sizeof(router_ready) ||
-	    ready_event.nfds != 0 || router_ready.status != 0)
+	    &ready_options) == -1) {
+		fail_error = errno;
+		logcmp_log(LOG_ERR, "router did not report: %s",
+		    strerror(fail_error));
+		errno = fail_error;
 		goto fail_router;
+	}
+	if (ready_event.length != sizeof(router_ready) ||
+	    ready_event.nfds != 0) {
+		logcmp_log(LOG_ERR, "router sent a malformed ready status");
+		errno = EPROTO;
+		goto fail_router;
+	}
+	if (router_ready.status != 0) {
+		logcmp_log(LOG_ERR, "router did not start: %s",
+		    strerror(router_ready.status));
+		errno = router_ready.status;
+		goto fail_router;
+	}
 	watch_context.process_fd = router_pd;
 	watcher_error = pthread_create(&watcher, NULL, router_watch,
 	    &watch_context);
@@ -1901,11 +1963,9 @@ main(void)
 		goto fail_router;
 	}
 	watcher_started = true;
-	/* The provider must continue receiving Switchboard's new-client
-	 * descriptors. NOFDRECV would stop that admission after readiness. */
 	if (service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
-	    SERVICE_PROTECT_NOIPC |
+	    SERVICE_PROTECT_NOIPC | SERVICE_PROTECT_NOFDRECV |
 	    SERVICE_PROTECT_NOEXEC |
 	    SERVICE_PROTECT_NOSOCK) == -1 ||
 	    service_provider_expose(provider, listener_names[NOTIFY_TIER_OPEN],
@@ -1997,6 +2057,8 @@ main(void)
 	}
 
 fail_router:
+	/* The cleanup below may change errno; report the failure itself. */
+	fail_error = errno;
 	atomic_store_explicit(&watch_context.expected_exit, true,
 	    memory_order_release);
 	if (router_session != NULL)
@@ -2005,8 +2067,10 @@ fail_router:
 	if (watcher_started)
 		(void)pthread_join(watcher, NULL);
 	close(router_pd);
+	errno = fail_error;
 fail:
-	logcmp_log(LOG_ERR, "provider failed: %m");
+	fail_error = errno;
+	logcmp_log(LOG_ERR, "provider failed: %s", strerror(fail_error));
 	if (accept_kq >= 0)
 		close(accept_kq);
 	return (1);

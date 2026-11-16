@@ -943,3 +943,8 @@ string_flag(name = "dtrace_link_machine", build_setting_default = "native",
     values = ["native", "aarch64"], visibility = ["//visibility:public"])
 config_setting(name = "dtrace_link_aarch64", flag_values = {":dtrace_link_machine": "aarch64"},
     visibility = ["//visibility:public"])
+
+# MK_ZFS_TESTS follows the tests and ZFS selections in src.opts.mk.
+bool_flag(name = "zfs_tests", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "zfs_tests_enabled", flag_values = {":zfs_tests": "true", ":tests": "true", ":zfs": "true",
+    ":cddl": "true", ":openssl": "true", ":crypt": "true"}, visibility = ["//visibility:public"])

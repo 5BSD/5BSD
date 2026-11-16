@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 provider oeslogger {
 	probe event__handled(uint32_t a0, uint32_t a1);
 	probe wait__done(int a0, int a1);

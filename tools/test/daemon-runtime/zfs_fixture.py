@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Stage ZFS mechanism-test prerequisites from explicit world/kernel inputs.
 
 This small fixture is not package-derived installed-system qualification.

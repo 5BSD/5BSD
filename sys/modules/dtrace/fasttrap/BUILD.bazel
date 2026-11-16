@@ -2,3 +2,4 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
 amd64_generic_module(module = "fasttrap", objects = ["//sys/cddl/contrib/opensolaris:fasttrap_ordered_objects"], export_all = False)
+[cross_generic_module(arch = arch, module = "fasttrap", objects = ["//sys/cddl/contrib/opensolaris:" + arch + "_fasttrap_ordered_objects"], export_all = False) for arch in ["arm64", "riscv"]]

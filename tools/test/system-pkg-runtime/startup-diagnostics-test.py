@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Real reboot failure snippets must not pass normal-system qualification."""
 import unittest
 from startup_diagnostics import reject_failures

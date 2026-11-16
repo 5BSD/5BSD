@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/cddl/zfs:suite.bzl", "zfs_test_suite")
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+cc_binary(name = 'txg_integrity', srcs = ['txg_integrity.c'],
+    deps = ['//lib/libthr:thr'], dynamic_deps = ['//lib/libthr:thr_shared'],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'txg_integrity_install', program = 'txg_integrity', manual = None,
+    package = "tests", bindir = '/usr/tests/sys/cddl/zfs/tests/txg_integrity')
+cc_binary(name = 'fsync_integrity', srcs = ['fsync_integrity.c'],
+    deps = ['//lib/libthr:thr'], dynamic_deps = ['//lib/libthr:thr_shared'],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'fsync_integrity_install', program = 'fsync_integrity', manual = None,
+    package = "tests", bindir = '/usr/tests/sys/cddl/zfs/tests/txg_integrity')
+
+zfs_test_suite(
+    files = ['setup.ksh', 'txg_integrity_001_pos.ksh', 'fsync_integrity_001_pos.ksh', 'cleanup.ksh', 'txg_integrity.cfg'],
+    tests = {'txg_integrity_test': {'required_user': 'root', 'is_exclusive': True, 'required_programs': 'ksh93'}},
+    extra_manifests = [':txg_integrity_install', ':fsync_integrity_install'], debug = True,
+)

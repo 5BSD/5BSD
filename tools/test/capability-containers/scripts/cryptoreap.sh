@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # bsdcrypto container-model key reap, end to end: Test.cap/cryptoprobe mints a
 # NAMED key under bundle "Test" in the kernel keystore; remove the bundle (the
 # watch unloads it); on the next boot bsdcrypto's reconcile must drop the key.

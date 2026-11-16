@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Coverage-guided native transport/codec fuzzing; never run clock gates. */
 #include <sys/ioctl.h>
 #include <sys/resource.h>

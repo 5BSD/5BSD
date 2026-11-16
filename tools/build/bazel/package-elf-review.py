@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Review indexed packages with the maintained ELF/archive contract checker.
 
 Diagnostic scope: non-debug installed programs, libraries, static archives and

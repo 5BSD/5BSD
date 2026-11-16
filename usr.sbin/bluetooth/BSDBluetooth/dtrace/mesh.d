@@ -1,4 +1,10 @@
 #!/usr/sbin/dtrace -s
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * mesh.d - trace a BLE Mesh PDU as it flows through the libmesh layers:
  * network (obfuscate/encrypt/decrypt + NID match + relay), lower/upper

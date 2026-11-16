@@ -68,7 +68,7 @@
 #include <machine/riscvreg.h>
 #include <machine/vector.h>
 
-MODULE_VERSION(linux64elf, 1);
+MODULE_VERSION(linux64, 1);
 
 static u_long linux_elf_hwcap_zero;
 

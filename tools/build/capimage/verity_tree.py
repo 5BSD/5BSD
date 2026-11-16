@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Bounded dm-verity v1/SHA-256 tree primitives, without a superblock.
 
 Trusted-builder component only. The caller must authenticate geometry, salt and

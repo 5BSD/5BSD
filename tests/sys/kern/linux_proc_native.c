@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Native security boundaries around linprocfs. Disposable BSD guests only. */
 #include <sys/param.h>
 #include <sys/capsicum.h>

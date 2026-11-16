@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Native allocation-failure checks for actual manifest registration/loading."""
 from pathlib import Path
 import subprocess

@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Configure the OpenBSD reference DUT ("PF" role).  Disposable guest only.
 set -eu
 # No DNS in the isolated topology: fail lookups immediately (as NXDOMAIN

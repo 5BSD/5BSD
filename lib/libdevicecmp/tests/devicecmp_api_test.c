@@ -1,4 +1,5 @@
 /*- SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Argument-validation tests for the system.Device client.  These exercise the
  * fail-closed input checks that return before any provider session is opened,

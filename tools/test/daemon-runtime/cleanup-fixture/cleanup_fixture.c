@@ -1,5 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Isolated VM fixture for callback completion versus service unload.
  */
 #include <sys/param.h>

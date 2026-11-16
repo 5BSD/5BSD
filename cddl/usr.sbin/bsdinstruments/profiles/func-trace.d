@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Trace a specific user-space function in a process.
  * Usage: bsdinstruments watch func-trace --param pid=<pid> --param func=<function>

@@ -1,9 +1,9 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.\" Copyright (c) 2026 ABAC Project
+.\" Copyright (c) 2026 Kory Heard
 .\" All rights reserved.
 .\"
-.Dd November 15, 2026
+.Dd November 16, 2026
 .Dt MAC_ABAC 4
 .Os
 .Sh NAME
@@ -114,7 +114,24 @@ Controlling terminal presence
 .El
 .Pp
 Subject context applies to the calling process.
-Object context applies to the target process (for debug/signal/sched operations).
+Object context applies to the target process (for debug, signal, sched and
+wait operations).
+.Pp
+A target process has a controlling terminal when
+.Pa /dev/tty
+would open for it: it acquired the terminal of its session,
+the session still holds it, and the terminal has not been revoked with
+.Xr revoke 2 .
+For the calling process the test is the first part only: a process whose
+session leader has exited, or has given the terminal up with
+.Dv TIOCNOTTY ,
+or whose terminal was revoked,
+keeps counting as having a controlling terminal in subject context,
+although
+.Pa /dev/tty
+no longer opens for it.
+The calling process's session cannot be read reliably while another
+process is locked for the check.
 .Ss Idle behaviour
 A hook that evaluates rules runs only while some rule could decide its
 operation: while the policy is enabled and not in mode 0, and either

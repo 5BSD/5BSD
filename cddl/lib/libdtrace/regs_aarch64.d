@@ -72,3 +72,8 @@ inline int R_SP	= 31;
 #pragma D binding "1.13" R_SP
 inline int R_PC	= 32;
 #pragma D binding "1.13" R_PC
+/* The generic R_R0 and R_R1 that x86 also defines. */
+inline int R_R0 = R_X0;
+#pragma D binding "1.13" R_R0
+inline int R_R1 = R_X1;
+#pragma D binding "1.13" R_R1

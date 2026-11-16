@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Compile changed kernel sources with native per-source flags and hooks on/off."""
 from pathlib import Path
 import concurrent.futures,json,os,re,shlex,subprocess,sys

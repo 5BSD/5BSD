@@ -1037,6 +1037,12 @@ interpret:
 	 */
 	IS_AUTHORITY_EXEC(imgp, p,
 	    imgp->authority_setid ? exec_authority : NULL);
+	/*
+	 * The credential installed above is this exec's own and not yet
+	 * shared: record in it the authority the new image runs with.
+	 */
+	if (oldcred == NULL)
+		cap_authority_cred_stamp(p, p->p_ucred);
 	IS_INSTALL(imgp, p, &old_image);
 	installed_ops = imgp->is_ops;
 

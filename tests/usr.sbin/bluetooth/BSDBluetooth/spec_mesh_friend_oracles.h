@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Test-only Friendship control-message oracles transcribed from Mesh Protocol
  * 1.1 Section 3.6.5, Tables 3.28-3.46.  No production headers are included.
  */

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * The probe table shared by the boundary pins (dq-boundary design 6.1,
  * items 1-5): every call by which one process names another by pid, with
  * the errno an actor gets for a given target.  The same table is run

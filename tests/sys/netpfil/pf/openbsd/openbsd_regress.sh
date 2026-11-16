@@ -1,6 +1,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Run the imported OpenBSD PF regress suites (contrib/openbsd-pf) unchanged
 # through OpenBSD's bsd.regress.mk.  Each upstream target is reported in
 # REGRESS_LOG; the ATF case fails when any target fails and lists them.
@@ -20,7 +22,19 @@ srctree()
 run_suite()
 {
 	local dir=$1; shift
-	local corpus work log
+	local corpus work log make_status trans_timeout
+
+	# Keep the complete pf_trans suite, but allow slow disposable guests
+	# the upstream dev-limit maximum dwell (strtonum accepts 1..60).
+	if [ "${dir}" = sys/net/pf_trans ]; then
+		trans_timeout=$(atf_config_get openbsd_regress_pf_trans_timeout 10)
+		case "${trans_timeout}" in
+		''|*[!0-9]*) atf_fail "pf_trans timeout must be an integer in 1..60" ;;
+		esac
+		[ "${trans_timeout}" -ge 1 ] && [ "${trans_timeout}" -le 60 ] || \
+		    atf_fail "pf_trans timeout must be an integer in 1..60"
+		set -- "$@" "TIMEOUT=${trans_timeout}"
+	fi
 
 	corpus=$(srctree)
 	[ -d "${corpus}/regress/${dir}" ] || atf_skip "corpus not installed"
@@ -45,18 +59,33 @@ run_suite()
 	done
 	log=$(pwd)/regress.log
 	: > "${log}"
+	make_status=0
 	(cd "${work}/regress/${dir}" && \
 	    env MAKESYSPATH="$(atf_get_srcdir)/mk:/usr/share/mk" \
 	    BSDSRCDIR="${work}" make REGRESS_LOG="${log}" REGRESS_FAIL_EARLY=no \
-	    "$@" regress) > out 2>&1 || true
+	    "$@" regress) > out 2>&1 || make_status=$?
 	cat out
+	echo "==== REGRESS_LOG BEGIN ===="
+	cat "${log}"
+	echo "==== REGRESS_LOG END ===="
+	# REGRESS_FAIL_EARLY=no lets per-target FAIL/XPASS complete the
+	# log, but does not excuse make/setup/cleanup errors after a SUCCESS.
+	[ "${make_status}" -eq 0 ] || \
+	    atf_fail "upstream make failed (status ${make_status}); see out"
 	if ! grep -q . "${log}"; then
-		grep -q SKIPPED out && atf_skip "upstream suite skipped: $(grep -B2 SKIPPED out | head -2 | tr '\n' ' ')"
+		# Some suite Makefiles override regress with a whole-suite skip.
+		grep -qx SKIPPED out && atf_skip "upstream suite skipped: $(grep -B2 '^SKIPPED$' out | head -2 | tr '\n' ' ')"
 		atf_fail "no per-target results"
 	fi
-	if grep -q '^FAIL' "${log}"; then
-		atf_fail "$(grep -c '^FAIL' "${log}") failed: $(grep '^FAIL' "${log}" | sed 's,.*/,,' | tr '\n' ' ')"
+	# bsd.regress.mk emits exactly STATUS suite/target. Reject partial
+	# records, unexpected status words and arbitrary nonempty output.
+	awk '$0 !~ /^(SUCCESS|SKIP|XFAIL|FAIL|XPASS) [^[:space:]]+$/ { exit 1 }' \
+	    "${log}" || atf_fail "malformed per-target results"
+	if grep -Eq '^(FAIL|XPASS) ' "${log}"; then
+		atf_fail "$(grep -Ec '^(FAIL|XPASS) ' "${log}") failed or unexpectedly passed: $(grep -E '^(FAIL|XPASS) ' "${log}" | sed 's,.*/,,' | tr '\n' ' ')"
 	fi
+	grep -Eq '^(SUCCESS|XFAIL) ' "${log}" || \
+	    atf_skip "all upstream targets skipped"
 }
 
 local_case()

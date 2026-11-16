@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Inspect the complete BIOS loader and exercise the real guarded strip action."""
 import argparse
 import json

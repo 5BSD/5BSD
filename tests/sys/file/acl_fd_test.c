@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * The __acl_*_fd(2) family is answered by the descriptor's fileops
  * (fo_acl).  A vnode file answers as the same call on its path does,
  * whether the filesystem supports ACLs or not; descriptors with no vnode

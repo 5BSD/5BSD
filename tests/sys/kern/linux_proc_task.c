@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Process-leader task directory and memory permission regression. */
 #include "linux_test.h"
 static volatile u64 value = 0x123456789abcdef0UL;

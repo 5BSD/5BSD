@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Ed25519 descriptor operations use the already-loaded crypto.ko ref10
  * primitives.  Private material is held only in the descriptor object.
  */

@@ -375,11 +375,8 @@ pkgbase-repo:
 	        (echo "PKGBASE_PKG_PACKAGE checksum $${actual} does not match ${PKGBASE_PKG_SHA256}" >&2; false)
 .endif
 	@pkgname=$$(${PKG_CMD} query -F ${PKGBASE_PKG_PACKAGE:Q} %n); \
-	    pkgabi=$$(${PKG_CMD} query -F ${PKGBASE_PKG_PACKAGE:Q} %q); \
 	    test "$${pkgname}" = pkg || \
-	        (echo "PKGBASE_PKG_PACKAGE is not the pkg package: $${pkgname}" >&2; false); \
-	    test "$${pkgabi}" = "${PKG_ABI}" || \
-	        (echo "PKGBASE_PKG_PACKAGE ABI $${pkgabi} does not match ${PKG_ABI}" >&2; false)
+	        (echo "PKGBASE_PKG_PACKAGE is not the pkg package: $${pkgname}" >&2; false)
 	@pkgos=$$(${PKG_CMD} query -F ${PKGBASE_PKG_PACKAGE:Q} '%At=%Av' | \
 	    sed -n 's/^FreeBSD_version=//p'); \
 	    targetos=$$(awk '/^#define[[:space:]]+__FreeBSD_version[[:space:]]/ { print $$3 }' ${WORLDDIR}/sys/sys/param.h); \
@@ -389,6 +386,12 @@ pkgbase-repo:
 	        (echo "PKGBASE_PKG_PACKAGE requires OSVERSION $${pkgos}, newer than target $${targetos}; build pkg for the release world" >&2; false)
 	( ${IMAKE} -C ${WORLDDIR} packages PKG_CMD=${PKG_CMD:Q} \
 	    REPODIR=${.OBJDIR}/pkgbase-repo )
+# PKG_ABI is read from the staged world, which "packages" has just created:
+# on a fresh object tree it does not exist before that.
+	@pkgabi=$$(${PKG_CMD} query -F ${PKGBASE_PKG_PACKAGE:Q} %q); \
+	    abi=${PKG_ABI}; \
+	    test -n "$${abi}" && test "$${pkgabi}" = "$${abi}" || \
+	        (echo "PKGBASE_PKG_PACKAGE ABI $${pkgabi} does not match '$${abi}'" >&2; false)
 	@pkgdir=$$(readlink pkgbase-repo/${PKG_ABI}/latest-built); \
 	    cp ${PKGBASE_PKG_PACKAGE:Q} pkgbase-repo/${PKG_ABI}/$${pkgdir}/; \
 	    printf "version = 2;\n" > pkgbase-repo.meta; \
@@ -447,7 +450,8 @@ disc1:
 # empty root.  Media assembly has to be idempotent.
 	rm -rf ${.TARGET}/usr/5bsd-packages ${.OBJDIR}/pkgdb-disc1
 	mkdir -p ${.TARGET}/usr/5bsd-packages/repos/
-	env PKG_CMD=${PKG_CMD:Q} ${.CURDIR}/scripts/pkgbase-stage.lua disc \
+	env PKG_CMD=${PKG_CMD:Q} MEDIA_KERNEL=${KERNCONF:U:[1]:Q} \
+	    ${.CURDIR}/scripts/pkgbase-stage.lua disc \
 	    ${.OBJDIR}/pkgbase-repo-dir \
 	    ${.TARGET}/usr/5bsd-packages/offline \
 	    "${_ALL_libcompats}" ${PKG_ABI} ${.OBJDIR}/pkgdb-disc1
@@ -596,7 +600,8 @@ dvd:
 .if (!defined(NOPKGBASE) || empty(NOPKGBASE)) && (!defined(PKGBASE_SIGNED_REPOSITORY) || empty(PKGBASE_SIGNED_REPOSITORY))
 # Create offline pkgbase repo on release media
 	mkdir -p ${.TARGET}/usr/5bsd-packages/repos/
-	env PKG_CMD=${PKG_CMD:Q} ${.CURDIR}/scripts/pkgbase-stage.lua dvd \
+	env PKG_CMD=${PKG_CMD:Q} MEDIA_KERNEL=${KERNCONF:U:[1]:Q} \
+	    ${.CURDIR}/scripts/pkgbase-stage.lua dvd \
 	    ${.OBJDIR}/pkgbase-repo-dir \
 	    ${.TARGET}/usr/5bsd-packages/offline \
 	    "${_ALL_libcompats}" ${PKG_ABI} ${.OBJDIR}/pkgdb-dvd

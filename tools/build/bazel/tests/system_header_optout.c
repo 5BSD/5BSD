@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* __stdarg___gnuc_va_list.h is a Clang resource header in the selected SDK. */
 /* Both -nostdinc and -nostdlibinc suppress the target C library headers. */
 #if __has_include(<stdio.h>)

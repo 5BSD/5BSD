@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Build and inspect source membership in native regular, PIC and PIE archives.
 
 Uses an explicit qualified workspace's toolchain/module inputs and build command.

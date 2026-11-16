@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Qualify private header ownership, dependent isolation and invalidation."""
 import argparse,json,os,shutil,subprocess
 from pathlib import Path

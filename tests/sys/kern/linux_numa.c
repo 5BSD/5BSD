@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * NUMA memory-policy syscalls on a single-/multi-domain host: get_mempolicy
  * (MPOL_F_MEMS_ALLOWED reports the node set; default policy otherwise),

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Run native kldxref on declared regular copies; never scan an installed OS."""
 import json
 import os

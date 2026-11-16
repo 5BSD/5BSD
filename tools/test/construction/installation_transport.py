@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Transport explicit installation inputs into a disposable builder VM.
 
 This binds transport bytes and path translation, not policy approval.

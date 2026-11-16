@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check exact same-file definition selection using explicit ELF build tools.
 
 ELF permits distinct symbol entries with the same name. The fixture gives a

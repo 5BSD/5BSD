@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * unix-pipe — netcat-style AF_UNIX tool for the e2e suite (host side of
  * the bhyve vsock device: per-port sockets in the device's path= dir).

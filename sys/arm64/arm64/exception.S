@@ -311,6 +311,12 @@ END(handle_el0_sync)
 
 ENTRY(handle_el0_irq)
 	save_registers 0
+	/*
+	 * An interrupt does not set ESR_EL1, so the frame holds the syndrome
+	 * of the last synchronous exception.  Clear it: a thread preempted
+	 * here is not in a system call (see vfp_save_state_common()).
+	 */
+	str	xzr, [sp, #(TF_ESR)]
 	KMSAN_ENTER
 	mov	x0, sp
 	mov	x1, #INTR_ROOT_IRQ
@@ -323,6 +329,12 @@ END(handle_el0_irq)
 
 ENTRY(handle_el0_fiq)
 	save_registers 0
+	/*
+	 * An interrupt does not set ESR_EL1, so the frame holds the syndrome
+	 * of the last synchronous exception.  Clear it: a thread preempted
+	 * here is not in a system call (see vfp_save_state_common()).
+	 */
+	str	xzr, [sp, #(TF_ESR)]
 	KMSAN_ENTER
 	mov	x0, sp
 	mov	x1, #INTR_ROOT_FIQ

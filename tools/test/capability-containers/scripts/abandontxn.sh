@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Container-model ABANDONED-TXN SWEEP proof.
 #
 # A TXN_BEGIN stages a read-write clone of a claim, reaped explicitly by

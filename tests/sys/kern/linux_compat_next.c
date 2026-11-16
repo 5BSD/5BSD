@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Linux64 differential tests; run only in a disposable guest.
  */
 #define _GNU_SOURCE

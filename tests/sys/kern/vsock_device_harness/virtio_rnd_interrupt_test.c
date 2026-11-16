@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Integration test for the bhyve VirtIO entropy interrupt path.  This uses
  * the real device callback and shared VirtIO core with a small guest-memory

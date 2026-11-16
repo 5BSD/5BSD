@@ -20,23 +20,33 @@ def world_construction_inputs():
     return ["//etc:account_install_manifest", "//:world_manual_databases_manifest",
         "//usr.sbin/services_mkdb:construction_manifest", "//usr.bin/login:generated_manifest"] + _world_construction_archives()
 
+def _world_archives(candidates = False):
+    variant = "installation_candidates" if candidates else "production_installation_archives"
+    return ([
+        "//lib:" + variant, "//libexec:installation_archives",
+        "//bin:installation_archives", "//sbin:installation_archives",
+        "//include:installation_archives", "//usr.bin:production_installation_archives",
+        "//usr.sbin:" + variant, "//share:production_installation_archives",
+        "//etc:pre_database_installation_archives", ":sys_world_installation_archives",
+    ] + select({"//tools/build/bazel/config:tests_enabled": ["//tests:" + variant], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:rescue_enabled": ["//rescue:production_installation_archives"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:boot_enabled": ["//stand:production_installation_archives"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:cddl_enabled": ["//cddl:" + variant], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:crypt_enabled": ["//secure:" + variant], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:world_kerberos_mit": ["//krb5:production_installation_archives"],
+                "//tools/build/bazel/config:world_kerberos_disabled": []},
+            no_match_error = "The selected Heimdal world root has no native aggregate; select MIT Kerberos or disable Kerberos"))
+
+
 def world_contributions():
     package_suffixes = ["dbg", "dev", "lib"] + select({
         "//tools/build/bazel/config:split_manpages_enabled": ["man"], "//conditions:default": [],
     })
-    bsd_install_archive_set(name = "world_contributions", archives = [
-        "//lib:production_installation_archives", "//libexec:installation_archives",
-        "//bin:installation_archives", "//sbin:installation_archives",
-        "//include:installation_archives", "//usr.bin:production_installation_archives",
-        "//usr.sbin:production_installation_archives", "//share:production_installation_archives",
-        "//etc:pre_database_installation_archives", ":sys_world_installation_archives",
-    ] + select({"//tools/build/bazel/config:rescue_enabled": ["//rescue:production_installation_archives"], "//conditions:default": []}) +
-        select({"//tools/build/bazel/config:boot_enabled": ["//stand:production_installation_archives"], "//conditions:default": []}) +
-        select({"//tools/build/bazel/config:cddl_enabled": ["//cddl:production_installation_archives"], "//conditions:default": []}) +
-        select({"//tools/build/bazel/config:crypt_enabled": ["//secure:production_installation_archives"], "//conditions:default": []}) +
-        select({"//tools/build/bazel/config:world_kerberos_mit": ["//krb5:production_installation_archives"],
-                "//tools/build/bazel/config:world_kerberos_disabled": []},
-            no_match_error = "The selected Heimdal world root has no native aggregate; select MIT Kerberos or disable Kerberos"),
+    bsd_install_archive_set(name = "world_contributions", archives = _world_archives(),
+        visibility = ["//visibility:public"])
+    # Same family selections and source-owned contributions, available for a
+    # complete installation audit before the production full-test guard lifts.
+    bsd_install_archive_set(name = "world_installation_candidates", archives = _world_archives(candidates = True),
         visibility = ["//visibility:public"])
     for name, root in [("main", "/usr/share/man"), ("openssl", "/usr/share/openssl/man")]:
         bsd_man_database(name = "world_" + name + "_manual_database", archives = [":world_contributions"],

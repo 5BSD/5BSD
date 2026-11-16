@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Installation namespaces are independent of software signing identity. */
 #ifndef SWITCHBOARD_SCOPE_IDENTITY_H
 #define SWITCHBOARD_SCOPE_IDENTITY_H

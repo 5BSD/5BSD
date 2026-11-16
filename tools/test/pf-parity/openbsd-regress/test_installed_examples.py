@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Parse the shipped inactive PF template without loading rules or interfaces."""
 from pathlib import Path
 import os

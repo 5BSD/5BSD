@@ -1,4 +1,8 @@
 #!/usr/bin/env atf-sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
 
 atf_test_case native_book_is_installed_with_base
 native_book_is_installed_with_base_body()

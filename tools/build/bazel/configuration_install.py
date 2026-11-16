@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Export bsd.confs.mk's effective per-file installation contract."""
 import shlex
 from pathlib import PurePosixPath

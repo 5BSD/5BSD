@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Observe internal priority on untagged packets after PF, independently of PCP.
 # Packet tag 21 is PACKET_TAG_PF from sys/mbuf.h; reject absent/wrong tags.
 . $(atf_get_srcdir)/utils.subr

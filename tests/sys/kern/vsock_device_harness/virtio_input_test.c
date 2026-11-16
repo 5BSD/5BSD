@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Unit tests for bhyve's VirtIO input device.  The real device source is
  * included so queue validation, frame handling, and transport wiring can be

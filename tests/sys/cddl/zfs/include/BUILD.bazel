@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/cddl/zfs:suite.bzl", "zfs_test_suite")
+load("//tools/build/bazel:bsd_awk_output.bzl", "bsd_awk_output")
+load("//tools/build/bazel:bsd_sed_output.bzl", "bsd_sed_output")
+bsd_awk_output(name = "commands_config", script = "translatecommands.awk", srcs = ["commands.txt"],
+    variables = {"stfsuitedir": "/usr/tests/sys/cddl/zfs"}, output = "commands.cfg",
+    awk = "@bsd_sdk//toolchain:awk", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:awk_runtime"])
+bsd_sed_output(name = "default_config", template = "default.cfg.in", output = "default.cfg",
+    arguments = ["s:%%STFSUITEDIR%%:/usr/tests/sys/cddl/zfs:"], sed = "@bsd_sdk//toolchain:sed",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:sed_runtime"])
+
+zfs_test_suite(
+    files = ['constants.cfg', 'libremote.kshlib', 'libgnop.kshlib', 'logapi.kshlib', 'libtest.kshlib', 'stf.shlib', 'testenv.kshlib', 'commands.cfg', 'default.cfg'],
+    generated = {"commands.cfg": ":commands_config", "default.cfg": ":default_config"},
+    tests = {'libtest_test': {'required_programs': 'ksh93'}},
+)

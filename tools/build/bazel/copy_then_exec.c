@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Copy declared inputs to fresh outputs before running a mutating generator. */
 #include <sys/stat.h>
 #include <errno.h>

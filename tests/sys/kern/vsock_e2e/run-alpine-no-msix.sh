@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Acceptance test for bhyve's shared VirtIO interrupt path.  The guest uses
 # Alpine's upstream legacy drivers while bhyve -W removes MSI-X, forcing the
 # one-vector MSI/INTx fallback exercised by virtio.c.  The monitor-mode reboot

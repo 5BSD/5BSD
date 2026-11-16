@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 13, 2026
+.Dd November 15, 2026
 .Dt LIBDQ 3
 .Os
 .Sh NAME
@@ -319,6 +319,19 @@ device.
 A controller opens a queue, mints descriptors that present an identity of
 its choosing, reads the events the kernel posts for operations on those
 descriptors and answers them by id.
+A controller that attaches programs is their
+.Em Capability Broker
+.Pq Xr dq 4 :
+it answers the capability lifecycle hooks with allow
+.Pq Fn dq_reply_resolve_pass ,
+deny
+.Pq Fn dq_reply_resolve_errno ,
+substitute
+.Pq Fn dq_reply_resolve_swap
+or proxy
+.Pq Fn dq_reply_resolve_fd .
+It is not one of the brokered system services; this page keeps the
+word controller.
 Every function is a thin wrapper over the
 .Xr ioctl 2
 and
@@ -338,7 +351,10 @@ opens
 .Pa /dev/dq
 with
 .Dv O_RDWR | O_CLOEXEC | O_CLOFORK
-and returns the queue descriptor.
+and returns the queue descriptor; on success it also reads
+.Va kern.dq.max_io
+once, to size the buffer of
+.Fn dq_dispatch .
 One open is one queue, owned by the calling process: the descriptor is in
 no child and no exec'd image and cannot be sent, whatever its flags say,
 only the calling process operates the queue, and the queue dies when that
@@ -1280,13 +1296,15 @@ answers an open that accepts
 .Dv DQ_RESOLVE_SWAP
 with
 .Fa fd ,
-a descriptor of the controller: the kernel installs that open file in the
+a descriptor of the controller
+.Pq descriptor substitution :
+the kernel installs that open file in the
 requester as the result of its
 .Xr open 2 ,
 and the requester then works on the real file with no further events
 .Po
 .Xr dq 4 ,
-.Sx Swapped answers ,
+.Sx Descriptor substitution ,
 which also lists the duties of a controller that answers this way
 .Pc .
 Open
@@ -1316,6 +1334,63 @@ means the requester is gone.
 .Er EBUSY
 (the open file has another reference, possibly a transient one taken by
 another thread) is retried once before it is returned.
+.Pp
+The file is handed over as it is: it keeps the credential of the
+controller's
+.Xr open 2
+and the rights of
+.Fa fd ,
+also when the controller is another user.
+A file opened by root keeps set-ID bits on write and, on ufs, may fill
+the reserved blocks and is not held to a quota in the requester's hands;
+the kernel does not prevent that.
+A controller therefore restricts itself before it answers:
+.Fn dq_open ,
+.Fn dq_attach ,
+then
+.Xr setuid 2
+to an unprivileged user
+.Po
+and
+.Xr jail_attach 2
+or
+.Xr cap_enter 2
+where that fits
+.Pc ,
+and only then the
+.Xr open 2
+of each file it hands over.
+The event, reply, mint, attach and statistics functions work after that.
+.Fn dq_open
+and
+.Fn dq_observe_connect
+open a device by path and must come first.
+.Fn dq_tree_create
+and
+.Fn dq_serve_tree
+use the controller's own namespace for names outside the prefix and for
+the backing tree's path: create the tree before entering a jail, and do
+not serve names outside the prefix from capability mode.
+A tree created inside a jail records its backing path relative to the
+jail's root, and a
+.Dv DQ_RESOLVE_REAL
+answer built from it names another file for a requester outside the
+jail.
+The sysctls the library reads,
+.Va kern.dq.max_io ,
+.Va vfs.lookup_cap_dotdot
+and
+.Va vfs.lookup_cap_dotdot_nonlocal ,
+are readable in capability mode, and
+.Fn dq_open
+sizes the buffer of
+.Fn dq_dispatch
+from
+.Va kern.dq.max_io
+before the controller restricts itself.
+The order, and what each restriction bounds, is in
+.Xr dq 4 ,
+.Sx The substituted file and the restricted Capability Broker .
 .Pp
 .Fn dq_event_readdir
 returns a

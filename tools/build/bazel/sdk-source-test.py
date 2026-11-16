@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Explicit SDK roots and compiler identities must never select a hidden fallback."""
 from pathlib import Path
 import importlib.util

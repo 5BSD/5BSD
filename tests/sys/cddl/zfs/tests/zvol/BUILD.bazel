@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/cddl/zfs:suite.bzl", "zfs_test_suite")
+
+zfs_test_suite(
+    files = ['zvol.cfg', 'zvol_common.kshlib'],
+    subdirectories = ['zvol_ENOSPC', 'zvol_swap', 'zvol_misc', 'zvol_cli'],
+    child_archives = ['//tests/sys/cddl/zfs/tests/zvol/zvol_ENOSPC:installation_archives', '//tests/sys/cddl/zfs/tests/zvol/zvol_swap:installation_archives', '//tests/sys/cddl/zfs/tests/zvol/zvol_misc:installation_archives', '//tests/sys/cddl/zfs/tests/zvol/zvol_cli:installation_archives'],
+)

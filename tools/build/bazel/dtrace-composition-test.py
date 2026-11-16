@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Qualify DTrace/static-only composition with an explicit SDK and Bazel inputs.
 
 This builds bounded rule fixtures, not libc or active tracing qualification.

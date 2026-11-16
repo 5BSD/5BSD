@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * EXTERNAL REFERENCE ORACLE: the HCI LE Event Mask -- bit assignments, the
  * specified default, the "Controller shall ignore unsupported bits" rule, and

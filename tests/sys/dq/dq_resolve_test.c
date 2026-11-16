@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * RESOLVE (stage 1c-i): every name an attached process resolves is posted
  * before the lookup runs, with the operation, the class (the requester's
  * own path, a path for a kernel consumer, a kernel-origin lookup) and the

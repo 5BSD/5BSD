@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Unit tests for bhyve's modern Virtio PCI transport.  The real transport
  * source is included so its register-level behavior can be tested without a

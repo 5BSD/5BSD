@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Run an explicitly selected generator with declared standard streams:
  * stdout bound to its declared output and, with -i or --stdin, stdin bound

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Run the maintained bzip2 sample comparisons against explicit native outputs."""
 import argparse,binascii,gzip,hashlib,json,os,re,subprocess
 from pathlib import Path

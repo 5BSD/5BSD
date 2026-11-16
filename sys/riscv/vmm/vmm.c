@@ -46,6 +46,7 @@
 #include <sys/rwlock.h>
 #include <sys/sched.h>
 #include <sys/smp.h>
+#include <sys/sysctl.h>
 
 #include <vm/vm.h>
 #include <vm/vm_object.h>
@@ -90,6 +91,13 @@ static VMM_STAT(VCPU_TOTAL_RUNTIME, "vcpu total runtime");
 VMM_STAT(VMEXIT_COUNT, "total number of vm exits");
 VMM_STAT(VMEXIT_IRQ, "number of vmexits for an irq");
 VMM_STAT(VMEXIT_UNHANDLED, "number of vmexits for an unhandled exception");
+
+SYSCTL_DECL(_hw_vmm);
+
+int vmm_hypercalls_enabled = 1;
+SYSCTL_INT(_hw_vmm, OID_AUTO, hypercalls_enabled, CTLFLAG_RWTUN,
+    &vmm_hypercalls_enabled, 0,
+    "Enable hypercalls on all guests");
 
 static void
 vcpu_cleanup(struct vcpu *vcpu, bool destroy)
@@ -742,6 +750,7 @@ static int
 vm_handle_wfi(struct vcpu *vcpu, struct vm_exit *vme, bool *retu)
 {
 	struct vm *vm;
+	sbintime_t wait;
 
 	vm = vcpu->vm;
 	vcpu_lock(vcpu);
@@ -761,12 +770,16 @@ vm_handle_wfi(struct vcpu *vcpu, struct vm_exit *vme, bool *retu)
 		if (vcpu_should_yield(vcpu))
 			break;
 
+		wait = riscv_vstimer_wait(vcpu->cookie);
+		if (wait == 0)
+			break;
+
 		vcpu_require_state_locked(vcpu, VCPU_SLEEPING);
 		/*
 		 * XXX msleep_spin() cannot be interrupted by signals so
-		 * wake up periodically to check pending signals.
+		 * wake up at least once a second to check pending signals.
 		 */
-		msleep_spin(vcpu, &vcpu->mtx, "vmidle", hz);
+		msleep_spin_sbt(vcpu, &vcpu->mtx, "vmidle", wait, 0, 0);
 		vcpu_require_state_locked(vcpu, VCPU_FROZEN);
 	}
 	vcpu_unlock(vcpu);
@@ -1005,7 +1018,8 @@ restart:
 			break;
 		case VM_EXITCODE_ECALL:
 			vcpu->nextpc = vme->pc + vme->inst_length;
-			if (vme->u.ecall.args[7] == SBI_EXT_ID_HYPERTRACE) {
+			if (vmm_hypercalls_enabled != 0 &&
+			    vme->u.ecall.args[7] == SBI_EXT_ID_HYPERTRACE) {
 				vm_handle_hypertrace_ecall(vcpu, vme);
 				retu = false;
 			} else

@@ -1,5 +1,9 @@
 #!/bin/sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Verify that each public nested-VMX header which exposes bool can be included
 # directly by a standalone model consumer.  Kernel builds have broad ambient
 # include coverage; this deliberately does not rely on it.

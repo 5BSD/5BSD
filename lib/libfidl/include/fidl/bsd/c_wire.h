@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef FIDL_BSD_C_WIRE_H
 #define FIDL_BSD_C_WIRE_H
 // Direct FIDL v2 wire coding for the generated C bindings.

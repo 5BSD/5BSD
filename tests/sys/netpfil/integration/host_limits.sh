@@ -1,6 +1,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # 5BSD seam tests: host-owned pf pool limits.
 #
 # pf's memory pools (states, src-nodes, frags, tables, table-entries,

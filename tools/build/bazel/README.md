@@ -43766,7 +43766,12 @@ Layout:
   RELRO/NOW, TEXTREL, RPATH/RUNPATH, stack, W+X, NEEDED set, imported and
   exported dynamic symbols with versions, version requirements per provider)
   and archives (member order, defined and undefined symbols per member), and
-  records per-section hashes. `elf-artifact-check-test.py` has six
+  records per-section hashes. Dynamic PIE is the default; explicit mutually
+  exclusive `--static-program` and `--non-pie-program` contracts model deliberate
+  test fixtures. Non-PIE dynamic comparison still requires the interpreter,
+  RELRO/NOW, safe segment permissions and matching dynamic dependencies/symbols.
+  These flags do not waive checks based on file names or alter runtime policy.
+  `elf-artifact-check-test.py` has six
   positive/negative cases (program metadata drift, missing member, member
   order, renamed symbol).
 

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * The system.Filesystem client: service_storage_*(3), service_open_config(3)
  * and service_open_isolated(3) over bsd.filesystem.v1 (filesystemcmp.fidl).

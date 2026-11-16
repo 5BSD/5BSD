@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Fault injection at the capability-list API; real account-policy evaluation. */
 #include <sys/types.h>
 #include <atf-c.h>

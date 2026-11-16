@@ -4,9 +4,9 @@ load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import")
 # production dependency graph would force duplicate client/provider objects and
 # override the scripted fixture's own service functions.
 cc_import(name = "component_archive", static_library = "//lib/libnetworkcmp:static_archive",
-    deps = ["//lib/libnetworkcmp:headers", "//lib/libnetworkcmp:generated_headers"])
+    deps = ["//tests:capability_tier", "//lib/libnetworkcmp:headers", "//lib/libnetworkcmp:generated_headers"])
 [cc_binary(name = name, srcs = sources,
-    deps = [":component_archive", "//lib/libnetworkcmp:test_source_headers",
+    deps = ["//tests:capability_tier", ":component_archive", "//lib/libnetworkcmp:test_source_headers",
         "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libthr:thr",
         "//lib/atf/libatf-c:atf_c"] + (["//lib/libservice:service"] if name == "networkcmp_test" else []) + (["//lib/libservice:bootstrap_headers"] if name == "networkcmp_test" else []),
     linkstatic = True, linkopts = ["-static"])

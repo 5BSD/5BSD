@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # bsdlog container-model reclaim proof: a real bundle (Test.cap/logprobe) emits to
 # system.Log, so bsdlog maps its owner->bundle "Test" in owners.meta; removing the
 # bundle + rebooting must make bsdlog's reconcile seal that owner and drop it from

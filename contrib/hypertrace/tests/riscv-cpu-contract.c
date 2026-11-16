@@ -1,10 +1,11 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+#include <sys/param.h>
 #include <assert.h>
 #include <errno.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
-#define __FreeBSD_version 1600000
 #define VM_CAP_SSTC 1
 /* SBI_IDS */
 
@@ -93,6 +94,11 @@ main(void)
 	destination.records[4].values[0] ^= 1;
 	assert(checkpoint_cpu_contract_match(&saved, &destination,
 	    NULL, 0) == EXDEV);
+	char reason[160];
+	assert(checkpoint_cpu_contract_match(&saved, &destination,
+	    reason, sizeof(reason)) == EXDEV);
+	assert(strstr(reason, " value[0]: source 0x0000007f, "
+	    "destination 0x0000007e") != NULL);
 	capability = 2;
 	assert(checkpoint_cpu_contract_capture(&vcpu, &contract) == EPROTO);
 	assert(memcmp(&saved, &contract, sizeof(saved)) == 0);

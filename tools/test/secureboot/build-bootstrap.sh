@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Run only inside the source tree's buildenv, using its matching world sysroot.
 set -eu
 [ "${BUILDENV:-}" = 1 ] || { echo 'requires make buildenv' >&2; exit 1; }

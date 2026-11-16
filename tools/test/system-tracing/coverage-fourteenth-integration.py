@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check optional build integration and preservation of non-instrumentation C tokens."""
 import concurrent.futures,json,os,re,subprocess
 from pathlib import Path

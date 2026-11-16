@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Inspect real GPT/UFS, ISO and GPT/ZFS boot artifacts and exercise the actual size-check CLI."""
 import argparse
 import json

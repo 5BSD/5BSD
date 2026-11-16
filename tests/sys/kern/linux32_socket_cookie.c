@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Freestanding i386 Linux SO_COOKIE ABI check. */
 typedef unsigned long long u64;
 static long

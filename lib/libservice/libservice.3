@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd October 18, 2026
+.Dd November 15, 2026
 .Dt LIBSERVICE 3
 .Os
 .Sh NAME
@@ -70,6 +70,8 @@ Service lifecycle library
 .Ft int
 .Ft int
 .Fn service_worker_protect "uint32_t flags"
+.Ft bool
+.Fn service_worker_protect_available "void"
 .Ft void
 .Fn service_worker_drop_inherited_authority "void"
 .Ft int
@@ -333,6 +335,10 @@ After a provider forks a per-request worker,
 .Fn service_worker_protect
 activates its assigned process-protection policy without requiring an inherited
 context object.
+.Fn service_worker_protect_available
+is true while the process holds the descriptor that
+.Fn service_worker_protect
+needs; a provider that confines forked workers checks it at start.
 .Fn service_worker_drop_inherited_authority
 then discards every private descriptor retained by libservice before the
 worker enters capability mode.

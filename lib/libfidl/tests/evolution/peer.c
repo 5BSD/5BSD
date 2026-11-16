@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Schema evolution peer. Built once against bsd:1 and once against bsd:2
  * of evolution.fidl. "peer launch ROLE OTHER" creates a channel,

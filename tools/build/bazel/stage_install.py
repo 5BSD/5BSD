@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Validate explicit stage policy/tool inputs and emit the native install action."""
 import hashlib
 import json

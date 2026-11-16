@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Run by rc.local in the L2 guest (role l2). Prints the marker, then the
 # optional CPU-bound checksum workload (hosttest.l2work MiB per vCPU, one
 # worker pinned to each vCPU with cpuset -l) and the optional hold

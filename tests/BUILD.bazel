@@ -1,7 +1,43 @@
 # SPDX-License-Identifier: BSD-2-Clause
 exports_files(["README"], visibility = ["//lib/libregex/tests:__pkg__"])
 
-exports_files(["Kyuafile"], visibility = ["//lib/atf/tests:__pkg__", "//lib/tests:__pkg__", "//usr.sbin/tests:__pkg__", "//lib/googletest/tests:__pkg__", "//libexec:__subpackages__", "//bin:__subpackages__", "//sbin:__subpackages__", "//usr.bin:__subpackages__", "//lib/libcasper/services/tests:__pkg__"])
+exports_files(["Kyuafile"], visibility = ["//lib/atf/tests:__pkg__", "//lib/tests:__pkg__", "//usr.sbin/tests:__pkg__", "//lib/googletest/tests:__pkg__", "//libexec:__subpackages__", "//bin:__subpackages__", "//sbin:__subpackages__", "//usr.bin:__subpackages__", "//lib/libcasper/services/tests:__pkg__", "//tests/etc:__pkg__"])
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
-cc_library(name = "suite_macros", hdrs = ["freebsd_test_suite/macros.h"], includes = ["."], visibility = ["//lib/libc/tests/nss:__pkg__", "//lib/libcasper/services/cap_fileargs/tests:__pkg__", "//tests/sys/kern:__pkg__"])
+cc_library(name = "suite_macros", hdrs = ["freebsd_test_suite/macros.h"], includes = ["."], visibility = ["//lib/libc/tests/nss:__pkg__", "//lib/libcasper/services/cap_fileargs/tests:__pkg__", "//tests/sys/kern:__pkg__", "//tests/sys/vfs:__pkg__", "//tests/sys/audit:__pkg__", "//tests/sys/fs/fusefs:__pkg__"])
+# Skips that name their VM tier (DEFERRED_DEVICE_TIER); used by plane-on
+# provider and client tests across the tree.
+cc_library(name = "capability_tier", hdrs = ["freebsd_test_suite/capability_tier.h"], includes = ["."], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+# Audit contributions only. No root Kyuafile claims that these partial suites
+# constitute the complete /usr/tests hierarchy.
+_INSTALLATION_CANDIDATES = [
+    "//tests/sys/auditpipe:install_archive",
+    "//tests/sys/fs:installation_archives",
+    "//tests/sys/geom:installation_archives",
+    "//tests/sys/pjdfstest:installation_archives",
+    "//tests/include:install_archive",
+    "//tests/etc:installation_archives",
+    "//tests/release:install_archive",
+    "//tests/sys/sys:install_archive",
+    "//tests/sys/sound:install_archive",
+    "//tests/sys/vfs:install_archive",
+    "//tests/sys/vm:installation_archives",
+    "//tests/sys/aio:install_archive",
+    "//tests/sys/fifo:install_archive",
+    "//tests/sys/file:install_archive",
+    "//tests/sys/mqueue:install_archive",
+    "//tests/sys/posixshm:install_archive",
+    "//tests/sys/ses:install_archive",
+    "//tests/sys/common:install_archive",
+    "//tests/sys/kern:descriptor_install_archive",
+    "//tests/sys/netinet/libalias:install_archive",
+    "//tests/sys/security:installation_archives",
+] + select({"//tools/build/bazel/config:audit_enabled": ["//tests/sys/audit:install_archive"], "//conditions:default": []}) + select({"//tools/build/bazel/config:cddl_enabled": ["//tests/sys/cddl:installation_archives"], "//conditions:default": []})
+bsd_install_archive_set(name = "installation_candidates", archives = _INSTALLATION_CANDIDATES,
+    visibility = ["//visibility:public"])
+# Incomplete OS tests must never silently become a production test installation.
+bsd_install_archive_set(name = "production_installation_archives", archives = _INSTALLATION_CANDIDATES,
+    target_compatible_with = ["@platforms//:incompatible"],
+    visibility = ["//visibility:public"])

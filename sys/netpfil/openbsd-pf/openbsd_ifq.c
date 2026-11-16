@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The 5BSD Project
+ * Copyright (c) 2026 Kory Heard
  *
  * OpenBSD interface send-queue disciplines (ifq(9), HFSC, FQ-CoDel) used
  * by pf queues.  Queue scheduling on 5BSD interfaces is not wired yet:

@@ -48,12 +48,16 @@
  * are logged and left alone.
  *
  * The package database and module metadata are parsed in pdfork(2)ed
- * children.  The kldload token is close-on-fork, and a child closes every
- * descriptor but the one it reads and its reply pipe, so a malformed database
- * or module reaches a process that can load nothing.  The database child maps
- * local.sqlite privately and opens it with sqlite3_deserialize(3) read-only
- * (base's private sqlite; libpkg is not part of base), with views, triggers
- * and untrusted schema functions disabled.
+ * children.  The kldload token is close-on-fork; before reading, a child
+ * shields itself with every capprotect restriction (no privilege, fork, exec,
+ * IPC, sockets or descriptor receipt), drops what libservice holds and stays
+ * in capability mode (service_worker_enter_capability_mode(3)), then closes
+ * every descriptor but the one it reads and its reply pipe, so a malformed
+ * database or module reaches a process that can load nothing and open
+ * nothing.  A child that cannot confine itself reads nothing.  The database
+ * child maps local.sqlite privately and opens it with sqlite3_deserialize(3)
+ * read-only (base's private sqlite; libpkg is not part of base), with views,
+ * triggers and untrusted schema functions disabled.
  *
  * What this is not: the package database and /boot are both writable by
  * root, so a root that edits the database, or swaps a file or /boot after the
@@ -71,6 +75,7 @@
 #include <sys/linker.h>
 #include <sys/mman.h>
 #include <sys/module.h>
+#include <sys/capsicum.h>
 #include <sys/procdesc.h>
 #include <sys/stat.h>
 
@@ -116,6 +121,14 @@ static pthread_mutex_t root_lock = PTHREAD_MUTEX_INITIALIZER;
 static struct root_loaded root_loaded[SYSEXT_ROOT_LOADED_MAX];
 
 #ifdef BSDEXTENSION_TESTING
+static int
+test_child_cap_enter(void)
+{
+
+	return (cap_enter());
+}
+
+int (*sysext_test_child_confine)(void) = test_child_cap_enter;
 int (*sysext_test_kld_load)(const char *, int *);
 int (*sysext_test_kld_unload)(int);
 int (*sysext_test_kld_stat)(int, char *, size_t, char *, size_t);
@@ -468,6 +481,25 @@ out:
 /* ------------------------------------------------------- forked readers */
 
 /*
+ * Confine a freshly forked reader before it reads a byte: every capprotect
+ * restriction, libservice's inherited descriptors dropped, capability mode
+ * (the broker is already in it; the call keeps it so).  The protections
+ * against other processes are not asked for: the broker kills and reaps the
+ * child through its process descriptor.
+ */
+static int
+child_confine(void)
+{
+
+#ifdef BSDEXTENSION_TESTING
+	if (sysext_test_child_confine != NULL)
+		return (sysext_test_child_confine());
+#endif
+	return (service_worker_enter_capability_mode(
+	    SERVICE_PROTECT_RESTRICT));
+}
+
+/*
  * Run fn over fd in a pdfork(2)ed child and collect its fixed-size reply
  * (whose first member is the int32_t status fn returns).  The child keeps only
  * fd (as 3) and the reply pipe (as 4): the kldload token is close-on-fork and
@@ -501,6 +533,17 @@ child_read(int fd, int (*fn)(int, const void *, void *), const void *arg,
 	if (pid == 0) {
 		int a, b;
 
+		/*
+		 * Before the descriptors move (capprotect's may be 3 or 4).
+		 * A child that cannot confine itself reads nothing and reports
+		 * why as its status.
+		 */
+		if (child_confine() == -1) {
+			memset(reply, 0, replylen);
+			*(int32_t *)reply = errno != 0 ? errno : EPERM;
+			n = write(p[1], reply, replylen);
+			_exit(1);
+		}
 		a = fcntl(fd, F_DUPFD, 10);
 		b = fcntl(p[1], F_DUPFD, 10);
 		if (a == -1 || b == -1 || dup2(a, 3) == -1 || dup2(b, 4) == -1)

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Shared native and Linux tests for future-write sealing. */
 #ifdef LINUX_ABI
 #if defined(__x86_64__)

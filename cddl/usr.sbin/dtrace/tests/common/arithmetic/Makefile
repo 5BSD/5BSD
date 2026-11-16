@@ -19,6 +19,8 @@ TFILES= \
      tst.compcast.d.out  \
      tst.compnarrowassign.d  \
      tst.compnarrowassign.d.out  \
+     tst.constfold.d  \
+     tst.constfold.d.out  \
      tst.execcast.d  \
      tst.execcast.d.out  \
 

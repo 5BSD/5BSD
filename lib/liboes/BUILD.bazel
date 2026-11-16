@@ -121,3 +121,10 @@ bsd_install_archive(
 )
 
 cc_library(name = "broker_protocol_headers", hdrs = ["oes_broker_protocol.h"], deps = [":headers", ":generated_headers", "//lib/libfidl:headers"], strip_include_prefix = ".", visibility = ["//usr.sbin/BSDFilesystem:__pkg__", "//usr.sbin/BSDFilesystem/tests:__pkg__"])
+
+# The kernel integration suite compiles the reader implementation directly,
+# matching its Make SRCS overrides without linking the broker/FIDL library.
+cc_library(name = "reader_test_objects", srcs = ["liboes.c"], hdrs = ["diagnostics.h"],
+    deps = [":headers"], copts = ["-fPIE"],
+    target_compatible_with = _PLATFORM,
+    visibility = ["//tests/sys/security/oes:__pkg__"])

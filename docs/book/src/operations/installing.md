@@ -63,8 +63,9 @@ whose providers have no durable containers. See
 `usr.sbin/bsdinstall/scripts/pkgbase.in` queries the repository for
 `5BSD-set-*` metapackages and offers them as components. `base` (the complete
 system) is on by default; `kernel-dbg`, `src`, `tests` and `debug` are
-explicit choices; `minimal`, `pkg` and `kernel` are always installed
-(`5BSD-kernel-generic`, the only kernel the script knows). With `--jail`
+explicit choices; `minimal`, `pkg` and `kernel` are always installed (the
+kernel is the repository's only `5BSD-kernel-*` package, or the one that
+`BSDINSTALL_KERNEL` names when there are several). With `--jail`
 (used by `bsdinstall jail`) the `-jail` variants are selected and no kernel is
 installed. A scripted install sets `COMPONENTS` in the environment; the
 `script` target forces it to `base kernel`.

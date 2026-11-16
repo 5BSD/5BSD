@@ -31,6 +31,7 @@
 
 
 #include <sys/elf_common.h>
+#include <machine/armreg.h>
 #include <machine/asm.h>
 #include <machine/hypervisor.h>
 
@@ -318,5 +319,62 @@ ENTRY(VMM_HYP_FUNC(do_call_guest))
 	/* Enter guest */
 	ERET
 END(VMM_HYP_FUNC(do_call_guest))
+
+/*
+ * Usage:
+ * uint64_t vmm_at_s1e1r(uint64_t va)
+ *
+ * Translate va with AT S1E1R and return PAR_EL1.  The guest's stage 1 table
+ * walk can take a synchronous External abort, for example on a table in
+ * device memory, and at EL2 nothing else may handle it: VHE would take it on
+ * the kernel's vectors with the guest's registers still loaded.  Take any
+ * exception here on at_vectors, which resumes with a failed translation.
+ * The exception overwrites ELR_EL2 and SPSR_EL2, which still hold guest
+ * state, so preserve them.  As Linux __kvm_at() does, handle only synchronous
+ * exceptions: mask debug exceptions, SError, IRQ and FIQ while at_vectors is
+ * installed, so that a pending one is taken, and reported, by the regular
+ * handler afterwards.
+ */
+ENTRY(VMM_HYP_FUNC(at_s1e1r))
+	mrs	x5, daif
+	msr	daifset, #(DAIF_ALL)
+	mrs	x1, vbar_el2
+	mrs	x2, elr_el2
+	mrs	x3, spsr_el2
+	adrp	x4, at_vectors
+	add	x4, x4, :lo12:at_vectors
+	msr	vbar_el2, x4
+	isb
+	at	s1e1r, x0
+	isb
+	mrs	x0, par_el1
+1:
+	msr	elr_el2, x2
+	msr	spsr_el2, x3
+	msr	vbar_el2, x1
+	isb
+	msr	daif, x5
+	ret
+at_failed:
+	mov	x0, #(PAR_F)		/* the translation failed */
+	b	1b
+END(VMM_HYP_FUNC(at_s1e1r))
+
+	.text
+	.align 11
+at_vectors:
+	.rept	16
+	.align 7
+	b	at_abort
+	.endr
+
+/*
+ * Leave the AT for at_failed.  DAIF is masked here, so only a synchronous
+ * exception from the AT can arrive.
+ */
+at_abort:
+	adr	x9, at_failed
+	msr	elr_el2, x9
+	eret
 
 GNU_PROPERTY_AARCH64_FEATURE_1_NOTE(GNU_PROPERTY_AARCH64_FEATURE_1_VAL)

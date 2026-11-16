@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Positive and negative cases for elf-artifact-check.py using real Make artifacts."""
 import argparse
 import importlib.util

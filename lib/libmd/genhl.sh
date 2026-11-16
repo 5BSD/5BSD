@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Arguments: digest bytes, header stem, symbol prefix, optional context type,
 # template, output, sed, mv and rm executables. Used by both Make and Bazel.
 set -eu

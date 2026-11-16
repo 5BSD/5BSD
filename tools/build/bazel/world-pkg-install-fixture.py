@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Build package-derived disk fixtures for the maintained VM runner, unprivileged."""
 import argparse
 from collections import defaultdict

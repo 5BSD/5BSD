@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* Print sched runqueue events (dequeue + enqueue + load-change) */
 
 sched:::dequeue,

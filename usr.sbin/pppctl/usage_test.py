@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Only argument errors which return before socket/address/PAM operations."""
 import os
 from pathlib import Path

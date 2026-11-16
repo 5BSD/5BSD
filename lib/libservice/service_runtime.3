@@ -1,5 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd October 10, 2026
+.\" Copyright (c) 2026 Kory Heard
+.Dd November 15, 2026
 .Dt SERVICE_RUNTIME 3
 .Os
 .Sh NAME
@@ -138,6 +139,34 @@ The caller must close or retain the socket according to its worker
 lifecycle and terminate/reap failed children as necessary.
 No authority is granted and no child cleanup or hard scheduling bound is
 provided by this helper.
+.Pp
+.Fn service_retry_activation attempt arg attempt_ms
+is for a process that must open a session before it confines itself and
+so cannot defer the lookup, while switchboard may still be activating the
+provider.
+It calls
+.Fn attempt arg ,
+which returns 0 or -1 with errno, and repeats an attempt that failed with
+ETIMEDOUT after a pause of
+.Dv SERVICE_ACTIVATION_RETRY_PAUSE_MS ,
+but starts none that could end after
+.Fn SERVICE_ACTIVATION_WAIT_MS attempt_ms :
+switchboard's own activation bound,
+.Dv SERVICE_ACTIVATION_TIMEOUT_MS ,
+plus one attempt, whose bound is
+.Fa attempt_ms
+(for a lookup,
+.Dv SERVICE_LOOKUP_TIMEOUT_MS ) .
+The whole call therefore ends within that bound if each attempt keeps to
+.Fa attempt_ms .
+It returns 0, or -1 with the errno of the last attempt: any error other
+than ETIMEDOUT is final.
+A NULL attempt or a zero bound fails with EINVAL.
+Activations nest: a provider whose own start waits out another provider's
+activation this way can take longer than
+.Dv SERVICE_ACTIVATION_TIMEOUT_MS
+to start, so a client activating it on demand may see ETIMEDOUT from
+switchboard first and has to retry, for example with this function.
 .Sh SEE ALSO
 .Xr libservice 3 ,
 .Xr BSDMemory 8 ,

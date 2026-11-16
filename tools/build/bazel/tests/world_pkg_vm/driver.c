@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Package mechanisms in a disposable VM; this is not normal system startup. */
 #include <sys/types.h>
 #include <sys/mount.h>

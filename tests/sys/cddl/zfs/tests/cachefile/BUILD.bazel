@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/cddl/zfs:suite.bzl", "zfs_test_suite")
+
+zfs_test_suite(
+    files = ['cachefile_002_pos.ksh', 'cachefile_003_pos.ksh', 'cachefile_001_pos.ksh', 'cachefile.cfg', 'cachefile.kshlib', 'cachefile_004_pos.ksh'],
+    tests = {'cachefile_test': {'required_user': 'root', 'is_exclusive': True, 'required_programs': 'ksh93'}},
+)

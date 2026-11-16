@@ -758,6 +758,9 @@
 #define	 EXCP_WATCHPT_EL1	0x35	/* Watchpoint, from same EL */
 #define	 EXCP_BRKPT_32		0x38    /* 32bits breakpoint */
 #define	 EXCP_BRK		0x3c	/* Breakpoint */
+#define	  BRK_IMM_MASK		0xffff	/* The brk immediate in ISS */
+#define	  BRK_IMM_FASTTRAP_PROBE 0xdd0	/* DTrace pid tracepoint */
+#define	  BRK_IMM_FASTTRAP_RETURN 0xdd1	/* DTrace out-of-line return */
 
 /* ESR_EL1 */
 #define	ESR_EL1_REG			MRS_REG_ALT_NAME(ESR_EL1)

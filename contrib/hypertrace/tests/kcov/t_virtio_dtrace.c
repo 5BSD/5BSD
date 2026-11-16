@@ -340,6 +340,8 @@ env_up(struct env *e, uint64_t features, uint16_t id, uint64_t epoch)
 
 	env_create(e, features);
 	KHX_EQ(env_attach(e), 0);
+	/* The guest never forwards the probes of its own control queues. */
+	KHX_CHECK(khx_vq_sdt_disabled(e->rxq) && khx_vq_sdt_disabled(e->txq));
 	KHX_EQ(step(e), KHX_KT_PARKED);
 	n = host_recv_events(e, ev, 8);
 	KHX_EQ(n, 3);

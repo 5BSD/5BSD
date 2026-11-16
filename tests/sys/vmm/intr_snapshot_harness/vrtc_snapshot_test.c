@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Model tests for the STRUCT_VRTC snapshot codec, focused on the restore
  * validator vrtc_snapshot_state_valid().  A migrating guest controls the
  * serialized base_rtctime; an out-of-range value would flow into

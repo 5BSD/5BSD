@@ -768,9 +768,21 @@ int mac_file_check_fsync(struct ucred *cred, struct file *fp);
   path, after the reply has been accepted for a served descriptor
   (DescriptorQueue stage 1a, `docs/book/src/capability/descriptor-queue.md`
   D89).  **Implemented 2026-11-07.**
-- **Lock context:** No locks held (the object's `struct file` is held by
-  the caller for the duration)
-- **Can sleep:** YES
+- **Lock context:** No locks held.  The caller keeps the object's
+  `struct file` valid for the duration without a reference on it: the
+  file's last close waits for the hook (`o_notify`, `dq_close`), so the
+  requester's own close stays the last close and releases its `flock`
+  and OFD locks before it returns.  The file's count may be zero while
+  the hook runs; a policy must not take a reference on `fp` (changed
+  2026-11-14; a reference held here made the reply ioctl the last close
+  whenever the requester closed first).
+- **Can sleep:** YES, briefly.  Every last close of the file (close(2),
+  exit, exec, the unix-domain collector) waits for the hook without a
+  signal ending the wait, so a policy must not wait here for userland,
+  for an authorization, or in an interruptible sleep.  The caller runs the
+  hook with stops deferred (`sigdeferstop(SIGDEFERSTOP_SILENT)`), so a
+  stopped controller does not suspend in it.  The hook is also called for a file whose
+  last close has already begun (it was skipped then before 2026-11-14).
 - **Composition macro:** `MAC_POLICY_PERFORM` (sleepable)
 - **Fast-path flag:** No
 - **Arguments:** `controller` is the credential of the process that

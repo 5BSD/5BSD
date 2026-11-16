@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Common parser acceptance corpus. Parse only; never load these rules.
 set -eu
 [ -f /root/pf-parity-disposable ] || exit 1

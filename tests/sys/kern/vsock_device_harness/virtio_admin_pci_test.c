@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Exercise the production administration-virtqueue PCI ring adapter.
  * The controller is mocked at its narrow value boundary so these cases can

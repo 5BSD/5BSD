@@ -7,6 +7,7 @@
 #include <sys/types.h>
 #include <sys/event.h>
 #include <sys/mman.h>
+#include <sys/sysctl.h>
 #include <dev/mac_capability/mac_capability_coalition_proto.h>
 
 #include <dev/mac_capability/mac_capability_channel_proto.h>
@@ -28,6 +29,8 @@ static bool cleanup_mock;
 static uint32_t cleanup_phase;
 static unsigned runtime_removals;
 static unsigned slot_removals, launch_calls;
+/* When set, the svc_exec() stub refuses as execute.c's svc_exec() does. */
+static bool exec_refuses_started;
 
 static int
 cleanup_test_status(int fd, struct capability_coalition_status *state)
@@ -102,12 +105,25 @@ svc_reregister_kevents(int kq)
 	(void)kq;
 }
 
+void
+svc_reclaim_mark_dirty(void)
+{
+}
+
 int
 svc_exec(struct svc_runtime *svc, int kq)
 {
 
+	if (exec_refuses_started && svc->cleanup.pending) {
+		errno = EBUSY;
+		return (-1);
+	}
+	if (exec_refuses_started &&
+	    (svc->state != SVC_STATE_STOPPED || svc->launch != NULL)) {
+		errno = EALREADY;
+		return (-1);
+	}
 	launch_calls++;
-	(void)svc;
 	(void)kq;
 	return (0);
 }
@@ -450,6 +466,165 @@ ATF_TC_BODY(circuit_breaker_blocks_on_demand_relaunch, tc)
 	/* A fresh runtime and an explicitly reset counter remain launchable. */
 	svc.restart_count = 0;
 	ATF_CHECK(!on_demand_circuit_open(&svc));
+}
+
+/*
+ * A unit that died waits for its backoff restart timer; a lookup (or an
+ * activation, or a reload) may start it before the timer fires.  That launch
+ * supersedes the restart: the timer must be dropped.
+ */
+ATF_TC_WITHOUT_HEAD(restart_superseded_by_launch);
+ATF_TC_BODY(restart_superseded_by_launch, tc)
+{
+	struct timespec zero = { 0, 0 };
+	struct kevent kev;
+	struct svc_runtime svc;
+	uintptr_t stale_ident;
+	int kq;
+
+	(void)tc;
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	switchboard_kq = kq;
+	exec_refuses_started = true;
+	runtime_init(&svc, "org.test.relaunched", 0, 0);
+	svc.pd_fd = svc.channel_fd = svc.coalition_fd = -1;
+	svc.manifest.max_failures = 10;
+	svc.state = SVC_STATE_STOPPED;
+	svc.restart_count = 1;
+	schedule_restart(&svc, kq);
+	ATF_REQUIRE(svc.restart_pending);
+	ATF_REQUIRE(svc.timer_ident != 0);
+	stale_ident = svc.timer_ident;
+
+	launch_calls = 0;
+	ATF_REQUIRE_EQ(0, svc_launch_or_await(&svc, kq));
+	ATF_CHECK_EQ(1, launch_calls);
+	ATF_CHECK_MSG(!svc.restart_pending,
+	    "the restart timer outlived the launch that superseded it");
+	ATF_CHECK_EQ(0, svc.timer_ident);
+	/* And it is gone from the kqueue, not only from the runtime. */
+	ATF_CHECK_EQ(0, kevent(kq, NULL, 0, &kev, 1, &zero));
+
+	/*
+	 * A timer event already returned in the same kevent() batch, before
+	 * the launch cancelled it, names the old ident: it launches nothing
+	 * and counts nothing.
+	 */
+	memset(&kev, 0, sizeof(kev));
+	kev.ident = stale_ident;
+	kev.filter = EVFILT_TIMER;
+	kev.udata = &svc;
+	supervisor_handle_timer(&kev);
+	ATF_CHECK_EQ(1, launch_calls);
+	ATF_CHECK_EQ(1, svc.restart_count);
+	ATF_CHECK(!svc.restart_pending);
+
+	exec_refuses_started = false;
+	switchboard_kq = -1;
+	(void)close(kq);
+}
+
+/*
+ * dA2 (2026-11-15): a restart timer that fires for a unit that is already up
+ * again was counted as an exec failure ("svc_exec ...: not stopped (state
+ * 2)"), re-armed, and after max_failures the running unit was disabled and
+ * marked STOPPED.  Firing at a started unit is not a failure and launches
+ * nothing.
+ */
+ATF_TC_WITHOUT_HEAD(restart_timer_for_started_unit);
+ATF_TC_BODY(restart_timer_for_started_unit, tc)
+{
+	struct kevent kev;
+	struct svc_runtime svc;
+	unsigned i;
+	int kq;
+
+	(void)tc;
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	switchboard_kq = kq;
+	exec_refuses_started = true;
+	runtime_init(&svc, "org.test.running", 1234, 7);
+	svc.pd_fd = svc.channel_fd = svc.coalition_fd = -1;
+	svc.manifest.max_failures = 3;
+	svc.restart_count = 1;
+	launch_calls = 0;
+	for (i = 0; i < 2 * svc.manifest.max_failures; i++) {
+		svc.state = i % 2 == 0 ? SVC_STATE_RUNNING : SVC_STATE_STARTING;
+		svc.restart_pending = true;
+		svc.timer_ident = 0x100 + i;
+		memset(&kev, 0, sizeof(kev));
+		kev.ident = svc.timer_ident;
+		kev.filter = EVFILT_TIMER;
+		kev.udata = &svc;
+		supervisor_handle_timer(&kev);
+		ATF_CHECK_EQ(1, svc.restart_count);
+		ATF_CHECK(svc.state == SVC_STATE_RUNNING ||
+		    svc.state == SVC_STATE_STARTING);
+		/* Nothing re-armed. */
+		ATF_CHECK(!svc.restart_pending && svc.timer_ident == 0);
+	}
+	ATF_CHECK_EQ(0, launch_calls);
+	ATF_CHECK_EQ(1234, svc.pid);
+
+	exec_refuses_started = false;
+	switchboard_kq = -1;
+	(void)close(kq);
+}
+
+/*
+ * While a unit's previous coalition is still being torn down, svc_exec()
+ * refuses with EBUSY.  A restart timer that fires then is postponed, not
+ * counted: a slow teardown must not disable a unit that was never exec'd.
+ */
+ATF_TC_WITHOUT_HEAD(restart_waits_for_cleanup);
+ATF_TC_BODY(restart_waits_for_cleanup, tc)
+{
+	struct kevent kev;
+	struct svc_runtime svc;
+	unsigned i;
+	int kq;
+
+	(void)tc;
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	switchboard_kq = kq;
+	exec_refuses_started = true;
+	runtime_init(&svc, "org.test.cleaning", 0, 0);
+	svc.pd_fd = svc.channel_fd = svc.coalition_fd = -1;
+	svc.manifest.max_failures = 3;
+	svc.state = SVC_STATE_STOPPED;
+	svc.restart_count = 1;
+	svc.cleanup.pending = true;
+	launch_calls = 0;
+	schedule_restart(&svc, kq);
+	for (i = 0; i < 2 * svc.manifest.max_failures; i++) {
+		ATF_REQUIRE(svc.restart_pending);
+		memset(&kev, 0, sizeof(kev));
+		kev.ident = svc.timer_ident;
+		kev.filter = EVFILT_TIMER;
+		kev.udata = &svc;
+		supervisor_handle_timer(&kev);
+		ATF_CHECK_EQ(0, launch_calls);
+		ATF_CHECK_EQ(1, svc.restart_count);
+		ATF_CHECK_MSG(svc.restart_pending,
+		    "the postponed restart was not rescheduled");
+	}
+	/* Teardown done: the next firing restarts it. */
+	svc.cleanup.pending = false;
+	memset(&kev, 0, sizeof(kev));
+	kev.ident = svc.timer_ident;
+	kev.filter = EVFILT_TIMER;
+	kev.udata = &svc;
+	supervisor_handle_timer(&kev);
+	ATF_CHECK_EQ(1, launch_calls);
+	ATF_CHECK_EQ(1, svc.restart_count);
+
+	svc_cancel_restart(&svc, kq);
+	exec_refuses_started = false;
+	switchboard_kq = -1;
+	(void)close(kq);
 }
 
 /*
@@ -803,6 +978,30 @@ ATF_TC_BODY(cleanup_updated_intent, tc)
 	cleanup_mock = false;
 }
 
+/*
+ * The live coalition cases drive /dev/mac_capability themselves.  With the
+ * plane on and the isolation policy enforcing (the production tier) Capsule's
+ * claim refuses the device to them; they run in the plane-on test tier.
+ */
+static int
+open_capability_device(void)
+{
+	size_t len;
+	int enforce, fd;
+
+	fd = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
+	if (fd == -1 && (errno == EACCES || errno == EPERM)) {
+		len = sizeof(enforce);
+		if (sysctlbyname("kern.mac_capability_isolation.enforce",
+		    &enforce, &len, NULL, 0) == 0 && enforce != 0)
+			atf_tc_skip("DEFERRED_DEVICE_TIER: /dev/mac_capability "
+			    "is claimed by the enforcing plane; this case runs "
+			    "in the plane-on test tier");
+	}
+	ATF_REQUIRE_MSG(fd >= 0, "/dev/mac_capability: %s", strerror(errno));
+	return (fd);
+}
+
 ATF_TC(cleanup_unenlisted_child);
 ATF_TC_HEAD(cleanup_unenlisted_child, tc)
 {
@@ -828,8 +1027,7 @@ ATF_TC_BODY(cleanup_unenlisted_child, tc)
 		for (;;)
 			pause();
 	}
-	device = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
-	ATF_REQUIRE(device >= 0);
+	device = open_capability_device();
 	idle_runtime_init(&svc, "org.test.cleanup.unenlisted");
 	svc.pid = child;
 	svc.pd_fd = pd;
@@ -992,8 +1190,7 @@ ATF_TC_BODY(cleanup_live_process, tc)
 		for (;;)
 			pause();
 	}
-	device = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
-	ATF_REQUIRE(device >= 0);
+	device = open_capability_device();
 	idle_runtime_init(&svc, "org.test.cleanup.process");
 	svc.cleanup.fd = -1;
 	svc.coalition_fd = capability_service_connect(device, "coalition");
@@ -1053,8 +1250,7 @@ ATF_TC_BODY(cleanup_live_outcomes, tc)
 
 	(void)tc;
 	cleanup_mock = false;
-	device = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
-	ATF_REQUIRE(device >= 0);
+	device = open_capability_device();
 	switchboard_kq = kqueue();
 	ATF_REQUIRE(switchboard_kq >= 0);
 	for (fail = 0; fail < 2; fail++) {
@@ -1738,6 +1934,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, timer_identifiers);
 	ATF_TP_ADD_TC(tp, timer_registration_failure);
 	ATF_TP_ADD_TC(tp, circuit_breaker_blocks_on_demand_relaunch);
+	ATF_TP_ADD_TC(tp, restart_superseded_by_launch);
+	ATF_TP_ADD_TC(tp, restart_timer_for_started_unit);
+	ATF_TP_ADD_TC(tp, restart_waits_for_cleanup);
 	ATF_TP_ADD_TC(tp, idle_timer_arm_cancel);
 	ATF_TP_ADD_TC(tp, idle_timer_ident_range);
 	ATF_TP_ADD_TC(tp, idle_timer_fire_stops_provider);

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Export a pinned Bazel distribution's repository cache without executing it."""
 import argparse
 import hashlib

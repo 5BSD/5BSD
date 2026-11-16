@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef RUN_CONTAINER_CLEANUP_H
 #define RUN_CONTAINER_CLEANUP_H
 

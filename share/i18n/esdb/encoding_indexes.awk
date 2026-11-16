@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 FILENAME != layout {
     if ($0 ~ /^#/ || NF == 0) next
     key = FILENAME SUBSEP $1

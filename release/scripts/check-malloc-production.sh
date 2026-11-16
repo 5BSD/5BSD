@@ -1,6 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Refuse to publish a world whose libc was built with -CURRENT's debug
 # malloc(3).  5BSD release and package builds use production jemalloc
 # (WITH_MALLOC_PRODUCTION); development builds keep the debug default.

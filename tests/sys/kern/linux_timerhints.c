@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Timer-slack lifecycle and the Linux THP status view. */
 #include "linux_test.h"
 

@@ -1,6 +1,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # The test-access setting of dq(4) and its separation from a published
 # kernel (design D346, D352).
 #

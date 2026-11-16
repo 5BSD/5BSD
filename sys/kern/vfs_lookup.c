@@ -190,7 +190,7 @@ nameiinit(void *dummy __unused)
 SYSINIT(vfs, SI_SUB_VFS, SI_ORDER_SECOND, nameiinit, NULL);
 
 static int lookup_cap_dotdot = 1;
-SYSCTL_INT(_vfs, OID_AUTO, lookup_cap_dotdot, CTLFLAG_RWTUN,
+SYSCTL_INT(_vfs, OID_AUTO, lookup_cap_dotdot, CTLFLAG_RWTUN | CTLFLAG_CAPRD,
     &lookup_cap_dotdot, 0,
     "enables \"..\" components in path lookup in capability mode");
 
@@ -203,7 +203,8 @@ namei_cap_dotdot(void)
 }
 
 static int lookup_cap_dotdot_nonlocal = 1;
-SYSCTL_INT(_vfs, OID_AUTO, lookup_cap_dotdot_nonlocal, CTLFLAG_RWTUN,
+SYSCTL_INT(_vfs, OID_AUTO, lookup_cap_dotdot_nonlocal,
+    CTLFLAG_RWTUN | CTLFLAG_CAPRD,
     &lookup_cap_dotdot_nonlocal, 0,
     "enables \"..\" components in path lookup in capability mode "
     "on non-local mount");
@@ -770,6 +771,7 @@ namei(struct nameidata *ndp)
 	struct pwd *pwd;
 	struct dqres_snap dqsnap;
 	int error;
+	bool magiclink;
 	enum cache_fpl_status status;
 
 	cnp = &ndp->ni_cnd;
@@ -930,6 +932,8 @@ restart:
 		error = namei_follow_link(ndp);
 		if (error != 0)
 			break;
+		/* Object-link text is a native path rooted at pwd_rdir. */
+		magiclink = (vn_irflag_read(ndp->ni_vp) & VIRF_MAGICLINK) != 0;
 		vput(ndp->ni_vp);
 		dp = ndp->ni_dvp;
 		cnp->cn_nameptr = cnp->cn_pnbuf;
@@ -971,8 +975,12 @@ restart:
 			 * native namespace.  Otherwise absolute symlinks inside
 			 * /compat/linux, including the ELF interpreter symlink,
 			 * incorrectly escape to the native root (PR 289739).
+			 * Kernel-generated object links (linprocfs exe, cwd,
+			 * root) hold native paths from vn_fullpath(), so they
+			 * always resolve from the real root.
 			 */
-			if ((cnp->cn_flags & (ISRESTARTED | RINROOT)) == ISRESTARTED)
+			if ((cnp->cn_flags & RINROOT) == 0 &&
+			    ((cnp->cn_flags & ISRESTARTED) != 0 || magiclink))
 				ndp->ni_rootdir = pwd->pwd_rdir;
 			vrele(dp);
 			error = namei_handle_root(ndp, &dp);
@@ -1508,6 +1516,20 @@ dirloop:
 			}
 			if ((dp->v_vflag & VV_ROOT) == 0)
 				break;
+			/*
+			 * A strictly relative lookup may not leave its start.
+			 * The ".." of a start that is the root of a mount is
+			 * taken in the covered directory below, so that the
+			 * check after the lookup (case 5) would compare the
+			 * covered vnode with the start and let it through:
+			 * apply it here, before crossing.
+			 */
+			if (__predict_false(dp == ndp->ni_rbeneath_dpp &&
+			    (ndp->ni_lcf & NI_LCF_STRICTREL) != 0)) {
+				error = nameicap_check_dotdot(ndp, dp);
+				if (error != 0)
+					goto bad;
+			}
 			if ((cnp->cn_flags & NOXDEV) != 0) {
 				error = EXDEV;
 				goto bad;

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * /dev/fd lookups through stacked file systems over fdescfs.
  *
  * What it tries to break: a nodup fdescfs lookup of a descriptor that

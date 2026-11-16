@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Run upstream libfuse's statically linked Linux64 hello daemon in a guest.
 set -eu
 PATH=/sbin:/bin:/usr/sbin:/usr/bin

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Select declared test runfiles, then preserve the program's process semantics. */
 #include <err.h>
 #include <stdio.h>

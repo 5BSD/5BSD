@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Test-only L2CAP wire oracles.  These values are transcribed from
  * Bluetooth Core 6.3 Vol 3 Part A §§2-6 and Assigned Numbers; this header
  * deliberately includes no kernel/netgraph Bluetooth headers.

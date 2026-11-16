@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 from pathlib import Path
 import subprocess,os,time,json,re
 import argparse
@@ -19,7 +23,7 @@ with log.open('wb') as f:
 s=log.read_text(errors='replace').replace('\r','')
 rows=re.findall(r'^PIPE_REOPEN_RESULT (root|unprivileged) (\w+) (\d+)$',s,re.M)
 expected={(user, case, '0') for user in ['root','unprivileged'] for case in
-    'identity matrix flags reader_lifetime writer_lifetime rdwr no_readers no_writers opath opath_queue cloexec directory queue epoll epoll_writer splice churn exhaustion async full_writer metadata permission'.split()}
+    'identity matrix flags reader_lifetime writer_lifetime rdwr no_readers no_writers opath opath_queue cloexec directory queue epoll epoll_writer splice churn exhaustion async full_writer metadata permission inherited_flags inherited_reader inherited_writer inherited_epipe inherited_async inherited_churn inherited_permission'.split()}
 passed=(p.returncode == 0 and len(rows) == len(expected) and set(rows) == expected
     and s.count('PIPE_REOPEN_PASS ') == len(expected) and 'PIPE_REOPEN_DONE' in s
     and 'PIPE_REOPEN_EXIT 0' in s and 'Powering system off' in s

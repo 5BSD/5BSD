@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 provider logsend {
 	probe operation__start(size_t);
 	probe operation__done(size_t, int64_t, int);

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Adapt upstream file fixture inputs to the common byte/exit comparator. */
 #include <sys/types.h>
 #include <ctype.h>

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Only invalid single options returning before open(/dev/apm); no power IO."""
 import argparse
 import os

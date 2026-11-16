@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* Tests for the real bhyve split-ring parser and interrupt decision logic. */
 #include <sys/param.h>
 #include <sys/types.h>

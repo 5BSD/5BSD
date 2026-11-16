@@ -17,6 +17,12 @@ ATF_TESTS_SH+=	vnet_test
 TEST_METADATA.vnet_test+=	required_user="root" \
 				is_exclusive="true"
 
+# Optional extra PF pass before local IPv4/IPv6 delivery.
+ATF_TESTS_SH+=	local_delivery_test
+${PACKAGE}FILES+=	local_loopback_tcp.py
+${PACKAGE}FILES+=	local_loopback_udp.py
+TEST_METADATA.local_delivery_test+= required_user="root" is_exclusive="true"
+
 # Transparent proxying with divert-to (TCP and UDP, IPv4 and IPv6).
 ATF_TESTS_SH+=	divert_test
 TEST_METADATA.divert_test+=	required_user="root" \

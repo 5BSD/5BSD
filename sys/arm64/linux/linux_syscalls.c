@@ -458,6 +458,7 @@ const char *linux_syscallnames[] = {
 	"linux_set_mempolicy_home_node",			/* 450 = linux_set_mempolicy_home_node */
 	"linux_cachestat",			/* 451 = linux_cachestat */
 	"linux_fchmodat2",			/* 452 = linux_fchmodat2 */
+	"#453",			/* 453 = map_shadow_stack */
 	"linux_futex_wake",			/* 454 = linux_futex_wake */
 	"linux_futex_wait",			/* 455 = linux_futex_wait */
 	"linux_futex_requeue",			/* 456 = linux_futex_requeue */

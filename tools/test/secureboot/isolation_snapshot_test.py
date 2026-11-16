@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual vnode-check control flow with injected claims/locks, not kernel races."""
 from pathlib import Path
 import subprocess

@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* Device-level tests for bhyve's VirtIO 1.4 RTC device. */
 #include <sys/param.h>
 #include <sys/types.h>

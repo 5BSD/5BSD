@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Freestanding amd64 Linux syscall test for the *xattrat() family
  * (setxattrat 463, getxattrat 464, listxattrat 465, removexattrat 466).

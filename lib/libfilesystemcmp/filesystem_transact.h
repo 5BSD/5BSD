@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Client side of bsd.filesystem.v1 for the libraries that build their requests
  * in the legacy record shapes of bsdfilesystem_proto.h (libfilesystemcmp and

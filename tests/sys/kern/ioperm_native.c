@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Native amd64 backend regression for Linux ioperm compatibility. */
 #include <sys/types.h>
 #include <machine/sysarch.h>

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Model tests for the STRUCT_VATPIT snapshot codec.  The real kernel
  * vatpit.c is compiled against the harness's shadow kernel headers; uptime
  * is test-controlled, so restore can be performed on a "destination" whose

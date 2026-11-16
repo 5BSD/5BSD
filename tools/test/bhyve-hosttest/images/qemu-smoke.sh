@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Unprivileged smoke test of the guest image under QEMU/TCG (authoring aid:
 # bhyve needs root and vmm). Checks boot, the serial autologin with /bin/sh,
 # the rc.local marker, the console command driver, the guest helpers and

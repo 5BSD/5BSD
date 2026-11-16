@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Ordinary unsigned files on an executable, writable test filesystem. */
 #include <sys/mman.h>
 #include <sys/stat.h>

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Inspect actual zlib target outputs with declared native tools, without execution."""
 import argparse
 from pathlib import Path

@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Opt-in real ZFS clone checks, only inside an explicitly disposable VM.
 
 Uses one newly created file-backed pool. Only selects or activates datasets in that private pool; never upgrades

@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Produce a proposed replacement for spec_requirements.tsv that stops counting
 # implementation contracts as specification conformance.
 #

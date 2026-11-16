@@ -1,5 +1,9 @@
 #!/bin/sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Build and run the rootless architecture-neutral bhyve checkpoint model
 # tests.  This deliberately uses the ATF test-program protocol directly: the
 # source tree may be available before kyua(1) is installed, and each case is

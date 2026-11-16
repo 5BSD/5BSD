@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * fstatfs(2) is answered by the descriptor's fileops (fo_statfs).  Every
  * descriptor that carries a vnode must answer as statfs(2) on its path
  * does; descriptors with no vnode return EINVAL, as getvnode_path() did.

@@ -104,7 +104,7 @@ Categories:
 |---|---|---|---|
 | `compat/linux/linux_file.c:217`⁽ᵀ⁾ | `linux_common_open` | attempts `fo_ioctl(TIOCSCTTY)` only when the new fd is a vnode | keep (6.1.1, by decision): the `TIOCSCTTY` attempt is made for `DTYPE_VNODE` only, never for a FIFO or any other type; the test stays a type test and fails safe for `DTYPE_DQ`. Stays: `SESS_LEADER`/`P_CONTROLT` test under `proctree_lock`, `cap_ioctl_rights` |
 | `compat/linux/linux_file.c:783` | `linux_getdents_error` | comment: `EINVAL` for a table without `fo_readdir` (no directory entries), as `getvnode()` said; otherwise `fo_stat` `S_ISDIR` → `ENOTDIR` | done (`fo_readdir`, `f6e5f5d0922`; the `EINVAL` for a type with no directory entries restored by `f134444e4b1`, the probe is `:782`, not matched); comment only. Stays: `path_fileops` `EBADF` |
-| `compat/linux/linux_quota.c:77`⁽ᴺ⁾ | `linux_quotactl_fd_impl` | `vp->v_mount` → `vfs_busy` → `vfs_quota()`; `ENOSYS` if NULL | deferred by decision (D64): no fileop yields a `struct mount`; stays `ENOSYS` for non-vnode files and the vnode path is unchanged |
+| `compat/linux/linux_quota.c:78`⁽ᴺ⁾ | `linux_quotactl_fd_impl` | `vp->v_mount` → `vfs_busy` → `vfs_quota()`; `ENOSYS` if NULL | deferred by decision (D64): no fileop yields a `struct mount`; stays `ENOSYS` for non-vnode files and the vnode path is unchanged |
 | `compat/linux/linux_stats.c:492` | `linux_syncfs` | comment: a descriptor with no filesystem returns `EINVAL`, as `fgetvp()` did | done (`fo_fsync` mode `FO_FSYNC_FS`, `78f8f643b0b`): the body is `fo_fsync`; the comment records the preserved errno (`invfo_fsync` → `EINVAL`). Comment only |
 | `compat/linux/linux_xattr.c:131` | `xattr_getvnode` | comment: `EINVAL` otherwise, as `getvnode()` gave | done (`fo_extattr`, `13ff5fd675e`); comment only |
 | `compat/linux/linux_xattr.c:137` | `xattr_getvnode` | `fget`, then `path_fileops` → `EBADF` unless internal O_PATH, `fo_extattr == NULL` → `EINVAL`; the helper kept its name | done (`fo_extattr`, `13ff5fd675e`): the helper no longer touches `f_vnode`; matched by its name only |
@@ -158,8 +158,8 @@ so the "open" list of that ledger closes with a commit against every entry):
 |---|---|---|---|
 | `compat/linux/linux_file.c:628` | `linux_fchroot` | `getvnode_path()` for the new root fd | root stays a real vnode (D9); non-vnode → `ENOTDIR` (already, via `EINVAL` mapping). Stays: `path_fileops` `EBADF`, `UF_RESOLVE_BENEATH` `ENOTCAPABLE`. Served root is recorded in the resolver attachment, stage 1 |
 | `compat/linux/linux_file.c:641` | `linux_fchroot` | `vp = fp->f_vnode`; `v_type != VDIR` → `ENOTDIR`; `VOP_ACCESS(VEXEC)`; `kern_chroot` | as `:628`; `namei_handle_root` consults the attachment, stage 1 |
-| `dev/mac_capability/mac_capability_authority.c:1097`⁽ᵀ⁾ | `set_library_directories` | directory fds must be read-only `VDIR` vnodes | `ENOTDIR`/`EINVAL` for non-vnode (already). These vnodes are later lookup starts (`namei_setup`); served directories are not accepted as library roots |
-| `dev/mac_capability/mac_capability_authority.c:1098` | `set_library_directories` | `f_vnode->v_type != VDIR` → `EINVAL` | as `:1097` |
+| `dev/mac_capability/mac_capability_authority.c:1098`⁽ᵀ⁾ | `set_library_directories` | directory fds must be read-only `VDIR` vnodes | `ENOTDIR`/`EINVAL` for non-vnode (already). These vnodes are later lookup starts (`namei_setup`); served directories are not accepted as library roots |
+| `dev/mac_capability/mac_capability_authority.c:1099` | `set_library_directories` | `f_vnode->v_type != VDIR` → `EINVAL` | as `:1098` |
 | `dev/mac_capability/mac_capability_capprotect.c:501`⁽ᵀ⁾ | `cp_call` | protected-directory fd must be a vnode | `EINVAL` for non-vnode (already); the vnode is a lookup start (`namei_setup`) |
 | `dev/mac_capability/mac_capability_capprotect.c:504` | `cp_call` | `vp->v_type != VDIR` → `ENOTDIR` | as `:501` |
 | `fs/fdescfs/fdesc_vnops.c:269`⁽ᵀ⁾ | `fdesc_get_ino_alloc` | `/dev/fd/N` with `traverse`/`FMNT_NODUP` hands out the fd's vnode | ENOTDIR for non-vnode (fdescfs): a non-vnode fd keeps its fdesc node and reopens through `fdesc_open`/`dupfdopen`; `/dev/fd/N/child` on a served `N` → `ENOTDIR` (D29) |
@@ -195,9 +195,9 @@ so the "open" list of that ledger closes with a commit against every entry):
 
 | file:line | function | what it does with the vnode | disposition |
 |---|---|---|---|
-| `dev/mac_capability/mac_capability_authority.c:272`⁽ᴺ⁾ | `cap_authority_runs_pinned_image` | `p_textvp != NULL` before comparing with pinned executables | p_image consumer; tolerates NULL (explicit test; a served image is never pinned, D13) |
-| `dev/mac_capability/mac_capability_authority.c:274` | `cap_authority_runs_pinned_image` | `a->executable[i] == p->p_textvp` | p_image consumer (guarded by `:272`) |
-| `dev/mac_capability/mac_capability_authority.c:1012` | `constrain_authority` | `fgetvp_exec()` of each executable fd, `VREG` test, `VOP_SET_TEXT` pin | pinned authority is a vnode by design (D13); non-vnode → `EINVAL` (already, from `fgetvp_exec`). The dq `is_authority(EXEC)` still calls `cap_authority_exec(p, NULL, NULL)` (6.2.2 item 2); stage 3 |
+| `dev/mac_capability/mac_capability_authority.c:273`⁽ᴺ⁾ | `cap_authority_runs_pinned_image` | `p_textvp != NULL` before comparing with pinned executables | p_image consumer; tolerates NULL (explicit test; a served image is never pinned, D13) |
+| `dev/mac_capability/mac_capability_authority.c:275` | `cap_authority_runs_pinned_image` | `a->executable[i] == p->p_textvp` | p_image consumer (guarded by `:273`) |
+| `dev/mac_capability/mac_capability_authority.c:1013` | `constrain_authority` | `fgetvp_exec()` of each executable fd, `VREG` test, `VOP_SET_TEXT` pin | pinned authority is a vnode by design (D13); non-vnode → `EINVAL` (already, from `fgetvp_exec`). The dq `is_authority(EXEC)` still calls `cap_authority_exec(p, NULL, NULL)` (6.2.2 item 2); stage 3 |
 | `kern/coredump_vnode.c:521` | `coredump_vnode` | `vn_fullpath_global(p->p_textvp)` for the devctl notification | p_image consumer; tolerates NULL (`vn_fullpath_global` returns `EINVAL` for a NULL vnode → `goto out2`, notification skipped). No fallback needed (`7b587d57f55` survey) |
 | `kern/exec_image_vnode.c:105` | `exec_image_vnode_setup` | `imgp->vp = vp` as the backend installs `is_ops`/`is_data` | vnode backend, by design: construction (`exec_image_vnode_from_namei`, `_from_vnode`, `_init`); `imgp->vp` is the backend's field (6.2.2 item 10) |
 | `kern/exec_image_vnode.c:198` | `exec_image_vnode_lock` | `vn_lock(imgp->vp, LK_SHARED \| LK_RETRY)` | vnode backend, by design: `is_lock` |
@@ -266,14 +266,14 @@ so the "open" list of that ledger closes with a commit against every entry):
 | `security/mac_veriexec/mac_veriexec.c:988` | `mac_veriexec_syscall` | `img.vp = fp->f_vnode` | as `:970`: `image_params.vp` is the vnode backend's field, kept in place for this hand-built use (6.2.2 item 10) |
 | `security/mac_veriexec/mac_veriexec.c:996` | `mac_veriexec_syscall` | `VOP_GETATTR(fp->f_vnode)` | as `:970` |
 | `security/mac_veriexec/mac_veriexec.c:1052`⁽ᴺ⁾ | `mac_veriexec_syscall` (`GET_PARAMS`) | `textvp = proc->p_textvp`, `vref` if non-NULL | p_image consumer; tolerates NULL (explicit test) |
-| `security/mac_veriexec/veriexec_capimage.c:231` | `capimage_handle_live` | handle's backing file must still be a live `VREG` vnode | vnode by design: a prepared capability image requires a real vnode (handles are only created from one, `:425`) |
-| `security/mac_veriexec/veriexec_capimage.c:244` | `capimage_handle_close` | `VOP_UNSET_TEXT_CHECKED` on the backing vnode | vnode by design (vnode-only by construction) |
-| `security/mac_veriexec/veriexec_capimage.c:425` | `mac_veriexec_capimage_prepare` | `getvnode()` with `CAP_PREAD` for the source fd | vnode by design: a served image is never verified (D28) → non-vnode refused (already, `EINVAL`) |
-| `security/mac_veriexec/veriexec_capimage.c:429` | `mac_veriexec_capimage_prepare` | `FREAD` and `v_type == VREG`, else `EBADF` | as `:425` |
-| `security/mac_veriexec/veriexec_capimage.c:433` | `mac_veriexec_capimage_prepare` | `vp = backing->f_vnode`; `VOP_GETATTR`, fingerprint, `VOP_SET_TEXT` | vnode by design (text pin on the backing vnode) |
-| `security/mac_veriexec/veriexec_capimage.c:486` | `mac_veriexec_capimage_prepare` | error path: `vn_lock(backing->f_vnode)` | vnode by design (unpin) |
-| `security/mac_veriexec/veriexec_capimage.c:487` | `mac_veriexec_capimage_prepare` | `VOP_UNSET_TEXT_CHECKED(backing->f_vnode)` | as `:486` |
-| `security/mac_veriexec/veriexec_capimage.c:488` | `mac_veriexec_capimage_prepare` | `VOP_UNLOCK(backing->f_vnode)` | as `:486` |
+| `security/mac_veriexec/veriexec_capimage.c:232` | `capimage_handle_live` | handle's backing file must still be a live `VREG` vnode | vnode by design: a prepared capability image requires a real vnode (handles are only created from one, `:426`) |
+| `security/mac_veriexec/veriexec_capimage.c:245` | `capimage_handle_close` | `VOP_UNSET_TEXT_CHECKED` on the backing vnode | vnode by design (vnode-only by construction) |
+| `security/mac_veriexec/veriexec_capimage.c:426` | `mac_veriexec_capimage_prepare` | `getvnode()` with `CAP_PREAD` for the source fd | vnode by design: a served image is never verified (D28) → non-vnode refused (already, `EINVAL`) |
+| `security/mac_veriexec/veriexec_capimage.c:430` | `mac_veriexec_capimage_prepare` | `FREAD` and `v_type == VREG`, else `EBADF` | as `:426` |
+| `security/mac_veriexec/veriexec_capimage.c:434` | `mac_veriexec_capimage_prepare` | `vp = backing->f_vnode`; `VOP_GETATTR`, fingerprint, `VOP_SET_TEXT` | vnode by design (text pin on the backing vnode) |
+| `security/mac_veriexec/veriexec_capimage.c:487` | `mac_veriexec_capimage_prepare` | error path: `vn_lock(backing->f_vnode)` | vnode by design (unpin) |
+| `security/mac_veriexec/veriexec_capimage.c:488` | `mac_veriexec_capimage_prepare` | `VOP_UNSET_TEXT_CHECKED(backing->f_vnode)` | as `:487` |
+| `security/mac_veriexec/veriexec_capimage.c:489` | `mac_veriexec_capimage_prepare` | `VOP_UNLOCK(backing->f_vnode)` | as `:487` |
 | `security/mac_veriexec/veriexec_fingerprint.c:254` | `mac_veriexec_fingerprint_check_image` | comment: called with `imgp->vp` locked | vnode by design (comment); reached from the vnode backend's `is_check` only |
 | `security/mac_veriexec/veriexec_fingerprint.c:262` | `mac_veriexec_fingerprint_check_image` | `vp = imgp->vp` for the fingerprint lookup | vnode by design (D28; the fingerprint path is never handed a NULL vnode, 6.2.2 item 6) |
 
@@ -317,7 +317,7 @@ so the "open" list of that ledger closes with a commit against every entry):
 | `kern/kern_descrip.c:4475` | `fgetvp_rights` | `*vpp = fp->f_vnode; vrefact` | keep |
 | `kern/kern_descrip.c:4487` | `fgetvp_read` | wrapper, `FREAD` (definition) | keep |
 | `kern/kern_descrip.c:4491` | `fgetvp_read` | calls `_fgetvp` | keep |
-| `kern/kern_descrip.c:4495` | `fgetvp_exec` | wrapper, `FEXEC` (definition) | keep (its callers are classified individually: C rows `kern_exec.c:597`, `mac_capability_authority.c:1012`) |
+| `kern/kern_descrip.c:4495` | `fgetvp_exec` | wrapper, `FEXEC` (definition) | keep (its callers are classified individually: C rows `kern_exec.c:597`, `mac_capability_authority.c:1013`) |
 | `kern/kern_descrip.c:4499` | `fgetvp_exec` | calls `_fgetvp` | keep |
 | `kern/kern_descrip.c:4504` | `fgetvp_write` (`#ifdef notyet`) | wrapper, `FWRITE` (definition) | keep (not compiled) |
 | `kern/kern_descrip.c:4508` | `fgetvp_write` (`#ifdef notyet`) | calls `_fgetvp` | keep (not compiled) |
@@ -573,18 +573,18 @@ seven of the eleven; the structure now carries four spares again (D72, KBI).
 
 | table | file:line | descriptor type(s) | carries `f_vnode` | pathconf | statfs | fsync | setattr | fadvise | readdir | copy_file_range | acl | extattr | fcntl | advlock | PRIVWRITE / FLOCK / RECLOCK |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `linux_perf_ops` | `compat/linux/linux_perf.c:138` | `DTYPE_LINUXPERF` | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
+| `linux_perf_ops` | `compat/linux/linux_perf.c:140` | `DTYPE_LINUXPERF` | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
 | `linux_pidfd_ops` | `compat/linux/linux_pidfd.c:131` | `DTYPE_LINUXPIDFD` | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
 | `linux_signalfd_ops` | `compat/linux/linux_signalfd.c:112` | `DTYPE_LINUXSIGNALFD` | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
 | `linuxfileops` | `compat/linuxkpi/common/src/linux_compat.c:1850` | `DTYPE_DEV` (linuxkpi cdev, DRM) | sometimes (devfs `d_fdopen` path `vref`s at `:799`; `fd_install()` path has none) | vn/opt | vn/opt | vn/opt | vn/opt | inv | vn/opt | inv | vn/opt | vn/opt | inv | inv | no / no / no |
 | `zfshandle_ops` | `contrib/openzfs/module/os/freebsd/zfs/zfs_handle.c:296` | `DTYPE_ZFSHANDLE` | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
 | `zfshandle_anon_dir_ops` | `contrib/openzfs/module/os/freebsd/zfs/zfs_handle.c:166` (filled at `:194` from `vnops`, `fo_close` overridden) | `DTYPE_VNODE` (zfshandle anon mount root) | yes | own | own | own | own | own | own | own | own | own | own | own | yes / yes / yes (copied) |
-| `issuer_ops` | `dev/mac_capability/mac_capability_authority.c:567` | `DTYPE_DEV` (authority issuer) | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
-| `token_ops` | `dev/mac_capability/mac_capability_authority.c:577` | `DTYPE_DEV` (authority token) | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
-| `lease_control_ops` | `dev/mac_capability/mac_capability_authority.c:821` (`LEASE_FILEOPS` macro, `:812`) | `DTYPE_DEV` (lease control) | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
-| `lease_owner_ops` | `dev/mac_capability/mac_capability_authority.c:822` (`LEASE_FILEOPS` macro) | `DTYPE_DEV` (lease owner) | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
+| `issuer_ops` | `dev/mac_capability/mac_capability_authority.c:568` | `DTYPE_DEV` (authority issuer) | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
+| `token_ops` | `dev/mac_capability/mac_capability_authority.c:578` | `DTYPE_DEV` (authority token) | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
+| `lease_control_ops` | `dev/mac_capability/mac_capability_authority.c:822` (`LEASE_FILEOPS` macro, `:813`) | `DTYPE_DEV` (lease control) | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
+| `lease_owner_ops` | `dev/mac_capability/mac_capability_authority.c:823` (`LEASE_FILEOPS` macro) | `DTYPE_DEV` (lease owner) | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
 | `mac_capability_instance_ops` | `dev/mac_capability/mac_capability_dev.c:93` | `DTYPE_MAC_CAPABILITY` | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
-| `origin_ops` | `dev/mac_capability/mac_capability_process.c:250` | `DTYPE_DEV` (process origin) | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
+| `origin_ops` | `dev/mac_capability/mac_capability_process.c:252` | `DTYPE_DEV` (process origin) | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
 | `ntsync_sem_fops` | `dev/ntsync/ntsync.c:515` | `DTYPE_NTSYNC` | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
 | `ntsync_mutex_fops` | `dev/ntsync/ntsync.c:823` | `DTYPE_NTSYNC` | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
 | `ntsync_event_fops` | `dev/ntsync/ntsync.c:1112` | `DTYPE_NTSYNC` | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
@@ -612,7 +612,7 @@ seven of the eleven; the structure now carries four spares again (D72, KBI).
 | `cryptodesc_ops` | `opencrypto/cryptodev.c:374` | `DTYPE_CRYPTO` | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
 | `cryptoctl_ops` | `opencrypto/cryptodev.c:2417` | `DTYPE_CRYPTO` | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
 | `mac_mmap_image_ops` | `security/mac/mac_vfs.c:725` | `DTYPE_DEV` (internal mmap owner; backing file in `f_data`) | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
-| `capimage_handle_ops` | `security/mac_veriexec/veriexec_capimage.c:351` | `DTYPE_DEV` (capability image handle; backing file in `f_data`) | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
+| `capimage_handle_ops` | `security/mac_veriexec/veriexec_capimage.c:352` | `DTYPE_DEV` (capability image handle; backing file in `f_data`) | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
 
 Tables that carry a vnode without being `vnops` and therefore install explicit
 members: `devfs_ops_f` and `devfs_ops_nonpassable_f` (all eleven, `vn`),

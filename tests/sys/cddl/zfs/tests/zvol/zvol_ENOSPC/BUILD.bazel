@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/cddl/zfs:suite.bzl", "zfs_test_suite")
+
+zfs_test_suite(
+    files = ['zvol_ENOSPC_001_pos.ksh', 'setup.ksh', 'zvol_ENOSPC.cfg', 'cleanup.ksh'],
+    tests = {'zvol_ENOSPC_test': {'required_user': 'root', 'is_exclusive': True, 'required_programs': 'ksh93'}},
+)

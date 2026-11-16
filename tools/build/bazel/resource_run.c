@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Measure a command from a small native parent, excluding controller RSS. */
 #include <sys/types.h>
 #include <sys/resource.h>

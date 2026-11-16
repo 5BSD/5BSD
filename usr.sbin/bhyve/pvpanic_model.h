@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The FreeBSD Foundation
+ * Copyright (c) 2026 Kory Heard
  *
  * Pure, allocation-free model of the QEMU pvpanic event register ABI and the
  * host reaction policy.  Kept header-only so both the bhyve device model

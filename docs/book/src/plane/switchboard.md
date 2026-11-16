@@ -183,7 +183,7 @@ onto one launch; each waiter still gets its own channel. switchboard sends
 answers `SVC_OP_NAME_RESULT`, and success releases only that name's queued
 sessions. A provider that dies before publishing fails its waiters
 immediately; one that never publishes fails them with `ETIMEDOUT` after
-`ON_DEMAND_TIMEOUT_SEC` (10 s). At most 64 lookups may be pending at once. A
+`SERVICE_ACTIVATION_TIMEOUT_MS` (10 s, `<service_runtime.h>`). At most 64 lookups may be pending at once. A
 lookup whose requester exits is discarded, and a restarted requester cannot
 consume a predecessor's reply.
 

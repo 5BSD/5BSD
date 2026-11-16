@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise the runner's phase lifecycle with a controlled ATF protocol fixture."""
 import os
 import signal

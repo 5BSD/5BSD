@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Stream the ordered Make help inputs into the maintained AWK algorithm."""
 import argparse
 from pathlib import Path

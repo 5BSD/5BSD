@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Boot-only storage acquisition. No ambient discovery or executable-name grants. */
 #include <sys/types.h>
 #include <sys/capsicum.h>

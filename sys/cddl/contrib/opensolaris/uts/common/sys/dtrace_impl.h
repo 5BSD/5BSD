@@ -1389,6 +1389,15 @@ extern int dtrace_attached(void);
 extern hrtime_t dtrace_gethrestime(void);
 #endif
 
+#if defined(__aarch64__) || defined(__riscv)
+struct dtrace_error_arg {
+	uintptr_t	illval;
+	bool		active;
+};
+
+extern struct dtrace_error_arg dtrace_error_arg[];
+#endif
+
 #if defined(__aarch64__)
 extern void dtrace_copyin_pan(uintptr_t, uintptr_t, size_t);
 extern void dtrace_copyinstr_pan(uintptr_t, uintptr_t, size_t);

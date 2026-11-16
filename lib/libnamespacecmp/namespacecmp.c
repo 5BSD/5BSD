@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * The system.Namespace client: service_enter_namespace(3),
  * service_enter_namespace_ex(3), service_destroy_namespace(3) and

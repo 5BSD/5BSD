@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Copy an identified Python runtime and pinned Scapy into a disposable stage."""
 import argparse
 import hashlib

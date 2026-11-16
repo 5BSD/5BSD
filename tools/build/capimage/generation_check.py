@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Reconcile a quiescent alternate filesystem with explicit generation inputs.
 
 This is an offline trusted-builder check, not input authentication, a policy

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Linux reference only: the 5BSD x86-64 table leaves io_uring unimplemented.
  * Adapted test ideas from Fuchsia Starnix io_uring_test.cc at commit

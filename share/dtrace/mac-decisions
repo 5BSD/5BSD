@@ -2,6 +2,8 @@
 /*
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * mac-decisions -- per-policy MAC decision observability.  Shows WHICH MAC
  *		    policy module denied (or allowed) WHICH framework entry
  *		    point, the headline observability this 5BSD fork's MAC

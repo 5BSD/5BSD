@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Live libshmring traffic, backpressure, and wake-coalescing summary.
  * Usage: bsdinstruments watch shmring-traffic

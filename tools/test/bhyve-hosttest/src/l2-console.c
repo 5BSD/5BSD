@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* Raw, receive-only console capture for a private L2 null-modem endpoint. */
 #include <sys/types.h>
 #include <sys/stat.h>

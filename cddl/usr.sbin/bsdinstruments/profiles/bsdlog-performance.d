@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Live system.Log batching, wakeup, persistence, and flush performance.
  * Usage: bsdinstruments watch bsdlog-performance

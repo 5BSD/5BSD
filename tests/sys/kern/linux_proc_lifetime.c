@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Linux64 probe driven by guest-proc-stress.sh; never execute on the host. */
 #include "linux_test.h"
 

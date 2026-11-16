@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Source-reviewed argument paths that return before opening a device."""
 import os
 from pathlib import Path

@@ -1,4 +1,8 @@
 #!/usr/libexec/atf-sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
 
 # The contract cases grep the daemon sources and DTrace providers.  The test
 # package installs those files beneath srctree/ next to this program, so an

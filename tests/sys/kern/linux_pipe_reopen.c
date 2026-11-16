@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Anonymous-pipe open-description tests. Disposable guests only. */
 #define _GNU_SOURCE
 #include <sys/stat.h>
@@ -31,6 +32,89 @@ static void same_inode(int a, int b)
  CHECK(S_ISFIFO(x.st_mode) && x.st_dev==y.st_dev && x.st_ino==y.st_ino);
  CHECK((x.st_mode & 0777)==0600 && x.st_uid==getuid());
 }
+/* Native-parent endpoints retain their original bidirectional identity. */
+static int inherited(const char *mode)
+{
+ int n=-1, other=-1, flags; char c;
+ CHECK(fcntl(10,F_GETFD)>=0 && fcntl(11,F_GETFD)>=0);
+ if (!strcmp(mode,"inherited_flags")) {
+  flags=fcntl(11,F_GETFL); CHECK(flags>=0);
+  n=reopen(11,O_WRONLY|O_APPEND|O_NONBLOCK|O_CREAT); CHECK(n>=0);
+  CHECK((fcntl(n,F_GETFL)&O_ACCMODE)==O_WRONLY);
+  CHECK((fcntl(n,F_GETFL)&(O_APPEND|O_NONBLOCK))==(O_APPEND|O_NONBLOCK));
+  CHECK(fcntl(11,F_GETFL)==flags);
+  CHECK(read(n,&c,1)==-1 && errno==EBADF);
+  other=dup(n); CHECK(other>=0);
+  CHECK(fcntl(other,F_SETFL,0)==0 && (fcntl(n,F_GETFL)&O_NONBLOCK)==0);
+  CHECK(fcntl(11,F_GETFL)==flags);
+  CHECK(write(n,"f",1)==1 && read(10,&c,1)==1 && c=='f');
+ } else if (!strcmp(mode,"inherited_reader")) {
+  n=reopen(10,O_RDONLY); CHECK(n>=0);
+  CHECK(close(10)==0);
+  CHECK(write(11,"r",1)==1 && read(n,&c,1)==1 && c=='r');
+  CHECK(close(11)==0 && read(n,&c,1)==0);
+ } else if (!strcmp(mode,"inherited_writer")) {
+  n=reopen(11,O_WRONLY); CHECK(n>=0);
+  CHECK(close(11)==0);
+  CHECK(write(n,"w",1)==1 && read(10,&c,1)==1 && c=='w');
+  CHECK(close(n)==0); n=-1;
+  CHECK(read(10,&c,1)==0);
+ } else if (!strcmp(mode,"inherited_epipe")) {
+  n=reopen(11,O_WRONLY|O_NONBLOCK); CHECK(n>=0);
+  CHECK(close(10)==0);
+  struct pollfd ready={.fd=n,.events=POLLOUT};
+  /* Native bidirectional endpoints report HUP; Linux one-way pipes ERR. */
+  CHECK(poll(&ready,1,0)==1 && (ready.revents&(POLLERR|POLLHUP))!=0);
+  CHECK(write(n,"x",1)==-1 && errno==EPIPE);
+ } else if (!strcmp(mode,"inherited_async")) {
+  CHECK(fcntl(10,F_SETOWN,getpid())==0);
+  n=reopen(10,O_RDONLY|O_NONBLOCK); CHECK(n>=0);
+  CHECK(fcntl(n,F_GETOWN)==0);
+  CHECK(fcntl(n,F_SETOWN,getpid())==0 && fcntl(10,F_SETOWN,0)==0);
+  CHECK(fcntl(n,F_GETOWN)==getpid());
+  other=dup(n); CHECK(other>=0);
+  CHECK(fcntl(other,F_SETOWN,0)==0 && fcntl(n,F_GETOWN)==0);
+  CHECK(close(other)==0); other=-1;
+  sigset_t signals; struct timespec now={0}, deadline={1,0};
+  sigemptyset(&signals); sigaddset(&signals,SIGIO);
+  CHECK(sigprocmask(SIG_BLOCK,&signals,0)==0);
+  CHECK(fcntl(n,F_SETOWN,getpid())==0);
+  CHECK(fcntl(n,F_SETFL,O_ASYNC|O_NONBLOCK)==0);
+  CHECK(write(11,"a",1)==1);
+  CHECK(sigtimedwait(&signals,0,&deadline)==SIGIO);
+  CHECK(read(n,&c,1)==1 && c=='a');
+  CHECK(fcntl(n,F_SETFL,O_NONBLOCK)==0);
+  CHECK(write(11,"b",1)==1 && read(n,&c,1)==1 && c=='b');
+  CHECK(sigtimedwait(&signals,0,&now)==-1 && errno==EAGAIN);
+  CHECK(fcntl(10,F_SETOWN,getpid())==0);
+  CHECK(fcntl(10,F_SETFL,O_ASYNC|O_NONBLOCK)==0);
+  CHECK(close(n)==0); n=-1;
+  CHECK(write(11,"s",1)==1);
+  CHECK(sigtimedwait(&signals,0,&deadline)==SIGIO);
+  CHECK(read(10,&c,1)==1 && c=='s');
+ } else if (!strcmp(mode,"inherited_churn")) {
+  pid_t child=fork(); CHECK(child>=0);
+  for(int i=0;i<2000;i++) {
+   n=reopen(11,O_WRONLY|O_NONBLOCK); CHECK(n>=0);
+   other=dup(n); CHECK(other>=0);
+   CHECK(close(n)==0 && close(other)==0); n=other=-1;
+  }
+  if(!child) _exit(0);
+  int status; CHECK(waitpid(child,&status,0)==child && WIFEXITED(status) && WEXITSTATUS(status)==0);
+  CHECK(write(11,"c",1)==1 && read(10,&c,1)==1 && c=='c');
+ } else if (!strcmp(mode,"inherited_permission")) {
+  if(getuid()==0) {
+   CHECK(setgid(65534)==0 && setuid(65534)==0);
+   CHECK(reopen(11,O_WRONLY|O_NONBLOCK)==-1 && errno==EACCES);
+   CHECK(write(11,"p",1)==1 && read(10,&c,1)==1 && c=='p');
+  } else {
+   n=reopen(11,O_WRONLY); CHECK(n>=0);
+  }
+ } else { fprintf(stderr,"unknown inherited case %s\n",mode); return 2; }
+ if(other>=0) CHECK(close(other)==0);
+ if(n>=0) CHECK(close(n)==0);
+ printf("PIPE_REOPEN_PASS %s\n",mode); return 0;
+}
 int main(int argc, char **argv)
 {
  int p[2], n=-1, other=-1; char c;
@@ -38,6 +122,7 @@ int main(int argc, char **argv)
  if (argc>2 && !strcmp(argv[2],"unprivileged")) {
   CHECK(setgid(65534)==0); CHECK(setuid(65534)==0);
  }
+ if(!strncmp(argv[1],"inherited_",10)) return inherited(argv[1]);
  CHECK(pipe2(p,O_NONBLOCK|O_CLOEXEC)==0);
  if (!strcmp(argv[1],"identity")) {
   same_inode(p[0],p[1]);

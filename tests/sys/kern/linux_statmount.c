@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * listmount(2)/statmount(2): enumerate mounts and query one.  listmount from
  * LSMT_ROOT returns >=1 mount id; statmount fills fs_type/mnt_point/sb_source

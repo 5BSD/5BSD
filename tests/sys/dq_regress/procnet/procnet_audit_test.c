@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * BSM audit records of an unattached process, as before stage 1c.
  *
  * Stage 1c-iii-b adds "dq_start" and "dq_object" argument tokens

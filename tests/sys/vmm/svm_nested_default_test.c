@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * The AMD nested-SVM host policy (hw.vmm.svm.nested) is on by default.  The
  * first case reads the initial value of the policy variable from the installed
  * vmm.ko without loading it, so it runs on any amd64 host, including emulators

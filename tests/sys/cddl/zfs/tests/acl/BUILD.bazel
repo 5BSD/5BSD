@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/cddl/zfs:suite.bzl", "zfs_test_suite")
+
+zfs_test_suite(
+    files = ['acl.cfg', 'acl_common.kshlib', 'cleanup.ksh', 'setup.ksh'],
+    subdirectories = ['cifs', 'trivial', 'nontrivial'],
+    child_archives = ['//tests/sys/cddl/zfs/tests/acl/cifs:installation_archives', '//tests/sys/cddl/zfs/tests/acl/trivial:installation_archives', '//tests/sys/cddl/zfs/tests/acl/nontrivial:installation_archives'],
+)

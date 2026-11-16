@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Ioctls (D99, N6): under dp_ioctl = DQ_EVENT every command a regular file
  * does not answer locally is an IOCTL event carrying the generic layer's
  * post-copyin argument (IOC_IN, and the int of an int-sized IOC_VOID) and

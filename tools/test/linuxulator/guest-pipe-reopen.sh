@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Disposable VM only. Record all cases, including failures.
 set -eu
 trap 'rc=$?; echo PIPE_REOPEN_EXIT "$rc"; /sbin/halt -p' EXIT
@@ -15,6 +20,17 @@ for user in root unprivileged; do
  for case in identity matrix flags reader_lifetime writer_lifetime rdwr no_readers no_writers opath opath_queue cloexec directory queue epoll epoll_writer splice churn exhaustion async full_writer metadata permission; do
   rc=0
   /root/pipe-reopen-linux "$case" "$user" || rc=$?
+  echo PIPE_REOPEN_RESULT "$user" "$case" "$rc"
+  [ "$rc" -eq 0 ] || failed=1
+ done
+done
+# The unprivileged native parent must be able to exec the Linux child.
+mkdir -m 755 /tmp/pipe-reopen-tests
+install -m 555 /root/pipe-reopen-linux /tmp/pipe-reopen-tests/probe
+for user in root unprivileged; do
+ for case in inherited_flags inherited_reader inherited_writer inherited_epipe inherited_async inherited_churn inherited_permission; do
+  rc=0
+  /root/native-pipe-parent /tmp/pipe-reopen-tests/probe "$case" "$user" || rc=$?
   echo PIPE_REOPEN_RESULT "$user" "$case" "$rc"
   [ "$rc" -eq 0 ] || failed=1
  done

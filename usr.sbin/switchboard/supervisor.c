@@ -148,13 +148,32 @@ schedule_restart(struct svc_runtime *svc, int kq)
  * against the circuit breaker (so a permanently-broken exec is eventually
  * disabled instead of spinning) and otherwise arm a backoff retry, matching the
  * fail-soft/retry behaviour of the death path.
+ *
+ * A unit that another path has already started (it is no longer STOPPED, or
+ * an asynchronous launch is in flight) needs no restart.  svc_exec() refuses
+ * it, but that refusal is not an exec failure: counting it would disable a
+ * running unit and mark it STOPPED behind its back.  Likewise svc_exec()
+ * refuses (EBUSY) while the unit's previous coalition is still being torn
+ * down: the restart is postponed, not counted, or a slow teardown could
+ * disable a unit that was never exec'd.
  */
 static void
 svc_restart_now(struct svc_runtime *svc, int kq)
 {
 
+	if (svc->state != SVC_STATE_STOPPED || svc->launch != NULL) {
+		syslog(LOG_INFO, "service %s: already started (state %d); "
+		    "restart dropped", svc->manifest.label, svc->state);
+		return;
+	}
 	if (svc_exec(svc, kq) != -1)
 		return;
+	if (errno == EBUSY && svc->cleanup.pending) {
+		syslog(LOG_INFO, "service %s: previous instance still being "
+		    "cleaned up; restart postponed", svc->manifest.label);
+		schedule_restart(svc, kq);
+		return;
+	}
 	if (++svc->restart_count >= svc->manifest.max_failures) {
 		syslog(LOG_CRIT, "service %s: exec failed %u times, disabling",
 		    svc->manifest.label, svc->restart_count);

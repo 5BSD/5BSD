@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Independent Core 6.3 ISO control-plane byte oracles.
  * No production or Netgraph Bluetooth header is included.
  */

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Test-only privacy/HCI oracles from Bluetooth Core 6.3 Vol 4 Part E
  * §§7.8.10, 7.8.44-7.8.45.  No production or Netgraph headers are included.
  */

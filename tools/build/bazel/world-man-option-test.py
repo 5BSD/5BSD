@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check MAN against the complete source-owned world inventory, including aliases."""
 import json
 import os

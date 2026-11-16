@@ -76,6 +76,26 @@ list_json_body()
 	atf_check -o match:'"origin":"user"' cat out.json
 }
 
+atf_test_case base_descriptions
+base_descriptions_head()
+{
+	atf_set descr "every installed base profile keeps its recorded description"
+}
+base_descriptions_body()
+{
+	# profile_descriptions.jsonl records `list --json` for the base
+	# catalog: one line per profile, name order.  A licence header in
+	# front of a profile must not become, or change, its description.
+	export HOME="$(pwd)/home"
+	atf_check -o save:out.json bsdinstruments list --json
+	grep '"origin":"base"}$' out.json > base.json
+	if grep -qE '"description":"(SPDX-License-Identifier|Copyright|-")' \
+	    base.json; then
+		atf_fail "a licence header line became a description"
+	fi
+	atf_check diff -u "$(atf_get_srcdir)/profile_descriptions.jsonl" base.json
+}
+
 atf_test_case generate_render
 generate_render_head()
 {
@@ -1311,6 +1331,7 @@ atf_init_test_cases()
 	atf_add_test_case watch_otel_file_target
 	atf_add_test_case watch_errors_and_exit
 	atf_add_test_case list_basic
+	atf_add_test_case base_descriptions
 	atf_add_test_case list_json
 	atf_add_test_case generate_render
 	atf_add_test_case generate_no_filters

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Schema evolution for system.Network (evolve:1/evolve:2 pairing).
  * next_peer is built from evolution/networkcmp_next.fidl at bsd:2, which adds
@@ -19,6 +20,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+
+#include "freebsd_test_suite/capability_tier.h"
 
 static int test_client_fd = -1;
 
@@ -78,8 +81,7 @@ require_plane(void)
 {
 	int fd = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
 	if (fd < 0)
-		atf_tc_skip("capability plane unavailable: %s",
-		    strerror(errno));
+		capability_plane_skip(errno);
 	close(fd);
 }
 

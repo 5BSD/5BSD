@@ -2,6 +2,8 @@
 /*
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * ipcwatch.d -- observe the System V / POSIX IPC surface: who is talking to
  *		 whom through message queues, semaphores, shared memory,
  *		 pipes, and cross-process kqueue process-watching.

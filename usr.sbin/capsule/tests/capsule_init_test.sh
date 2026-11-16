@@ -1,6 +1,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Initialization integrity tests for capsule.
 #
 # These verify that the running capsule instance has applied all

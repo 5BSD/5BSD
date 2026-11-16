@@ -31,7 +31,6 @@ typedef struct { struct { int dtdt_kind; } dtdo_rtype; } dtrace_difo_t;
 #define B_TRUE true
 #define ipaddr_t in_addr_t
 #define DTRACE_V4MAPPED_OFFSET (sizeof(uint32_t) * 3)
-#define ASSERT assert
 #define CPU_DTRACE_NOSCRATCH 4
 #define CPU_DTRACE_ILLOP 8
 #define CPU_DTRACE_KPRIV 16
@@ -353,10 +352,11 @@ int main(void)
         mstate.dtms_strtok == 123 && mstate.dtms_strtok_limit == 124 &&
         mstate.dtms_strtok_vmhdl == &pg);
     pt(6)[1] = 11 * PAGE_SIZE | 1;
+    /* Out-of-range values wrap modulo 2^64, as upstream. */
     input("9223372036854775808"); reset(); run(DIF_SUBR_STRTOLL, 1);
-    assert(regs[0].dttr_value == INT64_MAX);
-    input("-9223372036854775809"); reset(); run(DIF_SUBR_STRTOLL, 1);
     assert(regs[0].dttr_value == (uint64_t)INT64_MIN);
+    input("-9223372036854775809"); reset(); run(DIF_SUBR_STRTOLL, 1);
+    assert(regs[0].dttr_value == INT64_MAX);
     input("{\"answer\":\"yes\"}"); reset(); args[1].dttk_value = (uintptr_t)"answer";
     run(DIF_SUBR_JSON, 2); assert(strcmp(result(), "yes") == 0);
     reset(); memcpy((char *)pt(7) + 128, "answer", 7);

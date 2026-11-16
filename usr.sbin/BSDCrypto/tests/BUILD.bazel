@@ -4,7 +4,7 @@ load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
 # Keep installed linkage identical to Make; only runtime variants use local RPATH.
 [cc_binary(name = name + suffix,
     srcs = [name + ".c", "//usr.sbin/BSDCrypto:policy.c"],
-    deps = ["//usr.sbin/BSDCrypto:policy_headers", "//lib/atf/libatf-c:atf_c"],
+    deps = ["//tests:capability_tier", "//usr.sbin/BSDCrypto:policy_headers", "//lib/atf/libatf-c:atf_c"],
     dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
     copts = ["-fPIE"], linkopts = ["-pie"] + (["-Wl,--disable-new-dtags,-rpath,$ORIGIN"] if suffix else []))
  for name in ["policy_test"] for suffix in ["", "_runtime"]]
@@ -22,7 +22,7 @@ load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
 
 [cc_binary(name = name, srcs = [name + ".c", "//usr.sbin/BSDCrypto:policy.c"] +
         (["//usr.sbin/BSDCrypto:bsdcrypto.c"] if name == "provider_test" else []),
-    deps = ["//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDCrypto:test_headers",
+    deps = ["//tests:capability_tier", "//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDCrypto:test_headers",
         "//lib/libauditcmp:auditcmp", "//lib/libcryptocmp:cryptocmp", "//lib/libcryptocmp:generated_headers",
         "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libcryptodesc:cryptodesc",
         "//lib/libextensioncmp:extensioncmp", "//lib/libservice:service", "//lib/liblogcmp:headers", "//lib/libcapreclaim:headers",
@@ -32,7 +32,7 @@ load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
     linkstatic = True, linkopts = ["-static"])
  for name in ["provider_test", "lifecycle_test"]]
 cc_binary(name = "quota_test", srcs = ["quota_test.c"],
-    deps = ["//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDCrypto:test_headers",
+    deps = ["//tests:capability_tier", "//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDCrypto:test_headers",
         "//lib/libauditcmp:headers", "//lib/libcryptocmp:generated_headers", "//lib/libfidl:headers",
         "//lib/libchannel:headers", "//lib/libcryptodesc:headers", "//lib/libextensioncmp:headers",
         "//lib/libservice:headers", "//lib/liblogcmp:headers", "//lib/libcapreclaim:headers"],
@@ -64,20 +64,20 @@ filegroup(name = "next_header_files", srcs = [":next_bindings"], output_group = 
 cc_library(name = "next_headers", hdrs = [":next_header_files"], strip_include_prefix = "next_bindings")
 # Make links all three generated objects directly into this standalone peer.
 cc_library(name = "next_codec", srcs = [":next_sources"],
-    deps = [":next_headers", "//lib/libfidl:headers", "//contrib/llvm-project/libcxx/include:headers"],
+    deps = ["//tests:capability_tier", ":next_headers", "//lib/libfidl:headers", "//contrib/llvm-project/libcxx/include:headers"],
     copts = ["-std=c++20", "-nostdinc++"], linkstatic = True, alwayslink = True)
 # The newer peer must never inherit the production bsd:1 generated headers.
 cc_binary(name = "next_peer", srcs = ["evolution/next_peer.c"],
-    deps = [":next_headers", ":next_codec", "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libc++:cxx"],
+    deps = ["//tests:capability_tier", ":next_headers", ":next_codec", "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libc++:cxx"],
     linkopts = ["-static"], linkstatic = True)
 
 
 _CRYPTO_LIBS = ['//lib/libauditcmp:auditcmp', '//lib/libcryptocmp:cryptocmp', '//lib/libfidl:fidl', '//lib/libchannel:channel', '//lib/libcryptodesc:cryptodesc', '//lib/libextensioncmp:extensioncmp', '//lib/libservice:service']
 cc_binary(name = "evolution_test", srcs = ["evolution_test.c", "evolution_test_provider.c", "//usr.sbin/BSDCrypto:policy.c"],
-    deps = _CRYPTO_LIBS + ["//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDCrypto:test_headers", "//lib/libcryptocmp:generated_headers", "//lib/liblogcmp:headers", "//lib/libcapreclaim:headers"],
+    deps = _CRYPTO_LIBS + ["//tests:capability_tier", "//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDCrypto:test_headers", "//lib/libcryptocmp:generated_headers", "//lib/liblogcmp:headers", "//lib/libcapreclaim:headers"],
     local_defines = ["BSDCRYPTO_TESTING"], linkstatic = True, linkopts = ["-static"])
 cc_binary(name = "latency_bench", srcs = ["latency_bench.c", "latency_bench_provider.c", "//usr.sbin/BSDCrypto:policy.c"],
-    deps = _CRYPTO_LIBS + ["//usr.sbin/BSDCrypto:test_headers", "//lib/libcryptocmp:client_source_headers", "//tools/build/fuchsia:daemon_bench_headers", "//lib/liblogcmp:headers", "//lib/libcapreclaim:headers"],
+    deps = _CRYPTO_LIBS + ["//tests:capability_tier", "//usr.sbin/BSDCrypto:test_headers", "//lib/libcryptocmp:client_source_headers", "//tools/build/fuchsia:daemon_bench_headers", "//lib/liblogcmp:headers", "//lib/libcapreclaim:headers"],
     dynamic_deps = [lib + "_shared" for lib in _CRYPTO_LIBS],
     local_defines = ["BSDCRYPTO_TESTING"], copts = ["-fPIE"], linkopts = ["-pie"])
 bsd_kyua_test(name = "evolution_test_run", program = ":evolution_test", interface = "atf",

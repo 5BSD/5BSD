@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Prepare explicit blank VM output disk and run the ordinary install fixture."""
 import argparse
 import json

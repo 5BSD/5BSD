@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Metadata contract negatives; real TLS program comparisons are separate evidence."""
 import importlib.util
 from pathlib import Path
@@ -41,12 +42,58 @@ class RuntimePathContracts(unittest.TestCase):
         self.tool = self.root / 'readelf'
         self.tool.write_bytes(b'inspection boundary fixture')
 
-    def compare(self, candidate, reference, expected=None, static=False):
+    def compare(self, candidate, reference, expected=None, static=False, non_pie=False):
         def inspect(args):
             return candidate if Path(args[-1]) == self.candidate else reference
         with patch.object(checker, 'run', side_effect=inspect), patch.object(checker, 'sections', return_value={}):
             return checker.compare_program(self.tool, 'unused', self.candidate,
-                self.reference, self.root, expected_search_paths=expected, static=static)
+                self.reference, self.root, expected_search_paths=expected, static=static, non_pie=non_pie)
+
+    @staticmethod
+    def non_pie_metadata():
+        return _BASE.replace('Type: DYN (Shared object file)',
+                             'Type: EXEC (Executable file)').replace('NOW PIE', 'NOW')
+
+    def test_non_pie_requires_explicit_selection(self):
+        metadata = self.non_pie_metadata()
+        result = self.compare(metadata, metadata, non_pie=True)
+        self.assertEqual(result['linkage'], 'dynamic')
+        self.assertFalse(result['position_independent'])
+        with self.assertRaisesRegex(ValueError, 'PIE executable required'):
+            self.compare(metadata, metadata)
+
+    def test_non_pie_rejects_pie_on_either_side(self):
+        metadata = self.non_pie_metadata()
+        for a, b in [(_BASE, metadata), (metadata, _BASE)]:
+            with self.subTest(a=a), self.assertRaisesRegex(ValueError, 'fixed non-PIE dynamic'):
+                self.compare(a, b, non_pie=True)
+
+    def test_non_pie_requires_dynamic_interpreter(self):
+        with self.assertRaisesRegex(ValueError, 'interpreter'):
+            self.compare(self.static_metadata(), self.static_metadata(), non_pie=True)
+
+    def test_non_pie_preserves_hardening_on_either_side(self):
+        good = self.non_pie_metadata()
+        bad = [good.replace('GNU_RELRO', 'OTHER_SEGMENT'),
+               good.replace('BIND_NOW', 'SYMBOLIC').replace('Flags: NOW', 'Flags: NONE'),
+               good.replace('0x000 0x000 RW 0x10', '0x000 0x000 RWE 0x10'),
+               good.replace('0x100 0x100 R E', '0x100 0x100 RWE'),
+               good + ' 0x16 (TEXTREL) 0x0\n', good + _PATH]
+        for wrong in bad:
+            for a, b in [(wrong, good), (good, wrong)]:
+                with self.subTest(wrong=wrong), self.assertRaises(ValueError):
+                    self.compare(a, b, non_pie=True)
+
+    def test_non_pie_preserves_dependency_contract(self):
+        good = self.non_pie_metadata()
+        wrong = good.replace('libc.so.7', 'other.so')
+        with self.assertRaisesRegex(ValueError, 'metadata mismatch: needed'):
+            self.compare(wrong, good, non_pie=True)
+
+    def test_executable_contract_selections_are_typed_and_exclusive(self):
+        for options in [dict(non_pie='yes'), dict(static=1), dict(static=True, non_pie=True)]:
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                self.compare(_BASE, _BASE, **options)
 
     @staticmethod
     def static_metadata():

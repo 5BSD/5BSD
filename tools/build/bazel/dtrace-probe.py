@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Declared Bazel targets for cddl/lib/libdtrace and dtrace(1), compared with Make.
 
 libdtrace.so.2 is built from its C and C++ sources plus the generated

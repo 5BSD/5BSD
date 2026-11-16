@@ -2029,7 +2029,8 @@ bsd_to_linux_flock(struct flock *bsd_flock, struct l_flock *linux_flock)
 }
 
 
-/* Linux64 one-way pipes keep SIGIO ownership per open description. */
+/* Anonymous pipes keep SIGIO ownership per open description, including
+ * native bidirectional endpoints inherited across a Linux exec. */
 static int
 linux_fcntl_setown(struct thread *td, int fd, pid_t owner)
 {
@@ -2040,7 +2041,7 @@ linux_fcntl_setown(struct thread *td, int fd, pid_t owner)
 	if (error)
 		return (error);
 	if (fp->f_type == DTYPE_PIPE &&
-	    (((struct pipe *)fp->f_data)->pipe_type & PIPE_TYPE_UNIDIR) == 0) {
+	    (((struct pipe *)fp->f_data)->pipe_type & PIPE_TYPE_NAMED) != 0) {
 		fdrop(fp, td);
 		return (EINVAL);
 	}

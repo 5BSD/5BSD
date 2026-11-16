@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * vtcryptocbc -- 5BSD guest helper that proves the virtio_crypto(4) guest
  * driver registered with opencrypto(9) and that an AES-CBC request travels
  * through the emulated bhyve virtio-crypto device and back.

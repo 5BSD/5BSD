@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise explicit certificate selection from an inventoried package corpus.
 
 This is utility qualification, not a production construction policy compiler or

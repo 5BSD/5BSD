@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Run C peers built from two versions of one schema against each other.
 
 evolution/evolution.fidl is compiled at bsd:1 and bsd:2 (--available bsd:N,

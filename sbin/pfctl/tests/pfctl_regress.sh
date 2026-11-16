@@ -1,6 +1,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # OpenBSD's pfctl regression corpus (contrib/openbsd-pf/regress/sbin/pfctl)
 # under ATF.  The corpus and its Makefile are installed unchanged in files/;
 # the Makefile is installed as regress.mk and the test lists (PFTESTS,

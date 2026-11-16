@@ -1,7 +1,7 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
-# Copyright (c) 2026 The 5BSD Project
+# Copyright (c) 2026 Kory Heard
 #
 # OpenBSD PF per-vnet instances: every vnet has its own rulesets, states,
 # tables, anchors, interfaces and pflog/pfsync/pflow clones, and /dev/pf

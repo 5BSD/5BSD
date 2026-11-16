@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The FreeBSD Foundation
+ * Copyright (c) 2026 Kory Heard
  *
  * mac_capability_capprotect — Capability Protection.
  *
@@ -832,10 +832,20 @@ cp_mac_check_fork(struct ucred *cred, int flags __unused)
 	return (cp_check_self_restrict(cred, CP_SF_NOFORK, "fork", EPERM));
 }
 
+/*
+ * CP_SF_NOFDRECV removes ambient descriptor receipt (SCM_RIGHTS and the
+ * like).  A descriptor arriving over a capability channel the process
+ * already holds, as a message attachment or in a CALL reply, stays under
+ * the channel's own authority and transfer limits and is not refused here
+ * (mac_capability_capprotect(4)); mac_capability_dev.c marks the thread
+ * while it asks.
+ */
 static int
 cp_mac_file_check_receive(struct ucred *cred, struct file *fp __unused)
 {
 
+	if ((curthread->td_pflags2 & TDP2_CAPCHAN_RECV) != 0)
+		return (0);
 	return (cp_check_self_restrict(cred, CP_SF_NOFDRECV, "fd_receive",
 	    EACCES));
 }

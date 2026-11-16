@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The FreeBSD Foundation
+ * Copyright (c) 2026 Kory Heard
  *
  * Emulation of the Intel 6300ESB PCI-to-PCI bridge watchdog timer (the
  * "i6300esb" device that stock guest drivers -- Linux i6300esb, the Windows

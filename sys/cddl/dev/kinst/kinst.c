@@ -103,55 +103,15 @@ kinst_excluded(const char *name)
 	if (strcmp(name, "cpu_switch") == 0)
 		return (true);
 
-	/*
-	 * Anything beginning with "dtrace_" may be called from probe context
-	 * unless it explicitly indicates that it won't be called from probe
-	 * context by using the prefix "dtrace_safe_".
-	 */
-	if (strncmp(name, "dtrace_", strlen("dtrace_")) == 0 &&
-	    strncmp(name, "dtrace_safe_", strlen("dtrace_safe_")) != 0)
-		return (true);
-
-	/*
-	 * Omit instrumentation of functions that are probably in DDB.  It
-	 * makes it too hard to debug broken kinst.
-	 *
-	 * NB: kdb_enter() can be excluded, but its call to printf() can't be.
-	 * This is generally OK since we're not yet in debugging context.
-	 */
-	if (strncmp(name, "db_", strlen("db_")) == 0 ||
-	    strncmp(name, "kdb_", strlen("kdb_")) == 0)
-		return (true);
-
-	/*
-	 * Lock owner methods may be called from probe context.
-	 */
-	if (strcmp(name, "owner_mtx") == 0 ||
-	    strcmp(name, "owner_rm") == 0 ||
-	    strcmp(name, "owner_rw") == 0 ||
-	    strcmp(name, "owner_sx") == 0)
-		return (true);
-
-	/*
-	 * The KMSAN runtime can't be instrumented safely.
-	 */
-	if (strncmp(name, "__msan", 6) == 0 ||
-	    strncmp(name, "kmsan_", 6) == 0)
-		return (1);
-
-	/*
-	 * When DTrace is built into the kernel we need to exclude the kinst
-	 * functions from instrumentation.
-	 */
-#ifndef _KLD_MODULE
-	if (strncmp(name, "kinst_", strlen("kinst_")) == 0)
-		return (true);
-#endif
-
 	if (strcmp(name, "trap_check") == 0)
 		return (true);
 
-	return (false);
+	/*
+	 * What DTrace calls in probe context, and the trap handlers of the
+	 * providers compiled into the kernel, kinst_invop() among them; fbt
+	 * refuses the same functions.
+	 */
+	return (dtrace_instr_excluded(name) != 0);
 }
 
 void
@@ -185,6 +145,14 @@ kinst_linker_file_cb(linker_file_t lf, void *arg)
 
 	pd = arg;
 	if (pd->kpd_mod[0] != '\0' && strcmp(pd->kpd_mod, lf->filename) != 0)
+		return (0);
+
+	/*
+	 * DTrace and the modules that register with it, kinst.ko included,
+	 * are ineligible as they are for fbt: a probe in them fires in probe
+	 * context or in a breakpoint handler.
+	 */
+	if (dtrace_instr_file_excluded(lf))
 		return (0);
 
 	/*

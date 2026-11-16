@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Born-in-capmode networking reachability proof: CONNECT (TCP) and UDP.
 #
 # bsdnetwork is born in capability mode.  Plain connect(2)/bind(2) are not

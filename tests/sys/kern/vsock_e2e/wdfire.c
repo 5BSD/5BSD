@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * wdfire -- 5BSD guest helper that arms the platform watchdog(4) through
  * /dev/fido and, only when told to, lets it lapse so the host i6300esb model
  * applies its configured action.

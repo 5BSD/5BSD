@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * The lockless (SMR) lookup is still used for unattached processes.
  *
  * What it tries to break: cache_can_fplookup declines the fast path for a

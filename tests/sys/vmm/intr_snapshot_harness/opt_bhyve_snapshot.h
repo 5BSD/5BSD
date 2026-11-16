@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Userspace harness stand-in for the kernel option header.
  */
 #ifndef _KMOCK_OPT_BHYVE_SNAPSHOT_H_

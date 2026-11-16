@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # vm-provider.sh -- FIDL provider validation in a disposable plane-on guest.
 # Derived from the plane-on Kyua runner described in
 # docs/book/src/develop/testing.md ("VM, plane on").  Before Kyua it exercises
@@ -23,7 +28,12 @@
 #   TIMEOUT_S  host-side deadline for the whole VM (default 10800).
 #
 # Environment: FATAL_LOR (yes; no logs a lock order reversal without
-# stopping the run), CPUS (default 8), MEM_MB (8192), PARALLELISM (kyua, default 1),
+# stopping the run), CPUS (default 8), MEM_MB (8192; 12288 when the suites
+#   include sys/posixshm: its largepage_* cases need a free aligned 1 GB
+#   range, and an 8 GB guest has only four, which incidental cached pages
+#   can occupy, so ENOMEM there is expected), PARALLELISM (kyua, default 1),
+#   ROOT_FS (ufs, the default, or zfs: a ZFS root pool for the suites that
+#   require one, such as the Linux ptrace ones),
 #   GATE_TIMEOUT (guest seconds to wait for provider convergence, 600),
 #   REQUIRE_UNITS (space-separated SwitchBoard labels that must be "running"
 #   before tests start; default: the twelve core providers that
@@ -32,6 +42,22 @@
 #   loader.conf lines).
 #   ISOLATION_ENFORCE=1 retains production device isolation for deployment
 #   checks; the default 0 permits raw-device provider test fixtures.
+#   With PLANE_OFF=1 the default is 1 (the enforced tier, below), and the
+#   guest gate checks the booted value either way.
+#   SYSCTL_WRITE (space-separated sysctl names; default none): the image's
+#   system.Sysctl policy lets every client write these names through the
+#   provider (the policy matches prefixes: each name also covers the
+#   subtree under it, so name leaves).  The plane reserves the provider's isolated names
+#   (kern.maxfiles) for the provider, so a test that must change one asks
+#   the provider; the shipped policy grants no client a write.  For
+#   sys/kern/kern_descrip_test:kern_maxfiles__increase:
+#   SYSCTL_WRITE=kern.maxfiles with
+#   KYUA_VARS=test_suites.FreeBSD.allow_sysctl_side_effects=1.
+#
+# Two tiers run tests/sys/mac_capability (docs/book/src/develop/testing.md):
+# the plane-on run, where its isolation denial cases skip because the policy
+# only traces denials, and the enforced tier, PLANE_OFF=1 (enforce=1), which
+# runs them.  The second is an addition to the plane-on run, not a substitute.
 #
 # Why not /etc/rc.local: under Capsule, SwitchBoard runs /etc/rc as a oneshot
 # under a temporary boot grant and launches the native capability units only
@@ -52,7 +78,8 @@
 # still skip here by design: they need a guest with no Capsule running.
 set -eu
 
-usage() { sed -n '2,/^set -eu/p' "$0" | sed -e '/^set -eu/d' -e 's/^# \{0,1\}//' >&2; exit 64; }
+usage() { sed -n '7,/^set -eu/p' "$0" | sed -e '/^set -eu/d' -e 's/^# \{0,1\}//' >&2; exit 64; }
+die() { echo "vm-provider: $*" >&2; exit 2; }
 [ $# -ge 3 ] && [ $# -le 4 ] || usage
 stage=$1 work=$2 suites=$3 timeout=${4:-10800}
 # First runnable emulator: $QEMU, the local build carrying the X86Access
@@ -71,7 +98,14 @@ kyua_vars=${KYUA_VARS:-}
 # EXTRA_DIR: a host directory whose regular files are installed executable in
 # the guest under /root/vm-extra.d (for example legacy latency benches).
 plane_off=${PLANE_OFF:-0}
-isolation=${ISOLATION_ENFORCE:-0}
+case "$plane_off" in 0|1) ;; *) echo "PLANE_OFF must be 0 or 1" >&2; exit 64;; esac
+# No Capsule claims the device with the plane off, so that tier enforces the
+# isolation policy unless told otherwise: its isolation suites need it.
+if [ "$plane_off" = 1 ]; then
+	isolation=${ISOLATION_ENFORCE:-1}
+else
+	isolation=${ISOLATION_ENFORCE:-0}
+fi
 case "$isolation" in 0|1) ;; *) echo "ISOLATION_ENFORCE must be 0 or 1" >&2; exit 64;; esac
 extra_script=${EXTRA_SCRIPT:-}
 [ -z "$extra_script" ] || [ -f "$extra_script" ] || die "no such EXTRA_SCRIPT: $extra_script"
@@ -92,15 +126,23 @@ if [ -n "$linux_compat_dir" ]; then
 	bad=$(cd "$linux_compat_dir" && find compat/linux -print | grep -v '^[A-Za-z0-9_./+-]*$' || true)
 	[ -z "$bad" ] || die "LINUX_COMPAT_DIR has unsupported path names: $bad"
 fi
-cpus=${CPUS:-4} mem=${MEM_MB:-8192} par=${PARALLELISM:-1} gate=${GATE_TIMEOUT:-600}
+case " $suites " in
+*" sys/posixshm"*) mem_default=12288 ;;
+*) mem_default=8192 ;;
+esac
+cpus=${CPUS:-4} mem=${MEM_MB:-$mem_default} par=${PARALLELISM:-1} gate=${GATE_TIMEOUT:-600}
+root_fs=${ROOT_FS:-ufs}
+case "$root_fs" in ufs|zfs) ;; *) echo "ROOT_FS must be ufs or zfs" >&2; exit 64;; esac
 units=${REQUIRE_UNITS:-system.Log/bsdlog system.Network/bsdnetwork system.Trace/bsdtrace system.Filesystem/bsdfilesystem system.Audit/bsdaudit system.Time/bsdtime system.SystemExtension/bsdextension system.Notify/bsdnotify system.Device/bsddevice system.Power/bsdpower system.Sysctl/bsdsysctl system.Crypto/bsdcrypto}
 
-die() { echo "vm-provider: $*" >&2; exit 2; }
 isnum() { case $1 in ''|*[!0-9]*) return 1;; esac; [ "$1" -gt 0 ]; }
 for n in "$timeout" "$cpus" "$mem" "$par" "$gate"; do isnum "$n" || die "not a positive integer: $n"; done
 case $suites in *[!A-Za-z0-9_./:\ -]*|'') die "suite list may only contain [A-Za-z0-9_./:-] and spaces";; esac
 case $units in *[!A-Za-z0-9_./\ -]*) die "REQUIRE_UNITS has unexpected characters";; esac
 case $kyua_vars in *[!A-Za-z0-9_.=\ -]*) die "KYUA_VARS has unexpected characters";; esac
+sysctl_write=${SYSCTL_WRITE:-}
+case $sysctl_write in *[!A-Za-z0-9_.\ ]*) die "SYSCTL_WRITE has unexpected characters";; esac
+sysctl_conf=Capabilities/System/Sysctl.cap/Units/bsdsysctl.unit/Config/sysctl.conf
 
 stage=$(cd "$stage" 2>/dev/null && pwd) || die "no stage dir"
 [ -f "$stage/METALOG" ] || die "no METALOG in $stage (not a NO_ROOT stage)"
@@ -164,14 +206,19 @@ EOF
 # booting stock init (plane off) and turning every provider test into a skip.
 printf 'init_path="/sbin/capsule"\n' > "$x/loader.conf.local"
 if [ "$plane_off" = 1 ]; then
-	# No Capsule claims the device with the plane off, so keep isolation
-	# enforced: the isolation suites run in this tier and need it.
+	# No Capsule claims the device with the plane off; the isolation
+	# setting chosen above (enforcing by default) is written as is.
 	sed -i '' '/^# Test mode:/,/^kern.mac_capability_isolation.enforce=/d' \
 	    "$x/loader.conf"
+	printf 'kern.mac_capability_isolation.enforce="%s"\n' "$isolation" \
+	    >> "$x/loader.conf"
 	printf 'capability_plane="NO"\n' >> "$x/loader.conf"
 	: > "$x/loader.conf.local"
 fi
 # LOADER_EXTRA: more loader.conf lines, e.g. if_vxlan_load="YES".
+if [ "$root_fs" = zfs ]; then
+	printf 'zfs_load="YES"\nvfs.root.mountfrom="zfs:kyuaroot"\n' >> "$x/loader.conf"
+fi
 [ -z "${LOADER_EXTRA:-}" ] || printf '%s\n' "$LOADER_EXTRA" >> "$x/loader.conf"
 if [ -n "$extra_script" ]; then cp "$extra_script" "$x/extra.sh"; else : > "$x/extra.sh"; fi
 cat > "$x/fstab" <<'EOF'
@@ -179,6 +226,7 @@ cat > "$x/fstab" <<'EOF'
 tmpfs		/tmp	tmpfs	rw,mode=1777	0	0
 tmpfs		/Capabilities/Run	tmpfs	rw,mode=0700	0	0
 EOF
+[ "$root_fs" = ufs ] || sed -i '' '/^\/dev\/vtbd0p2	\/	ufs/d' "$x/fstab"
 if [ -n "$linux_compat_dir" ]; then
 	cat >> "$x/fstab" <<'EOF'
 linprocfs	/compat/linux/proc	linprocfs	rw	0	0
@@ -222,6 +270,21 @@ fi
 EOF
 } > "$x/zprofile"
 printf '%s\n' "$suites" > "$x/suites"
+if [ -n "$sysctl_write" ]; then
+	# The default policy's empty write list becomes the given names.
+	[ -f "$stage/$sysctl_conf" ] || die "SYSCTL_WRITE: stage lacks /$sysctl_conf"
+	list=$(for n in $sysctl_write; do printf '"%s", ' "$n"; done | sed -e 's/, $//')
+	awk -v list="$list" '
+	    /^default[[:space:]]*\{/ { indef = 1 }
+	    indef && !done && /^[[:space:]]*write[[:space:]]*=[[:space:]]*\[\];/ {
+		sub(/\[\]/, "[" list "]"); done = 1
+	    }
+	    indef && /^\}/ { indef = 0 }
+	    { print }
+	    END { exit !done }
+	' "$stage/$sysctl_conf" > "$x/sysctl.conf" ||
+	    die "SYSCTL_WRITE: no empty default write list in /$sysctl_conf"
+fi
 cat > "$x/kyua-planeon.sh" <<EOF
 #!/bin/sh
 # Generated by vm-provider.sh; runs from the root autologin on ttyu0.
@@ -239,7 +302,10 @@ mkdir -p "$R"
 echo KYUA_PLANEON_START
 if [ "$PLANE_OFF" = 1 ]; then
 echo "PLANEOFF_PID1=$(ps -o comm= -p 1 | tr -d ' ')"
-echo PLANEOFF_READY
+enf=$(sysctl -n kern.mac_capability_isolation.enforce 2>/dev/null || echo unset)
+echo "PLANEOFF_ISOLATION_ENFORCE=$enf"
+if [ "$enf" = "$ISOLATION_ENFORCE" ]; then echo PLANEOFF_READY; else
+	echo "PLANEOFF_GATE: kern.mac_capability_isolation.enforce=$enf (want $ISOLATION_ENFORCE)"; fi
 else
 gate=PASS
 pid1=$(ps -o comm= -p 1 | tr -d ' ')
@@ -399,6 +465,7 @@ sh -n "$x/kyua-planeon.sh" || die "generated guest script has a syntax error"
 
 # --------------------------------------------------------------- manifest ---
 over='boot/loader.conf boot/loader.conf.local etc/fstab etc/rc.conf etc/rc.local etc/ttys etc/gettytab root/.profile root/.zprofile root/kyua-planeon.sh root/kyua-planeon.suites root/vm-extra.sh'
+[ -z "$sysctl_write" ] || over="$over $sysctl_conf"
 re=$(for p in $over; do printf '%s|' "$p"; done | sed -e 's/|$//' -e 's/\./\\./g')
 {
 	echo '#mtree 2.0'
@@ -416,6 +483,7 @@ re=$(for p in $over; do printf '%s|' "$p"; done | sed -e 's/|$//' -e 's/\./\\./g
 	m root/kyua-planeon.sh 0555 kyua-planeon.sh
 	m root/kyua-planeon.suites 0444 suites
 	m root/vm-extra.sh 0555 extra.sh
+	[ -z "$sysctl_write" ] || m "$sysctl_conf" 0644 sysctl.conf
 	if [ -n "$extra_dir" ]; then
 		echo "./root/vm-extra.d type=dir uname=root gname=wheel mode=0755"
 		for f in "$extra_dir"/*; do
@@ -456,11 +524,19 @@ done
 # ------------------------------------------------------------------ image ---
 # Manifest mode: makefs resolves plain records relative to the cwd (the stage)
 # and overlay records through contents=, so the stage is never written.
+if [ "$root_fs" = zfs ]; then
+(cd "$stage" && makefs -t zfs -s 8g -o poolname=kyuaroot -o bootfs=kyuaroot \
+    -o rootpath=/ "$work/root.ufs" "$work/METALOG") > "$work/makefs.log" 2>&1 ||
+    { tail -n 20 "$work/makefs.log" >&2; die "makefs failed"; }
+mkimg -s gpt -f raw -b "$stage/boot/pmbr" -p "freebsd-boot:=$stage/boot/gptzfsboot" \
+    -p "freebsd-zfs:=$work/root.ufs" -o "$work/guest.img"
+else
 (cd "$stage" && makefs -t ffs -B little -s 8g -o version=2,softupdates=1,label=root \
     "$work/root.ufs" "$work/METALOG") > "$work/makefs.log" 2>&1 ||
     { tail -n 20 "$work/makefs.log" >&2; die "makefs failed"; }
 mkimg -s gpt -f raw -b "$stage/boot/pmbr" -p "freebsd-boot:=$stage/boot/gptboot" \
     -p "freebsd-ufs:=$work/root.ufs" -o "$work/guest.img"
+fi
 rm -f "$work/root.ufs"
 truncate -s 512m "$work/results.img"
 echo "image: $work/guest.img"
@@ -567,5 +643,18 @@ echo "qemu_exit=$rc forced=$forced guest_poweroff=$guest_off"
 tr -d '\r' < "$log" | grep -aE '^(PLANEON_GATE|PLANEOFF|KYUA_SUMMARY|PLANEON_PID1|PLANEON_ISOLATION|BSDTIME)' || true
 nskip=$(tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c ' -> ' || true)
 echo "skipped=$nskip (a skip in a plane-on suite is not a pass; see KYUA_SKIPPED_LIST in $log)"
+# Cases that named the tier they belong to: the run is not complete without
+# a run of the same stage and suites in that tier.
+for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER; do
+	ndefer=$(tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c "$token" || true)
+	[ "$ndefer" -eq 0 ] || case $token in
+	DEFERRED_ENFORCED_TIER)
+		echo "DEFERRED_TO_ENFORCED_TIER=$ndefer (run PLANE_OFF=1 with the same stage and suites; not a pass)";;
+	DEFERRED_PLANEOFF_TIER)
+		echo "DEFERRED_TO_PLANEOFF_TIER=$ndefer (test-local stacks: need PLANE_OFF=1 and a kernel that lets a test-local Capsule issue authority, which the tree does not provide yet; not a pass)";;
+	*)
+		echo "DEFERRED_TO_DEVICE_TIER=$ndefer (run without ISOLATION_ENFORCE=1 with the same stage and suites; not a pass)";;
+	esac
+done
 echo "$verdict"
 [ "$verdict" = VM_CLEAN ]

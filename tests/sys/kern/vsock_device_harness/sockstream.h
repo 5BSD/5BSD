@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* Mock of bhyve sockstream.h for the vsock device harness (unused by the DUT). */
 #ifndef MOCK_SOCKSTREAM_H
 #define MOCK_SOCKSTREAM_H

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Passphrase input and echo restoration using pipes and disposable PTYs."""
 import argparse
 import hashlib

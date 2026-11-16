@@ -192,4 +192,7 @@ CFLAGS.persistent_retention_test+= -I${SRCTOP}/tests/sys/zfshandle
 LIBADD.persistent_retention_test= ${BSDFILESYSTEM_LIBADD}
 NO_SHARED.persistent_retention_test= yes
 
+# freebsd_test_suite/capability_tier.h: skips that name their VM tier.
+CFLAGS+=	-I${SRCTOP}/tests
+
 .include <bsd.test.mk>

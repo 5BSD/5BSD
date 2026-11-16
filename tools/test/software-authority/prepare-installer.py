@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Create disposable automated qualification media from the fresh release tree.
 
 This copies release staging and adds only installer automation. Public media

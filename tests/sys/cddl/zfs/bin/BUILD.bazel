@@ -1,0 +1,107 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/cddl/zfs:suite.bzl", "zfs_test_suite")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+cc_library(name = "file_test_headers", hdrs = ["file_common.h"])
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+cc_binary(name = 'chg_usr_exec', srcs = ['chg_usr_exec.c'],
+    deps = [], dynamic_deps = [],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'chg_usr_exec_install', program = 'chg_usr_exec', manual = None,
+    package = "tests", bindir = '/usr/tests/sys/cddl/zfs/bin')
+cc_binary(name = 'dir_rd_update', srcs = ['dir_rd_update.c'],
+    deps = [], dynamic_deps = [],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'dir_rd_update_install', program = 'dir_rd_update', manual = None,
+    package = "tests", bindir = '/usr/tests/sys/cddl/zfs/bin')
+cc_binary(name = 'file_check', srcs = ['file_check.c'],
+    deps = [":file_test_headers"], dynamic_deps = [],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'file_check_install', program = 'file_check', manual = None,
+    package = "tests", bindir = '/usr/tests/sys/cddl/zfs/bin')
+cc_binary(name = 'file_trunc', srcs = ['file_trunc.c'],
+    deps = [], dynamic_deps = [],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'file_trunc_install', program = 'file_trunc', manual = None,
+    package = "tests", bindir = '/usr/tests/sys/cddl/zfs/bin')
+cc_binary(name = 'file_write', srcs = ['file_write.c'],
+    deps = [":file_test_headers"], dynamic_deps = [],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'file_write_install', program = 'file_write', manual = None,
+    package = "tests", bindir = '/usr/tests/sys/cddl/zfs/bin')
+cc_binary(name = 'largest_file', srcs = ['largest_file.c'],
+    deps = [":file_test_headers"], dynamic_deps = [],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'largest_file_install', program = 'largest_file', manual = None,
+    package = "tests", bindir = '/usr/tests/sys/cddl/zfs/bin')
+cc_binary(name = 'mkfile', srcs = ['mkfile.c'],
+    deps = [], dynamic_deps = [],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'mkfile_install', program = 'mkfile', manual = None,
+    package = "tests", bindir = '/usr/tests/sys/cddl/zfs/bin')
+cc_binary(name = 'mktree', srcs = ['mktree.c'],
+    deps = [], dynamic_deps = [],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'mktree_install', program = 'mktree', manual = None,
+    package = "tests", bindir = '/usr/tests/sys/cddl/zfs/bin')
+cc_binary(name = 'mmapwrite', srcs = ['mmapwrite.c'],
+    deps = ['//lib/libthr:thr'], dynamic_deps = ['//lib/libthr:thr_shared'],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'mmapwrite_install', program = 'mmapwrite', manual = None,
+    package = "tests", bindir = '/usr/tests/sys/cddl/zfs/bin')
+cc_binary(name = 'randfree_file', srcs = ['randfree_file.c'],
+    deps = [":file_test_headers"], dynamic_deps = [],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'randfree_file_install', program = 'randfree_file', manual = None,
+    package = "tests", bindir = '/usr/tests/sys/cddl/zfs/bin')
+cc_binary(name = 'readmmap', srcs = ['readmmap.c'],
+    deps = [], dynamic_deps = [],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'readmmap_install', program = 'readmmap', manual = None,
+    package = "tests", bindir = '/usr/tests/sys/cddl/zfs/bin')
+cc_binary(name = 'rename_dir', srcs = ['rename_dir.c'],
+    deps = [], dynamic_deps = [],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'rename_dir_install', program = 'rename_dir', manual = None,
+    package = "tests", bindir = '/usr/tests/sys/cddl/zfs/bin')
+cc_binary(name = 'rm_lnkcnt_zero_file', srcs = ['rm_lnkcnt_zero_file.c'],
+    deps = ['//lib/libthr:thr'], dynamic_deps = ['//lib/libthr:thr_shared'],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'rm_lnkcnt_zero_file_install', program = 'rm_lnkcnt_zero_file', manual = None,
+    package = "tests", bindir = '/usr/tests/sys/cddl/zfs/bin')
+cc_binary(name = 'zfs_destroy_snaps', srcs = ['zfs_destroy_snaps.c'],
+    deps = ['//cddl/lib/libzfs_core:zfs_core', '//cddl/lib/libnvpair:nvpair', '//sys/contrib/openzfs:userland_test_headers', '//cddl/compat/opensolaris/include:headers'], dynamic_deps = ['//cddl/lib/libzfs_core:zfs_core_shared', '//cddl/lib/libnvpair:nvpair_shared'],
+    copts = ["-fPIE"] + ["-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h"],
+    local_defines = ["IN_BASE", "HAVE_ISSETUGID"],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'zfs_destroy_snaps_install', program = 'zfs_destroy_snaps', manual = None,
+    package = "tests", bindir = '/usr/tests/sys/cddl/zfs/bin')
+cc_binary(name = 'zfs_send_capsicum', srcs = ['zfs_send_capsicum.c'],
+    deps = ['//cddl/lib/libzfs_core:zfs_core', '//sys/contrib/openzfs:userland_test_headers', '//cddl/compat/opensolaris/include:headers'], dynamic_deps = ['//cddl/lib/libzfs_core:zfs_core_shared'],
+    copts = ["-fPIE"] + ["-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h"],
+    local_defines = ["IN_BASE", "HAVE_ISSETUGID"],
+    linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+utility_installation(name = 'zfs_send_capsicum_install', program = 'zfs_send_capsicum', manual = None,
+    package = "tests", bindir = '/usr/tests/sys/cddl/zfs/bin')
+
+zfs_test_suite(
+    raw_scripts = {'bsddisks': 'bsddisks.ksh', 'dircmp': 'dircmp.ksh', 'dumpadm': 'dumpadm.ksh', 'ff': 'ff.ksh', 'fmadm': 'fmadm.ksh', 'fmdump': 'fmdump.ksh', 'format': 'format.ksh', 'groupadd': 'groupadd.ksh', 'groupdel': 'groupdel.ksh', 'groupmod': 'groupmod.ksh', 'groupshow': 'groupshow.ksh', 'svcs': 'svcs.ksh', 'swap': 'swap.ksh', 'testenv': 'testenv.ksh', 'useradd': 'useradd.ksh', 'userdel': 'userdel.ksh', 'usermod': 'usermod.ksh', 'zfs': 'zfs.ksh', 'zfs_crypto': 'zfs_crypto.ksh', 'zfs_version': 'zfs_version.ksh', 'zlogin': 'zlogin.ksh', 'zoneadm': 'zoneadm.ksh', 'zonecfg': 'zonecfg.ksh', 'zpool': 'zpool.ksh', 'zpool_bsd': 'zpool_bsd.ksh', 'zpool_smi': 'zpool_smi.ksh', 'zpool_version': 'zpool_version.ksh'},
+    extra_manifests = [':chg_usr_exec_install', ':dir_rd_update_install', ':file_check_install', ':file_trunc_install', ':file_write_install', ':largest_file_install', ':mkfile_install', ':mktree_install', ':mmapwrite_install', ':randfree_file_install', ':readmmap_install', ':rename_dir_install', ':rm_lnkcnt_zero_file_install', ':zfs_destroy_snaps_install', ':zfs_send_capsicum_install'], debug = True,
+    kyuafile = False,
+)

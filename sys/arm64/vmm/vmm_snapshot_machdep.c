@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The 5BSD Project
+ * Copyright (c) 2026 Kory Heard
  */
 
 /*
@@ -461,7 +461,7 @@ arm64_snapshot_vgic(struct vm *vm, struct vm_snapshot_meta *meta)
 int
 vm_snapshot_req(struct vm *vm, struct vm_snapshot_meta *meta)
 {
-	int error;
+	int error __diagused;
 
 	if (vm == NULL || meta == NULL || !vm_snapshot_op_is_kernel(meta->op))
 		return (EINVAL);

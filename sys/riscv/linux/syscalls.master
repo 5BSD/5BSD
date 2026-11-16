@@ -2046,6 +2046,7 @@
 	}
 
 ; Linux 6.7:
+453	AUE_NULL		UNIMPL	map_shadow_stack
 454	AUE_NULL		STD {
 		int linux_futex_wake(
 		    void *uaddr,

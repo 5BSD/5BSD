@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * The system-call return path for the syscalls stage 1c touched, for an
  * unattached process.
  *

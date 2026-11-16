@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Test-only Mesh Time, Scene, and Scheduler oracles.  Values are transcribed
  * from Mesh Model 1.1.1 Sections 5.1-5.4, Tables 5.1-5.44 and Bluetooth
  * Assigned Numbers.  This header deliberately has no production includes.

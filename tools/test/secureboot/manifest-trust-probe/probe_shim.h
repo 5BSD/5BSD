@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef MANIFEST_TRUST_PROBE_SHIM_H
 #define MANIFEST_TRUST_PROBE_SHIM_H
 #include <sys/cdefs.h>

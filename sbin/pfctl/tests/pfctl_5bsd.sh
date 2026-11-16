@@ -1,6 +1,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Parser round trips for the 5BSD extensions to OpenBSD pfctl: the jail
 # rule option, ether rules, dnpipe/dnqueue, the sctp.* timeouts and
 # allow-related (pf.conf(5), "5BSD:" sections).  Same recipes as the

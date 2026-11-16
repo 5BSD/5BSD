@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise complete ownership boundaries, not just successful partition output."""
 import unittest
 from world_package_inventory import inventory

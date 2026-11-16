@@ -1,5 +1,8 @@
 #!/usr/sbin/dtrace -s
 /* SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Dummynet queue/scheduler summary, all VNETs. Ctrl-C prints results.
  * Usage: dtrace -s /usr/share/dtrace/dn-observe -c 'sleep 30'
  * Residence and lateness use Dummynet ticks. Release is not delivery.

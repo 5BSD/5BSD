@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * EXTERNAL REFERENCE ORACLE: Bluetooth Mesh foundation-model status codes --
  * the complete Table 4.308 "Summary of status codes", plus the corresponding
  * enumerations in two independent reference implementations.

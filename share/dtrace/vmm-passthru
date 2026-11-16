@@ -2,6 +2,8 @@
 /*
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * vmm-passthru -- bhyve/vmm control-plane and PCI passthrough observability on
  *		   this 5BSD fork.  Traces guest create/destroy and, most
  *		   importantly, PCI passthrough assign/unassign -- handing a

@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Authenticated VM script, executed by staged /bin/sh as UID 65534.
 # A marker follows a checked operation, never just an executable's presence.
 work=$(/usr/bin/mktemp -d /tmp/programs.XXXXXXXX)

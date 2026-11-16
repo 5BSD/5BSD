@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Count actual verifier callback traffic; not disk IOPS or a throughput benchmark."""
 import argparse
 import ctypes as C

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Compare no-hooks .text against saved originals with file/line diagnostics normalized.
 This is a code-generation check, not a runtime behavior or relocation-equivalence test.
 """

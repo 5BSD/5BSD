@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Independent binary CTF fixtures: renumbering, cycles and negative ABI changes."""
 import struct
 import tempfile

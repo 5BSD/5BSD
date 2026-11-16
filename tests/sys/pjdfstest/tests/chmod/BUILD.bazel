@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/fs:suite.bzl", "filesystem_test_suite")
+load("//tools/build/bazel:bsd_sed_output.bzl", "bsd_sed_output")
+
+filesystem_test_suite(directory = '/usr/tests/sys/pjdfstest/chmod',
+    scripts = {'00': '//contrib/pjdfstest:tests/chmod/00.t', '01': '//contrib/pjdfstest:tests/chmod/01.t', '02': '//contrib/pjdfstest:tests/chmod/02.t', '03': '//contrib/pjdfstest:tests/chmod/03.t', '04': '//contrib/pjdfstest:tests/chmod/04.t', '05': '//contrib/pjdfstest:tests/chmod/05.t', '06': '//contrib/pjdfstest:tests/chmod/06.t', '07': '//contrib/pjdfstest:tests/chmod/07.t', '08': '//contrib/pjdfstest:tests/chmod/08.t', '09': '//contrib/pjdfstest:tests/chmod/09.t', '10': '//contrib/pjdfstest:tests/chmod/10.t', '11': '//contrib/pjdfstest:tests/chmod/11.t', '12': '//contrib/pjdfstest:tests/chmod/12.t'}, atf_shell = {},
+    interfaces = {'00': 'tap', '01': 'tap', '02': 'tap', '03': 'tap', '04': 'tap', '05': 'tap', '06': 'tap', '07': 'tap', '08': 'tap', '09': 'tap', '10': 'tap', '11': 'tap', '12': 'tap'}, metadata = {'00': {'required_user': 'root'}, '01': {'required_user': 'root'}, '02': {'required_user': 'root'}, '03': {'required_user': 'root'}, '04': {'required_user': 'root'}, '05': {'required_user': 'root'}, '06': {'required_user': 'root'}, '07': {'required_user': 'root'}, '08': {'required_user': 'root'}, '09': {'required_user': 'root'}, '10': {'required_user': 'root'}, '11': {'required_user': 'root'}, '12': {'required_user': 'root'}},
+)

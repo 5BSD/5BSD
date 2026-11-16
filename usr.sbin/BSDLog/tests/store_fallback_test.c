@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #include <atf-c.h>
 #define service_storage_open mock_storage_open
 #define service_capability_open mock_capability_open

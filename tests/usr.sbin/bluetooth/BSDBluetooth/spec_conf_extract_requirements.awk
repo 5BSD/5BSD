@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Extract normative requirements from the Bluetooth Core Specification text.
 #
 # Input:  Core_Specification_6_3.txt (the machine-readable render of the PDF).

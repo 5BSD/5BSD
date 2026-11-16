@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * flock(2) and the fcntl(2) record locks are answered by the descriptor's
  * fileops (fo_advlock).  Vnode files take both; a FIFO takes flock(2) only;
  * descriptors whose table takes no locks (pipes, sockets, kqueues, shm,

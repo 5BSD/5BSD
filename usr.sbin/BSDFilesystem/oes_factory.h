@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef _BSDFS_OES_FACTORY_H_
 #define _BSDFS_OES_FACTORY_H_
 /* Privileged factory primitive; caller must enforce system.oes admission.
