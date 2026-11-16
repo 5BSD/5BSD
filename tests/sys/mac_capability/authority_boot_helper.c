@@ -2136,7 +2136,8 @@ credential_lifetime_test(int issuer, bool clear)
 		if (clear) {
 			CHECK(op(CAP_AUTH_CLEAR, -1, NULL) == 0);
 			CHECK(write(sp[1], "c", 1) == 1);
-			CHECK(read(gate[0], &byte, 1) == 1);
+			/* Stay alive until PID 1 has checked, then see EOF. */
+			CHECK(read(gate[0], &byte, 1) == 0);
 		}
 		_exit(0);
 	}
