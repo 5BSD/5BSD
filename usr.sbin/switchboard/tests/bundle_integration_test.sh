@@ -275,14 +275,24 @@ missing_system_bundle_optional_head() {
 	require_capsule_stack_kmods
 }
 missing_system_bundle_optional_body() {
-	use_private_control
+	local missing
+
 	prepare_paths
-	# Remove the system dir
-	rmdir "${APPS_DIR}" 2>/dev/null || true
+	write_config
+	# Point the system bundle root at a directory that does not exist.
+	# start_stack keeps this configuration (the config file is already
+	# written) but recreates APPS_DIR, so APPS_DIR itself cannot be the
+	# missing directory.
+	missing="${WORK}/NoSystemBundles"
+	[ ! -e "$missing" ] || atf_fail "$missing unexpectedly exists"
+	export SWITCHBOARD_BUNDLE_DIR_SYSTEM="$missing"
 
 	start_stack
-	atf_check -s exit:0 -o match:"switchboard: running" \
-	    "$SWITCHBOARDCTL" status
+	[ ! -e "$missing" ] || atf_fail "the stack created $missing"
+	atf_check -s exit:0 -o ignore grep "switchboard ready" "$logfile"
+	capd_guardian_is_running || atf_fail "Capsule exited"
+	capd_capsule_ctl "$sockpath" status | grep -q running ||
+	    atf_fail "Capsule status request failed"
 }
 missing_system_bundle_optional_cleanup() {
 	cleanup_common

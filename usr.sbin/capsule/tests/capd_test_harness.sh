@@ -211,6 +211,7 @@ capd_stack_prepare()
 pidfile = "$CAPD_PIDFILE";
 control_socket = "$CAPD_CAPSULE_SOCKET";
 control_socket_mode = "0700";
+lookup_route_export = true;
 service_manager = "$capd_switchboard_bin";
 EOF
 	export SWITCHBOARD_BUNDLE_DIR_SYSTEM="$CAPD_APPS_SYSTEM"

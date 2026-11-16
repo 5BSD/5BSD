@@ -107,6 +107,7 @@ cc_binary(name = "capd_test_guardian_dynamic", srcs = ["capd_test_guardian.c"],
     copts = ["-fPIE"], linkopts = ["-pie"], visibility = ["//visibility:public"])
 cc_binary(name = "capd_lookup_exec", srcs = ["capd_lookup_exec.c"],
     deps = ["//lib/libservice:service", "//lib/libcapsulert:headers"],
+    dynamic_deps = ["//lib/libservice:service_shared"],
     copts = ["-fPIE"], linkopts = ["-pie"], visibility = ["//visibility:public"])
 cc_binary(name = "capd_bootstrap_fixture", srcs = ["capd_bootstrap_fixture.c"],
     deps = ["//lib/libcapsulert:headers", "//sys/dev/mac_capability:ioctl_headers"],
@@ -197,12 +198,12 @@ test_suite(name = "daemon_shell_tests", tests = [":capsule_daemon_test_" + case 
 # Bootstrap protocol uses the maintained mock service manager, not an installed
 # Switchboard. Requires a matching, plane-off test kernel with the declared MAC
 # modules; building these targets does not establish those prerequisites.
-_BOOTSTRAP_CASES = ["bootstrap_starts_switchboard", "bootstrap_channel_ping", "control_reload_reaches_switchboard", "bootstrap_channel_loss_kills_switchboard", "bootstrap_ready_logged", "bootstrap_restart_on_crash", "bootstrap_clean_shutdown", "ambient_signals_denied_control_shutdown_allowed", "bootstrap_no_service_manager"]
+_BOOTSTRAP_CASES = ["bootstrap_starts_switchboard", "bootstrap_channel_ping", "control_reload_reaches_switchboard", "bootstrap_channel_loss_kills_switchboard", "bootstrap_ready_logged", "bootstrap_restart_on_crash", "bootstrap_clean_shutdown", "ambient_signals_denied_control_shutdown_allowed", "bootstrap_no_service_manager", "lookup_without_route"]
 [bsd_atf_test(name = "capsule_bootstrap_test_" + case, case_name = case,
     body = "capsule_bootstrap_test.sh", cleanup = True,
     subr = "//libexec/atf/atf-sh:shell_library",
     data = ["capd_test_harness.sh"],
-    data_paths = {":capd_bootstrap_fixture": "capd_bootstrap_fixture", "//tests/sys/mac_capability:mac_capability_shield_helper": "mac_capability_shield_helper"},
+    data_paths = {":capd_bootstrap_fixture": "capd_bootstrap_fixture", ":capd_lookup_exec": "capd_lookup_exec", "//tests/sys/mac_capability:mac_capability_shield_helper": "mac_capability_shield_helper"},
     config_files = {"//usr.sbin/capsule:capsule": "capd_capsule", ":capd_test_guardian_dynamic": "capd_guardian", "//tests/sys/mac_capability:mac_capability_shield_helper": "capd_shield_helper"},
     runtime_bin = _SHELL_TOOLS + ["//bin/sleep:sleep", "//bin/test:test", "//bin/ps:ps", "//bin/dd:dd", "//usr.bin/mkfifo:mkfifo", "//usr.bin/nc:nc", "//usr.bin/hexdump:od", "//usr.bin/awk:awk", "//usr.bin/tail:tail", "//usr.bin/mktemp:mktemp"],
     runtime_lib = _SHELL_RUNTIME + _CAPSULE_RUNTIME + ["//lib/libkvm:kvm_shared", "//lib/libjail:jail_shared", "//lib/libxo/libxo:xo_shared", "//lib/libelf:elf_shared", "//lib/libipsec:ipsec_shared", "//lib/libstats:stats_shared", "//lib/libcasper/libcasper:casper_shared", "//lib/libcasper/services/cap_fileargs:cap_fileargs_shared", "//lib/libnv:nv_shared"],

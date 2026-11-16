@@ -173,21 +173,32 @@ cmd_lifecycle(uid_t euid, uint32_t op, struct ctl_reply *reply)
 }
 
 /*
- * CTL_OP_LOOKUP: give a root client the discovery route this instance holds,
- * the lookup channel its SwitchBoard supplied.  PID 1 carries the same route
- * into logins; a daemon instance has no logins, so its root control client
- * asks for it here (the test harness uses it to drive a private stack).  The
- * route carries no authority: SwitchBoard admits each request by the
- * sender's kernel-stamped software authority, never by UID.
+ * CTL_OP_LOOKUP: give a root client the discovery route this daemon holds,
+ * the lookup channel its own SwitchBoard minted.  A daemon instance has no
+ * logins to carry the route into, so its root control client asks for it here
+ * (the test harness uses it to drive a private stack).  The route carries no
+ * authority: SwitchBoard admits each request by the sender's kernel-stamped
+ * software authority, never by UID.
+ *
+ * The caller has already checked that lookup_route_export is set.  As PID 1
+ * the system route must never leave through a socket, whatever opens one in
+ * the future, so PID 1 refuses like cmd_shutdown().
  *
  * Returns the borrowed descriptor to attach to the reply, or -1 with
- * reply->status set.
+ * reply->status set.  The caller logs the grant once the reply holds its own
+ * reference.
  */
 int
 cmd_lookup(uid_t euid, struct ctl_reply *reply)
 {
 	int fd;
 
+	if (getpid() == 1) {
+		reply->status = EPERM;
+		syslog(LOG_WARNING, "control: lookup rejected: capsule is PID 1");
+		CAPSULE_PROBE_CTL_DENY(CTL_OP_LOOKUP, euid);
+		return (-1);
+	}
 	if (euid != 0) {
 		reply->status = EPERM;
 		syslog(LOG_WARNING, "control: lookup denied uid %u", euid);
@@ -197,10 +208,10 @@ cmd_lookup(uid_t euid, struct ctl_reply *reply)
 	fd = capsule_ambient_lookup();
 	if (fd < 0) {
 		reply->status = ENOENT;
+		syslog(LOG_INFO, "control: lookup: no route held yet");
 		return (-1);
 	}
 	reply->status = CTL_STATUS_OK;
-	syslog(LOG_INFO, "control: lookup route uid %u", euid);
 	return (fd);
 }
 

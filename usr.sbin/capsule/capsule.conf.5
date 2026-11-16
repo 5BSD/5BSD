@@ -49,6 +49,18 @@ Default:
 Quoted octal file mode for the control socket.
 Default:
 .Dq 0700 .
+.It Va lookup_route_export
+Boolean.
+When true, a daemon instance answers the root-only
+.Dv CTL_OP_LOOKUP
+control operation with the discovery route its
+.Xr switchboard 8
+minted (see
+.Xr capsule 8 ) .
+The route grants no authority.
+The test harness sets it to drive a private stack.
+Read at startup.
+Default: false.
 .It Va service_manager
 Path to the first managed process started by
 .Xr capsule 8 .

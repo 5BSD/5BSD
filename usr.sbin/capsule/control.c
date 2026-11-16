@@ -196,20 +196,29 @@ conn_dispatch(struct ctl_conn *c)
 		    c->summary, sizeof(c->summary));
 		break;
 	case CTL_OP_LOOKUP:
+		/* Off unless configured: answer as for an unknown op. */
+		if (!od.cfg.lookup_route_export) {
+			reply->status = ENOTSUP;
+			break;
+		}
 		if (req->datalen != 0) {
 			reply->status = EINVAL;
 			break;
 		}
 		fd = cmd_lookup(c->euid, reply);
+		if (fd < 0)
+			break;
 		/*
 		 * Hold a duplicate: the route may be replaced (and its
 		 * descriptor closed) before the reply is written.
 		 */
-		if (fd >= 0 &&
-		    (c->pass_fd = fcntl(fd, F_DUPFD_CLOEXEC, 0)) == -1) {
+		c->pass_fd = fcntl(fd, F_DUPFD_CLOEXEC, 0);
+		if (c->pass_fd == -1) {
 			reply->status = errno;
 			syslog(LOG_WARNING, "control: lookup dup: %m");
+			break;
 		}
+		syslog(LOG_INFO, "control: lookup route uid %u", c->euid);
 		break;
 	case CTL_OP_REBOOT:
 	case CTL_OP_HALT:

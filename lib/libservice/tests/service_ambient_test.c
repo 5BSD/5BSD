@@ -175,13 +175,18 @@ ATF_TC_BODY(descriptor_cannot_grant_discovery, tc)
 	(void)tc;
 	isolate_ambient_lookup();
 	ATF_REQUIRE_EQ(0, mac_capability_channel_create(pair));
-	/* Hold a live channel at descriptor 3, the retired fixed route. */
+	/*
+	 * Recreate the retired route exactly: a live channel at descriptor 3 and
+	 * the variable that named it.  Neither half may grant discovery.
+	 */
 	saved = fcntl(3, F_DUPFD_CLOEXEC, 10);
 	ATF_REQUIRE(saved >= 0 || errno == EBADF);
 	ATF_REQUIRE_EQ(3, dup2(pair[0], 3));
+	ATF_REQUIRE_EQ(0, setenv("SERVICE_LOOKUP_FD", "3", 1));
 	errno = 0;
 	ATF_CHECK_EQ(-1, service_ambient_lookup_fd());
 	ATF_CHECK_EQ(ENOENT, errno);
+	ATF_REQUIRE_EQ(0, unsetenv("SERVICE_LOOKUP_FD"));
 	ATF_REQUIRE_EQ(0, close(3));
 	if (saved >= 0) {
 		ATF_REQUIRE_EQ(3, dup2(saved, 3));

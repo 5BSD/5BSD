@@ -215,7 +215,10 @@ The separate daemon personality (`/usr/sbin/capsule` not running as PID 1)
 still opens the root-only control socket named in `capsule.conf`
 (`usr.sbin/capsule/main.c`, `control.c`), which is what the test harness
 drives. PID 1 never opens it: `capsule_engine_start()` does not call
-`ctl_setup()`.
+`ctl_setup()`. With `lookup_route_export = true;` in its configuration, a
+daemon also answers `CTL_OP_LOOKUP`: it hands a root client the discovery
+route its own SwitchBoard minted, which is how the switchboard tests drive a
+private stack with `switchboardctl`. The route carries no authority.
 
 ## Signals Capsule ignores
 

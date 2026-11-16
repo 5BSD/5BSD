@@ -517,11 +517,20 @@ to
 .Xr switchboard 8 .
 Root only.
 .It Dv CTL_OP_LOOKUP (15)
-Return the discovery route this daemon holds: the lookup channel its
+Return the discovery route this daemon holds: the lookup channel its own
 .Xr switchboard 8
-supplied, which
+minted.
+Answered only when
+.Va lookup_route_export
+is set in
+.Xr capsule.conf 5 ;
+otherwise the reply is
+.Er ENOTSUP ,
+as for an unknown operation.
+Daemon personality only: as PID 1,
 .Nm
-as PID 1 carries into logins.
+opens no control socket, and the operation would be refused with
+.Er EPERM .
 The channel is attached to the reply header as
 .Dv SCM_RIGHTS .
 The route grants no authority;

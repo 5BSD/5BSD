@@ -1367,6 +1367,66 @@ control_socket_lookup_root_only_cleanup()
 	[ -z "$sock" ] || rm -f "$sock"
 }
 
+# First reply word (status) of op 15 sent with a 4-byte payload, in decimal.
+lookup_status_with_payload()
+{
+	{
+		printf '\017\000\000\000'
+		printf '\000\000\000\000'
+		printf '\004\000\000\000'
+		printf 'JUNK'
+	} | nc -U "$1" | od -A n -t u4 -N 4 | awk '{ print $1 }'
+}
+
+atf_test_case control_socket_lookup_disabled cleanup
+control_socket_lookup_disabled_head()
+{
+	atf_set "descr" "without lookup_route_export, CTL_OP_LOOKUP answers ENOTSUP like an unknown op"
+	atf_set "require.user" "root"
+	capd_require_stack_kmods
+}
+control_socket_lookup_disabled_body()
+{
+	capd_stack_prepare
+	capd_find_lookup_exec
+	sed -i '' -e '/^lookup_route_export = /d' "$CAPD_CONFIG"
+	atf_check -s exit:1 grep lookup_route_export "$CAPD_CONFIG"
+	capd_start_stack
+	capsule_sock=$CAPD_CAPSULE_SOCKET
+	atf_check -s exit:0 -o ignore \
+	    grep "config: lookup_route_export=false" "$CAPD_LOG"
+	# Root, with a route held: still refused, and no descriptor attached
+	# (a refusal carrying one would exit 76).
+	atf_check -s exit:69 -e match:"Operation not supported" \
+	    "$capd_lookup_exec_bin" -s "$capsule_sock" /usr/bin/true
+	# Same answer as an unknown operation, payload or not (ENOTSUP = 45).
+	[ "$(lookup_status_with_payload "$capsule_sock")" = 45 ] ||
+	    atf_fail "a disabled lookup with a payload did not answer ENOTSUP"
+}
+control_socket_lookup_disabled_cleanup()
+{
+	capd_cleanup_stack
+}
+
+atf_test_case control_socket_lookup_payload_rejected cleanup
+control_socket_lookup_payload_rejected_head()
+{
+	atf_set "descr" "an enabled CTL_OP_LOOKUP with a payload answers EINVAL"
+	atf_set "require.user" "root"
+	capd_require_stack_kmods
+}
+control_socket_lookup_payload_rejected_body()
+{
+	require_pidfile
+	[ "$(lookup_status_with_payload "$capsule_sock")" = 22 ] ||
+	    atf_fail "a lookup with a payload was not refused with EINVAL"
+	capsule_ctl_expect status "running"
+}
+control_socket_lookup_payload_rejected_cleanup()
+{
+	capd_cleanup_stack
+}
+
 atf_test_case config_claims_files_alias cleanup
 config_claims_files_alias_head()
 {
@@ -1462,6 +1522,8 @@ atf_init_test_cases()
 	atf_add_test_case control_socket_services_any_user
 	atf_add_test_case control_socket_lookup_route
 	atf_add_test_case control_socket_lookup_root_only
+	atf_add_test_case control_socket_lookup_disabled
+	atf_add_test_case control_socket_lookup_payload_rejected
 
 	# Configuration
 	atf_add_test_case config_explicit_missing_rejected

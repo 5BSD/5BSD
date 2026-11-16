@@ -53,11 +53,10 @@ log_loaded_manifest(const struct svc_manifest *m)
 }
 
 /*
- * Mint the SYSTEM ambient lookup route and hand it to Capsule.  This runs at
- * every startup, including a test fixture that skips /etc/rc: the route is
- * how boot descendants and Capsule's clients reach this SwitchBoard, and a
- * fixture's private Capsule hands it to its root control client
- * (CTL_OP_LOOKUP) just as PID 1 carries it into logins.
+ * Mint the SYSTEM ambient lookup route and hand it to Capsule.  It is how boot
+ * descendants and Capsule's clients reach this SwitchBoard: PID 1 carries it
+ * into logins, and a daemon-personality Capsule hands it to its root control
+ * client (CTL_OP_LOOKUP).  See startup_launch_system() for when it runs.
  */
 static void
 startup_ambient_lookup(void)
@@ -400,8 +399,15 @@ startup_launch_system(int kq)
 	SWITCHBOARD_PROBE_STARTUP_BEGIN(sd.nservices, 1);
 	launched = 0;
 
-	/* The boot discovery route exists whether or not /etc/rc runs. */
-	startup_ambient_lookup();
+	/*
+	 * The boot discovery route exists whenever /etc/rc runs.  A fixture
+	 * that skips rc gets one only under a daemon-personality Capsule, whose
+	 * root client (the test harness) fetches it with CTL_OP_LOOKUP.  A
+	 * fixture that skips rc under Capsule as PID 1 (the daemon-runtime
+	 * OES-admission image) keeps the route-less boot it was written for.
+	 */
+	if (!skip_rc || getppid() != 1)
+		startup_ambient_lookup();
 
 	/*
 	 * Transitional rc world: run /etc/rc once (a oneshot) and block until it

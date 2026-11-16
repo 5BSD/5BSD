@@ -42,6 +42,7 @@ write_config()
 pidfile = "$pidfile";
 control_socket = "$sockpath";
 control_socket_mode = "0700";
+lookup_route_export = true;
 service_manager = "$switchboard_bin";
 EOF
 	# Export bundle directory overrides so switchboard scans test-local paths.
@@ -219,6 +220,12 @@ use_private_control()
 	capd_require_unit_issuer
 	prepare_paths
 	capd_find_lookup_exec
+	# A build-tree run that selects its own switchboardctl must also select a
+	# bundle wrapping it; never fall back to the installed one silently.
+	if atf_config_has switchboardctl &&
+	    ! atf_config_has switchboardctl_bundle; then
+		atf_fail "switchboardctl is selected; select switchboardctl_bundle too"
+	fi
 	source=$(atf_config_get switchboardctl_bundle \
 	    /Capabilities/System/SwitchBoardControl.cap)
 	[ -d "$source" ] || atf_fail "control bundle is missing: $source"

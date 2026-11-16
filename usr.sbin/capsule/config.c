@@ -278,6 +278,25 @@ config_copy(struct capsule_config *dst, const struct capsule_config *src)
 	return (0);
 }
 
+/*
+ * An optional boolean; absent means false.
+ */
+static int
+cfg_bool(const ucl_object_t *obj, const char *key, bool *out)
+{
+	const ucl_object_t *o;
+
+	o = ucl_object_lookup(obj, key);
+	if (o == NULL) {
+		*out = false;
+		return (0);
+	}
+	if (o->next != NULL || ucl_object_type(o) != UCL_BOOLEAN)
+		return (-1);
+	*out = ucl_object_toboolean(o);
+	return (0);
+}
+
 static int
 cfg_string(const ucl_object_t *obj, const char *key,
     char *buf, size_t bufsz)
@@ -677,7 +696,8 @@ int
 config_load_fd(struct capsule_config *cfg, int fd)
 {
 	static const char *const keys[] = {
-	    "pidfile", "control_socket", "control_socket_mode", "service_manager",
+	    "pidfile", "control_socket", "control_socket_mode", "lookup_route_export",
+	    "service_manager",
 	    "integrity", "claims", "storage", "hostuuid", "crypto_recipient"
 	};
 	struct capsule_config candidate = {0};
@@ -738,6 +758,8 @@ config_load_fd(struct capsule_config *cfg, int fd)
 		error = errno;
 		goto out;
 	}
+	/* Opt-in only: a file without the key, or an empty one, leaves it off. */
+	candidate.lookup_route_export = false;
 	if (root != NULL &&
 	    (!cfg_keys(root, keys, nitems(keys)) ||
 	    cfg_string(root, "pidfile", candidate.pidfile, sizeof(candidate.pidfile)) ||
@@ -745,6 +767,8 @@ config_load_fd(struct capsule_config *cfg, int fd)
 	    sizeof(candidate.control_socket)) ||
 	    cfg_string(root, "service_manager", candidate.service_manager,
 	    sizeof(candidate.service_manager)) ||
+	    cfg_bool(root, "lookup_route_export",
+	    &candidate.lookup_route_export) ||
 	    cfg_mode(root, &candidate) || cfg_integrity(root, &candidate) ||
 	    cfg_claims(root, &candidate) || cfg_storage(root, &candidate) ||
 	    cfg_crypto(root, &candidate) ||
@@ -807,6 +831,8 @@ config_log(const struct capsule_config *cfg)
 	syslog(LOG_INFO, "config: pidfile=%s", cfg->pidfile);
 	syslog(LOG_INFO, "config: control_socket=%s mode=%04o",
 	    cfg->control_socket, cfg->control_socket_mode);
+	syslog(LOG_INFO, "config: lookup_route_export=%s",
+	    cfg->lookup_route_export ? "true" : "false");
 	syslog(LOG_INFO, "config: integrity_flags=0x%x", cfg->integrity_flags);
 	syslog(LOG_INFO, "config: claims network=%d system=0x%x",
 	    cfg->nclaim_net, cfg->claim_system);
