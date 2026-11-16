@@ -128,8 +128,9 @@ TEST_METADATA.dq_getcwd_test+=	is_exclusive="true"
 TEST_METADATA.dq_kclass_test+=	is_exclusive="true"
 # Runs whole suites in a served root and in chroot(8): alone, with time.
 TEST_METADATA.dq_tree_suites_test+=	is_exclusive="true" timeout="7200"
-# Runs whole suites twice under kyua: alone, and with time.
-TEST_METADATA.dq_oracle_test+=	is_exclusive="true" timeout="3600"
+# Runs whole suites twice under kyua: alone, and with time.  670 to 1440 s
+# on an idle host; more than 3600 s on a loaded one (host load 25-40).
+TEST_METADATA.dq_oracle_test+=	is_exclusive="true" timeout="7200"
 
 # dqpass (share/examples/dq): the pass-everything controller the oracle
 # test runs suites under, and the differences it expects (M9).
