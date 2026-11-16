@@ -424,8 +424,10 @@ ctl_start(struct ctl *c, unsigned seed, uint32_t events)
 static void
 ctl_stop(struct ctl *c)
 {
+	int error;
 
-	dqt_server_stop(&c->server);
+	error = dqt_server_stop(&c->server);
+	ATF_CHECK_EQ_MSG(0, error, "controller thread: %s", strerror(error));
 	ATF_CHECK_EQ_MSG(0, c->failures, "dq_serve_file failed %u times",
 	    c->failures);
 	(void)close(c->fd);

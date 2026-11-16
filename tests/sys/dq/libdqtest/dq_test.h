@@ -513,11 +513,13 @@ struct dqt_server {
 	_Atomic(bool)	 stop;
 	bool		 running;
 	int		 wake[2];
+	int		 error;		/* why the thread ended early, or 0 */
 };
 void	dqt_server_start(struct dqt_server *sv, int q, dq_handler_t handler,
 	    void *arg);
 void	dqt_server_stop_async(struct dqt_server *sv);
-void	dqt_server_stop(struct dqt_server *sv);
+/* Joins the thread; returns the errno that ended it early, or 0. */
+int	dqt_server_stop(struct dqt_server *sv);
 
 /*
  * Serve q in the calling thread: hand every record to handle(ev, arg)

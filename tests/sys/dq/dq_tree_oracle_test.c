@@ -294,7 +294,7 @@ ATF_TC_BODY(tree_oracle, tc)
 	struct srv s;
 	struct out *real, *served;
 	char cwd[PATH_MAX], prefix[PATH_MAX], bpath[PATH_MAX];
-	int go[2], back[2], pd, status, ofd, bfd, sroot, ls1, ls2, fd;
+	int go[2], back[2], pd, status, ofd, bfd, sroot, ls1, ls2, fd, error;
 	size_t got;
 	uint64_t rootid;
 	pid_t pid;
@@ -352,7 +352,8 @@ ATF_TC_BODY(tree_oracle, tc)
 		printf("--- real\n%s--- served\n%s", real->buf, served->buf);
 		atf_tc_fail("the served transcript differs from the real one");
 	}
-	dqt_server_stop(&s.server);
+	error = dqt_server_stop(&s.server);
+	ATF_CHECK_EQ_MSG(0, error, "controller thread: %s", strerror(error));
 	close(sroot);
 	dq_tree_destroy(s.tree);
 	close(s.q);

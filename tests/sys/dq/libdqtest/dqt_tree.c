@@ -137,8 +137,10 @@ ts_start(struct ts *s, const char *dir, uint32_t flags)
 void
 ts_stop(struct ts *s)
 {
+	int error;
 
-	dqt_server_stop(&s->server);
+	error = dqt_server_stop(&s->server);
+	ATF_CHECK_EQ_MSG(0, error, "controller thread: %s", strerror(error));
 	if (s->sroot >= 0)
 		close(s->sroot);
 	dq_tree_destroy(s->tree);

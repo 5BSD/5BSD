@@ -38,17 +38,25 @@ dqt_server_main(void *arg)
 		if (poll(pfd, 2, -1) == -1) {
 			if (errno == EINTR)
 				continue;
+			sv->error = errno;
 			break;
 		}
 		if (pfd[1].revents != 0 || atomic_load(&sv->stop))
 			break;
-		/* The queue was closed under the loop (by a handler). */
-		if ((pfd[0].revents & POLLNVAL) != 0)
+		/*
+		 * The queue was closed under the loop without a stop: the
+		 * number may be reused, so the loop must not poll it again.
+		 */
+		if ((pfd[0].revents & POLLNVAL) != 0) {
+			sv->error = EBADF;
 			break;
+		}
 		if ((pfd[0].revents & (POLLIN | POLLHUP)) != 0 &&
 		    dq_dispatch(sv->q, sv->handler, sv->arg) == -1 &&
-		    errno != EAGAIN && errno != EINTR)
+		    errno != EAGAIN && errno != EINTR) {
+			sv->error = errno;
 			break;
+		}
 	}
 	return (NULL);
 }
@@ -81,19 +89,20 @@ dqt_server_stop_async(struct dqt_server *sv)
 	atomic_store(&sv->stop, true);
 }
 
-void
+int
 dqt_server_stop(struct dqt_server *sv)
 {
 	char b = 's';
 
 	if (!sv->running)
-		return;
+		return (sv->error);
 	atomic_store(&sv->stop, true);
 	(void)write(sv->wake[1], &b, 1);
 	(void)pthread_join(sv->thr, NULL);
 	(void)close(sv->wake[0]);
 	(void)close(sv->wake[1]);
 	sv->running = false;
+	return (sv->error);
 }
 
 #define	DQT_SERVE_BUFSIZE	(256 * 1024)

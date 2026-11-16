@@ -158,8 +158,10 @@ srv_start(struct srv *s, uint32_t flags)
 static void
 srv_stop(struct srv *s)
 {
+	int error;
 
-	dqt_server_stop(&s->server);
+	error = dqt_server_stop(&s->server);
+	ATF_CHECK_EQ_MSG(0, error, "controller thread: %s", strerror(error));
 	close(s->sroot);
 	dq_tree_destroy(s->tree);
 	close(s->q);
