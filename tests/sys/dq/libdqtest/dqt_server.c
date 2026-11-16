@@ -16,6 +16,7 @@
 #include <poll.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -93,4 +94,62 @@ dqt_server_stop(struct dqt_server *sv)
 	(void)close(sv->wake[0]);
 	(void)close(sv->wake[1]);
 	sv->running = false;
+}
+
+#define	DQT_SERVE_BUFSIZE	(256 * 1024)
+
+int
+dqt_serve_until(int q, int pd, dqt_done_fn done, dqt_event_fn handle,
+    void *arg, int ms)
+{
+	struct pollfd pfd[2];
+	const struct dq_event *ev;
+	char *buf;
+	ssize_t got;
+	int error, flags, n;
+	bool hup;
+
+	flags = fcntl(q, F_GETFL);
+	if (flags == -1 || fcntl(q, F_SETFL, flags | O_NONBLOCK) == -1)
+		return (errno);
+	buf = malloc(DQT_SERVE_BUFSIZE);
+	if (buf == NULL)
+		return (ENOMEM);
+	error = 0;
+	for (hup = false; !hup && (done == NULL || !done(arg));) {
+		pfd[0].fd = q;
+		pfd[0].events = POLLIN;
+		pfd[0].revents = 0;
+		pfd[1].fd = pd;
+		pfd[1].events = POLLHUP;
+		pfd[1].revents = 0;
+		n = poll(pfd, pd != -1 ? 2 : 1, ms);
+		if (n == -1 && errno == EINTR)
+			continue;
+		if (n <= 0) {
+			error = n == 0 ? ETIMEDOUT : errno;
+			break;
+		}
+		hup = pd != -1 && (pfd[1].revents & POLLHUP) != 0;
+		/* Drain: after a hang-up, these are the last records. */
+		for (;;) {
+			if (dq_read_events(q, buf, DQT_SERVE_BUFSIZE,
+			    &got) != 0) {
+				if (errno == EINTR)
+					continue;
+				if (errno != EAGAIN)
+					error = errno;
+				break;
+			}
+			if (got <= 0)
+				break;
+			for (ev = dq_event_first(buf, (size_t)got); ev != NULL;
+			    ev = dq_event_next(buf, (size_t)got, ev))
+				handle(ev, arg);
+		}
+		if (error != 0)
+			break;
+	}
+	free(buf);
+	return (error);
 }

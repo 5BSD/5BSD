@@ -806,7 +806,7 @@ qd_subject(enum qd_kind kind, int rep, int cmd)
 		row.fd = -1;
 		goto out;
 	}
-	row.scm_errno = (dqt_send_fd(sp[0], fd) == 0 ? 0 : errno);
+	row.scm_errno = DQT_ERRNO_OF(dqt_send_fd(sp[0], fd));
 	if (row.scm_errno == 0 && (d = dqt_recv_fd_flags(sp[1], MSG_DONTWAIT)) != -1) {
 		row.scm_getfd = fcntl(d, F_GETFD);
 		row.scm_stats = qd_stats(d);
@@ -1687,13 +1687,13 @@ child_transfer(void *arg __unused, void *result)
 		_exit(6);
 	if (socketpair(PF_UNIX, SOCK_STREAM, 0, sp) != 0)
 		_exit(7);
-	res->stream_send = (dqt_send_fd(sp[0], q) == 0 ? 0 : errno);
+	res->stream_send = DQT_ERRNO_OF(dqt_send_fd(sp[0], q));
 	res->stream_recv = peer_recv(sp[1]);
 	(void)close(sp[0]);
 	(void)close(sp[1]);
 	if (socketpair(PF_UNIX, SOCK_DGRAM, 0, sp) != 0)
 		_exit(7);
-	res->dgram_send = (dqt_send_fd(sp[0], q) == 0 ? 0 : errno);
+	res->dgram_send = DQT_ERRNO_OF(dqt_send_fd(sp[0], q));
 	res->dgram_recv = peer_recv(sp[1]);
 	(void)close(sp[0]);
 	(void)close(sp[1]);
@@ -1820,7 +1820,7 @@ copies_subject(int rep)
 		row[i].getfl = fcntl(row[i].fd, F_GETFL);
 		row[i].stats = qd_stats(row[i].fd);
 		row[i].fork_stats = qd_fork_probe(row[i].fd, false);
-		row[i].scm = (dqt_send_fd(sp[0], row[i].fd) == 0 ? 0 : errno);
+		row[i].scm = DQT_ERRNO_OF(dqt_send_fd(sp[0], row[i].fd));
 		(void)fcntl(row[i].fd, F_SETFD, 0);
 	}
 	(void)fcntl(q, F_SETFD, 0);

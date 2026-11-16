@@ -1413,8 +1413,8 @@ dqt_wait_wmesg(pid_t pid, const char *wmesg, int ms)
 		    len != 0) {
 			len *= 2;
 			kp = malloc(len);
-			ATF_REQUIRE(kp != NULL);
-			if (sysctl(mib, nitems(mib), kp, &len, NULL, 0) == 0) {
+			if (kp != NULL &&
+			    sysctl(mib, nitems(mib), kp, &len, NULL, 0) == 0) {
 				n = (int)(len / sizeof(*kp));
 				for (i = 0; i < n && !found; i++)
 					found = strcmp(kp[i].ki_wmesg,

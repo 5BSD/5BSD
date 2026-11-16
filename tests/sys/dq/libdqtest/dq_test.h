@@ -483,6 +483,7 @@ void	dqt_msleep(int ms);
 /*
  * Wait until a thread of pid sleeps on the wait channel message wmesg (a
  * requester blocked where the test needs it, instead of a fixed sleep).
+ * No ATF call: a forked supervisor may use it.
  */
 bool	dqt_wait_wmesg(pid_t pid, const char *wmesg, int ms);
 /* The kernel's wait channel messages a test waits for (dq_queue.c). */
@@ -515,6 +516,19 @@ void	dqt_server_start(struct dqt_server *sv, int q, dq_handler_t handler,
 	    void *arg);
 void	dqt_server_stop_async(struct dqt_server *sv);
 void	dqt_server_stop(struct dqt_server *sv);
+
+/*
+ * Serve q in the calling thread: hand every record to handle(ev, arg)
+ * until done(arg) holds (checked before each wait; NULL: never) or, when
+ * pd is not -1, until that process has exited and its last records are
+ * read.  Each wait for a record is bounded by ms.  The queue is made
+ * non-blocking.  Returns 0, ETIMEDOUT when a wait ran out, or the errno
+ * of a failed poll or read.  No ATF call: a forked supervisor may use it.
+ */
+typedef bool (*dqt_done_fn)(void *arg);
+typedef void (*dqt_event_fn)(const struct dq_event *ev, void *arg);
+int	dqt_serve_until(int q, int pd, dqt_done_fn done, dqt_event_fn handle,
+	    void *arg, int ms);
 
 /*
  * A descriptor over a UNIX domain socket (SCM_RIGHTS) with one byte of
