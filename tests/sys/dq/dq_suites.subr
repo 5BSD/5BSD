@@ -63,7 +63,7 @@ dq_check_expected()
 		sub(/[[:space:]]+$/, "", p)
 		if (i == 0 || substr(line, i + 1) !~ /^[[:space:]]*[^[:space:]:]+[^:]*:/)
 			print "untagged: " line
-		else if (p !~ /^\^[A-Za-z0-9_]+:[^[:space:]]+\[\[:space:\]\]/)
+		else if (p !~ /^\^[A-Za-z0-9_\/]+:[^[:space:]]+\[\[:space:\]\]/)
 			print "unanchored: " p
 	}')
 	[ -z "${bad}" ] || {
