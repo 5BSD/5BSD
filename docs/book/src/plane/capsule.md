@@ -217,8 +217,11 @@ still opens the root-only control socket named in `capsule.conf`
 drives. PID 1 never opens it: `capsule_engine_start()` does not call
 `ctl_setup()`. With `lookup_route_export = true;` in its configuration, a
 daemon also answers `CTL_OP_LOOKUP`: it hands a root client the discovery
-route its own SwitchBoard minted, which is how the switchboard tests drive a
-private stack with `switchboardctl`. The route carries no authority.
+route its own SwitchBoard minted. The route carries no authority. The
+switchboard tests that drive a private stack with `switchboardctl` are wired
+to this route; they run once the GENERIC-TEST issuer tier exists, and until
+then they skip for want of a unit issuer. As PID 1 the key has no effect, and
+Capsule logs a notice when it is set.
 
 ## Signals Capsule ignores
 

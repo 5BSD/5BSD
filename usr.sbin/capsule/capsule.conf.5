@@ -60,6 +60,9 @@ minted (see
 The route grants no authority.
 The test harness sets it to drive a private stack.
 Read at startup.
+As PID 1,
+.Xr capsule 8
+opens no control socket; the key has no effect there and a notice is logged.
 Default: false.
 .It Va service_manager
 Path to the first managed process started by

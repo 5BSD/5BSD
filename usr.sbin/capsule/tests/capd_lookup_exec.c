@@ -9,6 +9,8 @@
  *
  *   -s SOCKET  the route a test-local Capsule holds from its own SwitchBoard,
  *              fetched from its control socket (CTL_OP_LOOKUP, root only);
+ *   -P         with -s, attach a 4-byte payload the operation must refuse
+ *              (EINVAL); exercises the refusal path, never installs a route;
  *   -i         the route this process inherited, taken out of the slot,
  *              cleared, and installed again (checks install-then-exec
  *              against a live plane without a private stack).
@@ -41,7 +43,7 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: capd_lookup_exec -s socket | -i command [argument ...]\n");
+	    "usage: capd_lookup_exec -s socket [-P] | -i command [argument ...]\n");
 	exit(EX_USAGE);
 }
 
@@ -65,7 +67,7 @@ write_all(int s, const void *buf, size_t len)
 
 /* Ask a test-local Capsule for its route; returns an owned descriptor. */
 static int
-capsule_route(const char *path)
+capsule_route(const char *path, bool payload)
 {
 	union {
 		struct cmsghdr	hdr;
@@ -93,7 +95,11 @@ capsule_route(const char *path)
 		err(EX_UNAVAILABLE, "connect %s", path);
 	memset(&req, 0, sizeof(req));
 	req.op = CTL_OP_LOOKUP;
+	if (payload)
+		req.datalen = 4;
 	write_all(s, &req, sizeof(req));
+	if (payload)
+		write_all(s, "JUNK", 4);
 
 	fd = -1;
 	got = 0;
@@ -159,15 +165,19 @@ int
 main(int argc, char **argv)
 {
 	const char *socket_path;
-	bool inherited;
+	bool inherited, payload;
 	int ch, fd;
 
 	socket_path = NULL;
 	inherited = false;
-	while ((ch = getopt(argc, argv, "is:")) != -1) {
+	payload = false;
+	while ((ch = getopt(argc, argv, "iPs:")) != -1) {
 		switch (ch) {
 		case 'i':
 			inherited = true;
+			break;
+		case 'P':
+			payload = true;
 			break;
 		case 's':
 			socket_path = optarg;
@@ -178,10 +188,11 @@ main(int argc, char **argv)
 	}
 	argc -= optind;
 	argv += optind;
-	if (argc < 1 || inherited == (socket_path != NULL))
+	if (argc < 1 || inherited == (socket_path != NULL) ||
+	    (payload && socket_path == NULL))
 		usage();
 
-	fd = inherited ? inherited_route() : capsule_route(socket_path);
+	fd = inherited ? inherited_route() : capsule_route(socket_path, payload);
 	if (service_install_ambient_lookup(fd) == -1)
 		err(EX_OSERR, "service_install_ambient_lookup");
 	/* The slot holds its own reference and is inherited across exec. */
