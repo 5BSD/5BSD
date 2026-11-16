@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Independent Authenticode qualification; no firmware or revocation claims."""
 import argparse
 import hashlib

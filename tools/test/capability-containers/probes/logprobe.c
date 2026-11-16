@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * logprobe: a throwaway capability unit for the bsdlog container-model reclaim
  * test.  It enters capability mode (switchboard's readiness boundary) and emits
  * a few records to system.Log, which makes bsdlog map this unit's flat owner key

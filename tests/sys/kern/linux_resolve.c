@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Freestanding amd64/arm64 openat2 link-resolution contract tests.
  * Run each named case in a fresh directory; magic cases require proc/fdesc mounts. */
 #if defined(__x86_64__)

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef _LOADER_VERITYDEV_H_
 #define _LOADER_VERITYDEV_H_
 #include <geom/verity/g_verity_verify.h>

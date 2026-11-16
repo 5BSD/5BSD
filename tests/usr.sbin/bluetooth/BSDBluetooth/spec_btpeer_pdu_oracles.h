@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Independent byte oracles for btpeer_srv_pdu_test.
  *
  * Opcode, error, SMP, and fixed-CID assignments are instantiated from the

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef FIDL_BSD_RUNTIME_C_H
 #define FIDL_BSD_RUNTIME_C_H
 #include <limits.h>

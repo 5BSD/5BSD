@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Freestanding Linux ABI tests; invoke each named case in a fresh process. */
 #if defined(__x86_64__)
 #define NR(a,b) (a)

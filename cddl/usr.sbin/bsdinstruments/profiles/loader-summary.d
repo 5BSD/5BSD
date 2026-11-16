@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Load request counts include already-loaded objects, not unique files. */
 #pragma D option quiet
 #pragma D option strsize=256

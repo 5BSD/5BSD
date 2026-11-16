@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Build and run the bhyve virtio-vsock device-level TX harness locally.
 #
 # In the tree this is a normal ATF test (see tests/sys/kern/Makefile).  This

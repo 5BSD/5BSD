@@ -1,7 +1,7 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
-# Copyright (c) 2026 The 5BSD Project
+# Copyright (c) 2026 Kory Heard
 #
 # authpf(8) (OpenBSD): a login session loads the user's rules into the
 # authpf/<user>(<pid>) anchor and adds the client to the authpf_users

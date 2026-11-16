@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * open(2)/openat(2) semantics for an unattached process.
  *
  * What it tries to break: openatfp became a wrapper around

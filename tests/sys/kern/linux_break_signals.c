@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Adversarial signal tests with threads: per-thread masks and tgkill
  * targeting, a signal interrupting futex_wait (EINTR without SA_RESTART,

@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Launch Alpine with bhyve's virtio-vsock device.  This deliberately does not
 # modify the image, ISO, or host networking.
 #

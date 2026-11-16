@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Emit one syscall stub. Make and native build rules supply the same configured
 # macro, symbol and printf-format architecture notes; no syscall list lives here.
 set -eu

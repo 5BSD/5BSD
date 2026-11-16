@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Copy explicitly declared fixture files; never discover inputs by walking."""
 import json
 from pathlib import Path

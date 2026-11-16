@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Test the Capsicum mapping with a test-only ZFD_LIMIT double.  These tests
  * exercise real cap_ioctls_limit(2) on sockets, not the ZFS operation ceiling.
  * trustedzfs_limit_test uses the production library without the double;

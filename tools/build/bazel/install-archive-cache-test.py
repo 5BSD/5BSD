@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Qualify archive links/metadata across fresh Bazel output bases and disk cache."""
 import argparse,json,subprocess,os,hashlib,tarfile
 from pathlib import Path

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Compare OpenBSD-regress results of the reference and a 5BSD DUT run.
 
 usage: report.py REFERENCE_DIR CANDIDATE_DIR [--json OUT]

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Pending-signal and tracing relationship probes: disposable amd64 VMs only. */
 #include "linux_test.h"
 #define PTR 101

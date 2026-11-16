@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * jailprobe: a throwaway unit for the jail-reclaim e2e.  It enters a
  * PERSISTENT jail through bsdnamespace (system.Namespace) -- the kind that by design
  * outlives the process -- and idles.  Uninstalling its bundle must make

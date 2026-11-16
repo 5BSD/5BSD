@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 provider attrtool {
 	probe delete__start(int, int);
 	probe delete__done(int, int, int, int);

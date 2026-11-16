@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Issued authority registry. Routes never contain grants: each request is
  * resolved from the kernel's sender stamp. The table is confined to the

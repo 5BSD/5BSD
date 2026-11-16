@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 from pathlib import Path
 import json,subprocess,importlib.util,re,os
 S=Path('/usr/src');O=Path('/usr/obj/5bsd-dtrace-twentyfirst-validation');T=S/'tools/test/system-tracing';R=O/'tests';R.mkdir(exist_ok=True)

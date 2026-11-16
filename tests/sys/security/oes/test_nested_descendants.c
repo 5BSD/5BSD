@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Verify composable descendants scopes.  A nested client inherits the outer
  * scope marker and adds its own: the outer client sees all three generations,

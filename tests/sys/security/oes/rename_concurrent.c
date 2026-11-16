@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Per-thread rename authorization metadata.  The client is descendants-scoped,
  * so only the forked workers are authorized and the rest of the guest is never

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Linux amd64 legacy-AIO timeout conversion and interruption regression. */
 typedef unsigned long u64;
 struct io_event {

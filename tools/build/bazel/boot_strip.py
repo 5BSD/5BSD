@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Strip a BIOS ELF client and enforce its declared size before publishing output."""
 import argparse
 import os

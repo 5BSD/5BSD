@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Derive the in-scope Vol 4 Part E section list from the HCI opcodes blued
 # actually issues.
 #

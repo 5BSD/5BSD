@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise explicit bzip2/bzip2recover binaries with multiblock corruption."""
 import argparse
 import hashlib

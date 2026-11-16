@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Verify selected native runtime libraries and execute a consumer without overrides.
 
 This checks the named libraries only; other loader/system dependencies can remain

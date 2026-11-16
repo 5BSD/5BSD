@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * The system.Network.State reactor (state.c) driven in-process over real
  * capability channels: each test client is a bsd.network.v1 NetworkState

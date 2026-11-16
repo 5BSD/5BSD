@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Firmware-only Secure Boot qualification; no kernel or system image."""
 import argparse
 import datetime

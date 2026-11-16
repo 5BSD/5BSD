@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # vsock end-to-end test driver: 5BSD host <-> bhyve guest over the
 # virtio-vsock device.  Covers the vsock_bhyve_testplan.md section-6
 # matrix rows that in-guest ATF cannot (real wire, real device).

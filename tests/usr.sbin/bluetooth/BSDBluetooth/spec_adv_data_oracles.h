@@ -1,5 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Independent Core 6.3, CSS v12, and Assigned Numbers display oracles.
  */
 #ifndef TESTS_BLUETOOTH_SPEC_ADV_DATA_ORACLES_H

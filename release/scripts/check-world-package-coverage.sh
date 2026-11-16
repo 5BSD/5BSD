@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Match staged world plists to the active package makefiles, not old archives.
 set -eu
 if [ "$#" -lt 3 ]; then

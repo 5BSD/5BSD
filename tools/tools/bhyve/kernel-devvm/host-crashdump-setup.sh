@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Configure unattended compressed kernel minidumps and automatic savecore.
 # This script deliberately does not trigger a panic on the physical host.
 set -eu

@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The 5BSD Project
+ * Copyright (c) 2026 Kory Heard
  *
  * OpenBSD network stack entry points used by OpenBSD PF, implemented on
  * the 5BSD stack: route lookups (rtalloc on FIB nexthops), IP output,

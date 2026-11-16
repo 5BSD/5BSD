@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Runtime provenance and recipe checks; fixtures do not claim a Make build."""
 import copy
 import json

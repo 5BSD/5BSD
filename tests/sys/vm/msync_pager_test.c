@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * msync(2) reaches the object's pager through pgo_sync.  The proof is the
  * page state seen through mincore(2), not the file's bytes (the unified
  * buffer cache returns a dirty mapped page with or without a sync): after a

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef _BHYVE_MIGRATION_DEST_IMAGE_H_
 #define _BHYVE_MIGRATION_DEST_IMAGE_H_
 

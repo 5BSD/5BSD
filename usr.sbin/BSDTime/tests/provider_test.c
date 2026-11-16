@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* The actual provider and C client over kernel channels; gate writes are
  * mocked. */
 #include <sys/capsicum.h>

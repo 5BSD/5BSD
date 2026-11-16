@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Run native iconv qualification in a prepared root, dropping test privileges."""
 import argparse
 import hashlib

@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* KINST — trace one instruction inside a kernel function */
 /* Usage: bsdinstruments watch kinst --param func=<name> --param offset=<bytes> */
 

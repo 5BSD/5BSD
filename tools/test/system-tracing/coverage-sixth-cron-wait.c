@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Exercise the real wait helper without starting cron or launching jobs. */
 #define DEBUGGING 0
 #include "cron.h"

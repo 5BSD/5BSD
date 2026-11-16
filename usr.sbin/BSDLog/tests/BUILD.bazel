@@ -55,6 +55,14 @@ cc_binary(name = "pool_fairness_test", srcs = ["pool_fairness_test.c", "pool_fai
         "//lib/liblogcmp:logcmp", "//lib/libfilesystemcmp:filesystemcmp", "//lib/libservice:service",
         "//lib/libshmring:shmring", "//lib/libthr:thr", "//lib/atf/libatf-c:atf_c"],
     copts = ["-ffunction-sections", "-fdata-sections"], linkopts = ["-static", "-Wl,--gc-sections"], linkstatic = True)
+# The real pool_worker() with the Audit lookup, storage session and confinement replaced.
+cc_binary(name = "pool_start_test", srcs = ["pool_start_test.c", "pool_fairness_session.c", "//usr.sbin/BSDLog:config.c",
+        "//usr.sbin/BSDLog:storage.c", "//usr.sbin/BSDLog:store.c"],
+    deps = [":provider_headers", "//lib/libauditcmp:auditcmp", "//lib/libcapreclaim:capreclaim", "//lib/libcapsulert:capsulert",
+        "//lib/libchannel:channel", "//lib/libfidl:fidl", "//lib/liblogcmp:logcmp", "//lib/libfilesystemcmp:filesystemcmp",
+        "//lib/libmd:md_link", "//lib/libservice:service", "//lib/libshmring:shmring", "//lib/libucl:ucl",
+        "//lib/libthr:thr", "//lib/atf/libatf-c:atf_c"],
+    copts = ["-ffunction-sections", "-fdata-sections"], linkopts = ["-static", "-Wl,--gc-sections"], linkstatic = True)
 cc_binary(name = "provider_test", srcs = ["provider_test.c", "//usr.sbin/BSDLog:logcmp.c", "//usr.sbin/BSDLog:session.c"],
     deps = [":provider_headers", "//sys/dev/mac_capability:channel_headers", "//sys/dev/mac_capability:ioctl_headers",
         "//lib/libchannel:channel", "//lib/libfidl:fidl", "//lib/liblogcmp:logcmp",
@@ -66,7 +74,7 @@ cc_binary(name = "provider_test", srcs = ["provider_test.c", "//usr.sbin/BSDLog:
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
     size = "medium", visibility = ["//visibility:public"])
- for name in ["store_fallback_test", "quota_test", "pool_fairness_test", "provider_test"]]
+ for name in ["store_fallback_test", "quota_test", "pool_fairness_test", "pool_start_test", "provider_test"]]
 
 load("//tools/build/bazel:bsd_fidl.bzl", "bsd_fidl_ir", "bsd_fidl_bindings")
 bsd_fidl_ir(name = "next_ir", schemas = ["//lib/libfidl/tests:zx.fidl", "evolution/logcmp_next.fidl"], available = "bsd:2",

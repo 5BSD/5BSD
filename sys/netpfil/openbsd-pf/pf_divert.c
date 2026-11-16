@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The 5BSD Project
+ * Copyright (c) 2026 Kory Heard
  *
  * OpenBSD divert(4) for pf "divert-packet port N": raw sockets of
  * protocol IPPROTO_DIVERT in the inet and inet6 domains.  A socket bound

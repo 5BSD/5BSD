@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual amd64 EFI Multiboot2 load function with bounded native input seams."""
 import argparse
 from pathlib import Path

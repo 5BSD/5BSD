@@ -2,6 +2,8 @@
 #-
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Exercise an installed Capsule PID 1 image through bhyve.  This is deliberately
 # a manual, root-only test: unlike a VM liveness check, it succeeds only after
 # switchboard begins its /etc/rc bootstrap and Capsule's authenticated convergence

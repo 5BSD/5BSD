@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Namespace system calls (mkdir, mkfifo, mknod, unlink, rmdir, funlinkat,
  * rename, renameat2, link, linkat, symlink) and the order in which they
  * report several simultaneous errors.

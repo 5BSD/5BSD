@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Compile the production aggregation implementation with simulated kernel I/O.
 # No /dev/dtrace, privileges, guest, or network is used.
 set -eu

@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Workload and result summary for the capability service providers not covered
  * by the dedicated capsule, switchboard, bsdlog, and component-ipc profiles.

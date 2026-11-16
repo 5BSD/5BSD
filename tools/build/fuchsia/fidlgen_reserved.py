@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """C++ names the FIDL natural-type generator escapes with a trailing '_'.
 
 Copied from fidlgen_cpp's name_transforms.go (contrib/fuchsia/tools/fidl/

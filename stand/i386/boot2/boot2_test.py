@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Inspect generated boot images as data. No target image is executed."""
 import importlib.util
 import os

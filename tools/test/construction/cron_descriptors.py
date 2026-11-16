@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual cron system-table jobs in a disposable VM; not PAM/BIP qualification."""
 import argparse
 import hashlib

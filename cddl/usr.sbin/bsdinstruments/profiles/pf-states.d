@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * pf state lifecycle - state creation, insertion, protocol state
  * transitions, removal and purge activity (dtrace_pf(4)).

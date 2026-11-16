@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Export bsd.lib.mk's configured shared-library linker-script transformation."""
 from pathlib import Path
 import re

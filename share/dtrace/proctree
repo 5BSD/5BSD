@@ -2,6 +2,8 @@
 /*
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * proctree.d -- process lifecycle and control-abuse observability.
  *
  * Renders a family-tree view of process creation and teardown alongside the

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Pure policy conversion checks: no sockets or kernel policy mutations. */
 #include <sys/types.h>
 #include <sys/socket.h>

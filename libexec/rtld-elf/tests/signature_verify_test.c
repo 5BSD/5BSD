@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Actual verifier control flow; structural probe and kernel transport are
  * injected here. Real signatures and kernel transport are covered in VM tests. */
 #include <sys/types.h>

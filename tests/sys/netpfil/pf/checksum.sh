@@ -1,6 +1,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Ruleset checksums: pfsync peers match states to rules by the checksum, so
 # a ruleset without 5BSD extensions must checksum as it does on OpenBSD.
 

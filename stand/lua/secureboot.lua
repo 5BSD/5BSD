@@ -1,4 +1,7 @@
 -- SPDX-License-Identifier: BSD-2-Clause
+--
+-- Copyright (c) 2026 Kory Heard
+--
 -- Required, authenticated startup policy for the EFI Secure Boot loader.
 -- This file and every input it reads must belong to the signed generation.
 -- The ordinary loader's optional overrides, nextboot and menus are deliberately

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Inspect declared target outputs with native LLVM tools; never execute them."""
 import argparse
 from pathlib import Path

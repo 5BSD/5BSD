@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Configure the OpenBSD helper guest as SRC (rdomain 0), RT (rdomain 2) and
 # ECO (rdomain 3) of the upstream regress topology.  Disposable guest only.
 #

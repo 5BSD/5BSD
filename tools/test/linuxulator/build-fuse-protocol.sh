@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Build only. Execute these native fixtures exclusively in disposable VMs.
 set -eu
 [ "$#" -eq 1 ] || { echo "usage: $0 output-directory" >&2; exit 2; }

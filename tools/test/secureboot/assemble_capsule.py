@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Minimal actual Capsule/SwitchBoard closure for the Secure Boot VM fixture.
 
 All executable dependencies come from the supplied world stage or object tree;

@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * EXTERNAL REFERENCE ORACLE: L2CAP signalling rules (Command Reject, the
  * signalling MTU, per-channel command sets, identifier handling) and the LE

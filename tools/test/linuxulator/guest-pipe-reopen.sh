@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Disposable VM only. Record all cases, including failures.
 set -eu
 trap 'rc=$?; echo PIPE_REOPEN_EXIT "$rc"; /sbin/halt -p' EXIT

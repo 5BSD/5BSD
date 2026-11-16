@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Validate a compact, self-contained ELF64 VDSO and derive its symbol offset.
 
 Policy values are target inputs. Offsets come from the supplied target ELF,

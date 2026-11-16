@@ -136,6 +136,27 @@ openfiles(size_t n)
 		ATF_CHECK_MSG(wait(NULL) > 0, "wait: %s", strerror(errno));
 }
 
+/*
+ * Write kern.maxfiles: directly, or, where the capability plane reserves
+ * it for the system.Sysctl provider and refuses everyone else with EPERM
+ * (BSDSysctl(8), "isolate"), through the provider, which writes it when
+ * its policy lets this client.  Returns 0 or an errno.
+ */
+static int
+maxfiles_write(int value)
+{
+	char cmd[80];
+
+	if (sysctlbyname("kern.maxfiles", NULL, 0, &value,
+	    sizeof(value)) == 0)
+		return (0);
+	if (errno != EPERM)
+		return (errno);
+	snprintf(cmd, sizeof(cmd),
+	    "/usr/sbin/sysctlcmpctl set kern.maxfiles %d", value);
+	return (system(cmd) == 0 ? 0 : EPERM);
+}
+
 ATF_TC_WITH_CLEANUP(kern_maxfiles__increase);
 ATF_TC_HEAD(kern_maxfiles__increase, tc)
 {
@@ -148,7 +169,7 @@ ATF_TC_HEAD(kern_maxfiles__increase, tc)
 ATF_TC_BODY(kern_maxfiles__increase, tc)
 {
 	size_t oldlen;
-	int maxfiles, oldmaxfiles, current;
+	int maxfiles, oldmaxfiles, current, current2, error;
 	char buf[80];
 	struct rlimit rl;
 
@@ -169,9 +190,17 @@ ATF_TC_BODY(kern_maxfiles__increase, tc)
 		    strerror(errno));
 
 	maxfiles += EXPANDBY;
-	if (sysctlbyname("kern.maxfiles", NULL, 0, &maxfiles, oldlen) == -1)
+	error = maxfiles_write(maxfiles);
+	if (error != 0)
+		atf_tc_fail("setting kern.maxfiles to %d: %s%s", maxfiles,
+		    strerror(error), error == EPERM ? " (under the "
+		    "capability plane the system.Sysctl policy must let this "
+		    "session write it)" : "");
+	if (sysctlbyname("kern.maxfiles", &current2, &oldlen, NULL, 0) == -1)
 		atf_tc_fail("getsysctlbyname(%s): %s", "kern.maxfiles",
 		    strerror(errno));
+	ATF_REQUIRE_EQ_MSG(maxfiles, current2, "kern.maxfiles is %d after "
+	    "setting it to %d", current2, maxfiles);
 
 	rl.rlim_cur = rl.rlim_max = maxfiles;
 	ATF_REQUIRE_EQ_MSG(0, setrlimit(RLIMIT_NOFILE, &rl),
@@ -182,17 +211,13 @@ ATF_TC_BODY(kern_maxfiles__increase, tc)
 
 ATF_TC_CLEANUP(kern_maxfiles__increase, tc)
 {
-	size_t oldlen;
 	int n, oldmaxfiles;
 	char buf[80];
 
 	if ((n = readlink(VALUE, buf, sizeof(buf))) > 0) {
 		buf[MIN((size_t)n, sizeof(buf) - 1)] = '\0';
-		if (sscanf(buf, "%d", &oldmaxfiles) == 1) {
-			oldlen = sizeof(oldmaxfiles);
-			(void) sysctlbyname("kern.maxfiles", NULL, 0,
-			    &oldmaxfiles, oldlen);
-		}
+		if (sscanf(buf, "%d", &oldmaxfiles) == 1)
+			(void)maxfiles_write(oldmaxfiles);
 	}
 	(void)unlink(VALUE);
 	(void)unlink(AFILE);

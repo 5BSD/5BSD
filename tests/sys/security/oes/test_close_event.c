@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * OES NOTIFY_CLOSE test.  Closing a file's last vnode reference must generate a
  * NOTIFY_CLOSE event, delivered via the mac_vnode_check_close hook.  Close is

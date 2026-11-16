@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Process-held discovery and attribution; authentication remains provider-owned. */
 #ifndef _LIBSERVICE_SESSION_H_
 #define _LIBSERVICE_SESSION_H_

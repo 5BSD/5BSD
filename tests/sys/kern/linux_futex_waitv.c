@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * futex_waitv(2): wait on several futexes at once.  Validation (count,
  * flags, alignment, reserved, 64-bit values), immediate EAGAIN on a value

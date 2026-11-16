@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Checkpoint save of the virtio-iommu PCI model with the production VirtIO
  * core and modern transport (see virtio_iommu_post_init_test.c, whose host

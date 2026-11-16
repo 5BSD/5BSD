@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * The fcntl(2) commands with per-type semantics, F_READAHEAD, F_RDAHEAD and
  * F_ISUNIONSTACK, are answered by the descriptor's fileops (fo_fcntl).
  * Regular files take read-ahead; other vnode files return ENOTTY for it;

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef _BHYVE_MIGRATION_SOURCE_STORAGE_H_
 #define _BHYVE_MIGRATION_SOURCE_STORAGE_H_
 #include "migration_source_owner.h"

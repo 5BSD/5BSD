@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Shared validation of flattened BSD mtree directory metadata."""
 from pathlib import PurePosixPath
 import re

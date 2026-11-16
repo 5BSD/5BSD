@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Independent Core 6.3 byte assignments for hci_emulator_test.
  * No production or Netgraph Bluetooth header is included.
  */

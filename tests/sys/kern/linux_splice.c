@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * splice(2)/vmsplice(2): file->pipe->file copy with checksums, socket
  * sinks, offsets and offset updates, SPLICE_F_NONBLOCK on empty/full

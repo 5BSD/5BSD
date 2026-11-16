@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * modprobe: a throwaway unit that asks system.SystemExtension to ensure each
  * module named on its command line is loaded, records the outcome of each in

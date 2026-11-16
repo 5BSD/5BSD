@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The 5BSD Project
+ * Copyright (c) 2026 Kory Heard
  *
  * Issue single /dev/pf ioctls for the seam tests (securelevel.sh,
  * quotas.sh) and print the result as "<ioctl>=<ok|errno name>".  pfctl(8)

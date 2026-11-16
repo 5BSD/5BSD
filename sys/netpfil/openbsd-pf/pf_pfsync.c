@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The 5BSD Project
+ * Copyright (c) 2026 Kory Heard
  *
  * pfsync(4) on the 5BSD stack: the carp(4) demotion OpenBSD pfsync
  * applies to the "carp" interface group, and the 5BSD extension of an

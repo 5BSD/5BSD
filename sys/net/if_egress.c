@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The 5BSD Project
+ * Copyright (c) 2026 Kory Heard
  *
  * The "egress" interface group, as on OpenBSD: it holds the interfaces
  * that the default routes (IPv4 0.0.0.0/0 and IPv6 ::/0) of routing

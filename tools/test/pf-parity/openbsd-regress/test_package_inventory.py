@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Check PF archive variants after retirement of the native libpfctl."""
 from pathlib import Path
 import subprocess

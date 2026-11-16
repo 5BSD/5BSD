@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Disposable VM only: sources and ATF programs must be staged in /usr/tests.
 set -eu
 trap 'rc=$?; echo STARNIX_ATF_EXIT "$rc"; /sbin/halt -p' EXIT

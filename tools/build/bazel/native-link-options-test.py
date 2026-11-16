@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Reject ambient linker searches while accepting declared dependency locations."""
 from pathlib import Path
 import tempfile

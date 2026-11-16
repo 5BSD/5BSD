@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check a quiescent pkg database against explicit trusted-builder expectations.
 
 This supplements archive-record verification; it does not replace it. The contract

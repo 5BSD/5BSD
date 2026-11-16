@@ -1,5 +1,9 @@
 #!/bin/sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Cross-check the architectural nested-VMX ledger and the complete positive
 # hardware-qualification ledger.  A requirement held specifically at
 # pending-live is not allowed to disappear between those two ledgers.  This

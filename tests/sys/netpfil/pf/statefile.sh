@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # The raw format retains incremental import and duplicate/invalid-record handling.
 # These tests require truthful I/O errors; they do not claim atomic restore.
 . $(atf_get_srcdir)/utils.subr

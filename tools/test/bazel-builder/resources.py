@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Measure and bound a command in a disposable FreeBSD qualification VM.
 
 Samples are observations, not an IO benchmark or complete peak-memory accounting.

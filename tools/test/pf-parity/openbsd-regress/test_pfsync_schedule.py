@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Check pfsync's actual schedule gate against an in-flight callback/restart."""
 from pathlib import Path
 import os, re, shlex, subprocess, tempfile, unittest

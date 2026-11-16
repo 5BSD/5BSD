@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Generate selected Bluetooth SIG Assigned Numbers test oracles.
 # Input is the official Assigned Numbers HTML snapshot.
 

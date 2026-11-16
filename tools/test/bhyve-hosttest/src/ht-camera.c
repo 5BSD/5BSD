@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * ht-camera: grab one frame from a video(4) device with read(2).
  *   ht-camera /dev/video0 out.raw

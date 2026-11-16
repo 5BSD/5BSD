@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * EXTERNAL REFERENCE ORACLE: Bluetooth Mesh segmentation and reassembly --
  * the Mesh 1.1 SAR Transmitter and SAR Receiver composite states with their
  * formulas and default values, the Segment Acknowledgment message rules, and

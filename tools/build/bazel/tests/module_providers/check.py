@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Reject cross-module imports whose supplied provider definitions are local.
 
 This is a known-provider regression check, not complete kernel/module dependency

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Qualify ordered repeated library inputs with native Bazel linking."""
 import argparse,collections,json,os,shutil,subprocess,sys
 from pathlib import Path

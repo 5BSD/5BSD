@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* This translation unit must compile as ISO C, not C++. */
 #include <sys/capsicum.h>
 #include <sys/event.h>

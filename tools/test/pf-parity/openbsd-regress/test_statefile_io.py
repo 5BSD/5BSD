@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Exercise actual pfctl raw-state I/O, including deferred close failures."""
 from pathlib import Path
 import os, shlex, subprocess, tempfile, unittest

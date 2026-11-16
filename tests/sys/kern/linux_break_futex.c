@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Adversarial futex tests with real threads: contended ping-pong, requeue
  * storms, wake-all counting, timeouts racing wakes, robust lists (owner

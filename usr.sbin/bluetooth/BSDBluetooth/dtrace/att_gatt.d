@@ -1,4 +1,10 @@
 #!/usr/sbin/dtrace -s
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * att_gatt.d - trace ATT/GATT request-response, MTU, notify/indicate and
  * GATT Robust Caching in blued.

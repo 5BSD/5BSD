@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Materialize verified package payloads in a private trusted-builder root.
 
 This does not authenticate archives or authorize installation/activation. The

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Adversarial memory tests: huge NORESERVE reservations (what Go/JVM do),
  * mremap grow/shrink/move over live data, MAP_FIXED_NOREPLACE racing

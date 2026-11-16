@@ -1,6 +1,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Full-stack contracts for libservice(3).  Pure API validation lives in
 # libservice_api_test.c; managed service behavior uses capd_service_fixture.
 #

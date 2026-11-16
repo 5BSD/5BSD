@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Build and run both guest-side vsock unit harnesses WITHOUT the ATF runtime,
 # using a tiny atf-c.h shim (mirrors vsock_device_harness/run.sh).
 set -eu

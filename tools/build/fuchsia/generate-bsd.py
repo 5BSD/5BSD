@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Generate BSD adapters around upstream FIDL natural types and codecs.
 
 The upstream compiler IR is unchanged.  fidlgen_natural.py emits the native

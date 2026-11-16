@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Freestanding amd64 Linux ABI test for file_getattr(2) and
  * file_setattr(2), Linux syscall numbers 468 and 469.  It deliberately has

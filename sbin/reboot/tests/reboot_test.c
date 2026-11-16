@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Exercise the real command without signaling or rebooting the test host. */
 int reboot_main(int, char **);
 #define main reboot_main

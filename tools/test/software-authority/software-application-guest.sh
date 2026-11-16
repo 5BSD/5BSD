@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 set -eu
 exec > /dev/console 2>&1
 trap 'code=$?; if [ "$code" -ne 0 ]; then echo SOFTWARE_APPLICATION_FAIL; tail -80 /var/log/capability.log; fi' EXIT

@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The FreeBSD Foundation
+ * Copyright (c) 2026 Kory Heard
  *
  * Host-side KVM-compatible paravirtual clock (pvclock).  See vpvclock.h for
  * an overview.  The interface is opt-in: the hw.vmm.pvclock.enabled tunable

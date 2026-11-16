@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Assemble explicit native iconv artifacts for the maintained disposable VM."""
 import argparse
 import hashlib

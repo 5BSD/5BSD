@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Preserve typed Kyua outcomes in JUnit for a single-program Bazel suite.
 
 Kyua schema v3 is defined in contrib/kyua/store/schema_v3.sql. Its legacy JUnit

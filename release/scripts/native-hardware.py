@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Build a selected hardware profile using native, unprivileged ports staging."""
 import argparse
 import importlib.util

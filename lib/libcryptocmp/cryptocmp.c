@@ -1,4 +1,5 @@
 /*- SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * system.Crypto client, using the generated bsd.crypto.v1 bindings
  * (cryptocmp.fidl) over a native capability channel.  A transport failure,

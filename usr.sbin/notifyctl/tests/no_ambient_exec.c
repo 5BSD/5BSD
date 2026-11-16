@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Run a command without the process's ambient service lookup route.  Under a
  * live plane the route is a kernel per-process slot inherited across exec,

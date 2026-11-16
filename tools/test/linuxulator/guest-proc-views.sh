@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 set -eu
 trap 'rc=$?; if [ "$rc" -ne 0 ]; then echo PROC_VIEWS_FAILED "$rc"; /sbin/halt -p; fi' EXIT
 PATH=/sbin:/bin:/usr/sbin:/usr/bin

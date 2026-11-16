@@ -1,4 +1,10 @@
 #!/usr/sbin/dtrace -s
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * conn.d - trace GAP connection lifecycle, advertising/scan state, and
  * privacy/RPA rotation in blued.

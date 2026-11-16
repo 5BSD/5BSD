@@ -1,5 +1,9 @@
 #!/bin/sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Common host-side live evidence for indirect descriptor consumption and
 # EVENT_IDX decisions.  Source this file from a root-only VM harness.
 

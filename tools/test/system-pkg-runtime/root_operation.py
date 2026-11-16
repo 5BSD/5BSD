@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Run an owned SSH operation and journal failed attempts as well as successes."""
 import hashlib
 from pathlib import Path

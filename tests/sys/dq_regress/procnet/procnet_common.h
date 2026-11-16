@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Shared helpers of the procnet regression programs.
  *
  * Every case runs in a process that is NOT attached to a dq(4) controller

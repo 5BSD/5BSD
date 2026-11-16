@@ -1,5 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
  */
 #ifndef _BSDNETWORK_PROBES_H_
 #define	_BSDNETWORK_PROBES_H_

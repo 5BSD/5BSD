@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Keyless integrity baseline for an offline pkgbase generation.
 set -eu
 [ "$#" -eq 3 ] || { echo "usage: $0 create|check|veriexec candidate-root manifest" >&2; exit 64; }

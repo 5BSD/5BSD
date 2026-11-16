@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * system.Sysctl constants and limits, the interface snapshot record, and the
  * legacy pre-FIDL wire records.  The current client and provider speak
  * sysctlcmp.fidl (library bsd.sysctl.v1); the message layouts below are kept

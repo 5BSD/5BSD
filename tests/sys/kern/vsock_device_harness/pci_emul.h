@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* Mock of bhyve pci_emul.h for the vsock device harness. */
 #ifndef MOCK_PCI_EMUL_H
 #define MOCK_PCI_EMUL_H

@@ -1,4 +1,5 @@
 /*- SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * system.Crypto constants and the client API's request/result records.  The
  * client and provider speak cryptocmp.fidl (library bsd.crypto.v1); the

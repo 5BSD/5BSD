@@ -1,5 +1,8 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Prepared native amd64 validation only; see COVERAGE-EIGHTH.
 from pathlib import Path
 import subprocess,os,json,re,shlex

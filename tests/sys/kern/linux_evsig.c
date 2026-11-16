@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Freestanding amd64 Linux syscall test for epoll_ctl flag handling
  * (EPOLLEXCLUSIVE/EPOLLWAKEUP hints and the Linux EPOLLEXCLUSIVE rules),

@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Build the hosttest bhyve guest image from a published pkgbase generation.
 # Unprivileged (pkg INSTALL_AS_USER + METALOG, makefs/mkimg NO_ROOT style).
 # Run as an ordinary user after the upgrade so that the guest matches the

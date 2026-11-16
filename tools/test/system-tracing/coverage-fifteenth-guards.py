@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Fault-inject the real USDT headers; no live tracing or global state changes."""
 from pathlib import Path
 import json,subprocess

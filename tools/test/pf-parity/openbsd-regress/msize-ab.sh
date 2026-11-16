@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # MSIZE A/B on the DUT: boot each kernel once with nextboot(8), configure
 # the topology, run msize-bench.sh.  Kernels are expected in /boot/msizeA
 # (MSIZE 256) and /boot/msizeB (MSIZE 512) on the DUT.  usage: msize-ab.sh OUT

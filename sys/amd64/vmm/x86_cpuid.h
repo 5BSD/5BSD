@@ -1,5 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
  */
 #ifndef _VMM_X86_CPUID_H_
 #define	_VMM_X86_CPUID_H_

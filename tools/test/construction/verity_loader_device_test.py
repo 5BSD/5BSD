@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual device/reader/core, real files; injected loader partition operations."""
 import importlib.util
 from pathlib import Path

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Explicit extra disk for disposable build work; never reformat a source disk."""
 import os
 from pathlib import Path

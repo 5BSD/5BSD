@@ -1,5 +1,9 @@
 #!/bin/sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Verify an exact, source-controlled traceability record for every Kyua case.
 # Wildcard and suite-only records are not accepted by this layer.
 

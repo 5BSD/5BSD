@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 provider bsdlog {
 	probe pool__start(uint32_t shard, uint32_t capacity, int result);
 	probe pool__admit(uint32_t shard, const char *label, uint32_t active,

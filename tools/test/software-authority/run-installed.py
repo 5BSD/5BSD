@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Run the full software suite on a disposable overlay of a BSDInstall target."""
 import argparse
 import hashlib

@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026
+ * Copyright (c) 2026 Kory Heard
  * All rights reserved.
  */
 
@@ -186,6 +186,8 @@ HOOK_CHECK_IMPL(vnode_check_uipc_bind, struct ucred *cred __unused,
     struct componentname *cnp __unused, struct vattr *vap __unused)
 HOOK_CHECK_IMPL(vnode_check_uipc_connect, struct ucred *cred __unused,
     struct vnode *vp __unused, struct label *vplabel __unused)
+HOOK_CHECK_IMPL(socket_check_create, struct ucred *cred __unused,
+    int domain __unused, int type __unused, int protocol __unused)
 HOOK_CHECK_IMPL(socket_check_setsockopt, struct ucred *cred __unused,
     struct socket *so __unused, struct label *solabel __unused,
     int level __unused, int optname __unused)
@@ -250,6 +252,7 @@ static struct mac_policy_ops test_hooks_ops = {
 	.mpo_vnode_check_setutimes = test_vnode_check_setutimes,
 	.mpo_vnode_check_uipc_bind = test_vnode_check_uipc_bind,
 	.mpo_vnode_check_uipc_connect = test_vnode_check_uipc_connect,
+	.mpo_socket_check_create = test_socket_check_create,
 	.mpo_socket_check_setsockopt = test_socket_check_setsockopt,
 	.mpo_kld_check_unload = test_kld_check_unload,
 	.mpo_pts_check_open = test_pts_check_open,

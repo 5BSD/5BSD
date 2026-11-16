@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * The vm.objects sysctl names each POSIX shared memory object by its path.
  * A jailed reader gets the paths as its jail sees them, the way
  * kern.ipc.posix_shm_list and fstat(1) present them: an object under the

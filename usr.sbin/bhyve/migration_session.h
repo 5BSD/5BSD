@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Live-migration control plane for bhyve: a versioned, checksummed
  * source/destination session protocol driven on top of the existing
  * migration_precopy/migration_dirty/snapshot foundations.

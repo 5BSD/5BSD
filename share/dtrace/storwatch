@@ -2,6 +2,8 @@
 /*
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * storwatch.d -- observe storage/filesystem policy: ZFS administrative ioctls
  *		  and per-file VOP access verdicts, the capability-fd
  *		  ("trustedzfs") deny and op-return path, mount/unmount, and the

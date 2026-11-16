@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual isolation filehandle hook with injected claim lookup and enforcement."""
 from pathlib import Path
 import resource,subprocess,tempfile,unittest

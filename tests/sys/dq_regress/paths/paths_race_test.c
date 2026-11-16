@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Races against path lookups.
  *
  * What it tries to break: the stage-1c wrappers and namei hooks add work

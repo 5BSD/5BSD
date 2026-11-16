@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Query every discovered world directory; retain failures and all component kinds.
 
 This is configured metadata coverage, not native action or package coverage.

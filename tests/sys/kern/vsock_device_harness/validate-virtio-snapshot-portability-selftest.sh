@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Prove that the portability guard rejects a native state field outside the
 # three historical legacy VirtIO snapshot codecs.  This test deliberately
 # changes only a temporary copy of the production source; it never relies on

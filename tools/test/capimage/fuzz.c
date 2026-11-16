@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Structural fuzzing; crypto/trust success paths have deterministic ATF tests. */
 #include <sys/types.h>
 #include <sys/mman.h>

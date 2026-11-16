@@ -1,5 +1,9 @@
 #!/bin/sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Check the 5BSD book (docs/book/src) against the source tree it describes.
 #
 # usage: check-book.sh [-m man-inventory] [-s sysctl-inventory] root

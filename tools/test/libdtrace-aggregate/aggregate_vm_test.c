@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* Exercise production aggregation and joined walks without a DTrace device.
  * Only kernel metadata/snapshot I/O and allocation failure are simulated.
  */

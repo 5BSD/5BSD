@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 Project5BSD
+ * Copyright (c) 2026 Kory Heard
  *
  * Tests for mac_capability isolation.
  *
@@ -297,6 +297,7 @@ ATF_TC_BODY(claim_blocks_inherited_write, tc)
 	int svc, target, status, expected;
 	pid_t pid;
 
+	require_isolation_enforced();
 	make_tmpfile();
 	svc = fi_connect();
 	target = open(tmppath, O_RDWR);
@@ -341,6 +342,7 @@ ATF_TC_BODY(claim_blocks_inherited_read, tc)
 	int svc, target, status, expected;
 	pid_t pid;
 
+	require_isolation_enforced();
 	make_tmpfile();
 	svc = fi_connect();
 	target = open(tmppath, O_RDWR);
@@ -385,6 +387,7 @@ ATF_TC_BODY(claim_blocks_inherited_map_read, tc)
 	int svc, target, status, expected;
 	pid_t pid;
 
+	require_isolation_enforced();
 	make_tmpfile();
 	svc = fi_connect();
 	target = open(tmppath, O_RDWR);
@@ -429,6 +432,7 @@ ATF_TC_BODY(claim_blocks_stat, tc)
 	int svc, target, status;
 	pid_t pid;
 
+	require_isolation_enforced();
 	make_tmpfile();
 	svc = fi_connect();
 	target = open(tmppath, O_RDONLY);
@@ -474,6 +478,7 @@ ATF_TC_BODY(claim_blocks_unlink, tc)
 	int svc, target, status;
 	pid_t pid;
 
+	require_isolation_enforced();
 	make_tmpfile();
 	svc = fi_connect();
 	target = open(tmppath, O_RDONLY);
@@ -840,6 +845,7 @@ ATF_TC_BODY(dir_claim_content_scope, tc)
 	int svc, directory, target, status, expected;
 	pid_t pid;
 
+	require_isolation_enforced();
 	make_tmpdir();
 	svc = fi_connect();
 	directory = open(tmpdir, O_RDONLY | O_DIRECTORY);
@@ -887,6 +893,7 @@ ATF_TC_BODY(dir_claim_blocks_lookup, tc)
 	pid_t pid;
 	char cmd[256];
 
+	require_isolation_enforced();
 	make_tmpdir();
 	svc = fi_connect();
 
@@ -940,6 +947,7 @@ ATF_TC_BODY(dir_claim_blocks_stat_inside, tc)
 	int svc, dir_fd, status;
 	pid_t pid;
 
+	require_isolation_enforced();
 	make_tmpdir();
 	svc = fi_connect();
 
@@ -1482,6 +1490,7 @@ ATF_TC_BODY(net_claim_blocks_bind, tc)
 	int rc, svc;
 	uint16_t port = htons(18443);
 
+	require_isolation_enforced();
 	svc = fi_connect();
 
 	/* Claim TCP bind on port 18443 */
@@ -1629,6 +1638,7 @@ ATF_TC_BODY(net_claim_blocks_connect, tc)
 	int rc, svc, listener;
 	uint16_t port = 18448;
 
+	require_isolation_enforced();
 	listener = socket(AF_INET, SOCK_STREAM, 0);
 	ATF_REQUIRE(listener >= 0);
 	memset(&sin, 0, sizeof(sin));
@@ -1661,6 +1671,7 @@ ATF_TC_BODY(net_wildcard_blocks_socket_create, tc)
 {
 	int rc, s, svc;
 
+	require_isolation_enforced();
 	svc = fi_connect();
 	ATF_REQUIRE(fi_net_call(svc, FI_OP_CLAIM_NET,
 	    AF_INET, IPPROTO_TCP, 0, FI_NET_ANY) == 0);
@@ -1725,6 +1736,7 @@ ATF_TC_BODY(unix_socket_claim_blocks_connect, tc)
 	struct fi_reply rpl;
 	int rc, listener, svc, target;
 
+	require_isolation_enforced();
 	listener = make_tmpunix_listener();
 
 	svc = fi_connect();
@@ -1834,6 +1846,7 @@ ATF_TC_BODY(cross_nonce_read_blocked, tc)
 		  "exec dd if=/dev/zero of='%s' bs=1 count=1 2>/dev/null" },
 	};
 
+	require_isolation_enforced();
 	run_simple_cross_nonce_table(ops, sizeof(ops) / sizeof(ops[0]));
 }
 ATF_TC_CLEANUP(cross_nonce_read_blocked, tc)
@@ -1865,6 +1878,8 @@ ATF_TC_BODY(cross_nonce_metadata_blocked, tc)
 	struct fi_reply rpl;
 	int svc, target;
 	char cmd[256], linkpath[160];
+
+	require_isolation_enforced();
 
 	/* Test simple metadata ops via the table */
 	run_simple_cross_nonce_table(simple_ops,
@@ -1911,6 +1926,8 @@ ATF_TC_BODY(cross_nonce_lifecycle_blocked, tc)
 	struct fi_reply rpl;
 	int svc, target;
 	char cmd[256], linkpath[160], newpath[160], exepath[160];
+
+	require_isolation_enforced();
 
 	/* -- hard link -- */
 	make_tmpfile();
@@ -2531,6 +2548,7 @@ ATF_TC_BODY(token_close_revokes_access, tc)
 	int status, readyfd[2], gofd[2];
 	char buf;
 
+	require_isolation_enforced();
 	make_tmpfile();
 	svc = fi_connect();
 	target = open(tmppath, O_RDONLY);
@@ -2609,6 +2627,7 @@ ATF_TC_BODY(token_does_not_survive_reclaim, tc)
 	int status, readyfd[2], gofd[2];
 	char buf;
 
+	require_isolation_enforced();
 	make_tmpfile();
 	svc = fi_connect();
 	target = open(tmppath, O_RDONLY);
@@ -2782,6 +2801,7 @@ ATF_TC_BODY(token_scoped_to_claim, tc)
 	pid_t pid;
 	int status;
 
+	require_isolation_enforced();
 	make_tmpfile();
 	make_tmpfile2();
 	svc = fi_connect();
@@ -2853,6 +2873,7 @@ ATF_TC_BODY(token_read_only_denies_write, tc)
 	struct fi_reply rpl;
 	int svc, target, token, rc;
 
+	require_isolation_enforced();
 	make_tmpfile();
 	svc = fi_connect();
 	target = open(tmppath, O_RDWR);
@@ -3165,6 +3186,7 @@ ATF_TC_BODY(vsock_claim_blocks_foreign_bind, tc)
 	struct fi_vsock_request req;
 	int svc;
 
+	require_isolation_enforced();
 	svc = fi_connect();
 	memset(&req, 0, sizeof(req));
 	req.cid = VSOCK_CID_ANY;
@@ -3183,6 +3205,7 @@ ATF_TC_BODY(vsock_claim_blocks_foreign_connect, tc)
 	struct fi_vsock_request req;
 	int svc;
 
+	require_isolation_enforced();
 	svc = fi_connect();
 	memset(&req, 0, sizeof(req));
 	req.cid = 3;
@@ -3254,6 +3277,7 @@ ATF_TC_BODY(vsock_exact_claim_blocks_wildcard_bind, tc)
 	struct fi_vsock_request req;
 	int svc;
 
+	require_isolation_enforced();
 	svc = fi_connect();
 	memset(&req, 0, sizeof(req));
 	req.cid = VSOCK_CID_LOCAL;
@@ -3292,6 +3316,7 @@ ATF_TC_BODY(vsock_wildcard_claim_blocks_socket_create, tc)
 	struct fi_vsock_request req;
 	int svc;
 
+	require_isolation_enforced();
 	svc = fi_connect();
 	memset(&req, 0, sizeof(req));
 	req.cid = VSOCK_CID_ANY;
@@ -3332,6 +3357,7 @@ ATF_TC_BODY(vsock_wildcard_claim_allows_narrow_token, tc)
 	struct fi_vsock_request claim, token_req;
 	int svc, token;
 
+	require_isolation_enforced();
 	svc = fi_connect();
 	memset(&claim, 0, sizeof(claim));
 	claim.cid = VSOCK_CID_ANY;
@@ -3418,6 +3444,7 @@ ATF_TC_BODY(vsock_endpoint_claim_does_not_grant_provider, tc)
 	struct vsock_transport_attach attach;
 	int fd, svc;
 
+	require_isolation_enforced();
 	svc = fi_connect();
 	memset(&req, 0, sizeof(req));
 	req.cid = 0x70000002;
@@ -3445,6 +3472,7 @@ ATF_TC_BODY(vsock_provider_lifetime_authorization, tc)
 	struct vsock_transport_attach attach;
 	int fd, svc, token;
 
+	require_isolation_enforced();
 	svc = fi_connect();
 	memset(&req, 0, sizeof(req));
 	req.cid = 0x70000003;
@@ -3492,6 +3520,7 @@ ATF_TC_BODY(vsock_provider_honors_late_claim, tc)
 	struct vsock_transport_attach attach;
 	int fd, svc;
 
+	require_isolation_enforced();
 	memset(&req, 0, sizeof(req));
 	req.cid = 0x70000004;
 	req.port_max = UINT32_MAX;
@@ -3529,6 +3558,7 @@ ATF_TC_BODY(vsock_provider_kqueue_rechecks_revocation, tc)
 	pid_t pid;
 	int fd, gofd[2], readyfd[2], status, svc, token;
 
+	require_isolation_enforced();
 	svc = fi_connect();
 	memset(&req, 0, sizeof(req));
 	req.cid = 0x70000005;
@@ -3614,6 +3644,7 @@ ATF_TC_BODY(net_token_authorize_grants_bind, tc)
 	int svc, token, rc;
 	uint16_t port_net = htons(18551);
 
+	require_isolation_enforced();
 	svc = fi_connect();
 	ATF_REQUIRE(fi_net_call(svc, FI_OP_CLAIM_NET,
 	    AF_INET, IPPROTO_TCP, port_net, FI_NET_BIND) == 0);
@@ -3647,6 +3678,7 @@ ATF_TC_BODY(net_wildcard_claim_allows_narrow_token, tc)
 	int rc, svc, token;
 	uint16_t port_net;
 
+	require_isolation_enforced();
 	svc = fi_connect();
 	ATF_REQUIRE(fi_net_call(svc, FI_OP_CLAIM_NET, 0,
 	    IPPROTO_TCP, 0, FI_NET_ANY) == 0);
@@ -3714,6 +3746,7 @@ ATF_TC_BODY(net_token_scoped_to_endpoint, tc)
 	uint16_t port_a = htons(18552);
 	uint16_t port_b = htons(18553);
 
+	require_isolation_enforced();
 	svc = fi_connect();
 
 	/* Claim both ports. */
@@ -3747,6 +3780,7 @@ ATF_TC_BODY(net_token_close_revokes, tc)
 	int svc, token, rc;
 	uint16_t port_net = htons(18554);
 
+	require_isolation_enforced();
 	svc = fi_connect();
 	ATF_REQUIRE(fi_net_call(svc, FI_OP_CLAIM_NET,
 	    AF_INET, IPPROTO_TCP, port_net, FI_NET_BIND) == 0);
@@ -3832,6 +3866,7 @@ ATF_TC_BODY(net_token_range_does_not_authorize_other_claim, tc)
 {
 	int rc, svc, token;
 
+	require_isolation_enforced();
 	svc = fi_connect();
 	ATF_REQUIRE(fi_net_call2(svc, FI_OP_CLAIM_NET, AF_INET,
 	    IPPROTO_TCP, 19320, 19330, FI_NET_BIND) == 0);
@@ -3874,6 +3909,7 @@ ATF_TC_BODY(net_wildcard_claim_blocks_exact_bind, tc)
 {
 	int rc, svc;
 
+	require_isolation_enforced();
 	svc = fi_connect();
 
 	/* Claim 0..65535 (wildcard) */
@@ -3932,6 +3968,7 @@ ATF_TC_BODY(net_byte_order_port_256, tc)
 	struct sockaddr_in sin;
 	int svc, s;
 
+	require_isolation_enforced();
 	svc = fi_connect();
 
 	/* Claim port 256 via the range API (host-order in, htons inside). */
@@ -3974,6 +4011,7 @@ ATF_TC_BODY(token_stat_only_denies_read, tc)
 	struct fi_reply rpl;
 	int svc, target, token, rc;
 
+	require_isolation_enforced();
 	make_tmpfile();
 	svc = fi_connect();
 	target = open(tmppath, O_RDONLY);
@@ -4103,6 +4141,7 @@ ATF_TC_BODY(net_token_range_bind_inside_outside, tc)
 {
 	int svc, token, rc;
 
+	require_isolation_enforced();
 	svc = fi_connect();
 
 	/* Claim 19600-19699 and also 19700 individually. */
@@ -4146,6 +4185,7 @@ ATF_TC_BODY(dir_token_create_no_delete, tc)
 	int svc, dir_fd, token, status;
 	pid_t pid;
 
+	require_isolation_enforced();
 	make_tmpdir();
 	svc = fi_connect();
 
@@ -4297,6 +4337,7 @@ ATF_TC_BODY(token_write_denies_exec, tc)
 	int svc, target, token, rc;
 	const char *sh = "/bin/sh";
 
+	require_isolation_enforced();
 	svc = fi_connect();
 	target = open(sh, O_RDONLY);
 	ATF_REQUIRE(target >= 0);
@@ -4333,6 +4374,7 @@ ATF_TC_BODY(token_read_denies_exec, tc)
 	int svc, target, token, rc;
 	const char *sh = "/bin/sh";
 
+	require_isolation_enforced();
 	svc = fi_connect();
 	target = open(sh, O_RDONLY);
 	ATF_REQUIRE(target >= 0);
@@ -4369,6 +4411,7 @@ ATF_TC_BODY(dir_token_lookup_no_create, tc)
 	int svc, dir_fd, token, rc;
 	char newfile[160];
 
+	require_isolation_enforced();
 	make_tmpdir();
 	svc = fi_connect();
 
@@ -4409,6 +4452,7 @@ ATF_TC_BODY(token_uipc_connect, tc)
 	struct fi_reply rpl;
 	int svc, listener, sock_fd, token, rc;
 
+	require_isolation_enforced();
 	listener = make_tmpunix_listener();
 	svc = fi_connect();
 
@@ -4503,6 +4547,7 @@ ATF_TC_BODY(net_cidr_token_inside_outside, tc)
 	int svc, token, rc;
 	uint16_t port = htons(18600);
 
+	require_isolation_enforced();
 	svc = fi_connect();
 
 	/* Claim 127.0.0.0/8 on port 18600 */
@@ -4545,6 +4590,7 @@ ATF_TC_BODY(rename_requires_both_dirs, tc)
 	char srcdir[128], dstdir[128], srcfile[160], dstfile[160];
 	int fd;
 
+	require_isolation_enforced();
 	snprintf(srcdir, sizeof(srcdir),
 	    "/tmp/fi_rename_src.%d", (int)getpid());
 	snprintf(dstdir, sizeof(dstdir),
@@ -4856,6 +4902,7 @@ ATF_TC_BODY(jail_claim_blocks_create, tc)
 	struct fi_reply rpl;
 	int rc, svc;
 
+	require_isolation_enforced();
 	svc = fi_connect();
 
 	/* Claim jail name with CREATE action */
@@ -5039,6 +5086,8 @@ ATF_TC_BODY(jail_claim_blocks_get, tc)
 	struct iovec iov[6];
 	int persist = 1;
 
+	require_isolation_enforced();
+
 	/* First create a real jail so jail_get has something to query */
 	iov[0].iov_base = __DECONST(char *, "name");
 	iov[0].iov_len = sizeof("name");
@@ -5086,6 +5135,8 @@ ATF_TC_BODY(jail_claim_blocks_remove, tc)
 	int rc, svc, jid;
 	struct iovec iov[6];
 	int persist = 1;
+
+	require_isolation_enforced();
 
 	/* Create a real jail */
 	iov[0].iov_base = __DECONST(char *, "name");
@@ -5169,6 +5220,7 @@ ATF_TC_BODY(jail_token_wrong_action_denied, tc)
 	struct fi_reply rpl;
 	int rc, svc, token;
 
+	require_isolation_enforced();
 	svc = fi_connect();
 
 	/* Claim with ALL actions */
@@ -5341,6 +5393,7 @@ ATF_TC_BODY(token_mapping_read_ceiling, tc)
 	struct fi_reply reply;
 	int svc, target, token, result;
 
+	require_isolation_enforced();
 	make_tmpfile();
 	svc = fi_connect();
 	target = open(tmppath, O_RDWR);
@@ -5375,6 +5428,7 @@ ATF_TC_BODY(inherited_extattr_authority, tc)
 	int svc, target, token, status, phase, expected;
 	pid_t child;
 
+	require_isolation_enforced();
 	make_tmpfile();
 	svc = fi_connect();
 	target = open(tmppath, O_RDWR);
@@ -5439,6 +5493,7 @@ ATF_TC_BODY(inherited_directory_authority, tc)
 	int svc, target, token, status, phase, expected;
 	pid_t child;
 
+	require_isolation_enforced();
 	make_tmpdir();
 	svc = fi_connect();
 	target = open(tmpdir, O_RDONLY | O_DIRECTORY);

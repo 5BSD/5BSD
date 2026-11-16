@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Declared zero, padding, alignment and concatenation operations used by BIOS boot recipes."""
 import argparse
 from pathlib import Path

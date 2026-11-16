@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Load real Kerberos PAM modules; malformed local configuration must fail closed. */
 #include <sys/stat.h>
 #include <atf-c.h>

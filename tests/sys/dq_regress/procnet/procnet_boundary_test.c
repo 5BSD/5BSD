@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * The process boundary as a process that is NOT attached to a dq(4)
  * controller sees it today (dq-boundary design, part b0, section 6.1).
  *

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Native orchestration; backend commands are argv vectors, never shell text. */
 #include <sys/param.h>
 #include <sys/types.h>

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #include "linux_test.h"
 /*
  * mlockall(2)/munlockall(2) flag validation incl. MCL_ONFAULT (Linux 4.4),

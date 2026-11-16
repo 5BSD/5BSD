@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """C layouts and checked conversions for reachable FIDL natural types."""
 import hashlib
 

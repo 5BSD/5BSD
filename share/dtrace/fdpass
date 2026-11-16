@@ -2,6 +2,8 @@
 /*
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * fdpass.d -- follow capability (file-descriptor) flow: descriptors passed
  *	       between processes over UNIX-domain sockets via SCM_RIGHTS, the
  *	       credentials passed alongside them, and the raw install/dup/close

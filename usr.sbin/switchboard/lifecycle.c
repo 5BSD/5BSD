@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Resource-ownership identity for launched units and their client sessions.
  *
  * Two identities are stamped on each client connection.  The flat

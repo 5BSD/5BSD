@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # TXN_BEGIN clone-failure cleanup proof (fault injection).
 #
 # Fix under test: when TXN_BEGIN's base snapshot succeeds but the clone fails

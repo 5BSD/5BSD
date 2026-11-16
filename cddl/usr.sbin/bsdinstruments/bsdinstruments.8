@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd October 29, 2026
+.Dd November 15, 2026
 .Dt BSDINSTRUMENTS 8
 .Os
 .Sh NAME
@@ -64,6 +64,12 @@ collector over OTLP/HTTP with protobuf or JSON bodies, or OTLP/gRPC.
 A profile is a plain
 .Pa .d
 file.
+Its description is the first non-empty line of its first block
+comment; a leading licence header (a comment holding only
+.Ql SPDX-License-Identifier
+and
+.Ql Copyright
+lines) is skipped.
 Profiles are loaded from three locations, in increasing precedence:
 .Pa /usr/share/bsdinstruments/profiles
 (base system),

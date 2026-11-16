@@ -1,4 +1,8 @@
 #!/usr/libexec/atf-sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
 
 # The requirements audit traces production sources, so it needs a source tree
 # matching the installed suite (the validator looks beside the tests, then

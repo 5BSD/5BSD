@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 set -eu
 
 ledger=${1:-$(dirname "$0")/waspnest-nonvirtio-coverage.tsv}

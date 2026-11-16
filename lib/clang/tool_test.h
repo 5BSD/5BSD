@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef CLANG_TOOL_TEST_H
 #define CLANG_TOOL_TEST_H
 #include <sys/types.h>

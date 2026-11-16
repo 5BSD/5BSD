@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Trace Node.js garbage collection via USDT probes.
  * Usage: bsdinstruments watch node-gc --param pid=<node-pid>

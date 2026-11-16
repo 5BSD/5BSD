@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Binder reference tests, rewritten from Starnix binder_test.cc at
  * 8a938a3224e768f6254ee12d240b6492361ebccf. No Binder backend exists in

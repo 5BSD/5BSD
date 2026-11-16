@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Classify every generated profile/supplement normative requirement as COVERED,
 # UNCOVERED, or NOT-APPLICABLE, using the existing traceability matrix as the
 # coverage index.

@@ -1,6 +1,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Full-stack naming contracts for switchboard.  Managed programs come from the
 # build-time capd_service_fixture; naming.c state-machine unit tests belong in
 # the component layer.

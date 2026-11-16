@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Install qualification media onto an exclusive disposable disk, without a NIC.
 
 The media must run bsdinstall-software.conf and emit SOFTWARE_BSDINSTALL_PASS

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Freestanding amd64 Linux syscall test for pkey_alloc(2), pkey_free(2) and
  * pkey_mprotect(2): no Linux libc or sysroot required.  Exit status

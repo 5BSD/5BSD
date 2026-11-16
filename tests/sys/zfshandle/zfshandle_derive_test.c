@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * TrustedZFS derivation tests: DERIVE only narrows, OPENAT stays inside the
  * grant, subtree and snapshot-of-self semantics.
  */

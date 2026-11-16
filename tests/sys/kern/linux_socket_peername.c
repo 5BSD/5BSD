@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Run only in disposable Linux / FreeBSD Linux64 guests. */
 #include "linux_test.h"
 #define ENOPROTOOPT 92

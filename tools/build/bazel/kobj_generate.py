@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Run makeobjops with declared tools, preserving errors and stable provenance."""
 import os
 from pathlib import Path

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #include <stand.h>
 #include <crypto/sha2/sha256.h>
 #include "verified_root.h"

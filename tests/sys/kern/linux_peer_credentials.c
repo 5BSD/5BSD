@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Run only in disposable Linux or Linuxulator guests, initially as root. */
 #define _GNU_SOURCE
 #include <sys/socket.h>

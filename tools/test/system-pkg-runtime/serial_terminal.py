@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Answer absolute-position/DSR probes using the declared serial terminal size.
 
 This handles the standard cursor-to-bottom-right size probe, not a general screen

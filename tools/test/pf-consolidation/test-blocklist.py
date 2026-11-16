@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Exercise real helper scripts with controller/config paths redirected to fixtures.
 
 The fake pfctl answers in OpenBSD pfctl's formats (5BSD's pfctl is OpenBSD's):
