@@ -16,8 +16,9 @@
 #   -l  The ledger to read (default: sys/conf/test-options in the source
 #       tree this script belongs to, ../../sys/conf/test-options from its
 #       own directory).  It is read before anything is checked, wherever
-#       -l stands.  A ledger that is missing, unreadable, malformed or
-#       empty is a refusal: nothing is checked against a partial list.
+#       -l stands.  A ledger that is missing, unreadable, malformed,
+#       empty or a symbolic link is a refusal: nothing is checked against a
+#       partial list.
 #   -L  Print the ledger's rows as they are written, one per line, and
 #       check nothing.
 #
@@ -101,6 +102,8 @@ EOM
 # refusal.
 load_ledger()
 {
+	[ ! -L "$1" ] ||
+	    refuse "the test-kernel option ledger is a symbolic link: $1"
 	[ -f "$1" ] && [ -r "$1" ] ||
 	    refuse "the test-kernel option ledger cannot be read: $1"
 	: > "${work}/patterns"

@@ -200,52 +200,70 @@ config(const char *path)
  * kernel, which is never packaged or placed on media.  The ledger is read
  * from SOURCE when the plan is made, never compiled in: an installed
  * build-bsd older than the tree it builds still sees every option the tree
- * defines.  A ledger that is missing, unreadable or malformed is reported as
- * not-read.  Read the kernel configuration from every place config(8) could
- * take it or its includes from (--kernel-dir, sys/<target>/conf, sys/conf)
- * and report whether any ledger option is named in it: present, absent, or
- * not-read when any part of it could not be found or read.  A name counts
+ * defines.  It is read through the check script itself
+ * (release/scripts/check-test-kernel.sh -L), so the two never disagree about
+ * what the ledger holds.  A ledger the script refuses (missing, empty,
+ * malformed, a symbolic link) refuses packages and media plans at once;
+ * other plans report the configuration as not-read.  Read the kernel
+ * configuration from every place config(8) could take it or its includes
+ * from (--kernel-dir, sys/<target>/conf, sys/conf) and report whether any
+ * ledger option is named in it: present, absent, or not-read when any part
+ * of it could not be found or read.  A name counts
  * wherever it stands outside a comment, so nooptions does not lift it.  This
  * is an early refusal of a plain mistake.  The check that decides reads the
  * binaries: release/scripts/check-test-kernel.sh.  Neither says anything
  * about the boot chain of an installed system.
  */
 #define TEST_OPTION_LEDGER SOURCE "/sys/conf/test-options"
-#define TEST_OPTION_MAX 64
 #define KERNEL_TEST_CHECK SOURCE "/release/scripts/check-test-kernel.sh"
 enum kernel_option { KO_UNSCANNED, KO_ABSENT, KO_NOTREAD, KO_PRESENT };
 static enum kernel_option kernel_option;
 static const char *kernel_option_name;	/* the first ledger option found */
-static char *test_option[TEST_OPTION_MAX];
+static char **test_option;
 static size_t test_options;
+static char test_option_error[256];	/* why the ledger could not be read */
 static enum kernel_option kernel_option_file(const char *path,unsigned depth);
 /*
- * Read the option names from the ledger: one row per option, six fields
- * separated by "|"; the first is the option, the second live or reserved.
- * The rest is the check script's (release/scripts/check-test-kernel.sh,
- * which validates every field); a row this reader cannot take whole makes
- * the ledger unread.  Returns false when nothing may be concluded.
+ * The option names of the ledger, from "check-test-kernel.sh -l LEDGER -L":
+ * one row per line as the ledger writes it, the option first, every field
+ * already validated by the script.  Anything else (a refusal, a non-zero
+ * exit, no row, a line that is not a row) leaves the ledger unread, with
+ * the reason in test_option_error.  Returns false when nothing may be
+ * concluded.
  */
 static bool
 test_option_ledger(void)
 {
- char *line=NULL;size_t cap=0;ssize_t n;struct stat st;bool good=true;
- int fd=open(TEST_OPTION_LEDGER,O_RDONLY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC);FILE *fp;
- if(fd<0)return false;
- if(fstat(fd,&st)<0 || !S_ISREG(st.st_mode) || !(fp=fdopen(fd,"r"))){close(fd);return false;}
- while(good && (n=getline(&line,&cap,fp))>=0){
-  if((size_t)n!=strlen(line)){good=false;break;}
-  if(n && line[n-1]=='\n')line[--n]='\0';
-  if(!n || line[0]=='#')continue;
-  char *p=line,*field[6];size_t fields=0;
-  while(fields<nitems(field) && (field[fields]=strsep(&p,"|"))!=NULL)fields++;
-  if(fields!=nitems(field) || p!=NULL || !*field[0] || strspn(field[0],"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")!=strlen(field[0]) ||
-     (strcmp(field[1],"live") && strcmp(field[1],"reserved")) || test_options==TEST_OPTION_MAX){good=false;break;}
-  for(size_t i=0;i<test_options;i++)if(!strcmp(test_option[i],field[0]))good=false;
-  if(good && !(test_option[test_options++]=strdup(field[0])))err(1,"strdup");
+ int out[2];pid_t pid;int status;bool good=true;char *line=NULL;size_t cap=0;ssize_t n;FILE *fp;
+ test_option_error[0]='\0';
+ if(pipe2(out,O_CLOEXEC)<0)err(1,"pipe");
+ pid=fork();if(pid<0)err(1,"fork");
+ if(pid==0){
+  if(dup2(out[1],1)<0 || dup2(out[1],2)<0)_exit(126);
+  execl("/bin/sh","sh",KERNEL_TEST_CHECK,"-l",TEST_OPTION_LEDGER,"-L",(char *)NULL);
+  _exit(127);
  }
- if(ferror(fp) || !test_options)good=false;
+ close(out[1]);
+ if(!(fp=fdopen(out[0],"r")))err(1,"fdopen");
+ while((n=getline(&line,&cap,fp))>=0){
+  if(n && line[n-1]=='\n')line[--n]='\0';
+  size_t length=strcspn(line,"|");
+  if((size_t)n!=strlen(line) || !length || line[length]!='|' ||
+     strspn(line,"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")!=length){
+   if(good)snprintf(test_option_error,sizeof(test_option_error),"%s",line);
+   good=false;continue;
+  }
+  if(!good)continue;
+  char **grown=reallocarray(test_option,test_options+1,sizeof(*test_option));
+  if(!grown || !(grown[test_options]=strndup(line,length)))err(1,"test-kernel options");
+  test_option=grown;test_options++;
+ }
+ if(ferror(fp))good=false;
  free(line);fclose(fp);
+ while(waitpid(pid,&status,0)<0)if(errno!=EINTR)err(1,"waitpid");
+ if(!WIFEXITED(status) || WEXITSTATUS(status)!=0)good=false;
+ if(good && !test_options){good=false;snprintf(test_option_error,sizeof(test_option_error),"no option listed");}
+ if(!good && !test_option_error[0])snprintf(test_option_error,sizeof(test_option_error),"the check script failed");
  if(!good){while(test_options)free(test_option[--test_options]);}
  return good;
 }
@@ -486,7 +504,9 @@ validate(void)
    if(kernel_reconfigure_name)errx(1,"%s defines %s: the kernel would not be reconfigured, so its test-kernel options cannot be read; packages and media are refused",reconfigure,kernel_reconfigure_name);
    errx(1,"%s cannot be read, so whether it defines KERNFAST or NO_KERNELCONFIG is unknown; packages and media are refused",reconfigure);
   }
-  kernel_option=reconfigure?KO_NOTREAD:!test_option_ledger()?KO_NOTREAD:kernel_option_include(get("kernel"),0);
+  bool ledger=test_option_ledger();
+  if(!ledger && (request.packages || action("media")))errx(1,"the test-kernel option ledger %s cannot be read (%s): packages and media are refused",TEST_OPTION_LEDGER,test_option_error);
+  kernel_option=reconfigure || !ledger?KO_NOTREAD:kernel_option_include(get("kernel"),0);
   if(kernel_option==KO_PRESENT && (request.packages || action("media")))errx(1,"the kernel configuration carries options %s, a test-kernel option (%s): a test kernel is never packaged or placed on media, and there is no override",kernel_option_name,TEST_OPTION_LEDGER);
  }
  if(*get("pkg-key") && !request.packages)fail("--pkg-key applies only to build or packages");

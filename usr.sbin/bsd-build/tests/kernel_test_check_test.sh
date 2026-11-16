@@ -128,6 +128,11 @@ EOF
         ./check -l "$PWD/absent" -d good
     atf_check -s exit:1 -o empty -e match:'ledger cannot be read' \
         ./check -l "$PWD/tmp" -d good
+    ln -s "$ledger" linked
+    atf_check -s exit:1 -o empty -e match:'ledger is a symbolic link' \
+        ./check -l "$PWD/linked" -d good
+    atf_check -s exit:1 -o empty -e match:'ledger is a symbolic link' \
+        ./check -l "$PWD/linked" -L
     # The installed script has no source tree around it: no default ledger.
     atf_check -s exit:1 -o empty -e match:'ledger cannot be read' \
         ./raw "$script" -d good

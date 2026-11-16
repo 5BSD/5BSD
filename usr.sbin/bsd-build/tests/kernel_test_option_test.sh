@@ -505,6 +505,67 @@ ledger_options_body()
         -e empty ./plan packages --kernel NOTROW
 }
 
+atf_test_case ledger_unreadable cleanup
+ledger_unreadable_head()
+{
+    atf_set descr 'A ledger the check script refuses refuses packages and media plans; others read nothing'
+    atf_set require.user root
+    atf_set require.kmods nullfs
+    atf_set is.exclusive true
+}
+ledger_unreadable_body()
+{
+    setup
+    configuration PLAIN 'ident PLAIN' 'options FOO'
+    # Each crafted directory is mounted over /usr/src/sys/conf, where
+    # build-bsd reads the ledger through the check script.
+    m='test kernel: not for publication'
+    for kind in missing empty malformed symlink many; do
+        rm -rf crafted
+        mkdir crafted
+        case $kind in
+        missing) ;;
+        empty) printf '# only a comment\n' > crafted/test-options ;;
+        malformed) printf 'LG3|live|-|-|@(#)5BSD LG3 %s\n' "$m" > crafted/test-options ;;
+        symlink)
+            cp /usr/src/sys/conf/test-options real
+            ln -s "$PWD/real" crafted/test-options ;;
+        many)
+            # No row limit: the last of 200 rows is seen.
+            i=1
+            while [ $i -le 200 ]; do
+                printf 'LG3_%d|live|-|-|@(#)5BSD LG3_%d %s|-\n' $i $i "$m"
+                i=$((i + 1))
+            done > crafted/test-options ;;
+        esac
+        mount -t nullfs "$PWD/crafted" /usr/src/sys/conf ||
+            atf_fail "cannot mount the crafted $kind ledger"
+        if [ $kind = many ]; then
+            configuration LAST 'ident LAST' 'options LG3_200'
+            atf_check -s exit:1 -o empty \
+                -e match:'carries options LG3_200, a test-kernel option' \
+                ./plan packages --kernel LAST
+            atf_check -s exit:0 -o match:'kernel-test-option-configuration=absent ' \
+                -e empty ./plan packages --kernel PLAIN
+        else
+            for action in packages media; do
+                atf_check -s exit:1 -o empty \
+                    -e match:"test-kernel option ledger /usr/src/sys/conf/test-options cannot be read .*: packages and media are refused" \
+                    ./plan $action --kernel PLAIN
+            done
+            for action in kernel stage; do
+                atf_check -s exit:0 -o match:'kernel-test-option-configuration=not-read ' \
+                    -e empty ./plan $action --kernel PLAIN
+            done
+        fi
+        umount /usr/src/sys/conf || atf_fail 'cannot unmount the crafted ledger'
+    done
+}
+ledger_unreadable_cleanup()
+{
+    umount /usr/src/sys/conf 2>/dev/null || true
+}
+
 atf_test_case reconfigure_refused
 reconfigure_refused_head()
 {
@@ -571,6 +632,7 @@ atf_init_test_cases()
     atf_add_test_case hardware_check
     atf_add_test_case publish_refused
     atf_add_test_case ledger_options
+    atf_add_test_case ledger_unreadable
     atf_add_test_case reconfigure_refused
     atf_add_test_case kernel_configuration_directory
 }

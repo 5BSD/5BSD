@@ -1746,9 +1746,11 @@ test option, in
 .Pa GENERIC-TEST
 .Pc ,
 is a test kernel and is never published.
-The ledger is read from the source tree when the plan is made; it is
-not compiled into the tool, so an installed tool older than the tree
-still sees every option the tree defines.
+The ledger is read from the source tree when the plan is made, through
+.Pa /usr/src/release/scripts/check-test-kernel.sh Fl L ;
+it is not compiled into the tool, so an installed tool older than the
+tree still sees every option the tree defines, and the tool and the check
+read it alike.
 Two separate things keep it out, and plans and results name each by what
 was actually done.
 .Pp
@@ -1781,13 +1783,17 @@ or
 .Va NO_KERNELCONFIG :
 the kernel would not be reconfigured, so the configuration read would not
 be the one built.
+They are refused as well when the check script cannot read the ledger
+.Pq missing, empty, malformed or a symbolic link .
 The kernel_test_option_configuration field records
 .Cm absent ,
 .Cm present
 .Pq development actions only ,
 .Cm not-read
-when some part of the configuration or the ledger could not be found or
-read, or when a make or src configuration names
+when some part of the configuration could not be found or read, when the
+ledger could not be read
+.Pq Cm kernel No and Cm stage No only ,
+or when a make or src configuration names
 .Va KERNFAST
 or
 .Va NO_KERNELCONFIG
