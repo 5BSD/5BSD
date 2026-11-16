@@ -15,8 +15,11 @@
 #include <sys/module.h>
 #include <sys/capsicum.h>
 #include <sys/jail.h>
+#include <sys/lock.h>
+#include <sys/mutex.h>
 #include <sys/proc.h>
 #include <sys/ucred.h>
+#include <sys/vnode.h>
 
 #include <security/mac/mac_policy.h>
 
@@ -97,8 +100,8 @@ done:
  *
  * "Has a controlling terminal" is answered as /dev/tty answers it
  * (ctty_clone()) for a target process: P_CONTROLT, and a session that
- * still holds its terminal (s_ttyvp), read under the target's lock that
- * the MAC caller holds.  For the calling process only P_CONTROLT is
+ * still holds its terminal (s_ttyvp) and has not had it revoked, read
+ * under the target's lock that the MAC caller holds.  For the calling process only P_CONTROLT is
  * read, without its lock: the hook may hold another process's lock, so
  * the caller's process group, and the session through it, cannot be
  * held stable (setsid(2) in a sibling thread can free the old session).
@@ -136,7 +139,9 @@ abac_ctx_attrs_subject(struct abac_ctx_attrs *attrs, struct ucred *cred)
 void
 abac_ctx_attrs_object(struct abac_ctx_attrs *attrs, struct proc *p)
 {
-	struct pgrp *pg;
+	struct session *sp;
+	struct vnode *vp;
+	bool has_tty;
 
 	if (p == NULL) {
 		attrs->va_valid = false;
@@ -149,15 +154,25 @@ abac_ctx_attrs_object(struct abac_ctx_attrs *attrs, struct proc *p)
 	}
 	/*
 	 * The process lock keeps p_pgrp, and with it the session, stable.
-	 * The terminal is the session's while the session still holds it:
-	 * s_ttyvp is cleared when the session leader exits or gives the
-	 * terminal up (killjobc(), TIOCNOTTY), while the members keep
-	 * P_CONTROLT.  This is the test of /dev/tty (ctty_clone()).
+	 * The terminal is the session's while the session still holds it and
+	 * it has not been revoked: s_ttyvp is cleared when the session leader
+	 * exits or gives the terminal up (killjobc(), TIOCNOTTY), while the
+	 * members keep P_CONTROLT, and revoke(2) leaves it pointing at a
+	 * reclaimed vnode.  This is the test of /dev/tty (ctty_clone()).
+	 * s_ttyvp is cleared under the session mutex before its reference is
+	 * released, so the vnode can be read while the mutex is held; the
+	 * session mutex orders after the process lock.
 	 */
-	pg = p->p_pgrp;
-	abac_ctx_attrs_cred(attrs, p->p_ucred,
-	    (p->p_flag & P_CONTROLT) != 0 && pg != NULL &&
-	    atomic_load_ptr(&pg->pg_session->s_ttyvp) != NULL);
+	has_tty = false;
+	if ((p->p_flag & P_CONTROLT) != 0 && p->p_pgrp != NULL) {
+		sp = p->p_pgrp->pg_session;
+		SESS_LOCK(sp);
+		vp = sp->s_ttyvp;
+		has_tty = vp != NULL && vp->v_type != VBAD &&
+		    vp->v_rdev != NULL;
+		SESS_UNLOCK(sp);
+	}
+	abac_ctx_attrs_cred(attrs, p->p_ucred, has_tty);
 }
 
 /*

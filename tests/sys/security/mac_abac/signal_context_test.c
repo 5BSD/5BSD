@@ -139,6 +139,7 @@ check_context(const atf_tc_t *tc, uint32_t operation, int target_tty)
 	uint64_t before;
 	int gate[2], ready[2], status, priority, master = -1, slave = -1;
 	int ttyfd, first, last;
+	char ttypath[64];
 
 	if (strcmp(atf_tc_get_config_var_wd(tc, "disposable_vm", "no"), "yes") != 0)
 		atf_tc_skip("requires explicit disposable_vm=yes; affected kernels may panic");
@@ -164,7 +165,9 @@ check_context(const atf_tc_t *tc, uint32_t operation, int target_tty)
 		ATF_REQUIRE(grantpt(master) == 0);
 		ATF_REQUIRE(unlockpt(master) == 0);
 		ATF_REQUIRE(ptsname(master) != NULL);
-		slave = open(ptsname(master), O_RDWR | O_NOCTTY);
+		ATF_REQUIRE(strlcpy(ttypath, ptsname(master), sizeof(ttypath)) <
+		    sizeof(ttypath));
+		slave = open(ttypath, O_RDWR | O_NOCTTY);
 		ATF_REQUIRE(slave >= 0);
 	}
 	child = fork();
@@ -179,6 +182,16 @@ check_context(const atf_tc_t *tc, uint32_t operation, int target_tty)
 				close(master);
 				if (ioctl(slave, TIOCSCTTY, NULL) == -1)
 					_exit(11);
+			}
+			if (target_tty == 3) {
+				/*
+				 * The session keeps the terminal, but it has
+				 * been revoked: s_ttyvp is a reclaimed vnode.
+				 */
+				signal(SIGHUP, SIG_IGN);
+				close(slave);
+				if (revoke(ttypath) == -1)
+					_exit(16);
 			}
 			if (target_tty == 2) {
 				/*
@@ -454,6 +467,34 @@ ORPHAN_TTY_CASE(signal_target_orphaned_tty, ABAC_OP_SIGNAL);
 ORPHAN_TTY_CASE(wait_target_orphaned_tty, ABAC_OP_WAIT);
 
 /*
+ * A session whose terminal was revoked (revoke(2)) still holds a vnode for
+ * it, but /dev/tty does not open: an object "tty" constraint must see no
+ * terminal.
+ */
+#define	REVOKED_TTY_CASE(name, operation)				\
+ATF_TC_WITH_CLEANUP(name);						\
+ATF_TC_HEAD(name, tc)							\
+{									\
+	atf_tc_set_md_var(tc, "descr",					\
+	    "target whose terminal was revoked has no terminal");	\
+	atf_tc_set_md_var(tc, "require.user", "root");			\
+	atf_tc_set_md_var(tc, "require.kmods", "mac_abac");		\
+	atf_tc_set_md_var(tc, "is.exclusive", "true");			\
+	atf_tc_set_md_var(tc, "timeout", "30");				\
+}									\
+ATF_TC_BODY(name, tc)							\
+{									\
+	check_context(tc, operation, 3);				\
+}									\
+ATF_TC_CLEANUP(name, tc)						\
+{									\
+	(void)tc;							\
+	cleanup_rule();							\
+}
+
+REVOKED_TTY_CASE(signal_target_revoked_tty, ABAC_OP_SIGNAL);
+
+/*
  * Two processes signal each other under a rule with a subject "tty"
  * constraint, optionally while the rule lock is taken as a writer.  The process
  * hooks run with the target's process lock held; a rule engine that took
@@ -717,6 +758,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, wait_target_with_tty);
 	ATF_TP_ADD_TC(tp, signal_target_orphaned_tty);
 	ATF_TP_ADD_TC(tp, wait_target_orphaned_tty);
+	ATF_TP_ADD_TC(tp, signal_target_revoked_tty);
 	ATF_TP_ADD_TC(tp, signal_mutual_subject_tty);
 	ATF_TP_ADD_TC(tp, signal_mutual_rule_updates);
 	return (atf_no_error());

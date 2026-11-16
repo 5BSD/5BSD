@@ -3,7 +3,7 @@
 .\" Copyright (c) 2026 Kory Heard
 .\" All rights reserved.
 .\"
-.Dd September 4, 2026
+.Dd November 16, 2026
 .Dt MAC_ABAC 4
 .Os
 .Sh NAME
@@ -119,11 +119,13 @@ wait operations).
 .Pp
 A target process has a controlling terminal when
 .Pa /dev/tty
-would open for it: it acquired the terminal of its session
-and the session still holds it.
-For the calling process the test is the first half only: a process whose
+would open for it: it acquired the terminal of its session,
+the session still holds it, and the terminal has not been revoked with
+.Xr revoke 2 .
+For the calling process the test is the first part only: a process whose
 session leader has exited, or has given the terminal up with
 .Dv TIOCNOTTY ,
+or whose terminal was revoked,
 keeps counting as having a controlling terminal in subject context,
 although
 .Pa /dev/tty
