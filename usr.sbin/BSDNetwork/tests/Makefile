@@ -175,4 +175,7 @@ FIDL_FLAGS.networkcmp_next=	--available bsd:2
 
 .PATH: ${.CURDIR}/evolution
 
+# freebsd_test_suite/capability_tier.h: skips that name their VM tier.
+CFLAGS+=	-I${SRCTOP}/tests
+
 .include <bsd.test.mk>

@@ -22,6 +22,7 @@
 #include <libservice.h>
 #include <sysctlcmp.h>
 
+#include "freebsd_test_suite/capability_tier.h"
 #include "config.h"
 #include "bsdsysctl_test.h"
 
@@ -54,8 +55,7 @@ require_plane(void)
 
 	fd = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
 	if (fd < 0)
-		atf_tc_skip("plane device /dev/mac_capability unavailable: %s",
-		    strerror(errno));
+		capability_plane_skip(errno);
 	close(fd);
 }
 

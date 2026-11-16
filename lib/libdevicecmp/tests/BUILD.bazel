@@ -2,7 +2,7 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
 [cc_binary(name = name, srcs = [name + ".c"],
-    deps = ["//lib/atf/libatf-c:atf_c", "//lib/libdevicecmp:devicecmp", "//lib/libdevicecmp:generated_headers",
+    deps = ["//tests:capability_tier", "//lib/atf/libatf-c:atf_c", "//lib/libdevicecmp:devicecmp", "//lib/libdevicecmp:generated_headers",
         "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libthr:thr", "//lib/libservice:service"] +
         (["//lib/libdevicecmp:client_source_headers"] if name == "client_protocol_test" else []),
     linkstatic = True, linkopts = ["-static"])

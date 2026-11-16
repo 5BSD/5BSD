@@ -26,6 +26,8 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "freebsd_test_suite/capability_tier.h"
+
 static int fake_service_open(const char *, int *);
 #define service_open fake_service_open
 #include "../devicecmp.c"
@@ -203,8 +205,7 @@ setup(void)
 	int fd = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
 
 	if (fd < 0)
-		atf_tc_skip("capability plane unavailable: %s",
-		    strerror(errno));
+		capability_plane_skip(errno);
 	close(fd);
 	script = mmap(NULL, sizeof(*script), PROT_READ | PROT_WRITE,
 	    MAP_ANON | MAP_SHARED, -1, 0);

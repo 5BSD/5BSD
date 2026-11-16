@@ -250,15 +250,34 @@ image serves both, rebuilt with or without `CAPLANE_OFF=1`.
 plane-on run is the standard one. Its isolation cases that expect the policy
 to refuse an access (all of `mac_capability_isolation_test`'s denial cases
 and `mac_capability_system_test:sysctl_isolation_union_and_subtract`) call
-`require_isolation_enforced()` and skip there, naming
-`kern.mac_capability_isolation.enforce=0`, because that tier's test mode only
-traces such denials. They run in the enforced tier, the same command with
+`require_isolation_enforced()` and skip there with the token
+`DEFERRED_ENFORCED_TIER`, naming `kern.mac_capability_isolation.enforce=0`,
+because that tier's test mode only traces such denials.  The runner counts
+them in a `DEFERRED_TO_ENFORCED_TIER=N` line: a plane-on result for this
+suite is incomplete until the same stage and suites have also passed in the
+enforced tier. They run in the enforced tier, the same command with
 `PLANE_OFF=1`: the runner boots `capability_plane="NO"` with
 `kern.mac_capability_isolation.enforce=1` (the plane-off default of
 `ISOLATION_ENFORCE`) and reports `PLANEOFF_READY` only if the booted value
 is the one asked for. The enforced tier is an addition to the plane-on run,
-never a substitute: run both. Enforcing with the plane on is not a tier;
-Capsule's claim then refuses the test its own `/dev/mac_capability`.
+never a substitute: run both.
+
+The production combination, plane on with the policy enforcing, is the third
+tier: `ISOLATION_ENFORCE=1` without `PLANE_OFF`.  The gate then checks that
+root cannot open the claimed `/dev/mac_capability`.  What this tier proves is
+that providers, switchboard and the integration suites work as deployed; run
+it with those suites (for example `usr.sbin/switchboard usr.sbin/BSDLog
+usr.sbin/BSDNotify sys/dq/dq_bootstrap_test`).  `tests/sys/mac_capability`
+drives the device itself and is not part of it.  A case of a deployed-tier
+suite that needs the device skips with `DEFERRED_DEVICE_TIER`, counted as
+`DEFERRED_TO_DEVICE_TIER=N`: it runs in the plane-on test tier.  Cases that
+start a test-local Capsule and switchboard skip with any plane on as
+`DEFERRED_PLANEOFF_TIER` (`DEFERRED_TO_PLANEOFF_TIER=N`).  They need a
+plane-off guest whose kernel lets a test-local Capsule create the protected
+authority issuer (the `MAC_CAPABILITY_TEST_RELAX` option and
+`kern.mac_capability.test_relax=1` that `capd_test_harness.sh` names), which
+the tree does not provide yet; plane-off on GENERIC their units never launch.
+Until it exists they are not covered by any tier.
 The runner's own checks (the tier selection and gate above, the stage root
 metadata preflight, the extra-script status) are shell scripts under
 `tools/build/fuchsia/tests/`; `make -C tools/build/fuchsia check-runner`

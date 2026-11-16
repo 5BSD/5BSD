@@ -74,6 +74,7 @@
 set -eu
 
 usage() { sed -n '7,/^set -eu/p' "$0" | sed -e '/^set -eu/d' -e 's/^# \{0,1\}//' >&2; exit 64; }
+die() { echo "vm-provider: $*" >&2; exit 2; }
 [ $# -ge 3 ] && [ $# -le 4 ] || usage
 stage=$1 work=$2 suites=$3 timeout=${4:-10800}
 # First runnable emulator: $QEMU, the local build carrying the X86Access
@@ -123,7 +124,6 @@ fi
 cpus=${CPUS:-4} mem=${MEM_MB:-8192} par=${PARALLELISM:-1} gate=${GATE_TIMEOUT:-600}
 units=${REQUIRE_UNITS:-system.Log/bsdlog system.Network/bsdnetwork system.Trace/bsdtrace system.Filesystem/bsdfilesystem system.Audit/bsdaudit system.Time/bsdtime system.SystemExtension/bsdextension system.Notify/bsdnotify system.Device/bsddevice system.Power/bsdpower system.Sysctl/bsdsysctl system.Crypto/bsdcrypto}
 
-die() { echo "vm-provider: $*" >&2; exit 2; }
 isnum() { case $1 in ''|*[!0-9]*) return 1;; esac; [ "$1" -gt 0 ]; }
 for n in "$timeout" "$cpus" "$mem" "$par" "$gate"; do isnum "$n" || die "not a positive integer: $n"; done
 case $suites in *[!A-Za-z0-9_./:\ -]*|'') die "suite list may only contain [A-Za-z0-9_./:-] and spaces";; esac
@@ -620,5 +620,18 @@ echo "qemu_exit=$rc forced=$forced guest_poweroff=$guest_off"
 tr -d '\r' < "$log" | grep -aE '^(PLANEON_GATE|PLANEOFF|KYUA_SUMMARY|PLANEON_PID1|PLANEON_ISOLATION|BSDTIME)' || true
 nskip=$(tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c ' -> ' || true)
 echo "skipped=$nskip (a skip in a plane-on suite is not a pass; see KYUA_SKIPPED_LIST in $log)"
+# Cases that named the tier they belong to: the run is not complete without
+# a run of the same stage and suites in that tier.
+for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER; do
+	ndefer=$(tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c "$token" || true)
+	[ "$ndefer" -eq 0 ] || case $token in
+	DEFERRED_ENFORCED_TIER)
+		echo "DEFERRED_TO_ENFORCED_TIER=$ndefer (run PLANE_OFF=1 with the same stage and suites; not a pass)";;
+	DEFERRED_PLANEOFF_TIER)
+		echo "DEFERRED_TO_PLANEOFF_TIER=$ndefer (test-local stacks: need PLANE_OFF=1 and a kernel that lets a test-local Capsule issue authority, which the tree does not provide yet; not a pass)";;
+	*)
+		echo "DEFERRED_TO_DEVICE_TIER=$ndefer (run without ISOLATION_ENFORCE=1 with the same stage and suites; not a pass)";;
+	esac
+done
 echo "$verdict"
 [ "$verdict" = VM_CLEAN ]

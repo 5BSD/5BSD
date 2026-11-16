@@ -79,9 +79,10 @@ require_isolation_enforced(void)
 		    strerror(errno));
 	}
 	if (enforce == 0)
-		atf_tc_skip("kern.mac_capability_isolation.enforce=0: the "
-		    "isolation policy allows what this case expects it to "
-		    "refuse; it runs in the enforced (plane-off) tier");
+		atf_tc_skip("DEFERRED_ENFORCED_TIER: "
+		    "kern.mac_capability_isolation.enforce=0: the isolation "
+		    "policy allows what this case expects it to refuse; it "
+		    "runs in the enforced (plane-off) tier");
 }
 
 #endif /* _MAC_CAPABILITY_TEST_HELPERS_H_ */

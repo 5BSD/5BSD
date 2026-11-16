@@ -4,7 +4,7 @@ load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
 # Keep installed linkage identical to Make; only runtime variants use local RPATH.
 [cc_binary(name = name + suffix,
     srcs = [name + ".c", "//usr.sbin/BSDNetwork:policy.c"] + (["//usr.sbin/BSDNetwork:config.c"] if name == "config_test" else []),
-    deps = ["//usr.sbin/BSDNetwork:config_headers", "//lib/atf/libatf-c:atf_c"] + (["//lib/libucl:ucl"] if name == "config_test" else []),
+    deps = ["//tests:capability_tier", "//usr.sbin/BSDNetwork:config_headers", "//lib/atf/libatf-c:atf_c"] + (["//lib/libucl:ucl"] if name == "config_test" else []),
     dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"] + (["//lib/libucl:ucl_shared"] if name == "config_test" else []),
     copts = ["-fPIE"], linkopts = ["-pie"] + (["-Wl,--disable-new-dtags,-rpath,$ORIGIN"] if suffix else []))
  for name in ["config_test", "policy_test"] for suffix in ["", "_runtime"]]
@@ -22,15 +22,15 @@ load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
  for name in ["config_test", "policy_test"]]
 
 cc_binary(name = "resolver_test", srcs = ["resolver_test.c"],
-    deps = ["//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDNetwork:resolver_headers", "//lib/libfilesystemcmp:filesystemcmp", "//lib/libservice:service"],
+    deps = ["//tests:capability_tier", "//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDNetwork:resolver_headers", "//lib/libfilesystemcmp:filesystemcmp", "//lib/libservice:service"],
     dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libfilesystemcmp:filesystemcmp_shared", "//lib/libservice:service_shared"],
     copts = ["-fPIE"], linkopts = ["-pie"])
 cc_binary(name = "resolver_recovery_test", srcs = ["resolver_recovery_test.c"],
-    deps = ["//usr.sbin/BSDNetwork:resolver_headers", "//lib/atf/libatf-c:atf_c"],
+    deps = ["//tests:capability_tier", "//usr.sbin/BSDNetwork:resolver_headers", "//lib/atf/libatf-c:atf_c"],
     dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
     copts = ["-fPIE", "-ffunction-sections", "-fdata-sections"], linkopts = ["-pie", "-Wl,--gc-sections"])
 cc_binary(name = "provider_test", srcs = ["provider_test.c", "//usr.sbin/BSDNetwork:networkcmp.c", "//usr.sbin/BSDNetwork:config.c", "//usr.sbin/BSDNetwork:policy.c", "//usr.sbin/BSDNetwork:resolver.c"],
-    deps = ["//usr.sbin/BSDNetwork:provider_test_headers", "//lib/libauditcmp:auditcmp", "//lib/libchannel:channel", "//lib/libfidl:fidl", "//lib/libnetworkcmp:networkcmp", "//lib/libnetworkcmp:generated_headers", "//lib/libthr:thr", "//lib/libfilesystemcmp:filesystemcmp", "//lib/libservice:service", "//lib/libucl:ucl", "//lib/atf/libatf-c:atf_c", "//sys/dev/mac_capability:channel_headers", "//sys/dev/mac_capability:ioctl_headers", "//lib/liblogcmp:headers"],
+    deps = ["//tests:capability_tier", "//usr.sbin/BSDNetwork:provider_test_headers", "//lib/libauditcmp:auditcmp", "//lib/libchannel:channel", "//lib/libfidl:fidl", "//lib/libnetworkcmp:networkcmp", "//lib/libnetworkcmp:generated_headers", "//lib/libthr:thr", "//lib/libfilesystemcmp:filesystemcmp", "//lib/libservice:service", "//lib/libucl:ucl", "//lib/atf/libatf-c:atf_c", "//sys/dev/mac_capability:channel_headers", "//sys/dev/mac_capability:ioctl_headers", "//lib/liblogcmp:headers"],
     local_defines = ["NETWORKCMP_TESTING"], linkstatic = True, linkopts = ["-static"])
 bsd_kyua_test(name = "provider_test_run", program = ":provider_test", interface = "atf",
     tags = ["manual", "requires-matching-kernel"],
@@ -39,7 +39,7 @@ bsd_kyua_test(name = "provider_test_run", program = ":provider_test", interface 
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"], size = "medium", visibility = ["//visibility:public"])
 
 [cc_binary(name = name, srcs = [name + ".c"],
-    deps = ["//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDNetwork:state_test_headers",
+    deps = ["//tests:capability_tier", "//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDNetwork:state_test_headers",
         "//lib/libnetworkcmp:networkcmp", "//lib/libnetworkcmp:generated_headers", "//lib/libfidl:fidl",
         "//lib/libnotify:notify", "//lib/libchannel:channel", "//lib/libfilesystemcmp:filesystemcmp",
         "//lib/libservice:service", "//lib/libthr:thr"] +
@@ -55,7 +55,7 @@ bsd_kyua_test(name = "provider_test_run", program = ":provider_test", interface 
  for name in ["state_test", "state_plane_test", "state_sampler_test"]]
 
 [cc_binary(name = name, srcs = [name + ".c", "//usr.sbin/BSDNetwork:config.c", "//usr.sbin/BSDNetwork:policy.c", "//usr.sbin/BSDNetwork:resolver.c"],
-    deps = ["//usr.sbin/BSDNetwork:provider_test_headers", "//lib/libauditcmp:auditcmp", "//lib/libchannel:channel", "//lib/libfidl:fidl", "//lib/libnetworkcmp:networkcmp", "//lib/libnetworkcmp:generated_headers", "//lib/libthr:thr", "//lib/libfilesystemcmp:filesystemcmp", "//lib/libservice:service", "//lib/libucl:ucl", "//lib/atf/libatf-c:atf_c", "//sys/dev/mac_capability:channel_headers", "//sys/dev/mac_capability:ioctl_headers", "//lib/liblogcmp:headers"],
+    deps = ["//tests:capability_tier", "//usr.sbin/BSDNetwork:provider_test_headers", "//lib/libauditcmp:auditcmp", "//lib/libchannel:channel", "//lib/libfidl:fidl", "//lib/libnetworkcmp:networkcmp", "//lib/libnetworkcmp:generated_headers", "//lib/libthr:thr", "//lib/libfilesystemcmp:filesystemcmp", "//lib/libservice:service", "//lib/libucl:ucl", "//lib/atf/libatf-c:atf_c", "//sys/dev/mac_capability:channel_headers", "//sys/dev/mac_capability:ioctl_headers", "//lib/liblogcmp:headers"],
  linkstatic = True, linkopts = ["-static"])
  for name in ["coalesce_test", "connect_deadline_test"]]
 
@@ -83,20 +83,20 @@ filegroup(name = "next_header_files", srcs = [":next_bindings"], output_group = 
 cc_library(name = "next_headers", hdrs = [":next_header_files"], strip_include_prefix = "next_bindings")
 # Make links all three generated objects directly into this standalone peer.
 cc_library(name = "next_codec", srcs = [":next_sources"],
-    deps = [":next_headers", "//lib/libfidl:headers", "//contrib/llvm-project/libcxx/include:headers"],
+    deps = ["//tests:capability_tier", ":next_headers", "//lib/libfidl:headers", "//contrib/llvm-project/libcxx/include:headers"],
     copts = ["-std=c++20", "-nostdinc++"], linkstatic = True, alwayslink = True)
 # The newer peer must never inherit the production bsd:1 generated headers.
 cc_binary(name = "next_peer", srcs = ["evolution/next_peer.c"],
-    deps = [":next_headers", ":next_codec", "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libc++:cxx"],
+    deps = ["//tests:capability_tier", ":next_headers", ":next_codec", "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libc++:cxx"],
     linkopts = ["-static"], linkstatic = True)
 
 cc_binary(name = 'evolution_test', srcs = ['evolution_test.c', 'evolution_test_provider.c', '//usr.sbin/BSDNetwork:config.c', '//usr.sbin/BSDNetwork:policy.c', '//usr.sbin/BSDNetwork:resolver.c'],
-    deps = ['//usr.sbin/BSDNetwork:provider_test_headers', '//lib/libnetworkcmp:test_source_headers', '//lib/liblogcmp:headers', '//lib/libauditcmp:auditcmp', '//lib/libchannel:channel', '//lib/libfidl:fidl', '//lib/libnetworkcmp:networkcmp', '//lib/libfilesystemcmp:filesystemcmp', '//lib/libservice:service', '//lib/libucl:ucl', '//lib/libthr:thr', '//lib/atf/libatf-c:atf_c'],
+    deps = ["//tests:capability_tier", '//usr.sbin/BSDNetwork:provider_test_headers', '//lib/libnetworkcmp:test_source_headers', '//lib/liblogcmp:headers', '//lib/libauditcmp:auditcmp', '//lib/libchannel:channel', '//lib/libfidl:fidl', '//lib/libnetworkcmp:networkcmp', '//lib/libfilesystemcmp:filesystemcmp', '//lib/libservice:service', '//lib/libucl:ucl', '//lib/libthr:thr', '//lib/atf/libatf-c:atf_c'],
     local_defines = ["NETWORKCMP_TESTING"],
     linkstatic = True, linkopts = ["-static"])
 
 cc_binary(name = 'latency_bench', srcs = ['latency_bench.c', 'latency_bench_provider.c', '//usr.sbin/BSDNetwork:config.c', '//usr.sbin/BSDNetwork:policy.c', '//usr.sbin/BSDNetwork:resolver.c'],
-    deps = ['//usr.sbin/BSDNetwork:provider_test_headers', '//lib/libnetworkcmp:test_source_headers', '//lib/liblogcmp:headers', '//lib/libauditcmp:auditcmp', '//lib/libchannel:channel', '//lib/libfidl:fidl', '//lib/libnetworkcmp:networkcmp', '//lib/libfilesystemcmp:filesystemcmp', '//lib/libservice:service', '//lib/libucl:ucl', '//lib/libthr:thr', '//tools/build/fuchsia:daemon_bench_headers'],
+    deps = ["//tests:capability_tier", '//usr.sbin/BSDNetwork:provider_test_headers', '//lib/libnetworkcmp:test_source_headers', '//lib/liblogcmp:headers', '//lib/libauditcmp:auditcmp', '//lib/libchannel:channel', '//lib/libfidl:fidl', '//lib/libnetworkcmp:networkcmp', '//lib/libfilesystemcmp:filesystemcmp', '//lib/libservice:service', '//lib/libucl:ucl', '//lib/libthr:thr', '//tools/build/fuchsia:daemon_bench_headers'],
     local_defines = ["NETWORKCMP_TESTING"],
     dynamic_deps = ['//lib/libauditcmp:auditcmp_shared', '//lib/libchannel:channel_shared', '//lib/libfidl:fidl_shared', '//lib/libnetworkcmp:networkcmp_shared', '//lib/libfilesystemcmp:filesystemcmp_shared', '//lib/libservice:service_shared', '//lib/libucl:ucl_shared', '//lib/libthr:thr_shared'],
     copts = ["-fPIE"], linkopts = ["-pie"])
@@ -108,14 +108,14 @@ bsd_kyua_test(name = "evolution_test_run", program = ":evolution_test", interfac
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"], size = "medium", visibility = ["//visibility:public"])
 
 cc_binary(name = "worker_test", srcs = ["worker_test.c", "//lib/libservice:service_runtime.c"],
-    deps = ["//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDNetwork:provider_test_headers",
+    deps = ["//tests:capability_tier", "//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDNetwork:provider_test_headers",
         "//lib/libnetworkcmp:headers", "//lib/libnetworkcmp:generated_headers", "//lib/libfidl:headers",
         "//lib/libauditcmp:headers", "//lib/libchannel:headers", "//lib/liblogcmp:headers",
         "//lib/libnotify:headers", "//lib/libsysctlcmp:headers",
         "//lib/libservice:runtime_source_headers", "//lib/libfilesystemcmp:filesystemcmp", "//lib/libservice:service"],
     copts = ["-ffunction-sections", "-fdata-sections"], linkstatic = True, linkopts = ["-static", "-Wl,--gc-sections"])
 cc_binary(name = "pf_test", srcs = ["pf_test.c", "//usr.sbin/BSDNetwork:pf_session.c"],
-    deps = ["//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDNetwork:provider_test_headers", "//lib/libnetworkcmp:test_source_headers",
+    deps = ["//tests:capability_tier", "//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDNetwork:provider_test_headers", "//lib/libnetworkcmp:test_source_headers",
         "//lib/libauditcmp:auditcmp", "//lib/libchannel:channel", "//lib/libfidl:fidl", "//lib/libnetworkcmp:networkcmp",
         "//lib/libfilesystemcmp:filesystemcmp", "//lib/libservice:service", "//lib/libucl:ucl", "//lib/libthr:thr",
         "//sys/dev/mac_capability:channel_headers", "//sys/dev/mac_capability:ioctl_headers"],

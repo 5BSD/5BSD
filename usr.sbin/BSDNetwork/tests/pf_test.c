@@ -36,6 +36,8 @@
 #include <libservice.h>
 #include <networkcmp.h>
 
+#include "freebsd_test_suite/capability_tier.h"
+
 static int test_client_fd = -1;
 
 static int
@@ -61,8 +63,7 @@ capability_connect(const char *name)
 
 	control = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
 	if (control < 0)
-		atf_tc_skip("capability plane unavailable: /dev/mac_capability: "
-		    "%s", strerror(errno));
+		capability_plane_skip(errno);
 	memset(&connect, 0, sizeof(connect));
 	strlcpy(connect.name, name, sizeof(connect.name));
 	if (ioctl(control, MAC_CAPABILITY_CONNECT, &connect) == -1) {

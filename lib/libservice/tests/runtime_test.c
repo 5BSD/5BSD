@@ -143,6 +143,77 @@ ATF_TC_BODY(listener_wait, tc)
 	close(fds[1]);
 	close(kq);
 }
+struct activation_mock {
+	int	failures;	/* attempts that fail before success; -1 never */
+	int	error;		/* errno of a failing attempt */
+	unsigned delay_ms;	/* time a failing attempt takes */
+	int	calls;
+};
+
+static int
+activation_attempt(void *arg)
+{
+	struct activation_mock *m = arg;
+
+	m->calls++;
+	if (m->failures >= 0 && m->calls > m->failures)
+		return (0);
+	if (m->delay_ms != 0)
+		usleep(m->delay_ms * 1000);
+	errno = m->error;
+	return (-1);
+}
+
+ATF_TC(activation_retry);
+ATF_TC_HEAD(activation_retry, tc)
+{
+	atf_tc_set_md_var(tc, "timeout", "120");
+}
+ATF_TC_BODY(activation_retry, tc)
+{
+	struct activation_mock m;
+	uint64_t start, elapsed;
+	const uint32_t bound = 2000;
+
+	/* Timeouts are repeated until the provider answers. */
+	m = (struct activation_mock){ .failures = 3, .error = ETIMEDOUT };
+	ATF_CHECK_EQ(0, service_retry_activation(activation_attempt, &m, bound));
+	ATF_CHECK_EQ(4, m.calls);
+
+	/* Any other error is final, with its errno. */
+	m = (struct activation_mock){ .failures = -1, .error = ENOENT };
+	ATF_CHECK_EQ(-1, service_retry_activation(activation_attempt, &m, bound));
+	ATF_CHECK_EQ(ENOENT, errno);
+	ATF_CHECK_EQ(1, m.calls);
+
+	/*
+	 * Attempts that fail only after nearly their bound: none is started
+	 * that could end after the activation bound plus one attempt.
+	 */
+	m = (struct activation_mock){ .failures = -1, .error = ETIMEDOUT,
+	    .delay_ms = bound - 100 };
+	start = service_monotime_ms();
+	ATF_CHECK_EQ(-1, service_retry_activation(activation_attempt, &m, bound));
+	ATF_CHECK_EQ(ETIMEDOUT, errno);
+	elapsed = service_monotime_ms() - start;
+	ATF_CHECK_MSG(elapsed <= SERVICE_ACTIVATION_WAIT_MS(bound) + 200,
+	    "gave up after %ju ms", (uintmax_t)elapsed);
+	ATF_CHECK_MSG(elapsed >= SERVICE_ACTIVATION_TIMEOUT_MS -
+	    SERVICE_ACTIVATION_RETRY_PAUSE_MS,
+	    "gave up early, after %ju ms", (uintmax_t)elapsed);
+
+	/* Attempts that time out at once are paced, not spun. */
+	m = (struct activation_mock){ .failures = -1, .error = ETIMEDOUT };
+	ATF_CHECK_EQ(-1, service_retry_activation(activation_attempt, &m, bound));
+	ATF_CHECK_MSG(m.calls <= (int)(SERVICE_ACTIVATION_WAIT_MS(bound) /
+	    SERVICE_ACTIVATION_RETRY_PAUSE_MS) + 1, "%d attempts", m.calls);
+
+	ATF_CHECK_EQ(-1, service_retry_activation(NULL, &m, bound));
+	ATF_CHECK_EQ(EINVAL, errno);
+	ATF_CHECK_EQ(-1, service_retry_activation(activation_attempt, &m, 0));
+	ATF_CHECK_EQ(EINVAL, errno);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, retry_and_health);
@@ -150,5 +221,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, drain_deadline);
 	ATF_TP_ADD_TC(tp, budget_scope);
 	ATF_TP_ADD_TC(tp, listener_wait);
+	ATF_TP_ADD_TC(tp, activation_retry);
 	return (atf_no_error());
 }

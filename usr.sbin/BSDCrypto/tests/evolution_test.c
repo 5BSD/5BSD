@@ -22,6 +22,7 @@
 
 #include <cryptocmp.h>
 
+#include "freebsd_test_suite/capability_tier.h"
 #include "bsdcrypto_test.h"
 
 static pid_t
@@ -63,8 +64,7 @@ require_plane(void)
 {
 	int fd = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
 	if (fd < 0)
-		atf_tc_skip("capability plane unavailable: %s",
-		    strerror(errno));
+		capability_plane_skip(errno);
 	close(fd);
 }
 

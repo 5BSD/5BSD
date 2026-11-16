@@ -17,6 +17,7 @@
 #include <libservice.h>
 #include <service_runtime.h>
 #include <powercmp.h>
+#include "freebsd_test_suite/capability_tier.h"
 #include "config.h"
 #include "BSDPower_test.h"
 
@@ -83,7 +84,8 @@ channel_pair(int *client, int *provider)
 	struct mac_capability_recvmsg_args receive = { 0 };
 	uint32_t operation = CHANNEL_OP_CREATE;
 	int control = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
-	ATF_REQUIRE(control >= 0);
+	if (control < 0)
+		capability_plane_skip(errno);
 	strlcpy(connect.name, "channel", sizeof(connect.name));
 	ATF_REQUIRE_EQ(0, ioctl(control, MAC_CAPABILITY_CONNECT, &connect));
 	close(control);

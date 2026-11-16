@@ -1169,9 +1169,11 @@ main(void)
 
 	/*
 	 * Self-harden the long-lived accept/fork parent.  It must still pdfork
-	 * workers and receive connection descriptors, so NOFORK/NOFDRECV are not
-	 * applied; NOPRIVS is safe because the scoped bootstrap control is
-	 * already present (mirrors bsdnetwork's parent protect mask).
+	 * workers, so NOFORK is not applied; NOPRIVS is safe because the scoped
+	 * bootstrap control is already present (mirrors bsdnetwork's parent
+	 * protect mask).  NOFDRECV would not stop the connection descriptors it
+	 * receives over its capability channels (mac_capability_capprotect(4));
+	 * applying it here is left to a change that tests it.
 	 */
 	STARTUP_CHECK(control_fd, 13);
 	STARTUP_CHECK(harden_control_descriptor(false), 14);

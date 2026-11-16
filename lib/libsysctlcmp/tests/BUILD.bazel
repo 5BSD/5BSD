@@ -2,7 +2,7 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
 [cc_binary(name = name, srcs = [name + ".c"] + (["//lib/libsysctlcmp:sysctlcmp_legacy.c"] if name == "sysctlcmp_test" else []),
-    deps = ["//lib/libsysctlcmp:sysctlcmp", "//lib/libsysctlcmp:generated_headers", "//lib/libfidl:fidl",
+    deps = ["//tests:capability_tier", "//lib/libsysctlcmp:sysctlcmp", "//lib/libsysctlcmp:generated_headers", "//lib/libfidl:fidl",
         "//lib/libchannel:channel", "//lib/libservice:service", "//lib/atf/libatf-c:atf_c"],
     linkstatic = True, linkopts = ["-static"])
  for name in ["sysctlcmp_test", "client_strings_test"]]
