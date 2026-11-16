@@ -12,17 +12,51 @@ concurrent_rules_exec_paths_changes_head()
 {
     atf_set descr "Consistency of rules and exec paths changes on same jail"
 }
+
+# Write knob to v1, then to v2, and check that each write reads back.  One
+# sysctl(8) does it all: after each assignment it reads the knob again and
+# prints "name: old -> new".  The previous per-step atf-check(1), sed(1) and
+# sysctl(8) processes (nine execs a step) made the 2 x 1000 steps take about
+# 550 s in a 2-vCPU TCG guest (about 26 execs/s, steady progress, no thread
+# stuck in the kernel), past the 300 s timeout.
+set_and_read_back()
+{
+    local knob v1 v2 out l1 l2
+
+    knob=$1
+    v1=$2
+    v2=$3
+    if ! out=$(sysctl "$knob=$v1" "$knob=$v2"); then
+        echo "sysctl $knob=$v1 $knob=$v2 failed" >&2
+        return 1
+    fi
+    { IFS= read -r l1; IFS= read -r l2; } <<EOF
+$out
+EOF
+    if [ "${l1##* -> }" != "$v1" ] || [ "${l2##* -> }" != "$v2" ]; then
+        echo "$knob: wrote '$v1' then '$v2', read back:" >&2
+        echo "$out" >&2
+        return 1
+    fi
+}
+
 concurrent_rules_exec_paths_changes_body()
 {
     local rules exec_paths rules_es exec_paths_es
 
+    # As sysctl_set_and_check_rules() and _exec_paths() do, each step writes
+    # its knob twice, with the older in-rule separator (':') first (an exec
+    # path has none, so its two writes are equal), and checks each write,
+    # while the other loop changes the other knob.
     for I in $(jot - 1 1000); do
-        sysctl_set_and_check_rules "uid=$I>uid=1001"
+        set_and_read_back ${RULES_KNOB} "uid=$I:uid=1001" \
+            "uid=$I>uid=1001" || exit 1
     done &
     rules=$!
 
     for I in $(jot - 1 1000); do
-        sysctl_set_and_check_exec_paths /nowhere/nonexistent$I
+        set_and_read_back ${EXEC_PATHS_KNOB} /nowhere/nonexistent$I \
+            /nowhere/nonexistent$I || exit 1
     done &
     exec_paths=$!
 
@@ -32,15 +66,13 @@ concurrent_rules_exec_paths_changes_body()
     wait $exec_paths
     exec_paths_es=$?
 
-    # atf_check called in the asynchronous AND-OR lists above causes exit of the
-    # subshells and also a write to the ATF result file.  These writes are
-    # concurrent and may cause the result file to be malformed.  Consequently,
-    # it is important that, once execution becomes sequential again, atf_fail() is
-    # called again (and not just exit()).
     if [ $rules_es -ne 0 ] || [ $exec_paths_es -ne 0 ]; then
         atf_fail "Rules exit status: $rules_es, \
 exec paths exit status: $exec_paths_es"
     fi
+    # The last values written must have stuck.
+    sysctl_check_rules "uid=1000>uid=1001"
+    sysctl_check_exec_paths /nowhere/nonexistent1000
 }
 
 atf_test_case inheritance cleanup
