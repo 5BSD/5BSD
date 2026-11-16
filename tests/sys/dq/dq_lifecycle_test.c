@@ -81,6 +81,7 @@ ATF_TC_BODY(close_once, tc)
 	struct dqt_ctl c;
 	struct dqt_object *o;
 	struct dq_policy pol;
+	struct dq_stats2 st;
 	struct one_read_arg a;
 	struct dqt_rr r;
 	char link[64];
@@ -118,7 +119,14 @@ ATF_TC_BODY(close_once, tc)
 	no_close_yet(&c);
 	ATF_REQUIRE_EQ(0, close(reopen));
 	ATF_CHECK(dqt_wait_events(&c, DQ_OP_CLOSE, 1, DQT_WAIT_MS));
-	/* A second CLOSE would have been dispatched before the fence's. */
+	/*
+	 * Retired: no longer counted, so no other CLOSE is due from it (the
+	 * retire is once, o_retired).  The object has no pages, so a second
+	 * CLOSE would also have been dispatched before the fence's.
+	 */
+	dqt_stats2(&c, &st);
+	ATF_CHECK_EQ_MSG(0, st.ds2_objects_live, "%ju objects live",
+	    (uintmax_t)st.ds2_objects_live);
 	dqt_close_fence(&c);
 	dqt_lock(&c);
 	ATF_CHECK_EQ(1, c.events[DQ_OP_CLOSE]);

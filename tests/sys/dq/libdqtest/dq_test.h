@@ -363,11 +363,12 @@ struct dqt_rr {
  * batch in order, so every record posted before the child's read (by any
  * process, synchronously) has been recorded.  It needs one reader thread
  * that is not paused.  dqt_close_fence: a fresh sentinel with CLOSE events
- * is closed and its CLOSE seen.  A CLOSE is posted when the last reference
- * goes, from the dq task queue when the object has pages; that queue
- * dispatches in order, so a CLOSE due before the sentinel's has been
- * dispatched too.  Use it with the object count (ds2_objects_live) where
- * it matters: an object still counted has posted no CLOSE.
+ * is closed and its CLOSE seen.  It orders only CLOSEs of objects with no
+ * pages, async I/O or mappings in flight: the destroy task of such an
+ * object re-arms itself (DQ_DESTROY_POLL, dq_async.c) until they settle,
+ * and the sentinel, which has none, can overtake it.  Pair it with the
+ * object count (ds2_objects_live): an object still counted has posted no
+ * CLOSE, and one no longer counted has retired and posts no other.
  */
 void	dqt_fence(struct dqt_ctl *c)
 	    __requires_unlocked(c->mtx);
