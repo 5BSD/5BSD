@@ -887,7 +887,6 @@ ATF_TC_BODY(fork_inherits, tc)
  * sibling looks a name up; every event is consistent (a served start
  * names the root object, a real start is hinted with a real cwd).
  */
-#define	RACE_SWITCHES	150	/* fchdir pairs: no events */
 #define	RACE_LOOKUPS	250	/* stat events: one each */
 
 struct race_arg {
@@ -896,33 +895,28 @@ struct race_arg {
 	char		real[PATH_MAX];
 	char		orig[PATH_MAX];
 	_Atomic(int)	started;	/* the looker has made its first lookup */
-	_Atomic(int)	stop;
+	_Atomic(int)	stop;		/* the looker is done */
 };
 
 static void *
 race_switcher(void *arg)
 {
 	struct race_arg *a = arg;
-	int i;
 
 	/*
-	 * Not before the looker runs: a switcher that finished before the
-	 * first lookup (a slow thread start on a loaded machine) raced
-	 * nothing, and every lookup started in the real cwd.
+	 * For as long as the looker looks, and both switches by descriptor:
+	 * neither waits for the controller, so at any lookup the cwd is
+	 * either one.  A chdir(2) by path waits for its consultation with
+	 * the served cwd in place (the lookups almost never saw the real
+	 * one), and a fixed number of fast switches ends after the first
+	 * few lookups.
 	 */
 	while (atomic_load(&a->started) == 0)
 		(void)sched_yield();
-	/*
-	 * Both switches by descriptor, so neither waits for the controller
-	 * and the cwd spends comparable time in each.  A chdir(2) by path
-	 * waits for its consultation while the served cwd stays in place,
-	 * and the lookups then almost never saw the real one.
-	 */
-	for (i = 0; i < RACE_SWITCHES; i++) {
+	while (atomic_load(&a->stop) == 0) {
 		(void)fchdir(a->sroot);
 		(void)fchdir(a->realfd);
 	}
-	atomic_store(&a->stop, 1);
 	return (NULL);
 }
 
@@ -942,11 +936,11 @@ race_fn(void *arg, void *out)
 		return;
 	}
 	/* Bounded, so that every event fits the harness's record (TS_NEV). */
-	for (n = 0; atomic_load(&a->stop) == 0 && n < RACE_LOOKUPS; n++) {
+	for (n = 0; n < RACE_LOOKUPS; n++) {
 		(void)stat("a", &st);
 		atomic_store(&a->started, 1);
 	}
-	atomic_store(&a->started, 1);	/* none made: let the switcher end */
+	atomic_store(&a->stop, 1);
 	pthread_join(thr, NULL);
 }
 

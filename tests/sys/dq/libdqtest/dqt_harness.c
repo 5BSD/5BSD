@@ -1242,7 +1242,13 @@ dqt_idle_spawn(struct dqt_idle *s, int rfflags, int pdflags,
 	ATF_REQUIRE_MSG(s->pid != -1, "pdfork: %s", strerror(errno));
 	if (s->pid != 0)
 		return;
-	(void)close(s->go[1]);
+	/*
+	 * A copied table drops its write end, so a parent that dies is an
+	 * end of file.  A table shared with the parent (rfork without
+	 * RFFDG or RFCFDG) must keep it: the close would be the parent's.
+	 */
+	if ((rfflags & RFPROC) == 0 || (rfflags & (RFFDG | RFCFDG)) != 0)
+		(void)close(s->go[1]);
 	if (prep != NULL && (error = prep(arg)) != 0)
 		_exit(error);
 	/*

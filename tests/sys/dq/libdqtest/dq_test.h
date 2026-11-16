@@ -384,9 +384,10 @@ void	dqt_run_ints(int q, dqt_int_fn fn, void *arg, int *res, int nres,
 
 /*
  * An idle target behind a process descriptor (pdrfork with rfflags when
- * not 0, else pdfork with pdflags).  The child runs prep(arg) first when
- * given (its nonzero return is the child's exit status: entering a jail,
- * giving up root), then waits for one byte on go.  Without exec_path it
+ * not 0, else pdfork with pdflags; a child sharing the table keeps the
+ * write end of go, which is the parent's too).  The child runs prep(arg)
+ * first when given (its nonzero return is the child's exit status:
+ * entering a jail, giving up root), then waits for one byte on go.  Without exec_path it
  * then exits 0; with one it execs exec_path exec_arg, and exits 4 when go
  * is closed without the byte.  dqt_idle_exec sends the byte and waits
  * (30 s) until the child has exec'd; dqt_idle_end ends it in any state.
