@@ -60,61 +60,6 @@
 #define	LA_ATTACH_BIT	0x10000u
 
 /*
- * A pdfork child that waits on a pipe until told to exit; with a path,
- * until told to exec it (idle_exec()).
- */
-struct idle {
-	pid_t		 pid;
-	int		 pd;
-	int		 go[2];
-};
-
-static void
-idle_spawn(struct idle *s, int pdflags, const char *exec_path)
-{
-	char b;
-
-	ATF_REQUIRE_EQ(0, pipe(s->go));
-	s->pid = pdfork(&s->pd, pdflags);
-	ATF_REQUIRE_MSG(s->pid != -1, "pdfork: %s", strerror(errno));
-	if (s->pid == 0) {
-		(void)close(s->go[1]);
-		if (exec_path != NULL) {
-			/*
-			 * Not before the parent says so: a NOTE_EXEC filter
-			 * added after the exec never reports it.
-			 */
-			if (read(s->go[0], &b, 1) != 1)
-				_exit(4);
-			execl(exec_path, exec_path, "30", (char *)NULL);
-			_exit(3);
-		}
-		(void)read(s->go[0], &b, 1);
-		_exit(0);
-	}
-}
-
-static void
-idle_exec(struct idle *s)
-{
-
-	ATF_REQUIRE_EQ(1, write(s->go[1], "g", 1));
-}
-
-static void
-idle_end(struct idle *s)
-{
-	int status;
-
-	(void)write(s->go[1], "x", 1);
-	(void)pdkill(s->pd, SIGKILL);
-	(void)pdwait(s->pd, &status, WEXITED, NULL, NULL);
-	(void)close(s->pd);
-	(void)close(s->go[0]);
-	(void)close(s->go[1]);
-}
-
-/*
  * The capability plane, without the ATF-calling helpers: these run in
  * forked children, which must report through their result and not through
  * the test program's result file.
@@ -390,7 +335,7 @@ ATF_TC_BODY(nonparent_attach, tc)
 	struct dqt_child ch;
 	struct recv_arg ra;
 	struct act_res r;
-	struct idle s;
+	struct dqt_idle s;
 	struct kevent kev;
 	struct timespec ts = { 120, 0 };
 	int kq, sv[2];
@@ -400,37 +345,37 @@ ATF_TC_BODY(nonparent_attach, tc)
 	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
 	ra.sock = sv[1];
 	dqt_spawn(&ch, actor_scm, &ra);
-	idle_spawn(&s, 0, NULL);
+	dqt_idle_spawn(&s, 0, 0, NULL, "30", NULL, NULL);
 	ATF_REQUIRE_EQ(0, dqt_send_fd(sv[0], s.pd));
 	memset(&r, 0, sizeof(r));
 	dqt_collect(&ch, &r, sizeof(r));
 	ROW("received by SCM_RIGHTS: dq_open", r.open, 0);
 	ROW("received by SCM_RIGHTS: attach", r.attach, 0);
 	ROW("received by SCM_RIGHTS: ds2_attached", r.attached, 1);
-	idle_end(&s);
+	dqt_idle_end(&s);
 	(void)close(sv[0]);
 	(void)close(sv[1]);
 
 	/* (a) by inheritance: a sibling of the target. */
-	idle_spawn(&s, 0, NULL);
+	dqt_idle_spawn(&s, 0, 0, NULL, "30", NULL, NULL);
 	r = act_run(s.pd, s.pid, 0, -1);
 	ROW("inherited: attach", r.attach, 0);
 	ROW("inherited: ds2_attached", r.attached, 1);
-	idle_end(&s);
+	dqt_idle_end(&s);
 
 	/* (b) the target exec'd. */
 	kq = kqueue();
 	ATF_REQUIRE(kq != -1);
-	idle_spawn(&s, 0, "/bin/sleep");
+	dqt_idle_spawn(&s, 0, 0, "/bin/sleep", "30", NULL, NULL);
 	EV_SET(&kev, s.pd, EVFILT_PROCDESC, EV_ADD, NOTE_EXEC, 0, NULL);
 	ATF_REQUIRE_EQ(0, kevent(kq, &kev, 1, NULL, 0, NULL));
-	idle_exec(&s);
+	dqt_idle_exec(&s);
 	ATF_REQUIRE_EQ_MSG(1, kevent(kq, NULL, 0, &kev, 1, &ts),
 	    "no NOTE_EXEC from the target");
 	r = act_run(s.pd, s.pid, 0, -1);
 	ROW("after exec: attach", r.attach, EBUSY);
 	ROW("after exec: ds2_attached", r.attached, 0);
-	idle_end(&s);
+	dqt_idle_end(&s);
 	(void)close(kq);
 }
 
@@ -447,10 +392,10 @@ ATF_TC_HEAD(unprivileged_attach, tc)
 ATF_TC_BODY(unprivileged_attach, tc)
 {
 	struct act_res r;
-	struct idle s;
+	struct dqt_idle s;
 
 	dqt_require_plane();
-	idle_spawn(&s, 0, NULL);
+	dqt_idle_spawn(&s, 0, 0, NULL, "30", NULL, NULL);
 	r = act_run(s.pd, s.pid, ACT_SETUID, -1);
 	ROW("setuid", r.setuid, 0);
 	ROW("attach", r.attach, EPERM);
@@ -458,7 +403,7 @@ ATF_TC_BODY(unprivileged_attach, tc)
 	/* The same target is still attachable by root: nothing was left. */
 	r = act_run(s.pd, s.pid, 0, -1);
 	ROW("root afterwards: attach", r.attach, 0);
-	idle_end(&s);
+	dqt_idle_end(&s);
 }
 
 /* (d): the protector is a third process, neither parent nor the test. */
@@ -516,12 +461,12 @@ ATF_TC_BODY(shielded_attach, tc)
 	struct prot_arg pa;
 	struct prot_res pr;
 	struct act_res r;
-	struct idle s;
+	struct dqt_idle s;
 	char b;
 
 	dqt_require_plane();
 	dqt_init_manual(&c);
-	idle_spawn(&s, 0, NULL);
+	dqt_idle_spawn(&s, 0, 0, NULL, "30", NULL, NULL);
 	pa.pd = s.pd;
 	pa.pid = s.pid;
 	ATF_REQUIRE_EQ(0, pipe(pa.ready));
@@ -546,7 +491,7 @@ ATF_TC_BODY(shielded_attach, tc)
 	ROW("protector: attach", pr.act.attach, 0);
 	ROW("protector: ds2_attached", pr.act.attached, 1);
 
-	idle_end(&s);
+	dqt_idle_end(&s);
 	(void)close(pa.ready[0]);
 	(void)close(pa.go[1]);
 	dqt_fini(&c);
@@ -565,18 +510,18 @@ ATF_TC_BODY(pd_protected_attach, tc)
 {
 	struct dqt_ctl c;
 	struct act_res r;
-	struct idle s;
+	struct dqt_idle s;
 
 	dqt_require_plane();
 	dqt_init_manual(&c);
-	idle_spawn(&s, PD_PROTECTED, NULL);
+	dqt_idle_spawn(&s, 0, PD_PROTECTED, NULL, "30", NULL, NULL);
 	errno = 0;
 	ATF_CHECK_EQ(-1, dq_attach(c.q, s.pd));
 	ROW("parent: attach", errno, EPERM);
 	r = act_run(s.pd, s.pid, 0, -1);
 	ROW("non-parent: attach", r.attach, EPERM);
 	ROW("non-parent: ds2_attached", r.attached, 0);
-	idle_end(&s);
+	dqt_idle_end(&s);
 	dqt_fini(&c);
 }
 
@@ -595,7 +540,7 @@ shielded_parent(void *arg, void *result)
 {
 	struct sp_arg *sa = arg;
 	struct sp_res *r = result;
-	struct idle s;
+	struct dqt_idle s;
 	char b;
 	int fd;
 
@@ -619,7 +564,7 @@ shielded_parent(void *arg, void *result)
 		_exit(7);
 	/* Stay, shielded, until the test has looked at both processes. */
 	(void)read(sa->sock, &b, 1);
-	idle_end(&s);
+	dqt_idle_end(&s);
 }
 
 ATF_TC(shield_not_inherited);
@@ -761,11 +706,11 @@ ATF_TC_HEAD(token_attach, tc)
 ATF_TC_BODY(token_attach, tc)
 {
 	struct act_res r;
-	struct idle s;
+	struct dqt_idle s;
 	int chan[2], shield, tok;
 
 	dqt_require_plane();
-	idle_spawn(&s, 0, NULL);
+	dqt_idle_spawn(&s, 0, 0, NULL, "30", NULL, NULL);
 	shield = cp_shield(s.pd, CP_SF_PTRACE);
 	ATF_REQUIRE_MSG(shield != -1, "CP_OP_PROTECT: %s", strerror(errno));
 	ATF_REQUIRE_MSG(chan_create(chan) == 0, "channel: %s",
@@ -827,7 +772,7 @@ ATF_TC_BODY(token_attach, tc)
 	ROW("held token: attach", r.attach, 0);
 	ROW("held token: ds2_attached", r.attached, 1);
 
-	idle_end(&s);
+	dqt_idle_end(&s);
 	(void)close(chan[0]);
 	(void)close(chan[1]);
 	(void)close(shield);
@@ -863,11 +808,11 @@ ATF_TC_BODY(nnp_seen_by_others, tc)
 {
 	struct dqt_ctl c;
 	struct nnp_res r;
-	struct idle s;
+	struct dqt_idle s;
 
 	dqt_require_plane();
 	dqt_init_manual(&c);
-	idle_spawn(&s, 0, NULL);
+	dqt_idle_spawn(&s, 0, 0, NULL, "30", NULL, NULL);
 	memset(&r, 0, sizeof(r));
 	dqt_run_child(nnp_reader, &s.pid, &r, sizeof(r));
 	ROW("before: procctl", r.err, 0);
@@ -878,7 +823,7 @@ ATF_TC_BODY(nnp_seen_by_others, tc)
 	dqt_run_child(nnp_reader, &s.pid, &r, sizeof(r));
 	ROW("after: procctl", r.err, 0);
 	ROW("after: status", r.nnp, PROC_NO_NEW_PRIVS_ENABLE);
-	idle_end(&s);
+	dqt_idle_end(&s);
 	dqt_fini(&c);
 }
 

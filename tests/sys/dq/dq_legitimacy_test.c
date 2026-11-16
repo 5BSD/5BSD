@@ -241,79 +241,37 @@ make_jail(const char *name)
 	return (jid);
 }
 
-/* An idle child behind a process descriptor, as dq_attach_test makes one. */
-struct idle {
-	pid_t		 pid;
-	int		 pd;
-	int		 go[2];
+/* In the idle child, before it waits: enter jail jid, give up root. */
+struct lg_prep {
+	int		 jid;		/* -1: no jail */
+	bool		 nobody;
 };
 
-/*
- * With exec_path the child waits for idle_exec() before it execs, so that
- * the NOTE_EXEC registration cannot lose the race; before that it enters
- * jail jid (unless -1) and, with nobody, gives up root.
- */
-static void
-idle_spawn_as(struct idle *s, const char *exec_path, int jid, bool nobody)
+static int
+lg_prep(void *arg)
 {
-	char b;
+	const struct lg_prep *p = arg;
 
-	ATF_REQUIRE_EQ(0, pipe(s->go));
-	s->pid = pdfork(&s->pd, 0);
-	ATF_REQUIRE_MSG(s->pid != -1, "pdfork: %s", strerror(errno));
-	if (s->pid == 0) {
-		if (jid != -1 && jail_attach(jid) != 0)
-			_exit(5);
-		if (nobody && !become_nobody())
-			_exit(4);
-		(void)read(s->go[0], &b, 1);
-		if (exec_path != NULL) {
-			execl(exec_path, exec_path, "60", (char *)NULL);
-			_exit(3);
-		}
-		_exit(0);
-	}
+	if (p->jid != -1 && jail_attach(p->jid) != 0)
+		return (5);
+	if (p->nobody && !become_nobody())
+		return (4);
+	return (0);
 }
 
 static void
-idle_spawn(struct idle *s, const char *exec_path)
+idle_spawn_as(struct dqt_idle *s, const char *exec_path, int jid, bool nobody)
+{
+	struct lg_prep p = { jid, nobody };
+
+	dqt_idle_spawn(s, 0, 0, exec_path, "60", lg_prep, &p);
+}
+
+static void
+idle_spawn(struct dqt_idle *s, const char *exec_path)
 {
 
 	idle_spawn_as(s, exec_path, -1, false);
-}
-
-/* Let a child spawned with an exec_path go, and wait until it has exec'd. */
-static void
-idle_exec(struct idle *s)
-{
-	struct kevent kev;
-	struct timespec ts = { 30, 0 };
-	int kq;
-
-	kq = kqueue();
-	ATF_REQUIRE(kq != -1);
-	EV_SET(&kev, s->pd, EVFILT_PROCDESC, EV_ADD, NOTE_EXEC | NOTE_EXIT, 0,
-	    NULL);
-	ATF_REQUIRE_EQ(0, kevent(kq, &kev, 1, NULL, 0, NULL));
-	ATF_REQUIRE_EQ(1, write(s->go[1], "x", 1));
-	ATF_REQUIRE_EQ(1, kevent(kq, NULL, 0, &kev, 1, &ts));
-	ATF_REQUIRE_MSG((kev.fflags & NOTE_EXIT) == 0 &&
-	    (kev.fflags & NOTE_EXEC) != 0, "the target did not exec: %#x",
-	    kev.fflags);
-	(void)close(kq);
-}
-
-static void
-idle_end(struct idle *s)
-{
-	int status;
-
-	(void)write(s->go[1], "x", 1);
-	(void)pdkill(s->pd, SIGKILL);
-	(void)pdwait(s->pd, &status, WEXITED, NULL, NULL);
-	(void)close(s->pd);
-	(void)close(s->go[0]);
-	(void)close(s->go[1]);
 }
 
 /*
@@ -861,7 +819,7 @@ ATF_TC_HEAD(attach_outside_prison, tc)
 ATF_TC_BODY(attach_outside_prison, tc)
 {
 	struct dqt_ctl c;
-	struct idle s1, s2;
+	struct dqt_idle s1, s2;
 	struct jail_arg a;
 	struct lg_res res;
 
@@ -896,8 +854,8 @@ ATF_TC_BODY(attach_outside_prison, tc)
 	ATF_CHECK_EQ_MSG(0, dq_attach(c.q, s1.pd), "errno %d", errno);
 	ATF_CHECK_EQ_MSG(0, dq_attach(c.q, s2.pd), "errno %d", errno);
 	(void)close(a.q);
-	idle_end(&s1);
-	idle_end(&s2);
+	dqt_idle_end(&s1);
+	dqt_idle_end(&s2);
 	dqt_fini(&c);
 }
 ATF_TC_CLEANUP(attach_outside_prison, tc)
@@ -945,7 +903,7 @@ ATF_TC_HEAD(attach_child_jail_target, tc)
 ATF_TC_BODY(attach_child_jail_target, tc)
 {
 	struct dqt_ctl c;
-	struct idle plain, jailed;
+	struct dqt_idle plain, jailed;
 	struct targets_arg a;
 	struct lg_res res;
 	pid_t pid;
@@ -977,9 +935,9 @@ ATF_TC_BODY(attach_child_jail_target, tc)
 	(void)close(pd);
 
 	idle_spawn_as(&plain, "/bin/sleep", -1, true);
-	idle_exec(&plain);
+	dqt_idle_exec(&plain);
 	idle_spawn_as(&jailed, "/bin/sleep", jid, true);
-	idle_exec(&jailed);
+	dqt_idle_exec(&jailed);
 	a.plain = plain.pd;
 	a.jailed = jailed.pd;
 	a.q = fcntl(c.q, F_DUPFD, 0);
@@ -993,8 +951,8 @@ ATF_TC_BODY(attach_child_jail_target, tc)
 	CHECK_ERR(res.r[0], EPERM);
 	CHECK_ERR(res.r[1], EPERM);
 	(void)close(a.q);
-	idle_end(&plain);
-	idle_end(&jailed);
+	dqt_idle_end(&plain);
+	dqt_idle_end(&jailed);
 
 	ATF_REQUIRE_EQ(0, jail_remove(jid));
 	dqt_fini(&c);
@@ -1051,7 +1009,7 @@ ATF_TC_HEAD(attach_errno_order, tc)
 ATF_TC_BODY(attach_errno_order, tc)
 {
 	struct dqt_ctl c;
-	struct idle exited, execed, idle;
+	struct dqt_idle exited, execed, idle;
 	struct order_arg a;
 	struct lg_res res;
 	int i, status;
@@ -1062,7 +1020,7 @@ ATF_TC_BODY(attach_errno_order, tc)
 	(void)write(exited.go[1], "x", 1);
 	ATF_REQUIRE_EQ(0, pdwait(exited.pd, &status, WEXITED, NULL, NULL));
 	idle_spawn(&execed, "/bin/sleep");
-	idle_exec(&execed);
+	dqt_idle_exec(&execed);
 	idle_spawn(&idle, NULL);
 
 	a.notpd = open("/dev/null", O_RDONLY);
@@ -1098,8 +1056,8 @@ ATF_TC_BODY(attach_errno_order, tc)
 	(void)close(exited.pd);
 	(void)close(exited.go[0]);
 	(void)close(exited.go[1]);
-	idle_end(&execed);
-	idle_end(&idle);
+	dqt_idle_end(&execed);
+	dqt_idle_end(&idle);
 	dqt_fini(&c);
 }
 
@@ -1748,7 +1706,7 @@ ATF_TC_HEAD(owner_dropped_attach, tc)
 ATF_TC_BODY(owner_dropped_attach, tc)
 {
 	struct clean_target clean, clean2;
-	struct idle execed, exited, jailed, plain;
+	struct dqt_idle execed, exited, jailed, plain;
 	struct owner_arg a;
 	struct lg_res res;
 	int jid, notpd, status;
@@ -1763,11 +1721,11 @@ ATF_TC_BODY(owner_dropped_attach, tc)
 	(void)write(exited.go[1], "x", 1);
 	ATF_REQUIRE_EQ(0, pdwait(exited.pd, &status, WEXITED, NULL, NULL));
 	idle_spawn(&execed, "/bin/sleep");
-	idle_exec(&execed);
+	dqt_idle_exec(&execed);
 	idle_spawn_as(&plain, "/bin/sleep", -1, true);
-	idle_exec(&plain);
+	dqt_idle_exec(&plain);
 	idle_spawn_as(&jailed, "/bin/sleep", jid, true);
-	idle_exec(&jailed);
+	dqt_idle_exec(&jailed);
 	clean_target_spawn(tc, &clean);
 	clean_target_spawn(tc, &clean2);
 
@@ -1809,9 +1767,9 @@ ATF_TC_BODY(owner_dropped_attach, tc)
 	(void)close(exited.pd);
 	(void)close(exited.go[0]);
 	(void)close(exited.go[1]);
-	idle_end(&execed);
-	idle_end(&plain);
-	idle_end(&jailed);
+	dqt_idle_end(&execed);
+	dqt_idle_end(&plain);
+	dqt_idle_end(&jailed);
 	ATF_REQUIRE_EQ(0, jail_remove(jid));
 	(void)dqt_sysctl_restore(PROC_DEBUG);
 }
@@ -1837,7 +1795,7 @@ ATF_TC_HEAD(owner_jailed_attach, tc)
 }
 ATF_TC_BODY(owner_jailed_attach, tc)
 {
-	struct idle inside, outside;
+	struct dqt_idle inside, outside;
 	struct owner_arg a;
 	struct lg_res res;
 	int jid;
@@ -1859,8 +1817,8 @@ ATF_TC_BODY(owner_jailed_attach, tc)
 	CHECK_ERR(res.r[OWNER_T0 + 0], ESRCH);
 	CHECK_OK(res.r[OWNER_T0 + 1]);
 
-	idle_end(&outside);
-	idle_end(&inside);
+	dqt_idle_end(&outside);
+	dqt_idle_end(&inside);
 	ATF_REQUIRE_EQ(0, jail_remove(jid));
 }
 ATF_TC_CLEANUP(owner_jailed_attach, tc)

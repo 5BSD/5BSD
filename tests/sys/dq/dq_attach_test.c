@@ -96,63 +96,6 @@ ATF_TC_BODY(attach_basic, tc)
 	dqt_fini(&c);
 }
 
-/*
- * A pdfork child that waits on a pipe until told to exit; with a path,
- * until told to exec it (idle_exec()).
- */
-struct idle {
-	pid_t		 pid;
-	int		 pd;
-	int		 go[2];
-};
-
-static void
-idle_spawn(struct idle *s, int rfflags, const char *exec_path)
-{
-	char b;
-
-	ATF_REQUIRE_EQ(0, pipe(s->go));
-	if (rfflags != 0)
-		s->pid = pdrfork(&s->pd, 0, rfflags);
-	else
-		s->pid = pdfork(&s->pd, 0);
-	ATF_REQUIRE_MSG(s->pid != -1, "pdfork: %s", strerror(errno));
-	if (s->pid == 0) {
-		if (exec_path != NULL) {
-			/*
-			 * Not before the parent says so: a NOTE_EXEC filter
-			 * added after the exec never reports it.
-			 */
-			if (read(s->go[0], &b, 1) != 1)
-				_exit(4);
-			execl(exec_path, exec_path, "30", (char *)NULL);
-			_exit(3);
-		}
-		(void)read(s->go[0], &b, 1);
-		_exit(0);
-	}
-}
-
-static void
-idle_exec(struct idle *s)
-{
-
-	ATF_REQUIRE_EQ(1, write(s->go[1], "g", 1));
-}
-
-static void
-idle_end(struct idle *s)
-{
-	int status;
-
-	(void)write(s->go[1], "x", 1);
-	(void)pdkill(s->pd, SIGKILL);
-	(void)pdwait(s->pd, &status, WEXITED, NULL, NULL);
-	(void)close(s->pd);
-	(void)close(s->go[0]);
-	(void)close(s->go[1]);
-}
-
 ATF_TC(attach_refusals);
 ATF_TC_HEAD(attach_refusals, tc)
 {
@@ -169,7 +112,7 @@ ATF_TC_BODY(attach_refusals, tc)
 {
 	struct dqt_ctl c, c2;
 	struct dq_attach_args args;
-	struct idle s;
+	struct dqt_idle s;
 	struct kevent kev;
 	struct timespec ts = { 120, 0 };
 	int fd, kq, qdup, self, status;
@@ -182,7 +125,7 @@ ATF_TC_BODY(attach_refusals, tc)
 	ATF_REQUIRE(fd != -1);
 	DQT_CHECK_REFUSED(dq_attach(c.q, fd), EINVAL);
 	(void)close(fd);
-	idle_spawn(&s, 0, NULL);
+	dqt_idle_spawn(&s, 0, 0, NULL, "30", NULL, NULL);
 	memset(&args, 0, sizeof(args));
 	args.da_version = DQ_API_VERSION + 1;
 	args.da_procfd = s.pd;
@@ -206,7 +149,7 @@ ATF_TC_BODY(attach_refusals, tc)
 	ATF_REQUIRE_EQ(0, dq_attach(c.q, s.pd));
 	DQT_CHECK_REFUSED(dq_attach(c.q, s.pd), EBUSY);
 	DQT_CHECK_REFUSED(dq_attach(c2.q, s.pd), EBUSY);
-	idle_end(&s);
+	dqt_idle_end(&s);
 
 	/* Itself. */
 	self = pdopenpid(getpid(), 0);
@@ -218,15 +161,15 @@ ATF_TC_BODY(attach_refusals, tc)
 	/* A child that exec'd (P_EXEC). */
 	kq = kqueue();
 	ATF_REQUIRE(kq != -1);
-	idle_spawn(&s, 0, "/bin/sleep");
+	dqt_idle_spawn(&s, 0, 0, "/bin/sleep", "30", NULL, NULL);
 	EV_SET(&kev, s.pd, EVFILT_PROCDESC, EV_ADD, NOTE_EXEC, 0, NULL);
 	if (kevent(kq, &kev, 1, NULL, 0, NULL) == 0) {
-		idle_exec(&s);
+		dqt_idle_exec(&s);
 		ATF_REQUIRE_EQ_MSG(1, kevent(kq, NULL, 0, &kev, 1, &ts),
 		    "no NOTE_EXEC from the child");
 		DQT_CHECK_REFUSED(dq_attach(c.q, s.pd), EBUSY);
 	}
-	idle_end(&s);
+	dqt_idle_end(&s);
 	(void)close(kq);
 
 	/*
@@ -237,10 +180,10 @@ ATF_TC_BODY(attach_refusals, tc)
 	qdup = fcntl(c.q, F_DUPFD, 0);
 	ATF_REQUIRE(qdup != -1);
 	ATF_CHECK_EQ(0, fcntl(qdup, F_GETFD));
-	idle_spawn(&s, 0, NULL);
+	dqt_idle_spawn(&s, 0, 0, NULL, "30", NULL, NULL);
 	ATF_CHECK_EQ_MSG(0, dq_attach(c.q, s.pd), "attach: %s",
 	    strerror(errno));
-	idle_end(&s);
+	dqt_idle_end(&s);
 	(void)close(qdup);
 
 	/*
@@ -253,12 +196,12 @@ ATF_TC_BODY(attach_refusals, tc)
 	 * owner that can reach the queue; what it is answered there is
 	 * dq_owner_test's sharer_cannot_operate.
 	 */
-	idle_spawn(&s, RFPROC | RFPROCDESC, NULL);
+	dqt_idle_spawn(&s, RFPROC | RFPROCDESC, 0, NULL, "30", NULL, NULL);
 	DQT_CHECK_REFUSED(dq_attach(c.q, s.pd), EBUSY);
-	idle_end(&s);
+	dqt_idle_end(&s);
 
 	/* An exited child (not reaped: the descriptor still names it). */
-	idle_spawn(&s, 0, NULL);
+	dqt_idle_spawn(&s, 0, 0, NULL, "30", NULL, NULL);
 	(void)write(s.go[1], "x", 1);
 	ATF_REQUIRE_EQ(0, pdwait(s.pd, &status, WEXITED, NULL, NULL));
 	DQT_CHECK_REFUSED(dq_attach(c.q, s.pd), ESRCH);
@@ -382,7 +325,7 @@ ATF_TC_HEAD(failed_exec_still_attachable, tc)
 ATF_TC_BODY(failed_exec_still_attachable, tc)
 {
 	struct dqt_ctl c;
-	struct idle s;
+	struct dqt_idle s;
 	struct dqt_sync y;
 	char b;
 
@@ -400,7 +343,7 @@ ATF_TC_BODY(failed_exec_still_attachable, tc)
 	ATF_REQUIRE(dqt_sync_wait(y.toparent[0], DQT_WAIT_MS));
 	ATF_CHECK_EQ_MSG(0, dq_attach(c.q, s.pd), "ATTACH: %s",
 	    strerror(errno));
-	idle_end(&s);
+	dqt_idle_end(&s);
 	dqt_fini(&c);
 }
 

@@ -380,6 +380,27 @@ typedef void (*dqt_int_fn)(void *arg, int *res);
 void	dqt_run_ints(int q, dqt_int_fn fn, void *arg, int *res, int nres,
 	    uid_t uid, bool attach);
 
+/*
+ * An idle target behind a process descriptor (pdrfork with rfflags when
+ * not 0, else pdfork with pdflags).  The child runs prep(arg) first when
+ * given (its nonzero return is the child's exit status: entering a jail,
+ * giving up root), then waits for one byte on go.  Without exec_path it
+ * then exits 0; with one it execs exec_path exec_arg, and exits 4 when go
+ * is closed without the byte.  dqt_idle_exec sends the byte and waits
+ * (30 s) until the child has exec'd; dqt_idle_end ends it in any state.
+ */
+struct dqt_idle {
+	pid_t		 pid;
+	int		 pd;
+	int		 go[2];
+};
+typedef int (*dqt_idle_prep)(void *arg);
+void	dqt_idle_spawn(struct dqt_idle *s, int rfflags, int pdflags,
+	    const char *exec_path, const char *exec_arg, dqt_idle_prep prep,
+	    void *arg);
+void	dqt_idle_exec(struct dqt_idle *s);
+void	dqt_idle_end(struct dqt_idle *s);
+
 /* A system call result: return value and errno. */
 struct dqt_rr {
 	long		 rv;

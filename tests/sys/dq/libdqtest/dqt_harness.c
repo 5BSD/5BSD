@@ -9,6 +9,7 @@
  */
 
 #include <sys/param.h>
+#include <sys/event.h>
 #include <sys/procdesc.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
@@ -1223,6 +1224,72 @@ dqt_digest(const void *p, size_t len)
 		h *= 1099511628211ULL;
 	}
 	return (h);
+}
+
+void
+dqt_idle_spawn(struct dqt_idle *s, int rfflags, int pdflags,
+    const char *exec_path, const char *exec_arg, dqt_idle_prep prep,
+    void *arg)
+{
+	char b;
+	int error;
+
+	ATF_REQUIRE_EQ(0, pipe(s->go));
+	if (rfflags != 0)
+		s->pid = pdrfork(&s->pd, pdflags, rfflags);
+	else
+		s->pid = pdfork(&s->pd, pdflags);
+	ATF_REQUIRE_MSG(s->pid != -1, "pdfork: %s", strerror(errno));
+	if (s->pid != 0)
+		return;
+	(void)close(s->go[1]);
+	if (prep != NULL && (error = prep(arg)) != 0)
+		_exit(error);
+	/*
+	 * Not before the parent says so: a NOTE_EXEC filter added after the
+	 * exec never reports it.
+	 */
+	if (read(s->go[0], &b, 1) != 1)
+		_exit(exec_path != NULL ? 4 : 0);
+	if (exec_path != NULL) {
+		execl(exec_path, exec_path, exec_arg, (char *)NULL);
+		_exit(3);
+	}
+	_exit(0);
+}
+
+void
+dqt_idle_exec(struct dqt_idle *s)
+{
+	struct kevent kev;
+	struct timespec ts = { 30, 0 };
+	int kq;
+
+	kq = kqueue();
+	ATF_REQUIRE(kq != -1);
+	EV_SET(&kev, s->pd, EVFILT_PROCDESC, EV_ADD, NOTE_EXEC | NOTE_EXIT, 0,
+	    NULL);
+	ATF_REQUIRE_EQ(0, kevent(kq, &kev, 1, NULL, 0, NULL));
+	ATF_REQUIRE_EQ(1, write(s->go[1], "g", 1));
+	ATF_REQUIRE_EQ_MSG(1, kevent(kq, NULL, 0, &kev, 1, &ts),
+	    "the target neither exec'd nor exited in 30 s");
+	ATF_REQUIRE_MSG((kev.fflags & NOTE_EXIT) == 0 &&
+	    (kev.fflags & NOTE_EXEC) != 0, "the target did not exec: %#x",
+	    kev.fflags);
+	(void)close(kq);
+}
+
+void
+dqt_idle_end(struct dqt_idle *s)
+{
+	int status;
+
+	(void)write(s->go[1], "x", 1);
+	(void)pdkill(s->pd, SIGKILL);
+	(void)pdwait(s->pd, &status, WEXITED, NULL, NULL);
+	(void)close(s->pd);
+	(void)close(s->go[0]);
+	(void)close(s->go[1]);
 }
 
 void
