@@ -49,21 +49,25 @@
 #   sys/kern/kern_descrip_test:kern_maxfiles__increase:
 #   SYSCTL_WRITE=kern.maxfiles with
 #   KYUA_VARS=test_suites.FreeBSD.allow_sysctl_side_effects=1.
-#   KERNEL_TIER (main, test or auto; default auto): the kernel tier this run
-#   claims.  main is GENERIC (or any kernel without a test-kernel option),
-#   test is GENERIC-TEST; auto claims nothing and reports what it found.
+#   KERNEL_TIER (main or test; default main): the kernel tier of the run.
+#   main is GENERIC, or any kernel without a test-kernel option; test is
+#   GENERIC-TEST, and must be asked for: a stage whose kernel carries a
+#   test-kernel option is refused unless KERNEL_TIER=test.
 #
-# Kernel tier.  The main tiers boot a kernel without any option of the
-# test-kernel option ledger (sys/conf/test-options); the knob tier boots
-# GENERIC-TEST.  Which one a run had is proved, not taken from a name: on
-# the host, release/scripts/check-test-kernel.sh reads the stage's boot
-# directory (refused: a test kernel) and the kernel file's SHA-256 is
-# recorded; in the guest, the booted kern.bootfile must have that hash, and
-# the ledger's knobs for live options must exist exactly on a test kernel.
-# TEST_KERNEL=yes|no is printed only when both agree, and the run is not
-# clean otherwise.  The guest writes the proof, every knob's value, the
-# plane state and the MAC policy modules kldstat lists to tier.txt in the
-# results.
+# Kernel tier.  The main tiers (plane on, PLANE_OFF=1, ISOLATION_ENFORCE=1)
+# boot a kernel without any option of the test-kernel option ledger
+# (sys/conf/test-options); the knob tier boots GENERIC-TEST.  Which one a
+# run had is proved, not taken from a name.  On the host,
+# release/scripts/check-test-kernel.sh reads the stage's boot/kernel (a
+# refusal means a test kernel) and its whole boot directory (which must
+# agree), and the kernel file's SHA-256 and version string are recorded.  In
+# the guest, the booted kern.bootfile must have that hash, kern.version must
+# be that version, and the ledger's knobs for live options must exist
+# exactly on a test kernel.  TEST_KERNEL=yes|no is printed only when all
+# agree, and the run is not clean otherwise.  The guest writes the proof,
+# every knob's value, the plane state and the MAC policy modules kldstat
+# lists to tier.txt in the results, and appends the knobs again after the
+# suites.
 #
 # Two tiers run tests/sys/mac_capability (docs/book/src/develop/testing.md):
 # the plane-on run, where its isolation denial cases skip because the policy
@@ -218,38 +222,53 @@ work=$(cd "$work" && pwd)
 [ ${#work} -le 80 ] || die "work path too long for the QMP UNIX socket: $work"
 
 # ------------------------------------------------------------ kernel tier ---
-# The binary check of the source tree this runner belongs to, against the
-# stage's boot directory: exit 0, no test-kernel option; 1 with "was built
-# with options X", a test kernel; anything else is a check that read
-# nothing, and the run stops.
+# The binary check of the source tree this runner belongs to, run twice: on
+# the stage's boot/kernel (the kernel and its modules, which decide the
+# tier) and on the whole boot directory (which must agree).  Exit 0, no
+# test-kernel option; 1 with "was built with options X", a test kernel;
+# anything else is a check that read nothing, and the run stops.
 # --- kernel tier, host side (tests/vm-provider-test-kernel-proof.sh runs this block)
-kernel_tier=${KERNEL_TIER:-auto}
-case $kernel_tier in main|test|auto) ;; *) die "KERNEL_TIER must be main, test or auto";; esac
+kernel_tier=${KERNEL_TIER:-main}
+case $kernel_tier in main|test) ;; *) die "KERNEL_TIER must be main or test";; esac
 src_root=$(cd "$(dirname "$0")/../../.." && pwd)
 tk_check=$src_root/release/scripts/check-test-kernel.sh
 tk_ledger=$src_root/sys/conf/test-options
 [ -f "$tk_check" ] && [ -f "$tk_ledger" ] ||
     die "no release/scripts/check-test-kernel.sh or sys/conf/test-options in $src_root"
-tk_status=0
-sh "$tk_check" -l "$tk_ledger" -d "$stage" > "$work/test-kernel-check.out" \
-    2> "$work/test-kernel-check.err" || tk_status=$?
-case $tk_status in
-0)	test_kernel_host=no test_option=none ;;
-1)	test_option=$(sed -n 's/.* was built with options \([A-Z0-9_]*\), a test-kernel option$/\1/p' \
-	    "$work/test-kernel-check.err" | head -n 1)
-	[ -n "$test_option" ] || { cat "$work/test-kernel-check.err" >&2
-	    die "the test-kernel check could not read the stage's boot directory"; }
-	test_kernel_host=yes ;;
-*)	cat "$work/test-kernel-check.err" >&2
-	die "the test-kernel check failed (exit $tk_status)" ;;
-esac
+# tk_run mode path name: sets tk_found (yes or no) and tk_option.
+tk_run() {
+	tk_status=0
+	sh "$tk_check" -l "$tk_ledger" "$1" "$2" > "$work/test-kernel-check-$3.out" \
+	    2> "$work/test-kernel-check-$3.err" || tk_status=$?
+	case $tk_status in
+	0)	tk_found=no tk_option=none ;;
+	1)	tk_option=$(sed -n 's/.* was built with options \([A-Z0-9_]*\), a test-kernel option$/\1/p' \
+		    "$work/test-kernel-check-$3.err" | head -n 1)
+		[ -n "$tk_option" ] || { cat "$work/test-kernel-check-$3.err" >&2
+		    die "the test-kernel check could not read the stage's $3"; }
+		tk_found=yes ;;
+	*)	cat "$work/test-kernel-check-$3.err" >&2
+		die "the test-kernel check of the stage's $3 failed (exit $tk_status)" ;;
+	esac
+}
+tk_run -o "$stage/boot/kernel" kernel
+test_kernel_host=$tk_found test_option=$tk_option
+tk_run -d "$stage" boot
+[ "$tk_found" = "$test_kernel_host" ] ||
+    die "the stage's boot directory (test option: $tk_option) disagrees with its boot/kernel (test option: $test_option)"
 kernel_sha256=$(sha256 -q "$stage/boot/kernel/kernel") || die "cannot hash the stage's kernel"
+kernel_version=$(strings -a "$stage/boot/kernel/kernel" |
+    sed -n 's/^@(#)\(5BSD .*\)$/\1/p' | head -n 1)
+case $kernel_version in
+''|*[!A-Za-z0-9\ .:#_/+-]*) die "cannot read the version string of the stage's kernel";;
+esac
 test_knobs=$(sh "$tk_check" -l "$tk_ledger" -L |
     awk -F '|' '$2 == "live" && $6 != "-" { gsub(",", " ", $6); printf "%s ", $6 }')
 case $test_knobs in *[!a-z0-9_.\ ]*) die "unexpected knob names in the ledger";; esac
 echo "TEST_KERNEL_HOST: binary-check=$test_kernel_host option=$test_option kernel-sha256=$kernel_sha256"
+echo "TEST_KERNEL_HOST: version=$kernel_version"
 case $kernel_tier:$test_kernel_host in
-main:yes) die "KERNEL_TIER=main, but the stage's kernel was built with options $test_option";;
+main:yes) die "the stage's kernel was built with options $test_option: a test kernel runs only with KERNEL_TIER=test";;
 test:no) die "KERNEL_TIER=test, but the stage's kernel carries no test-kernel option";;
 esac
 # --- end of the kernel tier, host side
@@ -363,6 +382,7 @@ KERNEL_TIER=$kernel_tier
 TEST_KERNEL_HOST=$test_kernel_host
 TEST_OPTION=$test_option
 KERNEL_SHA256=$kernel_sha256
+KERNEL_VERSION="$kernel_version"
 TEST_KNOBS="$test_knobs"
 EOF
 cat >> "$x/kyua-planeon.sh" <<'EOF'
@@ -374,12 +394,13 @@ echo KYUA_PLANEON_START
 # must exist exactly when the host found a test-kernel option.
 bootfile=$(sysctl -n kern.bootfile 2>/dev/null || echo unknown)
 booted_sha256=$(sha256 -q "$bootfile" 2>/dev/null || echo unreadable)
+booted_version=$(sysctl -n kern.version 2>/dev/null | head -n 1)
 present= absent=
 for k in $TEST_KNOBS; do
 	if sysctl -N "$k" > /dev/null 2>&1; then present="$present $k"; else absent="$absent $k"; fi
 done
 test_kernel=inconsistent
-if [ "$booted_sha256" = "$KERNEL_SHA256" ]; then
+if [ "$booted_sha256" = "$KERNEL_SHA256" ] && [ "$booted_version" = "$KERNEL_VERSION" ]; then
 	if [ "$TEST_KERNEL_HOST" = yes ] && [ -z "$absent" ]; then
 		test_kernel=yes
 	elif [ "$TEST_KERNEL_HOST" = no ] && [ -z "$present" ]; then
@@ -391,6 +412,8 @@ fi
 	echo "TEST_KERNEL=$test_kernel"
 	echo "test-kernel-binary-check host=$TEST_KERNEL_HOST option=$TEST_OPTION"
 	echo "kernel-sha256 host=$KERNEL_SHA256 booted=$booted_sha256 bootfile=$bootfile"
+	echo "kernel-version host=$KERNEL_VERSION"
+	echo "kernel-version booted=$booted_version"
 	echo "kern.ident=$(sysctl -n kern.ident 2>/dev/null || echo unknown)"
 	for k in $TEST_KNOBS; do echo "knob $k=$(sysctl -n "$k" 2>/dev/null || echo absent)"; done
 	echo "plane-off=$PLANE_OFF pid1=$(ps -o comm= -p 1 | tr -d ' ') capability_plane=$(kenv -q capability_plane || echo unset)"
@@ -399,7 +422,7 @@ fi
 } > "$R/tier.txt"
 sed 's/^/TIER_INFO: /' "$R/tier.txt"
 case $KERNEL_TIER:$test_kernel in
-main:no|test:yes|auto:yes|auto:no) echo TEST_KERNEL_PROOF_PASS ;;
+main:no|test:yes) echo TEST_KERNEL_PROOF_PASS ;;
 *) echo "TEST_KERNEL_PROOF_FAIL: tier $KERNEL_TIER, booted kernel $test_kernel" ;;
 esac
 # --- end of the test-kernel proof
@@ -554,6 +577,12 @@ kyua report -r "$R/results.db" --verbose --results-filter broken,failed 2>&1 | h
 cp /var/log/capability.log /var/log/messages "$R/" 2>/dev/null || true
 dmesg -a > "$R/dmesg.txt" 2>&1 || true
 echo "KYUA_SUMMARY: $(tail -n 1 "$R/kyua-test.out")"
+# The ledger's knobs again, after the suites, in tier.txt.
+{
+	echo "after-suites:"
+	for k in $TEST_KNOBS; do echo "knob $k=$(sysctl -n "$k" 2>/dev/null || echo absent)"; done
+} >> "$R/tier.txt"
+sed -n '/^after-suites:$/,$s/^/TIER_INFO: /p' "$R/tier.txt"
 # Results disk: only the explicitly identified second disk is written.
 if [ "$(geom disk list vtbd1 2>/dev/null | awk '/ident:/ {print $2}')" = kyua-results ]; then
 	tar -cf /dev/vtbd1 -C /tmp kyua-results && echo KYUA_RESULTS_DISK_WRITTEN
@@ -734,7 +763,8 @@ verdict=VM_NOT_CLEAN
 if [ $forced = 0 ] && [ $rc = 0 ] && [ $guest_off = 1 ] &&
     [ "$(cat "$work/results/kyua-results/kyua-test.status" 2>/dev/null)" = 0 ] &&
     tr -d '\r' < "$log" | grep -aqx 'KYUA_VM_DONE' &&
-    tr -d '\r' < "$log" | grep -aqx 'TEST_KERNEL_PROOF_PASS' &&
+    [ "$(tr -d '\r' < "$log" | grep -acx 'TEST_KERNEL_PROOF_PASS')" = 1 ] &&
+    ! tr -d '\r' < "$log" | grep -aq '^TEST_KERNEL_PROOF_FAIL' &&
     { [ "$plane_off" = 1 ] && tr -d '\r' < "$log" | grep -aqx 'PLANEOFF_READY' ||
       { tr -d '\r' < "$log" | grep -aqx 'PLANEON_GATE_PASS' &&
         tr -d '\r' < "$log" | grep -aqx 'BSDTIME_LIFECYCLE_PASS'; }; } &&

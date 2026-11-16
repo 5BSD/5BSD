@@ -279,22 +279,27 @@ authority issuer (the `MAC_CAPABILITY_TEST_RELAX` option and
 the tree does not provide yet; plane-off on GENERIC their units never launch.
 Until it exists they are not covered by any tier.
 
-Each of these tiers also has a kernel tier.  The main tiers boot a kernel
-without any test-kernel option (`GENERIC`); the knob tier boots
-`GENERIC-TEST`, which carries every live option of the test-kernel option
-ledger, `sys/conf/test-options` (today `DQ_TEST_OPEN`), and whose knobs the
-loader sets (`debug.dq.unverified_open="1"` through `LOADER_EXTRA`).
-`KERNEL_TIER=main` or `KERNEL_TIER=test` states which one a run claims;
-the default, `auto`, claims nothing.  The runner proves it rather than
-trusting a configuration name: on the host it runs
-`release/scripts/check-test-kernel.sh` on the stage's boot directory (a
-refusal means a test kernel) and records the kernel file's SHA-256; in the
-guest the booted `kern.bootfile` must have that hash and the ledger's knobs
-must exist exactly on a test kernel.  Only then does it print
-`TIER_INFO: TEST_KERNEL=yes` or `=no` and `TEST_KERNEL_PROOF_PASS`, and a run
-without that line is not `VM_CLEAN`.  The proof, every knob's value, the
-plane state and the loaded MAC policy modules (`kldstat -v`) are written to
-`tier.txt` in the results, next to the Kyua database.
+Each of these tiers also has a kernel tier.  The main tiers (plane on,
+`PLANE_OFF=1`, `ISOLATION_ENFORCE=1`) boot a kernel without any test-kernel
+option (`GENERIC`); the knob tier boots `GENERIC-TEST`, which carries every
+live option of the test-kernel option ledger, `sys/conf/test-options` (today
+`DQ_TEST_OPEN`), and whose knobs the loader sets
+(`debug.dq.unverified_open="1"` through `LOADER_EXTRA`).  `KERNEL_TIER`
+defaults to `main`; the knob tier must be asked for with `KERNEL_TIER=test`,
+and the runner refuses a stage whose kernel carries a test-kernel option
+otherwise.  The runner proves the tier rather than trusting a configuration
+name: on the host it runs `release/scripts/check-test-kernel.sh` on the
+stage's `boot/kernel` (a refusal means a test kernel) and on its whole boot
+directory, which must agree, and records the kernel file's SHA-256 and
+version string; in the guest the booted `kern.bootfile` must have that
+hash, `kern.version` must be that version, and the ledger's knobs must
+exist exactly on a test kernel.  Only then does it print
+`TIER_INFO: TEST_KERNEL=yes` or `=no` and `TEST_KERNEL_PROOF_PASS`; a run
+is `VM_CLEAN` only with exactly one such line and no
+`TEST_KERNEL_PROOF_FAIL`.  The proof, every knob's value, the plane state
+and the loaded MAC policy modules (`kldstat -v`) are written to `tier.txt`
+in the results, next to the Kyua database, and the knobs are appended again
+after the suites.
 
 The runner's own checks (the tier selection and gate above, the stage root
 metadata preflight, the extra-script status) are shell scripts under
