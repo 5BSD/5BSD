@@ -1146,12 +1146,9 @@ ATF_TC_CLEANUP(vm_create_enomem, tc)
 static void
 c_opath(struct srv *s, int *r)
 {
-	char path[PATH_MAX], buf[4], cbuf[CMSG_SPACE(sizeof(int))];
+	char path[PATH_MAX], buf[4];
 	struct pollfd pfd;
 	struct stat st;
-	struct msghdr msg;
-	struct cmsghdr *cm;
-	struct iovec iov;
 	int fd, sv[2];
 
 	snprintf(path, sizeof(path), "%s/a", s->prefix);
@@ -1172,19 +1169,7 @@ c_opath(struct srv *s, int *r)
 	if (fd < 0)
 		return;
 	r[6] = ERR(socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
-	memset(&msg, 0, sizeof(msg));
-	iov.iov_base = buf;
-	iov.iov_len = 1;
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	msg.msg_control = cbuf;
-	msg.msg_controllen = sizeof(cbuf);
-	cm = CMSG_FIRSTHDR(&msg);
-	cm->cmsg_level = SOL_SOCKET;
-	cm->cmsg_type = SCM_RIGHTS;
-	cm->cmsg_len = CMSG_LEN(sizeof(int));
-	memcpy(CMSG_DATA(cm), &fd, sizeof(int));
-	r[7] = sendmsg(sv[0], &msg, 0) < 0 ? errno : 0;
+	r[7] = dqt_send_fd(sv[0], fd) == -1 ? errno : 0;
 	r[8] = (fcntl(fd, F_GETFD) & FD_CLOEXEC) != 0;
 	close(fd);
 }

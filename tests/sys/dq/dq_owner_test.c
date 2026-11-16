@@ -780,59 +780,6 @@ qd_fork_probe(int fd, bool exec)
 	return (WEXITSTATUS(status));
 }
 
-static int
-qd_sendfd(int sock, int fd)
-{
-	union {
-		struct cmsghdr	hdr;
-		char		buf[CMSG_SPACE(sizeof(int))];
-	} ctl;
-	struct msghdr msg;
-	struct iovec iov;
-	char b = 'q';
-
-	memset(&msg, 0, sizeof(msg));
-	memset(&ctl, 0, sizeof(ctl));
-	iov.iov_base = &b;
-	iov.iov_len = 1;
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	msg.msg_control = ctl.buf;
-	msg.msg_controllen = sizeof(ctl.buf);
-	ctl.hdr.cmsg_len = CMSG_LEN(sizeof(int));
-	ctl.hdr.cmsg_level = SOL_SOCKET;
-	ctl.hdr.cmsg_type = SCM_RIGHTS;
-	memcpy(CMSG_DATA(&ctl.hdr), &fd, sizeof(fd));
-	return (sendmsg(sock, &msg, 0) == 1 ? 0 : errno);
-}
-
-static int
-qd_recvfd(int sock)
-{
-	union {
-		struct cmsghdr	hdr;
-		char		buf[CMSG_SPACE(sizeof(int))];
-	} ctl;
-	struct msghdr msg;
-	struct iovec iov;
-	char b;
-	int fd;
-
-	memset(&msg, 0, sizeof(msg));
-	iov.iov_base = &b;
-	iov.iov_len = 1;
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	msg.msg_control = ctl.buf;
-	msg.msg_controllen = sizeof(ctl.buf);
-	if (recvmsg(sock, &msg, MSG_DONTWAIT) != 1 ||
-	    msg.msg_controllen < CMSG_LEN(sizeof(int)) ||
-	    ctl.hdr.cmsg_level != SOL_SOCKET || ctl.hdr.cmsg_type != SCM_RIGHTS)
-		return (-1);
-	memcpy(&fd, CMSG_DATA(&ctl.hdr), sizeof(fd));
-	return (fd);
-}
-
 /*
  * The subject: opens the queue, fills the row, reports it on rep and holds
  * the descriptor until the test has tried pddupfd(2) and writes on cmd.
@@ -865,8 +812,8 @@ qd_subject(enum qd_kind kind, int rep, int cmd)
 		row.fd = -1;
 		goto out;
 	}
-	row.scm_errno = qd_sendfd(sp[0], fd);
-	if (row.scm_errno == 0 && (d = qd_recvfd(sp[1])) != -1) {
+	row.scm_errno = (dqt_send_fd(sp[0], fd) == 0 ? 0 : errno);
+	if (row.scm_errno == 0 && (d = dqt_recv_fd_flags(sp[1], MSG_DONTWAIT)) != -1) {
 		row.scm_getfd = fcntl(d, F_GETFD);
 		row.scm_stats = qd_stats(d);
 		(void)close(d);
@@ -1748,13 +1695,13 @@ child_transfer(void *arg __unused, void *result)
 		_exit(6);
 	if (socketpair(PF_UNIX, SOCK_STREAM, 0, sp) != 0)
 		_exit(7);
-	res->stream_send = qd_sendfd(sp[0], q);
+	res->stream_send = (dqt_send_fd(sp[0], q) == 0 ? 0 : errno);
 	res->stream_recv = peer_recv(sp[1]);
 	(void)close(sp[0]);
 	(void)close(sp[1]);
 	if (socketpair(PF_UNIX, SOCK_DGRAM, 0, sp) != 0)
 		_exit(7);
-	res->dgram_send = qd_sendfd(sp[0], q);
+	res->dgram_send = (dqt_send_fd(sp[0], q) == 0 ? 0 : errno);
 	res->dgram_recv = peer_recv(sp[1]);
 	(void)close(sp[0]);
 	(void)close(sp[1]);
@@ -1881,7 +1828,7 @@ copies_subject(int rep)
 		row[i].getfl = fcntl(row[i].fd, F_GETFL);
 		row[i].stats = qd_stats(row[i].fd);
 		row[i].fork_stats = qd_fork_probe(row[i].fd, false);
-		row[i].scm = qd_sendfd(sp[0], row[i].fd);
+		row[i].scm = (dqt_send_fd(sp[0], row[i].fd) == 0 ? 0 : errno);
 		(void)fcntl(row[i].fd, F_SETFD, 0);
 	}
 	(void)fcntl(q, F_SETFD, 0);

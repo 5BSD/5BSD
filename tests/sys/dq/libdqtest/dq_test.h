@@ -438,6 +438,7 @@ void	dqt_server_stop(struct dqt_server *sv);
  */
 int	dqt_send_fd(int sock, int fd);
 int	dqt_recv_fd(int sock);
+int	dqt_recv_fd_flags(int sock, int flags);	/* recvmsg(2) flags */
 
 /*
  * Copy a program installed beside the tests (srcdir: the foreign-ABI

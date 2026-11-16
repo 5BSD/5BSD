@@ -1589,13 +1589,6 @@ static void
 p_send(void *arg __unused, void *result)
 {
 	struct sw_res *res = result;
-	struct msghdr msg;
-	struct iovec iov;
-	union {
-		struct cmsghdr	hdr;
-		char		buf[CMSG_SPACE(sizeof(int))];
-	} cm;
-	char b;
 	int fd, sv[2];
 
 	RR(res->r[0], fd = open("orig", O_RDONLY));
@@ -1604,20 +1597,7 @@ p_send(void *arg __unused, void *result)
 	RR(res->r[1], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
 	if (res->r[1].rv == -1)
 		return;
-	memset(&msg, 0, sizeof(msg));
-	memset(&cm, 0, sizeof(cm));
-	b = 'x';
-	iov.iov_base = &b;
-	iov.iov_len = 1;
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	msg.msg_control = cm.buf;
-	msg.msg_controllen = sizeof(cm.buf);
-	cm.hdr.cmsg_len = CMSG_LEN(sizeof(int));
-	cm.hdr.cmsg_level = SOL_SOCKET;
-	cm.hdr.cmsg_type = SCM_RIGHTS;
-	memcpy(CMSG_DATA(&cm.hdr), &fd, sizeof(fd));
-	RR(res->r[2], sendmsg(sv[0], &msg, 0));
+	RR(res->r[2], dqt_send_fd(sv[0], fd));
 }
 
 static void
@@ -1778,34 +1758,6 @@ ATF_TC_BODY(swap_from_proxy_directory, tc)
 	dqt_fini(&x.c);
 }
 
-/* Send fd over a socket: 0 or errno. */
-static int
-sw_sendfd(int sock, int fd)
-{
-	struct msghdr msg;
-	struct iovec iov;
-	union {
-		struct cmsghdr	hdr;
-		char		buf[CMSG_SPACE(sizeof(int))];
-	} cm;
-	char b;
-
-	memset(&msg, 0, sizeof(msg));
-	memset(&cm, 0, sizeof(cm));
-	b = 'x';
-	iov.iov_base = &b;
-	iov.iov_len = 1;
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	msg.msg_control = cm.buf;
-	msg.msg_controllen = sizeof(cm.buf);
-	cm.hdr.cmsg_len = CMSG_LEN(sizeof(int));
-	cm.hdr.cmsg_level = SOL_SOCKET;
-	cm.hdr.cmsg_type = SCM_RIGHTS;
-	memcpy(CMSG_DATA(&cm.hdr), &fd, sizeof(fd));
-	return (sendmsg(sock, &msg, 0) == -1 ? errno : 0);
-}
-
 /*
  * Case: the requester is killed while its open waits.  The supervisor's
  * later reply finds no event (ESRCH); its descriptor stays open and
@@ -1873,9 +1825,9 @@ a_killed(struct sw *x, const struct dq_event *ev,
 		 * costs the entry its transfer, dq(4).)
 		 */
 		ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
-		ATF_CHECK_EQ_MSG(0, sw_sendfd(sv[0], fd), "the entry was "
+		ATF_CHECK_EQ_MSG(0, (dqt_send_fd(sv[0], fd) == 0 ? 0 : errno), "the entry was "
 		    "consumed by a reply that found no event");
-		ATF_CHECK_EQ(ENOTCAPABLE, sw_sendfd(sv[0], fd));
+		ATF_CHECK_EQ(ENOTCAPABLE, (dqt_send_fd(sv[0], fd) == 0 ? 0 : errno));
 		(void)close(sv[0]);
 		(void)close(sv[1]);
 	}

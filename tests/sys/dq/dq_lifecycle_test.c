@@ -645,11 +645,6 @@ ATF_TC_BODY(scm_rights_refused, tc)
 {
 	struct dqt_ctl c;
 	struct dqt_object *o;
-	struct msghdr msg;
-	struct cmsghdr *cm;
-	struct iovec iov;
-	char cbuf[CMSG_SPACE(sizeof(int))];
-	char byte;
 	int oracle, sv[2];
 
 	dqt_fill(data, sizeof(data), 56);
@@ -659,25 +654,11 @@ ATF_TC_BODY(scm_rights_refused, tc)
 	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
 	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
 
-	byte = 'x';
-	iov.iov_base = &byte;
-	iov.iov_len = 1;
-	memset(&msg, 0, sizeof(msg));
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	msg.msg_control = cbuf;
-	msg.msg_controllen = sizeof(cbuf);
-	cm = CMSG_FIRSTHDR(&msg);
-	cm->cmsg_level = SOL_SOCKET;
-	cm->cmsg_type = SCM_RIGHTS;
-	cm->cmsg_len = CMSG_LEN(sizeof(int));
-	memcpy(CMSG_DATA(cm), &o->fd, sizeof(int));
 	errno = 0;
-	ATF_CHECK_EQ(-1, sendmsg(sv[0], &msg, 0));
+	ATF_CHECK_EQ(-1, dqt_send_fd(sv[0], o->fd));
 	ATF_CHECK_EQ(ENOTCAPABLE, errno);
 	/* The real file travels; only the served one is refused. */
-	memcpy(CMSG_DATA(cm), &oracle, sizeof(int));
-	ATF_CHECK_EQ(1, sendmsg(sv[0], &msg, 0));
+	ATF_CHECK_EQ(0, dqt_send_fd(sv[0], oracle));
 	/* dup and fork share it; the dup is as untransferable. */
 	ATF_CHECK(dup(o->fd) >= 0);
 	(void)close(sv[0]);

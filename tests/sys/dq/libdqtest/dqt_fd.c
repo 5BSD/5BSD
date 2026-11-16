@@ -46,6 +46,13 @@ dqt_send_fd(int sock, int fd)
 int
 dqt_recv_fd(int sock)
 {
+
+	return (dqt_recv_fd_flags(sock, 0));
+}
+
+int
+dqt_recv_fd_flags(int sock, int flags)
+{
 	union {
 		struct cmsghdr	 hdr;
 		char		 buf[CMSG_SPACE(sizeof(int))];
@@ -62,7 +69,7 @@ dqt_recv_fd(int sock)
 	mh.msg_iovlen = 1;
 	mh.msg_control = cm.buf;
 	mh.msg_controllen = sizeof(cm.buf);
-	if (recvmsg(sock, &mh, 0) != 1)
+	if (recvmsg(sock, &mh, flags) != 1)
 		return (-1);
 	/* One whole SCM_RIGHTS message carrying one descriptor, or none. */
 	if ((mh.msg_flags & MSG_CTRUNC) != 0 ||

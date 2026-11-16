@@ -174,6 +174,7 @@ BINDIR.dq_owner_helper=	${TESTSDIR}
 # dq_legitimacy_test's parent of an attach target.
 PROGS+=		dq_legitimacy_helper
 SRCS.dq_legitimacy_helper=	dq_legitimacy_helper.c
+LIBADD.dq_legitimacy_helper=	dqtest
 MAN.dq_legitimacy_helper=
 BINDIR.dq_legitimacy_helper=	${TESTSDIR}
 
@@ -219,6 +220,6 @@ WARNS?=		6
 .include <bsd.test.mk>
 
 # The programs link libdqtest.a: build the subdirectory before them.
-.for _t in ${ATF_TESTS_C}
+.for _t in ${ATF_TESTS_C} dq_legitimacy_helper
 .ORDER: all_subdir_${DIRPRFX}libdqtest ${_t}
 .endfor
