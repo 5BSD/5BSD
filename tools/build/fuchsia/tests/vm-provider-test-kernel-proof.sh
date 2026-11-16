@@ -31,7 +31,8 @@ version='5BSD 16.0-CURRENT #0 lg3-n1-0123456789ab: Mon Nov 16 00:00:00 UTC 2026'
 stage() {
 	rm -rf "$work/stage"
 	mkdir -p "$work/stage/boot/kernel"
-	printf 'ELF\0@(#)%s\0%s\0' "$version" "$1" > "$work/stage/boot/kernel/kernel"
+	# The marker first, as a real kernel has it: it too begins "@(#)5BSD ".
+	printf 'ELF\0%s\0@(#)%s\0' "$1" "$version" > "$work/stage/boot/kernel/kernel"
 }
 # host [VAR=value...]: runs the block as vm-provider.sh would, with the
 # given environment; prints its variables.
@@ -45,7 +46,7 @@ host() {
 	' "$root/vm-provider.sh" "$work/stage" "$work" "$work/host.sh" )
 }
 
-stage 'plain kernel'
+stage "@(#)5BSD DQ_TEST_OPEN_NOT_A_ROW plain"
 out=$(host) || fail "default tier on a plain kernel: $out"
 echo "$out" | grep -q '^host=no option=none ' || fail "plain kernel: $out"
 sha=$(sha256 -q "$work/stage/boot/kernel/kernel")

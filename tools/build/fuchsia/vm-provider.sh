@@ -269,7 +269,7 @@ tk_run -d "$stage" boot
     die "the stage's boot directory (test option: $tk_option) disagrees with its boot/kernel (test option: $test_option)"
 kernel_sha256=$(sha256 -q "$stage/boot/kernel/kernel") || die "cannot hash the stage's kernel"
 kernel_version=$(strings -a "$stage/boot/kernel/kernel" |
-    sed -n 's/^@(#)\(5BSD .*\)$/\1/p' | head -n 1)
+    sed -n 's/^@(#)\(5BSD [0-9][^ ]* #[0-9][0-9]* .*\)$/\1/p' | head -n 1)
 case $kernel_version in
 ''|*[!A-Za-z0-9\ .:#_/+-]*) die "cannot read the version string of the stage's kernel";;
 esac
