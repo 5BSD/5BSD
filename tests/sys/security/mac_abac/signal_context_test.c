@@ -185,13 +185,17 @@ check_context(const atf_tc_t *tc, uint32_t operation, int target_tty)
 			}
 			if (target_tty == 3) {
 				/*
-				 * The session keeps the terminal, but it has
-				 * been revoked: s_ttyvp is a reclaimed vnode.
+				 * The session keeps the terminal, but the
+				 * parent revokes it: s_ttyvp is left a reclaimed
+				 * vnode.  The slave stays open here: closing the
+				 * last descriptor, or a revoke by the session's
+				 * own process, drops s_ttyvp in devfs_close().
 				 */
 				signal(SIGHUP, SIG_IGN);
-				close(slave);
-				if (revoke(ttypath) == -1)
+				if (write(ready[1], "S", 1) != 1)
 					_exit(16);
+				if (read(gate[0], &byte, 1) != 1 || byte != 'v')
+					_exit(17);
 			}
 			if (target_tty == 2) {
 				/*
@@ -237,6 +241,11 @@ check_context(const atf_tc_t *tc, uint32_t operation, int target_tty)
 		    sizeof(child));
 		ATF_REQUIRE(waitpid(leader, &status, 0) == leader);
 		ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	}
+	if (target_tty == 3) {
+		ATF_REQUIRE(read(ready[0], &byte, 1) == 1 && byte == 'S');
+		ATF_REQUIRE(revoke(ttypath) == 0);
+		ATF_REQUIRE(write(gate[1], "v", 1) == 1);
 	}
 	ATF_REQUIRE(read(ready[0], &byte, 1) == 1 && byte == 'R');
 	close(ready[0]);
