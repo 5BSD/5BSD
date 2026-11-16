@@ -54,6 +54,14 @@
 #define	CTL_OP_CATATONIA	14	/* stop new logins (was SIGTSTP) */
 
 /*
+ * Discovery route (root).  A daemon instance replies with the lookup channel
+ * its SwitchBoard supplied, attached to the reply header as SCM_RIGHTS; it is
+ * the route PID 1 carries into logins.  The route carries no authority.
+ * ENOENT: no route is held yet.  PID 1 has no control socket.
+ */
+#define	CTL_OP_LOOKUP		15	/* reply carries the discovery route */
+
+/*
  * Request header.  For variable-length commands, datalen bytes of
  * payload follow immediately after the header.
  */

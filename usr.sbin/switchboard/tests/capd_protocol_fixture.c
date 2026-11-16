@@ -12,8 +12,8 @@
  * getpeereid control socket this fixture used to dial was retired.  Each verb
  * crafts a deliberately malformed sctl_request, sends it over the capability
  * channel, and prints the reply status so the test can assert the rejection.
- * If there is no ambient control channel here (not a live plane), it exits 2 so
- * the caller can skip.
+ * If system.switchboard cannot be opened through the route it inherited, it
+ * reports why and exits 2.
  */
 
 #include <sys/types.h>
@@ -28,7 +28,7 @@
 #include <libservice.h>
 #include <switchboard_ctl.h>
 
-/* Distinct exit code meaning "no ambient control channel here" (test skips). */
+/* Distinct exit code: system.switchboard could not be opened. */
 #define	EX_NO_CHANNEL	2
 
 /*
@@ -55,7 +55,7 @@ control_send(uint32_t op, uint32_t flags, uint32_t datalen,
 		errx(1, "payload too large for fixture buffer");
 
 	if (service_open(SWITCHBOARD_CONTROL_NAME, &fd) != 0) {
-		fprintf(stderr, "no ambient control channel\n");
+		warn("cannot open %s", SWITCHBOARD_CONTROL_NAME);
 		return (EX_NO_CHANNEL);
 	}
 	if (service_session_create(fd, &session) != 0) {

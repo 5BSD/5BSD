@@ -53,46 +53,15 @@ log_loaded_manifest(const struct svc_manifest *m)
 }
 
 /*
- * Transitional rc world: run /etc/rc once, as a oneshot, and block until
- * it finishes.  switchboard now owns rc startup (init no longer runs
- * /etc/rc), so this reproduces the traditional boot -- the full rc
- * sequence runs before native capability services launch.  /etc/rc
- * normally exits 0 even when individual rc.d services fail, so a non-zero
- * result here means rc itself is broken; it is logged but not fatal
- * (native services still launch).  Returns 0 if /etc/rc exited 0.
+ * Mint the SYSTEM ambient lookup route and hand it to Capsule.  This runs at
+ * every startup, including a test fixture that skips /etc/rc: the route is
+ * how boot descendants and Capsule's clients reach this SwitchBoard, and a
+ * fixture's private Capsule hands it to its root control client
+ * (CTL_OP_LOOKUP) just as PID 1 carries it into logins.
  */
-static int
-run_rc_bootstrap(int kqunused)
+static void
+startup_ambient_lookup(void)
 {
-	static struct svc_runtime rc;	/* static: stable kevent udata */
-	struct kevent event;
-	int nev;
-
-	(void)kqunused;
-
-	memset(&rc, 0, sizeof(rc));
-	rc.kind = SVC_KIND_ONESHOT;
-	rc.owner_uid = (uid_t)-1;
-	rc.bundle_idx = (unsigned)-1;
-	strlcpy(rc.manifest.label, "etc-rc", sizeof(rc.manifest.label));
-	/*
-	 * /etc/rc is a non-executable (0644) /bin/sh script, exactly as init
-	 * runs it: execve(_PATH_BSHELL, {"sh", "/etc/rc", "autoboot"}).  Exec
-	 * it through /bin/sh -- execv("/etc/rc") directly fails EACCES (child
-	 * _exit(127)), which silently skips the entire rc boot (no rw remount,
-	 * no /var), stalling convergence.
-	 */
-	strlcpy(rc.manifest.program, "/bin/sh", sizeof(rc.manifest.program));
-	strlcpy(rc.manifest.arguments[0], "/etc/rc",
-	    sizeof(rc.manifest.arguments[0]));
-	strlcpy(rc.manifest.arguments[1], "autoboot",
-	    sizeof(rc.manifest.arguments[1]));
-	rc.manifest.narguments = 2;
-	rc.manifest.restart = SVC_RESTART_NEVER;
-	rc.state = SVC_STATE_STOPPED;
-	rc.want_console = true;		/* rc progress must be visible on console */
-	svc_runtime_init_fds(&rc);
-
 	/*
 	 * Install the SYSTEM ambient lookup channel (§21) before exec'ing rc so
 	 * rc, getty, login, su, and every other boot descendant inherits system
@@ -150,6 +119,48 @@ run_rc_bootstrap(int kqunused)
 			(void)close(dupfd);
 		}
 	}
+}
+
+/*
+ * Transitional rc world: run /etc/rc once, as a oneshot, and block until
+ * it finishes.  switchboard now owns rc startup (init no longer runs
+ * /etc/rc), so this reproduces the traditional boot -- the full rc
+ * sequence runs before native capability services launch.  /etc/rc
+ * normally exits 0 even when individual rc.d services fail, so a non-zero
+ * result here means rc itself is broken; it is logged but not fatal
+ * (native services still launch).  Returns 0 if /etc/rc exited 0.
+ */
+static int
+run_rc_bootstrap(int kqunused)
+{
+	static struct svc_runtime rc;	/* static: stable kevent udata */
+	struct kevent event;
+	int nev;
+
+	(void)kqunused;
+
+	memset(&rc, 0, sizeof(rc));
+	rc.kind = SVC_KIND_ONESHOT;
+	rc.owner_uid = (uid_t)-1;
+	rc.bundle_idx = (unsigned)-1;
+	strlcpy(rc.manifest.label, "etc-rc", sizeof(rc.manifest.label));
+	/*
+	 * /etc/rc is a non-executable (0644) /bin/sh script, exactly as init
+	 * runs it: execve(_PATH_BSHELL, {"sh", "/etc/rc", "autoboot"}).  Exec
+	 * it through /bin/sh -- execv("/etc/rc") directly fails EACCES (child
+	 * _exit(127)), which silently skips the entire rc boot (no rw remount,
+	 * no /var), stalling convergence.
+	 */
+	strlcpy(rc.manifest.program, "/bin/sh", sizeof(rc.manifest.program));
+	strlcpy(rc.manifest.arguments[0], "/etc/rc",
+	    sizeof(rc.manifest.arguments[0]));
+	strlcpy(rc.manifest.arguments[1], "autoboot",
+	    sizeof(rc.manifest.arguments[1]));
+	rc.manifest.narguments = 2;
+	rc.manifest.restart = SVC_RESTART_NEVER;
+	rc.state = SVC_STATE_STOPPED;
+	rc.want_console = true;		/* rc progress must be visible on console */
+	svc_runtime_init_fds(&rc);
 
 	syslog(LOG_INFO, "startup: running /etc/rc");
 	if (svc_exec(&rc, switchboard_kq) == -1) {
@@ -388,6 +399,9 @@ startup_launch_system(int kq)
 	 */
 	SWITCHBOARD_PROBE_STARTUP_BEGIN(sd.nservices, 1);
 	launched = 0;
+
+	/* The boot discovery route exists whether or not /etc/rc runs. */
+	startup_ambient_lookup();
 
 	/*
 	 * Transitional rc world: run /etc/rc once (a oneshot) and block until it

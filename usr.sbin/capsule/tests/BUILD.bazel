@@ -11,7 +11,7 @@ cc_binary(
 )
 exports_files(["capd_test_harness.sh"], visibility = ["//visibility:public"])
 
-exports_files(["capd_test_guardian.c"], visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
+exports_files(["capd_test_guardian.c", "capd_lookup_exec.c"], visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
 
 load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
 load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
@@ -105,6 +105,9 @@ cc_library(name = "storage_config_objects", srcs = ["//usr.sbin/capsule:config.c
 # ordinary dynamic helper variant with the maintained program name.
 cc_binary(name = "capd_test_guardian_dynamic", srcs = ["capd_test_guardian.c"],
     copts = ["-fPIE"], linkopts = ["-pie"], visibility = ["//visibility:public"])
+cc_binary(name = "capd_lookup_exec", srcs = ["capd_lookup_exec.c"],
+    deps = ["//lib/libservice:service", "//lib/libcapsulert:headers"],
+    copts = ["-fPIE"], linkopts = ["-pie"], visibility = ["//visibility:public"])
 cc_binary(name = "capd_bootstrap_fixture", srcs = ["capd_bootstrap_fixture.c"],
     deps = ["//lib/libcapsulert:headers", "//sys/dev/mac_capability:ioctl_headers"],
     copts = ["-fPIE"], linkopts = ["-pie"], visibility = ["//visibility:public"])
@@ -114,7 +117,7 @@ load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 _SHELL_PROGRAMS = ["capsule_config_cli_test", "capsule_daemon_test", "capsule_init_test", "capsule_daemon_lifecycle_test", "capsule_bootstrap_test", "capd_test_guardian_test", "capsule_boot_test"]
 _ATF_PROGRAMS = list(_LOGIC_CASES.keys()) + ["capsule_ambient_test", "system_release_test", "config_test", "storage_test", "import_test"]
-_INSTALLED_BINARIES = _ATF_PROGRAMS + ["capd_test_guardian", "capd_bootstrap_fixture"]
+_INSTALLED_BINARIES = _ATF_PROGRAMS + ["capd_test_guardian", "capd_bootstrap_fixture", "capd_lookup_exec"]
 [bsd_script_wrapper(name = program, body = program + ".sh", interpreter = "/usr/libexec/atf-sh",
     cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect") for program in _SHELL_PROGRAMS]
 [utility_installation(name = "install_" + program, program = program, manual = "", package = "capsule-tests",

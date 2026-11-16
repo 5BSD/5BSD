@@ -21,6 +21,12 @@ void	capsule_main(int argc, char *argv[]) __dead2;
 int	capsule_set_ambient_lookup(int fd);
 
 /*
+ * The lookup channel installed by capsule_set_ambient_lookup(), borrowed (the
+ * caller must not close it), or -1 when none is held.
+ */
+int	capsule_ambient_lookup(void);
+
+/*
  * Apply a system lifecycle transition requested over the capability plane
  * (docs/book/src/plane/capsule.md, P4b).  op is a CTL_OP_* lifecycle
  * opcode.  Returns 0 when applied, EPERM when Capsule is not PID 1.

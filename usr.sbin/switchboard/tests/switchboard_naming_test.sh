@@ -68,7 +68,7 @@ naming_register_and_lookup_head()
 }
 naming_register_and_lookup_body()
 {
-	require_ambient_control
+	use_private_control
 	prepare_paths
 	install_naming_fixture org.test.switchboard-ls-provider \
 	    'activation { ipc = ["org.test.ls-provider"]; }
@@ -85,7 +85,7 @@ arguments = ["provider", "provider-registered.result", "provider.result"];'
 	atf_check -s exit:0 \
 	    -o match:'client_label=org.test.switchboard-ls-client/[^ ]* message=world provider_sendable=yes$' \
 	    cat provider.result
-	switchboardctl status > naming-status.result
+	"$SWITCHBOARDCTL" status > naming-status.result
 	atf_check -s exit:0 -o match:'org.test.switchboard-ls-provider.*conns=1' \
 	    cat naming-status.result
 	atf_check -s exit:0 -o not-match:'org.test.switchboard-ls-client/switchboard-ls-client running.*conns=[1-9]' \
@@ -130,7 +130,7 @@ naming_auto_unregister_on_exit_head()
 }
 naming_auto_unregister_on_exit_body()
 {
-	require_ambient_control
+	use_private_control
 	local provider_pid before i
 
 	prepare_paths
@@ -148,7 +148,7 @@ arguments = ["provider", "provider-registered.result", "provider.result"];'
 	    "${APPS_DIR}/org.test.switchboard-ls-client.cap/Units/switchboard-ls-client.unit/Unit.ucl"
 	start_stack
 	wait_naming_result provider.result
-	provider_pid=$(switchboardctl status |
+	provider_pid=$("$SWITCHBOARDCTL" status |
 	    sed -n 's/.*org.test.switchboard-ls-provider\/switchboard-ls-provider running  *pid \([0-9][0-9]*\).*/\1/p')
 	case "$provider_pid" in
 	''|*[!0-9]*) atf_fail "could not determine the provider PID" ;;

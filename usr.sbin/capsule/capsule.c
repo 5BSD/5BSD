@@ -1911,6 +1911,13 @@ capsule_set_ambient_lookup(int fd)
 	return (0);
 }
 
+int
+capsule_ambient_lookup(void)
+{
+
+	return (capsule_ambient_lookup_fd);
+}
+
 static pid_t
 start_getty(session_t *sp)
 {

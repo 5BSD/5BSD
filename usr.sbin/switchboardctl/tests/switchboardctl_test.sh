@@ -32,8 +32,9 @@ find_switchboardctl()
 	atf_skip "switchboardctl binary not found"
 }
 
-# These cases deliberately exercise the manager belonging to the root login.
-# An inherited channel cannot address an independently started fixture manager.
+# These cases deliberately exercise the manager the root login's inherited route
+# reaches.  Cases that need a private manager install that stack's route instead
+# (use_private_control in usr.sbin/switchboard/tests).
 # Opt in only in a disposable VM: the service cases install one temporary bundle.
 require_ambient_control()
 {
