@@ -316,31 +316,26 @@ ATF_TC_BODY(push_refusals, tc)
 
 	o = setup(&c, 4);
 	kq = watch(o->fd);
-#define	REFUSED(call, want) do {					\
-	errno = 0;							\
-	ATF_CHECK_EQ(-1, (call));					\
-	ATF_CHECK_EQ_MSG(want, errno, "%s: errno %d", #call, errno);	\
-} while (0)
-	REFUSED(dq_push_vnode_note(c.q, o->id, 0), EINVAL);
-	REFUSED(dq_push_vnode_note(c.q, o->id, NOTE_REVOKE), EINVAL);
-	REFUSED(dq_push_vnode_note(c.q, o->id, NOTE_WRITE | NOTE_REVOKE),
+	DQT_CHECK_REFUSED(dq_push_vnode_note(c.q, o->id, 0), EINVAL);
+	DQT_CHECK_REFUSED(dq_push_vnode_note(c.q, o->id, NOTE_REVOKE), EINVAL);
+	DQT_CHECK_REFUSED(dq_push_vnode_note(c.q, o->id, NOTE_WRITE | NOTE_REVOKE),
 	    EINVAL);
-	REFUSED(dq_push_vnode_note(c.q, o->id, 0x80000000u), EINVAL);
-	REFUSED(dq_push_vnode_note(c.q, o->id + 1000, NOTE_WRITE), ESRCH);
+	DQT_CHECK_REFUSED(dq_push_vnode_note(c.q, o->id, 0x80000000u), EINVAL);
+	DQT_CHECK_REFUSED(dq_push_vnode_note(c.q, o->id + 1000, NOTE_WRITE), ESRCH);
 	memset(&pa, 0, sizeof(pa));
 	pa.dp_version = DQ_API_VERSION + 1;
 	pa.dp_op = DQ_PUSH_NOTIFY_VNODE;
 	pa.dp_object = o->id;
 	pa.dp_note = NOTE_WRITE;
-	REFUSED(ioctl(c.q, DQ_IOC_PUSH, &pa), EINVAL);
+	DQT_CHECK_REFUSED(ioctl(c.q, DQ_IOC_PUSH, &pa), EINVAL);
 	pa.dp_version = DQ_API_VERSION;
 	pa.dp_pad0 = 1;
-	REFUSED(ioctl(c.q, DQ_IOC_PUSH, &pa), EINVAL);
+	DQT_CHECK_REFUSED(ioctl(c.q, DQ_IOC_PUSH, &pa), EINVAL);
 	pa.dp_pad0 = 0;
 	pa.dp_op = DQ_PUSH_INVALIDATE;
-	REFUSED(ioctl(c.q, DQ_IOC_PUSH, &pa), EINVAL);
+	DQT_CHECK_REFUSED(ioctl(c.q, DQ_IOC_PUSH, &pa), EINVAL);
 	pa.dp_op = 99;
-	REFUSED(ioctl(c.q, DQ_IOC_PUSH, &pa), EINVAL);
+	DQT_CHECK_REFUSED(ioctl(c.q, DQ_IOC_PUSH, &pa), EINVAL);
 #undef REFUSED
 	ATF_CHECK_EQ(NOTE_ATTRIB, notes_fenced(kq, &c, o));
 	dqt_stats2(&c, &st);

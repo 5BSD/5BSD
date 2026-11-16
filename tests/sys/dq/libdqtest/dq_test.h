@@ -386,6 +386,30 @@ struct dqt_rr {
 	int		 err;
 };
 
+/*
+ * Record a call's result in a struct dqt_rr: errno is cleared first, and
+ * kept only when the call returned -1.
+ */
+#define	DQT_RR(rr, call) do {						\
+	errno = 0;							\
+	(rr).rv = (long)(call);						\
+	(rr).err = (rr).rv == -1 ? errno : 0;				\
+} while (0)
+/* A call's errno, or 0 when it did not return -1. */
+#define	DQT_ERRNO_OF(call)	((call) == -1 ? errno : 0)
+/* The call fails with -1 and errno want (captured before any check). */
+#define	DQT_CHECK_REFUSED(call, want) do {				\
+	long _dqt_rv;							\
+	int _dqt_err;							\
+									\
+	errno = 0;							\
+	_dqt_rv = (long)(call);						\
+	_dqt_err = errno;						\
+	ATF_CHECK_EQ_MSG(-1, _dqt_rv, "%s returned %ld", #call, _dqt_rv);\
+	ATF_CHECK_EQ_MSG((want), _dqt_err, "%s: errno %d want %d", #call,\
+	    _dqt_err, (want));						\
+} while (0)
+
 /* A dqt_child_fn: read(2) once, up to len (at most 4096) bytes of fd. */
 struct dqt_read_arg {
 	int		 fd;
@@ -531,7 +555,6 @@ void	dqt_check_stat_eq(const struct stat *served, const struct stat *want);
 void	dqt_check_statfs_eq(const struct statfs *served,
 	    const struct statfs *want);
 
-
 /*
  * Pages.  dqt_touch reads (or writes wval, then reads) one byte of a
  * mapping and returns 0, or the signal (SIGBUS, SIGSEGV) the access
@@ -548,7 +571,6 @@ struct dqt_sync {
 void	dqt_sync_init(struct dqt_sync *s);
 void	dqt_sync_post(int fd);
 bool	dqt_sync_wait(int fd, int ms);
-
 
 /*
  * Resolution (1c).  dqt_attach_spawn pdforks a requester, attaches it to

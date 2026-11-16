@@ -252,8 +252,6 @@ run_child(struct srv *s, child_fn_t fn, int *res)
 	run_child_as(s, fn, res, true);
 }
 
-#define	ERR(x)	((x) < 0 ? errno : 0)
-
 /*
  * An errno check that names the value it got (strerror_r: strerror's
  * buffer would be shared by both strings).
@@ -357,10 +355,10 @@ c_dirfd_ops(struct srv *s, int *r)
 	char buf[64];
 	int fd, d;
 
-	r[0] = ERR(fstatat(s->sroot, "a", &st, 0));
+	r[0] = DQT_ERRNO_OF(fstatat(s->sroot, "a", &st, 0));
 	r[1] = (int)st.st_size;
 	fd = openat(s->sroot, "a", O_RDONLY);
-	r[2] = ERR(fd);
+	r[2] = DQT_ERRNO_OF(fd);
 	r[3] = fd >= 0 ? (int)read(fd, buf, sizeof(buf)) : -1;
 	r[4] = fd >= 0 && r[3] == 7 && memcmp(buf, "served\n", 7) == 0;
 	if (fd >= 0)
@@ -368,25 +366,25 @@ c_dirfd_ops(struct srv *s, int *r)
 	memset(buf, 0, sizeof(buf));
 	r[5] = (int)readlinkat(s->sroot, "l", buf, sizeof(buf));
 	r[6] = strcmp(buf, "a") == 0;
-	r[7] = ERR(faccessat(s->sroot, "a", R_OK, 0));
-	r[8] = ERR(mkdirat(s->sroot, "nd", 0755));
-	r[9] = ERR(renameat(s->sroot, "nd", s->sroot, "nd2"));
-	r[10] = ERR(unlinkat(s->sroot, "nd2", AT_REMOVEDIR));
-	r[11] = ERR(symlinkat("a", s->sroot, "nl"));
-	r[12] = ERR(unlinkat(s->sroot, "nl", 0));
+	r[7] = DQT_ERRNO_OF(faccessat(s->sroot, "a", R_OK, 0));
+	r[8] = DQT_ERRNO_OF(mkdirat(s->sroot, "nd", 0755));
+	r[9] = DQT_ERRNO_OF(renameat(s->sroot, "nd", s->sroot, "nd2"));
+	r[10] = DQT_ERRNO_OF(unlinkat(s->sroot, "nd2", AT_REMOVEDIR));
+	r[11] = DQT_ERRNO_OF(symlinkat("a", s->sroot, "nl"));
+	r[12] = DQT_ERRNO_OF(unlinkat(s->sroot, "nl", 0));
 	/* A served subdirectory is a start too; ".." stays in the tree. */
 	d = openat(s->sroot, "d", O_RDONLY | O_DIRECTORY);
-	r[13] = ERR(d);
+	r[13] = DQT_ERRNO_OF(d);
 	if (d >= 0) {
-		r[14] = ERR(fstat(d, &st));
+		r[14] = DQT_ERRNO_OF(fstat(d, &st));
 		r[15] = S_ISDIR(st.st_mode);
-		r[16] = ERR(fstatat(d, "f", &st, 0));
-		r[17] = ERR(fstatat(d, "../a", &st, 0));
+		r[16] = DQT_ERRNO_OF(fstatat(d, "f", &st, 0));
+		r[17] = DQT_ERRNO_OF(fstatat(d, "../a", &st, 0));
 		r[18] = (int)st.st_size;
 		close(d);
 	}
-	r[19] = ERR(fstatat(s->sroot, "missing", &st, 0));
-	r[20] = ERR(fchmodat(s->sroot, "a", 0640, 0));
+	r[19] = DQT_ERRNO_OF(fstatat(s->sroot, "missing", &st, 0));
+	r[20] = DQT_ERRNO_OF(fchmodat(s->sroot, "a", 0640, 0));
 }
 
 DQ_TC(dirfd_ops);
@@ -479,7 +477,7 @@ c_pass(struct srv *s, int *r)
 {
 	struct stat st;
 
-	r[0] = ERR(fstatat(s->sroot, "pass", &st, 0));
+	r[0] = DQT_ERRNO_OF(fstatat(s->sroot, "pass", &st, 0));
 }
 
 DQ_TC(pass_refused);
@@ -542,13 +540,13 @@ c_real(struct srv *s, int *r)
 	int fd;
 
 	fd = openat(s->sroot, "realfile", O_RDONLY);
-	r[0] = ERR(fd);
+	r[0] = DQT_ERRNO_OF(fd);
 	if (fd >= 0) {
 		r[1] = (int)read(fd, buf, sizeof(buf));
 		close(fd);
 	}
-	r[2] = ERR(openat(s->sroot, "loop", O_RDONLY));
-	r[3] = ERR(openat(s->sroot, "beneath", O_RDONLY | O_RESOLVE_BENEATH));
+	r[2] = DQT_ERRNO_OF(openat(s->sroot, "loop", O_RDONLY));
+	r[3] = DQT_ERRNO_OF(openat(s->sroot, "beneath", O_RDONLY | O_RESOLVE_BENEATH));
 }
 
 DQ_TC(real_answer);
@@ -586,8 +584,8 @@ c_starts(struct srv *s, int *r)
 	int fd;
 
 	fd = openat(s->sroot, "a", O_RDONLY);
-	r[0] = ERR(fd);
-	r[1] = ERR(fstatat(fd, "x", &st, 0));
+	r[0] = DQT_ERRNO_OF(fd);
+	r[1] = DQT_ERRNO_OF(fstatat(fd, "x", &st, 0));
 }
 
 static void
@@ -595,7 +593,7 @@ c_stat_root(struct srv *s, int *r)
 {
 	struct stat st;
 
-	r[0] = ERR(fstatat(s->sroot, "a", &st, 0));
+	r[0] = DQT_ERRNO_OF(fstatat(s->sroot, "a", &st, 0));
 }
 
 DQ_TC(start_rules);
@@ -636,17 +634,17 @@ c_two_path(struct srv *s, int *r)
 	int fd, rfd;
 
 	snprintf(real, sizeof(real), "%s/../realx", s->backing);
-	r[0] = ERR(renameat(s->sroot, "a", AT_FDCWD, real));
-	r[1] = ERR(linkat(AT_FDCWD, real, s->sroot, "b", 0));
+	r[0] = DQT_ERRNO_OF(renameat(s->sroot, "a", AT_FDCWD, real));
+	r[1] = DQT_ERRNO_OF(linkat(AT_FDCWD, real, s->sroot, "b", 0));
 	rfd = open(real, O_CREAT | O_RDWR, 0644);
-	r[2] = ERR(rfd);
-	r[3] = ERR(getfh(real, &fh));
-	r[4] = ERR(fhlinkat(&fh, s->sroot, "fhl"));
+	r[2] = DQT_ERRNO_OF(rfd);
+	r[3] = DQT_ERRNO_OF(getfh(real, &fh));
+	r[4] = DQT_ERRNO_OF(fhlinkat(&fh, s->sroot, "fhl"));
 	fd = openat(s->sroot, "d/f", O_RDONLY);
-	r[5] = ERR(fd);
-	r[6] = ERR(funlinkat(AT_FDCWD, real, fd, 0));
-	r[7] = ERR(funlinkat(s->sroot, "a", rfd, 0));
-	r[8] = ERR(funlinkat(s->sroot, "d/f", fd, 0));
+	r[5] = DQT_ERRNO_OF(fd);
+	r[6] = DQT_ERRNO_OF(funlinkat(AT_FDCWD, real, fd, 0));
+	r[7] = DQT_ERRNO_OF(funlinkat(s->sroot, "a", rfd, 0));
+	r[8] = DQT_ERRNO_OF(funlinkat(s->sroot, "d/f", fd, 0));
 }
 
 DQ_TC(two_path);
@@ -715,13 +713,13 @@ c_i8(struct srv *s, int *r)
 {
 	struct stat st;
 
-	r[0] = ERR(fstatat(s->sroot, "../a", &st, AT_RESOLVE_BENEATH));
-	r[1] = ERR(fstatat(s->sroot, "./../a", &st, AT_RESOLVE_BENEATH));
-	r[2] = ERR(fstatat(s->sroot, ".//../a", &st, AT_RESOLVE_BENEATH));
-	r[3] = ERR(fstatat(s->sroot, "/etc", &st, AT_RESOLVE_BENEATH));
-	r[4] = ERR(fstatat(s->sroot, "d/../a", &st, AT_RESOLVE_BENEATH));
+	r[0] = DQT_ERRNO_OF(fstatat(s->sroot, "../a", &st, AT_RESOLVE_BENEATH));
+	r[1] = DQT_ERRNO_OF(fstatat(s->sroot, "./../a", &st, AT_RESOLVE_BENEATH));
+	r[2] = DQT_ERRNO_OF(fstatat(s->sroot, ".//../a", &st, AT_RESOLVE_BENEATH));
+	r[3] = DQT_ERRNO_OF(fstatat(s->sroot, "/etc", &st, AT_RESOLVE_BENEATH));
+	r[4] = DQT_ERRNO_OF(fstatat(s->sroot, "d/../a", &st, AT_RESOLVE_BENEATH));
 	r[5] = (int)st.st_size;
-	r[6] = ERR(fstatat(s->sroot, "d/outside", &st, AT_RESOLVE_BENEATH));
+	r[6] = DQT_ERRNO_OF(fstatat(s->sroot, "d/outside", &st, AT_RESOLVE_BENEATH));
 }
 
 DQ_TC(i8_beneath);
@@ -767,23 +765,23 @@ c_capmode(struct srv *s, int *r)
 	int fd, d;
 
 	d = openat(s->sroot, "d", O_RDONLY | O_DIRECTORY);
-	r[0] = ERR(d);
+	r[0] = DQT_ERRNO_OF(d);
 	cap_rights_init(&rights, CAP_LOOKUP, CAP_READ, CAP_FSTAT, CAP_FSTATAT,
 	    CAP_FCNTL);
-	r[1] = ERR(cap_rights_limit(s->sroot, &rights));
-	r[2] = ERR(fcntl(s->sroot, F_SETFD, FD_RESOLVE_BENEATH));
+	r[1] = DQT_ERRNO_OF(cap_rights_limit(s->sroot, &rights));
+	r[2] = DQT_ERRNO_OF(fcntl(s->sroot, F_SETFD, FD_RESOLVE_BENEATH));
 	fd = openat(s->sroot, "a", O_RDONLY);
-	r[3] = ERR(fd);
+	r[3] = DQT_ERRNO_OF(fd);
 	if (fd >= 0) {
-		r[4] = ERR(cap_rights_get(fd, &got));
+		r[4] = DQT_ERRNO_OF(cap_rights_get(fd, &got));
 		r[5] = cap_rights_is_set(&got, CAP_READ);
 		r[6] = cap_rights_is_set(&got, CAP_WRITE);
 		r[7] = (fcntl(fd, F_GETFD) & FD_RESOLVE_BENEATH) != 0;
 	}
-	r[8] = ERR(cap_enter());
-	r[9] = ERR(fstatat(d, "../a", &st, 0));
+	r[8] = DQT_ERRNO_OF(cap_enter());
+	r[9] = DQT_ERRNO_OF(fstatat(d, "../a", &st, 0));
 	/* Not leading: refused only because lookup_cap_dotdot is 0. */
-	r[10] = ERR(fstatat(s->sroot, "d/../a", &st, 0));
+	r[10] = DQT_ERRNO_OF(fstatat(s->sroot, "d/../a", &st, 0));
 }
 
 DQ_TC_CLEANUP(capmode_rights);
@@ -854,7 +852,7 @@ c_install_limits(struct srv *s, int *r)
 	r[2] = cap_rights_is_set(&got, CAP_IOCTL);
 	r[3] = c_nioctls(fd, &first);
 	fcntls = 0;
-	r[4] = ERR(cap_fcntls_get(fd, &fcntls));
+	r[4] = DQT_ERRNO_OF(cap_fcntls_get(fd, &fcntls));
 	r[5] = (int)fcntls;
 	(void)close(fd);
 	fd = openat(s->sroot, "a", O_RDONLY | O_CLOEXEC | O_CLOFORK);
@@ -864,12 +862,12 @@ c_install_limits(struct srv *s, int *r)
 	/* A start with an fcntl limit and a one-command ioctl list. */
 	cap_rights_init(&rights, CAP_LOOKUP, CAP_READ, CAP_FSTAT, CAP_FCNTL,
 	    CAP_IOCTL);
-	r[7] = ERR(cap_rights_limit(s->sroot, &rights));
-	r[8] = ERR(cap_fcntls_limit(s->sroot, CAP_FCNTL_GETFL));
+	r[7] = DQT_ERRNO_OF(cap_rights_limit(s->sroot, &rights));
+	r[8] = DQT_ERRNO_OF(cap_fcntls_limit(s->sroot, CAP_FCNTL_GETFL));
 	cmd = FIONREAD;
-	r[9] = ERR(cap_ioctls_limit(s->sroot, &cmd, 1));
+	r[9] = DQT_ERRNO_OF(cap_ioctls_limit(s->sroot, &cmd, 1));
 	fd = openat(s->sroot, "a", O_RDONLY);
-	r[10] = ERR(fd);
+	r[10] = DQT_ERRNO_OF(fd);
 	(void)cap_rights_get(fd, &got);
 	r[11] = cap_rights_is_set(&got, CAP_READ);
 	r[12] = cap_rights_is_set(&got, CAP_WRITE);
@@ -882,7 +880,7 @@ c_install_limits(struct srv *s, int *r)
 	(void)close(fd);
 
 	/* The start's list emptied. */
-	r[17] = ERR(cap_ioctls_limit(s->sroot, NULL, 0));
+	r[17] = DQT_ERRNO_OF(cap_ioctls_limit(s->sroot, NULL, 0));
 	fd = openat(s->sroot, "a", O_RDONLY);
 	(void)cap_rights_get(fd, &got);
 	r[18] = c_nioctls(fd, &first);
@@ -891,14 +889,14 @@ c_install_limits(struct srv *s, int *r)
 
 	/* A start with neither CAP_IOCTL nor CAP_FCNTL. */
 	cap_rights_init(&rights, CAP_LOOKUP, CAP_READ, CAP_FSTAT);
-	r[20] = ERR(cap_rights_limit(s->sroot, &rights));
+	r[20] = DQT_ERRNO_OF(cap_rights_limit(s->sroot, &rights));
 	fd = openat(s->sroot, "a", O_RDONLY);
 	(void)cap_rights_get(fd, &got);
 	r[21] = cap_rights_is_set(&got, CAP_IOCTL);
 	r[22] = c_nioctls(fd, &first);
 	r[23] = cap_rights_is_set(&got, CAP_FCNTL);
 	fcntls = 0;
-	r[24] = ERR(cap_fcntls_get(fd, &fcntls));
+	r[24] = DQT_ERRNO_OF(cap_fcntls_get(fd, &fcntls));
 	r[25] = (int)fcntls;
 	(void)close(fd);
 }
@@ -968,14 +966,14 @@ c_noswap(struct srv *s, int *r)
 	int fd;
 
 	fd = openat(s->sroot, "a", O_RDONLY);
-	r[0] = ERR(fd);
+	r[0] = DQT_ERRNO_OF(fd);
 	(void)close(fd);
 	fd = openat(s->sroot, "a", O_RDONLY | O_RESOLVE_BENEATH);
-	r[1] = ERR(fd);
+	r[1] = DQT_ERRNO_OF(fd);
 	(void)close(fd);
-	r[2] = ERR(cap_enter());
+	r[2] = DQT_ERRNO_OF(cap_enter());
 	fd = openat(s->sroot, "a", O_RDONLY);
-	r[3] = ERR(fd);
+	r[3] = DQT_ERRNO_OF(fd);
 	r[4] = (int)read(fd, b, sizeof(b));
 }
 
@@ -1019,12 +1017,12 @@ c_emptypath(struct srv *s, int *r)
 	int fd;
 
 	fd = openat(s->sroot, "", O_EMPTY_PATH | O_RDONLY | O_DIRECTORY);
-	r[0] = ERR(fd);
+	r[0] = DQT_ERRNO_OF(fd);
 	if (fd >= 0) {
-		r[1] = ERR(fstat(fd, &st));
+		r[1] = DQT_ERRNO_OF(fstat(fd, &st));
 		r[2] = S_ISDIR(st.st_mode);
 	}
-	r[3] = ERR(fstatat(s->sroot, "", &st, AT_EMPTY_PATH));
+	r[3] = DQT_ERRNO_OF(fstatat(s->sroot, "", &st, AT_EMPTY_PATH));
 	r[4] = S_ISDIR(st.st_mode);
 	/*
 	 * A plain fdescfs node of the descriptor is not a directory
@@ -1033,7 +1031,7 @@ c_emptypath(struct srv *s, int *r)
 	 * a higher descriptor is ENOENT: the test mounts its own.
 	 */
 	snprintf(path, sizeof(path), "%s/%d/a", DQT_FDESC_DIR, s->sroot);
-	r[5] = ERR(stat(path, &st));
+	r[5] = DQT_ERRNO_OF(stat(path, &st));
 }
 
 DQ_TC_CLEANUP(emptypath);
@@ -1081,27 +1079,27 @@ c_symlink(struct srv *s, int *r)
 	int fd, ffd;
 
 	fd = openat(s->sroot, "l", O_PATH | O_NOFOLLOW);
-	r[0] = ERR(fd);
+	r[0] = DQT_ERRNO_OF(fd);
 	if (fd < 0)
 		return;
-	r[1] = ERR(fstat(fd, &st));
+	r[1] = DQT_ERRNO_OF(fstat(fd, &st));
 	r[2] = S_ISLNK(st.st_mode);
 	memset(&kif, 0, sizeof(kif));
 	kif.kf_structsize = sizeof(kif);
-	r[3] = ERR(fcntl(fd, F_KINFO, &kif));
+	r[3] = DQT_ERRNO_OF(fcntl(fd, F_KINFO, &kif));
 	r[4] = kif.kf_un.kf_file.kf_file_type == KF_VTYPE_VLNK;
 	memset(buf, 0, sizeof(buf));
 	r[5] = (int)readlinkat(fd, "", buf, sizeof(buf));
 	r[6] = strcmp(buf, "a") == 0;
-	r[7] = ERR(openat(s->sroot, "l", O_RDONLY | O_NOFOLLOW));
-	r[8] = ERR(fchmodat(s->sroot, "l", 0700, AT_SYMLINK_NOFOLLOW));
-	r[9] = ERR(fchmod(fd, 0600));
-	r[10] = ERR(fchmodat(fd, "", 0750, AT_EMPTY_PATH));
+	r[7] = DQT_ERRNO_OF(openat(s->sroot, "l", O_RDONLY | O_NOFOLLOW));
+	r[8] = DQT_ERRNO_OF(fchmodat(s->sroot, "l", 0700, AT_SYMLINK_NOFOLLOW));
+	r[9] = DQT_ERRNO_OF(fchmod(fd, 0600));
+	r[10] = DQT_ERRNO_OF(fchmodat(fd, "", 0750, AT_EMPTY_PATH));
 	ffd = openat(s->sroot, "a", O_PATH);
-	r[11] = ERR(ffd);
-	r[12] = ERR(fchmodat(ffd, "", 0604, AT_EMPTY_PATH));
-	r[13] = ERR(fchownat(ffd, "", (uid_t)-1, (gid_t)-1, AT_EMPTY_PATH));
-	r[14] = ERR(fchmod(ffd, 0600));
+	r[11] = DQT_ERRNO_OF(ffd);
+	r[12] = DQT_ERRNO_OF(fchmodat(ffd, "", 0604, AT_EMPTY_PATH));
+	r[13] = DQT_ERRNO_OF(fchownat(ffd, "", (uid_t)-1, (gid_t)-1, AT_EMPTY_PATH));
+	r[14] = DQT_ERRNO_OF(fchmod(ffd, 0600));
 	/* kqueue on the O_PATH symlink: FKQALLOWED, as vn_open_vnode. */
 	{
 		struct kevent kev;
@@ -1110,7 +1108,7 @@ c_symlink(struct srv *s, int *r)
 		kq = kqueue();
 		EV_SET(&kev, fd, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_ATTRIB,
 		    0, NULL);
-		r[15] = ERR(kevent(kq, &kev, 1, NULL, 0, NULL));
+		r[15] = DQT_ERRNO_OF(kevent(kq, &kev, 1, NULL, 0, NULL));
 		close(kq);
 	}
 }
@@ -1165,7 +1163,7 @@ c_dir(struct srv *s, int *r)
 	int seen, d;
 
 	d = openat(s->sroot, ".", O_RDONLY | O_DIRECTORY);
-	r[0] = ERR(d);
+	r[0] = DQT_ERRNO_OF(d);
 	if (d < 0)
 		return;
 	seen = 0;
@@ -1195,7 +1193,7 @@ c_dir(struct srv *s, int *r)
 	r[6] = lseek(d, 0, SEEK_DATA) < 0 ? errno : 0;
 	memset(&kif, 0, sizeof(kif));
 	kif.kf_structsize = sizeof(kif);
-	r[7] = ERR(fcntl(d, F_KINFO, &kif));
+	r[7] = DQT_ERRNO_OF(fcntl(d, F_KINFO, &kif));
 	r[8] = kif.kf_un.kf_file.kf_file_type == KF_VTYPE_VDIR;
 	r[9] = (int)lseek(d, 0, SEEK_SET);
 	r[10] = (int)getdirentries(d, buf, sizeof(buf), &base) > 0;
@@ -1213,7 +1211,7 @@ c_dir(struct srv *s, int *r)
 		r[13] = served[0] != '\0' && strcmp(served, real) == 0;
 	}
 	/* A directory is not opened for writing (vn_open_vnode). */
-	r[14] = ERR(openat(s->sroot, ".", O_RDWR));
+	r[14] = DQT_ERRNO_OF(openat(s->sroot, ".", O_RDWR));
 	/* kqueue on a served directory. */
 	{
 		struct kevent kev;
@@ -1222,9 +1220,9 @@ c_dir(struct srv *s, int *r)
 		kq = kqueue();
 		EV_SET(&kev, d, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_WRITE,
 		    0, NULL);
-		r[15] = ERR(kevent(kq, &kev, 1, NULL, 0, NULL));
+		r[15] = DQT_ERRNO_OF(kevent(kq, &kev, 1, NULL, 0, NULL));
 		EV_SET(&kev, d, EVFILT_READ, EV_ADD, 0, 0, NULL);
-		r[16] = ERR(kevent(kq, &kev, 1, NULL, 0, NULL));
+		r[16] = DQT_ERRNO_OF(kevent(kq, &kev, 1, NULL, 0, NULL));
 		close(kq);
 	}
 }
@@ -1405,18 +1403,18 @@ c_resymlink(struct srv *s, int *r)
 	struct stat st;
 	int fd;
 
-	r[0] = ERR(stat("reallink", &st));
+	r[0] = DQT_ERRNO_OF(stat("reallink", &st));
 	fd = openat(s->sroot, "p", O_RDONLY | O_NONBLOCK);
-	r[1] = ERR(fd);
+	r[1] = DQT_ERRNO_OF(fd);
 	if (fd >= 0) {
-		r[2] = ERR(fstat(fd, &st));
+		r[2] = DQT_ERRNO_OF(fstat(fd, &st));
 		r[3] = S_ISFIFO(st.st_mode);
 	}
 	/* A served answer (ATTR) to a re-consultation into the prefix. */
-	r[4] = ERR(stat("toprefix", &st));
+	r[4] = DQT_ERRNO_OF(stat("toprefix", &st));
 	r[5] = (int)st.st_size;
 	/* REAL to a re-consultation: the backing "a", 7 bytes. */
-	r[6] = ERR(stat("reallink3", &st));
+	r[6] = DQT_ERRNO_OF(stat("reallink3", &st));
 	r[7] = (int)st.st_size;
 }
 
@@ -1458,7 +1456,6 @@ ATF_TC_BODY(symlink_reconsult, tc)
 	srv_stop(&s);
 }
 
-
 /*
  * Round 2, finding 1: both starts served, the second checked against its
  * own descriptor before anything is posted.  A second descriptor without
@@ -1477,20 +1474,20 @@ c_slot1(struct srv *s, int *r)
 	d1 = openat(s->sroot, "d", O_RDONLY | O_DIRECTORY);
 	d2 = openat(s->sroot, "d", O_RDONLY | O_DIRECTORY);
 	d3 = openat(s->sroot, "d", O_RDONLY | O_DIRECTORY);
-	r[0] = ERR(d1) + ERR(d2) + ERR(d3);
+	r[0] = DQT_ERRNO_OF(d1) + DQT_ERRNO_OF(d2) + DQT_ERRNO_OF(d3);
 	cap_rights_init(&rights, CAP_LOOKUP, CAP_READ);
-	r[1] = ERR(cap_rights_limit(d1, &rights));
-	r[2] = ERR(renameat(s->sroot, "a", d1, "x1"));
-	r[3] = ERR(fcntl(d2, F_SETFD, FD_RESOLVE_BENEATH));
-	r[4] = ERR(renameat(s->sroot, "a", d2, "../x2"));
+	r[1] = DQT_ERRNO_OF(cap_rights_limit(d1, &rights));
+	r[2] = DQT_ERRNO_OF(renameat(s->sroot, "a", d1, "x1"));
+	r[3] = DQT_ERRNO_OF(fcntl(d2, F_SETFD, FD_RESOLVE_BENEATH));
+	r[4] = DQT_ERRNO_OF(renameat(s->sroot, "a", d2, "../x2"));
 	cap_rights_init(&rights, CAP_LOOKUP, CAP_READ, CAP_RENAMEAT_TARGET,
 	    CAP_CREATE);
-	r[5] = ERR(cap_rights_limit(d3, &rights));
-	r[6] = ERR(renameat(s->sroot, "a", d3, "x3"));
-	r[7] = ERR(renameat(s->sroot, "x3x", d3, "x4"));
-	r[8] = ERR(cap_enter());
-	r[9] = ERR(renameat(s->sroot, "d/x3", AT_FDCWD, "x5"));
-	r[10] = ERR(renameat(s->sroot, "d/x3", s->sroot, "../x6"));
+	r[5] = DQT_ERRNO_OF(cap_rights_limit(d3, &rights));
+	r[6] = DQT_ERRNO_OF(renameat(s->sroot, "a", d3, "x3"));
+	r[7] = DQT_ERRNO_OF(renameat(s->sroot, "x3x", d3, "x4"));
+	r[8] = DQT_ERRNO_OF(cap_enter());
+	r[9] = DQT_ERRNO_OF(renameat(s->sroot, "d/x3", AT_FDCWD, "x5"));
+	r[10] = DQT_ERRNO_OF(renameat(s->sroot, "d/x3", s->sroot, "../x6"));
 }
 
 DQ_TC(slot1_restricted);
@@ -1540,17 +1537,17 @@ c_vnodeless(struct srv *s, int *r)
 
 	if (other_q >= 0)
 		close(other_q);
-	r[0] = ERR(renameat(AT_FDCWD, "realsrc", other_root, "x"));
-	r[1] = ERR(renameat(AT_FDCWD, "realsrc", other_file, "x"));
-	r[2] = ERR(renameat(AT_FDCWD, "realsrc", 999, "x"));
-	r[3] = ERR(mkdirat(s->sroot, "rd", 0755));
+	r[0] = DQT_ERRNO_OF(renameat(AT_FDCWD, "realsrc", other_root, "x"));
+	r[1] = DQT_ERRNO_OF(renameat(AT_FDCWD, "realsrc", other_file, "x"));
+	r[2] = DQT_ERRNO_OF(renameat(AT_FDCWD, "realsrc", 999, "x"));
+	r[3] = DQT_ERRNO_OF(mkdirat(s->sroot, "rd", 0755));
 	fd = openat(s->sroot, "rd", O_RDONLY | O_DIRECTORY);
-	r[4] = ERR(fd);
+	r[4] = DQT_ERRNO_OF(fd);
 	cap_rights_init(&rights, CAP_READ);
-	r[5] = ERR(cap_rights_limit(fd, &rights));
-	r[6] = ERR(funlinkat(s->sroot, "rd", fd, AT_REMOVEDIR));
+	r[5] = DQT_ERRNO_OF(cap_rights_limit(fd, &rights));
+	r[6] = DQT_ERRNO_OF(funlinkat(s->sroot, "rd", fd, AT_REMOVEDIR));
 	fd = openat(s->sroot, "rd", O_RDONLY | O_DIRECTORY);
-	r[7] = ERR(funlinkat(s->sroot, "rd", fd, AT_REMOVEDIR));
+	r[7] = DQT_ERRNO_OF(funlinkat(s->sroot, "rd", fd, AT_REMOVEDIR));
 }
 
 DQ_TC(vnodeless_slot1);
@@ -1648,9 +1645,9 @@ c_slash(struct srv *s, int *r)
 {
 	struct stat st;
 
-	r[0] = ERR(openat(s->sroot, "rs/", O_RDONLY));
-	r[1] = ERR(openat(s->sroot, "rn/", O_CREAT | O_RDWR, 0644));
-	r[2] = ERR(fstatat(s->sroot, "rl/", &st, AT_SYMLINK_NOFOLLOW));
+	r[0] = DQT_ERRNO_OF(openat(s->sroot, "rs/", O_RDONLY));
+	r[1] = DQT_ERRNO_OF(openat(s->sroot, "rn/", O_CREAT | O_RDWR, 0644));
+	r[2] = DQT_ERRNO_OF(fstatat(s->sroot, "rl/", &st, AT_SYMLINK_NOFOLLOW));
 	r[3] = S_ISDIR(st.st_mode);
 }
 
@@ -1676,11 +1673,11 @@ ATF_TC_BODY(real_trailing_slash, tc)
 		int o0, o1, o2;
 
 		snprintf(p, sizeof(p), "%s/a/", s.backing);
-		o0 = ERR(open(p, O_RDONLY));
+		o0 = DQT_ERRNO_OF(open(p, O_RDONLY));
 		snprintf(p, sizeof(p), "%s/newname_oracle/", s.backing);
-		o1 = ERR(open(p, O_CREAT | O_RDWR, 0644));
+		o1 = DQT_ERRNO_OF(open(p, O_CREAT | O_RDWR, 0644));
 		snprintf(p, sizeof(p), "%s/dl/", s.backing);
-		o2 = ERR(fstatat(AT_FDCWD, p, &st, AT_SYMLINK_NOFOLLOW));
+		o2 = DQT_ERRNO_OF(fstatat(AT_FDCWD, p, &st, AT_SYMLINK_NOFOLLOW));
 		CHECK_ERRNO(o0, r[0]);
 		ATF_CHECK_EQ_MSG(o1, r[1], "O_CREAT of name/: real %d served %d",
 		    o1, r[1]);
@@ -1722,8 +1719,8 @@ c_limited(struct srv *s, int *r)
 	struct stat st;
 
 	cap_rights_init(&rights, CAP_LOOKUP, CAP_FSTATAT);
-	r[0] = ERR(cap_rights_limit(s->sroot, &rights));
-	r[1] = ERR(fstatat(s->sroot, "lim", &st, 0));
+	r[0] = DQT_ERRNO_OF(cap_rights_limit(s->sroot, &rights));
+	r[1] = DQT_ERRNO_OF(fstatat(s->sroot, "lim", &st, 0));
 }
 
 DQ_TC(real_limited_rights);
@@ -1757,10 +1754,10 @@ c_skips(struct srv *s, int *r)
 
 	(void)s;
 	d = open(".", O_RDONLY | O_DIRECTORY);
-	r[0] = ERR(fstatat(d, "sk_link1", &st, AT_RESOLVE_BENEATH));
-	r[1] = ERR(renameat(AT_FDCWD, "sk_src", AT_FDCWD, "sk_dirlink/dst"));
-	r[2] = ERR(cap_enter());
-	r[3] = ERR(fstatat(d, "sk_link2", &st, 0));
+	r[0] = DQT_ERRNO_OF(fstatat(d, "sk_link1", &st, AT_RESOLVE_BENEATH));
+	r[1] = DQT_ERRNO_OF(renameat(AT_FDCWD, "sk_src", AT_FDCWD, "sk_dirlink/dst"));
+	r[2] = DQT_ERRNO_OF(cap_enter());
+	r[3] = DQT_ERRNO_OF(fstatat(d, "sk_link2", &st, 0));
 }
 
 DQ_TC(reconsult_skips);
@@ -1821,21 +1818,21 @@ c_r3(struct srv *s, int *r)
 	struct stat st;
 	int d, rd;
 
-	r[0] = ERR(fstatat(s->sroot, "rf/.", &st, 0));
+	r[0] = DQT_ERRNO_OF(fstatat(s->sroot, "rf/.", &st, 0));
 	memset(longp, 'y', sizeof(longp) - 1);
 	memcpy(longp, "long/", 5);
 	longp[sizeof(longp) - 1] = '\0';
-	r[1] = ERR(fstatat(s->sroot, longp, &st, 0));
-	r[2] = ERR(renameat(s->sroot, "a", s->sroot, ""));
-	r[3] = ERR(renameat(AT_FDCWD, "missing_r3", 999, "x"));
+	r[1] = DQT_ERRNO_OF(fstatat(s->sroot, longp, &st, 0));
+	r[2] = DQT_ERRNO_OF(renameat(s->sroot, "a", s->sroot, ""));
+	r[3] = DQT_ERRNO_OF(renameat(AT_FDCWD, "missing_r3", 999, "x"));
 	d = openat(s->sroot, "d", O_RDONLY | O_DIRECTORY);
 	rd = open(".", O_RDONLY | O_DIRECTORY);
-	r[4] = ERR(d) + ERR(rd);
-	r[5] = ERR(cap_enter());
-	r[6] = ERR(unlinkat(d, "sub/../../a", 0));
-	r[7] = ERR(renameat(d, "sub/../../a", d, "moved"));
-	r[8] = ERR(unlinkat(d, "up/a", 0));
-	r[9] = ERR(renameat(s->sroot, "a", rd, "x"));
+	r[4] = DQT_ERRNO_OF(d) + DQT_ERRNO_OF(rd);
+	r[5] = DQT_ERRNO_OF(cap_enter());
+	r[6] = DQT_ERRNO_OF(unlinkat(d, "sub/../../a", 0));
+	r[7] = DQT_ERRNO_OF(renameat(d, "sub/../../a", d, "moved"));
+	r[8] = DQT_ERRNO_OF(unlinkat(d, "up/a", 0));
+	r[9] = DQT_ERRNO_OF(renameat(s->sroot, "a", rd, "x"));
 }
 
 DQ_TC(round3_rows);
@@ -1892,14 +1889,14 @@ c_r4(struct srv *s, int *r)
 	int d2, d;
 
 	d2 = openat(s->sroot, "d", O_RDONLY | O_DIRECTORY);
-	r[0] = ERR(d2);
-	r[1] = ERR(cap_lookup_capmode(d2));
-	r[2] = ERR(renameat(s->sroot, "a", d2, "x"));
-	r[3] = ERR(renameat(AT_FDCWD, "realfile_r4/x", 999, ""));
-	r[4] = ERR(renameat(AT_FDCWD, "realfile_r4/x", AT_FDCWD, ""));
+	r[0] = DQT_ERRNO_OF(d2);
+	r[1] = DQT_ERRNO_OF(cap_lookup_capmode(d2));
+	r[2] = DQT_ERRNO_OF(renameat(s->sroot, "a", d2, "x"));
+	r[3] = DQT_ERRNO_OF(renameat(AT_FDCWD, "realfile_r4/x", 999, ""));
+	r[4] = DQT_ERRNO_OF(renameat(AT_FDCWD, "realfile_r4/x", AT_FDCWD, ""));
 	d = openat(s->sroot, "d", O_RDONLY | O_DIRECTORY);
-	r[5] = ERR(cap_enter());
-	r[6] = ERR(fstatat(d, "sub/../f", &st, 0));
+	r[5] = DQT_ERRNO_OF(cap_enter());
+	r[6] = DQT_ERRNO_OF(fstatat(d, "sub/../f", &st, 0));
 }
 
 DQ_TC_CLEANUP(round4_rows);

@@ -47,7 +47,6 @@
 #include "dq_test.h"
 
 #define	NA	(-9999)		/* a step that was not reached */
-#define	ERRNO_OF(call)	((call) == -1 ? errno : 0)
 
 #define	ROW(what, got, want) do {					\
 	int got_ = (int)(got), want_ = (int)(want);			\
@@ -132,16 +131,16 @@ slot_child(void *arg, void *result)
 	int fd;
 
 	r->send_err = r->cloexec = NA;
-	r->info_err = ERRNO_OF(cap_proc(MAC_CAP_PROCESS_INFO, -1, &r->info));
+	r->info_err = DQT_ERRNO_OF(cap_proc(MAC_CAP_PROCESS_INFO, -1, &r->info));
 	fd = cap_proc(MAC_CAP_PROCESS_GET, -1, NULL);
-	r->get_err = ERRNO_OF(fd);
+	r->get_err = DQT_ERRNO_OF(fd);
 	if (fd == -1)
 		return;
 	r->cloexec = (fcntl(fd, F_GETFD) & FD_CLOEXEC) != 0;
 	memset(&sa, 0, sizeof(sa));
 	sa.payload = tag;
 	sa.payload_len = strlen(tag);
-	r->send_err = ERRNO_OF(ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa));
+	r->send_err = DQT_ERRNO_OF(ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa));
 }
 
 /* One queued message on the test's end of the route, or errno. */
@@ -154,7 +153,7 @@ route_recv(int end, char *buf, size_t len)
 	memset(&ra, 0, sizeof(ra));
 	ra.payload = buf;
 	ra.payload_len = len - 1;
-	return (ERRNO_OF(ioctl(end, MAC_CAPABILITY_RECVMSG, &ra)));
+	return (DQT_ERRNO_OF(ioctl(end, MAC_CAPABILITY_RECVMSG, &ra)));
 }
 
 static void
@@ -263,7 +262,7 @@ try_open(const char *name)
 	int error, fd;
 
 	fd = -1;
-	error = ERRNO_OF(service_open(name, &fd));
+	error = DQT_ERRNO_OF(service_open(name, &fd));
 	if (fd != -1)
 		(void)close(fd);
 	return (error);
@@ -280,20 +279,20 @@ lookup_child(void *arg, void *result)
 	bool clear = *(bool *)arg;
 
 	memset(&info, 0, sizeof(info));
-	r->info_err = ERRNO_OF(cap_proc(MAC_CAP_PROCESS_INFO, -1, &info));
+	r->info_err = DQT_ERRNO_OF(cap_proc(MAC_CAP_PROCESS_INFO, -1, &info));
 	r->present = info.present;
-	r->clear = clear ? ERRNO_OF(service_clear_ambient_lookup()) : NA;
+	r->clear = clear ? DQT_ERRNO_OF(service_clear_ambient_lookup()) : NA;
 
 	nc = NULL;
-	r->notify = ERRNO_OF(notify_client_open(&nc));
+	r->notify = DQT_ERRNO_OF(notify_client_open(&nc));
 	if (nc != NULL)
 		notify_client_close(nc);
 	lc = NULL;
-	r->logcmp = ERRNO_OF(logcmp_client_open(&lc));
+	r->logcmp = DQT_ERRNO_OF(logcmp_client_open(&lc));
 	if (lc != NULL)
 		logcmp_client_close(lc);
 	sc = NULL;
-	r->sysctlcmp = ERRNO_OF(sysctlcmp_client_open(&sc));
+	r->sysctlcmp = DQT_ERRNO_OF(sysctlcmp_client_open(&sc));
 	if (sc != NULL)
 		sysctlcmp_client_close(sc);
 
@@ -302,7 +301,7 @@ lookup_child(void *arg, void *result)
 	r->open_sysctl = try_open("system.Sysctl");
 
 	memset(&info, 0, sizeof(info));
-	r->info2_err = ERRNO_OF(cap_proc(MAC_CAP_PROCESS_INFO, -1, &info));
+	r->info2_err = DQT_ERRNO_OF(cap_proc(MAC_CAP_PROCESS_INFO, -1, &info));
 	r->present2 = info.present;
 }
 

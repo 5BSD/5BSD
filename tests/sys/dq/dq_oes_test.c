@@ -115,23 +115,19 @@ child_ops(void *arg, void *result)
 	void *p;
 	int n;
 
-#define	RR(i, call) do {						\
-	r->r[i].rv = (call);						\
-	r->r[i].err = r->r[i].rv == -1 ? errno : 0;			\
-} while (0)
-	RR(0, pwrite(a->fd, "w", 1, 0));
-	RR(1, fchmod(a->fd, OPS_MODE));
-	RR(2, fsync(a->fd));
+	DQT_RR(r->r[0], pwrite(a->fd, "w", 1, 0));
+	DQT_RR(r->r[1], fchmod(a->fd, OPS_MODE));
+	DQT_RR(r->r[2], fsync(a->fd));
 	memset(&fl, 0, sizeof(fl));
 	fl.l_type = F_WRLCK;
 	fl.l_whence = SEEK_SET;
 	fl.l_start = OPS_LOCK_START;
 	fl.l_len = OPS_LOCK_LEN;
-	RR(3, fcntl(a->fd, F_SETLK, &fl));
+	DQT_RR(r->r[3], fcntl(a->fd, F_SETLK, &fl));
 	fl.l_type = F_UNLCK;
 	r->unlock.rv = fcntl(a->fd, F_SETLK, &fl);
 	r->unlock.err = r->unlock.rv == -1 ? errno : 0;
-	RR(4, ioctl(a->fd, FIONREAD, &n));
+	DQT_RR(r->r[4], ioctl(a->fd, FIONREAD, &n));
 	p = mmap(NULL, getpagesize(), PROT_READ, MAP_SHARED, a->fd, 0);
 	r->r[5].rv = p == MAP_FAILED ? -1 : 0;
 	r->r[5].err = p == MAP_FAILED ? errno : 0;

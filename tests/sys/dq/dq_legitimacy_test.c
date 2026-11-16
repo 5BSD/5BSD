@@ -204,12 +204,6 @@ struct lg_res {
 	uint64_t	 id;
 };
 
-#define	SET(rr, call) do {						\
-	errno = 0;							\
-	(rr).rv = (call);						\
-	(rr).err = (rr).rv == -1 ? errno : 0;				\
-} while (0)
-
 #define	CHECK_OK(rr) ATF_CHECK_MSG((rr).rv != -1,			\
 	"%s: failed, errno %d", #rr, (rr).err)
 #define	CHECK_ERR(rr, want) ATF_CHECK_MSG((rr).rv == -1 &&		\
@@ -333,9 +327,9 @@ child_open_stats(void *arg __unused, void *result)
 	struct dq_stats st;
 	int q;
 
-	SET(res->r[0], open(DQ_DEVICE, O_RDWR));
+	DQT_RR(res->r[0], open(DQ_DEVICE, O_RDWR));
 	q = (int)res->r[0].rv;
-	SET(res->r[1], dq_get_stats(q, &st));
+	DQT_RR(res->r[1], dq_get_stats(q, &st));
 	res->id = res->r[1].rv == 0 ? st.ds_queue_id : 0;
 }
 
@@ -390,12 +384,12 @@ child_nobody_open(void *arg __unused, void *result)
 
 	if (!become_nobody())
 		_exit(4);
-	SET(res->r[0], open(DQ_DEVICE, O_RDWR));
-	SET(res->r[1], open(DQ_DEVICE, O_RDONLY));
-	SET(res->r[2], open(DQ_DEVICE, O_WRONLY));
-	SET(res->r[3], access(DQ_DEVICE, F_OK));
-	SET(res->r[4], access(DQ_DEVICE, R_OK));
-	SET(res->r[5], access(DQ_DEVICE, W_OK));
+	DQT_RR(res->r[0], open(DQ_DEVICE, O_RDWR));
+	DQT_RR(res->r[1], open(DQ_DEVICE, O_RDONLY));
+	DQT_RR(res->r[2], open(DQ_DEVICE, O_WRONLY));
+	DQT_RR(res->r[3], access(DQ_DEVICE, F_OK));
+	DQT_RR(res->r[4], access(DQ_DEVICE, R_OK));
+	DQT_RR(res->r[5], access(DQ_DEVICE, W_OK));
 }
 
 /*
@@ -477,15 +471,15 @@ child_jailed(void *arg, void *result)
 		_exit(5);
 	if (a->nobody && !become_nobody())
 		_exit(4);
-	SET(res->r[0], open(DQ_DEVICE, O_RDWR));
-	SET(res->r[1], stat(DQ_DEVICE, &sb));
+	DQT_RR(res->r[0], open(DQ_DEVICE, O_RDWR));
+	DQT_RR(res->r[1], stat(DQ_DEVICE, &sb));
 	res->id = res->r[1].rv == 0 ? sb.st_mode & ALLPERMS : 0;
 	if (a->q != -1) {
-		SET(res->r[2], dq_get_stats(a->q, &st));
-		SET(res->r[3], dq_attach(a->q, a->pd));
+		DQT_RR(res->r[2], dq_get_stats(a->q, &st));
+		DQT_RR(res->r[3], dq_attach(a->q, a->pd));
 	}
 	if (a->dev != -1)
-		SET(res->r[4], capability_service_connect(a->dev,
+		DQT_RR(res->r[4], capability_service_connect(a->dev,
 		    DQ_OBSERVE_SERVICE));
 }
 
@@ -539,10 +533,10 @@ child_capmode(void *arg __unused, void *result)
 	dev = open("/dev", O_RDONLY | O_DIRECTORY);
 	if (dev == -1 || cap_enter() != 0)
 		_exit(6);
-	SET(res->r[0], open(DQ_DEVICE, O_RDWR));
-	SET(res->r[1], openat(dev, "dq", O_RDWR));
+	DQT_RR(res->r[0], open(DQ_DEVICE, O_RDWR));
+	DQT_RR(res->r[1], openat(dev, "dq", O_RDWR));
 	q = (int)res->r[1].rv;
-	SET(res->r[2], dq_get_stats(q, &st));
+	DQT_RR(res->r[2], dq_get_stats(q, &st));
 }
 
 /*
@@ -628,20 +622,20 @@ child_bearer(void *arg, void *result)
 	if (!become_nobody())
 		_exit(4);
 	q = a->q;
-	SET(res->r[0], open(DQ_DEVICE, O_RDWR));	/* it is not root */
-	SET(res->r[1], dq_get_stats(q, &st));
+	DQT_RR(res->r[0], open(DQ_DEVICE, O_RDWR));	/* it is not root */
+	DQT_RR(res->r[1], dq_get_stats(q, &st));
 	res->id = res->r[1].rv == 0 ? st.ds_queue_id : 0;
-	SET(res->r[2], dq_get_stats2(q, &st2));
+	DQT_RR(res->r[2], dq_get_stats2(q, &st2));
 	/* Read first: the objects minted below post records. */
 	on = 1;
-	SET(res->r[6], ioctl(q, FIONBIO, &on));
-	SET(res->r[7], read(q, buf, sizeof(buf)));
-	SET(res->r[3], dq_mint_observer(q, 0));
+	DQT_RR(res->r[6], ioctl(q, FIONBIO, &on));
+	DQT_RR(res->r[7], read(q, buf, sizeof(buf)));
+	DQT_RR(res->r[3], dq_mint_observer(q, 0));
 	dq_policy_default(&pol);
 	object = 0;
 	fd = -1;
-	SET(res->r[4], dq_mint_file(q, a->ident, &pol, &object, &fd, &reason));
-	SET(res->r[5], dq_revoke(q, object));
+	DQT_RR(res->r[4], dq_mint_file(q, a->ident, &pol, &object, &fd, &reason));
+	DQT_RR(res->r[5], dq_revoke(q, object));
 }
 
 /*
@@ -802,8 +796,8 @@ child_inherit_for_exec(void *arg, void *result)
 	struct dq_stats st;
 
 	/* What the fork child did before it exec'd the bearer. */
-	SET(res->r[0], dup2(a->q, LG_QFD));
-	SET(res->r[1], dq_get_stats(a->q, &st));
+	DQT_RR(res->r[0], dup2(a->q, LG_QFD));
+	DQT_RR(res->r[1], dq_get_stats(a->q, &st));
 }
 
 /*
@@ -847,7 +841,7 @@ child_attach(void *arg, void *result)
 	struct jail_arg *a = arg;
 	struct lg_res *res = result;
 
-	SET(res->r[3], dq_attach(a->q, a->pd));
+	DQT_RR(res->r[3], dq_attach(a->q, a->pd));
 }
 
 /*
@@ -925,8 +919,8 @@ child_attach_targets(void *arg, void *result)
 
 	if (!become_nobody())
 		_exit(4);
-	SET(res->r[0], dq_attach(a->q, a->plain));
-	SET(res->r[1], dq_attach(a->q, a->jailed));
+	DQT_RR(res->r[0], dq_attach(a->q, a->plain));
+	DQT_RR(res->r[1], dq_attach(a->q, a->jailed));
 }
 
 /*
@@ -1025,10 +1019,10 @@ child_attach_order(void *arg, void *result)
 
 	if (!become_nobody())
 		_exit(4);
-	SET(res->r[0], dq_attach(a->q, a->notpd));
-	SET(res->r[1], dq_attach(a->q, a->exited));
-	SET(res->r[2], dq_attach(a->q, a->execed));
-	SET(res->r[3], dq_attach(a->q, a->idle));
+	DQT_RR(res->r[0], dq_attach(a->q, a->notpd));
+	DQT_RR(res->r[1], dq_attach(a->q, a->exited));
+	DQT_RR(res->r[2], dq_attach(a->q, a->execed));
+	DQT_RR(res->r[3], dq_attach(a->q, a->idle));
 }
 
 /*
@@ -1132,16 +1126,16 @@ child_observe(void *arg, void *result)
 	if (a->nobody) {
 		if (!become_nobody())
 			_exit(4);
-		SET(res->r[0], open(DQ_MAC_CAPABILITY_DEVICE, O_RDWR));
-		SET(res->r[1], capability_service_connect(a->dev,
+		DQT_RR(res->r[0], open(DQ_MAC_CAPABILITY_DEVICE, O_RDWR));
+		DQT_RR(res->r[1], capability_service_connect(a->dev,
 		    DQ_OBSERVE_SERVICE));
 		return;
 	}
-	SET(res->r[1], dq_observe_connect());
+	DQT_RR(res->r[1], dq_observe_connect());
 	svc = (int)res->r[1].rv;
 	first = 0;
 	do {
-		SET(res->r[2], dq_observe_list_queues(svc, first, qi,
+		DQT_RR(res->r[2], dq_observe_list_queues(svc, first, qi,
 		    nitems(qi), &count, &total));
 		if (res->r[2].rv != 0)
 			return;
@@ -1433,18 +1427,18 @@ child_control(void *arg, void *result)
 		(void)read(go[0], &b, 1);
 		_exit(0);
 	}
-	SET(res->r[0], ptrace(PT_ATTACH, pid, NULL, 0));
+	DQT_RR(res->r[0], ptrace(PT_ATTACH, pid, NULL, 0));
 	status = 0;
-	SET(res->r[1], waitpid(pid, &status, WUNTRACED) == pid &&
+	DQT_RR(res->r[1], waitpid(pid, &status, WUNTRACED) == pid &&
 	    WIFSTOPPED(status) ? 0 : -1);
-	SET(res->r[2], ptrace(PT_DETACH, pid, (caddr_t)1, 0));
+	DQT_RR(res->r[2], ptrace(PT_DETACH, pid, (caddr_t)1, 0));
 	(void)close(go[1]);
 	status = -1;
-	SET(res->r[3], waitpid(pid, &status, 0) == pid && WIFEXITED(status) &&
+	DQT_RR(res->r[3], waitpid(pid, &status, 0) == pid && WIFEXITED(status) &&
 	    WEXITSTATUS(status) == 0 ? 0 : -1);
 
 	tracing = -2;
-	SET(res->r[4], procctl(P_PID, getpid(), PROC_TRACE_STATUS, &tracing));
+	DQT_RR(res->r[4], procctl(P_PID, getpid(), PROC_TRACE_STATUS, &tracing));
 	res->id = (uint64_t)(int64_t)tracing;
 
 	/* A child that aborts leaves a core. */
@@ -1457,7 +1451,7 @@ child_control(void *arg, void *result)
 		abort();
 	}
 	status = 0;
-	SET(res->r[5], waitpid(pid, &status, 0) == pid && WIFSIGNALED(status) &&
+	DQT_RR(res->r[5], waitpid(pid, &status, 0) == pid && WIFSIGNALED(status) &&
 	    WTERMSIG(status) == SIGABRT ? 0 : -1);
 	res->r[6].rv = WCOREDUMP(status) ? 1 : 0;
 	res->r[6].err = 0;
@@ -1509,7 +1503,7 @@ child_authority_info(void *arg __unused, void *result)
 	struct cap_authority_info info;
 
 	memset(&info, 0xff, sizeof(info));
-	SET(res->r[0], syscall(SYS_cap_process, CAP_AUTH_INFO, -1, 0, &info));
+	DQT_RR(res->r[0], syscall(SYS_cap_process, CAP_AUTH_INFO, -1, 0, &info));
 	res->r[1].rv = info.valid;
 	res->r[2].rv = info.identity != 0;
 	res->id = info.generation;
@@ -1707,13 +1701,13 @@ child_owner_after(void *arg, void *result)
 	if (a->nobody && !become_nobody())
 		_exit(4);
 	/* It could not open the queue now, and cannot go back. */
-	SET(res->r[0], open(DQ_DEVICE, O_RDWR));
-	SET(res->r[1], a->nobody ? setuid(0) : jail_attach(0));
-	SET(res->r[2], dq_get_stats(q, &st));
+	DQT_RR(res->r[0], open(DQ_DEVICE, O_RDWR));
+	DQT_RR(res->r[1], a->nobody ? setuid(0) : jail_attach(0));
+	DQT_RR(res->r[2], dq_get_stats(q, &st));
 	res->id = res->r[2].rv == 0 ? st.ds_queue_id : 0;
 	for (i = 0; i < OWNER_NTARGETS; i++) {
 		if (a->t[i] != -1)
-			SET(res->r[OWNER_T0 + i], dq_attach(q, a->t[i]));
+			DQT_RR(res->r[OWNER_T0 + i], dq_attach(q, a->t[i]));
 	}
 }
 

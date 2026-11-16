@@ -92,7 +92,11 @@ struct ops_arg {
 
 #define	BOTH(r, call) do {						\
 	int _fd;							\
-	struct pair *_p = &(r)->p[(r)->n++];				\
+	struct pair *_p;						\
+									\
+	if ((r)->n >= (int)nitems((r)->p))				\
+		_exit(DQT_EXIT_NORESULT);	/* a child: no ATF */	\
+	_p = &(r)->p[(r)->n++];						\
 	_fd = a->sfd;							\
 	_p->s.rv = (long)(call);					\
 	_p->s.err = _p->s.rv == -1 ? errno : 0;				\

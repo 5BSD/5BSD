@@ -111,11 +111,6 @@ struct ioctl_arg {
 	int		 fd, oracle;
 };
 
-#define	RR(field, expr) do {						\
-	r->field.rv = (long)(expr);					\
-	r->field.err = r->field.rv == -1 ? errno : 0;			\
-} while (0)
-
 static void
 child_ioctls(void *arg, void *result)
 {
@@ -128,21 +123,21 @@ child_ioctls(void *arg, void *result)
 	di.a = 0x1122334455667788ULL;
 	di.b = 9;
 	di.c = 10;
-	RR(in, ioctl(a->fd, DQT_IOC_IN, &di));
+	DQT_RR(r->in, ioctl(a->fd, DQT_IOC_IN, &di));
 	memset(&r->o, 0, sizeof(r->o));
-	RR(out, ioctl(a->fd, DQT_IOC_OUT, &r->o));
+	DQT_RR(r->out, ioctl(a->fd, DQT_IOC_OUT, &r->o));
 	r->v = 41;
-	RR(inout, ioctl(a->fd, DQT_IOC_INOUT, &r->v));
-	RR(voidint, ioctl(a->fd, DQT_IOC_VOIDINT, 7));
-	RR(voidint_bad, ioctl(a->fd, DQT_IOC_VOIDINT, 8));
-	RR(void0, ioctl(a->fd, DQT_IOC_VOID0));
+	DQT_RR(r->inout, ioctl(a->fd, DQT_IOC_INOUT, &r->v));
+	DQT_RR(r->voidint, ioctl(a->fd, DQT_IOC_VOIDINT, 7));
+	DQT_RR(r->voidint_bad, ioctl(a->fd, DQT_IOC_VOIDINT, 8));
+	DQT_RR(r->void0, ioctl(a->fd, DQT_IOC_VOID0));
 	dp.p = &di;
 	dp.len = sizeof(di);
-	RR(ptr, ioctl(a->fd, DQT_IOC_PTR, &dp));
-	RR(fiodtype, ioctl(a->fd, FIODTYPE, &type));
-	RR(oracle_fiodtype, ioctl(a->oracle, FIODTYPE, &type));
-	RR(setown, fcntl(a->fd, F_SETOWN, getpid()));
-	RR(oracle_setown, fcntl(a->oracle, F_SETOWN, getpid()));
+	DQT_RR(r->ptr, ioctl(a->fd, DQT_IOC_PTR, &dp));
+	DQT_RR(r->fiodtype, ioctl(a->fd, FIODTYPE, &type));
+	DQT_RR(r->oracle_fiodtype, ioctl(a->oracle, FIODTYPE, &type));
+	DQT_RR(r->setown, fcntl(a->fd, F_SETOWN, getpid()));
+	DQT_RR(r->oracle_setown, fcntl(a->oracle, F_SETOWN, getpid()));
 }
 
 ATF_TC(shapes);

@@ -108,7 +108,7 @@ int	ts_child(struct ts *s, int rootfd, int cwdfd, ts_child_fn fn,
 	    void *arg, void *out, size_t outlen);
 
 /* An errno of a call: 0 on success. */
-#define	TS_ERR(x)	((x) < 0 ? errno : 0)
+#define	TS_ERR(x)	DQT_ERRNO_OF(x)
 
 /* strerror(3) shares one buffer: format each errno into its own. */
 #define	TS_CHECK_ERRNO(want, got, what) do {				\

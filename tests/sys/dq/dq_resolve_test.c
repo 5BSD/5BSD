@@ -1147,12 +1147,6 @@ nullfs_mount(const char *src, const char *mnt)
 	return (nmount(iov, 6, 0));
 }
 
-#define	RR(field, call) do {						\
-	errno = 0;							\
-	r->field.rv = (long)(call);					\
-	r->field.err = r->field.rv == -1 ? errno : 0;			\
-} while (0)
-
 static void
 child_kconsumers(void *arg, void *result)
 {
@@ -1160,18 +1154,18 @@ child_kconsumers(void *arg, void *result)
 	struct kc_res *r = result;
 
 	if (a->md[0] != '\0') {
-		RR(swapon, swapon(a->md));
+		DQT_RR(r->swapon, swapon(a->md));
 		if (r->swapon.rv == 0)
-			RR(swapoff, swapoff(a->md, 0));
+			DQT_RR(r->swapoff, swapoff(a->md, 0));
 	}
-	RR(quotaon, quotactl(".", QCMD(Q_QUOTAON, USRQUOTA), 0,
+	DQT_RR(r->quotaon, quotactl(".", QCMD(Q_QUOTAON, USRQUOTA), 0,
 	    __DECONST(char *, "rt-quota.user")));
 	if (a->tmpfs[0] != '\0')
-		RR(unmount, unmount(a->tmpfs, 0));
-	RR(nullmount, nullfs_mount(a->nullsrc, a->nullmnt));
+		DQT_RR(r->unmount, unmount(a->tmpfs, 0));
+	DQT_RR(r->nullmount, nullfs_mount(a->nullsrc, a->nullmnt));
 	if (r->nullmount.rv == 0)
-		RR(nullunmount, unmount(a->nullmnt, 0));
-	RR(extattrctl, extattrctl("rt-eactl-dir", UFS_EXTATTR_CMD_STOP, NULL, 0,
+		DQT_RR(r->nullunmount, unmount(a->nullmnt, 0));
+	DQT_RR(r->extattrctl, extattrctl("rt-eactl-dir", UFS_EXTATTR_CMD_STOP, NULL, 0,
 	    NULL));
 }
 
@@ -1383,7 +1377,7 @@ child_round5(void *arg, void *result)
 		/* A valid size, as mdconfig sets it, so only the refusal can fail it. */
 		mdio.md_mediasize = 1024 * 1024;
 		mdio.md_sectorsize = 512;
-		RR(mdattach, ioctl(fd, MDIOCATTACH, &mdio));
+		DQT_RR(r->mdattach, ioctl(fd, MDIOCATTACH, &mdio));
 		if (r->mdattach.rv == 0) {
 			/* Not refused: undo it. */
 			(void)ioctl(fd, MDIOCDETACH, &mdio);
@@ -1402,15 +1396,15 @@ child_round5(void *arg, void *result)
 		    IBE_INTERP_LEN_MAX);
 		memcpy(xbe.xbe_magic, "DQTBM1", 6);
 		xbe.xbe_msize = 6;
-		RR(binmisc, sysctlbyname(IBE_SYSCTL_NAME_ADD, NULL, NULL, &xbe,
+		DQT_RR(r->binmisc, sysctlbyname(IBE_SYSCTL_NAME_ADD, NULL, NULL, &xbe,
 		    sizeof(xbe)));
 		if (r->binmisc.rv == 0)
 			(void)sysctlbyname(IBE_SYSCTL_NAME_REMOVE, NULL, NULL,
 			    &xbe, sizeof(xbe));
 	}
-	RR(unmount, unmount("rt-no-such-mount/x", 0));
+	DQT_RR(r->unmount, unmount("rt-no-such-mount/x", 0));
 	if (a->have_fh)
-		RR(fhlink, fhlink(&a->fh, "rt-fh-link"));
+		DQT_RR(r->fhlink, fhlink(&a->fh, "rt-fh-link"));
 }
 
 ATF_TC(attached_kernel_paths);

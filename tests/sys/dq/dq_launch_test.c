@@ -55,7 +55,6 @@
 #include "dq_test.h"
 
 #define	NA	(-9999)		/* a step that was not reached */
-#define	ERRNO_OF(call)	((call) == -1 ? errno : 0)
 
 /* The attach bit LA-1k plans for capprotect tokens; undefined today. */
 #define	LA_ATTACH_BIT	0x10000u
@@ -296,23 +295,23 @@ actor(void *arg, void *result)
 	tok = -1;
 
 	q = dq_open();
-	r->open = ERRNO_OF(q);
+	r->open = DQT_ERRNO_OF(q);
 	if (q == -1)
 		return;
 	if ((a->flags & ACT_SETUID) != 0) {
-		r->setuid = ERRNO_OF(setuid(ACT_UID));
+		r->setuid = DQT_ERRNO_OF(setuid(ACT_UID));
 		if (r->setuid != 0)
 			return;
 	}
 	if ((a->flags & (ACT_TOKEN | ACT_RESEND)) != 0) {
-		r->recv = ERRNO_OF(chan_recv_fd(a->chan, &tok));
+		r->recv = DQT_ERRNO_OF(chan_recv_fd(a->chan, &tok));
 		if (r->recv != 0)
 			return;
 	}
 	if ((a->flags & ACT_RESEND) != 0)
-		r->resend = ERRNO_OF(chan_send_fd(a->chan, tok));
+		r->resend = DQT_ERRNO_OF(chan_send_fd(a->chan, tok));
 	if ((a->flags & ACT_TOKEN) != 0) {
-		r->authorize = ERRNO_OF(cp_request(tok, CP_OP_AUTHORIZE, 0,
+		r->authorize = DQT_ERRNO_OF(cp_request(tok, CP_OP_AUTHORIZE, 0,
 		    -1, NULL));
 		if ((a->flags & ACT_TOKCLOSE) != 0) {
 			(void)close(tok);
@@ -320,18 +319,18 @@ actor(void *arg, void *result)
 		}
 	}
 	if ((a->flags & ACT_PTRACE) != 0) {
-		r->pt_attach = ERRNO_OF(ptrace(PT_ATTACH, a->pid, NULL, 0));
+		r->pt_attach = DQT_ERRNO_OF(ptrace(PT_ATTACH, a->pid, NULL, 0));
 		if (r->pt_attach == 0) {
 			/* The attach stop is certain: an unbounded wait. */
 			r->pt_stopped = waitpid(a->pid, &status, 0) ==
 			    a->pid && WIFSTOPPED(status) ? 0 : 1;
-			r->pt_detach = ERRNO_OF(ptrace(PT_DETACH, a->pid,
+			r->pt_detach = DQT_ERRNO_OF(ptrace(PT_DETACH, a->pid,
 			    (caddr_t)1, 0));
 		}
 	}
 	if ((a->flags & (ACT_NOATTACH | ACT_RESEND)) != 0)
 		return;
-	r->attach = ERRNO_OF(dq_attach(q, a->pd));
+	r->attach = DQT_ERRNO_OF(dq_attach(q, a->pd));
 	if (dq_get_stats2(q, &st) == 0)
 		r->attached = st.ds2_attached;
 }
@@ -487,7 +486,7 @@ protector(void *arg, void *result)
 	(void)close(pa->ready[0]);
 	(void)close(pa->go[1]);
 	fd = cp_shield(pa->pd, CP_SF_PTRACE);
-	r->shield = ERRNO_OF(fd);
+	r->shield = DQT_ERRNO_OF(fd);
 	b = 'r';
 	(void)write(pa->ready[1], &b, 1);
 	if (read(pa->go[0], &b, 1) != 1 || fd == -1) {
@@ -601,7 +600,7 @@ shielded_parent(void *arg, void *result)
 	int fd;
 
 	fd = cp_shield(-1, CP_SF_PTRACE);
-	r->shield = ERRNO_OF(fd);
+	r->shield = DQT_ERRNO_OF(fd);
 	r->self = getpid();
 	if (pipe(s.go) != 0)
 		_exit(4);
@@ -690,19 +689,19 @@ mint_child(void *arg, void *result)
 
 	r->shield = r->mint_bit = r->mint_bit_ptrace = r->mint_ptrace = NA;
 	fd = cp_shield(-1, CP_SF_PTRACE | LA_ATTACH_BIT);
-	r->shield_bit = ERRNO_OF(fd);
+	r->shield_bit = DQT_ERRNO_OF(fd);
 	if (fd != -1)
 		return;
 	fd = cp_shield(-1, ma->shield_flags);
-	r->shield = ERRNO_OF(fd);
+	r->shield = DQT_ERRNO_OF(fd);
 	if (fd == -1)
 		return;
 	tok = -1;
-	r->mint_bit = ERRNO_OF(cp_request(fd, CP_OP_MINT, LA_ATTACH_BIT, -1,
+	r->mint_bit = DQT_ERRNO_OF(cp_request(fd, CP_OP_MINT, LA_ATTACH_BIT, -1,
 	    &tok));
-	r->mint_bit_ptrace = ERRNO_OF(cp_request(fd, CP_OP_MINT,
+	r->mint_bit_ptrace = DQT_ERRNO_OF(cp_request(fd, CP_OP_MINT,
 	    CP_SF_PTRACE | LA_ATTACH_BIT, -1, &tok));
-	r->mint_ptrace = ERRNO_OF(cp_request(fd, CP_OP_MINT, CP_SF_PTRACE,
+	r->mint_ptrace = DQT_ERRNO_OF(cp_request(fd, CP_OP_MINT, CP_SF_PTRACE,
 	    -1, &tok));
 }
 
@@ -778,7 +777,7 @@ ATF_TC_BODY(token_attach, tc)
 
 	/* Transfer state: default, once, none. */
 	ATF_REQUIRE_EQ(0, cp_request(shield, CP_OP_MINT, 0, -1, &tok));
-	ROW("default token: send", ERRNO_OF(chan_send_fd(chan[0], tok)), 0);
+	ROW("default token: send", DQT_ERRNO_OF(chan_send_fd(chan[0], tok)), 0);
 	(void)close(tok);
 	r = act_run(s.pd, s.pid, ACT_RESEND, chan[1]);
 	ROW("default token: receive", r.recv, 0);
@@ -786,7 +785,7 @@ ATF_TC_BODY(token_attach, tc)
 
 	ATF_REQUIRE_EQ(0, cp_request(shield, CP_OP_MINT, 0, -1, &tok));
 	ATF_REQUIRE_EQ(0, cap_xfer_limit(tok, CAP_XFER_ONCE));
-	ROW("once token: send", ERRNO_OF(chan_send_fd(chan[0], tok)), 0);
+	ROW("once token: send", DQT_ERRNO_OF(chan_send_fd(chan[0], tok)), 0);
 	(void)close(tok);
 	r = act_run(s.pd, s.pid, ACT_RESEND, chan[1]);
 	ROW("once token: receive", r.recv, 0);
@@ -794,7 +793,7 @@ ATF_TC_BODY(token_attach, tc)
 
 	ATF_REQUIRE_EQ(0, cp_request(shield, CP_OP_MINT, 0, -1, &tok));
 	ATF_REQUIRE_EQ(0, cap_xfer_limit(tok, CAP_XFER_NONE));
-	ROW("none token: send", ERRNO_OF(chan_send_fd(chan[0], tok)),
+	ROW("none token: send", DQT_ERRNO_OF(chan_send_fd(chan[0], tok)),
 	    ENOTCAPABLE);
 	(void)close(tok);
 

@@ -153,13 +153,6 @@ idle_end(struct idle *s)
 	(void)close(s->go[1]);
 }
 
-#define	REFUSED(call, want) do {					\
-	errno = 0;							\
-	ATF_CHECK_EQ_MSG(-1, (call), "%s succeeded", #call);		\
-	ATF_CHECK_EQ_MSG((want), errno, "%s: errno %d want %d", #call,	\
-	    errno, (want));						\
-} while (0)
-
 ATF_TC(attach_refusals);
 ATF_TC_HEAD(attach_refusals, tc)
 {
@@ -187,38 +180,38 @@ ATF_TC_BODY(attach_refusals, tc)
 	/* Not a process descriptor; malformed arguments. */
 	fd = open("/dev/null", O_RDONLY);
 	ATF_REQUIRE(fd != -1);
-	REFUSED(dq_attach(c.q, fd), EINVAL);
+	DQT_CHECK_REFUSED(dq_attach(c.q, fd), EINVAL);
 	(void)close(fd);
 	idle_spawn(&s, 0, NULL);
 	memset(&args, 0, sizeof(args));
 	args.da_version = DQ_API_VERSION + 1;
 	args.da_procfd = s.pd;
 	args.da_rootfd = args.da_cwdfd = -1;
-	REFUSED(ioctl(c.q, DQ_IOC_ATTACH, &args), EINVAL);
+	DQT_CHECK_REFUSED(ioctl(c.q, DQ_IOC_ATTACH, &args), EINVAL);
 	/* Version 1 had a 96-byte RESOLVE body: refused (D184). */
 	ATF_REQUIRE_EQ(2, DQ_API_VERSION);
 	args.da_version = 1;
-	REFUSED(ioctl(c.q, DQ_IOC_ATTACH, &args), EINVAL);
+	DQT_CHECK_REFUSED(ioctl(c.q, DQ_IOC_ATTACH, &args), EINVAL);
 	args.da_version = DQ_API_VERSION;
 	args.da_flags = ~(uint32_t)DQ_ATTACH_F_NODIRS;	/* undefined bits */
-	REFUSED(ioctl(c.q, DQ_IOC_ATTACH, &args), EINVAL);
+	DQT_CHECK_REFUSED(ioctl(c.q, DQ_IOC_ATTACH, &args), EINVAL);
 	args.da_flags = 0;
 	args.da_rootfd = 0;	/* not a served directory */
-	REFUSED(ioctl(c.q, DQ_IOC_ATTACH, &args), EINVAL);
+	DQT_CHECK_REFUSED(ioctl(c.q, DQ_IOC_ATTACH, &args), EINVAL);
 	args.da_rootfd = -1;
 	args.da_pad0 = 1;
-	REFUSED(ioctl(c.q, DQ_IOC_ATTACH, &args), EINVAL);
+	DQT_CHECK_REFUSED(ioctl(c.q, DQ_IOC_ATTACH, &args), EINVAL);
 
 	/* Attached once; again here or elsewhere is EBUSY. */
 	ATF_REQUIRE_EQ(0, dq_attach(c.q, s.pd));
-	REFUSED(dq_attach(c.q, s.pd), EBUSY);
-	REFUSED(dq_attach(c2.q, s.pd), EBUSY);
+	DQT_CHECK_REFUSED(dq_attach(c.q, s.pd), EBUSY);
+	DQT_CHECK_REFUSED(dq_attach(c2.q, s.pd), EBUSY);
 	idle_end(&s);
 
 	/* Itself. */
 	self = pdopenpid(getpid(), 0);
 	if (self != -1) {
-		REFUSED(dq_attach(c.q, self), EBUSY);
+		DQT_CHECK_REFUSED(dq_attach(c.q, self), EBUSY);
 		(void)close(self);
 	}
 
@@ -231,7 +224,7 @@ ATF_TC_BODY(attach_refusals, tc)
 		idle_exec(&s);
 		ATF_REQUIRE_EQ_MSG(1, kevent(kq, NULL, 0, &kev, 1, &ts),
 		    "no NOTE_EXEC from the child");
-		REFUSED(dq_attach(c.q, s.pd), EBUSY);
+		DQT_CHECK_REFUSED(dq_attach(c.q, s.pd), EBUSY);
 	}
 	idle_end(&s);
 	(void)close(kq);
@@ -261,14 +254,14 @@ ATF_TC_BODY(attach_refusals, tc)
 	 * dq_owner_test's sharer_cannot_operate.
 	 */
 	idle_spawn(&s, RFPROC | RFPROCDESC, NULL);
-	REFUSED(dq_attach(c.q, s.pd), EBUSY);
+	DQT_CHECK_REFUSED(dq_attach(c.q, s.pd), EBUSY);
 	idle_end(&s);
 
 	/* An exited child (not reaped: the descriptor still names it). */
 	idle_spawn(&s, 0, NULL);
 	(void)write(s.go[1], "x", 1);
 	ATF_REQUIRE_EQ(0, pdwait(s.pd, &status, WEXITED, NULL, NULL));
-	REFUSED(dq_attach(c.q, s.pd), ESRCH);
+	DQT_CHECK_REFUSED(dq_attach(c.q, s.pd), ESRCH);
 	(void)close(s.pd);
 	(void)close(s.go[0]);
 	(void)close(s.go[1]);

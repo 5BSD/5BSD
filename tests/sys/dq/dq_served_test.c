@@ -307,8 +307,6 @@ srv_ident(struct srv *s, const char *rel, const char *name,
 	ATF_REQUIRE(dq_ident_from_stat(id, name, &st, &sf, -1) == 0);
 }
 
-#define	ERR(x)	((x) < 0 ? errno : 0)
-
 /* open -> FD: data, fstat, the identity's name, no write. */
 static void
 c_open(struct srv *s, int *r)
@@ -325,20 +323,20 @@ c_open(struct srv *s, int *r)
 		return;
 	r[1] = (int)read(fd, buf, sizeof(buf));
 	r[2] = r[1] == 7 && memcmp(buf, "served\n", 7) == 0;
-	r[3] = ERR(fstat(fd, &st));
+	r[3] = DQT_ERRNO_OF(fstat(fd, &st));
 	r[4] = (int)st.st_size;
 	r[5] = S_ISREG(st.st_mode);
 	r[6] = write(fd, "x", 1) < 0 ? errno : 0;
 	memset(&kif, 0, sizeof(kif));
 	kif.kf_structsize = sizeof(kif);
-	r[7] = ERR(fcntl(fd, F_KINFO, &kif));
+	r[7] = DQT_ERRNO_OF(fcntl(fd, F_KINFO, &kif));
 	/* kf_path presents the served name. */
 	r[9] = strcmp(kif.kf_path, path) == 0;
 	/* realpath(3) of the served name presents it (D174, real root). */
 	r[8] = realpath(path, rp) != NULL && strcmp(rp, path) == 0;
 	close(fd);
 	/* One real lookup outside the prefix: the tree PASSes it. */
-	r[10] = ERR(stat("/", &st));
+	r[10] = DQT_ERRNO_OF(stat("/", &st));
 }
 
 ATF_TC_WITHOUT_HEAD(open_fd);
@@ -446,22 +444,22 @@ c_stat(struct srv *s, int *r)
 
 	snprintf(path, sizeof(path), "%s/a", s->prefix);
 	snprintf(lpath, sizeof(lpath), "%s/l", s->prefix);
-	r[0] = ERR(stat(path, &st));
+	r[0] = DQT_ERRNO_OF(stat(path, &st));
 	r[1] = (int)st.st_size;
 	r[2] = (int)st.st_ino;
-	r[3] = ERR(access(path, R_OK));
-	r[4] = ERR(lstat(lpath, &lst));
+	r[3] = DQT_ERRNO_OF(access(path, R_OK));
+	r[4] = DQT_ERRNO_OF(lstat(lpath, &lst));
 	r[5] = S_ISLNK(lst.st_mode);
 	n = readlink(lpath, buf, sizeof(buf));
 	r[6] = (int)n;
 	r[7] = n == 1 && buf[0] == 'a';
-	r[8] = ERR(stat(lpath, &st));	/* follows l -> a */
+	r[8] = DQT_ERRNO_OF(stat(lpath, &st));	/* follows l -> a */
 	r[9] = (int)st.st_ino;
-	r[10] = ERR(statfs(path, &sf));
+	r[10] = DQT_ERRNO_OF(statfs(path, &sf));
 	r[11] = pathconf(path, _PC_NAME_MAX) > 0;
-	r[12] = ERR(readlink(path, buf, sizeof(buf)));	/* not a link */
+	r[12] = DQT_ERRNO_OF(readlink(path, buf, sizeof(buf)));	/* not a link */
 	snprintf(path, sizeof(path), "%s/missing", s->prefix);
-	r[13] = ERR(stat(path, &st));
+	r[13] = DQT_ERRNO_OF(stat(path, &st));
 }
 
 ATF_TC_WITHOUT_HEAD(stat_attr);
@@ -501,27 +499,27 @@ c_mutate(struct srv *s, int *r)
 	umask(022);
 #define	P(buf, name) snprintf(buf, sizeof(buf), "%s/%s", s->prefix, name)
 	P(a, "m");
-	r[0] = ERR(mkdir(a, 0777));
+	r[0] = DQT_ERRNO_OF(mkdir(a, 0777));
 	P(a, "f");
-	r[1] = ERR(mkfifo(a, 0666));
+	r[1] = DQT_ERRNO_OF(mkfifo(a, 0666));
 	P(a, "a"); P(b, "b");
-	r[2] = ERR(link(a, b));
+	r[2] = DQT_ERRNO_OF(link(a, b));
 	P(a, "b"); P(b, "c");
-	r[3] = ERR(rename(a, b));
+	r[3] = DQT_ERRNO_OF(rename(a, b));
 	P(a, "c");
-	r[4] = ERR(unlink(a));
+	r[4] = DQT_ERRNO_OF(unlink(a));
 	P(a, "m");
-	r[5] = ERR(rmdir(a));
+	r[5] = DQT_ERRNO_OF(rmdir(a));
 	P(a, "s");
-	r[6] = ERR(symlink("target-text", a));
+	r[6] = DQT_ERRNO_OF(symlink("target-text", a));
 	P(a, "a");
-	r[7] = ERR(chmod(a, 0600));
-	r[8] = ERR(truncate(a, 3));
-	r[9] = ERR(utimes(a, NULL));
+	r[7] = DQT_ERRNO_OF(chmod(a, 0600));
+	r[8] = DQT_ERRNO_OF(truncate(a, 3));
+	r[9] = DQT_ERRNO_OF(utimes(a, NULL));
 	/* Set-id bits never reach a served identity (I3): EPERM. */
-	r[10] = ERR(chmod(a, 04600));
+	r[10] = DQT_ERRNO_OF(chmod(a, 04600));
 	/* A rename across the prefix: EXDEV. */
-	r[11] = ERR(rename(a, "/tmp/dq_served_outside"));
+	r[11] = DQT_ERRNO_OF(rename(a, "/tmp/dq_served_outside"));
 #undef P
 }
 
@@ -1036,8 +1034,8 @@ c_stat_one(struct srv *s, int *r)
 	struct stat st;
 
 	snprintf(path, sizeof(path), "%s/a", s->prefix);
-	r[0] = ERR(stat(path, &st));
-	r[1] = ERR(stat(path, &st));	/* the next one completes */
+	r[0] = DQT_ERRNO_OF(stat(path, &st));
+	r[1] = DQT_ERRNO_OF(stat(path, &st));	/* the next one completes */
 }
 
 ATF_TC_WITH_CLEANUP(dropped_completion_eio);
@@ -1137,7 +1135,7 @@ c_opath(struct srv *s, int *r)
 	if (fd < 0)
 		return;
 	r[1] = read(fd, buf, 1) < 0 ? errno : 0;
-	r[2] = ERR(fstat(fd, &st));
+	r[2] = DQT_ERRNO_OF(fstat(fd, &st));
 	r[3] = fchmod(fd, 0644) < 0 ? errno : 0;
 	pfd.fd = fd;
 	pfd.events = POLLIN;
@@ -1148,7 +1146,7 @@ c_opath(struct srv *s, int *r)
 	r[5] = fd < 0 ? errno : 0;
 	if (fd < 0)
 		return;
-	r[6] = ERR(socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+	r[6] = DQT_ERRNO_OF(socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
 	r[7] = dqt_send_fd(sv[0], fd) == -1 ? errno : 0;
 	r[8] = (fcntl(fd, F_GETFD) & FD_CLOEXEC) != 0;
 	close(fd);
@@ -1228,49 +1226,49 @@ c_opath_calls(struct srv *s, int *r)
 	int fd, n;
 
 	fd = opath_open(s, O_PATH);
-	r[OP_OPEN] = ERR(fd);
+	r[OP_OPEN] = DQT_ERRNO_OF(fd);
 	if (fd < 0)
 		return;
-	r[OP_READ] = ERR(read(fd, &c, 1));
-	r[OP_LSEEK] = ERR(lseek(fd, 0, SEEK_CUR));
-	r[OP_IOCTL] = ERR(ioctl(fd, FIONREAD, &n));
+	r[OP_READ] = DQT_ERRNO_OF(read(fd, &c, 1));
+	r[OP_LSEEK] = DQT_ERRNO_OF(lseek(fd, 0, SEEK_CUR));
+	r[OP_IOCTL] = DQT_ERRNO_OF(ioctl(fd, FIONREAD, &n));
 	pfd.fd = fd;
 	pfd.events = POLLIN;
 	r[OP_POLL] = poll(&pfd, 1, 0) == 1 ? pfd.revents : -1;
 	p = mmap(NULL, getpagesize(), PROT_READ, MAP_PRIVATE, fd, 0);
 	r[OP_MMAP] = p == MAP_FAILED ? errno : 0;
-	r[OP_FSYNC] = ERR(fsync(fd));
-	r[OP_FDATASYNC] = ERR(fdatasync(fd));
-	r[OP_FTRUNCATE] = ERR(ftruncate(fd, 7));
-	r[OP_FCHMOD] = ERR(fchmod(fd, 0600));
-	r[OP_FCHOWN] = ERR(fchown(fd, OPATH_UID, -1));
-	r[OP_FUTIMENS] = ERR(futimens(fd, NULL));
-	r[OP_FCHFLAGS] = ERR(fchflags(fd, 0));
-	r[OP_FLOCK] = ERR(flock(fd, LOCK_SH | LOCK_NB));
+	r[OP_FSYNC] = DQT_ERRNO_OF(fsync(fd));
+	r[OP_FDATASYNC] = DQT_ERRNO_OF(fdatasync(fd));
+	r[OP_FTRUNCATE] = DQT_ERRNO_OF(ftruncate(fd, 7));
+	r[OP_FCHMOD] = DQT_ERRNO_OF(fchmod(fd, 0600));
+	r[OP_FCHOWN] = DQT_ERRNO_OF(fchown(fd, OPATH_UID, -1));
+	r[OP_FUTIMENS] = DQT_ERRNO_OF(futimens(fd, NULL));
+	r[OP_FCHFLAGS] = DQT_ERRNO_OF(fchflags(fd, 0));
+	r[OP_FLOCK] = DQT_ERRNO_OF(flock(fd, LOCK_SH | LOCK_NB));
 	memset(&fl, 0, sizeof(fl));
 	fl.l_type = F_RDLCK;
 	fl.l_whence = SEEK_SET;
-	r[OP_SETLK] = ERR(fcntl(fd, F_SETLK, &fl));
-	r[OP_SETFL] = ERR(fcntl(fd, F_SETFL, O_NONBLOCK));
-	r[OP_FSTAT] = ERR(fstat(fd, &st));
-	r[OP_FSTATFS] = ERR(fstatfs(fd, &sf));
-	r[OP_FPATHCONF] = ERR(fpathconf(fd, _PC_NAME_MAX));
+	r[OP_SETLK] = DQT_ERRNO_OF(fcntl(fd, F_SETLK, &fl));
+	r[OP_SETFL] = DQT_ERRNO_OF(fcntl(fd, F_SETFL, O_NONBLOCK));
+	r[OP_FSTAT] = DQT_ERRNO_OF(fstat(fd, &st));
+	r[OP_FSTATFS] = DQT_ERRNO_OF(fstatfs(fd, &sf));
+	r[OP_FPATHCONF] = DQT_ERRNO_OF(fpathconf(fd, _PC_NAME_MAX));
 
 	memset(&cb, 0, sizeof(cb));
 	cb.aio_fildes = fd;
-	r[OP_AIO_FSYNC] = ERR(aio_fsync(O_SYNC, &cb));
+	r[OP_AIO_FSYNC] = DQT_ERRNO_OF(aio_fsync(O_SYNC, &cb));
 	memset(&cb, 0, sizeof(cb));
 	cb.aio_fildes = fd;
 	cb.aio_lio_opcode = LIO_NOP;
 	list[0] = &cb;
-	r[OP_LIO_NOP] = ERR(lio_listio(LIO_NOWAIT, list, 1, NULL));
+	r[OP_LIO_NOP] = DQT_ERRNO_OF(lio_listio(LIO_NOWAIT, list, 1, NULL));
 	r[OP_LIO_NOP_ERROR] = aio_error(&cb);
 
 	snprintf(path, sizeof(path), DQT_FDESC_DIR "/%d", fd);
-	r[OP_FD_CHMOD] = ERR(chmod(path, 0600));
-	r[OP_FD_CHOWN] = ERR(chown(path, OPATH_UID, -1));
-	r[OP_FD_UTIMES] = ERR(utimes(path, NULL));
-	r[OP_FD_TRUNCATE] = ERR(truncate(path, 0));
+	r[OP_FD_CHMOD] = DQT_ERRNO_OF(chmod(path, 0600));
+	r[OP_FD_CHOWN] = DQT_ERRNO_OF(chown(path, OPATH_UID, -1));
+	r[OP_FD_UTIMES] = DQT_ERRNO_OF(utimes(path, NULL));
+	r[OP_FD_TRUNCATE] = DQT_ERRNO_OF(truncate(path, 0));
 	close(fd);
 }
 
@@ -1353,15 +1351,15 @@ c_served_fexecve_aio(struct srv *s, int *r)
 
 	opath_served = true;
 	fd = opath_open(s, O_PATH);
-	r[0] = ERR(fd);
-	r[1] = ERR(fexecve(fd, argv, envp));
+	r[0] = DQT_ERRNO_OF(fd);
+	r[1] = DQT_ERRNO_OF(fexecve(fd, argv, envp));
 	close(fd);
 	fd = opath_open(s, O_RDONLY);
-	r[2] = ERR(fd);
-	r[3] = ERR(fexecve(fd, argv, envp));
+	r[2] = DQT_ERRNO_OF(fd);
+	r[3] = DQT_ERRNO_OF(fexecve(fd, argv, envp));
 	memset(&cb, 0, sizeof(cb));
 	cb.aio_fildes = fd;
-	r[4] = ERR(aio_fsync(O_SYNC, &cb));
+	r[4] = DQT_ERRNO_OF(aio_fsync(O_SYNC, &cb));
 	if (r[4] == 0) {
 		r[5] = aio_waitcomplete(&done, NULL) < 0 ? errno : 0;
 		r[6] = done == &cb;
@@ -1412,7 +1410,7 @@ c_opath_linux(struct srv *s, int *r)
 	int fd, status;
 
 	fd = opath_open(s, O_PATH);
-	r[0] = ERR(fd);
+	r[0] = DQT_ERRNO_OF(fd);
 	if (fd < 0)
 		return;
 	pid = fork();
@@ -1469,12 +1467,12 @@ c_emptypath_unattached(struct srv *s, int *r)
 	char buf[8];
 
 	(void)s;
-	r[0] = ERR(faccessat(emptypath_mfd, "", R_OK, AT_EMPTY_PATH));
-	r[1] = ERR(fstatat(emptypath_mfd, "", &st, AT_EMPTY_PATH));
-	r[2] = ERR(readlinkat(emptypath_mfd, "", buf, sizeof(buf)));
-	r[3] = ERR(linkat(emptypath_mfd, "", AT_FDCWD, "lnk", AT_EMPTY_PATH));
-	r[4] = ERR(fchmodat(emptypath_mfd, "", 0640, AT_EMPTY_PATH));
-	r[5] = ERR(fchownat(emptypath_mfd, "", -1, -1, AT_EMPTY_PATH));
+	r[0] = DQT_ERRNO_OF(faccessat(emptypath_mfd, "", R_OK, AT_EMPTY_PATH));
+	r[1] = DQT_ERRNO_OF(fstatat(emptypath_mfd, "", &st, AT_EMPTY_PATH));
+	r[2] = DQT_ERRNO_OF(readlinkat(emptypath_mfd, "", buf, sizeof(buf)));
+	r[3] = DQT_ERRNO_OF(linkat(emptypath_mfd, "", AT_FDCWD, "lnk", AT_EMPTY_PATH));
+	r[4] = DQT_ERRNO_OF(fchmodat(emptypath_mfd, "", 0640, AT_EMPTY_PATH));
+	r[5] = DQT_ERRNO_OF(fchownat(emptypath_mfd, "", -1, -1, AT_EMPTY_PATH));
 }
 
 ATF_TC_WITHOUT_HEAD(emptypath_fallbacks);
@@ -1532,14 +1530,14 @@ c_emptypath_attached(struct srv *s, int *r)
 	r[0] = fd < 0 ? errno : 0;
 	if (fd < 0)
 		return;
-	r[1] = ERR(faccessat(fd, "", R_OK, AT_EMPTY_PATH));
-	r[2] = ERR(fstatat(fd, "", &st, AT_EMPTY_PATH));
-	r[3] = ERR(fchmodat(fd, "", 0640, AT_EMPTY_PATH));
-	r[4] = ERR(linkat(fd, "", AT_FDCWD, "lnk2", AT_EMPTY_PATH));
+	r[1] = DQT_ERRNO_OF(faccessat(fd, "", R_OK, AT_EMPTY_PATH));
+	r[2] = DQT_ERRNO_OF(fstatat(fd, "", &st, AT_EMPTY_PATH));
+	r[3] = DQT_ERRNO_OF(fchmodat(fd, "", 0640, AT_EMPTY_PATH));
+	r[4] = DQT_ERRNO_OF(linkat(fd, "", AT_FDCWD, "lnk2", AT_EMPTY_PATH));
 	close(fd);
 	rfd = open("backing/a", O_RDONLY);	/* a real descriptor */
 	r[5] = rfd < 0 ? errno : 0;
-	r[6] = ERR(fstatat(rfd, "", &st, AT_EMPTY_PATH));
+	r[6] = DQT_ERRNO_OF(fstatat(rfd, "", &st, AT_EMPTY_PATH));
 	ofd = openat(rfd, "", O_EMPTY_PATH | O_RDONLY);
 	r[7] = ofd < 0 ? errno : 0;
 	if (ofd >= 0)
@@ -1607,7 +1605,7 @@ c_two(struct srv *s, int *r)
 	memset(&fl, 0, sizeof(fl));
 	fl.l_type = F_WRLCK;
 	fl.l_whence = SEEK_SET;
-	r[4] = ERR(fcntl(fd, F_GETLK, &fl));
+	r[4] = DQT_ERRNO_OF(fcntl(fd, F_GETLK, &fl));
 	r[5] = fl.l_type == F_UNLCK;
 	close(fd);
 }
@@ -1956,7 +1954,7 @@ c_trunc(struct srv *s, int *r)
 	rl.rlim_cur = rl.rlim_max = 4;
 	(void)setrlimit(RLIMIT_FSIZE, &rl);
 	snprintf(path, sizeof(path), "%s/a", s->prefix);
-	r[0] = ERR(truncate(path, 100));
+	r[0] = DQT_ERRNO_OF(truncate(path, 100));
 	r[1] = xfsz;
 	rl.rlim_cur = rl.rlim_max = RLIM_INFINITY;
 	(void)setrlimit(RLIMIT_FSIZE, &rl);
@@ -2000,15 +1998,15 @@ c_items34(struct srv *s, int *r)
 	int fd;
 
 	snprintf(a, sizeof(a), "%s/a", s->prefix);
-	r[0] = ERR(chflags(a, 1UL << 40));
-	r[1] = ERR(utimes(a, NULL));
+	r[0] = DQT_ERRNO_OF(chflags(a, 1UL << 40));
+	r[1] = DQT_ERRNO_OF(utimes(a, NULL));
 	snprintf(b, sizeof(b), "%s/m", s->prefix);
-	r[2] = ERR(mkdir(b, 0755));
-	r[3] = ERR(unlink(a));
+	r[2] = DQT_ERRNO_OF(mkdir(b, 0755));
+	r[3] = DQT_ERRNO_OF(unlink(a));
 	fd = open(a, O_WRONLY);
 	r[4] = fd < 0 ? errno : 0;
 	snprintf(b, sizeof(b), "%s/l", s->prefix);
-	r[5] = ERR(renameat2(AT_FDCWD, a, AT_FDCWD, b, AT_RENAME_NOREPLACE));
+	r[5] = DQT_ERRNO_OF(renameat2(AT_FDCWD, a, AT_FDCWD, b, AT_RENAME_NOREPLACE));
 }
 
 ATF_TC_WITHOUT_HEAD(chflags_readonly_tree);
@@ -2052,9 +2050,9 @@ c_noreplace(struct srv *s, int *r)
 
 	snprintf(a, sizeof(a), "%s/a", s->prefix);
 	snprintf(b, sizeof(b), "%s/l", s->prefix);
-	r[0] = ERR(renameat2(AT_FDCWD, a, AT_FDCWD, b, AT_RENAME_NOREPLACE));
+	r[0] = DQT_ERRNO_OF(renameat2(AT_FDCWD, a, AT_FDCWD, b, AT_RENAME_NOREPLACE));
 	/* A flags word wider than 32 bits: FD, the file's EOPNOTSUPP. */
-	r[1] = ERR(chflags(a, 1UL << 40));
+	r[1] = DQT_ERRNO_OF(chflags(a, 1UL << 40));
 }
 
 ATF_TC_WITHOUT_HEAD(rename_noreplace);

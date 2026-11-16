@@ -649,30 +649,26 @@ child_writable(void *arg, void *result)
 	char buf[16];
 	int e;
 
-#define	RR(field, expr) do {						\
-	r->field.rv = (long)(expr);					\
-	r->field.err = r->field.rv == -1 ? errno : 0;			\
-} while (0)
 	memset(buf, 'w', sizeof(buf));
 	iov.iov_base = buf;
 	iov.iov_len = sizeof(buf);
-	RR(write, write(fd, buf, sizeof(buf)));
-	RR(pwrite, pwrite(fd, buf, sizeof(buf), 100));
-	RR(writev, writev(fd, &iov, 1));
-	RR(ftruncate, ftruncate(fd, 4096));
+	DQT_RR(r->write, write(fd, buf, sizeof(buf)));
+	DQT_RR(r->pwrite, pwrite(fd, buf, sizeof(buf), 100));
+	DQT_RR(r->writev, writev(fd, &iov, 1));
+	DQT_RR(r->ftruncate, ftruncate(fd, 4096));
 	e = posix_fallocate(fd, 0, 8192);
 	r->fallocate.rv = e == 0 ? 0 : -1;
 	r->fallocate.err = e;
 	rqsr.r_offset = 0;
 	rqsr.r_len = 512;
-	RR(fspacectl, fspacectl(fd, SPACECTL_DEALLOC, &rqsr, 0, NULL));
-	RR(fsync, fsync(fd));
-	RR(fdatasync, fdatasync(fd));
-	RR(fchmod, fchmod(fd, 0640));
+	DQT_RR(r->fspacectl, fspacectl(fd, SPACECTL_DEALLOC, &rqsr, 0, NULL));
+	DQT_RR(r->fsync, fsync(fd));
+	DQT_RR(r->fdatasync, fdatasync(fd));
+	DQT_RR(r->fchmod, fchmod(fd, 0640));
 	ts[0].tv_sec = 1000000;
 	ts[0].tv_nsec = 0;
 	ts[1] = ts[0];
-	RR(futimens, futimens(fd, ts));
+	DQT_RR(r->futimens, futimens(fd, ts));
 	(void)fstat(fd, &r->st);
 #undef RR
 }

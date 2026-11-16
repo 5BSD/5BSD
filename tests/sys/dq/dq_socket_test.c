@@ -57,12 +57,6 @@ struct sock_res {
 	char		 pairbuf[4];
 };
 
-#define	RR(rr, call) do {						\
-	errno = 0;							\
-	(rr).rv = (long)(call);						\
-	(rr).err = (rr).rv == -1 ? errno : 0;				\
-} while (0)
-
 /* The index of the n-th (from 0) recorded event of op, or -1. */
 static int
 nth_event(struct dqt_ctl *c, uint32_t op, int n)
@@ -132,19 +126,19 @@ child_protocols(void *arg __unused, void *result)
 	struct sock_res *r = result;
 	int s;
 
-	RR(r->r[0], s = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC |
+	DQT_RR(r->r[0], s = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC |
 	    SOCK_NONBLOCK, 0));
 	if (s != -1) {
 		r->fdflags = fcntl(s, F_GETFD);
 		r->flflags = fcntl(s, F_GETFL);
 	}
-	RR(r->r[1], socket(AF_INET, SOCK_DGRAM, 0));
+	DQT_RR(r->r[1], socket(AF_INET, SOCK_DGRAM, 0));
 	/* Raw IP is a wildcard protosw: the requested protocol is posted. */
-	RR(r->r[2], socket(AF_INET, SOCK_RAW, IPPROTO_ICMP));
-	RR(r->r[3], socket(AF_UNIX, SOCK_SEQPACKET, 0));
+	DQT_RR(r->r[2], socket(AF_INET, SOCK_RAW, IPPROTO_ICMP));
+	DQT_RR(r->r[3], socket(AF_UNIX, SOCK_SEQPACKET, 0));
 	/* Refused by the protocol lookup: nothing is posted. */
-	RR(r->r[4], socket(AF_UNIX, SOCK_RAW, 0));
-	RR(r->r[5], socket(AF_MAX + 10, SOCK_STREAM, 0));
+	DQT_RR(r->r[4], socket(AF_UNIX, SOCK_RAW, 0));
+	DQT_RR(r->r[5], socket(AF_MAX + 10, SOCK_STREAM, 0));
 }
 
 ATF_TC(protocol_resolved);
@@ -206,15 +200,15 @@ child_pair(void *arg __unused, void *result)
 	struct sock_res *r = result;
 	int sv[2];
 
-	RR(r->r[0], socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sv));
+	DQT_RR(r->r[0], socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sv));
 	if (r->r[0].rv == 0) {
 		r->fdflags = fcntl(sv[1], F_GETFD);
-		RR(r->r[1], write(sv[0], "abc", 3));
-		RR(r->r[2], read(sv[1], r->pairbuf, 3));
+		DQT_RR(r->r[1], write(sv[0], "abc", 3));
+		DQT_RR(r->r[2], read(sv[1], r->pairbuf, 3));
 	}
-	RR(r->r[3], socketpair(AF_UNIX, SOCK_DGRAM, 0, sv));
+	DQT_RR(r->r[3], socketpair(AF_UNIX, SOCK_DGRAM, 0, sv));
 	/* Found, consulted, then refused by the protocol (no connect2). */
-	RR(r->r[4], socketpair(AF_INET, SOCK_STREAM, 0, sv));
+	DQT_RR(r->r[4], socketpair(AF_INET, SOCK_STREAM, 0, sv));
 }
 
 ATF_TC(socketpair_one_event);
@@ -270,10 +264,10 @@ child_capmode(void *arg __unused, void *result)
 	if (cap_enter() != 0)
 		_exit(5);
 	/* Raw IP has no PR_CAPATTACH: ECAPMODE before any consultation. */
-	RR(r->r[0], socket(AF_INET, SOCK_RAW, IPPROTO_ICMP));
+	DQT_RR(r->r[0], socket(AF_INET, SOCK_RAW, IPPROTO_ICMP));
 	/* TCP and AF_UNIX may be created in capability mode: consulted. */
-	RR(r->r[1], socket(AF_INET, SOCK_STREAM, 0));
-	RR(r->r[2], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+	DQT_RR(r->r[1], socket(AF_INET, SOCK_STREAM, 0));
+	DQT_RR(r->r[2], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
 }
 
 ATF_TC(capmode_no_event);
@@ -336,14 +330,14 @@ child_mac_denied(void *arg __unused, void *result)
 
 	if (mac_create_deny(EPERM) != 0)
 		_exit(6);
-	RR(r->r[0], socket(AF_INET, SOCK_DGRAM, 0));
+	DQT_RR(r->r[0], socket(AF_INET, SOCK_DGRAM, 0));
 	if (mac_create_deny(0) != 0 || mac_create_deny(EPERM) != 0)
 		_exit(7);
-	RR(r->r[1], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+	DQT_RR(r->r[1], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
 	if (mac_create_deny(0) != 0)
 		_exit(8);
 	/* The same call once the policy allows it: consulted. */
-	RR(r->r[2], socket(AF_INET, SOCK_DGRAM, 0));
+	DQT_RR(r->r[2], socket(AF_INET, SOCK_DGRAM, 0));
 }
 
 ATF_TC_WITH_CLEANUP(mac_denial_no_event);
@@ -436,10 +430,10 @@ child_one_socket(void *arg __unused, void *result)
 	r->nextfd = dup(0);
 	if (r->nextfd != -1)
 		(void)close(r->nextfd);
-	RR(r->r[0], socket(AF_INET, SOCK_DGRAM, 0));
-	RR(r->r[1], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+	DQT_RR(r->r[0], socket(AF_INET, SOCK_DGRAM, 0));
+	DQT_RR(r->r[1], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
 	/* No descriptor was used by a refusal. */
-	RR(r->r[2], dup(0));
+	DQT_RR(r->r[2], dup(0));
 }
 
 ATF_TC(errno_answers);
@@ -504,7 +498,7 @@ child_slot(void *arg, void *result)
 	if (r->nextfd != -1)
 		(void)close(r->nextfd);
 	(void)write(a->tellfd, &r->nextfd, sizeof(r->nextfd));
-	RR(r->r[0], socket(AF_INET, SOCK_STREAM, 0));
+	DQT_RR(r->r[0], socket(AF_INET, SOCK_STREAM, 0));
 }
 
 /* Files of pid: the count and whether descriptor fd is among them. */
@@ -592,10 +586,10 @@ child_dead(void *arg __unused, void *result)
 	struct stat sb;
 	int sv[2];
 
-	RR(r->r[0], socket(AF_INET, SOCK_STREAM, 0));	/* held */
-	RR(r->r[1], socket(AF_INET, SOCK_STREAM, 0));
-	RR(r->r[2], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
-	RR(r->r[3], stat("/bin/sh", &sb));		/* a lookup: EIO */
+	DQT_RR(r->r[0], socket(AF_INET, SOCK_STREAM, 0));	/* held */
+	DQT_RR(r->r[1], socket(AF_INET, SOCK_STREAM, 0));
+	DQT_RR(r->r[2], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+	DQT_RR(r->r[3], stat("/bin/sh", &sb));		/* a lookup: EIO */
 }
 
 /* dtrace counting a probe for one pid; -1 and a reason when it cannot. */
@@ -850,19 +844,19 @@ child_full(void *arg, void *result)
 		if (cap_enter() != 0)
 			_exit(5);
 		/* Raw IP has no PR_CAPATTACH: ECAPMODE with room. */
-		RR(r->r[0], socket(AF_INET, SOCK_RAW, IPPROTO_ICMP));
-		RR(r->r[1], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+		DQT_RR(r->r[0], socket(AF_INET, SOCK_RAW, IPPROTO_ICMP));
+		DQT_RR(r->r[1], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
 		return;
 	}
-	RR(r->r[0], socket(AF_INET, SOCK_STREAM, 0));
-	RR(r->r[1], socket(AF_UNIX, SOCK_RAW, 0));	/* EPROTOTYPE */
-	RR(r->r[2], socket(AF_MAX + 10, SOCK_STREAM, 0)); /* EAFNOSUPPORT */
-	RR(r->r[3], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
-	RR(r->r[4], socketpair(AF_UNIX, SOCK_RAW, 0, sv));
+	DQT_RR(r->r[0], socket(AF_INET, SOCK_STREAM, 0));
+	DQT_RR(r->r[1], socket(AF_UNIX, SOCK_RAW, 0));	/* EPROTOTYPE */
+	DQT_RR(r->r[2], socket(AF_MAX + 10, SOCK_STREAM, 0)); /* EAFNOSUPPORT */
+	DQT_RR(r->r[3], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+	DQT_RR(r->r[4], socketpair(AF_UNIX, SOCK_RAW, 0, sv));
 	/* One free slot: socket(2) fits, socketpair(2) does not. */
 	(void)close(last);
-	RR(r->r[5], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
-	RR(r->r[6], socket(AF_INET, SOCK_STREAM, 0));
+	DQT_RR(r->r[5], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+	DQT_RR(r->r[6], socket(AF_INET, SOCK_STREAM, 0));
 	r->nextfd = last;
 }
 
@@ -982,8 +976,8 @@ child_jail_inet(void *arg __unused, void *result)
 {
 	struct sock_res *r = result;
 
-	RR(r->r[0], socket(AF_INET, SOCK_STREAM, 0));
-	RR(r->r[1], socket(AF_UNIX, SOCK_STREAM, 0));
+	DQT_RR(r->r[0], socket(AF_INET, SOCK_STREAM, 0));
+	DQT_RR(r->r[1], socket(AF_UNIX, SOCK_STREAM, 0));
 }
 
 /* dqt_attach_spawn, with the child entering the jail before ATTACH. */
@@ -1106,8 +1100,8 @@ child_tunport(void *arg __unused, void *result)
 	u_int v;
 
 	v = TUNPORT_VALUE;
-	RR(r->r[0], sysctlbyname(TUNPORT, NULL, NULL, &v, sizeof(v)));
-	RR(r->r[1], socket(AF_INET, SOCK_DGRAM, 0));
+	DQT_RR(r->r[0], sysctlbyname(TUNPORT, NULL, NULL, &v, sizeof(v)));
+	DQT_RR(r->r[1], socket(AF_INET, SOCK_DGRAM, 0));
 }
 
 ATF_TC_WITH_CLEANUP(kernel_socreate_not_consulted);
@@ -1182,11 +1176,11 @@ child_abstract(void *arg __unused, void *result)
 	len = offsetof(struct sockaddr_un, sun_path) + 7;
 	sun.sun_len = len;
 	s = socket(AF_UNIX, SOCK_STREAM, 0);
-	RR(r->r[0], bind(s, (struct sockaddr *)&sun, len));
+	DQT_RR(r->r[0], bind(s, (struct sockaddr *)&sun, len));
 	(void)close(s);
 	memcpy(sun.sun_path, "\0rt-abc", 7);
 	s = socket(AF_UNIX, SOCK_STREAM, 0);
-	RR(r->r[1], connect(s, (struct sockaddr *)&sun, len));
+	DQT_RR(r->r[1], connect(s, (struct sockaddr *)&sun, len));
 	(void)close(s);
 }
 

@@ -76,12 +76,6 @@ struct sw_res {
 	char		 data[64];
 };
 
-#define	RR(slot, call) do {						\
-	errno = 0;							\
-	(slot).rv = (long)(call);					\
-	(slot).err = (slot).rv == -1 ? errno : 0;			\
-} while (0)
-
 static void
 sw_write_file(const char *path, const char *text, mode_t mode)
 {
@@ -265,24 +259,24 @@ p_regular(void *arg __unused, void *result)
 	struct stat st;
 	int fd;
 
-	RR(res->r[0], fd = open("orig", O_RDONLY | O_CLOEXEC));
+	DQT_RR(res->r[0], fd = open("orig", O_RDONLY | O_CLOEXEC));
 	if (fd == -1)
 		return;
-	RR(res->r[1], fstat(fd, &st));
+	DQT_RR(res->r[1], fstat(fd, &st));
 	res->ino = st.st_ino;
 	res->size = st.st_size;
-	RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
+	DQT_RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
 	res->fdflags = fcntl(fd, F_GETFD);
 	res->flflags = fcntl(fd, F_GETFL);
 	memset(&kif, 0, sizeof(kif));
 	kif.kf_structsize = sizeof(kif);
-	RR(res->r[3], fcntl(fd, F_KINFO, &kif));
+	DQT_RR(res->r[3], fcntl(fd, F_KINFO, &kif));
 	res->kftype = kif.kf_type;
-	RR(res->r[4], lseek(fd, 0, SEEK_SET));
-	RR(res->r[5], read(fd, res->data, 4));
-	RR(res->r[6], lseek(fd, 0, SEEK_CUR));
-	RR(res->r[7], flock(fd, LOCK_SH));
-	RR(res->r[8], close(fd));
+	DQT_RR(res->r[4], lseek(fd, 0, SEEK_SET));
+	DQT_RR(res->r[5], read(fd, res->data, 4));
+	DQT_RR(res->r[6], lseek(fd, 0, SEEK_CUR));
+	DQT_RR(res->r[7], flock(fd, LOCK_SH));
+	DQT_RR(res->r[8], close(fd));
 }
 
 static void
@@ -348,11 +342,11 @@ p_plain_open(void *arg, void *result)
 	int fd, flags;
 
 	flags = arg != NULL ? *(int *)arg : O_RDONLY;
-	RR(res->r[0], fd = open("orig", flags, 0644));
+	DQT_RR(res->r[0], fd = open("orig", flags, 0644));
 	if (fd == -1)
 		return;
-	RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
-	RR(res->r[8], close(fd));
+	DQT_RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
+	DQT_RR(res->r[8], close(fd));
 }
 
 static void
@@ -483,9 +477,9 @@ p_notopen(void *arg __unused, void *result)
 	struct sw_res *res = result;
 	struct stat st;
 
-	RR(res->r[0], stat("orig", &st));
+	DQT_RR(res->r[0], stat("orig", &st));
 	res->size = st.st_size;
-	RR(res->r[1], chdir("dir"));
+	DQT_RR(res->r[1], chdir("dir"));
 }
 
 ATF_TC_WITHOUT_HEAD(swap_only_for_open);
@@ -568,14 +562,14 @@ p_exlock(void *arg __unused, void *result)
 	struct sw_res *res = result;
 	int fd, fd2;
 
-	RR(res->r[0], fd = open("orig", O_RDONLY | O_EXLOCK));
+	DQT_RR(res->r[0], fd = open("orig", O_RDONLY | O_EXLOCK));
 	if (fd == -1)
 		return;
 	/* "subst" by its own name is passed: a second open file of it. */
-	RR(res->r[1], fd2 = open("subst", O_RDONLY));
-	RR(res->r[2], flock(fd2, LOCK_EX | LOCK_NB));
-	RR(res->r[3], close(fd));
-	RR(res->r[4], flock(fd2, LOCK_EX | LOCK_NB));
+	DQT_RR(res->r[1], fd2 = open("subst", O_RDONLY));
+	DQT_RR(res->r[2], flock(fd2, LOCK_EX | LOCK_NB));
+	DQT_RR(res->r[3], close(fd));
+	DQT_RR(res->r[4], flock(fd2, LOCK_EX | LOCK_NB));
 	(void)close(fd2);
 }
 
@@ -641,14 +635,14 @@ p_write(void *arg, void *result)
 	flags = *(int *)arg;
 	if ((flags & 0x40000000) != 0) {
 		flags &= ~0x40000000;
-		RR(res->r[9], setgid(SW_UID));
-		RR(res->r[10], setuid(SW_UID));
+		DQT_RR(res->r[9], setgid(SW_UID));
+		DQT_RR(res->r[10], setuid(SW_UID));
 	}
-	RR(res->r[0], fd = open("orig", flags, 0444));
+	DQT_RR(res->r[0], fd = open("orig", flags, 0444));
 	if (fd == -1)
 		return;
-	RR(res->r[1], write(fd, "new", 3));
-	RR(res->r[8], close(fd));
+	DQT_RR(res->r[1], write(fd, "new", 3));
+	DQT_RR(res->r[8], close(fd));
 }
 
 ATF_TC_WITHOUT_HEAD(swap_trunc);
@@ -797,12 +791,12 @@ p_opath(void *arg __unused, void *result)
 	char b;
 	int fd;
 
-	RR(res->r[0], fd = open("orig", O_PATH));
+	DQT_RR(res->r[0], fd = open("orig", O_PATH));
 	if (fd == -1)
 		return;
-	RR(res->r[1], fstat(fd, &st));
+	DQT_RR(res->r[1], fstat(fd, &st));
 	res->mode = st.st_mode;
-	RR(res->r[2], read(fd, &b, 1));
+	DQT_RR(res->r[2], read(fd, &b, 1));
 	(void)close(fd);
 }
 
@@ -847,12 +841,12 @@ p_dir(void *arg __unused, void *result)
 	struct sw_res *res = result;
 	int dfd, fd;
 
-	RR(res->r[0], dfd = open("orig", O_RDONLY | O_DIRECTORY));
+	DQT_RR(res->r[0], dfd = open("orig", O_RDONLY | O_DIRECTORY));
 	if (dfd == -1)
 		return;
-	RR(res->r[1], fd = openat(dfd, "inside", O_RDONLY));
+	DQT_RR(res->r[1], fd = openat(dfd, "inside", O_RDONLY));
 	if (fd != -1) {
-		RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
+		DQT_RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
 		(void)close(fd);
 	}
 	(void)close(dfd);
@@ -905,19 +899,19 @@ p_emfile(void *arg __unused, void *result)
 	int fd, i;
 
 	/* Fill every number below the limit. */
-	RR(res->r[9], getrlimit(RLIMIT_NOFILE, &save));
+	DQT_RR(res->r[9], getrlimit(RLIMIT_NOFILE, &save));
 	rl = save;
 	rl.rlim_cur = 32;
-	RR(res->r[10], setrlimit(RLIMIT_NOFILE, &rl));
+	DQT_RR(res->r[10], setrlimit(RLIMIT_NOFILE, &rl));
 	for (i = 0; i < 64; i++) {
 		if (dup(0) == -1)
 			break;
 	}
-	RR(res->r[0], fd = open("orig", O_RDONLY));
-	RR(res->r[11], setrlimit(RLIMIT_NOFILE, &save));
-	RR(res->r[1], fd = open("orig", O_RDONLY));
+	DQT_RR(res->r[0], fd = open("orig", O_RDONLY));
+	DQT_RR(res->r[11], setrlimit(RLIMIT_NOFILE, &save));
+	DQT_RR(res->r[1], fd = open("orig", O_RDONLY));
 	if (fd != -1)
-		RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
+		DQT_RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
 }
 
 ATF_TC_WITHOUT_HEAD(swap_emfile);
@@ -999,21 +993,21 @@ p_gone_holder(void *arg, void *result)
 	char b;
 	int fd, fd2;
 
-	RR(res->r[0], fd = open("orig", O_RDWR));
+	DQT_RR(res->r[0], fd = open("orig", O_RDWR));
 	b = 'h';
 	(void)write(g->held[1], &b, 1);
 	(void)read(g->gone[0], &b, 1);
 	if (fd == -1)
 		return;
-	RR(res->r[1], pwrite(fd, "AFTER", 5, 0));
-	RR(res->r[2], pread(fd, res->data, sizeof(res->data) - 1, 0));
-	RR(res->r[3], fstat(fd, &st));
+	DQT_RR(res->r[1], pwrite(fd, "AFTER", 5, 0));
+	DQT_RR(res->r[2], pread(fd, res->data, sizeof(res->data) - 1, 0));
+	DQT_RR(res->r[3], fstat(fd, &st));
 	res->ino = st.st_ino;
-	RR(res->r[4], fd2 = dup(fd));
-	RR(res->r[5], open("orig", O_RDONLY));
-	RR(res->r[6], open("subst", O_RDONLY));
-	RR(res->r[7], stat("subst", &st));
-	RR(res->r[8], close(fd));
+	DQT_RR(res->r[4], fd2 = dup(fd));
+	DQT_RR(res->r[5], open("orig", O_RDONLY));
+	DQT_RR(res->r[6], open("subst", O_RDONLY));
+	DQT_RR(res->r[7], stat("subst", &st));
+	DQT_RR(res->r[8], close(fd));
 }
 
 ATF_TC_WITHOUT_HEAD(swap_survives_supervisor);
@@ -1099,13 +1093,13 @@ p_exlock_late(void *arg __unused, void *result)
 	/* The number the open will be given. */
 	next = dup(0);
 	(void)close(next);
-	RR(res->r[0], fd = open("orig", O_RDONLY | O_EXLOCK));
+	DQT_RR(res->r[0], fd = open("orig", O_RDONLY | O_EXLOCK));
 	if (fd != -1) {
-		RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
-		RR(res->r[8], close(fd));
+		DQT_RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
+		DQT_RR(res->r[8], close(fd));
 	} else
-		RR(res->r[4], fcntl(next, F_GETFD));
-	RR(res->r[3], stat("orig", &st));
+		DQT_RR(res->r[4], fcntl(next, F_GETFD));
+	DQT_RR(res->r[3], stat("orig", &st));
 }
 
 ATF_TC_WITHOUT_HEAD(swap_supervisor_gone_before_install);
@@ -1165,11 +1159,11 @@ p_exlock_trunc_late(void *arg __unused, void *result)
 
 	next = dup(0);
 	(void)close(next);
-	RR(res->r[0], fd = open("orig", O_WRONLY | O_TRUNC | O_EXLOCK));
+	DQT_RR(res->r[0], fd = open("orig", O_WRONLY | O_TRUNC | O_EXLOCK));
 	if (fd != -1)
-		RR(res->r[8], close(fd));
+		DQT_RR(res->r[8], close(fd));
 	else
-		RR(res->r[4], fcntl(next, F_GETFD));
+		DQT_RR(res->r[4], fcntl(next, F_GETFD));
 }
 
 ATF_TC_WITHOUT_HEAD(swap_supervisor_gone_after_trunc);
@@ -1269,12 +1263,12 @@ sw_exit_supervisor(int rep, int progrep)
 		if (read(go[0], &b, 1) != 1)
 			_exit(0);
 		memset(&res, 0, sizeof(res));
-		RR(res.r[1], keep = open("keep", O_RDONLY));
-		RR(res.r[0], fd = open("orig", O_RDONLY | O_EXLOCK));
+		DQT_RR(res.r[1], keep = open("keep", O_RDONLY));
+		DQT_RR(res.r[0], fd = open("orig", O_RDONLY | O_EXLOCK));
 		/* What it held before, it keeps; by name, nothing new. */
-		RR(res.r[2], read(keep, res.data, sizeof(res.data) - 1));
-		RR(res.r[3], stat("subst", &st));
-		RR(res.r[5], open("keep", O_RDONLY));
+		DQT_RR(res.r[2], read(keep, res.data, sizeof(res.data) - 1));
+		DQT_RR(res.r[3], stat("subst", &st));
+		DQT_RR(res.r[5], open("keep", O_RDONLY));
 		(void)write(progrep, &res, sizeof(res));
 		_exit(0);
 	}
@@ -1405,11 +1399,11 @@ p_race_open(void *arg __unused, void *result)
 
 	next = dup(0);
 	(void)close(next);
-	RR(res->r[0], fd = open("orig", O_RDONLY));
+	DQT_RR(res->r[0], fd = open("orig", O_RDONLY));
 	if (fd != -1)
-		RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
+		DQT_RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
 	else
-		RR(res->r[4], fcntl(next, F_GETFD));
+		DQT_RR(res->r[4], fcntl(next, F_GETFD));
 }
 
 /* One round: the outcome is counted; anything but the two fails. */
@@ -1500,12 +1494,12 @@ p_flags_open(void *arg, void *result)
 	struct stat st;
 	int fd;
 
-	RR(res->r[0], fd = open("orig", *(int *)arg, 0644));
+	DQT_RR(res->r[0], fd = open("orig", *(int *)arg, 0644));
 	if (fd == -1)
 		return;
-	RR(res->r[1], fstat(fd, &st));
+	DQT_RR(res->r[1], fstat(fd, &st));
 	res->mode = st.st_mode;
-	RR(res->r[8], close(fd));
+	DQT_RR(res->r[8], close(fd));
 }
 
 static void
@@ -1591,13 +1585,13 @@ p_send(void *arg __unused, void *result)
 	struct sw_res *res = result;
 	int fd, sv[2];
 
-	RR(res->r[0], fd = open("orig", O_RDONLY));
+	DQT_RR(res->r[0], fd = open("orig", O_RDONLY));
 	if (fd == -1)
 		return;
-	RR(res->r[1], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+	DQT_RR(res->r[1], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
 	if (res->r[1].rv == -1)
 		return;
-	RR(res->r[2], dqt_send_fd(sv[0], fd));
+	DQT_RR(res->r[2], dqt_send_fd(sv[0], fd));
 }
 
 static void
@@ -1662,19 +1656,19 @@ p_proxydir(void *arg __unused, void *result)
 	cap_rights_t lim;
 	int dfd, fd;
 
-	RR(res->r[0], dfd = open("pdir", O_RDONLY | O_DIRECTORY));
+	DQT_RR(res->r[0], dfd = open("pdir", O_RDONLY | O_DIRECTORY));
 	if (dfd == -1)
 		return;
 	/* Through the directory as the supervisor gave it. */
-	RR(res->r[1], fd = openat(dfd, "f", O_RDONLY));
+	DQT_RR(res->r[1], fd = openat(dfd, "f", O_RDONLY));
 	if (fd != -1) {
-		RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
+		DQT_RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
 		(void)close(fd);
 	}
 	/* Narrowed: no CAP_WRITE, no CAP_SEEK. */
-	RR(res->r[5], cap_rights_limit(dfd, cap_rights_init(&lim, CAP_LOOKUP,
+	DQT_RR(res->r[5], cap_rights_limit(dfd, cap_rights_init(&lim, CAP_LOOKUP,
 	    CAP_READ, CAP_FSTAT)));
-	RR(res->r[6], openat(dfd, "f", O_RDONLY));
+	DQT_RR(res->r[6], openat(dfd, "f", O_RDONLY));
 	(void)close(dfd);
 }
 

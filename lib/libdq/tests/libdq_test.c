@@ -476,11 +476,6 @@ struct io_res {
 	struct flock	 fl;
 };
 
-#define	DO(i, expr) do {						\
-	r->r[i].rv = (long)(expr);					\
-	r->r[i].err = r->r[i].rv == -1 ? errno : 0;			\
-} while (0)
-
 static void
 child_io(void *arg, void *result)
 {
@@ -491,24 +486,24 @@ child_io(void *arg, void *result)
 	int e;
 
 	memset(w, 0xee, sizeof(w));
-	DO(0, pread(fd, r->buf, sizeof(r->buf), 100));
-	DO(1, pwrite(fd, w, sizeof(w), 200));
+	DQT_RR(r->r[0], pread(fd, r->buf, sizeof(r->buf), 100));
+	DQT_RR(r->r[1], pwrite(fd, w, sizeof(w), 200));
 	(void)fcntl(fd, F_SETFL, O_APPEND);
-	DO(2, write(fd, w, sizeof(w)));
-	DO(3, lseek(fd, 0, SEEK_CUR));
+	DQT_RR(r->r[2], write(fd, w, sizeof(w)));
+	DQT_RR(r->r[3], lseek(fd, 0, SEEK_CUR));
 	(void)fcntl(fd, F_SETFL, 0);
-	DO(4, fchmod(fd, 0600));
-	DO(5, fsync(fd));
-	DO(6, fdatasync(fd));
+	DQT_RR(r->r[4], fchmod(fd, 0600));
+	DQT_RR(r->r[5], fsync(fd));
+	DQT_RR(r->r[6], fdatasync(fd));
 	e = posix_fallocate(fd, 0, DATA_LEN * 2);
 	r->r[7].rv = e == 0 ? 0 : -1;
 	r->r[7].err = e;
 	rq.r_offset = 1024;	/* clear of the bytes written at 200 */
 	rq.r_len = 512;
-	DO(8, fspacectl(fd, SPACECTL_DEALLOC, &rq, 0, &r->rmsr));
-	DO(9, ioctl(fd, FIODTYPE, &e));
-	DO(10, ftruncate(fd, DATA_LEN + 16));
-	DO(11, fstat(fd, &r->st));
+	DQT_RR(r->r[8], fspacectl(fd, SPACECTL_DEALLOC, &rq, 0, &r->rmsr));
+	DQT_RR(r->r[9], ioctl(fd, FIODTYPE, &e));
+	DQT_RR(r->r[10], ftruncate(fd, DATA_LEN + 16));
+	DQT_RR(r->r[11], fstat(fd, &r->st));
 }
 
 ATF_TC(serve_each_op);
@@ -608,9 +603,9 @@ child_try_lock(void *arg, void *result)
 	r->fl.l_whence = SEEK_SET;
 	r->fl.l_start = 5;
 	r->fl.l_len = 1;
-	DO(0, fcntl(fd, F_SETLK, &r->fl));
-	DO(1, fcntl(fd, F_GETLK, &r->fl));
-	DO(2, flock(fd, LOCK_EX | LOCK_NB));
+	DQT_RR(r->r[0], fcntl(fd, F_SETLK, &r->fl));
+	DQT_RR(r->r[1], fcntl(fd, F_GETLK, &r->fl));
+	DQT_RR(r->r[2], flock(fd, LOCK_EX | LOCK_NB));
 }
 
 ATF_TC(serve_locks);
@@ -689,8 +684,8 @@ child_map_write(void *arg, void *result)
 	/* A fault (READ) and a store, then the write-back (WRITE_ASYNC). */
 	memcpy(r->buf, p + 4096, 16);
 	p[4096 + 5] = 0x77;
-	DO(1, msync(p, DATA_LEN, MS_SYNC));
-	DO(2, munmap(p, DATA_LEN));
+	DQT_RR(r->r[1], msync(p, DATA_LEN, MS_SYNC));
+	DQT_RR(r->r[2], munmap(p, DATA_LEN));
 }
 
 ATF_TC(serve_mmap_writeback);
