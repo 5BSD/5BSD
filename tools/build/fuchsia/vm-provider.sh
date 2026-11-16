@@ -28,7 +28,12 @@
 #   TIMEOUT_S  host-side deadline for the whole VM (default 10800).
 #
 # Environment: FATAL_LOR (yes; no logs a lock order reversal without
-# stopping the run), CPUS (default 8), MEM_MB (8192), PARALLELISM (kyua, default 1),
+# stopping the run), CPUS (default 8), MEM_MB (8192; 12288 when the suites
+#   include sys/posixshm: its largepage_* cases need a free aligned 1 GB
+#   range, and an 8 GB guest has only four, which incidental cached pages
+#   can occupy, so ENOMEM there is expected), PARALLELISM (kyua, default 1),
+#   ROOT_FS (ufs, the default, or zfs: a ZFS root pool for the suites that
+#   require one, such as the Linux ptrace ones),
 #   GATE_TIMEOUT (guest seconds to wait for provider convergence, 600),
 #   REQUIRE_UNITS (space-separated SwitchBoard labels that must be "running"
 #   before tests start; default: the twelve core providers that
@@ -121,7 +126,13 @@ if [ -n "$linux_compat_dir" ]; then
 	bad=$(cd "$linux_compat_dir" && find compat/linux -print | grep -v '^[A-Za-z0-9_./+-]*$' || true)
 	[ -z "$bad" ] || die "LINUX_COMPAT_DIR has unsupported path names: $bad"
 fi
-cpus=${CPUS:-4} mem=${MEM_MB:-8192} par=${PARALLELISM:-1} gate=${GATE_TIMEOUT:-600}
+case " $suites " in
+*" sys/posixshm"*) mem_default=12288 ;;
+*) mem_default=8192 ;;
+esac
+cpus=${CPUS:-4} mem=${MEM_MB:-$mem_default} par=${PARALLELISM:-1} gate=${GATE_TIMEOUT:-600}
+root_fs=${ROOT_FS:-ufs}
+case "$root_fs" in ufs|zfs) ;; *) echo "ROOT_FS must be ufs or zfs" >&2; exit 64;; esac
 units=${REQUIRE_UNITS:-system.Log/bsdlog system.Network/bsdnetwork system.Trace/bsdtrace system.Filesystem/bsdfilesystem system.Audit/bsdaudit system.Time/bsdtime system.SystemExtension/bsdextension system.Notify/bsdnotify system.Device/bsddevice system.Power/bsdpower system.Sysctl/bsdsysctl system.Crypto/bsdcrypto}
 
 isnum() { case $1 in ''|*[!0-9]*) return 1;; esac; [ "$1" -gt 0 ]; }
@@ -205,6 +216,9 @@ if [ "$plane_off" = 1 ]; then
 	: > "$x/loader.conf.local"
 fi
 # LOADER_EXTRA: more loader.conf lines, e.g. if_vxlan_load="YES".
+if [ "$root_fs" = zfs ]; then
+	printf 'zfs_load="YES"\nvfs.root.mountfrom="zfs:kyuaroot"\n' >> "$x/loader.conf"
+fi
 [ -z "${LOADER_EXTRA:-}" ] || printf '%s\n' "$LOADER_EXTRA" >> "$x/loader.conf"
 if [ -n "$extra_script" ]; then cp "$extra_script" "$x/extra.sh"; else : > "$x/extra.sh"; fi
 cat > "$x/fstab" <<'EOF'
@@ -212,6 +226,7 @@ cat > "$x/fstab" <<'EOF'
 tmpfs		/tmp	tmpfs	rw,mode=1777	0	0
 tmpfs		/Capabilities/Run	tmpfs	rw,mode=0700	0	0
 EOF
+[ "$root_fs" = ufs ] || sed -i '' '/^\/dev\/vtbd0p2	\/	ufs/d' "$x/fstab"
 if [ -n "$linux_compat_dir" ]; then
 	cat >> "$x/fstab" <<'EOF'
 linprocfs	/compat/linux/proc	linprocfs	rw	0	0
@@ -509,11 +524,19 @@ done
 # ------------------------------------------------------------------ image ---
 # Manifest mode: makefs resolves plain records relative to the cwd (the stage)
 # and overlay records through contents=, so the stage is never written.
+if [ "$root_fs" = zfs ]; then
+(cd "$stage" && makefs -t zfs -s 8g -o poolname=kyuaroot -o bootfs=kyuaroot \
+    -o rootpath=/ "$work/root.ufs" "$work/METALOG") > "$work/makefs.log" 2>&1 ||
+    { tail -n 20 "$work/makefs.log" >&2; die "makefs failed"; }
+mkimg -s gpt -f raw -b "$stage/boot/pmbr" -p "freebsd-boot:=$stage/boot/gptzfsboot" \
+    -p "freebsd-zfs:=$work/root.ufs" -o "$work/guest.img"
+else
 (cd "$stage" && makefs -t ffs -B little -s 8g -o version=2,softupdates=1,label=root \
     "$work/root.ufs" "$work/METALOG") > "$work/makefs.log" 2>&1 ||
     { tail -n 20 "$work/makefs.log" >&2; die "makefs failed"; }
 mkimg -s gpt -f raw -b "$stage/boot/pmbr" -p "freebsd-boot:=$stage/boot/gptboot" \
     -p "freebsd-ufs:=$work/root.ufs" -o "$work/guest.img"
+fi
 rm -f "$work/root.ufs"
 truncate -s 512m "$work/results.img"
 echo "image: $work/guest.img"

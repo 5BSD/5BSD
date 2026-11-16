@@ -88,6 +88,14 @@ endpoint releases its binding. run-kernel.py requires the corresponding
 completion marker. This checks shared kernel binding mechanics, not persistent
 BIP storage grants or synchronous I/O revocation.
 
+Credentials record a process's authority without keeping it alive. A service
+installs an authority whose executable sits on the root file system and whose
+library directory is a tmpfs directory opened inside a jail. It passes a
+socket it created to PID 1, then exits, or clears its authority and stays.
+Once the token is closed, the executable must open for writing, the tmpfs must
+unmount and the jail must finish dying, all while that socket is still open.
+run-kernel.py requires `PASS authority-credential-does-not-pin-authority`.
+
 `run-kernel.py` creates an unprivileged UFS image with `makefs`/`mkimg`, boots
 it with QEMU in snapshot mode, and records the command, kernel and test hashes,
 serial-log hash, exit status, and pass/fail result in a new work directory.

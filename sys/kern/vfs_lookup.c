@@ -1516,6 +1516,20 @@ dirloop:
 			}
 			if ((dp->v_vflag & VV_ROOT) == 0)
 				break;
+			/*
+			 * A strictly relative lookup may not leave its start.
+			 * The ".." of a start that is the root of a mount is
+			 * taken in the covered directory below, so that the
+			 * check after the lookup (case 5) would compare the
+			 * covered vnode with the start and let it through:
+			 * apply it here, before crossing.
+			 */
+			if (__predict_false(dp == ndp->ni_rbeneath_dpp &&
+			    (ndp->ni_lcf & NI_LCF_STRICTREL) != 0)) {
+				error = nameicap_check_dotdot(ndp, dp);
+				if (error != 0)
+					goto bad;
+			}
 			if ((cnp->cn_flags & NOXDEV) != 0) {
 				error = EXDEV;
 				goto bad;

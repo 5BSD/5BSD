@@ -160,6 +160,15 @@ test(int argc, char **argv, char **envp)
 	/* tgkill with a wrong tgid or a dead tid is ESRCH; sig 0 probes */
 	if (sys3(SYS_tgkill, pid + 1, target_tid, 0) != -ESRCH &&
 	    sys3(SYS_tgkill, pid + 1, target_tid, 0) != -EINVAL) return (4);
+	/*
+	 * The join returns at the CLONE_CHILD_CLEARTID futex wake, which the
+	 * exiting thread does before it is gone: Linux in mm_release() from
+	 * exit_mm(), before exit_notify() unhashes the task; the Linuxulator
+	 * in linux_thread_detach(), before kern_thr_exit() removes the tid.
+	 * Until then the tid still answers, so wait for it to go.
+	 */
+	for (i = 0; i < 2000 && sys3(SYS_tgkill, pid, target_tid, 0) == 0; i++)
+		sleep_ms(1);
 	if (sys3(SYS_tgkill, pid, target_tid, 0) != -ESRCH) return (4);
 	if (sys3(SYS_tgkill, pid, 0, SIGUSR1) != -EINVAL) return (4);
 

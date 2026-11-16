@@ -235,6 +235,8 @@ struct mac_capability_authorization {
 	uint64_t process_identity;
 	uint64_t execution_nonce;
 };
+void mac_capability_authorization_snapshot_cred(struct ucred *,
+    struct mac_capability_authorization *);
 void mac_capability_authorization_snapshot(struct thread *,
     struct mac_capability_authorization *);
 /* Caller stabilizes the instance and must not hold its ci_mtx: this helper
