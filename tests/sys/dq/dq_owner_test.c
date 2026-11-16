@@ -328,14 +328,16 @@ queues_now(void)
 static bool
 queues_settle(u_int want)
 {
-	int i;
+	int64_t deadline;
 
-	for (i = 0; i < 100; i++) {
+	deadline = dqt_now_ms() + DQT_WAIT_MS;
+	for (;;) {
 		if (queues_now() == want)
 			return (true);
+		if (dqt_now_ms() >= deadline)
+			return (false);
 		dqt_msleep(50);
 	}
-	return (false);
 }
 
 /* How many of this process's descriptors are the queue device. */
@@ -1987,12 +1989,13 @@ ATF_TC_HEAD(owner_only_misc, tc)
 }
 ATF_TC_BODY(owner_only_misc, tc)
 {
+	int64_t deadline;
 	static char buf[4096];
 	struct dq_ident_file *ident;
 	struct dq_stats st;
 	struct ops_res second;
 	struct aiocb cb;
-	int error, i, q;
+	int error, q;
 
 	helper_locate(tc);
 	q = dqt_open_queue();
@@ -2015,11 +2018,10 @@ ATF_TC_BODY(owner_only_misc, tc)
 	cb.aio_nbytes = sizeof(buf);
 	ATF_REQUIRE_EQ_MSG(0, aio_read(&cb), "aio_read, unsafe on: %s",
 	    strerror(errno));
-	error = EINPROGRESS;
-	for (i = 0; i < 200 && error == EINPROGRESS; i++) {
+	deadline = dqt_now_ms() + 2 * DQT_WAIT_MS;
+	while ((error = aio_error(&cb)) == EINPROGRESS &&
+	    dqt_now_ms() < deadline)
 		dqt_msleep(50);
-		error = aio_error(&cb);
-	}
 	ATF_CHECK_EQ_MSG(EPERM, error, "aio_error: %d, want EPERM", error);
 	if (error != EINPROGRESS)
 		ATF_CHECK_EQ(-1, aio_return(&cb));
@@ -2147,6 +2149,7 @@ ATF_TC_HEAD(exit_close_storm, tc)
 }
 ATF_TC_BODY(exit_close_storm, tc)
 {
+	int64_t deadline;
 	char badbuf[64];
 	struct pollfd pfd;
 	ssize_t n;
@@ -2189,13 +2192,10 @@ ATF_TC_BODY(exit_close_storm, tc)
 	ATF_CHECK_EQ_MSG(0, nbad, "%d wrong answers", nbad);
 	ATF_CHECK_MSG(queues_settle(before), "kern.dq.queues is %u, was %u",
 	    queues_now(), before);
-	mem_now = -1;
-	for (i = 0; i < 100; i++) {
-		mem_now = dq_malloc_inuse();
-		if (mem_now == mem_before)
-			break;
+	deadline = dqt_now_ms() + DQT_WAIT_MS;
+	while ((mem_now = dq_malloc_inuse()) != mem_before &&
+	    dqt_now_ms() < deadline)
 		dqt_msleep(50);
-	}
 	ATF_CHECK_EQ_MSG(mem_before, mem_now, "dq malloc type: %ld in use, "
 	    "was %ld", mem_now, mem_before);
 }

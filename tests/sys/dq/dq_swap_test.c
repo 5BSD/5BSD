@@ -974,27 +974,6 @@ sw_serve_answered(struct sw *x, char *buf, int n)
 }
 
 /* Wait until the process sleeps on the named wait channel message. */
-static bool
-sw_wait_wmesg(pid_t pid, const char *wmesg, int ms)
-{
-	struct kinfo_proc kp;
-	size_t len;
-	int mib[4];
-
-	mib[0] = CTL_KERN;
-	mib[1] = KERN_PROC;
-	mib[2] = KERN_PROC_PID;
-	mib[3] = pid;
-	for (; ms > 0; ms -= 10) {
-		len = sizeof(kp);
-		if (sysctl(mib, nitems(mib), &kp, &len, NULL, 0) == 0 &&
-		    strcmp(kp.ki_wmesg, wmesg) == 0)
-			return (true);
-		dqt_msleep(10);
-	}
-	return (false);
-}
-
 static void
 a_rdwr(struct sw *x, const struct dq_event *ev,
     const struct dq_resolve_body *rb __unused)
@@ -1149,7 +1128,7 @@ ATF_TC_BODY(swap_supervisor_gone_before_install, tc)
 	ATF_REQUIRE(fcntl(x.c.q, F_SETFL, O_NONBLOCK) != -1);
 	dqt_attach_spawn(&x.c, &ch, p_exlock_late, NULL);
 	sw_serve_answered(&x, buf, 1);
-	ATF_REQUIRE_MSG(sw_wait_wmesg(ch.pid, "lockf", 30000),
+	ATF_REQUIRE_MSG(dqt_wait_wmesg(ch.pid, "lockf", 30000),
 	    "the program is not waiting for the lock");
 
 	dqt_close_queue(&x.c);
@@ -1214,7 +1193,7 @@ ATF_TC_BODY(swap_supervisor_gone_after_trunc, tc)
 	ATF_REQUIRE(fcntl(x.c.q, F_SETFL, O_NONBLOCK) != -1);
 	dqt_attach_spawn(&x.c, &ch, p_exlock_trunc_late, NULL);
 	sw_serve_answered(&x, buf, 1);
-	ATF_REQUIRE_MSG(sw_wait_wmesg(ch.pid, "lockf", 30000),
+	ATF_REQUIRE_MSG(dqt_wait_wmesg(ch.pid, "lockf", 30000),
 	    "the program is not waiting for the lock");
 	/* Nothing is truncated while the open waits for its lock. */
 	sw_read_file("subst", text, sizeof(text));
@@ -1339,7 +1318,7 @@ sw_exit_supervisor(int rep, int progrep)
 			answered = true;
 		}
 	}
-	if (!sw_wait_wmesg(er.prog, "lockf", 30000))
+	if (!dqt_wait_wmesg(er.prog, "lockf", 30000))
 		_exit(28);
 	_exit(0);
 }
@@ -1844,7 +1823,8 @@ a_killed(struct sw *x, const struct dq_event *ev,
 	char *buf;
 	size_t bodylen;
 	ssize_t got;
-	int fd, sv[2], tries;
+	int64_t deadline;
+	int fd, sv[2];
 	bool interrupted;
 
 	buf = malloc(SW_BUFSIZE);
@@ -1855,7 +1835,8 @@ a_killed(struct sw *x, const struct dq_event *ev,
 	ATF_REQUIRE_EQ(0, pdkill(x->pd, SIGKILL));
 	/* The kernel tells the supervisor the event was abandoned. */
 	interrupted = false;
-	for (tries = 0; tries < 100 && !interrupted; tries++) {
+	deadline = dqt_now_ms() + DQT_WAIT_MS;
+	while (!interrupted && dqt_now_ms() < deadline) {
 		pfd.fd = x->c.q;
 		pfd.events = POLLIN;
 		pfd.revents = 0;
@@ -1871,7 +1852,12 @@ a_killed(struct sw *x, const struct dq_event *ev,
 				    ib->din_id == ev->de_id)
 					interrupted = true;
 			} else if (e2->de_op == DQ_OP_RESOLVE)
-				(void)dq_reply_resolve_pass(x->c.q, e2->de_id);
+				ATF_CHECK_EQ(0, dq_reply_resolve_pass(x->c.q,
+				    e2->de_id));
+			else
+				/* Nothing else is posted to this queue. */
+				ATF_CHECK_MSG(false, "unexpected event, op %u",
+				    e2->de_op);
 		}
 	}
 	ATF_CHECK_MSG(interrupted, "no INTERRUPT for the killed open");

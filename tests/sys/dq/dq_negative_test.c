@@ -661,6 +661,7 @@ ATF_TC_HEAD(control_errors, tc)
 }
 ATF_TC_BODY(control_errors, tc)
 {
+	int64_t deadline;
 	struct fixture f;
 	struct dqt_object *o;
 	struct dq_object_args oa;
@@ -777,9 +778,10 @@ ATF_TC_BODY(control_errors, tc)
 	a.fd = o->fd;
 	a.len = 100;
 	dqt_spawn(&ch, child_one_read, &a);
-	for (flags = 0; flags < DQT_WAIT_MS; flags += 10) {
+	deadline = dqt_now_ms() + DQT_WAIT_MS;
+	for (;;) {
 		dqt_stats(&f.c, &st);
-		if (st.ds_queue_current == 1)
+		if (st.ds_queue_current == 1 || dqt_now_ms() >= deadline)
 			break;
 		dqt_msleep(10);
 	}
