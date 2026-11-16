@@ -221,7 +221,7 @@ route its own SwitchBoard minted. The route carries no authority. The
 switchboard tests that drive a private stack with `switchboardctl` are wired
 to this route; they run once the GENERIC-TEST issuer tier exists, and until
 then they skip for want of a unit issuer. As PID 1 the key has no effect, and
-Capsule logs a notice when it is set.
+Capsule prints a notice on the console at boot when it is set.
 
 ## Signals Capsule ignores
 
