@@ -365,28 +365,13 @@ actor_scm(void *arg, void *result)
 {
 	struct recv_arg *ra = arg;
 	struct act a;
-	struct msghdr mh;
-	struct iovec iov;
-	union {
-		struct cmsghdr	 hdr;
-		char		 buf[CMSG_SPACE(sizeof(int))];
-	} cm;
-	char b;
 
-	memset(&mh, 0, sizeof(mh));
-	iov.iov_base = &b;
-	iov.iov_len = 1;
-	mh.msg_iov = &iov;
-	mh.msg_iovlen = 1;
-	mh.msg_control = cm.buf;
-	mh.msg_controllen = sizeof(cm.buf);
-	if (recvmsg(ra->sock, &mh, 0) != 1 ||
-	    cm.hdr.cmsg_level != SOL_SOCKET || cm.hdr.cmsg_type != SCM_RIGHTS) {
+	memset(&a, 0, sizeof(a));
+	a.pd = dqt_recv_fd(ra->sock);
+	if (a.pd == -1) {
 		((struct act_res *)result)->open = EPROTO;
 		return;
 	}
-	memset(&a, 0, sizeof(a));
-	memcpy(&a.pd, CMSG_DATA(&cm.hdr), sizeof(int));
 	actor(&a, result);
 }
 
