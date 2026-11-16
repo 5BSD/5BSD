@@ -179,9 +179,9 @@ ATF_TC_BODY(invalidate_reposts, tc)
 	do_io(o->fd, 0, 0, DATA_LEN, 0, &r);
 	ATF_REQUIRE_EQ(DATA_LEN, r.r.rv);
 	reads = dqt_events(&c, DQ_OP_READ);
-	pthread_mutex_lock(&c.mtx);
+	dqt_lock(&c);
 	data[4100] = (unsigned char)~data[4100];
-	pthread_mutex_unlock(&c.mtx);
+	dqt_unlock(&c);
 	ATF_REQUIRE_EQ(0, dq_push_invalidate(c.q, o->id, 4096, 4096));
 	do_io(o->fd, 0, 4100, 1, 0, &r);
 	ATF_REQUIRE_EQ(1, r.r.rv);
@@ -346,10 +346,10 @@ ATF_TC_BODY(shrink_trims_cache, tc)
 	ATF_REQUIRE(id != NULL);
 	*id = o->ident;
 	id->di_size = 4096 + 10;
-	pthread_mutex_lock(&c.mtx);
+	dqt_lock(&c);
 	o->len = 4096 + 10;
 	o->ident = *id;
-	pthread_mutex_unlock(&c.mtx);
+	dqt_unlock(&c);
 	ATF_REQUIRE_EQ(0, dq_set_ident(c.q, o->id, id));
 	free(id);
 	do_io(o->fd, 0, 0, DATA_LEN, 0, &r);

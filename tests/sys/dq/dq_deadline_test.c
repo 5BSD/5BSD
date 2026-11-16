@@ -145,7 +145,7 @@ ATF_TC_BODY(deadline_zero_waits, tc)
 	dq_policy_default(&pol);
 	pol.dp_deadline_ms = 0;
 	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
-	c.reply_delay_ms = 600;
+	dqt_set_reply_delay(&c, 600);
 
 	a.fd = o->fd;
 	a.len = 100;

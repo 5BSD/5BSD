@@ -157,16 +157,16 @@ ATF_TC_BODY(fsync_errors, tc)
 	o = dqt_mint_ident_flags(&c, id, &pol, DQ_MINT_F_WRITE, data,
 	    sizeof(data));
 	free(id);
-	o->serve_errno = EINVAL;
+	dqt_object_serve_errno(&c, o, EINVAL);
 	memset(&r, 0, sizeof(r));
 	dqt_run_child(child_fsyncs, &o->fd, &r, sizeof(r));
 	ATF_CHECK_EQ(EINVAL, r.fsync.err);
 	/* K-N3: ENOSPC, EDQUOT and ESTALE joined the FSYNC list. */
-	o->serve_errno = ENOSPC;
+	dqt_object_serve_errno(&c, o, ENOSPC);
 	memset(&r, 0, sizeof(r));
 	dqt_run_child(child_fsyncs, &o->fd, &r, sizeof(r));
 	ATF_CHECK_EQ(ENOSPC, r.fsync.err);
-	o->serve_errno = EPERM;
+	dqt_object_serve_errno(&c, o, EPERM);
 	memset(&r, 0, sizeof(r));
 	dqt_run_child(child_fsyncs, &o->fd, &r, sizeof(r));
 	ATF_CHECK_EQ(EIO, r.fsync.err);

@@ -66,38 +66,41 @@ struct sock_res {
 /* The index of the n-th (from 0) recorded event of op, or -1. */
 static int
 nth_event(struct dqt_ctl *c, uint32_t op, int n)
+    __requires_unlocked(c->mtx)
 {
 	int i;
 
-	pthread_mutex_lock(&c->mtx);
+	dqt_lock(c);
 	for (i = 0; i < c->nrs; i++)
 		if (c->rs[i].op == op && n-- == 0)
 			break;
 	if (i == c->nrs)
 		i = -1;
-	pthread_mutex_unlock(&c->mtx);
+	dqt_unlock(c);
 	return (i);
 }
 
 static int
 count_events(struct dqt_ctl *c, uint32_t op, int domain, int type)
+    __requires_unlocked(c->mtx)
 {
 	int i, n;
 
 	n = 0;
-	pthread_mutex_lock(&c->mtx);
+	dqt_lock(c);
 	for (i = 0; i < c->nrs; i++)
 		if (c->rs[i].op == op && (domain == -1 ||
 		    c->rs[i].domain == domain) && (type == -1 ||
 		    c->rs[i].type == type))
 			n++;
-	pthread_mutex_unlock(&c->mtx);
+	dqt_unlock(c);
 	return (n);
 }
 
 static void
 check_socket_event(struct dqt_ctl *c, int i, uint32_t op, int domain,
     int type, int protocol)
+    __requires_unlocked(c->mtx)
 {
 
 	ATF_REQUIRE_MSG(i != -1, "no event of op %u", op);
@@ -456,8 +459,8 @@ ATF_TC_BODY(errno_answers, tc)
 	struct dq_stats2 st;
 
 	dqt_init(&c);
-	c.resolve_errno[DQ_ROP_SOCKET] = EACCES;
-	c.resolve_errno[DQ_ROP_SOCKETPAIR] = EPERM;
+	dqt_resolve_errno(&c, DQ_ROP_SOCKET, EACCES);
+	dqt_resolve_errno(&c, DQ_ROP_SOCKETPAIR, EPERM);
 	dqt_attach_spawn(&c, &ch, child_one_socket, NULL);
 	memset(&r, 0, sizeof(r));
 	dqt_attach_collect(&ch, &r, sizeof(r));
@@ -471,8 +474,8 @@ ATF_TC_BODY(errno_answers, tc)
 	dqt_fini(&c);
 
 	dqt_init(&c);
-	c.resolve_errno[DQ_ROP_SOCKET] = ENOENT;	/* a lookup's errno */
-	c.resolve_errno[DQ_ROP_SOCKETPAIR] = EINTR;	/* not on the list */
+	dqt_resolve_errno(&c, DQ_ROP_SOCKET, ENOENT);	/* a lookup's errno */
+	dqt_resolve_errno(&c, DQ_ROP_SOCKETPAIR, EINTR);	/* not on the list */
 	dqt_attach_spawn(&c, &ch, child_one_socket, NULL);
 	memset(&r, 0, sizeof(r));
 	dqt_attach_collect(&ch, &r, sizeof(r));
@@ -545,7 +548,7 @@ ATF_TC_BODY(no_fd_slot_while_waiting, tc)
 	ATF_REQUIRE_EQ(0, pipe(tell));
 	a.tellfd = tell[1];
 	dqt_init(&c);
-	c.resolve_hold_op = DQ_ROP_SOCKET;
+	dqt_resolve_hold(&c, NULL, DQ_ROP_SOCKET);
 	dqt_attach_spawn(&c, &ch, child_slot, &a);
 	(void)close(tell[1]);
 	ATF_REQUIRE_EQ((ssize_t)sizeof(next), read(tell[0], &next,
@@ -553,7 +556,7 @@ ATF_TC_BODY(no_fd_slot_while_waiting, tc)
 	ATF_REQUIRE(next >= 0);
 	n1 = files_of(ch.pid, next, &has);
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
-	id = c.held[0].id;
+	id = dqt_held_id(&c, 0);
 	n2 = files_of(ch.pid, next, &has);
 	ATF_CHECK_MSG(!has, "descriptor %d is allocated while the SOCKET "
 	    "event waits", next);
@@ -568,9 +571,7 @@ ATF_TC_BODY(no_fd_slot_while_waiting, tc)
 	ATF_CHECK_EQ(EINVAL, errno);
 	n2 = files_of(ch.pid, next, &has);
 	ATF_CHECK(!has);
-	pthread_mutex_lock(&c.mtx);
-	c.resolve_hold_op = 0;
-	pthread_mutex_unlock(&c.mtx);
+	dqt_resolve_hold(&c, NULL, 0);
 	ATF_CHECK_EQ(0, dq_reply_resolve_pass(c.q, id));
 	memset(&r, 0, sizeof(r));
 	dqt_attach_collect(&ch, &r, sizeof(r));
@@ -694,7 +695,7 @@ dead_controller(uint64_t *delta, bool trace, char *why, size_t whylen)
 	long n;
 
 	dqt_init(&c);
-	c.resolve_hold_op = DQ_ROP_SOCKET;
+	dqt_resolve_hold(&c, NULL, DQ_ROP_SOCKET);
 	before = gstat("resolve_failclosed");
 	dqt_attach_spawn(&c, &ch, child_dead, NULL);
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
@@ -795,7 +796,7 @@ ATF_TC_BODY(deadline_counts_failclosed, tc)
 	(void)fclose(f);
 	dqt_sysctl_set_uint("kern.dq.default_deadline_ms", 500);
 	dqt_init(&c);
-	c.resolve_hold_op = DQ_ROP_SOCKET;
+	dqt_resolve_hold(&c, NULL, DQ_ROP_SOCKET);
 	dqt_attach_spawn(&c, &ch, child_one_socket, NULL);
 	memset(&r, 0, sizeof(r));
 	dqt_attach_collect(&ch, &r, sizeof(r));
@@ -1086,7 +1087,7 @@ ATF_TC_BODY(jail_af_before_consult, tc)
 
 	/* A refusing controller is not asked about the refused family. */
 	dqt_init(&c);
-	c.resolve_errno[DQ_ROP_SOCKET] = EACCES;
+	dqt_resolve_errno(&c, DQ_ROP_SOCKET, EACCES);
 	spawn_jailed(&c, &ch, jid, child_jail_inet);
 	memset(&r, 0, sizeof(r));
 	dqt_attach_collect(&ch, &r, sizeof(r));

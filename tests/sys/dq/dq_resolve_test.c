@@ -246,6 +246,7 @@ ATF_TC_HEAD(families, tc)
 }
 ATF_TC_BODY(families, tc)
 {
+	struct dqt_resolve_seen rs;
 	struct dqt_ctl c;
 	struct dqt_achild ch;
 	struct fam_res o, a;
@@ -279,16 +280,15 @@ ATF_TC_BODY(families, tc)
 		    expects[k].tag, expects[k].op);
 		if (i == -1)
 			continue;
-		dqt_lock(&c);
-		ATF_CHECK_EQ_MSG(expects[k].cls, c.rs[i].cls,
-		    "step %d (%s): class %u", k, expects[k].tag, c.rs[i].cls);
-		dqt_unlock(&c);
+		dqt_resolve_at(&c, i, &rs);
+		ATF_CHECK_EQ_MSG(expects[k].cls, rs.cls,
+		    "step %d (%s): class %u", k, expects[k].tag, rs.cls);
 		if (expects[k].cls == DQ_RCLASS_USER)
-			ATF_CHECK((c.rs[i].rflags & DQ_RF_USER) != 0);
+			ATF_CHECK((rs.rflags & DQ_RF_USER) != 0);
 		else
-			ATF_CHECK((c.rs[i].rflags & DQ_RF_USER) == 0);
+			ATF_CHECK((rs.rflags & DQ_RF_USER) == 0);
 		if (expects[k].cls == DQ_RCLASS_KCONSUMER)
-			ATF_CHECK((c.rs[i].rflags & DQ_RF_KCONSUMER) != 0);
+			ATF_CHECK((rs.rflags & DQ_RF_KCONSUMER) != 0);
 	}
 	/* RENAME and LINK carry both paths in one event. */
 	i = dqt_find_resolve(&c, "rt-link", DQ_ROP_RENAME, 0);
@@ -365,9 +365,7 @@ ATF_TC_BODY(errno_answers, tc)
 	struct dq_stats2 st;
 
 	dqt_init(&c);
-	(void)strlcpy(c.resolve_fail_match, "rt-deny",
-	    sizeof(c.resolve_fail_match));
-	c.resolve_fail_errno = EACCES;
+	dqt_resolve_fail(&c, "rt-deny", EACCES);
 	dqt_attach_spawn(&c, &ch, child_deny, NULL);
 	memset(&r, 0, sizeof(r));
 	dqt_attach_collect(&ch, &r, sizeof(r));
@@ -376,7 +374,7 @@ ATF_TC_BODY(errno_answers, tc)
 	ATF_CHECK_EQ(ENOENT, r.r[2].err);
 	ATF_CHECK_EQ(-1, access("rt-deny", F_OK));
 
-	c.resolve_fail_errno = EPIPE;	/* not on the list */
+	dqt_resolve_fail(&c, NULL, EPIPE);	/* not on the list */
 	dqt_attach_spawn(&c, &ch, child_deny, NULL);
 	memset(&r, 0, sizeof(r));
 	dqt_attach_collect(&ch, &r, sizeof(r));
@@ -408,11 +406,10 @@ ATF_TC_BODY(reply_validation, tc)
 	uint64_t id;
 
 	dqt_init(&c);
-	(void)strlcpy(c.resolve_hold_match, "rt-deny",
-	    sizeof(c.resolve_hold_match));
+	dqt_resolve_hold(&c, "rt-deny", 0);
 	dqt_attach_spawn(&c, &ch, child_deny, NULL);
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
-	id = c.held[0].id;
+	id = dqt_held_id(&c, 0);
 	dqt_lock(&c);
 	ATF_CHECK_EQ(DQ_OP_RESOLVE, c.held[0].op);
 	dqt_unlock(&c);
@@ -438,9 +435,7 @@ ATF_TC_BODY(reply_validation, tc)
 	ATF_CHECK_EQ(-1, dq_reply(c.q, id, 0, NULL, 0));
 	ATF_CHECK_EQ(EINVAL, errno);
 	/* Still in flight: answer it, then let the rest through. */
-	pthread_mutex_lock(&c.mtx);
-	c.resolve_hold_match[0] = '\0';
-	pthread_mutex_unlock(&c.mtx);
+	dqt_resolve_hold(&c, "", 0);
 	ATF_CHECK_EQ(0, dq_reply_resolve_errno(c.q, id, EROFS));
 	memset(&r, 0, sizeof(r));
 	dqt_attach_collect(&ch, &r, sizeof(r));
@@ -493,8 +488,7 @@ ATF_TC_BODY(deadline_eio, tc)
 	dqt_sysctl_set_uint("kern.dq.default_deadline_ms", 500);
 
 	dqt_init(&c);
-	(void)strlcpy(c.resolve_hold_match, "rt-hold",
-	    sizeof(c.resolve_hold_match));
+	dqt_resolve_hold(&c, "rt-hold", 0);
 	dqt_attach_spawn(&c, &ch, child_hold_stat,
 	    __DECONST(void *, "rt-hold"));
 	memset(&r, 0, sizeof(r));
@@ -540,8 +534,7 @@ ATF_TC_BODY(controller_exit_fails_closed, tc)
 	struct one_res r;
 
 	dqt_init(&c);
-	(void)strlcpy(c.resolve_hold_match, "rt-exit",
-	    sizeof(c.resolve_hold_match));
+	dqt_resolve_hold(&c, "rt-exit", 0);
 	dqt_attach_spawn(&c, &ch, child_hold_stat,
 	    __DECONST(void *, "rt-exit"));
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
@@ -597,15 +590,13 @@ child_signal(void *arg, void *result)
 static void
 signal_during(struct dqt_ctl *c, struct dqt_achild *ch, struct sig_arg *a,
     const char *match, struct one_res *r)
+    __requires_unlocked(c->mtx)
 {
 
-	(void)strlcpy(c->resolve_hold_match, match,
-	    sizeof(c->resolve_hold_match));
+	dqt_resolve_hold(c, match, 0);
 	dqt_attach_spawn(c, ch, child_signal, a);
 	ATF_REQUIRE(dqt_wait_held(c, 1, DQT_WAIT_MS));
-	pthread_mutex_lock(&c->mtx);
-	c->resolve_hold_match[0] = '\0';
-	pthread_mutex_unlock(&c->mtx);
+	dqt_resolve_hold(c, "", 0);
 	ATF_REQUIRE_EQ(0, pdkill(ch->pd, SIGUSR1));
 	memset(r, 0, sizeof(*r));
 	dqt_attach_collect(ch, r, sizeof(*r));
@@ -994,6 +985,7 @@ ATF_TC_HEAD(two_path_calls, tc)
 }
 ATF_TC_BODY(two_path_calls, tc)
 {
+	struct dqt_resolve_seen rs;
 	struct dqt_ctl c;
 	struct dqt_achild ch;
 	struct two_res o, a;
@@ -1018,10 +1010,12 @@ ATF_TC_BODY(two_path_calls, tc)
 		ATF_CHECK_EQ_MSG(1, n, "%s: %d events of op %u", two_tag[k], n,
 		    two_op[k]);
 		i = dqt_find_resolve(&c, two_tag[k], two_op[k], 0);
-		if (i != -1)
-			ATF_CHECK_MSG(c.rs[i].path[0] != '\0' &&
-			    c.rs[i].path2[0] != '\0', "%s: path \"%s\" path2 "
-			    "\"%s\"", two_tag[k], c.rs[i].path, c.rs[i].path2);
+		if (i != -1) {
+			dqt_resolve_at(&c, i, &rs);
+			ATF_CHECK_MSG(rs.path[0] != '\0' && rs.path2[0] != '\0',
+			    "%s: path \"%s\" path2 \"%s\"", two_tag[k], rs.path,
+			    rs.path2);
+		}
 		if (i != -1) {
 			dqt_lock(&c);
 			ATF_CHECK_EQ_MSG(two_start2[k], c.rs[i].start2_kind,
@@ -1103,8 +1097,7 @@ ATF_TC_BODY(slot_revalidation, tc)
 
 	dqt_init(&c);
 	dqt_sync_init(&a.s);
-	(void)strlcpy(c.resolve_hold_match, "rt-sv-B1",
-	    sizeof(c.resolve_hold_match));
+	dqt_resolve_hold(&c, "rt-sv-B1", 0);
 	dqt_attach_spawn(&c, &ch, child_rename_swap, &a);
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
 	dqt_lock(&c);
@@ -1114,12 +1107,9 @@ ATF_TC_BODY(slot_revalidation, tc)
 	dqt_sync_post(a.s.tochild[1]);
 	ATF_REQUIRE(dqt_sync_wait(a.s.toparent[0], DQT_WAIT_MS));
 	/* The second consultation (the new bytes) is refused. */
-	pthread_mutex_lock(&c.mtx);
-	c.resolve_hold_match[0] = '\0';
-	(void)strlcpy(c.resolve_fail_match, "rt-sv-B2",
-	    sizeof(c.resolve_fail_match));
-	c.resolve_fail_errno = EACCES;
-	pthread_mutex_unlock(&c.mtx);
+	/* Refusal first, then release: no consultation slips through. */
+	dqt_resolve_fail(&c, "rt-sv-B2", EACCES);
+	dqt_resolve_hold(&c, "", 0);
 	dqt_lock(&c);
 	ATF_REQUIRE_EQ(0, dq_reply_resolve_pass(c.q, c.held[0].id));
 	dqt_unlock(&c);
@@ -1227,33 +1217,38 @@ run_cmd(const char *cmd, char *out, size_t outlen)
 static void
 check_kconsumer(struct dqt_ctl *c, const char *tag, const char *what)
 {
+	struct dqt_resolve_seen rs;
 	int i;
 
-	i = dqt_find_resolve(c, tag, 0, 0);
-	while (i != -1 && c->rs[i].cls != DQ_RCLASS_KCONSUMER)
-		i = dqt_find_resolve(c, tag, 0, i + 1);
+	for (i = dqt_find_resolve(c, tag, 0, 0); i != -1;
+	    i = dqt_find_resolve(c, tag, 0, i + 1)) {
+		dqt_resolve_at(c, i, &rs);
+		if (rs.cls == DQ_RCLASS_KCONSUMER)
+			break;
+	}
 	ATF_CHECK_MSG(i != -1, "%s: no class-2 RESOLVE naming \"%s\"", what,
 	    tag);
 	if (i != -1)
-		ATF_CHECK((c->rs[i].rflags & DQ_RF_KCONSUMER) != 0 &&
-		    (c->rs[i].rflags & DQ_RF_USER) == 0);
+		ATF_CHECK((rs.rflags & DQ_RF_KCONSUMER) != 0 &&
+		    (rs.rflags & DQ_RF_USER) == 0);
 }
 
 /* How many class-2 events of op (0: any) name tag. */
 static int
 count_kconsumer(struct dqt_ctl *c, const char *tag, uint32_t op)
+    __requires_unlocked(c->mtx)
 {
 	int i, n;
 
 	n = 0;
-	pthread_mutex_lock(&c->mtx);
+	dqt_lock(c);
 	for (i = 0; i < c->nrs; i++) {
 		if (c->rs[i].cls == DQ_RCLASS_KCONSUMER &&
 		    (op == 0 || c->rs[i].op == op) &&
 		    strstr(c->rs[i].path, tag) != NULL)
 			n++;
 	}
-	pthread_mutex_unlock(&c->mtx);
+	dqt_unlock(c);
 	return (n);
 }
 
@@ -1451,6 +1446,7 @@ ATF_TC_HEAD(attached_kernel_paths, tc)
 }
 ATF_TC_BODY(attached_kernel_paths, tc)
 {
+	struct dqt_resolve_seen rs;
 	struct dqt_ctl c;
 	struct dqt_achild ch;
 	struct r5_arg a;
@@ -1499,8 +1495,10 @@ ATF_TC_BODY(attached_kernel_paths, tc)
 		    strerror(r.fhlink.err));
 		i = dqt_find_resolve(&c, "rt-fh-link", DQ_ROP_LINK, 0);
 		ATF_CHECK_MSG(i != -1, "fhlink posted no LINK");
-		if (i != -1)
-			ATF_CHECK_EQ(DQ_RCLASS_USER, c.rs[i].cls);
+		if (i != -1) {
+			dqt_resolve_at(&c, i, &rs);
+			ATF_CHECK_EQ(DQ_RCLASS_USER, rs.cls);
+		}
 		ATF_CHECK_EQ(0, access("rt-fh-link", F_OK));
 	}
 	dqt_fini(&c);
@@ -1611,15 +1609,12 @@ ATF_TC_BODY(swapon_consult_ahead, tc)
 		(void)strlcpy(a.md, out, sizeof(a.md));
 		dqt_sync_init(&a.s);
 		dqt_init(&c);
-		(void)strlcpy(c.resolve_hold_match, a.md,
-		    sizeof(c.resolve_hold_match));
+		dqt_resolve_hold(&c, a.md, 0);
 		dqt_attach_spawn(&c, &ch, child_ahead, &a);
 		ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
 		dqt_sync_post(a.s.tochild[1]);
 		ATF_REQUIRE(dqt_sync_wait(a.s.toparent[0], DQT_WAIT_MS));
-		pthread_mutex_lock(&c.mtx);
-		c.resolve_hold_match[0] = '\0';
-		pthread_mutex_unlock(&c.mtx);
+		dqt_resolve_hold(&c, "", 0);
 		dqt_lock(&c);
 		ATF_REQUIRE_EQ(0, dq_reply_resolve_pass(c.q, c.held[0].id));
 		dqt_unlock(&c);
@@ -1678,9 +1673,7 @@ ATF_TC_BODY(unmount_refused, tc)
 	if (run_cmd("mount -t tmpfs tmpfs rt-umnt 2>&1", out, sizeof(out)) != 0)
 		atf_tc_fail("no tmpfs: %s", out);
 	dqt_init(&c);
-	(void)strlcpy(c.resolve_fail_match, "rt-umnt",
-	    sizeof(c.resolve_fail_match));
-	c.resolve_fail_errno = EACCES;
+	dqt_resolve_fail(&c, "rt-umnt", EACCES);
 	dqt_attach_spawn(&c, &ch, child_unmount_refused, NULL);
 	memset(&r, 0, sizeof(r));
 	dqt_attach_collect(&ch, &r, sizeof(r));
@@ -1727,9 +1720,7 @@ ATF_TC_BODY(link_eagain_eio, tc)
 	ATF_REQUIRE(fd != -1);
 	(void)close(fd);
 	dqt_init(&c);
-	(void)strlcpy(c.resolve_fail_match, "rt-lagain",
-	    sizeof(c.resolve_fail_match));
-	c.resolve_fail_errno = EAGAIN;
+	dqt_resolve_fail(&c, "rt-lagain", EAGAIN);
 	dqt_attach_spawn(&c, &ch, child_link_again, NULL);
 	memset(&r, 0, sizeof(r));
 	dqt_attach_collect(&ch, &r, sizeof(r));

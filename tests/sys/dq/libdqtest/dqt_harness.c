@@ -41,6 +41,7 @@
 
 static void
 dqt_record_seq(struct dqt_ctl *c, uint64_t seq)
+    __requires_exclusive(c->mtx)
 {
 
 	if (c->nseqs < DQT_MAX_SEQS)
@@ -69,6 +70,7 @@ struct dqt_pending_reply {
 static void
 dqt_record_body(struct dqt_ctl *c, struct dqt_object *o,
     const struct dq_event *ev)
+    __requires_exclusive(c->mtx)
 {
 	const struct dq_read_body *rbp;
 	const struct dq_write_body *wb;
@@ -154,6 +156,7 @@ dqt_record_body(struct dqt_ctl *c, struct dqt_object *o,
 static void
 dqt_hold_event(struct dqt_ctl *c, const struct dq_event *ev, uint32_t len,
     uint64_t offset)
+    __requires_exclusive(c->mtx)
 {
 	const struct dq_read_body *rb;
 	const struct dq_write_body *wb;
@@ -181,6 +184,7 @@ static const struct dq_resolve_reply dqt_pass = { DQ_RESOLVE_PASS, 0 };
 static bool
 dqt_handle_resolve(struct dqt_ctl *c, const struct dq_event *ev,
     struct dqt_pending_reply *pr)
+    __requires_exclusive(c->mtx)
 {
 	const struct dq_resolve_body *rb;
 	const char *path, *path2, *sp2;
@@ -240,6 +244,7 @@ dqt_handle_resolve(struct dqt_ctl *c, const struct dq_event *ev,
 static bool
 dqt_handle_record(struct dqt_ctl *c, const struct dq_event *ev,
     struct dqt_pending_reply *pr)
+    __requires_exclusive(c->mtx)
 {
 	const struct dq_read_body *rb;
 	const struct dq_interrupt_body *ib;
@@ -405,7 +410,7 @@ dqt_process_batch(struct dqt_ctl *c, const char *buf, size_t len)
 	const struct dq_event *recs[DQT_READ_BUFSIZE / sizeof(struct dq_event)];
 	struct dqt_pending_reply replies[nitems(recs)];
 	const struct dq_event *ev;
-	int i, n, nreplies, step, start;
+	int delay, i, n, nreplies, step, start;
 
 	n = 0;
 	for (ev = dq_event_first(buf, len); ev != NULL;
@@ -431,12 +436,13 @@ dqt_process_batch(struct dqt_ctl *c, const char *buf, size_t len)
 		if (dqt_handle_record(c, recs[i], &replies[nreplies]))
 			nreplies++;
 	}
+	delay = c->reply_delay_ms;
 	pthread_mutex_unlock(&c->mtx);
 
 	if (nreplies == 0)
 		return;
-	if (c->reply_delay_ms > 0)
-		dqt_msleep(c->reply_delay_ms);
+	if (delay > 0)
+		dqt_msleep(delay);
 	for (i = 0; i < nreplies; i++) {
 		if (replies[i].serve_ev != NULL) {
 			struct dqt_object *so = replies[i].serve_obj;
@@ -617,10 +623,13 @@ dqt_close_queue(struct dqt_ctl *c)
 void
 dqt_fini(struct dqt_ctl *c)
 {
-	int i;
+	int i, n;
 
 	dqt_stop(c);
-	for (i = 0; i < c->nobjs; i++) {
+	pthread_mutex_lock(&c->mtx);
+	n = c->nobjs;
+	pthread_mutex_unlock(&c->mtx);
+	for (i = 0; i < n; i++) {
 		if (c->objs[i].fd != -1) {
 			(void)close(c->objs[i].fd);
 			c->objs[i].fd = -1;
@@ -639,18 +648,32 @@ dqt_fini(struct dqt_ctl *c)
 	pthread_mutex_destroy(&c->mtx);
 }
 
+/*
+ * A lock taken twice (EDEADLK from the error-checking mutex) or released
+ * unheld (EPERM) is a test bug that would read state unlocked: abort.
+ */
 void
 dqt_lock(struct dqt_ctl *c)
 {
+	int error;
 
-	pthread_mutex_lock(&c->mtx);
+	error = pthread_mutex_lock(&c->mtx);
+	if (error != 0) {
+		fprintf(stderr, "dqt_lock: %s\n", strerror(error));
+		abort();
+	}
 }
 
 void
 dqt_unlock(struct dqt_ctl *c)
 {
+	int error;
 
-	pthread_mutex_unlock(&c->mtx);
+	error = pthread_mutex_unlock(&c->mtx);
+	if (error != 0) {
+		fprintf(stderr, "dqt_unlock: %s\n", strerror(error));
+		abort();
+	}
 }
 
 unsigned
@@ -663,6 +686,77 @@ dqt_events(struct dqt_ctl *c, uint32_t op)
 	n = c->events[op];
 	pthread_mutex_unlock(&c->mtx);
 	return (n);
+}
+
+void
+dqt_set_order(struct dqt_ctl *c, enum dqt_order order)
+{
+
+	pthread_mutex_lock(&c->mtx);
+	c->order = order;
+	pthread_mutex_unlock(&c->mtx);
+}
+
+void
+dqt_set_reply_delay(struct dqt_ctl *c, int ms)
+{
+
+	pthread_mutex_lock(&c->mtx);
+	c->reply_delay_ms = ms;
+	pthread_mutex_unlock(&c->mtx);
+}
+
+void
+dqt_resolve_fail(struct dqt_ctl *c, const char *match, int error)
+{
+
+	pthread_mutex_lock(&c->mtx);
+	if (match != NULL)
+		(void)strlcpy(c->resolve_fail_match, match,
+		    sizeof(c->resolve_fail_match));
+	c->resolve_fail_errno = error;
+	pthread_mutex_unlock(&c->mtx);
+	ATF_REQUIRE(match == NULL || strlen(match) < DQT_RPATH);
+}
+
+void
+dqt_resolve_hold(struct dqt_ctl *c, const char *match, uint32_t op)
+{
+
+	pthread_mutex_lock(&c->mtx);
+	(void)strlcpy(c->resolve_hold_match, match != NULL ? match : "",
+	    sizeof(c->resolve_hold_match));
+	c->resolve_hold_op = op;
+	pthread_mutex_unlock(&c->mtx);
+	ATF_REQUIRE(match == NULL || strlen(match) < DQT_RPATH);
+}
+
+void
+dqt_resolve_errno(struct dqt_ctl *c, uint32_t op, int error)
+{
+
+	ATF_REQUIRE(op <= DQ_ROP_MAX);
+	pthread_mutex_lock(&c->mtx);
+	c->resolve_errno[op] = error;
+	pthread_mutex_unlock(&c->mtx);
+}
+
+void
+dqt_object_serve_errno(struct dqt_ctl *c, struct dqt_object *o, int error)
+{
+
+	pthread_mutex_lock(&c->mtx);
+	o->serve_errno = error;
+	pthread_mutex_unlock(&c->mtx);
+}
+
+void
+dqt_object_read_errno(struct dqt_ctl *c, struct dqt_object *o, int error)
+{
+
+	pthread_mutex_lock(&c->mtx);
+	o->read_errno = error;
+	pthread_mutex_unlock(&c->mtx);
 }
 
 void
@@ -775,14 +869,18 @@ dqt_mint_common(struct dqt_ctl *c, const struct dq_ident_file *ident,
 {
 	struct dq_policy defpol;
 	struct dqt_object *o;
-	int reason;
+	int reason, slot;
 
 	if (pol == NULL) {
 		dq_policy_default(&defpol);
 		pol = &defpol;
 	}
-	ATF_REQUIRE(c->nobjs < DQT_MAX_OBJECTS);
-	o = &c->objs[c->nobjs];
+	/* Only this thread mints: the slot stays free until it is counted. */
+	pthread_mutex_lock(&c->mtx);
+	slot = c->nobjs;
+	pthread_mutex_unlock(&c->mtx);
+	ATF_REQUIRE(slot < DQT_MAX_OBJECTS);
+	o = &c->objs[slot];
 	memset(o, 0, sizeof(*o));
 	o->ident = *ident;
 	o->data = data;
@@ -870,6 +968,7 @@ dqt_mint(struct dqt_ctl *c, int oracle_fd, const char *path, const void *data,
 
 struct dqt_object *
 dqt_object_by_id(struct dqt_ctl *c, uint64_t id)
+    __requires_exclusive(c->mtx)
 {
 	int i;
 
@@ -943,6 +1042,7 @@ dqt_fence(struct dqt_ctl *c)
 static bool
 dqt_cond_fence_closes(struct dqt_ctl *c, uintptr_t n,
     uintptr_t unused __unused)
+    __requires_exclusive(c->mtx)
 {
 
 	return (c->fence_closes >= (unsigned)n);
@@ -1176,6 +1276,7 @@ dqt_wait_cond(struct dqt_ctl *c, dqt_cond_fn cond, uintptr_t a, uintptr_t b,
 
 static bool
 dqt_cond_events(struct dqt_ctl *c, uintptr_t op, uintptr_t n)
+    __requires_exclusive(c->mtx)
 {
 
 	return (c->events[op] >= (unsigned)n);
@@ -1183,6 +1284,7 @@ dqt_cond_events(struct dqt_ctl *c, uintptr_t op, uintptr_t n)
 
 static bool
 dqt_cond_held(struct dqt_ctl *c, uintptr_t n, uintptr_t unused __unused)
+    __requires_exclusive(c->mtx)
 {
 
 	return (c->nheld >= (int)n);
@@ -1190,6 +1292,7 @@ dqt_cond_held(struct dqt_ctl *c, uintptr_t n, uintptr_t unused __unused)
 
 static bool
 dqt_cond_interrupts(struct dqt_ctl *c, uintptr_t n, uintptr_t unused __unused)
+    __requires_exclusive(c->mtx)
 {
 
 	return (c->ninterrupted >= (int)n);
@@ -1218,6 +1321,7 @@ dqt_wait_interrupts(struct dqt_ctl *c, int n, int ms)
 
 static bool
 dqt_cond_locks(struct dqt_ctl *c __unused, uintptr_t o, uintptr_t n)
+    __requires_exclusive(c->mtx)
 {
 
 	return (((struct dqt_object *)o)->nlocks >= (int)n);
@@ -1567,6 +1671,28 @@ dqt_find_resolve(struct dqt_ctl *c, const char *match, uint32_t op, int from)
 	}
 	pthread_mutex_unlock(&c->mtx);
 	return (found);
+}
+
+uint64_t
+dqt_held_id(struct dqt_ctl *c, int i)
+{
+	uint64_t id;
+
+	pthread_mutex_lock(&c->mtx);
+	ATF_REQUIRE_MSG(i >= 0 && i < c->nheld, "held[%d] of %d", i, c->nheld);
+	id = c->held[i].id;
+	pthread_mutex_unlock(&c->mtx);
+	return (id);
+}
+
+void
+dqt_resolve_at(struct dqt_ctl *c, int i, struct dqt_resolve_seen *rs)
+{
+
+	pthread_mutex_lock(&c->mtx);
+	ATF_REQUIRE_MSG(i >= 0 && i < c->nrs, "rs[%d] of %d", i, c->nrs);
+	*rs = c->rs[i];
+	pthread_mutex_unlock(&c->mtx);
 }
 
 int

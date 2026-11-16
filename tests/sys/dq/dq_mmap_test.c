@@ -105,10 +105,11 @@ teardown(struct fixture *f)
 /* Every READ the pager posted is page-aligned and within the size. */
 static void
 check_fault_reads(struct dqt_ctl *c, uint64_t size)
+    __requires_unlocked(c->mtx)
 {
 	int i;
 
-	pthread_mutex_lock(&c->mtx);
+	dqt_lock(c);
 	for (i = 0; i < c->nrd; i++) {
 		ATF_CHECK_EQ_MSG(0, c->rd[i].offset % 4096, "READ at %ju",
 		    (uintmax_t)c->rd[i].offset);
@@ -116,7 +117,7 @@ check_fault_reads(struct dqt_ctl *c, uint64_t size)
 		    4096), "READ [%ju, +%u) past the last page",
 		    (uintmax_t)c->rd[i].offset, c->rd[i].len);
 	}
-	pthread_mutex_unlock(&c->mtx);
+	dqt_unlock(c);
 }
 
 struct map_arg {
@@ -388,14 +389,14 @@ ATF_TC_BODY(msync_writeback, tc)
 	dqt_lock(&f.c);
 	ATF_REQUIRE(f.c.events[DQ_OP_WRITE_ASYNC] >= 1);
 	dqt_unlock(&f.c);
-	pthread_mutex_lock(&f.c.mtx);
+	dqt_lock(&f.c);
 	for (i = 0; i < f.c.nwr; i++) {
 		ATF_CHECK_EQ(0, f.c.wr[i].offset % 4096);
 		ATF_CHECK_EQ(0, f.c.wr[i].flags);
 	}
 	ATF_CHECK((f.c.op_caller[DQ_OP_WRITE_ASYNC].dc_flags &
 	    DQ_CALLER_F_KERNEL) != 0);
-	pthread_mutex_unlock(&f.c.mtx);
+	dqt_unlock(&f.c);
 	teardown(&f);
 }
 
@@ -430,7 +431,7 @@ ATF_TC_BODY(msync_refused, tc)
 	o = dqt_mint_ident_flags(&c, id, &pol, DQ_MINT_F_WRITE, data,
 	    sizeof(data));
 	free(id);
-	o->serve_errno = EIO;	/* every WRITE_ASYNC refused */
+	dqt_object_serve_errno(&c, o, EIO);	/* every WRITE_ASYNC refused */
 	a.fd = o->fd;
 	a.backing = oracle;
 	a.do_msync = 1;
@@ -473,7 +474,7 @@ ATF_TC_BODY(munmap_close_writes_back, tc)
 	f.o->fd = -1;
 	dqt_collect(&ch, &r, sizeof(r));
 	ATF_REQUIRE(dqt_wait_events(&f.c, DQ_OP_CLOSE, 1, 4 * DQT_WAIT_MS));
-	pthread_mutex_lock(&f.c.mtx);
+	dqt_lock(&f.c);
 	ATF_CHECK(f.c.events[DQ_OP_WRITE_ASYNC] >= 1);
 	ATF_CHECK_MSG(f.c.op_seq[DQ_OP_WRITE_ASYNC] < f.c.op_seq[DQ_OP_CLOSE],
 	    "WRITE_ASYNC seq %ju after CLOSE seq %ju",
@@ -481,7 +482,7 @@ ATF_TC_BODY(munmap_close_writes_back, tc)
 	    (uintmax_t)f.c.op_seq[DQ_OP_CLOSE]);
 	ATF_CHECK((f.c.op_caller[DQ_OP_CLOSE].dc_flags &
 	    DQ_CALLER_F_KERNEL) != 0);
-	pthread_mutex_unlock(&f.c.mtx);
+	dqt_unlock(&f.c);
 	ATF_REQUIRE_EQ(2, pread(f.backing, got, 2, 5000));
 	ATF_CHECK_EQ(0xa1, got[0]);
 	ATF_CHECK_EQ(0xa2, got[1]);
@@ -527,7 +528,7 @@ ATF_TC_BODY(sigbus_cases, tc)
 
 	setup(&f, 7);
 	bad = dqt_mint_ident(&f.c, &f.o->ident, NULL, data, sizeof(data));
-	bad->read_errno = EIO;
+	dqt_object_read_errno(&f.c, bad, EIO);
 	fds[0] = bad->fd;
 	fds[1] = f.o->fd;
 	memset(&r, 0, sizeof(r));

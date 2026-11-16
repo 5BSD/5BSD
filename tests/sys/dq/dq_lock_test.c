@@ -253,6 +253,7 @@ check_probe(const struct probe_arg *a, const struct probe_res *r)
 static int
 count_unlocks(struct dqt_ctl *c, const struct dqt_object *o, uint32_t kind,
     uint64_t owner)
+    __requires_unlocked(c->mtx)
 {
 	int i, n;
 
@@ -585,8 +586,8 @@ ATF_TC_BODY(flock_owners_and_release, tc)
 	dqt_lock(&f.c);
 	ATF_REQUIRE(o2->nlocks >= 1);
 	ATF_CHECK(o2->locks[0].dl_owner != owner);	/* another open */
-	ATF_CHECK_EQ(0, count_unlocks(&f.c, f.o, DQ_LOCK_FLOCK, owner));
 	dqt_unlock(&f.c);
+	ATF_CHECK_EQ(0, count_unlocks(&f.c, f.o, DQ_LOCK_FLOCK, owner));
 	/* The last references go: the locks with them. */
 	(void)close(f.o->fd);
 	f.o->fd = -1;
@@ -705,10 +706,10 @@ lastclose_round(int how)
 		ATF_CHECK_MSG(r.close_ms >= LASTCLOSE_MIN_MS, "how %#x: the "
 		    "close took %ld ms: it did not meet the delayed reply, "
 		    "so the round shows nothing", how, r.close_ms);
-	pthread_mutex_lock(&f.c.mtx);
+	dqt_lock(&f.c);
 	ATF_REQUIRE(f.o->nlocks >= 1);
 	owner = f.o->locks[0].dl_owner;
-	pthread_mutex_unlock(&f.c.mtx);
+	dqt_unlock(&f.c);
 	ATF_CHECK_EQ(1, count_unlocks(&f.c, f.o, DQ_LOCK_FLOCK, owner));
 	teardown(&f);
 }
@@ -814,7 +815,7 @@ ATF_TC_BODY(normalisation_and_errnos, tc)
 	dqt_policy_write(&pol);
 	o = dqt_mint_ident_flags(&c, id, &pol, 0, data, sizeof(data));
 	free(id);
-	o->serve_errno = EDEADLK;
+	dqt_object_serve_errno(&c, o, EDEADLK);
 	memset(&r, 0, sizeof(r));
 	dqt_run_child(child_norm, &o->fd, &r, sizeof(r));
 	ATF_CHECK_EQ(EDEADLK, r.r[0].err);
@@ -829,7 +830,7 @@ ATF_TC_BODY(normalisation_and_errnos, tc)
 	ATF_CHECK_EQ(10, o->locks[2].dl_start);
 	ATF_CHECK_EQ(0, o->locks[2].dl_len);
 	dqt_unlock(&c);
-	o->serve_errno = EPERM;
+	dqt_object_serve_errno(&c, o, EPERM);
 	memset(&r, 0, sizeof(r));
 	dqt_run_child(child_norm, &o->fd, &r, sizeof(r));
 	ATF_CHECK_EQ(EIO, r.r[0].err);
@@ -1104,7 +1105,7 @@ ATF_TC_BODY(unlock_all_over_depth, tc)
 	    sizeof(oracle_path));
 	dqt_init(&c);
 	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
-	o->serve_errno = EAGAIN;	/* the lock is refused; o_locked is set */
+	dqt_object_serve_errno(&c, o, EAGAIN);	/* the lock is refused; o_locked is set */
 	memset(&h, 0, sizeof(h));
 	h.sfd = o->fd;
 	h.ofd = oracle;

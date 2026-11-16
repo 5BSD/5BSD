@@ -612,7 +612,7 @@ ATF_TC_BODY(locks_are_events, tc)
 	ATF_CHECK_EQ(0, f.c.records);
 	dqt_unlock(&f.c);
 	/* The controller refuses; the requester sees its word. */
-	f.o->serve_errno = EAGAIN;
+	dqt_object_serve_errno(&f.c, f.o, EAGAIN);
 	memset(&r, 0, sizeof(r));
 	dqt_run_child(child_read_locks, &f.o->fd, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.rd.rv);

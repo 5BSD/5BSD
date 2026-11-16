@@ -240,8 +240,10 @@ ATF_TC_BODY(fallocate_fspacectl_check_write, tc)
 	ATF_REQUIRE_MSG(n != -1, "dtrace: %s", why);
 	ATF_CHECK_EQ_MSG(2, n - base, "file_check_write fired %ld times over "
 	    "a baseline of %ld", n, base);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(1, c.events[DQ_OP_FALLOCATE]);
 	ATF_CHECK_EQ(1, c.events[DQ_OP_FSPACECTL]);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(backing);
 }
@@ -585,7 +587,7 @@ ATF_TC_BODY(abac_controller_label, tc)
 	ATF_CHECK_EQ(EACCES, r.stat2.err);
 	ATF_CHECK_EQ(-1, r.write2.rv);
 	ATF_CHECK_EQ(EACCES, r.write2.err);
-	ATF_CHECK_EQ(1, c1.events[DQ_OP_READ]);
+	ATF_CHECK_EQ(1, dqt_events(&c1, DQ_OP_READ));
 	dqt_fini(&c1);
 	free(ident);
 	(void)close(backing);

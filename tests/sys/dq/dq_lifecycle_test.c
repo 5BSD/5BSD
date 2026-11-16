@@ -56,6 +56,7 @@ child_one_read(void *arg, void *result)
  */
 static void
 no_close_yet(struct dqt_ctl *c)
+    __requires_unlocked(c->mtx)
 {
 	struct dq_stats2 st;
 

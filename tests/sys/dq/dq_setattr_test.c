@@ -567,7 +567,7 @@ ATF_TC_BODY(snapshot_mode, tc)
 
 	setup_as(&f, 7, 0, 0, 0644, DQ_MINT_F_WRITE);
 	o = mint_flagged(&f, SF_SNAPSHOT);
-	o->serve_errno = EROFS;
+	dqt_object_serve_errno(&f.c, o, EROFS);
 	memset(&r, 0, sizeof(r));
 	dqt_run_child(child_snapshot_chmod, &o->fd, &r, sizeof(r));
 	ATF_CHECK_EQ(EPERM, r.w.err);

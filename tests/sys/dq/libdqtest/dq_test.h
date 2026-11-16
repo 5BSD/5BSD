@@ -60,6 +60,13 @@
  * with ENOLCK) or from a backing file (backing != -1: every event goes to
  * dq_serve_file() with the object's lock state and identity copy).
  */
+/*
+ * The counters and bodies below are written by the reader threads under
+ * their controller's mtx.  -Wthread-safety cannot tie a field to another
+ * structure's mutex, so these are not marked: read them between dqt_lock
+ * and dqt_unlock of the controller, and change serve_errno and read_errno
+ * through dqt_object_serve_errno and dqt_object_read_errno.
+ */
 struct dqt_object {
 	uint64_t	 id;
 	int		 fd;		/* in the controller process */
@@ -106,6 +113,13 @@ enum dqt_order {
 	DQT_ORDER_REVERSE,		/* answer a batch last first */
 };
 
+/*
+ * A field the reader threads write, read and written only with mtx held:
+ * -Wthread-safety checks every access.  pthread_mutex_lock(&c->mtx) holds
+ * the capability "*&c->mtx", hence the spelling.
+ */
+#define	DQT_GUARDED	__guarded_by(*&mtx)
+
 struct dqt_ctl;
 struct dqt_reader_arg {
 	struct dqt_ctl	*c;
@@ -114,54 +128,55 @@ struct dqt_reader_arg {
 
 struct dqt_ctl {
 	int		 q;		/* the queue, -1 once closed */
+	/* Guards the fields marked __guarded_by: the reader threads write them. */
+	pthread_mutex_t	 mtx;
+	pthread_cond_t	 cv;
 	pthread_t	 thr[DQT_READERS_MAX];
 	struct dqt_reader_arg rarg[DQT_READERS_MAX];
 	/* Batches each reader thread read. */
-	unsigned	 thr_batches[DQT_READERS_MAX];
+	unsigned	 thr_batches[DQT_READERS_MAX] DQT_GUARDED;
 	int		 nthr;
-	pthread_mutex_t	 mtx;
-	pthread_cond_t	 cv;
-	bool		 stop;
-	bool		 paused;	/* do not read the queue */
-	int		 inbatch;	/* readers in a batch */
-	bool		 hold_replies;	/* read, record, do not answer */
-	int		 reply_delay_ms;
-	enum dqt_order	 order;
+	bool		 stop DQT_GUARDED;
+	bool		 paused DQT_GUARDED;	/* do not read the queue */
+	int		 inbatch DQT_GUARDED;	/* readers in a batch */
+	bool		 hold_replies DQT_GUARDED;	/* read, record, do not answer */
+	int		 reply_delay_ms DQT_GUARDED;
+	enum dqt_order	 order DQT_GUARDED;
 	struct dqt_object objs[DQT_MAX_OBJECTS];
-	int		 nobjs;
+	int		 nobjs DQT_GUARDED;
 
 	/* What the controller saw, under mtx. */
-	unsigned	 events[DQ_OP_REPLY + 1];
-	unsigned	 records;
-	unsigned	 reads;		/* successful read(2) calls */
-	unsigned	 paused_reads;	/* batches read while paused (none expected) */
-	uint64_t	 seqs[DQT_MAX_SEQS];
-	int		 nseqs;
-	uint64_t	 last_seq;
-	unsigned	 gaps;		/* de_seq jumps (drops) */
-	unsigned	 reply_failures;
-	int		 last_reply_errno;
+	unsigned	 events[DQ_OP_REPLY + 1] DQT_GUARDED;
+	unsigned	 records DQT_GUARDED;
+	unsigned	 reads DQT_GUARDED;		/* successful read(2) calls */
+	unsigned	 paused_reads DQT_GUARDED;	/* batches read while paused (none expected) */
+	uint64_t	 seqs[DQT_MAX_SEQS] DQT_GUARDED;
+	int		 nseqs DQT_GUARDED;
+	uint64_t	 last_seq DQT_GUARDED;
+	unsigned	 gaps DQT_GUARDED;		/* de_seq jumps (drops) */
+	unsigned	 reply_failures DQT_GUARDED;
+	int		 last_reply_errno DQT_GUARDED;
 	struct dq_caller last_caller;
-	struct dqt_held	 held[DQT_MAX_HELD];
-	int		 nheld;
+	struct dqt_held	 held[DQT_MAX_HELD] DQT_GUARDED;
+	int		 nheld DQT_GUARDED;
 	/* Every READ body seen, in delivery order. */
 	struct dqt_read_seen {
 		uint64_t	 object;
 		uint64_t	 offset;
 		uint32_t	 len;
-	}		 rd[DQT_MAX_SEQS];
-	int		 nrd;
+	}		 rd[DQT_MAX_SEQS] DQT_GUARDED;
+	int		 nrd DQT_GUARDED;
 	/* Every WRITE body seen (offset, length, flags), in delivery order. */
 	struct dqt_write_seen {
 		uint64_t	 object;
 		uint64_t	 offset;
 		uint32_t	 len;
 		uint32_t	 flags;
-	}		 wr[DQT_MAX_SEQS];
-	int		 nwr;
-	uint64_t	 interrupted[DQT_MAX_INTERRUPTS];
+	}		 wr[DQT_MAX_SEQS] DQT_GUARDED;
+	int		 nwr DQT_GUARDED;
+	uint64_t	 interrupted[DQT_MAX_INTERRUPTS] DQT_GUARDED;
 	/* Per operation: the sequence and caller of the last record. */
-	uint64_t	 op_seq[DQ_OP_REPLY + 1];
+	uint64_t	 op_seq[DQ_OP_REPLY + 1] DQT_GUARDED;
 	struct dq_caller op_caller[DQ_OP_REPLY + 1];
 	/*
 	 * RESOLVE (1c): every event recorded; answered PASS unless its path
@@ -178,17 +193,17 @@ struct dqt_ctl {
 		uint32_t	 pathlen;	/* exact: abstract names */
 		char		 path[DQT_RPATH], path2[DQT_RPATH];
 		char		 startpath2[DQT_RPATH];
-	}		 rs[DQT_MAX_RESOLVES];
-	int		 nrs;
-	int		 resolve_errno[DQ_ROP_MAX + 1];
-	char		 resolve_fail_match[DQT_RPATH];
-	int		 resolve_fail_errno;
-	char		 resolve_hold_match[DQT_RPATH];
-	uint32_t	 resolve_hold_op;	/* 0: none */
+	}		 rs[DQT_MAX_RESOLVES] DQT_GUARDED;
+	int		 nrs DQT_GUARDED;
+	int		 resolve_errno[DQ_ROP_MAX + 1] DQT_GUARDED;
+	char		 resolve_fail_match[DQT_RPATH] DQT_GUARDED;
+	int		 resolve_fail_errno DQT_GUARDED;
+	char		 resolve_hold_match[DQT_RPATH] DQT_GUARDED;
+	uint32_t	 resolve_hold_op DQT_GUARDED;	/* 0: none */
 	/* dq_serve_file lock owners: one table per queue (POSIX owners span
 	   the objects of one identity), made at the first backing mint. */
 	struct dq_serve_state *lockstate;
-	int		 ninterrupted;
+	int		 ninterrupted DQT_GUARDED;
 	/*
 	 * Fences (dqt_fence, dqt_close_fence): their sentinels' records are
 	 * counted here and nowhere else (not in records, events, rd[] or
@@ -196,8 +211,8 @@ struct dqt_ctl {
 	 * sequence numbers still go to seqs[] and the gap count.
 	 */
 	struct dqt_object *fence_obj;
-	unsigned	 fence_reads;
-	unsigned	 fence_closes;
+	unsigned	 fence_reads DQT_GUARDED;
+	unsigned	 fence_closes DQT_GUARDED;
 };
 
 /*
@@ -216,9 +231,12 @@ int	dqt_open_queue(void);
 void	dqt_init(struct dqt_ctl *c);		/* queue + 1 reader thread */
 void	dqt_init_manual(struct dqt_ctl *c);	/* queue, no reader thread */
 void	dqt_start(struct dqt_ctl *c, int nreaders);
-void	dqt_stop(struct dqt_ctl *c);		/* join the readers */
-void	dqt_close_queue(struct dqt_ctl *c);	/* readers stopped, queue closed */
-void	dqt_fini(struct dqt_ctl *c);		/* everything */
+void	dqt_stop(struct dqt_ctl *c)
+	    __requires_unlocked(c->mtx);		/* join the readers */
+void	dqt_close_queue(struct dqt_ctl *c)
+	    __requires_unlocked(c->mtx);	/* readers stopped, queue closed */
+void	dqt_fini(struct dqt_ctl *c)
+	    __requires_unlocked(c->mtx);		/* everything */
 
 /*
  * The recorded state above is written by the reader threads under mtx;
@@ -227,14 +245,44 @@ void	dqt_fini(struct dqt_ctl *c);		/* everything */
  * for i < nheld, rs[i] for i < nrs and so on) is complete and never
  * rewritten, so it may be read after a locked wait or search returned it.
  */
-void	dqt_lock(struct dqt_ctl *c) __locks_exclusive(c->mtx);
+void	dqt_lock(struct dqt_ctl *c) __locks_exclusive(c->mtx)
+	    __requires_unlocked(c->mtx);
 void	dqt_unlock(struct dqt_ctl *c) __unlocks(c->mtx);
 /* The number of records of op seen, read under the lock. */
-unsigned dqt_events(struct dqt_ctl *c, uint32_t op);
+unsigned dqt_events(struct dqt_ctl *c, uint32_t op)
+	    __requires_unlocked(c->mtx);
 
-void	dqt_pause(struct dqt_ctl *c);
-void	dqt_resume(struct dqt_ctl *c);
-void	dqt_hold(struct dqt_ctl *c, bool hold);
+/*
+ * The controller's settings, changed under the lock while it runs.
+ * dqt_resolve_fail: a RESOLVE whose path contains match (NULL keeps the
+ * current one, "" clears it) is answered error.  dqt_resolve_hold: one
+ * whose path contains match, or whose op is op (0: none), is held.
+ * dqt_resolve_errno: every RESOLVE of op is answered error (0: PASS).
+ */
+void	dqt_set_order(struct dqt_ctl *c, enum dqt_order order)
+	    __requires_unlocked(c->mtx);
+void	dqt_set_reply_delay(struct dqt_ctl *c, int ms)
+	    __requires_unlocked(c->mtx);
+void	dqt_resolve_fail(struct dqt_ctl *c, const char *match, int error)
+	    __requires_unlocked(c->mtx);
+void	dqt_resolve_hold(struct dqt_ctl *c, const char *match, uint32_t op)
+	    __requires_unlocked(c->mtx);
+void	dqt_resolve_errno(struct dqt_ctl *c, uint32_t op, int error)
+	    __requires_unlocked(c->mtx);
+/* An object's answer to its 1b events, and to READ (0: the bytes). */
+void	dqt_object_serve_errno(struct dqt_ctl *c, struct dqt_object *o,
+	    int error)
+	    __requires_unlocked(c->mtx);
+void	dqt_object_read_errno(struct dqt_ctl *c, struct dqt_object *o,
+	    int error)
+	    __requires_unlocked(c->mtx);
+
+void	dqt_pause(struct dqt_ctl *c)
+	    __requires_unlocked(c->mtx);
+void	dqt_resume(struct dqt_ctl *c)
+	    __requires_unlocked(c->mtx);
+void	dqt_hold(struct dqt_ctl *c, bool hold)
+	    __requires_unlocked(c->mtx);
 
 /* The oracle: a real file of these bytes in the test's work directory. */
 int	dqt_make_oracle(const char *name, const void *data, size_t len,
@@ -246,13 +294,16 @@ void	dqt_fill(unsigned char *buf, size_t len, unsigned seed);
 /* Mint an object presenting the oracle's identity and serving data. */
 struct dqt_object *dqt_mint(struct dqt_ctl *c, int oracle_fd,
 	    const char *path, const void *data, size_t len,
-	    const struct dq_policy *pol);
+	    const struct dq_policy *pol)
+	    __requires_unlocked(c->mtx);
 struct dqt_object *dqt_mint_ident(struct dqt_ctl *c,
 	    const struct dq_ident_file *ident, const struct dq_policy *pol,
-	    const void *data, size_t len);
+	    const void *data, size_t len)
+	    __requires_unlocked(c->mtx);
 struct dqt_object *dqt_mint_ident_flags(struct dqt_ctl *c,
 	    const struct dq_ident_file *ident, const struct dq_policy *pol,
-	    uint32_t mflags, const void *data, size_t len);
+	    uint32_t mflags, const void *data, size_t len)
+	    __requires_unlocked(c->mtx);
 /*
  * Mint an object served from a backing file through dq_serve_file(): the
  * identity is the backing file's at path, pol NULL is the write-serving
@@ -260,10 +311,13 @@ struct dqt_object *dqt_mint_ident_flags(struct dqt_ctl *c,
  * descriptor writable.  The object owns a lock state; dqt_fini destroys it.
  */
 struct dqt_object *dqt_mint_backing(struct dqt_ctl *c, int backing_fd,
-	    const char *path, const struct dq_policy *pol, uint32_t mflags);
+	    const char *path, const struct dq_policy *pol, uint32_t mflags)
+	    __requires_unlocked(c->mtx);
 /* dq_policy_default() with dp_write = DQ_EVENT. */
 void	dqt_policy_write(struct dq_policy *pol);
-struct dqt_object *dqt_object_by_id(struct dqt_ctl *c, uint64_t id);
+/* The object minted with id, or NULL; with the lock held (the reader). */
+struct dqt_object *dqt_object_by_id(struct dqt_ctl *c, uint64_t id)
+	    __requires_exclusive(c->mtx);
 
 /*
  * Requesters.  fn runs in a forked child and fills result (resultlen bytes,
@@ -315,22 +369,31 @@ struct dqt_rr {
  * dispatched too.  Use it with the object count (ds2_objects_live) where
  * it matters: an object still counted has posted no CLOSE.
  */
-void	dqt_fence(struct dqt_ctl *c);
-void	dqt_close_fence(struct dqt_ctl *c);
+void	dqt_fence(struct dqt_ctl *c)
+	    __requires_unlocked(c->mtx);
+void	dqt_close_fence(struct dqt_ctl *c)
+	    __requires_unlocked(c->mtx);
 
 /* Controller-side waits and queries; every wait has a monotonic deadline. */
 int64_t	dqt_now_ms(void);		/* CLOCK_MONOTONIC, in ms */
 /* cond(c, a, b), called with c->mtx held, until it holds or ms pass. */
 typedef bool (*dqt_cond_fn)(struct dqt_ctl *c, uintptr_t a, uintptr_t b);
 bool	dqt_wait_cond(struct dqt_ctl *c, dqt_cond_fn cond, uintptr_t a,
-	    uintptr_t b, int ms);
-bool	dqt_wait_events(struct dqt_ctl *c, uint32_t op, unsigned n, int ms);
-bool	dqt_wait_held(struct dqt_ctl *c, int n, int ms);
-bool	dqt_wait_interrupts(struct dqt_ctl *c, int n, int ms);
+	    uintptr_t b, int ms)
+	    __requires_unlocked(c->mtx);
+bool	dqt_wait_events(struct dqt_ctl *c, uint32_t op, unsigned n, int ms)
+	    __requires_unlocked(c->mtx);
+bool	dqt_wait_held(struct dqt_ctl *c, int n, int ms)
+	    __requires_unlocked(c->mtx);
+bool	dqt_wait_interrupts(struct dqt_ctl *c, int n, int ms)
+	    __requires_unlocked(c->mtx);
 /* Wait until the object has seen n LOCK bodies. */
-bool	dqt_wait_locks(struct dqt_ctl *c, struct dqt_object *o, int n, int ms);
-void	dqt_stats(struct dqt_ctl *c, struct dq_stats *st);
-void	dqt_stats2(struct dqt_ctl *c, struct dq_stats2 *st);
+bool	dqt_wait_locks(struct dqt_ctl *c, struct dqt_object *o, int n, int ms)
+	    __requires_unlocked(c->mtx);
+void	dqt_stats(struct dqt_ctl *c, struct dq_stats *st)
+	    __requires_unlocked(c->mtx);
+void	dqt_stats2(struct dqt_ctl *c, struct dq_stats2 *st)
+	    __requires_unlocked(c->mtx);
 void	dqt_msleep(int ms);
 /*
  * Wait until a thread of pid sleeps on the wait channel message wmesg (a
@@ -343,7 +406,8 @@ bool	dqt_wait_wmesg(pid_t pid, const char *wmesg, int ms);
 /* Poll the queue's statistics until pred(st, arg) holds or ms elapse. */
 typedef bool (*dqt_stats_pred)(const struct dq_stats *st, uintptr_t arg);
 bool	dqt_wait_stats(struct dqt_ctl *c, dqt_stats_pred pred, uintptr_t arg,
-	    int ms);
+	    int ms)
+	    __requires_unlocked(c->mtx);
 
 /*
  * A controller thread handing every record of q to handler through
@@ -460,14 +524,22 @@ struct dqt_achild {
 	int		 pipefd;
 };
 void	dqt_attach_spawn(struct dqt_ctl *c, struct dqt_achild *ch,
-	    dqt_child_fn fn, void *arg);
+	    dqt_child_fn fn, void *arg)
+	    __requires_unlocked(c->mtx);
 int	dqt_attach_wait(struct dqt_achild *ch, void *result, size_t resultlen);
 void	dqt_attach_collect(struct dqt_achild *ch, void *result,
 	    size_t resultlen);
 void	dqt_attach_run(struct dqt_ctl *c, dqt_child_fn fn, void *arg,
 	    void *result, size_t resultlen);
 int	dqt_find_resolve(struct dqt_ctl *c, const char *match, uint32_t op,
-	    int from);
-int	dqt_count_resolve(struct dqt_ctl *c, const char *match, uint32_t op);
+	    int from)
+	    __requires_unlocked(c->mtx);
+int	dqt_count_resolve(struct dqt_ctl *c, const char *match, uint32_t op)
+	    __requires_unlocked(c->mtx);
+/* Copies, under the lock, of the i-th held event's id and RESOLVE record. */
+uint64_t dqt_held_id(struct dqt_ctl *c, int i)
+	    __requires_unlocked(c->mtx);
+void	dqt_resolve_at(struct dqt_ctl *c, int i, struct dqt_resolve_seen *rs)
+	    __requires_unlocked(c->mtx);
 
 #endif /* !_DQ_TEST_H_ */

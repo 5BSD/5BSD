@@ -196,7 +196,7 @@ diag(struct fixture *f, const char *where)
 	if (f->c.q == -1)
 		return;
 	dqt_stats2(&f->c, &st);
-	pthread_mutex_lock(&f->c.mtx);
+	dqt_lock(&f->c);
 	fprintf(stderr, "diag %s: async_pending %ju async_bytes %ju "
 	    "async_deadlines %ju close_dropped %ju interrupts %ju | READ %u "
 	    "WRITE_ASYNC %u INTERRUPT %u CLOSE %u held %d\n", where,
@@ -205,7 +205,7 @@ diag(struct fixture *f, const char *where)
 	    (uintmax_t)st.ds2_interrupts, f->c.events[DQ_OP_READ],
 	    f->c.events[DQ_OP_WRITE_ASYNC], f->c.events[DQ_OP_INTERRUPT],
 	    f->c.events[DQ_OP_CLOSE], f->c.nheld);
-	pthread_mutex_unlock(&f->c.mtx);
+	dqt_unlock(&f->c);
 }
 
 static void

@@ -226,7 +226,7 @@ ATF_TC_BODY(threads_replies_reversed, tc)
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
 	    sizeof(oracle_path));
 	dqt_init(&c);
-	c.order = DQT_ORDER_REVERSE;
+	dqt_set_order(&c, DQT_ORDER_REVERSE);
 	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
 
 	/* Pause so the eight events pile up into one batch. */
@@ -350,9 +350,7 @@ ATF_TC_BODY(reply_racing_signal, tc)
 	 * outcomes have been seen.  The reply leaves 2 ms after the READ is
 	 * read, which keeps the window above the timer granularity.
 	 */
-	dqt_lock(&c);
-	c.reply_delay_ms = 2;
-	dqt_unlock(&c);
+	dqt_set_reply_delay(&c, 2);
 	ndata = neintr = 0;
 	lo = 0;
 	hi = 0;
@@ -465,9 +463,11 @@ ATF_TC_BODY(depth_exhausted, tc)
 	(uintmax_t)st.ds_events_dropped, (uintmax_t)st.ds_events_posted, \
 	(uintmax_t)st.ds_events_delivered, (uintmax_t)st.ds_inflight, \
 	(uintmax_t)st.ds_queue_highwater, c.reads, c.paused_reads, c.records
+	dqt_lock(&c);
 	ATF_CHECK_EQ_MSG(2, st.ds_queue_current, DEPTH_FMT, DEPTH_ARGS);
 	ATF_CHECK_EQ_MSG(1, st.ds_events_dropped, DEPTH_FMT, DEPTH_ARGS);
 	ATF_CHECK_EQ_MSG(2, st.ds_events_posted, DEPTH_FMT, DEPTH_ARGS);
+	dqt_unlock(&c);
 	dqt_resume(&c);
 	neio = nok = 0;
 	for (i = 0; i < 3; i++) {
@@ -493,8 +493,10 @@ ATF_TC_BODY(depth_exhausted, tc)
 	    c.nseqs, (uintmax_t)c.last_seq);
 	dqt_unlock(&c);
 	dqt_stats(&c, &st);
+	dqt_lock(&c);
 	ATF_CHECK_EQ_MSG(1, st.ds_events_dropped, DEPTH_FMT, DEPTH_ARGS);
 	ATF_CHECK_EQ_MSG(2, st.ds_queue_highwater, DEPTH_FMT, DEPTH_ARGS);
+	dqt_unlock(&c);
 #undef DEPTH_FMT
 #undef DEPTH_ARGS
 	dqt_fini(&c);
@@ -682,9 +684,11 @@ ATF_TC_BODY(inflight_bound, tc)
 	(uintmax_t)st.ds_queue_current, (uintmax_t)st.ds_events_posted, \
 	(uintmax_t)st.ds_events_dropped, (uintmax_t)st.ds_events_delivered, \
 	(uintmax_t)st.ds_inflight, c.reads, c.paused_reads, c.records
+	dqt_lock(&c);
 	ATF_CHECK_EQ_MSG(2, st.ds_queue_current, INFL_FMT, INFL_ARGS);
 	ATF_CHECK_EQ_MSG(2, st.ds_events_posted, INFL_FMT, INFL_ARGS);
 	ATF_CHECK_EQ_MSG(0, st.ds_events_dropped, INFL_FMT, INFL_ARGS);
+	dqt_unlock(&c);
 #undef INFL_FMT
 #undef INFL_ARGS
 	dqt_resume(&c);
@@ -754,8 +758,8 @@ ATF_TC_BODY(two_readers, tc)
 		ATF_CHECK_EQ(digest(data + i * (DATA_LEN / NTHREADS), 4096),
 		    r.hash[i]);
 	}
-	/* The readers are stopped: their records are read without the lock. */
 	dqt_stop(&c);
+	dqt_lock(&c);
 	printf("batches: reader 0 %u, reader 1 %u\n", c.thr_batches[0],
 	    c.thr_batches[1]);
 	ATF_CHECK_EQ(NTHREADS * 8, c.events[DQ_OP_READ]);
@@ -765,14 +769,17 @@ ATF_TC_BODY(two_readers, tc)
 		ATF_CHECK_EQ_MSG((uint64_t)i + 1, c.seqs[i],
 		    "seq %d is %ju: a duplicate or a gap", i,
 		    (uintmax_t)c.seqs[i]);
+	dqt_unlock(&c);
 	dqt_stats(&c, &st);
 	ATF_CHECK_EQ(0, st.ds_events_dropped);
 	ATF_CHECK_EQ(NTHREADS * 8, st.ds_events_delivered);
 	ATF_CHECK_EQ(NTHREADS * 8, st.ds_replies);
 	/* One reader that read every batch has shared nothing. */
+	dqt_lock(&c);
 	ATF_CHECK_MSG(c.thr_batches[0] != 0 && c.thr_batches[1] != 0,
 	    "race not exercised: reader 0 read %u batches, reader 1 %u",
 	    c.thr_batches[0], c.thr_batches[1]);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }

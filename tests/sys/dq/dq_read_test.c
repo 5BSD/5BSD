@@ -815,7 +815,7 @@ ATF_TC_BODY(read_error_reply, tc)
 	    sizeof(oracle_path));
 	dqt_init(&c);
 	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
-	o->read_errno = EACCES;
+	dqt_object_read_errno(&c, o, EACCES);
 
 	memset(&a, 0, sizeof(a));
 	a.chunk = 4096;

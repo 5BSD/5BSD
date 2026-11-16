@@ -242,17 +242,18 @@ static unsigned char data2[NR_LEN2];
 /* Wait until the held READ_ASYNC fills of object id cover want bytes. */
 static bool
 held_bytes(struct dqt_ctl *c, uint64_t id, size_t want)
+    __requires_unlocked(c->mtx)
 {
 	size_t held;
 	int i, waited;
 
 	for (waited = 0;; waited += 10) {
-		pthread_mutex_lock(&c->mtx);
+		dqt_lock(c);
 		for (held = 0, i = 0; i < c->nheld; i++)
 			if (c->held[i].op == DQ_OP_READ_ASYNC &&
 			    c->held[i].object == id)
 				held += c->held[i].len;
-		pthread_mutex_unlock(&c->mtx);
+		dqt_unlock(c);
 		if (held >= want)
 			return (true);
 		if (waited >= DQT_WAIT_MS)
@@ -265,12 +266,13 @@ held_bytes(struct dqt_ctl *c, uint64_t id, size_t want)
 static void
 answer_fills(struct dqt_ctl *c, struct dqt_object *o,
     const unsigned char *bytes, size_t len, int error)
+    __requires_unlocked(c->mtx)
 {
 	struct dqt_held *h;
 	size_t n;
 	int i, rv;
 
-	pthread_mutex_lock(&c->mtx);
+	dqt_lock(c);
 	for (i = 0; i < c->nheld; i++) {
 		h = &c->held[i];
 		if (h->op != DQ_OP_READ_ASYNC || h->object != o->id)
@@ -281,7 +283,7 @@ answer_fills(struct dqt_ctl *c, struct dqt_object *o,
 		    dq_reply(c->q, h->id, error, NULL, 0);
 		ATF_CHECK_EQ_MSG(0, rv, "dq_reply: %s", strerror(errno));
 	}
-	pthread_mutex_unlock(&c->mtx);
+	dqt_unlock(c);
 }
 
 /* Not readable, no EOF: recv, poll, select and kevent agree. */
