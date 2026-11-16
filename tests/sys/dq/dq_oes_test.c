@@ -397,11 +397,8 @@ ATF_TC_BODY(served_ops_events, tc)
 	int backing, status;
 
 	dqt_fill(data, sizeof(data), 113);
-	backing = dqt_make_oracle("backing", data, sizeof(data), oracle_path,
+	backing = dqt_make_rw("backing", data, sizeof(data), oracle_path,
 	    sizeof(oracle_path));
-	(void)close(backing);
-	backing = open(oracle_path, O_RDWR);
-	ATF_REQUIRE(backing != -1);
 	dqt_init(&c);
 	dqt_policy_write(&pol);
 	pol.dp_ioctl = DQ_EVENT;
@@ -478,11 +475,8 @@ ATF_TC_BODY(real_file_no_ops_events, tc)
 
 	q = dqt_open_queue();	/* fails when the device is absent */
 	dqt_fill(data, sizeof(data), 114);
-	fd = dqt_make_oracle("real", data, sizeof(data), oracle_path,
+	fd = dqt_make_rw("real", data, sizeof(data), oracle_path,
 	    sizeof(oracle_path));
-	(void)close(fd);
-	fd = open(oracle_path, O_RDWR);
-	ATF_REQUIRE(fd != -1);
 	client = oes_client_open();
 
 	a.fd = fd;

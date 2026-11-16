@@ -41,25 +41,6 @@ static unsigned char data[DATA_LEN];
 static char backing_path[DQT_PATH_MAX];
 static char oracle_path[DQT_PATH_MAX];
 
-struct fixture {
-	struct dqt_ctl	 c;
-	struct dqt_object *o;
-	int		 backing;	/* O_RDWR, served through dq_serve_file */
-	int		 oracle;	/* the same bytes, O_RDWR */
-};
-
-static int
-open_rw(const char *name, char *path)
-{
-	int fd;
-
-	fd = dqt_make_oracle(name, data, sizeof(data), path, DQT_PATH_MAX);
-	(void)close(fd);
-	fd = open(path, O_RDWR);
-	ATF_REQUIRE_MSG(fd != -1, "open %s: %s", path, strerror(errno));
-	return (fd);
-}
-
 /* A writable object that allows shared writable mappings. */
 static void
 policy_shared(struct dq_policy *pol, uint32_t events, int deadline_ms)
@@ -72,34 +53,23 @@ policy_shared(struct dq_policy *pol, uint32_t events, int deadline_ms)
 }
 
 static void
-setup_pol(struct fixture *f, unsigned seed, const struct dq_policy *pol,
+setup_pol(struct dqt_fixture *f, unsigned seed, const struct dq_policy *pol,
     uint32_t mflags)
 {
 
 	ATF_REQUIRE_EQ(4096, getpagesize());
 	dqt_fill(data, sizeof(data), seed);
-	f->backing = open_rw("backing", backing_path);
-	f->oracle = open_rw("oracle", oracle_path);
-	dqt_init(&f->c);
-	f->o = dqt_mint_backing(&f->c, f->backing, backing_path, pol, mflags);
+	dqt_fixture_init(f, data, sizeof(data), backing_path, oracle_path, pol,
+	    mflags);
 }
 
 static void
-setup(struct fixture *f, unsigned seed)
+setup(struct dqt_fixture *f, unsigned seed)
 {
 	struct dq_policy pol;
 
 	policy_shared(&pol, 0, DQ_DEADLINE_DEFAULT);
 	setup_pol(f, seed, &pol, DQ_MINT_F_WRITE);
-}
-
-static void
-teardown(struct fixture *f)
-{
-
-	dqt_fini(&f->c);
-	(void)close(f->backing);
-	(void)close(f->oracle);
 }
 
 /* Every READ the pager posted is page-aligned and within the size. */
@@ -176,7 +146,7 @@ ATF_TC_HEAD(read_oracle, tc)
 }
 ATF_TC_BODY(read_oracle, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct map_arg a;
 	struct map_res r;
 	int k;
@@ -199,7 +169,7 @@ ATF_TC_BODY(read_oracle, tc)
 	ATF_CHECK(f.c.events[DQ_OP_READ] >= 1);
 	dqt_unlock(&f.c);
 	check_fault_reads(&f.c, DATA_LEN);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 struct prot_res {
@@ -236,7 +206,7 @@ ATF_TC_HEAD(shared_write_rules, tc)
 }
 ATF_TC_BODY(shared_write_rules, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_object *ro, *deny;
 	struct dq_policy pol;
 	struct prot_res r;
@@ -261,7 +231,7 @@ ATF_TC_BODY(shared_write_rules, tc)
 	ATF_CHECK_EQ(r.e[3], r.e[1]);
 	ATF_CHECK_EQ(EACCES, r.e[2]);
 	(void)close(oro);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 struct cow_res {
@@ -303,7 +273,7 @@ ATF_TC_HEAD(private_cow_and_revoke, tc)
 }
 ATF_TC_BODY(private_cow_and_revoke, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct {
 		struct dqt_sync s;
 		int fd;
@@ -323,7 +293,7 @@ ATF_TC_BODY(private_cow_and_revoke, tc)
 	ATF_CHECK_EQ(0x5a, r.cow);
 	ATF_CHECK_EQ(SIGBUS, r.sig_new);
 	ATF_CHECK_EQ(SIGBUS, r.sig_shared);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 struct wb_res {
@@ -372,7 +342,7 @@ ATF_TC_HEAD(msync_writeback, tc)
 }
 ATF_TC_BODY(msync_writeback, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct wb_arg a;
 	struct wb_res r;
 	int i;
@@ -397,7 +367,7 @@ ATF_TC_BODY(msync_writeback, tc)
 	ATF_CHECK((f.c.op_caller[DQ_OP_WRITE_ASYNC].dc_flags &
 	    DQ_CALLER_F_KERNEL) != 0);
 	dqt_unlock(&f.c);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 ATF_TC(msync_refused);
@@ -456,7 +426,7 @@ ATF_TC_HEAD(munmap_close_writes_back, tc)
 }
 ATF_TC_BODY(munmap_close_writes_back, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dq_policy pol;
 	struct dqt_child ch;
 	struct wb_arg a;
@@ -486,7 +456,7 @@ ATF_TC_BODY(munmap_close_writes_back, tc)
 	ATF_REQUIRE_EQ(2, pread(f.backing, got, 2, 5000));
 	ATF_CHECK_EQ(0xa1, got[0]);
 	ATF_CHECK_EQ(0xa2, got[1]);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 struct bus_res {
@@ -521,7 +491,7 @@ ATF_TC_HEAD(sigbus_cases, tc)
 }
 ATF_TC_BODY(sigbus_cases, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_object *bad;
 	struct bus_res r;
 	int fds[2];
@@ -536,7 +506,7 @@ ATF_TC_BODY(sigbus_cases, tc)
 	ATF_CHECK_EQ(SIGBUS, r.sig_err);
 	ATF_CHECK_EQ(0, r.sig_ok);
 	ATF_CHECK_EQ(SIGBUS, r.sig_eof);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 static void
@@ -562,7 +532,7 @@ ATF_TC_HEAD(sigbus_deadline, tc)
 }
 ATF_TC_BODY(sigbus_deadline, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dq_policy pol;
 	struct bus_res r;
 
@@ -574,7 +544,7 @@ ATF_TC_BODY(sigbus_deadline, tc)
 	ATF_CHECK_EQ(SIGBUS, r.sig_err);
 	ATF_CHECK(dqt_wait_interrupts(&f.c, 1, DQT_WAIT_MS));
 	dqt_hold(&f.c, false);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 static volatile sig_atomic_t alarms;
@@ -628,7 +598,7 @@ ATF_TC_HEAD(fault_survives_signals, tc)
 }
 ATF_TC_BODY(fault_survives_signals, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_child ch;
 	struct i12_res r;
 
@@ -655,7 +625,7 @@ ATF_TC_BODY(fault_survives_signals, tc)
 	ATF_CHECK_MSG(r.alarms >= 1, "handlers ran %d times", r.alarms);
 	ATF_CHECK_EQ(data[7], r.v);
 	dqt_hold(&f.c, false);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 struct mincore_res {
@@ -692,7 +662,7 @@ ATF_TC_HEAD(mincore_residency, tc)
 }
 ATF_TC_BODY(mincore_residency, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct mincore_res r;
 	int fds[2];
 
@@ -709,7 +679,7 @@ ATF_TC_BODY(mincore_residency, tc)
 	ATF_CHECK_EQ(r.vo[2] & MINCORE_INCORE, r.vs[2] & MINCORE_INCORE);
 	ATF_CHECK_EQ(0, r.vs[1] & MINCORE_INCORE);
 	ATF_CHECK_EQ(0, r.vs[3] & MINCORE_INCORE);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 struct inval_res {
@@ -745,7 +715,7 @@ ATF_TC_HEAD(invalidate_through_mapping, tc)
 }
 ATF_TC_BODY(invalidate_through_mapping, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct {
 		struct dqt_sync s;
 		int fd;
@@ -773,7 +743,7 @@ ATF_TC_BODY(invalidate_through_mapping, tc)
 	dqt_lock(&f.c);
 	ATF_CHECK(f.c.events[DQ_OP_READ] > reads);
 	dqt_unlock(&f.c);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 static void
@@ -810,7 +780,7 @@ ATF_TC_HEAD(fork_mapping_revoke, tc)
 }
 ATF_TC_BODY(fork_mapping_revoke, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct {
 		struct dqt_sync s;
 		int fd;
@@ -827,7 +797,7 @@ ATF_TC_BODY(fork_mapping_revoke, tc)
 	dqt_sync_post(a.s.tochild[1]);
 	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(SIGBUS, r.sig_err);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 struct vm_res {
@@ -875,7 +845,7 @@ ATF_TC_HEAD(vmmap_identity, tc)
 }
 ATF_TC_BODY(vmmap_identity, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct vm_res r;
 
 	setup(&f, 13);
@@ -886,7 +856,7 @@ ATF_TC_BODY(vmmap_identity, tc)
 	ATF_CHECK_STREQ(backing_path, r.path);
 	ATF_CHECK_EQ(DATA_LEN, r.size);
 	ATF_CHECK_EQ(f.o->ident.di_ino, r.fileid);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 struct short_res {
@@ -919,7 +889,7 @@ ATF_TC_HEAD(short_reply_inside_size, tc)
 }
 ATF_TC_BODY(short_reply_inside_size, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_object *m, *d;
 	struct dq_policy pol;
 	struct short_res r;
@@ -938,7 +908,7 @@ ATF_TC_BODY(short_reply_inside_size, tc)
 	ATF_CHECK_EQ(SIGBUS, r.sig);
 	ATF_CHECK_EQ(-1, r.rd.rv);
 	ATF_CHECK_EQ(EIO, r.rd.err);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 ATF_TP_ADD_TCS(tp)

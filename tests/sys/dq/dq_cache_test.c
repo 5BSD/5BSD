@@ -205,11 +205,8 @@ ATF_TC_BODY(write_after_acceptance, tc)
 	int backing;
 
 	dqt_fill(data, sizeof(data), 3);
-	backing = dqt_make_oracle("backing", data, sizeof(data), path,
+	backing = dqt_make_rw("backing", data, sizeof(data), path,
 	    sizeof(path));
-	(void)close(backing);
-	backing = open(path, O_RDWR);
-	ATF_REQUIRE(backing != -1);
 	dqt_init(&c);
 	policy_data(&pol, true);
 	o = dqt_mint_backing(&c, backing, path, &pol, DQ_MINT_F_WRITE);
@@ -282,11 +279,8 @@ ATF_TC_BODY(fsync_flushes_first, tc)
 	int backing;
 
 	dqt_fill(data, sizeof(data), 4);
-	backing = dqt_make_oracle("backing", data, sizeof(data), path,
+	backing = dqt_make_rw("backing", data, sizeof(data), path,
 	    sizeof(path));
-	(void)close(backing);
-	backing = open(path, O_RDWR);
-	ATF_REQUIRE(backing != -1);
 	dqt_init(&c);
 	policy_data(&pol, true);
 	o = dqt_mint_backing(&c, backing, path, &pol, DQ_MINT_F_WRITE);

@@ -205,11 +205,8 @@ ATF_TC_BODY(fallocate_fspacectl_check_write, tc)
 	int backing;
 
 	dqt_fill(data, sizeof(data), 1);
-	backing = dqt_make_oracle("backing", data, sizeof(data), path,
+	backing = dqt_make_rw("backing", data, sizeof(data), path,
 	    sizeof(path));
-	(void)close(backing);
-	backing = open(path, O_RDWR);
-	ATF_REQUIRE(backing != -1);
 
 	/*
 	 * The requester's own harness write counts too: dqt_spawn returns
@@ -532,11 +529,8 @@ ATF_TC_BODY(abac_controller_label, tc)
 	(void)fclose(f);
 
 	dqt_fill(data, sizeof(data), 2);
-	backing = dqt_make_oracle("backing", data, sizeof(data), path,
+	backing = dqt_make_rw("backing", data, sizeof(data), path,
 	    sizeof(path));
-	(void)close(backing);
-	backing = open(path, O_RDWR);
-	ATF_REQUIRE(backing != -1);
 	ident = calloc(1, sizeof(*ident));
 	ATF_REQUIRE(ident != NULL);
 	dqt_ident_of(backing, path, ident, &sb, &sfs);

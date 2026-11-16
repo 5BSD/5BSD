@@ -86,11 +86,8 @@ setup(struct dqt_ctl *c, unsigned seed)
 {
 
 	dqt_fill(data, sizeof(data), seed);
-	backing = dqt_make_oracle("backing", data, sizeof(data), path,
+	backing = dqt_make_rw("backing", data, sizeof(data), path,
 	    sizeof(path));
-	(void)close(backing);
-	backing = open(path, O_RDWR);
-	ATF_REQUIRE(backing != -1);
 	dqt_init(c);
 	return (dqt_mint_backing(c, backing, path, NULL, DQ_MINT_F_WRITE));
 }

@@ -37,51 +37,28 @@ static unsigned char data[DATA_LEN];
 static char backing_path[DQT_PATH_MAX];
 static char oracle_path[DQT_PATH_MAX];
 
-struct fixture {
-	struct dqt_ctl	 c;
-	struct dqt_object *o;
-	int		 backing;
-	int		 oracle;
-};
-
 static int
-open_rw(const char *name, char *path, uid_t uid, gid_t gid, mode_t mode)
+open_owned(const char *name, char *path, uid_t uid, gid_t gid, mode_t mode)
 {
 	int fd;
 
-	fd = dqt_make_oracle(name, data, sizeof(data), path, DQT_PATH_MAX);
-	(void)close(fd);
-	ATF_REQUIRE_EQ(0, chown(path, uid, gid));
-	ATF_REQUIRE_EQ(0, chmod(path, mode));
-	fd = open(path, O_RDWR);
-	ATF_REQUIRE_MSG(fd != -1, "open %s: %s", path, strerror(errno));
+	fd = dqt_make_rw(name, data, sizeof(data), path, DQT_PATH_MAX);
+	ATF_REQUIRE_EQ(0, fchown(fd, uid, gid));
+	ATF_REQUIRE_EQ(0, fchmod(fd, mode));
 	return (fd);
 }
 
 /* Both files owned by uid:gid with mode; the object presents the backing. */
 static void
-setup_as(struct fixture *f, unsigned seed, uid_t uid, gid_t gid, mode_t mode,
+setup_as(struct dqt_fixture *f, unsigned seed, uid_t uid, gid_t gid, mode_t mode,
     uint32_t mflags)
 {
 
 	dqt_fill(data, sizeof(data), seed);
-	f->backing = open_rw("backing", backing_path, uid, gid, mode);
-	f->oracle = open_rw("oracle", oracle_path, uid, gid, mode);
+	f->backing = open_owned("backing", backing_path, uid, gid, mode);
+	f->oracle = open_owned("oracle", oracle_path, uid, gid, mode);
 	dqt_init(&f->c);
 	f->o = dqt_mint_backing(&f->c, f->backing, backing_path, NULL, mflags);
-}
-
-static void
-teardown(struct fixture *f)
-{
-
-	dqt_lock(&f->c);
-	ATF_CHECK_EQ_MSG(0, f->c.reply_failures, "reply failures: last %d",
-	    f->c.last_reply_errno);
-	dqt_unlock(&f->c);
-	dqt_fini(&f->c);
-	(void)close(f->backing);
-	(void)close(f->oracle);
 }
 
 struct pair {
@@ -208,7 +185,7 @@ ATF_TC_HEAD(root_oracle, tc)
 }
 ATF_TC_BODY(root_oracle, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct ops_arg a;
 	struct ops_res r;
 	struct timespec before;
@@ -242,7 +219,7 @@ ATF_TC_BODY(root_oracle, tc)
 		ATF_REQUIRE_EQ(0, fstat(f.backing, &bs));
 		check_attrs(&bs, &r.ost, true);
 	}
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 static void
@@ -282,7 +259,7 @@ ATF_TC_HEAD(owner_unprivileged, tc)
 }
 ATF_TC_BODY(owner_unprivileged, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct ops_arg a;
 	struct ops_res r;
 	int i;
@@ -310,7 +287,7 @@ ATF_TC_BODY(owner_unprivileged, tc)
 	ATF_CHECK_EQ(2, f.c.events[DQ_OP_SETATTR]);
 	ATF_CHECK((f.o->last_setattr.dsa_mask & DQ_SETATTR_F_UTIMES_NULL) != 0);
 	dqt_unlock(&f.c);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 static void
@@ -340,7 +317,7 @@ ATF_TC_HEAD(nonowner, tc)
 }
 ATF_TC_BODY(nonowner, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct ops_arg a;
 	struct ops_res r;
 	int i;
@@ -359,7 +336,7 @@ ATF_TC_BODY(nonowner, tc)
 	dqt_lock(&f.c);
 	ATF_CHECK_EQ(1, f.c.events[DQ_OP_SETATTR]);
 	dqt_unlock(&f.c);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 static void
@@ -388,7 +365,7 @@ ATF_TC_HEAD(birthtime_pullback, tc)
 }
 ATF_TC_BODY(birthtime_pullback, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct ops_arg a;
 	struct ops_res r;
 
@@ -406,7 +383,7 @@ ATF_TC_BODY(birthtime_pullback, tc)
 	ATF_CHECK((f.o->last_setattr.dsa_mask & DQ_SETATTR_BIRTHTIME) != 0);
 	ATF_CHECK_EQ(100, f.o->last_setattr.dsa_birthtime.tv_sec);
 	dqt_unlock(&f.c);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 static void
@@ -430,15 +407,15 @@ ATF_TC_HEAD(readonly_object, tc)
 }
 ATF_TC_BODY(readonly_object, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dq_policy pol;
 	struct ops_arg a;
 	struct ops_res r;
 	int ro;
 
 	dqt_fill(data, sizeof(data), 5);
-	f.backing = open_rw("backing", backing_path, 0, 0, 0644);
-	f.oracle = open_rw("oracle", oracle_path, 0, 0, 0644);
+	f.backing = open_owned("backing", backing_path, 0, 0, 0644);
+	f.oracle = open_owned("oracle", oracle_path, 0, 0, 0644);
 	ro = open(oracle_path, O_RDONLY);
 	ATF_REQUIRE(ro != -1);
 	dqt_init(&f.c);
@@ -457,7 +434,7 @@ ATF_TC_BODY(readonly_object, tc)
 	ATF_CHECK_EQ(1, f.c.events[DQ_OP_SETATTR]);
 	dqt_unlock(&f.c);
 	(void)close(ro);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 ATF_TC_WITH_CLEANUP(fdesc_setattr);
@@ -470,7 +447,7 @@ ATF_TC_HEAD(fdesc_setattr, tc)
 }
 ATF_TC_BODY(fdesc_setattr, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct stat ss, os;
 	struct timeval tv[2];
 	char sp[64], op[64];
@@ -503,7 +480,7 @@ ATF_TC_BODY(fdesc_setattr, tc)
 	dqt_lock(&f.c);
 	ATF_CHECK(f.c.events[DQ_OP_SETATTR] >= 3);
 	dqt_unlock(&f.c);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 ATF_TC_CLEANUP(fdesc_setattr, tc)
 {
@@ -513,7 +490,7 @@ ATF_TC_CLEANUP(fdesc_setattr, tc)
 
 /* A memory-served object of the oracle's bytes with these flags. */
 static struct dqt_object *
-mint_flagged(struct fixture *f, uint32_t flags)
+mint_flagged(struct dqt_fixture *f, uint32_t flags)
 {
 	struct dq_ident_file *id;
 	struct dq_policy pol;
@@ -561,7 +538,7 @@ ATF_TC_HEAD(snapshot_mode, tc)
 }
 ATF_TC_BODY(snapshot_mode, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_object *o;
 	struct snap_res r;
 
@@ -576,7 +553,7 @@ ATF_TC_BODY(snapshot_mode, tc)
 	dqt_lock(&f.c);
 	ATF_CHECK_EQ(1, f.c.events[DQ_OP_SETATTR]);
 	dqt_unlock(&f.c);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 static volatile sig_atomic_t xfsz;
@@ -621,7 +598,7 @@ ATF_TC_HEAD(truncate_checks_attributes_first, tc)
 }
 ATF_TC_BODY(truncate_checks_attributes_first, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_object *o;
 	struct trunc_res r;
 
@@ -635,7 +612,7 @@ ATF_TC_BODY(truncate_checks_attributes_first, tc)
 	dqt_lock(&f.c);
 	ATF_CHECK_EQ(0, f.c.events[DQ_OP_SETATTR]);
 	dqt_unlock(&f.c);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 ATF_TP_ADD_TCS(tp)

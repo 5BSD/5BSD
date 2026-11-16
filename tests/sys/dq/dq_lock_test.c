@@ -41,55 +41,20 @@ static unsigned char data[DATA_LEN];
 static char backing_path[DQT_PATH_MAX];
 static char oracle_path[DQT_PATH_MAX];
 
-struct fixture {
-	struct dqt_ctl	 c;
-	struct dqt_object *o;
-	int		 backing;
-	int		 oracle;
-};
-
-static int
-open_rw(const char *name, char *path)
-{
-	int fd;
-
-	fd = dqt_make_oracle(name, data, sizeof(data), path, DQT_PATH_MAX);
-	(void)close(fd);
-	fd = open(path, O_RDWR);
-	ATF_REQUIRE_MSG(fd != -1, "open %s: %s", path, strerror(errno));
-	return (fd);
-}
-
 static void
-setup_pol(struct fixture *f, unsigned seed, const struct dq_policy *pol)
+setup_pol(struct dqt_fixture *f, unsigned seed, const struct dq_policy *pol)
 {
 
 	dqt_fill(data, sizeof(data), seed);
-	f->backing = open_rw("backing", backing_path);
-	f->oracle = open_rw("oracle", oracle_path);
-	dqt_init(&f->c);
-	f->o = dqt_mint_backing(&f->c, f->backing, backing_path, pol,
+	dqt_fixture_init(f, data, sizeof(data), backing_path, oracle_path, pol,
 	    DQ_MINT_F_WRITE);
 }
 
 static void
-setup(struct fixture *f, unsigned seed)
+setup(struct dqt_fixture *f, unsigned seed)
 {
 
 	setup_pol(f, seed, NULL);
-}
-
-static void
-teardown(struct fixture *f)
-{
-
-	dqt_lock(&f->c);
-	ATF_CHECK_EQ_MSG(0, f->c.reply_failures, "reply failures: last %d",
-	    f->c.last_reply_errno);
-	dqt_unlock(&f->c);
-	dqt_fini(&f->c);
-	(void)close(f->backing);
-	(void)close(f->oracle);
 }
 
 /*
@@ -294,7 +259,7 @@ ATF_TC_HEAD(posix_oracle, tc)
 }
 ATF_TC_BODY(posix_oracle, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_object *sib, *other;
 	struct dq_ident_file *id;
 	struct dqt_child ch;
@@ -393,7 +358,7 @@ ATF_TC_BODY(posix_oracle, tc)
 	dqt_run_child(child_probe, &pa, &pr, sizeof(pr));
 	check_probe(&pa, &pr);
 	ATF_CHECK_EQ(0, pr.s[0].rv);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 struct wait_arg {
@@ -432,7 +397,7 @@ ATF_TC_HEAD(setlkw_no_deadline, tc)
 }
 ATF_TC_BODY(setlkw_no_deadline, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dq_policy pol;
 	struct dqt_child hch, wch;
 	struct holder_arg h;
@@ -467,7 +432,7 @@ ATF_TC_BODY(setlkw_no_deadline, tc)
 	holder_release(&h, &hch, &hr);
 	dqt_collect(&wch, &r, sizeof(r));
 	ATF_CHECK_EQ_MSG(0, r.rv, "F_SETLKW: %s", strerror(r.err));
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 ATF_TC(setlkw_interrupt);
@@ -481,7 +446,7 @@ ATF_TC_HEAD(setlkw_interrupt, tc)
 }
 ATF_TC_BODY(setlkw_interrupt, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_child hch, wch;
 	struct holder_arg h;
 	struct holder_res hr;
@@ -528,7 +493,7 @@ ATF_TC_BODY(setlkw_interrupt, tc)
 	dqt_run_child(child_probe, &pa, &pr, sizeof(pr));
 	check_probe(&pa, &pr);
 	ATF_CHECK_EQ(0, pr.s[0].rv);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 ATF_TC(flock_owners_and_release);
@@ -543,7 +508,7 @@ ATF_TC_HEAD(flock_owners_and_release, tc)
 }
 ATF_TC_BODY(flock_owners_and_release, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_object *o2;
 	struct dqt_child ch;
 	struct holder_arg h;
@@ -600,7 +565,7 @@ ATF_TC_BODY(flock_owners_and_release, tc)
 	check_probe(&pa, &pr);
 	ATF_CHECK_EQ(0, pr.s[0].rv);
 	(void)close(oracle2);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 /*
@@ -653,7 +618,7 @@ child_lastclose(void *arg, void *result)
 static void
 lastclose_round(int how)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_object *o2;
 	struct dqt_child ch;
 	struct lastclose_arg a;
@@ -711,7 +676,7 @@ lastclose_round(int how)
 	owner = f.o->locks[0].dl_owner;
 	dqt_unlock(&f.c);
 	ATF_CHECK_EQ(1, count_unlocks(&f.c, f.o, DQ_LOCK_FLOCK, owner));
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 ATF_TC_WITH_CLEANUP(flock_gone_when_last_close_returns);
@@ -937,7 +902,7 @@ ATF_TC_HEAD(posix_spans_siblings, tc)
 }
 ATF_TC_BODY(posix_spans_siblings, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_object *b;
 	struct dqt_child ch;
 	struct sib_arg s;
@@ -996,7 +961,7 @@ ATF_TC_BODY(posix_spans_siblings, tc)
 		ATF_CHECK_EQ(1, count_unlocks(&f.c, b, DQ_LOCK_POSIX,
 		    (uint64_t)r.pid));
 		(void)close(ob);
-		teardown(&f);
+		dqt_fixture_fini(&f);
 	}
 }
 
@@ -1035,7 +1000,7 @@ ATF_TC_HEAD(getlk_creates_no_owner, tc)
 }
 ATF_TC_BODY(getlk_creates_no_owner, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_rr r;
 	int before, i, after;
 
@@ -1057,9 +1022,8 @@ ATF_TC_BODY(getlk_creates_no_owner, tc)
 	ATF_CHECK_EQ(MIN(100, DQT_MAX_LOCKS), f.o->nlocks);
 	ATF_CHECK_EQ(DQ_LOCK_GETLK, f.o->locks[0].dl_op);
 	dqt_unlock(&f.c);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
-
 
 static void
 child_read_one(void *arg, void *result)

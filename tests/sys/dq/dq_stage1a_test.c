@@ -695,11 +695,8 @@ ATF_TC_BODY(writable_served, tc)
 	int backing, fd;
 
 	dqt_fill(data, sizeof(data), 42);
-	backing = dqt_make_oracle("backing", data, sizeof(data), oracle_path,
+	backing = dqt_make_rw("backing", data, sizeof(data), oracle_path,
 	    sizeof(oracle_path));
-	(void)close(backing);
-	backing = open(oracle_path, O_RDWR);
-	ATF_REQUIRE(backing != -1);
 	dqt_init(&c);
 	o = dqt_mint_backing(&c, backing, oracle_path, NULL, DQ_MINT_F_WRITE);
 	ATF_CHECK_EQ(O_RDWR, fcntl(o->fd, F_GETFL) & O_ACCMODE);

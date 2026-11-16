@@ -315,6 +315,26 @@ struct dqt_object *dqt_mint_backing(struct dqt_ctl *c, int backing_fd,
 	    __requires_unlocked(c->mtx);
 /* dq_policy_default() with dp_write = DQ_EVENT. */
 void	dqt_policy_write(struct dq_policy *pol);
+/* dqt_make_oracle, reopened O_RDWR: a backing file or a writable oracle. */
+int	dqt_make_rw(const char *name, const void *data, size_t len,
+	    char *path, size_t pathlen);
+
+/*
+ * The write-path fixture: a controller, an object served from the file
+ * "backing" (at backing_path) and, when oracle_path is not NULL, a second
+ * file "oracle" with the same bytes, both O_RDWR.  dqt_fixture_fini fails
+ * the case on a reply the controller could not deliver, then frees all.
+ */
+struct dqt_fixture {
+	struct dqt_ctl	 c;
+	struct dqt_object *o;
+	int		 backing;
+	int		 oracle;	/* -1 without one */
+};
+void	dqt_fixture_init(struct dqt_fixture *f, const void *data, size_t len,
+	    char *backing_path, char *oracle_path, const struct dq_policy *pol,
+	    uint32_t mflags);
+void	dqt_fixture_fini(struct dqt_fixture *f);
 /* The object minted with id, or NULL; with the lock held (the reader). */
 struct dqt_object *dqt_object_by_id(struct dqt_ctl *c, uint64_t id)
 	    __requires_exclusive(c->mtx);

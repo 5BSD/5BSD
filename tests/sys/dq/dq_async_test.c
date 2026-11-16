@@ -34,39 +34,19 @@
 static unsigned char data[DATA_LEN];
 static char path[DQT_PATH_MAX];
 
-struct fixture {
-	struct dqt_ctl	 c;
-	struct dqt_object *o;
-	int		 backing;
-};
-
 static void
-setup(struct fixture *f, unsigned seed, int deadline_ms, uint32_t events)
+setup(struct dqt_fixture *f, unsigned seed, int deadline_ms, uint32_t events)
 {
 	struct dq_policy pol;
 
 	ATF_REQUIRE_EQ(4096, getpagesize());
 	dqt_fill(data, sizeof(data), seed);
-	f->backing = dqt_make_oracle("backing", data, sizeof(data), path,
-	    sizeof(path));
-	(void)close(f->backing);
-	f->backing = open(path, O_RDWR);
-	ATF_REQUIRE(f->backing != -1);
-	dqt_init(&f->c);
 	dqt_policy_write(&pol);
 	pol.dp_mmap_shared_write = DQ_ALLOW;
 	pol.dp_deadline_ms = deadline_ms;
 	pol.dp_events = events;
-	f->o = dqt_mint_backing(&f->c, f->backing, path, &pol,
+	dqt_fixture_init(f, data, sizeof(data), path, NULL, &pol,
 	    DQ_MINT_F_WRITE);
-}
-
-static void
-teardown(struct fixture *f)
-{
-
-	dqt_fini(&f->c);
-	(void)close(f->backing);
 }
 
 /* Poll the extended counters until pred holds or ms pass. */
@@ -172,7 +152,7 @@ child_dirty(void *arg, void *result)
  * holding (events are read and not answered) before the stores.
  */
 static void
-start_dirty(struct fixture *f, struct dirty_arg *a, struct dqt_child *ch,
+start_dirty(struct dqt_fixture *f, struct dirty_arg *a, struct dqt_child *ch,
     bool hold)
 {
 
@@ -189,7 +169,7 @@ start_dirty(struct fixture *f, struct dirty_arg *a, struct dqt_child *ch,
 
 /* Temporary diagnostics for the VM runs: counters and the ops seen. */
 static void
-diag(struct fixture *f, const char *where)
+diag(struct dqt_fixture *f, const char *where)
 {
 	struct dq_stats2 st;
 
@@ -209,7 +189,7 @@ diag(struct fixture *f, const char *where)
 }
 
 static void
-check_backing_dirtied(struct fixture *f, int first, int npages)
+check_backing_dirtied(struct dqt_fixture *f, int first, int npages)
 {
 	unsigned char got;
 	int i;
@@ -232,7 +212,7 @@ ATF_TC_HEAD(inflight_bytes_bound, tc)
 }
 ATF_TC_BODY(inflight_bytes_bound, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_child ch;
 	struct dirty_arg a;
 	struct dirty_res r;
@@ -266,7 +246,7 @@ ATF_TC_BODY(inflight_bytes_bound, tc)
 	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
 	ATF_CHECK_EQ_MSG(0, r.rv1, "msync: %s", strerror(r.err1));
 	check_backing_dirtied(&f, 0, NPAGES);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 ATF_TC_CLEANUP(inflight_bytes_bound, tc)
 {
@@ -285,7 +265,7 @@ ATF_TC_HEAD(deadline_leaves_dirty, tc)
 }
 ATF_TC_BODY(deadline_leaves_dirty, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_child ch;
 	struct dirty_arg a;
 	struct dirty_res r;
@@ -314,7 +294,7 @@ ATF_TC_BODY(deadline_leaves_dirty, tc)
 	ATF_CHECK_EQ(EIO, r.err1);
 	ATF_CHECK_EQ_MSG(0, r.rv2, "second msync: %s", strerror(r.err2));
 	check_backing_dirtied(&f, 2, 1);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 ATF_TC(controller_exit_completes);
@@ -327,7 +307,7 @@ ATF_TC_HEAD(controller_exit_completes, tc)
 }
 ATF_TC_BODY(controller_exit_completes, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_child ch;
 	struct dirty_arg a;
 	struct dirty_res r;
@@ -351,7 +331,7 @@ ATF_TC_BODY(controller_exit_completes, tc)
 	ATF_CHECK_EQ(EIO, r.err1);
 	ATF_CHECK_EQ(0, r.unmap);
 	ATF_CHECK_EQ(0, r.closed);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 ATF_TC(close_dropped_counted);
@@ -364,7 +344,7 @@ ATF_TC_HEAD(close_dropped_counted, tc)
 }
 ATF_TC_BODY(close_dropped_counted, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_child ch;
 	struct dirty_arg a;
 	struct dirty_res r;
@@ -390,7 +370,7 @@ ATF_TC_BODY(close_dropped_counted, tc)
 	}
 	ATF_CHECK(st.ds2_async_deadlines >= 1);
 	dqt_resume(&f.c);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 ATF_TC(shrink_fails_pending);
@@ -403,7 +383,7 @@ ATF_TC_HEAD(shrink_fails_pending, tc)
 }
 ATF_TC_BODY(shrink_fails_pending, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_child ch;
 	struct dirty_arg a;
 	struct dirty_res r;
@@ -450,7 +430,7 @@ ATF_TC_BODY(shrink_fails_pending, tc)
 	status = dqt_wait(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ_MSG(0, r.sig, "signal %d in the requester", r.sig);
 	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 ATF_TP_ADD_TCS(tp)

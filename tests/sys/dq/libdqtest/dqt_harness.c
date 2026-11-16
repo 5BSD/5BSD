@@ -812,6 +812,47 @@ dqt_fill(unsigned char *buf, size_t len, unsigned seed)
 }
 
 int
+dqt_make_rw(const char *name, const void *data, size_t len, char *path,
+    size_t pathlen)
+{
+	int fd;
+
+	fd = dqt_make_oracle(name, data, len, path, pathlen);
+	(void)close(fd);
+	fd = open(path, O_RDWR);
+	ATF_REQUIRE_MSG(fd != -1, "open %s: %s", path, strerror(errno));
+	return (fd);
+}
+
+void
+dqt_fixture_init(struct dqt_fixture *f, const void *data, size_t len,
+    char *backing_path, char *oracle_path, const struct dq_policy *pol,
+    uint32_t mflags)
+{
+
+	f->backing = dqt_make_rw("backing", data, len, backing_path,
+	    DQT_PATH_MAX);
+	f->oracle = oracle_path == NULL ? -1 :
+	    dqt_make_rw("oracle", data, len, oracle_path, DQT_PATH_MAX);
+	dqt_init(&f->c);
+	f->o = dqt_mint_backing(&f->c, f->backing, backing_path, pol, mflags);
+}
+
+void
+dqt_fixture_fini(struct dqt_fixture *f)
+{
+
+	dqt_lock(&f->c);
+	ATF_CHECK_EQ_MSG(0, f->c.reply_failures, "reply failures: last %d",
+	    f->c.last_reply_errno);
+	dqt_unlock(&f->c);
+	dqt_fini(&f->c);
+	(void)close(f->backing);
+	if (f->oracle != -1)
+		(void)close(f->oracle);
+}
+
+int
 dqt_make_oracle(const char *name, const void *data, size_t len, char *path,
     size_t pathlen)
 {
