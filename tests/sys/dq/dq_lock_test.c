@@ -481,8 +481,12 @@ ATF_TC_BODY(setlkw_interrupt, tc)
 	holder_release(&h, &hch, &hr);
 	/*
 	 * Nobody holds the range: the waiters' proxies were cancelled.  The
-	 * INTERRUPTs and the holder's UNLOCK_ALL were served before the
-	 * fence's READ.
+	 * fence orders the records: the INTERRUPTs and the holder's
+	 * UNLOCK_ALL were posted, and served, before the fence's READ.  It
+	 * does not order libdq's own waiter threads, which the cancel does
+	 * not join (dq_serve_file's F_SETLKW proxies); what shows that their
+	 * locks are gone is the probe below, whose F_SETLK of the whole range
+	 * succeeds.
 	 */
 	dqt_fence(&f.c);
 	memset(&pa, 0, sizeof(pa));

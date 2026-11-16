@@ -613,7 +613,13 @@ ATF_TC_BODY(fault_survives_signals, tc)
 	dqt_unlock(&f.c);
 	ATF_REQUIRE_EQ(0, kill(ch.pid, SIGALRM));
 	ATF_REQUIRE_EQ(0, kill(ch.pid, SIGCHLD));
-	/* A caught signal must not end the fault: no INTERRUPT. */
+	/*
+	 * A caught signal must not end the fault.  The check that cannot
+	 * miss is the reply: an interrupted event is gone, and dq_reply to
+	 * it fails (ESRCH).  The INTERRUPT count is best-effort: the woken
+	 * thread posts it in its own time, and no fence orders that, so the
+	 * 200 ms only give a wrong INTERRUPT the chance to show by name.
+	 */
 	dqt_msleep(200);
 	dqt_lock(&f.c);
 	ATF_CHECK_EQ(0, f.c.ninterrupted);
