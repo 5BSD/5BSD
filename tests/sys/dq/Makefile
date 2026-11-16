@@ -184,11 +184,20 @@ BINDIR.dq_legitimacy_helper=	${TESTSDIR}
 # dq_legitimacy_test's ilp32_no_abi.  No libc and no headers but
 # dq_linux.h: they are built here with the cross compiler for their own
 # target and installed beside the tests, which run them.  x86 assembly:
-# amd64 only, as are the rows (require.arch).
-.if ${MACHINE_ARCH} == "amd64"
+# amd64 only, as are the rows (require.arch).  Cross targets take clang
+# and lld; with another compiler or linker (an external GCC toolchain,
+# WITHOUT_CLANG, WITHOUT_LLD) the programs are not built and the rows
+# fail, as they do for any missing prerequisite.
+.include <bsd.compiler.mk>
+.include <bsd.linker.mk>
+.if ${MACHINE_ARCH} == "amd64" && ${COMPILER_TYPE} == "clang" && \
+    ${LINKER_TYPE} == "lld"
 DQ_FOREIGN_CC=	${CC:N-target:N--target=*:N*-unknown-freebsd*:N--sysroot=*}
 DQ_FOREIGN_CFLAGS= -fuse-ld=lld -nostdlib -static -fno-stack-protector \
-		-fno-builtin -O2 -Wall -Wextra -Werror
+		-fno-builtin -O2 -Wall -Wextra
+.if ${MK_WERROR} != "no"
+DQ_FOREIGN_CFLAGS+= -Werror
+.endif
 DQ_LINUX=	dq_owner_linux dq_opath_linux dq_swap_linux dq_legitimacy_linux
 DQ_ILP32=	dq_legitimacy_ilp32_freebsd dq_legitimacy_ilp32_linux
 .for _p in ${DQ_LINUX}
