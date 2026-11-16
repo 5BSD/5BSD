@@ -56,20 +56,6 @@ struct rd_res {
 	uint64_t	 hash;		/* FNV-1a of all of them */
 };
 
-static uint64_t
-digest(const unsigned char *p, size_t len)
-{
-	uint64_t h;
-	size_t i;
-
-	h = 14695981039346656037ULL;
-	for (i = 0; i < len; i++) {
-		h ^= p[i];
-		h *= 1099511628211ULL;
-	}
-	return (h);
-}
-
 static void
 child_io(void *arg, void *result)
 {
@@ -85,7 +71,7 @@ child_io(void *arg, void *result)
 		r->r.rv = b == NULL ? -1 : pread(a->fd, b, a->len, a->off);
 		if (r->r.rv > 0) {
 			memcpy(r->buf, b, MIN((size_t)r->r.rv, sizeof(r->buf)));
-			r->hash = digest(b, (size_t)r->r.rv);
+			r->hash = dqt_digest(b, (size_t)r->r.rv);
 		}
 		free(b);
 	}
@@ -139,7 +125,7 @@ ATF_TC_BODY(second_read_cached, tc)
 	o = mint_memory(&c, oracle);
 	do_io(o->fd, 0, 0, DATA_LEN, 0, &r);
 	ATF_REQUIRE_EQ(DATA_LEN, r.r.rv);
-	ATF_CHECK(r.hash == digest(data, DATA_LEN));
+	ATF_CHECK(r.hash == dqt_digest(data, DATA_LEN));
 	reads = dqt_events(&c, DQ_OP_READ);
 	ATF_CHECK(reads >= 1);
 	dqt_lock(&c);
@@ -148,7 +134,7 @@ ATF_TC_BODY(second_read_cached, tc)
 	dqt_unlock(&c);
 	do_io(o->fd, 0, 0, DATA_LEN, 0, &r);
 	ATF_REQUIRE_EQ(DATA_LEN, r.r.rv);
-	ATF_CHECK(r.hash == digest(data, DATA_LEN));
+	ATF_CHECK(r.hash == dqt_digest(data, DATA_LEN));
 	dqt_lock(&c);
 	ATF_CHECK_EQ(reads, c.events[DQ_OP_READ]);
 	dqt_unlock(&c);
@@ -354,7 +340,7 @@ ATF_TC_BODY(shrink_trims_cache, tc)
 	free(id);
 	do_io(o->fd, 0, 0, DATA_LEN, 0, &r);
 	ATF_CHECK_EQ(4096 + 10, r.r.rv);
-	ATF_CHECK(r.hash == digest(data, 4096 + 10));
+	ATF_CHECK(r.hash == dqt_digest(data, 4096 + 10));
 	ATF_REQUIRE_EQ(0, fstat(o->fd, &sb));
 	ATF_CHECK_EQ(4096 + 10, sb.st_size);
 	dqt_fini(&c);

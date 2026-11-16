@@ -36,15 +36,6 @@ struct timed_res {
 	long		 elapsed_ms;
 };
 
-static long
-now_ms(void)
-{
-	struct timespec ts;
-
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return (ts.tv_sec * 1000L + ts.tv_nsec / 1000000L);
-}
-
 /* read(2) once and time it. */
 static void
 child_timed_read(void *arg, void *result)
@@ -54,10 +45,10 @@ child_timed_read(void *arg, void *result)
 	unsigned char buf[4096];
 	long start;
 
-	start = now_ms();
+	start = dqt_now_ms();
 	r->rr.rv = read(a->fd, buf, MIN(a->len, sizeof(buf)));
 	r->rr.err = r->rr.rv == -1 ? errno : 0;
-	r->elapsed_ms = now_ms() - start;
+	r->elapsed_ms = dqt_now_ms() - start;
 }
 
 ATF_TC(small_deadline_eio);

@@ -40,8 +40,6 @@
 static unsigned char data[DATA_LEN];
 static char oracle_path[DQT_PATH_MAX];
 
-static long	now_ms(void);
-
 static const oes_event_type_t served_events[] = {
 	OES_EVENT_NOTIFY_FILE_READ,
 	OES_EVENT_NOTIFY_FILE_STAT,
@@ -151,8 +149,8 @@ collect_ops(oes_client_t *client, oes_message_t *got[NOPS], pid_t pid,
 	long start;
 	size_t i, have;
 
-	start = now_ms();
-	for (have = 0; have < NOPS && now_ms() - start < ms;) {
+	start = dqt_now_ms();
+	for (have = 0; have < NOPS && dqt_now_ms() - start < ms;) {
 		if (oes_read_event(client, &msg, false) != 0) {
 			if (errno != EAGAIN)
 				atf_tc_fail("oes_read_event: %s", strerror(errno));
@@ -199,15 +197,6 @@ oes_client_open(void)
 	return (client);
 }
 
-static long
-now_ms(void)
-{
-	struct timespec ts;
-
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return (ts.tv_sec * 1000L + ts.tv_nsec / 1000000L);
-}
-
 /*
  * Collected messages: one copy of the first message of each event type
  * from the process(es) of interest.
@@ -236,8 +225,8 @@ collect(oes_client_t *client, struct seen *s, pid_t requester, pid_t controller,
 	long start;
 	pid_t pid;
 
-	start = now_ms();
-	while (!seen_all(s) && now_ms() - start < ms) {
+	start = dqt_now_ms();
+	while (!seen_all(s) && dqt_now_ms() - start < ms) {
 		if (oes_read_event(client, &msg, false) != 0) {
 			if (errno != EAGAIN)
 				atf_tc_fail("oes_read_event: %s", strerror(errno));

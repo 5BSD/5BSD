@@ -478,22 +478,6 @@ ATF_TC_BODY(nonroot_open_refused, tc)
 	(void)close(q);
 }
 
-struct one_read_arg {
-	int		 fd;
-	size_t		 len;
-};
-
-static void
-child_one_read(void *arg, void *result)
-{
-	struct one_read_arg *a = arg;
-	struct dqt_rr *r = result;
-	unsigned char buf[4096];
-
-	r->rv = read(a->fd, buf, MIN(a->len, sizeof(buf)));
-	r->err = r->rv == -1 ? errno : 0;
-}
-
 struct stat_res {
 	struct dqt_rr	 rr;
 	struct stat	 st;
@@ -502,7 +486,7 @@ struct stat_res {
 static void
 child_fstat(void *arg, void *result)
 {
-	struct one_read_arg *a = arg;
+	struct dqt_read_arg *a = arg;
 	struct stat_res *r = result;
 
 	r->rr.rv = fstat(a->fd, &r->st);
@@ -525,7 +509,7 @@ ATF_TC_BODY(reply_errors, tc)
 	struct dq_reply rep;
 	struct dq_ident_file *bad;
 	struct dq_stats st;
-	struct one_read_arg a;
+	struct dqt_read_arg a;
 	struct dqt_child ch;
 	struct dqt_rr r;
 	struct stat_res sr;
@@ -580,7 +564,7 @@ ATF_TC_BODY(reply_errors, tc)
 	dqt_hold(&f.c, true);
 	a.fd = o->fd;
 	a.len = 100;
-	dqt_spawn(&ch, child_one_read, &a);
+	dqt_spawn(&ch, dqt_child_read, &a);
 	ATF_REQUIRE(dqt_wait_held(&f.c, 1, DQT_WAIT_MS));
 	dqt_lock(&f.c);
 	ATF_CHECK_EQ(DQ_OP_READ, f.c.held[0].op);
@@ -669,7 +653,7 @@ ATF_TC_BODY(control_errors, tc)
 	struct dq_setpolicy_args spa;
 	struct dq_policy p;
 	struct dq_ident_file *id;
-	struct one_read_arg a;
+	struct dqt_read_arg a;
 	struct dqt_child ch;
 	struct dqt_rr r;
 	struct dq_stats st;
@@ -777,7 +761,7 @@ ATF_TC_BODY(control_errors, tc)
 	ATF_CHECK_EQ(EAGAIN, errno);
 	a.fd = o->fd;
 	a.len = 100;
-	dqt_spawn(&ch, child_one_read, &a);
+	dqt_spawn(&ch, dqt_child_read, &a);
 	deadline = dqt_now_ms() + DQT_WAIT_MS;
 	for (;;) {
 		dqt_stats(&f.c, &st);

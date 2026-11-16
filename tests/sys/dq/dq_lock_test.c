@@ -1061,13 +1061,6 @@ ATF_TC_BODY(getlk_creates_no_owner, tc)
 }
 
 
-static bool
-pred_current(const struct dq_stats *st, uintptr_t n)
-{
-
-	return (st->ds_queue_current >= n);
-}
-
 static void
 child_read_one(void *arg, void *result)
 {
@@ -1118,10 +1111,10 @@ ATF_TC_BODY(unlock_all_over_depth, tc)
 	dqt_pause(&c);
 	ATF_REQUIRE_EQ(0, dq_set_queue_depth(c.q, 1));
 	dqt_spawn(&rch, child_read_one, &o->fd);
-	ATF_REQUIRE(dqt_wait_stats(&c, pred_current, 1, DQT_WAIT_MS));
+	ATF_REQUIRE(dqt_wait_stats(&c, dqt_pred_current, 1, DQT_WAIT_MS));
 	/* The locker exits: its UNLOCK_ALL goes past the full queue. */
 	holder_release(&h, &lch, &hr);
-	ATF_CHECK(dqt_wait_stats(&c, pred_current, 2, DQT_WAIT_MS));
+	ATF_CHECK(dqt_wait_stats(&c, dqt_pred_current, 2, DQT_WAIT_MS));
 	dqt_stats(&c, &st);
 	ATF_CHECK_EQ(0, st.ds_events_dropped);
 	dqt_stats2(&c, &st2);

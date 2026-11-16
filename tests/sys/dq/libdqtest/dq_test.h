@@ -366,6 +366,13 @@ struct dqt_rr {
 	int		 err;
 };
 
+/* A dqt_child_fn: read(2) once, up to len (at most 4096) bytes of fd. */
+struct dqt_read_arg {
+	int		 fd;
+	size_t		 len;
+};
+void	dqt_child_read(void *arg, void *result);	/* result: dqt_rr */
+
 /*
  * Positive fences, for a test that asserts something did not happen.
  * dqt_fence: a child reads one byte of a sentinel object and the
@@ -387,6 +394,8 @@ void	dqt_close_fence(struct dqt_ctl *c)
 
 /* Controller-side waits and queries; every wait has a monotonic deadline. */
 int64_t	dqt_now_ms(void);		/* CLOCK_MONOTONIC, in ms */
+/* FNV-1a of len bytes: a child sends a digest, not the bytes it read. */
+uint64_t dqt_digest(const void *p, size_t len);
 /* cond(c, a, b), called with c->mtx held, until it holds or ms pass. */
 typedef bool (*dqt_cond_fn)(struct dqt_ctl *c, uintptr_t a, uintptr_t b);
 bool	dqt_wait_cond(struct dqt_ctl *c, dqt_cond_fn cond, uintptr_t a,
@@ -416,6 +425,8 @@ bool	dqt_wait_wmesg(pid_t pid, const char *wmesg, int ms);
 #define	DQT_WMESG_INFLIGHT	"dqinfl"	/* the in-flight bound */
 /* Poll the queue's statistics until pred(st, arg) holds or ms elapse. */
 typedef bool (*dqt_stats_pred)(const struct dq_stats *st, uintptr_t arg);
+/* A dqt_stats_pred: at least arg events queued (ds_queue_current). */
+bool	dqt_pred_current(const struct dq_stats *st, uintptr_t n);
 bool	dqt_wait_stats(struct dqt_ctl *c, dqt_stats_pred pred, uintptr_t arg,
 	    int ms)
 	    __requires_unlocked(c->mtx);

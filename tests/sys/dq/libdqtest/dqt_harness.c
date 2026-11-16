@@ -1162,6 +1162,39 @@ dqt_run_ints(int q, dqt_int_fn fn, void *arg, int *res, int nres, uid_t uid,
 	ATF_REQUIRE_EQ(len, got);
 }
 
+bool
+dqt_pred_current(const struct dq_stats *st, uintptr_t n)
+{
+
+	return (st->ds_queue_current >= n);
+}
+
+uint64_t
+dqt_digest(const void *p, size_t len)
+{
+	const unsigned char *b = p;
+	uint64_t h;
+	size_t i;
+
+	h = 14695981039346656037ULL;
+	for (i = 0; i < len; i++) {
+		h ^= b[i];
+		h *= 1099511628211ULL;
+	}
+	return (h);
+}
+
+void
+dqt_child_read(void *arg, void *result)
+{
+	struct dqt_read_arg *a = arg;
+	struct dqt_rr *r = result;
+	unsigned char buf[4096];
+
+	r->rv = read(a->fd, buf, MIN(a->len, sizeof(buf)));
+	r->err = r->rv == -1 ? errno : 0;
+}
+
 void
 dqt_require_exit0(int status, const char *what)
 {

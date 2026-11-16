@@ -27,22 +27,6 @@
 static unsigned char data[DATA_LEN];
 static char oracle_path[DQT_PATH_MAX];
 
-struct one_read_arg {
-	int		 fd;
-	size_t		 len;
-};
-
-static void
-child_one_read(void *arg, void *result)
-{
-	struct one_read_arg *a = arg;
-	struct dqt_rr *r = result;
-	unsigned char buf[4096];
-
-	r->rv = read(a->fd, buf, MIN(a->len, sizeof(buf)));
-	r->err = r->rv == -1 ? errno : 0;
-}
-
 /* The observe service is part of the plane: its absence is a failure. */
 static int
 observe_connect(void)
@@ -130,7 +114,7 @@ ATF_TC_BODY(list_queues, tc)
 	struct dqt_object *o;
 	struct dqo_queue_info qi;
 	struct dq_stats st;
-	struct one_read_arg a;
+	struct dqt_read_arg a;
 	struct dqt_rr r;
 	int obs, oracle, svc;
 
@@ -145,7 +129,7 @@ ATF_TC_BODY(list_queues, tc)
 	ATF_REQUIRE(obs != -1);
 	a.fd = o->fd;
 	a.len = 100;
-	dqt_run_child(child_one_read, &a, &r, sizeof(r));
+	dqt_run_child(dqt_child_read, &a, &r, sizeof(r));
 	ATF_REQUIRE_EQ(100, r.rv);
 
 	dqt_stats(&c, &st);
@@ -168,7 +152,7 @@ ATF_TC_BODY(list_queues, tc)
 		int64_t deadline;
 		int status;
 
-		dqt_spawn(&ch, child_one_read, &a);
+		dqt_spawn(&ch, dqt_child_read, &a);
 		/* Wait for the post rather than a fixed sleep (4-vCPU guest). */
 		deadline = dqt_now_ms() + DQT_WAIT_MS;
 		for (;;) {
@@ -300,7 +284,7 @@ ATF_TC_BODY(subscribe, tc)
 	struct dqt_ctl c;
 	struct dqt_object *o;
 	struct dq_stats st, st2;
-	struct one_read_arg a;
+	struct dqt_read_arg a;
 	struct dqt_rr r;
 	struct pollfd pfd;
 	const struct dq_event *ev;
@@ -328,7 +312,7 @@ ATF_TC_BODY(subscribe, tc)
 
 	a.fd = o->fd;
 	a.len = 100;
-	dqt_run_child(child_one_read, &a, &r, sizeof(r));
+	dqt_run_child(dqt_child_read, &a, &r, sizeof(r));
 	ATF_REQUIRE_EQ(100, r.rv);
 	pfd.fd = obs;
 	pfd.events = POLLIN;

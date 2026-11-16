@@ -693,13 +693,6 @@ child_depth(void *arg, void *result)
 }
 
 static bool
-pred_current(const struct dq_stats *st, uintptr_t n)
-{
-
-	return (st->ds_queue_current >= n);
-}
-
-static bool
 pred_dropped(const struct dq_stats *st, uintptr_t n)
 {
 
@@ -726,7 +719,7 @@ ATF_TC_BODY(depth_exhausted, tc)
 	dqt_sync_init(&a.s);
 	dqt_pause(&c);
 	dqt_attach_spawn(&c, &ch, child_depth, &a);
-	ATF_REQUIRE(dqt_wait_stats(&c, pred_current, 1, DQT_WAIT_MS));
+	ATF_REQUIRE(dqt_wait_stats(&c, dqt_pred_current, 1, DQT_WAIT_MS));
 	dqt_sync_post(a.s.tochild[1]);
 	/* The child's own lookup is refused at once (a drop). */
 	ATF_CHECK(dqt_wait_stats(&c, pred_dropped, 1, DQT_WAIT_MS));

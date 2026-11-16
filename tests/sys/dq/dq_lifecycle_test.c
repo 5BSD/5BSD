@@ -33,23 +33,6 @@
 static unsigned char data[DATA_LEN];
 static char oracle_path[DQT_PATH_MAX];
 
-struct one_read_arg {
-	int		 fd;
-	size_t		 len;
-};
-
-/* read(2) once; the pipe carries the result. */
-static void
-child_one_read(void *arg, void *result)
-{
-	struct one_read_arg *a = arg;
-	struct dqt_rr *r = result;
-	unsigned char buf[4096];
-
-	r->rv = read(a->fd, buf, MIN(a->len, sizeof(buf)));
-	r->err = r->rv == -1 ? errno : 0;
-}
-
 /*
  * The object is still referenced: it is still counted live (a CLOSE is
  * posted only after it retires), and no CLOSE was due before the fence's.
@@ -82,7 +65,7 @@ ATF_TC_BODY(close_once, tc)
 	struct dqt_object *o;
 	struct dq_policy pol;
 	struct dq_stats2 st;
-	struct one_read_arg a;
+	struct dqt_read_arg a;
 	struct dqt_rr r;
 	char link[64];
 	int d, oracle, reopen;
@@ -106,7 +89,7 @@ ATF_TC_BODY(close_once, tc)
 	/* A child's copies go away at its exit: no CLOSE yet. */
 	a.fd = o->fd;
 	a.len = 100;
-	dqt_run_child(child_one_read, &a, &r, sizeof(r));
+	dqt_run_child(dqt_child_read, &a, &r, sizeof(r));
 	ATF_CHECK_EQ(100, r.rv);
 	dqt_lock(&c);
 	ATF_CHECK_EQ(1, c.events[DQ_OP_READ]);
@@ -206,7 +189,7 @@ ATF_TC_BODY(revoke, tc)
 {
 	struct dqt_ctl c;
 	struct dqt_object *o;
-	struct one_read_arg a;
+	struct dqt_read_arg a;
 	struct dqt_rr r;
 	struct kevent kev[3], out[3];
 	struct timespec zero = { 0, 0 };
@@ -236,14 +219,14 @@ ATF_TC_BODY(revoke, tc)
 
 	a.fd = o->fd;
 	a.len = 100;
-	dqt_run_child(child_one_read, &a, &r, sizeof(r));
+	dqt_run_child(dqt_child_read, &a, &r, sizeof(r));
 	ATF_CHECK_EQ(100, r.rv);
 
 	ATF_REQUIRE_EQ(0, dq_revoke(c.q, o->id));
 	/* Idempotent: the object is still in the table, already revoked. */
 	ATF_CHECK_EQ(0, dq_revoke(c.q, o->id));
 
-	dqt_run_child(child_one_read, &a, &r, sizeof(r));
+	dqt_run_child(dqt_child_read, &a, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.rv);
 	ATF_CHECK_EQ(EIO, r.err);
 	dqt_lock(&c);
@@ -306,7 +289,7 @@ ATF_TC_BODY(revoke_wakes_waiter, tc)
 {
 	struct dqt_ctl c;
 	struct dqt_object *o;
-	struct one_read_arg a;
+	struct dqt_read_arg a;
 	struct dqt_child ch;
 	struct dqt_rr r;
 	struct dq_stats st;
@@ -321,7 +304,7 @@ ATF_TC_BODY(revoke_wakes_waiter, tc)
 
 	a.fd = o->fd;
 	a.len = 100;
-	dqt_spawn(&ch, child_one_read, &a);
+	dqt_spawn(&ch, dqt_child_read, &a);
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
 	ATF_REQUIRE_EQ(0, dq_revoke(c.q, o->id));
 	dqt_collect(&ch, &r, sizeof(r));

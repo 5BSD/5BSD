@@ -31,22 +31,6 @@
 static unsigned char data[DATA_LEN];
 static char oracle_path[DQT_PATH_MAX];
 
-struct one_read_arg {
-	int		 fd;
-	size_t		 len;
-};
-
-static void
-child_one_read(void *arg, void *result)
-{
-	struct one_read_arg *a = arg;
-	struct dqt_rr *r = result;
-	unsigned char buf[4096];
-
-	r->rv = read(a->fd, buf, MIN(a->len, sizeof(buf)));
-	r->err = r->rv == -1 ? errno : 0;
-}
-
 /* Read observer records until n have arrived or the wait is over. */
 static int
 collect(int obs, char *buf, size_t len, const struct dq_event **recs, int n,
@@ -92,7 +76,7 @@ ATF_TC_BODY(sees_events_and_replies, tc)
 {
 	struct dqt_ctl c;
 	struct dqt_object *o;
-	struct one_read_arg a;
+	struct dqt_read_arg a;
 	struct dqt_rr r;
 	const struct dq_event *recs[4];
 	const struct dq_read_body *rb;
@@ -116,7 +100,7 @@ ATF_TC_BODY(sees_events_and_replies, tc)
 
 	a.fd = o->fd;
 	a.len = 100;
-	dqt_run_child(child_one_read, &a, &r, sizeof(r));
+	dqt_run_child(dqt_child_read, &a, &r, sizeof(r));
 	ATF_REQUIRE_EQ(100, r.rv);
 
 	buf = malloc(OBS_BUFSIZE);
@@ -264,7 +248,7 @@ ATF_TC_BODY(read_rules, tc)
 {
 	struct dqt_ctl c;
 	struct dqt_object *o;
-	struct one_read_arg a;
+	struct dqt_read_arg a;
 	struct dqt_rr r;
 	struct kevent kev;
 	struct timespec zero = { 0, 0 };
@@ -296,7 +280,7 @@ ATF_TC_BODY(read_rules, tc)
 
 	a.fd = o->fd;
 	a.len = 100;
-	dqt_run_child(child_one_read, &a, &r, sizeof(r));
+	dqt_run_child(dqt_child_read, &a, &r, sizeof(r));
 	ATF_REQUIRE_EQ(100, r.rv);
 	/* Two records wait: a 120-byte READ copy and a 120-byte REPLY. */
 	pfd.revents = 0;
@@ -319,7 +303,7 @@ ATF_TC_BODY(read_rules, tc)
 	ATF_CHECK_EQ(EAGAIN, errno);
 
 	/* The queue goes away: the observer drains, then reads end of file. */
-	dqt_run_child(child_one_read, &a, &r, sizeof(r));
+	dqt_run_child(dqt_child_read, &a, &r, sizeof(r));
 	ATF_REQUIRE_EQ(100, r.rv);
 	dqt_close_queue(&c);
 	pfd.revents = 0;
@@ -535,7 +519,7 @@ ATF_TC_BODY(get_stats2, tc)
 {
 	struct dqt_ctl c;
 	struct dqt_object *o;
-	struct one_read_arg a;
+	struct dqt_read_arg a;
 	struct dqt_rr r;
 	struct dq_stats st;
 	struct dq_stats2 s2, o2;
@@ -550,7 +534,7 @@ ATF_TC_BODY(get_stats2, tc)
 	ATF_REQUIRE(obs != -1);
 	a.fd = o->fd;
 	a.len = 100;
-	dqt_run_child(child_one_read, &a, &r, sizeof(r));
+	dqt_run_child(dqt_child_read, &a, &r, sizeof(r));
 	ATF_REQUIRE_EQ(100, r.rv);
 	ATF_REQUIRE_EQ(0, dq_push_vnode_note(c.q, o->id, NOTE_ATTRIB));
 

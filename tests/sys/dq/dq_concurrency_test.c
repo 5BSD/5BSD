@@ -53,21 +53,6 @@ inflight_is_zero(const struct dq_stats *st, uintptr_t unused __unused)
 	return (st->ds_inflight == 0 && st->ds_queue_current == 0);
 }
 
-static uint64_t
-digest(const void *p, size_t len)
-{
-	const unsigned char *b = p;
-	uint64_t h;
-	size_t i;
-
-	h = 14695981039346656037ULL;
-	for (i = 0; i < len; i++) {
-		h ^= b[i];
-		h *= 1099511628211ULL;
-	}
-	return (h);
-}
-
 struct thr_arg {
 	int		 fd;
 	off_t		 offset;
@@ -90,7 +75,7 @@ pread_thread(void *arg)
 		t->rv = pread(t->fd, buf, t->len, t->offset);
 		t->err = t->rv == -1 ? errno : 0;
 		if (t->rv > 0)
-			t->hash = digest(buf, (size_t)t->rv);
+			t->hash = dqt_digest(buf, (size_t)t->rv);
 	}
 	free(buf);
 	return (NULL);
@@ -240,7 +225,7 @@ ATF_TC_BODY(threads_replies_reversed, tc)
 	for (i = 0; i < NTHREADS; i++) {
 		ATF_CHECK_EQ_MSG(4096, r.rv[i], "thread %d: %ld (errno %d)", i,
 		    r.rv[i], r.err[i]);
-		ATF_CHECK_EQ_MSG(digest(data + i * (DATA_LEN / NTHREADS), 4096),
+		ATF_CHECK_EQ_MSG(dqt_digest(data + i * (DATA_LEN / NTHREADS), 4096),
 		    r.hash[i], "thread %d got the wrong bytes", i);
 	}
 	dqt_lock(&c);
@@ -739,7 +724,7 @@ ATF_TC_BODY(two_readers, tc)
 	dqt_run_child(child_threads, &a, &r, sizeof(r));
 	for (i = 0; i < NTHREADS; i++) {
 		ATF_CHECK_EQ(4096, r.rv[i]);
-		ATF_CHECK_EQ(digest(data + i * (DATA_LEN / NTHREADS), 4096),
+		ATF_CHECK_EQ(dqt_digest(data + i * (DATA_LEN / NTHREADS), 4096),
 		    r.hash[i]);
 	}
 	dqt_stop(&c);
