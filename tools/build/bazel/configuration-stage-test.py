@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """A self-consistent native stage must still match Make's config bytes."""
 import hashlib,json,tempfile,unittest
 from pathlib import Path

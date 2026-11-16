@@ -2,6 +2,8 @@
 #-
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Persist the pool selected by guided ZFS into bsdfilesystem's packaged policy.
 
 : ${BSDINSTALL_CHROOT=/mnt}

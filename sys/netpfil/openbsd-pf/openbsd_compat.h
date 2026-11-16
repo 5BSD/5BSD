@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The 5BSD Project
+ * Copyright (c) 2026 Kory Heard
  *
  * 5BSD compatibility layer for OpenBSD PF (contrib/openbsd-pf/sys/net).
  *

@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Find slow PostgreSQL queries by measuring query duration.
  * Requires PostgreSQL built with --enable-dtrace.

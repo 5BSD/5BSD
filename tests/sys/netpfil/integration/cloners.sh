@@ -1,6 +1,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # 5BSD seam tests: pf's cloned interfaces in VNET jails.
 #
 # pflog(4), pfsync(4) and pflow(4) are interface cloners in pf.ko.  Unlike

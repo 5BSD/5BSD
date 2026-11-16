@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual io.read binding with a native Lua 5.4 library; file I/O injected."""
 import argparse
 from pathlib import Path

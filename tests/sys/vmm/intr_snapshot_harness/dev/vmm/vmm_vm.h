@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Userspace harness shadow of <dev/vmm/vmm_vm.h>: only the declarations
  * the interrupt/timer device models consume.
  */

@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Stage current daemon binaries and .ucl bundles for private OES admission."""
 import hashlib
 import json

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Software identity: wire and identity
  * contract between the kernel stamp, libchannel, libservice, and SwitchBoard.
  *

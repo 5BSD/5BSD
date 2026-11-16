@@ -1,4 +1,5 @@
 /*- SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * libsysctlcmp reply validation against a scripted bsd.sysctl.v1 server over
  * a real capability channel: semantic strings must be NUL-terminated and

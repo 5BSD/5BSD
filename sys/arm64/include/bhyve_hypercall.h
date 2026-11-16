@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Guest-side 5BSD HyperTrace HVC ABI.  These vendor hypervisor service calls
  * are private to a matched 5BSD guest and bhyve host.
  */

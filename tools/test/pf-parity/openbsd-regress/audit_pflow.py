@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check pflow exports against saved loopback packets, without changing fixtures.
 
 Supports the DLT_NULL (5BSD) and DLT_LOOP=12 (OpenBSD) captures produced by

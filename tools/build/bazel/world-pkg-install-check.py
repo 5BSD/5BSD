@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """VM-only real pkg installation and state-preserving reinstall verification."""
 import argparse
 import hashlib

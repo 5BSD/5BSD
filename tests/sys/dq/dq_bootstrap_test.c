@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * BS-0: pins of what a dq-attached process sees of its service lookup
  * route today, written before the bootstrap slices (BS-1 onward) put the
  * supervisor in front of it.  Every case records what the kernel and the

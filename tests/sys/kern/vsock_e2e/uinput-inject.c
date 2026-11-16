@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Create a deterministic host evdev device for the bhyve virtio-input
  * end-to-end test.  The device stays alive while bhyve has it open, injects
  * one key frame on command, and verifies the guest's LED status response.

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual libsa seek arithmetic with native bounded filesystem-state adapters."""
 from pathlib import Path
 import subprocess

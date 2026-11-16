@@ -2,6 +2,8 @@
 #-
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Verify the platform loader defaults without altering the running boot
 # environment.  Installer and image builders intentionally rely on this single
 # source of truth rather than appending per-image overrides.

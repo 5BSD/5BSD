@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Plane tests for BSDPower(8)'s per-session request handler.
  *
  * A real capability channel is created through /dev/mac_capability; BSDPower's

@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Boot software-authority kernel fixtures in a disposable amd64 QEMU guest."""
 from pathlib import Path
 from input_evidence import snapshot_inputs, digest

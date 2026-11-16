@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Local DTrace execution tests; called on host and in each HyperTrace guest.
 # Each case must return successfully AND produce its own positive count.
 set -u

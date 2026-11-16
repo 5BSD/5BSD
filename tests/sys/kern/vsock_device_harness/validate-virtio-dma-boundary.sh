@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Verify the common VirtIO DMA boundary remains the only queue/descriptor
 # mapping path, so ACCESS_PLATFORM cannot be bypassed by a device callback.
 # TEST-ANCHOR: common-dma-translator

@@ -4,7 +4,7 @@
  * Copyright (c) 2001 Daniel Hartmeier
  * Copyright (c) 2002,2003 Henning Brauer
  * Copyright (c) 2021 Rubicon Communications, LLC (Netgate)
- * Copyright (c) 2026 The 5BSD Project
+ * Copyright (c) 2026 Kory Heard
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without

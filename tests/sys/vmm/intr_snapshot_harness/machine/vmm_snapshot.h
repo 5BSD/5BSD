@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Relay to the tree's real snapshot metadata header so the harness tests
  * the exact current wire macros and types.
  */

@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Explicit pkgbase deployment to a new root or inactive boot environment.
 
 Never activates a boot environment or modifies the running root's pkg database.

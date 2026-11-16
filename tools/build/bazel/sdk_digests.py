@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Bounded full-content SHA-256 verification; every selected file is read."""
 from concurrent.futures import ThreadPoolExecutor
 import hashlib

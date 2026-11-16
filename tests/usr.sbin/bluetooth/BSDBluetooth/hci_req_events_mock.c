@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Preserve the command-response seam of the existing encoder fixtures. */
 #define L2CAP_SOCKET_CHECKED
 #include <bluetooth.h>

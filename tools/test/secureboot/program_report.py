@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Report observed VM behavior without turning image inclusion into a pass."""
 import re
 

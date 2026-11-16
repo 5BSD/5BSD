@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Owned disposable-guest probe. No host execution or external network access.
 set -eu
 openssl=$1 certctl=$2 fetch=$3 bundle=$4 localdir=$5 port=$6 user=$7 uid=$8 work=$9

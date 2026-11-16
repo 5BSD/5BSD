@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Shared helpers of the path-syscall regression tests.
  *
  * These programs try to break the behaviour of FreeBSD's path system

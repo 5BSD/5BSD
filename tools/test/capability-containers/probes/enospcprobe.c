@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * enospcprobe: drives the TXN_BEGIN clone-failure cleanup path.  Paired with a
  * fault-injection build of bsdfilesystem (BSDFILESYSTEM_FAULT_TXN_CLONE in the
  * unit environment), every TXN_BEGIN takes its base snapshot and then fails the

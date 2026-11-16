@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Link-only stubs for virtio_iommu_snapshot_test.c: as
  * virtio_iommu_post_init_stubs.c, without the snapshot serializer, which the

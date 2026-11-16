@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Independent PC4 bond-record contract and Core SMP field bounds.
  * PC4/BREC is a blued interchange format, not a Bluetooth SIG format.
  */

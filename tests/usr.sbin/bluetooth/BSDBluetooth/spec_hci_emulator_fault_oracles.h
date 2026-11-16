@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Test-only HCI emulator oracles from Bluetooth Core 6.3 Vol 4 Part A
  * §2/Table 2.1 and Vol 4 Part E §§5.4.2, 7.8.7, 7.8.9, 7.8.11-7.8.12.
  * No production headers are included.

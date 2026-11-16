@@ -1,5 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
  */
 
 #ifndef _VMM_INTEL_VMX_NESTED_CONTROL_CAPABILITIES_INTEL_H_

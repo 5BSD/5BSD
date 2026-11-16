@@ -1,4 +1,8 @@
 #!/usr/bin/env atf-sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
 
 atf_test_case reject_ilp32
 reject_ilp32_head()

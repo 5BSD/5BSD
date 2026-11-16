@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # vsock end-to-end driver for a LINUX guest (companion to run.sh, which drives a
 # 5BSD guest).  The FreeBSD guest tools (vsock-pipe) do not build on Linux, so
 # the guest side is driven by gvsock.py (AF_VSOCK via python3, shipped here);

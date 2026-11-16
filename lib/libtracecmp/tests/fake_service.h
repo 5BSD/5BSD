@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef _TRACECMP_FAKE_SERVICE_H_
 #define _TRACECMP_FAKE_SERVICE_H_
 /* Provider counters the fake service reports in a Stats reply. */

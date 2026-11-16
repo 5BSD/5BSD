@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Original lib/libz/Makefile version expression and pkg-config substitutions.
 set -eu
 [ "$#" -eq 2 ] || exit 64

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Input-boundary tests; real compiler/Make behavior is covered by qualify.py."""
 import hashlib
 import importlib.util

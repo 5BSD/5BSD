@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Helper for shield tests.  Exec'd to get a different nonce, then
  * attempts an operation on a target pid.  Exits 0 if the operation
  * was denied (EACCES/ESRCH), 1 if it succeeded (shield didn't work),

@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Literal substitution preserves punctuation in encoding variable values.
 function replace(text, token, value,    position, result) {
     result = ""

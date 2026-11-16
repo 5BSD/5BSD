@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Compare config's selected-input API with independently expanded Make OBJS.
 
 This migration qualification invokes Make only as an independent oracle.

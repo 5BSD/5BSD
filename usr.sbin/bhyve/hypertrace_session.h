@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef _BHYVE_HYPERTRACE_SESSION_H_
 #define _BHYVE_HYPERTRACE_SESSION_H_
 #include <sys/types.h>

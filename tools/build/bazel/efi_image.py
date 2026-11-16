@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Apply the maintained EFI nm/elfcopy recipe using explicit tools and runtimes."""
 import argparse
 from pathlib import Path

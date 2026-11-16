@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef _OES_BROKER_PROTOCOL_H_
 #define _OES_BROKER_PROTOCOL_H_
 

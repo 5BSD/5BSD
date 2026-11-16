@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * OES file events on a served descriptor (D89): a NOTIFY client sees
  * FILE_READ, FILE_STAT and FILE_CLOSE carrying the presented identity
  * (OES_FILE_META_PRESENTED), and one DQ_REPLY per controller reply with a

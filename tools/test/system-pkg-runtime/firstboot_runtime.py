@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise the private fixture's declared firstboot transitions in the real guest."""
 import hashlib
 import io

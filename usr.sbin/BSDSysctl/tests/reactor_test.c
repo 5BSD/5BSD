@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * The production BSDSysctl reactor (sessions_admit/sessions_wait over
  * fidl_bsd_connections_wait) with real capability channels and real

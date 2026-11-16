@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Userspace harness shadow of the kernel <sys/sysctl.h>.  The vmm device
  * models register read-only tunables at load time; in the rootless harness
  * those declarations must compile to nothing.

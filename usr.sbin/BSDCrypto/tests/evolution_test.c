@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Schema evolution for system.Crypto (evolve:1/evolve:2 pairing).  next_peer
  * is built from evolution/cryptocmp_next.fidl at bsd:2, which adds a method to

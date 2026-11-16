@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Run only in a disposable BSD guest with /proc and /sys mounted.
 set -eu
 cp /root/linux_filesystems /tmp/fsprobe

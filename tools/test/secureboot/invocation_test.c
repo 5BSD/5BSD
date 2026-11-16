@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Real-kernel fixture: the issuer is PID 1, with no production test bypass. */
 #include <sys/types.h>
 #include <sys/cap_authority.h>

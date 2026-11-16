@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check selected ports' firmware placement against base loader/devd contracts.
 
 Reads make metadata only; does not build packages, load firmware or qualify devices.

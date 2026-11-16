@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Tracee for linux_trace_test: exercises each new Linuxulator syscall a
  * known number of times so truss/kdump/DTrace output can be asserted.

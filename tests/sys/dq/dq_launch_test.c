@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * LA-0: pins of who may DQ_IOC_ATTACH a process today, written before the
  * launch/attach slices (LA-1k, LA-1, LA-2) change it.  Every case records
  * what the kernel does now and names the slice expected to change it; none

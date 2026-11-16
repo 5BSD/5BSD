@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # amd64 Linux64 peer-name getter and process ptrace event regression gate.
 set -u
 sha256 /root/linux_socket_peername /root/linux_ptrace_events /root/peer_caps /root/peer_caps_probe /root/ptrace_exit_native || exit 1

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * The system.Device client against a scripted bsd.device.v1 server over a
  * real capability channel (service_open is faked to hand out a fresh
  * channel to a forked server).  Covers reply validation, session reuse,

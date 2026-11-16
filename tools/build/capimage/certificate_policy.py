@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Compile explicit certificate policy in a reconciled, private builder root.
 
 The caller authenticates policy and packages before a protected release. This

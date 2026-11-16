@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 from pathlib import Path
 import json,subprocess,shlex,os,concurrent.futures
 S=Path('/usr/src');O=Path('/usr/obj/5bsd-dtrace-seventh-validation');inv=json.loads((S/'tools/test/system-tracing/coverage-seventh.json').read_text());T=O/'tap';T.mkdir(exist_ok=True)

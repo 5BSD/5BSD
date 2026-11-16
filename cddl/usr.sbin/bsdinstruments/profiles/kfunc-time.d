@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Measure time spent in a kernel function.
  * Usage: bsdinstruments watch kfunc-time --param func=<kernel-function>

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Image policy for software authority: the short-lived rc application and the
  * lasting grants of adopted rc.d services.  Logins issue no grants.

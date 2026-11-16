@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Model tests for the guest FPU/XSAVE snapshot record
  * (VMM_SNAPSHOT_SECTION_VCPU_X86_FPU): round trip, truncation, version,
  * and capability-mismatch rejection, plus the kernel-common transaction's

@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Read-only verification of an unpacked signed system using native host tools.
 set -eu
 usage() { echo 'usage: verify-stage.sh -r root -p trusted-code-public.pem' >&2; exit 64; }

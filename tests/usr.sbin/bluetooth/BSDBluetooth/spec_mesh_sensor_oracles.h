@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Test-only Mesh Sensor model oracles.  Values are transcribed from Mesh
  * Model 1.1 Tables 4.1, 4.11, 4.19-4.36 and Bluetooth Assigned Numbers;
  * this header deliberately has no production includes.

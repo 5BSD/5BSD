@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check maintained archive/link policies in emitted graph; not Bazel analysis."""
 import argparse,ast,importlib.util,json,shlex,tempfile,unittest
 from pathlib import Path

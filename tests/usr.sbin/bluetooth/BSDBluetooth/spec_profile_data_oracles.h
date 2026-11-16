@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Independent Core 6.3 ATT/GATT and SIG profile assignments for profile data.
  * No production Bluetooth header is included.
  */

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Private 5BSD VirtIO-net packet provenance extension.  This is deliberately
  * negotiated through the control queue: the standard network feature bitmap
  * has no vendor-reserved bit.  Other devices reply VIRTIO_NET_ERR and retain

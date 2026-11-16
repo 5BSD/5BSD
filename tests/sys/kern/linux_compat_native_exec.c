@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Native privilege-drop fixture; execute only inside a disposable test VM. */
 #include <sys/types.h>
 #include <err.h>

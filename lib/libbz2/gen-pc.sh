@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # template output sed mv rm prefix exec_prefix libdir sharedlibdir includedir version
 set -eu
 [ "$#" -eq 11 ] || exit 64

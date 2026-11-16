@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The 5BSD Project
+ * Copyright (c) 2026 Kory Heard
  *
  * OpenBSD tcpdump(8) (contrib/openbsd-pf/usr.sbin/tcpdump) on 5BSD:
  * force-included before every source file.  It adds the OpenBSD names the

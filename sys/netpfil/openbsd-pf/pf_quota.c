@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The 5BSD Project
+ * Copyright (c) 2026 Kory Heard
  *
  * Per-VNET pf resource quotas.
  *
@@ -424,7 +424,7 @@ pf_quota_setlimit(struct pfioc_limit *pl)
 /* ------------------------------------------------------------------ */
 
 SYSCTL_DECL(_net);
-static SYSCTL_NODE(_net, OID_AUTO, pf, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
+SYSCTL_NODE(_net, OID_AUTO, pf, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
     "pf(4)");
 
 /* A host-only percentage (arg2: the maximum). */

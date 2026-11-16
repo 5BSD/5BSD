@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Linux64 SO_COOKIE oracle; execute only in disposable guests. */
 #include "linux_test.h"
 #define COOKIE 57

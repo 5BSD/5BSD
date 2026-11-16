@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Linux fcntl write hints/created query and Unix SCM_PIDFD. */
 #include "linux_test.h"
 

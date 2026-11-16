@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # The dq(4) test option and publication (design D346, D352).
 #
 # Everything here is sh: the cases run where no Python exists.  The

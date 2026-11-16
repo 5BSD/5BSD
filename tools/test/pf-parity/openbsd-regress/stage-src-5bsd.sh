@@ -1,6 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Stage the imported OpenBSD tree on a disposable 5BSD DUT in the upstream
 # layout the regress Makefiles expect (/usr/src/regress, /usr/src/sbin/pfctl,
 # /usr/src/sys/net, ...), plus the pfctl userland compatibility header and

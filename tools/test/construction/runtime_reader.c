@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Read actual DB records directly, with no flat-file or NSS fallback. */
 #include <sys/types.h>
 #include <arpa/inet.h>

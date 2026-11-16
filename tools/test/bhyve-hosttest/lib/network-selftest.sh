@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Unprivileged fixtures only: no host networking changes or VMs.
 set -u
 HT_KIT=$(cd "$(dirname "$0")/.." && pwd -P)

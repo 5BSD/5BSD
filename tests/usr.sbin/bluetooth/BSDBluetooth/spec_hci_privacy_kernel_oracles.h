@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Independent Core 6.3 HCI initiator/privacy and CIS command assignments.
  * No Netgraph or production Bluetooth header is included.
  */

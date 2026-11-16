@@ -1,5 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Independent Bluetooth Core 6.3 LE feature/event-mask oracles.
  * No production Bluetooth header is included.
  */

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Freestanding amd64 Linux syscall test for openat2(2), fchmodat2(2) and
  * execveat(2): no Linux libc or sysroot required.  Exit status identifies

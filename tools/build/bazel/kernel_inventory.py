@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Audit a configured Make kernel's selected link products; never build them.
 
 This is an independent migration audit, not native build-time discovery.

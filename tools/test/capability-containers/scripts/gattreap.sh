@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Container-model proof: blued as a reconcile client.  Units open the daemon
 # over the capability plane (ble_open_plane: their stamped identity reaches
 # blued) and register local GATT services; blued attributes each service's

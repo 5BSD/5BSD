@@ -1,6 +1,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Launch-level verification of the manifest launch-policy keys: what a unit
 # actually observes (or what switchboard actually does) after it is launched.
 #

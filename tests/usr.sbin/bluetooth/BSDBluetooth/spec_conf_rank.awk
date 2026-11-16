@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Rank UNCOVERED normative requirements by risk.
 #
 # Input:  spec_conf_coverage_generated.tsv

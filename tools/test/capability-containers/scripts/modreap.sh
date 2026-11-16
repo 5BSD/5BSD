@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Container-model proof: bsdextension as a reconcile client.  Kernel modules loaded
 # on a bundle's behalf are attributed to the bundle (from the stamped
 # container) and unloaded once the bundle is gone -- but only the modules

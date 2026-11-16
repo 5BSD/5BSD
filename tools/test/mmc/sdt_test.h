@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Capture SDT arguments in production-function fixtures, without DTrace. */
 #ifndef MMC_SDT_TEST_H
 #define MMC_SDT_TEST_H

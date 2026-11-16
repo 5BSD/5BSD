@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check generator metadata boundaries, including unmodeled outputs."""
 import tempfile,unittest
 from pathlib import Path

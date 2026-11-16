@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Native controller for Linux64 event isolation. Disposable BSD VMs only. */
 #include <sys/param.h>
 #include <sys/jail.h>

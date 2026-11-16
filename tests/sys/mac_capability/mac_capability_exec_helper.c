@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Exec helper for mac_capability tests.  Being exec'd rotates the process
  * nonce, which is the whole point — callers fork+exec this binary
  * so the child runs under a different nonce.

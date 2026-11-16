@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Contracts/context: tools/test/system-tracing/COVERAGE-SIXTH.
  * Elapsed microseconds include blocking and preemption. Pointers are opaque.
  * Start before the workload. Drops or nonlocal exits invalidate pairing.

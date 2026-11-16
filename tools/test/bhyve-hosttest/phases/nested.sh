@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Phase 3: nested virtualization. AMD: 5BSD nested SVM (host gate: loader
 # tunable hw.vmm.svm.nested, 1 by default since fix/devd-nested-ntpd; guest
 # gate: bhyve -o x86.nested_svm=true). Intel: nested VMX exists behind

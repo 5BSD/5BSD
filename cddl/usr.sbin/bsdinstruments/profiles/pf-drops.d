@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * pf drop reasons - every REASON_SET site in pf, with the PFRES_* code
  * and the source location that recorded it, plus blocked packets per

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Compare Bazel programs and static archives with explicit maintained-Make artifacts.
 
 Programs: ELF identity, PIE/interpreter, ordered NEEDED dependencies, hardening, imported and

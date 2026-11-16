@@ -1,5 +1,9 @@
 #!/bin/sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Dead-export gate for the Bluetooth stack.
 #
 # A census of the mesh stack found hundreds of exported symbols that no

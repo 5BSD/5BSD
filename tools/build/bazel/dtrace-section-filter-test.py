@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Verify section-scoped DTrace generation against a captured multi-section action.
 
 This is a bounded build-tool check, not live tracing or a GC integration test.

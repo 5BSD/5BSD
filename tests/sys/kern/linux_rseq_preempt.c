@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Same-CPU scheduler preemption must abort an active Linux rseq section. */
 typedef unsigned long u64;
 typedef unsigned int u32;

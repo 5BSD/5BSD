@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Run only in an explicitly selected disposable guest. Requests guest shutdown.
 set -eu
 if [ "$#" -lt 2 ]; then

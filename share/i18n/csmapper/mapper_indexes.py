@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Preserve the Citrus mapper directory and pivot table formats."""
 import json
 from pathlib import Path

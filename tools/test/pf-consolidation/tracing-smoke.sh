@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Run as root ONLY in a disposable VM; DTrace runs outside the VNET jails.
 set -eu
 [ "${1-}" = "--disposable-vm" ] || { echo 'requires --disposable-vm' >&2; exit 2; }

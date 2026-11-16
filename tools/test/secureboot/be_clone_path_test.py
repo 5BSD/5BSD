@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Clone path boundary checks against the actual libbe helper."""
 from pathlib import Path
 import subprocess

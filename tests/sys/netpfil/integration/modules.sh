@@ -1,6 +1,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # 5BSD seam tests: the capability plane, pf's modules and its rc.d scripts.
 #
 # The capability plane denies kldload(2) after boot: pf and the DTrace

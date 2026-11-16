@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * The system.SystemExtension client over bsd.extension.v1 (extensioncmp.fidl):
  * the process-wide service_ensure_extension(3), service_extension_stat(3) and

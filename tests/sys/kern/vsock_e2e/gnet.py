@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # VIRTIO_ACTIVATION_ASSERTION: indirect-desc-and-rss-control
 # VIRTIO_ACTIVATION_ASSERTION: event-idx-negotiated-and-network-traffic
 """Linux guest verifier for bhyve's disposable virtio-net interface."""

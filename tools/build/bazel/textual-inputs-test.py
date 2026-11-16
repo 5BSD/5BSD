@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Qualify mixed standalone/textually included source action checks."""
 import importlib.util
 from pathlib import Path

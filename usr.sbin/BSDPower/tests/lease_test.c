@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Drive BSDPower's real bsd.power.v1 method handlers directly, with the
  * generated reply functions replaced by recorders, without any ACPI

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Translate declared Make test policy without evaluating arbitrary Lua or shell."""
 import json
 import re

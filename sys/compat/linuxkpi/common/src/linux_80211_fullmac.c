@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* cfg80211 FullMAC station support over net80211. */
 #include <sys/param.h>
 #include <sys/queue.h>

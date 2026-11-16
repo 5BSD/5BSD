@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Run all vsock ATF tests and write results to a file.
 # Usage: ./run_vsock_tests.sh [output_file]
 #

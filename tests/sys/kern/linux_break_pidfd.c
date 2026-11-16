@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /*
  * Adversarial pidfd tests: churn (thousands of spawn/pidfd_open/poll/reap
  * cycles), pid reuse safety, pidfd_getfd racing the target closing the

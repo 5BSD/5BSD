@@ -16,5 +16,7 @@ LDFLAGS.bsdinstruments_unit_test+=	-Wl,--wrap=malloc -Wl,--wrap=calloc \
 
 # Scripted libdtrace, compiled and preloaded by the tests.
 ${PACKAGE}FILES+=	mockdtrace.c
+# list --json for the base profile catalog (base_descriptions).
+${PACKAGE}FILES+=	profile_descriptions.jsonl
 
 .include <bsd.test.mk>

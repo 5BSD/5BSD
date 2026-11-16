@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 terminal_head()
 {
 	atf_set "descr" "Linux terminal input flushing and packet mode"

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef _LINUXKPI_LINUX_CLK_H_
 #define _LINUXKPI_LINUX_CLK_H_
 #include <linux/device.h>

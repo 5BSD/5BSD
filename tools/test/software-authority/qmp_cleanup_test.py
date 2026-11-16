@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise runner startup/cleanup code without executing setup or any VM.
 
 Some runners execute setup at module scope. Extract only their Popen-through-try

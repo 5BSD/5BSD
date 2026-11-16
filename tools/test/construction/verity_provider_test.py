@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Provider lifecycle/control-flow tests with injected kernel operations.
 
 Executes actual provider methods and constructor, not a live GEOM graph.

@@ -1,3 +1,8 @@
+--
+-- SPDX-License-Identifier: BSD-2-Clause
+--
+-- Copyright (c) 2026 Kory Heard
+--
 -- Actual config.lua parsing; loader and I/O boundaries are injected.
 local closed, reject, failread, text = false, false, false, nil
 local values = {}

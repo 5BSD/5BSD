@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise actual base binaries on disposable fixtures, with tracing on/off."""
 import gzip,io,json,os,subprocess,tarfile,tempfile
 from pathlib import Path

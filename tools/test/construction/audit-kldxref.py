@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check real module-hints error handling; a failing gate exits nonzero.
 
 Use explicit matching kldxref/module inputs. This runs on a trusted builder,

@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * TrustedZFS dataset handles: capability file descriptors over the ZFS
  * management plane.  See docs/trustedzfs-design.md.
  *

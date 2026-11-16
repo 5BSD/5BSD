@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * EXTERNAL REFERENCE ORACLE: ATT_READ_BLOB_REQ response selection, and the
  * status of Attribute Not Long (0x0B) in the ecosystem.

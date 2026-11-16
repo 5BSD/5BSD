@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Generate MAC hook argument metadata from the policy ABI; --check checks drift."""
 import argparse,json,re
 from pathlib import Path

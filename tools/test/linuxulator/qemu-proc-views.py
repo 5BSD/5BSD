@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Run the Linux64 proc/topology guest plus the complete filesystem inventory."""
 import argparse
 import json

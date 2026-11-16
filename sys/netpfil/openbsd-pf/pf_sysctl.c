@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The 5BSD Project
+ * Copyright (c) 2026 Kory Heard
  *
  * sysctl(9) nodes for the statistics OpenBSD exports through its sysctl
  * MIBs (net.inet.pfsync.stats, net.pflow.stats).  5BSD names them

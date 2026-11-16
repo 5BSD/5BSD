@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # UNIX socket diagnostics, disposable VM only.
 set -eu
 trap 'rc=$?; echo UNIX_DIAG_EXIT "$rc"; /sbin/halt -p' EXIT

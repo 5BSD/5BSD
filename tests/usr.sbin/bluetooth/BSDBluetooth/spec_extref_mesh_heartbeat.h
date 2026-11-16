@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * EXTERNAL REFERENCE ORACLE: Bluetooth Mesh Heartbeat -- the two DIFFERENT
  * logarithmic field transforms, Table 4.1, Table 4.323, and the field-zeroing
  * and remaining-versus-configured reporting rules of the four Config

@@ -2,6 +2,8 @@
 #-
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Build a clean source-tree VM image and verify that it boots with Capsule as
 # PID 1.  This is intentionally a root-only integration test.
 

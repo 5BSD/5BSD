@@ -1,4 +1,10 @@
 #!/usr/sbin/dtrace -s
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * hogp.d - trace HID-over-GATT (HOGP) flow in blued: report-map parse,
  * report classification, protocol-mode selection, CCCD subscribe, and the

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Bounded DER framing tests; this does not validate X.509 certificate semantics."""
 from pathlib import Path
 import subprocess

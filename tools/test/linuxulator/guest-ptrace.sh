@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # amd64-only register contracts; invoked by the isolated guest gate.
 set -u
 mkdir -p /proc || exit 1

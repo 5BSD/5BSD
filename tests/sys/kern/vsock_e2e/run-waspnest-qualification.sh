@@ -1,5 +1,9 @@
 #!/bin/sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Run the complete WASPNest VirtIO qualification gate.  virtio-lab owns
 # per-case logs, resumability, cleanup, collision-free VM allocation, and the
 # machine-readable result summary under WORKDIR.

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause
+// Copyright (c) 2026 Kory Heard
 // Regression coverage for the native FIDL compiler port.
 #include <gtest/gtest.h>
 #include "tools/fidl/fidlc/src/lexer.h"

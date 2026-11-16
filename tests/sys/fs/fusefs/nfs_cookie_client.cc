@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Wire decoder checks: no mounts, servers or root privileges required. */
 #include "nfs_cookie_client.hh"
 #include <cstdio>

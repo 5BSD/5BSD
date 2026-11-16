@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Syntax tests never open a control socket or change firewall/shaper state.
 
 atf_test_case syntax

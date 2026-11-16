@@ -1,6 +1,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # Service lifecycle tests for switchboard.
 #
 # Ported from capsule_stress_test.sh and capsule_svc_test.sh for the

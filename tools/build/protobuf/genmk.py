@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Emit the source/header list blocks of the 5BSD protobuf/abseil/nghttp2
 Makefiles from pb-vendor/lists.json.  The blocks are pasted between
 '# BEGIN generated' / '# END generated' markers so the rest of each

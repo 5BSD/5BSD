@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* Controlled generator input; never an installed socket ABI. */
 #define AF_UNSPEC 0
 #define AF_INET 2

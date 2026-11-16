@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Contracts and limits: tools/test/system-tracing/COVERAGE-FOURTH.
  * Durations are elapsed microseconds, including blocking and callbacks.
  * Identities are never dereferenced. Start tracing before the workload.

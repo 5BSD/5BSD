@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Provision initial state in a new ZFS child, in an exclusive offline builder.
 
 No pool creation, recursive dataset creation, existing-state updates, signing,

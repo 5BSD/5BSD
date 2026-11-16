@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * EXTERNAL REFERENCE ORACLE: isochronous parameter ranges for the HCI LE
  * isochronous commands, and specifically the Retransmission Number (RTN)

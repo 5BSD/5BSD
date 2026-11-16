@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Qualify an explicit selected system database in a disposable VM, not OS boot."""
 import argparse
 import importlib.util

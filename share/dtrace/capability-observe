@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Observe one capability daemon without changing its policy or workload.
 set -eu
 usage() { echo 'usage: capability-observe DAEMON PID [SECONDS=30]' >&2; }

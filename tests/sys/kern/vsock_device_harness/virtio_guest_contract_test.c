@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /* Tests for transport-independent FreeBSD guest VirtIO contracts. */
 #include <sys/types.h>
 

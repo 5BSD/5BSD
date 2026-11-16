@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * EXTERNAL REFERENCE ORACLE: Bluetooth Mesh network-layer security material
  * selection -- the three k2 credential families, the inbound-to-outbound
  * credential rule for relayed PDUs, the fixed group destination conditions of

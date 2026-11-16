@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The FreeBSD Foundation
+ * Copyright (c) 2026 Kory Heard
  *
  * Guest driver for the QEMU/bhyve "pvpanic" paravirtual crash-notification
  * device.  The device is an LPC/ISA I/O port (default 0x505, length 1) that a

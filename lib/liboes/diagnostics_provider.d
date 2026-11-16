@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 provider oesclient {
 	probe batch__read(int64_t a0, int a1);
 	probe buffer__corrupt(uint64_t a0, uint64_t a1);

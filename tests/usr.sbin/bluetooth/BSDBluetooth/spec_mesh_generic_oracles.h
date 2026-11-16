@@ -1,5 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Independent Bluetooth Mesh Model 1.1.1 Generic-model oracles.
  *
  * No production header is included.  Message layouts and states are from

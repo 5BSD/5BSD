@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef SERVICE_LOOKUP_IDENTITY_H
 #define SERVICE_LOOKUP_IDENTITY_H
 #include <sys/capsicum.h>

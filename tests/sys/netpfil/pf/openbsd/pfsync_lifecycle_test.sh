@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Exercise the OpenBSD hook adapter when FreeBSD marks a syncdev dying
 # before notifying its consumers.  Run under INVARIANTS/WITNESS and malloc
 # trash checking; absence of jails alone does not prove callback retirement.

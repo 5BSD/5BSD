@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Export native amd64 libmd driver inputs from the matching maintained Make profile.
 
 No recipes are scraped or executed. ATF harness generation,

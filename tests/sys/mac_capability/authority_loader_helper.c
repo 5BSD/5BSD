@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Dynamic-loader boundary fixture, launched only in the isolated test VM. */
 #include <sys/types.h>
 #include <sys/cap_authority.h>

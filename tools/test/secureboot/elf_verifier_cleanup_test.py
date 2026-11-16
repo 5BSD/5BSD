@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Actual ELF finalization blocks with injected verifier ownership operations."""
 from pathlib import Path
 import re

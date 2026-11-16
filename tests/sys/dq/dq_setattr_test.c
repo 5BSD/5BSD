@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Attributes (D96, N4): fchmod, fchown, futimens, fchflags and ftruncate on
  * a served file post SETATTR after the DAC and privilege checks a vnode
  * applies, and dq_serve_file() applies the masked fields to a backing file.

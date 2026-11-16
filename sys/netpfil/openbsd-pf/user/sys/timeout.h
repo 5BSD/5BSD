@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The 5BSD Project
+ * Copyright (c) 2026 Kory Heard
  *
  * OpenBSD <sys/timeout.h> for userland: struct timeout is embedded in
  * kernel-only <net/pfvar.h> structures; userland sees an opaque object.

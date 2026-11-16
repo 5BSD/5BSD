@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+
 """Guest-side, device-specific checks for the bhyve non-VirtIO lab.
 
 The runner passes the fixed PCI address used by the reviewed VM topology.  We

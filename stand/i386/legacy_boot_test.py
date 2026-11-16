@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Check real generated BIOS/BTX format and input ABI; never execute an image."""
 import os
 from pathlib import Path

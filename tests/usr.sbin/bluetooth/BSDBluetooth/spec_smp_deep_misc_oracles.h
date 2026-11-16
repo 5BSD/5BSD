@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * Test-only SMP wire oracles from Bluetooth Core 6.3 Vol 3 Part H:
  * §§3.5.1-3.5.5 and §3.5.8, including Tables 3.4, 3.5, and 3.7.
  * No production headers are included.

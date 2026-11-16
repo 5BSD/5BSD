@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Real jailed certificate planning/construction from the complete package corpus."""
 import hashlib
 import io

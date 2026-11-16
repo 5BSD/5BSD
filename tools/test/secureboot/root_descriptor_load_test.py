@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Exercise actual bounded descriptor reader; verifier and arch I/O are injected."""
 from pathlib import Path
 import subprocess

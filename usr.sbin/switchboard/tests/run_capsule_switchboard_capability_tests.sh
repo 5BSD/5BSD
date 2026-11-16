@@ -1,5 +1,9 @@
 #!/bin/sh
 #
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Run the focused Capsule/switchboard capability suite under Kyua.  Kyua owns
 # test isolation, timeout enforcement, cleanup phases, and result reporting.
 #

@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Disposable amd64 guests only: creates and removes a guest loopback interface.
 set -eu
 trap 'rc=$?; echo UEVENT_EXIT "$rc"; /sbin/halt -p' EXIT

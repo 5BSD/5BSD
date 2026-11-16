@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2026 The FreeBSD Foundation
+ * Copyright (c) 2026 Kory Heard
  *
  * TU-include harness for the bhyve NS16550 UART device model
  * (usr.sbin/bhyve/uart_emul.c).  The production translation unit is compiled

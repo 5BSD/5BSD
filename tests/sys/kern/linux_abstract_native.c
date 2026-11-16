@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 /* Native namespace/capability fixture. Disposable guest only. */
 #include <fcntl.h>
 #include <stdio.h>

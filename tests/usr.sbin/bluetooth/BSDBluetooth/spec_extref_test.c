@@ -1,4 +1,10 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
+/*-
  * Self-check for the EXTERNAL reference-vector corpus (spec_extref_*.h).
  *
  * This program deliberately links NO blued source file and includes NO blued

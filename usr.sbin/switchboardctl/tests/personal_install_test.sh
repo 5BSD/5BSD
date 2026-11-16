@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Offline roots only: never changes host /Capabilities or its trust catalogue.
 
 prepare_root()

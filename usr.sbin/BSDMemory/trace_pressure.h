@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef USR_SBIN_BSDMEMORY_TRACE_PRESSURE_H
 #define USR_SBIN_BSDMEMORY_TRACE_PRESSURE_H
 #ifdef WITH_DTRACE

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Initialize an allocated private VM disk from verified generation projections.
 
 Caller must independently verify the retained candidate before invoking this

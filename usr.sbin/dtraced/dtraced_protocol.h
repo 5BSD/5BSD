@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef DTRACED_PROTOCOL_H
 #define DTRACED_PROTOCOL_H
 #include <sys/hypertrace.h>

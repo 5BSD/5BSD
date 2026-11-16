@@ -1,6 +1,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
+# Copyright (c) 2026 Kory Heard
+#
 # The descriptor-operations layer registers its DTrace probes: a default
 # answering for a table without the member (fd:::invfo), a system call
 # refusing a descriptor before looking at its arguments (fd:::refused), and

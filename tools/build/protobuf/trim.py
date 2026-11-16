@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.12
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Compute the trimmed 5BSD import trees for protobuf, abseil-cpp, nghttp2
 and opentelemetry-proto from pristine upstream trees.
 

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Kory Heard
 """Policy and bounded-plan parsing tests; real execution is qualified in the VM."""
 import copy
 import importlib.util

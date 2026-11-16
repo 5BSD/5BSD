@@ -1,6 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
+ * Copyright (c) 2026 Kory Heard
+ *
  * The Linux-ABI half of procnet_control_test: process creation,
  * signalling, waiting and exit as a Linux process that is NOT attached to
  * a dq(4) controller sees them.  One fixed workload; every return value,

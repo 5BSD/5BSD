@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Run every ATF case in the TrustedZFS payload without relying on an installed
 # Kyuafile.  Intended for the root shell of a disposable test VM.
 

@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Container persistence smoke test across metadata reload and reboot.
 # This edits Bundle.ucl in place: the installed bundle directory never vanishes.
 # It does NOT exercise pkg transactions, concurrent reaping during replacement,

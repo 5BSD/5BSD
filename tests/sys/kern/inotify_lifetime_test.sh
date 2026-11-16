@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
 # Native checks for regressions in the backend shared with Linux inotify.
 metadata()
 {

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 Kory Heard */
 #ifndef SWITCHBOARD_ACCOUNT_NSS_H
 #define SWITCHBOARD_ACCOUNT_NSS_H
 #include <sys/types.h>
