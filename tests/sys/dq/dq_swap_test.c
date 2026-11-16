@@ -1602,7 +1602,7 @@ ATF_TC_BODY(swap_noxfer, tc)
 	sw_run(&x, p_send, NULL, &res);
 	ATF_CHECK_MSG(res.r[0].rv >= 0, "open: %s", strerror(res.r[0].err));
 	ATF_CHECK_EQ(0, res.r[1].rv);
-	ATF_CHECK_EQ_MSG(1, res.r[2].rv, "sendmsg: %s",
+	ATF_CHECK_EQ_MSG(0, res.r[2].rv, "dqt_send_fd: %s",
 	    strerror(res.r[2].err));
 	dqt_fini(&x.c);
 
