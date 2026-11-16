@@ -102,7 +102,7 @@ suites_head()
 }
 suites_body()
 {
-	local suite kf expected nsuites rc
+	local suite kf expected nsuites rc defaults
 
 	require_dq
 	# The fixture without its comments and blank lines (an empty pattern
@@ -114,7 +114,12 @@ suites_body()
 	# name contains it.
 	dq_check_expected "$(atf_get_srcdir)/dqpass.expected"
 	dq_patterns "${expected}" "$(atf_get_srcdir)/dqpass.expected"
+	# Only the default set can prove an entry stale: an entry for a
+	# suite left out matches nothing.
+	defaults=
+	[ -n "${DQ_ORACLE_SUITES}" ] || defaults=yes
 	: ${DQ_ORACLE_SUITES:="sys/file sys/kern/execve sys/dq_regress"}
+	: > used
 	nsuites=0
 	for suite in ${DQ_ORACLE_SUITES}; do
 		kf="/usr/tests/${suite}/Kyuafile"
@@ -133,9 +138,11 @@ suites_body()
 		dq_results pass.db pass.all
 		echo "=== ${suite}: cases dqpass.expected excludes" >&2
 		dq_excluded "${expected}" plain.all pass.all
+		dq_pattern_use "${expected}" plain.all pass.all used
 		grep -v -E -f "${expected}" plain.all > plain.res
 		grep -v -E -f "${expected}" pass.all > pass.res
 		[ -s plain.res ] || atf_fail "${suite}: every case is excluded"
+		dq_require_passed "${suite}" plain.res pass.res
 		if ! diff -u plain.res pass.res >&2; then
 			cat pass.report >&2
 			# The attached run's output of each case that differs.
@@ -154,6 +161,8 @@ suites_body()
 		nsuites=$((nsuites + 1))
 	done
 	[ "${nsuites}" -gt 0 ] || atf_fail "no suite was compared"
+	[ -z "${defaults}" ] ||
+	    dq_pattern_verdict "$(atf_get_srcdir)/dqpass.expected" used
 }
 
 atf_init_test_cases()

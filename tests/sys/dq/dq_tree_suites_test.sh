@@ -135,6 +135,7 @@ suites_head()
 suites_body()
 {
 	local root suite kf expected env failed sampler stalled nsuites rc
+	local defaults
 
 	[ -c /dev/dq ] || atf_fail "/dev/dq is absent"
 	[ -x "$(atf_get_srcdir)/dqtree" ] || atf_fail "dqtree is not installed"
@@ -155,7 +156,12 @@ suites_body()
 	# Every suite runs and reports before the case fails.
 	failed=
 	env="env -i HOME=/tmp PATH=/bin:/sbin:/usr/bin:/usr/sbin TMPDIR=/tmp"
+	# Only the default set can prove an entry of dqtree.expected stale
+	# (dqpass.expected's are dq_oracle_test's to judge).
+	defaults=
+	[ -n "${DQ_TREE_SUITES}" ] || defaults=yes
 	: ${DQ_TREE_SUITES:="sys/file lib/libc/gen bin/ls usr.bin/find"}
+	: > used
 	nsuites=0
 	for suite in ${DQ_TREE_SUITES}; do
 		kf="/usr/tests/${suite}/Kyuafile"
@@ -184,9 +190,11 @@ suites_body()
 		dq_results "${root}/tmp/tree.db" tree.all
 		echo "=== ${suite}: cases the expected differences exclude" >&2
 		dq_excluded "${expected}" chroot.all tree.all
+		dq_pattern_use "${expected}" chroot.all tree.all used
 		grep -v -E -f "${expected}" chroot.all > chroot.res
 		grep -v -E -f "${expected}" tree.all > tree.res
 		[ -s chroot.res ] || atf_fail "${suite}: every case is excluded"
+		dq_require_passed "${suite}" chroot.res tree.res
 		echo "=== ${suite}: expected differences by owner" >&2
 		count_by_tag chroot.all tree.all tags >&2
 		dq_results plain.db plain.all
@@ -226,6 +234,9 @@ suites_body()
 	done
 	[ "${nsuites}" -gt 0 ] || atf_fail "no suite was compared"
 	[ -z "${failed}" ] || atf_fail "${failed}"
+	# dqtree.expected's patterns come first in ${expected} (tags).
+	[ -z "${defaults}" ] ||
+	    dq_pattern_verdict "$(atf_get_srcdir)/dqtree.expected" used
 }
 suites_cleanup()
 {

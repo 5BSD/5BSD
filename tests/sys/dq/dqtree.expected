@@ -55,7 +55,7 @@
 ^fspacectl_test:unaligned_dealloc_offmax[[:space:]]  # ux-1: FSPACECTL reply for an OFF_MAX range refused by the invariant (dq_queue.c)
 
 # A kernel consumer's relative path from a served cwd (nmount's fspath).
-^fsetattr_test:fdescfs_[a-z_]*[[:space:]]  # by-design D175: mount(2) "fspath" from a served cwd is a class-2 path, EXDEV (kern_dqres.c)
+^fsetattr_test:fdescfs_(fifo|kqueue|mac_target|no_attributes|opath|ptmx_direct|ptmx_nonowner|regular_file|shm)[[:space:]]  # by-design D175: mount(2) "fspath" from a served cwd is a class-2 path, EXDEV (kern_dqres.c)
 ^fsetattr_test:fdesc_setattr_atomic[[:space:]]  # by-design D175: the case mounts fdescfs the same way
 
 # Requester credentials (ux-6, items 3 and N1).
