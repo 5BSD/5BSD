@@ -137,6 +137,9 @@ child_threads(void *arg, void *result)
 
 /* Rounds of a race before it is reported as not exercised. */
 #define	RACE_ROUNDS_MAX	200
+/* The bounds of reply_racing_signal's adaptive timer. */
+#define	RACE_TIMER_MIN_US	100
+#define	RACE_TIMER_MAX_US	100000
 
 struct one_read_arg {
 	int		 fd;
@@ -329,7 +332,7 @@ ATF_TC_BODY(reply_racing_signal, tc)
 	struct one_read_arg a;
 	struct one_read_res r;
 	struct dq_stats st;
-	int i, oracle, ndata, neintr;
+	int hi, i, lo, oracle, ndata, neintr, us;
 
 	dqt_fill(data, sizeof(data), 63);
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
@@ -338,29 +341,55 @@ ATF_TC_BODY(reply_racing_signal, tc)
 	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
 
 	/*
-	 * The reply leaves about 2 ms after the READ is read, and the timers
-	 * run from 1 ms to 4.5 ms: some fire before the reply and some after,
-	 * however fast the guest answers.  More rounds until both outcomes
-	 * have been seen.
+	 * The timer is steered to where the reply lands, however fast or
+	 * loaded the guest: lo is the longest timer seen to fire first
+	 * (EINTR), hi the shortest seen to lose (data).  Without both, the
+	 * timer doubles after an EINTR and halves after data; with both, it
+	 * is the midpoint, kept from collapsing onto either bound, so the
+	 * rounds go both ways.  At least 20 rounds, and more until both
+	 * outcomes have been seen.  The reply leaves 2 ms after the READ is
+	 * read, which keeps the window above the timer granularity.
 	 */
+	dqt_lock(&c);
 	c.reply_delay_ms = 2;
+	dqt_unlock(&c);
 	ndata = neintr = 0;
+	lo = 0;
+	hi = 0;
+	us = 2000;
 	memset(&a, 0, sizeof(a));
 	for (i = 0; i < RACE_ROUNDS_MAX && (i < 20 || ndata == 0 ||
 	    neintr == 0); i++) {
 		a.fd = o->fd;
 		a.len = 100;
-		a.alarm_us = 1000 + 500 * (i % 8);
+		a.alarm_us = us;
 		dqt_run_child(child_one_read, &a, &r, sizeof(r));
-		if (r.rr.rv == 100)
+		if (r.rr.rv == 100) {
 			ndata++;
-		else {
+			if (hi == 0 || us < hi)
+				hi = us;
+		} else {
 			ATF_CHECK_EQ(-1, r.rr.rv);
 			ATF_CHECK_EQ(EINTR, r.rr.err);
 			neintr++;
+			if (us > lo)
+				lo = us;
 		}
+		if (hi == 0)
+			us = MIN(us * 2, RACE_TIMER_MAX_US);
+		else if (lo == 0)
+			us = MAX(us / 2, RACE_TIMER_MIN_US);
+		else if (hi > lo)
+			/* Alternate just below and just above the midpoint. */
+			us = (lo + hi) / 2 + ((i & 1) != 0 ? 1 : -1) *
+			    MAX((hi - lo) / 4, 100);
+		else
+			/* The bounds crossed (noise): widen around them. */
+			us = (i & 1) != 0 ? lo + 500 : MAX(hi - 500,
+			    RACE_TIMER_MIN_US);
 	}
-	printf("%d rounds: %d data, %d EINTR\n", i, ndata, neintr);
+	printf("%d rounds: %d data, %d EINTR (EINTR up to %d us, data from "
+	    "%d us)\n", i, ndata, neintr, lo, hi);
 	/* Every record has reached the queue once nothing is in flight. */
 	ATF_CHECK(dqt_wait_stats(&c, inflight_is_zero, 0, DQT_WAIT_MS));
 	dqt_stats(&c, &st);
