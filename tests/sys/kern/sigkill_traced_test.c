@@ -948,6 +948,49 @@ ATF_TC_CLEANUP(waited__kill_races_detach, tc)
 	cleanup();
 }
 
+/*
+ * A non-parent debugger collects the exit status of a pdfork(2) child it
+ * traces.  As in FreeBSD, that wait takes the parent's waitpid(2)
+ * reference: the parent's waitpid() fails with ECHILD, and the status stays
+ * available through the process descriptor (pdwait(2)).
+ */
+ATF_TC_WITH_CLEANUP(pdfork_debugger_reaps);
+ATF_TC_HEAD(pdfork_debugger_reaps, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "after a debugger reaps a pdfork child, waitpid is ECHILD and "
+	    "pdwait returns the status");
+}
+ATF_TC_BODY(pdfork_debugger_reaps, tc)
+{
+	struct fx fx;
+	struct reply r;
+	int status;
+
+	if (!transparent_attach())
+		atf_tc_skip(TRANSPARENT " is not set");
+	fx_start(&fx, K_READ, true);
+	STEP(dbg(&fx, OP_ATTACH, 0, &r) && r.rv == 0);
+	STEP(dbg(&fx, OP_WAIT, 0, &r) && STOPPED_AT(r, fx.tgt, SIGSTOP));
+	STEP(dbg(&fx, OP_CONT, 0, &r) && r.rv == 0);
+	STEP(wait_asleep(fx.tgt, 1, 1));
+	STEP(pdkill(fx.pd, SIGKILL) == 0);
+	STEP(dbg(&fx, OP_WAIT, 0, &r) && STOPPED_AT(r, fx.tgt, SIGKILL));
+	STEP(dbg(&fx, OP_CONT, SIGKILL, &r) && r.rv == 0);
+	STEP(dbg(&fx, OP_WAIT, 0, &r) && KILLED(r.rv, r.status, fx.tgt));
+	errno = 0;
+	STEP(waitpid(fx.tgt, &status, WNOHANG) == -1 && errno == ECHILD);
+	status = 0;
+	STEP(pdwait(fx.pd, &status, WEXITED, NULL, NULL) == 0);
+	STEP(WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL);
+out:
+	fx_end(&fx);
+}
+ATF_TC_CLEANUP(pdfork_debugger_reaps, tc)
+{
+	cleanup();
+}
+
 /* No debugger: SIGKILL ends a process stopped by SIGSTOP in its sleep. */
 ATF_TC_WITH_CLEANUP(untraced_stopped__kill);
 ATF_TC_HEAD(untraced_stopped__kill, tc)
@@ -991,6 +1034,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, waited__kill__debugger_exit_kills);
 	ATF_TP_ADD_TC(tp, vfork_parent__kill__detach);
 	ATF_TP_ADD_TC(tp, untraced_stopped__kill);
+	ATF_TP_ADD_TC(tp, pdfork_debugger_reaps);
 	ATF_TP_ADD_TC(tp, mt_spin_1st__kill__detach);
 	ATF_TP_ADD_TC(tp, mt_other_sigstop__kill__detach);
 	ATF_TP_ADD_TC(tp, legacy_mt_other_sigstop__kill__detach);
