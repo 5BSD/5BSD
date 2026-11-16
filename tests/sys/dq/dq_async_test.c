@@ -29,7 +29,7 @@
 
 #define	NPAGES		8
 #define	DATA_LEN	(NPAGES * 4096)
-#define	SAVED		"max_inflight_bytes.saved"
+#define	MAX_INFLIGHT_BYTES	"kern.dq.max_inflight_bytes"
 
 static unsigned char data[DATA_LEN];
 static char path[DQT_PATH_MAX];
@@ -238,16 +238,9 @@ ATF_TC_BODY(inflight_bytes_bound, tc)
 	struct dirty_res r;
 	struct dq_stats2 st;
 	struct stat sb;
-	u_int saved;
-	FILE *fp;
 	int i, status;
 
-	ATF_REQUIRE(dqt_sysctl_get_uint("kern.dq.max_inflight_bytes", &saved));
-	fp = fopen(SAVED, "w");
-	ATF_REQUIRE(fp != NULL);
-	(void)fprintf(fp, "%u\n", saved);
-	(void)fclose(fp);
-	dqt_sysctl_set_uint("kern.dq.max_inflight_bytes", 2 * 4096);
+	dqt_sysctl_save_set_uint(MAX_INFLIGHT_BYTES, 2 * 4096);
 
 	setup(&f, 1, DQ_DEADLINE_DEFAULT, 0);
 	memset(&a, 0, sizeof(a));
@@ -277,16 +270,8 @@ ATF_TC_BODY(inflight_bytes_bound, tc)
 }
 ATF_TC_CLEANUP(inflight_bytes_bound, tc)
 {
-	FILE *fp;
-	u_int saved;
 
-	fp = fopen(SAVED, "r");
-	if (fp == NULL)
-		return;
-	if (fscanf(fp, "%u", &saved) == 1)
-		(void)sysctlbyname("kern.dq.max_inflight_bytes", NULL, NULL,
-		    &saved, sizeof(saved));
-	(void)fclose(fp);
+	(void)dqt_sysctl_restore(MAX_INFLIGHT_BYTES);
 }
 
 ATF_TC(deadline_leaves_dirty);

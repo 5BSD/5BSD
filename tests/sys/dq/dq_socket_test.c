@@ -770,7 +770,7 @@ ATF_TC_BODY(dead_controller_probe, tc)
  * The counter itself, while the queue is open: a SOCKET wait that misses
  * its deadline is EIO (not a dead controller) and counts as failed closed.
  */
-#define	DEADLINE_SAVED	"default_deadline_ms.saved"
+#define	DEFAULT_DEADLINE	"kern.dq.default_deadline_ms"
 
 ATF_TC_WITH_CLEANUP(deadline_counts_failclosed);
 ATF_TC_HEAD(deadline_counts_failclosed, tc)
@@ -786,15 +786,8 @@ ATF_TC_BODY(deadline_counts_failclosed, tc)
 	struct dqt_achild ch;
 	struct sock_res r;
 	struct dq_stats2 st;
-	FILE *f;
-	u_int saved;
 
-	ATF_REQUIRE(dqt_sysctl_get_uint("kern.dq.default_deadline_ms", &saved));
-	f = fopen(DEADLINE_SAVED, "w");
-	ATF_REQUIRE(f != NULL);
-	(void)fprintf(f, "%u\n", saved);
-	(void)fclose(f);
-	dqt_sysctl_set_uint("kern.dq.default_deadline_ms", 500);
+	dqt_sysctl_save_set_uint(DEFAULT_DEADLINE, 500);
 	dqt_init(&c);
 	dqt_resolve_hold(&c, NULL, DQ_ROP_SOCKET);
 	dqt_attach_spawn(&c, &ch, child_one_socket, NULL);
@@ -809,16 +802,8 @@ ATF_TC_BODY(deadline_counts_failclosed, tc)
 }
 ATF_TC_CLEANUP(deadline_counts_failclosed, tc)
 {
-	FILE *f;
-	u_int v;
 
-	f = fopen(DEADLINE_SAVED, "r");
-	if (f == NULL)
-		return;
-	if (fscanf(f, "%u", &v) == 1)
-		(void)sysctlbyname("kern.dq.default_deadline_ms", NULL, NULL,
-		    &v, sizeof(v));
-	(void)fclose(f);
+	(void)dqt_sysctl_restore(DEFAULT_DEADLINE);
 }
 
 /*
@@ -1113,7 +1098,6 @@ ATF_TC_CLEANUP(jail_af_before_consult, tc)
 
 #define	TUNPORT		"net.inet.tcp.udp_tunneling_port"
 #define	TUNPORT_VALUE	9899
-#define	TUNPORT_SAVED	"tunport.saved"
 
 static void
 child_tunport(void *arg __unused, void *result)
@@ -1141,18 +1125,14 @@ ATF_TC_BODY(kernel_socreate_not_consulted, tc)
 	struct dqt_achild ch;
 	struct sock_res r;
 	struct dq_stats2 st;
-	FILE *f;
 	u_int v;
 
 	if (!dqt_sysctl_get_uint(TUNPORT, &v))
 		atf_tc_fail("no " TUNPORT);
 	if (v != 0)
 		atf_tc_fail(TUNPORT " is in use (%u)", v);
-	/* What the cleanup restores; without the file it touches nothing. */
-	f = fopen(TUNPORT_SAVED, "w");
-	ATF_REQUIRE(f != NULL);
-	(void)fprintf(f, "%u\n", v);
-	(void)fclose(f);
+	/* What the cleanup restores (the child sets it). */
+	dqt_sysctl_save(TUNPORT);
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ch, child_tunport, NULL);
 	memset(&r, 0, sizeof(r));
@@ -1173,15 +1153,8 @@ ATF_TC_BODY(kernel_socreate_not_consulted, tc)
 }
 ATF_TC_CLEANUP(kernel_socreate_not_consulted, tc)
 {
-	FILE *f;
-	u_int v;
 
-	f = fopen(TUNPORT_SAVED, "r");
-	if (f == NULL)
-		return;
-	if (fscanf(f, "%u", &v) == 1)
-		(void)sysctlbyname(TUNPORT, NULL, NULL, &v, sizeof(v));
-	(void)fclose(f);
+	(void)dqt_sysctl_restore(TUNPORT);
 }
 
 /*

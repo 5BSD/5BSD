@@ -808,23 +808,12 @@ DQ_TC_CLEANUP(capmode_rights);
 ATF_TC_BODY(capmode_rights, tc)
 {
 	struct srv s;
-	char saved[16];
-	size_t len;
-	int r[RES_MAX], old, zero;
+	int r[RES_MAX];
 
-	len = sizeof(old);
-	ATF_REQUIRE(sysctlbyname("vfs.lookup_cap_dotdot", &old, &len, NULL,
-	    0) == 0);
-	snprintf(saved, sizeof(saved), "%d\n", old);
-	atf_utils_create_file("cap_dotdot.save", "%s", saved);
-	zero = 0;
-	if (sysctlbyname("vfs.lookup_cap_dotdot", NULL, NULL, &zero,
-	    sizeof(zero)) != 0)
-		atf_tc_fail("vfs.lookup_cap_dotdot: %s", strerror(errno));
+	dqt_sysctl_save_set_int("vfs.lookup_cap_dotdot", 0);
 	srv_start(&s, 0);
 	run_child(&s, c_capmode, r);
-	(void)sysctlbyname("vfs.lookup_cap_dotdot", NULL, NULL, &old,
-	    sizeof(old));
+	ATF_REQUIRE(dqt_sysctl_restore("vfs.lookup_cap_dotdot"));
 	CHECK_ERRNO(0, r[0]);
 	CHECK_ERRNO(0, r[1]);
 	CHECK_ERRNO(0, r[2]);
@@ -842,15 +831,8 @@ ATF_TC_BODY(capmode_rights, tc)
 }
 ATF_TC_CLEANUP(capmode_rights, tc)
 {
-	FILE *f;
-	int old;
 
-	f = fopen("cap_dotdot.save", "r");
-	if (f != NULL && fscanf(f, "%d", &old) == 1)
-		(void)sysctlbyname("vfs.lookup_cap_dotdot", NULL, NULL, &old,
-		    sizeof(old));
-	if (f != NULL)
-		fclose(f);
+	(void)dqt_sysctl_restore("vfs.lookup_cap_dotdot");
 }
 
 /*
@@ -1942,26 +1924,14 @@ DQ_TC_CLEANUP(round4_rows);
 ATF_TC_BODY(round4_rows, tc)
 {
 	struct srv s;
-	char saved[16];
-	size_t len;
-	int r[RES_MAX], old, zero;
+	int r[RES_MAX];
 
-	len = sizeof(old);
-	ATF_REQUIRE(sysctlbyname("vfs.lookup_cap_dotdot_nonlocal", &old, &len,
-	    NULL, 0) == 0);
-	snprintf(saved, sizeof(saved), "%d\n", old);
-	atf_utils_create_file("nonlocal.save", "%s", saved);
-	zero = 0;
-	if (sysctlbyname("vfs.lookup_cap_dotdot_nonlocal", NULL, NULL, &zero,
-	    sizeof(zero)) != 0)
-		atf_tc_fail("vfs.lookup_cap_dotdot_nonlocal: %s",
-		    strerror(errno));
+	dqt_sysctl_save_set_int("vfs.lookup_cap_dotdot_nonlocal", 0);
 	srv_start(&s, DQ_TREE_F_WRITE);
 	ATF_REQUIRE(mkdir("backing/d/sub", 0755) == 0);
 	ATF_REQUIRE(close(open("realfile_r4", O_CREAT | O_RDWR, 0644)) == 0);
 	run_child(&s, c_r4, r);
-	(void)sysctlbyname("vfs.lookup_cap_dotdot_nonlocal", NULL, NULL, &old,
-	    sizeof(old));
+	ATF_REQUIRE(dqt_sysctl_restore("vfs.lookup_cap_dotdot_nonlocal"));
 	CHECK_ERRNO(0, r[0]);
 	CHECK_ERRNO(0, r[1]);
 	CHECK_ERRNO(ENOTCAPABLE, r[2]);
@@ -1974,15 +1944,8 @@ ATF_TC_BODY(round4_rows, tc)
 }
 ATF_TC_CLEANUP(round4_rows, tc)
 {
-	FILE *f;
-	int old;
 
-	f = fopen("nonlocal.save", "r");
-	if (f != NULL && fscanf(f, "%d", &old) == 1)
-		(void)sysctlbyname("vfs.lookup_cap_dotdot_nonlocal", NULL,
-		    NULL, &old, sizeof(old));
-	if (f != NULL)
-		fclose(f);
+	(void)dqt_sysctl_restore("vfs.lookup_cap_dotdot_nonlocal");
 }
 
 ATF_TP_ADD_TCS(tp)

@@ -37,7 +37,6 @@ static unsigned char data[DATA_LEN];
 static char oracle_path[DQT_PATH_MAX];
 
 static const char inflight_sysctl[] = "kern.dq.max_inflight_per_object";
-static const char inflight_saved[] = "max_inflight_per_object.saved";
 
 /* Stats predicates for dqt_wait_stats: no fixed sleeps on a loaded guest. */
 static bool
@@ -638,17 +637,10 @@ ATF_TC_BODY(inflight_bound, tc)
 	struct one_read_res r[3];
 	struct dqt_child ch[3];
 	struct dq_stats st;
-	FILE *fp;
-	u_int old;
 	int64_t deadline;
 	int i, n, oracle;
 
-	ATF_REQUIRE(dqt_sysctl_get_uint(inflight_sysctl, &old));
-	fp = fopen(inflight_saved, "w");
-	ATF_REQUIRE(fp != NULL);
-	fprintf(fp, "%u\n", old);
-	fclose(fp);
-	dqt_sysctl_set_uint(inflight_sysctl, 2);
+	dqt_sysctl_save_set_uint(inflight_sysctl, 2);
 
 	dqt_fill(data, sizeof(data), 67);
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
@@ -702,20 +694,12 @@ ATF_TC_BODY(inflight_bound, tc)
 	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
-	dqt_sysctl_set_uint(inflight_sysctl, old);
+	ATF_REQUIRE(dqt_sysctl_restore(inflight_sysctl));
 }
 ATF_TC_CLEANUP(inflight_bound, tc)
 {
-	FILE *fp;
-	u_int old;
 
-	fp = fopen(inflight_saved, "r");
-	if (fp == NULL)
-		return;
-	if (fscanf(fp, "%u", &old) == 1)
-		(void)sysctlbyname(inflight_sysctl, NULL, NULL, &old,
-		    sizeof(old));
-	fclose(fp);
+	(void)dqt_sysctl_restore(inflight_sysctl);
 }
 
 static int

@@ -1962,20 +1962,6 @@ ATF_TC_CLEANUP(dup_carries_states, tc)
 #define	AIO_UNSAFE	"vfs.aio.enable_unsafe"
 
 static void
-aio_unsafe_restore(void)
-{
-	FILE *f;
-	u_int old;
-
-	f = fopen("aio_unsafe.save", "r");
-	if (f == NULL)
-		return;
-	if (fscanf(f, "%u", &old) == 1)
-		dqt_sysctl_set_uint(AIO_UNSAFE, old);
-	(void)fclose(f);
-}
-
-static void
 child_second_open(void *arg __unused, void *result)
 {
 	struct ops_res *res = result;
@@ -2006,8 +1992,6 @@ ATF_TC_BODY(owner_only_misc, tc)
 	struct dq_stats st;
 	struct ops_res second;
 	struct aiocb cb;
-	FILE *f;
-	u_int old;
 	int error, i, q;
 
 	helper_locate(tc);
@@ -2015,12 +1999,7 @@ ATF_TC_BODY(owner_only_misc, tc)
 	ATF_REQUIRE_EQ(0, dq_get_stats(q, &st));
 
 	/* aio_read(2). */
-	ATF_REQUIRE(dqt_sysctl_get_uint(AIO_UNSAFE, &old));
-	f = fopen("aio_unsafe.save", "w");
-	ATF_REQUIRE(f != NULL);
-	fprintf(f, "%u\n", old);
-	ATF_REQUIRE_EQ(0, fclose(f));
-	dqt_sysctl_set_uint(AIO_UNSAFE, 0);
+	dqt_sysctl_save_set_uint(AIO_UNSAFE, 0);
 	memset(&cb, 0, sizeof(cb));
 	cb.aio_fildes = q;
 	cb.aio_buf = buf;
@@ -2046,7 +2025,7 @@ ATF_TC_BODY(owner_only_misc, tc)
 		ATF_CHECK_EQ(-1, aio_return(&cb));
 	else
 		(void)aio_cancel(q, &cb);
-	aio_unsafe_restore();
+	(void)dqt_sysctl_restore(AIO_UNSAFE);
 
 	/* daemon(3). */
 	ident = calloc(1, sizeof(*ident));
@@ -2071,7 +2050,7 @@ ATF_TC_BODY(owner_only_misc, tc)
 ATF_TC_CLEANUP(owner_only_misc, tc)
 {
 
-	aio_unsafe_restore();
+	(void)dqt_sysctl_restore(AIO_UNSAFE);
 }
 
 /*

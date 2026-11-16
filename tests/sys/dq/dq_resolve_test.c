@@ -443,7 +443,7 @@ ATF_TC_BODY(reply_validation, tc)
 	dqt_fini(&c);
 }
 
-#define	DEADLINE_SAVED	"default_deadline_ms.saved"
+#define	DEFAULT_DEADLINE	"kern.dq.default_deadline_ms"
 
 static void
 child_hold_stat(void *arg, void *result)
@@ -477,15 +477,8 @@ ATF_TC_BODY(deadline_eio, tc)
 	struct dqt_ctl c;
 	struct dqt_achild ch;
 	struct one_res r;
-	u_int saved;
-	FILE *fp;
 
-	ATF_REQUIRE(dqt_sysctl_get_uint("kern.dq.default_deadline_ms", &saved));
-	fp = fopen(DEADLINE_SAVED, "w");
-	ATF_REQUIRE(fp != NULL);
-	(void)fprintf(fp, "%u\n", saved);
-	(void)fclose(fp);
-	dqt_sysctl_set_uint("kern.dq.default_deadline_ms", 500);
+	dqt_sysctl_save_set_uint(DEFAULT_DEADLINE, 500);
 
 	dqt_init(&c);
 	dqt_resolve_hold(&c, "rt-hold", 0);
@@ -506,16 +499,8 @@ ATF_TC_BODY(deadline_eio, tc)
 }
 ATF_TC_CLEANUP(deadline_eio, tc)
 {
-	FILE *fp;
-	u_int saved;
 
-	fp = fopen(DEADLINE_SAVED, "r");
-	if (fp == NULL)
-		return;
-	if (fscanf(fp, "%u", &saved) == 1)
-		(void)sysctlbyname("kern.dq.default_deadline_ms", NULL, NULL,
-		    &saved, sizeof(saved));
-	(void)fclose(fp);
+	(void)dqt_sysctl_restore(DEFAULT_DEADLINE);
 }
 
 ATF_TC(controller_exit_fails_closed);
