@@ -2570,15 +2570,22 @@ ATF_TC_BODY(node_signal_child, tc)
 		close(fd);
 		close(sv[0]);
 
-		/* Tell parent we're ready */
-		write(sv[1], "r", 1);
+		/*
+		 * Block SIGUSR1 before reporting ready: the parent signals as
+		 * soon as it reads the byte, and an unblocked SIGUSR1 would
+		 * kill the child with its default action.
+		 */
+		sigemptyset(&set);
+		sigaddset(&set, SIGUSR1);
+		if (sigprocmask(SIG_BLOCK, &set, NULL) != 0)
+			_exit(2);
+		if (write(sv[1], "r", 1) != 1)
+			_exit(3);
 		close(sv[1]);
 
 		/* Wait for SIGUSR1 */
-		sigemptyset(&set);
-		sigaddset(&set, SIGUSR1);
-		sigprocmask(SIG_BLOCK, &set, NULL);
-		sigwait(&set, &sig);
+		if (sigwait(&set, &sig) != 0)
+			_exit(4);
 
 		/* Exit 0 if we got SIGUSR1, 1 otherwise */
 		_exit(sig == SIGUSR1 ? 0 : 1);

@@ -7931,10 +7931,21 @@ check_unload_waits_for_admission(unsigned stage, bool fail, bool mint)
 		ATF_CHECK_ERRNO(ECONNABORTED, channel_mint_instance(fd) == -1);
 		ATF_REQUIRE_EQ(0, close(fd));
 	}
-	len = sizeof(after);
-	ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",
-	    &after, &len, NULL, 0));
-	ATF_CHECK_EQ(before, after);
+	/*
+	 * An instance's last reference can be dropped by a task after close
+	 * and unload return: poll (at most 5 s) for the count to settle.
+	 */
+	for (unsigned i = 0; i < 500; i++) {
+		len = sizeof(after);
+		ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",
+		    &after, &len, NULL, 0));
+		if (after == before)
+			break;
+		usleep(10000);
+	}
+	ATF_CHECK_EQ_MSG(before, after, "instances before %ju after %ju "
+	    "(stage %u fail=%d mint=%d)", (uintmax_t)before, (uintmax_t)after,
+	    stage, fail, mint);
 }
 
 ATF_TC(unload_waits_for_admission);
