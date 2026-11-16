@@ -337,7 +337,7 @@ ATF_TC_BODY(served_file_events, tc)
 	a.fd = o->fd;
 	dqt_spawn(&ch, child_read_stat, &a);
 	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	ATF_REQUIRE_EQ(READ_LEN, r.rd.rv);
 	ATF_REQUIRE_EQ(0, r.st.rv);
 	/* The controller's own close(2): a second FILE_CLOSE, from this pid. */
@@ -423,7 +423,7 @@ ATF_TC_BODY(served_ops_events, tc)
 	a.fd = o->fd;
 	dqt_spawn(&ch, child_ops, &a);
 	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	for (i = 0; i < NOPS; i++)
 		ATF_CHECK_MSG(r.r[i].rv != -1, "operation %zu (event %#x): %s",
 		    i, ops_events[i], strerror(r.r[i].err));
@@ -499,7 +499,7 @@ ATF_TC_BODY(real_file_no_ops_events, tc)
 	a.fd = fd;
 	dqt_spawn(&ch, child_ops, &a);
 	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	/* Every operation must have run, or the negative proves nothing. */
 	for (i = 0; i < NOPS; i++)
 		ATF_REQUIRE_MSG(r.r[i].rv != -1, "operation %zu on a real "
@@ -544,7 +544,7 @@ ATF_TC_BODY(real_file_no_events, tc)
 	a.fd = oracle;
 	dqt_spawn(&ch, child_read_stat, &a);
 	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	ATF_REQUIRE_EQ(READ_LEN, r.rd.rv);
 	ATF_REQUIRE_EQ(0, r.st.rv);
 

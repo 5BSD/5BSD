@@ -63,7 +63,7 @@ run(void (*fn)(void *, void *), bool cwd_only)
 	memset(&r, 0, sizeof(r));
 	status = ts_child(&s, cwd_only ? -1 : s.sroot, s.sroot, fn, NULL, &r,
 	    sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	TS_CHECK_ERRNO(EXDEV, r.err[0], "ktrace");
 	TS_CHECK_ERRNO(EXDEV, r.err[1], "acct");
 	TS_CHECK_ERRNO(EXDEV, r.err[2], "kldload");
@@ -145,7 +145,7 @@ ATF_TC_BODY(kernel_path_refused, tc)
 	memset(&r, 0, sizeof(r));
 	n0 = ts_nev(&s);
 	status = ts_child(&s, -1, -1, kpath_fn, NULL, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	ATF_REQUIRE_MSG(r.err[0] == 0, "cannot open /dev/mdctl");
 	TS_CHECK_ERRNO(EPERM, r.err[1], "MDIOCATTACH of a vnode");
 	/* Only the open of /dev/mdctl was posted. */

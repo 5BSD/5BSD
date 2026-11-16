@@ -148,7 +148,7 @@ ATF_TC_BODY(own_presented, tc)
 	ts_start(&s, "t", DQ_TREE_F_ROOT);
 	memset(&r, 0, sizeof(r));
 	status = ts_child(&s, s.sroot, s.sroot, own_fn, NULL, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	TS_CHECK_ERRNO(0, r.err[0], "chdir d");
 	ATF_CHECK_STREQ("/d", r.path[1]);
 	TS_CHECK_ERRNO(0, r.err[2], "realpath f");
@@ -229,7 +229,7 @@ ATF_TC_BODY(real_under_served_root, tc)
 	ATF_REQUIRE(realpath("w", a.real) != NULL);
 	memset(&r, 0, sizeof(r));
 	status = ts_child(&s, s.sroot, s.sroot, real_fn, &a, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	TS_CHECK_ERRNO(ENOENT, r.err[0], "realpath answered REAL");
 	TS_CHECK_ERRNO(0, r.err[1], "fchdir real");
 	TS_CHECK_ERRNO(ENOENT, r.err[2], "getcwd: real cwd, served root");
@@ -524,7 +524,7 @@ ATF_TC_BODY(revoked_frozen, tc)
 	status = ts_child(&s, s.sroot, s.sroot, revoked_fn, &v, &r,
 	    sizeof(r));
 	pthread_join(thr, NULL);
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	TS_CHECK_ERRNO(0, r.err[0], "getcwd, revoked");
 	ATF_CHECK_STREQ("/", r.path[0]);
 	TS_CHECK_ERRNO(0, r.err[1], "kinfo, revoked");
