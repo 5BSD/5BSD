@@ -5348,6 +5348,13 @@ cache_fplookup_emptypath(struct cache_fpl *fpl)
 
 	MPASS(*cnp->cn_pnbuf == '\0');
 
+	/*
+	 * cache_can_fplookup() leaves "" without EMPTYPATH to namei(), which
+	 * answers ENOENT before it looks at the start directory.  The test
+	 * below is kept for a non-INVARIANTS kernel and gives the same answer.
+	 */
+	KASSERT((cnp->cn_flags & EMPTYPATH) != 0,
+	    ("%s: \"\" without EMPTYPATH reached the lockless walk", __func__));
 	if (__predict_false((cnp->cn_flags & EMPTYPATH) == 0)) {
 		cache_fpl_smr_exit(fpl);
 		return (cache_fpl_handled_error(fpl, ENOENT));
