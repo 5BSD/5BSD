@@ -27,6 +27,7 @@
 #include <fidl/bsd.crypto.v1/c/bsd.h>
 #include <fidl/bsd/sync_c.h>
 
+#include "freebsd_test_suite/capability_tier.h"
 #include "bsdcrypto_test.h"
 
 /*
@@ -59,8 +60,7 @@ require_plane(void)
 
 	fd = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
 	if (fd < 0)
-		atf_tc_skip("plane device /dev/mac_capability unavailable: %s",
-		    strerror(errno));
+		capability_plane_skip(errno);
 	close(fd);
 	fd = open("/dev/crypto", O_RDWR);
 	if (fd < 0)
@@ -82,7 +82,6 @@ allow_software_crypto(int value)
 	    &value, sizeof(value)) == 0, "kern.crypto.allow_soft: %s",
 	    strerror(errno));
 }
-
 
 static int
 capability_connect(const char *name)

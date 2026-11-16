@@ -628,7 +628,7 @@ for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER;
 	DEFERRED_ENFORCED_TIER)
 		echo "DEFERRED_TO_ENFORCED_TIER=$ndefer (run PLANE_OFF=1 with the same stage and suites; not a pass)";;
 	DEFERRED_PLANEOFF_TIER)
-		echo "DEFERRED_TO_PLANEOFF_TIER=$ndefer (test-local stacks; run PLANE_OFF=1 with the same stage and suites; not a pass)";;
+		echo "DEFERRED_TO_PLANEOFF_TIER=$ndefer (test-local stacks: need PLANE_OFF=1 and a kernel that lets a test-local Capsule issue authority, which the tree does not provide yet; not a pass)";;
 	*)
 		echo "DEFERRED_TO_DEVICE_TIER=$ndefer (run without ISOLATION_ENFORCE=1 with the same stage and suites; not a pass)";;
 	esac
