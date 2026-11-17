@@ -85,6 +85,7 @@ SDT_PROBE_DEFINE3(dq, , , resolve__real, "struct dq_queue *", "uint32_t",
     "char *");
 SDT_PROBE_DEFINE3(dq, , , resolve__symlink, "struct dq_queue *", "uint32_t",
     "uint32_t");
+SDT_PROBE_DEFINE3(dq, , , fop__local, "struct file *", "int", "int");
 
 /*
  * Tunables (design 8.6).  Bounded setters: a controller can lower its own
@@ -395,10 +396,16 @@ static struct cdevsw dq_cdevsw = {
 	.d_name = "dq",
 };
 
+/*
+ * Everything the device needs, in an order that can be undone: the
+ * resolution vector (dqres_ops) is registered last, once nothing can fail,
+ * so a failed MOD_LOAD of a preloaded module never leaves the kernel core
+ * calling into a module the linker drops.
+ */
 static int
 dq_init(void)
 {
-
+	struct make_dev_args args;
 	int error;
 
 	/*
@@ -421,12 +428,22 @@ dq_init(void)
 	taskqueue_start_threads(&dq_taskq, 2, PVM, "dq taskq");
 	mtx_init(&dq_mtx, "dq", NULL, MTX_DEF);
 	dq_file_init();		/* the lock-owner hash key */
-	dq_resolve_init();	/* the resolution vector (D125) */
-	dq_cdev = make_dev(&dq_cdevsw, 0, UID_ROOT, GID_WHEEL, 0600, "dq");
-	if (dq_cdev == NULL) {
+	make_dev_args_init(&args);
+	args.mda_devsw = &dq_cdevsw;
+	args.mda_uid = UID_ROOT;
+	args.mda_gid = GID_WHEEL;
+	args.mda_mode = 0600;
+	args.mda_flags = MAKEDEV_WAITOK | MAKEDEV_CHECKNAME;
+	error = make_dev_s(&args, &dq_cdev, "dq");
+	if (error != 0) {
+		printf("dq: cannot create /dev/dq: %d\n", error);
 		mtx_destroy(&dq_mtx);
-		return (ENXIO);
+		taskqueue_free(dq_taskq);
+		dq_taskq = NULL;
+		dq_pager_unregister();
+		return (error);
 	}
+	dq_resolve_init();	/* the resolution vector (D125), last */
 	dq_active = true;
 	return (0);
 }

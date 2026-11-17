@@ -3361,7 +3361,7 @@ kern_statat_dqserved(struct thread *td, struct dq_intent *di,
 	id = dqres_ident(di, DQ_RESOLVE_ATTR);
 	if (id == NULL)
 		return (EIO);
-	dqres_ident_to_stat(id, sbp);
+	dqres_ident_to_stat(id, td->td_ucred, sbp);
 #ifdef KTRACE
 	if (KTRPOINT(td, KTR_STRUCT))
 		ktrstat_error(sbp, 0);

@@ -131,6 +131,18 @@ SDT_PROBE_DECLARE(dq, , , resolve__served);
 SDT_PROBE_DECLARE(dq, , , resolve__retire);
 SDT_PROBE_DECLARE(dq, , , resolve__real);
 SDT_PROBE_DECLARE(dq, , , resolve__symlink);
+SDT_PROBE_DECLARE(dq, , , fop__local);
+
+/*
+ * dq:::fop-local's operation: a fileop the kernel answered from the
+ * identity or the descriptor, with no event (args: file, DQ_FOP_*, errno).
+ */
+#define	DQ_FOP_IOCTL		1
+#define	DQ_FOP_FCNTL		2
+#define	DQ_FOP_FADVISE		3
+#define	DQ_FOP_SEEK		4
+#define	DQ_FOP_PATHCONF		5
+#define	DQ_FOP_STATFS		6
 
 /* Tunables (dq_dev.c), kern.dq.* */
 extern u_int dq_max_io;
@@ -596,6 +608,7 @@ void	dq_object_invalidate(struct dq_object *o, off_t offset, off_t len);
 
 /* dq_pager.c */
 int	dq_pager_register(void);
+void	dq_pager_unregister(void);
 int	dq_object_vm_create(struct dq_object *o);
 boolean_t dq_pager_flush(struct dq_object *o, struct vm_object *obj,
 	    vm_ooffset_t offset, vm_size_t size, boolean_t syncio,

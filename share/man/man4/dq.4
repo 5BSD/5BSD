@@ -829,6 +829,24 @@ name
 .Va dq_pc_names Bq Ar i
 (a dense index of the sparse constants, shared with userland under
 .Dv DQ_WANT_PC_NAMES ) .
+.Xr fstat 2
+of a served file and
+.Xr stat 2
+of a name answered
+.Dv DQ_RESOLVE_ATTR
+present
+.Va di_gen
+as
+.Va st_gen
+only to a credential with
+.Dv PRIV_VFS_GENERATION ,
+and 0 to any other, as a vnode's
+.Fn vn_stat
+does; both go through one routine, as
+.Xr fpathconf 2
+and
+.Xr pathconf 2
+do.
 .Dv DQ_IOC_MINT
 and
 .Dv DQ_IOC_SETIDENT
@@ -1707,7 +1725,9 @@ locked costs its closes nothing.
 .Dv FIOSEEKDATA
 and
 .Dv FIOSEEKHOLE
-are answered locally from the identity, and
+are answered locally from the identity
+.Pq Er ENOTTY No for a directory ,
+and
 .Dv FIOBMAP2
 is
 .Er EOPNOTSUPP .
@@ -1824,10 +1844,20 @@ before stage 3; declared), while
 .Dv FREAD
 and the MAC mmap check still apply.
 .Xr procstat 1
-.Fl v
-and
+.Fl v ,
 .Xr kinfo_getvmmap 3
-show a vnode mapping with the presented path, size and file id; a mapping
+and the
+.Pa maps
+file of
+.Xr linprocfs 4
+show a vnode mapping with the presented size and file id and the
+presented path, against the reader as
+.Dv F_KINFO
+presents it
+.Pq see Sx Served working directory and root :
+relative to the reader's served root of the same queue, the raw
+.Va di_path
+for any other reader; a mapping
 holds the open file, so a mapping that outlives the descriptor delays
 the last close (and with it the release of
 .Xr flock 2
@@ -3375,12 +3405,34 @@ is
 and
 .Xr sendfile 2
 are
-.Er EINVAL ,
+.Er EINVAL
+.Po
+.Xr mmap 2
+after its protection checks, as
+.Fn vn_mmap
+makes them:
+.Er EACCES
+for a shared writable mapping of a read-only descriptor comes first
+.Pc ,
 .Dv SEEK_DATA
 and
 .Dv SEEK_HOLE
 are
 .Er EINVAL ,
+.Dv FIOSEEKDATA ,
+.Dv FIOSEEKHOLE
+and
+.Xr fcntl 2
+.Dv F_READAHEAD
+are
+.Er ENOTTY
+(the generic layer's answers; a file system answering
+.Dv FIOSEEKDATA
+itself may differ, ufs answers
+.Er EINVAL ) ,
+.Xr posix_fadvise 2
+is
+.Er ENODEV ,
 and
 .Dv F_KINFO
 and
@@ -4411,6 +4463,25 @@ reply refused before the event was answered)
 .Fa "uint32_t rop" ,
 .Fa "uint32_t kind"
 (a re-consultation at a symbolic link and the kind it was answered)
+.It dq:::fop-local
+.Fa "struct file *" ,
+.Fa "int op" ,
+.Fa "int errno"
+(a file operation answered from the identity or the descriptor with no
+event:
+.Va op
+is 1
+.Xr ioctl 2 ,
+2
+.Xr fcntl 2 ,
+3
+.Xr posix_fadvise 2 ,
+4
+.Xr lseek 2 ,
+5
+.Xr fpathconf 2 ,
+6
+.Xr fstatfs 2 )
 .El
 .Pp
 Every reply also runs the

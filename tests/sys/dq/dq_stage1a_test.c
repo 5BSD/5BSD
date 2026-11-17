@@ -664,18 +664,17 @@ ATF_TC_BODY(dir_local_answers, tc)
 	ATF_CHECK_EQ(EINVAL, dir_mmap_errno(f.rdir, PROT_READ, MAP_SHARED));
 
 	/*
-	 * Pins of today's served answers, which differ (T-A16 to T-A19):
-	 * fadvise accepts the advice, the seek ioctls answer from the
-	 * presented size, F_READAHEAD succeeds, and mmap refuses the kind
-	 * before the protection.
+	 * The served directory answers as the generic layer answers a
+	 * directory (T-A16 to T-A19; they answered 0, 0, 0, 0 and EINVAL):
+	 * the seek ioctls ENOTTY, where ufs answers FIOSEEKDATA itself.
 	 */
-	ATF_CHECK_EQ(0, posix_fadvise(f.sdir, 0, 0, POSIX_FADV_NORMAL));
+	ATF_CHECK_EQ(ENODEV, posix_fadvise(f.sdir, 0, 0, POSIX_FADV_NORMAL));
 	off = 0;
-	ATF_CHECK_EQ(0, DQT_ERRNO_OF(ioctl(f.sdir, FIOSEEKDATA, &off)));
+	ATF_CHECK_EQ(ENOTTY, DQT_ERRNO_OF(ioctl(f.sdir, FIOSEEKDATA, &off)));
 	off = 0;
-	ATF_CHECK_EQ(0, DQT_ERRNO_OF(ioctl(f.sdir, FIOSEEKHOLE, &off)));
-	ATF_CHECK_EQ(0, DQT_ERRNO_OF(fcntl(f.sdir, F_READAHEAD, 0)));
-	ATF_CHECK_EQ(EINVAL, dir_mmap_errno(f.sdir, PROT_READ | PROT_WRITE,
+	ATF_CHECK_EQ(ENOTTY, DQT_ERRNO_OF(ioctl(f.sdir, FIOSEEKHOLE, &off)));
+	ATF_CHECK_EQ(ENOTTY, DQT_ERRNO_OF(fcntl(f.sdir, F_READAHEAD, 0)));
+	ATF_CHECK_EQ(EACCES, dir_mmap_errno(f.sdir, PROT_READ | PROT_WRITE,
 	    MAP_SHARED));
 	ATF_CHECK_EQ(EINVAL, dir_mmap_errno(f.sdir, PROT_READ, MAP_SHARED));
 	dir_teardown(&f);

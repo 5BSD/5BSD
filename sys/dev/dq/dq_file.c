@@ -758,6 +758,15 @@ dq_uio_advance(struct uio *uio, size_t n)
 	}
 }
 
+/* A fileop answered here, with no event: dq:::fop-local, then the answer. */
+static inline int
+dq_fop_local(struct file *fp, int op, int error)
+{
+
+	SDT_PROBE3(dq, , , fop__local, fp, op, error);
+	return (error);
+}
+
 /*
  * dp_cache = NONE or ATTR: one READ per max_io chunk, in order; a short
  * answer is the end of the file.
@@ -1103,37 +1112,8 @@ out_offset:
  * Attributes
  */
 
-static void
-dq_ident_to_stat(const struct dq_ident_file *di, struct stat *sb)
-{
-
-	bzero(sb, sizeof(*sb));
-	sb->st_dev = di->di_dev;
-	sb->st_ino = di->di_ino;
-	sb->st_nlink = di->di_nlink;
-	sb->st_mode = di->di_mode;
-	sb->st_bsdflags = 0;
-	sb->st_uid = di->di_uid;
-	sb->st_gid = di->di_gid;
-	sb->st_rdev = di->di_rdev;
-	sb->st_atim.tv_sec = di->di_atime.tv_sec;
-	sb->st_atim.tv_nsec = di->di_atime.tv_nsec;
-	sb->st_mtim.tv_sec = di->di_mtime.tv_sec;
-	sb->st_mtim.tv_nsec = di->di_mtime.tv_nsec;
-	sb->st_ctim.tv_sec = di->di_ctime.tv_sec;
-	sb->st_ctim.tv_nsec = di->di_ctime.tv_nsec;
-	sb->st_birthtim.tv_sec = di->di_birthtime.tv_sec;
-	sb->st_birthtim.tv_nsec = di->di_birthtime.tv_nsec;
-	sb->st_size = di->di_size;
-	sb->st_blocks = di->di_blocks;
-	sb->st_blksize = di->di_blksize;
-	sb->st_flags = di->di_flags;
-	sb->st_gen = di->di_gen;
-	sb->st_filerev = di->di_filerev;
-}
-
 static int
-dq_stat(struct file *fp, struct stat *sb, struct ucred *active_cred __unused)
+dq_stat(struct file *fp, struct stat *sb, struct ucred *active_cred)
 {
 	struct dq_object *o;
 	struct dq_ident_file *di;
@@ -1169,7 +1149,7 @@ dq_stat(struct file *fp, struct stat *sb, struct ucred *active_cred __unused)
 	DQO_LOCK(o);
 	*di = o->o_ident;
 	DQO_UNLOCK(o);
-	dq_ident_to_stat(di, sb);
+	dqres_ident_to_stat(di, active_cred, sb);
 	free(di, M_DQ);
 	return (0);
 }
@@ -1209,30 +1189,26 @@ dq_statfs(struct file *fp, struct statfs *buf, struct thread *td __unused)
 	memcpy(buf->f_mntfromname, ds->ds_mntfromname, MNAMELEN);
 	memcpy(buf->f_mntonname, ds->ds_mntonname, MNAMELEN);
 	free(ds, M_DQ);
-	return (0);
+	return (dq_fop_local(fp, DQ_FOP_STATFS, 0));
 }
 
+/*
+ * The identity's answer, through the routine a name answered ATTR uses
+ * (dqres_ident_pathconf), so fpathconf(2) and pathconf(2) cannot differ.
+ * _PC_ASYNC_IO never arrives here: kern_fpathconf answers it for every
+ * descriptor before the fileop.
+ */
 static int
 dq_pathconf(struct file *fp, int name, long *valuep, struct thread *td __unused)
 {
 	struct dq_object *o;
-	int i;
+	int error;
 
 	o = dq_fp_object(fp);
-	for (i = 0; i < DQ_PC_NCOUNT; i++) {
-		if (dq_pc_names[i] == name)
-			break;
-	}
-	if (i == DQ_PC_NCOUNT)
-		return (EINVAL);
 	DQO_LOCK(o);
-	if ((o->o_ident.di_pathconf.dp_valid & ((uint64_t)1 << i)) == 0) {
-		DQO_UNLOCK(o);
-		return (EINVAL);
-	}
-	*valuep = o->o_ident.di_pathconf.dp_value[i];
+	error = dqres_ident_pathconf(&o->o_ident, name, valuep);
 	DQO_UNLOCK(o);
-	return (0);
+	return (dq_fop_local(fp, DQ_FOP_PATHCONF, error));
 }
 
 static int
@@ -1956,25 +1932,29 @@ dq_ioctl(struct file *fp, u_long com, void *data, struct ucred *active_cred,
 	case FIONREAD:
 		/* As vn_ioctl: the int truncation is the real file's too. */
 		*(int *)data = size - fp->f_offset;
-		return (0);
+		return (dq_fop_local(fp, DQ_FOP_IOCTL, 0));
 	case FIONBIO:
 	case FIOASYNC:
-		return (0);
+		return (dq_fop_local(fp, DQ_FOP_IOCTL, 0));
 	case FIOSEEKDATA:
 	case FIOSEEKHOLE:
+		/* vn_bmap_seekhole: ENOTTY for anything but a regular file. */
+		if (o->o_kind != DQ_KIND_FILE)
+			return (dq_fop_local(fp, DQ_FOP_IOCTL, ENOTTY));
 		offp = data;
 		if (*offp < 0 || *offp >= size)
-			return (ENXIO);
+			return (dq_fop_local(fp, DQ_FOP_IOCTL, ENXIO));
 		if (com == FIOSEEKHOLE)
 			*offp = size;
-		return (0);
+		return (dq_fop_local(fp, DQ_FOP_IOCTL, 0));
 	case FIOBMAP2:
-		return (EOPNOTSUPP);	/* no VOP_BMAP to run; declared */
+		/* No VOP_BMAP to run; declared. */
+		return (dq_fop_local(fp, DQ_FOP_IOCTL, EOPNOTSUPP));
 	default:
 		break;
 	}
-	if (!event)
-		return (ENOTTY);	/* dp_ioctl = DENY */
+	if (!event)	/* dp_ioctl = DENY */
+		return (dq_fop_local(fp, DQ_FOP_IOCTL, ENOTTY));
 	error = dq_object_usable(o);
 	if (error != 0)
 		return (error);
@@ -2163,32 +2143,44 @@ dq_seek(struct file *fp, off_t offset, int whence, struct thread *td)
 		td->td_uretoff.tdu_off = offset;
 	}
 	foffset_unlock(fp, offset, error != 0 ? FOF_NOUPDATE : 0);
-	return (error);
+	return (dq_fop_local(fp, DQ_FOP_SEEK, error));
 }
 
 static int
 dq_fcntl(struct file *fp, int cmd, intptr_t arg, struct thread *td)
 {
+	int error;
 
 	switch (cmd) {
 	case F_READAHEAD:
+		/* vn_fcntl: read-ahead exists for a regular file only. */
+		if (dq_fp_object(fp)->o_kind != DQ_KIND_FILE) {
+			error = ENOTTY;
+			break;
+		}
 		/* No read-ahead exists to size; the flag is kept as vn_fcntl keeps it. */
 		if (arg >= 0)
 			atomic_set_int(&fp->f_flag, FRDAHEAD);
 		else
 			atomic_clear_int(&fp->f_flag, FRDAHEAD);
-		return (0);
+		error = 0;
+		break;
 	case F_ISUNIONSTACK:
 		td->td_retval[0] = 0;
-		return (0);
+		error = 0;
+		break;
 	case F_GET_RW_HINT:
 		td->td_retval[0] = 0;	/* WRITE_LIFE_NOT_SET */
-		return (0);
+		error = 0;
+		break;
 	case F_SET_RW_HINT:
-		return (EPERM);		/* N12: a hint without a vnode has no consumer */
+		error = EPERM;	/* N12: a hint without a vnode has no consumer */
+		break;
 	default:
-		return (EINVAL);
+		error = EINVAL;
+		break;
 	}
+	return (dq_fop_local(fp, DQ_FOP_FCNTL, error));
 }
 
 /*
@@ -2216,12 +2208,6 @@ dq_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t size,
 	int error;
 
 	o = dq_fp_object(fp);
-	/* vm_mmap_vnode: only a regular file maps (EINVAL, the oracle). */
-	if (o->o_kind != DQ_KIND_FILE)
-		return (EINVAL);
-	error = dq_object_usable(o);
-	if (error != 0)
-		return (error);
 	DQO_LOCK(o);
 	fsflags = o->o_ident.di_statfs.ds_flags;
 	sharedw = o->o_policy.dp_mmap_shared_write;
@@ -2252,6 +2238,16 @@ dq_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t size,
 	/* As vn_mmap and shm_mmap: an offset inside the object, no wrap. */
 	if (size > OFF_MAX || foff > OFF_MAX - size)
 		return (EINVAL);
+	/*
+	 * vm_mmap_vnode, after vn_mmap's protection checks: only a regular
+	 * file maps (EINVAL, the oracle); then a revoked object or a gone
+	 * controller (EIO).
+	 */
+	if (o->o_kind != DQ_KIND_FILE)
+		return (EINVAL);
+	error = dq_object_usable(o);
+	if (error != 0)
+		return (error);
 
 	obj = o->o_object;
 	vm_object_reference(obj);
@@ -2361,12 +2357,17 @@ dq_get_seals(struct file *fp __unused, int *flags __unused)
 	return (EINVAL);
 }
 
+/*
+ * vn_fadvise: a regular file accepts the advice; anything else is ENODEV.
+ * Nothing is kept: no read-ahead exists to steer.
+ */
 static int
-dq_fadvise(struct file *fp __unused, off_t offset __unused, off_t len __unused,
+dq_fadvise(struct file *fp, off_t offset __unused, off_t len __unused,
     int advice __unused, struct thread *td __unused)
 {
 
-	return (0);		/* vn_fadvise on a VREG: advice accepted */
+	return (dq_fop_local(fp, DQ_FOP_FADVISE,
+	    dq_fp_object(fp)->o_kind != DQ_KIND_FILE ? ENODEV : 0));
 }
 
 static int

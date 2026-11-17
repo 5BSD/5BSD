@@ -598,8 +598,8 @@ ATF_TC_BODY(stat_gen_unpriv, tc)
 	ATF_CHECK_EQ(0, r.err[1]);
 	ATF_CHECK_EQ_MSG(0, r.gen[1], "real file: st_gen %ju for uid 1001",
 	    (uintmax_t)r.gen[1]);
-	/* Pin: today the served file shows its generation to anyone. */
-	ATF_CHECK_EQ_MSG(snap.st.st_gen, r.gen[0], "served fstat: st_gen %ju",
+	/* As vn_stat: no generation without PRIV_VFS_GENERATION. */
+	ATF_CHECK_EQ_MSG(0, r.gen[0], "served fstat: st_gen %ju",
 	    (uintmax_t)r.gen[0]);
 	dqt_fini(&c);
 	(void)close(oracle);
@@ -614,10 +614,10 @@ ATF_TC_BODY(stat_gen_unpriv, tc)
 	    gen_tree_fn, NULL, &r, sizeof(r)), "child");
 	ATF_CHECK_EQ(0, r.err[2]);
 	ATF_CHECK_EQ(0, r.err[3]);
-	/* Pin: today both show the backing generation. */
-	ATF_CHECK_EQ_MSG(st.st_gen, r.gen[2], "served stat: st_gen %ju",
+	/* Neither the name nor the descriptor shows it (one routine). */
+	ATF_CHECK_EQ_MSG(0, r.gen[2], "served stat: st_gen %ju",
 	    (uintmax_t)r.gen[2]);
-	ATF_CHECK_EQ_MSG(st.st_gen, r.gen[3], "served fstat: st_gen %ju",
+	ATF_CHECK_EQ_MSG(0, r.gen[3], "served fstat: st_gen %ju",
 	    (uintmax_t)r.gen[3]);
 	ts_stop(&s);
 }

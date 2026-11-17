@@ -37,6 +37,7 @@
 #include <sys/malloc.h>
 #include <sys/mutex.h>
 #include <sys/proc.h>
+#include <sys/dqres.h>
 #include <sys/rwlock.h>
 #include <sys/taskqueue.h>
 #include <sys/user.h>
@@ -108,6 +109,19 @@ dq_pager_register(void)
 		return (ENOSPC);
 	dq_pager_type = type;
 	return (0);
+}
+
+/*
+ * The inverse of dq_pager_register, for a dq_init that fails before any
+ * object exists.
+ */
+void
+dq_pager_unregister(void)
+{
+
+	KASSERT(dq_pager_type >= 0, ("dq: no pager type to unregister"));
+	vm_pager_free_dyn_type(dq_pager_type);
+	dq_pager_type = -1;
 }
 
 /* The largest page run one event carries. */
@@ -632,12 +646,15 @@ dq_pager_sync(vm_object_t obj, vm_ooffset_t offset, vm_size_t size,
 
 /*
  * What procstat -v, kinfo_getvmmap(3) and linprocfs show for a mapping: the
- * presented identity, as a regular file's vnode would report itself.  The
- * object is referenced and unlocked; handle stays until termination.
+ * presented identity, as a regular file's vnode would report itself, its
+ * path presented against the reader td as fill_kinfo presents the
+ * descriptor's (D174): relative to a served root of the same queue, the
+ * raw di_path for any other reader, empty when not underneath.  The object
+ * is referenced and unlocked (vm_object_kinfo), so the presentation may
+ * sleep; handle stays until termination.
  */
 static void
-dq_pager_kinfo(vm_object_t obj, struct vm_object_kinfo *ki,
-    struct thread *td __unused)
+dq_pager_kinfo(vm_object_t obj, struct vm_object_kinfo *ki, struct thread *td)
 {
 	struct dq_object *o;
 	struct dq_ident_file *di;
@@ -649,8 +666,10 @@ dq_pager_kinfo(vm_object_t obj, struct vm_object_kinfo *ki,
 	DQO_LOCK(o);
 	*di = o->o_ident;
 	DQO_UNLOCK(o);
-	ki->vk_freepath = malloc(di->di_pathlen + 1, M_TEMP, M_WAITOK);
-	strlcpy(ki->vk_freepath, di->di_path, di->di_pathlen + 1);
+	ki->vk_freepath = malloc(MAXPATHLEN, M_TEMP, M_WAITOK);
+	if (dqres_present_viewer(td, o->o_queue->q_gid, di->di_path,
+	    di->di_pathlen, ki->vk_freepath, MAXPATHLEN) != 0)
+		ki->vk_freepath[0] = '\0';
 	ki->vk_path = ki->vk_freepath;
 	ki->vk_vn_type = KF_VTYPE_VREG;
 	ki->vk_fileid = di->di_ino;

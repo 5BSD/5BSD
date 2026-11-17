@@ -22,6 +22,26 @@ require_dtrace()
 	    atf_fail "dtrace -l: $(cat dtrace.err) (preload dtraceall)"
 }
 
+# usage: fire PROBE FORMAT ARGS PROGRAM CASE
+# Run one case of a C test program of this directory under DTrace, with
+# PROBE printing FORMAT of ARGS for every firing in the case's progeny,
+# into the file "fired"; the case must pass.  A case with a cleanup part
+# has it run after.
+fire()
+{
+	local probe fmt args prog tc
+
+	probe="$1"; fmt="$2"; args="$3"; prog="$4"; tc="$5"
+	printf '%s -r result %s\n' "$(atf_get_srcdir)/${prog}" "${tc}" > run.sh
+	printf '%s -r cleanup %s:cleanup\n' "$(atf_get_srcdir)/${prog}" \
+	    "${tc}" >> run.sh
+	atf_check -o save:fired -e ignore dtrace -q -n "
+	    ${probe} /progenyof(\$target)/ { printf(\"${fmt}\\n\", ${args}); }" \
+	    -c "/bin/sh run.sh"
+	grep -q '^passed' result ||
+	    atf_fail "${prog}:${tc} under DTrace: $(cat result)"
+}
+
 atf_test_case dq_probes_present
 dq_probes_present_head()
 {
@@ -33,7 +53,8 @@ dq_probes_present_body()
 	require_dtrace
 	for probe in queue-open queue-close mint revoke object-close \
 	    event-post event-deliver event-reply event-drop event-interrupt \
-	    event-deadline reply-late attach resolve-post resolve-reply; do
+	    event-deadline reply-late attach resolve-post resolve-reply \
+	    fop-local; do
 		atf_check -o ignore dtrace -l -n "dq:::${probe}"
 	done
 }
@@ -85,9 +106,29 @@ mac_file_notify_reply_present_body()
 	done
 }
 
+atf_test_case fop_local_fires
+fop_local_fires_head()
+{
+	atf_set "descr" "dq:::fop-local fires for the fileops a served " \
+	    "directory answers locally, with the operation and errno"
+	atf_set "require.user" "root"
+}
+fop_local_fires_body()
+{
+	require_dtrace
+	fire dq:::fop-local "%d %d" "arg1, arg2" dq_stage1a_test \
+	    dir_local_answers
+	# posix_fadvise (3) ENODEV (19), FIOSEEKDATA (1) ENOTTY (25),
+	# F_READAHEAD (2) ENOTTY.
+	atf_check -o ignore grep -qx '3 19' fired
+	atf_check -o ignore grep -qx '1 25' fired
+	atf_check -o ignore grep -qx '2 25' fired
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case dq_probes_present
 	atf_add_test_case dq_probes_fire
 	atf_add_test_case mac_file_notify_reply_present
+	atf_add_test_case fop_local_fires
 }

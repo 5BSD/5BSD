@@ -1119,11 +1119,12 @@ ATF_TC_BODY(vmmap_path_served_root, tc)
 	/* The descriptor's own row is presented (D174). */
 	ATF_CHECK_STREQ("/a", ra.kf);
 	/*
-	 * Pin (B2): today the mapping's rows show A the raw di_path, the
-	 * backing path outside its root, by both routes.
+	 * The mapping's rows are presented to A as the descriptor's is,
+	 * by both routes (B2: they showed the raw di_path, the backing
+	 * path outside its root).
 	 */
-	ATF_CHECK_STREQ(raw, ra.kve);
-	ATF_CHECK_STREQ(raw, ra.lp);
+	ATF_CHECK_STREQ("/a", ra.kve);
+	ATF_CHECK_STREQ("/a", ra.lp);
 	close(pd);
 	close(v.lpfd);
 	ts_stop(&s);

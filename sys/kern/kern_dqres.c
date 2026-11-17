@@ -2761,9 +2761,15 @@ dqres_ident(struct dq_intent *di, uint32_t kind)
 	return (di->di_res.da_ident);
 }
 
-/* As dq_stat presents an object's identity; no mount-point flag. */
+/*
+ * An identity as stat(2) presents it, for fstat of a served descriptor
+ * (dq_stat) and for a name answered ATTR; no mount-point flag.  st_gen
+ * is answered as vn_stat answers it (vop_stat_helper_post): only to a
+ * credential with PRIV_VFS_GENERATION.
+ */
 void
-dqres_ident_to_stat(const struct dq_ident_file *di, struct stat *sb)
+dqres_ident_to_stat(const struct dq_ident_file *di, struct ucred *cred,
+    struct stat *sb)
 {
 
 	bzero(sb, sizeof(*sb));
@@ -2786,7 +2792,7 @@ dqres_ident_to_stat(const struct dq_ident_file *di, struct stat *sb)
 	sb->st_blocks = di->di_blocks;
 	sb->st_blksize = di->di_blksize;
 	sb->st_flags = di->di_flags;
-	sb->st_gen = di->di_gen;
+	sb->st_gen = priv_check_cred_vfs_generation(cred) == 0 ? di->di_gen : 0;
 	sb->st_filerev = di->di_filerev;
 }
 

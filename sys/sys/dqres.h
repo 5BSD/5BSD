@@ -525,7 +525,8 @@ struct stat;
 struct statfs;
 struct ucred;
 const struct dq_ident_file *dqres_ident(struct dq_intent *di, uint32_t kind);
-void	dqres_ident_to_stat(const struct dq_ident_file *di, struct stat *sb);
+void	dqres_ident_to_stat(const struct dq_ident_file *di, struct ucred *cred,
+	    struct stat *sb);
 void	dqres_ident_to_statfs(const struct dq_ident_file *di,
 	    struct statfs *sf);
 int	dqres_ident_pathconf(const struct dq_ident_file *di, int name,
