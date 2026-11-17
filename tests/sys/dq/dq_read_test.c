@@ -747,6 +747,7 @@ ATF_TC_BODY(two_objects_same_identity, tc)
 {
 	struct dqt_ctl c;
 	struct dqt_object *o1, *o2;
+	struct dq_policy pol;
 	struct io_arg a;
 	struct io_res r1, r2;
 	struct stat st1, st2;
@@ -757,8 +758,15 @@ ATF_TC_BODY(two_objects_same_identity, tc)
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
 	    sizeof(oracle_path));
 	dqt_init(&c);
-	o1 = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
-	o2 = dqt_mint(&c, oracle, oracle_path, data2, sizeof(data2), NULL);
+	/*
+	 * The controller keeps the times: each object stamps its own access
+	 * time at its own reads (C7b), and two objects of one identity do
+	 * not share one until the identity group (C10).
+	 */
+	dq_policy_default(&pol);
+	pol.dp_flags = DQ_PF_NO_STAMP;
+	o1 = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
+	o2 = dqt_mint(&c, oracle, oracle_path, data2, sizeof(data2), &pol);
 	ATF_CHECK(o1->id != o2->id);
 
 	memset(&a, 0, sizeof(a));
