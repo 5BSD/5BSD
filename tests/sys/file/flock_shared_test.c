@@ -160,24 +160,39 @@ on_signal(int sig __unused)
 /*
  * A child sharing the caller's open files that asks for the lock and
  * exits with 0 or the errno.  With a signal number it first installs a
- * handler that interrupts system calls.
+ * handler that interrupts system calls, and says so on a pipe before
+ * fork_locker_closing returns: until then the signal would kill it.
  */
 static pid_t
 fork_locker_closing(int fd, int how, int sig, int closefd)
 {
 	struct sigaction sa;
 	pid_t pid;
+	int ready[2];
+	char b;
 
+	ATF_REQUIRE_EQ(0, pipe(ready));
 	pid = fork();
 	ATF_REQUIRE(pid != -1);
+	if (pid != 0) {
+		(void)close(ready[1]);
+		if (sig != 0)
+			ATF_REQUIRE_EQ_MSG(1, read(ready[0], &b, 1),
+			    "the locker died before its handler was set");
+		(void)close(ready[0]);
+	}
 	if (pid == 0) {
+		(void)close(ready[0]);
 		if (sig != 0) {
 			memset(&sa, 0, sizeof(sa));
 			sa.sa_handler = on_signal;
 			sigemptyset(&sa.sa_mask);
 			if (sigaction(sig, &sa, NULL) != 0)
 				_exit(255);
+			if (write(ready[1], "h", 1) != 1)
+				_exit(255);
 		}
+		(void)close(ready[1]);
 		/* Leave the parent the only holder of that open file. */
 		if (closefd != -1 && close(closefd) != 0)
 			_exit(255);
@@ -191,6 +206,45 @@ fork_locker(int fd, int how, int sig)
 {
 
 	return (fork_locker_closing(fd, how, sig, -1));
+}
+
+/*
+ * Interrupt a sleeping locker: send sig every 50 ms until the child is
+ * reaped, and return its flock(2) result.  One signal is not enough: the
+ * wait for the lock found by wait_blocked can be another sleep (a served
+ * file's page-in waits as "dqwait" too), and a signal caught there is
+ * gone before the child reaches flock(2).  Each later signal either ends
+ * the sleeping flock(2) with EINTR or is caught before it.  A child that
+ * is still not reaped after 30 s was never interrupted: a failure.
+ */
+static int
+interrupt_and_reap(pid_t pid, int sig)
+{
+	struct timespec t0, t;
+	pid_t got;
+	int status;
+
+	ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &t0));
+	for (;;) {
+		ATF_REQUIRE_EQ(0, kill(pid, sig));
+		got = waitpid(pid, &status, WNOHANG);
+		ATF_REQUIRE(got != -1);
+		if (got == pid)
+			break;
+		ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &t));
+		if (t.tv_sec - t0.tv_sec >= 30) {
+			/*
+			 * Not waited for: a sleep that no signal ends ends
+			 * when this process exits and releases the lock.
+			 */
+			(void)kill(pid, SIGKILL);
+			atf_tc_fail("the lock request of pid %d was not "
+			    "interrupted in 30 s", (int)pid);
+		}
+		usleep(50000);
+	}
+	ATF_REQUIRE_MSG(WIFEXITED(status), "child status %#x", status);
+	return (WEXITSTATUS(status));
 }
 
 /* The child's exit status: its flock(2) result. */
@@ -583,8 +637,7 @@ ATF_TC_BODY(interrupted_sleeper, tc)
 		wait_blocked(pid);
 		if (unlock != 0)
 			ATF_CHECK_EQ(0, flock(x, LOCK_UN));
-		ATF_REQUIRE_EQ(0, kill(pid, SIGUSR1));
-		ATF_CHECK_EQ(EINTR, reap(pid));
+		ATF_CHECK_EQ(EINTR, interrupt_and_reap(pid, SIGUSR1));
 		CHECK_HELD_EX();
 		ATF_REQUIRE_EQ(0, flock(y, LOCK_UN));
 		/* x is still open; nothing was granted to it. */
@@ -611,8 +664,7 @@ ATF_TC_BODY(interrupted_upgrade, tc)
 	ATF_REQUIRE_EQ(0, flock(y, LOCK_SH));
 	pid = fork_locker(x, LOCK_EX, SIGUSR1);
 	wait_blocked(pid);
-	ATF_REQUIRE_EQ(0, kill(pid, SIGUSR1));
-	ATF_CHECK_EQ(EINTR, reap(pid));
+	ATF_CHECK_EQ(EINTR, interrupt_and_reap(pid, SIGUSR1));
 	CHECK_HELD_SH();
 	ATF_REQUIRE_EQ(0, flock(y, LOCK_UN));
 	CHECK_FREE();
