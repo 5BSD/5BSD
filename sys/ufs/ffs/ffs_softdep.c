@@ -2171,9 +2171,13 @@ retry_flush:
 	if (!error) {
 		if (oldmnt->mnt_kern_flag & MNTK_UNMOUNT) {
 			retry = 0;
-			MNT_ILOCK(oldmnt);
-			morework = oldmnt->mnt_nvnodelistsize > 0;
+			morework = 0;
 #ifdef QUOTA
+			/*
+			 * The FFS lock is taken before the mount interlock
+			 * (quotaon(), quotaoff_inchange()): look at the
+			 * quota files first.
+			 */
 			UFS_LOCK(ump);
 			for (i = 0; i < MAXQUOTAS; i++) {
 				if (ump->um_quotas[i] != NULL)
@@ -2181,6 +2185,9 @@ retry_flush:
 			}
 			UFS_UNLOCK(ump);
 #endif
+			MNT_ILOCK(oldmnt);
+			if (oldmnt->mnt_nvnodelistsize > 0)
+				morework = 1;
 			if (morework) {
 				if (--retry_flush_count > 0) {
 					retry = 1;
