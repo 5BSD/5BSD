@@ -906,8 +906,22 @@ guest_off=0
 python3.12 -c 'import json,sys
 ev=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]
 sys.exit(0 if any(e.get("event")=="SHUTDOWN" and e.get("data",{}).get("guest") is True and e["data"].get("reason")=="guest-shutdown" for e in ev) else 1)' "$work/qmp-events.jsonl" 2>/dev/null && guest_off=1
+# --- stack-tier verdict (tests/vm-provider-stack-tier-verdict.sh runs this block)
+# STACK_TIER=1 also needs the results disk's tier.txt, which tar writes whole,
+# to show the tier met and its test issuers created and all freed: a kernel
+# message landing mid-line on the console can hide a STACK_TIER_FAIL line.
+stack_tier_met() {
+	[ "$stack_tier_request" = 1 ] || return 0
+	t=$work/results/kyua-results/tier.txt
+	[ -f "$t" ] && grep -qx 'stack-tier=yes' "$t" &&
+	    awk '$1 == "STACK_TIER:" && $4 ~ /^created=[0-9]+$/ && $5 ~ /^live=[0-9]+$/ {
+		split($4, c, "="); split($5, l, "=")
+		ok = (c[2] + 0 > 0 && l[2] + 0 == 0)
+	    } END { exit !ok }' "$t"
+}
+# --- end of the stack-tier verdict
 verdict=VM_NOT_CLEAN
-if [ $forced = 0 ] && [ $rc = 0 ] && [ $guest_off = 1 ] &&
+if [ $forced = 0 ] && [ $rc = 0 ] && [ $guest_off = 1 ] && stack_tier_met &&
     [ "$(cat "$work/results/kyua-results/kyua-test.status" 2>/dev/null)" = 0 ] &&
     tr -d '\r' < "$log" | grep -aqx 'KYUA_VM_DONE' &&
     ! tr -d '\r' < "$log" | grep -aq '^STACK_TIER_FAIL' &&
