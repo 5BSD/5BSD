@@ -786,20 +786,20 @@ ATF_TC_BODY(real_object_paths_served_root, tc)
 	TS_CHECK_ERRNO(0, ra.err[2], "F_KINFO");
 	TS_CHECK_ERRNO(0, ra.err[3], "mmap");
 	/*
-	 * Pin (T-A10): the program sees the backing paths, outside its
-	 * root, by every route.
+	 * T-A10, Q1's default: under a served root a real object shows no
+	 * path by any route (the program saw the backing paths, outside
+	 * its root): empty kf_path and kve_path, and fdescfs ENOENT, as
+	 * when vn_fullpath fails.
 	 */
-	ATF_CHECK_STREQ(real[RO_SWAP], ra.kinfo[RO_SWAP]);
-	ATF_CHECK_STREQ(real[RO_PASS], ra.kinfo[RO_PASS]);
-	ATF_CHECK_STREQ(real[RO_SWAP], ra.table[RO_SWAP]);
-	ATF_CHECK_STREQ(real[RO_PASS], ra.table[RO_PASS]);
-	ATF_CHECK_STREQ(real[RO_PASS], ra.vmmap);
+	ATF_CHECK_STREQ("", ra.kinfo[RO_SWAP]);
+	ATF_CHECK_STREQ("", ra.kinfo[RO_PASS]);
+	ATF_CHECK_STREQ("", ra.table[RO_SWAP]);
+	ATF_CHECK_STREQ("", ra.table[RO_PASS]);
+	ATF_CHECK_STREQ("", ra.vmmap);
 	TS_CHECK_ERRNO(0, ra.err[6], "linprocfs maps");
-	ATF_CHECK_STREQ(real[RO_PASS], ra.lpmap);
-	TS_CHECK_ERRNO(0, ra.err[4], "fdescfs link, SWAP");
-	TS_CHECK_ERRNO(0, ra.err[5], "fdescfs link, PASS");
-	ATF_CHECK_STREQ(real[RO_SWAP], ra.link[RO_SWAP]);
-	ATF_CHECK_STREQ(real[RO_PASS], ra.link[RO_PASS]);
+	ATF_CHECK_STREQ("", ra.lpmap);
+	TS_CHECK_ERRNO(ENOENT, ra.err[4], "fdescfs link, SWAP");
+	TS_CHECK_ERRNO(ENOENT, ra.err[5], "fdescfs link, PASS");
 	close(pd);
 	close(a.realdir);
 	close(a.lpfd);

@@ -4059,6 +4059,38 @@ under a served root, are
 .Er ENOENT ;
 a buffer too short is
 .Er ERANGE .
+A real object (a file opened through
+.Dv DQ_RESOLVE_PASS
+or
+.Dv DQ_RESOLVE_REAL ,
+a substitute, an inherited descriptor; the reader's own or another
+process's) shows no path to a reader whose root is served either: an
+empty
+.Va kf_path
+in
+.Dv F_KINFO
+and
+.Dv KERN_PROC_FILEDESC ,
+an empty
+.Va kve_path
+in
+.Dv KERN_PROC_VMMAP
+and no name in
+.Xr linprocfs 4 Ns 's
+.Pa maps ,
+and
+.Er ENOENT
+from
+.Xr readlink 2
+of its
+.Xr fdescfs 4
+link, as when
+.Fn vn_fullpath
+fails; the path it has is the controller's, not the program's (declared;
+owner question Q1, whose other answer would present one under the root
+relative to it).
+Every other reader sees the vnode's path as before, and an unattached
+reader pays one test of its own process for it.
 With a real root,
 .Va di_path
 is shown as given: it must then be a real-namespace path, an obligation
@@ -4604,6 +4636,13 @@ held or cannot be taken, 27 a descriptor entry with states of its own,
 .Fa "struct dq_queue *" ,
 .Fa "int fd"
 (the supervisor's descriptor closed at the take)
+.It dqres:::present
+.Fa "pid_t viewer" ,
+.Fa "int kind" ,
+.Fa "int errno"
+(a path presented to an attached viewer:
+.Va kind
+1 a served object's, 2 a real object's under a served root)
 .El
 .Pp
 Every reply also runs the

@@ -77,6 +77,8 @@ SDT_PROBE_DEFINE3(dqres, , , namei__served, "uint32_t", "uint32_t", "int");
 SDT_PROBE_DEFINE3(dqres, , , subst__refuse, "uint32_t", "int", "int");
 SDT_PROBE_DEFINE2(dqres, , , subst__install, "uint32_t", "int");
 SDT_PROBE_DEFINE2(dqres, , , subst__consume, "void *", "int");
+/* A path presented to a viewer: viewer pid, DQRES_PRESENT_*, errno. */
+SDT_PROBE_DEFINE3(dqres, , , present, "pid_t", "int", "int");
 
 const struct dqres_ops *dqres_ops;
 
@@ -2231,7 +2233,8 @@ dq_present_rel(const char *root, size_t rlen, const char *path, size_t plen,
 	}
 	if (n + 1 > outsz)
 		return (ENAMETOOLONG);
-	memcpy(out, rest, n + 1);
+	/* out may be path itself (dqres_present_real): rest is its suffix. */
+	memmove(out, rest, n + 1);
 	return (0);
 }
 
@@ -2262,6 +2265,8 @@ dqres_present_viewer(struct thread *viewer, uint64_t qgid, const char *path,
 		if (rqgid == qgid) {
 			error = dq_present_rel(root->di_path, root->di_pathlen,
 			    path, pathlen, out, outsz);
+			SDT_PROBE3(dqres, , , present, viewer->td_proc->p_pid,
+			    DQRES_PRESENT_SERVED, error);
 			goto out;
 		}
 	}
@@ -2277,6 +2282,60 @@ out:
 	dqres_snap_release(&snap);
 	free(root, M_TEMP);
 	return (error);
+}
+
+/*
+ * Paths of real objects (vnodes) under a served root (T-A10, owner
+ * question Q1).  A process whose root is served has no name for a real
+ * object outside it, and the backing path of one inside is the
+ * supervisor's, not the program's.
+ *
+ * DQRES_REAL_ONE_RULE is the choice: with it, a path at or under the
+ * root's presented di_path (component-bounded, D174) is shown relative to
+ * the root, as a served object's is, and any other is emptied; without it
+ * (the default until Q1 is answered) every real object's path is emptied
+ * for such a viewer, as realpath(3) and getcwd(3) already answer ENOENT.
+ * An empty path is what kinfo shows when vn_fullpath fails; fdescfs turns
+ * it into ENOENT.  A viewer without a served root sees vn_fullpath's
+ * answer unchanged.
+ */
+static const bool dqres_real_one_rule = false;
+
+void
+dqres_present_real(struct thread *viewer, char *path, size_t size)
+{
+	struct dq_ident_file *root;
+	struct dqres_snap snap;
+	uint64_t qgid;
+	size_t len;
+	int error;
+	bool closed;
+
+	bzero(&snap, sizeof(snap));
+	root = NULL;
+	if (dqres_ops == NULL || !dqres_proc_attached(viewer->td_proc))
+		return;
+	pwd_dqres_proc(viewer->td_proc, &snap);
+	if (snap.dsn_root == NULL && (snap.dsn_flags & DR_ROOT_DEAD) == 0)
+		goto out;	/* a real root: vn_fullpath's answer stands */
+	error = ENOENT;
+	if (dqres_real_one_rule && snap.dsn_root != NULL &&
+	    (snap.dsn_flags & DR_ROOT_DEAD) == 0) {
+		root = malloc(sizeof(*root), M_TEMP, M_WAITOK);
+		len = strnlen(path, size);
+		if (len < size && dqres_ops->dro_file_ident(snap.dsn_root,
+		    root, &qgid, &closed) == 0)
+			/* The result is a suffix of path: rewritten in place. */
+			error = dq_present_rel(root->di_path, root->di_pathlen,
+			    path, len, path, size);
+	}
+	if (error != 0)
+		path[0] = '\0';
+	SDT_PROBE3(dqres, , , present, viewer->td_proc->p_pid,
+	    DQRES_PRESENT_REAL, error);
+out:
+	dqres_snap_release(&snap);
+	free(root, M_TEMP);
 }
 
 /* A served file's path presented against the viewer (dq's fill_kinfo). */

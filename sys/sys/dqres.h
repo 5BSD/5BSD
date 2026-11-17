@@ -333,7 +333,8 @@ extern const struct dqres_ops *dqres_ops;
  * program (the completion); dqres:::subst-install (op, fd) is the
  * program's new descriptor; dqres:::subst-consume (queue, fd) the
  * supervisor's entry closed with the take.  The reasons continue the
- * dtrace-observability list after 22.
+ * dtrace-observability list after 22.  dqres:::present (viewer pid,
+ * DQRES_PRESENT_*, errno): a path presented to an attached viewer.
  */
 SDT_PROVIDER_DECLARE(dqres);
 SDT_PROBE_DECLARE(dqres, , , namei__served);
@@ -347,6 +348,9 @@ SDT_PROBE_DECLARE(dqres, , , subst__consume);
 					   or a type that would wait */
 #define	DQRES_R_SUBST_STATES	27	/* the entry carries states (PLAIN) */
 #define	DQRES_R_SUBST_SLASH	28	/* a trailing slash, not a directory */
+/* dqres:::present (viewer pid, DQRES_PRESENT_*, errno). */
+#define	DQRES_PRESENT_SERVED	1	/* a served object's di_path */
+#define	DQRES_PRESENT_REAL	2	/* a real object's vn_fullpath */
 
 /* The requester's completion refused the answer (dro_bad_answer). */
 void	dqres_bad_answer(struct thread *td);
@@ -499,6 +503,7 @@ int	dqres_present_viewer(struct thread *viewer, uint64_t qgid,
 	    const char *path, size_t pathlen, char *out, size_t outsz);
 int	dqres_present_file(struct thread *viewer, struct file *fp, char *out,
 	    size_t outsz);
+void	dqres_present_real(struct thread *viewer, char *path, size_t size);
 bool	dqres_served_root(struct thread *td);
 int	dqres_getcwd(struct thread *td, char *buf, size_t *buflenp);
 int	dqres_proc_dirpath(struct thread *viewer, struct proc *p, bool root,
@@ -661,6 +666,18 @@ int	dqres_kpath_refused(struct thread *td);
 
 #define	DQRES_ATTACHED_TD(td)						\
 	(__predict_false(dqres_ops != NULL && dqres_proc_attached((td)->td_proc)))
+
+/*
+ * The path of a real object (vn_fullpath's answer, in path[size]) as the
+ * viewer may see it (T-A10): for an attached viewer with a served root it
+ * is rewritten in place by dqres_present_real; every other viewer pays
+ * this test alone, with no call and no copy.  A macro: the headers that
+ * include this one need not define struct thread.
+ */
+#define	dqres_present_real_maybe(viewer, path, size) do {		\
+	if (DQRES_ATTACHED_TD(viewer))					\
+		dqres_present_real((viewer), (path), (size));		\
+} while (0)
 
 #endif /* _KERNEL */
 #endif /* !_SYS_DQRES_H_ */

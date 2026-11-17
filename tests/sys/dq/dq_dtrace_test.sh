@@ -182,6 +182,26 @@ subst_fires_body()
 	atf_check -o ignore grep -Eqx 'install 1 [0-9]+' fired
 }
 
+atf_test_case present_fires
+present_fires_head()
+{
+	atf_set "descr" "dqres:::present fires for the paths shown to a " \
+	    "program under a served root: a real object's and a served one's"
+	atf_set "require.user" "root"
+}
+present_fires_body()
+{
+	require_dtrace
+	# A real object under a served root (2): no path, ENOENT (2).
+	fire dqres:::present "%d %d" "arg1, arg2" dq_getcwd_test \
+	    real_object_paths_served_root
+	atf_check -o ignore grep -qx '2 2' fired
+	# A served mapping's path (1), presented.
+	fire dqres:::present "%d %d" "arg1, arg2" dq_mmap_test \
+	    vmmap_path_served_root
+	atf_check -o ignore grep -qx '1 0' fired
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case dq_probes_present
@@ -191,4 +211,5 @@ atf_init_test_cases()
 	atf_add_test_case namei_served_fires
 	atf_add_test_case quota_wait_fires
 	atf_add_test_case subst_fires
+	atf_add_test_case present_fires
 }

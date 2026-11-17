@@ -71,6 +71,7 @@
 #include <sys/sf_buf.h>
 #include <sys/domainset.h>
 #include <sys/user.h>
+#include <sys/dqres.h>
 
 #include <machine/atomic.h>
 
@@ -135,7 +136,10 @@ vm_object_kinfo_vnode(struct vnode *vp, struct vm_object_kinfo *ki,
 {
 	struct vattr va;
 
-	vn_fullpath(vp, &ki->vk_path, &ki->vk_freepath);
+	if (vn_fullpath(vp, &ki->vk_path, &ki->vk_freepath) == 0)
+		/* The reader under a served root (T-A10). */
+		dqres_present_real_maybe(td, ki->vk_path,
+		    strlen(ki->vk_path) + 1);
 	ki->vk_vn_type = vntype_to_kinfo(vp->v_type);
 	vn_lock(vp, LK_SHARED | LK_RETRY);
 	if (VOP_GETATTR(vp, &va, td->td_ucred) == 0) {
