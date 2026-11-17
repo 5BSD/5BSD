@@ -8,6 +8,11 @@
  * its issuer, here debug.mac_capability.test_issuer_anchor, revokes every
  * test issuer still alive, and no test issuer can be created afterwards.
  *
+ * The registered application is gone from exec selection afterwards, and
+ * mac_capability:::issuer-decision fires REVOKE (reason ANCHORED) once for
+ * every test issuer the anchor revoked.  dtrace(1) needs its providers
+ * preloaded (dtraceall_load="YES").
+ *
  * The anchor lasts for the boot, so this program runs only in a guest of
  * its own: the runner sets test_suites.FreeBSD.authority_anchor=1 for it
  * (require.config), and every other test-issuer case expects an unanchored
@@ -18,6 +23,7 @@
 #include <sys/cap_authority.h>
 #include <sys/syscall.h>
 #include <sys/sysctl.h>
+#include <sys/wait.h>
 
 #include <atf-c.h>
 #include <errno.h>
@@ -28,6 +34,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+#include "authority_probe.h"
 
 #define	THREADS		8
 #define	HELD_MAX	4096
@@ -58,6 +66,31 @@ issue(int issuer)
 	};
 
 	return (op(CAP_AUTH_ISSUE, issuer, &spec));
+}
+
+/* Exec ./image (the issuer helper) and return what authority it ran with. */
+static void
+exec_image(char *buf, size_t size)
+{
+	int fds[2], status;
+	ssize_t n;
+	pid_t child;
+
+	ATF_REQUIRE(pipe(fds) == 0);
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		dup2(fds[1], STDOUT_FILENO);
+		execl("./image", "image", "info", (char *)NULL);
+		_exit(127);
+	}
+	close(fds[1]);
+	memset(buf, 0, size);
+	n = read(fds[0], buf, size - 1);
+	close(fds[0]);
+	ATF_REQUIRE(waitpid(child, &status, 0) == child);
+	ATF_REQUIRE_MSG(n > 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "image info: status %#x", status);
 }
 
 static _Atomic int anchored;
@@ -97,6 +130,7 @@ ATF_TC_HEAD(anchor, tc)
 	    "The anchor revokes every live test issuer and what it produced, refuses new ones, and races creation safely");
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "require.config", "authority_anchor");
+	atf_tc_set_md_var(tc, "require.progs", "/usr/sbin/dtrace");
 	atf_tc_set_md_var(tc, "timeout", "600");
 }
 ATF_TC_BODY(anchor, tc)
@@ -106,10 +140,14 @@ ATF_TC_BODY(anchor, tc)
 	struct cap_authority_application app;
 	struct cap_authority_bind bind;
 	struct cap_authority_info info;
+	struct probe p;
 	pthread_t threads[THREADS];
-	char buf[32];
+	char buf[32], ran[128], predicate[64], copy[PATH_MAX + 32], expect[64];
+	char *out, *line, *next;
+	uintmax_t identity, issuer_identity, latency;
 	void *result;
 	int issuer, constrained, unregistered, spare, image, one = 1, n;
+	int outcome, reason, perrno, revokes, own_revoked;
 
 	state(buf, sizeof(buf));
 	ATF_REQUIRE_MSG(strcmp(buf, "anchored") != 0,
@@ -122,8 +160,13 @@ ATF_TC_BODY(anchor, tc)
 	unregistered = issue(issuer);
 	spare = issue(issuer);
 	ATF_REQUIRE(constrained >= 0 && unregistered >= 0 && spare >= 0);
-	/* A private image: a registration must not touch a shared binary. */
-	ATF_REQUIRE(system("cp /usr/bin/true ./image") == 0);
+	/*
+	 * A private image, the issuer helper: a registration must not touch a
+	 * shared binary, and the helper reports what exec selected.
+	 */
+	snprintf(copy, sizeof(copy), "cp %s/authority_issuer_helper ./image",
+	    atf_tc_get_config_var(tc, "srcdir"));
+	ATF_REQUIRE(system(copy) == 0);
 	image = open("./image", O_RDONLY);
 	ATF_REQUIRE(image >= 0);
 	constraint.token_fd = constrained;
@@ -147,6 +190,17 @@ ATF_TC_BODY(anchor, tc)
 	ATF_REQUIRE(op(CAP_AUTH_LEASE_CHECK, lease.control_fd, NULL) == 0);
 	ATF_REQUIRE(op(CAP_AUTH_TOKEN_INFO, spare, &info) == 0);
 	ATF_REQUIRE_EQ(info.revoked, 0);
+	issuer_identity = info.issuer;
+	/* Exec of the registered image selects the application. */
+	exec_image(ran, sizeof(ran));
+	snprintf(expect, sizeof(expect), "valid=1 issuer=%ju revoked=0\n",
+	    issuer_identity);
+	ATF_REQUIRE_STREQ_MSG(ran, expect, "before the anchor");
+
+	/* Count the anchor's REVOKE firings. */
+	snprintf(predicate, sizeof(predicate), "progenyof(%d) && arg1 == %d",
+	    (int)getpid(), CAP_AUTH_ISSUER_O_REVOKE);
+	probe_start(&p, predicate);
 
 	/* Creators race the anchor. */
 	for (int i = 0; i < THREADS; i++)
@@ -165,6 +219,38 @@ ATF_TC_BODY(anchor, tc)
 	}
 	n = atomic_load(&held_count);
 	printf("test issuers created during the race: %d\n", n);
+	out = probe_stop(&p);
+	revokes = own_revoked = 0;
+	for (line = out; *line != '\0'; line = next) {
+		next = strchr(line, '\n');
+		if (next != NULL)
+			*next++ = '\0';
+		else
+			next = line + strlen(line);
+		if (line[0] != 'D')
+			continue;
+		ATF_REQUIRE_MSG(sscanf(line, "D %ju %d %d %ju %d", &identity,
+		    &outcome, &reason, &latency, &perrno) == 5,
+		    "unparsed firing: %s", line);
+		revokes++;
+		ATF_CHECK_EQ(outcome, CAP_AUTH_ISSUER_O_REVOKE);
+		ATF_CHECK_EQ(reason, CAP_AUTH_ISSUER_R_ANCHORED);
+		ATF_CHECK_EQ(latency, 0);
+		ATF_CHECK_EQ(perrno, 0);
+		ATF_CHECK(identity != 0);
+		if (identity == issuer_identity)
+			own_revoked++;
+	}
+	free(out);
+	/* This program runs in a guest of its own: no other issuer is alive. */
+	ATF_CHECK_EQ_MSG(revokes, 1 + n, "%d REVOKE firings for %d issuers",
+	    revokes, 1 + n);
+	ATF_CHECK_EQ_MSG(own_revoked, 1, "first issuer revoked %d times",
+	    own_revoked);
+	/* Exec no longer selects the application. */
+	exec_image(ran, sizeof(ran));
+	ATF_CHECK_MSG(strncmp(ran, "valid=0 ", 8) == 0,
+	    "after the anchor: %s", ran);
 
 	state(buf, sizeof(buf));
 	ATF_CHECK_STREQ(buf, "anchored");
