@@ -1998,24 +1998,32 @@ ATF_TC_CLEANUP(owner_only_misc, tc)
  * Races
  */
 
-/* InUse of the "dq" malloc type, from vmstat -m; -1 if it cannot be read. */
+/*
+ * InUse of the "dq" malloc type, from vmstat -m; -1 if vmstat fails.
+ * vmstat -m leaves out a type that has never allocated (vmstat.c
+ * domemstat_malloc), so a missing "dq" line is 0 in use, not an error:
+ * nothing may have opened a queue since boot.
+ */
 static long
 dq_malloc_inuse(void)
 {
 	char line[256], name[64];
 	FILE *p;
 	long use, found;
+	int status;
 
 	p = popen("/usr/bin/vmstat -m", "r");
 	if (p == NULL)
 		return (-1);
-	found = -1;
+	found = 0;
 	while (fgets(line, sizeof(line), p) != NULL) {
 		if (sscanf(line, "%63s %ld", name, &use) == 2 &&
 		    strcmp(name, "dq") == 0)
 			found = use;
 	}
-	(void)pclose(p);
+	status = pclose(p);
+	if (status == -1 || !WIFEXITED(status) || WEXITSTATUS(status) != 0)
+		return (-1);
 	return (found);
 }
 
@@ -2100,7 +2108,7 @@ ATF_TC_BODY(exit_close_storm, tc)
 	dqt_require_test_access();
 	before = queues_now();
 	mem_before = dq_malloc_inuse();
-	ATF_REQUIRE_MSG(mem_before >= 0, "vmstat -m has no dq type");
+	ATF_REQUIRE_MSG(mem_before >= 0, "vmstat -m failed");
 	ATF_REQUIRE_EQ(0, pipe(bad));
 	for (i = 0; i < EXIT_STORM; i++) {
 		pid = fork();
