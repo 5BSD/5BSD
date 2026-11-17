@@ -95,6 +95,10 @@ capd_expect_test_issuer()
 		capd_dump_diagnostics
 		atf_fail "test-local Capsule did not create a relaxed issuer (pid $pid)"
 	fi
+	# A reused pid could match an older stack's line: the count must have
+	# grown since this Capsule was launched.
+	[ "$(sysctl -n kern.mac_capability.test_issuers)" -gt "${CAPD_TEST_ISSUERS_BEFORE:-0}" ] ||
+	    atf_fail "no test issuer was created since the test-local Capsule (pid $pid) was launched"
 	echo "test issuer: $(echo "$line" | sed -n 's/.* created authority issuer \([0-9]*\) off PID 1.*/\1/p') (Capsule pid $pid)"
 }
 
@@ -347,6 +351,8 @@ capd_launch_capsule()
 	# descriptor in the guardian process; only the test shell owns the writer.
 	exec 9<>"$CAPD_LEASE"
 	capd_find_capsule
+	# The test issuers created before this Capsule: its own must be a new one.
+	CAPD_TEST_ISSUERS_BEFORE=$(sysctl -n kern.mac_capability.test_issuers 2>/dev/null || echo 0)
 	"$capd_guardian_bin" run -l "$CAPD_LEASE" \
 	    -s "$CAPD_GUARDIAN_SOCKET" -- \
 	    "$capd_capsule_bin" -d -f "$CAPD_CONFIG" >"$CAPD_LOG" 2>&1 9>&- &
