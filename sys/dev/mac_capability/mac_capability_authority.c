@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 Kory Heard */
 /* Issued authority is independent of discovery and UNIX credential privilege. */
+#include "opt_mac_capability.h"
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/cap_authority.h>
@@ -23,12 +25,15 @@
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/mutex.h>
+#include <sys/priv.h>
 #include <sys/proc.h>
 #include <sys/procdesc.h>
+#include <sys/sdt.h>
 #include <sys/sx.h>
 #include <sys/refcount.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
+#include <sys/syslog.h>
 #include <sys/ucred.h>
 #include <sys/user.h>
 #include <sys/vnode.h>
@@ -39,6 +44,17 @@
 #include "mac_capability_label.h"
 
 FEATURE(cap_authority, "Protected process authority independent of discovery");
+
+SDT_PROVIDER_DECLARE(mac_capability);
+/*
+ * Every issuer creation, allowed or refused, and every test issuer revoked
+ * when PID 1 anchors the boot: issuer identity (0 when none was installed),
+ * outcome (CAP_AUTH_ISSUER_O_*), reason (CAP_AUTH_ISSUER_R_*), latency
+ * (always 0: the decision is synchronous in the caller's thread) and the
+ * errno returned.
+ */
+SDT_PROBE_DEFINE5(mac_capability, , , issuer__decision, "uint64_t", "int",
+    "int", "uint64_t", "int");
 MALLOC_DEFINE(M_CAP_AUTHORITY, "cap_authority", "issued process authority");
 
 /*
@@ -65,6 +81,12 @@ struct authority_issuer {
 	uint64_t identity;
 	uint64_t next;
 	LIST_HEAD(, cap_authority_lease) leases;
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+	/* Under mac_capability_test_issuer_lock. */
+	bool test_made;			/* created off PID 1 */
+	bool test_linked;		/* on mac_capability_test_issuer_list */
+	LIST_ENTRY(authority_issuer) test_link;
+#endif
 };
 struct cap_authority {
 	volatile u_int refs;
@@ -152,6 +174,144 @@ MTX_SYSINIT(authority_applications, &application_lock, "authority applications",
 static unsigned application_count;
 static volatile uint64_t execution_sequence;
 static volatile uint64_t issuer_sequence;
+static bool issuer_revoke(struct authority_issuer *);
+static void issuer_drop(struct authority_issuer *);
+
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+/*
+ * Test issuers (options MAC_CAPABILITY_TEST_PERMISSIVE, GENERIC-TEST only;
+ * the tunable and sysctls are in mac_capability_testissuer.c).  With
+ * kern.mac_capability.test_issuer=1 an unjailed root process other than
+ * PID 1, outside capability mode, may create an issuer until PID 1 attempts
+ * its own.  That attempt anchors the boot, which is sticky, and revokes
+ * every test issuer still alive: from then on no kernel decision honours a
+ * test issuer or anything it produced.  A test issuer is visible only once
+ * it is linked, under the lock, after the state is rechecked, so none can
+ * be created after the anchor.  The lock is a leaf: nothing else is locked
+ * while it is held.
+ */
+static struct mtx mac_capability_test_issuer_lock;
+MTX_SYSINIT(mac_capability_test_issuer, &mac_capability_test_issuer_lock,
+    "authority test issuers", MTX_DEF);
+static LIST_HEAD(, authority_issuer) mac_capability_test_issuer_list =
+    LIST_HEAD_INITIALIZER(mac_capability_test_issuer_list);
+static volatile u_int mac_capability_test_issuer_state_value =
+    MAC_CAPABILITY_TEST_ISSUER_NONE;
+volatile u_long mac_capability_test_issuer_created;
+volatile u_int mac_capability_test_issuer_live;
+
+u_int
+mac_capability_test_issuer_state(void)
+{
+
+	return (atomic_load_acq_int(&mac_capability_test_issuer_state_value));
+}
+
+/*
+ * PID 1's attempt, or the test-only anchor sysctl: anchor the boot and
+ * revoke every test issuer still alive.  An issuer whose last reference is
+ * already gone is being freed and holds nothing; it is only unlinked.
+ */
+void
+mac_capability_test_issuer_anchor(void)
+{
+	LIST_HEAD(, authority_issuer) held = LIST_HEAD_INITIALIZER(held);
+	struct authority_issuer *issuer, *next;
+
+	mtx_lock(&mac_capability_test_issuer_lock);
+	atomic_store_rel_int(&mac_capability_test_issuer_state_value,
+	    MAC_CAPABILITY_TEST_ISSUER_ANCHORED);
+	LIST_FOREACH_SAFE(issuer, &mac_capability_test_issuer_list, test_link,
+	    next) {
+		LIST_REMOVE(issuer, test_link);
+		issuer->test_linked = false;
+		if (refcount_acquire_if_not_zero(&issuer->refs))
+			LIST_INSERT_HEAD(&held, issuer, test_link);
+	}
+	mtx_unlock(&mac_capability_test_issuer_lock);
+	while ((issuer = LIST_FIRST(&held)) != NULL) {
+		LIST_REMOVE(issuer, test_link);
+		(void)issuer_revoke(issuer);
+		SDT_PROBE5(mac_capability, , , issuer__decision,
+		    issuer->identity, CAP_AUTH_ISSUER_O_REVOKE,
+		    CAP_AUTH_ISSUER_R_ANCHORED, 0, 0);
+		log(LOG_WARNING, "mac_capability: TEST MODE: issuer %ju "
+		    "revoked: PID 1 anchored the boot\n",
+		    (uintmax_t)issuer->identity);
+		issuer_drop(issuer);
+	}
+}
+
+/*
+ * A caller other than PID 1, not jailed: may it create a test issuer?  The
+ * checks are in order and every refusal is EPERM, the only refusal this
+ * operation has.
+ */
+static int
+mac_capability_test_issuer_check(struct thread *td, int *reason)
+{
+	u_int state;
+
+	if (mac_capability_test_issuer_enabled != 1) {
+		*reason = CAP_AUTH_ISSUER_R_NOT_INIT;
+		return (EPERM);
+	}
+	if (IN_CAPABILITY_MODE(td)) {
+		*reason = CAP_AUTH_ISSUER_R_CAPMODE;
+		return (EPERM);
+	}
+	if (priv_check(td, PRIV_DRIVER) != 0) {
+		*reason = CAP_AUTH_ISSUER_R_PRIV;
+		return (EPERM);
+	}
+	mtx_lock(&mac_capability_test_issuer_lock);
+	state = mac_capability_test_issuer_state_value;
+	mtx_unlock(&mac_capability_test_issuer_lock);
+	if (state == MAC_CAPABILITY_TEST_ISSUER_ANCHORED) {
+		*reason = CAP_AUTH_ISSUER_R_ANCHORED;
+		return (EPERM);
+	}
+	return (0);
+}
+
+/* Link a new test issuer, unless the boot was anchored meanwhile. */
+static int
+mac_capability_test_issuer_link(struct authority_issuer *issuer)
+{
+
+	mtx_lock(&mac_capability_test_issuer_lock);
+	if (mac_capability_test_issuer_state_value ==
+	    MAC_CAPABILITY_TEST_ISSUER_ANCHORED) {
+		mtx_unlock(&mac_capability_test_issuer_lock);
+		return (EPERM);
+	}
+	atomic_store_rel_int(&mac_capability_test_issuer_state_value,
+	    MAC_CAPABILITY_TEST_ISSUER_TEST);
+	issuer->test_made = true;
+	issuer->test_linked = true;
+	LIST_INSERT_HEAD(&mac_capability_test_issuer_list, issuer, test_link);
+	atomic_add_long(&mac_capability_test_issuer_created, 1);
+	atomic_add_int(&mac_capability_test_issuer_live, 1);
+	mtx_unlock(&mac_capability_test_issuer_lock);
+	return (0);
+}
+
+/* issuer_free(): unlink a test issuer that the anchor did not take. */
+static void
+mac_capability_test_issuer_unlink(struct authority_issuer *issuer)
+{
+
+	if (!issuer->test_made)
+		return;
+	mtx_lock(&mac_capability_test_issuer_lock);
+	if (issuer->test_linked) {
+		LIST_REMOVE(issuer, test_link);
+		issuer->test_linked = false;
+	}
+	mtx_unlock(&mac_capability_test_issuer_lock);
+	atomic_subtract_int(&mac_capability_test_issuer_live, 1);
+}
+#endif /* MAC_CAPABILITY_TEST_PERMISSIVE */
 
 /*
  * Kernel-only identities: fork preserves a family; exec and explicit authority
@@ -240,6 +400,9 @@ issuer_free(void *context, int pending __unused)
 {
 	struct authority_issuer *issuer = context;
 
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+	mac_capability_test_issuer_unlink(issuer);
+#endif
 	revocation_drop(issuer->rv);
 	crfree(issuer->cred);
 	mtx_destroy(&issuer->lock);
@@ -708,17 +871,28 @@ cap_authority_check(struct thread *td, struct cap_authority *bound)
 	PROC_UNLOCK(td->td_proc);
 	return (error);
 }
-static int
-issuer_close(struct file *fp, struct thread *td __unused)
+/*
+ * Revoke an issuer: its grants, its executable catalogue and its leases.
+ * The first caller does the work and returns true; a later one (the last
+ * close after a test issuer was revoked by the anchor) returns false.  The
+ * flag is set under application_lock, which serialises it against
+ * register_application()'s check and insert.  A lease linked after the
+ * walk below is never visited; it is invalid all the same, because
+ * cap_authority_lease_valid() checks the issuer's flag, and LEASE_CREATE
+ * refuses a revoked issuer.
+ */
+static bool
+issuer_revoke(struct authority_issuer *issuer)
 {
-	struct authority_issuer *issuer = fp->f_data;
-
 	struct cap_authority *a, *next;
+	struct cap_authority_lease *lease;
 	LIST_HEAD(, cap_authority) removed = LIST_HEAD_INITIALIZER(removed);
 
-	/* Losing the issuer revokes grants and removes its executable catalogue. */
 	mtx_lock(&application_lock);
-	atomic_store_rel_int(&issuer->revoked, 1);
+	if (!atomic_cmpset_int(&issuer->revoked, 0, 1)) {
+		mtx_unlock(&application_lock);
+		return (false);
+	}
 	revocation_revoke(issuer->rv);
 	for (unsigned i = 0; i < AUTH_APP_BUCKETS; i++) {
 		LIST_FOREACH_SAFE(a, &applications[i], application_link, next) {
@@ -734,10 +908,19 @@ issuer_close(struct file *fp, struct thread *td __unused)
 		cap_authority_drop(a);
 	}
 	mtx_lock(&issuer->lock);
-	struct cap_authority_lease *lease;
 	LIST_FOREACH(lease, &issuer->leases, issuer_link)
 		lease_revoke(lease);
 	mtx_unlock(&issuer->lock);
+	return (true);
+}
+
+static int
+issuer_close(struct file *fp, struct thread *td __unused)
+{
+	struct authority_issuer *issuer = fp->f_data;
+
+	/* Losing the issuer revokes grants and removes its executable catalogue. */
+	(void)issuer_revoke(issuer);
 	issuer_drop(issuer);
 	return (0);
 }
@@ -834,6 +1017,7 @@ cap_authority_binding_acquire(struct thread *td, int issuer_fd, int token_fd,
 	if (error == 0) {
 		authority = token->f_data;
 		if (authority->issuer != issuer->f_data ||
+		    atomic_load_acq_int(&authority->issuer->revoked) ||
 		    authority->issuer->cred->cr_prison != td->td_ucred->cr_prison)
 			error = EPERM;
 		else {
@@ -1046,7 +1230,8 @@ lease_create(struct thread *td, int issuer_fd, void *data)
 	if (error != 0)
 		return (error);
 	struct authority_issuer *issuer = issuer_file->f_data;
-	if (issuer->cred->cr_prison != td->td_ucred->cr_prison) {
+	if (issuer->cred->cr_prison != td->td_ucred->cr_prison ||
+	    atomic_load_acq_int(&issuer->revoked)) {
 		fdrop(issuer_file, td);
 		return (EPERM);
 	}
@@ -1209,6 +1394,7 @@ constrain_authority(struct thread *td, int issuer_fd, void *data)
 	a = token->f_data;
 	if (a->issuer != issuer->f_data || a->kind != CAP_AUTH_MANAGED ||
 	    atomic_load_acq_int(&a->revoked) ||
+	    atomic_load_acq_int(&a->issuer->revoked) ||
 	    a->issuer->cred->cr_prison != td->td_ucred->cr_prison) {
 		error = EPERM;
 		goto out;
@@ -1518,6 +1704,110 @@ check_invocation(struct thread *td, int issuer_fd, void *data)
 	return (error);
 }
 
+/*
+ * CAP_AUTH_ISSUER_CREATE.  The issuer is a boot trust anchor, not a
+ * superuser privilege: only PID 1 creates one, never a jailed process.  A
+ * kernel built with options MAC_CAPABILITY_TEST_PERMISSIVE also creates
+ * test issuers, under the conditions of mac_capability_test_issuer_check(),
+ * until PID 1's own attempt anchors the boot.
+ */
+static int
+issuer_create(struct thread *td)
+{
+	struct authority_issuer *issuer;
+	struct file *fresh;
+	uint64_t identity = 0;
+	bool test = false;
+	int error, reason;
+
+	if (jailed(td->td_ucred)) {
+		reason = CAP_AUTH_ISSUER_R_JAILED;
+		error = EPERM;
+		goto out;
+	}
+	if (td->td_proc == initproc) {
+		reason = CAP_AUTH_ISSUER_R_INIT;
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+		/* The attempt anchors, whether or not it succeeds. */
+		mac_capability_test_issuer_anchor();
+		error = atomic_swap_int(&mac_capability_test_issuer_fail_init, 0);
+		if (error != 0) {
+			reason = error == ENOSPC ? CAP_AUTH_ISSUER_R_NOSPC :
+			    CAP_AUTH_ISSUER_R_RESOURCE;
+			goto out;
+		}
+#endif
+	} else {
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+		error = mac_capability_test_issuer_check(td, &reason);
+		if (error != 0)
+			goto out;
+		reason = CAP_AUTH_ISSUER_R_TEST;
+		test = true;
+#else
+		reason = CAP_AUTH_ISSUER_R_NOT_INIT;
+		error = EPERM;
+		goto out;
+#endif
+	}
+	/* Snapshot comparison needs collision-free identity, not a secret.
+	 * Consume IDs even on allocation failure; never wrap or reuse. */
+	identity = next_identity(&issuer_sequence);
+	if (identity == 0) {
+		reason = CAP_AUTH_ISSUER_R_NOSPC;
+		error = ENOSPC;
+		goto out;
+	}
+	error = falloc_noinstall(td, &fresh);
+	if (error != 0) {
+		reason = CAP_AUTH_ISSUER_R_RESOURCE;
+		goto refused;
+	}
+	issuer = malloc(sizeof(*issuer), M_CAP_AUTHORITY, M_WAITOK | M_ZERO);
+	refcount_init(&issuer->refs, 1);
+	issuer->rv = revocation_alloc(NULL);
+	mtx_init(&issuer->lock, "authority issuer", NULL, MTX_DEF);
+	LIST_INIT(&issuer->leases);
+	issuer->cred = crhold(td->td_ucred);
+	TASK_INIT(&issuer->cleanup, 0, issuer_free, issuer);
+	issuer->identity = identity;
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+	if (test && mac_capability_test_issuer_link(issuer) != 0) {
+		/* Anchored since the check: never visible, freed here. */
+		issuer_free(issuer, 0);
+		fdrop(fresh, td);
+		reason = CAP_AUTH_ISSUER_R_ANCHORED;
+		error = EPERM;
+		goto refused;
+	}
+#endif
+	finit(fresh, FREAD | FWRITE, DTYPE_DEV, issuer, &issuer_ops);
+	/*
+	 * An anchor from here on revokes the issuer; the descriptor installed
+	 * is then revoked and inert.  A failed install closes the file, which
+	 * revokes and drops the issuer.
+	 */
+	error = install_file(td, fresh);
+	if (error != 0) {
+		reason = CAP_AUTH_ISSUER_R_RESOURCE;
+		goto refused;
+	}
+	SDT_PROBE5(mac_capability, , , issuer__decision, identity,
+	    CAP_AUTH_ISSUER_O_ALLOW, reason, 0, 0);
+	if (test)
+		log(LOG_WARNING, "mac_capability: TEST MODE: pid %d (%s) "
+		    "created authority issuer %ju off PID 1\n",
+		    td->td_proc->p_pid, td->td_proc->p_comm,
+		    (uintmax_t)identity);
+	return (0);
+refused:
+	identity = 0;
+out:
+	SDT_PROBE5(mac_capability, , , issuer__decision, identity,
+	    CAP_AUTH_ISSUER_O_DENY, reason, 0, error);
+	return (error);
+}
+
 int
 cap_authority_call(struct thread *td, int op, int fd, void *data)
 {
@@ -1532,7 +1822,6 @@ cap_authority_call(struct thread *td, int op, int fd, void *data)
 	struct cap_authority_revoke revoke;
 	struct mac_capability_instance *instance;
 	struct file *fp, *token, *capability, *fresh;
-	uint64_t issuer_identity;
 	int error;
 
 	if ((op == CAP_AUTH_ISSUER_CREATE || op == CAP_AUTH_INSTALL ||
@@ -1563,27 +1852,7 @@ cap_authority_call(struct thread *td, int op, int fd, void *data)
 	case CAP_AUTH_CONSTRAIN:
 		return (constrain_authority(td, fd, data));
 	case CAP_AUTH_ISSUER_CREATE:
-		/* A boot trust anchor, not a superuser privilege. */
-		if (td->td_proc != initproc || jailed(td->td_ucred))
-			return (EPERM);
-		/* Snapshot comparison needs collision-free identity, not a secret.
-		 * Consume IDs even on allocation failure; never wrap or reuse. */
-		issuer_identity = next_identity(&issuer_sequence);
-		if (issuer_identity == 0)
-			return (ENOSPC);
-		error = falloc_noinstall(td, &fresh);
-		if (error != 0)
-			return (error);
-		issuer = malloc(sizeof(*issuer), M_CAP_AUTHORITY, M_WAITOK | M_ZERO);
-		refcount_init(&issuer->refs, 1);
-		issuer->rv = revocation_alloc(NULL);
-		mtx_init(&issuer->lock, "authority issuer", NULL, MTX_DEF);
-		LIST_INIT(&issuer->leases);
-		issuer->cred = crhold(td->td_ucred);
-		TASK_INIT(&issuer->cleanup, 0, issuer_free, issuer);
-		issuer->identity = issuer_identity;
-		finit(fresh, FREAD | FWRITE, DTYPE_DEV, issuer, &issuer_ops);
-		return (install_file(td, fresh));
+		return (issuer_create(td));
 	case CAP_AUTH_ISSUE:
 		error = copyin(data, &spec, sizeof(spec));
 		if (error != 0)
@@ -1595,7 +1864,8 @@ cap_authority_call(struct thread *td, int op, int fd, void *data)
 		if (error != 0)
 			return (error);
 		issuer = fp->f_data;
-		if (issuer->cred->cr_prison != td->td_ucred->cr_prison) {
+		if (issuer->cred->cr_prison != td->td_ucred->cr_prison ||
+		    atomic_load_acq_int(&issuer->revoked)) {
 			fdrop(fp, td);
 			return (EPERM);
 		}

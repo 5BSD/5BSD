@@ -167,6 +167,35 @@ _Static_assert(sizeof(struct cap_authority_lease_create) == 24,
 _Static_assert(sizeof(struct cap_authority_lease_bind) == 16,
     "lease binding has a fixed-width ABI");
 
+/*
+ * The outcome and reason of an issuer creation, as the
+ * mac_capability:::issuer-decision probe reports them.  The values are
+ * fixed; 0 is never a reason.  The list is the same on every kernel; the
+ * reasons a test issuer can produce occur only on a kernel built with
+ * options MAC_CAPABILITY_TEST_PERMISSIVE.
+ */
+#define	CAP_AUTH_ISSUER_O_ALLOW		1
+#define	CAP_AUTH_ISSUER_O_DENY		2
+#define	CAP_AUTH_ISSUER_O_REVOKE	3	/* a test issuer, at the anchor */
+
+#define	CAP_AUTH_ISSUER_REASONS(R)					\
+	R(INIT,		1, "init")	/* PID 1 */			\
+	R(TEST,		2, "test")	/* a test issuer */		\
+	R(JAILED,	3, "jailed")	/* the caller is jailed */	\
+	R(NOT_INIT,	4, "not-init")	/* not PID 1, no test issuers */ \
+	R(CAPMODE,	5, "capmode")	/* in capability mode */	\
+	R(PRIV,		6, "priv")	/* no PRIV_DRIVER */		\
+	R(ANCHORED,	7, "anchored")	/* PID 1 anchored the boot */	\
+	R(NOSPC,	8, "nospc")	/* identity space exhausted */	\
+	R(RESOURCE,	9, "resource")	/* no file or descriptor */
+
+#define	CAP_AUTH_ISSUER_R_ENUM(name, value, string)			\
+	CAP_AUTH_ISSUER_R_##name = value,
+enum cap_auth_issuer_reason {
+	CAP_AUTH_ISSUER_REASONS(CAP_AUTH_ISSUER_R_ENUM)
+};
+#undef	CAP_AUTH_ISSUER_R_ENUM
+
 #ifdef _KERNEL
 struct mac_capability_instance;
 struct cap_authority_lease;
