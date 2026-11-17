@@ -39,7 +39,7 @@
 
 #include <libdq.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	SRV_MAX_SEEN	256
 

@@ -49,7 +49,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	CF_NROW		12
 #define	CF_UID_S	65533		/* the supervisor after its drop */

@@ -27,6 +27,7 @@
 #include <libutil.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -94,19 +95,23 @@ has_lock_flag(int fd)
 }
 
 /*
- * True once a thread of pid sleeps on an advisory lock.  A request on a file
- * served by a supervisor queue sleeps in the consultation ("dqwait") while
- * the supervisor holds the lock table; the wait message is not program
- * behaviour, so both are the sleeper.
+ * How a thread of pid sleeps: SLEEP_LOCKF on an advisory lock of a real
+ * file ("lockf"), SLEEP_DQ in a supervisor queue consultation ("dqwait"),
+ * SLEEP_NONE otherwise.  A request on a file served by a supervisor queue
+ * sleeps in the consultation while the supervisor holds the lock table, so
+ * "dqwait" is the sleeper there too; but a page-in from a served file
+ * waits as "dqwait" as well, so that match is ambiguous.
  */
-static bool
+enum sleep_kind { SLEEP_NONE, SLEEP_LOCKF, SLEEP_DQ };
+
+static enum sleep_kind
 sleeps_on_lock(pid_t pid)
 {
 	struct kinfo_proc *kp;
 	char *buf, *p;
 	size_t len;
 	int mib[4];
-	bool found;
+	enum sleep_kind found;
 
 	mib[0] = CTL_KERN;
 	mib[1] = KERN_PROC;
@@ -114,20 +119,23 @@ sleeps_on_lock(pid_t pid)
 	mib[3] = pid;
 	len = 0;
 	if (sysctl(mib, nitems(mib), NULL, &len, NULL, 0) != 0)
-		return (false);
+		return (SLEEP_NONE);
 	len += len / 2 + sizeof(*kp);
 	buf = malloc(len);
 	ATF_REQUIRE(buf != NULL);
-	found = false;
+	found = SLEEP_NONE;
 	if (sysctl(mib, nitems(mib), buf, &len, NULL, 0) == 0) {
 		for (p = buf; p + sizeof(*kp) <= buf + len;
 		    p += kp->ki_structsize) {
 			kp = (struct kinfo_proc *)(void *)p;
 			if (kp->ki_structsize < (int)sizeof(*kp))
 				break;
-			if (strcmp(kp->ki_wmesg, "lockf") == 0 ||
-			    strcmp(kp->ki_wmesg, "dqwait") == 0) {
-				found = true;
+			if (strcmp(kp->ki_wmesg, "lockf") == 0) {
+				found = SLEEP_LOCKF;
+				break;
+			}
+			if (strcmp(kp->ki_wmesg, "dqwait") == 0) {
+				found = SLEEP_DQ;
 				break;
 			}
 		}
@@ -136,15 +144,19 @@ sleeps_on_lock(pid_t pid)
 	return (found);
 }
 
-/* Wait, bounded, until the request made by pid is asleep on the lock. */
-static void
+/*
+ * Wait, bounded, until the request made by pid is asleep on the lock, and
+ * say how (sleeps_on_lock).
+ */
+static enum sleep_kind
 wait_blocked(pid_t pid)
 {
+	enum sleep_kind k;
 	int i;
 
 	for (i = 0; i < 30000; i++) {
-		if (sleeps_on_lock(pid))
-			return;
+		if ((k = sleeps_on_lock(pid)) != SLEEP_NONE)
+			return (k);
 		usleep(1000);
 	}
 	if (pid != getpid())
@@ -160,24 +172,48 @@ on_signal(int sig __unused)
 /*
  * A child sharing the caller's open files that asks for the lock and
  * exits with 0 or the errno.  With a signal number it first installs a
- * handler that interrupts system calls.
+ * handler that interrupts system calls, and says so on a pipe before
+ * fork_locker_closing returns: until then the signal would kill it.
  */
 static pid_t
 fork_locker_closing(int fd, int how, int sig, int closefd)
 {
 	struct sigaction sa;
 	pid_t pid;
+	int pf, ready[2];
+	char b;
 
+	ATF_REQUIRE_EQ(0, pipe(ready));
 	pid = fork();
 	ATF_REQUIRE(pid != -1);
+	if (pid != 0) {
+		(void)close(ready[1]);
+		if (sig != 0)
+			ATF_REQUIRE_EQ_MSG(1, read(ready[0], &b, 1),
+			    "the locker died before its handler was set");
+		(void)close(ready[0]);
+	}
 	if (pid == 0) {
+		(void)close(ready[0]);
 		if (sig != 0) {
+			/*
+			 * Fault in flock(2)'s pages (on a file of its own)
+			 * before the handshake, so that a served root's
+			 * page-in is unlikely to be the sleep found later.
+			 */
+			pf = open("prefault", O_RDWR | O_CREAT, 0644);
+			if (pf == -1 || flock(pf, LOCK_SH | LOCK_NB) != 0 ||
+			    flock(pf, LOCK_UN) != 0 || close(pf) != 0)
+				_exit(255);
 			memset(&sa, 0, sizeof(sa));
 			sa.sa_handler = on_signal;
 			sigemptyset(&sa.sa_mask);
 			if (sigaction(sig, &sa, NULL) != 0)
 				_exit(255);
+			if (write(ready[1], "h", 1) != 1)
+				_exit(255);
 		}
+		(void)close(ready[1]);
 		/* Leave the parent the only holder of that open file. */
 		if (closefd != -1 && close(closefd) != 0)
 			_exit(255);
@@ -191,6 +227,68 @@ fork_locker(int fd, int how, int sig)
 {
 
 	return (fork_locker_closing(fd, how, sig, -1));
+}
+
+/*
+ * Interrupt a sleeping locker found by wait_blocked as kind, and return
+ * its flock(2) result.
+ *
+ * SLEEP_LOCKF is unambiguous: the request sleeps on the lock, so exactly
+ * one signal is sent, and the child must end within 30 s without another;
+ * a kernel that loses that signal fails here.
+ *
+ * SLEEP_DQ is ambiguous: a served file's page-in before flock(2) waits as
+ * "dqwait" too, and a signal caught there is gone before the request
+ * sleeps.  So the signal is sent again every second until the child is
+ * reaped; each one either ends the sleeping flock(2) with EINTR or is
+ * caught before it.  On that path a lost first signal cannot be told from
+ * a page-in, and is not detected.  The re-send waits a second: a served
+ * request's EINTR goes through the supervisor (INTERRUPT, the cancelled
+ * proxy lock, the reply), which takes tens to hundreds of milliseconds;
+ * a quicker re-send would only send extra signals while that reply is on
+ * its way and inflate the printed count.
+ *
+ * The number of signals sent and the time to the reap are printed.  A
+ * child still not reaped after 30 s fails the case; it is killed, not
+ * waited for (a sleep that no signal ends ends when this process exits
+ * and releases the lock).
+ */
+static int
+interrupt_and_reap(pid_t pid, int sig, enum sleep_kind kind)
+{
+	struct timespec t0, t;
+	pid_t got;
+	long ms;
+	int nsig, polls, status;
+
+	ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &t0));
+	ATF_REQUIRE_EQ(0, kill(pid, sig));
+	nsig = 1;
+	polls = 0;
+	for (;;) {
+		got = waitpid(pid, &status, WNOHANG);
+		ATF_REQUIRE(got != -1);
+		if (got == pid)
+			break;
+		ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &t));
+		if (t.tv_sec - t0.tv_sec >= 30) {
+			(void)kill(pid, SIGKILL);
+			atf_tc_fail("the lock request of pid %d (%s) was not "
+			    "interrupted in 30 s, %d signal(s)", (int)pid,
+			    kind == SLEEP_LOCKF ? "lockf" : "dqwait", nsig);
+		}
+		usleep(10000);
+		if (kind == SLEEP_DQ && ++polls % 100 == 0) {
+			ATF_REQUIRE_EQ(0, kill(pid, sig));
+			nsig++;
+		}
+	}
+	ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &t));
+	ms = (t.tv_sec - t0.tv_sec) * 1000 + (t.tv_nsec - t0.tv_nsec) / 1000000;
+	printf("interrupted after %d signal(s) (%s) in %ld ms\n", nsig,
+	    kind == SLEEP_LOCKF ? "lockf" : "dqwait", ms);
+	ATF_REQUIRE_MSG(WIFEXITED(status), "child status %#x", status);
+	return (WEXITSTATUS(status));
 }
 
 /* The child's exit status: its flock(2) result. */
@@ -572,6 +670,7 @@ ATF_TC_BODY(blocking_upgrade_drops_shared, tc)
 ATF_TC_WITHOUT_HEAD(interrupted_sleeper);
 ATF_TC_BODY(interrupted_sleeper, tc)
 {
+	enum sleep_kind kind;
 	pid_t pid;
 	int unlock, x, y;
 
@@ -580,11 +679,10 @@ ATF_TC_BODY(interrupted_sleeper, tc)
 		y = open_file(0);
 		ATF_REQUIRE_EQ(0, flock(y, LOCK_EX));
 		pid = fork_locker(x, LOCK_EX, SIGUSR1);
-		wait_blocked(pid);
+		kind = wait_blocked(pid);
 		if (unlock != 0)
 			ATF_CHECK_EQ(0, flock(x, LOCK_UN));
-		ATF_REQUIRE_EQ(0, kill(pid, SIGUSR1));
-		ATF_CHECK_EQ(EINTR, reap(pid));
+		ATF_CHECK_EQ(EINTR, interrupt_and_reap(pid, SIGUSR1, kind));
 		CHECK_HELD_EX();
 		ATF_REQUIRE_EQ(0, flock(y, LOCK_UN));
 		/* x is still open; nothing was granted to it. */
@@ -596,23 +694,45 @@ ATF_TC_BODY(interrupted_sleeper, tc)
 }
 
 /*
- * An interrupted blocking upgrade has already given up its shared lock
- * and does not get it back.
+ * A blocking upgrade from a shared lock that a signal interrupts fails with
+ * EINTR.  x and y hold shared locks; the child shares x and asks for the
+ * exclusive lock.
  */
+static void
+interrupt_upgrade(int *xp, int *yp)
+{
+	enum sleep_kind kind;
+	pid_t pid;
+
+	*xp = open_file(0);
+	*yp = open_file(0);
+	ATF_REQUIRE_EQ(0, flock(*xp, LOCK_SH));
+	ATF_REQUIRE_EQ(0, flock(*yp, LOCK_SH));
+	pid = fork_locker(*xp, LOCK_EX, SIGUSR1);
+	kind = wait_blocked(pid);
+	ATF_CHECK_EQ(EINTR, interrupt_and_reap(pid, SIGUSR1, kind));
+}
+
 ATF_TC_WITHOUT_HEAD(interrupted_upgrade);
 ATF_TC_BODY(interrupted_upgrade, tc)
 {
-	pid_t pid;
 	int x, y;
 
-	x = open_file(0);
-	y = open_file(0);
-	ATF_REQUIRE_EQ(0, flock(x, LOCK_SH));
-	ATF_REQUIRE_EQ(0, flock(y, LOCK_SH));
-	pid = fork_locker(x, LOCK_EX, SIGUSR1);
-	wait_blocked(pid);
-	ATF_REQUIRE_EQ(0, kill(pid, SIGUSR1));
-	ATF_CHECK_EQ(EINTR, reap(pid));
+	interrupt_upgrade(&x, &y);
+	ATF_CHECK_EQ(0, close(x));
+	ATF_CHECK_EQ(0, close(y));
+}
+
+/*
+ * An interrupted blocking upgrade has already given up its shared lock
+ * and does not get it back.
+ */
+ATF_TC_WITHOUT_HEAD(interrupted_upgrade_state);
+ATF_TC_BODY(interrupted_upgrade_state, tc)
+{
+	int x, y;
+
+	interrupt_upgrade(&x, &y);
 	CHECK_HELD_SH();
 	ATF_REQUIRE_EQ(0, flock(y, LOCK_UN));
 	CHECK_FREE();
@@ -821,6 +941,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, blocking_upgrade_drops_shared);
 	ATF_TP_ADD_TC(tp, interrupted_sleeper);
 	ATF_TP_ADD_TC(tp, interrupted_upgrade);
+	ATF_TP_ADD_TC(tp, interrupted_upgrade_state);
 	ATF_TP_ADD_TC(tp, unlock_before_grant_process);
 	ATF_TP_ADD_TC(tp, unlock_before_grant_thread);
 	ATF_TP_ADD_TC(tp, unlock_before_grant_upgrade);

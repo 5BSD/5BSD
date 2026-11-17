@@ -32,7 +32,7 @@
 
 #include <libdq.h>
 
-#include "dq_tree_harness.h"
+#include "dqt_tree.h"
 
 /* Every case is root (a controller of /dev/dq) and bounded in time. */
 #define	DQ_TC_HEAD_BODY(name)						\
@@ -396,18 +396,18 @@ lpc_fn(void *arg __unused, void *out)
 	lpc_fill("/l", out);
 }
 
-TS_TC(lpathconf_symlink);
+DQT_TREE_TC(lpathconf_symlink);
 ATF_TC_BODY(lpathconf_symlink, tc)
 {
 	struct lpc_res real, served;
-	struct ts s;
+	struct dqt_tree s;
 	size_t i;
 
-	ts_make_tree("t");
+	dqt_tree_make("t");
 	lpc_fill("t/l", &real);
-	ts_start(&s, "t", DQ_TREE_F_ROOT);
+	dqt_tree_start(&s, "t", DQ_TREE_F_ROOT);
 	memset(&served, 0, sizeof(served));
-	dqt_require_exit0(ts_child(&s, s.sroot, s.sroot, lpc_fn, NULL, &served,
+	dqt_require_exit0(dqt_tree_child(&s, s.sroot, s.sroot, lpc_fn, NULL, &served,
 	    sizeof(served)), "child");
 	for (i = 0; i < LPC_N; i++) {
 		ATF_CHECK_MSG(real.value[i] != -1, "real lpathconf %d: %s",
@@ -417,7 +417,7 @@ ATF_TC_BODY(lpathconf_symlink, tc)
 		    "name %d: real %ld served %ld (%s)", lpc_names[i],
 		    real.value[i], served.value[i], strerror(served.err[i]));
 	}
-	ts_stop(&s);
+	dqt_tree_stop(&s);
 }
 
 /*
@@ -439,29 +439,29 @@ fs_fn(void *arg __unused, void *out)
 	r->err[0] = fd < 0 ? errno : 0;
 	if (fd < 0)
 		return;
-	r->err[1] = TS_ERR(fstat(fd, &r->before));
+	r->err[1] = DQT_ERRNO_OF(fstat(fd, &r->before));
 	dqt_msleep(20);
 	r->err[2] = write(fd, "more", 4) == 4 ? 0 : errno;
-	r->err[3] = TS_ERR(fstat(fd, &r->fst));
+	r->err[3] = DQT_ERRNO_OF(fstat(fd, &r->fst));
 	if (stat("/a", &r->st) != 0)
 		r->err[3] = errno;
 	(void)close(fd);
 }
 
-TS_TC(fstat_stat_after_write);
+DQT_TREE_TC(fstat_stat_after_write);
 ATF_TC_BODY(fstat_stat_after_write, tc)
 {
 	struct fs_res r;
-	struct ts s;
+	struct dqt_tree s;
 
-	ts_make_tree("t");
-	ts_start(&s, "t", DQ_TREE_F_ROOT | DQ_TREE_F_WRITE);
+	dqt_tree_make("t");
+	dqt_tree_start(&s, "t", DQ_TREE_F_ROOT | DQ_TREE_F_WRITE);
 	memset(&r, 0, sizeof(r));
-	dqt_require_exit0(ts_child(&s, s.sroot, s.sroot, fs_fn, NULL, &r,
+	dqt_require_exit0(dqt_tree_child(&s, s.sroot, s.sroot, fs_fn, NULL, &r,
 	    sizeof(r)), "child");
-	TS_CHECK_ERRNO(0, r.err[0], "open /a");
-	TS_CHECK_ERRNO(0, r.err[2], "write");
-	TS_CHECK_ERRNO(0, r.err[3], "fstat, stat");
+	DQT_CHECK_ERRNO(0, r.err[0], "open /a");
+	DQT_CHECK_ERRNO(0, r.err[2], "write");
+	DQT_CHECK_ERRNO(0, r.err[3], "fstat, stat");
 	ATF_CHECK_EQ(r.st.st_size, r.fst.st_size);
 	ATF_REQUIRE(timespeccmp(&r.st.st_mtim, &r.before.st_mtim, >));
 	/*
@@ -470,7 +470,7 @@ ATF_TC_BODY(fstat_stat_after_write, tc)
 	 */
 	ATF_CHECK(timespeccmp(&r.fst.st_mtim, &r.st.st_mtim, ==));
 	ATF_CHECK(timespeccmp(&r.fst.st_ctim, &r.st.st_ctim, ==));
-	ts_stop(&s);
+	dqt_tree_stop(&s);
 }
 
 ATF_TP_ADD_TCS(tp)

@@ -31,7 +31,7 @@
 #include <unistd.h>
 
 #define	DQ_WANT_PC_NAMES
-#include "dq_tree_harness.h"
+#include "dqt_tree.h"
 
 #define	DATA_LEN	8192
 
@@ -485,7 +485,7 @@ ATF_TC_BODY(pathconf_async_io_agree, tc)
 	struct dqt_ctl c;
 	struct snapshot snap;
 	struct dqt_object *o;
-	struct ts s;
+	struct dqt_tree s;
 	long r[2];
 	int oracle;
 
@@ -501,14 +501,14 @@ ATF_TC_BODY(pathconf_async_io_agree, tc)
 	dqt_fini(&c);
 	(void)close(oracle);
 
-	ts_make_tree("t");
-	ts_start(&s, "t", DQ_TREE_F_ROOT);
+	dqt_tree_make("t");
+	dqt_tree_start(&s, "t", DQ_TREE_F_ROOT);
 	memset(r, 0, sizeof(r));
-	dqt_require_exit0(ts_child(&s, s.sroot, s.sroot, pathconf_async_fn,
+	dqt_require_exit0(dqt_tree_child(&s, s.sroot, s.sroot, pathconf_async_fn,
 	    NULL, r, sizeof(r)), "child");
 	ATF_CHECK_EQ_MSG(_POSIX_ASYNCHRONOUS_IO, r[0], "pathconf /a: %ld "
 	    "errno %ld", r[0], r[1]);
-	ts_stop(&s);
+	dqt_tree_stop(&s);
 }
 
 /*
@@ -575,7 +575,7 @@ ATF_TC_BODY(stat_gen_unpriv, tc)
 	struct gen_arg a;
 	struct gen_res r;
 	struct stat st;
-	struct ts s;
+	struct dqt_tree s;
 	char path[PATH_MAX];
 	int oracle;
 
@@ -604,13 +604,13 @@ ATF_TC_BODY(stat_gen_unpriv, tc)
 	dqt_fini(&c);
 	(void)close(oracle);
 
-	ts_make_tree("t");
+	dqt_tree_make("t");
 	ATF_REQUIRE(realpath("t/a", path) != NULL);
 	ATF_REQUIRE_EQ(0, stat(path, &st));
 	ATF_REQUIRE(st.st_gen != 0);
-	ts_start(&s, "t", DQ_TREE_F_ROOT);
+	dqt_tree_start(&s, "t", DQ_TREE_F_ROOT);
 	memset(&r, 0, sizeof(r));
-	dqt_require_exit0(ts_child_uid(&s, s.sroot, s.sroot, 1001,
+	dqt_require_exit0(dqt_tree_child_uid(&s, s.sroot, s.sroot, 1001,
 	    gen_tree_fn, NULL, &r, sizeof(r)), "child");
 	ATF_CHECK_EQ(0, r.err[2]);
 	ATF_CHECK_EQ(0, r.err[3]);
@@ -619,7 +619,7 @@ ATF_TC_BODY(stat_gen_unpriv, tc)
 	    (uintmax_t)r.gen[2]);
 	ATF_CHECK_EQ_MSG(0, r.gen[3], "served fstat: st_gen %ju",
 	    (uintmax_t)r.gen[3]);
-	ts_stop(&s);
+	dqt_tree_stop(&s);
 }
 
 ATF_TP_ADD_TCS(tp)

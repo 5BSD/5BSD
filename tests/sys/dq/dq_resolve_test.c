@@ -50,7 +50,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 /*
  * The families.  Each step is one call on a tagged path, run first

@@ -7,7 +7,7 @@
  * its cleanup: sysctl values, fault-injection counters and file modes.
  * The cleanup routines make no ATF calls (a cleanup may run after the body
  * failed half-way, or never got to the change), and put back the value
- * read before the change, never an assumed default.  See dq_test.h.
+ * read before the change, never an assumed default.  See dqt.h.
  */
 
 #include <sys/param.h>
@@ -22,7 +22,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	DQT_SAVE_MAX	256	/* a saved value: integers and short strings */
 

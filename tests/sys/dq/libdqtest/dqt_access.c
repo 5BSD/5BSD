@@ -17,7 +17,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 void
 dqt_require_plane(void)

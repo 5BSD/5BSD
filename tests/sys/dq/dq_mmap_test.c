@@ -35,7 +35,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "dq_tree_harness.h"
+#include "dqt_tree.h"
 
 #define	NPAGES		3
 #define	TAIL		100
@@ -1116,10 +1116,10 @@ vm_mount_linprocfs(const char *dir)
 	return (nmount(iov, 4, 0) == 0);
 }
 
-TS_TC_CLEANUP(vmmap_path_served_root);
+DQT_TREE_TC_CLEANUP(vmmap_path_served_root);
 ATF_TC_BODY(vmmap_path_served_root, tc)
 {
-	struct ts s;
+	struct dqt_tree s;
 	struct vmp_arg v;
 	struct vmp_res ra;
 	char raw[PATH_MAX], viewed[PATH_MAX];
@@ -1129,9 +1129,9 @@ ATF_TC_BODY(vmmap_path_served_root, tc)
 	pid_t apid, pid;
 	char c;
 
-	ts_make_tree("t");
+	dqt_tree_make("t");
 	/* A reads linprocfs through a real directory: PASS it. */
-	ts_start(&s, "t", DQ_TREE_F_ROOT | DQ_TREE_F_OUTSIDE_PASS);
+	dqt_tree_start(&s, "t", DQ_TREE_F_ROOT | DQ_TREE_F_OUTSIDE_PASS);
 	ATF_REQUIRE_MSG(vm_mount_linprocfs("lp"), "linprocfs: %s",
 	    strerror(errno));
 	memset(&v, 0, sizeof(v));
@@ -1180,10 +1180,10 @@ ATF_TC_BODY(vmmap_path_served_root, tc)
 	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
 	dqt_require_exit0(status, "A");
 	ATF_REQUIRE_EQ(sizeof(ra), got);
-	TS_CHECK_ERRNO(0, ra.err[0], "open /a");
-	TS_CHECK_ERRNO(0, ra.err[1], "mmap /a");
-	TS_CHECK_ERRNO(0, ra.err[2], "own vmmap row");
-	TS_CHECK_ERRNO(0, ra.err[3], "own linprocfs row");
+	DQT_CHECK_ERRNO(0, ra.err[0], "open /a");
+	DQT_CHECK_ERRNO(0, ra.err[1], "mmap /a");
+	DQT_CHECK_ERRNO(0, ra.err[2], "own vmmap row");
+	DQT_CHECK_ERRNO(0, ra.err[3], "own linprocfs row");
 	/* The descriptor's own row is presented (D174). */
 	ATF_CHECK_STREQ("/a", ra.kf);
 	/*
@@ -1195,7 +1195,7 @@ ATF_TC_BODY(vmmap_path_served_root, tc)
 	ATF_CHECK_STREQ("/a", ra.lp);
 	close(pd);
 	close(v.lpfd);
-	ts_stop(&s);
+	dqt_tree_stop(&s);
 }
 ATF_TC_CLEANUP(vmmap_path_served_root, tc)
 {

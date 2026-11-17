@@ -34,7 +34,7 @@
 
 #include <libdq.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 /* Every case is root (a controller of /dev/dq) and bounded in time. */
 #define	DQ_TC_HEAD_BODY(name)						\
