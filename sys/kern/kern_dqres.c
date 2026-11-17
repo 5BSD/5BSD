@@ -52,6 +52,7 @@
 #include <sys/proc.h>
 #include <sys/refcount.h>
 #include <sys/dqres.h>
+#include <sys/sdt.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/sx.h>
@@ -64,6 +65,15 @@
 #include <security/audit/audit.h>
 
 static MALLOC_DEFINE(M_DQRES, "dqres", "DescriptorQueue attachments");
+
+/*
+ * The kernel core's half of the supervisor queue.  Nothing fires for an
+ * unattached process: every site is behind DQRES_ATTACHED_TD or inside a
+ * served lookup.
+ */
+SDT_PROVIDER_DEFINE(dqres);
+/* A lookup from a served start returned: op, answer kind (0: none), errno. */
+SDT_PROBE_DEFINE3(dqres, , , namei__served, "uint32_t", "uint32_t", "int");
 
 const struct dqres_ops *dqres_ops;
 
@@ -1203,7 +1213,8 @@ dqres_namei(struct nameidata *ndp, struct vnode *dp, bool abs,
 		rq.rq_class = dq_islot_class(di, s);
 		rq.rq_op = di->di_op;
 		rq.rq_mode = di->di_mode;
-		rq.rq_object = di->di_drs_object;
+		/* A served fd argument goes with the path it names (B4). */
+		rq.rq_object = slot == 0 ? di->di_drs_object : 0;
 		rq.rq_syscall = di->di_syscall;
 		rq.rq_expected_locks = di->di_expected_locks;
 		rq.rq_no_erestart = (di->di_flags & DQI_NO_ERESTART) != 0;
@@ -1801,6 +1812,9 @@ dqres_namei_served(struct nameidata *ndp, struct file *fp, int how,
 		di->di_startnioctls = 0;	/* a dropped list permits none */
 	error = EDQRESOLVED;
 out:
+	SDT_PROBE3(dqres, , , namei__served, (di != NULL ? di->di_op : 0),
+	    (*realp ? DQ_RESOLVE_REAL : error == EDQRESOLVED ?
+	    di->di_res.da_kind : 0), (error == EDQRESOLVED ? 0 : error));
 	if (s1 != NULL)
 		dq_islot_forget(s1);
 	free(rootid, M_TEMP);
@@ -2357,10 +2371,13 @@ dqres_fchdir_file(struct thread *td, int fd, const cap_rights_t *rights,
 }
 
 /*
- * The served directory fchdir(2) or fchroot(2) names: EACCES for an
+ * The served descriptor fchdir(2) or fchroot(2) names: ENOTDIR for any
+ * kind but a directory first, as kern_fchdir tests the type before
+ * anything else and whatever the caller's attachment or the object's
+ * state (the kind is fixed at mint: no lock); then EACCES for an
  * unattached process and EDEADLK for one attached elsewhere (D163), EIO
- * once revoked or closing, ENOTDIR for another kind, then the D166 search
- * check on its identity with the caller's credential.
+ * once revoked or closing, then the D166 search check on its identity
+ * with the caller's credential.
  */
 int
 dqres_dir_check(struct thread *td, struct file *fp)
@@ -2372,13 +2389,14 @@ dqres_dir_check(struct thread *td, struct file *fp)
 	int error;
 	bool closed;
 
+	if (dqres_ops->dro_file_kind(fp) != DQ_KIND_DIR)
+		return (ENOTDIR);
 	dr = atomic_load_ptr(&td->td_proc->p_pd->pd_dqres);
 	error = dqres_ops->dro_start(td, dr != NULL ? dr->dr_binding : NULL,
 	    fp, &kind, &obj);
 	if (error != 0)
 		return (error == ENOTTY ? ENOTDIR : error);
-	if (kind != DQ_KIND_DIR)
-		return (ENOTDIR);
+	KASSERT(kind == DQ_KIND_DIR, ("dq: object kind changed to %u", kind));
 	ident = malloc(sizeof(*ident), M_TEMP, M_WAITOK);
 	error = dqres_ops->dro_file_ident(fp, ident, &qgid, &closed);
 	if (error == 0)
@@ -2584,7 +2602,7 @@ dqres_consult_slot(struct thread *td, int slot)
 	rq.rq_rflags = dq_class_rflags(rq.rq_class);
 	rq.rq_op = di->di_op;
 	rq.rq_mode = di->di_mode;
-	rq.rq_object = di->di_drs_object;
+	rq.rq_object = slot == 0 ? di->di_drs_object : 0;
 	rq.rq_syscall = di->di_syscall;
 	rq.rq_expected_locks = di->di_expected_locks;
 	rq.rq_no_erestart = (di->di_flags & DQI_NO_ERESTART) != 0;

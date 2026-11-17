@@ -17,6 +17,7 @@
 #include <sys/types.h>
 #include <sys/_uio.h>
 #include <sys/caprights.h>
+#include <sys/sdt.h>
 
 struct dqres_binding;
 struct fdinstall_gate;
@@ -317,6 +318,13 @@ struct dqres_ops {
 
 void	dqres_register(const struct dqres_ops *ops);
 extern const struct dqres_ops *dqres_ops;
+
+/*
+ * DTrace: the dqres provider (kern_dqres.c).  dqres:::namei-served (op,
+ * answer kind, errno): a lookup from a served start returned.
+ */
+SDT_PROVIDER_DECLARE(dqres);
+SDT_PROBE_DECLARE(dqres, , , namei__served);
 
 /* Is the process attached?  Racy fast test; the slow paths lock. */
 bool	dqres_proc_attached(struct proc *p);

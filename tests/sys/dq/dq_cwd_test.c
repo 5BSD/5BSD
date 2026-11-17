@@ -1444,8 +1444,8 @@ ATF_TC_BODY(fchdir_file_errno_order, tc)
 	memset(r, 0, sizeof(r));
 	dqt_run_child(fchdir_errno_fn, fds, r, sizeof(r));
 	TS_CHECK_ERRNO(ENOTDIR, r[1], "real file");
-	/* Pin: unattached, the start check answers first (EACCES). */
-	TS_CHECK_ERRNO(EACCES, r[0], "served file, unattached");
+	/* The kind first, as kern_fchdir's (it was the start check's EACCES). */
+	TS_CHECK_ERRNO(ENOTDIR, r[0], "served file, unattached");
 	memset(r, 0, sizeof(r));
 	dqt_attach_run(&c, fchdir_errno_fn, fds, r, sizeof(r));
 	TS_CHECK_ERRNO(ENOTDIR, r[1], "real file, attached");
@@ -1454,11 +1454,11 @@ ATF_TC_BODY(fchdir_file_errno_order, tc)
 	ATF_REQUIRE_EQ(0, dq_revoke(c.q, o->id));
 	memset(r, 0, sizeof(r));
 	dqt_run_child(fchdir_errno_fn, fds, r, sizeof(r));
-	TS_CHECK_ERRNO(EACCES, r[0], "revoked served file, unattached");
+	TS_CHECK_ERRNO(ENOTDIR, r[0], "revoked served file, unattached");
 	memset(r, 0, sizeof(r));
 	dqt_attach_run(&c, fchdir_errno_fn, fds, r, sizeof(r));
-	/* Pin: attached, the revoked object answers first (EIO). */
-	TS_CHECK_ERRNO(EIO, r[0], "revoked served file, attached");
+	/* Whatever the object's state (it was the revoke's EIO). */
+	TS_CHECK_ERRNO(ENOTDIR, r[0], "revoked served file, attached");
 	dqt_fini(&c);
 	(void)close(oracle);
 }

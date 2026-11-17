@@ -3748,16 +3748,18 @@ by
 .Xr fchdir 2
 or
 .Xr fchroot 2
-of a served directory, which for an unattached process (the controller
-included) is
+of a served directory, which for a served descriptor of another kind is
+.Er ENOTDIR
+first, whoever holds it and whatever its state (as
+.Xr fchdir 2
+of a regular file is, before any other check), then for an unattached
+process (the controller included)
 .Er EACCES
 and for one attached to another queue
 .Er EDEADLK ,
 opened with
 .Dv O_RESOLVE_BENEATH
 .Er ENOTCAPABLE ,
-of another kind
-.Er ENOTDIR ,
 and once revoked
 .Er EIO ;
 and by
@@ -4488,6 +4490,22 @@ is 1
 .Xr fpathconf 2 ,
 6
 .Xr fstatfs 2 )
+.El
+.Pp
+The kernel core's half of the queue, which runs for attached processes
+only, fires the
+.Li dqres
+provider:
+.Bl -tag -width "dqres:::subst-consume" -offset indent -compact
+.It dqres:::namei-served
+.Fa "uint32_t op" ,
+.Fa "uint32_t kind" ,
+.Fa "int errno"
+(a lookup from a served start returned: the
+.Dv DQ_ROP_*
+operation, the answer's
+.Dv DQ_RESOLVE_*
+kind, 0 when there was none, and the errno)
 .El
 .Pp
 Every reply also runs the

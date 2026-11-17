@@ -125,10 +125,27 @@ fop_local_fires_body()
 	atf_check -o ignore grep -qx '2 25' fired
 }
 
+atf_test_case namei_served_fires
+namei_served_fires_head()
+{
+	atf_set "descr" "dqres:::namei-served fires for a lookup from a " \
+	    "served root, with the operation, the answer kind and errno"
+	atf_set "require.user" "root"
+}
+namei_served_fires_body()
+{
+	require_dtrace
+	fire dqres:::namei-served "%d %d %d" "arg0, arg1, arg2" \
+	    dq_identity_test stat_gen_unpriv
+	# stat(2) (DQ_ROP_STAT 2) answered ATTR (3), no error.
+	atf_check -o ignore grep -qx '2 3 0' fired
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case dq_probes_present
 	atf_add_test_case dq_probes_fire
 	atf_add_test_case mac_file_notify_reply_present
 	atf_add_test_case fop_local_fires
+	atf_add_test_case namei_served_fires
 }
