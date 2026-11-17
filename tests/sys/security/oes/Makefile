@@ -23,6 +23,11 @@ LIBADD+=	pthread
 # (test_set_descendants_scope()), because even an exclusive test must not
 # deny the rest of the guest, kyua included.
 TEST_METADATA+=	is_exclusive="true"
+# The gate tests keep the deferred queue full (G-17) and race subscriptions
+# for several rounds; in a 2-vCPU emulated guest they need more than the
+# default 300 s.
+TEST_METADATA.test_idle_gate+=	timeout="900"
+TEST_METADATA.test_idle_storm+=	timeout="900"
 
 # Unit-ish coverage that exercises the wire ABI and harness without the module
 # is still a plain test; module-dependent tests fail fast if /dev/oes is absent.
