@@ -17,7 +17,7 @@ ATF_TC_HEAD(event_device, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "The device event reader opens under ordinary root DAC without granting device control");
 	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "is_exclusive", "true");
+	atf_tc_set_md_var(tc, "is.exclusive", "true");
 	atf_tc_set_md_var(tc, "timeout", "15");
 }
 ATF_TC_BODY(event_device, tc)
@@ -66,7 +66,7 @@ ATF_TC_HEAD(audit_event_device, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Audit notification device remains root-only and rejects writes");
 	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "is_exclusive", "true");
+	atf_tc_set_md_var(tc, "is.exclusive", "true");
 	atf_tc_set_md_var(tc, "timeout", "15");
 }
 ATF_TC_BODY(audit_event_device, tc)

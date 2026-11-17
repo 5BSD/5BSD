@@ -32,6 +32,8 @@
 #include <atf-c.h>
 #include <errno.h>
 #include <signal.h>
+#include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 static void
@@ -220,14 +222,22 @@ ATF_TC_BODY(reaper_sigchld_child_first, tc)
 	ATF_REQUIRE_EQ(0, r);
 }
 
+/*
+ * A lost SIGCHLD would leave the case waiting for ever.  It was caught by a
+ * 2 s case timeout, which two forks and exits overran on a loaded emulated
+ * guest; the wait for the signal now has its own bound, which says what
+ * was missing, and the case timeout only backs it up.
+ */
+#define	REAPER_SIGCHLD_WAIT	60
 ATF_TC(reaper_sigchld_grandchild_first);
 ATF_TC_HEAD(reaper_sigchld_grandchild_first, tc)
 {
-	atf_tc_set_md_var(tc, "timeout", "2");
+	atf_tc_set_md_var(tc, "timeout", "120");
 }
 ATF_TC_BODY(reaper_sigchld_grandchild_first, tc)
 {
 	struct sigaction act;
+	struct timespec wait = { REAPER_SIGCHLD_WAIT, 0 };
 	sigset_t mask;
 	siginfo_t info;
 	pid_t parent, child, grandchild, pid;
@@ -274,8 +284,10 @@ ATF_TC_BODY(reaper_sigchld_grandchild_first, tc)
 	pid = waitpid(child, NULL, 0);
 	ATF_REQUIRE_EQ(child, pid);
 
-	r = sigwaitinfo(&mask, &info);
-	ATF_REQUIRE_EQ(SIGCHLD, r);
+	r = sigtimedwait(&mask, &info, &wait);
+	ATF_REQUIRE_MSG(r == SIGCHLD,
+	    "no SIGCHLD for the reparented grandchild within %d s: %d (%s)",
+	    REAPER_SIGCHLD_WAIT, r, r == -1 ? strerror(errno) : "");
 	ATF_CHECK_EQ(SIGCHLD, info.si_signo);
 	ATF_CHECK_EQ(CLD_EXITED, info.si_code);
 	ATF_CHECK_EQ(2, info.si_status);
