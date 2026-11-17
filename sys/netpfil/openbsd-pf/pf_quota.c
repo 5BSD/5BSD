@@ -329,9 +329,9 @@ pf_quota_jail_link(struct prison *pr)
 	struct prison *ppr;
 	struct pf_quota *q, *pq;
 
-	if (pr == &prison0 || !prison_owns_vnet(pr) || pr->pr_vnet == NULL)
+	if (pr == &prison0 || !pf_prison_owns_vnet(pr) || pr->pr_vnet == NULL)
 		return;
-	for (ppr = pr->pr_parent; ppr != &prison0 && !prison_owns_vnet(ppr);
+	for (ppr = pr->pr_parent; ppr != &prison0 && !pf_prison_owns_vnet(ppr);
 	    ppr = ppr->pr_parent)
 		;
 	if (ppr == &prison0 || ppr->pr_vnet == NULL)
