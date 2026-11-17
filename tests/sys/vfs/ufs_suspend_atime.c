@@ -20,13 +20,17 @@
  *
  * The readers are child processes: the suspending process must not close a
  * file on the suspended file system itself, or it would wait for its own
- * resume.  Many files are made before the ones read, so that the resume's
- * walk over the mount's vnodes reaches the read ones after their closes
- * have finished.  Each case makes its own md(4)-backed UFS file system.
+ * resume.  The closes race the resume's walk over the mount's vnodes, so the
+ * walk is given work ahead of the read files: a holder process keeps many
+ * files made before them open and reads them during the suspension, and
+ * the walk locks and converts each of those (they stay in use) before it
+ * reaches the read files, whose closes have finished by then.  Each case
+ * makes its own md(4)-backed UFS file system.
  */
 
 #include <sys/param.h>
 #include <sys/ioctl.h>
+#include <sys/resource.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
@@ -164,6 +168,97 @@ access_file(int fd)
 	return (0);
 }
 
+/*
+ * The holder: a child that opens every filler file, reads and fstats each
+ * when told (during the suspension), and closes them when told to finish
+ * (after the resume).  Commands and acknowledgements are one byte on a
+ * pair of pipes.
+ */
+struct holder {
+	pid_t	pid;
+	int	cmd;
+	int	ack;
+};
+
+static void
+holder_body(int cmd, int ack)
+{
+	struct rlimit rl;
+	char c, path[64];
+	int *fds, i;
+
+	rl.rlim_cur = rl.rlim_max = NFILLER + 64;
+	if (setrlimit(RLIMIT_NOFILE, &rl) != 0)
+		_exit(10);
+	fds = calloc(NFILLER, sizeof(*fds));
+	if (fds == NULL)
+		_exit(11);
+	for (i = 0; i < NFILLER; i++) {
+		path_of(path, sizeof(path), "filler", i);
+		if ((fds[i] = open(path, O_RDONLY)) < 0)
+			_exit(12);
+	}
+	c = 'o';
+	if (write(ack, &c, 1) != 1 || read(cmd, &c, 1) != 1)
+		_exit(13);
+	for (i = 0; i < NFILLER; i++)
+		if (access_file(fds[i]) != 0)
+			_exit(14);
+	c = 'a';
+	if (write(ack, &c, 1) != 1 || read(cmd, &c, 1) != 1)
+		_exit(15);
+	for (i = 0; i < NFILLER; i++)
+		(void)close(fds[i]);
+	_exit(0);
+}
+
+static void
+holder_start(struct holder *h)
+{
+	int cmdp[2], ackp[2];
+	char c;
+
+	ATF_REQUIRE_EQ(0, pipe(cmdp));
+	ATF_REQUIRE_EQ(0, pipe(ackp));
+	h->pid = fork();
+	ATF_REQUIRE(h->pid >= 0);
+	if (h->pid == 0) {
+		close(cmdp[1]);
+		close(ackp[0]);
+		holder_body(cmdp[0], ackp[1]);
+	}
+	close(cmdp[0]);
+	close(ackp[1]);
+	h->cmd = cmdp[1];
+	h->ack = ackp[0];
+	ATF_REQUIRE_MSG(read(h->ack, &c, 1) == 1 && c == 'o',
+	    "the holder did not open the filler files");
+}
+
+static void
+holder_access(struct holder *h)
+{
+	char c = 'r';
+
+	ATF_REQUIRE_EQ(1, write(h->cmd, &c, 1));
+	ATF_REQUIRE_MSG(read(h->ack, &c, 1) == 1 && c == 'a',
+	    "the holder did not read the filler files");
+}
+
+static void
+holder_finish(struct holder *h)
+{
+	char c = 'x';
+	int status;
+
+	ATF_REQUIRE_EQ(1, write(h->cmd, &c, 1));
+	ATF_REQUIRE_EQ(h->pid, waitpid(h->pid, &status, 0));
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "holder: status %#x", status);
+	close(h->cmd);
+	close(h->ack);
+}
+
 /* Whether process pid sleeps on the wait message wmesg. */
 static bool
 sleeps_on(pid_t pid, const char *wmesg)
@@ -275,15 +370,19 @@ ATF_TC_HEAD(closed_at_resume, tc)
 }
 ATF_TC_BODY(closed_at_resume, tc)
 {
+	struct holder h;
 	pid_t pids[NREAD];
 	int sfd;
 
 	fixture();
+	holder_start(&h);
 	sfd = suspend();
+	holder_access(&h);
 	start_readers(pids);
 	resume(sfd);
 	reap_readers(pids);
 	use_files();
+	holder_finish(&h);
 	remount_and_check();
 }
 ATF_TC_CLEANUP(closed_at_resume, tc)
@@ -338,16 +437,20 @@ ATF_TC_HEAD(repeated_suspensions, tc)
 }
 ATF_TC_BODY(repeated_suspensions, tc)
 {
+	struct holder h;
 	pid_t pids[NREAD];
 	int i, sfd;
 
 	fixture();
 	for (i = 0; i < 10; i++) {
+		holder_start(&h);
 		sfd = suspend();
+		holder_access(&h);
 		start_readers(pids);
 		resume(sfd);
 		reap_readers(pids);
 		use_files();
+		holder_finish(&h);
 	}
 	remount_and_check();
 }
