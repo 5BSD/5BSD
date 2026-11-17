@@ -74,7 +74,11 @@ with
 .Dv SIGEMT ,
 which only a stock
 .Xr init 8
-accepts.
+accepts;
+.Nm
+then reports success once the signal is sent, as in
+.Fx ,
+before the reroot has happened.
 In fast mode, they flush the file system cache to disk, send all
 running processes a
 .Dv SIGTERM
