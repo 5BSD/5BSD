@@ -457,7 +457,7 @@ dq_policy_validate(const struct dq_policy *pol, int *reason)
 		return (EINVAL);
 	if ((pol->dp_events & ~(DQ_EVENTS_GETATTR | DQ_EVENTS_CLOSE)) != 0)
 		return (EINVAL);
-	if (pol->dp_pad0 != 0)
+	if ((pol->dp_flags & ~DQ_PF_VALID) != 0)
 		return (EINVAL);
 	*reason = DQ_REASON_RIGHTS;
 	if (pol->dp_rights_version != CAP_RIGHTS_VERSION ||
@@ -650,10 +650,14 @@ dq_object_postop_size(struct dq_object *o, uint64_t size)
 /*
  * The times (and the size and blocks) after a served operation (T-A02,
  * Q2): the controller's post-operation attributes when its reply carried
- * a valid block.  A block that fails its checks (minsize: the size the
- * operation itself proves) is ignored and counted, never an error: the
- * operation has happened.  done is the bytes the operation moved.  No dq
- * lock is held.
+ * a valid block, else the kernel's stamp, as the file systems under
+ * vn_write and vn_read stamp: mtime and ctime for an operation that
+ * changed the file (op WRITE with done > 0 bytes, FALLOCATE, FSPACECTL,
+ * SETATTR of the size), atime for a READ of done > 0 bytes unless the
+ * presented file system is MNT_NOATIME.  DQ_PF_NO_STAMP leaves the times
+ * to the controller.  A block that fails its checks (minsize: the size
+ * the operation itself proves) is ignored and counted, never an error:
+ * the operation has happened.  No dq lock is held.
  */
 void
 dq_object_postop(struct dq_object *o, uint32_t op, const struct dq_data *reply,
@@ -661,8 +665,9 @@ dq_object_postop(struct dq_object *o, uint32_t op, const struct dq_data *reply,
 {
 	struct dq_postop_attr pa;
 	struct dq_queue *q;
+	struct timespec now;
 	uint32_t allowed;
-	bool block, resize;
+	bool block, resize, stamp;
 
 	block = reply != NULL && reply->dd_postop;
 	if (block) {
@@ -701,6 +706,23 @@ dq_object_postop(struct dq_object *o, uint32_t op, const struct dq_data *reply,
 		if ((pa.dpa_valid & DQ_PA_BLOCKS) != 0)
 			o->o_ident.di_blocks = pa.dpa_blocks;
 		SDT_PROBE4(dq, , , postop__attr, o, op, pa.dpa_valid, 0);
+	} else if ((o->o_policy.dp_flags & DQ_PF_NO_STAMP) == 0) {
+		if (op == DQ_OP_READ)
+			stamp = done > 0 &&
+			    (o->o_ident.di_statfs.ds_flags & MNT_NOATIME) == 0;
+		else
+			stamp = op != DQ_OP_WRITE || done > 0;
+		if (stamp) {
+			vfs_timestamp(&now);
+			if (op == DQ_OP_READ) {
+				o->o_ident.di_atime.tv_sec = now.tv_sec;
+				o->o_ident.di_atime.tv_nsec = now.tv_nsec;
+			} else {
+				o->o_ident.di_mtime.tv_sec = now.tv_sec;
+				o->o_ident.di_mtime.tv_nsec = now.tv_nsec;
+				o->o_ident.di_ctime = o->o_ident.di_mtime;
+			}
+		}
 	}
 	DQO_UNLOCK(o);
 	if (resize)
@@ -956,6 +978,7 @@ dq_read(struct file *fp, struct uio *uio, struct ucred *active_cred __unused,
 	struct dq_object *o;
 	void *cookie;
 	off_t start, end;
+	ssize_t resid;
 	int error;
 	bool cached;
 
@@ -984,9 +1007,14 @@ dq_read(struct file *fp, struct uio *uio, struct ucred *active_cred __unused,
 	DQO_LOCK(o);
 	cached = o->o_policy.dp_cache == DQ_CACHE_DATA;
 	DQO_UNLOCK(o);
-	if (cached)
+	if (cached) {
+		resid = uio->uio_resid;
 		error = dq_read_cached(o, uio);
-	else
+		/* No event carried the times: the kernel's stamp (T-A02). */
+		if (error == 0)
+			dq_object_postop(o, DQ_OP_READ, NULL, 0,
+			    resid - uio->uio_resid);
+	} else
 		error = dq_read_events(o, uio, td);
 	rangelock_unlock(&o->o_rl, cookie);
 	if (error == 0) {
@@ -1525,7 +1553,7 @@ dq_setattr_post(struct dq_object *o, struct dq_setattr_body *sb,
 	if (rerror != 0)
 		return (rerror);
 
-	nanotime(&now);
+	vfs_timestamp(&now);
 	mask = sb->dsa_mask;
 	DQO_LOCK(o);
 	if ((mask & DQ_SETATTR_MODE) != 0)
@@ -1547,6 +1575,10 @@ dq_setattr_post(struct dq_object *o, struct dq_setattr_body *sb,
 		o->o_ident.di_birthtime = sb->dsa_birthtime;
 	o->o_ident.di_ctime.tv_sec = now.tv_sec;
 	o->o_ident.di_ctime.tv_nsec = now.tv_nsec;
+	/* A truncation is a change of the data too (ffs_truncate). */
+	if ((mask & (DQ_SETATTR_SIZE | DQ_SETATTR_MTIME)) == DQ_SETATTR_SIZE &&
+	    (o->o_policy.dp_flags & DQ_PF_NO_STAMP) == 0)
+		o->o_ident.di_mtime = o->o_ident.di_ctime;
 	dq_file_knote(o, NOTE_ATTRIB);
 	DQO_UNLOCK(o);
 	if ((mask & DQ_SETATTR_SIZE) != 0)

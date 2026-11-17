@@ -407,8 +407,12 @@ ATF_TC_BODY(mint_reasons_policy, tc)
 	ATF_CHECK_EQ(0, dq_mint_file(f.c.q, &f.ident, &p, &object, &fd, NULL));
 	(void)close(fd);
 	p = f.pol;
-	p.dp_pad0 = 1;
-	expect_reason(&f, &f.ident, &p, DQ_REASON_POLICY, "dp_pad0");
+	p.dp_flags = 0x80000000;
+	expect_reason(&f, &f.ident, &p, DQ_REASON_POLICY, "dp_flags unknown");
+	p = f.pol;
+	p.dp_flags = DQ_PF_NO_STAMP;
+	ATF_CHECK_EQ(0, dq_mint_file(f.c.q, &f.ident, &p, &object, &fd, NULL));
+	(void)close(fd);
 
 	p = f.pol;
 	p.dp_rights_version = CAP_RIGHTS_VERSION + 1;

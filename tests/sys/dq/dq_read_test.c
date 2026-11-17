@@ -869,8 +869,21 @@ ATF_TC_BODY(atime_after_read, tc)
 	memset(&r, 0, sizeof(r));
 	dqt_run_child(child_read_atime, &fd, &r, sizeof(r));
 	ATF_REQUIRE_EQ(16, r.rv);
-	/* Pin: a read leaves the presented access time where it was. */
+	/*
+	 * No attributes came: the kernel stamps the access time, as a local
+	 * file system's read does (it stayed where it was).
+	 */
+	ATF_CHECK(timespeccmp(&r.after.st_atim, &r.before.st_atim, >));
+
+	/* DQ_PF_NO_STAMP: the controller keeps the times; none moves. */
+	pol.dp_flags = DQ_PF_NO_STAMP;
+	o = dqt_mint_ident(&c, ident, &pol, data, sizeof(data));
+	fd = o->fd;
+	memset(&r, 0, sizeof(r));
+	dqt_run_child(child_read_atime, &fd, &r, sizeof(r));
+	ATF_REQUIRE_EQ(16, r.rv);
 	ATF_CHECK(timespeccmp(&r.after.st_atim, &r.before.st_atim, ==));
+	pol.dp_flags = 0;
 
 	/* Presented MNT_NOATIME: never stamped. */
 	ident->di_statfs.ds_flags |= MNT_NOATIME;

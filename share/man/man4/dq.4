@@ -1001,8 +1001,11 @@ at least
 .Va dp_events
 a subset of
 .Dv DQ_EVENTS_GETATTR | DQ_EVENTS_CLOSE ;
-.Va dp_pad0
-zero.
+.Va dp_flags
+.Pq formerly Va dp_pad0
+no bit but
+.Dv DQ_PF_NO_STAMP
+.Pq see Sx Post-operation attributes .
 Anything else is
 .Er EINVAL
 with
@@ -1600,6 +1603,27 @@ and is never an error to the requester: the operation has happened in
 the backing file, and failing it would make the program repeat it.
 A larger size is applied: the backing file may have grown by another
 writer.
+.Pp
+With no block, or an ignored one, the kernel stamps the times as a local
+file system does: a write that took bytes, an allocation, a deallocation
+and a change of the size set
+.Va di_mtime
+and
+.Va di_ctime
+to
+.Fn vfs_timestamp ;
+a read that returned bytes, from the queue or from the cached pages, sets
+.Va di_atime
+unless the presented file system is
+.Dv MNT_NOATIME .
+A controller that keeps the times itself (by
+.Dv DQ_IOC_SETIDENT ,
+.Dv DQ_OP_GETATTR
+answers or its blocks) sets
+.Dv DQ_PF_NO_STAMP
+in
+.Va dp_flags ,
+and the kernel stamps nothing.
 .Ss Attributes
 .Xr fchmod 2 ,
 .Xr fchown 2 ,

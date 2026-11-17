@@ -252,9 +252,17 @@ struct dq_policy {
 	int32_t		dp_deadline_ms;		/* DQ_DEADLINE_DEFAULT, 0 = none, or ms */
 	uint32_t	dp_events;		/* DQ_EVENTS_* */
 	uint32_t	dp_rights_version;	/* CAP_RIGHTS_VERSION dp_rights was built with */
-	uint32_t	dp_pad0;
+	uint32_t	dp_flags;		/* DQ_PF_* (was dp_pad0, zero) */
 	cap_rights_t	dp_rights;		/* rights of the minted descriptor */
 };
+/*
+ * DQ_PF_NO_STAMP: the controller keeps the object's times itself (with
+ * SETIDENT, GETATTR or the post-operation attributes of its replies); the
+ * kernel does not stamp them after an operation that carried none.
+ * 0x00000001 and 0x00000002 are reserved (DQ_PF_INTR, DQ_PF_WRITE_UNIT).
+ */
+#define	DQ_PF_NO_STAMP		0x00000004
+#define	DQ_PF_VALID		(DQ_PF_NO_STAMP)
 
 /*
  * Event header (design 8.1).  de_size is the whole record, header and
@@ -322,13 +330,13 @@ enum dq_op {
  * backing file says after the operation, appended to the reply of a
  * WRITE, FALLOCATE or FSPACECTL (any of the fields), or of a READ
  * (DQ_PA_ATIME alone), as an NFS server returns wcc data.  The fields
- * dpa_valid names become the presented identity's.  A size below what
- * the operation itself proves (WRITE: dwr_offset + dwr_written;
- * FALLOCATE: the range's end), a time with tv_nsec outside 0..999999999,
- * a size above OFF_MAX, an unknown bit or a non-zero dpa_pad make the
- * block ignored and counted
+ * dpa_valid names become the presented identity's; the kernel stamps
+ * none of the times itself then.  A size below what the operation itself
+ * proves (WRITE: dwr_offset + dwr_written; FALLOCATE: the range's end), a
+ * time with tv_nsec outside 0..999999999, a size above OFF_MAX, an
+ * unknown bit or a non-zero dpa_pad make the block ignored and counted
  * (ds2_postop_ignored, dq:::postop-attr), never an error on an operation
- * that has already happened.
+ * that has already happened; the kernel then stamps as without one.
  */
 struct dq_postop_attr {
 	uint32_t	dpa_valid;		/* DQ_PA_* */

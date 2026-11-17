@@ -1026,10 +1026,14 @@ ATF_TC_BODY(postop_size_smaller_ignored, tc)
 	postop_round(&f, 50, &r, &ignored);
 	ATF_CHECK_EQ(10, r.w.rv);
 	ATF_CHECK_EQ(1, ignored);
-	/* Nothing of the block: the size and times are the kernel's. */
+	/*
+	 * Nothing of the block: the size is the kernel's and the times are
+	 * its stamp, as with no block.
+	 */
 	ATF_CHECK_EQ(r.before.st_size, r.after.st_size);
 	ATF_CHECK(r.after.st_mtim.tv_sec != POSTOP_SEC);
 	ATF_CHECK(r.after.st_ctim.tv_sec != POSTOP_SEC);
+	ATF_CHECK(timespeccmp(&r.after.st_mtim, &r.before.st_mtim, >));
 	dqt_fixture_fini(&f);
 }
 

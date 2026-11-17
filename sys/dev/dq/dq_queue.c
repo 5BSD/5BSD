@@ -2426,6 +2426,7 @@ dq_queue_setpolicy(struct dq_queue *q, struct dq_setpolicy_args *args)
 	cur->dp_ioctl = new->dp_ioctl;
 	cur->dp_deadline_ms = new->dp_deadline_ms;
 	cur->dp_events = new->dp_events;
+	cur->dp_flags = new->dp_flags;
 	DQO_UNLOCK(o);
 	DQ_UNLOCK(q);
 	return (0);
