@@ -21,6 +21,7 @@
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/sysctl.h>
+#include <sys/time.h>
 #include <sys/wait.h>
 
 #include <errno.h>
@@ -1848,6 +1849,193 @@ ATF_TC_BODY(peer_close_race, tc)
 		(void)set_direct(saved);
 }
 
+/*
+ * Revoking an endpoint frees the messages still queued on its service side
+ * (the RX queue) and drops the descriptors they carry.  The last reference
+ * to such a descriptor runs its close: for a channel endpoint that drains
+ * the channel taskqueue and sleeps, for a socket it takes sleepable socket
+ * locks.  None of that may run under the revoked instance's mutex: WITNESS
+ * must report nothing about "mac_capability instance" while it happens.
+ */
+
+/* Lines of the kernel message buffer that contain needle. */
+static int
+msgbuf_count(const char *needle)
+{
+	char *buf, *line, *next;
+	size_t len;
+	int n;
+
+	len = 0;
+	ATF_REQUIRE(sysctlbyname("kern.msgbuf", NULL, &len, NULL, 0) == 0);
+	len += 4096;
+	buf = malloc(len + 1);
+	ATF_REQUIRE(buf != NULL);
+	ATF_REQUIRE_MSG(sysctlbyname("kern.msgbuf", buf, &len, NULL, 0) == 0,
+	    "kern.msgbuf: %s", strerror(errno));
+	buf[len] = '\0';
+	n = 0;
+	for (line = buf; line != NULL; line = next) {
+		next = strchr(line, '\n');
+		if (next != NULL)
+			*next++ = '\0';
+		if (strstr(line, needle) != NULL)
+			n++;
+	}
+	free(buf);
+	return (n);
+}
+
+static const char *const revoke_witness_needles[] = {
+	"non-sleepable locks held",
+	"\"mac_capability instance\"",
+	"sleepable after non-sleepable",
+};
+
+static void
+revoke_witness_counts(int counts[nitems(revoke_witness_needles)])
+{
+	u_int i;
+
+	for (i = 0; i < nitems(revoke_witness_needles); i++)
+		counts[i] = msgbuf_count(revoke_witness_needles[i]);
+}
+
+/*
+ * Leave a message carrying the only reference to carried in P[0]'s RX
+ * queue: fill P[1]'s receive queue and P[0]'s RX queue, take one message
+ * off P[1] so the dispatch task moves one queued message on, and queue
+ * the carrying message behind the rest.  The caller's descriptor is closed.
+ */
+static void
+queue_carried_fd(int P[2], int carried)
+{
+	struct mac_capability_sendmsg_args sa;
+	unsigned char rx[64];
+	uint32_t rxlen, seq;
+	int fl, tries;
+	static const char note[] = "carrier";
+
+	ATF_REQUIRE_MSG(cap_xfer_limit(carried, CAP_XFER_ONCE) == 0,
+	    "cap_xfer_limit: %s", strerror(errno));
+	fl = fcntl(P[0], F_GETFL);
+	ATF_REQUIRE(fcntl(P[0], F_SETFL, fl | O_NONBLOCK) == 0);
+	for (seq = 0; seq < 100000; seq++) {
+		if (chan_send(P[0], &seq, sizeof(seq)) != 0) {
+			ATF_REQUIRE_MSG(errno == EAGAIN || errno == ENOBUFS,
+			    "fill: %s", strerror(errno));
+			break;
+		}
+	}
+	ATF_REQUIRE_MSG(seq > 0 && seq < 100000, "queues never pushed back");
+	for (tries = 0; tries < 5000; tries++) {
+		if (chan_recv_nb(P[1], rx, sizeof(rx), &rxlen, NULL) == 0)
+			break;
+		ATF_REQUIRE_MSG(errno == EAGAIN, "recv: %s", strerror(errno));
+		usleep(1000);
+	}
+	ATF_REQUIRE_MSG(tries < 5000, "nothing arrived on the peer");
+
+	memset(&sa, 0, sizeof(sa));
+	sa.payload = note;
+	sa.payload_len = sizeof(note);
+	sa.fds = &carried;
+	sa.nfds = 1;
+	for (tries = 0; tries < 5000; tries++) {
+		if (ioctl(P[0], MAC_CAPABILITY_SENDMSG, &sa) == 0)
+			break;
+		ATF_REQUIRE_MSG(errno == EAGAIN || errno == ENOBUFS,
+		    "send carried fd: %s", strerror(errno));
+		usleep(1000);
+	}
+	ATF_REQUIRE_MSG(tries < 5000, "the carrying message was never queued");
+	ATF_REQUIRE_EQ(0, close(carried));
+}
+
+static void
+revoke_and_check_witness(int fd)
+{
+	int after[nitems(revoke_witness_needles)];
+	int before[nitems(revoke_witness_needles)];
+	u_int i;
+
+	revoke_witness_counts(before);
+	ATF_REQUIRE_MSG(ioctl(fd, MAC_CAPABILITY_TERMINATE, NULL) == 0,
+	    "terminate: %s", strerror(errno));
+	revoke_witness_counts(after);
+	for (i = 0; i < nitems(revoke_witness_needles); i++)
+		ATF_CHECK_MSG(after[i] <= before[i],
+		    "the revoke logged %d new kernel message(s) naming '%s'",
+		    after[i] - before[i], revoke_witness_needles[i]);
+}
+
+ATF_TC(revoke_frees_queued_endpoint);
+ATF_TC_HEAD(revoke_frees_queued_endpoint, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "revoking an endpoint closes a channel endpoint carried by a "
+	    "queued message outside the instance mutex");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(revoke_frees_queued_endpoint, tc)
+{
+	char rx[32];
+	int P[2], Q[2], tries;
+
+	ATF_REQUIRE(chan_create_required(P) == 0);
+	ATF_REQUIRE(chan_create(Q) == 0);
+	queue_carried_fd(P, Q[0]);
+	revoke_and_check_witness(P[0]);
+
+	/* Freeing the message closed Q[0]: its partner sees the peer die. */
+	for (tries = 0; tries < 5000; tries++) {
+		if (chan_recv_nb(Q[1], rx, sizeof(rx), NULL, NULL) == 0)
+			atf_tc_fail("unexpected message on Q[1]");
+		if (errno != EAGAIN)
+			break;
+		usleep(1000);
+	}
+	ATF_CHECK_EQ_MSG(ECONNRESET, errno, "Q[1] after the revoke: %s",
+	    strerror(errno));
+	close(P[0]);
+	close(P[1]);
+	close(Q[1]);
+}
+
+ATF_TC(revoke_frees_queued_socket);
+ATF_TC_HEAD(revoke_frees_queued_socket, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "revoking an endpoint closes a socket carried by a queued "
+	    "message outside the instance mutex");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(revoke_frees_queued_socket, tc)
+{
+	struct timeval tv;
+	char c;
+	int P[2], sv[2];
+
+	ATF_REQUIRE(chan_create_required(P) == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	queue_carried_fd(P, sv[0]);
+	revoke_and_check_witness(P[0]);
+
+	/* Freeing the message closed sv[0]: its peer reads end of file. */
+	tv.tv_sec = 5;
+	tv.tv_usec = 0;
+	ATF_REQUIRE(setsockopt(sv[1], SOL_SOCKET, SO_RCVTIMEO, &tv,
+	    sizeof(tv)) == 0);
+	ATF_CHECK_EQ_MSG(0, read(sv[1], &c, 1), "read: %s", strerror(errno));
+	close(P[0]);
+	close(P[1]);
+	close(sv[1]);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, create_pair);
@@ -1879,6 +2067,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, sendmsg_v2_move_lock_paths);
 	ATF_TP_ADD_TC(tp, recvmsg_v4_info);
 	ATF_TP_ADD_TC(tp, peer_close_race);
+	ATF_TP_ADD_TC(tp, revoke_frees_queued_endpoint);
+	ATF_TP_ADD_TC(tp, revoke_frees_queued_socket);
 
 	return (atf_no_error());
 }
