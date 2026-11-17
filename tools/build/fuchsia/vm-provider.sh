@@ -66,6 +66,11 @@
 #   GENERIC-TEST, and must be asked for: a stage whose kernel carries a
 #   test-kernel option is refused unless KERNEL_TIER=test.
 #
+# Mandatory options.  Before any tier, release/scripts/check-mandatory-kernel.sh
+# reads every kernel under the stage's boot directory and the run is refused
+# when one lacks an option of sys/conf/mandatory-options (AUDIT,
+# CAPABILITY_MODE, CAPABILITIES, RACCT, RCTL).
+#
 # Kernel tier.  The main tiers (plane on, PLANE_OFF=1, ISOLATION_ENFORCE=1)
 # boot a kernel without any option of the test-kernel option ledger
 # (sys/conf/test-options); the knob tier boots GENERIC-TEST.  Which one a
@@ -324,6 +329,16 @@ test_knobs=$(sh "$tk_check" -l "$tk_ledger" -L |
     awk -F '|' '$2 == "live" && $6 != "-" { gsub(",", " ", $6); printf "%s ", $6 }')
 case $test_knobs in *[!a-z0-9_.\ ]*) die "unexpected knob names in the ledger";; esac
 echo "TEST_KERNEL_HOST: binary-check=$test_kernel_host option=$test_option kernel-sha256=$kernel_sha256"
+# Every tier: the stage's kernels carry every option of
+# sys/conf/mandatory-options (a separate check from the test-kernel one).
+mk_check=$src_root/release/scripts/check-mandatory-kernel.sh
+[ -f "$mk_check" ] ||
+    die "no release/scripts/check-mandatory-kernel.sh in $src_root"
+sh "$mk_check" -d "$stage" > "$work/mandatory-kernel-check.out" \
+    2> "$work/mandatory-kernel-check.err" ||
+    { cat "$work/mandatory-kernel-check.err" >&2
+      die "the stage's kernel lacks an option of sys/conf/mandatory-options"; }
+echo "MANDATORY_KERNEL_HOST: $(cat "$work/mandatory-kernel-check.out")"
 echo "TEST_KERNEL_HOST: version=$kernel_version"
 case $kernel_tier:$test_kernel_host in
 main:yes) die "the stage's kernel was built with options $test_option: a test kernel runs only with KERNEL_TIER=test";;
