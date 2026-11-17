@@ -46,14 +46,6 @@
 ^flock_shared_test:blocking_upgrade_drops_shared[[:space:]]  # ux-0 D247, parked: a blocking flock SH-to-EX upgrade on a served file keeps its shared lock while it sleeps (one atomic F_OFD_SETLKW conversion on the owner reopen, libdq_serve.c); base unlocks first, so another shared holder gets LOCK_EX|LOCK_NB there and EWOULDBLOCK here
 ^flock_shared_test:interrupted_upgrade[[:space:]]  # ux-0 D247, parked: a blocking flock SH-to-EX upgrade on a served file that ends in EINTR still holds its shared lock (the cancelled F_OFD_SETLKW converted nothing, libdq_serve.c), so LOCK_EX|LOCK_NB by others stays EWOULDBLOCK until it unlocks or closes; base has dropped the shared lock
 
-# fspacectl(2) past EOF: the reply invariant requires dscr_len == end -
-# dscr_offset (sys/dev/dq/dq_queue.c); FreeBSD's VOP_DEALLOCATE
-# stops at EOF and reports the rest, which the invariant refuses.
-^fspacectl_test:aligned_dealloc_eof[[:space:]]  # ux-1: FSPACECTL reply past EOF refused by the invariant (dq_queue.c)
-^fspacectl_test:aligned_dealloc_offmax[[:space:]]  # ux-1: FSPACECTL reply for an OFF_MAX range refused by the invariant (dq_queue.c)
-^fspacectl_test:unaligned_dealloc_eof[[:space:]]  # ux-1: FSPACECTL reply past EOF refused by the invariant (dq_queue.c)
-^fspacectl_test:unaligned_dealloc_offmax[[:space:]]  # ux-1: FSPACECTL reply for an OFF_MAX range refused by the invariant (dq_queue.c)
-
 # A kernel consumer's relative path from a served cwd (nmount's fspath).
 ^fsetattr_test:fdescfs_(fifo|kqueue|mac_target|no_attributes|opath|ptmx_direct|ptmx_nonowner|regular_file|shm)[[:space:]]  # by-design D175: mount(2) "fspath" from a served cwd is a class-2 path, EXDEV (kern_dqres.c)
 ^fsetattr_test:fdesc_setattr_atomic[[:space:]]  # by-design D175: the case mounts fdescfs the same way

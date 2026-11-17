@@ -1089,14 +1089,15 @@ ATF_TC_BODY(fspacectl_past_eof, tc)
 	fd = f.o->fd;
 	dqt_run_child(child_space_past_eof, &fd, &s, sizeof(s));
 	/*
-	 * Pin: the controller's {EOF, 0} is refused (EINVAL to it), the
-	 * event stays in flight, and the requester fails EIO at its deadline.
+	 * The controller's {EOF, 0} is accepted and reaches the requester
+	 * unchanged, as the real file's (it was refused, EINVAL to the
+	 * controller, and the requester failed EIO at its deadline).
 	 */
-	ATF_CHECK_EQ(-1, s.r.rv);
-	ATF_CHECK_EQ(EIO, s.r.err);
+	ATF_CHECK_EQ_MSG(0, s.r.rv, "fspacectl: %s", strerror(s.r.err));
+	ATF_CHECK_EQ(o.rm.r_offset, s.rm.r_offset);
+	ATF_CHECK_EQ(o.rm.r_len, s.rm.r_len);
 	dqt_lock(&f.c);
-	ATF_CHECK_EQ(1, f.c.reply_failures);
-	ATF_CHECK_EQ(EINVAL, f.c.last_reply_errno);
+	ATF_CHECK_EQ(0, f.c.reply_failures);
 	dqt_unlock(&f.c);
 	dqt_fini(&f.c);
 	(void)close(f.backing);

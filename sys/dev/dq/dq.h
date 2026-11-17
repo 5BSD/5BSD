@@ -498,8 +498,9 @@ struct dq_fspacectl_body {
 	uint64_t	dsc_len;
 };
 struct dq_fspacectl_reply {		/* the range left to do */
-	uint64_t	dscr_offset;	/* >= dsc_offset */
-	uint64_t	dscr_len;	/* offset + len == dsc_offset + dsc_len */
+	uint64_t	dscr_offset;	/* dsc_offset..dsc_offset + dsc_len */
+	uint64_t	dscr_len;	/* 0, or offset + len == dsc_offset +
+					   dsc_len */
 };
 
 /*

@@ -860,13 +860,14 @@ the controller's end of file; the requester's implicit offset becomes
 .Fn dq_reply_fspacectl
 answers a
 .Dv DQ_OP_FSPACECTL
-with the range left undone, whose
+with the range left undone, as
+.Xr fspacectl 2
+reports it: an
 .Fa offset
-is at least
-.Va dsc_offset
-and whose end is
-.Va dsc_offset No + Va dsc_len
-(a finished request answers that end and 0);
+within the request, and a
+.Fa len
+of 0 (a finished request answers its end; one that stopped at the end of
+the file, that offset) or one that ends where the request ends;
 .Fn dq_reply_postop
 sends a successful reply of
 .Fa len

@@ -2031,13 +2031,18 @@ dq_reply_validate(const struct dq_event_k *ev, int rerrno, const void *buf,
 		sb = (const struct dq_fspacectl_body *)body;
 		sr = buf;
 		/*
-		 * The invariant vn_fallocate panics on: the remaining range
-		 * ends where the request ended and starts no earlier.  The
-		 * kernel validated offset + len <= OFF_MAX before posting.
+		 * The remaining range, as vn_deallocate's contract has it:
+		 * it starts no earlier than the request and no later than its
+		 * end, and either ends where the request ended (progress) or
+		 * is empty (done, or stopped at the end of the file, as
+		 * vop_stddeallocate answers past EOF: {EOF, 0} or {offset,
+		 * 0}).  The kernel validated offset + len <= OFF_MAX before
+		 * posting, and passes the reply to the caller as it is.
 		 */
 		end = sb->dsc_offset + sb->dsc_len;
 		if (sr->dscr_offset < sb->dsc_offset || sr->dscr_offset > end ||
-		    sr->dscr_len != end - sr->dscr_offset)
+		    sr->dscr_len > end - sr->dscr_offset ||
+		    (sr->dscr_len != 0 && sr->dscr_offset + sr->dscr_len != end))
 			return (EINVAL);
 		return (0);
 	case DQ_OP_LOCK:

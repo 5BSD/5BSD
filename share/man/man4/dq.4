@@ -460,15 +460,20 @@ Body
 .Pq Xr fspacectl 2 .
 The reply is an errno and, when it is 0, one
 .Vt struct dq_fspacectl_reply ,
-the range left undone:
+the range left undone, as
+.Fn vn_deallocate
+reports it:
 .Va dscr_offset
-at least
-.Va dsc_offset
-and
+within the request
+.Pq Va dsc_offset No to Va dsc_offset No + Va dsc_len ,
+and either
+.Va dscr_len
+0 (nothing left: a finished request answers its end, a deallocation
+that stopped at the end of file answers that offset) or
 .Va dscr_offset No + Va dscr_len
 equal to
-.Va dsc_offset No + Va dsc_len
-(a finished request answers the end and 0).
+.Va dsc_offset No + Va dsc_len .
+The range reaches the requester unchanged.
 .Dv NOTE_WRITE
 fires on success.
 .It Dv DQ_OP_LOCK
