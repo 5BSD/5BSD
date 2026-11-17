@@ -83,9 +83,11 @@ struct oes_softc {
 	counter_u64_t		sc_jail_filtered_auth; /* AUTH events of those */
 
 	/*
-	 * Idle gating (oes_mac.c).  sc_gate_sx serializes oes_gate_reconcile(),
-	 * which recomputes from the clients and the strict settings which
-	 * hooks anyone needs; it is taken with no other OES lock held.
+	 * Idle gating (oes_mac.c).  sc_gate_sx serializes the per-event
+	 * subscriber counts and oes_gate_reconcile(), which recomputes from
+	 * those counts and the strict settings which hooks anyone needs; it
+	 * is taken with no other OES lock held, and the gate never takes the
+	 * global OES lock, which the delivery task holds for each event.
 	 */
 	struct sx		sc_gate_sx;
 	counter_u64_t		sc_gate_passes;	/* Hook entries past a gate */
@@ -164,6 +166,12 @@ struct oes_client {
 	uint32_t		ec_deadline_max_ms[128]; /* Per-AUTH-event cap; 0=default */
 	uint64_t		ec_subscriptions[4]; /* [0,1]=AUTH (128b), [2,3]=NOTIFY (128b) */
 	uint32_t		ec_flags;	/* EC_FLAG_* */
+	/*
+	 * What this client contributes to the idle gate's counts (oes_mac.c):
+	 * the subscriptions and cache use last accounted.  sc_gate_sx.
+	 */
+	uint64_t		ec_gate_subs[4];
+	bool			ec_gate_cache;
 	uint32_t		ec_mute_invert;	/* OES_MUTE_INVERT_* */
 
 	/* Event queue */
@@ -635,6 +643,7 @@ void	oes_set_auth_deadline(struct oes_pending *ep, uint32_t deadline_ms);
  */
 int	oes_mac_init(void);
 void	oes_gate_reconcile(void);
+void	oes_gate_client_update(struct oes_client *ec, bool gone);
 void	oes_gate_set_strict(int *knob, int value);
 uint64_t oes_proc_get_exec_id(struct proc *p);
 const char *oes_proc_get_exec_path(struct proc *p, uint32_t *meta_flags);

@@ -392,7 +392,7 @@ oes_client_dtor(void *data)
 	atomic_subtract_int(&oes_softc.sc_nclients, 1);
 	OES_UNLOCK();
 	/* Hooks only this client needed go idle; nothing waits for them. */
-	oes_gate_reconcile();
+	oes_gate_client_update(ec, true);
 	if (pr != NULL)
 		prison_free(pr);
 	if (setter_pr != NULL)

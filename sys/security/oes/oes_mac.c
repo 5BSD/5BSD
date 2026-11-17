@@ -161,8 +161,11 @@ static u_int oes_rename_cache_populated;
  * Every gated hook with a framework fast-path flag counts toward that flag
  * only while it is live (MPC_LOADTIME_FLAG_FP_INACTIVE), so with nobody
  * listening OES makes the framework enter no path on its own account.
- * oes_gate_reconcile() recomputes liveness from scratch after anything it
- * depends on changes.  It never waits for threads inside hooks: hooks,
+ * Liveness is recomputed after anything it depends on changes: a client's
+ * subscriptions, cache use or close (oes_gate_client_update(), which keeps
+ * per-event subscriber counts so that it never walks the clients or takes
+ * the global OES lock) and the strict settings (oes_gate_reconcile()).
+ * Neither waits for threads inside hooks: hooks,
  * tables and locks are permanent, a hook may run while not live (another
  * policy holds the flag, or a thread was already past its test), and it
  * then behaves as if nobody listened.
@@ -367,13 +370,24 @@ oes_gate_bit(const uint64_t sub[4], uint16_t event)
 	return ((sub[base + bit / 64] & (1ULL << (bit % 64))) != 0);
 }
 
+/*
+ * The union of the subscriptions of all open clients, kept as a count of
+ * subscribers per event bit (AUTH words 0-1, NOTIFY words 2-3), and the
+ * number of clients that have used the decision cache.  Each client's
+ * contribution is recorded in it (ec_gate_subs, ec_gate_cache), so a
+ * change is applied as a difference: reconcile never walks the clients and
+ * never takes the global OES lock, which the delivery task holds for the
+ * whole of each event's delivery.  sc_gate_sx.
+ */
+static u_int oes_gate_subcount[4 * 64];
+static u_int oes_gate_cache_clients;
+
 static void
 oes_gate_reconcile_locked(bool force_strict)
 {
 	u_long want[OES_GATE_WORDS], old[OES_GATE_WORDS];
 	u_short on[OES_H_COUNT], off[OES_H_COUNT];
 	const struct oes_hook_desc *d;
-	struct oes_client *ec;
 	uint64_t sub[4];
 	u_int non, noff, w;
 	bool cache, strict, was, now;
@@ -385,19 +399,10 @@ oes_gate_reconcile_locked(bool force_strict)
 	    oes_auth_fail_closed != 0 ||
 	    oes_default_deadline_miss_mode == OES_DEADLINE_MISS_FAIL_CLOSED;
 	memset(sub, 0, sizeof(sub));
-	cache = false;
-	OES_LOCK();
-	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
-		EC_LOCK(ec);
-		if ((ec->ec_flags & EC_FLAG_CLOSING) == 0) {
-			for (i = 0; i < 4; i++)
-				sub[i] |= ec->ec_subscriptions[i];
-			if ((ec->ec_flags & EC_FLAG_CACHE_USED) != 0)
-				cache = true;
-		}
-		EC_UNLOCK(ec);
-	}
-	OES_UNLOCK();
+	for (i = 0; i < (int)nitems(oes_gate_subcount); i++)
+		if (oes_gate_subcount[i] != 0)
+			sub[i / 64] |= 1ULL << (i % 64);
+	cache = oes_gate_cache_clients != 0;
 
 	memset(want, 0, sizeof(want));
 	for (h = 0; h < OES_H_COUNT; h++) {
@@ -444,16 +449,61 @@ oes_gate_reconcile_locked(bool force_strict)
 }
 
 /*
- * Recompute which hooks are live.  Called, with no OES lock held, after
- * every change of a subscription, of a client's closing or cache-use state,
- * or of a strict setting; complete before it returns.  Bounded: one walk of
- * the clients and of the hook table, and one fast-path update.
+ * Recompute which hooks are live from the subscriber counts and the strict
+ * settings, with no OES lock held; complete before it returns.  Bounded: one
+ * pass over the counts and the hook table, and one fast-path update.
  */
 void
 oes_gate_reconcile(void)
 {
 
 	sx_xlock(&oes_softc.sc_gate_sx);
+	oes_gate_reconcile_locked(false);
+	sx_xunlock(&oes_softc.sc_gate_sx);
+}
+
+/*
+ * Account a change of ec's subscriptions or cache use (gone: ec is closing
+ * and contributes nothing from now on), then recompute.  Called with no
+ * OES lock held, after the change and before the call that made it
+ * returns.  Only ec's own lock is taken, briefly, to read its state.
+ */
+void
+oes_gate_client_update(struct oes_client *ec, bool gone)
+{
+	uint64_t now[4], diff;
+	bool cache;
+	int b, i;
+
+	sx_xlock(&oes_softc.sc_gate_sx);
+	EC_LOCK(ec);
+	gone = gone || (ec->ec_flags & EC_FLAG_CLOSING) != 0;
+	for (i = 0; i < 4; i++)
+		now[i] = gone ? 0 : ec->ec_subscriptions[i];
+	cache = !gone && (ec->ec_flags & EC_FLAG_CACHE_USED) != 0;
+	EC_UNLOCK(ec);
+	for (i = 0; i < 4; i++) {
+		diff = now[i] ^ ec->ec_gate_subs[i];
+		while (diff != 0) {
+			b = ffsll(diff) - 1;
+			diff &= diff - 1;
+			if ((now[i] & (1ULL << b)) != 0)
+				oes_gate_subcount[i * 64 + b]++;
+			else {
+				KASSERT(oes_gate_subcount[i * 64 + b] > 0,
+				    ("oes gate: subscriber count underflow"));
+				oes_gate_subcount[i * 64 + b]--;
+			}
+		}
+		ec->ec_gate_subs[i] = now[i];
+	}
+	if (cache != ec->ec_gate_cache) {
+		if (cache)
+			oes_gate_cache_clients++;
+		else
+			oes_gate_cache_clients--;
+		ec->ec_gate_cache = cache;
+	}
 	oes_gate_reconcile_locked(false);
 	sx_xunlock(&oes_softc.sc_gate_sx);
 }

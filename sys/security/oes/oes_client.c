@@ -592,7 +592,7 @@ oes_client_subscribe_events(struct oes_client *ec, oes_event_type_t *events,
 
 	EC_UNLOCK(ec);
 	/* Live, with fast-path flags counted, before the ioctl returns. */
-	oes_gate_reconcile();
+	oes_gate_client_update(ec, false);
 
 	OES_DEBUG("client %p subscribed to %zu events", ec, count);
 
@@ -670,7 +670,7 @@ oes_client_subscribe_bitmap(struct oes_client *ec,
 	}
 
 	EC_UNLOCK(ec);
-	oes_gate_reconcile();
+	oes_gate_client_update(ec, false);
 
 	OES_DEBUG("client %p subscribed via ext bitmap", ec);
 

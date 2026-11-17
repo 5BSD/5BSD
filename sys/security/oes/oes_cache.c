@@ -439,7 +439,7 @@ oes_client_cache_add(struct oes_client *ec, const oes_cache_entry_t *entry)
 	ec->ec_flags |= EC_FLAG_CACHE_USED;
 	EC_UNLOCK(ec);
 	if (first_use)
-		oes_gate_reconcile();
+		oes_gate_client_update(ec, false);
 
 	oes_cache_make_deadline(&expires, entry->ece_ttl_ms);
 	new_entry = malloc(sizeof(*new_entry), M_OES, M_WAITOK | M_ZERO);
