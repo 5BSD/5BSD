@@ -1719,7 +1719,8 @@ answered with the backing file's size, times and block count as
 post-operation attributes.
 .It Dv DQ_OP_FSPACECTL
 .Xr fspacectl 2 ,
-answering the range it left, with the same attributes.
+answering the range it left, with the backing file's times and block
+count (no size: a deallocation changes none).
 .It Dv DQ_OP_LOCK
 each owner gets its own open of the backing file
 .Po
@@ -1820,6 +1821,17 @@ drops the object's flock and OFD owners and cancels their waits; POSIX
 owners belong to the identity and go with
 .Dv DQ_OP_UNLOCK_ALL .
 .El
+.Pp
+A kernel that refuses a post-operation block with
+.Er EINVAL
+(one from before them, which required the reply's flags word to be 0)
+gets the same reply without it; from then on the process sends none, and
+the kernel stamps the times itself.
+A
+.Dv DQ_SERVE_F_SYNC_IDENT
+refresh that finds the object closed after its operation was answered
+.Pq Er ESRCH
+is not a failure.
 .Pp
 Any other operation with a reply token is answered
 .Er EIO ,

@@ -39,6 +39,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <stdatomic.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -603,12 +605,23 @@ dq_serve_ident_sync(int q, const struct dq_event *ev,
 		return (0);
 	if (dq_serve_ident_refresh(backing, opts->so_ident) == -1)
 		return (-1);
-	return (dq_set_ident(q, ev->de_object, opts->so_ident));
+	/*
+	 * The operation was answered: an object the program closed since
+	 * (ESRCH) has no identity left to follow, and that is no failure.
+	 */
+	if (dq_set_ident(q, ev->de_object, opts->so_ident) == -1 &&
+	    errno != ESRCH)
+		return (-1);
+	return (0);
 }
 
 /*
  * Operations
  */
+
+/* Set once a kernel refused a post-operation block that a plain reply
+   then answered: the block is not offered again (dq_serve_reply_postop). */
+static atomic_bool dq_serve_no_postop;
 
 /*
  * A successful reply with the backing file's attributes after the
@@ -624,10 +637,25 @@ dq_serve_reply_postop(int q, uint64_t id, int backing, const void *data,
 	struct dq_postop_attr pa;
 	struct stat sb;
 
-	if (fstat(backing, &sb) == -1)
+	if (atomic_load_explicit(&dq_serve_no_postop, memory_order_relaxed) ||
+	    fstat(backing, &sb) == -1)
 		return (dq_reply(q, id, 0, data, len));
 	dq_postop_from_stat(&pa, &sb, valid);
-	return (dq_reply_postop(q, id, data, len, &pa));
+	if (dq_reply_postop(q, id, data, len, &pa) == 0)
+		return (0);
+	if (errno != EINVAL)
+		return (-1);
+	/*
+	 * A kernel from before post-operation attributes refuses the flag
+	 * (dr_pad0 was zero), and any kernel may refuse a block it does not
+	 * take: the reply goes without it, and the kernel stamps the times.
+	 * Once a plain reply was taken where the block was refused, the
+	 * block is not offered again in this process.
+	 */
+	if (dq_reply(q, id, 0, data, len) == -1)
+		return (-1);
+	atomic_store_explicit(&dq_serve_no_postop, true, memory_order_relaxed);
+	return (0);
 }
 
 static int
