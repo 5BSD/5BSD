@@ -54,7 +54,7 @@ kldxref_audit_test(name = "nullfs_artifacts_test", mode = "module-artifacts",
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib"], tags = ["local", "no-cache"], size = "small")
 
-exports_files(['inventory_audit_test.py', 'verify_retained.py'], visibility = ["//usr.sbin/bsd-build/tests:__pkg__"])
+exports_files(['inventory_audit_test.py', 'verify_retained.py', 'installation_transport.py'], visibility = ["//usr.sbin/bsd-build/tests:__pkg__"])
 
 
 # Semantic module inspection uses native Python and target ELF inputs. Keep the
