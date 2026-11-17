@@ -53,6 +53,7 @@
 #include <sys/resource.h>
 #include <sys/resourcevar.h>
 #include <sys/rwlock.h>
+#include <sys/sdt.h>
 #include <sys/vnode.h>
 
 #include <vm/vm.h>
@@ -2544,6 +2545,10 @@ readblock(struct vnode *vp,
 
 #endif
 
+SDT_PROVIDER_DECLARE(ffs);
+SDT_PROBE_DEFINE2(ffs, , , deferred__inactive__update, "struct vnode *",
+    "int");
+
 /*
  * Process file deletes that were deferred by ufs_inactive() due to
  * the file system being suspended. Transfer IN_LAZYACCESS into
@@ -2555,6 +2560,7 @@ process_deferred_inactive(struct mount *mp)
 	struct vnode *vp, *mvp;
 	struct inode *ip;
 	int error;
+	bool update;
 
 	(void) vn_start_secondary_write(NULL, &mp, V_WAIT);
  loop:
@@ -2592,7 +2598,25 @@ retry_vnode:
 			VOP_UNLOCK(vp);
 			goto retry_vnode;
 		}
+		/*
+		 * A vnode that was only accessed during the suspension, and
+		 * is no longer in use, owes no inactivation: vinactive() did
+		 * not write it.  Write it now.  Otherwise the vdrop() below
+		 * releases the last hold and takes the vnode off the lazy
+		 * list with the IN_MODIFIED set above, which no syncer pass
+		 * then finds (ffs_unlock_debug() asserts on the next unlock).
+		 * A vnode still in use stays held and on the lazy list, and
+		 * its last close writes it.
+		 */
+		update = !VN_IS_DOOMED(vp) && vp->v_usecount == 0 &&
+		    (VTOI(vp)->i_flag & UFS_INODE_FLAG_LAZY_MASK_ASSERTABLE) !=
+		    0;
 		VI_UNLOCK(vp);
+		if (update) {
+			error = UFS_UPDATE(vp, 0);
+			SDT_PROBE2(ffs, , , deferred__inactive__update, vp,
+			    error);
+		}
 		VOP_UNLOCK(vp);
 		vdrop(vp);
 	}
