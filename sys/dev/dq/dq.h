@@ -317,6 +317,36 @@ enum dq_op {
 	DQ_OP_REPLY = 64,	/* observer record of a controller reply */
 };
 
+/*
+ * Post-operation attributes (DQ_REPLY_F_POSTOP): what the controller's
+ * backing file says after the operation, appended to the reply of a
+ * WRITE, FALLOCATE or FSPACECTL (any of the fields), or of a READ
+ * (DQ_PA_ATIME alone), as an NFS server returns wcc data.  The fields
+ * dpa_valid names become the presented identity's.  A size below what
+ * the operation itself proves (WRITE: dwr_offset + dwr_written;
+ * FALLOCATE: the range's end), a time with tv_nsec outside 0..999999999,
+ * a size above OFF_MAX, an unknown bit or a non-zero dpa_pad make the
+ * block ignored and counted
+ * (ds2_postop_ignored, dq:::postop-attr), never an error on an operation
+ * that has already happened.
+ */
+struct dq_postop_attr {
+	uint32_t	dpa_valid;		/* DQ_PA_* */
+	uint32_t	dpa_pad;
+	uint64_t	dpa_size;
+	struct dq_timespec dpa_mtime;
+	struct dq_timespec dpa_ctime;
+	struct dq_timespec dpa_atime;
+	uint64_t	dpa_blocks;
+};
+#define	DQ_PA_SIZE		0x00000001
+#define	DQ_PA_MTIME		0x00000002
+#define	DQ_PA_CTIME		0x00000004
+#define	DQ_PA_BLOCKS		0x00000008
+#define	DQ_PA_ATIME		0x00000010
+#define	DQ_PA_VALID		(DQ_PA_SIZE | DQ_PA_MTIME | DQ_PA_CTIME | \
+	    DQ_PA_BLOCKS | DQ_PA_ATIME)
+
 /* Bodies.  READ: reply is errno + up to dr_len bytes (short = EOF). */
 struct dq_read_body {
 	uint64_t	dr_offset;
@@ -533,12 +563,21 @@ struct dq_ioctl_body {
  */
 struct dq_reply {
 	uint32_t	dr_version;
-	uint32_t	dr_pad0;
+	uint32_t	dr_flags;		/* DQ_REPLY_F_* (was dr_pad0, zero) */
 	uint64_t	dr_id;
 	int32_t		dr_errno;		/* 0 or an errno */
 	uint32_t	dr_len;			/* <= kern.dq.max_io */
 	const void	*dr_data;
 };
+
+/*
+ * DQ_REPLY_F_POSTOP: the last sizeof(struct dq_postop_attr) bytes of
+ * dr_data are post-operation attributes; the rest is the reply as without
+ * them.  For a READ, WRITE, FALLOCATE or FSPACECTL that succeeded only
+ * (EINVAL otherwise, and for a reply shorter than the block).
+ */
+#define	DQ_REPLY_F_POSTOP	0x00000001
+#define	DQ_REPLY_F_VALID	(DQ_REPLY_F_POSTOP)
 
 /* MINT refusal reasons, written through dm_reasonp with EINVAL. */
 enum dq_reason {
@@ -696,7 +735,9 @@ struct dq_stats2 {
 	uint64_t	ds2_resolve_exdev;	/* refused EXDEV with no event
 						   (1c-iii-b/c) */
 	uint64_t	ds2_readdirs;		/* READDIR events (1c-iii-b) */
-	uint64_t	ds2_reserved[3];
+	uint64_t	ds2_postop_ignored;	/* post-operation attribute blocks
+						   ignored (DQ_REPLY_F_POSTOP) */
+	uint64_t	ds2_reserved[2];
 };
 
 /*
@@ -1025,6 +1066,7 @@ _Static_assert(sizeof(struct dq_policy) == 56, "dq_policy");
 _Static_assert(sizeof(struct dq_caller) == 48, "dq_caller");
 _Static_assert(sizeof(struct dq_event) == 104, "dq_event");
 _Static_assert(sizeof(struct dq_read_body) == 16, "dq_read_body");
+_Static_assert(sizeof(struct dq_postop_attr) == 72, "dq_postop_attr");
 _Static_assert(sizeof(struct dq_resolve_swap) == 32, "dq_resolve_swap");
 _Static_assert(sizeof(struct dq_reply) == 32, "dq_reply");
 _Static_assert(sizeof(struct dq_mint_args) == 3976, "dq_mint_args");

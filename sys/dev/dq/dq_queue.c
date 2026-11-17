@@ -790,6 +790,8 @@ dq_data_alloc(size_t len)
 	dd = malloc(sizeof(*dd) + alloc, M_DQ, M_WAITOK);
 	refcount_init(&dd->dd_refs, 1);
 	dd->dd_len = len;
+	dd->dd_plen = len;
+	dd->dd_postop = false;
 	if (alloc != len)
 		bzero(dd->dd_bytes + len, alloc - len);
 	return (dd);
@@ -2131,11 +2133,16 @@ dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 	size_t len;
 	uint32_t op;
 	int error, rerrno, stopdefer;
-	bool async;
+	bool async, postop;
 
-	if (r->dr_version != DQ_API_VERSION || r->dr_pad0 != 0 ||
+	postop = (r->dr_flags & DQ_REPLY_F_POSTOP) != 0;
+	if (r->dr_version != DQ_API_VERSION ||
+	    (r->dr_flags & ~DQ_REPLY_F_VALID) != 0 ||
 	    r->dr_errno < 0 || r->dr_errno > ELAST ||
-	    r->dr_len > MAX(dq_max_io, DQ_RESOLVE_REPLY_MAX))
+	    r->dr_len > MAX(dq_max_io, DQ_RESOLVE_REPLY_MAX) +
+	    (postop ? sizeof(struct dq_postop_attr) : 0) ||
+	    (postop && (r->dr_errno != 0 ||
+	    r->dr_len < sizeof(struct dq_postop_attr))))
 		return (EINVAL);
 	len = r->dr_len;
 	dd = NULL;
@@ -2146,11 +2153,22 @@ dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 			dq_data_rele(dd);
 			return (error);
 		}
+		if (postop) {
+			/* The block ends the data; the reply is the rest. */
+			dd->dd_postop = true;
+			dd->dd_plen = len - sizeof(struct dq_postop_attr);
+			len = dd->dd_plen;
+		}
 	}
 	robj = NULL;
 	objectp = NULL;
-	/* Only for a RESOLVE event that accepts FD: prepare looks first. */
-	if (r->dr_errno == 0 && len >= sizeof(struct dq_resolve_reply) &&
+	/*
+	 * Only for a RESOLVE event that accepts FD: prepare looks first.  A
+	 * RESOLVE has no post-operation block: such a reply is refused below
+	 * before anything is minted or taken.
+	 */
+	if (r->dr_errno == 0 && !postop &&
+	    len >= sizeof(struct dq_resolve_reply) &&
 	    ((const struct dq_resolve_reply *)dd->dd_bytes)->drr_kind ==
 	    DQ_RESOLVE_FD) {
 		error = dq_resolve_mint_prepare(q, r->dr_id, dd, &robj,
@@ -2167,7 +2185,8 @@ dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 	 * made, and linked to the event under it.
 	 */
 	bzero(&rswap, sizeof(rswap));
-	if (r->dr_errno == 0 && len >= sizeof(struct dq_resolve_reply) &&
+	if (r->dr_errno == 0 && !postop &&
+	    len >= sizeof(struct dq_resolve_reply) &&
 	    ((const struct dq_resolve_reply *)dd->dd_bytes)->drr_kind ==
 	    DQ_RESOLVE_SWAP) {
 		error = dq_resolve_swap_prepare(q, r->dr_id, dd, td, &rswap);
@@ -2205,6 +2224,9 @@ dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 	o = ev->ev_object;
 	if (op != DQ_OP_RESOLVE && len > dq_max_io)
 		error = EINVAL;
+	else if (postop && op != DQ_OP_READ && op != DQ_OP_WRITE &&
+	    op != DQ_OP_FALLOCATE && op != DQ_OP_FSPACECTL)
+		error = EINVAL;		/* not an operation that has one */
 	else
 		error = dq_reply_validate(ev, r->dr_errno,
 		    dd != NULL ? dd->dd_bytes : NULL, len);

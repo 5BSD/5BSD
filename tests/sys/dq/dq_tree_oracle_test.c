@@ -464,9 +464,12 @@ ATF_TC_BODY(fstat_stat_after_write, tc)
 	TS_CHECK_ERRNO(0, r.err[3], "fstat, stat");
 	ATF_CHECK_EQ(r.st.st_size, r.fst.st_size);
 	ATF_REQUIRE(timespeccmp(&r.st.st_mtim, &r.before.st_mtim, >));
-	/* Pin: fstat keeps the open-time times; stat has the new ones. */
-	ATF_CHECK(timespeccmp(&r.fst.st_mtim, &r.before.st_mtim, ==));
-	ATF_CHECK(!timespeccmp(&r.fst.st_mtim, &r.st.st_mtim, ==));
+	/*
+	 * fstat has the times stat has, from the write's post-operation
+	 * attributes (it kept the open-time ones).
+	 */
+	ATF_CHECK(timespeccmp(&r.fst.st_mtim, &r.st.st_mtim, ==));
+	ATF_CHECK(timespeccmp(&r.fst.st_ctim, &r.st.st_ctim, ==));
 	ts_stop(&s);
 }
 

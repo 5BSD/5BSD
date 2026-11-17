@@ -54,6 +54,8 @@ MLINKS+=	libdq.3 dq_open.3 \
 		libdq.3 dq_event_interrupt.3 \
 		libdq.3 dq_event_reply_record.3 \
 		libdq.3 dq_reply_write.3 \
+		libdq.3 dq_reply_postop.3 \
+		libdq.3 dq_postop_from_stat.3 \
 		libdq.3 dq_reply_fspacectl.3 \
 		libdq.3 dq_reply_lock.3 \
 		libdq.3 dq_reply_ioctl.3 \

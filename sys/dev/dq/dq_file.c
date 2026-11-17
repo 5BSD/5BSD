@@ -630,6 +630,83 @@ dq_file_knote(struct dq_object *o, long hint)
 	KNOTE_LOCKED(&o->o_sel.si_note, hint);
 }
 
+/*
+ * A size the controller's post-operation attributes report, made the
+ * object's (o_mtx held).  The one place C7's size write happens, so the
+ * identity group's ordered apply can take it over.  Returns whether the
+ * pager's size must follow (dq_object_setsize, with no dq lock).
+ */
+static bool
+dq_object_postop_size(struct dq_object *o, uint64_t size)
+{
+
+	DQO_LOCK_ASSERT(o);
+	if (o->o_ident.di_size == size)
+		return (false);
+	o->o_ident.di_size = size;
+	return (true);
+}
+
+/*
+ * The times (and the size and blocks) after a served operation (T-A02,
+ * Q2): the controller's post-operation attributes when its reply carried
+ * a valid block.  A block that fails its checks (minsize: the size the
+ * operation itself proves) is ignored and counted, never an error: the
+ * operation has happened.  done is the bytes the operation moved.  No dq
+ * lock is held.
+ */
+void
+dq_object_postop(struct dq_object *o, uint32_t op, const struct dq_data *reply,
+    uint64_t minsize, size_t done)
+{
+	struct dq_postop_attr pa;
+	struct dq_queue *q;
+	uint32_t allowed;
+	bool block, resize;
+
+	block = reply != NULL && reply->dd_postop;
+	if (block) {
+		/* Unaligned after a READ's data. */
+		memcpy(&pa, reply->dd_bytes + reply->dd_plen, sizeof(pa));
+		allowed = op == DQ_OP_READ ? DQ_PA_ATIME : DQ_PA_VALID;
+		if ((pa.dpa_valid & ~allowed) != 0 || pa.dpa_pad != 0 ||
+		    ((pa.dpa_valid & DQ_PA_SIZE) != 0 &&
+		    (pa.dpa_size > OFF_MAX || pa.dpa_size < minsize)) ||
+		    ((pa.dpa_valid & DQ_PA_MTIME) != 0 &&
+		    !dq_time_valid(&pa.dpa_mtime)) ||
+		    ((pa.dpa_valid & DQ_PA_CTIME) != 0 &&
+		    !dq_time_valid(&pa.dpa_ctime)) ||
+		    ((pa.dpa_valid & DQ_PA_ATIME) != 0 &&
+		    !dq_time_valid(&pa.dpa_atime))) {
+			SDT_PROBE4(dq, , , postop__attr, o, op, pa.dpa_valid,
+			    EINVAL);
+			q = o->o_queue;
+			DQ_LOCK(q);
+			q->q_stats.ds2_postop_ignored++;
+			DQ_UNLOCK(q);
+			block = false;
+		}
+	}
+	resize = false;
+	DQO_LOCK(o);
+	if (block) {
+		if ((pa.dpa_valid & DQ_PA_SIZE) != 0)
+			resize = dq_object_postop_size(o, pa.dpa_size);
+		if ((pa.dpa_valid & DQ_PA_MTIME) != 0)
+			o->o_ident.di_mtime = pa.dpa_mtime;
+		if ((pa.dpa_valid & DQ_PA_CTIME) != 0)
+			o->o_ident.di_ctime = pa.dpa_ctime;
+		if ((pa.dpa_valid & DQ_PA_ATIME) != 0)
+			o->o_ident.di_atime = pa.dpa_atime;
+		if ((pa.dpa_valid & DQ_PA_BLOCKS) != 0)
+			o->o_ident.di_blocks = pa.dpa_blocks;
+		SDT_PROBE4(dq, , , postop__attr, o, op, pa.dpa_valid, 0);
+	}
+	DQO_UNLOCK(o);
+	if (resize)
+		dq_object_setsize(o, pa.dpa_size);	/* B10 */
+}
+
 static inline struct dq_object *
 dq_fp_object(struct file *fp)
 {
@@ -798,9 +875,11 @@ dq_read_events(struct dq_object *o, struct uio *uio, struct thread *td)
 			error = rerror;
 			break;
 		}
-		replylen = reply != NULL ? reply->dd_len : 0;
+		replylen = reply != NULL ? reply->dd_plen : 0;
 		if (replylen != 0)
 			error = uiomove(reply->dd_bytes, replylen, uio);
+		if (error == 0)
+			dq_object_postop(o, DQ_OP_READ, reply, 0, replylen);
 		dq_reply_free(reply);
 		if (error != 0 || replylen < chunk)
 			break;	/* a short answer is the end of the file */
@@ -1053,7 +1132,6 @@ dq_write(struct file *fp, struct uio *uio, struct ucred *active_cred __unused,
 		wr = (const struct dq_write_reply *)reply->dd_bytes;
 		written = wr->dwr_written;
 		woff = wr->dwr_offset;
-		dq_reply_free(reply);
 		/*
 		 * Accepted: the cached pages the bytes cover take them, valid
 		 * and as clean as they were (D103), so mappings and DATA reads
@@ -1089,6 +1167,9 @@ dq_write(struct file *fp, struct uio *uio, struct ucred *active_cred __unused,
 			dq_object_setsize(o, newend);	/* B10 */
 			extended = false;
 		}
+		/* The times, and the controller's size (T-A02, Q2). */
+		dq_object_postop(o, DQ_OP_WRITE, reply, newend, written);
+		dq_reply_free(reply);
 		if (written < chunk)
 			break;	/* a short write ends the call */
 	}
@@ -1632,11 +1713,10 @@ dq_fallocate(struct file *fp, off_t offset, off_t len, struct thread *td)
 	cookie = rangelock_wlock(&o->o_rl, offset, offset + len);
 	error = dq_event_post_wait(o, DQ_OP_FALLOCATE, &fb, sizeof(fb), td, 0,
 	    &reply, &rerror);
-	if (error == 0) {
+	if (error == 0 && rerror != 0) {
 		dq_reply_free(reply);
 		error = rerror;
-	}
-	if (error == 0) {
+	} else if (error == 0) {
 		end = (uint64_t)offset + (uint64_t)len;
 		DQO_LOCK(o);
 		hint = NOTE_WRITE;
@@ -1648,6 +1728,8 @@ dq_fallocate(struct file *fp, off_t offset, off_t len, struct thread *td)
 		DQO_UNLOCK(o);
 		if ((hint & NOTE_EXTEND) != 0)
 			dq_object_setsize(o, end);	/* B10 */
+		dq_object_postop(o, DQ_OP_FALLOCATE, reply, end, 0);
+		dq_reply_free(reply);
 	}
 	rangelock_unlock(&o->o_rl, cookie);
 	return (error);
@@ -1686,6 +1768,8 @@ dq_fspacectl(struct file *fp, int cmd, off_t *offset, off_t *length,
 		DQO_LOCK(o);
 		dq_file_knote(o, NOTE_WRITE);	/* B7 */
 		DQO_UNLOCK(o);
+		/* A deallocation proves no size. */
+		dq_object_postop(o, DQ_OP_FSPACECTL, reply, 0, 0);
 	}
 	if (error == 0) {
 		dq_reply_free(reply);

@@ -210,6 +210,18 @@ int	dq_reply(int q, uint64_t id, int error, const void *data, size_t len);
  * IOCPARM_LEN(cmd) for a successful IOC_OUT command and 0 otherwise.
  */
 int	dq_reply_write(int q, uint64_t id, uint64_t written, uint64_t offset);
+/*
+ * dq_reply_postop(): a successful reply of len bytes (a READ's data, a
+ * struct dq_write_reply, nothing for a FALLOCATE, a struct
+ * dq_fspacectl_reply) followed by the post-operation attributes pa
+ * (DQ_REPLY_F_POSTOP, dq(4)).  dq_postop_from_stat() fills pa from what
+ * fstat(2) said of the backing file after the operation, for the fields
+ * of valid (DQ_PA_*).
+ */
+int	dq_reply_postop(int q, uint64_t id, const void *data, size_t len,
+	    const struct dq_postop_attr *pa);
+void	dq_postop_from_stat(struct dq_postop_attr *pa, const struct stat *sb,
+	    uint32_t valid);
 int	dq_reply_fspacectl(int q, uint64_t id, uint64_t offset, uint64_t len);
 int	dq_reply_lock(int q, uint64_t id, const struct dq_lock_reply *lr);
 int	dq_reply_ioctl(int q, uint64_t id, int error, const void *out,

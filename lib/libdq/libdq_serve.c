@@ -610,6 +610,26 @@ dq_serve_ident_sync(int q, const struct dq_event *ev,
  * Operations
  */
 
+/*
+ * A successful reply with the backing file's attributes after the
+ * operation (DQ_REPLY_F_POSTOP): the kernel presents them, so fstat(2)
+ * of the served file and stat(2) of the backing file agree (T-A02).  If
+ * the backing file cannot be asked, the reply goes without them and the
+ * kernel stamps the times itself.
+ */
+static int
+dq_serve_reply_postop(int q, uint64_t id, int backing, const void *data,
+    size_t len, uint32_t valid)
+{
+	struct dq_postop_attr pa;
+	struct stat sb;
+
+	if (fstat(backing, &sb) == -1)
+		return (dq_reply(q, id, 0, data, len));
+	dq_postop_from_stat(&pa, &sb, valid);
+	return (dq_reply_postop(q, id, data, len, &pa));
+}
+
 static int
 dq_serve_read(int q, const struct dq_event *ev, int backing)
 {
@@ -626,6 +646,14 @@ dq_serve_read(int q, const struct dq_event *ev, int backing)
 	n = pread(backing, buf, rb->dr_len, (off_t)rb->dr_offset);
 	if (n == -1)
 		rv = dq_reply(q, ev->de_id, errno, NULL, 0);
+	else if (n > 0 && ev->de_op == DQ_OP_READ)
+		/*
+		 * The access time the read gave the backing file.  A
+		 * READ_ASYNC (sendfile's pages) carries none: it has no
+		 * post-operation block.
+		 */
+		rv = dq_serve_reply_postop(q, ev->de_id, backing, buf,
+		    (size_t)n, DQ_PA_ATIME);
 	else
 		rv = dq_reply(q, ev->de_id, 0, buf, (size_t)n);
 	error = errno;
@@ -651,6 +679,7 @@ dq_serve_write(int q, const struct dq_event *ev,
     const struct dq_serve_opts *opts, int backing)
 {
 	const struct dq_write_body *wb;
+	struct dq_write_reply wr;
 	const void *data;
 	struct stat sb;
 	size_t len;
@@ -683,7 +712,14 @@ dq_serve_write(int q, const struct dq_event *ev,
 	if (error != 0)
 		return (dq_reply(q, ev->de_id, dq_serve_map(DQ_OP_WRITE, error),
 		    NULL, 0));
-	rv = dq_reply_write(q, ev->de_id, (uint64_t)n, (uint64_t)off);
+	if (ev->de_op == DQ_OP_WRITE) {
+		wr.dwr_written = (uint64_t)n;
+		wr.dwr_offset = (uint64_t)off;
+		rv = dq_serve_reply_postop(q, ev->de_id, backing, &wr,
+		    sizeof(wr), DQ_PA_SIZE | DQ_PA_MTIME | DQ_PA_CTIME |
+		    DQ_PA_BLOCKS);
+	} else
+		rv = dq_reply_write(q, ev->de_id, (uint64_t)n, (uint64_t)off);
 	/*
 	 * Not after a WRITE_ASYNC: write-back of a mapping's pages runs from
 	 * the page daemon and msync, and the size and times a mapping
@@ -832,8 +868,12 @@ dq_serve_fallocate(int q, const struct dq_event *ev,
 	else
 		error = posix_fallocate(backing, (off_t)fb->dfa_offset,
 		    (off_t)fb->dfa_len);
-	rv = dq_reply(q, ev->de_id, dq_serve_map(DQ_OP_FALLOCATE, error), NULL,
-	    0);
+	if (error == 0)
+		rv = dq_serve_reply_postop(q, ev->de_id, backing, NULL, 0,
+		    DQ_PA_SIZE | DQ_PA_MTIME | DQ_PA_CTIME | DQ_PA_BLOCKS);
+	else
+		rv = dq_reply(q, ev->de_id, dq_serve_map(DQ_OP_FALLOCATE,
+		    error), NULL, 0);
 	if (rv == 0 && error == 0 && opts != NULL &&
 	    (opts->so_flags & DQ_SERVE_F_SYNC_IDENT) != 0)
 		rv = dq_serve_ident_sync(q, ev, opts, backing);
@@ -845,6 +885,7 @@ dq_serve_fspacectl(int q, const struct dq_event *ev,
     const struct dq_serve_opts *opts, int backing)
 {
 	const struct dq_fspacectl_body *sb;
+	struct dq_fspacectl_reply sr;
 	struct spacectl_range rqsr, rmsr;
 	int rv;
 
@@ -857,8 +898,10 @@ dq_serve_fspacectl(int q, const struct dq_event *ev,
 	    &rmsr) == -1)
 		return (dq_reply(q, ev->de_id,
 		    dq_serve_map(DQ_OP_FSPACECTL, errno), NULL, 0));
-	rv = dq_reply_fspacectl(q, ev->de_id, (uint64_t)rmsr.r_offset,
-	    (uint64_t)rmsr.r_len);
+	sr.dscr_offset = (uint64_t)rmsr.r_offset;
+	sr.dscr_len = (uint64_t)rmsr.r_len;
+	rv = dq_serve_reply_postop(q, ev->de_id, backing, &sr, sizeof(sr),
+	    DQ_PA_SIZE | DQ_PA_MTIME | DQ_PA_CTIME | DQ_PA_BLOCKS);
 	if (rv == 0 && opts != NULL &&
 	    (opts->so_flags & DQ_SERVE_F_SYNC_IDENT) != 0)
 		rv = dq_serve_ident_sync(q, ev, opts, backing);

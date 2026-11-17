@@ -657,6 +657,55 @@ dq_reply(int q, uint64_t id, int error, const void *data, size_t len)
 }
 
 int
+dq_reply_postop(int q, uint64_t id, const void *data, size_t len,
+    const struct dq_postop_attr *pa)
+{
+	struct dq_reply r;
+	char *buf;
+	int error, rv;
+
+	if (pa == NULL || len > UINT32_MAX - sizeof(*pa) ||
+	    (len != 0 && data == NULL)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	buf = malloc(len + sizeof(*pa));
+	if (buf == NULL)
+		return (-1);
+	if (len != 0)
+		memcpy(buf, data, len);
+	memcpy(buf + len, pa, sizeof(*pa));
+	memset(&r, 0, sizeof(r));
+	r.dr_version = DQ_API_VERSION;
+	r.dr_flags = DQ_REPLY_F_POSTOP;
+	r.dr_id = id;
+	r.dr_len = (uint32_t)(len + sizeof(*pa));
+	r.dr_data = buf;
+	rv = ioctl(q, DQ_IOC_REPLY, &r);
+	error = errno;
+	free(buf);
+	errno = error;
+	return (rv);
+}
+
+void
+dq_postop_from_stat(struct dq_postop_attr *pa, const struct stat *sb,
+    uint32_t valid)
+{
+
+	memset(pa, 0, sizeof(*pa));
+	pa->dpa_valid = valid & DQ_PA_VALID;
+	pa->dpa_size = (uint64_t)sb->st_size;
+	pa->dpa_mtime.tv_sec = sb->st_mtim.tv_sec;
+	pa->dpa_mtime.tv_nsec = sb->st_mtim.tv_nsec;
+	pa->dpa_ctime.tv_sec = sb->st_ctim.tv_sec;
+	pa->dpa_ctime.tv_nsec = sb->st_ctim.tv_nsec;
+	pa->dpa_atime.tv_sec = sb->st_atim.tv_sec;
+	pa->dpa_atime.tv_nsec = sb->st_atim.tv_nsec;
+	pa->dpa_blocks = (uint64_t)sb->st_blocks;
+}
+
+int
 dq_reply_write(int q, uint64_t id, uint64_t written, uint64_t offset)
 {
 	struct dq_write_reply wr;

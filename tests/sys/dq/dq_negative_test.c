@@ -547,11 +547,16 @@ ATF_TC_BODY(reply_errors, tc)
 	ATF_CHECK_EQ(-1, ioctl(f.c.q, DQ_IOC_REPLY, &rep));
 	ATF_CHECK_EQ(EINVAL, errno);
 	rep.dr_version = DQ_API_VERSION;
-	rep.dr_pad0 = 1;
+	rep.dr_flags = 0x80000000;
 	errno = 0;
 	ATF_CHECK_EQ(-1, ioctl(f.c.q, DQ_IOC_REPLY, &rep));
 	ATF_CHECK_EQ(EINVAL, errno);
-	rep.dr_pad0 = 0;
+	/* A post-operation block needs the room for one, and success. */
+	rep.dr_flags = DQ_REPLY_F_POSTOP;
+	errno = 0;
+	ATF_CHECK_EQ(-1, ioctl(f.c.q, DQ_IOC_REPLY, &rep));
+	ATF_CHECK_EQ(EINVAL, errno);
+	rep.dr_flags = 0;
 	rep.dr_len = 10;
 	rep.dr_data = NULL;	/* copied in before the lookup */
 	errno = 0;

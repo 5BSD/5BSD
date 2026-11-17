@@ -133,6 +133,7 @@ SDT_PROBE_DECLARE(dq, , , resolve__real);
 SDT_PROBE_DECLARE(dq, , , resolve__symlink);
 SDT_PROBE_DECLARE(dq, , , fop__local);
 SDT_PROBE_DECLARE(dq, , , quota__wait);
+SDT_PROBE_DECLARE(dq, , , postop__attr);
 
 /* dq:::quota-wait's quota (args: queue, event, DQ_QUOTA_*, errno). */
 #define	DQ_QUOTA_OBJECT		1	/* kern.dq.max_inflight_per_object */
@@ -186,6 +187,11 @@ int	dq_object_cmp(const struct dq_object *, const struct dq_object *);
 struct dq_data {
 	u_int			 dd_refs;
 	size_t			 dd_len;
+	size_t			 dd_plen;	/* the reply without its post-op
+						   block: what the operation
+						   reads (dd_len without one) */
+	bool			 dd_postop;	/* DQ_REPLY_F_POSTOP: a struct
+						   dq_postop_attr ends dd_bytes */
 	char			 dd_bytes[];
 };
 
@@ -652,6 +658,8 @@ int	dq_file_start(struct file *fp, struct dq_queue *q, struct thread *td,
 int	dq_file_install(struct thread *td, struct dq_object *o,
 	    const struct dq_policy *pol, u_int mflags, int *fdp);
 void	dq_file_knote(struct dq_object *o, long hint);
+void	dq_object_postop(struct dq_object *o, uint32_t op,
+	    const struct dq_data *reply, uint64_t minsize, size_t done);
 int	dq_file_bind(struct thread *td, struct dq_object *o, int fflags,
 	    struct file **fpp);
 

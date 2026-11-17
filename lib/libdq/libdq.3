@@ -290,6 +290,15 @@ DescriptorQueue controller library
 .Ft int
 .Fn dq_reply_fspacectl "int q" "uint64_t id" "uint64_t offset" "uint64_t len"
 .Ft int
+.Fo dq_reply_postop
+.Fa "int q" "uint64_t id" "const void *data" "size_t len"
+.Fa "const struct dq_postop_attr *pa"
+.Fc
+.Ft void
+.Fo dq_postop_from_stat
+.Fa "struct dq_postop_attr *pa" "const struct stat *sb" "uint32_t valid"
+.Fc
+.Ft int
 .Fn dq_reply_lock "int q" "uint64_t id" "const struct dq_lock_reply *lr"
 .Ft int
 .Fo dq_reply_ioctl
@@ -858,6 +867,35 @@ is at least
 and whose end is
 .Va dsc_offset No + Va dsc_len
 (a finished request answers that end and 0);
+.Fn dq_reply_postop
+sends a successful reply of
+.Fa len
+bytes at
+.Fa data
+.Po the data of a
+.Dv DQ_OP_READ ,
+a
+.Vt struct dq_write_reply ,
+nothing for a
+.Dv DQ_OP_FALLOCATE ,
+a
+.Vt struct dq_fspacectl_reply
+.Pc
+followed by the post-operation attributes
+.Fa pa
+.Pq Dv DQ_REPLY_F_POSTOP , Xr dq 4 ,
+and
+.Fn dq_postop_from_stat
+fills
+.Fa pa
+from what
+.Xr fstat 2
+said of the backing file after the operation, for the fields named in
+.Fa valid
+.Pq Dv DQ_PA_SIZE , MTIME , CTIME , BLOCKS , ATIME ;
+only
+.Dv DQ_PA_ATIME
+for a read;
 .Fn dq_reply_lock
 answers a
 .Dv DQ_LOCK_GETLK
@@ -1247,7 +1285,9 @@ is
 in this mode.
 Object events go to
 .Fn dq_serve_file
-on the backing file;
+on the backing file, with
+.Dv DQ_SERVE_F_SYNC_IDENT
+so that the whole identity follows the backing file after a write;
 .Dv DQ_OP_CLOSE
 closes it.
 .Dv DQ_TREE_F_WRITE
@@ -1576,6 +1616,10 @@ flight until its deadline:
 .It Dv DQ_OP_READ , DQ_OP_READ_ASYNC
 .Xr pread 2 ;
 a short read is the end of the file.
+A
+.Dv DQ_OP_READ
+that read bytes carries the backing file's access time as post-operation
+attributes.
 The presented size must not exceed the backing file's: a reply short of
 bytes the identity says exist fails a fault with
 .Dv SIGBUS
@@ -1601,8 +1645,8 @@ at
 .Va dw_offset ,
 or at the backing file's end under
 .Dv DQ_WRITE_F_APPEND ,
-reported through
-.Fn dq_reply_write ;
+reported with the backing file's size, times and block count as
+post-operation attributes;
 .Dv DQ_WRITE_F_SYNC
 and
 .Dv DQ_WRITE_F_DSYNC
@@ -1639,10 +1683,12 @@ for
 .Xr fsync 2
 otherwise.
 .It Dv DQ_OP_FALLOCATE
-.Xr posix_fallocate 2 .
+.Xr posix_fallocate 2 ,
+answered with the backing file's size, times and block count as
+post-operation attributes.
 .It Dv DQ_OP_FSPACECTL
 .Xr fspacectl 2 ,
-answering the range it left.
+answering the range it left, with the same attributes.
 .It Dv DQ_OP_LOCK
 each owner gets its own open of the backing file
 .Po

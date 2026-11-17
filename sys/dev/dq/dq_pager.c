@@ -305,7 +305,8 @@ dq_pager_getpages(vm_object_t obj, vm_page_t *ma, int count, int *rbehind,
 				dq_reply_free(reply);
 				return (VM_PAGER_ERROR);
 			}
-			rlen = reply != NULL ? reply->dd_len : 0;
+			/* A post-operation block of a page-in is not used. */
+			rlen = reply != NULL ? reply->dd_plen : 0;
 			npg = howmany(chunk, PAGE_SIZE);
 			dq_pager_fill(ma + filled, npg, reply != NULL ?
 			    reply->dd_bytes : NULL, rlen);

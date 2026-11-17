@@ -1450,6 +1450,12 @@ dq_serve_tree(struct dq_tree *t, const struct dq_event *ev, const void *body,
 	memset(&opts, 0, sizeof(opts));
 	opts.so_state = t->t_state;
 	opts.so_ident = &o->to_ident;
+	/*
+	 * After a write, the whole identity follows the backing file (its
+	 * nlink, flags and the rest; the size and times already came with
+	 * the reply's post-operation attributes).
+	 */
+	opts.so_flags = DQ_SERVE_F_SYNC_IDENT;
 	ret = dq_serve_file(t->t_q, ev, body, bodylen, o->to_fd, &opts);
 	if (ev->de_op == DQ_OP_CLOSE) {
 		close(o->to_fd);

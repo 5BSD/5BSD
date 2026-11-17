@@ -566,7 +566,15 @@ and a
 .Vt struct dq_reply :
 .Va dr_id ,
 .Va dr_errno
-(0 or an errno) and
+(0 or an errno),
+.Va dr_flags
+(0 or
+.Dv DQ_REPLY_F_POSTOP ,
+see
+.Sx Post-operation attributes ;
+any other bit is
+.Er EINVAL )
+and
 .Va dr_len
 bytes at
 .Va dr_data ,
@@ -661,6 +669,12 @@ bytes for a successful command with
 .Dv IOC_OUT
 set; none otherwise.
 .El
+.Pp
+With
+.Dv DQ_REPLY_F_POSTOP
+the body is followed by a post-operation block
+.Pq Sx Post-operation attributes ;
+the rules apply to what precedes it.
 .Pp
 The errno a controller may answer is allow-listed per operation.
 Any other errno reaches the requester as
@@ -1239,9 +1253,13 @@ or
 .Va ds2_resolve_exdev
 (two-path operations with a served and a real start, and
 .Xr fhlink 2
-into a served directory, refused with no event) and
+into a served directory, refused with no event),
 .Va ds2_readdirs
-.Pq Dv DQ_OP_READDIR No events .
+.Pq Dv DQ_OP_READDIR No events
+and
+.Va ds2_postop_ignored
+(post-operation attribute blocks ignored, see
+.Sx Post-operation attributes ) .
 The kernel writes
 .Va ds2_size
 .Pq 320 .
@@ -1527,6 +1545,61 @@ the earlier ones (a vnode's all-or-nothing
 .Dv IO_UNIT
 is a property of each filesystem, and a served file has none); a declared
 difference.
+.Ss Post-operation attributes
+A successful reply to a
+.Dv DQ_OP_WRITE ,
+.Dv DQ_OP_FALLOCATE
+or
+.Dv DQ_OP_FSPACECTL ,
+or to a
+.Dv DQ_OP_READ ,
+may carry what the backing file says after the operation, as an NFS
+server returns its post-operation attributes: with
+.Dv DQ_REPLY_F_POSTOP
+in
+.Va dr_flags ,
+the last 72 bytes of the reply are a
+.Bd -literal -offset indent
+struct dq_postop_attr {
+	uint32_t	dpa_valid;	/* DQ_PA_* */
+	uint32_t	dpa_pad;	/* 0 */
+	uint64_t	dpa_size;
+	struct dq_timespec dpa_mtime;
+	struct dq_timespec dpa_ctime;
+	struct dq_timespec dpa_atime;
+	uint64_t	dpa_blocks;
+};
+.Ed
+.Pp
+and the fields
+.Va dpa_valid
+names
+.Pq Dv DQ_PA_SIZE , DQ_PA_MTIME , DQ_PA_CTIME , DQ_PA_BLOCKS , DQ_PA_ATIME
+become the presented identity's.
+A read's block names
+.Dv DQ_PA_ATIME
+only.
+The flag on a failed reply, a reply shorter than the block, an
+asynchronous operation, a lookup or any other operation is
+.Er EINVAL
+with the event left in flight.
+The size is a lower bound: a block whose size is below what the
+operation itself proves (the end of the bytes a write took, the end of an
+allocated range) is ignored, as is one with an unknown bit, a nonzero
+.Va dpa_pad ,
+a size above
+.Dv OFF_MAX
+or a time whose nanoseconds are out of range; an ignored block is
+counted in
+.Va ds2_postop_ignored
+and fires
+.Li dq:::postop-attr
+with
+.Er EINVAL ,
+and is never an error to the requester: the operation has happened in
+the backing file, and failing it would make the program repeat it.
+A larger size is applied: the backing file may have grown by another
+writer.
 .Ss Attributes
 .Xr fchmod 2 ,
 .Xr fchown 2 ,
@@ -4581,6 +4654,13 @@ reply refused before the event was answered)
 .Fa "uint32_t rop" ,
 .Fa "uint32_t kind"
 (a re-consultation at a symbolic link and the kind it was answered)
+.It dq:::postop-attr
+.Fa "struct dq_object *" ,
+.Fa "uint32_t op" ,
+.Fa "uint32_t valid" ,
+.Fa "int errno"
+(a reply's post-operation attributes applied, or ignored with
+.Er EINVAL )
 .It dq:::fop-local
 .Fa "struct file *" ,
 .Fa "int op" ,

@@ -47,6 +47,8 @@ MANUAL_ALIASES = [
     "dq_event_interrupt",
     "dq_event_reply_record",
     "dq_reply_write",
+    "dq_reply_postop",
+    "dq_postop_from_stat",
     "dq_reply_fspacectl",
     "dq_reply_lock",
     "dq_reply_ioctl",

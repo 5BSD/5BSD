@@ -54,7 +54,7 @@ dq_probes_present_body()
 	for probe in queue-open queue-close mint revoke object-close \
 	    event-post event-deliver event-reply event-drop event-interrupt \
 	    event-deadline reply-late attach resolve-post resolve-reply \
-	    fop-local quota-wait; do
+	    fop-local quota-wait postop-attr; do
 		atf_check -o ignore dtrace -l -n "dq:::${probe}"
 	done
 }
@@ -202,6 +202,25 @@ present_fires_body()
 	atf_check -o ignore grep -qx '1 0' fired
 }
 
+atf_test_case postop_attr_fires
+postop_attr_fires_head()
+{
+	atf_set "descr" "dq:::postop-attr fires for an applied and an " \
+	    "ignored post-operation block, with the op, the mask and errno"
+	atf_set "require.user" "root"
+}
+postop_attr_fires_body()
+{
+	require_dtrace
+	# A WRITE (3) with size, mtime and ctime (7): applied, then ignored.
+	fire dq:::postop-attr "%d %d %d" "arg1, arg2, arg3" dq_write_test \
+	    postop_size_larger_accepted
+	atf_check -o ignore grep -qx '3 7 0' fired
+	fire dq:::postop-attr "%d %d %d" "arg1, arg2, arg3" dq_write_test \
+	    postop_size_smaller_ignored
+	atf_check -o ignore grep -qx '3 7 22' fired
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case dq_probes_present
@@ -212,4 +231,5 @@ atf_init_test_cases()
 	atf_add_test_case quota_wait_fires
 	atf_add_test_case subst_fires
 	atf_add_test_case present_fires
+	atf_add_test_case postop_attr_fires
 }

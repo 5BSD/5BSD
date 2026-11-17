@@ -918,11 +918,118 @@ ATF_TC_BODY(mtime_after_write, tc)
 	/* The backing file's times moved. */
 	ATF_REQUIRE(timespeccmp(&bs.st_mtim, &r.before.st_mtim, >));
 	/*
-	 * Pin: the served file's times do not move with a write; fstat
-	 * keeps the open-time ones.
+	 * The served file's times are the backing file's, from the reply's
+	 * post-operation attributes (fstat kept the open-time ones).
 	 */
-	ATF_CHECK(timespeccmp(&r.after.st_mtim, &r.before.st_mtim, ==));
-	ATF_CHECK(timespeccmp(&r.after.st_ctim, &r.before.st_ctim, ==));
+	ATF_CHECK(timespeccmp(&r.after.st_mtim, &bs.st_mtim, ==));
+	ATF_CHECK(timespeccmp(&r.after.st_ctim, &bs.st_ctim, ==));
+	ATF_CHECK_EQ(bs.st_blocks, r.after.st_blocks);
+	dqt_fixture_fini(&f);
+}
+
+/*
+ * C7 (R2-H3): the size of the post-operation attributes is a lower bound.
+ * A requester writes 10 bytes at 100 and fstats; the controller answers
+ * with a block whose size is above, or below, what the write proves.
+ */
+#define	POSTOP_SEC	1000000000	/* a time no stamp gives */
+
+struct postop_res {
+	struct dqt_rr	 w;
+	struct stat	 before, after;
+};
+
+static void
+child_write_fstat(void *arg, void *result)
+{
+	struct postop_res *r = result;
+	int fd = *(int *)arg;
+	char buf[10];
+
+	memset(buf, 'p', sizeof(buf));
+	(void)fstat(fd, &r->before);
+	dqt_msleep(20);
+	DQT_RR(r->w, pwrite(fd, buf, sizeof(buf), 100));
+	(void)fstat(fd, &r->after);
+}
+
+static void
+postop_round(struct dqt_fixture *f, uint64_t size, struct postop_res *r,
+    uint64_t *ignored)
+{
+	struct dq_postop_attr pa;
+	struct dq_write_reply wr;
+	struct dq_stats2 st0, st1;
+	struct dqt_child ch;
+	int fd;
+
+	dqt_stats2(&f->c, &st0);
+	dqt_hold(&f->c, true);
+	fd = f->o->fd;
+	memset(r, 0, sizeof(*r));
+	dqt_spawn(&ch, child_write_fstat, &fd);
+	ATF_REQUIRE(dqt_wait_held(&f->c, 1, DQT_WAIT_MS));
+	memset(&pa, 0, sizeof(pa));
+	pa.dpa_valid = DQ_PA_SIZE | DQ_PA_MTIME | DQ_PA_CTIME;
+	pa.dpa_size = size;
+	pa.dpa_mtime.tv_sec = pa.dpa_ctime.tv_sec = POSTOP_SEC;
+	memset(&wr, 0, sizeof(wr));
+	wr.dwr_written = 10;
+	wr.dwr_offset = 100;
+	ATF_REQUIRE_MSG(dq_reply_postop(f->c.q, dqt_held_id(&f->c, 0), &wr,
+	    sizeof(wr), &pa) == 0, "dq_reply_postop: %s", strerror(errno));
+	dqt_collect(&ch, r, sizeof(*r));
+	dqt_hold(&f->c, false);
+	dqt_stats2(&f->c, &st1);
+	*ignored = st1.ds2_postop_ignored - st0.ds2_postop_ignored;
+}
+
+ATF_TC(postop_size_larger_accepted);
+ATF_TC_HEAD(postop_size_larger_accepted, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "post-operation attributes whose size "
+	    "is above the write's end are applied: the backing file may have "
+	    "grown by another writer (C7, R2-H3)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(postop_size_larger_accepted, tc)
+{
+	struct dqt_fixture f;
+	struct postop_res r;
+	uint64_t ignored;
+
+	setup(&f, 16);
+	postop_round(&f, DATA_LEN + 100, &r, &ignored);
+	ATF_CHECK_EQ(10, r.w.rv);
+	ATF_CHECK_EQ(0, ignored);
+	ATF_CHECK_EQ(DATA_LEN + 100, r.after.st_size);
+	ATF_CHECK_EQ(POSTOP_SEC, r.after.st_mtim.tv_sec);
+	ATF_CHECK_EQ(POSTOP_SEC, r.after.st_ctim.tv_sec);
+	dqt_fixture_fini(&f);
+}
+
+ATF_TC(postop_size_smaller_ignored);
+ATF_TC_HEAD(postop_size_smaller_ignored, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "post-operation attributes whose size "
+	    "is below the write's end are ignored and counted; the write "
+	    "succeeds (C7, R2-H3)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(postop_size_smaller_ignored, tc)
+{
+	struct dqt_fixture f;
+	struct postop_res r;
+	uint64_t ignored;
+
+	setup(&f, 17);
+	postop_round(&f, 50, &r, &ignored);
+	ATF_CHECK_EQ(10, r.w.rv);
+	ATF_CHECK_EQ(1, ignored);
+	/* Nothing of the block: the size and times are the kernel's. */
+	ATF_CHECK_EQ(r.before.st_size, r.after.st_size);
+	ATF_CHECK(r.after.st_mtim.tv_sec != POSTOP_SEC);
+	ATF_CHECK(r.after.st_ctim.tv_sec != POSTOP_SEC);
 	dqt_fixture_fini(&f);
 }
 
@@ -1008,6 +1115,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, edeadlk_while_held);
 	ATF_TP_ADD_TC(tp, reply_offset_and_zero);
 	ATF_TP_ADD_TC(tp, mtime_after_write);
+	ATF_TP_ADD_TC(tp, postop_size_larger_accepted);
+	ATF_TP_ADD_TC(tp, postop_size_smaller_ignored);
 	ATF_TP_ADD_TC(tp, fspacectl_past_eof);
 	return (atf_no_error());
 }
