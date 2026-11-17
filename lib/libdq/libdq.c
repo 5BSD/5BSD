@@ -717,6 +717,35 @@ dq_dispatch_bufsize(void)
 	return (size);
 }
 
+/*
+ * The records read with the batch after the one the handler stopped on
+ * were taken off the queue and no other read sees them: each that has a
+ * waiter (an id) is answered EIO now, so its requester fails at once
+ * instead of at its deadline (a lock, which has none, would wait for a
+ * signal).  Records without an id (CLOSE, INTERRUPT, UNLOCK_ALL) are
+ * left: the queue's close or a later UNLOCK_ALL settles their state.  An
+ * answer that finds its event gone (ESRCH) is not an error.
+ */
+static void
+dq_dispatch_fail_rest(int q, const char *buf, size_t got,
+    const struct dq_event *stop)
+{
+	const struct dq_event *ev;
+	int error;
+
+	error = errno;
+	for (ev = dq_event_next(buf, got, stop); ev != NULL;
+	    ev = dq_event_next(buf, got, ev)) {
+		if (ev->de_id == 0 || (ev->de_flags & DQ_EVENT_F_OBSERVED) != 0)
+			continue;
+		if (ev->de_op == DQ_OP_RESOLVE)
+			(void)dq_reply_resolve_errno(q, ev->de_id, EIO);
+		else
+			(void)dq_reply(q, ev->de_id, EIO, NULL, 0);
+	}
+	errno = error;
+}
+
 int
 dq_dispatch(int q, dq_handler_t handler, void *arg)
 {
@@ -742,8 +771,10 @@ dq_dispatch(int q, dq_handler_t handler, void *arg)
 	    ev = dq_event_next(buf, (size_t)got, ev)) {
 		body = dq_event_body(ev, &bodylen);
 		n++;
-		if (handler(q, ev, body, bodylen, arg) != 0)
+		if (handler(q, ev, body, bodylen, arg) != 0) {
+			dq_dispatch_fail_rest(q, buf, (size_t)got, ev);
 			break;
+		}
 	}
 	free(buf);
 	return (n);
@@ -1222,8 +1253,9 @@ dq_mint_dir(int q, const struct dq_ident_file *ident,
 
 /*
  * The identity of name relative to dirfd without following a final
- * symbolic link, presented as presented; pathconf from an O_PATH open
- * (none for a symbolic link, whose size is its target's length).
+ * symbolic link, presented as presented; pathconf from an O_PATH |
+ * O_NOFOLLOW open, which answers for the link itself as lpathconf(2)
+ * does.
  */
 int
 dq_ident_from_lstat(struct dq_ident_file *ident, const char *presented,
@@ -1239,8 +1271,7 @@ dq_ident_from_lstat(struct dq_ident_file *ident, const char *presented,
 	rv = -1;
 	if (fstatat(dirfd, name, &st, AT_SYMLINK_NOFOLLOW) == 0 &&
 	    fstatfs(fd, &sfs) == 0)
-		rv = dq_ident_from_stat(ident, presented, &st, &sfs,
-		    S_ISLNK(st.st_mode) ? -1 : fd);
+		rv = dq_ident_from_stat(ident, presented, &st, &sfs, fd);
 	error = errno;
 	close(fd);
 	errno = error;

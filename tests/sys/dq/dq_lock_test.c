@@ -1168,7 +1168,7 @@ ATF_TC_HEAD(waiter_fd_reuse_stress, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "a SETLKW waiter granted as its owner "
 	    "goes must not act on another owner's reused descriptor (T-R07; "
-	    "recorded)");
+	    "C5)");
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "timeout", "300");
 }
@@ -1248,8 +1248,16 @@ ATF_TC_BODY(waiter_fd_reuse_stress, tc)
 	printf("waiter_fd_reuse_stress: %d rounds, %d foreign unlocks, "
 	    "%d foreign grants, %d stray locks\n", rounds, foreign_unlock,
 	    foreign_grant, stray);
-	/* Recorded: today's rate is what this run printed. */
+	/*
+	 * The waiter works on its own descriptor of the owner's open file
+	 * and the owner's close drains it first: no grant or undo reaches
+	 * another owner's open (on dev 74daf2dc9f7, 35 rounds showed none
+	 * either: the window is narrow).
+	 */
 	ATF_CHECK(rounds > 0);
+	ATF_CHECK_EQ(0, foreign_unlock);
+	ATF_CHECK_EQ(0, foreign_grant);
+	ATF_CHECK_EQ(0, stray);
 	(void)close(hb);
 	(void)close(hc);
 	dqt_fixture_fini(&f);

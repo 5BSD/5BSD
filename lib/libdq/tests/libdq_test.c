@@ -900,23 +900,27 @@ ATF_TC_BODY(dispatch_stop_drops, tc)
 	struct stop_res r;
 	int handled, n;
 
-	/* A read behind the stop: unanswered until its 1 s deadline. */
+	/*
+	 * A read behind the stop is answered EIO at once (it waited out its
+	 * 1 s deadline).
+	 */
 	stop_round(false, &r, &handled, &n);
 	ATF_CHECK_EQ(1, handled);
 	ATF_CHECK_EQ(1, n);
 	ATF_CHECK_EQ(-1, r.r.rv);
 	ATF_CHECK_EQ(EIO, r.r.err);
-	/* Pin: the dropped read waits out its deadline. */
-	ATF_CHECK_MSG(r.ms >= 900, "the dropped read ended after %ld ms",
+	ATF_CHECK_MSG(r.ms < 900, "the dropped read ended after %ld ms",
 	    r.ms);
 
-	/* A lock behind the stop: no deadline. */
+	/*
+	 * A lock behind the stop, which has no deadline: EIO at once (it
+	 * hung until the 3 s signal's EINTR).
+	 */
 	stop_round(true, &r, &handled, &n);
 	ATF_CHECK_EQ(1, handled);
 	ATF_CHECK_EQ(-1, r.r.rv);
-	/* Pin: the dropped F_SETLKW hangs until the 3 s signal. */
-	ATF_CHECK_EQ(EINTR, r.r.err);
-	ATF_CHECK_MSG(r.ms >= 2900, "the dropped lock ended after %ld ms",
+	ATF_CHECK_EQ(EIO, r.r.err);
+	ATF_CHECK_MSG(r.ms < 2900, "the dropped lock ended after %ld ms",
 	    r.ms);
 }
 

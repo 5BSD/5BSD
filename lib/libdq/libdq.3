@@ -963,6 +963,21 @@ into a buffer sized for the largest record the kernel can post and calls
 once per record with the header, the body and
 .Fa arg .
 The handler returns 0 to continue or nonzero to stop.
+When it stops, the records read with the batch after the one it stopped
+on are not handed to it, and those that wait for an answer are answered
+.Er EIO
+.Po
+.Fn dq_reply_resolve_errno
+for a
+.Dv DQ_OP_RESOLVE ,
+.Fn dq_reply
+otherwise
+.Pc ,
+so that no requester waits out its deadline or, for a lock, its signal,
+for a record nobody will see; those that wait for nothing
+.Pq Dv DQ_OP_CLOSE , DQ_OP_INTERRUPT , DQ_OP_UNLOCK_ALL ,
+observer records
+are dropped, their state left to the kernel's close of the queue.
 .Fn dq_dispatch
 returns the number of records handed to the handler, or -1 with the errno
 of the read.
@@ -1274,7 +1289,12 @@ fills an identity from
 relative to
 .Fa dirfd
 without following a final symbolic link, presented as
-.Fa presented .
+.Fa presented ;
+its pathconf values come from an
+.Dv O_PATH | O_NOFOLLOW
+open, so a symbolic link carries its own, as
+.Xr lpathconf 2
+reports them.
 .Fn dq_reply_resolve_fd
 also answers with
 .Dv DQ_KIND_DIR ;
@@ -1656,7 +1676,10 @@ once, and an
 by one is answered 0.
 A
 .Dv DQ_LOCK_SETLKW
-blocks in a thread of its own, which answers when the lock is granted;
+blocks in a thread of its own, on a descriptor of its own of the owner's
+open file (the same open file, so the same OFD owner), never on the
+owner's descriptor number, which a close of the owner frees for any other
+open of the process; it answers when the lock is granted;
 when that reply finds the event no longer in flight
 .Pq Er ESRCH : No the requester gave up and its Dv DQ_OP_INTERRUPT No raced the grant
 the grant is undone by unlocking the requested range for the owner,
@@ -1674,8 +1697,8 @@ answer carries
 -1: the routine does not track which owner holds the blocker (a declared
 difference from a real file, which names a POSIX owner's pid).
 .It Dv DQ_OP_UNLOCK_ALL
-closes that owner's open, which releases its locks, and cancels its
-blocked waits.
+cancels the owner's blocked waits and waits for their threads to finish,
+then closes the owner's open, which releases its locks.
 .It Dv DQ_OP_IOCTL
 the
 .Va so_ioctl

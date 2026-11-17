@@ -412,11 +412,10 @@ ATF_TC_BODY(lpathconf_symlink, tc)
 	for (i = 0; i < LPC_N; i++) {
 		ATF_CHECK_MSG(real.value[i] != -1, "real lpathconf %d: %s",
 		    lpc_names[i], strerror(real.err[i]));
-		/* Pin: a served link presents no pathconf: EINVAL. */
-		ATF_CHECK_EQ_MSG(-1, served.value[i], "name %d: served %ld",
-		    lpc_names[i], served.value[i]);
-		ATF_CHECK_EQ_MSG(EINVAL, served.err[i], "name %d: errno %d",
-		    lpc_names[i], served.err[i]);
+		/* The link's own values (it presented none: EINVAL). */
+		ATF_CHECK_EQ_MSG(real.value[i], served.value[i],
+		    "name %d: real %ld served %ld (%s)", lpc_names[i],
+		    real.value[i], served.value[i], strerror(served.err[i]));
 	}
 	ts_stop(&s);
 }

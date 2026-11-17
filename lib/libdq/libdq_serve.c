@@ -57,16 +57,25 @@ struct dq_serve_owner {
 	LIST_ENTRY(dq_serve_owner) so_link;
 	struct dq_serve_key so_key;
 	int		 so_fd;		/* the owner's open of the backing file */
+	int		 so_nwaits;	/* its SETLKW threads (ss_mtx) */
 };
 
+/*
+ * A SETLKW thread.  It works on its own descriptor of the owner's open
+ * file (sw_dupfd), never on the owner's number: an owner closed while the
+ * thread runs frees that number for any other open of this process.  The
+ * owner itself outlives the thread: whoever closes it waits for its
+ * so_nwaits to drain first (dq_serve_owner_close).
+ */
 struct dq_serve_wait {
 	LIST_ENTRY(dq_serve_wait) sw_link;
 	struct dq_serve_state *sw_state;
+	struct dq_serve_owner *sw_owner;
 	pthread_t	 sw_thr;
 	uint64_t	 sw_id;		/* the event; INTERRUPT names it */
 	struct dq_serve_key sw_key;
 	int		 sw_q;
-	int		 sw_fd;
+	int		 sw_dupfd;	/* a dup of sw_owner->so_fd, the thread's */
 	struct flock	 sw_fl;
 };
 
@@ -116,23 +125,39 @@ dq_serve_state_create(void)
 	return (st);
 }
 
-/* The mutex is held.  Owners are opens: closing one releases its locks. */
-static void
-dq_serve_owner_close(struct dq_serve_state *st, struct dq_serve_owner *so)
-{
-
-	LIST_REMOVE(so, so_link);
-	st->ss_nowners--;
-	(void)close(so->so_fd);
-	free(so);
-}
-
 /* The mutex is held; the wait unlinks itself from its cleanup handler. */
 static void
 dq_serve_wait_cancel(struct dq_serve_wait *w)
 {
 
 	(void)pthread_cancel(w->sw_thr);
+}
+
+/*
+ * The mutex is held.  Owners are opens: closing one releases its locks.
+ * The owner leaves the table first, so no new SETLKW joins it; its
+ * threads are cancelled and waited for (each closes its own descriptor),
+ * and only then is its open closed.  The wait drops the mutex.
+ */
+static void	dq_serve_owner_close(struct dq_serve_state *st,
+		    struct dq_serve_owner *so) __requires_exclusive(st->ss_mtx);
+
+static void
+dq_serve_owner_close(struct dq_serve_state *st, struct dq_serve_owner *so)
+{
+	struct dq_serve_wait *w;
+
+	LIST_REMOVE(so, so_link);
+	st->ss_nowners--;
+	while (so->so_nwaits > 0) {
+		LIST_FOREACH(w, &st->ss_waits, sw_link) {
+			if (w->sw_owner == so)
+				dq_serve_wait_cancel(w);
+		}
+		pthread_cond_wait(&st->ss_cv, &st->ss_mtx);
+	}
+	(void)close(so->so_fd);
+	free(so);
 }
 
 void
@@ -280,16 +305,22 @@ dq_serve_flock_from_body(const struct dq_lock_body *lb, struct flock *fl)
 	fl->l_len = lb->dl_len;
 }
 
-/* Cleanup of a SETLKW thread, on completion or cancellation. */
+/*
+ * Cleanup of a SETLKW thread, on completion or cancellation: its own
+ * descriptor goes (the owner's open stays, held by the owner), then the
+ * owner's count, which its close may be waiting for.
+ */
 static void
 dq_serve_wait_unlink(void *arg)
 {
 	struct dq_serve_wait *w = arg;
 	struct dq_serve_state *st = w->sw_state;
 
+	(void)close(w->sw_dupfd);
 	pthread_mutex_lock(&st->ss_mtx);
 	LIST_REMOVE(w, sw_link);
 	st->ss_nwaits--;
+	w->sw_owner->so_nwaits--;
 	pthread_cond_broadcast(&st->ss_cv);
 	pthread_mutex_unlock(&st->ss_mtx);
 	free(w);
@@ -299,14 +330,12 @@ static void *
 dq_serve_waiter(void *arg)
 {
 	struct dq_serve_wait *w = arg;
-	struct dq_serve_state *st = w->sw_state;
-	struct dq_serve_owner *so;
 	struct flock fl;
 	int error, old, rv;
 
 	pthread_cleanup_push(dq_serve_wait_unlink, w);
 	/* The cancellation point: an INTERRUPT ends the wait here. */
-	error = fcntl(w->sw_fd, F_OFD_SETLKW, &w->sw_fl) == -1 ? errno : 0;
+	error = fcntl(w->sw_dupfd, F_OFD_SETLKW, &w->sw_fl) == -1 ? errno : 0;
 	(void)pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old);
 	rv = dq_reply(w->sw_q, w->sw_id, dq_serve_map(DQ_OP_LOCK, error), NULL,
 	    0);
@@ -314,24 +343,16 @@ dq_serve_waiter(void *arg)
 		/*
 		 * Granted after the requester gave up (its INTERRUPT is on
 		 * its way or already handled, the event is no longer in
-		 * flight): nobody holds this lock, so take it back.  The
-		 * whole range is unlocked for the owner, which also drops
+		 * flight): nobody holds this lock, so take it back, on the
+		 * owner's own open file (this thread's descriptor of it).
+		 * The whole range is unlocked for the owner, which also drops
 		 * what the owner held there before the request (a lock
 		 * upgrade that is abandoned leaves the range unlocked; a
-		 * real file would keep the old lock).  The owner's open is
-		 * used only while it is still in the table.
+		 * real file would keep the old lock).
 		 */
-		pthread_mutex_lock(&st->ss_mtx);
-		LIST_FOREACH(so, &st->ss_owners, so_link) {
-			if (so->so_fd == w->sw_fd)
-				break;
-		}
-		if (so != NULL) {
-			fl = w->sw_fl;
-			fl.l_type = F_UNLCK;
-			(void)fcntl(so->so_fd, F_OFD_SETLK, &fl);
-		}
-		pthread_mutex_unlock(&st->ss_mtx);
+		fl = w->sw_fl;
+		fl.l_type = F_UNLCK;
+		(void)fcntl(w->sw_dupfd, F_OFD_SETLK, &fl);
 	}
 	pthread_cleanup_pop(1);
 	return (NULL);
@@ -340,7 +361,8 @@ dq_serve_waiter(void *arg)
 /* The mutex is held.  Returns 0 or an errno for the reply. */
 static int
 dq_serve_setlkw(struct dq_serve_state *st, int q, uint64_t id,
-    const struct dq_lock_body *lb, const struct dq_serve_key *k, int fd)
+    const struct dq_lock_body *lb, const struct dq_serve_key *k,
+    struct dq_serve_owner *so)
 {
 	struct dq_serve_wait *w;
 	pthread_attr_t attr;
@@ -349,14 +371,21 @@ dq_serve_setlkw(struct dq_serve_state *st, int q, uint64_t id,
 	w = calloc(1, sizeof(*w));
 	if (w == NULL)
 		return (ENOLCK);
+	/* The same open file, so the same OFD owner: the owner's locks. */
+	w->sw_dupfd = fcntl(so->so_fd, F_DUPFD_CLOEXEC, 0);
+	if (w->sw_dupfd == -1) {
+		free(w);
+		return (ENOLCK);
+	}
 	w->sw_state = st;
+	w->sw_owner = so;
 	w->sw_id = id;
 	w->sw_key = *k;
 	w->sw_q = q;
-	w->sw_fd = fd;
 	dq_serve_flock_from_body(lb, &w->sw_fl);
 	LIST_INSERT_HEAD(&st->ss_waits, w, sw_link);
 	st->ss_nwaits++;
+	so->so_nwaits++;
 	(void)pthread_attr_init(&attr);
 	(void)pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 	error = pthread_create(&w->sw_thr, &attr, dq_serve_waiter, w);
@@ -364,6 +393,8 @@ dq_serve_setlkw(struct dq_serve_state *st, int q, uint64_t id,
 	if (error != 0) {
 		LIST_REMOVE(w, sw_link);
 		st->ss_nwaits--;
+		so->so_nwaits--;
+		(void)close(w->sw_dupfd);
 		free(w);
 		return (ENOLCK);
 	}
@@ -445,7 +476,7 @@ dq_serve_lock(int q, const struct dq_event *ev, const struct dq_lock_body *lb,
 			error = errno;
 			break;
 		}
-		error = dq_serve_setlkw(st, q, ev->de_id, lb, &k, so->so_fd);
+		error = dq_serve_setlkw(st, q, ev->de_id, lb, &k, so);
 		if (error == 0) {
 			pthread_mutex_unlock(&st->ss_mtx);
 			return (0);	/* the thread answers */
@@ -471,7 +502,6 @@ dq_serve_unlock_all(const struct dq_event *ev,
 {
 	struct dq_serve_state *st;
 	struct dq_serve_owner *so;
-	struct dq_serve_wait *w;
 	struct dq_serve_key k;
 
 	st = opts != NULL ? opts->so_state : NULL;
@@ -479,12 +509,9 @@ dq_serve_unlock_all(const struct dq_event *ev,
 	    ev->de_object, opts, backing) == -1)
 		return;
 	pthread_mutex_lock(&st->ss_mtx);
-	LIST_FOREACH(w, &st->ss_waits, sw_link) {
-		if (dq_serve_key_eq(&w->sw_key, &k))
-			dq_serve_wait_cancel(w);
-	}
 	LIST_FOREACH(so, &st->ss_owners, so_link) {
 		if (dq_serve_key_eq(&so->so_key, &k)) {
+			/* Its waits are cancelled and drained first. */
 			dq_serve_owner_close(st, so);
 			break;
 		}
@@ -517,20 +544,23 @@ dq_serve_interrupt(struct dq_serve_state *st, uint64_t id)
 static void
 dq_serve_close(struct dq_serve_state *st, uint64_t object)
 {
-	struct dq_serve_owner *so, *sotmp;
-	struct dq_serve_wait *w;
+	struct dq_serve_owner *so;
 
 	if (st == NULL)
 		return;
 	pthread_mutex_lock(&st->ss_mtx);
-	LIST_FOREACH(w, &st->ss_waits, sw_link) {
-		if (w->sw_key.kind != DQ_LOCK_POSIX && w->sw_key.object == object)
-			dq_serve_wait_cancel(w);
-	}
-	LIST_FOREACH_SAFE(so, &st->ss_owners, so_link, sotmp) {
+	/*
+	 * dq_serve_owner_close drops the mutex while it drains an owner's
+	 * waits: the list may change under it, so look again from the
+	 * start after each close.
+	 */
+restart:
+	LIST_FOREACH(so, &st->ss_owners, so_link) {
 		if (so->so_key.kind != DQ_LOCK_POSIX &&
-		    so->so_key.object == object)
+		    so->so_key.object == object) {
 			dq_serve_owner_close(st, so);
+			goto restart;
+		}
 	}
 	pthread_mutex_unlock(&st->ss_mtx);
 }
