@@ -634,6 +634,11 @@ void	dq_object_invalidate(struct dq_object *o, off_t offset, off_t len);
 /* dq_pager.c */
 int	dq_pager_register(void);
 void	dq_pager_unregister(void);
+#ifdef DQ_FAULT_INJECTION
+/* dq_faultinj.c (options DQ_FAULT_INJECTION): test-kernel windows. */
+void	dq_faultinj_swap_take_pause(void);
+void	dq_faultinj_postop_apply_pause(void);
+#endif
 int	dq_object_vm_create(struct dq_object *o);
 boolean_t dq_pager_flush(struct dq_object *o, struct vm_object *obj,
 	    vm_ooffset_t offset, vm_size_t size, boolean_t syncio,

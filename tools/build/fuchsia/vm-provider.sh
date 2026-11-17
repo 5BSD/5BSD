@@ -817,11 +817,13 @@ nskip=$(tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED
 echo "skipped=$nskip (a skip in a plane-on suite is not a pass; see KYUA_SKIPPED_LIST in $log)"
 # Cases that named the tier they belong to: the run is not complete without
 # a run of the same stage and suites in that tier.
-for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER; do
+for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER DEFERRED_KNOB_TIER; do
 	ndefer=$(tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c "$token" || true)
 	[ "$ndefer" -eq 0 ] || case $token in
 	DEFERRED_ENFORCED_TIER)
 		echo "DEFERRED_TO_ENFORCED_TIER=$ndefer (run PLANE_OFF=1 with the same stage and suites; not a pass)";;
+	DEFERRED_KNOB_TIER)
+		echo "DEFERRED_TO_KNOB_TIER=$ndefer (cases that need a fault knob of options DQ_FAULT_INJECTION: run KERNEL_TIER=test with a GENERIC-TEST stage and the same suites; not a pass)";;
 	DEFERRED_PLANEOFF_TIER)
 		echo "DEFERRED_TO_PLANEOFF_TIER=$ndefer (test-local stacks: need PLANE_OFF=1 and a kernel that lets a test-local Capsule issue authority, which the tree does not provide yet; not a pass)";;
 	*)

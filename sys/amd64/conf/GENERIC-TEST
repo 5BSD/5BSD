@@ -10,8 +10,9 @@
 # sys/conf/test-options, which names this file as the one configuration
 # allowed to carry it.
 #
-# Each option does nothing until the loader sets its knob (dq(4):
-# debug.dq.unverified_open="1").
+# Each option does nothing until its knob is set (dq(4):
+# debug.dq.unverified_open="1" in the loader; the debug.dq fault knobs of
+# DQ_FAULT_INJECTION by sysctl).
 #
 
 include GENERIC
@@ -19,3 +20,4 @@ include GENERIC
 ident		GENERIC-TEST
 
 options 	DQ_TEST_OPEN		# dq(4) test access: never published
+options 	DQ_FAULT_INJECTION	# dq(4) fault knobs: never published

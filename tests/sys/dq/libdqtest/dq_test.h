@@ -228,6 +228,12 @@ void	dqt_require_plane(void);
  * debug.dq.unverified_open="1"; a kernel without the option passes.
  */
 void	dqt_require_test_access(void);
+/*
+ * A debug.dq fault knob of options DQ_FAULT_INJECTION, or the case is owed
+ * by the knob tier: it skips with the DEFERRED_KNOB_TIER token on a kernel
+ * without the option, and fails on a test kernel that lacks the knob.
+ */
+void	dqt_require_fault_knob(const char *name);
 /* Fails, never skips, when the queue device is absent or refuses. */
 int	dqt_open_queue(void);
 void	dqt_init(struct dqt_ctl *c);		/* queue + 1 reader thread */

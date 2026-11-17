@@ -2645,6 +2645,7 @@ ATF_TC_BODY(swap_late_reply_consumed, tc)
 	struct sw x;
 	struct sw_res res;
 
+	dqt_require_fault_knob(DELAY_SWAP_TAKE);
 	pin_reset();
 	memset(&late, 0, sizeof(late));
 	dqt_sysctl_save_set_uint(DELAY_SWAP_TAKE, LATE_DELAYED);

@@ -653,6 +653,9 @@ DEV_DQ			opt_dq.h
 # the test-kernel option ledger, sys/conf/test-options).  It is
 # deliberately not in NOTES: LINT must not build it.
 DQ_TEST_OPEN		opt_dq.h
+# DQ_FAULT_INJECTION adds the dq(4) fault-injection knobs of the test
+# suites; a test kernel as DQ_TEST_OPEN is, and not in NOTES either.
+DQ_FAULT_INJECTION	opt_dq.h
 DEV_NETMAP		opt_global.h
 DEV_PCI			opt_pci.h
 DEV_PF			opt_pf.h

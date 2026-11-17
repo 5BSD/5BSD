@@ -285,6 +285,11 @@ authority issuer (the `MAC_CAPABILITY_TEST_RELAX` option and
 `kern.mac_capability.test_relax=1` that `capd_test_harness.sh` names), which
 the tree does not provide yet; plane-off on GENERIC their units never launch.
 Until it exists they are not covered by any tier.
+A `tests/sys/dq` case that needs a fault knob of `options DQ_FAULT_INJECTION`
+(`debug.dq.delay_swap_take`, `debug.dq.delay_postop_apply`) calls
+`dqt_require_fault_knob` and skips on a kernel without the option with
+`DEFERRED_KNOB_TIER`, counted as `DEFERRED_TO_KNOB_TIER=N`: it runs in the
+knob tier, `KERNEL_TIER=test` with a GENERIC-TEST stage.
 Cases that drive their private SwitchBoard with `switchboardctl` call
 `use_private_control` (`usr.sbin/switchboard/tests/test_helpers.sh`): it runs
 `switchboardctl` through `capd_lookup_exec`, which installs the private

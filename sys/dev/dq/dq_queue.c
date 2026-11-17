@@ -13,6 +13,8 @@
  * a full queue and a missed deadline all answer EIO at once (design 15).
  */
 
+#include "opt_dq.h"
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/callout.h>
@@ -1816,17 +1818,6 @@ SYSCTL_UINT(_debug_dq, OID_AUTO, delay_reply_notify, CTLFLAG_RW,
     "The next N replies about an open file sleep one second after the "
     "requester is released, before the policies are told");
 
-/*
- * The window between a SWAP answer's take and the queue lock, in which
- * the requester can give up and the reply becomes ECANCELED, made wide
- * enough for a test.
- */
-static u_int dq_delay_swap_take;
-SYSCTL_UINT(_debug_dq, OID_AUTO, delay_swap_take, CTLFLAG_RW,
-    &dq_delay_swap_take, 0,
-    "The next N SWAP replies sleep one second after the take, before the "
-    "queue lock");
-
 bool
 dq_fault_inject(u_int *counter)
 {
@@ -2299,8 +2290,10 @@ dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 			dq_data_rele(dd);
 			return (error);
 		}
-		if (rswap.fs_fp != NULL && dq_fault_inject(&dq_delay_swap_take))
-			pause_sbt("dqswtk", SBT_1S, 0, 0);
+#ifdef DQ_FAULT_INJECTION
+		if (rswap.fs_fp != NULL)
+			dq_faultinj_swap_take_pause();
+#endif
 	}
 
 	key.ev_hdr.de_id = r->dr_id;

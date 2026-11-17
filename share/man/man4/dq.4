@@ -4713,6 +4713,34 @@ on the console.
 On a kernel without the option, setting the tunable in
 .Xr loader.conf 5
 has no effect at all.
+.Pp
+A kernel built with
+.Bd -ragged -offset indent
+.Cd "options DQ_FAULT_INJECTION"
+.Ed
+.Pp
+is a test kernel in the same way, with the same requirements and the same
+publication refusal.
+It adds fault-injection variables that widen a window a test must hit;
+each holds a count, and the next that many times the kernel reaches its
+point it sleeps one second there, with no lock held:
+.Bl -tag -width "debug.dq.delay_postop_apply" -offset indent -compact
+.It Va debug.dq.delay_swap_take
+a
+.Dv DQ_RESOLVE_SWAP
+reply, after the take and before it looks for its event, so that the
+requester can leave and the reply answer
+.Er ECANCELED ;
+.It Va debug.dq.delay_postop_apply
+a requester woken with its reply, before it applies the reply's
+post-operation attributes.
+.El
+.Pp
+The older
+.Va debug.dq
+fault variables
+.Pq Va fail_vm_create , fail_link_closing , fail_bind_enfile , delay_reply_notify
+are still in every kernel; they move under the option later.
 .Sh DTRACE
 The
 .Nm
