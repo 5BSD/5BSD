@@ -14,6 +14,11 @@ ${PACKAGE}FILES+= elf_dependencies.py elf_dependencies_test.py elf_features_buil
 ${PACKAGE}FILES+= sign-stage.sh signing_custody_test.py
 ${PACKAGE}FILES+= hardware-profile-cases
 ${PACKAGE}FILES+= generation_boot.py generation_boot_test.py
+# Files the installed helpers and tests load from beside themselves
+# (Path(__file__).with_name, atf_get_srcdir); bsd_build_test:installed_support
+# checks that every one is installed.
+${PACKAGE}FILES+= verity_artifacts.py verity_tree.py verify-stage.sh library-policy.json
+${PACKAGE}FILES+= ${SRCTOP}/tools/test/construction/verify_retained.py
 ${PACKAGE}FILES+= seed_initialize.py seed_dataset.py state_storage.py state_storage_test.py
 ${PACKAGE}FILES+= generation_image.py generation_image_test.py generation_check.py generation_check_test.py
 ${PACKAGE}FILES+= database_preflight.py database_preflight_test.py
