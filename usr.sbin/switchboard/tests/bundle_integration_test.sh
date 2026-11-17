@@ -64,8 +64,11 @@ on_demand_launch_body() {
 	use_private_control
 	prepare_paths
 	build_lookup_client
+	# The lookup client is a user bundle: its lookups use a USER-domain
+	# channel, which resolves only names whose provider declares
+	# visible = ["user"].
 	create_user_bundle "LazyApp" "org.test.lazy" "lazyd" \
-	    "org.test.lazy.svc" ""
+	    "org.test.lazy.svc" 'visible = ["user"];'
 
 	start_stack
 
@@ -203,6 +206,10 @@ reload_new_service_body() {
 	local bundle
 
 	prepare_paths
+	# The install-folder watcher would otherwise load the bundle as it is
+	# written, before the explicit reload under test (which then reports
+	# "0 new").  Settle the watcher for longer than the case runs.
+	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=60
 	start_stack
 
 	# Initially no user services
@@ -504,6 +511,13 @@ reload_changed_core_refused_body() {
 	use_private_control
 	local bundle unit
 
+	# A core unit takes Capsule's boot storage grant, which only the PID 1
+	# Capsule can derive (protected_storage_derive()): a test-local stack
+	# cannot launch one ("boot storage grant failed: Operation not
+	# permitted").  No tier runs this case; it is recorded in
+	# 2026-11-17-test-local-stack-pid1-only-cases.md.
+	atf_skip "DEFERRED_PID1_ONLY: a core unit needs the PID 1 Capsule's boot storage grant"
+
 	prepare_paths
 	bundle=$(create_system_bundle "CoreMorph" "org.test.core-morph" \
 	    "coremorphd" "org.test.core-morph.svc" \
@@ -650,6 +664,7 @@ on_demand_crash_relaunch_body() {
 	local dir="${APPS_DIR}/Crasher.cap"
 	write_test_bundle "$dir" org.test.crash crashd \
 	    'activation { ipc = ["org.test.crash.svc"]; }
+visible = ["user"];
 restart = "on-failure";' 'activation { boot = true; }'
 
 	# Install the libservice ready helper directly as the service program.
@@ -741,6 +756,7 @@ UCL
 	cat > "${bundle}/Units/lazyd.unit/Unit.ucl" <<UCL
 directories = ["${WORK}"];
 activation { ipc = ["${endpoint}"]; }
+visible = ["user"];
 arguments = ["compat-ready", "${endpoint}"];
 UCL
 

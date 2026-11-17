@@ -832,6 +832,7 @@ idle_stop_and_relaunch_body()
 	prepare_paths
 	make_svc_bin system org.test.idle.svc \
 	    "activation { boot = true; ipc = [\"org.test.idle.svc\"]; }
+visible = [\"user\"];
 arguments = [\"idle-provider\", \"org.test.idle.svc\", \"1\", \"$(pwd)/idlep\"];" \
 	    "$capd_service_fixture"
 	write_config
@@ -892,6 +893,7 @@ idle_busy_keeps_provider_body()
 	prepare_paths
 	make_svc_bin system org.test.idle.busy \
 	    "activation { boot = true; ipc = [\"org.test.idle.busy\"]; }
+visible = [\"user\"];
 arguments = [\"idle-busy\", \"org.test.idle.busy\", \"$(pwd)/idlebusy.out\"];" \
 	    "$capd_service_fixture"
 	write_config
@@ -938,6 +940,7 @@ idle_demand_cancels_stop_body()
 	prepare_paths
 	make_svc_bin system org.test.idle.demand \
 	    "activation { boot = true; ipc = [\"org.test.idle.demand\"]; }
+visible = [\"user\"];
 arguments = [\"idle-provider\", \"org.test.idle.demand\", \"5\", \"$(pwd)/idled\"];" \
 	    "$capd_service_fixture"
 	write_config
