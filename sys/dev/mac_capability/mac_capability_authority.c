@@ -264,9 +264,8 @@ mac_capability_test_issuer_check(struct thread *td, int *reason)
 		*reason = CAP_AUTH_ISSUER_R_PRIV;
 		return (EPERM);
 	}
-	mtx_lock(&mac_capability_test_issuer_lock);
-	state = mac_capability_test_issuer_state_value;
-	mtx_unlock(&mac_capability_test_issuer_lock);
+	/* An early answer only: _link() rechecks under the lock. */
+	state = mac_capability_test_issuer_state();
 	if (state == MAC_CAPABILITY_TEST_ISSUER_ANCHORED) {
 		*reason = CAP_AUTH_ISSUER_R_ANCHORED;
 		return (EPERM);
