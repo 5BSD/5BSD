@@ -1311,6 +1311,7 @@ _INPUT_ROWS = [
     ('', '{"source":"kern/kern_lockstat.c","origin":"kernel","object":"kern_lockstat.o","flags":0,"compile_with":null,"depends":null}'),
     ('', '{"source":"kern/kern_loginclass.c","origin":"kernel","object":"kern_loginclass.o","flags":0,"compile_with":null,"depends":null}'),
     ('', '{"source":"kern/kern_malloc.c","origin":"kernel","object":"kern_malloc.o","flags":0,"compile_with":null,"depends":null}'),
+    ('', '{"source":"kern/kern_mandatory.c","origin":"kernel","object":"kern_mandatory.o","flags":0,"compile_with":null,"depends":null}'),
     ('', '{"source":"kern/kern_mbuf.c","origin":"kernel","object":"kern_mbuf.o","flags":0,"compile_with":null,"depends":null}'),
     ('', '{"source":"kern/kern_membarrier.c","origin":"kernel","object":"kern_membarrier.o","flags":0,"compile_with":null,"depends":null}'),
     ('', '{"source":"kern/kern_mib.c","origin":"kernel","object":"kern_mib.o","flags":0,"compile_with":null,"depends":null}'),
