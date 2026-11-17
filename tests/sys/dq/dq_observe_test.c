@@ -27,34 +27,16 @@
 static unsigned char data[DATA_LEN];
 static char oracle_path[DQT_PATH_MAX];
 
-struct one_read_arg {
-	int		 fd;
-	size_t		 len;
-};
-
-static void
-child_one_read(void *arg, void *result)
-{
-	struct one_read_arg *a = arg;
-	struct dqt_rr *r = result;
-	unsigned char buf[4096];
-
-	r->rv = read(a->fd, buf, MIN(a->len, sizeof(buf)));
-	r->err = r->rv == -1 ? errno : 0;
-}
-
+/* The observe service is part of the plane: its absence is a failure. */
 static int
-connect_or_skip(void)
+observe_connect(void)
 {
 	int svc;
 
 	svc = dq_observe_connect();
-	if (svc == -1) {
-		if (errno == ENOENT)
-			atf_tc_skip("%s: %s", DQ_MAC_CAPABILITY_DEVICE,
-			    strerror(errno));
-		atf_tc_fail("dq_observe_connect: %s", strerror(errno));
-	}
+	if (svc == -1)
+		atf_tc_fail("dq_observe_connect (%s): %s",
+		    DQ_MAC_CAPABILITY_DEVICE, strerror(errno));
 	return (svc);
 }
 
@@ -101,7 +83,7 @@ ATF_TC_BODY(connect_as_root, tc)
 	int q, svc;
 
 	q = dqt_open_queue();
-	svc = connect_or_skip();
+	svc = observe_connect();
 	ATF_REQUIRE_EQ(0, dq_observe_list_queues(svc, 0, buf, nitems(buf),
 	    &count, &total));
 	ATF_CHECK(total >= 1);
@@ -132,7 +114,7 @@ ATF_TC_BODY(list_queues, tc)
 	struct dqt_object *o;
 	struct dqo_queue_info qi;
 	struct dq_stats st;
-	struct one_read_arg a;
+	struct dqt_read_arg a;
 	struct dqt_rr r;
 	int obs, oracle, svc;
 
@@ -140,14 +122,14 @@ ATF_TC_BODY(list_queues, tc)
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
 	    sizeof(oracle_path));
 	dqt_init(&c);
-	svc = connect_or_skip();
+	svc = observe_connect();
 	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
 	(void)dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
 	obs = dq_mint_observer(c.q, 0);
 	ATF_REQUIRE(obs != -1);
 	a.fd = o->fd;
 	a.len = 100;
-	dqt_run_child(child_one_read, &a, &r, sizeof(r));
+	dqt_run_child(dqt_child_read, &a, &r, sizeof(r));
 	ATF_REQUIRE_EQ(100, r.rv);
 
 	dqt_stats(&c, &st);
@@ -167,13 +149,15 @@ ATF_TC_BODY(list_queues, tc)
 	dqt_pause(&c);
 	{
 		struct dqt_child ch;
-		int status, waited;
+		int64_t deadline;
+		int status;
 
-		dqt_spawn(&ch, child_one_read, &a);
+		dqt_spawn(&ch, dqt_child_read, &a);
 		/* Wait for the post rather than a fixed sleep (4-vCPU guest). */
-		for (waited = 0; waited < DQT_WAIT_MS; waited += 10) {
+		deadline = dqt_now_ms() + DQT_WAIT_MS;
+		for (;;) {
 			ATF_REQUIRE(find_queue(svc, st.ds_queue_id, &qi));
-			if (qi.qi_pending != 0)
+			if (qi.qi_pending != 0 || dqt_now_ms() >= deadline)
 				break;
 			dqt_msleep(10);
 		}
@@ -185,7 +169,8 @@ ATF_TC_BODY(list_queues, tc)
 		ATF_REQUIRE(find_queue(svc, st.ds_queue_id, &qi));
 		ATF_CHECK_EQ(0, qi.qi_pending);
 		ATF_CHECK_EQ(1, qi.qi_inflight);
-		ATF_REQUIRE_EQ(0, dq_reply(c.q, c.held[0].id, 0, data, 100));
+		ATF_REQUIRE_EQ(0, dq_reply(c.q, dqt_held_id(&c, 0), 0, data,
+		    100));
 		status = dqt_wait(&ch, &r, sizeof(r));
 		ATF_CHECK(status == 0);
 		ATF_CHECK_EQ(100, r.rv);
@@ -212,14 +197,15 @@ ATF_TC_BODY(list_objects, tc)
 	struct dq_stats st;
 	size_t count, i;
 	uint64_t total;
-	int oracle, svc, waited;
+	int64_t deadline;
+	int oracle, svc;
 	bool saw1, saw2;
 
 	dqt_fill(data, sizeof(data), 92);
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
 	    sizeof(oracle_path));
 	dqt_init(&c);
-	svc = connect_or_skip();
+	svc = observe_connect();
 	o1 = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
 	o2 = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
 	ATF_REQUIRE_EQ(0, dq_revoke(c.q, o2->id));
@@ -264,10 +250,11 @@ ATF_TC_BODY(list_objects, tc)
 	 */
 	ATF_REQUIRE_EQ(0, close(o1->fd));
 	o1->fd = -1;
-	for (waited = 0;; waited += 10) {
+	deadline = dqt_now_ms() + 4 * DQT_WAIT_MS;
+	for (;;) {
 		ATF_REQUIRE_EQ(0, dq_observe_list_objects(svc, st.ds_queue_id,
 		    0, oi, nitems(oi), &count, &total));
-		if (total == 1 || waited >= 4 * DQT_WAIT_MS)
+		if (total == 1 || dqt_now_ms() >= deadline)
 			break;
 		dqt_msleep(10);
 	}
@@ -296,7 +283,7 @@ ATF_TC_BODY(subscribe, tc)
 	struct dqt_ctl c;
 	struct dqt_object *o;
 	struct dq_stats st, st2;
-	struct one_read_arg a;
+	struct dqt_read_arg a;
 	struct dqt_rr r;
 	struct pollfd pfd;
 	const struct dq_event *ev;
@@ -308,7 +295,7 @@ ATF_TC_BODY(subscribe, tc)
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
 	    sizeof(oracle_path));
 	dqt_init(&c);
-	svc = connect_or_skip();
+	svc = observe_connect();
 	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
 	dqt_stats(&c, &st);
 
@@ -324,7 +311,7 @@ ATF_TC_BODY(subscribe, tc)
 
 	a.fd = o->fd;
 	a.len = 100;
-	dqt_run_child(child_one_read, &a, &r, sizeof(r));
+	dqt_run_child(dqt_child_read, &a, &r, sizeof(r));
 	ATF_REQUIRE_EQ(100, r.rv);
 	pfd.fd = obs;
 	pfd.events = POLLIN;

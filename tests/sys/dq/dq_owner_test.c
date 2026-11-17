@@ -60,12 +60,6 @@
 
 #include "dq_test.h"
 
-#define	SET(rr, call) do {						\
-	errno = 0;							\
-	(rr).rv = (call);						\
-	(rr).err = (rr).rv == -1 ? errno : 0;				\
-} while (0)
-
 /* Every way into the queue's cdevsw, one slot each. */
 enum {
 	OP_STATS,		/* DQ_IOC_GET_STATS */
@@ -131,9 +125,9 @@ ops_quiet(int q, struct ops_res *res)
 	char buf[4096];
 	int fl, kq, on;
 
-	SET(res->r[OP_STATS], dq_get_stats(q, &st));
+	DQT_RR(res->r[OP_STATS], dq_get_stats(q, &st));
 	res->id = res->r[OP_STATS].rv == 0 ? st.ds_queue_id : 0;
-	SET(res->r[OP_STATS2], dq_get_stats2(q, &st2));
+	DQT_RR(res->r[OP_STATS2], dq_get_stats2(q, &st2));
 	/*
 	 * FIONBIO to the value the open file already has is answered by
 	 * kern_ioctl() without the device, for any caller.  Where an
@@ -142,20 +136,20 @@ ops_quiet(int q, struct ops_res *res)
 	fl = fcntl(q, F_GETFL);
 	if (fl != -1 && (fl & O_NONBLOCK) != 0) {
 		on = 0;
-		SET(res->r[OP_FIONBIO], ioctl(q, FIONBIO, &on));
+		DQT_RR(res->r[OP_FIONBIO], ioctl(q, FIONBIO, &on));
 	} else
 		res->r[OP_FIONBIO].rv = 0;
 	if (res->r[OP_FIONBIO].rv == 0) {
 		on = 1;
-		SET(res->r[OP_FIONBIO], ioctl(q, FIONBIO, &on));
+		DQT_RR(res->r[OP_FIONBIO], ioctl(q, FIONBIO, &on));
 	}
-	SET(res->r[OP_READ], read(q, buf, sizeof(buf)));
-	SET(res->r[OP_READ_SHORT], read(q, buf, 1));
-	SET(res->r[OP_NOTTY], ioctl(q, TIOCEXCL));
+	DQT_RR(res->r[OP_READ], read(q, buf, sizeof(buf)));
+	DQT_RR(res->r[OP_READ_SHORT], read(q, buf, 1));
+	DQT_RR(res->r[OP_NOTTY], ioctl(q, TIOCEXCL));
 	pfd.fd = q;
 	pfd.events = POLLIN | POLLOUT;
 	pfd.revents = 0;
-	SET(res->r[OP_POLL], poll(&pfd, 1, 0));
+	DQT_RR(res->r[OP_POLL], poll(&pfd, 1, 0));
 	res->revents = pfd.revents;
 	/*
 	 * select(2) has no way to say POLLNVAL: for a caller the queue
@@ -166,14 +160,14 @@ ops_quiet(int q, struct ops_res *res)
 	FD_SET(q, &rset);
 	tv.tv_sec = 0;
 	tv.tv_usec = 100000;
-	SET(res->sel, select(q + 1, &rset, NULL, NULL, &tv));
+	DQT_RR(res->sel, select(q + 1, &rset, NULL, NULL, &tv));
 	kq = kqueue();
 	if (kq == -1) {
 		res->r[OP_KEVENT].rv = -2;
 		res->r[OP_KEVENT].err = errno;
 	} else {
 		EV_SET(&kev, q, EVFILT_READ, EV_ADD, 0, 0, NULL);
-		SET(res->r[OP_KEVENT], kevent(kq, &kev, 1, NULL, 0, NULL));
+		DQT_RR(res->r[OP_KEVENT], kevent(kq, &kev, 1, NULL, 0, NULL));
 		(void)close(kq);
 	}
 }
@@ -187,14 +181,14 @@ ops_make(int q, const struct dq_ident_file *ident, int target,
 	uint64_t object;
 	int fd, reason;
 
-	SET(res->r[OP_OBSERVER], dq_mint_observer(q, 0));
+	DQT_RR(res->r[OP_OBSERVER], dq_mint_observer(q, 0));
 	dq_policy_default(&pol);
 	object = 0;
 	fd = -1;
-	SET(res->r[OP_MINT], dq_mint_file(q, ident, &pol, &object, &fd,
+	DQT_RR(res->r[OP_MINT], dq_mint_file(q, ident, &pol, &object, &fd,
 	    &reason));
-	SET(res->r[OP_REVOKE], dq_revoke(q, object));
-	SET(res->r[OP_ATTACH], dq_attach(q, target));
+	DQT_RR(res->r[OP_REVOKE], dq_revoke(q, object));
+	DQT_RR(res->r[OP_ATTACH], dq_attach(q, target));
 	res->done = true;
 }
 
@@ -328,14 +322,16 @@ queues_now(void)
 static bool
 queues_settle(u_int want)
 {
-	int i;
+	int64_t deadline;
 
-	for (i = 0; i < 100; i++) {
+	deadline = dqt_now_ms() + DQT_WAIT_MS;
+	for (;;) {
 		if (queues_now() == want)
 			return (true);
+		if (dqt_now_ms() >= deadline)
+			return (false);
 		dqt_msleep(50);
 	}
-	return (false);
 }
 
 /* How many of this process's descriptors are the queue device. */
@@ -408,7 +404,7 @@ sharer_setfl(int q, struct sharer_setfl *sf)
 	int i;
 
 	for (i = 0; i < SF_N; i++) {
-		SET(sf->r[i], fcntl(q, F_SETFL, flags[i]));
+		DQT_RR(sf->r[i], fcntl(q, F_SETFL, flags[i]));
 		sf->getfl[i] = fcntl(q, F_GETFL);
 	}
 }
@@ -470,9 +466,9 @@ child_opener_sharer(void *arg, void *result)
 	    !read_all(rp[0], &res->setfl, sizeof(res->setfl)))
 		_exit(9);
 	/* Still non-blocking, whatever the sharer asked for. */
-	SET(res->opener_read, read(q, buf, sizeof(buf)));
+	DQT_RR(res->opener_read, read(q, buf, sizeof(buf)));
 	/* It holds the queue (its table does): EBUSY, as before sc-q. */
-	SET(res->attach_sharer, dq_attach(q, pd));
+	DQT_RR(res->attach_sharer, dq_attach(q, pd));
 	(void)write(gp[1], "x", 1);
 	if (pdwait(pd, &status, WEXITED, NULL, NULL) == 0)
 		res->sharer_status = status;
@@ -611,14 +607,14 @@ child_opener_exits(void *arg, void *result)
 	memset(&kev, 0, sizeof(kev));
 	ts.tv_sec = 10;
 	ts.tv_nsec = 0;
-	SET(eof.kev, kevent(kq, NULL, 0, &kev, 1, &ts));
+	DQT_RR(eof.kev, kevent(kq, NULL, 0, &kev, 1, &ts));
 	eof.flags = kev.flags;
 	eof.ident = (int)kev.ident;
 	eof.q = q;
 	ops_quiet(q, &sres);
 	ops_make(q, a->ident, target, &sres);
 	/* The last close of the queue. */
-	SET(sres.r[OP_CLOSE], close(q));
+	DQT_RR(sres.r[OP_CLOSE], close(q));
 	idle_target_end(target);
 	(void)write(a->rep, &sres, sizeof(sres));
 	(void)write(a->rep, &eof, sizeof(eof));
@@ -643,7 +639,7 @@ ATF_TC_BODY(sharer_outlives_opener, tc)
 	struct ops_res opener, sharer;
 	struct outlive_eof eof;
 	u_int before;
-	int go[2], rep[2], status;
+	int go[2], rep[2];
 	char b;
 
 	dqt_require_test_access();
@@ -661,9 +657,7 @@ ATF_TC_BODY(sharer_outlives_opener, tc)
 	/* The sharer alone holds these ends, so its death is end of file. */
 	(void)close(go[0]);
 	(void)close(rep[1]);
-	status = dqt_wait(&ch, &opener, sizeof(opener));
-	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
-	    "opener: status %#x", status);
+	dqt_collect(&ch, &opener, sizeof(opener));
 	ATF_REQUIRE_MSG(opener.done && opener.id != 0,
 	    "the opener has no queue");
 
@@ -780,59 +774,6 @@ qd_fork_probe(int fd, bool exec)
 	return (WEXITSTATUS(status));
 }
 
-static int
-qd_sendfd(int sock, int fd)
-{
-	union {
-		struct cmsghdr	hdr;
-		char		buf[CMSG_SPACE(sizeof(int))];
-	} ctl;
-	struct msghdr msg;
-	struct iovec iov;
-	char b = 'q';
-
-	memset(&msg, 0, sizeof(msg));
-	memset(&ctl, 0, sizeof(ctl));
-	iov.iov_base = &b;
-	iov.iov_len = 1;
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	msg.msg_control = ctl.buf;
-	msg.msg_controllen = sizeof(ctl.buf);
-	ctl.hdr.cmsg_len = CMSG_LEN(sizeof(int));
-	ctl.hdr.cmsg_level = SOL_SOCKET;
-	ctl.hdr.cmsg_type = SCM_RIGHTS;
-	memcpy(CMSG_DATA(&ctl.hdr), &fd, sizeof(fd));
-	return (sendmsg(sock, &msg, 0) == 1 ? 0 : errno);
-}
-
-static int
-qd_recvfd(int sock)
-{
-	union {
-		struct cmsghdr	hdr;
-		char		buf[CMSG_SPACE(sizeof(int))];
-	} ctl;
-	struct msghdr msg;
-	struct iovec iov;
-	char b;
-	int fd;
-
-	memset(&msg, 0, sizeof(msg));
-	iov.iov_base = &b;
-	iov.iov_len = 1;
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	msg.msg_control = ctl.buf;
-	msg.msg_controllen = sizeof(ctl.buf);
-	if (recvmsg(sock, &msg, MSG_DONTWAIT) != 1 ||
-	    msg.msg_controllen < CMSG_LEN(sizeof(int)) ||
-	    ctl.hdr.cmsg_level != SOL_SOCKET || ctl.hdr.cmsg_type != SCM_RIGHTS)
-		return (-1);
-	memcpy(&fd, CMSG_DATA(&ctl.hdr), sizeof(fd));
-	return (fd);
-}
-
 /*
  * The subject: opens the queue, fills the row, reports it on rep and holds
  * the descriptor until the test has tried pddupfd(2) and writes on cmd.
@@ -865,8 +806,8 @@ qd_subject(enum qd_kind kind, int rep, int cmd)
 		row.fd = -1;
 		goto out;
 	}
-	row.scm_errno = qd_sendfd(sp[0], fd);
-	if (row.scm_errno == 0 && (d = qd_recvfd(sp[1])) != -1) {
+	row.scm_errno = DQT_ERRNO_OF(dqt_send_fd(sp[0], fd));
+	if (row.scm_errno == 0 && (d = dqt_recv_fd_flags(sp[1], MSG_DONTWAIT)) != -1) {
 		row.scm_getfd = fcntl(d, F_GETFD);
 		row.scm_stats = qd_stats(d);
 		(void)close(d);
@@ -994,7 +935,7 @@ child_read16(void *arg, void *result)
 	struct rd_arg *a = arg;
 	struct rd_res *res = result;
 
-	SET(res->r, read(a->fd, res->buf, sizeof(res->buf)));
+	DQT_RR(res->r, read(a->fd, res->buf, sizeof(res->buf)));
 }
 
 enum { K_FORK, K_VFORK, K_PDFORK, K_RFFDG, K_SPAWN, K_N };
@@ -1253,7 +1194,7 @@ end_subject(enum end_how how, const struct dq_ident_file *ident)
 		(void)close(END_REP);
 		if (read(END_GO, &b, 1) != 1)
 			_exit(0);
-		SET(r, read(fd, buf, sizeof(buf)));
+		DQT_RR(r, read(fd, buf, sizeof(buf)));
 		(void)write(END_HREP, &r, sizeof(r));
 		_exit(0);
 	}
@@ -1533,12 +1474,12 @@ orphan_supervisor(enum orphan_how how)
 		memset(&res, 0, sizeof(res));
 		if (read(ORPHAN_GO, &b, 1) != 1)
 			_exit(0);
-		SET(res.stat, stat("/", &sb));
-		SET(res.open, open("/dev/null", O_RDONLY));
-		SET(res.sock, socket(PF_INET, SOCK_DGRAM, 0));
-		SET(res.pair, socketpair(PF_UNIX, SOCK_STREAM, 0, fds));
+		DQT_RR(res.stat, stat("/", &sb));
+		DQT_RR(res.open, open("/dev/null", O_RDONLY));
+		DQT_RR(res.sock, socket(PF_INET, SOCK_DGRAM, 0));
+		DQT_RR(res.pair, socketpair(PF_UNIX, SOCK_STREAM, 0, fds));
 		/* Not a name and not a socket: never consulted. */
-		SET(res.pipe, pipe(fds));
+		DQT_RR(res.pipe, pipe(fds));
 		pid = fork();
 		if (pid == 0)
 			_exit(stat("/", &sb) == -1 ? errno : 0);
@@ -1734,8 +1675,6 @@ peer_recv(int sock)
 	return (recv(sock, &b, 1, MSG_DONTWAIT) == -1 ? errno : 0);
 }
 
-#define	ERRNO_OF(call)	((call) == -1 ? errno : 0)
-
 static void
 child_transfer(void *arg __unused, void *result)
 {
@@ -1748,30 +1687,30 @@ child_transfer(void *arg __unused, void *result)
 		_exit(6);
 	if (socketpair(PF_UNIX, SOCK_STREAM, 0, sp) != 0)
 		_exit(7);
-	res->stream_send = qd_sendfd(sp[0], q);
+	res->stream_send = DQT_ERRNO_OF(dqt_send_fd(sp[0], q));
 	res->stream_recv = peer_recv(sp[1]);
 	(void)close(sp[0]);
 	(void)close(sp[1]);
 	if (socketpair(PF_UNIX, SOCK_DGRAM, 0, sp) != 0)
 		_exit(7);
-	res->dgram_send = qd_sendfd(sp[0], q);
+	res->dgram_send = DQT_ERRNO_OF(dqt_send_fd(sp[0], q));
 	res->dgram_recv = peer_recv(sp[1]);
 	(void)close(sp[0]);
 	(void)close(sp[1]);
 
 	/* The three states only tighten, and are as tight as they go. */
-	res->xfer_unlimited = ERRNO_OF(cap_xfer_limit(q, CAP_XFER_UNLIMITED));
-	res->xfer_once = ERRNO_OF(cap_xfer_limit(q, CAP_XFER_ONCE));
-	res->xfer_none = ERRNO_OF(cap_xfer_limit(q, CAP_XFER_NONE));
-	res->cloexec_unlocked = ERRNO_OF(cap_cloexec_limit(q,
+	res->xfer_unlimited = DQT_ERRNO_OF(cap_xfer_limit(q, CAP_XFER_UNLIMITED));
+	res->xfer_once = DQT_ERRNO_OF(cap_xfer_limit(q, CAP_XFER_ONCE));
+	res->xfer_none = DQT_ERRNO_OF(cap_xfer_limit(q, CAP_XFER_NONE));
+	res->cloexec_unlocked = DQT_ERRNO_OF(cap_cloexec_limit(q,
 	    CAP_CLOEXEC_UNLOCKED));
-	res->cloexec_once = ERRNO_OF(cap_cloexec_limit(q, CAP_CLOEXEC_ONCE));
-	res->cloexec_locked = ERRNO_OF(cap_cloexec_limit(q,
+	res->cloexec_once = DQT_ERRNO_OF(cap_cloexec_limit(q, CAP_CLOEXEC_ONCE));
+	res->cloexec_locked = DQT_ERRNO_OF(cap_cloexec_limit(q,
 	    CAP_CLOEXEC_LOCKED));
-	res->clofork_unlocked = ERRNO_OF(cap_clofork_limit(q,
+	res->clofork_unlocked = DQT_ERRNO_OF(cap_clofork_limit(q,
 	    CAP_CLOFORK_UNLOCKED));
-	res->clofork_once = ERRNO_OF(cap_clofork_limit(q, CAP_CLOFORK_ONCE));
-	res->clofork_locked = ERRNO_OF(cap_clofork_limit(q,
+	res->clofork_once = DQT_ERRNO_OF(cap_clofork_limit(q, CAP_CLOFORK_ONCE));
+	res->clofork_locked = DQT_ERRNO_OF(cap_clofork_limit(q,
 	    CAP_CLOFORK_LOCKED));
 	res->stats = qd_stats(q);
 }
@@ -1881,7 +1820,7 @@ copies_subject(int rep)
 		row[i].getfl = fcntl(row[i].fd, F_GETFL);
 		row[i].stats = qd_stats(row[i].fd);
 		row[i].fork_stats = qd_fork_probe(row[i].fd, false);
-		row[i].scm = qd_sendfd(sp[0], row[i].fd);
+		row[i].scm = DQT_ERRNO_OF(dqt_send_fd(sp[0], row[i].fd));
 		(void)fcntl(row[i].fd, F_SETFD, 0);
 	}
 	(void)fcntl(q, F_SETFD, 0);
@@ -1964,20 +1903,6 @@ ATF_TC_CLEANUP(dup_carries_states, tc)
 #define	AIO_UNSAFE	"vfs.aio.enable_unsafe"
 
 static void
-aio_unsafe_restore(void)
-{
-	FILE *f;
-	u_int old;
-
-	f = fopen("aio_unsafe.save", "r");
-	if (f == NULL)
-		return;
-	if (fscanf(f, "%u", &old) == 1)
-		dqt_sysctl_set_uint(AIO_UNSAFE, old);
-	(void)fclose(f);
-}
-
-static void
 child_second_open(void *arg __unused, void *result)
 {
 	struct ops_res *res = result;
@@ -2003,26 +1928,20 @@ ATF_TC_HEAD(owner_only_misc, tc)
 }
 ATF_TC_BODY(owner_only_misc, tc)
 {
+	int64_t deadline;
 	static char buf[4096];
 	struct dq_ident_file *ident;
 	struct dq_stats st;
 	struct ops_res second;
 	struct aiocb cb;
-	FILE *f;
-	u_int old;
-	int error, i, q;
+	int error, q;
 
 	helper_locate(tc);
 	q = dqt_open_queue();
 	ATF_REQUIRE_EQ(0, dq_get_stats(q, &st));
 
 	/* aio_read(2). */
-	ATF_REQUIRE(dqt_sysctl_get_uint(AIO_UNSAFE, &old));
-	f = fopen("aio_unsafe.save", "w");
-	ATF_REQUIRE(f != NULL);
-	fprintf(f, "%u\n", old);
-	ATF_REQUIRE_EQ(0, fclose(f));
-	dqt_sysctl_set_uint(AIO_UNSAFE, 0);
+	dqt_sysctl_save_set_uint(AIO_UNSAFE, 0);
 	memset(&cb, 0, sizeof(cb));
 	cb.aio_fildes = q;
 	cb.aio_buf = buf;
@@ -2038,17 +1957,16 @@ ATF_TC_BODY(owner_only_misc, tc)
 	cb.aio_nbytes = sizeof(buf);
 	ATF_REQUIRE_EQ_MSG(0, aio_read(&cb), "aio_read, unsafe on: %s",
 	    strerror(errno));
-	error = EINPROGRESS;
-	for (i = 0; i < 200 && error == EINPROGRESS; i++) {
+	deadline = dqt_now_ms() + 2 * DQT_WAIT_MS;
+	while ((error = aio_error(&cb)) == EINPROGRESS &&
+	    dqt_now_ms() < deadline)
 		dqt_msleep(50);
-		error = aio_error(&cb);
-	}
 	ATF_CHECK_EQ_MSG(EPERM, error, "aio_error: %d, want EPERM", error);
 	if (error != EINPROGRESS)
 		ATF_CHECK_EQ(-1, aio_return(&cb));
 	else
 		(void)aio_cancel(q, &cb);
-	aio_unsafe_restore();
+	(void)dqt_sysctl_restore(AIO_UNSAFE);
 
 	/* daemon(3). */
 	ident = calloc(1, sizeof(*ident));
@@ -2073,7 +1991,7 @@ ATF_TC_BODY(owner_only_misc, tc)
 ATF_TC_CLEANUP(owner_only_misc, tc)
 {
 
-	aio_unsafe_restore();
+	(void)dqt_sysctl_restore(AIO_UNSAFE);
 }
 
 /*
@@ -2170,6 +2088,7 @@ ATF_TC_HEAD(exit_close_storm, tc)
 }
 ATF_TC_BODY(exit_close_storm, tc)
 {
+	int64_t deadline;
 	char badbuf[64];
 	struct pollfd pfd;
 	ssize_t n;
@@ -2212,13 +2131,10 @@ ATF_TC_BODY(exit_close_storm, tc)
 	ATF_CHECK_EQ_MSG(0, nbad, "%d wrong answers", nbad);
 	ATF_CHECK_MSG(queues_settle(before), "kern.dq.queues is %u, was %u",
 	    queues_now(), before);
-	mem_now = -1;
-	for (i = 0; i < 100; i++) {
-		mem_now = dq_malloc_inuse();
-		if (mem_now == mem_before)
-			break;
+	deadline = dqt_now_ms() + DQT_WAIT_MS;
+	while ((mem_now = dq_malloc_inuse()) != mem_before &&
+	    dqt_now_ms() < deadline)
 		dqt_msleep(50);
-	}
 	ATF_CHECK_EQ_MSG(mem_before, mem_now, "dq malloc type: %ld in use, "
 	    "was %ld", mem_now, mem_before);
 }
@@ -2275,7 +2191,7 @@ ATF_TC_BODY(inspect_vs_close, tc)
 		holder = fork();
 		ATF_REQUIRE(holder != -1);
 		if (holder == 0) {
-			SET(r, read(fd, buf, sizeof(buf)));
+			DQT_RR(r, read(fd, buf, sizeof(buf)));
 			(void)write(hp[1], &r, sizeof(r));
 			_exit(0);
 		}
@@ -2304,9 +2220,6 @@ ATF_TC_BODY(inspect_vs_close, tc)
  * The Linux ABI (L8)
  */
 
-#define	LINUX_CC	"clang --target=x86_64-linux-gnu -fuse-ld=lld "	\
-	"-nostdlib -static -fno-stack-protector -fno-builtin -O2 -Wall "	\
-	"-Wextra -Werror -o dq_owner_linux %s/dq_owner_linux.c"
 #define	LX_NRES		10
 #define	LINUX_EPERM	1
 #define	LINUX_EAGAIN	11
@@ -2319,15 +2232,12 @@ run_owner_linux(const atf_tc_t *tc, long mode, long pid, long qfd, long plain,
 {
 	char *const argv[] = { __DECONST(char *, "dq_owner_linux"), NULL };
 	char *const envp[] = { NULL };
-	char cmd[PATH_MAX + 512];
 	long in[4] = { mode, pid, qfd, plain };
 	pid_t child;
 	int image, ip[2], op[2], status;
 
-	snprintf(cmd, sizeof(cmd), LINUX_CC,
-	    atf_tc_get_config_var(tc, "srcdir"));
-	/* Not a skip: without the compiler the row is not taken. */
-	ATF_REQUIRE_EQ_MSG(0, system(cmd), "%s", cmd);
+	/* Built with the tests (Makefile); missing, the row fails. */
+	dqt_copy_helper(tc, "dq_owner_linux", "dq_owner_linux");
 	image = open("dq_owner_linux", O_RDONLY);
 	ATF_REQUIRE(image != -1);
 	ATF_REQUIRE_EQ(0, pipe(ip));

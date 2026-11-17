@@ -56,20 +56,6 @@ struct rd_res {
 	uint64_t	 hash;		/* FNV-1a of all of them */
 };
 
-static uint64_t
-digest(const unsigned char *p, size_t len)
-{
-	uint64_t h;
-	size_t i;
-
-	h = 14695981039346656037ULL;
-	for (i = 0; i < len; i++) {
-		h ^= p[i];
-		h *= 1099511628211ULL;
-	}
-	return (h);
-}
-
 static void
 child_io(void *arg, void *result)
 {
@@ -85,7 +71,7 @@ child_io(void *arg, void *result)
 		r->r.rv = b == NULL ? -1 : pread(a->fd, b, a->len, a->off);
 		if (r->r.rv > 0) {
 			memcpy(r->buf, b, MIN((size_t)r->r.rv, sizeof(r->buf)));
-			r->hash = digest(b, (size_t)r->r.rv);
+			r->hash = dqt_digest(b, (size_t)r->r.rv);
 		}
 		free(b);
 	}
@@ -139,17 +125,19 @@ ATF_TC_BODY(second_read_cached, tc)
 	o = mint_memory(&c, oracle);
 	do_io(o->fd, 0, 0, DATA_LEN, 0, &r);
 	ATF_REQUIRE_EQ(DATA_LEN, r.r.rv);
-	ATF_CHECK(r.hash == digest(data, DATA_LEN));
-	reads = c.events[DQ_OP_READ];
+	ATF_CHECK(r.hash == dqt_digest(data, DATA_LEN));
+	reads = dqt_events(&c, DQ_OP_READ);
 	ATF_CHECK(reads >= 1);
-	pthread_mutex_lock(&c.mtx);
+	dqt_lock(&c);
 	for (i = 0; i < c.nrd; i++)
 		ATF_CHECK_EQ(0, c.rd[i].offset % 4096);
-	pthread_mutex_unlock(&c.mtx);
+	dqt_unlock(&c);
 	do_io(o->fd, 0, 0, DATA_LEN, 0, &r);
 	ATF_REQUIRE_EQ(DATA_LEN, r.r.rv);
-	ATF_CHECK(r.hash == digest(data, DATA_LEN));
+	ATF_CHECK(r.hash == dqt_digest(data, DATA_LEN));
+	dqt_lock(&c);
 	ATF_CHECK_EQ(reads, c.events[DQ_OP_READ]);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -176,19 +164,23 @@ ATF_TC_BODY(invalidate_reposts, tc)
 	o = mint_memory(&c, oracle);
 	do_io(o->fd, 0, 0, DATA_LEN, 0, &r);
 	ATF_REQUIRE_EQ(DATA_LEN, r.r.rv);
-	reads = c.events[DQ_OP_READ];
-	pthread_mutex_lock(&c.mtx);
+	reads = dqt_events(&c, DQ_OP_READ);
+	dqt_lock(&c);
 	data[4100] = (unsigned char)~data[4100];
-	pthread_mutex_unlock(&c.mtx);
+	dqt_unlock(&c);
 	ATF_REQUIRE_EQ(0, dq_push_invalidate(c.q, o->id, 4096, 4096));
 	do_io(o->fd, 0, 4100, 1, 0, &r);
 	ATF_REQUIRE_EQ(1, r.r.rv);
 	ATF_CHECK_EQ(data[4100], r.buf[0]);
+	dqt_lock(&c);
 	ATF_CHECK(c.events[DQ_OP_READ] > reads);
+	dqt_unlock(&c);
 	/* The pages outside the range stayed. */
-	reads = c.events[DQ_OP_READ];
+	reads = dqt_events(&c, DQ_OP_READ);
 	do_io(o->fd, 0, 0, 100, 0, &r);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(reads, c.events[DQ_OP_READ]);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -210,20 +202,17 @@ ATF_TC_BODY(write_after_acceptance, tc)
 	struct rd_arg a;
 	struct rd_res r;
 	unsigned reads;
-	int backing, status;
+	int backing;
 
 	dqt_fill(data, sizeof(data), 3);
-	backing = dqt_make_oracle("backing", data, sizeof(data), path,
+	backing = dqt_make_rw("backing", data, sizeof(data), path,
 	    sizeof(path));
-	(void)close(backing);
-	backing = open(path, O_RDWR);
-	ATF_REQUIRE(backing != -1);
 	dqt_init(&c);
 	policy_data(&pol, true);
 	o = dqt_mint_backing(&c, backing, path, &pol, DQ_MINT_F_WRITE);
 	do_io(o->fd, 0, 0, DATA_LEN, 0, &r);
 	ATF_REQUIRE_EQ(DATA_LEN, r.r.rv);
-	reads = c.events[DQ_OP_READ];
+	reads = dqt_events(&c, DQ_OP_READ);
 
 	dqt_hold(&c, true);
 	a.fd = o->fd;
@@ -233,21 +222,26 @@ ATF_TC_BODY(write_after_acceptance, tc)
 	a.wbyte = (unsigned char)~data[10];
 	dqt_spawn(&ch, child_io, &a);
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	dqt_lock(&c);
 	ATF_REQUIRE_EQ(DQ_OP_WRITE, c.held[0].op);
 	ATF_REQUIRE_EQ(0, dq_reply(c.q, c.held[0].id, EIO, NULL, 0));
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_unlock(&c);
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(EIO, r.r.err);
 	dqt_hold(&c, false);
 	do_io(o->fd, 0, 10, 1, 0, &r);
 	ATF_CHECK_EQ(data[10], r.buf[0]);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(reads, c.events[DQ_OP_READ]);
+	dqt_unlock(&c);
 
 	do_io(o->fd, 1, 10, 1, (unsigned char)~data[10], &r);
 	ATF_REQUIRE_EQ(1, r.r.rv);
 	do_io(o->fd, 0, 10, 1, 0, &r);
 	ATF_CHECK_EQ((unsigned char)~data[10], r.buf[0]);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(reads, c.events[DQ_OP_READ]);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(backing);
 }
@@ -285,20 +279,19 @@ ATF_TC_BODY(fsync_flushes_first, tc)
 	int backing;
 
 	dqt_fill(data, sizeof(data), 4);
-	backing = dqt_make_oracle("backing", data, sizeof(data), path,
+	backing = dqt_make_rw("backing", data, sizeof(data), path,
 	    sizeof(path));
-	(void)close(backing);
-	backing = open(path, O_RDWR);
-	ATF_REQUIRE(backing != -1);
 	dqt_init(&c);
 	policy_data(&pol, true);
 	o = dqt_mint_backing(&c, backing, path, &pol, DQ_MINT_F_WRITE);
 	memset(&r, 0, sizeof(r));
 	dqt_run_child(child_map_fsync, &o->fd, &r, sizeof(r));
 	ATF_CHECK_EQ_MSG(0, r.rv, "fsync: %s", strerror(r.err));
+	dqt_lock(&c);
 	ATF_REQUIRE(c.events[DQ_OP_WRITE_ASYNC] >= 1);
 	ATF_REQUIRE_EQ(1, c.events[DQ_OP_FSYNC]);
 	ATF_CHECK(c.op_seq[DQ_OP_WRITE_ASYNC] < c.op_seq[DQ_OP_FSYNC]);
+	dqt_unlock(&c);
 	ATF_REQUIRE_EQ(1, pread(backing, &got, 1, 4096 + 3));
 	ATF_CHECK_EQ(0xc3, got);
 	dqt_fini(&c);
@@ -333,15 +326,15 @@ ATF_TC_BODY(shrink_trims_cache, tc)
 	ATF_REQUIRE(id != NULL);
 	*id = o->ident;
 	id->di_size = 4096 + 10;
-	pthread_mutex_lock(&c.mtx);
+	dqt_lock(&c);
 	o->len = 4096 + 10;
 	o->ident = *id;
-	pthread_mutex_unlock(&c.mtx);
+	dqt_unlock(&c);
 	ATF_REQUIRE_EQ(0, dq_set_ident(c.q, o->id, id));
 	free(id);
 	do_io(o->fd, 0, 0, DATA_LEN, 0, &r);
 	ATF_CHECK_EQ(4096 + 10, r.r.rv);
-	ATF_CHECK(r.hash == digest(data, 4096 + 10));
+	ATF_CHECK(r.hash == dqt_digest(data, 4096 + 10));
 	ATF_REQUIRE_EQ(0, fstat(o->fd, &sb));
 	ATF_CHECK_EQ(4096 + 10, sb.st_size);
 	dqt_fini(&c);

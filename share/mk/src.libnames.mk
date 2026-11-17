@@ -56,6 +56,7 @@ _INTERNALLIBS=	\
 		cron \
 		der \
 		diff \
+		dqtest \
 		dtotel \
 		elftc \
 		fdt \
@@ -446,6 +447,7 @@ _DP_fetch=	md
 .if ${MK_OPENSSH} != "no"
 _DP_fido2+=	cbor crypto z
 .endif
+_DP_dqtest=	dq pthread util atf_c
 _DP_fifolog=	z
 _DP_formw=	ncursesw
 _DP_geom=	bsdxml sbuf
@@ -783,6 +785,9 @@ LIBTELNET?=	${LIBTELNETDIR}/libtelnet${PIE_SUFFIX}.a
 
 LIBCRONDIR=	${_LIB_OBJTOP}/usr.sbin/cron/lib
 LIBCRON?=	${LIBCRONDIR}/libcron${PIE_SUFFIX}.a
+
+LIBDQTESTDIR=	${_LIB_OBJTOP}/tests/sys/dq/libdqtest
+LIBDQTEST?=	${LIBDQTESTDIR}/libdqtest${PIE_SUFFIX}.a
 
 LIBDERDIR=	${_LIB_OBJTOP}/lib/libder
 LIBDER?=	${LIBDERDIR}/libder${PIE_SUFFIX}.a

@@ -32,6 +32,8 @@
 #   include sys/posixshm: its largepage_* cases need a free aligned 1 GB
 #   range, and an 8 GB guest has only four, which incidental cached pages
 #   can occupy, so ENOMEM there is expected), PARALLELISM (kyua, default 1),
+#   with sys/dq (or a program under it) in the suites, imgact_binmisc and
+#   dtraceall are preloaded for them,
 #   ROOT_FS (ufs, the default, or zfs: a ZFS root pool for the suites that
 #   require one, such as the Linux ptrace ones),
 #   GATE_TIMEOUT (guest seconds to wait for provider convergence, 600),
@@ -172,6 +174,18 @@ fi
 case " $suites " in
 *" sys/posixshm"*) mem_default=12288 ;;
 *) mem_default=8192 ;;
+esac
+# The modules the dq suites need that nothing else preloads: the plane
+# refuses a late kldload, and those suites fail (never skip) without
+# them.  imgact_binmisc for dq_resolve_test's binmisc row, dtraceall for
+# dq_dtrace_test and dq_socket_test's probes.  LOADER_EXTRA still carries
+# the Linux modules, mac_test_hooks and the rest of the recipe (DQ chapter
+# of the book, section 17); a module named twice is loaded once.
+dq_loader=
+case " $suites " in
+*" sys/dq "*|*" sys/dq/"*)
+	dq_loader='imgact_binmisc_load="YES"
+dtraceall_load="YES"' ;;
 esac
 cpus=${CPUS:-4} mem=${MEM_MB:-$mem_default} par=${PARALLELISM:-1} gate=${GATE_TIMEOUT:-600}
 root_fs=${ROOT_FS:-ufs}
@@ -318,6 +332,7 @@ fi
 if [ "$root_fs" = zfs ]; then
 	printf 'zfs_load="YES"\nvfs.root.mountfrom="zfs:kyuaroot"\n' >> "$x/loader.conf"
 fi
+[ -z "$dq_loader" ] || printf '%s\n' "$dq_loader" >> "$x/loader.conf"
 [ -z "${LOADER_EXTRA:-}" ] || printf '%s\n' "$LOADER_EXTRA" >> "$x/loader.conf"
 if [ -n "$extra_script" ]; then cp "$extra_script" "$x/extra.sh"; else : > "$x/extra.sh"; fi
 cat > "$x/fstab" <<'EOF'

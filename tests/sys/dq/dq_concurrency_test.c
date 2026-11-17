@@ -37,7 +37,6 @@ static unsigned char data[DATA_LEN];
 static char oracle_path[DQT_PATH_MAX];
 
 static const char inflight_sysctl[] = "kern.dq.max_inflight_per_object";
-static const char inflight_saved[] = "max_inflight_per_object.saved";
 
 /* Stats predicates for dqt_wait_stats: no fixed sleeps on a loaded guest. */
 static bool
@@ -52,21 +51,6 @@ inflight_is_zero(const struct dq_stats *st, uintptr_t unused __unused)
 {
 
 	return (st->ds_inflight == 0 && st->ds_queue_current == 0);
-}
-
-static uint64_t
-digest(const void *p, size_t len)
-{
-	const unsigned char *b = p;
-	uint64_t h;
-	size_t i;
-
-	h = 14695981039346656037ULL;
-	for (i = 0; i < len; i++) {
-		h ^= b[i];
-		h *= 1099511628211ULL;
-	}
-	return (h);
 }
 
 struct thr_arg {
@@ -91,7 +75,7 @@ pread_thread(void *arg)
 		t->rv = pread(t->fd, buf, t->len, t->offset);
 		t->err = t->rv == -1 ? errno : 0;
 		if (t->rv > 0)
-			t->hash = digest(buf, (size_t)t->rv);
+			t->hash = dqt_digest(buf, (size_t)t->rv);
 	}
 	free(buf);
 	return (NULL);
@@ -135,10 +119,17 @@ child_threads(void *arg, void *result)
 	}
 }
 
+/* Rounds of a race before it is reported as not exercised. */
+#define	RACE_ROUNDS_MAX	200
+/* The bounds of reply_racing_signal's adaptive timer. */
+#define	RACE_TIMER_MIN_US	100
+#define	RACE_TIMER_MAX_US	100000
+
 struct one_read_arg {
 	int		 fd;
 	size_t		 len;
-	int		 alarm_us;	/* 0: no signal */
+	int		 alarm_us;	/* 0: no timer */
+	bool		 catch_alrm;	/* catch SIGALRM, no SA_RESTART */
 };
 
 struct one_read_res {
@@ -165,10 +156,12 @@ child_one_read(void *arg, void *result)
 	struct itimerval it;
 	unsigned char buf[4096];
 
-	if (a->alarm_us != 0) {
+	if (a->alarm_us != 0 || a->catch_alrm) {
 		memset(&sa, 0, sizeof(sa));
 		sa.sa_handler = on_signal;
 		sigaction(SIGALRM, &sa, NULL);
+	}
+	if (a->alarm_us != 0) {
 		memset(&it, 0, sizeof(it));
 		it.it_value.tv_sec = a->alarm_us / 1000000;
 		it.it_value.tv_usec = a->alarm_us % 1000000;
@@ -211,13 +204,13 @@ ATF_TC_BODY(threads_replies_reversed, tc)
 	struct threads_arg a;
 	struct threads_res r;
 	struct dqt_child ch;
-	int i, oracle, status;
+	int i, oracle;
 
 	dqt_fill(data, sizeof(data), 61);
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
 	    sizeof(oracle_path));
 	dqt_init(&c);
-	c.order = DQT_ORDER_REVERSE;
+	dqt_set_order(&c, DQT_ORDER_REVERSE);
 	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
 
 	/* Pause so the eight events pile up into one batch. */
@@ -228,16 +221,17 @@ ATF_TC_BODY(threads_replies_reversed, tc)
 	dqt_spawn(&ch, child_threads, &a);
 	ATF_CHECK(dqt_wait_stats(&c, posted_or_dropped_is, NTHREADS, DQT_WAIT_MS));
 	dqt_resume(&c);
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_collect(&ch, &r, sizeof(r));
 	for (i = 0; i < NTHREADS; i++) {
 		ATF_CHECK_EQ_MSG(4096, r.rv[i], "thread %d: %ld (errno %d)", i,
 		    r.rv[i], r.err[i]);
-		ATF_CHECK_EQ_MSG(digest(data + i * (DATA_LEN / NTHREADS), 4096),
+		ATF_CHECK_EQ_MSG(dqt_digest(data + i * (DATA_LEN / NTHREADS), 4096),
 		    r.hash[i], "thread %d got the wrong bytes", i);
 	}
+	dqt_lock(&c);
 	ATF_CHECK_EQ(NTHREADS, c.events[DQ_OP_READ]);
 	ATF_CHECK_EQ(0, c.reply_failures);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -257,6 +251,7 @@ ATF_TC_BODY(sigalrm_interrupt, tc)
 	struct one_read_arg a;
 	struct one_read_res r;
 	struct dq_stats st;
+	struct dqt_child ch;
 	int oracle;
 
 	dqt_fill(data, sizeof(data), 62);
@@ -266,21 +261,35 @@ ATF_TC_BODY(sigalrm_interrupt, tc)
 	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
 	dqt_hold(&c, true);
 
+	/*
+	 * The signal is sent once the controller holds the READ: the read
+	 * is then delivered and waiting, whatever the machine's load (a
+	 * timer could fire before the delivery and test nothing).
+	 */
+	memset(&a, 0, sizeof(a));
 	a.fd = o->fd;
 	a.len = 100;
-	a.alarm_us = 200000;
-	dqt_run_child(child_one_read, &a, &r, sizeof(r));
+	a.catch_alrm = true;
+	dqt_spawn(&ch, child_one_read, &a);
+	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	ATF_REQUIRE(dqt_wait_wmesg(ch.pid, DQT_WMESG_REPLY, DQT_WAIT_MS));
+	ATF_REQUIRE_EQ(0, kill(ch.pid, SIGALRM));
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.rr.rv);
 	ATF_CHECK_EQ(EINTR, r.rr.err);
 	ATF_CHECK_EQ(1, r.signals);
 	/* The controller had read it, so the abandonment is announced. */
+	dqt_lock(&c);
 	ATF_REQUIRE_EQ(1, c.nheld);
+	dqt_unlock(&c);
 	ATF_REQUIRE(dqt_wait_interrupts(&c, 1, DQT_WAIT_MS));
+	dqt_lock(&c);
 	ATF_CHECK_EQ(c.held[0].id, c.interrupted[0]);
 	ATF_CHECK_EQ(1, c.events[DQ_OP_INTERRUPT]);
+	dqt_unlock(&c);
 	/* INTERRUPT needs no answer: de_id 0 is never in flight. */
 	errno = 0;
-	ATF_CHECK_EQ(-1, dq_reply(c.q, c.held[0].id, 0, data, 100));
+	ATF_CHECK_EQ(-1, dq_reply(c.q, dqt_held_id(&c, 0), 0, data, 100));
 	ATF_CHECK_EQ(ESRCH, errno);
 	dqt_stats(&c, &st);
 	ATF_CHECK_EQ(1, st.ds_interrupts);
@@ -305,7 +314,7 @@ ATF_TC_BODY(reply_racing_signal, tc)
 	struct one_read_arg a;
 	struct one_read_res r;
 	struct dq_stats st;
-	int i, oracle, ndata, neintr;
+	int hi, i, lo, oracle, ndata, neintr, us;
 
 	dqt_fill(data, sizeof(data), 63);
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
@@ -313,20 +322,54 @@ ATF_TC_BODY(reply_racing_signal, tc)
 	dqt_init(&c);
 	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
 
+	/*
+	 * The timer is steered to where the reply lands, however fast or
+	 * loaded the guest: lo is the longest timer seen to fire first
+	 * (EINTR), hi the shortest seen to lose (data).  Without both, the
+	 * timer doubles after an EINTR and halves after data; with both, it
+	 * is the midpoint, kept from collapsing onto either bound, so the
+	 * rounds go both ways.  At least 20 rounds, and more until both
+	 * outcomes have been seen.  The reply leaves 2 ms after the READ is
+	 * read, which keeps the window above the timer granularity.
+	 */
+	dqt_set_reply_delay(&c, 2);
 	ndata = neintr = 0;
-	for (i = 0; i < 20; i++) {
+	lo = 0;
+	hi = 0;
+	us = 2000;
+	memset(&a, 0, sizeof(a));
+	for (i = 0; i < RACE_ROUNDS_MAX && (i < 20 || ndata == 0 ||
+	    neintr == 0); i++) {
 		a.fd = o->fd;
 		a.len = 100;
-		a.alarm_us = 1000 + 500 * (i % 8);
+		a.alarm_us = us;
 		dqt_run_child(child_one_read, &a, &r, sizeof(r));
-		if (r.rr.rv == 100)
+		if (r.rr.rv == 100) {
 			ndata++;
-		else {
+			if (hi == 0 || us < hi)
+				hi = us;
+		} else {
 			ATF_CHECK_EQ(-1, r.rr.rv);
 			ATF_CHECK_EQ(EINTR, r.rr.err);
 			neintr++;
+			if (us > lo)
+				lo = us;
 		}
+		if (hi == 0)
+			us = MIN(us * 2, RACE_TIMER_MAX_US);
+		else if (lo == 0)
+			us = MAX(us / 2, RACE_TIMER_MIN_US);
+		else if (hi > lo)
+			/* Alternate just below and just above the midpoint. */
+			us = (lo + hi) / 2 + ((i & 1) != 0 ? 1 : -1) *
+			    MAX((hi - lo) / 4, 100);
+		else
+			/* The bounds crossed (noise): widen around them. */
+			us = (i & 1) != 0 ? lo + 500 : MAX(hi - 500,
+			    RACE_TIMER_MIN_US);
 	}
+	printf("%d rounds: %d data, %d EINTR (EINTR up to %d us, data from "
+	    "%d us)\n", i, ndata, neintr, lo, hi);
 	/* Every record has reached the queue once nothing is in flight. */
 	ATF_CHECK(dqt_wait_stats(&c, inflight_is_zero, 0, DQT_WAIT_MS));
 	dqt_stats(&c, &st);
@@ -338,6 +381,7 @@ ATF_TC_BODY(reply_racing_signal, tc)
 	 * while the waiter withdrew it PENDING).  An EINTR before any copy is
 	 * never seen by the controller.
 	 */
+	dqt_lock(&c);
 	ATF_CHECK_EQ_MSG(ndata + c.reply_failures, c.events[DQ_OP_READ],
 	    "READ %u data %d late %u", c.events[DQ_OP_READ], ndata,
 	    c.reply_failures);
@@ -347,7 +391,14 @@ ATF_TC_BODY(reply_racing_signal, tc)
 	ATF_CHECK_EQ(c.reply_failures, st.ds_late_replies);
 	if (c.reply_failures != 0)
 		ATF_CHECK_EQ(ESRCH, c.last_reply_errno);
+	dqt_unlock(&c);
 	ATF_CHECK_EQ(0, st.ds_inflight);
+	/*
+	 * A race seen going one way only has tested one side of it.  This
+	 * fails rather than skips: atf_tc_skip would hide the checks above.
+	 */
+	ATF_CHECK_MSG(ndata != 0 && neintr != 0, "race not exercised: %d "
+	    "data, %d EINTR in %d rounds", ndata, neintr, i);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -367,7 +418,7 @@ ATF_TC_BODY(depth_exhausted, tc)
 	struct one_read_res r[3], r4;
 	struct dqt_child ch[3];
 	struct dq_stats st;
-	int i, neio, nok, oracle, status;
+	int i, neio, nok, oracle;
 
 	dqt_fill(data, sizeof(data), 64);
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
@@ -394,14 +445,15 @@ ATF_TC_BODY(depth_exhausted, tc)
 	(uintmax_t)st.ds_events_dropped, (uintmax_t)st.ds_events_posted, \
 	(uintmax_t)st.ds_events_delivered, (uintmax_t)st.ds_inflight, \
 	(uintmax_t)st.ds_queue_highwater, c.reads, c.paused_reads, c.records
+	dqt_lock(&c);
 	ATF_CHECK_EQ_MSG(2, st.ds_queue_current, DEPTH_FMT, DEPTH_ARGS);
 	ATF_CHECK_EQ_MSG(1, st.ds_events_dropped, DEPTH_FMT, DEPTH_ARGS);
 	ATF_CHECK_EQ_MSG(2, st.ds_events_posted, DEPTH_FMT, DEPTH_ARGS);
+	dqt_unlock(&c);
 	dqt_resume(&c);
 	neio = nok = 0;
 	for (i = 0; i < 3; i++) {
-		status = dqt_wait(&ch[i], &r[i], sizeof(r[i]));
-		ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+		dqt_collect(&ch[i], &r[i], sizeof(r[i]));
 		if (r[i].rr.rv == 100)
 			nok++;
 		else if (r[i].rr.rv == -1 && r[i].rr.err == EIO)
@@ -414,15 +466,19 @@ ATF_TC_BODY(depth_exhausted, tc)
 	/* One more event makes the gap visible wherever the drop fell. */
 	dqt_run_child(child_one_pread, &a, &r4, sizeof(r4));
 	ATF_CHECK_EQ_MSG(100, r4.rr.rv, "rv %ld errno %d", r4.rr.rv, r4.rr.err);
+	dqt_lock(&c);
 	ATF_CHECK_EQ_MSG(3, c.nseqs, "nseqs %d last_seq %ju", c.nseqs,
 	    (uintmax_t)c.last_seq);
 	ATF_CHECK_EQ_MSG(4, c.last_seq, "nseqs %d last_seq %ju", c.nseqs,
 	    (uintmax_t)c.last_seq);
 	ATF_CHECK_EQ_MSG(1, c.last_seq - (uint64_t)c.nseqs, "nseqs %d last_seq %ju",
 	    c.nseqs, (uintmax_t)c.last_seq);
+	dqt_unlock(&c);
 	dqt_stats(&c, &st);
+	dqt_lock(&c);
 	ATF_CHECK_EQ_MSG(1, st.ds_events_dropped, DEPTH_FMT, DEPTH_ARGS);
 	ATF_CHECK_EQ_MSG(2, st.ds_queue_highwater, DEPTH_FMT, DEPTH_ARGS);
+	dqt_unlock(&c);
 #undef DEPTH_FMT
 #undef DEPTH_ARGS
 	dqt_fini(&c);
@@ -474,9 +530,11 @@ ATF_TC_BODY(edeadlk_controller, tc)
 	d = dup(o->fd);
 	ATF_REQUIRE(d != -1);
 	ATF_CHECK_EQ(0, close(d));
-	/* Nothing reached the queue. */
-	dqt_msleep(100);
+	/* Nothing reached the queue: everything before the fence is seen. */
+	dqt_fence(&c);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(0, c.records);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -562,16 +620,10 @@ ATF_TC_BODY(inflight_bound, tc)
 	struct one_read_res r[3];
 	struct dqt_child ch[3];
 	struct dq_stats st;
-	FILE *fp;
-	u_int old;
-	int i, oracle, status;
+	int64_t deadline;
+	int i, n, oracle;
 
-	ATF_REQUIRE(dqt_sysctl_get_uint(inflight_sysctl, &old));
-	fp = fopen(inflight_saved, "w");
-	ATF_REQUIRE(fp != NULL);
-	fprintf(fp, "%u\n", old);
-	fclose(fp);
-	dqt_sysctl_set_uint(inflight_sysctl, 2);
+	dqt_sysctl_save_set_uint(inflight_sysctl, 2);
 
 	dqt_fill(data, sizeof(data), 67);
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
@@ -587,10 +639,19 @@ ATF_TC_BODY(inflight_bound, tc)
 		dqt_spawn(&ch[i], child_one_pread, &a);
 	/*
 	 * Two posted; the third sleeps in dq_event_post_wait ("dqinfl").  Wait
-	 * for the two, then give the third time to have reached its sleep.
+	 * for the two, then for the third to sleep there.
 	 */
 	ATF_CHECK(dqt_wait_stats(&c, posted_or_dropped_is, 2, DQT_WAIT_MS));
-	dqt_msleep(200);
+	deadline = dqt_now_ms() + DQT_WAIT_MS;
+	for (;;) {
+		for (i = n = 0; i < 3; i++)
+			if (dqt_wait_wmesg(ch[i].pid, DQT_WMESG_INFLIGHT, 0))
+				n++;
+		if (n != 0 || dqt_now_ms() >= deadline)
+			break;
+		dqt_msleep(10);
+	}
+	ATF_REQUIRE_EQ_MSG(1, n, "%d requesters wait for a slot, not 1", n);
 	dqt_stats(&c, &st);
 #define	INFL_FMT "current %ju posted %ju dropped %ju delivered %ju " \
 	"inflight %ju; harness reads %u paused_reads %u records %u"
@@ -598,35 +659,30 @@ ATF_TC_BODY(inflight_bound, tc)
 	(uintmax_t)st.ds_queue_current, (uintmax_t)st.ds_events_posted, \
 	(uintmax_t)st.ds_events_dropped, (uintmax_t)st.ds_events_delivered, \
 	(uintmax_t)st.ds_inflight, c.reads, c.paused_reads, c.records
+	dqt_lock(&c);
 	ATF_CHECK_EQ_MSG(2, st.ds_queue_current, INFL_FMT, INFL_ARGS);
 	ATF_CHECK_EQ_MSG(2, st.ds_events_posted, INFL_FMT, INFL_ARGS);
 	ATF_CHECK_EQ_MSG(0, st.ds_events_dropped, INFL_FMT, INFL_ARGS);
+	dqt_unlock(&c);
 #undef INFL_FMT
 #undef INFL_ARGS
 	dqt_resume(&c);
 	for (i = 0; i < 3; i++) {
-		status = dqt_wait(&ch[i], &r[i], sizeof(r[i]));
-		ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+		dqt_collect(&ch[i], &r[i], sizeof(r[i]));
 		ATF_CHECK_EQ_MSG(100, r[i].rr.rv, "child %d: %ld errno %d", i,
 		    r[i].rr.rv, r[i].rr.err);
 	}
+	dqt_lock(&c);
 	ATF_CHECK_EQ(3, c.events[DQ_OP_READ]);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
-	dqt_sysctl_set_uint(inflight_sysctl, old);
+	ATF_REQUIRE(dqt_sysctl_restore(inflight_sysctl));
 }
 ATF_TC_CLEANUP(inflight_bound, tc)
 {
-	FILE *fp;
-	u_int old;
 
-	fp = fopen(inflight_saved, "r");
-	if (fp == NULL)
-		return;
-	if (fscanf(fp, "%u", &old) == 1)
-		(void)sysctlbyname(inflight_sysctl, NULL, NULL, &old,
-		    sizeof(old));
-	fclose(fp);
+	(void)dqt_sysctl_restore(inflight_sysctl);
 }
 
 static int
@@ -666,10 +722,13 @@ ATF_TC_BODY(two_readers, tc)
 	dqt_run_child(child_threads, &a, &r, sizeof(r));
 	for (i = 0; i < NTHREADS; i++) {
 		ATF_CHECK_EQ(4096, r.rv[i]);
-		ATF_CHECK_EQ(digest(data + i * (DATA_LEN / NTHREADS), 4096),
+		ATF_CHECK_EQ(dqt_digest(data + i * (DATA_LEN / NTHREADS), 4096),
 		    r.hash[i]);
 	}
 	dqt_stop(&c);
+	dqt_lock(&c);
+	printf("batches: reader 0 %u, reader 1 %u\n", c.thr_batches[0],
+	    c.thr_batches[1]);
 	ATF_CHECK_EQ(NTHREADS * 8, c.events[DQ_OP_READ]);
 	ATF_REQUIRE_EQ(NTHREADS * 8, c.nseqs);
 	qsort(c.seqs, (size_t)c.nseqs, sizeof(c.seqs[0]), cmp_u64);
@@ -677,10 +736,17 @@ ATF_TC_BODY(two_readers, tc)
 		ATF_CHECK_EQ_MSG((uint64_t)i + 1, c.seqs[i],
 		    "seq %d is %ju: a duplicate or a gap", i,
 		    (uintmax_t)c.seqs[i]);
+	dqt_unlock(&c);
 	dqt_stats(&c, &st);
 	ATF_CHECK_EQ(0, st.ds_events_dropped);
 	ATF_CHECK_EQ(NTHREADS * 8, st.ds_events_delivered);
 	ATF_CHECK_EQ(NTHREADS * 8, st.ds_replies);
+	/* One reader that read every batch has shared nothing. */
+	dqt_lock(&c);
+	ATF_CHECK_MSG(c.thr_batches[0] != 0 && c.thr_batches[1] != 0,
+	    "race not exercised: reader 0 read %u batches, reader 1 %u",
+	    c.thr_batches[0], c.thr_batches[1]);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -707,7 +773,7 @@ ATF_TC_BODY(efault_mid_batch, tc)
 	size_t pagesize;
 	ssize_t got;
 	uint64_t ids[2], seqs[2];
-	int i, oracle, status, waited;
+	int i, oracle, waited;
 
 	pagesize = (size_t)getpagesize();
 	dqt_fill(data, sizeof(data), 69);
@@ -779,8 +845,7 @@ ATF_TC_BODY(efault_mid_batch, tc)
 
 	ATF_CHECK_EQ(0, dq_reply(c.q, ids[1], 0, data, 100));
 	for (i = 0; i < 2; i++) {
-		status = dqt_wait(&ch[i], &r[i], sizeof(r[i]));
-		ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+		dqt_collect(&ch[i], &r[i], sizeof(r[i]));
 		ATF_CHECK_EQ(100, r[i].rr.rv);
 	}
 	(void)munmap(map, 2 * pagesize);

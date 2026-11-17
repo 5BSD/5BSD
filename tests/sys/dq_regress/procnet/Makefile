@@ -54,13 +54,18 @@ MAN.procnet_boundary_helper=
 BINDIR.procnet_boundary_helper=	${TESTSDIR}
 LIBADD.procnet_boundary_test+=	pthread
 LIBADD.procnet_ipc_test+=	rt
-.PATH:		${SRCTOP}/tests/sys/dq
-SRCS.procnet_outside_test=	procnet_outside_test.c dq_test.c
+# The dq test support library's controller harness and queue access, as
+# sources: tests/sys/dq/libdqtest's archive is built in another directory
+# that is not ordered before this one.
+.PATH:		${SRCTOP}/tests/sys/dq/libdqtest
+SRCS.procnet_outside_test=	procnet_outside_test.c dqt_access.c \
+				dqt_harness.c
 CFLAGS.procnet_outside_test.c+=	-I${SRCTOP}/sys -I${SRCTOP}/lib/libdq \
-		-I${SRCTOP}/tests/sys/dq \
+		-I${SRCTOP}/tests/sys/dq/libdqtest \
 		-I${SRCTOP}/sys/dev/mac_capability \
 		-I${SRCTOP}/tests/sys/mac_capability
-CFLAGS.dq_test.c+=	-I${SRCTOP}/sys -I${SRCTOP}/lib/libdq
+CFLAGS.dqt_access.c+=	-I${SRCTOP}/sys -I${SRCTOP}/lib/libdq
+CFLAGS.dqt_harness.c+=	-I${SRCTOP}/sys -I${SRCTOP}/lib/libdq
 LIBADD.procnet_outside_test+=	dq pthread util
 
 # The Linux-ABI half: a freestanding static Linux program (no Linux libc)

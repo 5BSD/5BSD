@@ -1610,8 +1610,15 @@ Every "yes" is a test in section 17; every "no" is in `dq(4)`.
 Tier: VM, capability plane on (`tools/build/fuchsia/vm-provider.sh`),
 `GENERIC` (INVARIANTS+WITNESS) during development, `GENERIC-NODEBUG` for
 the final run of each stage; `tests/sys/dq/` (kernel) and
-`lib/libdq/tests/` (controller library), ATF C; `is_exclusive` where
-tunables change; every test skips when `/dev/dq` is absent. Oracle method:
+`lib/libdq/tests/` (controller library), ATF C, on the support library
+`tests/sys/dq/libdqtest`; `is_exclusive` where tunables change, and every
+global setting a case changes is saved and restored by its cleanup. One
+skip policy: a skip in a plane-on run is not a pass, so a missing device,
+module or program fails; the only skips are by architecture, a race a
+one-CPU machine cannot run, and a case deferred by name to another VM tier
+(`DEFERRED_DEVICE_TIER`, which the plane-on test tier never takes). A test that asserts something did not happen
+proves it with a fence (`dqt_fence`, `dqt_close_fence`), not a sleep, and a
+race case fails when the race was not exercised. Oracle method:
 the same operation on a real object and a served object presenting its
 identity, results compared field by field (`struct stat`, `struct statfs`,
 `kinfo_file`, `kinfo_vmentry`, `pathconf`, errno, `revents`, `kevent`,
@@ -1619,7 +1626,8 @@ bytes). WITNESS must stay clean throughout.
 
 For a run with nothing skipped the runner is given three things besides
 the suites. `LOADER_EXTRA` preloads `mac_test_hooks` (with `linux64`,
-`linprocfs`, `linsysfs`, `fdescfs`, `mqueuefs` and `dtraceall`): the plane
+`linprocfs`, `linsysfs`, `fdescfs`, `mqueuefs`, `dtraceall` and
+`imgact_binmisc`, which `dq_resolve_test`'s binmisc row needs): the plane
 refuses a module load after boot, and `dq_socket_test:mac_denial_no_event`
 needs the policy's `socket_check_create` toggle.
 `KYUA_VARS=test_suites.FreeBSD.allow_sysctl_side_effects=1` lets

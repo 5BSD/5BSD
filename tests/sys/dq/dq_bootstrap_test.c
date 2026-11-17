@@ -46,28 +46,7 @@
 
 #include "dq_test.h"
 
-/*
- * A pin does not skip: the plane and the queue device are there.  Without
- * this, dqt_open_queue() would turn a missing /dev/dq into a skip.
- */
-static void
-pin_require_plane(void)
-{
-	struct kinfo_proc kp;
-	size_t len;
-	int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, 1 };
-
-	len = sizeof(kp);
-	ATF_REQUIRE_EQ(0, sysctl(mib, nitems(mib), &kp, &len, NULL, 0));
-	ATF_REQUIRE_MSG(strcmp(kp.ki_comm, "capsule") == 0, "the capability "
-	    "plane is off (PID 1 is %s): this pin runs with it on",
-	    kp.ki_comm);
-	ATF_REQUIRE_MSG(access("/dev/dq", F_OK) == 0, "/dev/dq: %s",
-	    strerror(errno));
-}
-
 #define	NA	(-9999)		/* a step that was not reached */
-#define	ERRNO_OF(call)	((call) == -1 ? errno : 0)
 
 #define	ROW(what, got, want) do {					\
 	int got_ = (int)(got), want_ = (int)(want);			\
@@ -152,16 +131,16 @@ slot_child(void *arg, void *result)
 	int fd;
 
 	r->send_err = r->cloexec = NA;
-	r->info_err = ERRNO_OF(cap_proc(MAC_CAP_PROCESS_INFO, -1, &r->info));
+	r->info_err = DQT_ERRNO_OF(cap_proc(MAC_CAP_PROCESS_INFO, -1, &r->info));
 	fd = cap_proc(MAC_CAP_PROCESS_GET, -1, NULL);
-	r->get_err = ERRNO_OF(fd);
+	r->get_err = DQT_ERRNO_OF(fd);
 	if (fd == -1)
 		return;
 	r->cloexec = (fcntl(fd, F_GETFD) & FD_CLOEXEC) != 0;
 	memset(&sa, 0, sizeof(sa));
 	sa.payload = tag;
 	sa.payload_len = strlen(tag);
-	r->send_err = ERRNO_OF(ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa));
+	r->send_err = DQT_ERRNO_OF(ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa));
 }
 
 /* One queued message on the test's end of the route, or errno. */
@@ -174,7 +153,7 @@ route_recv(int end, char *buf, size_t len)
 	memset(&ra, 0, sizeof(ra));
 	ra.payload = buf;
 	ra.payload_len = len - 1;
-	return (ERRNO_OF(ioctl(end, MAC_CAPABILITY_RECVMSG, &ra)));
+	return (DQT_ERRNO_OF(ioctl(end, MAC_CAPABILITY_RECVMSG, &ra)));
 }
 
 static void
@@ -222,9 +201,9 @@ ATF_TC_BODY(route_slot_inherited, tc)
 	struct mac_cap_process_info mine;
 	struct slot_res r;
 	char tag_a[] = "attached", tag_u[] = "unattached";
-	int pair[2], status;
+	int pair[2];
 
-	pin_require_plane();
+	dqt_require_plane();
 	if (chan_create(pair) == -1) {
 		int enforce, error;
 		size_t len;
@@ -252,8 +231,7 @@ ATF_TC_BODY(route_slot_inherited, tc)
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ach, slot_child, tag_a);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ach, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ach, &r, sizeof(r));
 	slot_check("attached", &r, &mine, pair[1], tag_a);
 
 	memset(&r, 0, sizeof(r));
@@ -284,7 +262,7 @@ try_open(const char *name)
 	int error, fd;
 
 	fd = -1;
-	error = ERRNO_OF(service_open(name, &fd));
+	error = DQT_ERRNO_OF(service_open(name, &fd));
 	if (fd != -1)
 		(void)close(fd);
 	return (error);
@@ -301,20 +279,20 @@ lookup_child(void *arg, void *result)
 	bool clear = *(bool *)arg;
 
 	memset(&info, 0, sizeof(info));
-	r->info_err = ERRNO_OF(cap_proc(MAC_CAP_PROCESS_INFO, -1, &info));
+	r->info_err = DQT_ERRNO_OF(cap_proc(MAC_CAP_PROCESS_INFO, -1, &info));
 	r->present = info.present;
-	r->clear = clear ? ERRNO_OF(service_clear_ambient_lookup()) : NA;
+	r->clear = clear ? DQT_ERRNO_OF(service_clear_ambient_lookup()) : NA;
 
 	nc = NULL;
-	r->notify = ERRNO_OF(notify_client_open(&nc));
+	r->notify = DQT_ERRNO_OF(notify_client_open(&nc));
 	if (nc != NULL)
 		notify_client_close(nc);
 	lc = NULL;
-	r->logcmp = ERRNO_OF(logcmp_client_open(&lc));
+	r->logcmp = DQT_ERRNO_OF(logcmp_client_open(&lc));
 	if (lc != NULL)
 		logcmp_client_close(lc);
 	sc = NULL;
-	r->sysctlcmp = ERRNO_OF(sysctlcmp_client_open(&sc));
+	r->sysctlcmp = DQT_ERRNO_OF(sysctlcmp_client_open(&sc));
 	if (sc != NULL)
 		sysctlcmp_client_close(sc);
 
@@ -323,7 +301,7 @@ lookup_child(void *arg, void *result)
 	r->open_sysctl = try_open("system.Sysctl");
 
 	memset(&info, 0, sizeof(info));
-	r->info2_err = ERRNO_OF(cap_proc(MAC_CAP_PROCESS_INFO, -1, &info));
+	r->info2_err = DQT_ERRNO_OF(cap_proc(MAC_CAP_PROCESS_INFO, -1, &info));
 	r->present2 = info.present;
 }
 
@@ -372,7 +350,6 @@ lookup_pair(bool clear)
 	struct dqt_achild ach;
 	struct mac_cap_process_info mine;
 	struct lookup_res r;
-	int status;
 
 	/* A pin does not skip: without a route there is nothing to pin. */
 	ATF_REQUIRE_EQ_MSG(0, cap_proc(MAC_CAP_PROCESS_INFO, -1, &mine),
@@ -384,8 +361,7 @@ lookup_pair(bool clear)
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ach, lookup_child, &clear);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ach, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ach, &r, sizeof(r));
 	lookup_check("attached", &r, clear);
 	dqt_fini(&c);
 
@@ -409,7 +385,7 @@ ATF_TC_HEAD(public_lookup, tc)
 ATF_TC_BODY(public_lookup, tc)
 {
 
-	pin_require_plane();
+	dqt_require_plane();
 	lookup_pair(false);
 }
 
@@ -428,7 +404,7 @@ ATF_TC_HEAD(cleared_lookup, tc)
 ATF_TC_BODY(cleared_lookup, tc)
 {
 
-	pin_require_plane();
+	dqt_require_plane();
 	lookup_pair(true);
 }
 

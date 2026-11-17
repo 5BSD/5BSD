@@ -21,6 +21,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -110,11 +111,6 @@ struct ioctl_arg {
 	int		 fd, oracle;
 };
 
-#define	RR(field, expr) do {						\
-	r->field.rv = (long)(expr);					\
-	r->field.err = r->field.rv == -1 ? errno : 0;			\
-} while (0)
-
 static void
 child_ioctls(void *arg, void *result)
 {
@@ -127,21 +123,21 @@ child_ioctls(void *arg, void *result)
 	di.a = 0x1122334455667788ULL;
 	di.b = 9;
 	di.c = 10;
-	RR(in, ioctl(a->fd, DQT_IOC_IN, &di));
+	DQT_RR(r->in, ioctl(a->fd, DQT_IOC_IN, &di));
 	memset(&r->o, 0, sizeof(r->o));
-	RR(out, ioctl(a->fd, DQT_IOC_OUT, &r->o));
+	DQT_RR(r->out, ioctl(a->fd, DQT_IOC_OUT, &r->o));
 	r->v = 41;
-	RR(inout, ioctl(a->fd, DQT_IOC_INOUT, &r->v));
-	RR(voidint, ioctl(a->fd, DQT_IOC_VOIDINT, 7));
-	RR(voidint_bad, ioctl(a->fd, DQT_IOC_VOIDINT, 8));
-	RR(void0, ioctl(a->fd, DQT_IOC_VOID0));
+	DQT_RR(r->inout, ioctl(a->fd, DQT_IOC_INOUT, &r->v));
+	DQT_RR(r->voidint, ioctl(a->fd, DQT_IOC_VOIDINT, 7));
+	DQT_RR(r->voidint_bad, ioctl(a->fd, DQT_IOC_VOIDINT, 8));
+	DQT_RR(r->void0, ioctl(a->fd, DQT_IOC_VOID0));
 	dp.p = &di;
 	dp.len = sizeof(di);
-	RR(ptr, ioctl(a->fd, DQT_IOC_PTR, &dp));
-	RR(fiodtype, ioctl(a->fd, FIODTYPE, &type));
-	RR(oracle_fiodtype, ioctl(a->oracle, FIODTYPE, &type));
-	RR(setown, fcntl(a->fd, F_SETOWN, getpid()));
-	RR(oracle_setown, fcntl(a->oracle, F_SETOWN, getpid()));
+	DQT_RR(r->ptr, ioctl(a->fd, DQT_IOC_PTR, &dp));
+	DQT_RR(r->fiodtype, ioctl(a->fd, FIODTYPE, &type));
+	DQT_RR(r->oracle_fiodtype, ioctl(a->oracle, FIODTYPE, &type));
+	DQT_RR(r->setown, fcntl(a->fd, F_SETOWN, getpid()));
+	DQT_RR(r->oracle_setown, fcntl(a->oracle, F_SETOWN, getpid()));
 }
 
 ATF_TC(shapes);
@@ -193,8 +189,12 @@ ATF_TC_BODY(shapes, tc)
 	ATF_CHECK_EQ(r.oracle_setown.rv, r.setown.rv);
 	ATF_CHECK_EQ(r.oracle_setown.err, r.setown.err);
 	/* The bodies the kernel posted: lengths per shape, never a pointer. */
-	ATF_CHECK(c.events[DQ_OP_IOCTL] >= 9);
+	dqt_lock(&c);
+	printf("IOCTL records: %u\n", c.events[DQ_OP_IOCTL]);
+	/* One record per ioctl that reaches the controller. */
+	ATF_CHECK_EQ(9, c.events[DQ_OP_IOCTL]);
 	ATF_CHECK_EQ(0, c.reply_failures);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(backing);
 	(void)close(oracle);
@@ -242,7 +242,7 @@ ATF_TC_BODY(reply_rules, tc)
 	struct dqt_out out;
 	struct statfs sfs;
 	struct stat sb;
-	int oracle, status;
+	int oracle;
 
 	dqt_fill(data, sizeof(data), 2);
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), path,
@@ -261,36 +261,39 @@ ATF_TC_BODY(reply_rules, tc)
 	a.cmd = DQT_IOC_OUT;
 	dqt_spawn(&ch, child_one_ioctl, &a);
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	dqt_lock(&c);
 	ATF_CHECK_EQ(DQT_IOC_OUT, o->last_ioctl.dio_cmd);
 	ATF_CHECK_EQ(0, o->last_ioctl.dio_len);
+	dqt_unlock(&c);
 	memset(&out, 0, sizeof(out));
 	errno = 0;
-	ATF_CHECK_EQ(-1, dq_reply_ioctl(c.q, c.held[0].id, 0, &out, 8));
+	ATF_CHECK_EQ(-1, dq_reply_ioctl(c.q, dqt_held_id(&c, 0), 0, &out, 8));
 	ATF_CHECK_EQ(EINVAL, errno);
 	errno = 0;
-	ATF_CHECK_EQ(-1, dq_reply_ioctl(c.q, c.held[0].id, 0, NULL, 0));
+	ATF_CHECK_EQ(-1, dq_reply_ioctl(c.q, dqt_held_id(&c, 0), 0, NULL, 0));
 	ATF_CHECK_EQ(EINVAL, errno);
 	errno = 0;
-	ATF_CHECK_EQ(-1, dq_reply_ioctl(c.q, c.held[0].id, ENXIO, &out,
+	ATF_CHECK_EQ(-1, dq_reply_ioctl(c.q, dqt_held_id(&c, 0), ENXIO, &out,
 	    sizeof(out)));
 	ATF_CHECK_EQ(EINVAL, errno);
-	ATF_CHECK_EQ(0, dq_reply_ioctl(c.q, c.held[0].id, 0, &out,
+	ATF_CHECK_EQ(0, dq_reply_ioctl(c.q, dqt_held_id(&c, 0), 0, &out,
 	    sizeof(out)));
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(0, r.rv);
 
 	a.cmd = DQT_IOC_IN;
 	dqt_spawn(&ch, child_one_ioctl, &a);
 	ATF_REQUIRE(dqt_wait_held(&c, 2, DQT_WAIT_MS));
+	dqt_lock(&c);
 	ATF_CHECK_EQ(DQT_IOC_IN, o->last_ioctl.dio_cmd);
 	ATF_CHECK_EQ(sizeof(struct dqt_in), o->last_ioctl.dio_len);
+	dqt_unlock(&c);
 	errno = 0;
-	ATF_CHECK_EQ(-1, dq_reply_ioctl(c.q, c.held[1].id, 0, &out, 8));
+	ATF_CHECK_EQ(-1, dq_reply_ioctl(c.q, dqt_held_id(&c, 1), 0, &out, 8));
 	ATF_CHECK_EQ(EINVAL, errno);
-	ATF_CHECK_EQ(0, dq_reply_ioctl(c.q, c.held[1].id, EPIPE, NULL, 0));
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	ATF_CHECK_EQ(0, dq_reply_ioctl(c.q, dqt_held_id(&c, 1), EPIPE, NULL,
+	    0));
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(EIO, r.err);
 	dqt_hold(&c, false);
 	dqt_fini(&c);
@@ -346,8 +349,11 @@ ATF_TC_BODY(deny_and_local, tc)
 	errno = 0;
 	ATF_CHECK_EQ(-1, ioctl(ev->fd, DQT_IOC_IN, &in));
 	ATF_CHECK_EQ(EDEADLK, errno);
-	dqt_msleep(100);
+	/* Everything posted before the fence has been recorded. */
+	dqt_fence(&c);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(0, c.records);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }

@@ -39,7 +39,6 @@
 
 #include "dq_test.h"
 
-#define	SW_BUFSIZE	(256 * 1024)
 #define	SW_NRES		24
 #define	SW_UID		65534		/* nobody */
 
@@ -75,12 +74,6 @@ struct sw_res {
 	int		 flflags;
 	char		 data[64];
 };
-
-#define	RR(slot, call) do {						\
-	errno = 0;							\
-	(slot).rv = (long)(call);					\
-	(slot).err = (slot).rv == -1 ? errno : 0;			\
-} while (0)
 
 static void
 sw_write_file(const char *path, const char *text, mode_t mode)
@@ -167,39 +160,26 @@ sw_handle(struct sw *x, const struct dq_event *ev)
 		atf_tc_fail("PASS of \"%s\": %s", path, strerror(errno));
 }
 
+static void
+sw_event(const struct dq_event *ev, void *arg)
+{
+
+	sw_handle(arg, ev);
+}
+
 /* Serve the queue until the program has exited; collect its result. */
 static void
 sw_run(struct sw *x, dqt_child_fn fn, void *arg, struct sw_res *res)
 {
 	struct dqt_achild ch;
-	struct pollfd pfd[2];
-	const struct dq_event *ev;
-	char *buf;
-	ssize_t got;
-	int status;
-	bool hup;
+	int error, status;
 
-	buf = malloc(SW_BUFSIZE);
-	ATF_REQUIRE(buf != NULL);
-	ATF_REQUIRE(fcntl(x->c.q, F_SETFL, O_NONBLOCK) != -1);
 	dqt_attach_spawn(&x->c, &ch, fn, arg);
 	x->pd = ch.pd;
-	for (hup = false; !hup;) {
-		pfd[0].fd = x->c.q;
-		pfd[0].events = POLLIN;
-		pfd[1].fd = ch.pd;
-		pfd[1].events = POLLHUP;
-		pfd[0].revents = pfd[1].revents = 0;
-		if (poll(pfd, 2, 30000) <= 0)
-			atf_tc_fail("the program neither asked nor exited");
-		hup = (pfd[1].revents & POLLHUP) != 0;
-		while (dq_read_events(x->c.q, buf, SW_BUFSIZE, &got) == 0 &&
-		    got > 0) {
-			for (ev = dq_event_first(buf, (size_t)got); ev != NULL;
-			    ev = dq_event_next(buf, (size_t)got, ev))
-				sw_handle(x, ev);
-		}
-	}
+	error = dqt_serve_until(x->c.q, ch.pd, NULL, sw_event, x, 30000);
+	if (error == ETIMEDOUT)
+		atf_tc_fail("the program neither asked nor exited");
+	ATF_REQUIRE_EQ_MSG(0, error, "serving the queue: %s", strerror(error));
 	x->pd = -1;
 	status = dqt_attach_wait(&ch, res, sizeof(*res));
 	if (x->expect_killed)
@@ -209,7 +189,6 @@ sw_run(struct sw *x, dqt_child_fn fn, void *arg, struct sw_res *res)
 	else
 		ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
 		    "the program failed, status %#x", status);
-	free(buf);
 }
 
 /* The supervisor's own open for an answer, as dq(4) asks for it. */
@@ -265,24 +244,24 @@ p_regular(void *arg __unused, void *result)
 	struct stat st;
 	int fd;
 
-	RR(res->r[0], fd = open("orig", O_RDONLY | O_CLOEXEC));
+	DQT_RR(res->r[0], fd = open("orig", O_RDONLY | O_CLOEXEC));
 	if (fd == -1)
 		return;
-	RR(res->r[1], fstat(fd, &st));
+	DQT_RR(res->r[1], fstat(fd, &st));
 	res->ino = st.st_ino;
 	res->size = st.st_size;
-	RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
+	DQT_RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
 	res->fdflags = fcntl(fd, F_GETFD);
 	res->flflags = fcntl(fd, F_GETFL);
 	memset(&kif, 0, sizeof(kif));
 	kif.kf_structsize = sizeof(kif);
-	RR(res->r[3], fcntl(fd, F_KINFO, &kif));
+	DQT_RR(res->r[3], fcntl(fd, F_KINFO, &kif));
 	res->kftype = kif.kf_type;
-	RR(res->r[4], lseek(fd, 0, SEEK_SET));
-	RR(res->r[5], read(fd, res->data, 4));
-	RR(res->r[6], lseek(fd, 0, SEEK_CUR));
-	RR(res->r[7], flock(fd, LOCK_SH));
-	RR(res->r[8], close(fd));
+	DQT_RR(res->r[4], lseek(fd, 0, SEEK_SET));
+	DQT_RR(res->r[5], read(fd, res->data, 4));
+	DQT_RR(res->r[6], lseek(fd, 0, SEEK_CUR));
+	DQT_RR(res->r[7], flock(fd, LOCK_SH));
+	DQT_RR(res->r[8], close(fd));
 }
 
 static void
@@ -348,11 +327,11 @@ p_plain_open(void *arg, void *result)
 	int fd, flags;
 
 	flags = arg != NULL ? *(int *)arg : O_RDONLY;
-	RR(res->r[0], fd = open("orig", flags, 0644));
+	DQT_RR(res->r[0], fd = open("orig", flags, 0644));
 	if (fd == -1)
 		return;
-	RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
-	RR(res->r[8], close(fd));
+	DQT_RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
+	DQT_RR(res->r[8], close(fd));
 }
 
 static void
@@ -483,9 +462,38 @@ p_notopen(void *arg __unused, void *result)
 	struct sw_res *res = result;
 	struct stat st;
 
-	RR(res->r[0], stat("orig", &st));
+	DQT_RR(res->r[0], stat("orig", &st));
 	res->size = st.st_size;
-	RR(res->r[1], chdir("dir"));
+	DQT_RR(res->r[1], chdir("dir"));
+}
+
+/* STAT and CHDIR never accept SWAP: the reply is EINVAL, then PASS. */
+struct notopen_arg {
+	int		 q;
+	int		 fd;
+	int		 nstat, nchdir;
+};
+
+static void
+notopen_event(const struct dq_event *ev, void *arg)
+{
+	struct notopen_arg *na = arg;
+	const struct dq_resolve_body *rb;
+	const char *path;
+
+	if (ev->de_op != DQ_OP_RESOLVE)
+		return;
+	ATF_REQUIRE_EQ(0, dq_event_resolve(ev, &rb, &path, NULL, NULL, NULL));
+	if (rb->drs_op == DQ_ROP_STAT || rb->drs_op == DQ_ROP_CHDIR) {
+		if (rb->drs_op == DQ_ROP_STAT)
+			na->nstat++;
+		else
+			na->nchdir++;
+		ATF_CHECK(!dq_resolve_accepts(rb, DQ_RESOLVE_SWAP));
+		ATF_CHECK_ERRNO(EINVAL, dq_reply_resolve_swap(na->q,
+		    ev->de_id, na->fd, 0) == -1);
+	}
+	ATF_CHECK_EQ(0, dq_reply_resolve_pass(na->q, ev->de_id));
 }
 
 ATF_TC_WITHOUT_HEAD(swap_only_for_open);
@@ -493,68 +501,26 @@ ATF_TC_BODY(swap_only_for_open, tc)
 {
 	struct dqt_ctl c;
 	struct dqt_achild ch;
-	struct pollfd pfd[2];
 	struct sw_res res;
-	const struct dq_event *ev;
-	const struct dq_resolve_body *rb;
-	const char *path;
-	char *buf;
-	ssize_t got;
-	int fd, nstat, nchdir, status;
-	bool hup;
+	struct notopen_arg na;
 
 	dqt_require_plane();
 	sw_write_file("orig", "ORIGINAL", 0644);
 	ATF_REQUIRE_EQ(0, mkdir("dir", 0755));
 	dqt_init_manual(&c);
-	buf = malloc(SW_BUFSIZE);
-	ATF_REQUIRE(buf != NULL);
-	ATF_REQUIRE(fcntl(c.q, F_SETFL, O_NONBLOCK) != -1);
-	fd = sw_open("orig", O_RDONLY);
-	nstat = nchdir = 0;
+	memset(&na, 0, sizeof(na));
+	na.q = c.q;
+	na.fd = sw_open("orig", O_RDONLY);
 	dqt_attach_spawn(&c, &ch, p_notopen, NULL);
-	for (hup = false; !hup;) {
-		pfd[0].fd = c.q;
-		pfd[0].events = POLLIN;
-		pfd[1].fd = ch.pd;
-		pfd[1].events = POLLHUP;
-		pfd[0].revents = pfd[1].revents = 0;
-		ATF_REQUIRE(poll(pfd, 2, 30000) > 0);
-		hup = (pfd[1].revents & POLLHUP) != 0;
-		while (dq_read_events(c.q, buf, SW_BUFSIZE, &got) == 0 &&
-		    got > 0) {
-			for (ev = dq_event_first(buf, (size_t)got); ev != NULL;
-			    ev = dq_event_next(buf, (size_t)got, ev)) {
-				if (ev->de_op != DQ_OP_RESOLVE)
-					continue;
-				ATF_REQUIRE_EQ(0, dq_event_resolve(ev, &rb,
-				    &path, NULL, NULL, NULL));
-				if (rb->drs_op == DQ_ROP_STAT ||
-				    rb->drs_op == DQ_ROP_CHDIR) {
-					if (rb->drs_op == DQ_ROP_STAT)
-						nstat++;
-					else
-						nchdir++;
-					ATF_CHECK(!dq_resolve_accepts(rb,
-					    DQ_RESOLVE_SWAP));
-					ATF_CHECK_ERRNO(EINVAL,
-					    dq_reply_resolve_swap(c.q,
-					    ev->de_id, fd, 0) == -1);
-				}
-				ATF_CHECK_EQ(0, dq_reply_resolve_pass(c.q,
-				    ev->de_id));
-			}
-		}
-	}
-	status = dqt_attach_wait(&ch, &res, sizeof(res));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
-	ATF_CHECK(nstat >= 1);
-	ATF_CHECK(nchdir >= 1);
+	ATF_REQUIRE_EQ(0, dqt_serve_until(c.q, ch.pd, NULL, notopen_event, &na,
+	    30000));
+	dqt_attach_collect(&ch, &res, sizeof(res));
+	ATF_CHECK(na.nstat >= 1);
+	ATF_CHECK(na.nchdir >= 1);
 	ATF_CHECK_EQ(0, res.r[0].rv);
 	ATF_CHECK_EQ(8, res.size);
 	ATF_CHECK_EQ(0, res.r[1].rv);
-	(void)close(fd);
-	free(buf);
+	(void)close(na.fd);
 	dqt_fini(&c);
 }
 
@@ -569,14 +535,14 @@ p_exlock(void *arg __unused, void *result)
 	struct sw_res *res = result;
 	int fd, fd2;
 
-	RR(res->r[0], fd = open("orig", O_RDONLY | O_EXLOCK));
+	DQT_RR(res->r[0], fd = open("orig", O_RDONLY | O_EXLOCK));
 	if (fd == -1)
 		return;
 	/* "subst" by its own name is passed: a second open file of it. */
-	RR(res->r[1], fd2 = open("subst", O_RDONLY));
-	RR(res->r[2], flock(fd2, LOCK_EX | LOCK_NB));
-	RR(res->r[3], close(fd));
-	RR(res->r[4], flock(fd2, LOCK_EX | LOCK_NB));
+	DQT_RR(res->r[1], fd2 = open("subst", O_RDONLY));
+	DQT_RR(res->r[2], flock(fd2, LOCK_EX | LOCK_NB));
+	DQT_RR(res->r[3], close(fd));
+	DQT_RR(res->r[4], flock(fd2, LOCK_EX | LOCK_NB));
 	(void)close(fd2);
 }
 
@@ -642,14 +608,14 @@ p_write(void *arg, void *result)
 	flags = *(int *)arg;
 	if ((flags & 0x40000000) != 0) {
 		flags &= ~0x40000000;
-		RR(res->r[9], setgid(SW_UID));
-		RR(res->r[10], setuid(SW_UID));
+		DQT_RR(res->r[9], setgid(SW_UID));
+		DQT_RR(res->r[10], setuid(SW_UID));
 	}
-	RR(res->r[0], fd = open("orig", flags, 0444));
+	DQT_RR(res->r[0], fd = open("orig", flags, 0444));
 	if (fd == -1)
 		return;
-	RR(res->r[1], write(fd, "new", 3));
-	RR(res->r[8], close(fd));
+	DQT_RR(res->r[1], write(fd, "new", 3));
+	DQT_RR(res->r[8], close(fd));
 }
 
 ATF_TC_WITHOUT_HEAD(swap_trunc);
@@ -798,12 +764,12 @@ p_opath(void *arg __unused, void *result)
 	char b;
 	int fd;
 
-	RR(res->r[0], fd = open("orig", O_PATH));
+	DQT_RR(res->r[0], fd = open("orig", O_PATH));
 	if (fd == -1)
 		return;
-	RR(res->r[1], fstat(fd, &st));
+	DQT_RR(res->r[1], fstat(fd, &st));
 	res->mode = st.st_mode;
-	RR(res->r[2], read(fd, &b, 1));
+	DQT_RR(res->r[2], read(fd, &b, 1));
 	(void)close(fd);
 }
 
@@ -848,12 +814,12 @@ p_dir(void *arg __unused, void *result)
 	struct sw_res *res = result;
 	int dfd, fd;
 
-	RR(res->r[0], dfd = open("orig", O_RDONLY | O_DIRECTORY));
+	DQT_RR(res->r[0], dfd = open("orig", O_RDONLY | O_DIRECTORY));
 	if (dfd == -1)
 		return;
-	RR(res->r[1], fd = openat(dfd, "inside", O_RDONLY));
+	DQT_RR(res->r[1], fd = openat(dfd, "inside", O_RDONLY));
 	if (fd != -1) {
-		RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
+		DQT_RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
 		(void)close(fd);
 	}
 	(void)close(dfd);
@@ -906,19 +872,19 @@ p_emfile(void *arg __unused, void *result)
 	int fd, i;
 
 	/* Fill every number below the limit. */
-	RR(res->r[9], getrlimit(RLIMIT_NOFILE, &save));
+	DQT_RR(res->r[9], getrlimit(RLIMIT_NOFILE, &save));
 	rl = save;
 	rl.rlim_cur = 32;
-	RR(res->r[10], setrlimit(RLIMIT_NOFILE, &rl));
+	DQT_RR(res->r[10], setrlimit(RLIMIT_NOFILE, &rl));
 	for (i = 0; i < 64; i++) {
 		if (dup(0) == -1)
 			break;
 	}
-	RR(res->r[0], fd = open("orig", O_RDONLY));
-	RR(res->r[11], setrlimit(RLIMIT_NOFILE, &save));
-	RR(res->r[1], fd = open("orig", O_RDONLY));
+	DQT_RR(res->r[0], fd = open("orig", O_RDONLY));
+	DQT_RR(res->r[11], setrlimit(RLIMIT_NOFILE, &save));
+	DQT_RR(res->r[1], fd = open("orig", O_RDONLY));
 	if (fd != -1)
-		RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
+		DQT_RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
 }
 
 ATF_TC_WITHOUT_HEAD(swap_emfile);
@@ -952,50 +918,30 @@ struct sw_gone {
 };
 
 /* Serve the queue until the open under test has been answered n times. */
-static void
-sw_serve_answered(struct sw *x, char *buf, int n)
-{
-	struct pollfd pfd;
-	const struct dq_event *ev;
-	ssize_t got;
+static int sw_answered_want;
 
-	while (x->answered < n) {
-		pfd.fd = x->c.q;
-		pfd.events = POLLIN;
-		pfd.revents = 0;
-		if (poll(&pfd, 1, 30000) <= 0)
-			atf_tc_fail("the program did not ask");
-		while (dq_read_events(x->c.q, buf, SW_BUFSIZE, &got) == 0 &&
-		    got > 0) {
-			for (ev = dq_event_first(buf, (size_t)got); ev != NULL;
-			    ev = dq_event_next(buf, (size_t)got, ev))
-				sw_handle(x, ev);
-		}
-	}
+static bool
+sw_answered_enough(void *arg)
+{
+	struct sw *x = arg;
+
+	return (x->answered >= sw_answered_want);
+}
+
+static void
+sw_serve_answered(struct sw *x, int n)
+{
+	int error;
+
+	sw_answered_want = n;
+	error = dqt_serve_until(x->c.q, -1, sw_answered_enough, sw_event, x,
+	    30000);
+	if (error == ETIMEDOUT)
+		atf_tc_fail("the program did not ask");
+	ATF_REQUIRE_EQ_MSG(0, error, "serving the queue: %s", strerror(error));
 }
 
 /* Wait until the process sleeps on the named wait channel message. */
-static bool
-sw_wait_wmesg(pid_t pid, const char *wmesg, int ms)
-{
-	struct kinfo_proc kp;
-	size_t len;
-	int mib[4];
-
-	mib[0] = CTL_KERN;
-	mib[1] = KERN_PROC;
-	mib[2] = KERN_PROC_PID;
-	mib[3] = pid;
-	for (; ms > 0; ms -= 10) {
-		len = sizeof(kp);
-		if (sysctl(mib, nitems(mib), &kp, &len, NULL, 0) == 0 &&
-		    strcmp(kp.ki_wmesg, wmesg) == 0)
-			return (true);
-		dqt_msleep(10);
-	}
-	return (false);
-}
-
 static void
 a_rdwr(struct sw *x, const struct dq_event *ev,
     const struct dq_resolve_body *rb __unused)
@@ -1021,21 +967,21 @@ p_gone_holder(void *arg, void *result)
 	char b;
 	int fd, fd2;
 
-	RR(res->r[0], fd = open("orig", O_RDWR));
+	DQT_RR(res->r[0], fd = open("orig", O_RDWR));
 	b = 'h';
 	(void)write(g->held[1], &b, 1);
 	(void)read(g->gone[0], &b, 1);
 	if (fd == -1)
 		return;
-	RR(res->r[1], pwrite(fd, "AFTER", 5, 0));
-	RR(res->r[2], pread(fd, res->data, sizeof(res->data) - 1, 0));
-	RR(res->r[3], fstat(fd, &st));
+	DQT_RR(res->r[1], pwrite(fd, "AFTER", 5, 0));
+	DQT_RR(res->r[2], pread(fd, res->data, sizeof(res->data) - 1, 0));
+	DQT_RR(res->r[3], fstat(fd, &st));
 	res->ino = st.st_ino;
-	RR(res->r[4], fd2 = dup(fd));
-	RR(res->r[5], open("orig", O_RDONLY));
-	RR(res->r[6], open("subst", O_RDONLY));
-	RR(res->r[7], stat("subst", &st));
-	RR(res->r[8], close(fd));
+	DQT_RR(res->r[4], fd2 = dup(fd));
+	DQT_RR(res->r[5], open("orig", O_RDONLY));
+	DQT_RR(res->r[6], open("subst", O_RDONLY));
+	DQT_RR(res->r[7], stat("subst", &st));
+	DQT_RR(res->r[8], close(fd));
 }
 
 ATF_TC_WITHOUT_HEAD(swap_survives_supervisor);
@@ -1047,7 +993,7 @@ ATF_TC_BODY(swap_survives_supervisor, tc)
 	struct dqt_achild ch;
 	struct pollfd pfd;
 	struct stat st;
-	char *buf, b;
+	char b;
 	char text[64];
 	int status;
 
@@ -1057,11 +1003,8 @@ ATF_TC_BODY(swap_survives_supervisor, tc)
 	sw_init(&x, "orig", a_rdwr);
 	ATF_REQUIRE_EQ(0, pipe(g.held));
 	ATF_REQUIRE_EQ(0, pipe(g.gone));
-	buf = malloc(SW_BUFSIZE);
-	ATF_REQUIRE(buf != NULL);
-	ATF_REQUIRE(fcntl(x.c.q, F_SETFL, O_NONBLOCK) != -1);
 	dqt_attach_spawn(&x.c, &ch, p_gone_holder, &g);
-	sw_serve_answered(&x, buf, 1);
+	sw_serve_answered(&x, 1);
 	pfd.fd = g.held[0];
 	pfd.events = POLLIN;
 	ATF_REQUIRE_EQ(1, poll(&pfd, 1, 30000));
@@ -1096,7 +1039,6 @@ ATF_TC_BODY(swap_survives_supervisor, tc)
 	(void)close(g.held[1]);
 	(void)close(g.gone[0]);
 	(void)close(g.gone[1]);
-	free(buf);
 	dqt_fini(&x.c);
 }
 
@@ -1121,13 +1063,13 @@ p_exlock_late(void *arg __unused, void *result)
 	/* The number the open will be given. */
 	next = dup(0);
 	(void)close(next);
-	RR(res->r[0], fd = open("orig", O_RDONLY | O_EXLOCK));
+	DQT_RR(res->r[0], fd = open("orig", O_RDONLY | O_EXLOCK));
 	if (fd != -1) {
-		RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
-		RR(res->r[8], close(fd));
+		DQT_RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
+		DQT_RR(res->r[8], close(fd));
 	} else
-		RR(res->r[4], fcntl(next, F_GETFD));
-	RR(res->r[3], stat("orig", &st));
+		DQT_RR(res->r[4], fcntl(next, F_GETFD));
+	DQT_RR(res->r[3], stat("orig", &st));
 }
 
 ATF_TC_WITHOUT_HEAD(swap_supervisor_gone_before_install);
@@ -1136,8 +1078,7 @@ ATF_TC_BODY(swap_supervisor_gone_before_install, tc)
 	struct sw x;
 	struct sw_res res;
 	struct dqt_achild ch;
-	char *buf;
-	int lockfd, status;
+	int lockfd;
 
 	sw_write_file("orig", "ORIGINAL", 0644);
 	sw_write_file("subst", "SUBSTITUTE", 0644);
@@ -1145,19 +1086,14 @@ ATF_TC_BODY(swap_supervisor_gone_before_install, tc)
 	ATF_REQUIRE(lockfd != -1);
 	ATF_REQUIRE_EQ(0, flock(lockfd, LOCK_EX));
 	sw_init(&x, "orig", a_regular);
-	buf = malloc(SW_BUFSIZE);
-	ATF_REQUIRE(buf != NULL);
-	ATF_REQUIRE(fcntl(x.c.q, F_SETFL, O_NONBLOCK) != -1);
 	dqt_attach_spawn(&x.c, &ch, p_exlock_late, NULL);
-	sw_serve_answered(&x, buf, 1);
-	ATF_REQUIRE_MSG(sw_wait_wmesg(ch.pid, "lockf", 30000),
+	sw_serve_answered(&x, 1);
+	ATF_REQUIRE_MSG(dqt_wait_wmesg(ch.pid, "lockf", 30000),
 	    "the program is not waiting for the lock");
 
 	dqt_close_queue(&x.c);
 	ATF_REQUIRE_EQ(0, flock(lockfd, LOCK_UN));
-	status = dqt_attach_wait(&ch, &res, sizeof(res));
-	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
-	    "the program failed, status %#x", status);
+	dqt_attach_collect(&ch, &res, sizeof(res));
 	ATF_CHECK_EQ(1, x.answered);
 	ATF_CHECK_EQ_MSG(-1, res.r[0].rv, "the open returned %ld", res.r[0].rv);
 	ATF_CHECK_EQ(EIO, res.r[0].err);
@@ -1170,7 +1106,6 @@ ATF_TC_BODY(swap_supervisor_gone_before_install, tc)
 	/* The file was dropped: the lock taken for the program is gone. */
 	ATF_CHECK_EQ(0, flock(lockfd, LOCK_EX | LOCK_NB));
 	(void)close(lockfd);
-	free(buf);
 	dqt_fini(&x.c);
 }
 
@@ -1189,11 +1124,11 @@ p_exlock_trunc_late(void *arg __unused, void *result)
 
 	next = dup(0);
 	(void)close(next);
-	RR(res->r[0], fd = open("orig", O_WRONLY | O_TRUNC | O_EXLOCK));
+	DQT_RR(res->r[0], fd = open("orig", O_WRONLY | O_TRUNC | O_EXLOCK));
 	if (fd != -1)
-		RR(res->r[8], close(fd));
+		DQT_RR(res->r[8], close(fd));
 	else
-		RR(res->r[4], fcntl(next, F_GETFD));
+		DQT_RR(res->r[4], fcntl(next, F_GETFD));
 }
 
 ATF_TC_WITHOUT_HEAD(swap_supervisor_gone_after_trunc);
@@ -1202,9 +1137,8 @@ ATF_TC_BODY(swap_supervisor_gone_after_trunc, tc)
 	struct sw x;
 	struct sw_res res;
 	struct dqt_achild ch;
-	char *buf;
 	char text[64];
-	int lockfd, status;
+	int lockfd;
 
 	sw_write_file("orig", "ORIGINAL", 0644);
 	sw_write_file("subst", "SUBSTITUTE", 0644);
@@ -1212,12 +1146,9 @@ ATF_TC_BODY(swap_supervisor_gone_after_trunc, tc)
 	ATF_REQUIRE(lockfd != -1);
 	ATF_REQUIRE_EQ(0, flock(lockfd, LOCK_EX));
 	sw_init(&x, "orig", a_wronly);
-	buf = malloc(SW_BUFSIZE);
-	ATF_REQUIRE(buf != NULL);
-	ATF_REQUIRE(fcntl(x.c.q, F_SETFL, O_NONBLOCK) != -1);
 	dqt_attach_spawn(&x.c, &ch, p_exlock_trunc_late, NULL);
-	sw_serve_answered(&x, buf, 1);
-	ATF_REQUIRE_MSG(sw_wait_wmesg(ch.pid, "lockf", 30000),
+	sw_serve_answered(&x, 1);
+	ATF_REQUIRE_MSG(dqt_wait_wmesg(ch.pid, "lockf", 30000),
 	    "the program is not waiting for the lock");
 	/* Nothing is truncated while the open waits for its lock. */
 	sw_read_file("subst", text, sizeof(text));
@@ -1225,9 +1156,7 @@ ATF_TC_BODY(swap_supervisor_gone_after_trunc, tc)
 
 	dqt_close_queue(&x.c);
 	ATF_REQUIRE_EQ(0, flock(lockfd, LOCK_UN));
-	status = dqt_attach_wait(&ch, &res, sizeof(res));
-	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
-	    "the program failed, status %#x", status);
+	dqt_attach_collect(&ch, &res, sizeof(res));
 	ATF_CHECK_EQ_MSG(-1, res.r[0].rv, "the open returned %ld", res.r[0].rv);
 	ATF_CHECK_EQ(EIO, res.r[0].err);
 	ATF_CHECK_EQ(-1, res.r[4].rv);
@@ -1239,7 +1168,6 @@ ATF_TC_BODY(swap_supervisor_gone_after_trunc, tc)
 	ATF_CHECK_STREQ("ORIGINAL", text);
 	ATF_CHECK_EQ(0, flock(lockfd, LOCK_EX | LOCK_NB));
 	(void)close(lockfd);
-	free(buf);
 	dqt_fini(&x.c);
 }
 
@@ -1268,25 +1196,73 @@ sw_read_within(int fd, void *buf, size_t len, int ms)
 	return (read(fd, buf, len) == (ssize_t)len);
 }
 
+/*
+ * The forked supervisor's handler (no ATF): SWAP the open of "orig",
+ * PASS other RESOLVEs, answer anything else EIO.  A failure is its exit
+ * status.
+ */
+struct exit_sup {
+	int		 q;
+	int		 fail;		/* nonzero: _exit with it */
+	bool		 answered;
+};
+
+static bool
+exit_sup_done(void *arg)
+{
+	const struct exit_sup *es = arg;
+
+	return (es->answered || es->fail != 0);
+}
+
+static void
+exit_sup_event(const struct dq_event *ev, void *arg)
+{
+	struct exit_sup *es = arg;
+	const struct dq_resolve_body *rb;
+	const char *path;
+	size_t pl;
+	int fd;
+
+	if (es->fail != 0)
+		return;
+	if (ev->de_op != DQ_OP_RESOLVE) {
+		if (ev->de_id != 0)
+			(void)dq_reply(es->q, ev->de_id, EIO, NULL, 0);
+		return;
+	}
+	if (dq_event_resolve(ev, &rb, &path, NULL, NULL, NULL) != 0) {
+		es->fail = 26;
+		return;
+	}
+	pl = strlen(path);
+	if (rb->drs_op != DQ_ROP_OPEN || pl < 4 ||
+	    strcmp(path + pl - 4, "orig") != 0) {
+		(void)dq_reply_resolve_pass(es->q, ev->de_id);
+		return;
+	}
+	fd = open("subst", O_RDONLY | O_CLOEXEC | O_CLOFORK);
+	if (fd == -1 || dq_reply_resolve_swap(es->q, ev->de_id, fd, 0) != 0) {
+		es->fail = 27;
+		return;
+	}
+	(void)close(fd);
+	es->answered = true;
+}
+
 /* The supervisor process; exits 0 once the program waits in the lock. */
 static void
 sw_exit_supervisor(int rep, int progrep)
 {
 	struct sw_exit_rep er;
+	struct exit_sup es;
 	struct sw_res res;
 	struct stat st;
-	const struct dq_event *ev;
-	const struct dq_resolve_body *rb;
-	const char *path;
-	char *buf, b;
-	ssize_t got;
-	size_t pl;
+	char b;
 	int fd, go[2], keep, pd, q;
-	bool answered;
 
-	buf = malloc(SW_BUFSIZE);
 	q = dq_open();
-	if (buf == NULL || q == -1 || pipe(go) != 0)
+	if (q == -1 || pipe(go) != 0)
 		_exit(20);
 	er.prog = pdfork(&pd, PD_DAEMON);
 	if (er.prog == -1)
@@ -1295,12 +1271,12 @@ sw_exit_supervisor(int rep, int progrep)
 		if (read(go[0], &b, 1) != 1)
 			_exit(0);
 		memset(&res, 0, sizeof(res));
-		RR(res.r[1], keep = open("keep", O_RDONLY));
-		RR(res.r[0], fd = open("orig", O_RDONLY | O_EXLOCK));
+		DQT_RR(res.r[1], keep = open("keep", O_RDONLY));
+		DQT_RR(res.r[0], fd = open("orig", O_RDONLY | O_EXLOCK));
 		/* What it held before, it keeps; by name, nothing new. */
-		RR(res.r[2], read(keep, res.data, sizeof(res.data) - 1));
-		RR(res.r[3], stat("subst", &st));
-		RR(res.r[5], open("keep", O_RDONLY));
+		DQT_RR(res.r[2], read(keep, res.data, sizeof(res.data) - 1));
+		DQT_RR(res.r[3], stat("subst", &st));
+		DQT_RR(res.r[5], open("keep", O_RDONLY));
 		(void)write(progrep, &res, sizeof(res));
 		_exit(0);
 	}
@@ -1316,35 +1292,14 @@ sw_exit_supervisor(int rep, int progrep)
 	if (write(rep, &er, sizeof(er)) != sizeof(er) ||
 	    write(go[1], "g", 1) != 1)
 		_exit(24);
-	for (answered = false; !answered;) {
-		if (dq_read_events(q, buf, SW_BUFSIZE, &got) != 0 || got <= 0)
-			_exit(25);
-		for (ev = dq_event_first(buf, (size_t)got); ev != NULL;
-		    ev = dq_event_next(buf, (size_t)got, ev)) {
-			if (ev->de_op != DQ_OP_RESOLVE) {
-				if (ev->de_id != 0)
-					(void)dq_reply(q, ev->de_id, EIO,
-					    NULL, 0);
-				continue;
-			}
-			if (dq_event_resolve(ev, &rb, &path, NULL, NULL,
-			    NULL) != 0)
-				_exit(26);
-			pl = strlen(path);
-			if (rb->drs_op != DQ_ROP_OPEN || pl < 4 ||
-			    strcmp(path + pl - 4, "orig") != 0) {
-				(void)dq_reply_resolve_pass(q, ev->de_id);
-				continue;
-			}
-			fd = open("subst", O_RDONLY | O_CLOEXEC | O_CLOFORK);
-			if (fd == -1 ||
-			    dq_reply_resolve_swap(q, ev->de_id, fd, 0) != 0)
-				_exit(27);
-			(void)close(fd);
-			answered = true;
-		}
-	}
-	if (!sw_wait_wmesg(er.prog, "lockf", 30000))
+	memset(&es, 0, sizeof(es));
+	es.q = q;
+	if (dqt_serve_until(q, -1, exit_sup_done, exit_sup_event, &es,
+	    30000) != 0)
+		_exit(25);
+	if (es.fail != 0)
+		_exit(es.fail);
+	if (!dqt_wait_wmesg(er.prog, "lockf", 30000))
 		_exit(28);
 	_exit(0);
 }
@@ -1431,31 +1386,26 @@ p_race_open(void *arg __unused, void *result)
 
 	next = dup(0);
 	(void)close(next);
-	RR(res->r[0], fd = open("orig", O_RDONLY));
+	DQT_RR(res->r[0], fd = open("orig", O_RDONLY));
 	if (fd != -1)
-		RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
+		DQT_RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
 	else
-		RR(res->r[4], fcntl(next, F_GETFD));
+		DQT_RR(res->r[4], fcntl(next, F_GETFD));
 }
 
 /* One round: the outcome is counted; anything but the two fails. */
 static void
-sw_race_round(char *buf, int pass, int i, int *installed, int *refused)
+sw_race_round(int pass, int i, int *installed, int *refused)
 {
 	struct sw x;
 	struct sw_res res;
 	struct dqt_achild ch;
-	int status;
 
 	sw_init(&x, "orig", a_quick);
-	ATF_REQUIRE(fcntl(x.c.q, F_SETFL, O_NONBLOCK) != -1);
 	dqt_attach_spawn(&x.c, &ch, p_race_open, NULL);
-	sw_serve_answered(&x, buf, 1);
+	sw_serve_answered(&x, 1);
 	dqt_close_queue(&x.c);
-	status = dqt_attach_wait(&ch, &res, sizeof(res));
-	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
-	    "pass %d round %d: the program failed, status %#x", pass, i,
-	    status);
+	dqt_attach_collect(&ch, &res, sizeof(res));
 	if (res.r[0].rv >= 0) {
 		(*installed)++;
 		ATF_REQUIRE_EQ_MSG(10, res.r[2].rv,
@@ -1479,16 +1429,20 @@ ATF_TC_HEAD(swap_supervisor_gone_race, tc)
 }
 ATF_TC_BODY(swap_supervisor_gone_race, tc)
 {
-	char *buf;
 	size_t len;
 	int i, installed, ncpu, pass, refused;
 
 	sw_write_file("orig", "ORIGINAL", 0644);
 	sw_write_file("subst", "SUBSTITUTE", 0644);
-	buf = malloc(SW_BUFSIZE);
-	ATF_REQUIRE(buf != NULL);
 	len = sizeof(ncpu);
 	ATF_REQUIRE_EQ(0, sysctlbyname("hw.ncpu", &ncpu, &len, NULL, 0));
+	/*
+	 * With one CPU the close and the install cannot overlap, and which
+	 * comes first is the scheduler's choice: the race cannot be run.
+	 * Said before anything is checked, so that the skip hides nothing.
+	 */
+	if (ncpu == 1)
+		atf_tc_skip("race not exercised: one CPU");
 	installed = refused = 0;
 	/*
 	 * Both outcomes are wanted, and neither is owed by a correct kernel
@@ -1498,22 +1452,14 @@ ATF_TC_BODY(swap_supervisor_gone_race, tc)
 	for (pass = 0; pass < SW_RACE_PASSES &&
 	    (installed == 0 || refused == 0); pass++) {
 		for (i = 0; i < SW_RACE_ROUNDS; i++)
-			sw_race_round(buf, pass, i, &installed, &refused);
+			sw_race_round(pass, i, &installed, &refused);
 	}
 	printf("installed before the death %d, refused %d, in %d passes of "
 	    "%d rounds\n", installed, refused, pass, SW_RACE_ROUNDS);
-	/*
-	 * A race that only ever went one way has tested one side of it.
-	 * With one CPU the close and the install cannot overlap, and which
-	 * comes first is the scheduler's choice.
-	 */
-	if (ncpu == 1)
-		printf("one CPU: the split is not required\n");
-	else
-		ATF_CHECK_MSG(installed > 0 && refused > 0, "the race went "
-		    "one way only: %d installed, %d refused in %d passes",
-		    installed, refused, pass);
-	free(buf);
+	/* A race that only ever went one way has tested one side of it. */
+	ATF_CHECK_MSG(installed > 0 && refused > 0, "race not exercised: "
+	    "one way only, %d installed, %d refused in %d passes", installed,
+	    refused, pass);
 }
 
 /*
@@ -1530,12 +1476,12 @@ p_flags_open(void *arg, void *result)
 	struct stat st;
 	int fd;
 
-	RR(res->r[0], fd = open("orig", *(int *)arg, 0644));
+	DQT_RR(res->r[0], fd = open("orig", *(int *)arg, 0644));
 	if (fd == -1)
 		return;
-	RR(res->r[1], fstat(fd, &st));
+	DQT_RR(res->r[1], fstat(fd, &st));
 	res->mode = st.st_mode;
-	RR(res->r[8], close(fd));
+	DQT_RR(res->r[8], close(fd));
 }
 
 static void
@@ -1619,35 +1565,15 @@ static void
 p_send(void *arg __unused, void *result)
 {
 	struct sw_res *res = result;
-	struct msghdr msg;
-	struct iovec iov;
-	union {
-		struct cmsghdr	hdr;
-		char		buf[CMSG_SPACE(sizeof(int))];
-	} cm;
-	char b;
 	int fd, sv[2];
 
-	RR(res->r[0], fd = open("orig", O_RDONLY));
+	DQT_RR(res->r[0], fd = open("orig", O_RDONLY));
 	if (fd == -1)
 		return;
-	RR(res->r[1], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+	DQT_RR(res->r[1], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
 	if (res->r[1].rv == -1)
 		return;
-	memset(&msg, 0, sizeof(msg));
-	memset(&cm, 0, sizeof(cm));
-	b = 'x';
-	iov.iov_base = &b;
-	iov.iov_len = 1;
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	msg.msg_control = cm.buf;
-	msg.msg_controllen = sizeof(cm.buf);
-	cm.hdr.cmsg_len = CMSG_LEN(sizeof(int));
-	cm.hdr.cmsg_level = SOL_SOCKET;
-	cm.hdr.cmsg_type = SCM_RIGHTS;
-	memcpy(CMSG_DATA(&cm.hdr), &fd, sizeof(fd));
-	RR(res->r[2], sendmsg(sv[0], &msg, 0));
+	DQT_RR(res->r[2], dqt_send_fd(sv[0], fd));
 }
 
 static void
@@ -1676,7 +1602,7 @@ ATF_TC_BODY(swap_noxfer, tc)
 	sw_run(&x, p_send, NULL, &res);
 	ATF_CHECK_MSG(res.r[0].rv >= 0, "open: %s", strerror(res.r[0].err));
 	ATF_CHECK_EQ(0, res.r[1].rv);
-	ATF_CHECK_EQ_MSG(1, res.r[2].rv, "sendmsg: %s",
+	ATF_CHECK_EQ_MSG(0, res.r[2].rv, "dqt_send_fd: %s",
 	    strerror(res.r[2].err));
 	dqt_fini(&x.c);
 
@@ -1712,19 +1638,19 @@ p_proxydir(void *arg __unused, void *result)
 	cap_rights_t lim;
 	int dfd, fd;
 
-	RR(res->r[0], dfd = open("pdir", O_RDONLY | O_DIRECTORY));
+	DQT_RR(res->r[0], dfd = open("pdir", O_RDONLY | O_DIRECTORY));
 	if (dfd == -1)
 		return;
 	/* Through the directory as the supervisor gave it. */
-	RR(res->r[1], fd = openat(dfd, "f", O_RDONLY));
+	DQT_RR(res->r[1], fd = openat(dfd, "f", O_RDONLY));
 	if (fd != -1) {
-		RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
+		DQT_RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
 		(void)close(fd);
 	}
 	/* Narrowed: no CAP_WRITE, no CAP_SEEK. */
-	RR(res->r[5], cap_rights_limit(dfd, cap_rights_init(&lim, CAP_LOOKUP,
+	DQT_RR(res->r[5], cap_rights_limit(dfd, cap_rights_init(&lim, CAP_LOOKUP,
 	    CAP_READ, CAP_FSTAT)));
-	RR(res->r[6], openat(dfd, "f", O_RDONLY));
+	DQT_RR(res->r[6], openat(dfd, "f", O_RDONLY));
 	(void)close(dfd);
 }
 
@@ -1808,34 +1734,6 @@ ATF_TC_BODY(swap_from_proxy_directory, tc)
 	dqt_fini(&x.c);
 }
 
-/* Send fd over a socket: 0 or errno. */
-static int
-sw_sendfd(int sock, int fd)
-{
-	struct msghdr msg;
-	struct iovec iov;
-	union {
-		struct cmsghdr	hdr;
-		char		buf[CMSG_SPACE(sizeof(int))];
-	} cm;
-	char b;
-
-	memset(&msg, 0, sizeof(msg));
-	memset(&cm, 0, sizeof(cm));
-	b = 'x';
-	iov.iov_base = &b;
-	iov.iov_len = 1;
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	msg.msg_control = cm.buf;
-	msg.msg_controllen = sizeof(cm.buf);
-	cm.hdr.cmsg_len = CMSG_LEN(sizeof(int));
-	cm.hdr.cmsg_level = SOL_SOCKET;
-	cm.hdr.cmsg_type = SCM_RIGHTS;
-	memcpy(CMSG_DATA(&cm.hdr), &fd, sizeof(fd));
-	return (sendmsg(sock, &msg, 0) == -1 ? errno : 0);
-}
-
 /*
  * Case: the requester is killed while its open waits.  The supervisor's
  * later reply finds no event (ESRCH); its descriptor stays open and
@@ -1843,46 +1741,57 @@ sw_sendfd(int sock, int fd)
  */
 static bool killed_once;	/* the answer's entry is CAP_XFER_ONCE */
 
+/* The INTERRUPT for the killed open; RESOLVEs pass; nothing else comes. */
+struct killed_wait {
+	int		 q;
+	uint64_t	 id;
+	bool		 interrupted;
+};
+
+static bool
+killed_done(void *arg)
+{
+
+	return (((struct killed_wait *)arg)->interrupted);
+}
+
+static void
+killed_event(const struct dq_event *ev, void *arg)
+{
+	struct killed_wait *kw = arg;
+	const struct dq_interrupt_body *ib;
+	size_t bodylen;
+
+	if (ev->de_op == DQ_OP_INTERRUPT) {
+		ib = dq_event_body(ev, &bodylen);
+		if (ib != NULL && bodylen >= sizeof(*ib) &&
+		    ib->din_id == kw->id)
+			kw->interrupted = true;
+	} else if (ev->de_op == DQ_OP_RESOLVE)
+		ATF_CHECK_EQ(0, dq_reply_resolve_pass(kw->q, ev->de_id));
+	else
+		ATF_CHECK_MSG(false, "unexpected event, op %u", ev->de_op);
+}
+
 static void
 a_killed(struct sw *x, const struct dq_event *ev,
     const struct dq_resolve_body *rb __unused)
 {
-	const struct dq_interrupt_body *ib;
-	const struct dq_event *e2;
-	struct pollfd pfd;
-	char *buf;
-	size_t bodylen;
-	ssize_t got;
-	int fd, sv[2], tries;
+	struct killed_wait kw;
+	int fd, sv[2];
 	bool interrupted;
 
-	buf = malloc(SW_BUFSIZE);
-	ATF_REQUIRE(buf != NULL);
 	fd = sw_open("subst", O_RDONLY);
 	if (killed_once)
 		ATF_REQUIRE_EQ(0, cap_xfer_limit(fd, CAP_XFER_ONCE));
 	ATF_REQUIRE_EQ(0, pdkill(x->pd, SIGKILL));
 	/* The kernel tells the supervisor the event was abandoned. */
-	interrupted = false;
-	for (tries = 0; tries < 100 && !interrupted; tries++) {
-		pfd.fd = x->c.q;
-		pfd.events = POLLIN;
-		pfd.revents = 0;
-		if (poll(&pfd, 1, 100) <= 0)
-			continue;
-		if (dq_read_events(x->c.q, buf, SW_BUFSIZE, &got) != 0)
-			continue;
-		for (e2 = dq_event_first(buf, (size_t)got); e2 != NULL;
-		    e2 = dq_event_next(buf, (size_t)got, e2)) {
-			if (e2->de_op == DQ_OP_INTERRUPT) {
-				ib = dq_event_body(e2, &bodylen);
-				if (ib != NULL && bodylen >= sizeof(*ib) &&
-				    ib->din_id == ev->de_id)
-					interrupted = true;
-			} else if (e2->de_op == DQ_OP_RESOLVE)
-				(void)dq_reply_resolve_pass(x->c.q, e2->de_id);
-		}
-	}
+	memset(&kw, 0, sizeof(kw));
+	kw.q = x->c.q;
+	kw.id = ev->de_id;
+	(void)dqt_serve_until(x->c.q, -1, killed_done, killed_event, &kw,
+	    DQT_WAIT_MS);
+	interrupted = kw.interrupted;
 	ATF_CHECK_MSG(interrupted, "no INTERRUPT for the killed open");
 	ATF_CHECK_ERRNO(ESRCH, dq_reply_resolve_swap(x->c.q, ev->de_id, fd,
 	    0) == -1);
@@ -1896,14 +1805,13 @@ a_killed(struct sw *x, const struct dq_event *ev,
 		 * costs the entry its transfer, dq(4).)
 		 */
 		ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
-		ATF_CHECK_EQ_MSG(0, sw_sendfd(sv[0], fd), "the entry was "
-		    "consumed by a reply that found no event");
-		ATF_CHECK_EQ(ENOTCAPABLE, sw_sendfd(sv[0], fd));
+		ATF_CHECK_EQ_MSG(0, DQT_ERRNO_OF(dqt_send_fd(sv[0], fd)),
+		    "the entry was consumed by a reply that found no event");
+		ATF_CHECK_EQ(ENOTCAPABLE, DQT_ERRNO_OF(dqt_send_fd(sv[0], fd)));
 		(void)close(sv[0]);
 		(void)close(sv[1]);
 	}
 	(void)close(fd);
-	free(buf);
 }
 
 ATF_TC_WITHOUT_HEAD(swap_requester_killed);
@@ -1956,20 +1864,14 @@ ATF_TC(swap_linux);
 ATF_TC_HEAD(swap_linux, tc)
 {
 	atf_tc_set_md_var(tc, "require.arch", "amd64");
-	atf_tc_set_md_var(tc, "require.progs", "clang");
-	atf_tc_set_md_var(tc, "require.kmods", "linux64");
 }
 ATF_TC_BODY(swap_linux, tc)
 {
 	struct sw x;
 	struct sw_res res;
-	char cmd[PATH_MAX + 256];
 
-	snprintf(cmd, sizeof(cmd), "clang --target=x86_64-linux-gnu "
-	    "-fuse-ld=lld -nostdlib -static -fno-stack-protector "
-	    "-fno-builtin -O2 -Wall -Wextra -Werror -o dq_swap_linux "
-	    "%s/dq_swap_linux.c", atf_tc_get_config_var(tc, "srcdir"));
-	ATF_REQUIRE_EQ_MSG(0, system(cmd), "%s", cmd);
+	/* Built with the tests (Makefile); missing, the row fails. */
+	dqt_copy_helper(tc, "dq_swap_linux", "dq_swap_linux");
 	sw_write_file("orig", "ORIGINAL", 0644);
 	sw_write_file("subst", "SUBSTITUTE", 0644);
 	sw_init(&x, "orig", a_regular);
