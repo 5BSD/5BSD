@@ -567,6 +567,10 @@ struct ro_res {
 	char	 vmmap[PATH_MAX];	/* kinfo_getvmmap of the mapping */
 	char	 lpmap[PATH_MAX];	/* linprocfs maps of the mapping */
 	char	 link[2][PATH_MAX];	/* fdescfs readlink */
+	char	 lpfdl[2][PATH_MAX];	/* linprocfs <pid>/fd/<n> */
+	char	 lpcwd[PATH_MAX];	/* linprocfs <ppid>/cwd */
+	char	 lproot[PATH_MAX];	/* linprocfs <ppid>/root */
+	int	 lperr[4];		/* their readlink errnos */
 	uintptr_t start;
 };
 
@@ -652,6 +656,21 @@ ro_lpmap(int lpfd, pid_t pid, uintptr_t start, char *out)
 	return (ENOENT);
 }
 
+/* readlinkat of a linprocfs link: 0 and out, or the errno and "". */
+static int
+ro_lplink(int lpfd, const char *name, char *out)
+{
+	ssize_t n;
+
+	n = readlinkat(lpfd, name, out, PATH_MAX - 1);
+	if (n < 0) {
+		out[0] = '\0';
+		return (errno);
+	}
+	out[n] = '\0';
+	return (0);
+}
+
 static void
 ro_fn(void *argp, void *out)
 {
@@ -690,6 +709,17 @@ ro_fn(void *argp, void *out)
 	r->start = p == MAP_FAILED ? 0 : (uintptr_t)p;
 	ro_kve(getpid(), r->start, r->vmmap);
 	r->err[6] = ro_lpmap(a->lpfd, getpid(), r->start, r->lpmap);
+	/* linprocfs: its own descriptors, and the unattached parent's cwd and
+	   root (real directories outside the served root). */
+	for (i = 0; i < 2; i++) {
+		snprintf(name, sizeof(name), "%d/fd/%d", (int)getpid(),
+		    r->fd[i]);
+		r->lperr[i] = ro_lplink(a->lpfd, name, r->lpfdl[i]);
+	}
+	snprintf(name, sizeof(name), "%d/cwd", (int)getppid());
+	r->lperr[2] = ro_lplink(a->lpfd, name, r->lpcwd);
+	snprintf(name, sizeof(name), "%d/root", (int)getppid());
+	r->lperr[3] = ro_lplink(a->lpfd, name, r->lproot);
 	me = getpid();
 	(void)write(a->toparent[1], &me, sizeof(me));
 	(void)write(a->toparent[1], r, sizeof(*r));
@@ -724,6 +754,7 @@ ATF_TC_BODY(real_object_paths_served_root, tc)
 	struct ro_arg a;
 	struct ro_res r, ra;
 	char real[2][PATH_MAX], view[2][PATH_MAX], vm[PATH_MAX];
+	char mycwd[PATH_MAX];
 	int pd, status, ready[2], go[2], back[2];
 	size_t got;
 	pid_t apid, pid;
@@ -745,6 +776,7 @@ ATF_TC_BODY(real_object_paths_served_root, tc)
 	ATF_REQUIRE(pipe(a.tochild) == 0 && pipe(a.toparent) == 0);
 	snprintf(real[RO_SWAP], PATH_MAX, "%s/a", s.backing);
 	ATF_REQUIRE(realpath("w/x", real[RO_PASS]) != NULL);
+	ATF_REQUIRE(getcwd(mycwd, sizeof(mycwd)) != NULL);
 
 	ATF_REQUIRE(pipe(ready) == 0 && pipe(go) == 0 && pipe(back) == 0);
 	pid = pdfork(&pd, 0);
@@ -803,6 +835,18 @@ ATF_TC_BODY(real_object_paths_served_root, tc)
 	ATF_CHECK_STREQ("", ra.lpmap);
 	TS_CHECK_ERRNO(ENOENT, ra.err[4], "fdescfs link, SWAP");
 	TS_CHECK_ERRNO(ENOENT, ra.err[5], "fdescfs link, PASS");
+	/*
+	 * Pin (review 1 M3): linprocfs's fd, cwd and root links still show
+	 * the real paths to the program.
+	 */
+	TS_CHECK_ERRNO(0, ra.lperr[0], "linprocfs fd link, SWAP");
+	TS_CHECK_ERRNO(0, ra.lperr[1], "linprocfs fd link, PASS");
+	ATF_CHECK_STREQ(real[RO_SWAP], ra.lpfdl[RO_SWAP]);
+	ATF_CHECK_STREQ(real[RO_PASS], ra.lpfdl[RO_PASS]);
+	TS_CHECK_ERRNO(0, ra.lperr[2], "linprocfs cwd of the parent");
+	TS_CHECK_ERRNO(0, ra.lperr[3], "linprocfs root of the parent");
+	ATF_CHECK_STREQ(mycwd, ra.lpcwd);
+	ATF_CHECK_STREQ("/", ra.lproot);
 	close(pd);
 	close(a.realdir);
 	close(a.lpfd);
