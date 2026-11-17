@@ -1203,6 +1203,54 @@ two_reply(struct dqt_fixture *f, int i, off_t off)
 	    sizeof(wr), &pa) == 0, "dq_reply_postop: %s", strerror(errno));
 }
 
+/*
+ * A new object's rangelock serves its requests in cheat mode, as one sx
+ * lock: a second writer drains behind the first, whatever their ranges,
+ * instead of being posted (kern_rangelock.c).  Two writers that meet
+ * switch it to tracking ranges for good, as they do any file's, so the
+ * disjoint pair of the test is then in flight at once.  These two write
+ * inside the file and change no size.
+ */
+static void
+warm_reply(struct dqt_fixture *f, int i, off_t off)
+{
+	struct dq_write_reply wr;
+	char buf[TWO_LEN];
+
+	memset(buf, 'B', sizeof(buf));
+	ATF_REQUIRE_EQ(TWO_LEN, pwrite(f->backing, buf, TWO_LEN, off));
+	memset(&wr, 0, sizeof(wr));
+	wr.dwr_written = TWO_LEN;
+	wr.dwr_offset = (uint64_t)off;
+	ATF_REQUIRE_MSG(dq_reply(f->c.q, dqt_held_id(&f->c, i), 0, &wr,
+	    sizeof(wr)) == 0, "dq_reply: %s", strerror(errno));
+}
+
+static void
+two_precise_rangelock(struct dqt_fixture *f)
+{
+	struct dqt_child c0, c1;
+	struct big_arg w0, w1;
+	struct dqt_rr r0, r1;
+
+	w0.fd = w1.fd = f->o->fd;
+	w0.len = w1.len = TWO_LEN;
+	w0.off = 0;
+	w1.off = 4096;
+	dqt_spawn(&c0, child_pwrite_at, &w0);
+	ATF_REQUIRE(dqt_wait_held(&f->c, 1, DQT_WAIT_MS));
+	dqt_spawn(&c1, child_pwrite_at, &w1);
+	/* The second drains the cheat mode behind the first. */
+	ATF_REQUIRE(dqt_wait_wmesg(c1.pid, "ranged1", DQT_WAIT_MS));
+	warm_reply(f, 0, w0.off);
+	ATF_REQUIRE(dqt_wait_held(&f->c, 2, DQT_WAIT_MS));
+	warm_reply(f, 1, w1.off);
+	dqt_collect(&c0, &r0, sizeof(r0));
+	dqt_collect(&c1, &r1, sizeof(r1));
+	ATF_REQUIRE_EQ(TWO_LEN, r0.rv);
+	ATF_REQUIRE_EQ(TWO_LEN, r1.rv);
+}
+
 ATF_TC_WITH_CLEANUP(postop_two_writers_size);
 ATF_TC_HEAD(postop_two_writers_size, tc)
 {
@@ -1226,17 +1274,20 @@ ATF_TC_BODY(postop_two_writers_size, tc)
 	dqt_require_fault_knob(DELAY_POSTOP);
 	setup(&f, 18);
 	dqt_hold(&f.c, true);
+	two_precise_rangelock(&f);
 	a.fd = b.fd = f.o->fd;
 	a.len = b.len = TWO_LEN;
 	a.off = TWO_A_OFF;
 	b.off = TWO_B_OFF;
 	dqt_spawn(&cha, child_pwrite_at, &a);
 	dqt_spawn(&chb, child_pwrite_at, &b);
-	ATF_REQUIRE(dqt_wait_held(&f.c, 2, DQT_WAIT_MS));
+	ATF_REQUIRE_MSG(dqt_wait_held(&f.c, 4, DQT_WAIT_MS),
+	    "the two disjoint writes are not both posted");
 	dqt_lock(&f.c);
-	ia = f.c.wr[0].offset == TWO_A_OFF ? 0 : 1;
-	ib = 1 - ia;
-	ATF_REQUIRE_EQ(TWO_B_OFF, f.c.wr[ib].offset);
+	ia = f.c.held[2].offset == TWO_A_OFF ? 2 : 3;
+	ib = 5 - ia;
+	ATF_REQUIRE_EQ(TWO_A_OFF, f.c.held[ia].offset);
+	ATF_REQUIRE_EQ(TWO_B_OFF, f.c.held[ib].offset);
 	dqt_unlock(&f.c);
 	/* A's apply waits a second; B's reply lands meanwhile. */
 	dqt_sysctl_save_set_uint(DELAY_POSTOP, 1);
