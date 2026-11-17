@@ -37,7 +37,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	SW_NRES		24
 #define	SW_UID		65534		/* nobody */

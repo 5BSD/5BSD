@@ -14,7 +14,7 @@
 #include <sys/linker.h>
 #include <sys/mdioctl.h>
 
-#include "dq_tree_harness.h"
+#include "dqt_tree.h"
 
 struct kres {
 	int	err[16];
@@ -26,13 +26,13 @@ kclass_cwd_fn(void *arg __unused, void *out)
 	struct kres *r = out;
 
 	/* Relative names under the served cwd. */
-	r->err[0] = TS_ERR(ktrace("ktr.out", KTROP_SET, KTRFAC_SYSCALL,
+	r->err[0] = DQT_ERRNO_OF(ktrace("ktr.out", KTROP_SET, KTRFAC_SYSCALL,
 	    getpid()));
-	r->err[1] = TS_ERR(acct("acct.out"));
-	r->err[2] = TS_ERR(kldload("./m.ko"));
-	r->err[3] = TS_ERR(swapon("./swapfile"));
+	r->err[1] = DQT_ERRNO_OF(acct("acct.out"));
+	r->err[2] = DQT_ERRNO_OF(kldload("./m.ko"));
+	r->err[3] = DQT_ERRNO_OF(swapon("./swapfile"));
 	/* The linker's search is exempt: the real ENOENT. */
-	r->err[4] = TS_ERR(kldload("dq_kclass_no_such_module"));
+	r->err[4] = DQT_ERRNO_OF(kldload("dq_kclass_no_such_module"));
 }
 
 static void
@@ -41,35 +41,35 @@ kclass_root_fn(void *arg __unused, void *out)
 	struct kres *r = out;
 
 	/* Absolute names under the served root. */
-	r->err[0] = TS_ERR(ktrace("/ktr.out", KTROP_SET, KTRFAC_SYSCALL,
+	r->err[0] = DQT_ERRNO_OF(ktrace("/ktr.out", KTROP_SET, KTRFAC_SYSCALL,
 	    getpid()));
-	r->err[1] = TS_ERR(acct("/acct.out"));
-	r->err[2] = TS_ERR(kldload("/m.ko"));
-	r->err[3] = TS_ERR(swapon("/swapfile"));
+	r->err[1] = DQT_ERRNO_OF(acct("/acct.out"));
+	r->err[2] = DQT_ERRNO_OF(kldload("/m.ko"));
+	r->err[3] = DQT_ERRNO_OF(swapon("/swapfile"));
 }
 
 static void
 run(void (*fn)(void *, void *), bool cwd_only)
 {
-	struct ts s;
+	struct dqt_tree s;
 	struct kres r;
 	struct dq_stats2 a, b;
 	int n0, status;
 
-	ts_make_tree("t");
-	ts_start(&s, "t", DQ_TREE_F_ROOT);
+	dqt_tree_make("t");
+	dqt_tree_start(&s, "t", DQ_TREE_F_ROOT);
 	ATF_REQUIRE(dq_get_stats2(s.q, &a) == 0);
-	n0 = ts_nev(&s);
+	n0 = dqt_tree_nev(&s);
 	memset(&r, 0, sizeof(r));
-	status = ts_child(&s, cwd_only ? -1 : s.sroot, s.sroot, fn, NULL, &r,
-	    sizeof(r));
+	status = dqt_tree_child(&s, cwd_only ? -1 : s.sroot, s.sroot, fn, NULL,
+	    &r, sizeof(r));
 	dqt_require_exit0(status, "child");
-	TS_CHECK_ERRNO(EXDEV, r.err[0], "ktrace");
-	TS_CHECK_ERRNO(EXDEV, r.err[1], "acct");
-	TS_CHECK_ERRNO(EXDEV, r.err[2], "kldload");
-	TS_CHECK_ERRNO(EXDEV, r.err[3], "swapon");
+	DQT_CHECK_ERRNO(EXDEV, r.err[0], "ktrace");
+	DQT_CHECK_ERRNO(EXDEV, r.err[1], "acct");
+	DQT_CHECK_ERRNO(EXDEV, r.err[2], "kldload");
+	DQT_CHECK_ERRNO(EXDEV, r.err[3], "swapon");
 	if (fn == kclass_cwd_fn)
-		TS_CHECK_ERRNO(ENOENT, r.err[4], "kldload by name (exempt)");
+		DQT_CHECK_ERRNO(ENOENT, r.err[4], "kldload by name (exempt)");
 	ATF_REQUIRE(dq_get_stats2(s.q, &b) == 0);
 	printf("ds2_resolve_exdev rose by %ju\n",
 	    (uintmax_t)(b.ds2_resolve_exdev - a.ds2_resolve_exdev));
@@ -79,18 +79,19 @@ run(void (*fn)(void *, void *), bool cwd_only)
 	    (uintmax_t)(b.ds2_resolve_exdev - a.ds2_resolve_exdev));
 	ATF_CHECK_EQ(a.ds2_resolve_unmarked, b.ds2_resolve_unmarked);
 	/* No event was posted for any of them. */
-	ATF_CHECK_EQ_MSG(n0, ts_nev(&s), "%d events posted", ts_nev(&s) - n0);
-	ts_stop(&s);
+	ATF_CHECK_EQ_MSG(n0, dqt_tree_nev(&s), "%d events posted",
+	    dqt_tree_nev(&s) - n0);
+	dqt_tree_stop(&s);
 }
 
-TS_TC(kconsumer_served_cwd);
+DQT_TREE_TC(kconsumer_served_cwd);
 ATF_TC_BODY(kconsumer_served_cwd, tc)
 {
 
 	run(kclass_cwd_fn, true);
 }
 
-TS_TC(kconsumer_served_root);
+DQT_TREE_TC(kconsumer_served_root);
 ATF_TC_BODY(kconsumer_served_root, tc)
 {
 
@@ -127,30 +128,30 @@ kpath_fn(void *arg __unused, void *out)
 	 */
 	mdio.md_mediasize = DEV_BSIZE;
 	mdio.md_options = MD_AUTOUNIT | MD_READONLY;
-	r->err[1] = TS_ERR(ioctl(fd, MDIOCATTACH, &mdio));
+	r->err[1] = DQT_ERRNO_OF(ioctl(fd, MDIOCATTACH, &mdio));
 	close(fd);
 }
 
-TS_TC(kernel_path_refused);
+DQT_TREE_TC(kernel_path_refused);
 ATF_TC_BODY(kernel_path_refused, tc)
 {
-	struct ts s;
+	struct dqt_tree s;
 	struct kres r;
 	int n0, status;
 
 	if (access("/dev/" MDCTL_NAME, F_OK) != 0)
 		atf_tc_fail("md(4) is not loaded");
-	ts_make_tree("t");
-	ts_start(&s, "t", 0);
+	dqt_tree_make("t");
+	dqt_tree_start(&s, "t", 0);
 	memset(&r, 0, sizeof(r));
-	n0 = ts_nev(&s);
-	status = ts_child(&s, -1, -1, kpath_fn, NULL, &r, sizeof(r));
+	n0 = dqt_tree_nev(&s);
+	status = dqt_tree_child(&s, -1, -1, kpath_fn, NULL, &r, sizeof(r));
 	dqt_require_exit0(status, "child");
 	ATF_REQUIRE_MSG(r.err[0] == 0, "cannot open /dev/mdctl");
-	TS_CHECK_ERRNO(EPERM, r.err[1], "MDIOCATTACH of a vnode");
+	DQT_CHECK_ERRNO(EPERM, r.err[1], "MDIOCATTACH of a vnode");
 	/* Only the open of /dev/mdctl was posted. */
-	ATF_CHECK_EQ(n0 + 1, ts_nev(&s));
-	ts_stop(&s);
+	ATF_CHECK_EQ(n0 + 1, dqt_tree_nev(&s));
+	dqt_tree_stop(&s);
 }
 
 ATF_TP_ADD_TCS(tp)
