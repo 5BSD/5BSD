@@ -285,10 +285,12 @@ issuer, which only PID 1 creates on GENERIC; they call
 `capd_require_unit_issuer` and skip elsewhere with `DEFERRED_STACK_TIER`
 (`DEFERRED_TO_STACK_TIER=N`, not a pass).  They run on the stack tier:
 `GENERIC-TEST` booted plane-off with `kern.mac_capability.test_issuer=1`
-(`KERNEL_TIER=test PLANE_OFF=1 LOADER_EXTRA='kern.mac_capability.test_issuer="1"'`).
+(`STACK_TIER=1 KERNEL_TIER=test PLANE_OFF=1 LOADER_EXTRA='kern.mac_capability.test_issuer="1"'`).
 There a test-local Capsule gets a test issuer until PID 1 anchors the boot
 (`options MAC_CAPABILITY_TEST_PERMISSIVE`, mac_capability(4)).  The runner
-labels such a run `stack-tier=yes`, passes `stack_tier=1` to the suites so a
+labels such a run `stack-tier=yes`; `STACK_TIER=1` requires it, so a run that
+asks for the stack tier and misses a condition fails (`STACK_TIER_FAIL`)
+instead of counting every stack case as deferred.  It passes `stack_tier=1` to the suites so a
 missing issuer fails instead of skipping, and fails the run when stack
 suites ran and no test issuer was created.  The harness checks the kernel's
 TEST MODE line for each stack it starts, prints the issuer's identity, and
@@ -296,7 +298,21 @@ fails a case whose stack leaves a test issuer alive.
 `sys/mac_capability/authority_test_issuer_anchor_test` anchors the boot, so
 it runs only in a guest of its own, with
 `KYUA_VARS=test_suites.FreeBSD.authority_anchor=1`; elsewhere it is counted as
-`DEFERRED_TO_ANCHOR_RUN=N`.  The `usr.sbin/bsd-build` cases that read the
+`DEFERRED_TO_ANCHOR_RUN=N`.  It and
+`sys/mac_capability/authority_issuer_probe_test` read the
+`mac_capability:::issuer-decision` probe with dtrace(1); the runner preloads
+`dtraceall` for them, since the plane refuses a late kldload.  What happens
+when PID 1 itself anchors is the reroot stage: `REROOT=1` with
+`KERNEL_TIER=test PLANE_OFF=1` and
+`EXTRA_SCRIPT=tests/sys/mac_capability/authority_test_issuer_reroot.sh`.  The
+extra script runs with `VM_REROOT=before` on the plane-off boot, the guest
+then reroots into Capsule as PID 1 with the plane on (`kenv -u
+capability_plane; kenv init_path=/sbin/capsule; reboot -r`), and runs it
+again with `VM_REROOT=after` before the suites.  The run is clean only when
+both runs exit 0 and Capsule is PID 1 after the reroot.  By default the
+script also sets `debug.mac_capability.test_issuer_fail_init`, so PID 1's
+create fails after it anchors; `LOADER_EXTRA` with
+`vm_reroot_variant="plain"` selects the plain reroot.  The `usr.sbin/bsd-build` cases that read the
 source tree need `SRC_IMAGE` (and `PORTS_IMAGE` for package plans); without it
 they are counted as `DEFERRED_TO_SOURCE_TIER=N`.  With python, the source and
 the ports images, a long bsd-build run fills the default 8 GB guest root:

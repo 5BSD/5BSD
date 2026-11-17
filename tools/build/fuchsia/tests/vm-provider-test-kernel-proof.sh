@@ -138,6 +138,7 @@ stack() {
 	sh -c '
 	    R=$1/results; mkdir -p "$R"; : > "$R/tier.txt"
 	    test_kernel=$2 PLANE_OFF=$3 switch=$4 st=$5 KYUA_VARS=x
+	    STACK_TIER_REQUEST=$7
 	    sysctl() {
 		case "$2" in
 		kern.mac_capability.test_issuer) [ -n "$switch" ] && echo "$switch" ;;
@@ -147,7 +148,7 @@ stack() {
 	    }
 	    . "$6"
 	    echo "vars=$KYUA_VARS"
-	' stack "$work" "$@" "$work/stack.sh"
+	' stack "$work" "$@" "$work/stack.sh" "${REQ:-0}"
 }
 stack yes 1 1 none | grep -qx 'TIER_INFO: stack-tier=yes' || fail 'stack tier not recognised'
 stack yes 1 1 test | grep -qx 'vars=x test_suites.FreeBSD.stack_tier=1' || fail 'stack_tier not passed'
@@ -155,6 +156,24 @@ stack yes 1 1 anchored | grep -qx 'TIER_INFO: stack-tier=no' || fail 'anchored b
 stack yes 0 1 none | grep -qx 'TIER_INFO: stack-tier=no' || fail 'plane-on labelled stack'
 stack yes 1 0 none | grep -qx 'TIER_INFO: stack-tier=no' || fail 'switch off labelled stack'
 stack no 1 '' '' | grep -qx 'vars=x' || fail 'main kernel labelled stack'
+# STACK_TIER=1: a stack tier that is not met fails, one that is met does not.
+REQ=1 stack yes 1 1 none | grep -q '^STACK_TIER_FAIL' && fail 'met stack tier failed'
+for args in 'yes 1 1 anchored' 'yes 0 1 none' 'yes 1 0 none' 'no 1 0 none'; do
+	REQ=1 stack $args | grep -q '^STACK_TIER_FAIL: the stack tier was requested' ||
+	    fail "unmet stack tier [$args] not failed"
+done
+stack yes 1 1 anchored | grep -q '^STACK_TIER_FAIL' && fail 'unrequested stack tier failed'
+# The host refuses a request it cannot meet, before any guest is made.
+stage "$marker"
+for env in 'STACK_TIER=1' 'STACK_TIER=1 KERNEL_TIER=test' \
+    'STACK_TIER=1 PLANE_OFF=1'; do
+	if host $env > "$work/err" 2>&1; then fail "[$env] accepted"; fi
+	grep -q 'STACK_TIER=1 needs KERNEL_TIER=test and PLANE_OFF=1' "$work/err" ||
+	    fail "[$env]: $(cat "$work/err")"
+done
+if host STACK_TIER=2 KERNEL_TIER=test PLANE_OFF=1 > "$work/err" 2>&1; then fail 'STACK_TIER=2 accepted'; fi
+grep -q 'STACK_TIER must be 0 or 1' "$work/err" || fail "STACK_TIER=2: $(cat "$work/err")"
+host STACK_TIER=1 KERNEL_TIER=test PLANE_OFF=1 > /dev/null || fail 'a possible stack-tier request refused'
 
 # The verdict: exactly one PASS line and no FAIL line.
 verdict() { printf "$1" > "$work/log"; log=$work/log sh "$work/verdict.sh"; }
