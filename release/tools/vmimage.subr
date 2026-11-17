@@ -147,12 +147,12 @@ vm_install_base() {
 			installworld installkernel distribution || \
 			err "\n\nCannot install the base system to ${DESTDIR}."
 	fi
-	# The image never carries a kernel built with the dq(4) test option,
+	# The image never carries a kernel built with a test-kernel option,
 	# whether it was installed from the object tree or from packages
 	# (PKGBASE_REPO_DIR may name any repository).
-	sh ${WORLDDIR}/release/scripts/check-kernel-no-dq-test.sh \
+	sh ${WORLDDIR}/release/scripts/check-test-kernel.sh \
 		-d ${DESTDIR} || \
-		err "\n\nRefusing a kernel with the dq(4) test option."
+		err "\n\nRefusing a kernel with a test-kernel option."
 
 	# Bootstrap etcupdate(8) database.
 	mkdir -p ${DESTDIR}/var/db/etcupdate

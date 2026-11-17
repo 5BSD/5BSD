@@ -61,18 +61,18 @@ LIBC_OBJDIR?= ${OBJTOP}/lib/libc
 MALLOC_PRODUCTION_CHECK= sh ${.CURDIR}/release/scripts/check-malloc-production.sh \
 	    ${ALLOW_DEBUG_MALLOC:U:tl:Myes:S/yes/-a/}
 
-# Publication refuses a kernel or module built with the dq(4) test option
-# (options DQ_TEST_OPEN, for example KERNCONF=GENERIC-DQTEST).  The check
+# Publication refuses a kernel or module built with a test-kernel option
+# (sys/conf/test-options, for example KERNCONF=GENERIC-TEST).  The check
 # reads the binaries; it has no override.  It finds a test kernel that
 # reaches publication by accident and says nothing about the boot chain of
 # an installed system.
-KERNEL_TEST_OPTION_CHECK= sh ${.CURDIR}/release/scripts/check-kernel-no-dq-test.sh
+KERNEL_TEST_OPTION_CHECK= sh ${.CURDIR}/release/scripts/check-test-kernel.sh
 
 # Read-only: the world in the object tree must use production malloc(3).
 malloc-production-check: .PHONY
 	@${MALLOC_PRODUCTION_CHECK} -o ${LIBC_OBJDIR:Q}
 
-# Read-only: no kernel in the object tree carries the dq(4) test option.
+# Read-only: no kernel in the object tree carries a test-kernel option.
 # A check that names no kernel has read nothing and fails.
 kernel-test-option-check: .PHONY
 .if empty(KERNCONF)
@@ -103,7 +103,7 @@ hardware-packages hardware-packages-check: .PHONY
 # must be supplied together. The combined catalogue covers the copied archive.
 # APPLICATION_PACKAGE_SELECTION optionally adds a format-1 hash-bound archive
 # selection without rewriting package identities. Format 2 is not supported.
-# Both inputs are checked for the dq(4) test option before anything is
+# Both inputs are checked for a test-kernel option before anything is
 # created: the published kernel package is the hardware repository's copy.
 publish-packages: .PHONY
 	@${KERNEL_TEST_OPTION_CHECK} -r ${BASE_REPOSITORY:Q} -r ${HARDWARE_REPO:Q}

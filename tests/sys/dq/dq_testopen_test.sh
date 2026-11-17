@@ -7,7 +7,7 @@
 # kernel (design D346, D352).
 #
 # The oracle is the kernel's own configuration name, kern.ident: the
-# test configuration is GENERIC-DQTEST; every other kernel is treated as
+# test configuration is GENERIC-TEST; every other kernel is treated as
 # a production kernel.  No case skips: a kernel this file has no
 # expectation for is a failure.
 #
@@ -22,14 +22,14 @@
 #   - both sysctls exist and cannot be written; unverified_open is 1 only
 #     when the loader set it to exactly 1;
 #   - the booted kernel file carries both signatures, the ones
-#     release/scripts/check-kernel-no-dq-test.sh refuses;
+#     release/scripts/check-test-kernel.sh refuses;
 #   - who may open /dev/dq is unchanged: root does, an unprivileged user
 #     does not, with the tunable set or clear;
 #   - test_opens counts an open that passed every check of dq_open(),
 #     and only when the tunable is 1; a refused open is never counted.
 #
 
-TEST_IDENT=GENERIC-DQTEST
+TEST_IDENT=GENERIC-TEST
 MARKER='@(#)5BSD DQ_TEST_OPEN test kernel: not for publication'
 SYMBOLS='dq_testopen_'
 

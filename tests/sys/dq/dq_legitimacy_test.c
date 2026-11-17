@@ -41,7 +41,7 @@
  *    linux_open_ioctl (root half) and unattached_control fail at their
  *    first open, whatever the table says about their later rows.  Rows
  *    marked T are not observable on P from this program.
- * T  the test kernel (GENERIC-DQTEST, options DQ_TEST_OPEN, with
+ * T  the test kernel (GENERIC-TEST, options DQ_TEST_OPEN, with
  *    debug.dq.unverified_open=1; design 9.1).  Root's open binds a test
  *    queue.  The owner rule applies to a test-bound queue, so the
  *    non-owner rows change there; the attach token rule does not (no
