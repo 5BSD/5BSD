@@ -1230,9 +1230,10 @@ dq_write(struct file *fp, struct uio *uio, struct ucred *active_cred __unused,
 	 * moved and is not reported; the offset and the size already
 	 * follow the accepted bytes.  dofilewrite applies the same rule to
 	 * an interruption; the callers that do not (aio, the Linux bridges)
-	 * get it here.
+	 * get it here.  EFAULT from the caller's buffer is kept, as zfs_write
+	 * keeps it (review 1 L5).
 	 */
-	if (done != 0)
+	if (done != 0 && error != EFAULT)
 		error = 0;
 out_offset:
 	uio->uio_resid += resid_adj;
@@ -1597,12 +1598,18 @@ dq_setattr_post(struct dq_object *o, struct dq_setattr_body *sb,
 		o->o_ident.di_mtime = sb->dsa_mtime;
 	if ((mask & DQ_SETATTR_BIRTHTIME) != 0)
 		o->o_ident.di_birthtime = sb->dsa_birthtime;
-	o->o_ident.di_ctime.tv_sec = now.tv_sec;
-	o->o_ident.di_ctime.tv_nsec = now.tv_nsec;
-	/* A truncation is a change of the data too (ffs_truncate). */
-	if ((mask & (DQ_SETATTR_SIZE | DQ_SETATTR_MTIME)) == DQ_SETATTR_SIZE &&
-	    (o->o_policy.dp_flags & DQ_PF_NO_STAMP) == 0)
-		o->o_ident.di_mtime = o->o_ident.di_ctime;
+	/*
+	 * The change time, and for a truncation the data's (ffs_truncate),
+	 * unless the controller keeps the times (DQ_PF_NO_STAMP, review 1
+	 * L4).
+	 */
+	if ((o->o_policy.dp_flags & DQ_PF_NO_STAMP) == 0) {
+		o->o_ident.di_ctime.tv_sec = now.tv_sec;
+		o->o_ident.di_ctime.tv_nsec = now.tv_nsec;
+		if ((mask & (DQ_SETATTR_SIZE | DQ_SETATTR_MTIME)) ==
+		    DQ_SETATTR_SIZE)
+			o->o_ident.di_mtime = o->o_ident.di_ctime;
+	}
 	dq_file_knote(o, NOTE_ATTRIB);
 	DQO_UNLOCK(o);
 	if ((mask & DQ_SETATTR_SIZE) != 0)

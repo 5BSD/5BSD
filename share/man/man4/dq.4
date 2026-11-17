@@ -1629,6 +1629,9 @@ A failure after some chunks were accepted (the controller's errno, a
 deadline, a revoke, the signal of an interruptible object) ends the call
 with the short count of the accepted bytes and drops the error, as ZFS
 does (D194); the offset and the size already follow those bytes.
+.Er EFAULT ,
+a later chunk that cannot be copied from the caller's buffer, is kept,
+as ZFS keeps it.
 No rollback of accepted chunks is possible: a failing chunk does not undo
 the earlier ones (a vnode's all-or-nothing
 .Dv IO_UNIT

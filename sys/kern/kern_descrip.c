@@ -4733,6 +4733,18 @@ fget_fcntl(struct thread *td, int fd, const cap_rights_t *rightsp,
 #endif
 }
 
+/* The vnode of a held file, referenced; EINVAL for a file without one. */
+static __inline int
+_fgetvp_file(struct file *fp, struct vnode **vpp)
+{
+
+	if (fp->f_vnode == NULL)
+		return (EINVAL);
+	*vpp = fp->f_vnode;
+	vrefact(*vpp);
+	return (0);
+}
+
 /*
  * Like fget() but loads the underlying vnode, or returns an error if the
  * descriptor does not represent a vnode.  Note that pipes use vnodes but
@@ -4751,12 +4763,7 @@ _fgetvp(struct thread *td, int fd, int flags, const cap_rights_t *needrightsp,
 	error = _fget(td, fd, &fp, flags, needrightsp);
 	if (error != 0)
 		return (error);
-	if (fp->f_vnode == NULL) {
-		error = EINVAL;
-	} else {
-		*vpp = fp->f_vnode;
-		vrefact(*vpp);
-	}
+	error = _fgetvp_file(fp, vpp);
 	fdrop(fp, td);
 
 	return (error);
@@ -4826,17 +4833,7 @@ fgetvp_exec(struct thread *td, int fd, const cap_rights_t *rightsp,
 	error = _fget(td, fd, &fp, FEXEC, rightsp);
 	if (error != 0)
 		return (error);
-	if (fp->f_type == DTYPE_DQ) {
-		error = EACCES;
-		goto out;
-	}
-	if (fp->f_vnode == NULL) {
-		error = EINVAL;
-		goto out;
-	}
-	*vpp = fp->f_vnode;
-	vrefact(*vpp);
-out:
+	error = fp->f_type == DTYPE_DQ ? EACCES : _fgetvp_file(fp, vpp);
 	fdrop(fp, td);
 	return (error);
 }

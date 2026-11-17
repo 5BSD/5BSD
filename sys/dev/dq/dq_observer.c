@@ -40,6 +40,9 @@
 /* fc_ioctls is freed by filecaps_free() with this type (kern_descrip.c). */
 MALLOC_DECLARE(M_FILECAPS);
 
+/* The pad after an observed record's data. */
+static const char dq_obs_zeros[8];
+
 static fo_rdwr_t	dq_observer_read;
 static fo_ioctl_t	dq_observer_ioctl;
 static fo_poll_t	dq_observer_poll;
@@ -359,9 +362,19 @@ dq_observer_copyout(struct dq_obs_rec *rec, struct uio *uio,
 		error = uiomove((char *)&rec->or_ev->ev_hdr +
 		    sizeof(struct dq_event),
 		    rec->or_ev->ev_size - sizeof(struct dq_event), uio);
-	if (error == 0 && rec->or_data != NULL)
+	if (error == 0 && rec->or_data != NULL) {
+		/*
+		 * The data proper, then zeros to the record's alignment: the
+		 * bytes after dd_plen may be a post-operation block, which
+		 * the record does not carry (review 1 L2).
+		 */
 		error = uiomove(rec->or_data->dd_bytes,
-		    roundup2(rec->or_data->dd_plen, 8), uio);
+		    rec->or_data->dd_plen, uio);
+		if (error == 0 && (rec->or_data->dd_plen & 7) != 0)
+			error = uiomove(__DECONST(char *, dq_obs_zeros),
+			    roundup2(rec->or_data->dd_plen, 8) -
+			    rec->or_data->dd_plen, uio);
+	}
 	if (error != 0) {
 		memcpy(iovbase, iovsave, (size_t)iovcnt * sizeof(*iovsave));
 		uio->uio_iov = iovbase;
