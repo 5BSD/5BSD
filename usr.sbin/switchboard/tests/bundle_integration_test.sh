@@ -778,6 +778,7 @@ component_factory_names_are_internal_head() {
 component_factory_names_are_internal_body() {
 	local endpoint kind
 
+	capd_require_unit_issuer
 	prepare_paths
 	find_capd_service_fixture
 	build_lookup_client
@@ -960,6 +961,7 @@ multiple_provides_failure_isolated_head() {
 multiple_provides_failure_isolated_body() {
 	local bundle first lookup_pid second
 
+	capd_require_unit_issuer
 	prepare_paths
 	build_lookup_client
 	find_capd_service_fixture
@@ -1012,6 +1014,7 @@ requester_crash_cancels_pending_lookup_head() {
 requester_crash_cancels_pending_lookup_body() {
 	local client_bundle first_pid i provider_bundle service_name
 
+	capd_require_unit_issuer
 	prepare_paths
 	find_capd_service_fixture
 	service_name="org.test.lifecycle.delayed"
@@ -1140,6 +1143,7 @@ partial_system_install_is_admitted_when_complete_head() {
 partial_system_install_is_admitted_when_complete_body() {
 	local stage dst
 
+	capd_require_unit_issuer
 	prepare_paths
 	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=1
 	start_stack
@@ -1187,6 +1191,7 @@ broken_new_system_bundle_does_not_block_installs_head() {
 broken_new_system_bundle_does_not_block_installs_body() {
 	local bad bundle i
 
+	capd_require_unit_issuer
 	prepare_paths
 	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=1
 	start_stack
@@ -1227,6 +1232,7 @@ registered_system_bundle_survives_half_written_upgrade_head() {
 registered_system_bundle_survives_half_written_upgrade_body() {
 	local bundle pid unit loads0 i
 
+	capd_require_unit_issuer
 	prepare_paths
 	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=1
 	bundle=$(create_system_bundle "Keep" "org.test.keep" "keepd" "org.test.keep.svc")
@@ -1284,6 +1290,7 @@ registered_apps_bundle_survives_half_written_upgrade_head() {
 registered_apps_bundle_survives_half_written_upgrade_body() {
 	local bundle pid unit loads0 i
 
+	capd_require_unit_issuer
 	prepare_paths
 	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=1
 	bundle=$(create_user_bundle "Keepu" "org.test.keepu" "keepud" "org.test.keepu.svc")
@@ -1333,6 +1340,7 @@ conflicting_user_bundle_is_quarantined_not_fatal_head() {
 conflicting_user_bundle_is_quarantined_not_fatal_body() {
 	local sysb usrb
 
+	capd_require_unit_issuer
 	prepare_paths
 	sysb=$(create_system_bundle "Owner" "org.test.owner" "ownerd" "org.test.contended.svc")
 	usrb=$(create_user_bundle "Squatter" "org.test.squatter" "squatterd" "org.test.contended.svc")
@@ -1364,6 +1372,7 @@ vanished_system_root_retains_registry_head() {
 vanished_system_root_retains_registry_body() {
 	local bundle pid
 
+	capd_require_unit_issuer
 	prepare_paths
 	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=1
 	bundle=$(create_system_bundle "Rooted" "org.test.rooted" "rootedd" "org.test.rooted.svc")
@@ -1400,6 +1409,7 @@ folder_watch_loads_and_unloads_head() {
 folder_watch_loads_and_unloads_body() {
 	local bundle
 
+	capd_require_unit_issuer
 	prepare_paths
 	# Short quiescence so the test does not wait on the production settle.
 	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=1
@@ -1444,6 +1454,7 @@ folder_watch_coalesces_bursts_head() {
 folder_watch_coalesces_bursts_body() {
 	local u x n
 
+	capd_require_unit_issuer
 	prepare_paths
 	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=2
 	start_stack
@@ -1479,6 +1490,7 @@ run_live_markers_follow_units_head() {
 run_live_markers_follow_units_body() {
 	local bundle pid i
 
+	capd_require_unit_issuer
 	prepare_paths
 	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=1
 	start_stack
