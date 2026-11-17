@@ -54,6 +54,7 @@ ATF_TESTS_SH+=	dq_dtrace_test
 ATF_TESTS_SH+=	dq_testopen_test
 ATF_TESTS_SH+=	dq_oracle_test
 ATF_TESTS_SH+=	dq_tree_suites_test
+ATF_TESTS_SH+=	dq_tree_hang_loop
 ATF_TESTS_SH+=	dq_dqswap_test
 
 # Every program is a controller: each links the support library
@@ -130,6 +131,9 @@ TEST_METADATA.dq_getcwd_test+=	is_exclusive="true"
 TEST_METADATA.dq_kclass_test+=	is_exclusive="true"
 # Runs whole suites in a served root and in chroot(8): alone, with time.
 TEST_METADATA.dq_tree_suites_test+=	is_exclusive="true" timeout="7200"
+# Runs one served-root case 200 times beside CPU burners; only with
+# test_suites.FreeBSD.dq_hang_loop set: alone.
+TEST_METADATA.dq_tree_hang_loop+=	is_exclusive="true"
 # Runs whole suites twice under kyua: alone, and with time.  670 to 1440 s
 # on an idle host; more than 3600 s on a loaded one (host load 25-40).
 TEST_METADATA.dq_oracle_test+=	is_exclusive="true" timeout="7200"
@@ -143,8 +147,10 @@ LIBADD.dqpass=	dq
 MAN.dqpass=
 BINDIR.dqpass=	${TESTSDIR}
 ${PACKAGE}FILES+=	dqpass.expected
-# The shell functions dq_oracle_test and dq_tree_suites_test share.
+# The shell functions dq_oracle_test and dq_tree_suites_test share, and
+# the hang capture of the served-root runs (T-R11, T-R12).
 ${PACKAGE}FILES+=	dq_suites.subr
+${PACKAGE}FILES+=	dq_hang.subr
 
 # dqswap (share/examples/dq): the example supervisor that gives up root
 # after the attach; dq_dqswap_test runs it.
