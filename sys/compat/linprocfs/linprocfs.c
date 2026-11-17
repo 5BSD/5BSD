@@ -1561,7 +1561,12 @@ linprocfs_doproccwd(PFS_FILL_ARGS)
 	if (linprocfs_dqres_dir(td, p, false, sb))
 		return (0);
 	pwd = pwd_hold_proc(p);
-	vn_fullpath(pwd->pwd_cdir, &fullpath, &freepath);
+	if (vn_fullpath(pwd->pwd_cdir, &fullpath, &freepath) == 0) {
+		/* A reader under a served root sees no real path (T-A10). */
+		dqres_present_real_maybe(td, fullpath, strlen(fullpath) + 1);
+		if (fullpath[0] == '\0')
+			fullpath = "unknown";
+	}
 	sbuf_printf(sb, "%s", fullpath);
 	if (freepath)
 		free(freepath, M_TEMP);
@@ -1584,7 +1589,12 @@ linprocfs_doprocroot(PFS_FILL_ARGS)
 		return (0);
 	pwd = pwd_hold_proc(p);
 	vp = jailed(p->p_ucred) ? pwd->pwd_jdir : pwd->pwd_rdir;
-	vn_fullpath(vp, &fullpath, &freepath);
+	if (vn_fullpath(vp, &fullpath, &freepath) == 0) {
+		/* A reader under a served root sees no real path (T-A10). */
+		dqres_present_real_maybe(td, fullpath, strlen(fullpath) + 1);
+		if (fullpath[0] == '\0')
+			fullpath = "unknown";
+	}
 	sbuf_printf(sb, "%s", fullpath);
 	if (freepath)
 		free(freepath, M_TEMP);
@@ -2458,8 +2468,18 @@ linprocfs_dofd(PFS_FILL_ARGS, int fd)
 		error = vn_inotify_path_readlink(fp, &name, &buffer);
 		if (error == EOPNOTSUPP)
 			error = vn_fullpath(fp->f_vnode, &name, &buffer);
-		if (error == 0)
-			sbuf_cat(sb, name);
+		if (error == 0) {
+			/*
+			 * A reader under a served root sees no real path
+			 * (T-A10): ENOENT, as fdescfs answers, never an
+			 * empty link.
+			 */
+			dqres_present_real_maybe(td, name, strlen(name) + 1);
+			if (name[0] == '\0')
+				error = ENOENT;
+			else
+				sbuf_cat(sb, name);
+		}
 	} else if (linprocfs_kinfo_path(td, fp, sb) == 0) {
 		/* A presented path, appended. */
 	} else if (fp->f_type == DTYPE_PIPE || fp->f_type == DTYPE_SOCKET) {

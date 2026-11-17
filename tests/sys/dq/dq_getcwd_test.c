@@ -754,7 +754,6 @@ ATF_TC_BODY(real_object_paths_served_root, tc)
 	struct ro_arg a;
 	struct ro_res r, ra;
 	char real[2][PATH_MAX], view[2][PATH_MAX], vm[PATH_MAX];
-	char mycwd[PATH_MAX];
 	int pd, status, ready[2], go[2], back[2];
 	size_t got;
 	pid_t apid, pid;
@@ -776,7 +775,6 @@ ATF_TC_BODY(real_object_paths_served_root, tc)
 	ATF_REQUIRE(pipe(a.tochild) == 0 && pipe(a.toparent) == 0);
 	snprintf(real[RO_SWAP], PATH_MAX, "%s/a", s.backing);
 	ATF_REQUIRE(realpath("w/x", real[RO_PASS]) != NULL);
-	ATF_REQUIRE(getcwd(mycwd, sizeof(mycwd)) != NULL);
 
 	ATF_REQUIRE(pipe(ready) == 0 && pipe(go) == 0 && pipe(back) == 0);
 	pid = pdfork(&pd, 0);
@@ -836,17 +834,17 @@ ATF_TC_BODY(real_object_paths_served_root, tc)
 	TS_CHECK_ERRNO(ENOENT, ra.err[4], "fdescfs link, SWAP");
 	TS_CHECK_ERRNO(ENOENT, ra.err[5], "fdescfs link, PASS");
 	/*
-	 * Pin (review 1 M3): linprocfs's fd, cwd and root links still show
-	 * the real paths to the program.
+	 * linprocfs shows no real path either (review 1 M3; it showed them):
+	 * an fd link is ENOENT, as fdescfs's, and the cwd and root links of
+	 * real directories read "unknown", linprocfs's answer when it has
+	 * no path.
 	 */
-	TS_CHECK_ERRNO(0, ra.lperr[0], "linprocfs fd link, SWAP");
-	TS_CHECK_ERRNO(0, ra.lperr[1], "linprocfs fd link, PASS");
-	ATF_CHECK_STREQ(real[RO_SWAP], ra.lpfdl[RO_SWAP]);
-	ATF_CHECK_STREQ(real[RO_PASS], ra.lpfdl[RO_PASS]);
+	TS_CHECK_ERRNO(ENOENT, ra.lperr[0], "linprocfs fd link, SWAP");
+	TS_CHECK_ERRNO(ENOENT, ra.lperr[1], "linprocfs fd link, PASS");
 	TS_CHECK_ERRNO(0, ra.lperr[2], "linprocfs cwd of the parent");
 	TS_CHECK_ERRNO(0, ra.lperr[3], "linprocfs root of the parent");
-	ATF_CHECK_STREQ(mycwd, ra.lpcwd);
-	ATF_CHECK_STREQ("/", ra.lproot);
+	ATF_CHECK_STREQ("unknown", ra.lpcwd);
+	ATF_CHECK_STREQ("unknown", ra.lproot);
 	close(pd);
 	close(a.realdir);
 	close(a.lpfd);

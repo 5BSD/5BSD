@@ -4290,13 +4290,22 @@ in
 and no name in
 .Xr linprocfs 4 Ns 's
 .Pa maps ,
-and
 .Er ENOENT
 from
 .Xr readlink 2
 of its
 .Xr fdescfs 4
-link, as when
+link and of a
+.Xr linprocfs 4
+.Pa fd/ Ns Ar N
+link, and
+.Dq unknown
+from a
+.Xr linprocfs 4
+.Pa cwd
+or
+.Pa root
+link of a real directory, as when
 .Fn vn_fullpath
 fails; the path it has is the controller's, not the program's (declared;
 owner question Q1, whose other answer would present one under the root
