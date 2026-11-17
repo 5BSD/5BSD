@@ -1,16 +1,11 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
- * Copyright (c) 2026 Kory Heard <koryheard@icloud.com>
  *
- * DescriptorQueue stage 1c-iii-c test harness: a dq_serve_tree()
- * controller thread over a backing tree, its minted root (the served
- * root and cwd ATTACH can give), an event recorder, an optional hook that
- * answers chosen events itself, and attached children that report a
- * fixed-size result through a pipe.  Children never use ATF macros.
+ * Copyright (c) 2026 Kory Heard
+ *
+ * The served-tree harness of the DescriptorQueue tests; see
+ * dq_tree_harness.h.
  */
-
-#ifndef _DQ_TREE_HARNESS_H_
-#define	_DQ_TREE_HARNESS_H_
 
 #include <sys/param.h>
 #include <sys/procdesc.h>
@@ -29,51 +24,9 @@
 
 #include <libdq.h>
 
-#define	TS_TC_HEAD_BODY(name)						\
-	ATF_TC_HEAD(name, tc)						\
-	{								\
-		atf_tc_set_md_var(tc, "require.user", "root");		\
-		atf_tc_set_md_var(tc, "timeout", "180");		\
-	}
-#define	TS_TC(name)	ATF_TC(name); TS_TC_HEAD_BODY(name)
-#define	TS_TC_CLEANUP(name)	ATF_TC_WITH_CLEANUP(name); TS_TC_HEAD_BODY(name)
+#include "dq_tree_harness.h"
 
-#define	TS_NEV		512
-
-/* One recorded RESOLVE event. */
-struct ts_ev {
-	uint32_t	op;
-	uint32_t	start_kind;
-	uint32_t	rclass;
-	uint32_t	rflags;
-	uint32_t	accept;
-	uint64_t	start;
-	char		path[256];
-	char		hint[256];
-};
-
-struct ts;
-/* A hook answers an event itself (returns 1) or leaves it to the tree. */
-typedef int (*ts_hook_fn)(struct ts *, const struct dq_event *,
-    const struct dq_resolve_body *, const char *path);
-
-struct ts {
-	int		 q;
-	int		 bfd;		/* the backing tree */
-	int		 sroot;		/* the minted root (controller's fd) */
-	uint64_t	 rootid;
-	struct dq_tree	*tree;
-	pthread_t	 thr;
-	volatile int	 stop;
-	char		 backing[PATH_MAX];	/* its real path = the prefix */
-	pthread_mutex_t	 mtx;
-	int		 nev;
-	struct ts_ev	 ev[TS_NEV];
-	ts_hook_fn	 hook;
-	void		*hookarg;
-};
-
-static __unused int
+static int
 ts_handler(int q, const struct dq_event *ev, const void *body,
     size_t bodylen, void *arg)
 {
@@ -109,52 +62,39 @@ ts_handler(int q, const struct dq_event *ev, const void *body,
 	return (0);
 }
 
-static __unused void *
-ts_main(void *arg)
-{
-	struct ts *s = arg;
-	struct pollfd pfd;
-
-	while (!s->stop) {
-		pfd.fd = s->q;
-		pfd.events = POLLIN;
-		if (poll(&pfd, 1, 50) <= 0)
-			continue;
-		(void)dq_dispatch(s->q, ts_handler, s);
-	}
-	return (NULL);
-}
-
 /* A file with contents under dir. */
-static __unused void
+void
 ts_file(const char *dir, const char *name, const char *data)
 {
 	char path[PATH_MAX];
 	int fd;
 
-	snprintf(path, sizeof(path), "%s/%s", dir, name);
+	ATF_REQUIRE((size_t)snprintf(path, sizeof(path), "%s/%s", dir, name) <
+	    sizeof(path));
 	fd = open(path, O_CREAT | O_TRUNC | O_WRONLY, 0644);
 	ATF_REQUIRE_MSG(fd >= 0, "%s: %s", path, strerror(errno));
 	ATF_REQUIRE(write(fd, data, strlen(data)) == (ssize_t)strlen(data));
 	close(fd);
 }
 
-static __unused void
+void
 ts_mkdir(const char *dir, const char *name)
 {
 	char path[PATH_MAX];
 
-	snprintf(path, sizeof(path), "%s/%s", dir, name);
+	ATF_REQUIRE((size_t)snprintf(path, sizeof(path), "%s/%s", dir, name) <
+	    sizeof(path));
 	ATF_REQUIRE_MSG(mkdir(path, 0755) == 0, "%s: %s", path,
 	    strerror(errno));
 }
 
-static __unused void
+void
 ts_symlink(const char *dir, const char *name, const char *target)
 {
 	char path[PATH_MAX];
 
-	snprintf(path, sizeof(path), "%s/%s", dir, name);
+	ATF_REQUIRE((size_t)snprintf(path, sizeof(path), "%s/%s", dir, name) <
+	    sizeof(path));
 	ATF_REQUIRE(symlink(target, path) == 0);
 }
 
@@ -162,7 +102,7 @@ ts_symlink(const char *dir, const char *name, const char *target)
  * The standard tree: a ("tree\n"), d/, d/f ("f\n"), d/e/, l -> a,
  * ds -> d, abs -> /d/f (an absolute link, inside the served root).
  */
-static __unused void
+void
 ts_make_tree(const char *dir)
 {
 
@@ -177,33 +117,31 @@ ts_make_tree(const char *dir)
 }
 
 /* Serve dir (made by the caller) with flags | DQ_TREE_F_SERVED. */
-static __unused void
+void
 ts_start(struct ts *s, const char *dir, uint32_t flags)
 {
 
 	memset(s, 0, sizeof(*s));
-	if (access("/dev/dq", F_OK) != 0)
-		atf_tc_skip("no /dev/dq");
 	ATF_REQUIRE(realpath(dir, s->backing) != NULL);
 	s->bfd = open(s->backing, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
 	ATF_REQUIRE(s->bfd >= 0);
 	pthread_mutex_init(&s->mtx, NULL);
-	s->q = dq_open();
-	ATF_REQUIRE(s->q >= 0);
+	s->q = dqt_open_queue();
 	s->tree = dq_tree_create(s->q, s->bfd, s->backing,
 	    DQ_TREE_F_SERVED | flags);
 	ATF_REQUIRE_MSG(s->tree != NULL, "dq_tree_create: %s",
 	    strerror(errno));
 	ATF_REQUIRE(dq_tree_root(s->tree, &s->sroot, &s->rootid) == 0);
-	ATF_REQUIRE(pthread_create(&s->thr, NULL, ts_main, s) == 0);
+	dqt_server_start(&s->server, s->q, ts_handler, s);
 }
 
-static __unused void
+void
 ts_stop(struct ts *s)
 {
+	int error;
 
-	s->stop = 1;
-	pthread_join(s->thr, NULL);
+	error = dqt_server_stop(&s->server);
+	ATF_CHECK_EQ_MSG(0, error, "controller thread: %s", strerror(error));
 	if (s->sroot >= 0)
 		close(s->sroot);
 	dq_tree_destroy(s->tree);
@@ -213,7 +151,7 @@ ts_stop(struct ts *s)
 		close(s->bfd);
 }
 
-static __unused int
+int
 ts_nev(struct ts *s)
 {
 	int n;
@@ -225,7 +163,7 @@ ts_nev(struct ts *s)
 }
 
 /* How many recorded events, from index from, have this op. */
-static __unused int
+int
 ts_count_op(struct ts *s, int from, uint32_t op)
 {
 	int i, n;
@@ -239,20 +177,19 @@ ts_count_op(struct ts *s, int from, uint32_t op)
 	return (n);
 }
 
-typedef void (*ts_child_fn)(void *arg, void *out);
-
 /*
  * Run fn in a pdfork child attached to s->q with the given served starts
  * (-1 for none), sending back outlen bytes of out; returns the child's
  * wait status.  The child closes the controller's root descriptor unless
  * keep_sroot (an inherited served directory counts against chroot).
  */
-static __unused int
+int
 ts_child_ex(struct ts *s, int rootfd, int cwdfd, bool keep_sroot,
     bool close_before_go, ts_child_fn fn, void *arg, void *out, size_t outlen)
 {
 	int ready[2], go[2], back[2], pd, status;
-	ssize_t n;
+	char sbuf[64];
+	size_t got;
 	pid_t pid;
 	char c;
 
@@ -266,14 +203,24 @@ ts_child_ex(struct ts *s, int rootfd, int cwdfd, bool keep_sroot,
 		/* The backing tree is the controller's, never the child's. */
 		if (s->bfd >= 0)
 			close(s->bfd);
+		close(ready[0]);
+		close(go[1]);
+		close(back[0]);
 		(void)write(ready[1], "r", 1);
 		if (read(go[0], &c, 1) != 1)
 			_exit(1);
 		fn(arg, out);
-		(void)write(back[1], out, outlen);
-		_exit(0);
+		_exit(write(back[1], out, outlen) == (ssize_t)outlen ? 0 : 3);
 	}
-	ATF_REQUIRE(read(ready[0], &c, 1) == 1);
+	/*
+	 * Only the child holds the write ends: a child that dies is an EOF
+	 * here at once, not a hang until the case's timeout.
+	 */
+	close(ready[1]);
+	close(go[0]);
+	close(back[1]);
+	ATF_REQUIRE_MSG(read(ready[0], &c, 1) == 1, "the child died before "
+	    "attaching");
 	ATF_REQUIRE_MSG(dq_attach_starts(s->q, pd, rootfd, cwdfd) == 0,
 	    "attach: %s", strerror(errno));
 	if (close_before_go && s->sroot >= 0) {
@@ -282,18 +229,23 @@ ts_child_ex(struct ts *s, int rootfd, int cwdfd, bool keep_sroot,
 		s->sroot = -1;
 	}
 	ATF_REQUIRE(write(go[1], "g", 1) == 1);
-	n = read(back[0], out, outlen);
+	got = dqt_read_full(back[0], out, outlen);
 	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
-	if (n != (ssize_t)outlen)
+	if (got != outlen) {
+		/* Never trust part of a result. */
 		memset(out, 0, outlen);
-	close(ready[0]); close(ready[1]);
-	close(go[0]); close(go[1]);
-	close(back[0]); close(back[1]);
+		ATF_REQUIRE_MSG(!WIFEXITED(status) || WEXITSTATUS(status) != 0,
+		    "child exited 0 with %zu of %zu result bytes (%s)", got,
+		    outlen, dqt_status_str(status, sbuf, sizeof(sbuf)));
+	}
+	close(ready[0]);
+	close(go[1]);
+	close(back[0]);
 	close(pd);
 	return (status);
 }
 
-static __unused int
+int
 ts_child(struct ts *s, int rootfd, int cwdfd, ts_child_fn fn, void *arg,
     void *out, size_t outlen)
 {
@@ -301,18 +253,3 @@ ts_child(struct ts *s, int rootfd, int cwdfd, ts_child_fn fn, void *arg,
 	return (ts_child_ex(s, rootfd, cwdfd, false, false, fn, arg, out,
 	    outlen));
 }
-
-/* An errno of a call: 0 on success. */
-#define	TS_ERR(x)	((x) < 0 ? errno : 0)
-
-/* strerror(3) shares one buffer: format each errno into its own. */
-#define	TS_CHECK_ERRNO(want, got, what) do {				\
-	char _ws[64], _gs[64];						\
-	int _w = (want), _g = (got);					\
-	(void)strerror_r(_w, _ws, sizeof(_ws));				\
-	(void)strerror_r(_g, _gs, sizeof(_gs));				\
-	ATF_CHECK_EQ_MSG(_w, _g, "%s: want %d (%s), got %d (%s)",	\
-	    (what), _w, _ws, _g, _gs);					\
-} while (0)
-
-#endif /* !_DQ_TREE_HARNESS_H_ */

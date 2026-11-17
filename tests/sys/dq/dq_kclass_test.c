@@ -63,7 +63,7 @@ run(void (*fn)(void *, void *), bool cwd_only)
 	memset(&r, 0, sizeof(r));
 	status = ts_child(&s, cwd_only ? -1 : s.sroot, s.sroot, fn, NULL, &r,
 	    sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	TS_CHECK_ERRNO(EXDEV, r.err[0], "ktrace");
 	TS_CHECK_ERRNO(EXDEV, r.err[1], "acct");
 	TS_CHECK_ERRNO(EXDEV, r.err[2], "kldload");
@@ -71,7 +71,10 @@ run(void (*fn)(void *, void *), bool cwd_only)
 	if (fn == kclass_cwd_fn)
 		TS_CHECK_ERRNO(ENOENT, r.err[4], "kldload by name (exempt)");
 	ATF_REQUIRE(dq_get_stats2(s.q, &b) == 0);
-	ATF_CHECK_MSG(b.ds2_resolve_exdev - a.ds2_resolve_exdev >= 4,
+	printf("ds2_resolve_exdev rose by %ju\n",
+	    (uintmax_t)(b.ds2_resolve_exdev - a.ds2_resolve_exdev));
+	/* One refusal per call: ktrace, acct, kldload, swapon. */
+	ATF_CHECK_MSG(b.ds2_resolve_exdev - a.ds2_resolve_exdev == 4,
 	    "ds2_resolve_exdev rose by %ju",
 	    (uintmax_t)(b.ds2_resolve_exdev - a.ds2_resolve_exdev));
 	ATF_CHECK_EQ(a.ds2_resolve_unmarked, b.ds2_resolve_unmarked);
@@ -136,13 +139,13 @@ ATF_TC_BODY(kernel_path_refused, tc)
 	int n0, status;
 
 	if (access("/dev/" MDCTL_NAME, F_OK) != 0)
-		atf_tc_skip("md(4) is not loaded");
+		atf_tc_fail("md(4) is not loaded");
 	ts_make_tree("t");
 	ts_start(&s, "t", 0);
 	memset(&r, 0, sizeof(r));
 	n0 = ts_nev(&s);
 	status = ts_child(&s, -1, -1, kpath_fn, NULL, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	ATF_REQUIRE_MSG(r.err[0] == 0, "cannot open /dev/mdctl");
 	TS_CHECK_ERRNO(EPERM, r.err[1], "MDIOCATTACH of a vnode");
 	/* Only the open of /dev/mdctl was posted. */

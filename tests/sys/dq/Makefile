@@ -2,8 +2,13 @@
 # DescriptorQueue (dq) test suite.
 #
 # Integration tests: each program opens /dev/dq as a controller and forks
-# requesters, so they need the dq(4) device and root.  A program skips when
-# the device is absent.
+# requesters, so they need the dq(4) device and root.  One skip policy (see
+# libdqtest/dq_test.h): a missing device, module, program or other
+# prerequisite of the plane-on test guest is a failure, not a skip; the
+# skips left are by architecture (require.arch), a race a one-CPU machine
+# cannot run, and a case deferred by name to another VM tier
+# (DEFERRED_DEVICE_TIER in dq_bootstrap_test: never in the plane-on test
+# tier, where kern.mac_capability_isolation.enforce is 0).
 #
 PACKAGE=	dq-tests
 TESTSDIR=	${TESTSBASE}/sys/dq
@@ -51,13 +56,16 @@ ATF_TESTS_SH+=	dq_oracle_test
 ATF_TESTS_SH+=	dq_tree_suites_test
 ATF_TESTS_SH+=	dq_dqswap_test
 
-# Every program is a controller: the shared harness is part of each.
+# Every program is a controller: each links the support library
+# (libdqtest), which the libdqtest subdirectory builds first.
+SUBDIR=		libdqtest
 .for _t in ${ATF_TESTS_C}
-SRCS.${_t}=	${_t}.c dq_test.c
+LIBADD.${_t}+=	dqtest
 .endfor
 
-# ABI header <dev/dq/dq.h> and the library's own header.
-CFLAGS+=	-I${SRCTOP}/sys -I${SRCTOP}/lib/libdq
+# ABI header <dev/dq/dq.h>, the library's own header and the support
+# library's.
+CFLAGS+=	-I${SRCTOP}/sys -I${SRCTOP}/lib/libdq -I${.CURDIR}/libdqtest
 
 # The OES client side of dq_oes_test (<security/oes/oes.h>, liboes.h).
 CFLAGS.dq_oes_test+=	-I${SRCTOP}/lib/liboes
@@ -120,8 +128,9 @@ TEST_METADATA.dq_getcwd_test+=	is_exclusive="true"
 TEST_METADATA.dq_kclass_test+=	is_exclusive="true"
 # Runs whole suites in a served root and in chroot(8): alone, with time.
 TEST_METADATA.dq_tree_suites_test+=	is_exclusive="true" timeout="7200"
-# Runs whole suites twice under kyua: alone, and with time.
-TEST_METADATA.dq_oracle_test+=	is_exclusive="true" timeout="3600"
+# Runs whole suites twice under kyua: alone, and with time.  670 to 1440 s
+# on an idle host; more than 3600 s on a loaded one (host load 25-40).
+TEST_METADATA.dq_oracle_test+=	is_exclusive="true" timeout="7200"
 
 # dqpass (share/examples/dq): the pass-everything controller the oracle
 # test runs suites under, and the differences it expects (M9).
@@ -132,6 +141,8 @@ LIBADD.dqpass=	dq
 MAN.dqpass=
 BINDIR.dqpass=	${TESTSDIR}
 ${PACKAGE}FILES+=	dqpass.expected
+# The shell functions dq_oracle_test and dq_tree_suites_test share.
+${PACKAGE}FILES+=	dq_suites.subr
 
 # dqswap (share/examples/dq): the example supervisor that gives up root
 # after the attach; dq_dqswap_test runs it.
@@ -155,27 +166,58 @@ SRCS.dq_exec_helper=	dq_exec_helper.c
 MAN.dq_exec_helper=
 BINDIR.dq_exec_helper=	${TESTSDIR}
 
-# dq_served_test's Linux program for the O_PATH rows, built by the test.
-${PACKAGE}FILES+=	dq_opath_linux.c
-
-# dq_owner_test's exec'd image and its Linux program, built by the test.
+# dq_owner_test's exec'd image.
 PROGS+=		dq_owner_helper
 SRCS.dq_owner_helper=	dq_owner_helper.c
 MAN.dq_owner_helper=
 BINDIR.dq_owner_helper=	${TESTSDIR}
-${PACKAGE}FILES+=	dq_owner_linux.c
 
-# dq_swap_test's Linux program, built by the test.
-${PACKAGE}FILES+=	dq_swap_linux.c
-
-# dq_legitimacy_test's parent of an attach target, and its Linux
-# and 32-bit programs, built by the test.
+# dq_legitimacy_test's parent of an attach target.
 PROGS+=		dq_legitimacy_helper
 SRCS.dq_legitimacy_helper=	dq_legitimacy_helper.c
+LIBADD.dq_legitimacy_helper=	dqtest
 MAN.dq_legitimacy_helper=
 BINDIR.dq_legitimacy_helper=	${TESTSDIR}
-${PACKAGE}FILES+=	dq_legitimacy_linux.c
-${PACKAGE}FILES+=	dq_legitimacy_ilp32.c
+
+# The foreign-ABI programs: freestanding amd64 Linux programs for the
+# Linux rows of dq_owner_test, dq_served_test, dq_swap_test and
+# dq_legitimacy_test, and the i386 FreeBSD and Linux images of
+# dq_legitimacy_test's ilp32_no_abi.  No libc and no headers but
+# dq_linux.h: they are built here with the cross compiler for their own
+# target and installed beside the tests, which run them.  x86 assembly:
+# amd64 only, as are the rows (require.arch).  Cross targets take clang
+# and lld; with another compiler or linker (an external GCC toolchain,
+# WITHOUT_CLANG, WITHOUT_LLD) the programs are not built and the rows
+# fail, as they do for any missing prerequisite.
+.include <bsd.compiler.mk>
+.include <bsd.linker.mk>
+.if ${MACHINE_ARCH} == "amd64" && ${COMPILER_TYPE} == "clang" && \
+    ${LINKER_TYPE} == "lld"
+DQ_FOREIGN_CC=	${CC:N-target:N--target=*:N*-unknown-freebsd*:N--sysroot=*}
+DQ_FOREIGN_CFLAGS= -fuse-ld=lld -nostdlib -static -fno-stack-protector \
+		-fno-builtin -O2 -Wall -Wextra
+.if ${MK_WERROR} != "no"
+DQ_FOREIGN_CFLAGS+= -Werror
+.endif
+DQ_LINUX=	dq_owner_linux dq_opath_linux dq_swap_linux dq_legitimacy_linux
+DQ_ILP32=	dq_legitimacy_ilp32_freebsd dq_legitimacy_ilp32_linux
+.for _p in ${DQ_LINUX}
+DQ_TARGET.${_p}=	x86_64-unknown-linux-gnu
+DQ_SRC.${_p}=		${_p}.c
+.endfor
+DQ_TARGET.dq_legitimacy_ilp32_freebsd=	i386-unknown-freebsd
+DQ_TARGET.dq_legitimacy_ilp32_linux=	i386-unknown-linux-gnu
+DQ_SRC.dq_legitimacy_ilp32_freebsd=	dq_legitimacy_ilp32.c
+DQ_SRC.dq_legitimacy_ilp32_linux=	dq_legitimacy_ilp32.c
+.for _p in ${DQ_LINUX} ${DQ_ILP32}
+${_p}: ${.CURDIR}/${DQ_SRC.${_p}} ${.CURDIR}/dq_linux.h
+	${DQ_FOREIGN_CC} --target=${DQ_TARGET.${_p}} ${DQ_FOREIGN_CFLAGS} \
+	    -o ${.TARGET} ${.CURDIR}/${DQ_SRC.${_p}}
+${PACKAGE}FILES+=	${_p}
+${PACKAGE}FILESMODE_${_p}=	0555
+CLEANFILES+=	${_p}
+.endfor
+.endif
 
 # The socket commands the oracle runs (stage 1c-ii).
 PROGS+=		dq_sockprog
@@ -186,3 +228,8 @@ BINDIR.dq_sockprog=	${TESTSDIR}
 WARNS?=		6
 
 .include <bsd.test.mk>
+
+# The programs link libdqtest.a: build the subdirectory before them.
+.for _t in ${ATF_TESTS_C} dq_legitimacy_helper
+.ORDER: all_subdir_${DIRPRFX}libdqtest ${_t}
+.endfor

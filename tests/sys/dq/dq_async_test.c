@@ -29,44 +29,24 @@
 
 #define	NPAGES		8
 #define	DATA_LEN	(NPAGES * 4096)
-#define	SAVED		"max_inflight_bytes.saved"
+#define	MAX_INFLIGHT_BYTES	"kern.dq.max_inflight_bytes"
 
 static unsigned char data[DATA_LEN];
 static char path[DQT_PATH_MAX];
 
-struct fixture {
-	struct dqt_ctl	 c;
-	struct dqt_object *o;
-	int		 backing;
-};
-
 static void
-setup(struct fixture *f, unsigned seed, int deadline_ms, uint32_t events)
+setup(struct dqt_fixture *f, unsigned seed, int deadline_ms, uint32_t events)
 {
 	struct dq_policy pol;
 
 	ATF_REQUIRE_EQ(4096, getpagesize());
 	dqt_fill(data, sizeof(data), seed);
-	f->backing = dqt_make_oracle("backing", data, sizeof(data), path,
-	    sizeof(path));
-	(void)close(f->backing);
-	f->backing = open(path, O_RDWR);
-	ATF_REQUIRE(f->backing != -1);
-	dqt_init(&f->c);
 	dqt_policy_write(&pol);
 	pol.dp_mmap_shared_write = DQ_ALLOW;
 	pol.dp_deadline_ms = deadline_ms;
 	pol.dp_events = events;
-	f->o = dqt_mint_backing(&f->c, f->backing, path, &pol,
+	dqt_fixture_init(f, data, sizeof(data), path, NULL, &pol,
 	    DQ_MINT_F_WRITE);
-}
-
-static void
-teardown(struct fixture *f)
-{
-
-	dqt_fini(&f->c);
-	(void)close(f->backing);
 }
 
 /* Poll the extended counters until pred holds or ms pass. */
@@ -74,13 +54,14 @@ static bool
 wait_stats2(struct dqt_ctl *c, bool (*pred)(const struct dq_stats2 *,
     uint64_t), uint64_t arg, int ms, struct dq_stats2 *out)
 {
-	int waited;
+	int64_t deadline;
 
-	for (waited = 0;; waited += 10) {
+	deadline = dqt_now_ms() + ms;
+	for (;;) {
 		dqt_stats2(c, out);
 		if (pred(out, arg))
 			return (true);
-		if (waited >= ms)
+		if (dqt_now_ms() >= deadline)
 			return (false);
 		dqt_msleep(10);
 	}
@@ -171,7 +152,7 @@ child_dirty(void *arg, void *result)
  * holding (events are read and not answered) before the stores.
  */
 static void
-start_dirty(struct fixture *f, struct dirty_arg *a, struct dqt_child *ch,
+start_dirty(struct dqt_fixture *f, struct dirty_arg *a, struct dqt_child *ch,
     bool hold)
 {
 
@@ -188,14 +169,14 @@ start_dirty(struct fixture *f, struct dirty_arg *a, struct dqt_child *ch,
 
 /* Temporary diagnostics for the VM runs: counters and the ops seen. */
 static void
-diag(struct fixture *f, const char *where)
+diag(struct dqt_fixture *f, const char *where)
 {
 	struct dq_stats2 st;
 
 	if (f->c.q == -1)
 		return;
 	dqt_stats2(&f->c, &st);
-	pthread_mutex_lock(&f->c.mtx);
+	dqt_lock(&f->c);
 	fprintf(stderr, "diag %s: async_pending %ju async_bytes %ju "
 	    "async_deadlines %ju close_dropped %ju interrupts %ju | READ %u "
 	    "WRITE_ASYNC %u INTERRUPT %u CLOSE %u held %d\n", where,
@@ -204,11 +185,11 @@ diag(struct fixture *f, const char *where)
 	    (uintmax_t)st.ds2_interrupts, f->c.events[DQ_OP_READ],
 	    f->c.events[DQ_OP_WRITE_ASYNC], f->c.events[DQ_OP_INTERRUPT],
 	    f->c.events[DQ_OP_CLOSE], f->c.nheld);
-	pthread_mutex_unlock(&f->c.mtx);
+	dqt_unlock(&f->c);
 }
 
 static void
-check_backing_dirtied(struct fixture *f, int first, int npages)
+check_backing_dirtied(struct dqt_fixture *f, int first, int npages)
 {
 	unsigned char got;
 	int i;
@@ -231,22 +212,15 @@ ATF_TC_HEAD(inflight_bytes_bound, tc)
 }
 ATF_TC_BODY(inflight_bytes_bound, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_child ch;
 	struct dirty_arg a;
 	struct dirty_res r;
 	struct dq_stats2 st;
 	struct stat sb;
-	u_int saved;
-	FILE *fp;
 	int i, status;
 
-	ATF_REQUIRE(dqt_sysctl_get_uint("kern.dq.max_inflight_bytes", &saved));
-	fp = fopen(SAVED, "w");
-	ATF_REQUIRE(fp != NULL);
-	(void)fprintf(fp, "%u\n", saved);
-	(void)fclose(fp);
-	dqt_sysctl_set_uint("kern.dq.max_inflight_bytes", 2 * 4096);
+	dqt_sysctl_save_set_uint(MAX_INFLIGHT_BYTES, 2 * 4096);
 
 	setup(&f, 1, DQ_DEADLINE_DEFAULT, 0);
 	memset(&a, 0, sizeof(a));
@@ -272,20 +246,12 @@ ATF_TC_BODY(inflight_bytes_bound, tc)
 	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
 	ATF_CHECK_EQ_MSG(0, r.rv1, "msync: %s", strerror(r.err1));
 	check_backing_dirtied(&f, 0, NPAGES);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 ATF_TC_CLEANUP(inflight_bytes_bound, tc)
 {
-	FILE *fp;
-	u_int saved;
 
-	fp = fopen(SAVED, "r");
-	if (fp == NULL)
-		return;
-	if (fscanf(fp, "%u", &saved) == 1)
-		(void)sysctlbyname("kern.dq.max_inflight_bytes", NULL, NULL,
-		    &saved, sizeof(saved));
-	(void)fclose(fp);
+	(void)dqt_sysctl_restore(MAX_INFLIGHT_BYTES);
 }
 
 ATF_TC(deadline_leaves_dirty);
@@ -299,7 +265,7 @@ ATF_TC_HEAD(deadline_leaves_dirty, tc)
 }
 ATF_TC_BODY(deadline_leaves_dirty, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_child ch;
 	struct dirty_arg a;
 	struct dirty_res r;
@@ -328,7 +294,7 @@ ATF_TC_BODY(deadline_leaves_dirty, tc)
 	ATF_CHECK_EQ(EIO, r.err1);
 	ATF_CHECK_EQ_MSG(0, r.rv2, "second msync: %s", strerror(r.err2));
 	check_backing_dirtied(&f, 2, 1);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 ATF_TC(controller_exit_completes);
@@ -341,7 +307,7 @@ ATF_TC_HEAD(controller_exit_completes, tc)
 }
 ATF_TC_BODY(controller_exit_completes, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_child ch;
 	struct dirty_arg a;
 	struct dirty_res r;
@@ -365,7 +331,7 @@ ATF_TC_BODY(controller_exit_completes, tc)
 	ATF_CHECK_EQ(EIO, r.err1);
 	ATF_CHECK_EQ(0, r.unmap);
 	ATF_CHECK_EQ(0, r.closed);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 ATF_TC(close_dropped_counted);
@@ -378,7 +344,7 @@ ATF_TC_HEAD(close_dropped_counted, tc)
 }
 ATF_TC_BODY(close_dropped_counted, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_child ch;
 	struct dirty_arg a;
 	struct dirty_res r;
@@ -404,7 +370,7 @@ ATF_TC_BODY(close_dropped_counted, tc)
 	}
 	ATF_CHECK(st.ds2_async_deadlines >= 1);
 	dqt_resume(&f.c);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 ATF_TC(shrink_fails_pending);
@@ -417,12 +383,13 @@ ATF_TC_HEAD(shrink_fails_pending, tc)
 }
 ATF_TC_BODY(shrink_fails_pending, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_child ch;
 	struct dirty_arg a;
 	struct dirty_res r;
 	struct dq_ident_file *id;
-	int status;
+	uint32_t op;
+	int error, rv, status;
 
 	setup(&f, 5, DQ_DEADLINE_DEFAULT, 0);
 	memset(&a, 0, sizeof(a));
@@ -434,10 +401,15 @@ ATF_TC_BODY(shrink_fails_pending, tc)
 		diag(&f, "nothing held");
 		atf_tc_fail("no event held");
 	}
-	if (f.c.held[0].op != DQ_OP_WRITE_ASYNC)
+	dqt_lock(&f.c);
+	op = f.c.held[0].op;
+	dqt_unlock(&f.c);
+	if (op != DQ_OP_WRITE_ASYNC)
 		diag(&f, "first held");
+	dqt_lock(&f.c);
 	ATF_REQUIRE_EQ(DQ_OP_WRITE_ASYNC, f.c.held[0].op);
 	ATF_CHECK_EQ((NPAGES - 1) * 4096, f.c.held[0].offset);
+	dqt_unlock(&f.c);
 	id = calloc(1, sizeof(*id));
 	ATF_REQUIRE(id != NULL);
 	*id = f.o->ident;
@@ -445,16 +417,22 @@ ATF_TC_BODY(shrink_fails_pending, tc)
 	ATF_REQUIRE_EQ(0, dq_set_ident(f.c.q, f.o->id, id));
 	free(id);
 	errno = 0;
-	ATF_CHECK_EQ(-1, dq_reply_write(f.c.q, f.c.held[0].id,
-	    f.c.held[0].len, f.c.held[0].offset));
-	ATF_CHECK_EQ(ESRCH, errno);
+	dqt_lock(&f.c);
+	rv = dq_reply_write(f.c.q, f.c.held[0].id, f.c.held[0].len,
+	    f.c.held[0].offset);
+	error = errno;		/* before the unlock can change it */
+	dqt_unlock(&f.c);
+	ATF_CHECK_EQ(-1, rv);
+	ATF_CHECK_EQ(ESRCH, error);
 	ATF_CHECK(dqt_wait_interrupts(&f.c, 1, DQT_WAIT_MS));
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(f.c.held[0].id, f.c.interrupted[0]);
+	dqt_unlock(&f.c);
 	dqt_hold(&f.c, false);
 	status = dqt_wait(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ_MSG(0, r.sig, "signal %d in the requester", r.sig);
 	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 ATF_TP_ADD_TCS(tp)

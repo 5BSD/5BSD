@@ -71,11 +71,8 @@ setup(struct dqt_ctl *c, int *backing, const struct dq_policy *pol,
 {
 
 	dqt_fill(data, sizeof(data), 7);
-	*backing = dqt_make_oracle("backing", data, sizeof(data), path,
+	*backing = dqt_make_rw("backing", data, sizeof(data), path,
 	    sizeof(path));
-	(void)close(*backing);
-	*backing = open(path, O_RDWR);
-	ATF_REQUIRE(*backing != -1);
 	dqt_init(c);
 	return (dqt_mint_backing(c, *backing, path, pol, mflags));
 }
@@ -109,15 +106,19 @@ ATF_TC_BODY(fsync_events, tc)
 		/* aio(4) refuses a descriptor that is not a local vnode. */
 		ATF_CHECK_MSG(r.aio_full.err == EOPNOTSUPP || r.aio_full.err == EINVAL,
 		    "aio_fsync: %s", strerror(r.aio_full.err));
+		dqt_lock(&c);
 		ATF_CHECK_EQ(2, c.events[DQ_OP_FSYNC]);
+		dqt_unlock(&c);
 	} else {
 		ATF_CHECK_EQ(0, r.aio_full.rv);
 		ATF_CHECK_EQ(0, r.aio_data.rv);
 		ATF_CHECK(dqt_wait_events(&c, DQ_OP_FSYNC, 4, DQT_WAIT_MS));
 	}
+	dqt_lock(&c);
 	ATF_CHECK_EQ(DQ_FSYNC_DATA, o->last_fsync.dfs_mode);
 	ATF_CHECK_EQ(0, o->last_fsync.dfs_pad0);
 	ATF_CHECK_EQ(0, c.reply_failures);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(backing);
 }
@@ -153,16 +154,16 @@ ATF_TC_BODY(fsync_errors, tc)
 	o = dqt_mint_ident_flags(&c, id, &pol, DQ_MINT_F_WRITE, data,
 	    sizeof(data));
 	free(id);
-	o->serve_errno = EINVAL;
+	dqt_object_serve_errno(&c, o, EINVAL);
 	memset(&r, 0, sizeof(r));
 	dqt_run_child(child_fsyncs, &o->fd, &r, sizeof(r));
 	ATF_CHECK_EQ(EINVAL, r.fsync.err);
 	/* K-N3: ENOSPC, EDQUOT and ESTALE joined the FSYNC list. */
-	o->serve_errno = ENOSPC;
+	dqt_object_serve_errno(&c, o, ENOSPC);
 	memset(&r, 0, sizeof(r));
 	dqt_run_child(child_fsyncs, &o->fd, &r, sizeof(r));
 	ATF_CHECK_EQ(ENOSPC, r.fsync.err);
-	o->serve_errno = EPERM;
+	dqt_object_serve_errno(&c, o, EPERM);
 	memset(&r, 0, sizeof(r));
 	dqt_run_child(child_fsyncs, &o->fd, &r, sizeof(r));
 	ATF_CHECK_EQ(EIO, r.fsync.err);
@@ -217,8 +218,11 @@ ATF_TC_BODY(write_deny_local, tc)
 	o = setup(&c, &backing, &pol, 0);
 	ATF_CHECK_EQ(0, fsync(o->fd));
 	ATF_CHECK_EQ(0, fdatasync(o->fd));
-	dqt_msleep(100);
+	/* Everything posted before the fence has been recorded. */
+	dqt_fence(&c);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(0, c.records);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(backing);
 }

@@ -204,12 +204,6 @@ struct lg_res {
 	uint64_t	 id;
 };
 
-#define	SET(rr, call) do {						\
-	errno = 0;							\
-	(rr).rv = (call);						\
-	(rr).err = (rr).rv == -1 ? errno : 0;				\
-} while (0)
-
 #define	CHECK_OK(rr) ATF_CHECK_MSG((rr).rv != -1,			\
 	"%s: failed, errno %d", #rr, (rr).err)
 #define	CHECK_ERR(rr, want) ATF_CHECK_MSG((rr).rv == -1 &&		\
@@ -247,79 +241,37 @@ make_jail(const char *name)
 	return (jid);
 }
 
-/* An idle child behind a process descriptor, as dq_attach_test makes one. */
-struct idle {
-	pid_t		 pid;
-	int		 pd;
-	int		 go[2];
+/* In the idle child, before it waits: enter jail jid, give up root. */
+struct lg_prep {
+	int		 jid;		/* -1: no jail */
+	bool		 nobody;
 };
 
-/*
- * With exec_path the child waits for idle_exec() before it execs, so that
- * the NOTE_EXEC registration cannot lose the race; before that it enters
- * jail jid (unless -1) and, with nobody, gives up root.
- */
-static void
-idle_spawn_as(struct idle *s, const char *exec_path, int jid, bool nobody)
+static int
+lg_prep(void *arg)
 {
-	char b;
+	const struct lg_prep *p = arg;
 
-	ATF_REQUIRE_EQ(0, pipe(s->go));
-	s->pid = pdfork(&s->pd, 0);
-	ATF_REQUIRE_MSG(s->pid != -1, "pdfork: %s", strerror(errno));
-	if (s->pid == 0) {
-		if (jid != -1 && jail_attach(jid) != 0)
-			_exit(5);
-		if (nobody && !become_nobody())
-			_exit(4);
-		(void)read(s->go[0], &b, 1);
-		if (exec_path != NULL) {
-			execl(exec_path, exec_path, "60", (char *)NULL);
-			_exit(3);
-		}
-		_exit(0);
-	}
+	if (p->jid != -1 && jail_attach(p->jid) != 0)
+		return (5);
+	if (p->nobody && !become_nobody())
+		return (4);
+	return (0);
 }
 
 static void
-idle_spawn(struct idle *s, const char *exec_path)
+idle_spawn_as(struct dqt_idle *s, const char *exec_path, int jid, bool nobody)
+{
+	struct lg_prep p = { jid, nobody };
+
+	dqt_idle_spawn(s, 0, 0, exec_path, "60", lg_prep, &p);
+}
+
+static void
+idle_spawn(struct dqt_idle *s, const char *exec_path)
 {
 
 	idle_spawn_as(s, exec_path, -1, false);
-}
-
-/* Let a child spawned with an exec_path go, and wait until it has exec'd. */
-static void
-idle_exec(struct idle *s)
-{
-	struct kevent kev;
-	struct timespec ts = { 30, 0 };
-	int kq;
-
-	kq = kqueue();
-	ATF_REQUIRE(kq != -1);
-	EV_SET(&kev, s->pd, EVFILT_PROCDESC, EV_ADD, NOTE_EXEC | NOTE_EXIT, 0,
-	    NULL);
-	ATF_REQUIRE_EQ(0, kevent(kq, &kev, 1, NULL, 0, NULL));
-	ATF_REQUIRE_EQ(1, write(s->go[1], "x", 1));
-	ATF_REQUIRE_EQ(1, kevent(kq, NULL, 0, &kev, 1, &ts));
-	ATF_REQUIRE_MSG((kev.fflags & NOTE_EXIT) == 0 &&
-	    (kev.fflags & NOTE_EXEC) != 0, "the target did not exec: %#x",
-	    kev.fflags);
-	(void)close(kq);
-}
-
-static void
-idle_end(struct idle *s)
-{
-	int status;
-
-	(void)write(s->go[1], "x", 1);
-	(void)pdkill(s->pd, SIGKILL);
-	(void)pdwait(s->pd, &status, WEXITED, NULL, NULL);
-	(void)close(s->pd);
-	(void)close(s->go[0]);
-	(void)close(s->go[1]);
 }
 
 /*
@@ -333,9 +285,9 @@ child_open_stats(void *arg __unused, void *result)
 	struct dq_stats st;
 	int q;
 
-	SET(res->r[0], open(DQ_DEVICE, O_RDWR));
+	DQT_RR(res->r[0], open(DQ_DEVICE, O_RDWR));
 	q = (int)res->r[0].rv;
-	SET(res->r[1], dq_get_stats(q, &st));
+	DQT_RR(res->r[1], dq_get_stats(q, &st));
 	res->id = res->r[1].rv == 0 ? st.ds_queue_id : 0;
 }
 
@@ -390,12 +342,12 @@ child_nobody_open(void *arg __unused, void *result)
 
 	if (!become_nobody())
 		_exit(4);
-	SET(res->r[0], open(DQ_DEVICE, O_RDWR));
-	SET(res->r[1], open(DQ_DEVICE, O_RDONLY));
-	SET(res->r[2], open(DQ_DEVICE, O_WRONLY));
-	SET(res->r[3], access(DQ_DEVICE, F_OK));
-	SET(res->r[4], access(DQ_DEVICE, R_OK));
-	SET(res->r[5], access(DQ_DEVICE, W_OK));
+	DQT_RR(res->r[0], open(DQ_DEVICE, O_RDWR));
+	DQT_RR(res->r[1], open(DQ_DEVICE, O_RDONLY));
+	DQT_RR(res->r[2], open(DQ_DEVICE, O_WRONLY));
+	DQT_RR(res->r[3], access(DQ_DEVICE, F_OK));
+	DQT_RR(res->r[4], access(DQ_DEVICE, R_OK));
+	DQT_RR(res->r[5], access(DQ_DEVICE, W_OK));
 }
 
 /*
@@ -441,10 +393,10 @@ ATF_TC_BODY(nonroot_open_behind_mode, tc)
 	struct lg_res res;
 
 	LG_ROOT();
-	ATF_REQUIRE_EQ(0, chmod(DQ_DEVICE, 0666));
+	dqt_mode_save_set(DQ_DEVICE, 0666);
 	memset(&res, 0, sizeof(res));
 	dqt_run_child(child_nobody_open, NULL, &res, sizeof(res));
-	ATF_REQUIRE_EQ(0, chmod(DQ_DEVICE, 0600));
+	ATF_REQUIRE(dqt_mode_restore(DQ_DEVICE));
 	CHECK_ERR(res.r[0], EPERM);
 	CHECK_ERR(res.r[1], EPERM);
 	CHECK_ERR(res.r[2], EPERM);
@@ -454,7 +406,7 @@ ATF_TC_BODY(nonroot_open_behind_mode, tc)
 ATF_TC_CLEANUP(nonroot_open_behind_mode, tc)
 {
 
-	(void)chmod(DQ_DEVICE, 0600);
+	(void)dqt_mode_restore(DQ_DEVICE);
 }
 
 struct jail_arg {
@@ -477,15 +429,15 @@ child_jailed(void *arg, void *result)
 		_exit(5);
 	if (a->nobody && !become_nobody())
 		_exit(4);
-	SET(res->r[0], open(DQ_DEVICE, O_RDWR));
-	SET(res->r[1], stat(DQ_DEVICE, &sb));
+	DQT_RR(res->r[0], open(DQ_DEVICE, O_RDWR));
+	DQT_RR(res->r[1], stat(DQ_DEVICE, &sb));
 	res->id = res->r[1].rv == 0 ? sb.st_mode & ALLPERMS : 0;
 	if (a->q != -1) {
-		SET(res->r[2], dq_get_stats(a->q, &st));
-		SET(res->r[3], dq_attach(a->q, a->pd));
+		DQT_RR(res->r[2], dq_get_stats(a->q, &st));
+		DQT_RR(res->r[3], dq_attach(a->q, a->pd));
 	}
 	if (a->dev != -1)
-		SET(res->r[4], capability_service_connect(a->dev,
+		DQT_RR(res->r[4], capability_service_connect(a->dev,
 		    DQ_OBSERVE_SERVICE));
 }
 
@@ -539,10 +491,10 @@ child_capmode(void *arg __unused, void *result)
 	dev = open("/dev", O_RDONLY | O_DIRECTORY);
 	if (dev == -1 || cap_enter() != 0)
 		_exit(6);
-	SET(res->r[0], open(DQ_DEVICE, O_RDWR));
-	SET(res->r[1], openat(dev, "dq", O_RDWR));
+	DQT_RR(res->r[0], open(DQ_DEVICE, O_RDWR));
+	DQT_RR(res->r[1], openat(dev, "dq", O_RDWR));
 	q = (int)res->r[1].rv;
-	SET(res->r[2], dq_get_stats(q, &st));
+	DQT_RR(res->r[2], dq_get_stats(q, &st));
 }
 
 /*
@@ -588,15 +540,13 @@ ATF_TC_BODY(attached_root_open, tc)
 	struct dqt_achild ch;
 	struct dq_stats st;
 	struct lg_res res;
-	int status;
 
 	LG_ROOT();
 	dqt_init(&c);
 	dqt_stats(&c, &st);
 	memset(&res, 0, sizeof(res));
 	dqt_attach_spawn(&c, &ch, child_open_stats, NULL);
-	status = dqt_attach_wait(&ch, &res, sizeof(res));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &res, sizeof(res));
 	CHECK_OK(res.r[0]);
 	CHECK_OK(res.r[1]);
 	ATF_CHECK(res.id != 0 && res.id != st.ds_queue_id);
@@ -614,59 +564,6 @@ struct bearer_arg {
 	const struct dq_ident_file *ident;
 };
 
-static int
-recv_fd(int sock)
-{
-	union {
-		struct cmsghdr	hdr;
-		char		buf[CMSG_SPACE(sizeof(int))];
-	} ctl;
-	struct msghdr msg;
-	struct iovec iov;
-	char b;
-	int fd;
-
-	memset(&msg, 0, sizeof(msg));
-	iov.iov_base = &b;
-	iov.iov_len = 1;
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	msg.msg_control = ctl.buf;
-	msg.msg_controllen = sizeof(ctl.buf);
-	if (recvmsg(sock, &msg, 0) != 1 ||
-	    msg.msg_controllen < CMSG_LEN(sizeof(int)) ||
-	    ctl.hdr.cmsg_level != SOL_SOCKET || ctl.hdr.cmsg_type != SCM_RIGHTS)
-		return (-1);
-	memcpy(&fd, CMSG_DATA(&ctl.hdr), sizeof(fd));
-	return (fd);
-}
-
-static int
-send_fd(int sock, int fd)
-{
-	union {
-		struct cmsghdr	hdr;
-		char		buf[CMSG_SPACE(sizeof(int))];
-	} ctl;
-	struct msghdr msg;
-	struct iovec iov;
-	char b = 'q';
-
-	memset(&msg, 0, sizeof(msg));
-	memset(&ctl, 0, sizeof(ctl));
-	iov.iov_base = &b;
-	iov.iov_len = 1;
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	msg.msg_control = ctl.buf;
-	msg.msg_controllen = sizeof(ctl.buf);
-	ctl.hdr.cmsg_len = CMSG_LEN(sizeof(int));
-	ctl.hdr.cmsg_level = SOL_SOCKET;
-	ctl.hdr.cmsg_type = SCM_RIGHTS;
-	memcpy(CMSG_DATA(&ctl.hdr), &fd, sizeof(fd));
-	return (sendmsg(sock, &msg, 0) == 1 ? 0 : -1);
-}
-
 /* Every kind of queue operation, as nobody, on a queue root opened. */
 static void
 child_bearer(void *arg, void *result)
@@ -683,20 +580,20 @@ child_bearer(void *arg, void *result)
 	if (!become_nobody())
 		_exit(4);
 	q = a->q;
-	SET(res->r[0], open(DQ_DEVICE, O_RDWR));	/* it is not root */
-	SET(res->r[1], dq_get_stats(q, &st));
+	DQT_RR(res->r[0], open(DQ_DEVICE, O_RDWR));	/* it is not root */
+	DQT_RR(res->r[1], dq_get_stats(q, &st));
 	res->id = res->r[1].rv == 0 ? st.ds_queue_id : 0;
-	SET(res->r[2], dq_get_stats2(q, &st2));
+	DQT_RR(res->r[2], dq_get_stats2(q, &st2));
 	/* Read first: the objects minted below post records. */
 	on = 1;
-	SET(res->r[6], ioctl(q, FIONBIO, &on));
-	SET(res->r[7], read(q, buf, sizeof(buf)));
-	SET(res->r[3], dq_mint_observer(q, 0));
+	DQT_RR(res->r[6], ioctl(q, FIONBIO, &on));
+	DQT_RR(res->r[7], read(q, buf, sizeof(buf)));
+	DQT_RR(res->r[3], dq_mint_observer(q, 0));
 	dq_policy_default(&pol);
 	object = 0;
 	fd = -1;
-	SET(res->r[4], dq_mint_file(q, a->ident, &pol, &object, &fd, &reason));
-	SET(res->r[5], dq_revoke(q, object));
+	DQT_RR(res->r[4], dq_mint_file(q, a->ident, &pol, &object, &fd, &reason));
+	DQT_RR(res->r[5], dq_revoke(q, object));
 }
 
 /*
@@ -834,7 +731,7 @@ ATF_TC_BODY(bearer_scm_rights, tc)
 	ATF_REQUIRE_MSG(q != -1, "dq_open: %s", strerror(errno));
 	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_DGRAM, 0, sv));
 	errno = 0;
-	ATF_CHECK_EQ(-1, send_fd(sv[0], q));
+	ATF_CHECK_EQ(-1, dqt_send_fd(sv[0], q));
 	ATF_CHECK_EQ_MSG(ENOTCAPABLE, errno, "sendmsg: errno %d", errno);
 	errno = 0;
 	ATF_CHECK_EQ(-1, recv(sv[1], &b, 1, MSG_DONTWAIT));
@@ -857,8 +754,8 @@ child_inherit_for_exec(void *arg, void *result)
 	struct dq_stats st;
 
 	/* What the fork child did before it exec'd the bearer. */
-	SET(res->r[0], dup2(a->q, LG_QFD));
-	SET(res->r[1], dq_get_stats(a->q, &st));
+	DQT_RR(res->r[0], dup2(a->q, LG_QFD));
+	DQT_RR(res->r[1], dq_get_stats(a->q, &st));
 }
 
 /*
@@ -902,7 +799,7 @@ child_attach(void *arg, void *result)
 	struct jail_arg *a = arg;
 	struct lg_res *res = result;
 
-	SET(res->r[3], dq_attach(a->q, a->pd));
+	DQT_RR(res->r[3], dq_attach(a->q, a->pd));
 }
 
 /*
@@ -922,7 +819,7 @@ ATF_TC_HEAD(attach_outside_prison, tc)
 ATF_TC_BODY(attach_outside_prison, tc)
 {
 	struct dqt_ctl c;
-	struct idle s1, s2;
+	struct dqt_idle s1, s2;
 	struct jail_arg a;
 	struct lg_res res;
 
@@ -957,8 +854,8 @@ ATF_TC_BODY(attach_outside_prison, tc)
 	ATF_CHECK_EQ_MSG(0, dq_attach(c.q, s1.pd), "errno %d", errno);
 	ATF_CHECK_EQ_MSG(0, dq_attach(c.q, s2.pd), "errno %d", errno);
 	(void)close(a.q);
-	idle_end(&s1);
-	idle_end(&s2);
+	dqt_idle_end(&s1);
+	dqt_idle_end(&s2);
 	dqt_fini(&c);
 }
 ATF_TC_CLEANUP(attach_outside_prison, tc)
@@ -980,8 +877,8 @@ child_attach_targets(void *arg, void *result)
 
 	if (!become_nobody())
 		_exit(4);
-	SET(res->r[0], dq_attach(a->q, a->plain));
-	SET(res->r[1], dq_attach(a->q, a->jailed));
+	DQT_RR(res->r[0], dq_attach(a->q, a->plain));
+	DQT_RR(res->r[1], dq_attach(a->q, a->jailed));
 }
 
 /*
@@ -1006,7 +903,7 @@ ATF_TC_HEAD(attach_child_jail_target, tc)
 ATF_TC_BODY(attach_child_jail_target, tc)
 {
 	struct dqt_ctl c;
-	struct idle plain, jailed;
+	struct dqt_idle plain, jailed;
 	struct targets_arg a;
 	struct lg_res res;
 	pid_t pid;
@@ -1038,9 +935,9 @@ ATF_TC_BODY(attach_child_jail_target, tc)
 	(void)close(pd);
 
 	idle_spawn_as(&plain, "/bin/sleep", -1, true);
-	idle_exec(&plain);
+	dqt_idle_exec(&plain);
 	idle_spawn_as(&jailed, "/bin/sleep", jid, true);
-	idle_exec(&jailed);
+	dqt_idle_exec(&jailed);
 	a.plain = plain.pd;
 	a.jailed = jailed.pd;
 	a.q = fcntl(c.q, F_DUPFD, 0);
@@ -1054,8 +951,8 @@ ATF_TC_BODY(attach_child_jail_target, tc)
 	CHECK_ERR(res.r[0], EPERM);
 	CHECK_ERR(res.r[1], EPERM);
 	(void)close(a.q);
-	idle_end(&plain);
-	idle_end(&jailed);
+	dqt_idle_end(&plain);
+	dqt_idle_end(&jailed);
 
 	ATF_REQUIRE_EQ(0, jail_remove(jid));
 	dqt_fini(&c);
@@ -1080,10 +977,10 @@ child_attach_order(void *arg, void *result)
 
 	if (!become_nobody())
 		_exit(4);
-	SET(res->r[0], dq_attach(a->q, a->notpd));
-	SET(res->r[1], dq_attach(a->q, a->exited));
-	SET(res->r[2], dq_attach(a->q, a->execed));
-	SET(res->r[3], dq_attach(a->q, a->idle));
+	DQT_RR(res->r[0], dq_attach(a->q, a->notpd));
+	DQT_RR(res->r[1], dq_attach(a->q, a->exited));
+	DQT_RR(res->r[2], dq_attach(a->q, a->execed));
+	DQT_RR(res->r[3], dq_attach(a->q, a->idle));
 }
 
 /*
@@ -1112,7 +1009,7 @@ ATF_TC_HEAD(attach_errno_order, tc)
 ATF_TC_BODY(attach_errno_order, tc)
 {
 	struct dqt_ctl c;
-	struct idle exited, execed, idle;
+	struct dqt_idle exited, execed, idle;
 	struct order_arg a;
 	struct lg_res res;
 	int i, status;
@@ -1123,7 +1020,7 @@ ATF_TC_BODY(attach_errno_order, tc)
 	(void)write(exited.go[1], "x", 1);
 	ATF_REQUIRE_EQ(0, pdwait(exited.pd, &status, WEXITED, NULL, NULL));
 	idle_spawn(&execed, "/bin/sleep");
-	idle_exec(&execed);
+	dqt_idle_exec(&execed);
 	idle_spawn(&idle, NULL);
 
 	a.notpd = open("/dev/null", O_RDONLY);
@@ -1159,8 +1056,8 @@ ATF_TC_BODY(attach_errno_order, tc)
 	(void)close(exited.pd);
 	(void)close(exited.go[0]);
 	(void)close(exited.go[1]);
-	idle_end(&execed);
-	idle_end(&idle);
+	dqt_idle_end(&execed);
+	dqt_idle_end(&idle);
 	dqt_fini(&c);
 }
 
@@ -1187,16 +1084,16 @@ child_observe(void *arg, void *result)
 	if (a->nobody) {
 		if (!become_nobody())
 			_exit(4);
-		SET(res->r[0], open(DQ_MAC_CAPABILITY_DEVICE, O_RDWR));
-		SET(res->r[1], capability_service_connect(a->dev,
+		DQT_RR(res->r[0], open(DQ_MAC_CAPABILITY_DEVICE, O_RDWR));
+		DQT_RR(res->r[1], capability_service_connect(a->dev,
 		    DQ_OBSERVE_SERVICE));
 		return;
 	}
-	SET(res->r[1], dq_observe_connect());
+	DQT_RR(res->r[1], dq_observe_connect());
 	svc = (int)res->r[1].rv;
 	first = 0;
 	do {
-		SET(res->r[2], dq_observe_list_queues(svc, first, qi,
+		DQT_RR(res->r[2], dq_observe_list_queues(svc, first, qi,
 		    nitems(qi), &count, &total));
 		if (res->r[2].rv != 0)
 			return;
@@ -1349,27 +1246,11 @@ ATF_TC_BODY(constrain_reserved_words, tc)
  * Other ABIs
  */
 
-#define	LINUX_CC	"clang --target=%s -fuse-ld=lld -nostdlib -static "	\
-	"-fno-stack-protector -fno-builtin -O2 -Wall -Wextra -Werror "	\
-	"-o %s %s/%s"
-
-static void
-build_foreign(const atf_tc_t *tc, const char *target, const char *out,
-    const char *src)
-{
-	char cmd[PATH_MAX + 512];
-
-	snprintf(cmd, sizeof(cmd), LINUX_CC, target, out,
-	    atf_tc_get_config_var(tc, "srcdir"), src);
-	/* Not a skip: without the compiler the pin is not taken. */
-	ATF_REQUIRE_EQ_MSG(0, system(cmd), "%s", cmd);
-}
-
-#define	LX_NRES		11
+#define	LX_NRES		8
 
 /*
- * Run dq_legitimacy_linux, which looks for a queue at descriptor LG_QFD and
- * since sc-q finds none; collect its answers.
+ * Run dq_legitimacy_linux and collect its answers.  The child checks,
+ * before the exec, that it has no queue of its parent's to hand on.
  */
 static void
 run_linux(int q, bool nobody, long *lr)
@@ -1417,8 +1298,8 @@ run_linux(int q, bool nobody, long *lr)
  * has no handler for the group.
  *
  * Changed in sc-q: the process is given no queue by its parent (it was,
- * and read it); descriptor LG_QFD is closed in it, EBADF for all three
- * calls.  Its own queue is its own: those rows are unchanged.
+ * and read it); run_linux checks that before the exec.  Its own queue is
+ * its own: those rows are unchanged.
  */
 ATF_TC(linux_open_ioctl);
 ATF_TC_HEAD(linux_open_ioctl, tc)
@@ -1436,9 +1317,8 @@ ATF_TC_BODY(linux_open_ioctl, tc)
 	int i, q;
 
 	LG_ROOT();
-	build_foreign(tc, "x86_64-linux-gnu", "dq_legitimacy_linux",
-	    "dq_legitimacy_linux.c");
-	ATF_REQUIRE_EQ(0, chmod("dq_legitimacy_linux", 0755));
+	/* Built with the tests (Makefile); missing, the pin fails. */
+	dqt_copy_helper(tc, "dq_legitimacy_linux", "dq_legitimacy_linux");
 
 	q = raw_open();
 	memset(lr, 0x55, sizeof(lr));
@@ -1449,12 +1329,13 @@ ATF_TC_BODY(linux_open_ioctl, tc)
 		    lr[i]);
 	ATF_CHECK_EQ_MSG(0, lr[4], "FIONBIO: %ld", lr[4]);
 	ATF_CHECK_EQ_MSG(-LINUX_EAGAIN, lr[5], "read: %ld", lr[5]);
-	for (i = 6; i <= 8; i++)
-		ATF_CHECK_EQ_MSG(-LINUX_EBADF, lr[i], "inherited queue, "
-		    "call %d: %ld", i, lr[i]);
-	ATF_CHECK_MSG(lr[9] >= 0, "open /dev/null: %ld", lr[9]);
-	ATF_CHECK_EQ_MSG(-LINUX_EINVAL, lr[10], "/dev/null ioctl: %ld",
-	    lr[10]);
+	/*
+	 * That the child had no queue to hand on is checked in run_linux
+	 * before the exec (dup2 of the parent's number is EBADF).
+	 */
+	ATF_CHECK_MSG(lr[6] >= 0, "open /dev/null: %ld", lr[6]);
+	ATF_CHECK_EQ_MSG(-LINUX_EINVAL, lr[7], "/dev/null ioctl: %ld",
+	    lr[7]);
 	(void)close(q);
 
 	/* A fresh queue: the first run left its descriptor non-blocking. */
@@ -1465,11 +1346,8 @@ ATF_TC_BODY(linux_open_ioctl, tc)
 	for (i = 1; i <= 5; i++)
 		ATF_CHECK_EQ_MSG(-LINUX_EBADF, lr[i], "call %d: %ld", i,
 		    lr[i]);
-	for (i = 6; i <= 8; i++)
-		ATF_CHECK_EQ_MSG(-LINUX_EBADF, lr[i], "inherited queue, "
-		    "call %d: %ld", i, lr[i]);
-	ATF_CHECK_EQ_MSG(-LINUX_EINVAL, lr[10], "/dev/null ioctl: %ld",
-	    lr[10]);
+	ATF_CHECK_EQ_MSG(-LINUX_EINVAL, lr[7], "/dev/null ioctl: %ld",
+	    lr[7]);
 	(void)close(q);
 }
 
@@ -1499,18 +1377,18 @@ child_control(void *arg, void *result)
 		(void)read(go[0], &b, 1);
 		_exit(0);
 	}
-	SET(res->r[0], ptrace(PT_ATTACH, pid, NULL, 0));
+	DQT_RR(res->r[0], ptrace(PT_ATTACH, pid, NULL, 0));
 	status = 0;
-	SET(res->r[1], waitpid(pid, &status, WUNTRACED) == pid &&
+	DQT_RR(res->r[1], waitpid(pid, &status, WUNTRACED) == pid &&
 	    WIFSTOPPED(status) ? 0 : -1);
-	SET(res->r[2], ptrace(PT_DETACH, pid, (caddr_t)1, 0));
+	DQT_RR(res->r[2], ptrace(PT_DETACH, pid, (caddr_t)1, 0));
 	(void)close(go[1]);
 	status = -1;
-	SET(res->r[3], waitpid(pid, &status, 0) == pid && WIFEXITED(status) &&
+	DQT_RR(res->r[3], waitpid(pid, &status, 0) == pid && WIFEXITED(status) &&
 	    WEXITSTATUS(status) == 0 ? 0 : -1);
 
 	tracing = -2;
-	SET(res->r[4], procctl(P_PID, getpid(), PROC_TRACE_STATUS, &tracing));
+	DQT_RR(res->r[4], procctl(P_PID, getpid(), PROC_TRACE_STATUS, &tracing));
 	res->id = (uint64_t)(int64_t)tracing;
 
 	/* A child that aborts leaves a core. */
@@ -1523,7 +1401,7 @@ child_control(void *arg, void *result)
 		abort();
 	}
 	status = 0;
-	SET(res->r[5], waitpid(pid, &status, 0) == pid && WIFSIGNALED(status) &&
+	DQT_RR(res->r[5], waitpid(pid, &status, 0) == pid && WIFSIGNALED(status) &&
 	    WTERMSIG(status) == SIGABRT ? 0 : -1);
 	res->r[6].rv = WCOREDUMP(status) ? 1 : 0;
 	res->r[6].err = 0;
@@ -1575,7 +1453,7 @@ child_authority_info(void *arg __unused, void *result)
 	struct cap_authority_info info;
 
 	memset(&info, 0xff, sizeof(info));
-	SET(res->r[0], syscall(SYS_cap_process, CAP_AUTH_INFO, -1, 0, &info));
+	DQT_RR(res->r[0], syscall(SYS_cap_process, CAP_AUTH_INFO, -1, 0, &info));
 	res->r[1].rv = info.valid;
 	res->r[2].rv = info.identity != 0;
 	res->id = info.generation;
@@ -1601,7 +1479,6 @@ ATF_TC_BODY(attach_without_authority, tc)
 	struct dqt_ctl c;
 	struct dqt_achild ch;
 	struct lg_res res;
-	int status;
 
 	LG_ROOT();
 	memset(&before, 0xff, sizeof(before));
@@ -1612,8 +1489,7 @@ ATF_TC_BODY(attach_without_authority, tc)
 	dqt_init(&c);
 	memset(&res, 0xff, sizeof(res));
 	dqt_attach_spawn(&c, &ch, child_authority_info, NULL);
-	status = dqt_attach_wait(&ch, &res, sizeof(res));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &res, sizeof(res));
 	CHECK_OK(res.r[0]);
 	ATF_CHECK_EQ(0, res.r[1].rv);
 	ATF_CHECK_EQ(0, res.r[2].rv);
@@ -1675,10 +1551,8 @@ ATF_TC_BODY(ilp32_no_abi, tc)
 	ATF_CHECK_MSG(kldfind("linux64.ko") != -1, "linux64.ko: %s",
 	    strerror(errno));
 
-	build_foreign(tc, "i386-unknown-freebsd", "ilp32_freebsd",
-	    "dq_legitimacy_ilp32.c");
-	build_foreign(tc, "i386-linux-gnu", "ilp32_linux",
-	    "dq_legitimacy_ilp32.c");
+	dqt_copy_helper(tc, "dq_legitimacy_ilp32_freebsd", "ilp32_freebsd");
+	dqt_copy_helper(tc, "dq_legitimacy_ilp32_linux", "ilp32_linux");
 	ATF_CHECK_EQ(100, exec_errno("./ilp32_freebsd"));
 	ATF_CHECK_EQ(100, exec_errno("./ilp32_linux"));
 }
@@ -1734,7 +1608,7 @@ clean_target_spawn(const atf_tc_t *tc, struct clean_target *t)
 	}
 	(void)close(sv[1]);
 	t->sock = sv[0];
-	t->pd = recv_fd(t->sock);
+	t->pd = dqt_recv_fd(t->sock);
 	ATF_REQUIRE_MSG(t->pd != -1, "%s sent no target", path);
 }
 
@@ -1777,13 +1651,13 @@ child_owner_after(void *arg, void *result)
 	if (a->nobody && !become_nobody())
 		_exit(4);
 	/* It could not open the queue now, and cannot go back. */
-	SET(res->r[0], open(DQ_DEVICE, O_RDWR));
-	SET(res->r[1], a->nobody ? setuid(0) : jail_attach(0));
-	SET(res->r[2], dq_get_stats(q, &st));
+	DQT_RR(res->r[0], open(DQ_DEVICE, O_RDWR));
+	DQT_RR(res->r[1], a->nobody ? setuid(0) : jail_attach(0));
+	DQT_RR(res->r[2], dq_get_stats(q, &st));
 	res->id = res->r[2].rv == 0 ? st.ds_queue_id : 0;
 	for (i = 0; i < OWNER_NTARGETS; i++) {
 		if (a->t[i] != -1)
-			SET(res->r[OWNER_T0 + i], dq_attach(q, a->t[i]));
+			DQT_RR(res->r[OWNER_T0 + i], dq_attach(q, a->t[i]));
 	}
 }
 
@@ -1796,34 +1670,6 @@ owner_arg_init(struct owner_arg *a, bool nobody, int jid)
 	a->jid = jid;
 	for (i = 0; i < OWNER_NTARGETS; i++)
 		a->t[i] = -1;
-}
-
-static void
-proc_debug_save(void)
-{
-	FILE *f;
-	u_int old;
-
-	ATF_REQUIRE(dqt_sysctl_get_uint(PROC_DEBUG, &old));
-	f = fopen("proc_debug.save", "w");
-	ATF_REQUIRE(f != NULL);
-	fprintf(f, "%u\n", old);
-	ATF_REQUIRE_EQ(0, fclose(f));
-}
-
-static void
-proc_debug_restore(void)
-{
-	FILE *f;
-	u_int old;
-
-	f = fopen("proc_debug.save", "r");
-	if (f != NULL) {
-		if (fscanf(f, "%u", &old) == 1)
-			(void)sysctlbyname(PROC_DEBUG, NULL, NULL, &old,
-			    sizeof(old));
-		(void)fclose(f);
-	}
 }
 
 /*
@@ -1852,14 +1698,13 @@ ATF_TC_HEAD(owner_dropped_attach, tc)
 ATF_TC_BODY(owner_dropped_attach, tc)
 {
 	struct clean_target clean, clean2;
-	struct idle execed, exited, jailed, plain;
+	struct dqt_idle execed, exited, jailed, plain;
 	struct owner_arg a;
 	struct lg_res res;
 	int jid, notpd, status;
 
 	LG_ROOT();
-	proc_debug_save();
-	dqt_sysctl_set_uint(PROC_DEBUG, 1);
+	dqt_sysctl_save_set_uint(PROC_DEBUG, 1);
 	jid = make_jail("dq_lg_owner_target");
 
 	notpd = open("/dev/null", O_RDONLY);
@@ -1868,11 +1713,11 @@ ATF_TC_BODY(owner_dropped_attach, tc)
 	(void)write(exited.go[1], "x", 1);
 	ATF_REQUIRE_EQ(0, pdwait(exited.pd, &status, WEXITED, NULL, NULL));
 	idle_spawn(&execed, "/bin/sleep");
-	idle_exec(&execed);
+	dqt_idle_exec(&execed);
 	idle_spawn_as(&plain, "/bin/sleep", -1, true);
-	idle_exec(&plain);
+	dqt_idle_exec(&plain);
 	idle_spawn_as(&jailed, "/bin/sleep", jid, true);
-	idle_exec(&jailed);
+	dqt_idle_exec(&jailed);
 	clean_target_spawn(tc, &clean);
 	clean_target_spawn(tc, &clean2);
 
@@ -1914,16 +1759,16 @@ ATF_TC_BODY(owner_dropped_attach, tc)
 	(void)close(exited.pd);
 	(void)close(exited.go[0]);
 	(void)close(exited.go[1]);
-	idle_end(&execed);
-	idle_end(&plain);
-	idle_end(&jailed);
+	dqt_idle_end(&execed);
+	dqt_idle_end(&plain);
+	dqt_idle_end(&jailed);
 	ATF_REQUIRE_EQ(0, jail_remove(jid));
-	proc_debug_restore();
+	(void)dqt_sysctl_restore(PROC_DEBUG);
 }
 ATF_TC_CLEANUP(owner_dropped_attach, tc)
 {
 
-	proc_debug_restore();
+	(void)dqt_sysctl_restore(PROC_DEBUG);
 	(void)jail_remove(jail_getid("dq_lg_owner_target"));
 }
 
@@ -1942,7 +1787,7 @@ ATF_TC_HEAD(owner_jailed_attach, tc)
 }
 ATF_TC_BODY(owner_jailed_attach, tc)
 {
-	struct idle inside, outside;
+	struct dqt_idle inside, outside;
 	struct owner_arg a;
 	struct lg_res res;
 	int jid;
@@ -1964,8 +1809,8 @@ ATF_TC_BODY(owner_jailed_attach, tc)
 	CHECK_ERR(res.r[OWNER_T0 + 0], ESRCH);
 	CHECK_OK(res.r[OWNER_T0 + 1]);
 
-	idle_end(&outside);
-	idle_end(&inside);
+	dqt_idle_end(&outside);
+	dqt_idle_end(&inside);
 	ATF_REQUIRE_EQ(0, jail_remove(jid));
 }
 ATF_TC_CLEANUP(owner_jailed_attach, tc)

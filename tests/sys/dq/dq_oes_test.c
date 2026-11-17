@@ -40,8 +40,6 @@
 static unsigned char data[DATA_LEN];
 static char oracle_path[DQT_PATH_MAX];
 
-static long	now_ms(void);
-
 static const oes_event_type_t served_events[] = {
 	OES_EVENT_NOTIFY_FILE_READ,
 	OES_EVENT_NOTIFY_FILE_STAT,
@@ -117,23 +115,19 @@ child_ops(void *arg, void *result)
 	void *p;
 	int n;
 
-#define	RR(i, call) do {						\
-	r->r[i].rv = (call);						\
-	r->r[i].err = r->r[i].rv == -1 ? errno : 0;			\
-} while (0)
-	RR(0, pwrite(a->fd, "w", 1, 0));
-	RR(1, fchmod(a->fd, OPS_MODE));
-	RR(2, fsync(a->fd));
+	DQT_RR(r->r[0], pwrite(a->fd, "w", 1, 0));
+	DQT_RR(r->r[1], fchmod(a->fd, OPS_MODE));
+	DQT_RR(r->r[2], fsync(a->fd));
 	memset(&fl, 0, sizeof(fl));
 	fl.l_type = F_WRLCK;
 	fl.l_whence = SEEK_SET;
 	fl.l_start = OPS_LOCK_START;
 	fl.l_len = OPS_LOCK_LEN;
-	RR(3, fcntl(a->fd, F_SETLK, &fl));
+	DQT_RR(r->r[3], fcntl(a->fd, F_SETLK, &fl));
 	fl.l_type = F_UNLCK;
 	r->unlock.rv = fcntl(a->fd, F_SETLK, &fl);
 	r->unlock.err = r->unlock.rv == -1 ? errno : 0;
-	RR(4, ioctl(a->fd, FIONREAD, &n));
+	DQT_RR(r->r[4], ioctl(a->fd, FIONREAD, &n));
 	p = mmap(NULL, getpagesize(), PROT_READ, MAP_SHARED, a->fd, 0);
 	r->r[5].rv = p == MAP_FAILED ? -1 : 0;
 	r->r[5].err = p == MAP_FAILED ? errno : 0;
@@ -151,8 +145,8 @@ collect_ops(oes_client_t *client, oes_message_t *got[NOPS], pid_t pid,
 	long start;
 	size_t i, have;
 
-	start = now_ms();
-	for (have = 0; have < NOPS && now_ms() - start < ms;) {
+	start = dqt_now_ms();
+	for (have = 0; have < NOPS && dqt_now_ms() - start < ms;) {
 		if (oes_read_event(client, &msg, false) != 0) {
 			if (errno != EAGAIN)
 				atf_tc_fail("oes_read_event: %s", strerror(errno));
@@ -171,7 +165,7 @@ collect_ops(oes_client_t *client, oes_message_t *got[NOPS], pid_t pid,
 }
 
 static oes_client_t *
-client_or_skip(void)
+oes_client_open(void)
 {
 	struct oes_mute_args mute;
 	oes_client_t *client;
@@ -180,7 +174,7 @@ client_or_skip(void)
 	client = oes_client_create();
 	if (client == NULL) {
 		error = errno;
-		atf_tc_skip("/dev/oes: %s", strerror(error));
+		atf_tc_fail("/dev/oes: %s", strerror(error));
 	}
 	ATF_REQUIRE_MSG(oes_set_mode(client, OES_MODE_NOTIFY, 0, 0) == 0,
 	    "oes_set_mode: %s", strerror(errno));
@@ -197,15 +191,6 @@ client_or_skip(void)
 	    nitems(served_events), OES_SUB_REPLACE) == 0, "oes_subscribe: %s",
 	    strerror(errno));
 	return (client);
-}
-
-static long
-now_ms(void)
-{
-	struct timespec ts;
-
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return (ts.tv_sec * 1000L + ts.tv_nsec / 1000000L);
 }
 
 /*
@@ -236,8 +221,8 @@ collect(oes_client_t *client, struct seen *s, pid_t requester, pid_t controller,
 	long start;
 	pid_t pid;
 
-	start = now_ms();
-	while (!seen_all(s) && now_ms() - start < ms) {
+	start = dqt_now_ms();
+	while (!seen_all(s) && dqt_now_ms() - start < ms) {
 		if (oes_read_event(client, &msg, false) != 0) {
 			if (errno != EAGAIN)
 				atf_tc_fail("oes_read_event: %s", strerror(errno));
@@ -314,7 +299,7 @@ ATF_TC_BODY(served_file_events, tc)
 	    sizeof(oracle_path));
 	dqt_init(&c);
 	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
-	client = client_or_skip();
+	client = oes_client_open();
 
 	/* The controller's identity nonce, as dq.observe reports it. */
 	have_nonce = false;
@@ -337,7 +322,7 @@ ATF_TC_BODY(served_file_events, tc)
 	a.fd = o->fd;
 	dqt_spawn(&ch, child_read_stat, &a);
 	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	ATF_REQUIRE_EQ(READ_LEN, r.rd.rv);
 	ATF_REQUIRE_EQ(0, r.st.rv);
 	/* The controller's own close(2): a second FILE_CLOSE, from this pid. */
@@ -408,22 +393,19 @@ ATF_TC_BODY(served_ops_events, tc)
 	int backing, status;
 
 	dqt_fill(data, sizeof(data), 113);
-	backing = dqt_make_oracle("backing", data, sizeof(data), oracle_path,
+	backing = dqt_make_rw("backing", data, sizeof(data), oracle_path,
 	    sizeof(oracle_path));
-	(void)close(backing);
-	backing = open(oracle_path, O_RDWR);
-	ATF_REQUIRE(backing != -1);
 	dqt_init(&c);
 	dqt_policy_write(&pol);
 	pol.dp_ioctl = DQ_EVENT;
 	pol.dp_mmap_shared_write = DQ_ALLOW;
 	o = dqt_mint_backing(&c, backing, oracle_path, &pol, DQ_MINT_F_WRITE);
-	client = client_or_skip();
+	client = oes_client_open();
 
 	a.fd = o->fd;
 	dqt_spawn(&ch, child_ops, &a);
 	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	for (i = 0; i < NOPS; i++)
 		ATF_CHECK_MSG(r.r[i].rv != -1, "operation %zu (event %#x): %s",
 		    i, ops_events[i], strerror(r.r[i].err));
@@ -487,19 +469,16 @@ ATF_TC_BODY(real_file_no_ops_events, tc)
 	size_t i;
 	int fd, q, status;
 
-	q = dqt_open_queue();	/* skip when the device is absent */
+	q = dqt_open_queue();	/* fails when the device is absent */
 	dqt_fill(data, sizeof(data), 114);
-	fd = dqt_make_oracle("real", data, sizeof(data), oracle_path,
+	fd = dqt_make_rw("real", data, sizeof(data), oracle_path,
 	    sizeof(oracle_path));
-	(void)close(fd);
-	fd = open(oracle_path, O_RDWR);
-	ATF_REQUIRE(fd != -1);
-	client = client_or_skip();
+	client = oes_client_open();
 
 	a.fd = fd;
 	dqt_spawn(&ch, child_ops, &a);
 	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	/* Every operation must have run, or the negative proves nothing. */
 	for (i = 0; i < NOPS; i++)
 		ATF_REQUIRE_MSG(r.r[i].rv != -1, "operation %zu on a real "
@@ -535,16 +514,16 @@ ATF_TC_BODY(real_file_no_events, tc)
 	oes_client_t *client;
 	int oracle, q, status;
 
-	q = dqt_open_queue();	/* skip when the device is absent */
+	q = dqt_open_queue();	/* fails when the device is absent */
 	dqt_fill(data, sizeof(data), 112);
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
 	    sizeof(oracle_path));
-	client = client_or_skip();
+	client = oes_client_open();
 
 	a.fd = oracle;
 	dqt_spawn(&ch, child_read_stat, &a);
 	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	ATF_REQUIRE_EQ(READ_LEN, r.rd.rv);
 	ATF_REQUIRE_EQ(0, r.st.rv);
 

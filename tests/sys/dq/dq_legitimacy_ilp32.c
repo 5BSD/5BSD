@@ -3,8 +3,8 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * dq_legitimacy_test's 32-bit image: a freestanding i386 program the test
- * builds twice, as a FreeBSD and as a Linux executable,
+ * dq_legitimacy_test's 32-bit image: a freestanding i386 program built
+ * twice at buildworld time (Makefile), as a FreeBSD and a Linux executable,
  *   clang --target=i386-unknown-freebsd -fuse-ld=lld -nostdlib -static ...
  *   clang --target=i386-linux-gnu -fuse-ld=lld -nostdlib -static ...
  * and expects the kernel to refuse (ENOEXEC).  Should a kernel ever run

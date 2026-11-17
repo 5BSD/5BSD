@@ -36,15 +36,6 @@ struct timed_res {
 	long		 elapsed_ms;
 };
 
-static long
-now_ms(void)
-{
-	struct timespec ts;
-
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return (ts.tv_sec * 1000L + ts.tv_nsec / 1000000L);
-}
-
 /* read(2) once and time it. */
 static void
 child_timed_read(void *arg, void *result)
@@ -54,10 +45,10 @@ child_timed_read(void *arg, void *result)
 	unsigned char buf[4096];
 	long start;
 
-	start = now_ms();
+	start = dqt_now_ms();
 	r->rr.rv = read(a->fd, buf, MIN(a->len, sizeof(buf)));
 	r->rr.err = r->rr.rv == -1 ? errno : 0;
-	r->elapsed_ms = now_ms() - start;
+	r->elapsed_ms = dqt_now_ms() - start;
 }
 
 ATF_TC(small_deadline_eio);
@@ -104,12 +95,16 @@ ATF_TC_BODY(small_deadline_eio, tc)
 	 * and the controller's reply is late.  An event still pending would
 	 * have been withdrawn silently with no record.
 	 */
+	dqt_lock(&c);
 	ATF_REQUIRE_EQ(1, c.nheld);
+	dqt_unlock(&c);
 	ATF_REQUIRE(dqt_wait_interrupts(&c, 1, DQT_WAIT_MS));
+	dqt_lock(&c);
 	ATF_CHECK_EQ(c.held[0].id, c.interrupted[0]);
 	ATF_CHECK_EQ(1, c.events[DQ_OP_INTERRUPT]);
+	dqt_unlock(&c);
 	errno = 0;
-	ATF_CHECK_EQ(-1, dq_reply(c.q, c.held[0].id, 0, data, 100));
+	ATF_CHECK_EQ(-1, dq_reply(c.q, dqt_held_id(&c, 0), 0, data, 100));
 	ATF_CHECK_EQ(ESRCH, errno);
 	dqt_fini(&c);
 	(void)close(oracle);
@@ -139,7 +134,7 @@ ATF_TC_BODY(deadline_zero_waits, tc)
 	dq_policy_default(&pol);
 	pol.dp_deadline_ms = 0;
 	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
-	c.reply_delay_ms = 600;
+	dqt_set_reply_delay(&c, 600);
 
 	a.fd = o->fd;
 	a.len = 100;
@@ -276,7 +271,9 @@ ATF_TC_BODY(sigkill_breaks_wait, tc)
 	ATF_CHECK(WIFSIGNALED(status));
 	ATF_CHECK_EQ(SIGKILL, WTERMSIG(status));
 	ATF_REQUIRE(dqt_wait_interrupts(&c, 1, DQT_WAIT_MS));
+	dqt_lock(&c);
 	ATF_CHECK_EQ(c.held[0].id, c.interrupted[0]);
+	dqt_unlock(&c);
 	dqt_stats(&c, &st);
 	ATF_CHECK_EQ(1, st.ds_interrupts);
 	ATF_CHECK_EQ(0, st.ds_inflight);

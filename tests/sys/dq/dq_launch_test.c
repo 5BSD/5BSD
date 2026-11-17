@@ -54,86 +54,10 @@
 
 #include "dq_test.h"
 
-/*
- * A pin does not skip: the plane and the queue device are there.  Without
- * this, dqt_open_queue() would turn a missing /dev/dq into a skip.
- */
-static void
-pin_require_plane(void)
-{
-	struct kinfo_proc kp;
-	size_t len;
-	int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, 1 };
-
-	len = sizeof(kp);
-	ATF_REQUIRE_EQ(0, sysctl(mib, nitems(mib), &kp, &len, NULL, 0));
-	ATF_REQUIRE_MSG(strcmp(kp.ki_comm, "capsule") == 0, "the capability "
-	    "plane is off (PID 1 is %s): this pin runs with it on",
-	    kp.ki_comm);
-	ATF_REQUIRE_MSG(access("/dev/dq", F_OK) == 0, "/dev/dq: %s",
-	    strerror(errno));
-}
-
 #define	NA	(-9999)		/* a step that was not reached */
-#define	ERRNO_OF(call)	((call) == -1 ? errno : 0)
 
 /* The attach bit LA-1k plans for capprotect tokens; undefined today. */
 #define	LA_ATTACH_BIT	0x10000u
-
-/*
- * A pdfork child that waits on a pipe until told to exit; with a path,
- * until told to exec it (idle_exec()).
- */
-struct idle {
-	pid_t		 pid;
-	int		 pd;
-	int		 go[2];
-};
-
-static void
-idle_spawn(struct idle *s, int pdflags, const char *exec_path)
-{
-	char b;
-
-	ATF_REQUIRE_EQ(0, pipe(s->go));
-	s->pid = pdfork(&s->pd, pdflags);
-	ATF_REQUIRE_MSG(s->pid != -1, "pdfork: %s", strerror(errno));
-	if (s->pid == 0) {
-		(void)close(s->go[1]);
-		if (exec_path != NULL) {
-			/*
-			 * Not before the parent says so: a NOTE_EXEC filter
-			 * added after the exec never reports it.
-			 */
-			if (read(s->go[0], &b, 1) != 1)
-				_exit(4);
-			execl(exec_path, exec_path, "30", (char *)NULL);
-			_exit(3);
-		}
-		(void)read(s->go[0], &b, 1);
-		_exit(0);
-	}
-}
-
-static void
-idle_exec(struct idle *s)
-{
-
-	ATF_REQUIRE_EQ(1, write(s->go[1], "g", 1));
-}
-
-static void
-idle_end(struct idle *s)
-{
-	int status;
-
-	(void)write(s->go[1], "x", 1);
-	(void)pdkill(s->pd, SIGKILL);
-	(void)pdwait(s->pd, &status, WEXITED, NULL, NULL);
-	(void)close(s->pd);
-	(void)close(s->go[0]);
-	(void)close(s->go[1]);
-}
 
 /*
  * The capability plane, without the ATF-calling helpers: these run in
@@ -316,23 +240,23 @@ actor(void *arg, void *result)
 	tok = -1;
 
 	q = dq_open();
-	r->open = ERRNO_OF(q);
+	r->open = DQT_ERRNO_OF(q);
 	if (q == -1)
 		return;
 	if ((a->flags & ACT_SETUID) != 0) {
-		r->setuid = ERRNO_OF(setuid(ACT_UID));
+		r->setuid = DQT_ERRNO_OF(setuid(ACT_UID));
 		if (r->setuid != 0)
 			return;
 	}
 	if ((a->flags & (ACT_TOKEN | ACT_RESEND)) != 0) {
-		r->recv = ERRNO_OF(chan_recv_fd(a->chan, &tok));
+		r->recv = DQT_ERRNO_OF(chan_recv_fd(a->chan, &tok));
 		if (r->recv != 0)
 			return;
 	}
 	if ((a->flags & ACT_RESEND) != 0)
-		r->resend = ERRNO_OF(chan_send_fd(a->chan, tok));
+		r->resend = DQT_ERRNO_OF(chan_send_fd(a->chan, tok));
 	if ((a->flags & ACT_TOKEN) != 0) {
-		r->authorize = ERRNO_OF(cp_request(tok, CP_OP_AUTHORIZE, 0,
+		r->authorize = DQT_ERRNO_OF(cp_request(tok, CP_OP_AUTHORIZE, 0,
 		    -1, NULL));
 		if ((a->flags & ACT_TOKCLOSE) != 0) {
 			(void)close(tok);
@@ -340,18 +264,18 @@ actor(void *arg, void *result)
 		}
 	}
 	if ((a->flags & ACT_PTRACE) != 0) {
-		r->pt_attach = ERRNO_OF(ptrace(PT_ATTACH, a->pid, NULL, 0));
+		r->pt_attach = DQT_ERRNO_OF(ptrace(PT_ATTACH, a->pid, NULL, 0));
 		if (r->pt_attach == 0) {
 			/* The attach stop is certain: an unbounded wait. */
 			r->pt_stopped = waitpid(a->pid, &status, 0) ==
 			    a->pid && WIFSTOPPED(status) ? 0 : 1;
-			r->pt_detach = ERRNO_OF(ptrace(PT_DETACH, a->pid,
+			r->pt_detach = DQT_ERRNO_OF(ptrace(PT_DETACH, a->pid,
 			    (caddr_t)1, 0));
 		}
 	}
 	if ((a->flags & (ACT_NOATTACH | ACT_RESEND)) != 0)
 		return;
-	r->attach = ERRNO_OF(dq_attach(q, a->pd));
+	r->attach = DQT_ERRNO_OF(dq_attach(q, a->pd));
 	if (dq_get_stats2(q, &st) == 0)
 		r->attached = st.ds2_attached;
 }
@@ -385,55 +309,14 @@ actor_scm(void *arg, void *result)
 {
 	struct recv_arg *ra = arg;
 	struct act a;
-	struct msghdr mh;
-	struct iovec iov;
-	union {
-		struct cmsghdr	 hdr;
-		char		 buf[CMSG_SPACE(sizeof(int))];
-	} cm;
-	char b;
 
-	memset(&mh, 0, sizeof(mh));
-	iov.iov_base = &b;
-	iov.iov_len = 1;
-	mh.msg_iov = &iov;
-	mh.msg_iovlen = 1;
-	mh.msg_control = cm.buf;
-	mh.msg_controllen = sizeof(cm.buf);
-	if (recvmsg(ra->sock, &mh, 0) != 1 ||
-	    cm.hdr.cmsg_level != SOL_SOCKET || cm.hdr.cmsg_type != SCM_RIGHTS) {
+	memset(&a, 0, sizeof(a));
+	a.pd = dqt_recv_fd(ra->sock);
+	if (a.pd == -1) {
 		((struct act_res *)result)->open = EPROTO;
 		return;
 	}
-	memset(&a, 0, sizeof(a));
-	memcpy(&a.pd, CMSG_DATA(&cm.hdr), sizeof(int));
 	actor(&a, result);
-}
-
-static int
-send_fd(int sock, int fd)
-{
-	struct msghdr mh;
-	struct iovec iov;
-	union {
-		struct cmsghdr	 hdr;
-		char		 buf[CMSG_SPACE(sizeof(int))];
-	} cm;
-	char b = 'f';
-
-	memset(&mh, 0, sizeof(mh));
-	memset(&cm, 0, sizeof(cm));
-	iov.iov_base = &b;
-	iov.iov_len = 1;
-	mh.msg_iov = &iov;
-	mh.msg_iovlen = 1;
-	mh.msg_control = cm.buf;
-	mh.msg_controllen = sizeof(cm.buf);
-	cm.hdr.cmsg_len = CMSG_LEN(sizeof(int));
-	cm.hdr.cmsg_level = SOL_SOCKET;
-	cm.hdr.cmsg_type = SCM_RIGHTS;
-	memcpy(CMSG_DATA(&cm.hdr), &fd, sizeof(int));
-	return (sendmsg(sock, &mh, 0) == 1 ? 0 : -1);
 }
 
 ATF_TC(nonparent_attach);
@@ -452,48 +335,47 @@ ATF_TC_BODY(nonparent_attach, tc)
 	struct dqt_child ch;
 	struct recv_arg ra;
 	struct act_res r;
-	struct idle s;
+	struct dqt_idle s;
 	struct kevent kev;
 	struct timespec ts = { 120, 0 };
-	int kq, sv[2], status;
+	int kq, sv[2];
 
-	pin_require_plane();
+	dqt_require_plane();
 	/* (a) SCM_RIGHTS: the actor exists before the target does. */
 	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
 	ra.sock = sv[1];
 	dqt_spawn(&ch, actor_scm, &ra);
-	idle_spawn(&s, 0, NULL);
-	ATF_REQUIRE_EQ(0, send_fd(sv[0], s.pd));
+	dqt_idle_spawn(&s, 0, 0, NULL, "30", NULL, NULL);
+	ATF_REQUIRE_EQ(0, dqt_send_fd(sv[0], s.pd));
 	memset(&r, 0, sizeof(r));
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_collect(&ch, &r, sizeof(r));
 	ROW("received by SCM_RIGHTS: dq_open", r.open, 0);
 	ROW("received by SCM_RIGHTS: attach", r.attach, 0);
 	ROW("received by SCM_RIGHTS: ds2_attached", r.attached, 1);
-	idle_end(&s);
+	dqt_idle_end(&s);
 	(void)close(sv[0]);
 	(void)close(sv[1]);
 
 	/* (a) by inheritance: a sibling of the target. */
-	idle_spawn(&s, 0, NULL);
+	dqt_idle_spawn(&s, 0, 0, NULL, "30", NULL, NULL);
 	r = act_run(s.pd, s.pid, 0, -1);
 	ROW("inherited: attach", r.attach, 0);
 	ROW("inherited: ds2_attached", r.attached, 1);
-	idle_end(&s);
+	dqt_idle_end(&s);
 
 	/* (b) the target exec'd. */
 	kq = kqueue();
 	ATF_REQUIRE(kq != -1);
-	idle_spawn(&s, 0, "/bin/sleep");
+	dqt_idle_spawn(&s, 0, 0, "/bin/sleep", "30", NULL, NULL);
 	EV_SET(&kev, s.pd, EVFILT_PROCDESC, EV_ADD, NOTE_EXEC, 0, NULL);
 	ATF_REQUIRE_EQ(0, kevent(kq, &kev, 1, NULL, 0, NULL));
-	idle_exec(&s);
+	dqt_idle_exec(&s);
 	ATF_REQUIRE_EQ_MSG(1, kevent(kq, NULL, 0, &kev, 1, &ts),
 	    "no NOTE_EXEC from the target");
 	r = act_run(s.pd, s.pid, 0, -1);
 	ROW("after exec: attach", r.attach, EBUSY);
 	ROW("after exec: ds2_attached", r.attached, 0);
-	idle_end(&s);
+	dqt_idle_end(&s);
 	(void)close(kq);
 }
 
@@ -510,10 +392,10 @@ ATF_TC_HEAD(unprivileged_attach, tc)
 ATF_TC_BODY(unprivileged_attach, tc)
 {
 	struct act_res r;
-	struct idle s;
+	struct dqt_idle s;
 
-	pin_require_plane();
-	idle_spawn(&s, 0, NULL);
+	dqt_require_plane();
+	dqt_idle_spawn(&s, 0, 0, NULL, "30", NULL, NULL);
 	r = act_run(s.pd, s.pid, ACT_SETUID, -1);
 	ROW("setuid", r.setuid, 0);
 	ROW("attach", r.attach, EPERM);
@@ -521,7 +403,7 @@ ATF_TC_BODY(unprivileged_attach, tc)
 	/* The same target is still attachable by root: nothing was left. */
 	r = act_run(s.pd, s.pid, 0, -1);
 	ROW("root afterwards: attach", r.attach, 0);
-	idle_end(&s);
+	dqt_idle_end(&s);
 }
 
 /* (d): the protector is a third process, neither parent nor the test. */
@@ -549,7 +431,7 @@ protector(void *arg, void *result)
 	(void)close(pa->ready[0]);
 	(void)close(pa->go[1]);
 	fd = cp_shield(pa->pd, CP_SF_PTRACE);
-	r->shield = ERRNO_OF(fd);
+	r->shield = DQT_ERRNO_OF(fd);
 	b = 'r';
 	(void)write(pa->ready[1], &b, 1);
 	if (read(pa->go[0], &b, 1) != 1 || fd == -1) {
@@ -579,13 +461,12 @@ ATF_TC_BODY(shielded_attach, tc)
 	struct prot_arg pa;
 	struct prot_res pr;
 	struct act_res r;
-	struct idle s;
+	struct dqt_idle s;
 	char b;
-	int status;
 
-	pin_require_plane();
+	dqt_require_plane();
 	dqt_init_manual(&c);
-	idle_spawn(&s, 0, NULL);
+	dqt_idle_spawn(&s, 0, 0, NULL, "30", NULL, NULL);
 	pa.pd = s.pd;
 	pa.pid = s.pid;
 	ATF_REQUIRE_EQ(0, pipe(pa.ready));
@@ -605,13 +486,12 @@ ATF_TC_BODY(shielded_attach, tc)
 
 	ATF_REQUIRE_EQ(1, write(pa.go[1], "g", 1));
 	memset(&pr, 0, sizeof(pr));
-	status = dqt_wait(&ch, &pr, sizeof(pr));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_collect(&ch, &pr, sizeof(pr));
 	ROW("CP_OP_PROTECT", pr.shield, 0);
 	ROW("protector: attach", pr.act.attach, 0);
 	ROW("protector: ds2_attached", pr.act.attached, 1);
 
-	idle_end(&s);
+	dqt_idle_end(&s);
 	(void)close(pa.ready[0]);
 	(void)close(pa.go[1]);
 	dqt_fini(&c);
@@ -630,18 +510,18 @@ ATF_TC_BODY(pd_protected_attach, tc)
 {
 	struct dqt_ctl c;
 	struct act_res r;
-	struct idle s;
+	struct dqt_idle s;
 
-	pin_require_plane();
+	dqt_require_plane();
 	dqt_init_manual(&c);
-	idle_spawn(&s, PD_PROTECTED, NULL);
+	dqt_idle_spawn(&s, 0, PD_PROTECTED, NULL, "30", NULL, NULL);
 	errno = 0;
 	ATF_CHECK_EQ(-1, dq_attach(c.q, s.pd));
 	ROW("parent: attach", errno, EPERM);
 	r = act_run(s.pd, s.pid, 0, -1);
 	ROW("non-parent: attach", r.attach, EPERM);
 	ROW("non-parent: ds2_attached", r.attached, 0);
-	idle_end(&s);
+	dqt_idle_end(&s);
 	dqt_fini(&c);
 }
 
@@ -660,12 +540,12 @@ shielded_parent(void *arg, void *result)
 {
 	struct sp_arg *sa = arg;
 	struct sp_res *r = result;
-	struct idle s;
+	struct dqt_idle s;
 	char b;
 	int fd;
 
 	fd = cp_shield(-1, CP_SF_PTRACE);
-	r->shield = ERRNO_OF(fd);
+	r->shield = DQT_ERRNO_OF(fd);
 	r->self = getpid();
 	if (pipe(s.go) != 0)
 		_exit(4);
@@ -678,38 +558,13 @@ shielded_parent(void *arg, void *result)
 		_exit(0);
 	}
 	r->child = s.pid;
-	if (send_fd(sa->sock, s.pd) != 0)
+	if (dqt_send_fd(sa->sock, s.pd) != 0)
 		_exit(6);
 	if (write(sa->sock, r, sizeof(*r)) != (ssize_t)sizeof(*r))
 		_exit(7);
 	/* Stay, shielded, until the test has looked at both processes. */
 	(void)read(sa->sock, &b, 1);
-	idle_end(&s);
-}
-
-static int
-recv_fd(int sock)
-{
-	struct msghdr mh;
-	struct iovec iov;
-	union {
-		struct cmsghdr	 hdr;
-		char		 buf[CMSG_SPACE(sizeof(int))];
-	} cm;
-	char b;
-	int fd;
-
-	memset(&mh, 0, sizeof(mh));
-	iov.iov_base = &b;
-	iov.iov_len = 1;
-	mh.msg_iov = &iov;
-	mh.msg_iovlen = 1;
-	mh.msg_control = cm.buf;
-	mh.msg_controllen = sizeof(cm.buf);
-	if (recvmsg(sock, &mh, 0) != 1 || cm.hdr.cmsg_type != SCM_RIGHTS)
-		return (-1);
-	memcpy(&fd, CMSG_DATA(&cm.hdr), sizeof(int));
-	return (fd);
+	dqt_idle_end(&s);
 }
 
 ATF_TC(shield_not_inherited);
@@ -730,13 +585,13 @@ ATF_TC_BODY(shield_not_inherited, tc)
 	struct sp_arg sa;
 	struct sp_res sr, dummy;
 	struct act_res r;
-	int pd, status, sv[2];
+	int pd, sv[2];
 
-	pin_require_plane();
+	dqt_require_plane();
 	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
 	sa.sock = sv[1];
 	dqt_spawn(&ch, shielded_parent, &sa);
-	pd = recv_fd(sv[0]);
+	pd = dqt_recv_fd(sv[0]);
 	ATF_REQUIRE_MSG(pd != -1, "no process descriptor from the parent");
 	ATF_REQUIRE_EQ((ssize_t)sizeof(sr), read(sv[0], &sr, sizeof(sr)));
 	ROW("CP_OP_SHIELD", sr.shield, 0);
@@ -754,8 +609,7 @@ ATF_TC_BODY(shield_not_inherited, tc)
 	ROW("fork: ds2_attached", r.attached, 1);
 
 	ATF_REQUIRE_EQ(1, write(sv[0], "x", 1));
-	status = dqt_wait(&ch, &dummy, sizeof(dummy));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_collect(&ch, &dummy, sizeof(dummy));
 	(void)close(pd);
 	(void)close(sv[0]);
 	(void)close(sv[1]);
@@ -780,19 +634,19 @@ mint_child(void *arg, void *result)
 
 	r->shield = r->mint_bit = r->mint_bit_ptrace = r->mint_ptrace = NA;
 	fd = cp_shield(-1, CP_SF_PTRACE | LA_ATTACH_BIT);
-	r->shield_bit = ERRNO_OF(fd);
+	r->shield_bit = DQT_ERRNO_OF(fd);
 	if (fd != -1)
 		return;
 	fd = cp_shield(-1, ma->shield_flags);
-	r->shield = ERRNO_OF(fd);
+	r->shield = DQT_ERRNO_OF(fd);
 	if (fd == -1)
 		return;
 	tok = -1;
-	r->mint_bit = ERRNO_OF(cp_request(fd, CP_OP_MINT, LA_ATTACH_BIT, -1,
+	r->mint_bit = DQT_ERRNO_OF(cp_request(fd, CP_OP_MINT, LA_ATTACH_BIT, -1,
 	    &tok));
-	r->mint_bit_ptrace = ERRNO_OF(cp_request(fd, CP_OP_MINT,
+	r->mint_bit_ptrace = DQT_ERRNO_OF(cp_request(fd, CP_OP_MINT,
 	    CP_SF_PTRACE | LA_ATTACH_BIT, -1, &tok));
-	r->mint_ptrace = ERRNO_OF(cp_request(fd, CP_OP_MINT, CP_SF_PTRACE,
+	r->mint_ptrace = DQT_ERRNO_OF(cp_request(fd, CP_OP_MINT, CP_SF_PTRACE,
 	    -1, &tok));
 }
 
@@ -820,7 +674,7 @@ ATF_TC_BODY(mint_attach_bit, tc)
 	struct mint_res r;
 	u_int i;
 
-	pin_require_plane();
+	dqt_require_plane();
 	ATF_REQUIRE_EQ(0, CP_SF_ALL & LA_ATTACH_BIT);
 	for (i = 0; i < nitems(shields); i++) {
 		ma.shield_flags = shields[i].flags;
@@ -852,11 +706,11 @@ ATF_TC_HEAD(token_attach, tc)
 ATF_TC_BODY(token_attach, tc)
 {
 	struct act_res r;
-	struct idle s;
+	struct dqt_idle s;
 	int chan[2], shield, tok;
 
-	pin_require_plane();
-	idle_spawn(&s, 0, NULL);
+	dqt_require_plane();
+	dqt_idle_spawn(&s, 0, 0, NULL, "30", NULL, NULL);
 	shield = cp_shield(s.pd, CP_SF_PTRACE);
 	ATF_REQUIRE_MSG(shield != -1, "CP_OP_PROTECT: %s", strerror(errno));
 	ATF_REQUIRE_MSG(chan_create(chan) == 0, "channel: %s",
@@ -868,7 +722,7 @@ ATF_TC_BODY(token_attach, tc)
 
 	/* Transfer state: default, once, none. */
 	ATF_REQUIRE_EQ(0, cp_request(shield, CP_OP_MINT, 0, -1, &tok));
-	ROW("default token: send", ERRNO_OF(chan_send_fd(chan[0], tok)), 0);
+	ROW("default token: send", DQT_ERRNO_OF(chan_send_fd(chan[0], tok)), 0);
 	(void)close(tok);
 	r = act_run(s.pd, s.pid, ACT_RESEND, chan[1]);
 	ROW("default token: receive", r.recv, 0);
@@ -876,7 +730,7 @@ ATF_TC_BODY(token_attach, tc)
 
 	ATF_REQUIRE_EQ(0, cp_request(shield, CP_OP_MINT, 0, -1, &tok));
 	ATF_REQUIRE_EQ(0, cap_xfer_limit(tok, CAP_XFER_ONCE));
-	ROW("once token: send", ERRNO_OF(chan_send_fd(chan[0], tok)), 0);
+	ROW("once token: send", DQT_ERRNO_OF(chan_send_fd(chan[0], tok)), 0);
 	(void)close(tok);
 	r = act_run(s.pd, s.pid, ACT_RESEND, chan[1]);
 	ROW("once token: receive", r.recv, 0);
@@ -884,7 +738,7 @@ ATF_TC_BODY(token_attach, tc)
 
 	ATF_REQUIRE_EQ(0, cp_request(shield, CP_OP_MINT, 0, -1, &tok));
 	ATF_REQUIRE_EQ(0, cap_xfer_limit(tok, CAP_XFER_NONE));
-	ROW("none token: send", ERRNO_OF(chan_send_fd(chan[0], tok)),
+	ROW("none token: send", DQT_ERRNO_OF(chan_send_fd(chan[0], tok)),
 	    ENOTCAPABLE);
 	(void)close(tok);
 
@@ -918,7 +772,7 @@ ATF_TC_BODY(token_attach, tc)
 	ROW("held token: attach", r.attach, 0);
 	ROW("held token: ds2_attached", r.attached, 1);
 
-	idle_end(&s);
+	dqt_idle_end(&s);
 	(void)close(chan[0]);
 	(void)close(chan[1]);
 	(void)close(shield);
@@ -954,11 +808,11 @@ ATF_TC_BODY(nnp_seen_by_others, tc)
 {
 	struct dqt_ctl c;
 	struct nnp_res r;
-	struct idle s;
+	struct dqt_idle s;
 
-	pin_require_plane();
+	dqt_require_plane();
 	dqt_init_manual(&c);
-	idle_spawn(&s, 0, NULL);
+	dqt_idle_spawn(&s, 0, 0, NULL, "30", NULL, NULL);
 	memset(&r, 0, sizeof(r));
 	dqt_run_child(nnp_reader, &s.pid, &r, sizeof(r));
 	ROW("before: procctl", r.err, 0);
@@ -969,7 +823,7 @@ ATF_TC_BODY(nnp_seen_by_others, tc)
 	dqt_run_child(nnp_reader, &s.pid, &r, sizeof(r));
 	ROW("after: procctl", r.err, 0);
 	ROW("after: status", r.nnp, PROC_NO_NEW_PRIVS_ENABLE);
-	idle_end(&s);
+	dqt_idle_end(&s);
 	dqt_fini(&c);
 }
 

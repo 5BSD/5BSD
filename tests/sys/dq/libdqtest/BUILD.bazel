@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# The queue access checks and the controller thread of the dq test support
+# library, for the native libdq tests (lib/libdq/tests).  libdqtest.a itself
+# and tests/sys/dq are built by make only.
+load("@rules_cc//cc:defs.bzl", "cc_library")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "support", srcs = ["dqt_access.c", "dqt_server.c"],
+    hdrs = ["dq_test.h"],
+    deps = ["//lib/libdq:dq", "//lib/libthr:thr", "//lib/atf/libatf-c:atf_c"],
+    strip_include_prefix = ".", linkstatic = True,
+    target_compatible_with = _PLATFORM,
+    visibility = ["//lib/libdq/tests:__pkg__"])

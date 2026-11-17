@@ -29,6 +29,8 @@ int	__sys___realpathat(int, const char *, char *, size_t, int);
 
 #define	NPATH	12
 
+#define	ALLOW	"kern.chroot_allow_open_directories"
+
 struct pres {
 	int	err[NPATH];
 	char	path[NPATH][PATH_MAX];
@@ -146,7 +148,7 @@ ATF_TC_BODY(own_presented, tc)
 	ts_start(&s, "t", DQ_TREE_F_ROOT);
 	memset(&r, 0, sizeof(r));
 	status = ts_child(&s, s.sroot, s.sroot, own_fn, NULL, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	TS_CHECK_ERRNO(0, r.err[0], "chdir d");
 	ATF_CHECK_STREQ("/d", r.path[1]);
 	TS_CHECK_ERRNO(0, r.err[2], "realpath f");
@@ -227,7 +229,7 @@ ATF_TC_BODY(real_under_served_root, tc)
 	ATF_REQUIRE(realpath("w", a.real) != NULL);
 	memset(&r, 0, sizeof(r));
 	status = ts_child(&s, s.sroot, s.sroot, real_fn, &a, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	TS_CHECK_ERRNO(ENOENT, r.err[0], "realpath answered REAL");
 	TS_CHECK_ERRNO(0, r.err[1], "fchdir real");
 	TS_CHECK_ERRNO(ENOENT, r.err[2], "getcwd: real cwd, served root");
@@ -340,8 +342,8 @@ ATF_TC_BODY(viewer_rule, tc)
 	struct pres ra, rb, rc, rt;
 	struct view_arg v;
 	char buf[PATH_MAX], fdname[32];
-	size_t len;
-	int pd, status, e, ready[2], go[2], back[2], allow, oldallow;
+	size_t got;
+	int pd, status, e, ready[2], go[2], back[2];
 	pid_t pid;
 	char c;
 	bool lp;
@@ -367,9 +369,13 @@ ATF_TC_BODY(viewer_rule, tc)
 			_exit(1);
 		memset(&ra, 0, sizeof(ra));
 		a_fn(&v, &ra);
-		(void)write(back[1], &ra, sizeof(ra));
-		_exit(0);
+		_exit(write(back[1], &ra, sizeof(ra)) == (ssize_t)sizeof(ra) ?
+		    0 : DQT_EXIT_NORESULT);
 	}
+	/* Only A holds the write ends: its death is an EOF here. */
+	close(ready[1]);
+	close(go[0]);
+	close(back[1]);
 	ATF_REQUIRE(read(ready[0], &c, 1) == 1);
 	ATF_REQUIRE(dq_attach_starts(s.q, pd, s.sroot, s.sroot) == 0);
 	ATF_REQUIRE(write(go[1], "g", 1) == 1);
@@ -427,14 +433,10 @@ ATF_TC_BODY(viewer_rule, tc)
 	 */
 	memset(&rc, 0, sizeof(rc));
 	v.chroot_d = true;
-	allow = 2;
-	len = sizeof(oldallow);
-	ATF_REQUIRE(sysctlbyname("kern.chroot_allow_open_directories",
-	    &oldallow, &len, &allow, sizeof(allow)) == 0);
+	dqt_sysctl_save_set_int(ALLOW, 2);
 	status = ts_child(&s, s.sroot, s.sroot, viewer_fn, &v, &rc,
 	    sizeof(rc));
-	(void)sysctlbyname("kern.chroot_allow_open_directories", NULL, NULL,
-	    &oldallow, sizeof(oldallow));
+	ATF_REQUIRE(dqt_sysctl_restore(ALLOW));
 	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
 	TS_CHECK_ERRNO(0, rc.err[0], "C chroot d");
 	ATF_CHECK_STREQ("/", rc.path[1]);
@@ -448,8 +450,10 @@ ATF_TC_BODY(viewer_rule, tc)
 	/* A's own view. */
 	ATF_REQUIRE(write(v.tochild[1], "g", 1) == 1);
 	memset(&ra, 0, sizeof(ra));
-	(void)read(back[0], &ra, sizeof(ra));
+	got = dqt_read_full(back[0], &ra, sizeof(ra));
 	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	dqt_require_exit0(status, "A");
+	ATF_REQUIRE_EQ(sizeof(ra), got);
 	TS_CHECK_ERRNO(0, ra.err[0], "A chdir d");
 	close(pd);
 	if (v.lpfd >= 0)
@@ -458,12 +462,10 @@ ATF_TC_BODY(viewer_rule, tc)
 }
 ATF_TC_CLEANUP(viewer_rule, tc)
 {
-	int v = 1;
 
 	(void)unmount("lp", MNT_FORCE);
-	/* The body restores it; after a failure, the default. */
-	(void)sysctlbyname("kern.chroot_allow_open_directories", NULL, NULL,
-	    &v, sizeof(v));
+	/* The body restores it; after a failure, the value it found. */
+	(void)dqt_sysctl_restore(ALLOW);
 }
 
 /*
@@ -522,7 +524,7 @@ ATF_TC_BODY(revoked_frozen, tc)
 	status = ts_child(&s, s.sroot, s.sroot, revoked_fn, &v, &r,
 	    sizeof(r));
 	pthread_join(thr, NULL);
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	TS_CHECK_ERRNO(0, r.err[0], "getcwd, revoked");
 	ATF_CHECK_STREQ("/", r.path[0]);
 	TS_CHECK_ERRNO(0, r.err[1], "kinfo, revoked");

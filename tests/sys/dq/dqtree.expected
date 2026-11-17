@@ -10,33 +10,18 @@
 
 # Q11: dq_serve_tree checks a requester's access to parent directories
 # with its effective uid and gid only; supplementary groups are not seen.
-groups  # ux-6: Q11, supplementary groups not seen by dq_serve_tree
-getgroups  # ux-6: Q11, supplementary groups not seen by dq_serve_tree
-supplementary  # ux-6: Q11, supplementary groups not seen by dq_serve_tree
-
 # Q13: a path stat(2) of a served object can show set-id bits and device
-# numbers that fstat(2) of its descriptor does not.
-setid  # ux-1: Q13, set-id bits in a path stat but not in fstat
-st_rdev  # ux-1: Q13, device numbers in a path stat but not in fstat
+# numbers that fstat(2) of its descriptor does not.  No case of the
+# default suites differs for either (getgroups, setid and st_rdev cases
+# agree); entries are added by name when one does.
 
-# The served root has no mount points: st_dev and statfs(2) of names
-# under the tree's nullfs, tmpfs and devfs mounts are the backing ones,
-# and mount(8)/statfs(2) tests see the controller's view.
-st_dev  # ux-7: item 11, no mount points in the served root
-statfs  # ux-7: item 11 (N2), served statfs presentation
-getfsstat  # ux-7: item 11, the controller's mount view
-mount  # ux-7: item 11, the controller's mount view
+# The served root has no mount points: statfs(2) of names under the tree's
+# devfs and of a FIFO and a pts master is the backing file system's.
+^fstatfs_test:(devfs_node|fifo|pts_master_ptmx)[[:space:]]  # ux-7: item 11 (N2), served statfs presentation
 
-# D166 and D176: no vnode MAC hooks or veriexec fingerprints for served
-# objects.
-mac_  # by-design D166: no vnode MAC hooks for served objects
-fsetattr_test:times_none_mac[[:space:]]  # by-design D166: a served file is checked by mac_file_check_setattr, not the vnode hooks the case counts
-veriexec  # by-design D176: no veriexec fingerprints for served objects
-
-# fcntl(2) F_GETPATH / F_KINFO, procstat, and kinfo-based path checks
-# present served paths (D174), relative to the served root.
-f_getpath  # by-design D174: served paths presented relative to the served root
-kinfo  # by-design D174: served paths presented relative to the served root
+# D166: no vnode MAC hooks for served objects.
+^fsetattr_test:fchmod_fchown_mac_first[[:space:]]  # by-design D166: a served file is checked by mac_file_check_setattr, not the vnode hooks the case counts
+^fsetattr_test:times_none_mac[[:space:]]  # by-design D166: a served file is checked by mac_file_check_setattr, not the vnode hooks the case counts
 
 # The sys/file differences still owned by a sub-series of the Unix-
 # illusion plan (stage 1c-iii-c, run 58; owners from the plan's 0z rows
@@ -44,91 +29,78 @@ kinfo  # by-design D174: served paths presented relative to the served root
 # "case  # by-design D###: reason".  dq_tree_suites_test counts the
 # differences each tag still owns.  Paths are relative to the tree.
 
-# An O_PATH served descriptor keeps dq_fileops' DFLAG_FLOCK and
-# DFLAG_SEEKABLE (sys/dev/dq/dq_file.c:148) where a vnode's O_PATH
-# descriptor gets path_fileops, which has neither: flock is checked past
-# sys_flock's table test, lseek and fadvise are allowed, F_SETFL and aio
-# reach the generic paths.
-advlock_fd_test:opath_file[[:space:]]  # ux-0 D244: flock(O_PATH served) EBADF from dq_advlock (dq_file.c:1674), base EOPNOTSUPP (no DFLAG_FLOCK)
-advlock_fd_test:refused_before_args[[:space:]]  # ux-0 D244: O_PATH served F_SETLK/flock validate arguments first (dq_file.c:148 flags), base EBADF/EOPNOTSUPP
-fadvise_test:unseekable[[:space:]]  # ux-0 D244: posix_fadvise(O_PATH served) passes the DFLAG_SEEKABLE test (vfs_syscalls.c:6554), dq_fadvise returns 0, base ESPIPE
-path_test:path_aio[[:space:]]  # ux-0 D244: aio_fsync(O_PATH served) EINVAL (vfs_aio.c:1377 non-vnode), base EBADF (path_fileops)
-path_test:path_fcntl[[:space:]]  # ux-0 D244: F_SETFL on an O_PATH served descriptor is accepted, base EBADF (path_fileops)
-path_test:path_io[[:space:]]  # ux-0 D244: lseek(O_PATH served) succeeds through dq_seek (dq_file.c:1992), base ESPIPE
-path_test:path_lock[[:space:]]  # ux-0 D244: flock(O_PATH served) EBADF (dq_file.c:1674), base EOPNOTSUPP
-
 # A served directory: dq_fileops does not apply the vnode type rules of
 # vn_fadvise, vn_fcntl and vn_copy_file_range to DQ_KIND_DIR objects.
-fadvise_test:directory[[:space:]]  # ux-1 D245: dq_fadvise returns 0 for a DIR object (dq_file.c:2253), vn_fadvise ENODEV for non-VREG
-fcntl_fileop_test:directory[[:space:]]  # ux-1 D245: dq_fcntl F_READAHEAD/F_RDAHEAD succeed on a DIR object (dq_file.c:2054), vn_fcntl ENOTTY
-copy_file_range_test:directory[[:space:]]  # ux-1 D245: dq_fileops has no fo_copy_file_range, default EINVAL (vfs_syscalls.c:6793), base EISDIR
+^fadvise_test:directory[[:space:]]  # ux-1 D245: dq_fadvise returns 0 for a DIR object (dq_file.c), vn_fadvise ENODEV for non-VREG
+^fcntl_fileop_test:directory[[:space:]]  # ux-1 D245: dq_fcntl F_READAHEAD/F_RDAHEAD succeed on a DIR object (dq_file.c), vn_fcntl ENOTTY
+^copy_file_range_test:directory[[:space:]]  # ux-1 D245: dq_fileops has no fo_copy_file_range, default EINVAL (vfs_syscalls.c), base EISDIR
 
 # copy_file_range(2) between served files: no fo_copy_file_range.
-copy_file_range_test:regular_files[[:space:]]  # ux-2 D246: no fo_copy_file_range in dq_fileops, EINVAL (vfs_syscalls.c:6793)
-copy_file_range_test:same_file[[:space:]]  # ux-2 D246: no fo_copy_file_range in dq_fileops, EINVAL (vfs_syscalls.c:6793)
+^copy_file_range_test:regular_files[[:space:]]  # ux-2 D246: no fo_copy_file_range in dq_fileops, EINVAL (vfs_syscalls.c)
+^copy_file_range_test:same_file[[:space:]]  # ux-2 D246: no fo_copy_file_range in dq_fileops, EINVAL (vfs_syscalls.c)
 
 # dq_serve_lock emulates flock and POSIX locks with OFD locks on a
-# per-owner reopen of the backing file (lib/libdq/libdq_serve.c:256,440).
-advlock_fd_test:directory[[:space:]]  # ux-0 D247: flock(LOCK_EX) on a served directory: an OFD write lock on the read-only reopen of a directory (libdq_serve.c:229,440), base allows
-flock_test:main[[:space:]]  # ux-0 D247: lock events on flock_helper's open-unlinked temp file answer EIO (owner reopen libdq_serve.c:229, dq_serve_map EIO); test 2's parent then blocks reading its own pipe (flock_helper.c:221), a test-side wait, not a kernel hang
-flock_shared_test:blocking_upgrade_drops_shared[[:space:]]  # ux-0 D247, parked: a blocking flock SH-to-EX upgrade on a served file keeps its shared lock while it sleeps (one atomic F_OFD_SETLKW conversion on the owner reopen, libdq_serve.c:309); base unlocks first, so another shared holder gets LOCK_EX|LOCK_NB there and EWOULDBLOCK here
-flock_shared_test:interrupted_upgrade[[:space:]]  # ux-0 D247, parked: a blocking flock SH-to-EX upgrade on a served file that ends in EINTR still holds its shared lock (the cancelled F_OFD_SETLKW converted nothing, libdq_serve.c:309), so LOCK_EX|LOCK_NB by others stays EWOULDBLOCK until it unlocks or closes; base has dropped the shared lock
+# per-owner reopen of the backing file (lib/libdq/libdq_serve.c).
+^advlock_fd_test:directory[[:space:]]  # ux-0 D247: flock(LOCK_EX) on a served directory: an OFD write lock on the read-only reopen of a directory (libdq_serve.c), base allows
+^flock_test:main[[:space:]]  # ux-0 D247: lock events on flock_helper's open-unlinked temp file answer EIO (owner reopen libdq_serve.c, dq_serve_map EIO); test 2's parent then blocks reading its own pipe (flock_helper.c), a test-side wait, not a kernel hang
+^flock_shared_test:blocking_upgrade_drops_shared[[:space:]]  # ux-0 D247, parked: a blocking flock SH-to-EX upgrade on a served file keeps its shared lock while it sleeps (one atomic F_OFD_SETLKW conversion on the owner reopen, libdq_serve.c); base unlocks first, so another shared holder gets LOCK_EX|LOCK_NB there and EWOULDBLOCK here
+^flock_shared_test:interrupted_upgrade[[:space:]]  # ux-0 D247, parked: a blocking flock SH-to-EX upgrade on a served file that ends in EINTR still holds its shared lock (the cancelled F_OFD_SETLKW converted nothing, libdq_serve.c), so LOCK_EX|LOCK_NB by others stays EWOULDBLOCK until it unlocks or closes; base has dropped the shared lock
 
 # fspacectl(2) past EOF: the reply invariant requires dscr_len == end -
-# dscr_offset (sys/dev/dq/dq_queue.c:1860); FreeBSD's VOP_DEALLOCATE
+# dscr_offset (sys/dev/dq/dq_queue.c); FreeBSD's VOP_DEALLOCATE
 # stops at EOF and reports the rest, which the invariant refuses.
-fspacectl_test:aligned_dealloc_eof[[:space:]]  # ux-1: FSPACECTL reply past EOF refused by the invariant (dq_queue.c:1860)
-fspacectl_test:aligned_dealloc_offmax[[:space:]]  # ux-1: FSPACECTL reply for an OFF_MAX range refused by the invariant (dq_queue.c:1860)
-fspacectl_test:unaligned_dealloc_eof[[:space:]]  # ux-1: FSPACECTL reply past EOF refused by the invariant (dq_queue.c:1860)
-fspacectl_test:unaligned_dealloc_offmax[[:space:]]  # ux-1: FSPACECTL reply for an OFF_MAX range refused by the invariant (dq_queue.c:1860)
+^fspacectl_test:aligned_dealloc_eof[[:space:]]  # ux-1: FSPACECTL reply past EOF refused by the invariant (dq_queue.c)
+^fspacectl_test:aligned_dealloc_offmax[[:space:]]  # ux-1: FSPACECTL reply for an OFF_MAX range refused by the invariant (dq_queue.c)
+^fspacectl_test:unaligned_dealloc_eof[[:space:]]  # ux-1: FSPACECTL reply past EOF refused by the invariant (dq_queue.c)
+^fspacectl_test:unaligned_dealloc_offmax[[:space:]]  # ux-1: FSPACECTL reply for an OFF_MAX range refused by the invariant (dq_queue.c)
 
 # A kernel consumer's relative path from a served cwd (nmount's fspath).
-fsetattr_test:fdescfs_[a-z_]*[[:space:]]  # by-design D175: mount(2) "fspath" from a served cwd is a class-2 path, EXDEV (kern_dqres.c:2137)
-fsetattr_test:fdesc_setattr_atomic[[:space:]]  # by-design D175: the case mounts fdescfs the same way
+^fsetattr_test:fdescfs_(fifo|kqueue|mac_target|no_attributes|opath|ptmx_direct|ptmx_nonowner|regular_file|shm)[[:space:]]  # by-design D175: mount(2) "fspath" from a served cwd is a class-2 path, EXDEV (kern_dqres.c)
+^fsetattr_test:fdesc_setattr_atomic[[:space:]]  # by-design D175: the case mounts fdescfs the same way
 
 # Requester credentials (ux-6, items 3 and N1).
-path_test:path_directory_not_root[[:space:]]  # ux-6: the directory the unprivileged requester made is owned by the controller (N1), chmod needs DQ_SAPRIV_ADMIN (kern_dqres.c:3102): EPERM
-path_test:path_empty_not_root[[:space:]]  # ux-1 D249: chflagsat(/dev/null O_PATH, "", AT_EMPTY_PATH) EACCES from dq_serve_tree (likely its F_ROOT outside rule, libdq_tree.c:926) before base's privilege EPERM
+^path_test:path_directory_not_root[[:space:]]  # ux-6: the directory the unprivileged requester made is owned by the controller (N1), chmod needs DQ_SAPRIV_ADMIN (kern_dqres.c): EPERM
+^path_test:path_empty_not_root[[:space:]]  # ux-1 D249: chflagsat(/dev/null O_PATH, "", AT_EMPTY_PATH) EACCES from dq_serve_tree (likely its F_ROOT outside rule, libdq_tree.c) before base's privilege EPERM
 
 # A REAL-answered (backing) descriptor used as an AT_EMPTY_PATH start
 # under a served root is consulted as a real-start name.
-path_test:path_unix[[:space:]]  # ux-1 D249: fstatat(O_PATH socket, "", AT_EMPTY_PATH) EACCES (likely dq_tree_outside, libdq_tree.c:926)
-path_test:path_capsicum_empty[[:space:]]  # ux-1 D250: openat(O_PATH served dir, "", O_EMPTY_PATH) in capability mode refused: D164's reopen is a consultation under STRICTREL
+^path_test:path_unix[[:space:]]  # ux-1 D249: fstatat(O_PATH socket, "", AT_EMPTY_PATH) EACCES (likely dq_tree_outside, libdq_tree.c)
+^path_test:path_capsicum_empty[[:space:]]  # ux-1 D250: openat(O_PATH served dir, "", O_EMPTY_PATH) in capability mode refused: D164's reopen is a consultation under STRICTREL
 
 # linkat(2) of a served descriptor (D203).
-path_test:path_empty_root[[:space:]]  # ux-8: linkat(served O_PATH, "", AT_EMPTY_PATH) EXDEV (vfs_syscalls.c:2054), item 14 (D203)
+^path_test:path_empty_root[[:space:]]  # ux-8: linkat(served O_PATH, "", AT_EMPTY_PATH) EXDEV (vfs_syscalls.c), item 14 (D203)
 
 # kqueue and identity on served objects (ux-5).
-path_test:path_event[[:space:]]  # ux-5: no NOTE_DELETE on a served object after funlinkat (plan 6, D198); kevent with no timeout (path_test.c:536) waits forever, a test-side wait
-path_test:path_unlinked[[:space:]]  # ux-5: the served identity keeps st_nlink 1 after unlink: no SETIDENT push from dq_serve_tree (plan 6)
+^path_test:path_event[[:space:]]  # ux-5: no NOTE_DELETE on a served object after funlinkat (plan 6, D198); kevent with no timeout (path_test.c) waits forever, a test-side wait
+^path_test:path_unlinked[[:space:]]  # ux-5: the served identity keeps st_nlink 1 after unlink: no SETIDENT push from dq_serve_tree (plan 6)
 
 # SCM_RIGHTS of a served descriptor (plan 12: excluded until series iv).
-path_test:path_rights[[:space:]]  # by-design D159: served descriptors are installed CAP_XFER_NONE until stage 1c-iv (I6; kern_dqres.c:3005), sendmsg ENOTCAPABLE
+^path_test:path_rights[[:space:]]  # by-design D159: served descriptors are installed CAP_XFER_NONE until stage 1c-iv (I6; kern_dqres.c), sendmsg ENOTCAPABLE
 
 # lib/libc/gen (run 59).  The unprivileged tests' own chmod(2) of a file
 # or directory they created fails EPERM: dq_serve_tree creates it with
 # the controller's credential (N1), so dq_setattr_check's VADMIN test
-# (sys/dev/dq/dq_file.c:1286) refuses a requester that is not its owner;
+# (sys/dev/dq/dq_file.c) refuses a requester that is not its owner;
 # and the tree applies no requester DAC (item 3), so a mode that should
 # lock the requester out does not.
-fts_regress_test:read_no_exec_dir[[:space:]]  # ux-6 N1: chmod("dir", 0400) EPERM, the controller owns "dir" (dq_file.c:1286)
-fts_regress_test:readdir_error_detected[[:space:]]  # ux-6 N1: chmod("dir", 0100) EPERM, the controller owns "dir" (dq_file.c:1286)
-glob2_test:glob_callback[[:space:]]  # ux-6 N1: chmod("test", 0) EPERM, the controller owns "test" (dq_file.c:1286)
-glob_blocks_test:glob_b_callback[[:space:]]  # ux-6 N1: chmod("test", 0) EPERM, the controller owns "test" (dq_file.c:1286)
-realpath2_test:realpath_partial[[:space:]]  # ux-6 N1: chmod("foo", 000) EPERM, the controller owns "foo" (dq_file.c:1286)
-posix_spawn_test:posix_spawnp_eacces[[:space:]]  # ux-6 N1: the unchecked chmod("unsearchable", 0444) fails EPERM, so the directory stays searchable and the spawn succeeds
-fts_misc_test:fts_unrdir(_nochdir)?[[:space:]]  # ux-6: mkdir("dir/unr", 0100) by an unprivileged requester; dq_serve_tree reads it with the controller's credential (no requester DAC, item 3), so FTS_DP where FTS_DNR
-fts_misc_test:xdev[[:space:]]  # by-design D175: nmount(2) "fspath" from a served cwd is a class-2 path, EXDEV (kern_dqres.c:2137); the test skips
+^fts_regress_test:read_no_exec_dir[[:space:]]  # ux-6 N1: chmod("dir", 0400) EPERM, the controller owns "dir" (dq_file.c)
+^fts_regress_test:readdir_error_detected[[:space:]]  # ux-6 N1: chmod("dir", 0100) EPERM, the controller owns "dir" (dq_file.c)
+^glob2_test:glob_callback[[:space:]]  # ux-6 N1: chmod("test", 0) EPERM, the controller owns "test" (dq_file.c)
+^glob_blocks_test:glob_b_callback[[:space:]]  # ux-6 N1: chmod("test", 0) EPERM, the controller owns "test" (dq_file.c)
+^realpath2_test:realpath_partial[[:space:]]  # ux-6 N1: chmod("foo", 000) EPERM, the controller owns "foo" (dq_file.c)
+^posix_spawn_test:posix_spawnp_eacces[[:space:]]  # ux-6 N1: the unchecked chmod("unsearchable", 0444) fails EPERM, so the directory stays searchable and the spawn succeeds
+^fts_misc_test:fts_unrdir(_nochdir)?[[:space:]]  # ux-6: mkdir("dir/unr", 0100) by an unprivileged requester; dq_serve_tree reads it with the controller's credential (no requester DAC, item 3), so FTS_DP where FTS_DNR
+^fts_misc_test:xdev[[:space:]]  # by-design D175: nmount(2) "fspath" from a served cwd is a class-2 path, EXDEV (kern_dqres.c); the test skips
 
 # bin/ls (run 60).  ls_tests runs unprivileged; its own mkdir -m (and
 # childerr's chmod 0) of a directory it created is EPERM: the identity is
 # the controller's (N1).  All 28 cases fail there, before any ls(1) run.
-^ls_tests:  # ux-6 N1: mkdir -m chmods the new directory; the identity is the controller's (dq_file.c:1286)
+^ls_tests:(1_flag|A_flag|C_flag|F_flag|H_flag|I_flag|R_flag|S_flag|T_flag|a_flag|childerr|d_flag|f_flag|h_flag|i_flag|k_flag|lcomma_flag|m_flag|o_flag|p_flag|q_flag_and_w_flag|r_flag|s_flag|t_flag|u_flag|v_flag|x_flag|y_flag)[[:space:]]  # ux-6 N1: mkdir -m chmods the new directory; the identity is the controller's (dq_file.c)
 
 # usr.bin/find (run 61).  setextattr(8) of a name in the served tree is
 # refused EOPNOTSUPP: dq_serve_tree answers every XATTR consultation so
-# (lib/libdq/libdq_tree.c:1110), and served objects carry no extended
+# (lib/libdq/libdq_tree.c), and served objects carry no extended
 # attributes until ux-9 (DQ_OP_EXTATTR); the tests skip.  The entries
 # name the case, so they match its lines on both sides of the diff.
-^find_test:find_xattr[[:space:]]  # ux-9: setextattr EOPNOTSUPP from dq_serve_tree (libdq_tree.c:1110), the test skips
-^find_test:find_xattrname[[:space:]]  # ux-9: setextattr EOPNOTSUPP from dq_serve_tree (libdq_tree.c:1110), the test skips
+^find_test:find_xattr[[:space:]]  # ux-9: setextattr EOPNOTSUPP from dq_serve_tree (libdq_tree.c), the test skips
+^find_test:find_xattrname[[:space:]]  # ux-9: setextattr EOPNOTSUPP from dq_serve_tree (libdq_tree.c), the test skips

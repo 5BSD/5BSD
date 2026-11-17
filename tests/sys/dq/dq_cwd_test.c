@@ -25,6 +25,9 @@
 #include <sys/sysctl.h>
 #include <sys/uio.h>
 
+#include <sched.h>
+#include <stdatomic.h>
+
 #include "dq_tree_harness.h"
 
 int	__getcwd(char *, size_t);
@@ -89,20 +92,20 @@ get_allow(void)
 	return (v);
 }
 
+/* The first change saves the value found; the cleanup restores it. */
 static void
 set_allow(int v)
 {
 
-	ATF_REQUIRE(sysctlbyname(ALLOW, NULL, NULL, &v, sizeof(v)) == 0);
+	dqt_sysctl_save_set_int(ALLOW, v);
 }
 
-/* Cleanups put the sysctl back to its default; bodies restore it too. */
+/* Cleanups put back the value the body found; bodies restore it too. */
 static void
 reset_allow(void)
 {
-	int v = 1;
 
-	(void)sysctlbyname(ALLOW, NULL, NULL, &v, sizeof(v));
+	(void)dqt_sysctl_restore(ALLOW);
 }
 
 /*
@@ -182,7 +185,7 @@ ATF_TC_BODY(attach_starts, tc)
 	r.err[25] = -2;
 	status = ts_child_ex(&s, s.sroot, s.sroot, false, true,
 	    attach_starts_fn, NULL, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	ATF_CHECK_STREQ("/", r.cwd[0]);
 	TS_CHECK_ERRNO(0, r.err[1], "stat a");
 	TS_CHECK_ERRNO(0, r.err[2], "read a");
@@ -341,7 +344,7 @@ ATF_TC_BODY(attach_cwd_defaults_to_root, tc)
 	memset(&r, 0, sizeof(r));
 	status = ts_child(&s, s.sroot, -1, cwd_default_fn, NULL, &r,
 	    sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	TS_CHECK_ERRNO(0, r.err[0], "getcwd");
 	ATF_CHECK_STREQ("/", r.cwd[0]);
 	TS_CHECK_ERRNO(0, r.err[1], "stat a from the root as cwd");
@@ -450,7 +453,7 @@ ATF_TC_BODY(fchdir_served, tc)
 	memset(&r, 0, sizeof(r));
 	status = ts_child_ex(&s, -1, -1, true, false, fchdir_fn, &a, &r,
 	    sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	TS_CHECK_ERRNO(0, r.err[0], "fchdir served");
 	ATF_CHECK_STREQ(s.backing, r.cwd[0]);
 	TS_CHECK_ERRNO(0, r.err[2], "stat a from the served cwd");
@@ -563,6 +566,7 @@ ATF_TC_BODY(fchroot_served, tc)
 	struct nest n, real;
 	char dir[PATH_MAX];
 	int i, p[2], saved, status;
+	size_t got;
 	pid_t pid;
 
 	_Static_assert(sizeof(struct nest) <= sizeof(r.data), "nest fits");
@@ -578,7 +582,7 @@ ATF_TC_BODY(fchroot_served, tc)
 	status = ts_child_ex(&s, -1, -1, true, false, fchroot_fn, &n,
 	    &r, sizeof(r));
 	set_allow(saved);
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	TS_CHECK_ERRNO(0, r.err[0], "fchroot served");
 	TS_CHECK_ERRNO(ENOENT, r.err[1], "getcwd real cwd under served root");
 	TS_CHECK_ERRNO(0, r.err[2], "chdir /");
@@ -604,11 +608,15 @@ ATF_TC_BODY(fchroot_served, tc)
 		memset(&real, 0, sizeof(real));
 		if (chroot(dir) == 0 && chdir("/") == 0)
 			nested_names(&real);
-		(void)write(p[1], &real, sizeof(real));
-		_exit(0);
+		_exit(write(p[1], &real, sizeof(real)) ==
+		    (ssize_t)sizeof(real) ? 0 : DQT_EXIT_NORESULT);
 	}
-	ATF_REQUIRE(read(p[0], &real, sizeof(real)) == sizeof(real));
+	(void)close(p[1]);
+	got = dqt_read_full(p[0], &real, sizeof(real));
+	(void)close(p[0]);
 	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	dqt_require_exit0(status, "the chroot(2) oracle");
+	ATF_REQUIRE_EQ(sizeof(real), got);
 	for (i = 0; i < NNEST; i++) {
 		ATF_CHECK_EQ_MSG(real.err[i], n.err[i], "name %d: errno", i);
 		ATF_CHECK_EQ_MSG(real.ino[i], n.ino[i], "name %d: inode", i);
@@ -690,7 +698,7 @@ ATF_TC_BODY(chroot_refuse_served_dirs, tc)
 	memset(&r, 0, sizeof(r));
 	status = ts_child_ex(&s, -1, -1, true, false, refuse0_fn, &s.sroot,
 	    &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	TS_CHECK_ERRNO(EPERM, r.err[0], "fchroot with a served dir open");
 	TS_CHECK_ERRNO(EPERM, r.err[1], "chroot with a served dir open");
 	/*
@@ -714,7 +722,7 @@ ATF_TC_BODY(chroot_refuse_served_dirs, tc)
 	status = ts_child(&s, s.sroot, s.sroot, refuse1_fn, NULL, &r,
 	    sizeof(r));
 	set_allow(saved);
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	TS_CHECK_ERRNO(0, r.err[0], "open d");
 	TS_CHECK_ERRNO(EPERM, r.err[1], "allow 1: a served root is chrooted");
 	TS_CHECK_ERRNO(0, r.err[2], "allow 1: no directory open");
@@ -768,8 +776,7 @@ revoke_parent(void *arg)
 	(void)dq_revoke(s->q, s->rootid);
 	(void)write(a->tochild[1], "g", 1);
 	(void)read(a->toparent[0], &c, 1);
-	s->stop = 1;
-	pthread_join(s->thr, NULL);
+	(void)dqt_server_stop(&s->server);	/* no ATF: a helper thread */
 	close(s->q);
 	s->q = -1;
 	(void)write(a->tochild[1], "g", 1);
@@ -793,7 +800,7 @@ ATF_TC_BODY(revoke_and_exit, tc)
 	memset(&r, 0, sizeof(r));
 	status = ts_child(&s, s.sroot, s.sroot, revoke_fn, &a, &r, sizeof(r));
 	pthread_join(thr, NULL);
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	TS_CHECK_ERRNO(0, r.err[0], "chdir d");
 	TS_CHECK_ERRNO(0, r.err[1], "stat f");
 	TS_CHECK_ERRNO(EIO, r.err[2], "stat /a, root revoked");
@@ -826,17 +833,28 @@ fork_fn(void *arg __unused, void *out)
 		return;
 	}
 	pid = fork();
+	if (pid == -1) {
+		r->err[1] = errno;
+		return;
+	}
 	if (pid == 0) {
 		memset(&g, 0, sizeof(g));
 		kcwd(g.cwd[0], &g.err[0]);
 		g.err[1] = TS_ERR(stat("f", &st));
 		g.err[2] = TS_ERR(stat("/a", &st));
-		(void)write(p[1], &g, sizeof(g));
-		_exit(0);
+		_exit(write(p[1], &g, sizeof(g)) == (ssize_t)sizeof(g) ? 0 :
+		    DQT_EXIT_NORESULT);
 	}
+	(void)close(p[1]);
 	memset(&g, 0, sizeof(g));
-	(void)read(p[0], &g, sizeof(g));
-	(void)waitpid(pid, &status, 0);
+	/* A grandchild that did not report is an error the test sees. */
+	if (dqt_read_full(p[0], &g, sizeof(g)) != sizeof(g) ||
+	    waitpid(pid, &status, 0) != pid || !WIFEXITED(status) ||
+	    WEXITSTATUS(status) != 0) {
+		memset(&g, 0, sizeof(g));
+		r->err[1] = ECHILD;
+	}
+	(void)close(p[0]);
 	strlcpy(r->cwd[0], g.cwd[0], PATH_MAX);
 	r->err[2] = g.err[0];
 	r->err[3] = g.err[1];
@@ -854,7 +872,7 @@ ATF_TC_BODY(fork_inherits, tc)
 	ts_start(&s, "t", DQ_TREE_F_ROOT);
 	memset(&r, 0, sizeof(r));
 	status = ts_child(&s, s.sroot, s.sroot, fork_fn, NULL, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	TS_CHECK_ERRNO(0, r.err[0], "chdir d");
 	TS_CHECK_ERRNO(0, r.err[2], "grandchild getcwd");
 	ATF_CHECK_STREQ("/d", r.cwd[0]);
@@ -869,24 +887,36 @@ ATF_TC_BODY(fork_inherits, tc)
  * sibling looks a name up; every event is consistent (a served start
  * names the root object, a real start is hinted with a real cwd).
  */
+#define	RACE_LOOKUPS	250	/* stat events: one each */
+
 struct race_arg {
 	int		sroot;
+	int		realfd;		/* the real directory, opened */
 	char		real[PATH_MAX];
 	char		orig[PATH_MAX];
-	volatile int	stop;
+	_Atomic(int)	started;	/* the looker has made its first lookup */
+	_Atomic(int)	stop;		/* the looker is done */
 };
 
 static void *
 race_switcher(void *arg)
 {
 	struct race_arg *a = arg;
-	int i;
 
-	for (i = 0; i < 300; i++) {
+	/*
+	 * For as long as the looker looks, and both switches by descriptor:
+	 * neither waits for the controller, so at any lookup the cwd is
+	 * either one.  A chdir(2) by path waits for its consultation with
+	 * the served cwd in place (the lookups almost never saw the real
+	 * one), and a fixed number of fast switches ends after the first
+	 * few lookups.
+	 */
+	while (atomic_load(&a->started) == 0)
+		(void)sched_yield();
+	while (atomic_load(&a->stop) == 0) {
 		(void)fchdir(a->sroot);
-		(void)chdir(a->real);
+		(void)fchdir(a->realfd);
 	}
-	a->stop = 1;
 	return (NULL);
 }
 
@@ -897,13 +927,20 @@ race_fn(void *arg, void *out)
 	struct res *r = out;
 	struct stat st;
 	pthread_t thr;
+	int n;
 
-	if (pthread_create(&thr, NULL, race_switcher, a) != 0) {
+	a->realfd = open(a->real, O_RDONLY | O_DIRECTORY);
+	if (a->realfd == -1 ||
+	    pthread_create(&thr, NULL, race_switcher, a) != 0) {
 		r->err[0] = errno;
 		return;
 	}
-	while (!a->stop)
+	/* Bounded, so that every event fits the harness's record (TS_NEV). */
+	for (n = 0; n < RACE_LOOKUPS; n++) {
 		(void)stat("a", &st);
+		atomic_store(&a->started, 1);
+	}
+	atomic_store(&a->stop, 1);
 	pthread_join(thr, NULL);
 }
 
@@ -926,10 +963,13 @@ ATF_TC_BODY(cwd_switch_stress, tc)
 	memset(&r, 0, sizeof(r));
 	status = ts_child_ex(&s, -1, -1, true, false, race_fn, &a, &r,
 	    sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	TS_CHECK_ERRNO(0, r.err[0], "thread");
 	nserved = nreal = 0;
 	pthread_mutex_lock(&s.mtx);
+	/* A full record may have lost the later starts. */
+	ATF_CHECK_MSG(s.nev < TS_NEV, "the event record is full (%d)",
+	    s.nev);
 	for (i = 0; i < s.nev; i++) {
 		e = &s.ev[i];
 		if (e->op != DQ_ROP_STAT || strcmp(e->path, "a") != 0)
@@ -950,7 +990,9 @@ ATF_TC_BODY(cwd_switch_stress, tc)
 	}
 	pthread_mutex_unlock(&s.mtx);
 	printf("served starts %d, real starts %d\n", nserved, nreal);
-	ATF_CHECK(nserved + nreal > 0);
+	/* Both kinds of start, or the switch was never raced. */
+	ATF_CHECK_MSG(nserved > 0 && nreal > 0, "race not exercised: %d "
+	    "served starts, %d real starts", nserved, nreal);
 	ts_stop(&s);
 }
 
@@ -1034,7 +1076,7 @@ ATF_TC_BODY(d172a_in_real_walk, tc)
 	memset(&r, 0, sizeof(r));
 	status = ts_child(&s, s.sroot, s.sroot, d172a_fn, NULL, &r,
 	    sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	TS_CHECK_ERRNO(ENOENT, r.err[0], "the target from the served root");
 	n = 0;
 	pthread_mutex_lock(&s.mtx);
@@ -1104,7 +1146,7 @@ ATF_TC_BODY(root_escape_race, tc)
 	status = ts_child_ex(&s, s.sroot, s.sroot, true, false, esc_fn, &e,
 	    &r, sizeof(r));
 	set_allow(saved);
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	TS_CHECK_ERRNO(0, r.err[0], "thread");
 	ATF_CHECK_EQ_MSG(0, r.err[1], "%d lookups re-entered at the real root",
 	    r.err[1]);
@@ -1128,55 +1170,6 @@ ATF_TC_CLEANUP(root_escape_race, tc)
  * from it are outside the tree, refused EACCES by dq_serve_tree by
  * default and PASSed with DQ_TREE_F_OUTSIDE_PASS.
  */
-static int
-recv_fd(int so)
-{
-	struct msghdr msg;
-	struct iovec iov;
-	struct cmsghdr *cm;
-	char c, cbuf[CMSG_SPACE(sizeof(int))];
-	int fd;
-
-	memset(&msg, 0, sizeof(msg));
-	iov.iov_base = &c;
-	iov.iov_len = 1;
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	msg.msg_control = cbuf;
-	msg.msg_controllen = sizeof(cbuf);
-	if (recvmsg(so, &msg, 0) != 1)
-		return (-1);
-	cm = CMSG_FIRSTHDR(&msg);
-	if (cm == NULL || cm->cmsg_type != SCM_RIGHTS)
-		return (-1);
-	memcpy(&fd, CMSG_DATA(cm), sizeof(fd));
-	return (fd);
-}
-
-static void
-send_fd(int so, int fd)
-{
-	struct msghdr msg;
-	struct iovec iov;
-	struct cmsghdr *cm;
-	char c = 'f', cbuf[CMSG_SPACE(sizeof(int))];
-
-	memset(&msg, 0, sizeof(msg));
-	memset(cbuf, 0, sizeof(cbuf));
-	iov.iov_base = &c;
-	iov.iov_len = 1;
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	msg.msg_control = cbuf;
-	msg.msg_controllen = sizeof(cbuf);
-	cm = CMSG_FIRSTHDR(&msg);
-	cm->cmsg_level = SOL_SOCKET;
-	cm->cmsg_type = SCM_RIGHTS;
-	cm->cmsg_len = CMSG_LEN(sizeof(int));
-	memcpy(CMSG_DATA(cm), &fd, sizeof(fd));
-	(void)sendmsg(so, &msg, 0);
-}
-
 struct realfd_arg {
 	int	so;
 	int	realfd;
@@ -1187,7 +1180,7 @@ realfd_sender(void *arg)
 {
 	struct realfd_arg *a = arg;
 
-	send_fd(a->so, a->realfd);
+	(void)dqt_send_fd(a->so, a->realfd);
 	return (NULL);
 }
 
@@ -1199,7 +1192,7 @@ realfd_fn(void *arg, void *out)
 	struct stat st;
 	int fd;
 
-	fd = recv_fd(a->so);
+	fd = dqt_recv_fd(a->so);
 	r->err[0] = fd < 0 ? EBADF : 0;
 	r->err[1] = TS_ERR(fstatat(fd, "x", &st, 0));
 	r->err[2] = TS_ERR(fchdir(fd));
@@ -1231,7 +1224,7 @@ realfd_case(uint32_t flags, int want)
 	/* The real directory reaches the child only after ATTACH. */
 	status = ts_child(&s, s.sroot, s.sroot, realfd_fn, &a, &r, sizeof(r));
 	pthread_join(thr, NULL);
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	TS_CHECK_ERRNO(0, r.err[0], "received");
 	TS_CHECK_ERRNO(want, r.err[1], "fstatat(realfd, x)");
 	TS_CHECK_ERRNO(0, r.err[2], "fchdir(realfd)");
@@ -1312,7 +1305,7 @@ guard_fn(void *arg, void *out)
 	r->err[0] = TS_ERR(stat("/boundary", &st));
 	fd = open("/outfd", O_RDONLY);
 	r->err[1] = fd < 0 ? errno : 0;
-	fd = recv_fd(a->so);
+	fd = dqt_recv_fd(a->so);
 	r->err[2] = fd < 0 ? EBADF : TS_ERR(fstatat(fd, "rx", &st, 0));
 }
 
@@ -1345,7 +1338,7 @@ ATF_TC_BODY(guard_outside_root, tc)
 	memset(&r, 0, sizeof(r));
 	status = ts_child(&s, s.sroot, s.sroot, guard_fn, &a, &r, sizeof(r));
 	pthread_join(thr, NULL);
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	TS_CHECK_ERRNO(ENOTCAPABLE, r.err[0], "ATTR at /ab under root /a");
 	TS_CHECK_ERRNO(ENOTCAPABLE, r.err[1], "FD outside the root");
 	TS_CHECK_ERRNO(ENOTCAPABLE, r.err[2], "ATTR from a real start");
@@ -1402,7 +1395,7 @@ ATF_TC_BODY(restricted_under_served, tc)
 	memset(&r, 0, sizeof(r));
 	status = ts_child_ex(&s, s.sroot, s.sroot, true, false, restricted_fn,
 	    &s.sroot, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_require_exit0(status, "child");
 	TS_CHECK_ERRNO(ENOTCAPABLE, r.err[0], "BENEATH, absolute");
 	TS_CHECK_ERRNO(0, r.err[1], "BENEATH, relative");
 	TS_CHECK_ERRNO(0, r.err[2], "chdir d");
