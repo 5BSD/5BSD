@@ -279,12 +279,28 @@ drives the device itself and is not part of it.  A case of a deployed-tier
 suite that needs the device skips with `DEFERRED_DEVICE_TIER`, counted as
 `DEFERRED_TO_DEVICE_TIER=N`: it runs in the plane-on test tier.  Cases that
 start a test-local Capsule and switchboard skip with any plane on as
-`DEFERRED_PLANEOFF_TIER` (`DEFERRED_TO_PLANEOFF_TIER=N`).  They need a
-plane-off guest whose kernel lets a test-local Capsule create the protected
-authority issuer (the `MAC_CAPABILITY_TEST_RELAX` option and
-`kern.mac_capability.test_relax=1` that `capd_test_harness.sh` names), which
-the tree does not provide yet; plane-off on GENERIC their units never launch.
-Until it exists they are not covered by any tier.
+`DEFERRED_PLANEOFF_TIER` (`DEFERRED_TO_PLANEOFF_TIER=N`).  Those that launch
+no unit run plane-off on any kernel.  Those that launch units need a unit
+issuer, which only PID 1 creates on GENERIC; they call
+`capd_require_unit_issuer` and skip elsewhere with `DEFERRED_STACK_TIER`
+(`DEFERRED_TO_STACK_TIER=N`, not a pass).  They run on the stack tier:
+`GENERIC-TEST` booted plane-off with `kern.mac_capability.test_issuer=1`
+(`KERNEL_TIER=test PLANE_OFF=1 LOADER_EXTRA='kern.mac_capability.test_issuer="1"'`).
+There a test-local Capsule gets a test issuer until PID 1 anchors the boot
+(`options MAC_CAPABILITY_TEST_PERMISSIVE`, mac_capability(4)).  The runner
+labels such a run `stack-tier=yes`, passes `stack_tier=1` to the suites so a
+missing issuer fails instead of skipping, and fails the run when stack
+suites ran and no test issuer was created.  The harness checks the kernel's
+TEST MODE line for each stack it starts, prints the issuer's identity, and
+fails a case whose stack leaves a test issuer alive.
+`sys/mac_capability/authority_test_issuer_anchor_test` anchors the boot, so
+it runs only in a guest of its own, with
+`KYUA_VARS=test_suites.FreeBSD.authority_anchor=1`; elsewhere it is counted as
+`DEFERRED_TO_ANCHOR_RUN=N`.  The `usr.sbin/bsd-build` cases that read the
+source tree need `SRC_IMAGE` (and `PORTS_IMAGE` for package plans); without it
+they are counted as `DEFERRED_TO_SOURCE_TIER=N`.  With python, the source and
+the ports images, a long bsd-build run fills the default 8 GB guest root:
+give it `ROOT_SIZE=16g`.
 Cases that drive their private SwitchBoard with `switchboardctl` call
 `use_private_control` (`usr.sbin/switchboard/tests/test_helpers.sh`): it runs
 `switchboardctl` through `capd_lookup_exec`, which installs the private

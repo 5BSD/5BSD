@@ -175,6 +175,10 @@ case " $suites " in
 esac
 cpus=${CPUS:-4} mem=${MEM_MB:-$mem_default} par=${PARALLELISM:-1} gate=${GATE_TIMEOUT:-600}
 root_fs=${ROOT_FS:-ufs}
+# ROOT_SIZE: the guest root filesystem (makefs -s; default 8g).  Long
+# bsd-build runs with python and the source and ports images fill 8g.
+root_size=${ROOT_SIZE:-8g}
+case $root_size in [1-9]g|[1-9][0-9]g) ;; *) echo "ROOT_SIZE must be 1g to 99g" >&2; exit 64;; esac
 case "$root_fs" in ufs|zfs) ;; *) echo "ROOT_FS must be ufs or zfs" >&2; exit 64;; esac
 units=${REQUIRE_UNITS:-system.Log/bsdlog system.Network/bsdnetwork system.Trace/bsdtrace system.Filesystem/bsdfilesystem system.Audit/bsdaudit system.Time/bsdtime system.SystemExtension/bsdextension system.Notify/bsdnotify system.Device/bsddevice system.Power/bsdpower system.Sysctl/bsdsysctl system.Crypto/bsdcrypto}
 
@@ -441,6 +445,21 @@ main:no|test:yes) echo TEST_KERNEL_PROOF_PASS ;;
 *) echo "TEST_KERNEL_PROOF_FAIL: tier $KERNEL_TIER, booted kernel $test_kernel" ;;
 esac
 # --- end of the test-kernel proof
+# --- stack tier (tests/vm-provider-test-kernel-proof.sh runs this block)
+# A test kernel, plane off, with test issuers on and the boot not anchored:
+# test-local Capsule stacks get a unit issuer.  The cases that need one fail
+# here, rather than skip, when it is missing (atf config stack_tier=1).
+stack_tier=no
+if [ "$test_kernel" = yes ] && [ "$PLANE_OFF" = 1 ] &&
+    [ "$(sysctl -n kern.mac_capability.test_issuer 2>/dev/null)" = 1 ] &&
+    [ "$(sysctl -n kern.mac_capability.test_issuer_state 2>/dev/null)" != anchored ]; then
+	stack_tier=yes
+	KYUA_VARS="$KYUA_VARS test_suites.FreeBSD.stack_tier=1"
+fi
+stack_issuers_before=$(sysctl -n kern.mac_capability.test_issuers 2>/dev/null || echo 0)
+echo "stack-tier=$stack_tier" >> "$R/tier.txt"
+echo "TIER_INFO: stack-tier=$stack_tier"
+# --- end of the stack tier
 if [ "$PLANE_OFF" = 1 ]; then
 echo "PLANEOFF_PID1=$(ps -o comm= -p 1 | tr -d ' ')"
 enf=$(sysctl -n kern.mac_capability_isolation.enforce 2>/dev/null || echo unset)
@@ -598,6 +617,23 @@ echo "KYUA_SUMMARY: $(tail -n 1 "$R/kyua-test.out")"
 	for k in $TEST_KNOBS; do echo "knob $k=$(sysctl -n "$k" 2>/dev/null || echo absent)"; done
 } >> "$R/tier.txt"
 sed -n '/^after-suites:$/,$s/^/TIER_INFO: /p' "$R/tier.txt"
+# The stack tier must have given its stacks test issuers, and freed them.
+if [ "$stack_tier" = yes ]; then
+	i=0
+	while [ "$(sysctl -n kern.mac_capability.test_issuers_live)" -ne 0 ] && [ "$i" -lt 50 ]; do
+		i=$((i + 1)); sleep 0.1
+	done
+	after=$(sysctl -n kern.mac_capability.test_issuers)
+	live=$(sysctl -n kern.mac_capability.test_issuers_live)
+	echo "STACK_TIER: test issuers created=$((after - stack_issuers_before)) live=$live state=$(sysctl -n kern.mac_capability.test_issuer_state)" |
+	    tee -a "$R/tier.txt"
+	case " $(cat /root/kyua-planeon.suites) " in
+	*" usr.sbin/switchboard"*|*" usr.sbin/capsule"*|*" lib/libservice"*)
+		[ "$after" -gt "$stack_issuers_before" ] ||
+		    echo "STACK_TIER_FAIL: stack suites ran and no test issuer was created" ;;
+	esac
+	[ "$live" -eq 0 ] || echo "NOTE: $live test issuers still alive after the suites"
+fi
 # Results disk: only the explicitly identified second disk is written.
 if [ "$(geom disk list vtbd1 2>/dev/null | awk '/ident:/ {print $2}')" = kyua-results ]; then
 	tar -cf /dev/vtbd1 -C /tmp kyua-results && echo KYUA_RESULTS_DISK_WRITTEN
@@ -674,13 +710,13 @@ done
 # Manifest mode: makefs resolves plain records relative to the cwd (the stage)
 # and overlay records through contents=, so the stage is never written.
 if [ "$root_fs" = zfs ]; then
-(cd "$stage" && makefs -t zfs -s 8g -o poolname=kyuaroot -o bootfs=kyuaroot \
+(cd "$stage" && makefs -t zfs -s "$root_size" -o poolname=kyuaroot -o bootfs=kyuaroot \
     -o rootpath=/ "$work/root.ufs" "$work/METALOG") > "$work/makefs.log" 2>&1 ||
     { tail -n 20 "$work/makefs.log" >&2; die "makefs failed"; }
 mkimg -s gpt -f raw -b "$stage/boot/pmbr" -p "freebsd-boot:=$stage/boot/gptzfsboot" \
     -p "freebsd-zfs:=$work/root.ufs" -o "$work/guest.img"
 else
-(cd "$stage" && makefs -t ffs -B little -s 8g -o version=2,softupdates=1,label=root \
+(cd "$stage" && makefs -t ffs -B little -s "$root_size" -o version=2,softupdates=1,label=root \
     "$work/root.ufs" "$work/METALOG") > "$work/makefs.log" 2>&1 ||
     { tail -n 20 "$work/makefs.log" >&2; die "makefs failed"; }
 mkimg -s gpt -f raw -b "$stage/boot/pmbr" -p "freebsd-boot:=$stage/boot/gptboot" \
@@ -786,6 +822,7 @@ verdict=VM_NOT_CLEAN
 if [ $forced = 0 ] && [ $rc = 0 ] && [ $guest_off = 1 ] &&
     [ "$(cat "$work/results/kyua-results/kyua-test.status" 2>/dev/null)" = 0 ] &&
     tr -d '\r' < "$log" | grep -aqx 'KYUA_VM_DONE' &&
+    ! tr -d '\r' < "$log" | grep -aq '^STACK_TIER_FAIL' &&
     [ "$(tr -d '\r' < "$log" | grep -acx 'TEST_KERNEL_PROOF_PASS')" = 1 ] &&
     ! tr -d '\r' < "$log" | grep -aq '^TEST_KERNEL_PROOF_FAIL' &&
     { [ "$plane_off" = 1 ] && tr -d '\r' < "$log" | grep -aqx 'PLANEOFF_READY' ||
@@ -797,18 +834,28 @@ if [ $forced = 0 ] && [ $rc = 0 ] && [ $guest_off = 1 ] &&
 	verdict=VM_CLEAN
 fi
 echo "qemu_exit=$rc forced=$forced guest_poweroff=$guest_off"
-tr -d '\r' < "$log" | grep -aE '^(TIER_INFO: (KERNEL_TIER|TEST_KERNEL)=|TEST_KERNEL_PROOF|PLANEON_GATE|PLANEOFF|KYUA_SUMMARY|PLANEON_PID1|PLANEON_ISOLATION|BSDTIME)' || true
+tr -d '\r' < "$log" | grep -aE '^(TIER_INFO: (KERNEL_TIER|TEST_KERNEL|stack-tier)=|STACK_TIER|TEST_KERNEL_PROOF|PLANEON_GATE|PLANEOFF|KYUA_SUMMARY|PLANEON_PID1|PLANEON_ISOLATION|BSDTIME)' || true
 nskip=$(tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c ' -> ' || true)
 echo "skipped=$nskip (a skip in a plane-on suite is not a pass; see KYUA_SKIPPED_LIST in $log)"
 # Cases that named the tier they belong to: the run is not complete without
 # a run of the same stage and suites in that tier.
-for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER; do
+for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER \
+    DEFERRED_STACK_TIER DEFERRED_PID1_ONLY DEFERRED_SOURCE_TIER \
+    "configuration property 'authority_anchor'"; do
 	ndefer=$(tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c "$token" || true)
 	[ "$ndefer" -eq 0 ] || case $token in
 	DEFERRED_ENFORCED_TIER)
 		echo "DEFERRED_TO_ENFORCED_TIER=$ndefer (run PLANE_OFF=1 with the same stage and suites; not a pass)";;
 	DEFERRED_PLANEOFF_TIER)
-		echo "DEFERRED_TO_PLANEOFF_TIER=$ndefer (test-local stacks: need PLANE_OFF=1 and a kernel that lets a test-local Capsule issue authority, which the tree does not provide yet; not a pass)";;
+		echo "DEFERRED_TO_PLANEOFF_TIER=$ndefer (test-local stacks: run PLANE_OFF=1, and their unit cases on the stack tier; not a pass)";;
+	DEFERRED_STACK_TIER)
+		echo "DEFERRED_TO_STACK_TIER=$ndefer (run on GENERIC-TEST with KERNEL_TIER=test PLANE_OFF=1 and kern.mac_capability.test_issuer=1; not a pass)";;
+	DEFERRED_PID1_ONLY)
+		echo "DEFERRED_PID1_ONLY=$ndefer (they need the PID 1 Capsule; no tier runs them; not a pass)";;
+	DEFERRED_SOURCE_TIER)
+		echo "DEFERRED_TO_SOURCE_TIER=$ndefer (they read /usr/src: run with SRC_IMAGE; not a pass)";;
+	"configuration property 'authority_anchor'")
+		echo "DEFERRED_TO_ANCHOR_RUN=$ndefer (they anchor the boot: run alone with KYUA_VARS=test_suites.FreeBSD.authority_anchor=1; not a pass)";;
 	*)
 		echo "DEFERRED_TO_DEVICE_TIER=$ndefer (run without ISOLATION_ENFORCE=1 with the same stage and suites; not a pass)";;
 	esac

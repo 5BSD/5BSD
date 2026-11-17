@@ -130,6 +130,32 @@ grep -q '^kernel-sha256 host=good booted=good ' "$t" || fail 'tier.txt hash'
 grep -qx 'kernel-version booted=5BSD good' "$t" || fail 'tier.txt version'
 grep -qx 'mac-modules=mac_test ' "$t" || fail 'tier.txt MAC modules'
 
+# The stack tier: a test kernel, plane off, test issuers on, not anchored.
+sed -n '/^# --- stack tier/,/^# --- end of the stack tier$/p' \
+    "$root/vm-provider.sh" > "$work/stack.sh"
+grep -q 'stack_tier=1' "$work/stack.sh" || fail 'no stack-tier block'
+stack() {
+	sh -c '
+	    R=$1/results; mkdir -p "$R"; : > "$R/tier.txt"
+	    test_kernel=$2 PLANE_OFF=$3 switch=$4 st=$5 KYUA_VARS=x
+	    sysctl() {
+		case "$2" in
+		kern.mac_capability.test_issuer) [ -n "$switch" ] && echo "$switch" ;;
+		kern.mac_capability.test_issuer_state) [ -n "$st" ] && echo "$st" ;;
+		kern.mac_capability.test_issuers) echo 3 ;;
+		esac
+	    }
+	    . "$6"
+	    echo "vars=$KYUA_VARS"
+	' stack "$work" "$@" "$work/stack.sh"
+}
+stack yes 1 1 none | grep -qx 'TIER_INFO: stack-tier=yes' || fail 'stack tier not recognised'
+stack yes 1 1 test | grep -qx 'vars=x test_suites.FreeBSD.stack_tier=1' || fail 'stack_tier not passed'
+stack yes 1 1 anchored | grep -qx 'TIER_INFO: stack-tier=no' || fail 'anchored boot labelled stack'
+stack yes 0 1 none | grep -qx 'TIER_INFO: stack-tier=no' || fail 'plane-on labelled stack'
+stack yes 1 0 none | grep -qx 'TIER_INFO: stack-tier=no' || fail 'switch off labelled stack'
+stack no 1 '' '' | grep -qx 'vars=x' || fail 'main kernel labelled stack'
+
 # The verdict: exactly one PASS line and no FAIL line.
 verdict() { printf "$1" > "$work/log"; log=$work/log sh "$work/verdict.sh"; }
 verdict 'x\nTEST_KERNEL_PROOF_PASS\ny\n' || fail 'verdict: one PASS'
