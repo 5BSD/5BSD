@@ -14,7 +14,7 @@ _PLATFORM = ["@platforms//os:freebsd"] + select({
 _PLAIN = ['test_close_event', 'test_multi_process_clients', 'test_event_abi', 'test_event_reader', 'test_liboes_reader', 'test_oeslogger_output', 'test_descendants_client', 'test_nested_descendants', 'test_jail_pins', 'test_jail_scope', 'test_oeslogger_jail', 'test_vnode_events', 'test_process_events', 'test_multi_client_auth', 'test_multi_client_notify', 'test_auth_responses', 'test_auth_timeout', 'test_decision_cache', 'test_mute', 'test_path_mute', 'test_per_event_muting', 'test_default_muting', 'test_mute_inversion', 'test_uid_gid_mute', 'test_query_muted', 'test_unmute_all', 'test_flags_response', 'test_unmount_event', 'test_kldunload_event', 'test_signal_events', 'test_socket_events', 'test_extattr_acl_events', 'test_mmap_mprotect_events', 'test_chdir_chroot_events', 'test_exec_args', 'test_process_info', 'test_event_metadata', 'test_path_metadata', 'test_hook_coverage', 'test_event_delivery', 'test_mode_timeout_api', 'test_timeout_deadlines', 'test_fd_handling', 'test_bad_ioctls', 'test_error_conditions', 'test_edge_cases', 'test_passive_mode', 'test_memory_pressure', 'test_stress', 'rename_concurrent', 'signal_concurrent', 'test_idle_pins', 'test_idle_gate', 'test_idle_storm', 'test_identity_pins']
 _ATF = ["test_contract_matrix"]
 _READERS = ["test_liboes_reader", "test_oeslogger_output", "test_descendants_client", "test_nested_descendants"]
-_JAIL = ["test_jail_pins", "test_jail_scope", "test_oeslogger_jail"]
+_JAIL = ["test_jail_pins", "test_jail_scope", "test_oeslogger_jail", "test_idle_gate"]
 _DIRECTORY = "/usr/tests/sys/security/oes"
 
 cc_library(name = "harness", hdrs = ["test_common.h", "test_jail_common.h", "test_idle_common.h"],

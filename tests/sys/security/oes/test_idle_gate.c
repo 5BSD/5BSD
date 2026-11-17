@@ -17,6 +17,7 @@
 #include <sys/user.h>
 
 #include "test_idle_common.h"
+#include "test_jail_common.h"
 
 #ifndef OES_IDLE_LEVEL
 #define	OES_IDLE_LEVEL	3
@@ -592,6 +593,68 @@ g16_oes_only_flags(void)
 	(void)close(fd);
 }
 
+/*
+ * G-17: subscribing and closing do not wait for the delivery task.  With
+ * the deferred queue kept full (test_jail_common.h's load: writers and
+ * unread clients of pipe events), a client's SUBSCRIBE and close must stay
+ * fast: the gate must never wait behind the global OES lock, which the
+ * delivery task holds for each event.  The bound is generous (1 s against
+ * a few milliseconds expected); the defect it pins took seconds to minutes
+ * per call in a 2-vCPU guest.
+ */
+#define	G17_ROUNDS	20
+#define	G17_BOUND_MS	1000
+
+static void
+g17_gate_under_load(void)
+{
+	oes_event_type_t ev = OES_EVENT_NOTIFY_FORK;
+	struct timespec t;
+	struct jt_load load;
+	long sub_ms, close_ms, worst_sub, worst_close;
+	int fd, statfd, i;
+
+	TEST_BEGIN("G-17 SUBSCRIBE and close stay fast while delivery is busy");
+	statfd = test_open_oes();
+	if (statfd < 0) {
+		TEST_FAIL("client: %s", strerror(errno));
+		return;
+	}
+	if (jt_load_start(&load, statfd) != 0) {
+		printf("    note: the deferred queue could not be kept full; "
+		    "not measured\n");
+		(void)close(statfd);
+		return;
+	}
+	worst_sub = worst_close = 0;
+	for (i = 0; i < G17_ROUNDS; i++) {
+		fd = test_open_oes();
+		if (fd < 0 || test_set_mode(fd, OES_MODE_NOTIFY) != 0) {
+			TEST_FAIL("client %d: %s", i, strerror(errno));
+			break;
+		}
+		clock_gettime(CLOCK_MONOTONIC, &t);
+		ASSERT_MSG(test_subscribe(fd, &ev, 1, OES_SUB_REPLACE) == 0,
+		    "subscribe: %s", strerror(errno));
+		sub_ms = jt_elapsed_ms(&t);
+		clock_gettime(CLOCK_MONOTONIC, &t);
+		(void)close(fd);
+		close_ms = jt_elapsed_ms(&t);
+		if (sub_ms > worst_sub)
+			worst_sub = sub_ms;
+		if (close_ms > worst_close)
+			worst_close = close_ms;
+	}
+	printf("    %d rounds with %d unread clients: SUBSCRIBE worst %ld ms, "
+	    "close worst %ld ms\n", i, load.nclients, worst_sub, worst_close);
+	jt_load_stop(&load);
+	(void)close(statfd);
+	ASSERT_MSG(worst_sub < G17_BOUND_MS, "SUBSCRIBE took %ld ms under "
+	    "load", worst_sub);
+	ASSERT_MSG(worst_close < G17_BOUND_MS, "close took %ld ms under load",
+	    worst_close);
+}
+
 #if OES_IDLE_LEVEL >= 3
 /*
  * G-6: no record is lost once SUBSCRIBE has returned.  Workers open
@@ -1030,6 +1093,7 @@ main(void)
 #endif
 	g15_passive();
 	g16_oes_only_flags();
+	g17_gate_under_load();
 
 	(void)unlink(work_file);
 	TEST_SUITE_END("OES idle gate");
