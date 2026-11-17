@@ -247,9 +247,10 @@ fork_locker(int fd, int how, int sig)
  * proxy lock, the reply), which takes tens of milliseconds, and a quicker
  * re-send would count that latency as a lost signal.
  *
- * The number of signals sent and the time to the reap are printed.  A child still not reaped after
- * 30 s fails the case; it is killed, not waited for (a sleep that no
- * signal ends ends when this process exits and releases the lock).
+ * The number of signals sent and the time to the reap are printed.  A
+ * child still not reaped after 30 s fails the case; it is killed, not
+ * waited for (a sleep that no signal ends ends when this process exits
+ * and releases the lock).
  */
 static int
 interrupt_and_reap(pid_t pid, int sig, enum sleep_kind kind)
