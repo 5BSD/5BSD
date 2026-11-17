@@ -46,6 +46,7 @@
 #include <fcntl.h>
 #include <libutil.h>
 #include <limits.h>
+#include <memstat.h>
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
@@ -1039,6 +1040,7 @@ struct storm {
 	atomic_uint	 forks;
 	atomic_uint	 holders;	/* children that held a queue */
 	atomic_uint	 errors;
+	atomic_uint	 forkers_done;
 };
 
 static void *
@@ -1079,7 +1081,23 @@ storm_forker(void *arg)
 		if (WEXITSTATUS(status) != 0)
 			atomic_fetch_add(&st->holders, 1);
 	}
+	atomic_fetch_add(&st->forkers_done, 1);
 	return (NULL);
+}
+
+/*
+ * A storm's progress every 5 s, flushed at once: a case that runs out its
+ * time then shows its rate, and a stall shows as a count that stops.
+ */
+#define	STORM_REPORT_MS	5000
+
+static void
+storm_progress(int64_t t0, const char *what, unsigned done, unsigned of)
+{
+
+	printf("%5.1f s: %s %u of %u\n", (double)(dqt_now_ms() - t0) / 1000,
+	    what, done, of);
+	(void)fflush(stdout);
 }
 
 /* S3. */
@@ -1097,13 +1115,26 @@ ATF_TC_BODY(open_fork_storm, tc)
 {
 	static struct storm st;
 	pthread_t opener, forker[STORM_FORKERS];
+	int64_t t0, next;
 	int i;
 
 	dqt_require_test_access();
+	t0 = dqt_now_ms();
 	ATF_REQUIRE_EQ(0, pthread_create(&opener, NULL, storm_opener, &st));
 	for (i = 0; i < STORM_FORKERS; i++)
 		ATF_REQUIRE_EQ(0, pthread_create(&forker[i], NULL,
 		    storm_forker, &st));
+	next = t0 + STORM_REPORT_MS;
+	while (atomic_load(&st.forkers_done) < STORM_FORKERS) {
+		dqt_msleep(100);
+		if (dqt_now_ms() >= next) {
+			storm_progress(t0, "forks",
+			    MIN(atomic_load(&st.forks), STORM_FORKS),
+			    STORM_FORKS);
+			next += STORM_REPORT_MS;
+		}
+	}
+	storm_progress(t0, "forks", STORM_FORKS, STORM_FORKS);
 	for (i = 0; i < STORM_FORKERS; i++)
 		ATF_REQUIRE_EQ(0, pthread_join(forker[i], NULL));
 	atomic_store(&st.stop, true);
@@ -1999,32 +2030,38 @@ ATF_TC_CLEANUP(owner_only_misc, tc)
  */
 
 /*
- * InUse of the "dq" malloc type, from vmstat -m; -1 if vmstat fails.
- * vmstat -m leaves out a type that has never allocated (vmstat.c
- * domemstat_malloc), so a missing "dq" line is 0 in use, not an error:
- * nothing may have opened a queue since boot.
+ * The "dq" malloc type (M_DQ, dq_dev.c), read through libmemstat: whether
+ * the kernel has it, how many allocations are in use and how many were
+ * ever made.  False if the statistics cannot be read.
  */
-static long
-dq_malloc_inuse(void)
-{
-	char line[256], name[64];
-	FILE *p;
-	long use, found;
-	int status;
+struct dq_mstat {
+	bool		 present;
+	uint64_t	 inuse;
+	uint64_t	 numallocs;
+};
 
-	p = popen("/usr/bin/vmstat -m", "r");
-	if (p == NULL)
-		return (-1);
-	found = 0;
-	while (fgets(line, sizeof(line), p) != NULL) {
-		if (sscanf(line, "%63s %ld", name, &use) == 2 &&
-		    strcmp(name, "dq") == 0)
-			found = use;
+static bool
+dq_malloc_stat(struct dq_mstat *ms)
+{
+	struct memory_type_list *mtlp;
+	struct memory_type *mtp;
+
+	memset(ms, 0, sizeof(*ms));
+	mtlp = memstat_mtl_alloc();
+	if (mtlp == NULL)
+		return (false);
+	if (memstat_sysctl_malloc(mtlp, 0) != 0) {
+		memstat_mtl_free(mtlp);
+		return (false);
 	}
-	status = pclose(p);
-	if (status == -1 || !WIFEXITED(status) || WEXITSTATUS(status) != 0)
-		return (-1);
-	return (found);
+	mtp = memstat_mtl_find(mtlp, ALLOCATOR_MALLOC, "dq");
+	if (mtp != NULL) {
+		ms->present = true;
+		ms->inuse = memstat_get_count(mtp);
+		ms->numallocs = memstat_get_numallocs(mtp);
+	}
+	memstat_mtl_free(mtlp);
+	return (true);
 }
 
 static void *
@@ -2096,21 +2133,27 @@ ATF_TC_HEAD(exit_close_storm, tc)
 }
 ATF_TC_BODY(exit_close_storm, tc)
 {
-	int64_t deadline;
+	int64_t deadline, next, t0;
 	char badbuf[64];
 	struct pollfd pfd;
 	ssize_t n;
 	pid_t pid;
-	long mem_before, mem_now;
+	struct dq_mstat mem_before, mem_now;
 	u_int before;
 	int bad[2], i, nbad, status;
 
 	dqt_require_test_access();
 	before = queues_now();
-	mem_before = dq_malloc_inuse();
-	ATF_REQUIRE_MSG(mem_before >= 0, "vmstat -m failed");
+	ATF_REQUIRE_MSG(dq_malloc_stat(&mem_before),
+	    "malloc statistics: %s", strerror(errno));
 	ATF_REQUIRE_EQ(0, pipe(bad));
+	t0 = dqt_now_ms();
+	next = t0 + STORM_REPORT_MS;
 	for (i = 0; i < EXIT_STORM; i++) {
+		if (dqt_now_ms() >= next) {
+			storm_progress(t0, "rounds", i, EXIT_STORM);
+			next += STORM_REPORT_MS;
+		}
 		pid = fork();
 		ATF_REQUIRE_MSG(pid != -1, "fork: %s", strerror(errno));
 		if (pid == 0) {
@@ -2121,6 +2164,7 @@ ATF_TC_BODY(exit_close_storm, tc)
 		ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
 		    "round %d: owner status %#x", i, status);
 	}
+	storm_progress(t0, "rounds", EXIT_STORM, EXIT_STORM);
 	/* End of file once every sharer has exited. */
 	(void)close(bad[1]);
 	nbad = 0;
@@ -2139,12 +2183,26 @@ ATF_TC_BODY(exit_close_storm, tc)
 	ATF_CHECK_EQ_MSG(0, nbad, "%d wrong answers", nbad);
 	ATF_CHECK_MSG(queues_settle(before), "kern.dq.queues is %u, was %u",
 	    queues_now(), before);
+	/*
+	 * 2000 owners each opened queues: the type has allocated, so its
+	 * allocation count grew; then everything it holds is freed again.
+	 */
 	deadline = dqt_now_ms() + DQT_WAIT_MS;
-	while ((mem_now = dq_malloc_inuse()) != mem_before &&
-	    dqt_now_ms() < deadline)
+	for (;;) {
+		ATF_REQUIRE(dq_malloc_stat(&mem_now));
+		if (mem_now.inuse == mem_before.inuse ||
+		    dqt_now_ms() >= deadline)
+			break;
 		dqt_msleep(50);
-	ATF_CHECK_EQ_MSG(mem_before, mem_now, "dq malloc type: %ld in use, "
-	    "was %ld", mem_now, mem_before);
+	}
+	ATF_REQUIRE_MSG(mem_now.present, "no \"dq\" malloc type after the "
+	    "storm: nothing was compared");
+	ATF_CHECK_MSG(mem_now.numallocs > mem_before.numallocs, "dq malloc "
+	    "type: %ju allocations after the storm, %ju before",
+	    (uintmax_t)mem_now.numallocs, (uintmax_t)mem_before.numallocs);
+	ATF_CHECK_EQ_MSG(mem_before.inuse, mem_now.inuse, "dq malloc type: "
+	    "%ju in use, was %ju", (uintmax_t)mem_now.inuse,
+	    (uintmax_t)mem_before.inuse);
 }
 
 #define	INSPECT_ROUNDS	200

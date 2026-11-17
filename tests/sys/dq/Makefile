@@ -93,6 +93,8 @@ CFLAGS.dq_legitimacy_test+=	-I${SRCTOP}/lib/libcapability
 
 # The controller thread, the harness's kinfo_getfile(3) oracle.
 LIBADD+=	dq pthread util
+# exit_close_storm reads the "dq" malloc type.
+LIBADD.dq_owner_test+=	memstat
 
 # Changes kern.dq.max_inflight_per_object: run alone.
 TEST_METADATA.dq_concurrency_test+=	is_exclusive="true"
