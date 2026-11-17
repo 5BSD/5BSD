@@ -68,6 +68,11 @@ MALLOC_PRODUCTION_CHECK= sh ${.CURDIR}/release/scripts/check-malloc-production.s
 # an installed system.
 KERNEL_TEST_OPTION_CHECK= sh ${.CURDIR}/release/scripts/check-test-kernel.sh
 
+# Every 5BSD kernel carries the options of sys/conf/mandatory-options
+# (AUDIT, CAPABILITY_MODE, CAPABILITIES, RACCT, RCTL).  The check reads the
+# kernels' symbol tables; it has no override.
+KERNEL_MANDATORY_OPTION_CHECK= sh ${.CURDIR}/release/scripts/check-mandatory-kernel.sh
+
 # Read-only: the world in the object tree must use production malloc(3).
 malloc-production-check: .PHONY
 	@${MALLOC_PRODUCTION_CHECK} -o ${LIBC_OBJDIR:Q}
@@ -83,6 +88,16 @@ kernel-test-option-check: .PHONY
 	@${KERNEL_TEST_OPTION_CHECK} -o ${OBJTOP:Q}/sys/${_kernconf}
 .endfor
 
+# Read-only: every kernel in the object tree carries the mandatory options.
+kernel-mandatory-option-check: .PHONY
+.if empty(KERNCONF)
+	@echo "ERROR: kernel-mandatory-option-check: KERNCONF names no kernel" >&2; \
+	    false
+.endif
+.for _kernconf in ${KERNCONF}
+	@${KERNEL_MANDATORY_OPTION_CHECK} -o ${OBJTOP:Q}/sys/${_kernconf}
+.endfor
+
 hardware-packages hardware-packages-check: .PHONY
 	${HARDWARE_PYTHON} ${.CURDIR}/release/scripts/native-hardware.py \
 	    --base ${BASE_REPOSITORY:Q} --kernel-build ${KERNBUILDDIR:Q} \
@@ -96,6 +111,7 @@ hardware-packages hardware-packages-check: .PHONY
 # there, and publish-packages refuses a missing one.
 	@if [ ${.TARGET} = hardware-packages ] || [ -e ${HARDWARE_REPO:Q} ] || \
 	    [ -L ${HARDWARE_REPO:Q} ]; then \
+		${KERNEL_MANDATORY_OPTION_CHECK} -r ${HARDWARE_REPO:Q} && \
 		${KERNEL_TEST_OPTION_CHECK} -r ${HARDWARE_REPO:Q}; \
 	fi
 
@@ -108,6 +124,7 @@ hardware-packages hardware-packages-check: .PHONY
 publish-packages: .PHONY
 	@${KERNEL_TEST_OPTION_CHECK} -r ${BASE_REPOSITORY:Q} -r ${HARDWARE_REPO:Q}
 	@${MALLOC_PRODUCTION_CHECK} -r ${BASE_REPOSITORY:Q}
+	@${KERNEL_MANDATORY_OPTION_CHECK} -r ${HARDWARE_REPO:Q}
 	@mkdir -p ${COMPLETE_REPOSITORY:H:Q}
 	${HARDWARE_PYTHON} ${.CURDIR}/release/scripts/hardware-packages.py publish \
 	    --repository ${HARDWARE_REPO:Q} --base-repository ${BASE_REPOSITORY:Q} \
@@ -123,6 +140,7 @@ publish-packages: .PHONY
 system-packages: .PHONY
 	${MAKE} -C ${.CURDIR} malloc-production-check
 	${MAKE} -C ${.CURDIR} kernel-test-option-check
+	${MAKE} -C ${.CURDIR} kernel-mandatory-option-check
 	${MAKE} -C ${.CURDIR} packages
 	${MAKE} -C ${.CURDIR} hardware-packages
 	${MAKE} -C ${.CURDIR} publish-packages

@@ -239,6 +239,10 @@ malloc-production-check:
 # hardware repository.
 #
 KERNEL_TEST_OPTION_CHECK= sh ${.CURDIR}/scripts/check-test-kernel.sh
+# Every kernel carries the options of sys/conf/mandatory-options; see
+# scripts/check-mandatory-kernel.sh.  It reads the kernels where the
+# test-kernel check first reads a staged tree or a repository.
+KERNEL_MANDATORY_OPTION_CHECK= sh ${.CURDIR}/scripts/check-mandatory-kernel.sh
 MEDIA_KERNEL_TEST_OPTION_CHECK= \
 	${KERNEL_TEST_OPTION_CHECK} -d ${.OBJDIR}/${.TARGET} && \
 	for store in usr/5bsd-packages usr/5bsd-dist usr/obj; do \
@@ -272,6 +276,7 @@ kernel.txz: # Also (if enabled) kernel-dbg.txz.
 	mkdir -p ${DISTDIR}
 	( cd ${WORLDDIR} && ${IMAKE} distributekernel DISTDIR=${.OBJDIR}/${DISTDIR} )
 	@${KERNEL_TEST_OPTION_CHECK} -d ${.OBJDIR}/${DISTDIR}/kernel
+	@${KERNEL_MANDATORY_OPTION_CHECK} -d ${.OBJDIR}/${DISTDIR}/kernel
 	( cd ${WORLDDIR} && ${IMAKE} packagekernel DISTDIR=${.OBJDIR}/${DISTDIR} )
 # Every archive produced, which includes additional kernels
 # (kernel.NAME.txz) and the debug archives.
@@ -352,6 +357,7 @@ pkgbase-repo:
 	@${MALLOC_PRODUCTION_CHECK}
 .if defined(PKGBASE_SIGNED_REPOSITORY) && !empty(PKGBASE_SIGNED_REPOSITORY)
 	@${KERNEL_TEST_OPTION_CHECK} -r ${PKGBASE_SIGNED_REPOSITORY:Q}
+	@${KERNEL_MANDATORY_OPTION_CHECK} -r ${PKGBASE_SIGNED_REPOSITORY:Q}
 	mkdir -p pkgbase-repo/${PKG_ABI}
 	${HARDWARE_PYTHON} ${.CURDIR}/scripts/hardware-packages.py copy-signed-repository \
 	    --repository ${PKGBASE_SIGNED_REPOSITORY:Q} \
@@ -409,6 +415,7 @@ pkgbase-repo:
 	    ${.OBJDIR}/pkgbase-repo/${PKG_ABI}/latest-built
 .endif
 	@${KERNEL_TEST_OPTION_CHECK} -r ${.OBJDIR}/pkgbase-repo/${PKG_ABI}/latest-built
+	@${KERNEL_MANDATORY_OPTION_CHECK} -r ${.OBJDIR}/pkgbase-repo/${PKG_ABI}/latest-built
 
 .endif # rebuilding or snapshotting pkgbase
 
@@ -438,6 +445,7 @@ disc1:
 	    MK_RESCUE=no MK_DICT=no \
 	    MK_KERNEL_SYMBOLS=no MK_TESTS=no MK_DEBUG_FILES=no)
 	@${KERNEL_TEST_OPTION_CHECK} -d ${.OBJDIR}/${.TARGET}
+	@${KERNEL_MANDATORY_OPTION_CHECK} -d ${.OBJDIR}/${.TARGET}
 .if (!defined(NOPKGBASE) || empty(NOPKGBASE)) && (!defined(PKGBASE_SIGNED_REPOSITORY) || empty(PKGBASE_SIGNED_REPOSITORY))
 # Create offline pkgbase repo on release media.
 #
@@ -536,6 +544,7 @@ bootonly:
 	    MK_RESCUE=no MK_DICT=no \
 	    MK_KERNEL_SYMBOLS=no MK_TESTS=no MK_DEBUG_FILES=no)
 	@${KERNEL_TEST_OPTION_CHECK} -d ${.OBJDIR}/${.TARGET}
+	@${KERNEL_MANDATORY_OPTION_CHECK} -d ${.OBJDIR}/${.TARGET}
 .if !defined(NODISTSETS) || empty(NODISTSETS)
 # Copy manifest only (no distfiles) to get checksums
 	mkdir -p ${.TARGET}/usr/5bsd-dist
@@ -597,6 +606,7 @@ dvd:
 		DESTDIR=${.OBJDIR}/${.TARGET} MK_RESCUE=no MK_KERNEL_SYMBOLS=no \
 		MK_TESTS=no MK_DEBUG_FILES=no)
 	@${KERNEL_TEST_OPTION_CHECK} -d ${.OBJDIR}/${.TARGET}
+	@${KERNEL_MANDATORY_OPTION_CHECK} -d ${.OBJDIR}/${.TARGET}
 .if (!defined(NOPKGBASE) || empty(NOPKGBASE)) && (!defined(PKGBASE_SIGNED_REPOSITORY) || empty(PKGBASE_SIGNED_REPOSITORY))
 # Create offline pkgbase repo on release media
 	mkdir -p ${.TARGET}/usr/5bsd-packages/repos/
