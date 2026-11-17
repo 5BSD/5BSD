@@ -20,6 +20,8 @@ LIBADD.mac_capability_jail_lock_order_test+=	jail
 TEST_METADATA.mac_capability_jail_lock_order_test+=	is_exclusive="true"
 ATF_TESTS_C+=	mac_capability_procdesc_test
 ATF_TESTS_C+=	authority_test_issuer_test
+ATF_TESTS_C+=	authority_test_issuer_anchor_test
+LIBADD.authority_test_issuer_anchor_test+=	pthread
 ATF_TESTS_C+=	mac_capability_mount_test
 ATF_TESTS_C+=	mac_capability_system_test
 ATF_TESTS_C+=	mac_ntpd_delegate_test

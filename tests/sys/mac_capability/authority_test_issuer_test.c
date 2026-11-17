@@ -278,11 +278,119 @@ ATF_TC_BODY(test_sysctls, tc)
 	    strcmp(sw.state, "test") == 0 || strcmp(sw.state, "anchored") == 0);
 }
 
+static int
+create_in_capmode(void)
+{
+
+	if (cap_enter() != 0)
+		return (100);
+	return (create_errno());
+}
+
+static int
+create_unprivileged(void)
+{
+
+	if (setgid(65534) != 0 || setuid(65534) != 0)
+		return (100);
+	return (create_errno());
+}
+
+ATF_TC(create_refused_capmode_unprivileged);
+ATF_TC_HEAD(create_refused_capmode_unprivileged, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Capability mode and a non-root credential never create an issuer, on any kernel");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(create_refused_capmode_unprivileged, tc)
+{
+	int error;
+
+	(void)relaxed();
+	error = in_child(create_in_capmode);
+	ATF_REQUIRE_MSG(error != 100, "cap_enter failed");
+	ATF_CHECK_EQ_MSG(error, EPERM, "capability mode: %s", strerror(error));
+	error = in_child(create_unprivileged);
+	ATF_REQUIRE_MSG(error != 100, "cannot become nobody");
+	ATF_CHECK_EQ_MSG(error, EPERM, "uid 65534: %s", strerror(error));
+}
+
+static u_long
+test_issuers(void)
+{
+	u_long value;
+	size_t len = sizeof(value);
+
+	ATF_REQUIRE(sysctlbyname("kern.mac_capability.test_issuers", &value,
+	    &len, NULL, 0) == 0);
+	return (value);
+}
+
+static u_int
+test_issuers_live(void)
+{
+	u_int value;
+	size_t len = sizeof(value);
+
+	ATF_REQUIRE(sysctlbyname("kern.mac_capability.test_issuers_live",
+	    &value, &len, NULL, 0) == 0);
+	return (value);
+}
+
+ATF_TC(relaxed_issuer);
+ATF_TC_HEAD(relaxed_issuer, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "On a relaxed test kernel a test issuer issues authority and is counted until freed; elsewhere none is created");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(relaxed_issuer, tc)
+{
+	struct cap_authority_spec spec = {
+		.version = CAP_AUTH_VERSION, .kind = CAP_AUTH_MANAGED,
+	};
+	struct cap_authority_info info;
+	struct test_switch sw;
+	u_long created;
+	u_int live;
+	int issuer, token;
+
+	if (!relaxed()) {
+		ATF_CHECK_ERRNO(EPERM,
+		    op(CAP_AUTH_ISSUER_CREATE, -1, NULL) == -1);
+		return;
+	}
+	created = test_issuers();
+	live = test_issuers_live();
+	issuer = op(CAP_AUTH_ISSUER_CREATE, -1, NULL);
+	ATF_REQUIRE_MSG(issuer >= 0, "relaxed create: %s", strerror(errno));
+	ATF_CHECK_EQ(test_issuers(), created + 1);
+	ATF_CHECK_EQ(test_issuers_live(), live + 1);
+	test_switch(&sw);
+	ATF_CHECK_STREQ(sw.state, "test");
+	token = op(CAP_AUTH_ISSUE, issuer, &spec);
+	ATF_REQUIRE_MSG(token >= 0, "issue: %s", strerror(errno));
+	ATF_REQUIRE(op(CAP_AUTH_TOKEN_INFO, token, &info) == 0);
+	ATF_CHECK(info.issuer != 0 && info.identity != 0);
+	ATF_CHECK_EQ(info.revoked, 0);
+	/* The token keeps the issuer; closing both frees it, asynchronously. */
+	ATF_REQUIRE(close(issuer) == 0);
+	ATF_REQUIRE(op(CAP_AUTH_TOKEN_INFO, token, &info) == 0);
+	ATF_CHECK_EQ_MSG(info.revoked, 1, "closing the issuer revokes its grants");
+	ATF_REQUIRE(close(token) == 0);
+	for (int i = 0; i < 50 && test_issuers_live() != live; i++)
+		usleep(100000);
+	ATF_CHECK_EQ(test_issuers_live(), live);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, create_refused);
 	ATF_TP_ADD_TC(tp, create_refused_jailed);
 	ATF_TP_ADD_TC(tp, issuer_ops_need_an_issuer);
 	ATF_TP_ADD_TC(tp, test_sysctls);
+	ATF_TP_ADD_TC(tp, create_refused_capmode_unprivileged);
+	ATF_TP_ADD_TC(tp, relaxed_issuer);
 	return (atf_no_error());
 }
