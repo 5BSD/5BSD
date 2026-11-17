@@ -19,6 +19,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -898,6 +899,80 @@ ATF_TC_BODY(atime_after_read, tc)
 	(void)close(oracle);
 }
 
+/*
+ * T-A28: a signal, caught by a handler installed without SA_RESTART,
+ * during a read of a served regular file that the controller answers
+ * 300 ms later.  A local file system's read completes.
+ */
+static volatile sig_atomic_t alrm_seen;
+
+static void
+on_alrm(int sig __unused)
+{
+
+	alrm_seen++;
+}
+
+struct norestart_res {
+	struct dqt_rr	 rr;
+	int		 signals;
+};
+
+static void
+child_read_norestart(void *arg, void *result)
+{
+	struct norestart_res *r = result;
+	struct sigaction sa;
+	int fd = *(int *)arg;
+	char buf[16];
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = on_alrm;
+	(void)sigaction(SIGALRM, &sa, NULL);
+	DQT_RR(r->rr, read(fd, buf, sizeof(buf)));
+	r->signals = alrm_seen;
+}
+
+ATF_TC(sigalrm_no_restart);
+ATF_TC_HEAD(sigalrm_no_restart, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "SIGALRM without SA_RESTART during a "
+	    "served read the controller answers late (T-A28)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(sigalrm_no_restart, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct norestart_res r;
+	struct dqt_child ch;
+	int fd, oracle;
+
+	dqt_fill(data, sizeof(data), 62);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
+	dqt_hold(&c, true);
+	fd = o->fd;
+	dqt_spawn(&ch, child_read_norestart, &fd);
+	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	ATF_REQUIRE(dqt_wait_wmesg(ch.pid, DQT_WMESG_REPLY, DQT_WAIT_MS));
+	ATF_REQUIRE_EQ(0, kill(ch.pid, SIGALRM));
+	dqt_msleep(300);
+	/* Late, or refused with ESRCH when the wait already ended. */
+	(void)dq_reply(c.q, dqt_held_id(&c, 0), 0, data, 16);
+	memset(&r, 0, sizeof(r));
+	dqt_collect(&ch, &r, sizeof(r));
+	ATF_CHECK_EQ(1, r.signals);
+	/* Pin: the read ends with the signal. */
+	ATF_CHECK_EQ(-1, r.rr.rv);
+	ATF_CHECK_EQ(EINTR, r.rr.err);
+	dqt_hold(&c, false);
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -913,5 +988,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, two_objects_same_identity);
 	ATF_TP_ADD_TC(tp, read_error_reply);
 	ATF_TP_ADD_TC(tp, atime_after_read);
+	ATF_TP_ADD_TC(tp, sigalrm_no_restart);
 	return (atf_no_error());
 }

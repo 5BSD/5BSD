@@ -29,6 +29,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <libutil.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
@@ -638,6 +639,70 @@ ATF_TC_BODY(fault_survives_signals, tc)
 	dqt_fixture_fini(&f);
 }
 
+/*
+ * T-A28 (rev 8 fault_single_exit): a thread waits in a fault for a READ
+ * the controller holds; another thread of the process calls _exit.  The
+ * exit single-threads the process (SINGLE_EXIT) before it marks it
+ * exiting, and a non-catching wait is not aborted by that: the fault's
+ * wait must notice by itself.  The page deadline is 3 s.
+ */
+static void *
+fault_touch(void *arg)
+{
+	volatile unsigned char *p = arg;
+
+	(void)p[0];
+	return (NULL);
+}
+
+ATF_TC(fault_single_exit);
+ATF_TC_HEAD(fault_single_exit, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "_exit of a process with a thread "
+	    "waiting in a served fault (T-A28)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(fault_single_exit, tc)
+{
+	struct dqt_fixture f;
+	struct dq_policy pol;
+	pthread_t thr;
+	int64_t start, ms;
+	int go[2], status;
+	pid_t pid;
+	void *p;
+	char c;
+
+	policy_shared(&pol, 0, 3000);
+	setup_pol(&f, 10, &pol, DQ_MINT_F_WRITE);
+	dqt_hold(&f.c, true);
+	ATF_REQUIRE_EQ(0, pipe(go));
+	pid = fork();
+	ATF_REQUIRE(pid != -1);
+	if (pid == 0) {
+		p = mmap(NULL, 4096, PROT_READ, MAP_SHARED, f.o->fd, 0);
+		if (p == MAP_FAILED ||
+		    pthread_create(&thr, NULL, fault_touch, p) != 0)
+			_exit(3);
+		if (read(go[0], &c, 1) != 1)
+			_exit(4);
+		_exit(0);
+	}
+	ATF_REQUIRE(dqt_wait_held(&f.c, 1, DQT_WAIT_MS));
+	start = dqt_now_ms();
+	ATF_REQUIRE_EQ(1, write(go[1], "g", 1));
+	ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+	ms = dqt_now_ms() - start;
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	/* Pin: the exit waits for the fault's page deadline. */
+	ATF_CHECK_MSG(ms >= 2500, "the exit took %jd ms", (intmax_t)ms);
+	(void)close(go[0]);
+	(void)close(go[1]);
+	dqt_hold(&f.c, false);
+	dqt_fixture_fini(&f);
+}
+
 struct mincore_res {
 	char		 vs[NPAGES + 1], vo[NPAGES + 1];
 	int		 es, eo;
@@ -1147,6 +1212,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, sigbus_cases);
 	ATF_TP_ADD_TC(tp, sigbus_deadline);
 	ATF_TP_ADD_TC(tp, fault_survives_signals);
+	ATF_TP_ADD_TC(tp, fault_single_exit);
 	ATF_TP_ADD_TC(tp, mincore_residency);
 	ATF_TP_ADD_TC(tp, invalidate_through_mapping);
 	ATF_TP_ADD_TC(tp, fork_mapping_revoke);
