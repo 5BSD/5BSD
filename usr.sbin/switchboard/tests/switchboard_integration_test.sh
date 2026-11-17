@@ -27,6 +27,7 @@ crash_recovery_restarts_head()
 }
 crash_recovery_restarts_body()
 {
+	capd_require_unit_issuer
 	start_stack
 
 	# Service that crashes first time, succeeds second time
@@ -99,6 +100,7 @@ graceful_shutdown_sigterm_head()
 }
 graceful_shutdown_sigterm_body()
 {
+	capd_require_unit_issuer
 	start_stack
 
 	make_fixture_svc system trapper '' \
@@ -212,6 +214,7 @@ reload_adds_service_head()
 }
 reload_adds_service_body()
 {
+	capd_require_unit_issuer
 	start_stack
 
 	# Start with no services, then add one
@@ -245,6 +248,7 @@ reload_removes_service_head()
 }
 reload_removes_service_body()
 {
+	capd_require_unit_issuer
 	prepare_paths
 	make_fixture_svc system removeme '' \
 	    lifecycle-hold - "${WORK}/removeme-running.out" running
@@ -296,6 +300,7 @@ audit_records_best_effort_head()
 }
 audit_records_best_effort_body()
 {
+	capd_require_unit_issuer
 	command -v praudit >/dev/null 2>&1 || \
 	    atf_skip "praudit not available"
 	command -v auditreduce >/dev/null 2>&1 || \
@@ -354,6 +359,7 @@ manifest_arguments_environment_head()
 }
 manifest_arguments_environment_body()
 {
+	capd_require_unit_issuer
 	find_capd_service_fixture
 	start_stack
 	make_svc_bin system manifest-exec \
@@ -394,6 +400,7 @@ sealed_bundle_launches_unprivileged_service_head()
 }
 sealed_bundle_launches_unprivileged_service_body()
 {
+	capd_require_unit_issuer
 	local bundle unit
 
 	start_stack
@@ -430,6 +437,7 @@ remaining_token_families_activate_head()
 }
 remaining_token_families_activate_body()
 {
+	capd_require_unit_issuer
 	find_capd_service_fixture
 	start_stack
 	make_svc_bin system token-families 'capabilities {
@@ -465,6 +473,7 @@ malformed_reload_is_transactional_head()
 }
 malformed_reload_is_transactional_body()
 {
+	capd_require_unit_issuer
 	find_capd_service_fixture
 	start_stack
 	make_fixture_svc system reload-guard '' lifecycle-hold \

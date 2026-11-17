@@ -261,5 +261,22 @@ void	mac_capability_free_msgq(struct mac_capability_msgq *q);
 void	mac_capability_service_free(struct mac_capability_service *svc);
 extern const struct fileops mac_capability_instance_ops;
 
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+/*
+ * Test issuers (options MAC_CAPABILITY_TEST_PERMISSIVE, GENERIC-TEST only):
+ * mac_capability_authority.c and mac_capability_testissuer.c.  Whoever uses
+ * these includes opt_mac_capability.h first.
+ */
+#define	MAC_CAPABILITY_TEST_ISSUER_NONE		0
+#define	MAC_CAPABILITY_TEST_ISSUER_TEST		1
+#define	MAC_CAPABILITY_TEST_ISSUER_ANCHORED	2
+extern int mac_capability_test_issuer_enabled;	/* the tunable, 0 or 1 */
+extern volatile u_int mac_capability_test_issuer_fail_init;
+extern volatile u_long mac_capability_test_issuer_created;
+extern volatile u_int mac_capability_test_issuer_live;
+u_int	mac_capability_test_issuer_state(void);
+void	mac_capability_test_issuer_anchor(void);
+#endif
+
 #endif /* _KERNEL */
 #endif /* _DEV_MAC_CAPABILITY_MAC_CAPABILITY_INTERNAL_H_ */

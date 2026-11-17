@@ -64,8 +64,11 @@ on_demand_launch_body() {
 	use_private_control
 	prepare_paths
 	build_lookup_client
+	# The lookup client is a user bundle: its lookups use a USER-domain
+	# channel, which resolves only names whose provider declares
+	# visible = ["user"].
 	create_user_bundle "LazyApp" "org.test.lazy" "lazyd" \
-	    "org.test.lazy.svc" ""
+	    "org.test.lazy.svc" 'visible = ["user"];'
 
 	start_stack
 
@@ -203,6 +206,10 @@ reload_new_service_body() {
 	local bundle
 
 	prepare_paths
+	# The install-folder watcher would otherwise load the bundle as it is
+	# written, before the explicit reload under test (which then reports
+	# "0 new").  Settle the watcher for longer than the case runs.
+	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=60
 	start_stack
 
 	# Initially no user services
@@ -504,6 +511,13 @@ reload_changed_core_refused_body() {
 	use_private_control
 	local bundle unit
 
+	# A core unit takes Capsule's boot storage grant, which only the PID 1
+	# Capsule can derive (protected_storage_derive()): a test-local stack
+	# cannot launch one ("boot storage grant failed: Operation not
+	# permitted").  No tier runs this case; it is recorded in
+	# 2026-11-17-test-local-stack-pid1-only-cases.md.
+	atf_skip "DEFERRED_PID1_ONLY: a core unit needs the PID 1 Capsule's boot storage grant"
+
 	prepare_paths
 	bundle=$(create_system_bundle "CoreMorph" "org.test.core-morph" \
 	    "coremorphd" "org.test.core-morph.svc" \
@@ -650,6 +664,7 @@ on_demand_crash_relaunch_body() {
 	local dir="${APPS_DIR}/Crasher.cap"
 	write_test_bundle "$dir" org.test.crash crashd \
 	    'activation { ipc = ["org.test.crash.svc"]; }
+visible = ["user"];
 restart = "on-failure";' 'activation { boot = true; }'
 
 	# Install the libservice ready helper directly as the service program.
@@ -741,6 +756,7 @@ UCL
 	cat > "${bundle}/Units/lazyd.unit/Unit.ucl" <<UCL
 directories = ["${WORK}"];
 activation { ipc = ["${endpoint}"]; }
+visible = ["user"];
 arguments = ["compat-ready", "${endpoint}"];
 UCL
 
@@ -778,6 +794,7 @@ component_factory_names_are_internal_head() {
 component_factory_names_are_internal_body() {
 	local endpoint kind
 
+	capd_require_unit_issuer
 	prepare_paths
 	find_capd_service_fixture
 	build_lookup_client
@@ -960,6 +977,7 @@ multiple_provides_failure_isolated_head() {
 multiple_provides_failure_isolated_body() {
 	local bundle first lookup_pid second
 
+	capd_require_unit_issuer
 	prepare_paths
 	build_lookup_client
 	find_capd_service_fixture
@@ -1012,6 +1030,7 @@ requester_crash_cancels_pending_lookup_head() {
 requester_crash_cancels_pending_lookup_body() {
 	local client_bundle first_pid i provider_bundle service_name
 
+	capd_require_unit_issuer
 	prepare_paths
 	find_capd_service_fixture
 	service_name="org.test.lifecycle.delayed"
@@ -1140,6 +1159,7 @@ partial_system_install_is_admitted_when_complete_head() {
 partial_system_install_is_admitted_when_complete_body() {
 	local stage dst
 
+	capd_require_unit_issuer
 	prepare_paths
 	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=1
 	start_stack
@@ -1187,6 +1207,7 @@ broken_new_system_bundle_does_not_block_installs_head() {
 broken_new_system_bundle_does_not_block_installs_body() {
 	local bad bundle i
 
+	capd_require_unit_issuer
 	prepare_paths
 	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=1
 	start_stack
@@ -1227,6 +1248,7 @@ registered_system_bundle_survives_half_written_upgrade_head() {
 registered_system_bundle_survives_half_written_upgrade_body() {
 	local bundle pid unit loads0 i
 
+	capd_require_unit_issuer
 	prepare_paths
 	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=1
 	bundle=$(create_system_bundle "Keep" "org.test.keep" "keepd" "org.test.keep.svc")
@@ -1284,6 +1306,7 @@ registered_apps_bundle_survives_half_written_upgrade_head() {
 registered_apps_bundle_survives_half_written_upgrade_body() {
 	local bundle pid unit loads0 i
 
+	capd_require_unit_issuer
 	prepare_paths
 	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=1
 	bundle=$(create_user_bundle "Keepu" "org.test.keepu" "keepud" "org.test.keepu.svc")
@@ -1333,6 +1356,7 @@ conflicting_user_bundle_is_quarantined_not_fatal_head() {
 conflicting_user_bundle_is_quarantined_not_fatal_body() {
 	local sysb usrb
 
+	capd_require_unit_issuer
 	prepare_paths
 	sysb=$(create_system_bundle "Owner" "org.test.owner" "ownerd" "org.test.contended.svc")
 	usrb=$(create_user_bundle "Squatter" "org.test.squatter" "squatterd" "org.test.contended.svc")
@@ -1364,6 +1388,7 @@ vanished_system_root_retains_registry_head() {
 vanished_system_root_retains_registry_body() {
 	local bundle pid
 
+	capd_require_unit_issuer
 	prepare_paths
 	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=1
 	bundle=$(create_system_bundle "Rooted" "org.test.rooted" "rootedd" "org.test.rooted.svc")
@@ -1400,6 +1425,7 @@ folder_watch_loads_and_unloads_head() {
 folder_watch_loads_and_unloads_body() {
 	local bundle
 
+	capd_require_unit_issuer
 	prepare_paths
 	# Short quiescence so the test does not wait on the production settle.
 	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=1
@@ -1444,6 +1470,7 @@ folder_watch_coalesces_bursts_head() {
 folder_watch_coalesces_bursts_body() {
 	local u x n
 
+	capd_require_unit_issuer
 	prepare_paths
 	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=2
 	start_stack
@@ -1479,6 +1506,7 @@ run_live_markers_follow_units_head() {
 run_live_markers_follow_units_body() {
 	local bundle pid i
 
+	capd_require_unit_issuer
 	prepare_paths
 	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=1
 	start_stack

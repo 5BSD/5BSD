@@ -92,6 +92,7 @@ ready_reports_channel_head()
 }
 ready_reports_channel_body()
 {
+	capd_require_unit_issuer
 	local result
 
 	find_service_fixture
@@ -124,6 +125,7 @@ naming_exchange_confines_endpoints_head()
 }
 naming_exchange_confines_endpoints_body()
 {
+	capd_require_unit_issuer
 	local client provider registered
 
 	find_service_fixture
@@ -165,6 +167,7 @@ multiplexed_transport_correlates_reordered_replies_head()
 }
 multiplexed_transport_correlates_reordered_replies_body()
 {
+	capd_require_unit_issuer
 	local client provider
 
 	find_service_fixture
@@ -201,6 +204,7 @@ multiple_provides_route_independently_head()
 }
 multiple_provides_route_independently_body()
 {
+	capd_require_unit_issuer
 	local first second provider registered result
 
 	find_service_fixture
@@ -247,6 +251,7 @@ lookup_missing_returns_enoent_head()
 }
 lookup_missing_returns_enoent_body()
 {
+	capd_require_unit_issuer
 	local result
 
 	find_service_fixture
@@ -277,6 +282,7 @@ protection_denies_ktrace_head()
 }
 protection_denies_ktrace_body()
 {
+	capd_require_unit_issuer
 	local result service_pid
 
 	find_service_fixture
@@ -312,6 +318,7 @@ supervisor_death_is_observable_head()
 }
 supervisor_death_is_observable_body()
 {
+	capd_require_unit_issuer
 	local i ready result switchboard_pid
 
 	find_service_fixture

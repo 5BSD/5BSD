@@ -40,6 +40,7 @@ restart_never_no_restart_head()
 }
 restart_never_no_restart_body()
 {
+	capd_require_unit_issuer
 	prepare_paths
 	make_fixture_svc system exit0 'restart = "never";' \
 	    lifecycle-exit "${WORK}/exit0.pid" 0
@@ -74,6 +75,7 @@ restart_on_failure_ignores_clean_head()
 }
 restart_on_failure_ignores_clean_body()
 {
+	capd_require_unit_issuer
 	prepare_paths
 	make_fixture_svc system clean-exit 'restart = "on-failure";' \
 	    lifecycle-exit "${WORK}/clean.pid" 0
@@ -108,6 +110,7 @@ restart_on_failure_restarts_on_error_head()
 }
 restart_on_failure_restarts_on_error_body()
 {
+	capd_require_unit_issuer
 	prepare_paths
 	make_fixture_svc system fail-once 'restart = "on-failure";' \
 	    lifecycle-restart-once "${WORK}/fail-once.ran" \
@@ -143,6 +146,7 @@ restart_always_restarts_clean_head()
 }
 restart_always_restarts_clean_body()
 {
+	capd_require_unit_issuer
 	prepare_paths
 	make_fixture_svc system exit0-always 'restart = "always";' \
 	    lifecycle-restart-once "${WORK}/exit0-always.ran" \
@@ -176,6 +180,7 @@ circuit_breaker_disables_head()
 }
 circuit_breaker_disables_body()
 {
+	capd_require_unit_issuer
 	prepare_paths
 	make_fixture_svc system crash 'restart = "always"; max_failures = 3;' \
 	    lifecycle-exit "${WORK}/crash.pid" 1
@@ -207,6 +212,7 @@ shutdown_kills_sigterm_ignorer_head()
 }
 shutdown_kills_sigterm_ignorer_body()
 {
+	capd_require_unit_issuer
 	local svc_pid
 
 	prepare_paths
@@ -250,6 +256,7 @@ shutdown_kills_subtree_head()
 }
 shutdown_kills_subtree_body()
 {
+	capd_require_unit_issuer
 	local child_pid
 
 	prepare_paths
@@ -343,6 +350,7 @@ private_worker_channel_head()
 }
 private_worker_channel_body()
 {
+	capd_require_unit_issuer
 	find_capd_service_fixture
 	prepare_paths
 	make_svc_bin system worker-channel \
@@ -381,6 +389,7 @@ service_environment_minimal_head()
 }
 service_environment_minimal_body()
 {
+	capd_require_unit_issuer
 	prepare_paths
 	make_fixture_svc system env-probe '' \
 	    lifecycle-environment "${WORK}/env-probe.out"
@@ -480,6 +489,7 @@ service_runs_as_user_head()
 }
 service_runs_as_user_body()
 {
+	capd_require_unit_issuer
 	prepare_paths
 	make_fixture_svc system whoami 'user = "nobody"; group = "nogroup";' \
 	    lifecycle-identity "${WORK}/whoami-svc.out"
@@ -517,6 +527,7 @@ control_reload_head()
 }
 control_reload_body()
 {
+	capd_require_unit_issuer
 	start_stack
 
 	# Add a new bundle after startup.
@@ -553,6 +564,7 @@ restart_backoff_head()
 }
 restart_backoff_body()
 {
+	capd_require_unit_issuer
 	prepare_paths
 	make_fixture_svc system fastcrash 'restart = "always";' \
 	    lifecycle-exit "${WORK}/fastcrash.pid" 1
@@ -584,6 +596,7 @@ svc_unregister_explicit_head()
 }
 svc_unregister_explicit_body()
 {
+	capd_require_unit_issuer
 	find_capd_service_fixture
 
 	find_switchboard
@@ -634,6 +647,7 @@ svc_name_claim_state_machine_head()
 }
 svc_name_claim_state_machine_body()
 {
+	capd_require_unit_issuer
 	find_capd_service_fixture
 
 	prepare_paths
@@ -677,6 +691,7 @@ svc_withdraw_cancels_activation_head()
 }
 svc_withdraw_cancels_activation_body()
 {
+	capd_require_unit_issuer
 	local client_bundle i
 
 	find_capd_service_fixture
@@ -817,6 +832,7 @@ idle_stop_and_relaunch_body()
 	prepare_paths
 	make_svc_bin system org.test.idle.svc \
 	    "activation { boot = true; ipc = [\"org.test.idle.svc\"]; }
+visible = [\"user\"];
 arguments = [\"idle-provider\", \"org.test.idle.svc\", \"1\", \"$(pwd)/idlep\"];" \
 	    "$capd_service_fixture"
 	write_config
@@ -877,6 +893,7 @@ idle_busy_keeps_provider_body()
 	prepare_paths
 	make_svc_bin system org.test.idle.busy \
 	    "activation { boot = true; ipc = [\"org.test.idle.busy\"]; }
+visible = [\"user\"];
 arguments = [\"idle-busy\", \"org.test.idle.busy\", \"$(pwd)/idlebusy.out\"];" \
 	    "$capd_service_fixture"
 	write_config
@@ -923,6 +940,7 @@ idle_demand_cancels_stop_body()
 	prepare_paths
 	make_svc_bin system org.test.idle.demand \
 	    "activation { boot = true; ipc = [\"org.test.idle.demand\"]; }
+visible = [\"user\"];
 arguments = [\"idle-provider\", \"org.test.idle.demand\", \"5\", \"$(pwd)/idled\"];" \
 	    "$capd_service_fixture"
 	write_config
@@ -1086,6 +1104,7 @@ watchdog_heartbeat_keeps_alive_head()
 }
 watchdog_heartbeat_keeps_alive_body()
 {
+	capd_require_unit_issuer
 	find_capd_service_fixture
 	prepare_paths
 	# A generous interval versus the ~0.5s heartbeat cadence keeps the margin
@@ -1133,6 +1152,7 @@ watchdog_restarts_wedged_head()
 }
 watchdog_restarts_wedged_body()
 {
+	capd_require_unit_issuer
 	local pid1 pid2
 
 	find_capd_service_fixture
@@ -1185,6 +1205,7 @@ watchdog_user_unit_restarts_head()
 }
 watchdog_user_unit_restarts_body()
 {
+	capd_require_unit_issuer
 	find_capd_service_fixture
 	prepare_paths
 	make_svc_bin user org.test.wd.userapp \

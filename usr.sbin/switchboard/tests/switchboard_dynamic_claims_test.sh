@@ -47,6 +47,7 @@ shared_path_survives_exit_head()
 }
 shared_path_survives_exit_body()
 {
+	capd_require_unit_issuer
 	require_mac_capability
 	start_stack
 	make_gate_service gate-a '"kldload"' "${WORK}/gate-a.pid" \
@@ -75,6 +76,7 @@ dynamic_claim_fully_released_head()
 }
 dynamic_claim_fully_released_body()
 {
+	capd_require_unit_issuer
 	require_mac_capability
 	start_stack
 	make_gate_service sole-gate '"kldunload"' "${WORK}/sole-gate.pid" \
@@ -100,6 +102,7 @@ policy_claim_immune_to_release_head()
 }
 policy_claim_immune_to_release_body()
 {
+	capd_require_unit_issuer
 	require_mac_capability
 	prepare_paths
 	find_switchboard
@@ -141,6 +144,7 @@ multi_cap_batched_release_head()
 }
 multi_cap_batched_release_body()
 {
+	capd_require_unit_issuer
 	require_mac_capability
 	start_stack
 	make_gate_service multi-gate '"kldload", "kldunload"' \
@@ -174,6 +178,7 @@ duplicate_release_no_underflow_head()
 }
 duplicate_release_no_underflow_body()
 {
+	capd_require_unit_issuer
 	require_mac_capability
 	start_stack
 	make_gate_service first-gate '"kldunload"' \
@@ -200,6 +205,7 @@ sweep_all_claim_types_head()
 }
 sweep_all_claim_types_body()
 {
+	capd_require_unit_issuer
 	require_mac_capability
 	start_stack
 	make_gate_service shutdown-gates '"kldload", "kldunload"' \
