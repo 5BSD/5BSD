@@ -2593,7 +2593,8 @@ p_late(void *arg __unused, void *result)
 	(void)sigaction(SIGALRM, &sa, NULL);
 	for (i = 0; i < LATE_ROUNDS; i++) {
 		memset(&it, 0, sizeof(it));
-		it.it_value.tv_usec = 50 + (i * 37) % 2000;
+		/* 50 us to 50 ms: some opens lose to the timer, some win. */
+		it.it_value.tv_usec = 50 + (i * 997) % 50000;
 		(void)setitimer(ITIMER_REAL, &it, NULL);
 		fd = open("orig", O_RDONLY);
 		memset(&it, 0, sizeof(it));

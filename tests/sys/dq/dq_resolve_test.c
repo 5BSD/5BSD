@@ -766,21 +766,33 @@ child_depth(void *arg, void *result)
 	r->r[1].rv = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 
+/* Wait until the queue's waited posts have waited for a slot n times. */
 static bool
-pred_dropped(const struct dq_stats *st, uintptr_t n)
+full_waits_reach(struct dqt_ctl *c, uint64_t n, int ms)
 {
+	struct dq_stats2 st;
+	int64_t end;
 
-	return (st->ds_events_dropped >= n);
+	end = dqt_now_ms() + ms;
+	for (;;) {
+		dqt_stats2(c, &st);
+		if (st.ds2_full_waits >= n)
+			return (true);
+		if (dqt_now_ms() >= end)
+			return (false);
+		dqt_msleep(5);
+	}
 }
 
-ATF_TC(depth_exhausted);
-ATF_TC_HEAD(depth_exhausted, tc)
+ATF_TC(depth_full_waits);
+ATF_TC_HEAD(depth_full_waits, tc)
 {
-	atf_tc_set_md_var(tc, "descr", "a RESOLVE posted to a full queue fails "
-	    "the lookup with EIO at once, counted as a drop (sequence gap)");
+	atf_tc_set_md_var(tc, "descr", "a RESOLVE that finds the queue full "
+	    "waits for a slot and then posts (D205; it failed EIO at once and "
+	    "counted a drop)");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(depth_exhausted, tc)
+ATF_TC_BODY(depth_full_waits, tc)
 {
 	struct dqt_ctl c;
 	struct dqt_achild ch;
@@ -795,15 +807,15 @@ ATF_TC_BODY(depth_exhausted, tc)
 	dqt_attach_spawn(&c, &ch, child_depth, &a);
 	ATF_REQUIRE(dqt_wait_stats(&c, dqt_pred_current, 1, DQT_WAIT_MS));
 	dqt_sync_post(a.s.tochild[1]);
-	/* The child's own lookup is refused at once (a drop). */
-	ATF_CHECK(dqt_wait_stats(&c, pred_dropped, 1, DQT_WAIT_MS));
-	dqt_stats(&c, &st);
-	ATF_CHECK(st.ds_events_dropped >= 1);
+	/* The child's own lookup waits for the slot. */
+	ATF_CHECK(full_waits_reach(&c, 1, DQT_WAIT_MS));
 	dqt_resume(&c);
 	memset(&r, 0, sizeof(r));
 	dqt_attach_collect(&ch, &r, sizeof(r));
-	ATF_CHECK_EQ(EIO, r.r[0].err);
+	ATF_CHECK_EQ(ENOENT, r.r[0].err);	/* posted, then PASSed */
 	ATF_CHECK_EQ(ENOENT, r.r[1].rv);
+	dqt_stats(&c, &st);
+	ATF_CHECK_EQ(0, st.ds_events_dropped);
 	dqt_fini(&c);
 }
 
@@ -1873,7 +1885,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, signal_lookup_uninterruptible);
 	ATF_TP_ADD_TC(tp, signal_lookup_intr);
 	ATF_TP_ADD_TC(tp, path_swap_reconsults);
-	ATF_TP_ADD_TC(tp, depth_exhausted);
+	ATF_TP_ADD_TC(tp, depth_full_waits);
 	ATF_TP_ADD_TC(tp, i5_no_new_privileges);
 	ATF_TP_ADD_TC(tp, two_path_calls);
 	ATF_TP_ADD_TC(tp, slot_revalidation);
