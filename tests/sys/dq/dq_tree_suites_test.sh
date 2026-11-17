@@ -212,6 +212,12 @@ suites_body()
 suites_cleanup()
 {
 
+	# A body killed at its timeout never printed its capture: the
+	# cleanup copies what the sampler saw to the results disk.
+	if [ -d hang ]; then
+		echo "=== hang capture at the timeout" >&2
+		hang_report hang
+	fi
 	dq_teardown_root
 }
 
