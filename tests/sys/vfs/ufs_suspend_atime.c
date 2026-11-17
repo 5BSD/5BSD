@@ -4,23 +4,34 @@
  * Copyright (c) 2026 Kory Heard
  *
  * Access times recorded while a UFS file system is suspended through
- * /dev/ufssuspend (as growfs(8) suspends a mounted file system).
+ * /dev/ufssuspend, as growfs(8) suspends a mounted file system.
  *
  * A read and an fstat(2) during the suspension leave the inode marked
- * IN_LAZYACCESS.  At resume, process_deferred_inactive() turns that into
- * IN_MODIFIED.  If the file is no longer open, its vnode must be written
- * then: once the last hold is dropped the vnode leaves the mount's lazy
- * list, and an INVARIANTS kernel asserts in ffs_unlock_debug() ("modified
- * vnode not on lazy list") at the next unlock of the vnode, for example
- * the lookup of the file by the next open(2) or stat(2).
+ * IN_LAZYACCESS.  close(2) waits for the resume (vn_close1() starts a write
+ * on the mount), so a program that reads a file and closes it during the
+ * suspension (the devd growfs_postboot service script did) drops its last
+ * use of the vnode as the file system resumes, while the resume runs
+ * process_deferred_inactive().  That turns IN_LAZYACCESS into IN_MODIFIED,
+ * and for a vnode no longer in use it must write the inode then: once the
+ * last hold is dropped the vnode leaves the mount's lazy list, and an
+ * INVARIANTS kernel asserts in ffs_unlock_debug() ("modified vnode not on
+ * lazy list") at the next unlock of the vnode, such as the lookup of the
+ * next stat(2) or open(2) of the file.
  *
- * Each case makes its own md(4)-backed UFS file system.
+ * The readers are child processes: the suspending process must not close a
+ * file on the suspended file system itself, or it would wait for its own
+ * resume.  Many files are made before the ones read, so that the resume's
+ * walk over the mount's vnodes reaches the read ones after their closes
+ * have finished.  Each case makes its own md(4)-backed UFS file system.
  */
 
 #include <sys/param.h>
 #include <sys/ioctl.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
+#include <sys/user.h>
+#include <sys/wait.h>
 
 #include <ufs/ffs/fs.h>
 
@@ -28,6 +39,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <paths.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,7 +47,8 @@
 
 #define	MD_FILE		"md.unit"
 #define	MNT		"mnt"
-#define	FILE_PATH	MNT "/f"
+#define	NFILLER		2000
+#define	NREAD		32
 
 static void
 run(const char *cmd)
@@ -43,15 +56,35 @@ run(const char *cmd)
 	ATF_REQUIRE_EQ_MSG(0, system(cmd), "%s", cmd);
 }
 
-/* Make and mount a soft-updates UFS on a swap-backed md(4) device. */
+static void
+path_of(char *buf, size_t len, const char *prefix, int i)
+{
+	snprintf(buf, len, "%s/%s%d", MNT, prefix, i);
+}
+
+static void
+make_file(const char *path)
+{
+	int fd;
+
+	fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	ATF_REQUIRE_MSG(fd >= 0, "create %s: %s", path, strerror(errno));
+	ATF_REQUIRE_EQ(5, write(fd, "data\n", 5));
+	ATF_REQUIRE_EQ(0, close(fd));
+}
+
+/*
+ * A soft updates UFS on a swap-backed md(4) device, with NFILLER files and
+ * then NREAD files to read.
+ */
 static void
 fixture(void)
 {
-	char cmd[256], unit[32];
+	char cmd[256], path[64], unit[32];
 	FILE *fp;
-	int fd;
+	int i;
 
-	fp = popen("mdconfig -a -t swap -s 32m", "r");
+	fp = popen("mdconfig -a -t swap -s 64m", "r");
 	ATF_REQUIRE(fp != NULL);
 	ATF_REQUIRE(fgets(unit, sizeof(unit), fp) != NULL);
 	ATF_REQUIRE_EQ(0, pclose(fp));
@@ -66,12 +99,14 @@ fixture(void)
 	ATF_REQUIRE_EQ(0, mkdir(MNT, 0755));
 	snprintf(cmd, sizeof(cmd), "mount /dev/%s %s", unit, MNT);
 	run(cmd);
-
-	fd = open(FILE_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-	ATF_REQUIRE_MSG(fd >= 0, "create: %s", strerror(errno));
-	ATF_REQUIRE_EQ(5, write(fd, "data\n", 5));
-	ATF_REQUIRE_EQ(0, fsync(fd));
-	ATF_REQUIRE_EQ(0, close(fd));
+	for (i = 0; i < NFILLER; i++) {
+		path_of(path, sizeof(path), "filler", i);
+		make_file(path);
+	}
+	for (i = 0; i < NREAD; i++) {
+		path_of(path, sizeof(path), "f", i);
+		make_file(path);
+	}
 	sync();
 }
 
@@ -117,33 +152,95 @@ resume(int fd)
 }
 
 /* Read the file and fstat(2) it: the access time is noted lazily. */
-static void
+static int
 access_file(int fd)
 {
 	struct stat sb;
 	char c;
 
-	ATF_REQUIRE_EQ(0, lseek(fd, 0, SEEK_SET));
-	ATF_REQUIRE_EQ(1, read(fd, &c, 1));
-	ATF_REQUIRE_EQ(0, fstat(fd, &sb));
+	if (lseek(fd, 0, SEEK_SET) != 0 || read(fd, &c, 1) != 1 ||
+	    fstat(fd, &sb) != 0)
+		return (-1);
+	return (0);
 }
 
-/* Use the file after the resume: lookups lock and unlock its vnode. */
+/* Whether process pid sleeps on the wait message wmesg. */
+static bool
+sleeps_on(pid_t pid, const char *wmesg)
+{
+	struct kinfo_proc kp;
+	size_t len;
+	int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, 0 };
+
+	mib[3] = pid;
+	len = sizeof(kp);
+	if (sysctl(mib, nitems(mib), &kp, &len, NULL, 0) != 0 || len == 0)
+		return (false);
+	return (strcmp(kp.ki_wmesg, wmesg) == 0);
+}
+
+/*
+ * Start a child per read file that opens, reads and fstats it and closes
+ * it, and wait until every child's close waits for the resume.
+ */
 static void
-use_after_resume(void)
+start_readers(pid_t *pids)
+{
+	char path[64];
+	int fd, i, tries;
+
+	for (i = 0; i < NREAD; i++) {
+		path_of(path, sizeof(path), "f", i);
+		pids[i] = fork();
+		ATF_REQUIRE(pids[i] >= 0);
+		if (pids[i] == 0) {
+			fd = open(path, O_RDONLY);
+			if (fd < 0 || access_file(fd) != 0)
+				_exit(1);
+			_exit(close(fd) == 0 ? 0 : 2);
+		}
+	}
+	for (i = 0; i < NREAD; i++) {
+		for (tries = 0; tries < 2000; tries++) {
+			if (sleeps_on(pids[i], "suspfs"))
+				break;
+			usleep(5000);
+		}
+		ATF_REQUIRE_MSG(tries < 2000,
+		    "reader %d never waited for the resume in close", i);
+	}
+}
+
+static void
+reap_readers(pid_t *pids)
+{
+	int i, status;
+
+	for (i = 0; i < NREAD; i++) {
+		ATF_REQUIRE_EQ(pids[i], waitpid(pids[i], &status, 0));
+		ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+		    "reader %d: status %#x", i, status);
+	}
+}
+
+/* Use every read file: lookups lock and unlock its vnode. */
+static void
+use_files(void)
 {
 	struct stat sb;
-	char buf[8];
-	int fd;
+	char buf[8], path[64];
+	int fd, i;
 
-	ATF_REQUIRE_EQ_MSG(0, stat(FILE_PATH, &sb), "stat: %s",
-	    strerror(errno));
-	ATF_CHECK_EQ(5, sb.st_size);
-	fd = open(FILE_PATH, O_RDONLY);
-	ATF_REQUIRE_MSG(fd >= 0, "open: %s", strerror(errno));
-	ATF_CHECK_EQ(5, read(fd, buf, sizeof(buf)));
-	ATF_REQUIRE_EQ(0, close(fd));
-	ATF_REQUIRE_EQ(0, stat(FILE_PATH, &sb));
+	for (i = 0; i < NREAD; i++) {
+		path_of(path, sizeof(path), "f", i);
+		ATF_REQUIRE_EQ_MSG(0, stat(path, &sb), "stat %s: %s", path,
+		    strerror(errno));
+		ATF_CHECK_EQ(5, sb.st_size);
+		fd = open(path, O_RDONLY);
+		ATF_REQUIRE_MSG(fd >= 0, "open %s: %s", path, strerror(errno));
+		ATF_CHECK_EQ(5, read(fd, buf, sizeof(buf)));
+		ATF_REQUIRE_EQ(0, close(fd));
+	}
 }
 
 /* Unmount, check the file system read-only, and mount it again. */
@@ -163,65 +260,67 @@ remount_and_check(void)
 	run(cmd);
 	snprintf(cmd, sizeof(cmd), "mount /dev/%s %s", unit, MNT);
 	run(cmd);
-	use_after_resume();
+	use_files();
 }
 
-ATF_TC_WITH_CLEANUP(access_closed_during_suspension);
-ATF_TC_HEAD(access_closed_during_suspension, tc)
+ATF_TC_WITH_CLEANUP(closed_at_resume);
+ATF_TC_HEAD(closed_at_resume, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "a file read and closed while the file system is suspended "
-	    "can be used after the resume");
+	    "files read during a suspension and closed as it ends can be "
+	    "used after the resume");
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "require.progs", "mdconfig newfs fsck_ffs");
+	atf_tc_set_md_var(tc, "timeout", "300");
 }
-ATF_TC_BODY(access_closed_during_suspension, tc)
+ATF_TC_BODY(closed_at_resume, tc)
 {
-	int fd, sfd;
+	pid_t pids[NREAD];
+	int sfd;
 
 	fixture();
 	sfd = suspend();
-	fd = open(FILE_PATH, O_RDONLY);
-	ATF_REQUIRE_MSG(fd >= 0, "open: %s", strerror(errno));
-	access_file(fd);
-	/* The last close: the vnode is unused when the file system resumes. */
-	ATF_REQUIRE_EQ(0, close(fd));
+	start_readers(pids);
 	resume(sfd);
-	use_after_resume();
+	reap_readers(pids);
+	use_files();
 	remount_and_check();
 }
-ATF_TC_CLEANUP(access_closed_during_suspension, tc)
+ATF_TC_CLEANUP(closed_at_resume, tc)
 {
 	(void)tc;
 	cleanup();
 }
 
-ATF_TC_WITH_CLEANUP(access_open_across_resume);
-ATF_TC_HEAD(access_open_across_resume, tc)
+ATF_TC_WITH_CLEANUP(open_across_resume);
+ATF_TC_HEAD(open_across_resume, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "a file read while the file system is suspended and still open "
-	    "at the resume can be used after it");
+	    "a file read during a suspension and still open after it can be "
+	    "used after the resume");
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "require.progs", "mdconfig newfs fsck_ffs");
+	atf_tc_set_md_var(tc, "timeout", "300");
 }
-ATF_TC_BODY(access_open_across_resume, tc)
+ATF_TC_BODY(open_across_resume, tc)
 {
+	char path[64];
 	int fd, sfd;
 
 	fixture();
+	path_of(path, sizeof(path), "f", 0);
 	/* Open before the suspension: UFSSUSPEND refuses writers only. */
-	fd = open(FILE_PATH, O_RDONLY);
+	fd = open(path, O_RDONLY);
 	ATF_REQUIRE_MSG(fd >= 0, "open: %s", strerror(errno));
 	sfd = suspend();
-	access_file(fd);
+	ATF_REQUIRE_EQ(0, access_file(fd));
 	resume(sfd);
-	access_file(fd);
+	ATF_REQUIRE_EQ(0, access_file(fd));
 	ATF_REQUIRE_EQ(0, close(fd));
-	use_after_resume();
+	use_files();
 	remount_and_check();
 }
-ATF_TC_CLEANUP(access_open_across_resume, tc)
+ATF_TC_CLEANUP(open_across_resume, tc)
 {
 	(void)tc;
 	cleanup();
@@ -231,27 +330,24 @@ ATF_TC_WITH_CLEANUP(repeated_suspensions);
 ATF_TC_HEAD(repeated_suspensions, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "files read during repeated suspensions can be used after each "
-	    "resume");
+	    "files read and closed across repeated suspensions can be used "
+	    "after each resume");
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "require.progs", "mdconfig newfs fsck_ffs");
+	atf_tc_set_md_var(tc, "timeout", "900");
 }
 ATF_TC_BODY(repeated_suspensions, tc)
 {
-	int fd, i, sfd;
+	pid_t pids[NREAD];
+	int i, sfd;
 
 	fixture();
-	for (i = 0; i < 20; i++) {
+	for (i = 0; i < 10; i++) {
 		sfd = suspend();
-		fd = open(FILE_PATH, O_RDONLY);
-		ATF_REQUIRE_MSG(fd >= 0, "open: %s", strerror(errno));
-		access_file(fd);
-		ATF_REQUIRE_EQ(0, close(fd));
-		fd = open(MNT, O_RDONLY | O_DIRECTORY);
-		ATF_REQUIRE_MSG(fd >= 0, "open dir: %s", strerror(errno));
-		ATF_REQUIRE_EQ(0, close(fd));
+		start_readers(pids);
 		resume(sfd);
-		use_after_resume();
+		reap_readers(pids);
+		use_files();
 	}
 	remount_and_check();
 }
@@ -263,8 +359,8 @@ ATF_TC_CLEANUP(repeated_suspensions, tc)
 
 ATF_TP_ADD_TCS(tp)
 {
-	ATF_TP_ADD_TC(tp, access_closed_during_suspension);
-	ATF_TP_ADD_TC(tp, access_open_across_resume);
+	ATF_TP_ADD_TC(tp, closed_at_resume);
+	ATF_TP_ADD_TC(tp, open_across_resume);
 	ATF_TP_ADD_TC(tp, repeated_suspensions);
 	return (atf_no_error());
 }
