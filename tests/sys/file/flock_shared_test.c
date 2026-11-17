@@ -244,8 +244,9 @@ fork_locker(int fd, int how, int sig)
  * caught before it.  On that path a lost first signal cannot be told from
  * a page-in, and is not detected.  The re-send waits a second: a served
  * request's EINTR goes through the supervisor (INTERRUPT, the cancelled
- * proxy lock, the reply), which takes tens of milliseconds, and a quicker
- * re-send would count that latency as a lost signal.
+ * proxy lock, the reply), which takes tens to hundreds of milliseconds;
+ * a quicker re-send would only send extra signals while that reply is on
+ * its way and inflate the printed count.
  *
  * The number of signals sent and the time to the reap are printed.  A
  * child still not reaped after 30 s fails the case; it is killed, not

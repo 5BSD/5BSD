@@ -2032,7 +2032,8 @@ ATF_TC_CLEANUP(owner_only_misc, tc)
 /*
  * The "dq" malloc type (M_DQ, dq_dev.c), read through libmemstat: whether
  * the kernel has it, how many allocations are in use and how many were
- * ever made.  False if the statistics cannot be read.
+ * ever made.  False if the statistics cannot be read, with libmemstat's
+ * reason in *why.
  */
 struct dq_mstat {
 	bool		 present;
@@ -2041,16 +2042,20 @@ struct dq_mstat {
 };
 
 static bool
-dq_malloc_stat(struct dq_mstat *ms)
+dq_malloc_stat(struct dq_mstat *ms, const char **why)
 {
 	struct memory_type_list *mtlp;
 	struct memory_type *mtp;
 
 	memset(ms, 0, sizeof(*ms));
+	*why = NULL;
 	mtlp = memstat_mtl_alloc();
-	if (mtlp == NULL)
+	if (mtlp == NULL) {
+		*why = "memstat_mtl_alloc failed";
 		return (false);
+	}
 	if (memstat_sysctl_malloc(mtlp, 0) != 0) {
+		*why = memstat_strerror(memstat_mtl_geterror(mtlp));
 		memstat_mtl_free(mtlp);
 		return (false);
 	}
@@ -2139,13 +2144,14 @@ ATF_TC_BODY(exit_close_storm, tc)
 	ssize_t n;
 	pid_t pid;
 	struct dq_mstat mem_before, mem_now;
+	const char *why;
 	u_int before;
 	int bad[2], i, nbad, status;
 
 	dqt_require_test_access();
 	before = queues_now();
-	ATF_REQUIRE_MSG(dq_malloc_stat(&mem_before),
-	    "malloc statistics: %s", strerror(errno));
+	ATF_REQUIRE_MSG(dq_malloc_stat(&mem_before, &why),
+	    "malloc statistics: %s", why);
 	ATF_REQUIRE_EQ(0, pipe(bad));
 	t0 = dqt_now_ms();
 	next = t0 + STORM_REPORT_MS;
@@ -2189,7 +2195,8 @@ ATF_TC_BODY(exit_close_storm, tc)
 	 */
 	deadline = dqt_now_ms() + DQT_WAIT_MS;
 	for (;;) {
-		ATF_REQUIRE(dq_malloc_stat(&mem_now));
+		ATF_REQUIRE_MSG(dq_malloc_stat(&mem_now, &why),
+		    "malloc statistics: %s", why);
 		if (mem_now.inuse == mem_before.inuse ||
 		    dqt_now_ms() >= deadline)
 			break;
@@ -2197,8 +2204,10 @@ ATF_TC_BODY(exit_close_storm, tc)
 	}
 	ATF_REQUIRE_MSG(mem_now.present, "no \"dq\" malloc type after the "
 	    "storm: nothing was compared");
-	ATF_CHECK_MSG(mem_now.numallocs > mem_before.numallocs, "dq malloc "
-	    "type: %ju allocations after the storm, %ju before",
+	/* Each owner's queue alone is one M_DQ allocation (dq_queue.c). */
+	ATF_CHECK_MSG(mem_now.numallocs >= mem_before.numallocs + EXIT_STORM,
+	    "dq malloc type: %ju allocations after the storm, %ju before, "
+	    "fewer than one per round",
 	    (uintmax_t)mem_now.numallocs, (uintmax_t)mem_before.numallocs);
 	ATF_CHECK_EQ_MSG(mem_before.inuse, mem_now.inuse, "dq malloc type: "
 	    "%ju in use, was %ju", (uintmax_t)mem_now.inuse,
