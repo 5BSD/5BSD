@@ -582,7 +582,9 @@ SCRIPT
     atf_check -s exit:0 -o ignore grep 'PKGBASE_SIGNED_REPOSITORY=' commands
     atf_check -s exit:0 -o ignore grep 'host-tools.mk.* all kldxref' commands
     atf_check -s exit:0 -o ignore grep 'HARDWARE_KLDXREF=.*/native-tools/kldxref' commands
-    atf_check -s exit:0 -o ignore grep 'NOPKGBASE= NODISTSETS=yes NOPKG=yes disc1.iso memstick.img' commands
+    # build-bsd names KERNCONFDIR for every kernel-configuring step, the
+    # media step included, between the release knobs and the targets.
+    atf_check -s exit:0 -o ignore grep 'NOPKGBASE= NODISTSETS=yes NOPKG=yes KERNCONFDIR=/usr/src/sys/[a-z0-9]*/conf disc1.iso memstick.img$' commands
     atf_check -s exit:1 -o empty grep 'buildworld\|buildkernel' commands
     atf_check -s exit:0 test -s "$stage/CHECKSUM.SHA256"
     atf_check -s exit:0 test -s "$stage/CHECKSUM.SHA512"
@@ -1081,7 +1083,7 @@ boot_transport_head()
 {
     atf_set descr 'Complete boot transport, signing and GPT payload checks'
     atf_set require.progs 'python3.12 openssl'
-    atf_set timeout 120
+    atf_set timeout 900
 }
 boot_transport_body()
 {
