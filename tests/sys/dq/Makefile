@@ -3,7 +3,7 @@
 #
 # Integration tests: each program opens /dev/dq as a controller and forks
 # requesters, so they need the dq(4) device and root.  One skip policy (see
-# libdqtest/dq_test.h): a missing device, module, program or other
+# libdqtest/dqt.h): a missing device, module, program or other
 # prerequisite of the plane-on test guest is a failure, not a skip; the
 # skips left are by architecture (require.arch), a race a one-CPU machine
 # cannot run, and a case deferred by name to another VM tier

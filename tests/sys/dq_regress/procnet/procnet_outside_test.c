@@ -40,7 +40,7 @@
 #include "mac_capability_node_proto.h"
 #include "mac_capability_test_helpers.h"
 
-#include "dq_test.h"
+#include "dqt.h"
 #include "procnet_boundary.h"
 
 static char	helper[PATH_MAX];

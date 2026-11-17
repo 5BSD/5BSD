@@ -176,7 +176,7 @@
 
 #include <dev/dq/dq_observe_proto.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	NOBODY_UID	65534
 #define	PROC_DEBUG	"security.bsd.unprivileged_proc_debug"

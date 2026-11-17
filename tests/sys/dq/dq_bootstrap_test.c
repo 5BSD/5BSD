@@ -44,7 +44,7 @@
 #include <notify.h>
 #include <sysctlcmp.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	NA	(-9999)		/* a step that was not reached */
 

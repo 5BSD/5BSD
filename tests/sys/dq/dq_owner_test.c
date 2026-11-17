@@ -58,7 +58,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 /* Every way into the queue's cdevsw, one slot each. */
 enum {

@@ -4,7 +4,7 @@
  * Copyright (c) 2026 Kory Heard
  *
  * The served-tree harness of the DescriptorQueue tests; see
- * dq_tree_harness.h.
+ * dqt_tree.h.
  */
 
 #include <sys/param.h>
@@ -24,24 +24,24 @@
 
 #include <libdq.h>
 
-#include "dq_tree_harness.h"
+#include "dqt_tree.h"
 
 static int
-ts_handler(int q, const struct dq_event *ev, const void *body,
+dqt_tree_handler(int q, const struct dq_event *ev, const void *body,
     size_t bodylen, void *arg)
 {
 	const struct dq_resolve_body *rb;
 	const char *path, *path2, *sp, *sp2;
 	const struct dq_setattr_body *sb;
-	struct ts *s = arg;
-	struct ts_ev *e;
+	struct dqt_tree *s = arg;
+	struct dqt_tree_ev *e;
 
 	(void)q;
 	if (ev->de_op == DQ_OP_RESOLVE &&
 	    dq_event_resolve_ext(ev, &rb, &path, &path2, &sp, &sp2,
 	    &sb) == 0) {
 		pthread_mutex_lock(&s->mtx);
-		if (s->nev < TS_NEV) {
+		if (s->nev < DQT_TREE_NEV) {
 			e = &s->ev[s->nev++];
 			e->op = rb->drs_op;
 			e->start_kind = rb->drs_start_kind;
@@ -64,7 +64,7 @@ ts_handler(int q, const struct dq_event *ev, const void *body,
 
 /* A file with contents under dir. */
 void
-ts_file(const char *dir, const char *name, const char *data)
+dqt_tree_file(const char *dir, const char *name, const char *data)
 {
 	char path[PATH_MAX];
 	int fd;
@@ -78,7 +78,7 @@ ts_file(const char *dir, const char *name, const char *data)
 }
 
 void
-ts_mkdir(const char *dir, const char *name)
+dqt_tree_mkdir(const char *dir, const char *name)
 {
 	char path[PATH_MAX];
 
@@ -89,7 +89,7 @@ ts_mkdir(const char *dir, const char *name)
 }
 
 void
-ts_symlink(const char *dir, const char *name, const char *target)
+dqt_tree_symlink(const char *dir, const char *name, const char *target)
 {
 	char path[PATH_MAX];
 
@@ -103,22 +103,22 @@ ts_symlink(const char *dir, const char *name, const char *target)
  * ds -> d, abs -> /d/f (an absolute link, inside the served root).
  */
 void
-ts_make_tree(const char *dir)
+dqt_tree_make(const char *dir)
 {
 
 	ATF_REQUIRE(mkdir(dir, 0755) == 0);
-	ts_file(dir, "a", "tree\n");
-	ts_mkdir(dir, "d");
-	ts_file(dir, "d/f", "f\n");
-	ts_mkdir(dir, "d/e");
-	ts_symlink(dir, "l", "a");
-	ts_symlink(dir, "ds", "d");
-	ts_symlink(dir, "abs", "/d/f");
+	dqt_tree_file(dir, "a", "tree\n");
+	dqt_tree_mkdir(dir, "d");
+	dqt_tree_file(dir, "d/f", "f\n");
+	dqt_tree_mkdir(dir, "d/e");
+	dqt_tree_symlink(dir, "l", "a");
+	dqt_tree_symlink(dir, "ds", "d");
+	dqt_tree_symlink(dir, "abs", "/d/f");
 }
 
 /* Serve dir (made by the caller) with flags | DQ_TREE_F_SERVED. */
 void
-ts_start(struct ts *s, const char *dir, uint32_t flags)
+dqt_tree_start(struct dqt_tree *s, const char *dir, uint32_t flags)
 {
 
 	memset(s, 0, sizeof(*s));
@@ -132,11 +132,11 @@ ts_start(struct ts *s, const char *dir, uint32_t flags)
 	ATF_REQUIRE_MSG(s->tree != NULL, "dq_tree_create: %s",
 	    strerror(errno));
 	ATF_REQUIRE(dq_tree_root(s->tree, &s->sroot, &s->rootid) == 0);
-	dqt_server_start(&s->server, s->q, ts_handler, s);
+	dqt_server_start(&s->server, s->q, dqt_tree_handler, s);
 }
 
 void
-ts_stop(struct ts *s)
+dqt_tree_stop(struct dqt_tree *s)
 {
 	int error;
 
@@ -152,7 +152,7 @@ ts_stop(struct ts *s)
 }
 
 int
-ts_nev(struct ts *s)
+dqt_tree_nev(struct dqt_tree *s)
 {
 	int n;
 
@@ -164,7 +164,7 @@ ts_nev(struct ts *s)
 
 /* How many recorded events, from index from, have this op. */
 int
-ts_count_op(struct ts *s, int from, uint32_t op)
+dqt_tree_count_op(struct dqt_tree *s, int from, uint32_t op)
 {
 	int i, n;
 
@@ -184,8 +184,9 @@ ts_count_op(struct ts *s, int from, uint32_t op)
  * keep_sroot (an inherited served directory counts against chroot).
  */
 int
-ts_child_ex(struct ts *s, int rootfd, int cwdfd, bool keep_sroot,
-    bool close_before_go, ts_child_fn fn, void *arg, void *out, size_t outlen)
+dqt_tree_child_ex(struct dqt_tree *s, int rootfd, int cwdfd, bool keep_sroot,
+    bool close_before_go, dqt_tree_child_fn fn, void *arg, void *out,
+    size_t outlen)
 {
 	int ready[2], go[2], back[2], pd, status;
 	char sbuf[64];
@@ -246,10 +247,10 @@ ts_child_ex(struct ts *s, int rootfd, int cwdfd, bool keep_sroot,
 }
 
 int
-ts_child(struct ts *s, int rootfd, int cwdfd, ts_child_fn fn, void *arg,
-    void *out, size_t outlen)
+dqt_tree_child(struct dqt_tree *s, int rootfd, int cwdfd, dqt_tree_child_fn fn,
+    void *arg, void *out, size_t outlen)
 {
 
-	return (ts_child_ex(s, rootfd, cwdfd, false, false, fn, arg, out,
+	return (dqt_tree_child_ex(s, rootfd, cwdfd, false, false, fn, arg, out,
 	    outlen));
 }

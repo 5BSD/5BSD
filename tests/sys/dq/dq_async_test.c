@@ -25,7 +25,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	NPAGES		8
 #define	DATA_LEN	(NPAGES * 4096)
