@@ -748,6 +748,12 @@ Before that bound a requester waits for a slot when an object has
 .Va kern.dq.max_inflight_per_object
 unanswered events or the requester itself has
 .Va kern.dq.max_inflight_per_requester .
+That wait is part of the event's: the event's deadline, taken before it,
+bounds the two together, and a requester that reaches it there fails with
+.Er EIO ,
+counted in
+.Va ds_deadline_misses ,
+with no event posted (the controller sees nothing of it).
 .Ss Waiting, deadlines and interruption
 A requester waits for its reply holding only what the operation already
 held (the shared offset, the object's range lock); no vnode exists.
@@ -4445,6 +4451,14 @@ SDT provider fires:
 .It dq:::event-drop
 .Fa "struct dq_queue *" ,
 .Fa "int op"
+.It dq:::quota-wait
+.Fa "struct dq_queue *" ,
+.Fa "struct dq_event_k *" ,
+.Fa "int quota" ,
+.Fa "int errno"
+(a wait for an in-flight quota before a post ended:
+.Va quota
+1 the object's, 2 the requester's)
 .It dq:::reply-late
 .Fa "struct dq_queue *" ,
 .Fa "uint64_t id"

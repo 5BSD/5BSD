@@ -1025,29 +1025,51 @@ dq_fault_abandon(struct thread *td)
 #define	DQ_FAULT_SLICE	(100 * SBT_1MS)
 
 /*
- * A quota sleep before the post.  A syscall's is interruptible; a fault's
- * (DQ_POST_FAULT) is a non-catching slice bounded by the deadline: 0 to
- * look again, EIO at the deadline, EINTR when the process is dying.
+ * A quota sleep before the post, bounded by the event's own deadline
+ * (absolute, taken before the first sleep), so the wait for a slot and
+ * the wait for the answer together never pass it (T-R03).  A syscall's
+ * is interruptible; a fault's (DQ_POST_FAULT) is a non-catching slice.
+ * Returns 0 to look again; EIO at the deadline (the event was never
+ * posted: the controller sees nothing of it), counted as a deadline miss;
+ * a caught signal's errno; EINTR for a fault when the process is dying.
  * Called and returns with q_mtx held.
  */
 static int
-dq_post_quota_sleep(struct dq_queue *q, void *chan, const char *wmesg,
-    struct thread *td, int flags, sbintime_t deadline)
+dq_post_quota_sleep(struct dq_queue *q, struct dq_event_k *ev, void *chan,
+    const char *wmesg, struct thread *td, int flags, sbintime_t deadline)
 {
 	sbintime_t now;
+	int error;
 	bool dying;
 
-	if ((flags & DQ_POST_FAULT) == 0)
-		return (msleep(chan, &q->q_mtx, PCATCH, wmesg, 0));
-	now = sbinuptime();
-	if (now >= deadline)
-		return (EIO);
-	(void)msleep_sbt(chan, &q->q_mtx, 0, wmesg,
-	    MIN(deadline, now + DQ_FAULT_SLICE), 0, C_ABSOLUTE);
-	DQ_UNLOCK(q);
-	dying = dq_fault_abandon(td);
-	DQ_LOCK(q);
-	return (dying ? EINTR : 0);
+	if ((flags & DQ_POST_FAULT) == 0) {
+		if (deadline == 0)
+			error = msleep(chan, &q->q_mtx, PCATCH, wmesg, 0);
+		else
+			error = msleep_sbt(chan, &q->q_mtx, PCATCH, wmesg,
+			    deadline, 0, C_ABSOLUTE);
+		if (error == EWOULDBLOCK)
+			error = EIO;
+	} else {
+		now = sbinuptime();
+		if (now >= deadline) {
+			error = EIO;
+		} else {
+			(void)msleep_sbt(chan, &q->q_mtx, 0, wmesg,
+			    MIN(deadline, now + DQ_FAULT_SLICE), 0, C_ABSOLUTE);
+			DQ_UNLOCK(q);
+			dying = dq_fault_abandon(td);
+			DQ_LOCK(q);
+			error = dying ? EINTR : 0;
+		}
+	}
+	if (error == EIO)
+		q->q_stats.ds2_deadline_misses++;
+	if (error != 0)
+		SDT_PROBE4(dq, , , quota__wait, q, ev,
+		    (chan == (void *)&q->q_requesters ? DQ_QUOTA_REQUESTER :
+		    DQ_QUOTA_OBJECT), error);
+	return (error);
 }
 
 int
@@ -1138,16 +1160,16 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 		if (lock)
 			break;
 		if (o->o_inflight >= dq_max_inflight_per_object) {
-			error = dq_post_quota_sleep(q, &o->o_inflight, "dqinfl",
-			    td, flags, deadline);
+			error = dq_post_quota_sleep(q, ev, &o->o_inflight,
+			    "dqinfl", td, flags, deadline);
 			if (error != 0)
 				goto out_locked;
 			continue;
 		}
 		rq = dq_requester_find_locked(q, ev->ev_requester);
 		if (rq != NULL && rq->rq_inflight >= dq_max_inflight_per_requester) {
-			error = dq_post_quota_sleep(q, &q->q_requesters, "dqreq",
-			    td, flags, deadline);
+			error = dq_post_quota_sleep(q, ev, &q->q_requesters,
+			    "dqreq", td, flags, deadline);
 			if (error != 0)
 				goto out_locked;
 			continue;

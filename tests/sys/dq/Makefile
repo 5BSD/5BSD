@@ -99,6 +99,9 @@ LIBADD+=	dq pthread util
 TEST_METADATA.dq_concurrency_test+=	is_exclusive="true"
 # Changes kern.dq.max_inflight_per_object and _per_requester: run alone.
 TEST_METADATA.dq_deadline_test+=	is_exclusive="true"
+# Runs cases of the other programs under DTrace, one of them
+# dq_deadline_test's: alone.
+TEST_METADATA.dq_dtrace_test+=	is_exclusive="true"
 # Attaches a global OES client, as the OES suite does: run alone.
 TEST_METADATA.dq_oes_test+=	is_exclusive="true"
 # Switches mac_abac to enforcing for one rule, and traces with dtrace: alone.

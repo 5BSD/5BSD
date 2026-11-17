@@ -54,7 +54,7 @@ dq_probes_present_body()
 	for probe in queue-open queue-close mint revoke object-close \
 	    event-post event-deliver event-reply event-drop event-interrupt \
 	    event-deadline reply-late attach resolve-post resolve-reply \
-	    fop-local; do
+	    fop-local quota-wait; do
 		atf_check -o ignore dtrace -l -n "dq:::${probe}"
 	done
 }
@@ -141,6 +141,22 @@ namei_served_fires_body()
 	atf_check -o ignore grep -qx '2 3 0' fired
 }
 
+atf_test_case quota_wait_fires
+quota_wait_fires_head()
+{
+	atf_set "descr" "dq:::quota-wait fires when a wait for the " \
+	    "requester's in-flight quota reaches the event's deadline"
+	atf_set "require.user" "root"
+}
+quota_wait_fires_body()
+{
+	require_dtrace
+	fire dq:::quota-wait "%d %d" "arg2, arg3" dq_deadline_test \
+	    quota_requester_bounded
+	# The requester's quota (2), EIO (5).
+	atf_check -o ignore grep -qx '2 5' fired
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case dq_probes_present
@@ -148,4 +164,5 @@ atf_init_test_cases()
 	atf_add_test_case mac_file_notify_reply_present
 	atf_add_test_case fop_local_fires
 	atf_add_test_case namei_served_fires
+	atf_add_test_case quota_wait_fires
 }

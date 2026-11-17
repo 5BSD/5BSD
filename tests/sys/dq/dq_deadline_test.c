@@ -366,16 +366,16 @@ quota_run(struct dqt_ctl *c, struct quota_arg *a, struct timed_res *r)
 #define	QUOTA_REQUESTER	"kern.dq.max_inflight_per_requester"
 #define	QUOTA_OBJECT	"kern.dq.max_inflight_per_object"
 
-ATF_TC_WITH_CLEANUP(quota_requester_unbounded);
-ATF_TC_HEAD(quota_requester_unbounded, tc)
+ATF_TC_WITH_CLEANUP(quota_requester_bounded);
+ATF_TC_HEAD(quota_requester_bounded, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "the per-requester quota held by "
 	    "events of a deadline-0 object: a read of a 200 ms object waits "
-	    "for its post (T-R03)");
+	    "for its post no longer than its deadline (T-R03)");
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "timeout", "60");
 }
-ATF_TC_BODY(quota_requester_unbounded, tc)
+ATF_TC_BODY(quota_requester_bounded, tc)
 {
 	struct dqt_ctl c;
 	struct dqt_object *x, *y;
@@ -402,13 +402,13 @@ ATF_TC_BODY(quota_requester_unbounded, tc)
 	a.alarm_s = 1;
 	quota_run(&c, &a, &r);
 	/*
-	 * Pin: the quota sleep ignores the 200 ms deadline: the read is
-	 * still waiting for its post at 1 s and ends with the signal.
+	 * The quota sleep is bounded by the event's 200 ms deadline: EIO
+	 * then, well before the 1 s signal (it waited for the signal).
 	 */
 	ATF_CHECK_EQ(-1, r.rr.rv);
-	ATF_CHECK_EQ(EINTR, r.rr.err);
-	ATF_CHECK_MSG(r.elapsed_ms >= 950, "returned after %ld ms",
-	    r.elapsed_ms);
+	ATF_CHECK_EQ(EIO, r.rr.err);
+	ATF_CHECK_MSG(r.elapsed_ms >= 150 && r.elapsed_ms < 900,
+	    "returned after %ld ms", r.elapsed_ms);
 	/* Only the holders' events were ever posted. */
 	dqt_lock(&c);
 	ATF_CHECK_EQ(QUOTA_HOLDERS, c.nheld);
@@ -417,7 +417,7 @@ ATF_TC_BODY(quota_requester_unbounded, tc)
 	(void)close(oracle);
 	ATF_REQUIRE(dqt_sysctl_restore(QUOTA_REQUESTER));
 }
-ATF_TC_CLEANUP(quota_requester_unbounded, tc)
+ATF_TC_CLEANUP(quota_requester_bounded, tc)
 {
 
 	(void)dqt_sysctl_restore(QUOTA_REQUESTER);
@@ -482,7 +482,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, default_deadline_accepted);
 	ATF_TP_ADD_TC(tp, setpolicy_deadline);
 	ATF_TP_ADD_TC(tp, sigkill_breaks_wait);
-	ATF_TP_ADD_TC(tp, quota_requester_unbounded);
+	ATF_TP_ADD_TC(tp, quota_requester_bounded);
 	ATF_TP_ADD_TC(tp, quota_object_one_deadline);
 	return (atf_no_error());
 }

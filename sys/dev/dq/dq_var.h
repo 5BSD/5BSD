@@ -132,6 +132,11 @@ SDT_PROBE_DECLARE(dq, , , resolve__retire);
 SDT_PROBE_DECLARE(dq, , , resolve__real);
 SDT_PROBE_DECLARE(dq, , , resolve__symlink);
 SDT_PROBE_DECLARE(dq, , , fop__local);
+SDT_PROBE_DECLARE(dq, , , quota__wait);
+
+/* dq:::quota-wait's quota (args: queue, event, DQ_QUOTA_*, errno). */
+#define	DQ_QUOTA_OBJECT		1	/* kern.dq.max_inflight_per_object */
+#define	DQ_QUOTA_REQUESTER	2	/* kern.dq.max_inflight_per_requester */
 
 /*
  * dq:::fop-local's operation: a fileop the kernel answered from the
