@@ -775,34 +775,40 @@ config_bad_port_cleanup()
 	rm -f badport.conf
 }
 
-atf_test_case config_relative_path cleanup
-config_relative_path_head()
+# Path claims were retired (235fe13b64e): filesystem paths are brokered,
+# and capsule.conf(5) says no paths claim exists.  The key is refused at
+# load like any unknown claims key, whether the path is relative or not;
+# config_claims_system shows the same section with a known key loads.
+atf_test_case config_claims_paths_retired cleanup
+config_claims_paths_retired_head()
 {
-	atf_set "descr" "relative claim path is rejected"
+	atf_set "descr" "the retired claims.paths key rejects the configuration"
 }
-config_relative_path_body()
+config_claims_paths_retired_body()
 {
-	local conffile="$(pwd)/relpath.conf"
-	local pidfile="$(pwd)/relpath_test.pid"
-	cat > "$conffile" <<'ENDCONF'
+	local conffile="$(pwd)/claims_paths.conf"
+	local pidfile="$(pwd)/claims_paths_test.pid"
+	local path
+
+	for path in relative/path /var/empty; do
+		cat > "$conffile" <<ENDCONF
 claims {
-    paths = ["relative/path"];
+    paths = ["$path"];
 }
 ENDCONF
-	capsule -T -f "$conffile" -p "$pidfile" &
-	local pid=$!
-	atf_check -s exit:0 -o ignore sh -c \
-	    "i=0; while [ ! -s '$pidfile' ] && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; test -s '$pidfile'"
-	atf_check -s exit:0 kill -TERM "$pid"
-	wait "$pid"
+		atf_check -s not-exit:0 -o empty \
+		    -e match:"invalid configuration: .*/claims_paths.conf" \
+		    capsule -T -f "$conffile" -p "$pidfile"
+		atf_check -s exit:1 test -e "$pidfile"
+	done
 }
-config_relative_path_cleanup()
+config_claims_paths_retired_cleanup()
 {
-	if [ -f relpath_test.pid ]; then
-		kill "$(cat relpath_test.pid)" 2>/dev/null || true
-		rm -f relpath_test.pid
+	if [ -f claims_paths_test.pid ]; then
+		kill "$(cat claims_paths_test.pid)" 2>/dev/null || true
+		rm -f claims_paths_test.pid
 	fi
-	rm -f relpath.conf
+	rm -f claims_paths.conf
 }
 
 atf_test_case config_integer_mode_rejected cleanup
@@ -1531,7 +1537,7 @@ atf_init_test_cases()
 	atf_add_test_case config_claims_system
 	atf_add_test_case config_claims_system_bad_name
 	atf_add_test_case config_bad_port
-	atf_add_test_case config_relative_path
+	atf_add_test_case config_claims_paths_retired
 	atf_add_test_case config_integer_mode_rejected
 
 	# Daemon behavior
