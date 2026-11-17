@@ -14,8 +14,9 @@
 #	kyua -v test_suites.FreeBSD.dq_hang_loop=yes test \
 #	    sys/dq/dq_tree_hang_loop
 #
-# DQ_HANG_CASE (program:case under /usr/tests) and DQ_HANG_ROUNDS (200)
-# change what is run and how often.  Every round must pass: a round that
+# DQ_HANG_CASE (program:case under /usr/tests), DQ_HANG_ROUNDS (200) and
+# DQ_HANG_MAX (3: stop after that many hung rounds) change what is run and
+# how often.  Every round must pass: a round that
 # times out or fails is a hang, reported with the capture.
 #
 
@@ -34,7 +35,8 @@ loop_head()
 }
 loop_body()
 {
-	local root kase prog name rounds i hangs sampler rc res start secs
+	local root kase prog name rounds maxhangs i hangs sampler rc res start
+	local secs
 
 	[ -c /dev/dq ] || atf_fail "/dev/dq is absent"
 	[ -x "$(atf_get_srcdir)/dqtree" ] || atf_fail "dqtree is not installed"
@@ -42,6 +44,7 @@ loop_body()
 	prog="${kase%%:*}"
 	name="${kase#*:}"
 	rounds="${DQ_HANG_ROUNDS:-200}"
+	maxhangs="${DQ_HANG_MAX:-3}"
 	root="/usr/obj/dqtree-hang.$$"
 	dq_assemble_root "${root}" || atf_fail "cannot assemble ${root}"
 	[ -x "${root}/usr/tests/${prog}" ] ||
@@ -82,10 +85,11 @@ loop_body()
 			kyua report --results-file="${root}/tmp/hang.db" \
 			    --verbose >&2 2>/dev/null
 			hang_report hang
+			[ "${hangs}" -lt "${maxhangs}" ] || break
 			;;
 		esac
 	done
-	echo "${hangs} of ${rounds} rounds did not pass" >&2
+	echo "${hangs} of ${i} rounds did not pass" >&2
 	[ "${hangs}" -eq 0 ] || atf_fail "${hangs} of ${rounds} rounds hung" \
 	    "or failed"
 }

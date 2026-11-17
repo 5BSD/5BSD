@@ -71,27 +71,30 @@ hang_secs()
 	}'
 }
 
-# The newest "Executing command" line of the newest test output, or "".
+# The newest "Executing command" line of the newest test output under the
+# root's /tmp, or "".
 hang_last_command()
 {
 	local out
 
-	out=$(ls -t "$1"/tmp/kyua.*/*/stdout.txt 2>/dev/null | head -n 1)
+	out=$(find "$1"/tmp -name stdout.txt -newer "$2" 2>/dev/null |
+	    xargs ls -t 2>/dev/null | head -n 1)
 	[ -n "${out}" ] || return 0
 	grep 'Executing command' "${out}" 2>/dev/null | tail -n 1
 }
 
-# usage: hang_trace DIR PIDFILE
+# usage: hang_trace DIR PIDFILE TOP
+# The tree is the listed pids and the progeny of TOP: DTrace sees the
+# attached processes even where ps(1) of an unattached sampler does not.
 hang_trace()
 {
 	local d pred p
 
 	d="$1"
-	pred=
+	pred="progenyof($3)"
 	for p in $(cat "$2"); do
-		pred="${pred}${pred:+ || }pid == ${p}"
+		pred="${pred} || pid == ${p}"
 	done
-	[ -n "${pred}" ] || return 0
 	timeout 30 dtrace -q -n "
 	    profile-997 /${pred}/ { @prof[pid, execname, stack(), ustack()] = count(); }
 	    sched:::off-cpu /${pred}/ {
@@ -110,6 +113,7 @@ hang_sampler()
 
 	d="$1"; root="$2"; pat="$3"
 	mkdir -p "${d}"
+	: > "${d}/start"
 	n=0
 	idle=0
 	traced=
@@ -127,8 +131,9 @@ hang_sampler()
 			echo "=== sample ${n} $(date -u +%T)"
 			cat "${d}/rows.${n}"
 		} >> "${d}/samples"
-		cmd=$(hang_last_command "${root}")
-		if [ -n "${cmd}" ] && [ "${cmd}" = "${lastcmd}" ]; then
+		cmd=$(hang_last_command "${root}" "${d}/start")
+		# No output seen yet counts as no progress too.
+		if [ "${cmd}" = "${lastcmd}" ]; then
 			idle=$((idle + 10))
 		else
 			idle=0
@@ -165,8 +170,10 @@ hang_sampler()
 			{
 				echo "=== stall $(date -u +%T), last command:"
 				echo "${cmd}"
+				echo "=== every kernel stack (procstat -kk -a)"
+				procstat -kk -a 2>&1
 			} >> "${d}/stalls"
-			hang_trace "${d}" "${d}/pids.${n}"
+			hang_trace "${d}" "${d}/pids.${n}" "${top}"
 			cat "${d}/dtrace.out" >> "${d}/stalls"
 			for pid in $(cat "${d}/pids.${n}"); do
 				gcore -c "${d}/core.${n}.${pid}" "${pid}" \
