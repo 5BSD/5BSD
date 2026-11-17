@@ -95,6 +95,7 @@ exec_image(char *buf, size_t size)
 
 static _Atomic int anchored;
 static _Atomic int held_count;
+static _Atomic int dropped_count;
 static int held[HELD_MAX];
 
 /* Create test issuers until the anchor; keep every one created. */
@@ -115,8 +116,10 @@ creator(void *arg __unused)
 		}
 		n = atomic_fetch_add(&held_count, 1);
 		if (n >= HELD_MAX) {
+			/* The anchor may revoke it before this close. */
 			close(fd);
 			atomic_fetch_sub(&held_count, 1);
+			atomic_fetch_add(&dropped_count, 1);
 			continue;
 		}
 		held[n] = fd;
@@ -147,7 +150,7 @@ ATF_TC_BODY(anchor, tc)
 	uintmax_t identity, issuer_identity, latency;
 	void *result;
 	int issuer, constrained, unregistered, spare, image, one = 1, n;
-	int outcome, reason, perrno, revokes, own_revoked;
+	int outcome, reason, perrno, revokes, own_revoked, dropped;
 
 	state(buf, sizeof(buf));
 	ATF_REQUIRE_MSG(strcmp(buf, "anchored") != 0,
@@ -218,7 +221,9 @@ ATF_TC_BODY(anchor, tc)
 		    "refused before the anchor" : strerror((int)(intptr_t)result));
 	}
 	n = atomic_load(&held_count);
-	printf("test issuers created during the race: %d\n", n);
+	dropped = atomic_load(&dropped_count);
+	printf("test issuers created during the race: %d held, %d closed\n",
+	    n, dropped);
 	out = probe_stop(&p);
 	revokes = own_revoked = 0;
 	for (line = out; *line != '\0'; line = next) {
@@ -242,9 +247,15 @@ ATF_TC_BODY(anchor, tc)
 			own_revoked++;
 	}
 	free(out);
-	/* This program runs in a guest of its own: no other issuer is alive. */
-	ATF_CHECK_EQ_MSG(revokes, 1 + n, "%d REVOKE firings for %d issuers",
-	    revokes, 1 + n);
+	/*
+	 * This program runs in a guest of its own: no other issuer is alive.
+	 * Every held issuer was revoked by the anchor (each refuses ISSUE
+	 * below); one closed past HELD_MAX was revoked too if the anchor took
+	 * it before the close.
+	 */
+	ATF_CHECK_MSG(revokes >= 1 + n && revokes <= 1 + n + dropped,
+	    "%d REVOKE firings for %d held issuers and %d closed", revokes,
+	    1 + n, dropped);
 	ATF_CHECK_EQ_MSG(own_revoked, 1, "first issuer revoked %d times",
 	    own_revoked);
 	/* Exec no longer selects the application. */
