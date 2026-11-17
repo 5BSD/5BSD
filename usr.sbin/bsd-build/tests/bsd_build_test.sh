@@ -139,22 +139,26 @@ PYTHON
     atf_check -s exit:0 -o match:'boot-verification=not-performed' -e empty "$tool" plan stage
     atf_check -s exit:0 -o match:'bundle-signing-mode=unsigned' -e empty "$tool" plan stage --signing unsigned
 }
-atf_test_case optional_integrity_profile
-optional_integrity_profile_head()
+# The archived GENERIC-INTEGRITY profile (bsd-build(8): BIP development is
+# dropped) is not in the tree, so the explicit selection uses an ordinary one.
+atf_test_case signing_kernel_selection
+signing_kernel_selection_head()
 {
-    atf_set descr 'Signing preserves ordinary kernel defaults; explicit BIP profile selects the real policy object'
+    atf_set descr 'Signing preserves the GENERIC default; an explicit --kernel selects that configuration'
     atf_set require.progs python3.12
     atf_set require.arch amd64
 }
-optional_integrity_profile_body()
+signing_kernel_selection_body()
 {
     setup
-    kernel_config=$(atf_config_get kernel_config /usr/sbin/config)
-    atf_check -s exit:0 -o ignore -e empty python3.12 - "$tool" "$kernel_config" <<'PYTHON'
-import json, pathlib, subprocess, sys
-frontend, config = sys.argv[1:]
+    [ -f /usr/src/sys/amd64/conf/GENERIC-NODEBUG ] || atf_fail 'GENERIC-NODEBUG is missing from /usr/src'
+    [ ! -e /usr/src/sys/amd64/conf/GENERIC-INTEGRITY ] ||
+        atf_fail 'GENERIC-INTEGRITY is back in the tree: cover its policy object here'
+    atf_check -s exit:0 -o empty -e empty python3.12 - "$tool" <<'PYTHON'
+import json, subprocess, sys
+frontend, = sys.argv[1:]
 for signing in ('unsigned', 'development'):
-    for selected in (None, 'GENERIC-INTEGRITY'):
+    for selected in (None, 'GENERIC-NODEBUG'):
         command = [frontend, 'plan', 'stage', '--signing', signing, '--format', 'json',
                    '--src-conf', '/dev/null', '--make-conf', '/dev/null']
         if selected:
@@ -167,15 +171,71 @@ for signing in ('unsigned', 'development'):
         assert rows[0]['root_protection_verification'] == 'not-performed'
         kernel = next(row for row in rows[1:] if row['name'] == 'buildkernel')
         assert 'KERNCONF=' + expected in kernel['argv']
-for profile, enabled in (('GENERIC', False), ('GENERIC-INTEGRITY', True)):
-    output = pathlib.Path(profile).resolve()
-    subprocess.run([config, '-d', str(output), '-s', '/usr/src/sys', profile],
-                   cwd='/usr/src/sys/amd64/conf', check=True, capture_output=True)
-    options = (output / 'opt_system_integrity.h').read_text()
-    makefile = (output / 'Makefile').read_text()
-    assert ('#define MAC_SYSTEM_INTEGRITY 1' in options) == enabled
-    assert ('mac_system_integrity.o' in makefile) == enabled
 PYTHON
+}
+
+atf_test_case installed_support
+installed_support_head()
+{
+    atf_set descr 'Every file the installed helpers and cases load from beside themselves is installed'
+}
+installed_support_body()
+{
+    dir=$(atf_config_get support_dir "$(atf_get_srcdir)")
+    [ -f "$dir/construction.py" ] || atf_fail "no installed helpers in $dir"
+    : > needed
+    # Python modules name their siblings with Path(__file__).with_name('NAME').
+    for file in "$dir"/*.py; do
+        grep -o "with_name('[^']*')" "$file" |
+            sed -e "s/^with_name('//" -e "s/')\$//" -e "s|^|${file##*/} |" >> needed
+    done
+    python=$(wc -l < needed)
+    # The sh cases default their inputs to files in atf_get_srcdir.
+    for file in "$dir"/*; do
+        [ -f "$file" ] && head -n 1 "$file" | grep -q atf-sh || continue
+        grep -o '$(atf_get_srcdir)/[A-Za-z0-9_.-][A-Za-z0-9_.-]*' "$file" |
+            sed -e 's|^$(atf_get_srcdir)/||' -e "s|^|${file##*/} |" >> needed
+    done
+    shell=$(($(wc -l < needed) - python))
+    # Nothing is concluded from a scan that found no reference.
+    [ "$python" -gt 0 ] && [ "$shell" -gt 0 ] ||
+        atf_fail "scan found $python Python and $shell shell references"
+    grep -qx 'generation_image.py verity_artifacts.py' needed ||
+        atf_fail 'scan missed the verity_artifacts.py reference of generation_image.py'
+    sort -u needed | while read -r user name; do
+        [ -e "$dir/$name" ] || echo "$user loads $name, which is not installed in $dir"
+    done > missing
+    if [ -s missing ]; then
+        cat missing
+        atf_fail "$(wc -l < missing | tr -d ' ') support file(s) not installed"
+    fi
+}
+
+atf_test_case python_requirements
+python_requirements_head()
+{
+    atf_set descr 'Every case that runs python3.12 declares it, so a host without it skips the case'
+}
+python_requirements_body()
+{
+    script=$(atf_config_get python_requirements_script "$(atf_get_srcdir)/bsd_build_test")
+    [ -f "$script" ] || atf_fail "$script is missing"
+    # Python is a pinned build-host prerequisite, never part of base.
+    awk '
+    /^atf_test_case / { cases++ }
+    /^[a-z_0-9]+_head\(\)/ { name = $1; sub(/_head\(\)/, "", name); part = "head"; next }
+    /^[a-z_0-9]+_body\(\)/ { name = $1; sub(/_body\(\)/, "", name); part = "body"; next }
+    /^}/ { part = "" }
+    part == "head" && /require\.progs/ && /python3\.12/ { declared[name] = 1 }
+    part == "body" && /python3\.12/ { used[name] = 1; uses++ }
+    END {
+        if (cases == 0 || uses == 0) { print "no case or no use found"; exit 1 }
+        for (name in used) if (!(name in declared)) print name
+    }' "$script" > undeclared
+    if [ -s undeclared ]; then
+        cat undeclared
+        atf_fail "cases run the build-host Python without declaring it: $(tr '\n' ' ' < undeclared)"
+    fi
 }
 
 atf_test_case make_clean_options
@@ -735,6 +795,10 @@ retired_bip_options_body()
 }
 
 atf_test_case secureboot_generation_plan
+secureboot_generation_plan_head()
+{
+    atf_set require.progs python3.12
+}
 secureboot_generation_plan_body()
 {
     setup
@@ -843,6 +907,10 @@ PYTHON
     atf_check -s not-exit:0 -o empty -e match:'apply only to secureboot-test' "$tool" plan kernel --qemu /usr/bin/true
 }
 atf_test_case deployment_reconciliation_plan
+deployment_reconciliation_plan_head()
+{
+    atf_set require.progs python3.12
+}
 deployment_reconciliation_plan_body()
 {
     setup
@@ -868,15 +936,14 @@ PYTHON
 atf_test_case generation_reconciliation
 generation_reconciliation_head()
 {
-    atf_set require.progs 'python3.12 setextattr setfacl cc elfctl'
+    atf_set require.progs 'python3.12 setextattr setfacl cc'
     atf_set descr 'Offline generation reconciliation rejects unexplained objects and metadata changes'
 }
 generation_reconciliation_body()
 {
     helper=$(atf_config_get generation_helper "$(atf_get_srcdir)/generation_check.py")
     tests=$(atf_config_get generation_tests "$(atf_get_srcdir)/generation_check_test.py")
-    elfctl=$(atf_config_get elfctl elfctl)
-    atf_check -s exit:0 -o ignore -e match:'OK' env BSD_BUILD_GENERATION_HELPER="$helper" BSD_BUILD_ELFCTL="$elfctl" python3.12 -B "$tests"
+    atf_check -s exit:0 -o ignore -e match:'OK' env BSD_BUILD_GENERATION_HELPER="$helper" python3.12 -B "$tests"
 }
 atf_test_case inventory_plan
 inventory_plan_head()
@@ -944,6 +1011,10 @@ PYTHON
     atf_check -s not-exit:0 -o empty -e ignore "$tool" plan inventory-audit --inventory "$PWD/inventory.json" --root "$PWD" --output "$output"
 }
 atf_test_case reconciliation_plan
+reconciliation_plan_head()
+{
+    atf_set require.progs python3.12
+}
 reconciliation_plan_body()
 {
     setup
@@ -970,7 +1041,7 @@ import json, os
 rows = [json.loads(line) for line in open('layout-plan.jsonl')]
 assert rows[1]['argv'][-2:] == ['--storage-layout-policy', os.path.realpath('layout.json')]
 PYTHON
-    atf_check -s not-exit:0 -o empty -e match:'applies only to reconcile' "$tool" plan kernel --storage-layout-policy "$PWD/layout.json"
+    atf_check -s not-exit:0 -o empty -e match:'storage-layout-policy applies only to construct, reconcile or image' "$tool" plan kernel --storage-layout-policy "$PWD/layout.json"
     atf_check -s not-exit:0 -o empty -e match:'applies only to reconcile' "$tool" plan kernel --inventory "$(pwd)/inventory.json"
     atf_check -s not-exit:0 -o empty -e match:'alternate root' "$tool" plan reconcile --root / --inventory "$(pwd)/inventory.json" --generated "$(pwd)/generated.json"
 }
@@ -1030,6 +1101,10 @@ boot_transport_body()
 }
 
 atf_test_case boot_check_plan
+boot_check_plan_head()
+{
+    atf_set require.progs python3.12
+}
 boot_check_plan_body()
 {
     setup
@@ -1253,7 +1328,9 @@ installation_policy_body()
 {
     helper=$(atf_config_get construction_helper "$(atf_get_srcdir)/construction.py")
     tests=$(atf_config_get installation_policy_tests "$(atf_get_srcdir)/installation_policy_test.py")
-    atf_check -s exit:0 -o empty -e match:'OK' env BSD_BUILD_CONSTRUCTION_HELPER="$helper" python3.12 -B "$tests"
+    retained=$(atf_config_get retained_helper "$(atf_get_srcdir)/verify_retained.py")
+    atf_check -s exit:0 -o empty -e match:'OK' env BSD_BUILD_CONSTRUCTION_HELPER="$helper" \
+        BSD_BUILD_RETAINED_HELPER="$retained" python3.12 -B "$tests"
 }
 atf_test_case signing_custody
 signing_custody_head()
@@ -1273,6 +1350,10 @@ elf_feature_build_head()
 {
     atf_set require.progs 'python3.12 cc make elfctl'
     atf_set descr 'Declarative ELF feature marking before stripping and packaging'
+    # Exec-bound (one process per query or build step): a loaded 2-vCPU TCG
+    # guest took up to 116 s in passing runs and broke at 300 s.  The bound
+    # still ends a hang.
+    atf_set timeout 900
 }
 elf_feature_build_body()
 {
@@ -1324,6 +1405,10 @@ database_preflight_head()
 {
     atf_set descr 'Real SQLite package policy, schema, relationship and lock checks'
     atf_set require.progs 'python3.12 sqlite3'
+    # Exec-bound (one process per query or build step): a loaded 2-vCPU TCG
+    # guest took up to 247 s in passing runs and broke at 300 s.  The bound
+    # still ends a hang.
+    atf_set timeout 1200
 }
 database_preflight_body()
 {
@@ -1337,6 +1422,10 @@ database_payload_head()
 {
     atf_set descr 'Compare real SQLite payload metadata and dependency records against manifests'
     atf_set require.progs 'python3.12 sqlite3'
+    # Exec-bound (one process per query or build step): a loaded 2-vCPU TCG
+    # guest took up to 105 s in passing runs and broke at 300 s.  The bound
+    # still ends a hang.
+    atf_set timeout 900
 }
 database_payload_body()
 {
@@ -1346,6 +1435,10 @@ database_payload_body()
 }
 
 atf_test_case boot_observation_plan
+boot_observation_plan_head()
+{
+    atf_set require.progs python3.12
+}
 boot_observation_plan_body()
 {
     setup
@@ -1393,6 +1486,10 @@ ucl_policy_normalization_body()
 }
 
 atf_test_case configuration_composition_plan
+configuration_composition_plan_head()
+{
+    atf_set require.progs python3.12
+}
 configuration_composition_plan_body()
 {
     setup
@@ -1472,6 +1569,10 @@ state_storage_inputs_body()
 }
 
 atf_test_case state_storage_plan
+state_storage_plan_head()
+{
+    atf_set require.progs python3.12
+}
 state_storage_plan_body()
 {
     setup
@@ -1506,6 +1607,10 @@ native_capsule_validation_body()
 }
 
 atf_test_case production_loader_plan
+production_loader_plan_head()
+{
+    atf_set require.progs python3.12
+}
 production_loader_plan_body()
 {
     setup
@@ -1564,6 +1669,10 @@ PYTEST
 }
 
 atf_test_case bazel_plan
+bazel_plan_head()
+{
+    atf_set require.progs python3.12
+}
 bazel_plan_body()
 {
     setup
@@ -1684,7 +1793,9 @@ atf_init_test_cases()
     atf_add_test_case secureboot_plan
     atf_add_test_case secureboot_generation_plan
     atf_add_test_case security_scope
-    atf_add_test_case optional_integrity_profile
+    atf_add_test_case signing_kernel_selection
+    atf_add_test_case installed_support
+    atf_add_test_case python_requirements
     atf_add_test_case publication_destination
     atf_add_test_case json_plan
     atf_add_test_case hardware_inputs
