@@ -152,6 +152,9 @@ ATF_TC_CLEANUP(disk_import_and_binding, tc)
 {
 	char pool[128];
 	zht_poolname(tc, pool, sizeof(pool));
+	/* A body that skipped or failed early created no pool. */
+	if (zht_systemf("zpool list -H -o name %s >/dev/null 2>&1", pool) != 0)
+		return;
 	for (unsigned i = 0; i < 20; i++) {
 		if (zht_systemf("zpool destroy -f %s", pool) == 0) return;
 		usleep(100000);
