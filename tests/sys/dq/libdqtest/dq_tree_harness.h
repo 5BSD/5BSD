@@ -1,6 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
- * Copyright (c) 2026 Kory Heard <koryheard@icloud.com>
+ *
+ * Copyright (c) 2026 Kory Heard
  *
  * The served-tree harness of the DescriptorQueue tests (dqt_tree.c): a
  * dq_serve_tree() controller thread over a backing tree, its minted root
