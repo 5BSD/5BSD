@@ -58,7 +58,7 @@ dq_probes_present_body()
 	for probe in queue-open queue-close mint revoke object-close \
 	    event-post event-deliver event-reply event-drop event-interrupt \
 	    event-deadline reply-late attach resolve-post resolve-reply \
-	    fop-local quota-wait postop-attr; do
+	    fop-local quota-wait postop-attr wait-full wait-abandon; do
 		atf_check -o ignore dtrace -l -n "dq:::${probe}"
 	done
 }
@@ -225,6 +225,31 @@ postop_attr_fires_body()
 	atf_check -o ignore grep -qx '3 7 22' fired
 }
 
+atf_test_case wait_fires
+wait_fires_head()
+{
+	atf_set "descr" "dq:::wait-full fires once per post that waited for a " \
+	    "slot, with how it ended; dq:::wait-abandon for a wait a dying " \
+	    "process left"
+	atf_set "require.user" "root"
+}
+wait_fires_body()
+{
+	require_dtrace
+	# A post that waited for the slot and then went on (0).
+	fire dq:::wait-full "full %d" "arg2" dq_concurrency_test \
+	    full_waits_then_posts
+	atf_check -o ignore grep -qx 'full 0' fired
+	# One that reached its deadline there (EIO, 5).
+	fire dq:::wait-full "full %d" "arg2" dq_concurrency_test \
+	    full_deadline_eio
+	atf_check -o ignore grep -qx 'full 5' fired
+	# A read with no deadline whose process exits.
+	fire dq:::wait-abandon "abandon %d" "arg1 != 0" dq_read_test \
+	    read_deadline0_exit_sibling
+	atf_check -o ignore grep -qx 'abandon 1' fired
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case dq_probes_present
@@ -236,4 +261,5 @@ atf_init_test_cases()
 	atf_add_test_case subst_fires
 	atf_add_test_case present_fires
 	atf_add_test_case postop_attr_fires
+	atf_add_test_case wait_fires
 }

@@ -134,6 +134,8 @@ SDT_PROBE_DECLARE(dq, , , resolve__real);
 SDT_PROBE_DECLARE(dq, , , resolve__symlink);
 SDT_PROBE_DECLARE(dq, , , fop__local);
 SDT_PROBE_DECLARE(dq, , , quota__wait);
+SDT_PROBE_DECLARE(dq, , , wait__full);
+SDT_PROBE_DECLARE(dq, , , wait__abandon);
 SDT_PROBE_DECLARE(dq, , , postop__attr);
 
 /* dq:::quota-wait's quota (args: queue, event, DQ_QUOTA_*, errno). */

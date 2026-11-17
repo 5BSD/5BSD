@@ -4806,9 +4806,24 @@ SDT provider fires:
 .Fa "struct dq_event_k *" ,
 .Fa "int quota" ,
 .Fa "int errno"
-(a wait for an in-flight quota before a post ended:
+(a wait for an in-flight quota before a post ended, once per post:
 .Va quota
-1 the object's, 2 the requester's)
+1 the object's, 2 the requester's, the one waited on last;
+.Va errno
+0 when the post went on, else what ended it)
+.It dq:::wait-full
+.Fa "struct dq_queue *" ,
+.Fa "struct dq_event_k *" ,
+.Fa "int errno"
+(a waited post's wait for a slot of a full queue ended, once per post;
+.Va errno
+as for
+.Li quota-wait )
+.It dq:::wait-abandon
+.Fa "struct dq_queue *" ,
+.Fa "struct dq_event_k *"
+(a wait that catches no signal ended because the process is being
+killed, is exiting or is single-threaded for exit)
 .It dq:::reply-late
 .Fa "struct dq_queue *" ,
 .Fa "uint64_t id"

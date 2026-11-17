@@ -553,6 +553,130 @@ ATF_TC_BODY(full_deadline_eio, tc)
 	(void)close(oracle);
 }
 
+ATF_TC(full_close_wakes);
+ATF_TC_HEAD(full_close_wakes, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a post waiting for a slot of a full "
+	    "queue with no deadline ends EIO at once when the queue dies "
+	    "(D205)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(full_close_wakes, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct dq_policy pol;
+	struct one_read_arg a;
+	struct one_read_res r[2];
+	struct dqt_child ch[2];
+	int64_t start, ms;
+	int i, oracle;
+
+	dqt_fill(data, sizeof(data), 66);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	dq_policy_default(&pol);
+	pol.dp_deadline_ms = 0;
+	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
+	ATF_REQUIRE_EQ(0, dq_set_queue_depth(c.q, 1));
+	dqt_pause(&c);
+	memset(&a, 0, sizeof(a));
+	a.fd = o->fd;
+	a.len = 100;
+	dqt_spawn(&ch[0], child_one_pread, &a);
+	ATF_REQUIRE(dqt_wait_stats(&c, posted_or_dropped_is, 1, DQT_WAIT_MS));
+	dqt_spawn(&ch[1], child_one_pread, &a);
+	ATF_REQUIRE(full_waits_reach(&c, 1, DQT_WAIT_MS));
+	start = dqt_now_ms();
+	dqt_fini(&c);		/* the queue's last descriptor */
+	for (i = 0; i < 2; i++) {
+		dqt_collect(&ch[i], &r[i], sizeof(r[i]));
+		ATF_CHECK_EQ_MSG(-1, r[i].rr.rv, "reader %d", i);
+		ATF_CHECK_EQ_MSG(EIO, r[i].rr.err, "reader %d", i);
+	}
+	ms = dqt_now_ms() - start;
+	ATF_CHECK_MSG(ms < 2000, "the readers ended %jd ms after the close",
+	    (intmax_t)ms);
+	(void)close(oracle);
+}
+
+/* Read exactly one record (a READ) off a manual queue. */
+static uint64_t
+read_one_record(int q)
+{
+	char buf[sizeof(struct dq_event) + sizeof(struct dq_read_body)];
+	const struct dq_event *ev;
+	ssize_t n;
+
+	n = read(q, buf, sizeof(buf));
+	ATF_REQUIRE_MSG(n == (ssize_t)sizeof(buf), "read %zd: %s", n,
+	    strerror(errno));
+	ev = (const struct dq_event *)(void *)buf;
+	ATF_REQUIRE_EQ(DQ_OP_READ, ev->de_op);
+	return (ev->de_id);
+}
+
+ATF_TC(full_signal_one);
+ATF_TC_HEAD(full_signal_one, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "three posts waiting for the slot of a "
+	    "full queue and one slot freed: exactly one posts (D205)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(full_signal_one, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct dq_policy pol;
+	struct one_read_arg a;
+	struct one_read_res r[4];
+	struct dqt_child ch[4];
+	struct dq_stats st;
+	uint64_t id;
+	int i, oracle;
+
+	dqt_fill(data, sizeof(data), 67);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init_manual(&c);
+	dq_policy_default(&pol);
+	pol.dp_deadline_ms = 0;
+	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
+	ATF_REQUIRE_EQ(0, dq_set_queue_depth(c.q, 1));
+	memset(&a, 0, sizeof(a));
+	a.fd = o->fd;
+	a.len = 100;
+	dqt_spawn(&ch[0], child_one_pread, &a);
+	ATF_REQUIRE(dqt_wait_stats(&c, posted_or_dropped_is, 1, DQT_WAIT_MS));
+	for (i = 1; i < 4; i++)
+		dqt_spawn(&ch[i], child_one_pread, &a);
+	ATF_REQUIRE(full_waits_reach(&c, 3, DQT_WAIT_MS));
+	/* One record read off: one slot. */
+	id = read_one_record(c.q);
+	dqt_msleep(500);
+	dqt_stats(&c, &st);
+	ATF_CHECK_EQ_MSG(2, st.ds_events_posted, "one slot, %ju posts",
+	    (uintmax_t)st.ds_events_posted);
+	ATF_CHECK_EQ(1, st.ds_queue_current);
+	/* Answer everything, one record at a time. */
+	ATF_REQUIRE_EQ(0, dq_reply(c.q, id, 0, data, 100));
+	for (i = 1; i < 4; i++) {
+		id = read_one_record(c.q);
+		ATF_REQUIRE_EQ(0, dq_reply(c.q, id, 0, data, 100));
+	}
+	for (i = 0; i < 4; i++) {
+		dqt_collect(&ch[i], &r[i], sizeof(r[i]));
+		ATF_CHECK_EQ_MSG(100, r[i].rr.rv, "reader %d: errno %d", i,
+		    r[i].rr.err);
+	}
+	dqt_stats(&c, &st);
+	ATF_CHECK_EQ(4, st.ds_events_posted);
+	ATF_CHECK_EQ(0, st.ds_events_dropped);
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
 ATF_TC(edeadlk_controller);
 ATF_TC_HEAD(edeadlk_controller, tc)
 {
@@ -929,6 +1053,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, reply_racing_signal);
 	ATF_TP_ADD_TC(tp, full_waits_then_posts);
 	ATF_TP_ADD_TC(tp, full_deadline_eio);
+	ATF_TP_ADD_TC(tp, full_close_wakes);
+	ATF_TP_ADD_TC(tp, full_signal_one);
 	ATF_TP_ADD_TC(tp, edeadlk_controller);
 	ATF_TP_ADD_TC(tp, edeadlk_pdfork);
 	ATF_TP_ADD_TC(tp, inflight_bound);

@@ -9,8 +9,9 @@
  * id, in any order, from any thread.  The requesting thread waits on its
  * event with only the serialization the operation already took
  * (foffset, rangelock) and never with a lock the controller needs.
- * Everything that can fail closed does: a revoked object, a closing queue,
- * a full queue and a missed deadline all answer EIO at once (design 15).
+ * Everything that can fail closed does: a revoked object, a closing queue
+ * and a missed deadline answer EIO (design 15); a waited post that finds
+ * the queue full waits for a slot within its deadline (D205).
  */
 
 #include "opt_dq.h"
@@ -1055,11 +1056,11 @@ dq_wait_slice_end(sbintime_t now, sbintime_t deadline)
  * Returns 0 to look again; EIO when the deadline passed (the event was
  * never posted: the controller sees nothing of it); a caught signal's
  * EINTR or ERESTART (DQ_WAIT_CATCH); EINTR in the other modes when the
- * process is dying.
+ * process is dying (dq:::wait-abandon).
  */
 static int
-dq_wait_room(struct dq_queue *q, void *chan, const char *wmesg,
-    struct thread *td, int mode, sbintime_t deadline)
+dq_wait_room(struct dq_queue *q, struct dq_event_k *ev, void *chan,
+    const char *wmesg, struct thread *td, int mode, sbintime_t deadline)
 {
 	sbintime_t now;
 	int error;
@@ -1082,7 +1083,41 @@ dq_wait_room(struct dq_queue *q, void *chan, const char *wmesg,
 	DQ_UNLOCK(q);
 	dying = dq_wait_abandon(td);
 	DQ_LOCK(q);
-	return (dying ? EINTR : 0);
+	if (dying) {
+		SDT_PROBE2(dq, , , wait__abandon, q, ev);
+		return (EINTR);
+	}
+	return (0);
+}
+
+/*
+ * What one waited post waited for before it was posted: the quota it
+ * waited on last (DQ_QUOTA_*, 0 for none), whether it waited for a slot of
+ * a full queue, and whether it may hold a slot's wakeup it did not use.
+ * dq:::quota-wait and dq:::wait-full fire once when the wait ends: with
+ * the errno that ended the post, or 0 when the post went on.
+ */
+struct dq_post_waits {
+	int	pw_quota;
+	bool	pw_full;
+	bool	pw_pass;
+};
+
+static void
+dq_post_waits_done(struct dq_queue *q, struct dq_event_k *ev,
+    struct dq_post_waits *pw, int error)
+{
+
+	DQ_LOCK_ASSERT(q);
+	if (pw->pw_quota != 0)
+		SDT_PROBE4(dq, , , quota__wait, q, ev, pw->pw_quota, error);
+	if (pw->pw_full)
+		SDT_PROBE3(dq, , , wait__full, q, ev, error);
+	/* A slot this waiter was woken for and did not take goes on. */
+	if (pw->pw_pass)
+		dq_queue_slots_freed(q, 1);
+	pw->pw_quota = 0;
+	pw->pw_full = pw->pw_pass = false;
 }
 
 /*
@@ -1092,37 +1127,49 @@ dq_wait_room(struct dq_queue *q, void *chan, const char *wmesg,
  */
 static int
 dq_post_quota_sleep(struct dq_queue *q, struct dq_event_k *ev, void *chan,
-    const char *wmesg, struct thread *td, int mode, sbintime_t deadline)
+    const char *wmesg, struct thread *td, int mode, sbintime_t deadline,
+    struct dq_post_waits *pw)
 {
 	int error;
 
-	error = dq_wait_room(q, chan, wmesg, td, mode, deadline);
+	/* A slot this waiter was woken for goes on before it sleeps here. */
+	if (pw->pw_pass) {
+		dq_queue_slots_freed(q, 1);
+		pw->pw_pass = false;
+	}
+	pw->pw_quota = chan == (void *)&q->q_requesters ? DQ_QUOTA_REQUESTER :
+	    DQ_QUOTA_OBJECT;
+	error = dq_wait_room(q, ev, chan, wmesg, td, mode, deadline);
 	if (error == EIO)
 		q->q_stats.ds2_deadline_misses++;
-	if (error != 0)
-		SDT_PROBE4(dq, , , quota__wait, q, ev,
-		    (chan == (void *)&q->q_requesters ? DQ_QUOTA_REQUESTER :
-		    DQ_QUOTA_OBJECT), error);
 	return (error);
 }
 
 /*
  * A full queue (D205): a waited post waits for a slot instead of failing,
- * in its own mode and bounded by its deadline.  dq_queue_slots_freed wakes
- * one waiter per slot read off the queue (or withdrawn); a waiter woken
- * that goes on to sleep elsewhere passes its wakeup on (*passp).
+ * in its own mode and bounded by its deadline, counted once per post in
+ * ds2_full_waits.  dq_queue_slots_freed wakes one waiter per slot read off
+ * the queue (or withdrawn).  A waiter that finds room on waking may hold
+ * that slot's wakeup; if it goes on to sleep on a quota or fails, the
+ * wakeup is passed on (pw_pass).  A waiter that woke at a slice's end with
+ * the queue still full holds none.
  */
 static int
-dq_post_space_sleep(struct dq_queue *q, struct thread *td, int mode,
-    sbintime_t deadline, bool *passp)
+dq_post_space_sleep(struct dq_queue *q, struct dq_event_k *ev,
+    struct thread *td, int mode, sbintime_t deadline,
+    struct dq_post_waits *pw)
 {
 	int error;
 
-	q->q_stats.ds2_full_waits++;
-	error = dq_wait_room(q, &q->q_space, "dqfull", td, mode, deadline);
+	if (!pw->pw_full) {
+		pw->pw_full = true;
+		q->q_stats.ds2_full_waits++;
+	}
+	error = dq_wait_room(q, ev, &q->q_space, "dqfull", td, mode,
+	    deadline);
 	if (error == EIO)
 		q->q_stats.ds2_deadline_misses++;
-	*passp = true;
+	pw->pw_pass = error == 0 && q->q_count < q->q_depth;
 	return (error);
 }
 
@@ -1180,6 +1227,7 @@ dq_wait_event(struct dq_queue *q, struct dq_event_k *ev, struct thread *td,
 		dying = dq_wait_abandon(td);
 		DQ_LOCK(q);
 		if (dying) {
+			SDT_PROBE2(dq, , , wait__abandon, q, ev);
 			error = EINTR;
 			break;
 		}
@@ -1198,12 +1246,14 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 	struct dq_interrupt_body ib;
 	sbintime_t deadline;
 	int error, mode;
-	bool interrupt, drop_list_ref, lock, fault, pass;
+	struct dq_post_waits pw;
+	bool interrupt, drop_list_ref, lock, fault;
 
 	q = o->o_queue;
 	*replyp = NULL;
 	*errnop = 0;
-	interrupt = drop_list_ref = pass = false;
+	interrupt = drop_list_ref = false;
+	memset(&pw, 0, sizeof(pw));
 	lock = (flags & DQ_POST_LOCK) != 0;
 	fault = (flags & DQ_POST_FAULT) != 0;
 	KASSERT(!fault || (td == curthread && !lock),
@@ -1281,38 +1331,31 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 		 * readers.
 		 */
 		if (!lock && o->o_inflight >= dq_max_inflight_per_object) {
-			if (pass) {
-				dq_queue_slots_freed(q, 1);
-				pass = false;
-			}
 			error = dq_post_quota_sleep(q, ev, &o->o_inflight,
-			    "dqinfl", td, mode, deadline);
+			    "dqinfl", td, mode, deadline, &pw);
 			if (error != 0)
 				goto out_locked;
 			continue;
 		}
 		rq = lock ? NULL : dq_requester_find_locked(q, ev->ev_requester);
 		if (rq != NULL && rq->rq_inflight >= dq_max_inflight_per_requester) {
-			if (pass) {
-				dq_queue_slots_freed(q, 1);
-				pass = false;
-			}
 			error = dq_post_quota_sleep(q, ev, &q->q_requesters,
-			    "dqreq", td, mode, deadline);
+			    "dqreq", td, mode, deadline, &pw);
 			if (error != 0)
 				goto out_locked;
 			continue;
 		}
 		if (q->q_count >= q->q_depth) {
-			error = dq_post_space_sleep(q, td, mode, deadline,
-			    &pass);
+			error = dq_post_space_sleep(q, ev, td, mode, deadline,
+			    &pw);
 			if (error != 0)
 				goto out_locked;
 			continue;
 		}
 		break;
 	}
-	pass = false;
+	pw.pw_pass = false;		/* the slot is this post's */
+	dq_post_waits_done(q, ev, &pw, 0);
 	error = dq_event_enqueue_locked(q, ev);
 	if (error != 0)
 		goto out_locked;
@@ -1399,9 +1442,7 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 		dq_requester_release_locked(q, ev->ev_requester);
 	}
 out_locked:
-	/* A slot this waiter was woken for and did not take goes on. */
-	if (pass)
-		dq_queue_slots_freed(q, 1);
+	dq_post_waits_done(q, ev, &pw, error);
 	DQ_UNLOCK(q);
 	if (newrq != NULL)
 		free(newrq, M_DQ);
@@ -1454,13 +1495,15 @@ dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
 	struct dq_requester *rq, *newrq;
 	struct dq_interrupt_body ib;
 	int error, mode;
-	bool interrupt, drop_list_ref, pass;
+	struct dq_post_waits pw;
+	bool interrupt, drop_list_ref;
 
 	*replyp = NULL;
 	*errnop = 0;
 	*robjp = NULL;
 	bzero(rswapp, sizeof(*rswapp));
-	interrupt = drop_list_ref = pass = false;
+	interrupt = drop_list_ref = false;
+	memset(&pw, 0, sizeof(pw));
 	if (dq_caller_holds_queue(q, td))
 		return (EDEADLK);
 	mode = catching ? DQ_WAIT_CATCH : DQ_WAIT_UNINTR;
@@ -1479,27 +1522,24 @@ dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
 		}
 		rq = dq_requester_find_locked(q, ev->ev_requester);
 		if (rq != NULL && rq->rq_inflight >= dq_max_inflight_per_requester) {
-			if (pass) {
-				dq_queue_slots_freed(q, 1);
-				pass = false;
-			}
 			/* The quota wait is bounded by the same deadline. */
 			error = dq_post_quota_sleep(q, ev, &q->q_requesters,
-			    "dqreq", td, mode, deadline);
+			    "dqreq", td, mode, deadline, &pw);
 			if (error != 0)
 				goto out_locked;
 			continue;
 		}
 		if (q->q_count >= q->q_depth) {
-			error = dq_post_space_sleep(q, td, mode, deadline,
-			    &pass);
+			error = dq_post_space_sleep(q, ev, td, mode, deadline,
+			    &pw);
 			if (error != 0)
 				goto out_locked;
 			continue;
 		}
 		break;
 	}
-	pass = false;
+	pw.pw_pass = false;		/* the slot is this post's */
+	dq_post_waits_done(q, ev, &pw, 0);
 	error = dq_event_enqueue_locked(q, ev);
 	if (error != 0)
 		goto out_locked;
@@ -1565,8 +1605,7 @@ dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
 	}
 	dq_requester_release_locked(q, ev->ev_requester);
 out_locked:
-	if (pass)
-		dq_queue_slots_freed(q, 1);
+	dq_post_waits_done(q, ev, &pw, error);
 	DQ_UNLOCK(q);
 	if (newrq != NULL)
 		free(newrq, M_DQ);

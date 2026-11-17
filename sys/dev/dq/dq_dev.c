@@ -88,6 +88,12 @@ SDT_PROBE_DEFINE3(dq, , , resolve__symlink, "struct dq_queue *", "uint32_t",
 SDT_PROBE_DEFINE3(dq, , , fop__local, "struct file *", "int", "int");
 SDT_PROBE_DEFINE4(dq, , , quota__wait, "struct dq_queue *",
     "struct dq_event_k *", "int", "int");
+/* A waited post's wait for a slot of a full queue ended (D205). */
+SDT_PROBE_DEFINE3(dq, , , wait__full, "struct dq_queue *",
+    "struct dq_event_k *", "int");
+/* A wait that catches no signal ended because the process is dying. */
+SDT_PROBE_DEFINE2(dq, , , wait__abandon, "struct dq_queue *",
+    "struct dq_event_k *");
 SDT_PROBE_DEFINE4(dq, , , postop__attr, "struct dq_object *", "uint32_t",
     "uint32_t", "int");
 
