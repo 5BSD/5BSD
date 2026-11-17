@@ -933,6 +933,7 @@ Provider: `mac_capability` (core messaging)
 | `service-create` / `service-destroy` | service name, flags, ... |
 | `control` / `rights-change` | service name, badge, cmd, pid, cred, nonce |
 | `queue-pressure` | service name, badge, reason, current, limit |
+| `rxq-discard` | service name, badge, messages discarded from the RX queue of a revoked or dead instance |
 | `error` | service name, badge, cmd, pid, nonce, errno |
 
 Provider: `mac_capability_isolation` (file/net/vsock/jail enforcement)

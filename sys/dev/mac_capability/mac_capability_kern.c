@@ -52,6 +52,7 @@ SDT_PROBE_DECLARE(mac_capability, , , state);
 SDT_PROBE_DECLARE(mac_capability, , , service__create);
 SDT_PROBE_DECLARE(mac_capability, , , service__destroy);
 SDT_PROBE_DECLARE(mac_capability, , , queue__pressure);
+SDT_PROBE_DECLARE(mac_capability, , , rxq__discard);
 
 /*
  * Resolve target process: attached procdesc or self.
@@ -97,30 +98,26 @@ mac_capability_resolve_proc(struct file **fds, int nfds, struct proc **pp)
 	return (0);
 }
 
+/*
+ * Detach the RX queue of an instance onto q.  The caller frees q with
+ * mac_capability_free_msgq() after dropping ci_mtx.
+ */
 void
-mac_capability_instance_drain_txq(struct mac_capability_instance *s)
+mac_capability_instance_drain_rxq(struct mac_capability_instance *s,
+    struct mac_capability_msgq *q)
 {
-	struct mac_capability_msg *msg;
+	struct mac_capability_service *svc;
+	const char *name;
 
 	mtx_assert(&s->ci_mtx, MA_OWNED);
-	while ((msg = STAILQ_FIRST(&s->ci_txq)) != NULL) {
-		STAILQ_REMOVE_HEAD(&s->ci_txq, cm_link);
-		s->ci_txqlen--;
-		mac_capability_msg_free(msg);
-	}
-}
-
-void
-mac_capability_instance_drain_rxq(struct mac_capability_instance *s)
-{
-	struct mac_capability_msg *msg;
-
-	mtx_assert(&s->ci_mtx, MA_OWNED);
-	while ((msg = STAILQ_FIRST(&s->ci_rxq)) != NULL) {
-		STAILQ_REMOVE_HEAD(&s->ci_rxq, cm_link);
-		s->ci_rxqlen--;
-		mac_capability_msg_free(msg);
-	}
+	if (STAILQ_EMPTY(&s->ci_rxq))
+		return;
+	svc = s->ci_service;
+	name = svc != NULL ? svc->csvc_name : NULL;
+	SDT_PROBE3(mac_capability, , , rxq__discard, name, s->ci_badge,
+	    s->ci_rxqlen);
+	STAILQ_CONCAT(q, &s->ci_rxq);
+	s->ci_rxqlen = 0;
 }
 
 /*
@@ -207,8 +204,10 @@ mac_capability_call_cancel_locked(struct mac_capability_instance *s,
  * kernel memory without bound.  Set to 4× queue_depth.
  *
  * A message taken by a sleeping CHANNEL_CALL caller, or discarded as the
- * late reply to a timed-out call, is accepted without being queued; the
- * latter is returned on *discard for the caller to free outside ci_mtx.
+ * late reply to a timed-out call, is accepted without being queued.  The
+ * discarded reply, and a message refused with an error, are returned on
+ * *discard for the caller to free after dropping ci_mtx: freeing a message
+ * drops the descriptors it carries, which may run a last close.
  */
 static int
 mac_capability_instance_enqueue_tx(struct mac_capability_instance *s, struct mac_capability_msg *msg,
@@ -217,35 +216,31 @@ mac_capability_instance_enqueue_tx(struct mac_capability_instance *s, struct mac
 	int hard_limit;
 
 	mtx_assert(&s->ci_mtx, MA_OWNED);
-	if (discard != NULL)
-		*discard = NULL;
+	*discard = NULL;
 	if ((s->ci_flags & MAC_CAPABILITY_SF_DEAD) || s->ci_service == NULL) {
-		mac_capability_msg_free(msg);
+		*discard = msg;
 		return (ECONNRESET);
 	}
 	switch (mac_capability_call_intercept_locked(s, msg)) {
 	case MAC_CAPABILITY_TX_TAKEN:
 		return (0);
 	case MAC_CAPABILITY_TX_DISCARD:
-		if (discard != NULL) {
-			*discard = msg;
-			return (0);
-		}
-		break;
+		*discard = msg;
+		return (0);
 	}
 	hard_limit = (int)s->ci_service->csvc_queue_depth * MAC_CAPABILITY_TX_HARD_MULT;
 	if (!force && s->ci_txqlen >= (int)s->ci_service->csvc_tx_limit) {
 		SDT_PROBE5(mac_capability, , , queue__pressure,
 		    s->ci_service->csvc_name, s->ci_badge, "tx-soft",
 		    s->ci_txqlen, (int)s->ci_service->csvc_tx_limit);
-		mac_capability_msg_free(msg);
+		*discard = msg;
 		return (EAGAIN);
 	}
 	if (s->ci_txqlen >= hard_limit) {
 		SDT_PROBE5(mac_capability, , , queue__pressure,
 		    s->ci_service->csvc_name, s->ci_badge, "tx-hard",
 		    s->ci_txqlen, hard_limit);
-		mac_capability_msg_free(msg);
+		*discard = msg;
 		return (ENOBUFS);
 	}
 	STAILQ_INSERT_TAIL(&s->ci_txq, msg, cm_link);
@@ -444,6 +439,7 @@ mac_capability_dispatch_task(void *context, int pending __unused)
 	struct mac_capability_instance *s = context;
 	struct mac_capability_service *svc;
 	struct mac_capability_msg *msg;
+	struct mac_capability_msgq deadq;
 	sbintime_t start __unused;
 	bool retry;
 	int error;
@@ -451,6 +447,7 @@ mac_capability_dispatch_task(void *context, int pending __unused)
 	svc = s->ci_service;
 	if (svc == NULL)
 		return;
+	STAILQ_INIT(&deadq);
 
 	/*
 	 * Hold a reference for the duration of this task.  Close waits
@@ -511,8 +508,9 @@ mac_capability_dispatch_task(void *context, int pending __unused)
 			STAILQ_INSERT_HEAD(&s->ci_rxq, msg, cm_link);
 			s->ci_rxqlen++;
 		} else {
+			/* Freed after ci_mtx is dropped, as the RX queue is. */
 			if (retry)
-				mac_capability_msg_free(msg);
+				STAILQ_INSERT_TAIL(&deadq, msg, cm_link);
 			/* SENDMSG capacity was genuinely released. */
 			KNOTE_LOCKED(&s->ci_wknotes, 0);
 		}
@@ -552,7 +550,7 @@ mac_capability_dispatch_task(void *context, int pending __unused)
 
 	/* If dead, drain any remaining RX messages. */
 	if (s->ci_flags & MAC_CAPABILITY_SF_DEAD)
-		mac_capability_instance_drain_rxq(s);
+		mac_capability_instance_drain_rxq(s, &deadq);
 	s->ci_dispatching = false;
 	if (STAILQ_EMPTY(&s->ci_rxq))
 		s->ci_kick_pending = false;
@@ -564,6 +562,7 @@ mac_capability_dispatch_task(void *context, int pending __unused)
 	}
 
 	mtx_unlock(&s->ci_mtx);
+	mac_capability_free_msgq(&deadq);
 	mac_capability_instance_rele(s);
 }
 
@@ -646,16 +645,23 @@ mac_capability_instance_revoke_reason(struct mac_capability_instance *s,
     enum mac_capability_revoke_reason reason)
 {
 	struct mac_capability_service *svc = s->ci_service;
+	struct mac_capability_msgq deadq;
 	sbintime_t start __unused;
 
 	start = getsbinuptime();
+	STAILQ_INIT(&deadq);
 	mtx_lock(&s->ci_mtx);
 	if (s->ci_flags & MAC_CAPABILITY_SF_DEAD) {
 		mtx_unlock(&s->ci_mtx);
 		goto out;
 	}
 	s->ci_flags |= MAC_CAPABILITY_SF_REVOKED;
-	mac_capability_instance_drain_rxq(s);
+	/*
+	 * Detach the RX queue now and free it at "out", with ci_mtx dropped:
+	 * a queued message may carry the last reference to a descriptor,
+	 * whose close can sleep (a channel endpoint drains its taskqueue).
+	 */
+	mac_capability_instance_drain_rxq(s, &deadq);
 	/* Do NOT drain the TX queue here — let the receiver read
 	 * already-queued messages before seeing ECONNRESET. */
 
@@ -708,6 +714,7 @@ mac_capability_instance_revoke_reason(struct mac_capability_instance *s,
 	mac_capability_revoke_callback(s, reason);
 
 out:
+	mac_capability_free_msgq(&deadq);
 	if (svc != NULL) {
 		SDT_PROBE4(mac_capability, , , revoke__done, svc->csvc_name,
 		    s->ci_badge, reason, getsbinuptime() - start);
