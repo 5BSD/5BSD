@@ -34,6 +34,9 @@
 #   can occupy, so ENOMEM there is expected), PARALLELISM (kyua, default 1),
 #   with sys/dq (or a program under it) in the suites, imgact_binmisc and
 #   dtraceall are preloaded for them,
+#   ROOT_SIZE (the root file system's size, default 8g: a run that adds
+#   large test data, such as the build-host Python for usr.sbin/bsd-build,
+#   can fill 8g; the guest reports ROOT_DF before and after the suites),
 #   ROOT_FS (ufs, the default, or zfs: a ZFS root pool for the suites that
 #   require one, such as the Linux ptrace ones),
 #   GATE_TIMEOUT (guest seconds to wait for provider convergence, 600),
@@ -143,6 +146,10 @@ extra_dir=${EXTRA_DIR:-}
 # archive), attached read-only as a third disk and mounted read-only at
 # /usr/src, for suites that read the tree (usr.sbin/bsd-build).  The image
 # is test data and is never written; without it the guest has no source tree.
+# With it the guest is a build host, so the image also gets the empty standard
+# object root build-bsd(8) writes to, /usr/obj/usr/src and its repo
+# directory (the bsd_build_test cases that run build-bsd there skip without
+# them).
 src_image=${SRC_IMAGE:-}
 if [ -n "$src_image" ]; then
 	# die is defined further down.
@@ -190,6 +197,9 @@ esac
 cpus=${CPUS:-4} mem=${MEM_MB:-$mem_default} par=${PARALLELISM:-1} gate=${GATE_TIMEOUT:-600}
 root_fs=${ROOT_FS:-ufs}
 case "$root_fs" in ufs|zfs) ;; *) echo "ROOT_FS must be ufs or zfs" >&2; exit 64;; esac
+root_size=${ROOT_SIZE:-8g}
+case "$root_size" in [1-9]*[0-9]g|[1-9]g|[1-9]*[0-9]m) ;; *) echo "ROOT_SIZE must be a size in g or m" >&2; exit 64;; esac
+case "$root_size" in *[!0-9gm]*|*[gm]*[gm]) echo "ROOT_SIZE must be a size in g or m" >&2; exit 64;; esac
 units=${REQUIRE_UNITS:-system.Log/bsdlog system.Network/bsdnetwork system.Trace/bsdtrace system.Filesystem/bsdfilesystem system.Audit/bsdaudit system.Time/bsdtime system.SystemExtension/bsdextension system.Notify/bsdnotify system.Device/bsddevice system.Power/bsdpower system.Sysctl/bsdsysctl system.Crypto/bsdcrypto}
 
 isnum() { case $1 in ''|*[!0-9]*) return 1;; esac; [ "$1" -gt 0 ]; }
@@ -579,6 +589,7 @@ if [ -s /root/vm-extra.sh ]; then
 	echo "EXTRA_SCRIPT_STATUS=$(cat "$R/extra.exit")"
 	echo EXTRA_SCRIPT_END
 fi
+echo "ROOT_DF_BEFORE: $(df -k / | awk 'NR == 2 { print $2 "K total, " $4 "K free" }')"
 cd /usr/tests
 suites=$(cat /root/kyua-planeon.suites)
 vars=; for v in $KYUA_VARS; do vars="$vars -v $v"; done
@@ -607,6 +618,7 @@ kyua report -r "$R/results.db" --verbose --results-filter broken,failed 2>&1 | h
 cp /var/log/capability.log /var/log/messages "$R/" 2>/dev/null || true
 dmesg -a > "$R/dmesg.txt" 2>&1 || true
 echo "KYUA_SUMMARY: $(tail -n 1 "$R/kyua-test.out")"
+echo "ROOT_DF_AFTER: $(df -k / | awk 'NR == 2 { print $2 "K total, " $4 "K free" }')"
 # The ledger's knobs again, after the suites, in tier.txt.
 {
 	echo "after-suites:"
@@ -648,6 +660,11 @@ re=$(for p in $over; do printf '%s|' "$p"; done | sed -e 's/|$//' -e 's/\./\\./g
 	[ -z "$sysctl_write" ] || m "$sysctl_conf" 0644 sysctl.conf
 	# A stage has /usr/src and /usr/obj but no ports mount point.
 	[ -z "$ports_image" ] || echo "./usr/obj/5BSD-ports type=dir uname=root gname=wheel mode=0755"
+	if [ -n "$src_image" ]; then
+		for d in usr/obj/usr usr/obj/usr/src usr/obj/usr/src/repo; do
+			echo "./$d type=dir uname=root gname=wheel mode=0755"
+		done
+	fi
 	if [ -n "$extra_dir" ]; then
 		echo "./root/vm-extra.d type=dir uname=root gname=wheel mode=0755"
 		for f in "$extra_dir"/*; do
@@ -689,13 +706,13 @@ done
 # Manifest mode: makefs resolves plain records relative to the cwd (the stage)
 # and overlay records through contents=, so the stage is never written.
 if [ "$root_fs" = zfs ]; then
-(cd "$stage" && makefs -t zfs -s 8g -o poolname=kyuaroot -o bootfs=kyuaroot \
+(cd "$stage" && makefs -t zfs -s "$root_size" -o poolname=kyuaroot -o bootfs=kyuaroot \
     -o rootpath=/ "$work/root.ufs" "$work/METALOG") > "$work/makefs.log" 2>&1 ||
     { tail -n 20 "$work/makefs.log" >&2; die "makefs failed"; }
 mkimg -s gpt -f raw -b "$stage/boot/pmbr" -p "freebsd-boot:=$stage/boot/gptzfsboot" \
     -p "freebsd-zfs:=$work/root.ufs" -o "$work/guest.img"
 else
-(cd "$stage" && makefs -t ffs -B little -s 8g -o version=2,softupdates=1,label=root \
+(cd "$stage" && makefs -t ffs -B little -s "$root_size" -o version=2,softupdates=1,label=root \
     "$work/root.ufs" "$work/METALOG") > "$work/makefs.log" 2>&1 ||
     { tail -n 20 "$work/makefs.log" >&2; die "makefs failed"; }
 mkimg -s gpt -f raw -b "$stage/boot/pmbr" -p "freebsd-boot:=$stage/boot/gptboot" \
