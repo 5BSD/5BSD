@@ -236,8 +236,11 @@ ATF_TC_BODY(real_under_served_root, tc)
 	TS_CHECK_ERRNO(ENOENT, r.err[2], "getcwd: real cwd, served root");
 	TS_CHECK_ERRNO(ENOENT, r.err[3], "realpath of a real object");
 	TS_CHECK_ERRNO(0, r.err[4], "kinfo");
-	/* Observation, not resolution: the real vnode's path. */
-	ATF_CHECK_STREQ(a.real, r.path[4]);
+	/*
+	 * Under a served root a real object shows no path, in kinfo too
+	 * (C4, Q1's default; it showed the real vnode's path).
+	 */
+	ATF_CHECK_STREQ("", r.path[4]);
 	ATF_CHECK_STREQ("/", r.path[5]);
 	close(a.realfd);
 	ts_stop(&s);

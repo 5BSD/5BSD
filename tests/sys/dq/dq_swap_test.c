@@ -2638,8 +2638,6 @@ ATF_TC_WITH_CLEANUP(swap_late_reply_consumed);
 ATF_TC_HEAD(swap_late_reply_consumed, tc)
 {
 	atf_tc_set_md_var(tc, "timeout", "300");
-	/* debug.dq.delay_swap_take delays any swap reply. */
-	atf_tc_set_md_var(tc, "is_exclusive", "true");
 }
 ATF_TC_BODY(swap_late_reply_consumed, tc)
 {

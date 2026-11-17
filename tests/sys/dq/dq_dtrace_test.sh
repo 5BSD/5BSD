@@ -26,14 +26,18 @@ require_dtrace()
 # Run one case of a C test program of this directory under DTrace, with
 # PROBE printing FORMAT of ARGS for every firing in the case's progeny,
 # into the file "fired"; the case must pass.  A case with a cleanup part
-# has it run after.
+# has it run after.  Each run has a work directory of its own, as kyua
+# gives each case.
 fire()
 {
 	local probe fmt args prog tc
 
 	probe="$1"; fmt="$2"; args="$3"; prog="$4"; tc="$5"
-	printf '%s -r result %s\n' "$(atf_get_srcdir)/${prog}" "${tc}" > run.sh
-	printf '%s -r cleanup %s:cleanup\n' "$(atf_get_srcdir)/${prog}" \
+	rm -rf work
+	mkdir work
+	printf 'cd work\n' > run.sh
+	printf '%s -r ../result %s\n' "$(atf_get_srcdir)/${prog}" "${tc}" >> run.sh
+	printf '%s -r ../cleanup %s:cleanup\n' "$(atf_get_srcdir)/${prog}" \
 	    "${tc}" >> run.sh
 	atf_check -o save:fired -e ignore dtrace -q -n "
 	    ${probe} /progenyof(\$target)/ { printf(\"${fmt}\\n\", ${args}); }" \
