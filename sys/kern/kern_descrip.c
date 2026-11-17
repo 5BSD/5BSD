@@ -4775,12 +4775,35 @@ fgetvp_read(struct thread *td, int fd, const cap_rights_t *rightsp,
 	return (_fgetvp(td, fd, FREAD, rightsp, vpp));
 }
 
+/*
+ * fexecve(2)'s image.  A served file (DTYPE_DQ) has no vnode and no image
+ * source yet: EACCES, as for a file the caller may not execute, where the
+ * generic answer for a descriptor without a vnode is EINVAL.
+ */
 int
 fgetvp_exec(struct thread *td, int fd, const cap_rights_t *rightsp,
     struct vnode **vpp)
 {
+	struct file *fp;
+	int error;
 
-	return (_fgetvp(td, fd, FEXEC, rightsp, vpp));
+	*vpp = NULL;
+	error = _fget(td, fd, &fp, FEXEC, rightsp);
+	if (error != 0)
+		return (error);
+	if (fp->f_type == DTYPE_DQ) {
+		error = EACCES;
+		goto out;
+	}
+	if (fp->f_vnode == NULL) {
+		error = EINVAL;
+		goto out;
+	}
+	*vpp = fp->f_vnode;
+	vrefact(*vpp);
+out:
+	fdrop(fp, td);
+	return (error);
 }
 
 #ifdef notyet

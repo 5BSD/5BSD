@@ -4066,6 +4066,12 @@ As a read-only real file: private and shared read mappings, a private
 writable one; a shared writable one is
 .Er EACCES
 .Pq see Sx Pages .
+.It Xr fexecve 2
+.Er EACCES ,
+as for a file the caller may not execute: a served file has no image to
+execute before stage 3 (declared).
+The generic answer for a descriptor without a vnode would be
+.Er EINVAL .
 .It Xr aio_read 2 , Xr aio_write 2 , Xr aio_fsync 2
 refused unless
 .Va vfs.aio.enable_unsafe

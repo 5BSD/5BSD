@@ -1571,7 +1571,7 @@ the same backend; of a real file, the same predicate.
 | `write` family, `ftruncate`, `fsync`, `fallocate`, `fspacectl` | events | yes |
 | `mmap` (all modes), faults, `msync` (incl. `MS_SYNC`), `mincore`, `mlock` | dq pager | yes; `MAP_SHARED|PROT_WRITE` is `EACCES` unless allowed, as on a read-only fd |
 | `sendfile` | `getpages_async` | yes |
-| `execve`, `fexecve` | stage 3 | yes with `ALLOW`; `EACCES` before stage 3 |
+| `execve`, `fexecve` | stage 3 | yes with `ALLOW`; `EACCES` before stage 3 (`fgetvp_exec`; a descriptor with no vnode is `EINVAL`, as before) |
 | `fstat`/`stat`/`lstat`/`fstatat`, `fstatfs`/`statfs`, `fpathconf`/`pathconf` | identity (`dqres_ident_to_stat`, `dqres_ident_pathconf` for both the descriptor and the name) | yes, incl. `st_dev/ino`; `st_gen` only with `PRIV_VFS_GENERATION`, as `vn_stat` |
 | `F_KINFO`, `procstat -f`, `procstat -v`, `/proc/self/maps`, `realpath`, `/dev/fd/N` readlink, `getcwd` | `fo_fill_kinfo`, `pgo_kinfo`, attachment | yes; under a served root, `getcwd`/`realpath` of a real object are `ENOENT` (D174) |
 | `fcntl` flags/dup/readahead; `F_GETFL` | generic / `fo_fcntl` | yes (no served bit exists in `f_flag`) |
