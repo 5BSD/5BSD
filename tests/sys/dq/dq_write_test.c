@@ -517,38 +517,56 @@ ATF_TC_BODY(short_write, tc)
 	dqt_fixture_fini(&f);
 }
 
-ATF_TC(eintr_mid_chunk);
-ATF_TC_HEAD(eintr_mid_chunk, tc)
+/*
+ * A write of two max_io chunks; the first is accepted, and while the
+ * second waits the requester is signalled (SIGUSR1, caught, no
+ * SA_RESTART).  pol: the object's policy (NULL: the default).
+ */
+static void
+mid_chunk_start(struct dqt_fixture *f, const struct dq_policy *pol,
+    struct dqt_child *ch, struct big_arg *a, u_int *max_io)
 {
-	atf_tc_set_md_var(tc, "descr", "a signal while the second max_io chunk "
-	    "waits: INTERRUPT names it and the call returns the bytes of the "
-	    "accepted chunk (dofilewrite's count rule), not EINTR");
+
+	ATF_REQUIRE(dqt_sysctl_get_uint("kern.dq.max_io", max_io));
+	dqt_fill(data, sizeof(data), 7);
+	dqt_fixture_init(f, data, sizeof(data), backing_path, oracle_path,
+	    pol, DQ_MINT_F_WRITE);
+	dqt_hold(&f->c, true);
+	a->fd = f->o->fd;
+	a->len = 2 * (size_t)*max_io;
+	a->off = 0;
+	dqt_spawn(ch, child_big_pwrite, a);
+	ATF_REQUIRE(dqt_wait_held(&f->c, 1, DQT_WAIT_MS));
+	answer_write(f, 0, *max_io, 0);
+	ATF_REQUIRE(dqt_wait_held(&f->c, 2, DQT_WAIT_MS));
+	dqt_lock(&f->c);
+	ATF_REQUIRE_EQ(2, f->c.nwr);
+	ATF_CHECK_EQ((uint64_t)*max_io, f->c.wr[1].offset);
+	ATF_CHECK_EQ(*max_io, f->c.wr[1].len);
+	dqt_unlock(&f->c);
+	ATF_REQUIRE_EQ(0, kill(ch->pid, SIGUSR1));
+}
+
+ATF_TC(eintr_mid_chunk_intr);
+ATF_TC_HEAD(eintr_mid_chunk_intr, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "DQ_PF_INTR: a signal while the second "
+	    "max_io chunk waits: INTERRUPT names it and the call returns the "
+	    "bytes of the accepted chunk (the short count), not EINTR");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(eintr_mid_chunk, tc)
+ATF_TC_BODY(eintr_mid_chunk_intr, tc)
 {
 	struct dqt_fixture f;
 	struct dqt_child ch;
+	struct dq_policy pol;
 	struct big_arg a;
 	struct dqt_rr r;
 	u_int max_io;
 
-	ATF_REQUIRE(dqt_sysctl_get_uint("kern.dq.max_io", &max_io));
-	setup(&f, 7);
-	dqt_hold(&f.c, true);
-	a.fd = f.o->fd;
-	a.len = 2 * (size_t)max_io;
-	a.off = 0;
-	dqt_spawn(&ch, child_big_pwrite, &a);
-	ATF_REQUIRE(dqt_wait_held(&f.c, 1, DQT_WAIT_MS));
-	answer_write(&f, 0, max_io, 0);
-	ATF_REQUIRE(dqt_wait_held(&f.c, 2, DQT_WAIT_MS));
-	dqt_lock(&f.c);
-	ATF_REQUIRE_EQ(2, f.c.nwr);
-	ATF_CHECK_EQ((uint64_t)max_io, f.c.wr[1].offset);
-	ATF_CHECK_EQ(max_io, f.c.wr[1].len);
-	dqt_unlock(&f.c);
-	ATF_REQUIRE_EQ(0, kill(ch.pid, SIGUSR1));
+	dqt_policy_write(&pol);
+	pol.dp_flags = DQ_PF_INTR;
+	mid_chunk_start(&f, &pol, &ch, &a, &max_io);
 	ATF_CHECK(dqt_wait_interrupts(&f.c, 1, DQT_WAIT_MS));
 	dqt_lock(&f.c);
 	ATF_CHECK_EQ(f.c.held[1].id, f.c.interrupted[0]);
@@ -560,6 +578,74 @@ ATF_TC_BODY(eintr_mid_chunk, tc)
 	ATF_CHECK_EQ(-1, dq_reply_write(f.c.q, dqt_held_id(&f.c, 1), max_io,
 	    max_io));
 	ATF_CHECK_EQ(ESRCH, errno);
+	dqt_hold(&f.c, false);
+	dqt_fixture_fini(&f);
+}
+
+ATF_TC(signal_mid_write_uninterruptible);
+ATF_TC_HEAD(signal_mid_write_uninterruptible, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "the default policy: a signal while the "
+	    "second chunk waits does not end the write, which completes when "
+	    "the controller answers, as a local file system's (D192)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(signal_mid_write_uninterruptible, tc)
+{
+	struct dqt_fixture f;
+	struct dqt_child ch;
+	struct big_arg a;
+	struct dqt_rr r;
+	u_int max_io;
+
+	mid_chunk_start(&f, NULL, &ch, &a, &max_io);
+	/* Nothing is abandoned: the write still waits for its answer. */
+	dqt_msleep(300);
+	dqt_lock(&f.c);
+	ATF_CHECK_EQ(0, f.c.ninterrupted);
+	dqt_unlock(&f.c);
+	answer_write(&f, 1, max_io, max_io);
+	dqt_collect(&ch, &r, sizeof(r));
+	ATF_CHECK_EQ_MSG((long)(2 * max_io), r.rv, "rv %ld errno %d", r.rv,
+	    r.err);
+	dqt_hold(&f.c, false);
+	dqt_fixture_fini(&f);
+}
+
+ATF_TC(short_count_default);
+ATF_TC_HEAD(short_count_default, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a controller errno on the second chunk "
+	    "after the first was accepted: the write returns the accepted "
+	    "bytes (D194, ZFS's rule; the errno was returned and the count "
+	    "lost)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(short_count_default, tc)
+{
+	struct dqt_fixture f;
+	struct dqt_child ch;
+	struct big_arg a;
+	struct dqt_rr r;
+	struct stat st;
+	u_int max_io;
+
+	ATF_REQUIRE(dqt_sysctl_get_uint("kern.dq.max_io", &max_io));
+	setup(&f, 8);
+	dqt_hold(&f.c, true);
+	a.fd = f.o->fd;
+	a.len = 2 * (size_t)max_io;
+	a.off = 0;
+	dqt_spawn(&ch, child_big_pwrite, &a);
+	ATF_REQUIRE(dqt_wait_held(&f.c, 1, DQT_WAIT_MS));
+	answer_write(&f, 0, max_io, 0);
+	ATF_REQUIRE(dqt_wait_held(&f.c, 2, DQT_WAIT_MS));
+	ATF_REQUIRE_EQ(0, dq_reply(f.c.q, dqt_held_id(&f.c, 1), ENOSPC, NULL,
+	    0));
+	dqt_collect(&ch, &r, sizeof(r));
+	ATF_CHECK_EQ_MSG((long)max_io, r.rv, "rv %ld errno %d", r.rv, r.err);
+	ATF_REQUIRE_EQ(0, fstat(f.o->fd, &st));
+	ATF_CHECK(st.st_size >= (off_t)max_io);
 	dqt_hold(&f.c, false);
 	dqt_fixture_fini(&f);
 }
@@ -1113,7 +1199,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, append_two_writers);
 	ATF_TP_ADD_TC(tp, sync_flags);
 	ATF_TP_ADD_TC(tp, short_write);
-	ATF_TP_ADD_TC(tp, eintr_mid_chunk);
+	ATF_TP_ADD_TC(tp, eintr_mid_chunk_intr);
+	ATF_TP_ADD_TC(tp, signal_mid_write_uninterruptible);
+	ATF_TP_ADD_TC(tp, short_count_default);
 	ATF_TP_ADD_TC(tp, rlimit_fsize);
 	ATF_TP_ADD_TC(tp, notes_and_size);
 	ATF_TP_ADD_TC(tp, controller_errnos);

@@ -335,6 +335,8 @@ dq_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data, int fflag __unused
 		return (0);
 	case DQ_IOC_SET_QUEUE_DEPTH:
 		return (dq_queue_set_depth(q, *(uint32_t *)data));
+	case DQ_IOC_QUEUE_FLAGS:
+		return (dq_queue_flags(q, (struct dq_queue_flags *)data));
 	case DQ_IOC_PUSH:
 		return (dq_queue_push(q, (const struct dq_push_args *)data));
 	case DQ_IOC_PUSH_V1: {

@@ -256,13 +256,18 @@ struct dq_policy {
 	cap_rights_t	dp_rights;		/* rights of the minted descriptor */
 };
 /*
+ * DQ_PF_INTR: the requester's waits for this object's data and attribute
+ * events end on a signal (EINTR, or a short count), as an NFS intr mount's
+ * do; without it no signal ends them, as a local file system's I/O, and
+ * only the answer, the deadline, SIGKILL or the process exiting does.
  * DQ_PF_NO_STAMP: the controller keeps the object's times itself (with
  * SETIDENT, GETATTR or the post-operation attributes of its replies); the
  * kernel does not stamp them after an operation that carried none.
- * 0x00000001 and 0x00000002 are reserved (DQ_PF_INTR, DQ_PF_WRITE_UNIT).
+ * 0x00000002 is reserved (DQ_PF_WRITE_UNIT).
  */
+#define	DQ_PF_INTR		0x00000001
 #define	DQ_PF_NO_STAMP		0x00000004
-#define	DQ_PF_VALID		(DQ_PF_NO_STAMP)
+#define	DQ_PF_VALID		(DQ_PF_INTR | DQ_PF_NO_STAMP)
 
 /*
  * Event header (design 8.1).  de_size is the whole record, header and
@@ -746,7 +751,9 @@ struct dq_stats2 {
 	uint64_t	ds2_readdirs;		/* READDIR events (1c-iii-b) */
 	uint64_t	ds2_postop_ignored;	/* post-operation attribute blocks
 						   ignored (DQ_REPLY_F_POSTOP) */
-	uint64_t	ds2_reserved[2];
+	uint64_t	ds2_full_waits;		/* waited posts that waited for a
+						   slot of a full queue */
+	uint64_t	ds2_reserved[1];
 };
 
 /*
@@ -788,6 +795,23 @@ struct dq_push_args {
 #define	DQ_IOC_SET_QUEUE_DEPTH	_IOW('j', 8, uint32_t)
 #define	DQ_IOC_PUSH		_IOW('j', 9, struct dq_push_args)
 #define	DQ_IOC_GET_STATS2	_IOR('j', 12, struct dq_stats2)
+
+/*
+ * QUEUE_FLAGS: the controller's queue-wide choices.  dqf_set and
+ * dqf_clear (disjoint) are applied and dqf_old receives the flags from
+ * before.  DQ_QF_INTR: the requesters' own lookups (RESOLVE) end on a
+ * signal, with the first consultation's ERESTART (an NFS intr mount);
+ * without it they wait as a local file system's lookups do.
+ */
+struct dq_queue_flags {
+	uint32_t	dqf_set;
+	uint32_t	dqf_clear;
+	uint32_t	dqf_old;		/* out */
+	uint32_t	dqf_pad0;
+};
+#define	DQ_QF_INTR		0x00000001
+#define	DQ_QF_VALID		(DQ_QF_INTR)
+#define	DQ_IOC_QUEUE_FLAGS	_IOWR('j', 13, struct dq_queue_flags)
 
 /*
  * Stage 1c: resolution (design 11).  A process attached to a queue
@@ -1094,6 +1118,7 @@ _Static_assert(sizeof(struct dq_lock_reply) == 32, "dq_lock_reply");
 _Static_assert(sizeof(struct dq_unlock_all_body) == 16, "dq_unlock_all_body");
 _Static_assert(sizeof(struct dq_ioctl_body) == 16, "dq_ioctl_body");
 _Static_assert(sizeof(struct dq_stats2) == 320, "dq_stats2");
+_Static_assert(sizeof(struct dq_queue_flags) == 16, "dq_queue_flags");
 _Static_assert(sizeof(struct dq_push_args) == 40, "dq_push_args");
 _Static_assert(sizeof(struct dq_resolve_body) == 112, "dq_resolve_body");
 _Static_assert(__offsetof(struct dq_resolve_body, drs_root) == 96 &&

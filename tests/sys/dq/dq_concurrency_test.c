@@ -119,6 +119,16 @@ child_threads(void *arg, void *result)
 	}
 }
 
+/* The default policy with DQ_PF_INTR: waits end on a signal (D192). */
+static struct dq_policy *
+policy_intr(struct dq_policy *pol)
+{
+
+	dq_policy_default(pol);
+	pol->dp_flags = DQ_PF_INTR;
+	return (pol);
+}
+
 /* Rounds of a race before it is reported as not exercised. */
 #define	RACE_ROUNDS_MAX	200
 /* The bounds of reply_racing_signal's adaptive timer. */
@@ -236,18 +246,19 @@ ATF_TC_BODY(threads_replies_reversed, tc)
 	(void)close(oracle);
 }
 
-ATF_TC(sigalrm_interrupt);
-ATF_TC_HEAD(sigalrm_interrupt, tc)
+ATF_TC(sigalrm_read_intr);
+ATF_TC_HEAD(sigalrm_read_intr, tc)
 {
-	atf_tc_set_md_var(tc, "descr", "a signal during a delivered READ: the "
-	    "requester gets EINTR, the controller an INTERRUPT record, and its "
-	    "late reply ESRCH");
+	atf_tc_set_md_var(tc, "descr", "a signal during a delivered READ of a "
+	    "DQ_PF_INTR object: the requester gets EINTR, the controller an "
+	    "INTERRUPT record, and its late reply ESRCH (an NFS intr mount)");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(sigalrm_interrupt, tc)
+ATF_TC_BODY(sigalrm_read_intr, tc)
 {
 	struct dqt_ctl c;
 	struct dqt_object *o;
+	struct dq_policy pol;
 	struct one_read_arg a;
 	struct one_read_res r;
 	struct dq_stats st;
@@ -258,7 +269,8 @@ ATF_TC_BODY(sigalrm_interrupt, tc)
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
 	    sizeof(oracle_path));
 	dqt_init(&c);
-	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
+	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data),
+	    policy_intr(&pol));
 	dqt_hold(&c, true);
 
 	/*
@@ -302,15 +314,17 @@ ATF_TC_BODY(sigalrm_interrupt, tc)
 ATF_TC(reply_racing_signal);
 ATF_TC_HEAD(reply_racing_signal, tc)
 {
-	atf_tc_set_md_var(tc, "descr", "a reply racing a signal: either the "
-	    "data arrives and no INTERRUPT is posted, or EINTR and exactly one "
-	    "INTERRUPT (the state decides first, D91 item 7)");
+	atf_tc_set_md_var(tc, "descr", "a reply racing a signal on a "
+	    "DQ_PF_INTR object: either the data arrives and no INTERRUPT is "
+	    "posted, or EINTR and exactly one INTERRUPT (the state decides "
+	    "first, D91 item 7)");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(reply_racing_signal, tc)
 {
 	struct dqt_ctl c;
 	struct dqt_object *o;
+	struct dq_policy pol;
 	struct one_read_arg a;
 	struct one_read_res r;
 	struct dq_stats st;
@@ -320,7 +334,8 @@ ATF_TC_BODY(reply_racing_signal, tc)
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
 	    sizeof(oracle_path));
 	dqt_init(&c);
-	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
+	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data),
+	    policy_intr(&pol));
 
 	/*
 	 * The timer is steered to where the reply lands, however fast or
@@ -403,22 +418,42 @@ ATF_TC_BODY(reply_racing_signal, tc)
 	(void)close(oracle);
 }
 
-ATF_TC(depth_exhausted);
-ATF_TC_HEAD(depth_exhausted, tc)
+/* Wait until the queue's waited posts have waited for a slot n times. */
+static bool
+full_waits_reach(struct dqt_ctl *c, uint64_t n, int ms)
 {
-	atf_tc_set_md_var(tc, "descr", "a full queue fails the requester with "
-	    "EIO, counts a drop and leaves a de_seq gap");
+	struct dq_stats2 st;
+	int64_t end;
+
+	end = dqt_now_ms() + ms;
+	for (;;) {
+		dqt_stats2(c, &st);
+		if (st.ds2_full_waits >= n)
+			return (true);
+		if (dqt_now_ms() >= end)
+			return (false);
+		dqt_msleep(5);
+	}
+}
+
+ATF_TC(full_waits_then_posts);
+ATF_TC_HEAD(full_waits_then_posts, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a full queue makes a waited post wait "
+	    "for a slot and then post (D205), with no drop and no de_seq gap "
+	    "(it failed EIO at once and counted a drop)");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(depth_exhausted, tc)
+ATF_TC_BODY(full_waits_then_posts, tc)
 {
 	struct dqt_ctl c;
 	struct dqt_object *o;
 	struct one_read_arg a;
-	struct one_read_res r[3], r4;
+	struct one_read_res r[3];
 	struct dqt_child ch[3];
 	struct dq_stats st;
-	int i, neio, nok, oracle;
+	struct dq_stats2 st2;
+	int i, oracle;
 
 	dqt_fill(data, sizeof(data), 64);
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
@@ -426,61 +461,94 @@ ATF_TC_BODY(depth_exhausted, tc)
 	dqt_init(&c);
 	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
 	ATF_REQUIRE_EQ(0, dq_set_queue_depth(c.q, 2));
-	dqt_stats(&c, &st);
-	ATF_CHECK_EQ(2, st.ds_queue_depth);
 
 	dqt_pause(&c);
+	memset(&a, 0, sizeof(a));
 	a.fd = o->fd;
 	a.len = 100;
-	a.alarm_us = 0;
 	for (i = 0; i < 3; i++)
 		dqt_spawn(&ch[i], child_one_pread, &a);
-	/* Three attempts: two posted, one dropped (seq taken, EIO). */
-	ATF_CHECK(dqt_wait_stats(&c, posted_or_dropped_is, 3, DQT_WAIT_MS));
+	/* Two posted, the third waiting for a slot. */
+	ATF_CHECK(dqt_wait_stats(&c, posted_or_dropped_is, 2, DQT_WAIT_MS));
+	ATF_CHECK(full_waits_reach(&c, 1, DQT_WAIT_MS));
 	dqt_stats(&c, &st);
-#define	DEPTH_FMT "current %ju dropped %ju posted %ju delivered %ju " \
-	"inflight %ju highwater %ju; harness reads %u paused_reads %u " \
-	"records %u"
-#define	DEPTH_ARGS (uintmax_t)st.ds_queue_current, \
-	(uintmax_t)st.ds_events_dropped, (uintmax_t)st.ds_events_posted, \
-	(uintmax_t)st.ds_events_delivered, (uintmax_t)st.ds_inflight, \
-	(uintmax_t)st.ds_queue_highwater, c.reads, c.paused_reads, c.records
-	dqt_lock(&c);
-	ATF_CHECK_EQ_MSG(2, st.ds_queue_current, DEPTH_FMT, DEPTH_ARGS);
-	ATF_CHECK_EQ_MSG(1, st.ds_events_dropped, DEPTH_FMT, DEPTH_ARGS);
-	ATF_CHECK_EQ_MSG(2, st.ds_events_posted, DEPTH_FMT, DEPTH_ARGS);
-	dqt_unlock(&c);
+	ATF_CHECK_EQ(2, st.ds_queue_current);
+	ATF_CHECK_EQ(0, st.ds_events_dropped);
 	dqt_resume(&c);
-	neio = nok = 0;
 	for (i = 0; i < 3; i++) {
 		dqt_collect(&ch[i], &r[i], sizeof(r[i]));
-		if (r[i].rr.rv == 100)
-			nok++;
-		else if (r[i].rr.rv == -1 && r[i].rr.err == EIO)
-			neio++;
+		ATF_CHECK_EQ_MSG(100, r[i].rr.rv, "reader %d: rv %ld errno %d",
+		    i, r[i].rr.rv, r[i].rr.err);
 	}
-	ATF_CHECK_EQ_MSG(2, nok, "ok %d eio %d: rv/errno %ld/%d %ld/%d %ld/%d",
-	    nok, neio, r[0].rr.rv, r[0].rr.err, r[1].rr.rv, r[1].rr.err,
-	    r[2].rr.rv, r[2].rr.err);
-	ATF_CHECK_EQ_MSG(1, neio, "ok %d eio %d", nok, neio);
-	/* One more event makes the gap visible wherever the drop fell. */
-	dqt_run_child(child_one_pread, &a, &r4, sizeof(r4));
-	ATF_CHECK_EQ_MSG(100, r4.rr.rv, "rv %ld errno %d", r4.rr.rv, r4.rr.err);
 	dqt_lock(&c);
 	ATF_CHECK_EQ_MSG(3, c.nseqs, "nseqs %d last_seq %ju", c.nseqs,
 	    (uintmax_t)c.last_seq);
-	ATF_CHECK_EQ_MSG(4, c.last_seq, "nseqs %d last_seq %ju", c.nseqs,
-	    (uintmax_t)c.last_seq);
-	ATF_CHECK_EQ_MSG(1, c.last_seq - (uint64_t)c.nseqs, "nseqs %d last_seq %ju",
+	ATF_CHECK_EQ_MSG(3, c.last_seq, "no gap: nseqs %d last_seq %ju",
 	    c.nseqs, (uintmax_t)c.last_seq);
 	dqt_unlock(&c);
 	dqt_stats(&c, &st);
-	dqt_lock(&c);
-	ATF_CHECK_EQ_MSG(1, st.ds_events_dropped, DEPTH_FMT, DEPTH_ARGS);
-	ATF_CHECK_EQ_MSG(2, st.ds_queue_highwater, DEPTH_FMT, DEPTH_ARGS);
-	dqt_unlock(&c);
-#undef DEPTH_FMT
-#undef DEPTH_ARGS
+	ATF_CHECK_EQ(0, st.ds_events_dropped);
+	ATF_CHECK_EQ(3, st.ds_events_posted);
+	dqt_stats2(&c, &st2);
+	ATF_CHECK(st2.ds2_full_waits >= 1);
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
+ATF_TC(full_deadline_eio);
+ATF_TC_HEAD(full_deadline_eio, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a waited post that waits for a slot "
+	    "of a full queue is bounded by its deadline: EIO, counted as a "
+	    "deadline miss, nothing posted (D205)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(full_deadline_eio, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o0, *o1;
+	struct dq_policy pol;
+	struct one_read_arg a0, a1;
+	struct one_read_res r0, r1;
+	struct dqt_child ch0, ch1;
+	struct dq_stats st;
+	int64_t start, ms;
+	int oracle;
+
+	dqt_fill(data, sizeof(data), 65);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	dq_policy_default(&pol);
+	pol.dp_deadline_ms = 0;
+	o0 = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
+	pol.dp_deadline_ms = 300;
+	o1 = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
+	ATF_REQUIRE_EQ(0, dq_set_queue_depth(c.q, 1));
+
+	/* The one slot taken by a read with no deadline, never read. */
+	dqt_pause(&c);
+	memset(&a0, 0, sizeof(a0));
+	a0.fd = o0->fd;
+	a0.len = 100;
+	dqt_spawn(&ch0, child_one_pread, &a0);
+	ATF_CHECK(dqt_wait_stats(&c, posted_or_dropped_is, 1, DQT_WAIT_MS));
+	a1 = a0;
+	a1.fd = o1->fd;
+	start = dqt_now_ms();
+	dqt_spawn(&ch1, child_one_pread, &a1);
+	dqt_collect(&ch1, &r1, sizeof(r1));
+	ms = dqt_now_ms() - start;
+	ATF_CHECK_EQ(-1, r1.rr.rv);
+	ATF_CHECK_EQ(EIO, r1.rr.err);
+	ATF_CHECK_MSG(ms >= 250 && ms < 3000, "took %jd ms", (intmax_t)ms);
+	dqt_stats(&c, &st);
+	ATF_CHECK_EQ(1, st.ds_events_posted);
+	ATF_CHECK_EQ(0, st.ds_events_dropped);
+	ATF_CHECK_EQ(1, st.ds_deadline_misses);
+	dqt_resume(&c);
+	dqt_collect(&ch0, &r0, sizeof(r0));
+	ATF_CHECK_EQ(100, r0.rr.rv);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -857,9 +925,10 @@ ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, threads_replies_reversed);
-	ATF_TP_ADD_TC(tp, sigalrm_interrupt);
+	ATF_TP_ADD_TC(tp, sigalrm_read_intr);
 	ATF_TP_ADD_TC(tp, reply_racing_signal);
-	ATF_TP_ADD_TC(tp, depth_exhausted);
+	ATF_TP_ADD_TC(tp, full_waits_then_posts);
+	ATF_TP_ADD_TC(tp, full_deadline_eio);
 	ATF_TP_ADD_TC(tp, edeadlk_controller);
 	ATF_TP_ADD_TC(tp, edeadlk_pdfork);
 	ATF_TP_ADD_TC(tp, inflight_bound);

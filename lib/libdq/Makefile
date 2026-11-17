@@ -14,6 +14,7 @@ MAN=		libdq.3
 MLINKS+=	libdq.3 dq_open.3 \
 		libdq.3 dq_get_stats.3 \
 		libdq.3 dq_set_queue_depth.3 \
+		libdq.3 dq_queue_set_flags.3 \
 		libdq.3 dq_policy_default.3 \
 		libdq.3 dq_ident_from_stat.3 \
 		libdq.3 dq_mint_file.3 \

@@ -694,9 +694,10 @@ raise
 .Dv SIGPIPE :
 .Bl -tag -width "DQ_OP_FSPACECTL" -offset indent
 .It Dv DQ_OP_READ , GETATTR
-any errno.
+any errno but
+.Er EINTR .
 .It Dv DQ_OP_WRITE
-.Er EIO , ENOSPC , EDQUOT , EFBIG , EACCES , EPERM , EROFS , EINTR ,
+.Er EIO , ENOSPC , EDQUOT , EFBIG , EACCES , EPERM , EROFS ,
 .Er EAGAIN , ENXIO , EINVAL , ESTALE .
 .It Dv DQ_OP_SETATTR
 .Er EPERM , EROFS , EINVAL , EOPNOTSUPP , EIO , EFBIG , EDQUOT , ENOSPC ,
@@ -708,14 +709,14 @@ any errno.
 .It Dv DQ_OP_FSPACECTL
 .Er ENOSPC , EFBIG , EINVAL , EIO , EOPNOTSUPP , ENODEV .
 .It Dv DQ_OP_LOCK
-.Er EAGAIN , EDEADLK , ENOLCK , EINVAL , EIO , EINTR .
+.Er EAGAIN , EDEADLK , ENOLCK , EINVAL , EIO .
 .It Dv DQ_OP_IOCTL
 .Er ENOTTY , EINVAL , EIO , EPERM , EACCES , ENXIO .
 .It Dv DQ_OP_RESOLVE
 .Er EPERM , ENOENT , EIO , ENXIO , E2BIG , ENOEXEC , EACCES , EBUSY ,
 .Er EEXIST , EXDEV , ENODEV , ENOTDIR , EISDIR , EINVAL , ETXTBSY , EFBIG ,
 .Er ENOSPC , EROFS , EMLINK , EAGAIN , ENAMETOOLONG , ENOTEMPTY , ELOOP ,
-.Er EDQUOT , ESTALE , EOPNOTSUPP , EINTR , EAFNOSUPPORT , EPROTONOSUPPORT ,
+.Er EDQUOT , ESTALE , EOPNOTSUPP , EAFNOSUPPORT , EPROTONOSUPPORT ,
 .Er EADDRINUSE , EADDRNOTAVAIL , ECONNREFUSED , EPROTOTYPE , EFTYPE ,
 .Er EAUTH , ENOATTR , EINTEGRITY
 (one list for every lookup operation);
@@ -726,6 +727,17 @@ and
 .Er EPERM , EACCES , EAFNOSUPPORT , EPROTONOSUPPORT , EPROTOTYPE ,
 .Er EOPNOTSUPP , ENOBUFS , EMFILE , ENFILE .
 .El
+.Pp
+.Er EINTR
+is never a controller's answer, to any operation (D193): the only
+.Er EINTR
+a requester sees comes from the kernel's own wait, in the modes that end
+on a signal
+.Pq Sx Waiting, deadlines and interruption ;
+a reply carrying one reaches the requester as
+.Er EIO
+and is counted in
+.Va ds2_bad_replies .
 .Ss Reading the queue
 .Xr read 2
 on the queue copies whole records, as many as fit, in order, and never
@@ -770,11 +782,16 @@ A queue holds
 .Va kern.dq.queue_depth
 unread events (a controller may lower its own queue's depth with
 .Dv DQ_IOC_SET_QUEUE_DEPTH ,
-never raise it); when it is full the requester's operation fails with
-.Er EIO
-at once and
-.Va ds_events_dropped
-counts it.
+never raise it); when it is full an operation that waits for its answer
+waits for a slot (D205), in the mode and within the deadline of its own
+wait, and is counted in
+.Va ds2_full_waits ;
+a slot read off the queue, or withdrawn, wakes one such waiter, and a
+waiter that cannot use it (its quota is full) passes it on.
+A record that waits for nothing and is not exempt
+.Pq Dv DQ_OP_CLOSE
+is dropped on a full queue and counted in
+.Va ds_events_dropped .
 Before that bound a requester waits for a slot when an object has
 .Va kern.dq.max_inflight_per_object
 unanswered events or the requester itself has
@@ -799,17 +816,69 @@ A missed deadline fails the operation with
 .Er EIO
 and counts in
 .Va ds_deadline_misses .
-A signal interrupts the wait with
-.Er EINTR .
-Either way the event is abandoned (design 8.2): one the controller has not
-yet read is withdrawn silently; one already delivered is marked
-interrupted and a
+.Pp
+What else ends a wait depends on its mode (D192):
+.Bl -tag -width "uninterruptible"
+.It uninterruptible
+The default for the data and attribute operations of an object
+.Pq Dv DQ_OP_READ , WRITE , GETATTR , SETATTR , FSYNC , FALLOCATE , FSPACECTL , READDIR , IOCTL
+and for a process's own lookups: the wait is a local file system's disk
+wait, as fusefs's without
+.Cm intr
+is.
+No signal ends it; a caught signal is handled once the operation
+returns, and a stop
+.Pq Dv SIGSTOP , No a debugger
+takes effect then.
+Only the answer, the deadline,
+.Dv SIGKILL ,
+the process's exit and another thread's
+.Xr _exit 2
+(which single-threads the process before it marks it exiting) end it,
+the last three with the operation abandoned.
+Another thread's
+.Xr execve 2
+or a core dump waits for the answer, as for a disk read in progress.
+The wait sleeps in slices of 100 ms, whatever is pending, so a storm of
+signals costs it nothing.
+A deadline of 0 is then a hard mount: only the answer,
+.Dv SIGKILL
+or an exit ends the wait.
+.It interruptible
+An object minted or set with
+.Dv DQ_PF_INTR
+in
+.Va dp_flags ,
+and a queue's lookups after
+.Dv DQ_IOC_QUEUE_FLAGS
+set
+.Dv DQ_QF_INTR ,
+wait as an NFS
+.Cm intr
+mount: a caught signal ends the wait with
+.Er EINTR
+(a lookup's first consultation with the restart described in
+.Sx Attachment and resolution ) .
+A lock wait
+.Pq Dv DQ_OP_LOCK
+is always interruptible, as
+.Fn lf_advlock Ns 's
+sleep is.
+.It fault
+A page fault's wait catches no signal and is bounded by the page
+deadline; it ends as an uninterruptible wait does, and with
+.Dv SIGBUS
+at the deadline
+.Pq see Sx Pages .
+.El
+.Pp
+However it ends, an unanswered event is abandoned (design 8.2): one the
+controller has not yet read is withdrawn silently; one already delivered
+is marked interrupted and a
 .Dv DQ_OP_INTERRUPT
 record names it, so a deadline that expires after delivery posts the same
 record a signal does
-.Pq Va ds_interrupts counts the signal case .
-.Dv SIGKILL
-always breaks a wait.
+.Pq Va ds_interrupts counts the other cases .
 When a reply and a signal race, the state decides: a reply that landed
 first is consumed and no interruption is recorded.
 .Pp
@@ -820,7 +889,7 @@ wait has no deadline, whatever the policy says: a blocked
 is a legitimate wait of any length on a real file.
 Lock waits are counted apart from the in-flight bounds (a blocked locker
 never holds a slot readers and writers need) and bounded by the queue
-depth alone; a signal ends one as any other wait, with
+depth alone; a signal ends one, with
 .Dv DQ_OP_INTERRUPT .
 .Dv DQ_OP_UNLOCK_ALL ,
 .Dv DQ_OP_CLOSE
@@ -1009,6 +1078,9 @@ a subset of
 .Va dp_flags
 .Pq formerly Va dp_pad0
 no bit but
+.Dv DQ_PF_INTR
+.Pq see Sx Waiting, deadlines and interruption
+and
 .Dv DQ_PF_NO_STAMP
 .Pq see Sx Post-operation attributes .
 Anything else is
@@ -1145,6 +1217,20 @@ Lower the depth to 1..
 .Va kern.dq.queue_depth ;
 .Er EINVAL
 otherwise.
+Posts waiting for a slot look again at a raised depth.
+.It Dv DQ_IOC_QUEUE_FLAGS Vt "struct dq_queue_flags"
+Set
+.Va dqf_set
+and clear
+.Va dqf_clear
+(disjoint) among the queue's flags, and return the flags from before in
+.Va dqf_old ;
+.Er EINVAL
+for an unknown bit, overlapping masks or a nonzero
+.Va dqf_pad0 .
+.Dv DQ_QF_INTR :
+the attached processes' own lookups end on a signal
+.Pq Sx Waiting, deadlines and interruption .
 .It Dv DQ_IOC_PUSH Vt "struct dq_push_args"
 With
 .Va dp_op
@@ -1263,11 +1349,13 @@ or
 .Xr fhlink 2
 into a served directory, refused with no event),
 .Va ds2_readdirs
-.Pq Dv DQ_OP_READDIR No events
-and
+.Pq Dv DQ_OP_READDIR No events ,
 .Va ds2_postop_ignored
 (post-operation attribute blocks ignored, see
-.Sx Post-operation attributes ) .
+.Sx Post-operation attributes )
+and
+.Va ds2_full_waits
+(waited posts that waited for a slot of a full queue).
 The kernel writes
 .Va ds2_size
 .Pq 320 .
@@ -1539,15 +1627,10 @@ and
 .Dv SIGXFSZ ;
 for an append the limit is measured at the presented size, the best the
 kernel knows before the controller names its end of file.
-A failure after some chunks were accepted returns the error and the count
-is lost, except for
-.Er EINTR ,
-.Er ERESTART
-and
-.Er EWOULDBLOCK ,
-which make it a short write of the accepted bytes, as
-.Fn dofilewrite
-does.
+A failure after some chunks were accepted (the controller's errno, a
+deadline, a revoke, the signal of an interruptible object) ends the call
+with the short count of the accepted bytes and drops the error, as ZFS
+does (D194); the offset and the size already follow those bytes.
 No rollback of accepted chunks is possible: a failing chunk does not undo
 the earlier ones (a vnode's all-or-nothing
 .Dv IO_UNIT
@@ -2520,7 +2603,14 @@ A missed deadline fails the lookup with
 .Er EIO
 and posts
 .Dv DQ_OP_INTERRUPT .
-A caught signal ends the wait: during the first consultation of a system
+A lookup's wait is uninterruptible unless the queue has
+.Dv DQ_QF_INTR
+.Pq Sx Waiting, deadlines and interruption ;
+a kernel consumer's and the kernel's own consultations never end on a
+signal.
+With
+.Dv DQ_QF_INTR
+a caught signal ends the wait: during the first consultation of a system
 call's path the call restarts
 .Pq Dv SA_RESTART
 and posts again, the abandoned event named by an INTERRUPT; any other
@@ -2533,9 +2623,8 @@ fails with
 instead (a restarted rename could report a rename that did not happen).
 A restart copies the path in again: if the bytes changed, the new bytes
 are posted, never the old answer reused.
-A queue at its depth fails the lookup with
-.Er EIO
-at once and counts a drop.
+A queue at its depth makes the lookup wait for a slot, within its
+deadline.
 .Pp
 .Sy Failing closed .
 When the controller's queue dies, every waiting lookup and every later
@@ -3883,7 +3972,10 @@ It takes
 .Dv DQ_RESOLVE_PASS ,
 .Dv DQ_RESOLVE_REAL ,
 the operation's served kinds or an errno; a signal while waiting is
-.Er EINTR .
+.Er EINTR
+under
+.Dv DQ_QF_INTR
+and otherwise ends nothing.
 Paths consulted ahead, second paths, the kernel's own lookups, exempt
 regions and capability-restricted lookups
 .Pq Dv O_RESOLVE_BENEATH , RINROOT , No capability mode

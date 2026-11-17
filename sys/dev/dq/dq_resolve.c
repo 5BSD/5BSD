@@ -210,7 +210,7 @@ dq_resolve_consult(struct thread *td, struct dqres_binding *b,
 	size_t bodylen, strlen_;
 	char *p;
 	int error, rerror, ms;
-	bool dead;
+	bool catching, dead;
 
 	bzero(ans, sizeof(*ans));
 	q = b->db_queue;
@@ -289,8 +289,16 @@ dq_resolve_consult(struct thread *td, struct dqres_binding *b,
 	}
 	deadline = ms > 0 ? sbinuptime() + (sbintime_t)ms * SBT_1MS : 0;
 
+	/*
+	 * D192: a lookup waits as a local file system's does, whatever is
+	 * pending, unless the controller asked for intr (DQ_QF_INTR); a
+	 * kernel consumer's and a kernel lookup's never catch.
+	 */
+	DQ_LOCK(q);
+	catching = rq->rq_class == 1 && (q->q_qflags & DQ_QF_INTR) != 0;
+	DQ_UNLOCK(q);
 	error = dq_event_post_wait_q(q, DQ_OP_RESOLVE, rb, bodylen, td,
-	    deadline, &reply, &rerror, &robj, &rswap);
+	    deadline, catching, &reply, &rerror, &robj, &rswap);
 	free(rb, M_DQ);
 	DQ_LOCK(q);
 	q->q_stats.ds2_resolves++;
@@ -583,7 +591,7 @@ dq_resolve_errno_allowed(uint32_t rop, int error)
 	case ENODEV: case ENOTDIR: case EISDIR: case EINVAL: case ETXTBSY:
 	case EFBIG: case ENOSPC: case EROFS: case EMLINK: case EAGAIN:
 	case ENAMETOOLONG: case ENOTEMPTY: case ELOOP: case EDQUOT:
-	case ESTALE: case EOPNOTSUPP: case EINTR: case EAFNOSUPPORT:
+	case ESTALE: case EOPNOTSUPP: case EAFNOSUPPORT:
 	case EPROTONOSUPPORT: case EADDRINUSE: case EADDRNOTAVAIL:
 	case ECONNREFUSED: case EPROTOTYPE: case EFTYPE: case EAUTH:
 	case ENOATTR: case EINTEGRITY:

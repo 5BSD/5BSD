@@ -67,6 +67,21 @@ dq_set_queue_depth(int q, uint32_t depth)
 	return (ioctl(q, DQ_IOC_SET_QUEUE_DEPTH, &depth));
 }
 
+int
+dq_queue_set_flags(int q, uint32_t set, uint32_t clear, uint32_t *oldp)
+{
+	struct dq_queue_flags qf;
+
+	memset(&qf, 0, sizeof(qf));
+	qf.dqf_set = set;
+	qf.dqf_clear = clear;
+	if (ioctl(q, DQ_IOC_QUEUE_FLAGS, &qf) == -1)
+		return (-1);
+	if (oldp != NULL)
+		*oldp = qf.dqf_old;
+	return (0);
+}
+
 /*
  * Identity and policy
  */
@@ -567,12 +582,15 @@ dq_reply_errno_allowed(uint32_t op, int error)
 
 	if (error == 0)
 		return (1);
+	/* The kernel's alone: a controller never answers it (D193). */
+	if (error == EINTR)
+		return (0);
 	switch (op) {
 	case DQ_OP_WRITE:
 	case DQ_OP_WRITE_ASYNC:
 		return (error == EIO || error == ENOSPC || error == EDQUOT ||
 		    error == EFBIG || error == EACCES || error == EPERM ||
-		    error == EROFS || error == EINTR || error == EAGAIN ||
+		    error == EROFS || error == EAGAIN ||
 		    error == ENXIO || error == EINVAL || error == ESTALE);
 	case DQ_OP_SETATTR:
 		return (error == EPERM || error == EROFS || error == EINVAL ||
@@ -590,7 +608,7 @@ dq_reply_errno_allowed(uint32_t op, int error)
 		    error == EIO || error == EOPNOTSUPP || error == ENODEV);
 	case DQ_OP_LOCK:
 		return (error == EAGAIN || error == EDEADLK || error == ENOLCK ||
-		    error == EINVAL || error == EIO || error == EINTR);
+		    error == EINVAL || error == EIO);
 	case DQ_OP_IOCTL:
 		return (error == ENOTTY || error == EINVAL || error == EIO ||
 		    error == EPERM || error == EACCES || error == ENXIO);
@@ -628,7 +646,7 @@ dq_resolve_errno_allowed(uint32_t rop, int error)
 	case ENODEV: case ENOTDIR: case EISDIR: case EINVAL: case ETXTBSY:
 	case EFBIG: case ENOSPC: case EROFS: case EMLINK: case EAGAIN:
 	case ENAMETOOLONG: case ENOTEMPTY: case ELOOP: case EDQUOT:
-	case ESTALE: case EOPNOTSUPP: case EINTR: case EAFNOSUPPORT:
+	case ESTALE: case EOPNOTSUPP: case EAFNOSUPPORT:
 	case EPROTONOSUPPORT: case EADDRINUSE: case EADDRNOTAVAIL:
 	case ECONNREFUSED: case EPROTOTYPE: case EFTYPE: case EAUTH:
 	case ENOATTR: case EINTEGRITY:

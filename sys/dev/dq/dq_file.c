@@ -1035,10 +1035,9 @@ out_offset:
  * wrote at (the authoritative EOF of an append is the controller's); the
  * kernel moves the implicit offset to offset + written, extends di_size and
  * raises NOTE_WRITE (+ NOTE_EXTEND).  A failure after accepted chunks
- * returns the error with the count lost, except for EINTR, ERESTART and
- * EWOULDBLOCK, which dofilewrite turns into a short write; no rollback is
- * possible (IO_UNIT is a per-filesystem property; declared).  RLIMIT_FSIZE
- * is applied as the filesystems under vn_write apply it (N3).
+ * ends the call with the short count (D194, as ZFS does); no rollback is
+ * made (ufs's IO_UNIT is a per-filesystem property; declared).
+ * RLIMIT_FSIZE is applied as the filesystems under vn_write apply it (N3).
  */
 static int
 dq_write(struct file *fp, struct uio *uio, struct ucred *active_cred __unused,
@@ -1203,12 +1202,15 @@ dq_write(struct file *fp, struct uio *uio, struct ucred *active_cred __unused,
 	}
 	rangelock_unlock(&o->o_rl, cookie);
 	/*
-	 * dofilewrite's count rule, for the callers that do not apply it
-	 * themselves (aio, the Linux bridges): bytes moved before an
-	 * interruption are a short write, not an error.
+	 * The short count (D194, ZFS's rule and POSIX's): once a chunk was
+	 * accepted, an error that ends the call (the controller's errno, a
+	 * deadline, a revoke, the signal of an intr object) gives the count
+	 * moved and is not reported; the offset and the size already
+	 * follow the accepted bytes.  dofilewrite applies the same rule to
+	 * an interruption; the callers that do not (aio, the Linux bridges)
+	 * get it here.
 	 */
-	if (done != 0 && (error == EINTR || error == ERESTART ||
-	    error == EWOULDBLOCK))
+	if (done != 0)
 		error = 0;
 out_offset:
 	uio->uio_resid += resid_adj;

@@ -62,6 +62,12 @@ int	dq_get_stats2(int fd, struct dq_stats2 *st);
 
 /* Lower the queue's depth; 1..kern.dq.queue_depth, never above it. */
 int	dq_set_queue_depth(int q, uint32_t depth);
+/*
+ * Set and clear queue flags (DQ_QF_*, disjoint); *oldp, unless NULL,
+ * receives the flags from before.  DQ_QF_INTR: the requesters' lookups
+ * end on a signal (dq(4) "Waiting, deadlines and interruption").
+ */
+int	dq_queue_set_flags(int q, uint32_t set, uint32_t clear, uint32_t *oldp);
 
 /*
  * Identity and policy

@@ -413,6 +413,12 @@ ATF_TC_BODY(mint_reasons_policy, tc)
 	p.dp_flags = DQ_PF_NO_STAMP;
 	ATF_CHECK_EQ(0, dq_mint_file(f.c.q, &f.ident, &p, &object, &fd, NULL));
 	(void)close(fd);
+	p.dp_flags = DQ_PF_INTR | DQ_PF_NO_STAMP;
+	ATF_CHECK_EQ(0, dq_mint_file(f.c.q, &f.ident, &p, &object, &fd, NULL));
+	(void)close(fd);
+	/* 0x2 is reserved (DQ_PF_WRITE_UNIT, not built). */
+	p.dp_flags = 0x2;
+	expect_reason(&f, &f.ident, &p, DQ_REASON_POLICY, "dp_flags reserved");
 
 	p = f.pol;
 	p.dp_rights_version = CAP_RIGHTS_VERSION + 1;
@@ -495,6 +501,43 @@ child_fstat(void *arg, void *result)
 
 	r->rr.rv = fstat(a->fd, &r->st);
 	r->rr.err = r->rr.rv == -1 ? errno : 0;
+}
+
+ATF_TC(queue_flags);
+ATF_TC_HEAD(queue_flags, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "DQ_IOC_QUEUE_FLAGS: unknown bits, "
+	    "overlapping masks and padding EINVAL; set and clear report the "
+	    "flags from before");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(queue_flags, tc)
+{
+	struct dq_queue_flags qf;
+	uint32_t old;
+	int q;
+
+	q = dq_open();
+	ATF_REQUIRE(q != -1);
+	errno = 0;
+	ATF_CHECK_EQ(-1, dq_queue_set_flags(q, 0x80000000, 0, NULL));
+	ATF_CHECK_EQ(EINVAL, errno);
+	errno = 0;
+	ATF_CHECK_EQ(-1, dq_queue_set_flags(q, DQ_QF_INTR, DQ_QF_INTR, NULL));
+	ATF_CHECK_EQ(EINVAL, errno);
+	memset(&qf, 0, sizeof(qf));
+	qf.dqf_pad0 = 1;
+	errno = 0;
+	ATF_CHECK_EQ(-1, ioctl(q, DQ_IOC_QUEUE_FLAGS, &qf));
+	ATF_CHECK_EQ(EINVAL, errno);
+	old = 0xff;
+	ATF_REQUIRE_EQ(0, dq_queue_set_flags(q, DQ_QF_INTR, 0, &old));
+	ATF_CHECK_EQ(0, old);
+	ATF_REQUIRE_EQ(0, dq_queue_set_flags(q, 0, DQ_QF_INTR, &old));
+	ATF_CHECK_EQ(DQ_QF_INTR, old);
+	ATF_REQUIRE_EQ(0, dq_queue_set_flags(q, 0, 0, &old));
+	ATF_CHECK_EQ(0, old);
+	(void)close(q);
 }
 
 ATF_TC(reply_errors);
@@ -858,6 +901,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, mint_reasons_identity);
 	ATF_TP_ADD_TC(tp, mint_reasons_policy);
 	ATF_TP_ADD_TC(tp, nonroot_open_refused);
+	ATF_TP_ADD_TC(tp, queue_flags);
 	ATF_TP_ADD_TC(tp, reply_errors);
 	ATF_TP_ADD_TC(tp, control_errors);
 	ATF_TP_ADD_TC(tp, kldunload_refused);

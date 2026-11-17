@@ -135,6 +135,7 @@ dq_async_fail_locked1(struct dq_queue *q, struct dq_async *da, bool interrupt)
 			TAILQ_REMOVE(&q->q_pending, ev, ev_link);
 			q->q_count--;
 			q->q_bytes -= ev->ev_size;
+			dq_queue_slots_freed(q, 1);
 		} else {
 			RB_REMOVE(dq_inflight_tree, &q->q_inflight, ev);
 			q->q_stats.ds2_inflight--;

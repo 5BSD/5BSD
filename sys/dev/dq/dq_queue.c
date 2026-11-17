@@ -235,6 +235,7 @@ dq_queue_die(struct dq_queue *q)
 	}
 	wakeup(&q->q_pending);
 	wakeup(&q->q_requesters);
+	wakeup(&q->q_space);
 	selwakeup(&q->q_sel);
 	KNOTE_LOCKED(&q->q_sel.si_note, 0);
 	dq_observer_unlink_all(q);
@@ -538,6 +539,7 @@ dq_event_fail_locked(struct dq_queue *q, struct dq_event_k *ev, int error,
 		TAILQ_REMOVE(&q->q_pending, ev, ev_link);
 		q->q_count--;
 		q->q_bytes -= ev->ev_size;
+		dq_queue_slots_freed(q, 1);
 	} else {
 		RB_REMOVE(dq_inflight_tree, &q->q_inflight, ev);
 		q->q_stats.ds2_inflight--;
@@ -1006,11 +1008,14 @@ dq_deadline(const struct dq_policy *pol)
 }
 
 /*
- * B4: a page fault abandons its wait only when the process is being killed
- * or is exiting.  Called with no dq lock held.
+ * The abandon predicate of a wait that catches no signal (D192): the
+ * process is being killed, is exiting, or another of its threads is
+ * single-threading it for exit (exit1 starts thread_single(SINGLE_EXIT)
+ * before it sets P_WEXIT, and weed_inhib aborts only sleeps that catch).
+ * Called with no dq lock held.
  */
 static bool
-dq_fault_abandon(struct thread *td)
+dq_wait_abandon(struct thread *td)
 {
 	struct proc *p;
 	bool dying;
@@ -1019,58 +1024,164 @@ dq_fault_abandon(struct thread *td)
 		return (true);
 	p = td->td_proc;
 	PROC_LOCK(p);
-	dying = (p->p_flag & P_WEXIT) != 0;
+	dying = (p->p_flag & P_WEXIT) != 0 ||
+	    ((p->p_flag & P_SINGLE_EXIT) != 0 && p->p_singlethread != td);
 	PROC_UNLOCK(p);
 	return (dying);
 }
 
-#define	DQ_FAULT_SLICE	(100 * SBT_1MS)
+/*
+ * How long a non-catching wait sleeps before it looks at its process
+ * again.  A sleep that catches nothing sleeps its whole slice whatever is
+ * pending, so a signal storm or another thread's exec cannot make it
+ * spin (rev 8 section 3.1).
+ */
+#define	DQ_WAIT_SLICE	(100 * SBT_1MS)
+
+static sbintime_t
+dq_wait_slice_end(sbintime_t now, sbintime_t deadline)
+{
+
+	if (deadline != 0 && deadline < now + DQ_WAIT_SLICE)
+		return (deadline);
+	return (now + DQ_WAIT_SLICE);
+}
 
 /*
- * A quota sleep before the post, bounded by the event's own deadline
- * (absolute, taken before the first sleep), so the wait for a slot and
- * the wait for the answer together never pass it (T-R03).  A syscall's
- * is interruptible; a fault's (DQ_POST_FAULT) is a non-catching slice.
- * Returns 0 to look again; EIO at the deadline (the event was never
- * posted: the controller sees nothing of it), counted as a deadline miss;
- * a caught signal's errno; EINTR for a fault when the process is dying.
- * Called and returns with q_mtx held.
+ * A sleep for room before a waited post: a quota (the object's in-flight
+ * bound, the requester's) or the queue's depth.  q_mtx is held and kept.
+ * Returns 0 to look again; EIO when the deadline passed (the event was
+ * never posted: the controller sees nothing of it); a caught signal's
+ * EINTR or ERESTART (DQ_WAIT_CATCH); EINTR in the other modes when the
+ * process is dying.
  */
 static int
-dq_post_quota_sleep(struct dq_queue *q, struct dq_event_k *ev, void *chan,
-    const char *wmesg, struct thread *td, int flags, sbintime_t deadline)
+dq_wait_room(struct dq_queue *q, void *chan, const char *wmesg,
+    struct thread *td, int mode, sbintime_t deadline)
 {
 	sbintime_t now;
 	int error;
 	bool dying;
 
-	if ((flags & DQ_POST_FAULT) == 0) {
+	DQ_LOCK_ASSERT(q);
+	if (mode == DQ_WAIT_CATCH) {
 		if (deadline == 0)
 			error = msleep(chan, &q->q_mtx, PCATCH, wmesg, 0);
 		else
 			error = msleep_sbt(chan, &q->q_mtx, PCATCH, wmesg,
 			    deadline, 0, C_ABSOLUTE);
-		if (error == EWOULDBLOCK)
-			error = EIO;
-	} else {
-		now = sbinuptime();
-		if (now >= deadline) {
-			error = EIO;
-		} else {
-			(void)msleep_sbt(chan, &q->q_mtx, 0, wmesg,
-			    MIN(deadline, now + DQ_FAULT_SLICE), 0, C_ABSOLUTE);
-			DQ_UNLOCK(q);
-			dying = dq_fault_abandon(td);
-			DQ_LOCK(q);
-			error = dying ? EINTR : 0;
-		}
+		return (error == EWOULDBLOCK ? EIO : error);
 	}
+	now = sbinuptime();
+	if (deadline != 0 && now >= deadline)
+		return (EIO);
+	(void)msleep_sbt(chan, &q->q_mtx, 0, wmesg,
+	    dq_wait_slice_end(now, deadline), 0, C_ABSOLUTE);
+	DQ_UNLOCK(q);
+	dying = dq_wait_abandon(td);
+	DQ_LOCK(q);
+	return (dying ? EINTR : 0);
+}
+
+/*
+ * The quota sleeps of a waited post, bounded by the event's own deadline
+ * (absolute, taken before the first sleep), so the wait for room and the
+ * wait for the answer together never pass it (T-R03).
+ */
+static int
+dq_post_quota_sleep(struct dq_queue *q, struct dq_event_k *ev, void *chan,
+    const char *wmesg, struct thread *td, int mode, sbintime_t deadline)
+{
+	int error;
+
+	error = dq_wait_room(q, chan, wmesg, td, mode, deadline);
 	if (error == EIO)
 		q->q_stats.ds2_deadline_misses++;
 	if (error != 0)
 		SDT_PROBE4(dq, , , quota__wait, q, ev,
 		    (chan == (void *)&q->q_requesters ? DQ_QUOTA_REQUESTER :
 		    DQ_QUOTA_OBJECT), error);
+	return (error);
+}
+
+/*
+ * A full queue (D205): a waited post waits for a slot instead of failing,
+ * in its own mode and bounded by its deadline.  dq_queue_slots_freed wakes
+ * one waiter per slot read off the queue (or withdrawn); a waiter woken
+ * that goes on to sleep elsewhere passes its wakeup on (*passp).
+ */
+static int
+dq_post_space_sleep(struct dq_queue *q, struct thread *td, int mode,
+    sbintime_t deadline, bool *passp)
+{
+	int error;
+
+	q->q_stats.ds2_full_waits++;
+	error = dq_wait_room(q, &q->q_space, "dqfull", td, mode, deadline);
+	if (error == EIO)
+		q->q_stats.ds2_deadline_misses++;
+	*passp = true;
+	return (error);
+}
+
+void
+dq_queue_slots_freed(struct dq_queue *q, u_int n)
+{
+
+	DQ_LOCK_ASSERT(q);
+	while (n-- > 0)
+		wakeup_one(&q->q_space);
+}
+
+/*
+ * Wait for ev's answer, q_mtx held and kept (D192).  DQ_WAIT_CATCH: a
+ * signal ends the wait (EINTR or ERESTART), as an NFS intr mount's does.
+ * DQ_WAIT_UNINTR and DQ_WAIT_FAULT: no signal does, as a local file
+ * system's disk wait: the wait sleeps in non-catching slices and ends
+ * with the answer, the deadline (EWOULDBLOCK) or the process dying
+ * (EINTR, dq_wait_abandon).  The caller reads the event's state first.
+ */
+static int
+dq_wait_event(struct dq_queue *q, struct dq_event_k *ev, struct thread *td,
+    int mode, sbintime_t deadline)
+{
+	sbintime_t now;
+	int error;
+	bool dying;
+
+	DQ_LOCK_ASSERT(q);
+	KASSERT(td == curthread, ("dq: waiting for another thread"));
+	error = 0;
+	while (ev->ev_state == DQ_EV_PENDING ||
+	    ev->ev_state == DQ_EV_DELIVERED) {
+		if (mode == DQ_WAIT_CATCH) {
+			if (deadline == 0)
+				error = cv_wait_sig(&ev->ev_cv, &q->q_mtx);
+			else
+				error = cv_timedwait_sig_sbt(&ev->ev_cv,
+				    &q->q_mtx, deadline, 0, C_ABSOLUTE);
+			if (error != 0)
+				break;
+			continue;
+		}
+		now = sbinuptime();
+		if (deadline != 0 && now >= deadline) {
+			error = EWOULDBLOCK;
+			break;
+		}
+		(void)cv_timedwait_sbt(&ev->ev_cv, &q->q_mtx,
+		    dq_wait_slice_end(now, deadline), 0, C_ABSOLUTE);
+		if (ev->ev_state != DQ_EV_PENDING &&
+		    ev->ev_state != DQ_EV_DELIVERED)
+			break;
+		DQ_UNLOCK(q);
+		dying = dq_wait_abandon(td);
+		DQ_LOCK(q);
+		if (dying) {
+			error = EINTR;
+			break;
+		}
+	}
 	return (error);
 }
 
@@ -1083,14 +1194,14 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 	struct dq_event_k *ev;
 	struct dq_requester *rq, *newrq;
 	struct dq_interrupt_body ib;
-	sbintime_t deadline, now;
-	int error;
-	bool interrupt, drop_list_ref, lock, fault, catching, dying;
+	sbintime_t deadline;
+	int error, mode;
+	bool interrupt, drop_list_ref, lock, fault, pass;
 
 	q = o->o_queue;
 	*replyp = NULL;
 	*errnop = 0;
-	interrupt = drop_list_ref = false;
+	interrupt = drop_list_ref = pass = false;
 	lock = (flags & DQ_POST_LOCK) != 0;
 	fault = (flags & DQ_POST_FAULT) != 0;
 	KASSERT(!fault || (td == curthread && !lock),
@@ -1112,14 +1223,22 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 	ev->ev_pagein = fault && op == DQ_OP_READ;
 	newrq = lock ? NULL : malloc(sizeof(*newrq), M_DQ, M_WAITOK | M_ZERO);
 
+	/*
+	 * The wait's mode (D192): a fault never catches a signal; a lock
+	 * catches them, as lf_advlock's sleep does; the data and attribute
+	 * waits catch them only under DQ_PF_INTR (an NFS intr mount), and
+	 * otherwise wait as a local file system's I/O does.
+	 */
 	if (fault) {
 		/* A page never waits forever (B1, B4). */
 		deadline = dq_page_deadline(o);
-	} else if ((flags & DQ_POST_NODEADLINE) != 0) {
-		deadline = 0;
+		mode = DQ_WAIT_FAULT;
 	} else {
 		DQO_LOCK(o);
-		deadline = dq_deadline(&o->o_policy);
+		deadline = (flags & DQ_POST_NODEADLINE) != 0 ? 0 :
+		    dq_deadline(&o->o_policy);
+		mode = lock || (o->o_policy.dp_flags & DQ_PF_INTR) != 0 ?
+		    DQ_WAIT_CATCH : DQ_WAIT_UNINTR;
 		DQO_UNLOCK(o);
 	}
 	ev->ev_deadline = deadline;
@@ -1159,25 +1278,39 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 		 * it against the in-flight quotas would let lockers starve
 		 * readers.
 		 */
-		if (lock)
-			break;
-		if (o->o_inflight >= dq_max_inflight_per_object) {
+		if (!lock && o->o_inflight >= dq_max_inflight_per_object) {
+			if (pass) {
+				dq_queue_slots_freed(q, 1);
+				pass = false;
+			}
 			error = dq_post_quota_sleep(q, ev, &o->o_inflight,
-			    "dqinfl", td, flags, deadline);
+			    "dqinfl", td, mode, deadline);
 			if (error != 0)
 				goto out_locked;
 			continue;
 		}
-		rq = dq_requester_find_locked(q, ev->ev_requester);
+		rq = lock ? NULL : dq_requester_find_locked(q, ev->ev_requester);
 		if (rq != NULL && rq->rq_inflight >= dq_max_inflight_per_requester) {
+			if (pass) {
+				dq_queue_slots_freed(q, 1);
+				pass = false;
+			}
 			error = dq_post_quota_sleep(q, ev, &q->q_requesters,
-			    "dqreq", td, flags, deadline);
+			    "dqreq", td, mode, deadline);
+			if (error != 0)
+				goto out_locked;
+			continue;
+		}
+		if (q->q_count >= q->q_depth) {
+			error = dq_post_space_sleep(q, td, mode, deadline,
+			    &pass);
 			if (error != 0)
 				goto out_locked;
 			continue;
 		}
 		break;
 	}
+	pass = false;
 	error = dq_event_enqueue_locked(q, ev);
 	if (error != 0)
 		goto out_locked;
@@ -1197,52 +1330,7 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 		o->o_inflight++;
 	}
 
-	error = 0;
-	catching = true;
-	while (ev->ev_state == DQ_EV_PENDING || ev->ev_state == DQ_EV_DELIVERED) {
-		if (fault && !catching) {
-			/*
-			 * B4: a caught signal is pending, so every catching
-			 * sleep would return at once; sleep without catching,
-			 * in slices, and look at the process on each wake.
-			 */
-			now = sbinuptime();
-			if (now >= deadline) {
-				error = EWOULDBLOCK;
-				break;
-			}
-			(void)cv_timedwait_sbt(&ev->ev_cv, &q->q_mtx,
-			    MIN(deadline, now + DQ_FAULT_SLICE), 0, C_ABSOLUTE);
-			if (ev->ev_state != DQ_EV_PENDING &&
-			    ev->ev_state != DQ_EV_DELIVERED)
-				break;
-			DQ_UNLOCK(q);
-			dying = dq_fault_abandon(td);
-			DQ_LOCK(q);
-			if (dying) {
-				error = EINTR;
-				break;
-			}
-			continue;
-		}
-		if (deadline == 0)
-			error = cv_wait_sig(&ev->ev_cv, &q->q_mtx);
-		else
-			error = cv_timedwait_sig_sbt(&ev->ev_cv, &q->q_mtx,
-			    deadline, 0, C_ABSOLUTE);
-		if (fault && (error == EINTR || error == ERESTART)) {
-			DQ_UNLOCK(q);
-			dying = dq_fault_abandon(td);
-			DQ_LOCK(q);
-			if (dying)
-				break;
-			catching = false;
-			error = 0;
-			continue;
-		}
-		if (error != 0)
-			break;
-	}
+	error = dq_wait_event(q, ev, td, mode, deadline);
 
 	/*
 	 * The state decides first: a reply or a failure that landed just
@@ -1264,6 +1352,7 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 		TAILQ_REMOVE(&q->q_pending, ev, ev_link);
 		q->q_count--;
 		q->q_bytes -= ev->ev_size;
+		dq_queue_slots_freed(q, 1);
 		ev->ev_linked = false;
 		drop_list_ref = true;
 		if (error == EWOULDBLOCK) {
@@ -1308,6 +1397,9 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 		dq_requester_release_locked(q, ev->ev_requester);
 	}
 out_locked:
+	/* A slot this waiter was woken for and did not take goes on. */
+	if (pass)
+		dq_queue_slots_freed(q, 1);
 	DQ_UNLOCK(q);
 	if (newrq != NULL)
 		free(newrq, M_DQ);
@@ -1347,26 +1439,29 @@ dq_event_post_nowait(struct dq_queue *q, struct dq_object *o, uint32_t op,
  * A queue-level event a requester waits for (RESOLVE, stage 1c): as
  * dq_event_post_wait without an object, so no per-object quota and no
  * revoke; the queue closing fails it.  The caller is flagged ATTACHED.
+ * catching: the queue's DQ_QF_INTR for the requester's own lookups (the
+ * wait catches signals); every other wait does not (D192).
  */
 int
 dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
-    size_t bodylen, struct thread *td, sbintime_t deadline,
+    size_t bodylen, struct thread *td, sbintime_t deadline, bool catching,
     struct dq_data **replyp, int *errnop, struct dq_object **robjp,
     struct fdswap *rswapp)
 {
 	struct dq_event_k *ev;
 	struct dq_requester *rq, *newrq;
 	struct dq_interrupt_body ib;
-	int error;
-	bool interrupt, drop_list_ref;
+	int error, mode;
+	bool interrupt, drop_list_ref, pass;
 
 	*replyp = NULL;
 	*errnop = 0;
 	*robjp = NULL;
 	bzero(rswapp, sizeof(*rswapp));
-	interrupt = drop_list_ref = false;
+	interrupt = drop_list_ref = pass = false;
 	if (dq_caller_holds_queue(q, td))
 		return (EDEADLK);
+	mode = catching ? DQ_WAIT_CATCH : DQ_WAIT_UNINTR;
 	ev = dq_event_alloc(NULL, op, body, bodylen, td);
 	ev->ev_waited = true;
 	ev->ev_deadline = deadline;
@@ -1382,21 +1477,27 @@ dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
 		}
 		rq = dq_requester_find_locked(q, ev->ev_requester);
 		if (rq != NULL && rq->rq_inflight >= dq_max_inflight_per_requester) {
+			if (pass) {
+				dq_queue_slots_freed(q, 1);
+				pass = false;
+			}
 			/* The quota wait is bounded by the same deadline. */
-			if (deadline != 0)
-				error = msleep_sbt(&q->q_requesters, &q->q_mtx,
-				    PCATCH, "dqreq", deadline, 0, C_ABSOLUTE);
-			else
-				error = msleep(&q->q_requesters, &q->q_mtx,
-				    PCATCH, "dqreq", 0);
-			if (error == EWOULDBLOCK)
-				error = EIO;
+			error = dq_post_quota_sleep(q, ev, &q->q_requesters,
+			    "dqreq", td, mode, deadline);
+			if (error != 0)
+				goto out_locked;
+			continue;
+		}
+		if (q->q_count >= q->q_depth) {
+			error = dq_post_space_sleep(q, td, mode, deadline,
+			    &pass);
 			if (error != 0)
 				goto out_locked;
 			continue;
 		}
 		break;
 	}
+	pass = false;
 	error = dq_event_enqueue_locked(q, ev);
 	if (error != 0)
 		goto out_locked;
@@ -1410,16 +1511,7 @@ dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
 	rq->rq_inflight++;
 	SDT_PROBE2(dq, , , resolve__post, q, ev);
 
-	error = 0;
-	while (ev->ev_state == DQ_EV_PENDING || ev->ev_state == DQ_EV_DELIVERED) {
-		if (deadline == 0)
-			error = cv_wait_sig(&ev->ev_cv, &q->q_mtx);
-		else
-			error = cv_timedwait_sig_sbt(&ev->ev_cv, &q->q_mtx,
-			    deadline, 0, C_ABSOLUTE);
-		if (error != 0)
-			break;
-	}
+	error = dq_wait_event(q, ev, td, mode, deadline);
 	switch (ev->ev_state) {
 	case DQ_EV_REPLIED:
 		*replyp = ev->ev_reply;
@@ -1438,6 +1530,7 @@ dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
 		TAILQ_REMOVE(&q->q_pending, ev, ev_link);
 		q->q_count--;
 		q->q_bytes -= ev->ev_size;
+		dq_queue_slots_freed(q, 1);
 		ev->ev_linked = false;
 		drop_list_ref = true;
 		if (error == EWOULDBLOCK) {
@@ -1470,6 +1563,8 @@ dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
 	}
 	dq_requester_release_locked(q, ev->ev_requester);
 out_locked:
+	if (pass)
+		dq_queue_slots_freed(q, 1);
 	DQ_UNLOCK(q);
 	if (newrq != NULL)
 		free(newrq, M_DQ);
@@ -1590,6 +1685,8 @@ dq_queue_read(struct dq_queue *q, struct uio *uio, int ioflag)
 			TAILQ_REMOVE(&q->q_pending, ev, ev_link);
 			q->q_count--;
 			q->q_bytes -= ev->ev_size;
+			/* A slot for a post waiting on a full queue (D205). */
+			dq_queue_slots_freed(q, 1);
 			ev->ev_state = DQ_EV_DELIVERED;
 			q->q_stats.ds2_events_delivered++;
 			SDT_PROBE2(dq, , , event__deliver, q, ev);
@@ -1924,18 +2021,21 @@ dq_queue_mint_observer(struct dq_queue *q, struct dq_observer_args *args,
  * never answers EPIPE to write(2), so dofilewrite must never raise SIGPIPE
  * on a controller's word; anything outside the list reaches the requester
  * as EIO and is counted.  READ and GETATTR keep their 1a behaviour (no
- * list).
+ * list).  EINTR is the kernel's alone (D193): only a wait that catches a
+ * signal gives it, never a controller's answer.
  */
 static bool
 dq_reply_errno_allowed(uint32_t op, int error)
 {
 
+	if (error == EINTR)
+		return (false);
 	switch (op) {
 	case DQ_OP_WRITE:
 	case DQ_OP_WRITE_ASYNC:
 		return (error == EIO || error == ENOSPC || error == EDQUOT ||
 		    error == EFBIG || error == EACCES || error == EPERM ||
-		    error == EROFS || error == EINTR || error == EAGAIN ||
+		    error == EROFS || error == EAGAIN ||
 		    error == ENXIO || error == EINVAL || error == ESTALE);
 	case DQ_OP_SETATTR:
 		return (error == EPERM || error == EROFS || error == EINVAL ||
@@ -1953,7 +2053,7 @@ dq_reply_errno_allowed(uint32_t op, int error)
 		    error == EIO || error == EOPNOTSUPP || error == ENODEV);
 	case DQ_OP_LOCK:
 		return (error == EAGAIN || error == EDEADLK || error == ENOLCK ||
-		    error == EINVAL || error == EIO || error == EINTR);
+		    error == EINVAL || error == EIO);
 	case DQ_OP_IOCTL:
 		return (error == ENOTTY || error == EINVAL || error == EIO ||
 		    error == EPERM || error == EACCES || error == ENXIO);
@@ -2540,6 +2640,20 @@ dq_queue_push(struct dq_queue *q, const struct dq_push_args *args)
 	return (0);
 }
 
+int
+dq_queue_flags(struct dq_queue *q, struct dq_queue_flags *qf)
+{
+
+	if (((qf->dqf_set | qf->dqf_clear) & ~DQ_QF_VALID) != 0 ||
+	    (qf->dqf_set & qf->dqf_clear) != 0 || qf->dqf_pad0 != 0)
+		return (EINVAL);
+	DQ_LOCK(q);
+	qf->dqf_old = q->q_qflags;
+	q->q_qflags = (q->q_qflags & ~qf->dqf_clear) | qf->dqf_set;
+	DQ_UNLOCK(q);
+	return (0);
+}
+
 /* A controller may lower its depth below the system bound, never raise it. */
 int
 dq_queue_set_depth(struct dq_queue *q, uint32_t depth)
@@ -2548,6 +2662,9 @@ dq_queue_set_depth(struct dq_queue *q, uint32_t depth)
 	if (depth == 0 || depth > dq_queue_depth)
 		return (EINVAL);
 	DQ_LOCK(q);
+	/* Posts waiting for a slot look again at the new depth. */
+	if (depth > q->q_depth)
+		wakeup(&q->q_space);
 	q->q_depth = depth;
 	DQ_UNLOCK(q);
 	return (0);

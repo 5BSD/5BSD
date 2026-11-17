@@ -571,13 +571,17 @@ child_signal(void *arg, void *result)
 	r->r[0].err = r->r[0].rv == -1 ? errno : 0;
 }
 
-/* Hold the first event matching match, release later ones, signal. */
+/*
+ * Hold the first event matching match, release later ones, signal.  The
+ * queue is DQ_QF_INTR: its lookups end on a signal (an NFS intr mount).
+ */
 static void
 signal_during(struct dqt_ctl *c, struct dqt_achild *ch, struct sig_arg *a,
     const char *match, struct one_res *r)
     __requires_unlocked(c->mtx)
 {
 
+	ATF_REQUIRE_EQ(0, dq_queue_set_flags(c->q, DQ_QF_INTR, 0, NULL));
 	dqt_resolve_hold(c, match, 0);
 	dqt_attach_spawn(c, ch, child_signal, a);
 	ATF_REQUIRE(dqt_wait_held(c, 1, DQT_WAIT_MS));
@@ -591,16 +595,86 @@ signal_during(struct dqt_ctl *c, struct dqt_achild *ch, struct sig_arg *a,
 	dqt_unlock(c);
 }
 
-ATF_TC(signal_restart_rules);
-ATF_TC_HEAD(signal_restart_rules, tc)
+/*
+ * The default (D192): the held lookup is signalled, then answered PASS
+ * after 300 ms; the call completes with that answer, one event, no
+ * INTERRUPT.
+ */
+static void
+signal_unintr(struct dqt_ctl *c, struct dqt_achild *ch, struct sig_arg *a,
+    const char *match, struct one_res *r)
+    __requires_unlocked(c->mtx)
 {
-	atf_tc_set_md_var(tc, "descr", "a caught signal during a lookup's first "
-	    "consultation: with SA_RESTART the syscall restarts and posts again "
-	    "(the abandoned event gets INTERRUPT), without it EINTR; rename "
-	    "never restarts (EINTR, nothing renamed)");
+	uint64_t id;
+
+	dqt_resolve_hold(c, match, 0);
+	dqt_attach_spawn(c, ch, child_signal, a);
+	ATF_REQUIRE(dqt_wait_held(c, 1, DQT_WAIT_MS));
+	dqt_resolve_hold(c, "", 0);
+	ATF_REQUIRE_EQ(0, pdkill(ch->pd, SIGUSR1));
+	dqt_msleep(300);
+	dqt_lock(c);
+	ATF_CHECK_EQ(0, c->ninterrupted);
+	id = c->held[0].id;
+	dqt_unlock(c);
+	ATF_REQUIRE_EQ(0, dq_reply_resolve_pass(c->q, id));
+	memset(r, 0, sizeof(*r));
+	dqt_attach_collect(ch, r, sizeof(*r));
+	dqt_lock(c);
+	ATF_CHECK_EQ(0, c->ninterrupted);
+	dqt_unlock(c);
+}
+
+ATF_TC(signal_lookup_uninterruptible);
+ATF_TC_HEAD(signal_lookup_uninterruptible, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a caught signal, with or without "
+	    "SA_RESTART, during a lookup's consultation does not end it: the "
+	    "call completes with the controller's answer, as a local file "
+	    "system's lookup (D192)");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(signal_restart_rules, tc)
+ATF_TC_BODY(signal_lookup_uninterruptible, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_achild ch;
+	struct sig_arg a;
+	struct one_res r;
+	int fd;
+
+	memset(&a, 0, sizeof(a));
+	for (a.restart = 0; a.restart <= 1; a.restart++) {
+		dqt_init(&c);
+		signal_unintr(&c, &ch, &a, "rt-sig", &r);
+		ATF_CHECK_EQ(ENOENT, r.r[0].err);	/* PASSed, once */
+		ATF_CHECK_EQ(1, dqt_count_resolve(&c, "rt-sig", DQ_ROP_STAT));
+		dqt_fini(&c);
+	}
+
+	fd = open("rt-ren-a", O_CREAT | O_WRONLY, 0644);
+	ATF_REQUIRE(fd != -1);
+	(void)close(fd);
+	dqt_init(&c);
+	a.restart = 0;
+	a.rename = 1;
+	signal_unintr(&c, &ch, &a, "rt-ren", &r);
+	ATF_CHECK_EQ_MSG(0, r.r[0].rv, "rename: %s", strerror(r.r[0].err));
+	ATF_CHECK_EQ(-1, access("rt-ren-a", F_OK));
+	ATF_CHECK_EQ(0, access("rt-ren-b", F_OK));
+	dqt_fini(&c);
+	(void)unlink("rt-ren-b");
+}
+
+ATF_TC(signal_lookup_intr);
+ATF_TC_HEAD(signal_lookup_intr, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "DQ_QF_INTR: a caught signal during a "
+	    "lookup's first consultation: with SA_RESTART the syscall restarts "
+	    "and posts again (the abandoned event gets INTERRUPT), without it "
+	    "EINTR; rename never restarts (EINTR, nothing renamed)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(signal_lookup_intr, tc)
 {
 	struct dqt_ctl c;
 	struct dqt_achild ch;
@@ -641,10 +715,10 @@ ATF_TC_BODY(signal_restart_rules, tc)
 ATF_TC(path_swap_reconsults);
 ATF_TC_HEAD(path_swap_reconsults, tc)
 {
-	atf_tc_set_md_var(tc, "descr", "B1: the path buffer changes between "
-	    "the first consultation and the restart (a signal handler rewrites "
-	    "it): the restart posts a second event with the new bytes; the "
-	    "first is never PASSed");
+	atf_tc_set_md_var(tc, "descr", "B1, DQ_QF_INTR: the path buffer "
+	    "changes between the first consultation and the restart (a signal "
+	    "handler rewrites it): the restart posts a second event with the "
+	    "new bytes; the first is never PASSed");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(path_swap_reconsults, tc)
@@ -1796,7 +1870,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, reply_validation);
 	ATF_TP_ADD_TC(tp, deadline_eio);
 	ATF_TP_ADD_TC(tp, controller_exit_fails_closed);
-	ATF_TP_ADD_TC(tp, signal_restart_rules);
+	ATF_TP_ADD_TC(tp, signal_lookup_uninterruptible);
+	ATF_TP_ADD_TC(tp, signal_lookup_intr);
 	ATF_TP_ADD_TC(tp, path_swap_reconsults);
 	ATF_TP_ADD_TC(tp, depth_exhausted);
 	ATF_TP_ADD_TC(tp, i5_no_new_privileges);

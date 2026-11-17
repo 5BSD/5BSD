@@ -421,6 +421,8 @@ struct dq_queue {
 #define	DQ_Q_DEAD		0x2	/* the die began: no owner, no entry */
 #define	DQ_Q_DIED		0x4	/* the die's teardown is finished */
 #define	DQ_Q_PINNED		0x8	/* opened on a pinned file */
+	u_int			 q_qflags;	/* DQ_QF_* of the controller (q_mtx) */
+	char			 q_space;	/* wait channel: a slot (D205) */
 	struct proc		*q_owner;	/* the opening process, compared
 						   and never dereferenced; NULL
 						   once DEAD */
@@ -504,6 +506,7 @@ int	dq_queue_push(struct dq_queue *q, const struct dq_push_args *args);
 void	dq_queue_stats(struct dq_queue *q, struct dq_stats *st);
 void	dq_queue_stats2(struct dq_queue *q, struct dq_stats2 *st);
 int	dq_queue_set_depth(struct dq_queue *q, uint32_t depth);
+int	dq_queue_flags(struct dq_queue *q, struct dq_queue_flags *qf);
 bool	dq_caller_holds_queue(struct dq_queue *q, struct thread *td);
 
 void	dq_object_hold(struct dq_object *o);
@@ -541,13 +544,21 @@ void	dq_data_rele(struct dq_data *dd);
 #define	DQ_POST_LOCK		0x2
 /*
  * DQ_POST_FAULT (B4): the wait of a page fault.  The deadline is always
- * set (dq_page_deadline); a caught signal does not abandon the wait unless
- * the process is being killed or is exiting: after the first interrupted
- * sleep the waiter continues in non-catching 100 ms slices, re-testing
- * SIGKILL, P_WEXIT and the event on every wake, so a fault during SIGCHLD
- * or SIGALRM is not SIGBUS (I12).  Abandonment posts INTERRUPT.
+ * set (dq_page_deadline); no signal abandons the wait (DQ_WAIT_FAULT):
+ * the waiter sleeps in non-catching 100 ms slices, re-testing SIGKILL,
+ * the process's exit and the event on every wake, so a fault during
+ * SIGCHLD or SIGALRM is not SIGBUS (I12).  Abandonment posts INTERRUPT.
  */
 #define	DQ_POST_FAULT		0x4
+/*
+ * How a requester waits (D192).  UNINTR: no signal ends the wait, only
+ * the answer, the deadline, SIGKILL or the process exiting (a local file
+ * system's I/O wait); CATCH: a signal ends it with EINTR or ERESTART (an
+ * NFS intr mount, a lock wait); FAULT: UNINTR with the page deadline.
+ */
+#define	DQ_WAIT_UNINTR		0
+#define	DQ_WAIT_CATCH		1
+#define	DQ_WAIT_FAULT		2
 int	dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 	    size_t bodylen, struct thread *td, int flags,
 	    struct dq_data **replyp, int *errnop);
@@ -556,13 +567,16 @@ void	dq_event_post_nowait(struct dq_queue *q, struct dq_object *o,
 void	dq_reply_free(struct dq_data *reply);
 /*
  * A queue-level event (RESOLVE) waited for by a requester with no object:
- * the per-requester quota, the EDEADLK scan, PCATCH waits, deadline (0 =
- * none) and INTERRUPT as for any waited event.
+ * the per-requester quota, the EDEADLK scan, the depth, the deadline (0 =
+ * none) and INTERRUPT as for any waited event; it catches signals only
+ * when catching (DQ_QF_INTR).
  */
 int	dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
 	    size_t bodylen, struct thread *td, sbintime_t deadline,
-	    struct dq_data **replyp, int *errnop, struct dq_object **robjp,
-	    struct fdswap *rswapp);
+	    bool catching, struct dq_data **replyp, int *errnop,
+	    struct dq_object **robjp, struct fdswap *rswapp);
+/* n slots of the queue were freed: wake that many waiters for one. */
+void	dq_queue_slots_freed(struct dq_queue *q, u_int n);
 
 /*
  * Objects created apart from their linking (MINT, and the RESOLVE FD reply

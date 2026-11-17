@@ -2652,6 +2652,8 @@ ATF_TC_BODY(swap_late_reply_consumed, tc)
 	sw_write_file("orig", "ORIGINAL", 0644);
 	sw_write_file("subst", "SUBSTITUTE", 0644);
 	sw_init(&x, "orig", a_late);
+	/* The program's timer must be able to end its lookups (D192). */
+	ATF_REQUIRE_EQ(0, dq_queue_set_flags(x.c.q, DQ_QF_INTR, 0, NULL));
 	sw_run(&x, p_late, NULL, &res);
 	ATF_REQUIRE(dqt_sysctl_restore(DELAY_SWAP_TAKE));
 	printf("late: %d answered, %d ESRCH, %d ECANCELED, %d other; program: "

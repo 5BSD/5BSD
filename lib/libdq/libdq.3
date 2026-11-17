@@ -73,6 +73,8 @@
 .Nm dq_event_reply_record ,
 .Nm dq_reply_write ,
 .Nm dq_reply_fspacectl ,
+.Nm dq_reply_postop ,
+.Nm dq_postop_from_stat ,
 .Nm dq_reply_lock ,
 .Nm dq_reply_ioctl ,
 .Nm dq_reply_errno_allowed ,
@@ -93,6 +95,10 @@ DescriptorQueue controller library
 .Fn dq_get_stats "int fd" "struct dq_stats *st"
 .Ft int
 .Fn dq_set_queue_depth "int q" "uint32_t depth"
+.Ft int
+.Fo dq_queue_set_flags
+.Fa "int q" "uint32_t set" "uint32_t clear" "uint32_t *oldp"
+.Fc
 .Ft void
 .Fn dq_policy_default "struct dq_policy *pol"
 .Ft int
@@ -423,10 +429,30 @@ must be between 1 and
 .Va kern.dq.queue_depth
 or the call fails with
 .Er EINVAL .
-A full queue fails the requester's operation with
-.Er EIO ,
-counts a drop and leaves a gap in
+An operation that waits for its answer waits for a slot of a full queue,
+within its deadline
+.Pq Va ds2_full_waits ;
+a record that waits for nothing is dropped there and leaves a gap in
 .Va de_seq .
+.Pp
+.Fn dq_queue_set_flags
+sets the queue flags in
+.Fa set
+and clears those in
+.Fa clear
+(the two disjoint), and stores the flags from before in
+.Fa *oldp
+unless it is
+.Dv NULL .
+.Dv DQ_QF_INTR
+makes the attached processes' own lookups end on a signal, as on an NFS
+.Cm intr
+mount; without it they wait as a local file system's lookups do
+.Pq Xr dq 4 , Sx Waiting, deadlines and interruption .
+The data and attribute waits of an object take the same choice from
+.Dv DQ_PF_INTR
+in its policy's
+.Va dp_flags .
 .Ss Identity and policy
 .Fn dq_policy_default
 fills
@@ -957,9 +983,10 @@ returns nonzero when
 reaches the requester as itself:
 .Bl -tag -width "DQ_OP_FSPACECTL" -offset indent
 .It Dv DQ_OP_READ , READ_ASYNC , GETATTR
-any errno.
+any errno but
+.Er EINTR .
 .It Dv DQ_OP_WRITE , WRITE_ASYNC
-.Er EIO , ENOSPC , EDQUOT , EFBIG , EACCES , EPERM , EROFS , EINTR ,
+.Er EIO , ENOSPC , EDQUOT , EFBIG , EACCES , EPERM , EROFS ,
 .Er EAGAIN , ENXIO , EINVAL , ESTALE .
 .It Dv DQ_OP_SETATTR
 .Er EPERM , EROFS , EINVAL , EOPNOTSUPP , EIO , EFBIG , EDQUOT , ENOSPC ,
@@ -971,7 +998,7 @@ any errno.
 .It Dv DQ_OP_FSPACECTL
 .Er ENOSPC , EFBIG , EINVAL , EIO , EOPNOTSUPP , ENODEV .
 .It Dv DQ_OP_LOCK
-.Er EAGAIN , EDEADLK , ENOLCK , EINVAL , EIO , EINTR .
+.Er EAGAIN , EDEADLK , ENOLCK , EINVAL , EIO .
 .It Dv DQ_OP_IOCTL
 .Er ENOTTY , EINVAL , EIO , EPERM , EACCES , ENXIO .
 .It Dv DQ_OP_RESOLVE
@@ -988,11 +1015,14 @@ answers for
 .Er EPERM , ENOENT , EIO , ENXIO , E2BIG , ENOEXEC , EACCES , EBUSY ,
 .Er EEXIST , EXDEV , ENODEV , ENOTDIR , EISDIR , EINVAL , ETXTBSY , EFBIG ,
 .Er ENOSPC , EROFS , EMLINK , EAGAIN , ENAMETOOLONG , ENOTEMPTY , ELOOP ,
-.Er EDQUOT , ESTALE , EOPNOTSUPP , EINTR , EAFNOSUPPORT , EPROTONOSUPPORT ,
+.Er EDQUOT , ESTALE , EOPNOTSUPP , EAFNOSUPPORT , EPROTONOSUPPORT ,
 .Er EADDRINUSE , EADDRNOTAVAIL , ECONNREFUSED , EPROTOTYPE , EFTYPE ,
 .Er EAUTH , ENOATTR , EINTEGRITY .
 .El
 .El
+.Pp
+.Er EINTR
+is on no list: only the kernel's own wait gives it (D193).
 .Pp
 .Fn dq_dispatch
 performs one

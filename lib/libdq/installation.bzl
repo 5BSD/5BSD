@@ -7,6 +7,7 @@ MANUAL_ALIASES = [
     "dq_open",
     "dq_get_stats",
     "dq_set_queue_depth",
+    "dq_queue_set_flags",
     "dq_policy_default",
     "dq_ident_from_stat",
     "dq_mint_file",

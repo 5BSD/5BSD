@@ -584,9 +584,8 @@ child_fault_signals(void *arg, void *result)
 		_exit(3);
 	/*
 	 * Blocks in the fault while the controller holds the READ.  The
-	 * handlers cannot run before the fault returns (its wait catches the
-	 * first signal, then goes on without catching), so they are counted
-	 * afterwards.
+	 * handlers cannot run before the fault returns (its wait catches no
+	 * signal), so they are counted afterwards.
 	 */
 	r->sig = dqt_touch(p + 7, false, 0, &r->v);
 	r->alarms = alarms;
@@ -695,8 +694,12 @@ ATF_TC_BODY(fault_single_exit, tc)
 	ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
 	ms = dqt_now_ms() - start;
 	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
-	/* Pin: the exit waits for the fault's page deadline. */
-	ATF_CHECK_MSG(ms >= 2500, "the exit took %jd ms", (intmax_t)ms);
+	/*
+	 * The fault's wait sees the exit's single-threading and ends within
+	 * a slice (it waited for the 3 s page deadline).
+	 */
+	ATF_CHECK_MSG(ms < 1500, "the exit took %jd ms", (intmax_t)ms);
+	ATF_CHECK(dqt_wait_interrupts(&f.c, 1, DQT_WAIT_MS));
 	(void)close(go[0]);
 	(void)close(go[1]);
 	dqt_hold(&f.c, false);

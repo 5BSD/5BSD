@@ -219,6 +219,11 @@ ATF_TC_BODY(async_accessors, tc)
 	ATF_CHECK(dq_reply_errno_allowed(DQ_OP_WRITE_ASYNC, ENOSPC));
 	ATF_CHECK(!dq_reply_errno_allowed(DQ_OP_WRITE_ASYNC, EPIPE));
 	ATF_CHECK(dq_reply_errno_allowed(DQ_OP_READ_ASYNC, EPIPE));
+	/* EINTR is the kernel's alone, for every operation (D193). */
+	ATF_CHECK(!dq_reply_errno_allowed(DQ_OP_WRITE, EINTR));
+	ATF_CHECK(!dq_reply_errno_allowed(DQ_OP_LOCK, EINTR));
+	ATF_CHECK(!dq_reply_errno_allowed(DQ_OP_READ, EINTR));
+	ATF_CHECK(!dq_reply_errno_allowed(DQ_OP_GETATTR, EINTR));
 	free(big);
 }
 
@@ -298,6 +303,8 @@ ATF_TC_BODY(resolve_accessor, tc)
 	ATF_CHECK(!dq_resolve_errno_allowed(DQ_ROP_SOCKET, ENOENT));
 	ATF_CHECK(!dq_resolve_errno_allowed(DQ_ROP_OPEN, ENOBUFS));
 	ATF_CHECK(dq_resolve_errno_allowed(DQ_ROP_OPEN, ENOENT));
+	ATF_CHECK(!dq_resolve_errno_allowed(DQ_ROP_OPEN, EINTR));
+	ATF_CHECK(!dq_reply_errno_allowed(DQ_OP_RESOLVE, EINTR));
 
 	/* A SOCKET body: five empty strings, the request in the fixed part. */
 	memset(body, 0, sizeof(body));
