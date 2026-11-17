@@ -28,12 +28,14 @@ field()
     cut -d '|' -f "$1" rows
 }
 
-# LINT configurations config(8) cannot read on this tree, by architecture:
-# amd64 LINT names options and devices the retired subsystems took away
-# (/home/koryheard/5bsd-issues/2026-11-16-amd64-lint-does-not-configure.md).
-# Their text is still checked.  An entry that starts to configure fails, so
-# the list cannot go stale.
-LINT_UNCONFIGURABLE='amd64'
+# LINT configurations config(8) cannot read on this tree, by architecture
+# (none today: amd64 joined the sweep once its NOTES stopped naming the
+# retired floppy and AGP drivers,
+# /home/koryheard/5bsd-issues/2026-11-16-amd64-lint-does-not-configure.md).
+# A listed architecture's LINT text is still checked.  An entry that starts
+# to configure fails, so the list cannot go stale; a LINT that stops
+# configuring fails config_sweep like any other configuration.
+LINT_UNCONFIGURABLE=''
 
 atf_test_case config_sweep
 config_sweep_head()
