@@ -12,6 +12,7 @@
 
 #include <sys/param.h>
 #include <sys/event.h>
+#include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/uio.h>
@@ -1124,6 +1125,142 @@ ATF_TC_BODY(postop_size_smaller_ignored, tc)
 }
 
 /*
+ * Review 1 H1: two disjoint extending writers whose replies carry
+ * post-operation sizes, answered A (the smaller end) then B, with A's
+ * apply held back a second (debug.dq.delay_postop_apply) so that B's
+ * larger size is applied first.  Pin: A's older block then moves the
+ * presented size back to A's end, the VM object is cut there, and B's page
+ * of a mapping raises SIGBUS, while the backing file ends at B's end.
+ */
+#define	TWO_A_OFF	(DATA_LEN)
+#define	TWO_B_OFF	(DATA_LEN + 6000)
+#define	TWO_LEN		100
+#define	DELAY_POSTOP	"debug.dq.delay_postop_apply"
+
+static void
+child_pwrite_at(void *arg, void *result)
+{
+	struct big_arg *a = arg;
+	struct dqt_rr *r = result;
+	char buf[TWO_LEN];
+
+	memset(buf, a->off == TWO_A_OFF ? 'A' : 'B', sizeof(buf));
+	DQT_RR(*r, pwrite(a->fd, buf, a->len, a->off));
+}
+
+struct two_map_res {
+	int		 sig_a, sig_b;
+	unsigned char	 va, vb;
+	struct stat	 st;
+};
+
+/* A requester's view: its fstat, and its mapping of both writes. */
+static void
+child_two_map(void *arg, void *result)
+{
+	struct two_map_res *r = result;
+	int fd = *(int *)arg;
+	unsigned char *p;
+	size_t maplen;
+
+	(void)fstat(fd, &r->st);
+	maplen = TWO_B_OFF + TWO_LEN;
+	p = mmap(NULL, maplen, PROT_READ, MAP_SHARED, fd, 0);
+	if (p == MAP_FAILED)
+		_exit(3);
+	r->sig_b = dqt_touch(p + TWO_B_OFF + 50, false, 0, &r->vb);
+	r->sig_a = dqt_touch(p + TWO_A_OFF + 50, false, 0, &r->va);
+	(void)munmap(p, maplen);
+}
+
+static void
+two_reply(struct dqt_fixture *f, int i, off_t off)
+{
+	struct dq_postop_attr pa;
+	struct dq_write_reply wr;
+	struct stat bs;
+	char buf[TWO_LEN];
+
+	/* The controller's write, then what fstat says of its file. */
+	memset(buf, off == TWO_A_OFF ? 'A' : 'B', sizeof(buf));
+	ATF_REQUIRE_EQ(TWO_LEN, pwrite(f->backing, buf, TWO_LEN, off));
+	ATF_REQUIRE_EQ(0, fstat(f->backing, &bs));
+	dq_postop_from_stat(&pa, &bs, DQ_PA_SIZE | DQ_PA_MTIME | DQ_PA_CTIME);
+	memset(&wr, 0, sizeof(wr));
+	wr.dwr_written = TWO_LEN;
+	wr.dwr_offset = (uint64_t)off;
+	ATF_REQUIRE_MSG(dq_reply_postop(f->c.q, dqt_held_id(&f->c, i), &wr,
+	    sizeof(wr), &pa) == 0, "dq_reply_postop: %s", strerror(errno));
+}
+
+ATF_TC_WITH_CLEANUP(postop_two_writers_size);
+ATF_TC_HEAD(postop_two_writers_size, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "two disjoint extending writers whose "
+	    "post-operation sizes are applied out of order end with the "
+	    "larger size, the backing file's, and a mapping to it (review 1 "
+	    "H1)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(postop_two_writers_size, tc)
+{
+	struct dqt_fixture f;
+	struct dqt_child cha, chb;
+	struct big_arg a, b;
+	struct dqt_rr ra, rb;
+	struct two_map_res m;
+	struct stat bs;
+	int fd, ia, ib;
+
+	dqt_require_fault_knob(DELAY_POSTOP);
+	setup(&f, 18);
+	dqt_hold(&f.c, true);
+	a.fd = b.fd = f.o->fd;
+	a.len = b.len = TWO_LEN;
+	a.off = TWO_A_OFF;
+	b.off = TWO_B_OFF;
+	dqt_spawn(&cha, child_pwrite_at, &a);
+	dqt_spawn(&chb, child_pwrite_at, &b);
+	ATF_REQUIRE(dqt_wait_held(&f.c, 2, DQT_WAIT_MS));
+	dqt_lock(&f.c);
+	ia = f.c.wr[0].offset == TWO_A_OFF ? 0 : 1;
+	ib = 1 - ia;
+	ATF_REQUIRE_EQ(TWO_B_OFF, f.c.wr[ib].offset);
+	dqt_unlock(&f.c);
+	/* A's apply waits a second; B's reply lands meanwhile. */
+	dqt_sysctl_save_set_uint(DELAY_POSTOP, 1);
+	two_reply(&f, ia, TWO_A_OFF);
+	dqt_msleep(100);
+	two_reply(&f, ib, TWO_B_OFF);
+	dqt_collect(&chb, &rb, sizeof(rb));
+	dqt_collect(&cha, &ra, sizeof(ra));
+	ATF_REQUIRE(dqt_sysctl_restore(DELAY_POSTOP));
+	ATF_CHECK_EQ(TWO_LEN, ra.rv);
+	ATF_CHECK_EQ(TWO_LEN, rb.rv);
+
+	ATF_REQUIRE_EQ(0, fstat(f.backing, &bs));
+	ATF_CHECK_EQ(TWO_B_OFF + TWO_LEN, bs.st_size);
+	/* The mapping reaches B's bytes: the VM object was not cut. */
+	dqt_hold(&f.c, false);
+	memset(&m, 0, sizeof(m));
+	fd = f.o->fd;
+	dqt_run_child(child_two_map, &fd, &m, sizeof(m));
+	/* Pin (review 1 H1): the size went back to A's end. */
+	ATF_CHECK_EQ_MSG(TWO_A_OFF + TWO_LEN, m.st.st_size, "presented size "
+	    "%jd, backing %jd", (intmax_t)m.st.st_size, (intmax_t)bs.st_size);
+	ATF_CHECK_EQ_MSG(SIGBUS, m.sig_b, "B's page: signal %d", m.sig_b);
+	ATF_CHECK_EQ_MSG(0, m.sig_a, "A's page: signal %d", m.sig_a);
+	ATF_CHECK_EQ('A', m.va);
+	dqt_fixture_fini(&f);
+}
+ATF_TC_CLEANUP(postop_two_writers_size, tc)
+{
+
+	(void)dqt_sysctl_restore(DELAY_POSTOP);
+}
+
+/*
  * T-A24: fspacectl(2) past the end of the file.  vop_stddeallocate
  * answers {EOF, 0}, or {offset, 0} past it, which the requester then
  * sees; the served file's controller says the same and is refused.
@@ -1210,6 +1347,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, mtime_after_write);
 	ATF_TP_ADD_TC(tp, postop_size_larger_accepted);
 	ATF_TP_ADD_TC(tp, postop_size_smaller_ignored);
+	ATF_TP_ADD_TC(tp, postop_two_writers_size);
 	ATF_TP_ADD_TC(tp, fspacectl_past_eof);
 	return (atf_no_error());
 }

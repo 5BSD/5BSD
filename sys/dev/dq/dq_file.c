@@ -18,6 +18,8 @@
  * a real file answers (D87), and dq(4) lists each one.
  */
 
+#include "opt_dq.h"
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/capsicum.h>
@@ -670,6 +672,10 @@ dq_object_postop(struct dq_object *o, uint32_t op, const struct dq_data *reply,
 	bool block, resize, stamp;
 
 	block = reply != NULL && reply->dd_postop;
+#ifdef DQ_FAULT_INJECTION
+	if (block)
+		dq_faultinj_postop_apply_pause();
+#endif
 	if (block) {
 		/* Unaligned after a READ's data. */
 		memcpy(&pa, reply->dd_bytes + reply->dd_plen, sizeof(pa));
