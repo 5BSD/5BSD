@@ -1349,13 +1349,11 @@ or
 .Xr fhlink 2
 into a served directory, refused with no event),
 .Va ds2_readdirs
-.Pq Dv DQ_OP_READDIR No events ,
-.Va ds2_postop_ignored
-(post-operation attribute blocks ignored, see
-.Sx Post-operation attributes )
+.Pq Dv DQ_OP_READDIR No events
 and
 .Va ds2_full_waits
-(waited posts that waited for a slot of a full queue).
+(waited posts that waited for a slot of a full queue, once per post).
+Two words are reserved for later counters.
 The kernel writes
 .Va ds2_size
 .Pq 320 .
@@ -1681,8 +1679,10 @@ allocated range) is ignored, as is one with an unknown bit, a nonzero
 a size above
 .Dv OFF_MAX
 or a time whose nanoseconds are out of range; an ignored block is
-counted in
-.Va ds2_postop_ignored
+counted in the system-wide
+.Va kern.dq.postop_ignored
+(see
+.Sx SYSCTL VARIABLES )
 and fires
 .Li dq:::postop-attr
 with
@@ -4594,6 +4594,11 @@ and the depth of observers.
 Unanswered events per object before requesters wait for a slot (64).
 .It Va max_inflight_per_requester
 Unanswered events per requester, keyed by nonce or pid (256).
+.It Va postop_ignored
+Read-only: post-operation attribute blocks ignored since boot, by every
+queue; the
+.Li dq:::postop-attr
+probe names the queue and the object of each.
 .It Va kernel_deadline_ms
 The longest a kernel-consumer or kernel-origin consultation (classes 2
 and 3) waits (5000); never 0.

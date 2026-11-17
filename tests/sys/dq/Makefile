@@ -102,6 +102,9 @@ TEST_METADATA.dq_deadline_test+=	is_exclusive="true"
 # Runs cases of the other programs under DTrace, one of them
 # dq_deadline_test's: alone.
 TEST_METADATA.dq_dtrace_test+=	is_exclusive="true"
+# Reads the system-wide kern.dq.postop_ignored around its own replies and
+# sets debug.dq.delay_postop_apply: alone.
+TEST_METADATA.dq_write_test+=	is_exclusive="true"
 # swap_late_reply_consumed sets debug.dq.delay_swap_take, which delays
 # any swap reply: alone.
 TEST_METADATA.dq_swap_test+=	is_exclusive="true"

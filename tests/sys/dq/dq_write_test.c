@@ -15,6 +15,7 @@
 #include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <sys/uio.h>
 #include <sys/wait.h>
 
@@ -1046,11 +1047,19 @@ postop_round(struct dqt_fixture *f, uint64_t size, struct postop_res *r,
 {
 	struct dq_postop_attr pa;
 	struct dq_write_reply wr;
-	struct dq_stats2 st0, st1;
 	struct dqt_child ch;
+	uint64_t n0, n1;
+	size_t len;
 	int fd;
 
-	dqt_stats2(&f->c, &st0);
+	/*
+	 * kern.dq.postop_ignored is system-wide: its delta across this one
+	 * reply is this reply's, since this program runs alone (Makefile)
+	 * and no other program sends a block that is ignored.
+	 */
+	len = sizeof(n0);
+	ATF_REQUIRE_EQ(0, sysctlbyname("kern.dq.postop_ignored", &n0, &len,
+	    NULL, 0));
 	dqt_hold(&f->c, true);
 	fd = f->o->fd;
 	memset(r, 0, sizeof(*r));
@@ -1067,8 +1076,10 @@ postop_round(struct dqt_fixture *f, uint64_t size, struct postop_res *r,
 	    sizeof(wr), &pa) == 0, "dq_reply_postop: %s", strerror(errno));
 	dqt_collect(&ch, r, sizeof(*r));
 	dqt_hold(&f->c, false);
-	dqt_stats2(&f->c, &st1);
-	*ignored = st1.ds2_postop_ignored - st0.ds2_postop_ignored;
+	len = sizeof(n1);
+	ATF_REQUIRE_EQ(0, sysctlbyname("kern.dq.postop_ignored", &n1, &len,
+	    NULL, 0));
+	*ignored = n1 - n0;
 }
 
 ATF_TC(postop_size_larger_accepted);

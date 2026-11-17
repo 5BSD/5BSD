@@ -98,6 +98,18 @@ SDT_PROBE_DEFINE4(dq, , , postop__attr, "struct dq_object *", "uint32_t",
 SYSCTL_NODE(_kern, OID_AUTO, dq, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
     "DescriptorQueue");
 
+/*
+ * Post-operation attribute blocks ignored, system-wide (counter(9): the
+ * reply path does not contend on one line).  Per-queue attribution is the
+ * dq:::postop-attr probe's; struct dq_stats2 has no word for it (its three
+ * reserved words are allocated by Unix-illusion plan rev 8 0.3).
+ */
+COUNTER_U64_DEFINE_EARLY(dq_postop_ignored);
+SYSCTL_COUNTER_U64(_kern_dq, OID_AUTO, postop_ignored, CTLFLAG_RD,
+    &dq_postop_ignored,
+    "Post-operation attribute blocks ignored (DQ_REPLY_F_POSTOP), all "
+    "queues");
+
 u_int dq_max_io = 131072;
 u_int dq_queue_depth = 1024;
 u_int dq_max_inflight_per_object = 64;

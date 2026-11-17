@@ -666,7 +666,6 @@ dq_object_postop(struct dq_object *o, uint32_t op, const struct dq_data *reply,
     uint64_t minsize, size_t done)
 {
 	struct dq_postop_attr pa;
-	struct dq_queue *q;
 	struct timespec now;
 	uint32_t allowed;
 	bool block, resize, stamp;
@@ -691,10 +690,7 @@ dq_object_postop(struct dq_object *o, uint32_t op, const struct dq_data *reply,
 		    !dq_time_valid(&pa.dpa_atime))) {
 			SDT_PROBE4(dq, , , postop__attr, o, op, pa.dpa_valid,
 			    EINVAL);
-			q = o->o_queue;
-			DQ_LOCK(q);
-			q->q_stats.ds2_postop_ignored++;
-			DQ_UNLOCK(q);
+			counter_u64_add(dq_postop_ignored, 1);
 			block = false;
 		}
 	}

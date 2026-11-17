@@ -340,7 +340,7 @@ enum dq_op {
  * proves (WRITE: dwr_offset + dwr_written; FALLOCATE: the range's end), a
  * time with tv_nsec outside 0..999999999, a size above OFF_MAX, an
  * unknown bit or a non-zero dpa_pad make the block ignored and counted
- * (ds2_postop_ignored, dq:::postop-attr), never an error on an operation
+ * (kern.dq.postop_ignored, dq:::postop-attr), never an error on an operation
  * that has already happened; the kernel then stamps as without one.
  */
 struct dq_postop_attr {
@@ -749,11 +749,11 @@ struct dq_stats2 {
 	uint64_t	ds2_resolve_exdev;	/* refused EXDEV with no event
 						   (1c-iii-b/c) */
 	uint64_t	ds2_readdirs;		/* READDIR events (1c-iii-b) */
-	uint64_t	ds2_postop_ignored;	/* post-operation attribute blocks
-						   ignored (DQ_REPLY_F_POSTOP) */
+	uint64_t	ds2_reserved_abi;	/* reserved: ds2_abi_data
+						   (Unix-illusion rev 8 0.3) */
 	uint64_t	ds2_full_waits;		/* waited posts that waited for a
 						   slot of a full queue */
-	uint64_t	ds2_reserved[1];
+	uint64_t	ds2_reserved[1];	/* reserved: ds2_notes_raised */
 };
 
 /*

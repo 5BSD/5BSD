@@ -92,6 +92,7 @@
 #include <sys/_task.h>
 #include <sys/callout.h>
 #include <sys/condvar.h>
+#include <sys/counter.h>
 #include <sys/file.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
@@ -677,6 +678,7 @@ int	dq_file_start(struct file *fp, struct dq_queue *q, struct thread *td,
 int	dq_file_install(struct thread *td, struct dq_object *o,
 	    const struct dq_policy *pol, u_int mflags, int *fdp);
 void	dq_file_knote(struct dq_object *o, long hint);
+extern counter_u64_t dq_postop_ignored;	/* kern.dq.postop_ignored */
 void	dq_object_postop(struct dq_object *o, uint32_t op,
 	    const struct dq_data *reply, uint64_t minsize, size_t done);
 int	dq_file_bind(struct thread *td, struct dq_object *o, int fflags,
