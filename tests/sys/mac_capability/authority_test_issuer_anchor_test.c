@@ -109,7 +109,7 @@ ATF_TC_BODY(anchor, tc)
 	pthread_t threads[THREADS];
 	char buf[32];
 	void *result;
-	int issuer, constrained, spare, image, one = 1, n;
+	int issuer, constrained, unregistered, spare, image, one = 1, n;
 
 	state(buf, sizeof(buf));
 	ATF_REQUIRE_MSG(strcmp(buf, "anchored") != 0,
@@ -119,8 +119,9 @@ ATF_TC_BODY(anchor, tc)
 	issuer = op(CAP_AUTH_ISSUER_CREATE, -1, NULL);
 	ATF_REQUIRE_MSG(issuer >= 0, "relaxed create: %s", strerror(errno));
 	constrained = issue(issuer);
+	unregistered = issue(issuer);
 	spare = issue(issuer);
-	ATF_REQUIRE(constrained >= 0 && spare >= 0);
+	ATF_REQUIRE(constrained >= 0 && unregistered >= 0 && spare >= 0);
 	/* A private image: a registration must not touch a shared binary. */
 	ATF_REQUIRE(system("cp /usr/bin/true ./image") == 0);
 	image = open("./image", O_RDONLY);
@@ -132,6 +133,15 @@ ATF_TC_BODY(anchor, tc)
 	app = (struct cap_authority_application){ .token_fd = constrained };
 	ATF_REQUIRE_MSG(op(CAP_AUTH_REGISTER_APP, issuer, &app) == 0,
 	    "register: %s", strerror(errno));
+	/* Constrained but not registered: REGISTER_APP's own checks pass. */
+	ATF_REQUIRE(system("cp /usr/bin/true ./image2") == 0);
+	constraint.token_fd = unregistered;
+	constraint.executable_fds[0] = open("./image2", O_RDONLY);
+	ATF_REQUIRE(constraint.executable_fds[0] >= 0);
+	ATF_REQUIRE_MSG(op(CAP_AUTH_CONSTRAIN, issuer, &constraint) == 0,
+	    "constrain: %s", strerror(errno));
+	close(constraint.executable_fds[0]);
+	constraint.executable_fds[0] = image;
 	ATF_REQUIRE_MSG(op(CAP_AUTH_LEASE_CREATE, issuer, &lease) == 0,
 	    "lease: %s", strerror(errno));
 	ATF_REQUIRE(op(CAP_AUTH_LEASE_CHECK, lease.control_fd, NULL) == 0);
@@ -174,14 +184,15 @@ ATF_TC_BODY(anchor, tc)
 	bind = (struct cap_authority_bind){ .token_fd = spare,
 	    .capability_fd = -1 };
 	ATF_CHECK_ERRNO(EPERM, op(CAP_AUTH_BIND, issuer, &bind) == -1);
-	app = (struct cap_authority_application){ .token_fd = spare };
+	app = (struct cap_authority_application){ .token_fd = unregistered };
 	ATF_CHECK_ERRNO(EPERM, op(CAP_AUTH_REGISTER_APP, issuer, &app) == -1);
 	/* So does every issuer created during the race. */
 	for (int i = 0; i < n; i++) {
 		ATF_CHECK_ERRNO(EPERM, issue(held[i]) == -1);
 		close(held[i]);
 	}
-	close(spare); close(constrained); close(image); close(issuer);
+	close(spare); close(unregistered); close(constrained); close(image);
+	close(issuer);
 	close(lease.control_fd); close(lease.owner_fd);
 }
 
