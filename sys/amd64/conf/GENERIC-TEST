@@ -11,7 +11,8 @@
 # allowed to carry it.
 #
 # Each option does nothing until the loader sets its knob (dq(4):
-# debug.dq.unverified_open="1").
+# debug.dq.unverified_open="1"; mac_capability(4):
+# kern.mac_capability.test_issuer="1").
 #
 
 include GENERIC
@@ -19,3 +20,4 @@ include GENERIC
 ident		GENERIC-TEST
 
 options 	DQ_TEST_OPEN		# dq(4) test access: never published
+options 	MAC_CAPABILITY_TEST_PERMISSIVE	# test issuers: never published

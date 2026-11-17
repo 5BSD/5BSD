@@ -62,6 +62,7 @@ limits_umask_nice_applied_head()
 }
 limits_umask_nice_applied_body()
 {
+	capd_require_unit_issuer
 	prepare_paths
 	touch_open launch.out
 	make_fixture_svc system lim \
@@ -104,6 +105,7 @@ nice_clamped_for_user_bundle_head()
 }
 nice_clamped_for_user_bundle_body()
 {
+	capd_require_unit_issuer
 	prepare_paths
 	touch_open launch.out
 	make_fixture_svc user nicer 'nice = -5;' \
@@ -128,6 +130,7 @@ nice_positive_honoured_for_user_bundle_head()
 }
 nice_positive_honoured_for_user_bundle_body()
 {
+	capd_require_unit_issuer
 	prepare_paths
 	touch_open launch.out
 	make_fixture_svc user nicep 'nice = 7;' \
@@ -163,6 +166,7 @@ throttle_delays_restart_head()
 }
 throttle_delays_restart_body()
 {
+	capd_require_unit_issuer
 	local gap
 
 	prepare_paths
@@ -193,6 +197,7 @@ default_restart_delay_is_short_head()
 }
 default_restart_delay_is_short_body()
 {
+	capd_require_unit_issuer
 	local gap
 
 	prepare_paths
@@ -223,6 +228,7 @@ on_crash_restarts_only_after_signal_head()
 }
 on_crash_restarts_only_after_signal_body()
 {
+	capd_require_unit_issuer
 	prepare_paths
 	touch_open sig.counts ex0.counts ex1.counts
 	make_fixture_svc system sig \
@@ -266,6 +272,7 @@ socket_mode_owner_group_head()
 }
 socket_mode_owner_group_body()
 {
+	capd_require_unit_issuer
 	local sock
 
 	prepare_paths
