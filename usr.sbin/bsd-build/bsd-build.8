@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd November 16, 2026
+.Dd November 17, 2026
 .Dt BUILD-BSD 8
 .Os
 .Sh NAME
@@ -1637,8 +1637,11 @@ Production malloc and signed bundles do not qualify verified boot or
 protection against compromised root.
 The kernel_test_option_configuration and kernel_test_option_binary_check
 fields are described under
-.Sx TEST KERNEL REFUSAL ;
-the text format prints the same two values on a line beginning
+.Sx TEST KERNEL REFUSAL ,
+and the kernel_mandatory_option_configuration and
+kernel_mandatory_option_binary_check fields under
+.Sx MANDATORY KERNEL OPTIONS ;
+the text format prints the four values on a line beginning
 .Dq publication: .
 Subsequent records contain a sequence number, step name and exact argv array.
 No commands are executed and no output directories are created by a plan.
@@ -1950,6 +1953,90 @@ Neither is bundle signing, neither verifies boot, and neither protects an
 installed system against a compromised root replacing its kernel; the
 boot_verification and root_protection_verification fields are unchanged
 by them.
+.Sh MANDATORY KERNEL OPTIONS
+Every 5BSD kernel is built with the options of the ledger
+.Pa /usr/src/sys/conf/mandatory-options :
+.Cd "options AUDIT" ,
+.Cd "options CAPABILITY_MODE" ,
+.Cd "options CAPABILITIES" ,
+.Cd "options RACCT"
+and
+.Cd "options RCTL" .
+They are set in every architecture's
+.Pa DEFAULTS ,
+and a configuration that removes one with
+.Cm nooptions
+does not build
+.Pq Pa sys/kern/kern_mandatory.c No stops it with an error .
+There is no override.
+.Pp
+The
+.Cm build ,
+.Cm kernel ,
+.Cm stage ,
+.Cm packages
+and
+.Cm media
+actions read the ledger through its check script and refuse the plan when
+it cannot be read, or when the kernel configuration, or a file it
+includes, names a ledger option after
+.Cm nooptions .
+The kernel_mandatory_option_configuration field records
+.Cm complete
+when the configuration was read,
+.Cm not-read
+when part of it could not be found or read or a make or src configuration
+names
+.Va KERNFAST
+or
+.Va NO_KERNELCONFIG ,
+and
+.Cm not-performed
+for actions that take no kernel configuration.
+.Pp
+.Pa /usr/src/release/scripts/check-mandatory-kernel.sh
+reads the kernels themselves: a kernel passes when its symbol table holds
+the
+.Va kern.features
+sysctl each ledger option registers, and one without a symbol table is
+refused.
+Every step that runs the test-kernel check runs it on the same kernels:
+system-packages checks each
+.Va KERNCONF
+object directory before packaging and the hardware repository after it is
+built, publish-packages checks the hardware repository, the release
+makefile checks the kernel distribution, the staged media trees and the
+package repositories it copies, and the
+.Cm snapshot ,
+.Cm image
+and
+.Cm boot-stage
+actions add a kernel-mandatory-option-check step after their
+kernel-test-option-check step.
+The kernel_mandatory_option_binary_check field takes the value of
+kernel_test_option_binary_check.
+The text format prints both fields on the
+.Dq publication:
+line.
+.Pp
+BSM audit is mandatory in the world as well:
+.Pa share/mk/src.opts.mk
+stops a build that sets
+.Va WITHOUT_AUDIT
+with an error, and the
+.Cm build ,
+.Cm world ,
+.Cm stage ,
+.Cm packages
+and
+.Cm media
+actions refuse a make or src configuration
+.Pq Fl -src-conf , Fl -make-conf , Fl -src-env-conf
+that names it outside a comment, or that cannot be read.
+.Pp
+These checks say what a kernel was built with.
+They are not bundle signing, they do not verify boot, and they do not
+protect an installed system against a compromised root.
 .Sh INSTALLED BOOT OBSERVATION
 .Cm boot-observe
 requires

@@ -166,7 +166,8 @@ plan_fields_body()
     configuration OPTION 'ident OPTION' 'options DQ_TEST_OPEN'
     configuration MISSING 'ident MISSING' 'include "lg2-no-such-file"'
     configuration LOOP 'ident LOOP' 'include LOOP'
-    line='^publication: kernel-test-option-configuration=%s kernel-test-option-binary-check=%s$'
+    # The mandatory-option fields follow (mandatory_option_test.sh).
+    line='^publication: kernel-test-option-configuration=%s kernel-test-option-binary-check=%s kernel-mandatory-option-'
 
     atf_check -s exit:0 -o save:plan.out -e empty ./plan packages --kernel PLAIN
     atf_check -s exit:0 -o ignore \
@@ -224,7 +225,8 @@ plan_steps_body()
     printf '{}' > generated.json
     printf '{}' > receipt.json
     script=/usr/src/release/scripts/check-test-kernel.sh
-    line='^publication: kernel-test-option-configuration=not-performed kernel-test-option-binary-check=requested$'
+    mandatory=/usr/src/release/scripts/check-mandatory-kernel.sh
+    line='^publication: kernel-test-option-configuration=not-performed kernel-test-option-binary-check=requested kernel-mandatory-option-configuration=not-performed kernel-mandatory-option-binary-check=requested$'
 
     atf_check -s exit:0 -o save:plan.out -e empty "$tool" plan snapshot \
         --repository "$PWD/repository" --pkg-public-key "$PWD/trust.pub" \
@@ -233,8 +235,10 @@ plan_steps_body()
     atf_check -s exit:0 -o ignore grep "$line" plan.out
     atf_check -s exit:0 -o inline:"kernel-test-option-check: sh $script -r $(realpath repository)\n" \
         sed -n 4p plan.out
-    atf_check -s exit:0 -o match:'^snapshot: ' sed -n 5p plan.out
-    atf_check -s exit:0 -o match:'^ *5$' wc -l < plan.out
+    atf_check -s exit:0 -o inline:"kernel-mandatory-option-check: sh $mandatory -r $(realpath repository)\n" \
+        sed -n 5p plan.out
+    atf_check -s exit:0 -o match:'^snapshot: ' sed -n 6p plan.out
+    atf_check -s exit:0 -o match:'^ *6$' wc -l < plan.out
 
     atf_check -s exit:0 -o save:plan.out -e empty "$tool" plan image \
         --root "$PWD/root" --inventory "$PWD/inventory.json" \
@@ -244,7 +248,9 @@ plan_steps_body()
     atf_check -s exit:0 -o ignore grep "$line" plan.out
     atf_check -s exit:0 -o inline:"kernel-test-option-check: sh $script -i $(realpath root)\n" \
         sed -n 4p plan.out
-    atf_check -s exit:0 -o match:'^image: ' sed -n 5p plan.out
+    atf_check -s exit:0 -o inline:"kernel-mandatory-option-check: sh $mandatory -i $(realpath root)\n" \
+        sed -n 5p plan.out
+    atf_check -s exit:0 -o match:'^image: ' sed -n 6p plan.out
 
     : > image.ufs
     : > boot.tar
@@ -256,14 +262,16 @@ plan_steps_body()
     atf_check -s exit:0 -o ignore grep "$line" plan.out
     atf_check -s exit:0 -o inline:"kernel-test-option-check: sh $script -a $(realpath boot.tar)\n" \
         sed -n 4p plan.out
-    atf_check -s exit:0 -o match:'^boot-stage: ' sed -n 5p plan.out
+    atf_check -s exit:0 -o inline:"kernel-mandatory-option-check: sh $mandatory -a $(realpath boot.tar)\n" \
+        sed -n 5p plan.out
+    atf_check -s exit:0 -o match:'^boot-stage: ' sed -n 6p plan.out
     [ ! -e "$staged" ] || atf_fail 'a plan created its output'
     # boot-check writes nothing and runs no check.
     atf_check -s exit:0 -o save:plan.out -e empty "$tool" plan boot-check \
         --boot-image "$PWD/image.ufs" --boot-archive "$PWD/boot.tar" \
         --image-receipt "$PWD/receipt.json"
     atf_check -s exit:0 -o ignore grep \
-        '^publication: kernel-test-option-configuration=not-performed kernel-test-option-binary-check=not-performed$' \
+        '^publication: kernel-test-option-configuration=not-performed kernel-test-option-binary-check=not-performed kernel-mandatory-option-configuration=not-performed kernel-mandatory-option-binary-check=not-performed$' \
         plan.out
     atf_check -s exit:0 -o match:'^boot-check: ' sed -n 4p plan.out
     [ ! -e /usr/obj/usr/src/repo ] || [ -d /usr/obj/usr/src/repo ] ||
@@ -339,7 +347,9 @@ publish_recipe_body()
     atf_check -s exit:0 -o inline:"sh $PWD/src/release/scripts/check-test-kernel.sh -r $PWD/base -r $PWD/hardware\n" \
         sed -n 1p recipe.out
     atf_check -s exit:0 -o match:'check-malloc-production.sh  *-r ' sed -n 2p recipe.out
-    atf_check -s exit:0 -o match:'^mkdir -p ' sed -n 3p recipe.out
+    atf_check -s exit:0 -o inline:"sh $PWD/src/release/scripts/check-mandatory-kernel.sh -r $PWD/hardware\n" \
+        sed -n 3p recipe.out
+    atf_check -s exit:0 -o match:'^mkdir -p ' sed -n 4p recipe.out
     [ ! -e published ] || atf_fail 'a dry run created the destination'
 
     # The hardware repository is read after the hardware step, and by
@@ -364,7 +374,7 @@ publish_recipe_body()
         -e match:'KERNCONF names no kernel' \
         ./recipe KERNCONF= OBJTOP=/lg2/objtop kernel-test-option-check
     # system-packages runs it before packaging.
-    atf_check -s exit:0 -o inline:'malloc-production-check\nkernel-test-option-check\npackages\nhardware-packages\npublish-packages\n' \
+    atf_check -s exit:0 -o inline:'malloc-production-check\nkernel-test-option-check\nkernel-mandatory-option-check\npackages\nhardware-packages\npublish-packages\n' \
         sed -n '/^system-packages:/,$s/^	\${MAKE} -C \${.CURDIR} //p' \
         src/release/Makefile.hardware
 }
