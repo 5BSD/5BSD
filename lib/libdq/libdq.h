@@ -314,12 +314,24 @@ int	dq_reply_resolve_ok(int q, uint64_t id);
  * program then works on the real file with no further events.  Open fd
  * afresh for each answer, with the request's access mode and status
  * flags (drs_mode) but without O_TRUNC, and with O_CLOFORK so that no
- * child shares it; close it after success.  flags are DQ_SWAP_F_*.
- * The kernel's errno is returned unchanged: EBADF, EOPNOTSUPP, EFTYPE,
- * ENOTCAPABLE, EBUSY and EINVAL refuse fd or the reply and leave the
- * event in flight (answer again); ESRCH means the requester is gone.  fd
- * stays open in every case.  EBUSY (the open file has another reference,
- * possibly a transient one of another thread) is retried once.
+ * child shares it; do not read from it, lock it (but for an O_CREAT |
+ * O_EXCL request with O_SHLOCK or O_EXLOCK, where it must hold that
+ * flock), or give it per-descriptor states (dq(4)).  flags are
+ * DQ_SWAP_F_*.  Three outcomes:
+ *	0		taken: the kernel closed fd with the take, and the
+ *			file is the program's (installed, or being
+ *			installed);
+ *	ECANCELED	taken, but the program is gone: fd was closed with
+ *			the take and the file released;
+ *	any other	not taken: fd is still this process's, to close or
+ *			to answer again with.  EBADF, EOPNOTSUPP, EFTYPE,
+ *			ENOTCAPABLE, EBUSY and EINVAL refuse fd or the
+ *			reply and leave the event in flight; ESRCH means
+ *			there was no event to answer.
+ * After the first two fd must not be closed again: the number may
+ * already name another file.  EBUSY (the open file has another
+ * reference, possibly a transient one of another thread) is retried
+ * once; it is refused before anything is taken.
  * The file keeps the credential of this process's open and the rights
  * of fd (descriptor substitution): restrict this process (setuid,
  * jail_attach, cap_enter) after dq_open and dq_attach and before

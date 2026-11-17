@@ -1668,6 +1668,28 @@ kern_close(struct thread *td, int fd)
 	return (closefp(fdp, fd, fp, td, true, true));
 }
 
+/*
+ * Close descriptor fd of the current process, whose file fp a transfer
+ * has just taken (fdxfer_source_locked, with its own reference), as
+ * close(2) closes it: the entry goes, knotes, fo_fdclose, the MAC and
+ * audit notifications and closef (the process's POSIX locks on a vnode
+ * are released).  fp stays alive on the taker's reference.  Called with
+ * the table exclusively locked; returns with it unlocked.  The result of
+ * the close is not reported: the take has succeeded.
+ */
+void
+fdclose_taken(struct thread *td, struct filedesc *fdp, int fd,
+    struct file *fp)
+{
+
+	FILEDESC_XLOCK_ASSERT(fdp);
+	MPASS(fdp == td->td_proc->p_fd);
+	MPASS(fget_noref(fdp, fd) == fp);
+	MPASS(refcount_load(&fp->f_count) >= 2);
+	fdfree(fdp, fd);
+	(void)closefp(fdp, fd, fp, td, true, true);
+}
+
 static int
 close_range_flags(struct thread *td, u_int lowfd, u_int highfd, int flags)
 {
@@ -3840,6 +3862,11 @@ fget_remote(struct thread *td, struct proc *p, int fd, struct filecaps *fcaps,
  *    already holds a file there: EBADF;
  *  - a file type that cannot be passed: EOPNOTSUPP;
  *  - a CAP_XFER_NONE entry: ENOTCAPABLE;
+ *  - with FDXFER_PLAIN in 'xflags', an entry with a state of its own to
+ *    carry (a locked close-on-exec or close-on-fork state,
+ *    UF_MMAP_CAPMODE, UF_LOOKUP_CAPMODE or UF_RESOLVE_BENEATH): EFTYPE.
+ *    A transfer that stands for the receiver's own open (a swap) carries
+ *    none of them;
  *  - 'admit', if given, with the file and the rights that would be
  *    transferred (the entry's, limited by its transfer ceiling); it runs
  *    under the table lock, so it must not sleep, and its error is
@@ -3855,7 +3882,7 @@ fget_remote(struct thread *td, struct proc *p, int fd, struct filecaps *fcaps,
  */
 int
 fdxfer_source_locked(struct thread *td, struct filedesc *fdp, int fd,
-    pid_t srcpid, struct file **fpp, struct filecaps *fcaps,
+    pid_t srcpid, int xflags, struct file **fpp, struct filecaps *fcaps,
     struct fdinstall_prop *prop, int *flagsp,
     int (*admit)(struct file *, const cap_rights_t *, void *), void *arg)
 {
@@ -3864,6 +3891,7 @@ fdxfer_source_locked(struct thread *td, struct filedesc *fdp, int fd,
 	int error;
 
 	FILEDESC_XLOCK_ASSERT(fdp);
+	MPASS((xflags & ~FDXFER_PLAIN) == 0);
 	fp = *fpp;
 	fde = fdeget_noref(fdp, fd);
 	if (fde == NULL || (fp != NULL && fde->fde_file != fp))
@@ -3875,6 +3903,13 @@ fdxfer_source_locked(struct thread *td, struct filedesc *fdp, int fd,
 		    td->td_ucred, fde->fde_file->f_type, ENOTCAPABLE);
 		return (ENOTCAPABLE);
 	}
+	/* Before filecaps_copy: nothing to free on this refusal. */
+	if ((xflags & FDXFER_PLAIN) != 0 &&
+	    (fde->fde_cloexec_state != CAP_CLOEXEC_UNLOCKED ||
+	    fde->fde_clofork_state != CAP_CLOFORK_UNLOCKED ||
+	    (fde->fde_flags & (UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE |
+	    UF_RESOLVE_BENEATH)) != 0))
+		return (EFTYPE);
 	filecaps_copy(&fde->fde_caps, fcaps, true);
 	filecaps_restrict(fcaps, &fde->fde_xfer_caps);
 	if (admit != NULL) {
@@ -3975,7 +4010,7 @@ fdup_remote(struct thread *td, struct proc *p, int fd, int flags,
 		error = ENOENT;
 		goto unlock;
 	}
-	error = fdxfer_source_locked(td, fdp, fd, p->p_pid, &fp, &fcaps,
+	error = fdxfer_source_locked(td, fdp, fd, p->p_pid, 0, &fp, &fcaps,
 	    &prop, &flags, NULL, NULL);
 	if (error != 0)
 		goto unlock;

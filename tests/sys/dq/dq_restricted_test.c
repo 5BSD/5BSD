@@ -313,16 +313,21 @@ cf_answer_proxy(struct cf_srv *s, uint64_t id, int fd, const char *path,
 	free(ident);
 }
 
-/* Swap fd (S's own descriptor) and close it, as dq(4) asks. */
+/*
+ * Swap fd (S's own descriptor).  A taken one (0, ECANCELED) was closed by
+ * the kernel (dq(4)); S closes one the reply refused.
+ */
 static void
 cf_answer_swap(struct cf_srv *s, uint64_t id, int fd, struct cf_row *row)
 {
 
 	CF_RR(row->s_reply_rv, row->s_reply_errno,
 	    dq_reply_resolve_swap(s->q, id, fd, 0));
-	if (row->s_reply_rv != 0 && row->s_reply_errno != ESRCH)
-		(void)dq_reply_resolve_errno(s->q, id, EIO);
+	if (row->s_reply_rv == 0 || row->s_reply_errno == ECANCELED)
+		return;
 	(void)close(fd);
+	if (row->s_reply_errno != ESRCH)
+		(void)dq_reply_resolve_errno(s->q, id, EIO);
 }
 
 /*

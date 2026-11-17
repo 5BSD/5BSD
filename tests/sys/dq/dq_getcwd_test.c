@@ -577,12 +577,16 @@ ro_swap_hook(struct ts *s, const struct dq_event *ev,
 	if (rb->drs_op != DQ_ROP_OPEN || strcmp(path, "/a") != 0)
 		return (0);
 	snprintf(p, sizeof(p), "%s/a", s->backing);
-	fd = open(p, O_RDONLY | O_CLOEXEC);
-	if (fd < 0 || dq_reply_resolve_swap(s->q, ev->de_id, fd, 0) != 0)
+	fd = open(p, O_RDONLY | O_CLOEXEC | O_CLOFORK);
+	if (fd < 0)
 		(void)dq_reply_resolve_errno(s->q, ev->de_id, EIO);
-	/* Today the reply leaves it the supervisor's. */
-	if (fd >= 0)
-		(void)close(fd);
+	else if (dq_reply_resolve_swap(s->q, ev->de_id, fd, 0) != 0) {
+		if (errno != ECANCELED) {
+			(void)close(fd);
+			(void)dq_reply_resolve_errno(s->q, ev->de_id, EIO);
+		}
+	}
+	/* Taken (0, ECANCELED): the kernel closed fd. */
 	return (1);
 }
 

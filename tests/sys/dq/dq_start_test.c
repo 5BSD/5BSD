@@ -952,10 +952,11 @@ h_noswap(struct srv *s, const struct dq_event *ev,
 		fd = openat(s->rootfd, "a", O_RDONLY | O_CLOEXEC | O_CLOFORK);
 		ATF_REQUIRE(fd >= 0);
 		errno = 0;
-		if (dq_reply_resolve_swap(s->q, ev->de_id, fd, 0) == -1 &&
-		    errno == EINVAL)
-			s->hook_err[i] |= 2;
-		(void)close(fd);
+		if (dq_reply_resolve_swap(s->q, ev->de_id, fd, 0) == -1) {
+			if (errno == EINVAL)
+				s->hook_err[i] |= 2;
+			(void)close(fd);	/* refused: still ours */
+		}
 	}
 	return (0);		/* the tree answers the open */
 }

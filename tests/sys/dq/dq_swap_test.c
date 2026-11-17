@@ -280,9 +280,10 @@ a_regular(struct sw *x, const struct dq_event *ev,
 	ATF_CHECK(dq_resolve_accepts(rb, DQ_RESOLVE_FD));
 	fd = sw_open("subst", O_RDONLY);
 	ATF_CHECK_EQ(0, dq_reply_resolve_swap(x->c.q, ev->de_id, fd, 0));
-	/* The reply does not close the supervisor's descriptor. */
-	ATF_CHECK(fcntl(fd, F_GETFD) != -1);
-	/* A second reply finds no event and consumes nothing. */
+	/* The take closed the supervisor's descriptor (Q6). */
+	ATF_CHECK_ERRNO(EBADF, fcntl(fd, F_GETFD) == -1);
+	/* A second reply finds no event and takes nothing. */
+	fd = sw_open("subst", O_RDONLY);
 	ATF_CHECK_ERRNO(ESRCH, dq_reply_resolve_swap(x->c.q, ev->de_id, fd,
 	    0) == -1);
 	ATF_CHECK_EQ(0, close(fd));
@@ -435,8 +436,8 @@ a_refusals(struct sw *x, const struct dq_event *ev,
 		ATF_CHECK_ERRNO(EINVAL, dq_reply(x->c.q, ev->de_id, 0, &r,
 		    sizeof(r)) == -1);
 	}
+	/* Taken: the kernel has closed fd. */
 	ATF_CHECK_EQ(0, dq_reply_resolve_swap(x->c.q, ev->de_id, fd, 0));
-	(void)close(fd);
 }
 
 ATF_TC_WITHOUT_HEAD(swap_refused_to_supervisor);
@@ -565,8 +566,8 @@ a_exlock(struct sw *x, const struct dq_event *ev,
 	SW_REFUSED(x, ev, fd, 0, ENOTCAPABLE);
 	(void)close(fd);
 	fd = sw_open("subst", O_RDONLY);
+	/* Taken: the kernel has closed fd. */
 	ATF_CHECK_EQ(0, dq_reply_resolve_swap(x->c.q, ev->de_id, fd, 0));
-	(void)close(fd);
 }
 
 ATF_TC_WITHOUT_HEAD(swap_exlock);
@@ -601,8 +602,8 @@ a_wronly(struct sw *x, const struct dq_event *ev,
 	int fd;
 
 	fd = sw_open("subst", O_WRONLY);
+	/* Taken: the kernel has closed fd. */
 	ATF_CHECK_EQ(0, dq_reply_resolve_swap(x->c.q, ev->de_id, fd, 0));
-	(void)close(fd);
 }
 
 static void
@@ -716,7 +717,6 @@ a_created(struct sw *x, const struct dq_event *ev,
 	ATF_REQUIRE_EQ(0, fchown(fd, created_owner, (gid_t)-1));
 	ATF_CHECK_EQ(0, dq_reply_resolve_swap(x->c.q, ev->de_id, fd,
 	    created_flags));
-	(void)close(fd);
 }
 
 ATF_TC_WITHOUT_HEAD(swap_created);
@@ -790,8 +790,8 @@ a_opath(struct sw *x, const struct dq_event *ev,
 	SW_REFUSED(x, ev, fd, 0, EFTYPE);
 	(void)close(fd);
 	fd = sw_open("/dev/null", O_PATH);
+	/* Taken: the kernel has closed fd. */
 	ATF_CHECK_EQ(0, dq_reply_resolve_swap(x->c.q, ev->de_id, fd, 0));
-	(void)close(fd);
 }
 
 ATF_TC_WITHOUT_HEAD(swap_opath_device);
@@ -842,8 +842,8 @@ a_dir(struct sw *x, const struct dq_event *ev,
 	SW_REFUSED(x, ev, fd, 0, EFTYPE);
 	(void)close(fd);
 	fd = sw_open("subst", O_RDONLY | O_DIRECTORY);
+	/* Taken: the kernel has closed fd. */
 	ATF_CHECK_EQ(0, dq_reply_resolve_swap(x->c.q, ev->de_id, fd, 0));
-	(void)close(fd);
 }
 
 ATF_TC_WITHOUT_HEAD(swap_directory);
@@ -955,8 +955,8 @@ a_rdwr(struct sw *x, const struct dq_event *ev,
 	int fd;
 
 	fd = sw_open("subst", O_RDWR);
+	/* Taken: the kernel has closed fd. */
 	ATF_CHECK_EQ(0, dq_reply_resolve_swap(x->c.q, ev->de_id, fd, 0));
-	(void)close(fd);
 }
 
 /*
@@ -1252,7 +1252,6 @@ exit_sup_event(const struct dq_event *ev, void *arg)
 		es->fail = 27;
 		return;
 	}
-	(void)close(fd);
 	es->answered = true;
 }
 
@@ -1380,8 +1379,8 @@ a_quick(struct sw *x, const struct dq_event *ev,
 	int fd;
 
 	fd = sw_open("subst", O_RDONLY);
+	/* Taken: the kernel has closed fd. */
 	ATF_CHECK_EQ(0, dq_reply_resolve_swap(x->c.q, ev->de_id, fd, 0));
-	(void)close(fd);
 }
 
 static void
@@ -1511,8 +1510,8 @@ a_types(struct sw *x, const struct dq_event *ev,
 		}
 	} else
 		fd = sw_open("subst", flags);
+	/* Taken: the kernel has closed fd. */
 	ATF_CHECK_EQ(0, dq_reply_resolve_swap(x->c.q, ev->de_id, fd, 0));
-	(void)close(fd);
 }
 
 ATF_TC_WITHOUT_HEAD(swap_refused_types);
@@ -1591,7 +1590,6 @@ a_noxfer(struct sw *x, const struct dq_event *ev,
 	fd = sw_open("subst", O_RDONLY);
 	ATF_CHECK_EQ(0, dq_reply_resolve_swap(x->c.q, ev->de_id, fd,
 	    noxfer_flags));
-	(void)close(fd);
 }
 
 ATF_TC_WITHOUT_HEAD(swap_noxfer);
@@ -1704,8 +1702,8 @@ a_proxydir_file(struct sw *x, const struct dq_event *ev,
 		proxydir_swap_errno = errno;
 		ATF_CHECK_EQ(0, dq_reply_resolve_errno(x->c.q, ev->de_id,
 		    EACCES));
+		(void)close(fd);
 	}
-	(void)close(fd);
 }
 
 ATF_TC_WITHOUT_HEAD(swap_from_proxy_directory);
@@ -1890,8 +1888,9 @@ ATF_TC_BODY(swap_linux, tc)
 
 /*
  * Admission, consumption and completion (transparency rows T-S03 to
- * T-S06, T-S09, T-S12).  These pin what the kernel does today; each is
- * rewritten by the change that makes the swap transparent.
+ * T-S06, T-S09, T-S12; C3): a substitute that carries state of its own
+ * is refused, the take closes the supervisor's descriptor, and the
+ * completion runs as the program's own open.
  */
 
 /* What the supervisor saw: its reply's result and the state after it. */
@@ -1911,6 +1910,8 @@ static struct {
 	bool	 ofd_unlock;	/* released again before the reply */
 	int	 oflags;	/* the supervisor's own open */
 	bool	 slash;		/* the request had DQ_RF_TRAILINGSLASH */
+	int	 fallback_lock;	/* flock of the fresh answer (0: none) */
+	int	 fallback_errno; /* answer the refused open with it instead */
 } pin;
 
 static void
@@ -1966,9 +1967,9 @@ pin_join(void)
 
 /*
  * Reply with fd and record the result; on a refusal the descriptor is
- * closed and a fresh, plain one answers, so the program always finishes.
- * After an accepted reply the descriptor is still this process's, which
- * closes it (dq(4)).
+ * still ours and is closed, and a fresh one (with pin.fallback_lock) or
+ * pin.fallback_errno answers, so the program always finishes.  An
+ * accepted reply took the descriptor: the kernel closed it (dq(4), Q6).
  */
 static void
 pin_reply(struct sw *x, const struct dq_event *ev, int fd, const char *path,
@@ -1978,16 +1979,21 @@ pin_reply(struct sw *x, const struct dq_event *ev, int fd, const char *path,
 	if (dq_reply_resolve_swap(x->c.q, ev->de_id, fd, 0) == 0) {
 		if (pin.nreplies++ == 0)
 			pin.reply_err = 0;
-		ATF_CHECK_EQ(0, close(fd));
 		return;
 	}
 	if (pin.nreplies == 0)
 		pin.reply_err = errno;
-	(void)close(fd);
+	ATF_CHECK_EQ(0, close(fd));
+	if (pin.fallback_errno != 0) {
+		ATF_CHECK_EQ(0, dq_reply_resolve_errno(x->c.q, ev->de_id,
+		    pin.fallback_errno));
+		return;
+	}
 	fd = sw_open(path, oflags);
+	if (pin.fallback_lock != 0)
+		ATF_REQUIRE_EQ(0, flock(fd, pin.fallback_lock | LOCK_NB));
 	ATF_CHECK_EQ(0, dq_reply_resolve_swap(x->c.q, ev->de_id, fd, 0));
 	pin.nreplies++;
-	ATF_CHECK_EQ(0, close(fd));
 }
 
 /* A fresh plain answer. */
@@ -2026,10 +2032,13 @@ ATF_TC_BODY(swap_offset_carried, tc)
 	sw_init(&x, "orig", a_offset);
 	sw_run(&x, p_plain_open, NULL, &res);
 	ATF_CHECK_MSG(res.r[0].rv >= 0, "open: %s", strerror(res.r[0].err));
-	/* Pin: the file is accepted with its offset; the first read is mid-file. */
-	ATF_CHECK_EQ(0, pin.reply_err);
-	ATF_CHECK_EQ(6, res.r[2].rv);
-	ATF_CHECK_EQ(0, memcmp(res.data, "TITUTE", 6));
+	/*
+	 * A file that was read is refused (it was accepted, and the
+	 * program's first read began mid-file); the fresh one reads whole.
+	 */
+	ATF_CHECK_EQ(EFTYPE, pin.reply_err);
+	ATF_CHECK_EQ(10, res.r[2].rv);
+	ATF_CHECK_EQ(0, memcmp(res.data, "SUBSTITUTE", 10));
 	dqt_fini(&x.c);
 }
 
@@ -2097,12 +2106,12 @@ ATF_TC_BODY(swap_flock_carried, tc)
 	sw_run(&x, p_lockprobe, NULL, &res);
 	ATF_CHECK_MSG(res.r[0].rv >= 0, "open: %s", strerror(res.r[0].err));
 	/*
-	 * Pin: accepted, and the program holds a flock it never asked for:
-	 * another open file of the same file cannot take it.
+	 * A flock the open did not ask for is refused (the program held it,
+	 * and another open file could not take it); then nothing is held.
 	 */
-	ATF_CHECK_EQ(0, pin.reply_err);
-	ATF_CHECK_EQ(-1, res.r[2].rv);
-	ATF_CHECK_EQ(EWOULDBLOCK, res.r[2].err);
+	ATF_CHECK_EQ(EFTYPE, pin.reply_err);
+	ATF_CHECK_EQ_MSG(0, res.r[2].rv, "flock probe: %s",
+	    strerror(res.r[2].err));
 	dqt_fini(&x.c);
 }
 
@@ -2119,21 +2128,23 @@ ATF_TC_BODY(swap_ofdlock_carried, tc)
 	sw_init(&x, "orig", a_locked);
 	sw_run(&x, p_lockprobe, NULL, &res);
 	ATF_CHECK_MSG(res.r[0].rv >= 0, "open: %s", strerror(res.r[0].err));
-	/* Pin: accepted; the program's open file holds the OFD read lock. */
-	ATF_CHECK_EQ(0, pin.reply_err);
-	ATF_CHECK_EQ(-1, res.r[3].rv);
-	ATF_CHECK_EQ_MSG(EAGAIN, res.r[3].err, "OFD probe: %s",
+	/* An OFD lock is refused (the program's open file held it). */
+	ATF_CHECK_EQ(EFTYPE, pin.reply_err);
+	ATF_CHECK_EQ_MSG(0, res.r[3].rv, "OFD probe: %s",
 	    strerror(res.r[3].err));
 	dqt_fini(&x.c);
 
-	/* A lock taken and released again: accepted, and nothing is held. */
+	/*
+	 * A lock taken and released again: FHASOFDLOCK is sticky, so the
+	 * file is refused too (it was accepted).
+	 */
 	pin_reset();
 	pin.ofd = F_RDLCK;
 	pin.ofd_unlock = true;
 	sw_init(&x, "orig", a_locked);
 	sw_run(&x, p_lockprobe, NULL, &res);
 	ATF_CHECK_MSG(res.r[0].rv >= 0, "open: %s", strerror(res.r[0].err));
-	ATF_CHECK_EQ(0, pin.reply_err);
+	ATF_CHECK_EQ(EFTYPE, pin.reply_err);
 	ATF_CHECK_EQ_MSG(0, res.r[3].rv, "OFD probe: %s",
 	    strerror(res.r[3].err));
 	dqt_fini(&x.c);
@@ -2159,18 +2170,27 @@ p_excl_lock(void *arg __unused, void *result)
 		DQT_RR(res->r[8], close(fd));
 }
 
+static int	excl_third_err;	/* a third open file's LOCK_SH, errno */
+
 static void
 a_excl_lock(struct sw *x, const struct dq_event *ev,
     const struct dq_resolve_body *rb __unused)
 {
-	int fd;
+	int fd, third;
 
 	fd = open("newsubst", O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC |
 	    O_CLOFORK, 0644);
 	ATF_REQUIRE_MSG(fd != -1, "create: %s", strerror(errno));
 	if (pin.lockop != 0)
 		ATF_REQUIRE_EQ(0, flock(fd, pin.lockop | LOCK_NB));
-	pin_hold_lock("newsubst", LOCK_SH, 1500);
+	if (pin.lockop == LOCK_EX) {
+		/* The supervisor's lock keeps a third locker out. */
+		third = open("newsubst", O_RDONLY | O_CLOEXEC | O_CLOFORK);
+		ATF_REQUIRE(third != -1);
+		excl_third_err = DQT_ERRNO_OF(flock(third, LOCK_SH | LOCK_NB));
+		(void)close(third);
+	} else
+		pin_hold_lock("newsubst", LOCK_SH, 1500);
 	pin_reply(x, ev, fd, "newsubst", O_RDWR);
 }
 
@@ -2180,18 +2200,37 @@ ATF_TC_BODY(swap_excl_exlock_third_locker, tc)
 	struct sw x;
 	struct sw_res res;
 
+	/*
+	 * A created file without the supervisor's lock is refused: a third
+	 * locker could come between the creation and the program's lock
+	 * (its exclusive lock waited for one; base never waits here,
+	 * F_FIRSTOPEN).  The supervisor then answers EAGAIN, at once.
+	 */
 	pin_reset();
+	pin.fallback_errno = EAGAIN;
 	sw_init(&x, "newfile", a_excl_lock);
 	sw_run(&x, p_excl_lock, NULL, &res);
 	pin_join();
-	ATF_CHECK_EQ(0, pin.reply_err);
-	ATF_CHECK_MSG(res.r[0].rv >= 0, "open: %s", strerror(res.r[0].err));
+	ATF_CHECK_EQ(EFTYPE, pin.reply_err);
+	ATF_CHECK_EQ(-1, res.r[0].rv);
+	ATF_CHECK_EQ(EAGAIN, res.r[0].err);
+	ATF_CHECK_MSG(res.size < 1300, "the open took %jd ms",
+	    (intmax_t)res.size);
+	dqt_fini(&x.c);
+	ATF_REQUIRE_EQ(0, unlink("newsubst"));
+
 	/*
-	 * Pin: a file "created" for the program, and the program's own
-	 * exclusive lock waits for a third process (base never waits here:
-	 * F_FIRSTOPEN).
+	 * The supervisor locks what it creates before it answers: no third
+	 * locker gets in, and the program's lock is taken at once.
 	 */
-	ATF_CHECK_MSG(res.size >= 1300, "the open took %jd ms",
+	pin_reset();
+	pin.lockop = LOCK_EX;
+	sw_init(&x, "newfile", a_excl_lock);
+	sw_run(&x, p_excl_lock, NULL, &res);
+	ATF_CHECK_EQ(0, pin.reply_err);
+	ATF_CHECK_EQ(EWOULDBLOCK, excl_third_err);
+	ATF_CHECK_MSG(res.r[0].rv >= 0, "open: %s", strerror(res.r[0].err));
+	ATF_CHECK_MSG(res.size < 1300, "the open took %jd ms",
 	    (intmax_t)res.size);
 	dqt_fini(&x.c);
 }
@@ -2209,16 +2248,21 @@ ATF_TC_BODY(swap_excl_lock_upgrade_third_sh, tc)
 	sw_run(&x, p_excl_lock, NULL, &res);
 	pin_join();
 	ATF_CHECK_EQ(0, pin.reply_err);
-	ATF_CHECK_MSG(res.r[0].rv >= 0, "open: %s", strerror(res.r[0].err));
-	/* Pin: the upgrade to exclusive waits for the third shared lock. */
-	ATF_CHECK_MSG(res.size >= 1300, "the open took %jd ms",
+	/*
+	 * The upgrade to exclusive is not waited for (it waited for the
+	 * third shared lock): the open fails EIO at once, a bad answer.
+	 */
+	ATF_CHECK_EQ(-1, res.r[0].rv);
+	ATF_CHECK_EQ(EIO, res.r[0].err);
+	ATF_CHECK_MSG(res.size < 1300, "the open took %jd ms",
 	    (intmax_t)res.size);
 	dqt_fini(&x.c);
 }
 
 /*
  * T-S04: an O_EXLOCK wait under SA_RESTART.  A real file restarts the
- * open after the handler and waits on; the swapped one answers EINTR.
+ * open after the handler and waits on; so does the swapped one, which
+ * consults the supervisor again (it answered EINTR).
  */
 static void
 pin_alarm(int sig __unused)
@@ -2279,18 +2323,19 @@ ATF_TC_BODY(swap_exlock_signal, tc)
 	sw_init(&x, "orig", a_plain);
 	sw_run(&x, p_exlock_signal, __DECONST(char *, "orig"), &res);
 	pin_join();
-	/* Pin: the swapped open is not restarted; SIGALRM ends it EINTR. */
-	ATF_CHECK_EQ(1, x.answered);
-	ATF_CHECK_EQ(-1, res.r[0].rv);
-	ATF_CHECK_EQ(EINTR, res.r[0].err);
-	ATF_CHECK_MSG(res.size < 2000, "the swapped open took %jd ms",
+	/* The restart is a new open: the supervisor answers twice. */
+	ATF_CHECK_EQ(2, x.answered);
+	ATF_CHECK_MSG(res.r[0].rv >= 0, "swapped open: %s",
+	    strerror(res.r[0].err));
+	ATF_CHECK_MSG(res.size >= 2000, "the swapped open took %jd ms",
 	    (intmax_t)res.size);
 	dqt_fini(&x.c);
 }
 
 /*
- * T-S05: a trailing slash.  The real file's open(2) is ENOTDIR; a swap or
- * a served FD answer of a non-directory is accepted today.
+ * T-S05: a trailing slash.  The real file's open(2) is ENOTDIR; a swap of
+ * a non-directory is refused and a served FD answer of one is ENOTDIR (both
+ * were accepted).
  */
 static void
 p_slash(void *arg __unused, void *result)
@@ -2321,9 +2366,9 @@ a_slash(struct sw *x, const struct dq_event *ev,
 		pin.reply_err = 0;
 	} else {
 		pin.reply_err = errno;
+		(void)close(fd);
 		ATF_CHECK_EQ(0, dq_reply_resolve_pass(x->c.q, ev->de_id));
 	}
-	(void)close(fd);
 }
 
 static void
@@ -2364,14 +2409,14 @@ ATF_TC_BODY(swap_trailing_slash, tc)
 	ATF_CHECK_EQ(ENOTDIR, res.r[1].err);
 	ATF_CHECK_EQ(1, x.answered);
 	/*
-	 * Pin: the RESOLVE of an open does not carry DQ_RF_TRAILINGSLASH
-	 * (namei sets TRAILINGSLASH only while it walks, after the consult),
-	 * and a regular file is accepted for "orig/" and opened.
+	 * The RESOLVE carries DQ_RF_TRAILINGSLASH (it did not: namei sets
+	 * TRAILINGSLASH only while it walks, after the consult), a regular
+	 * file is refused for "orig/", and the passed open is ENOTDIR.
 	 */
-	ATF_CHECK(!pin.slash);
-	ATF_CHECK_EQ(0, pin.reply_err);
-	ATF_CHECK_MSG(res.r[0].rv >= 0, "open: %s", strerror(res.r[0].err));
-	ATF_CHECK_EQ(10, res.r[2].rv);
+	ATF_CHECK(pin.slash);
+	ATF_CHECK_EQ(EFTYPE, pin.reply_err);
+	ATF_CHECK_EQ(-1, res.r[0].rv);
+	ATF_CHECK_EQ(ENOTDIR, res.r[0].err);
 	dqt_fini(&x.c);
 }
 
@@ -2388,8 +2433,9 @@ ATF_TC_BODY(fd_trailing_slash, tc)
 	sw_run(&x, p_slash, NULL, &res);
 	ATF_CHECK_EQ(1, x.answered);
 	ATF_CHECK_EQ(0, pin.reply_err);
-	/* Pin: a served file is installed for "orig/". */
-	ATF_CHECK_MSG(res.r[0].rv >= 0, "open: %s", strerror(res.r[0].err));
+	/* The program's completion refuses a file for "orig/" (it took it). */
+	ATF_CHECK_EQ(-1, res.r[0].rv);
+	ATF_CHECK_EQ(ENOTDIR, res.r[0].err);
 	dqt_fini(&x.c);
 }
 
@@ -2443,16 +2489,19 @@ ATF_TC_BODY(swap_entry_states, tc)
 	sw_init(&x, "orig", a_states);
 	sw_run(&x, p_states, NULL, &res);
 	ATF_CHECK_MSG(res.r[0].rv >= 0, "open: %s", strerror(res.r[0].err));
-	/* Pin: accepted, and both states are the program's now. */
-	ATF_CHECK_EQ(0, pin.reply_err);
-	ATF_CHECK((res.fdflags & FD_RESOLVE_BENEATH) != 0);
-	ATF_CHECK_EQ(-1, res.r[1].rv);
+	/*
+	 * Refused (both states became the program's); the fresh answer
+	 * carries neither.
+	 */
+	ATF_CHECK_EQ(EFTYPE, pin.reply_err);
+	ATF_CHECK((res.fdflags & FD_RESOLVE_BENEATH) == 0);
+	ATF_CHECK_EQ_MSG(0, res.r[1].rv, "mmap: %s", strerror(res.r[1].err));
 	dqt_fini(&x.c);
 }
 
 /*
- * T-S12: the supervisor keeps its descriptor after the reply, moves the
- * offset and sets O_NONBLOCK; the program then looks at its own.
+ * T-S12: after the reply the supervisor tries to move the offset and set
+ * O_NONBLOCK through its descriptor; the program then looks at its own.
  */
 static void
 p_retained(void *arg __unused, void *result)
@@ -2500,15 +2549,15 @@ ATF_TC_BODY(swap_entry_retained, tc)
 	ATF_CHECK_EQ(0, pin.reply_err);
 	ATF_CHECK_MSG(res.r[0].rv >= 0, "open: %s", strerror(res.r[0].err));
 	/*
-	 * Pin: the supervisor's descriptor stays open after the reply and
-	 * shares the open file with the program: its offset and status
-	 * flags are the program's, and its close is an ordinary close.
+	 * The take closed the supervisor's descriptor: nothing it does
+	 * reaches the program's open file (it stayed open and shared the
+	 * offset and the status flags).
 	 */
-	ATF_CHECK_EQ(0, pin.seek_err);
-	ATF_CHECK_EQ(0, pin.setfl_err);
-	ATF_CHECK_EQ(0, pin.close_err);
-	ATF_CHECK_EQ(5, res.r[1].rv);
-	ATF_CHECK((res.flflags & O_NONBLOCK) != 0);
+	ATF_CHECK_EQ(EBADF, pin.seek_err);
+	ATF_CHECK_EQ(EBADF, pin.setfl_err);
+	ATF_CHECK_EQ(EBADF, pin.close_err);
+	ATF_CHECK_EQ(0, res.r[1].rv);
+	ATF_CHECK((res.flflags & O_NONBLOCK) == 0);
 	(void)close(pin.gate[0]);
 	(void)close(pin.gate[1]);
 	dqt_fini(&x.c);
@@ -2517,12 +2566,17 @@ ATF_TC_BODY(swap_entry_retained, tc)
 /*
  * R2-H1: a reply that races the program's interruption.  The program
  * opens in a loop with a short timer; every reply's result is checked
- * against what is left of the supervisor's descriptor.
+ * against what is left of the supervisor's descriptor: 0 and ECANCELED
+ * took it, ESRCH did not.  debug.dq.delay_swap_take holds the first
+ * replies between the take and the event lookup for a second, so the
+ * program's timer fires there and ECANCELED is exercised.
  */
 #define	LATE_ROUNDS	200
+#define	LATE_DELAYED	3
+#define	DELAY_SWAP_TAKE	"debug.dq.delay_swap_take"
 
 static struct {
-	int	 ok, srch, other;
+	int	 ok, srch, canceled, other;
 	int	 bad;		/* a result that contradicts the descriptor */
 } late;
 
@@ -2564,23 +2618,28 @@ a_late(struct sw *x, const struct dq_event *ev,
 	fd = sw_open("subst", O_RDONLY);
 	error = dq_reply_resolve_swap(x->c.q, ev->de_id, fd, 0) == 0 ? 0 :
 	    errno;
+	/* Nothing else opens a file meanwhile: the number is not reused. */
 	open_after = fcntl(fd, F_GETFD) != -1;
 	if (error == 0)
 		late.ok++;
 	else if (error == ESRCH)
 		late.srch++;
+	else if (error == ECANCELED)
+		late.canceled++;
 	else
 		late.other++;
-	/* Today every outcome leaves the descriptor the supervisor's. */
-	if (!open_after)
+	if (open_after != (error != 0 && error != ECANCELED))
 		late.bad++;
-	(void)close(fd);
+	if (open_after)
+		(void)close(fd);
 }
 
-ATF_TC(swap_late_reply_consumed);
+ATF_TC_WITH_CLEANUP(swap_late_reply_consumed);
 ATF_TC_HEAD(swap_late_reply_consumed, tc)
 {
 	atf_tc_set_md_var(tc, "timeout", "300");
+	/* debug.dq.delay_swap_take delays any swap reply. */
+	atf_tc_set_md_var(tc, "is_exclusive", "true");
 }
 ATF_TC_BODY(swap_late_reply_consumed, tc)
 {
@@ -2589,18 +2648,28 @@ ATF_TC_BODY(swap_late_reply_consumed, tc)
 
 	pin_reset();
 	memset(&late, 0, sizeof(late));
+	dqt_sysctl_save_set_uint(DELAY_SWAP_TAKE, LATE_DELAYED);
 	sw_write_file("orig", "ORIGINAL", 0644);
 	sw_write_file("subst", "SUBSTITUTE", 0644);
 	sw_init(&x, "orig", a_late);
 	sw_run(&x, p_late, NULL, &res);
-	printf("late: %d answered, %d ESRCH, %d other; program: %ld opened, "
-	    "%ld EINTR, %ld other\n", late.ok, late.srch, late.other,
-	    res.r[0].rv, res.r[1].rv, res.r[2].rv);
+	ATF_REQUIRE(dqt_sysctl_restore(DELAY_SWAP_TAKE));
+	printf("late: %d answered, %d ESRCH, %d ECANCELED, %d other; program: "
+	    "%ld opened, %ld EINTR, %ld other\n", late.ok, late.srch,
+	    late.canceled, late.other, res.r[0].rv, res.r[1].rv, res.r[2].rv);
 	ATF_CHECK_EQ(0, late.other);
 	ATF_CHECK_EQ(0, res.r[2].rv);
-	/* Pin: no outcome takes the descriptor from the supervisor. */
+	/* Each outcome says truly whether the descriptor was taken (Q6). */
 	ATF_CHECK_EQ(0, late.bad);
+	/* The race was run: a delayed take lost to the program's timer. */
+	ATF_CHECK_MSG(late.canceled > 0, "no reply was ECANCELED");
+	ATF_CHECK_MSG(late.ok > 0, "no reply was accepted");
 	dqt_fini(&x.c);
+}
+ATF_TC_CLEANUP(swap_late_reply_consumed, tc)
+{
+
+	(void)dqt_sysctl_restore(DELAY_SWAP_TAKE);
 }
 
 /*
@@ -2715,8 +2784,11 @@ ATF_TC_BODY(swap_notify_open, tc)
 	    strerror(res.r[1].err));
 	/* The supervisor's open of the substitute, and nothing else. */
 	ATF_CHECK_EQ(1, nopen);
-	/* Pin: only the control's open notified, for the program's pid. */
-	ATF_CHECK_EQ_MSG(1, count, "vnode_notify_open fired %ld times",
+	/*
+	 * The swapped open notifies the policies for the program, as its
+	 * own open would (it did not: only the control's open did).
+	 */
+	ATF_CHECK_EQ_MSG(2, count, "vnode_notify_open fired %ld times",
 	    count);
 	(void)close(in);
 	(void)close(pin.gate[0]);

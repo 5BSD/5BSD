@@ -88,6 +88,7 @@ struct dqres_answer {
 					   and installs; dro_answer_release
 					   drops what is left */
 	uint32_t	 da_swflags;	/* SWAP: DQ_SWAP_F_* of the reply */
+	uint32_t	 da_rflags;	/* the lookup's DQ_RF_* as posted */
 	bool		 da_swcreated;	/* SWAP: DQ_SWAP_F_CREATED honoured
 					   by the completion */
 };
@@ -314,6 +315,11 @@ struct dqres_ops {
 	 */
 	void	(*dro_swap_gate)(struct dqres_binding *,
 		    struct fdinstall_gate *);
+	/*
+	 * An answer the requester's completion refused as outside the
+	 * contract (EIO to the requester): ds2_bad_replies.
+	 */
+	void	(*dro_bad_answer)(struct dqres_binding *);
 };
 
 void	dqres_register(const struct dqres_ops *ops);
@@ -322,9 +328,28 @@ extern const struct dqres_ops *dqres_ops;
 /*
  * DTrace: the dqres provider (kern_dqres.c).  dqres:::namei-served (op,
  * answer kind, errno): a lookup from a served start returned.
+ * dqres:::subst-refuse (op, DQRES_R_*, errno) names why a Descriptor
+ * Substitution was refused, to the supervisor (the take) or to the
+ * program (the completion); dqres:::subst-install (op, fd) is the
+ * program's new descriptor; dqres:::subst-consume (queue, fd) the
+ * supervisor's entry closed with the take.  The reasons continue the
+ * dtrace-observability list after 22.
  */
 SDT_PROVIDER_DECLARE(dqres);
 SDT_PROBE_DECLARE(dqres, , , namei__served);
+SDT_PROBE_DECLARE(dqres, , , subst__refuse);
+SDT_PROBE_DECLARE(dqres, , , subst__install);
+SDT_PROBE_DECLARE(dqres, , , subst__consume);
+#define	DQRES_R_SUBST_OFFSET	23	/* the file was read or seeked */
+#define	DQRES_R_SUBST_FLOCK	24	/* a flock the request did not ask */
+#define	DQRES_R_SUBST_OFDLOCK	25	/* an OFD lock (sticky FHASOFDLOCK) */
+#define	DQRES_R_SUBST_EXCL_LOCK	26	/* O_CREAT|O_EXCL + lock: not held,
+					   or a type that would wait */
+#define	DQRES_R_SUBST_STATES	27	/* the entry carries states (PLAIN) */
+#define	DQRES_R_SUBST_SLASH	28	/* a trailing slash, not a directory */
+
+/* The requester's completion refused the answer (dro_bad_answer). */
+void	dqres_bad_answer(struct thread *td);
 
 /* Is the process attached?  Racy fast test; the slow paths lock. */
 bool	dqres_proc_attached(struct proc *p);

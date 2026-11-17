@@ -1717,6 +1717,17 @@ SYSCTL_UINT(_debug_dq, OID_AUTO, delay_reply_notify, CTLFLAG_RW,
     "The next N replies about an open file sleep one second after the "
     "requester is released, before the policies are told");
 
+/*
+ * The window between a SWAP answer's take and the queue lock, in which
+ * the requester can give up and the reply becomes ECANCELED, made wide
+ * enough for a test.
+ */
+static u_int dq_delay_swap_take;
+SYSCTL_UINT(_debug_dq, OID_AUTO, delay_swap_take, CTLFLAG_RW,
+    &dq_delay_swap_take, 0,
+    "The next N SWAP replies sleep one second after the take, before the "
+    "queue lock");
+
 bool
 dq_fault_inject(u_int *counter)
 {
@@ -2164,6 +2175,8 @@ dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 			dq_data_rele(dd);
 			return (error);
 		}
+		if (rswap.fs_fp != NULL && dq_fault_inject(&dq_delay_swap_take))
+			pause_sbt("dqswtk", SBT_1S, 0, 0);
 	}
 
 	key.ev_hdr.de_id = r->dr_id;
@@ -2175,8 +2188,17 @@ dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 		DQ_UNLOCK(q);
 		dq_data_rele(dd);
 		dq_reply_unmint(robj, objectp);
+		/*
+		 * A SWAP answer whose take ran (and so closed the
+		 * supervisor's descriptor) and whose event then went: the
+		 * requester was interrupted or reached its deadline.  The
+		 * file is released and the supervisor told ECANCELED, so it
+		 * knows its descriptor is gone; ESRCH keeps meaning "nothing
+		 * was taken".
+		 */
+		error = rswap.fs_fp != NULL ? ECANCELED : ESRCH;
 		fdswap_release(&rswap, td);
-		return (ESRCH);
+		return (error);
 	}
 	KASSERT(ev->ev_state == DQ_EV_DELIVERED, ("dq: inflight event state"));
 	op = ev->ev_hdr.de_op;
@@ -2211,6 +2233,13 @@ dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 	    DQ_RESOLVE_SWAP && rswap.fs_fp == NULL)
 		error = EINVAL;
 	if (error != 0) {
+		/*
+		 * dq_resolve_swap_prepare refused everything the validation
+		 * refuses before it took a file, and the raced-prepare case
+		 * took none: a taken file is never refused here.
+		 */
+		KASSERT(rswap.fs_fp == NULL,
+		    ("dq: reply %d refused after its take", error));
 		DQ_UNLOCK(q);
 		dq_data_rele(dd);
 		dq_reply_unmint(robj, objectp);

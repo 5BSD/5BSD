@@ -577,6 +577,18 @@ A reply fails with
 when the id is not in flight (never issued, already answered, abandoned,
 revoked or expired; counted in
 .Va ds_late_replies ) ,
+with
+.Er ECANCELED ,
+for a
+.Dv DQ_RESOLVE_SWAP
+answer only, when the kernel took and closed the answered descriptor and
+the requester left before it was installed
+.Pq see Sx Descriptor substitution ;
+an
+.Dv DQ_RESOLVE_FD
+answer whose requester left fails with
+.Er ESRCH ,
+its descriptor still the controller's),
 and with
 .Er EINVAL
 for a wrong version or padding, an errno outside the kernel's range, a
@@ -2934,14 +2946,46 @@ struct dq_resolve_swap {
 .Ed
 .Pp
 The reply takes the file out of the controller's descriptor table by
-number while it validates; the descriptor itself stays open and the
-controller closes it once the reply has returned 0.
+number while it validates, and once the file is admitted closes the
+controller's descriptor: after a reply that returned 0 or
+.Er ECANCELED
+the number is no longer the controller's, and the controller must not
+close it (the number may already name another file).
+The reply's three outcomes:
+.Bl -tag -width "ECANCELED"
+.It 0
+The requester received the file.
+.It Bq Er ECANCELED
+The file was admitted and the descriptor closed, but the requester left
+before the installation; the file was dropped.
+Only a swap answers it.
+.It any other error
+The descriptor is still the controller's, as listed below.
+.El
 The kernel resolves no name for a swap and creates nothing: which object
 the requester gets, and whether it exists, is the controller's own
 .Xr open 2 .
 .Pp
 The supplied open file must present as what the requester's open would
-have produced.
+have produced, and carry no state of its own that the requester's open
+would not have (see
+.Er EFTYPE
+below).
+An
+.Dv O_CREAT | O_EXCL
+request with
+.Dv O_SHLOCK
+or
+.Dv O_EXLOCK
+is the exception: the controller takes the
+.Xr flock 2
+lock on the file it creates before it answers, so that no other opener
+can come between the creation and the lock; the completion then takes the
+requester's lock without waiting, and a lock it cannot take at once (an
+upgrade a third opener blocks) ends the open with
+.Er EIO ,
+counted in
+.Va ds2_bad_replies .
 A refusal is the reply's error; the descriptor stays open and, except for
 .Er ESRCH ,
 the event stays in flight and nothing is consumed (a
@@ -2978,7 +3022,28 @@ inherited by or passed to another process, is in use by another thread of
 the controller, or was already swapped and not closed.
 The last two can be transient.
 .It Bq Er EFTYPE
-The file's access mode
+The request's path ends in a slash and the file is not a directory; the
+file's offset is not 0; the file holds an OFD lock; the file holds a
+.Xr flock 2
+lock and the request has neither
+.Dv O_SHLOCK
+nor
+.Dv O_EXLOCK ;
+the request is an
+.Dv O_CREAT | O_EXCL
+open with
+.Dv O_SHLOCK
+or
+.Dv O_EXLOCK
+and the file holds no
+.Xr flock 2
+lock; the controller's descriptor has a locked close-on-exec or
+close-on-fork state
+.Pq Xr fcntl 2 ,
+.Dv O_RESOLVE_BENEATH
+set on it, or mmap or lookups restricted to capability mode
+.Pq Xr cap_mmap_capmode 2 ;
+or the file's access mode
 .Pq read, write, execute or search, Dv O_PATH
 or one of the status flags
 .Dv O_APPEND , O_NONBLOCK , O_SYNC , O_DSYNC , O_DIRECT , O_ASYNC
@@ -3001,10 +3066,7 @@ The reply is not 40 bytes, a spare word or an unknown flag is set, or
 answers a request without
 .Dv O_CREAT .
 .It Bq Er ESRCH
-The requester is no longer waiting.
-When it left while the kernel was taking the file, a
-.Dv CAP_XFER_ONCE
-entry has been consumed.
+The requester is no longer waiting, and the file was not taken.
 .El
 .Pp
 Flags:
@@ -3120,7 +3182,9 @@ Hold no descriptor from before that you will hand over.
 Open the file afresh for each answer, with the request's access mode and
 status flags and with
 .Dv O_CLOFORK ,
-and close the descriptor after the reply succeeds.
+and do not close the descriptor after a reply that returned 0 or
+.Er ECANCELED :
+the kernel has closed it.
 The requester is then the only holder: the offset, the status flags and
 any
 .Xr flock 2
@@ -4520,6 +4584,26 @@ provider:
 operation, the answer's
 .Dv DQ_RESOLVE_*
 kind, 0 when there was none, and the errno)
+.It dqres:::subst-refuse
+.Fa "uint32_t op" ,
+.Fa "int reason" ,
+.Fa "int errno"
+(a substitute refused: at the take, the reply's errno; at the
+requester's completion, the requester's.
+.Va reason
+is 23 an offset, 24 an unrequested
+.Xr flock 2
+lock, 25 an OFD lock, 26 an exclusive locked creation whose lock is not
+held or cannot be taken, 27 a descriptor entry with states of its own,
+28 a trailing slash)
+.It dqres:::subst-install
+.Fa "uint32_t op" ,
+.Fa "int fd"
+(the requester's new descriptor)
+.It dqres:::subst-consume
+.Fa "struct dq_queue *" ,
+.Fa "int fd"
+(the supervisor's descriptor closed at the take)
 .El
 .Pp
 Every reply also runs the

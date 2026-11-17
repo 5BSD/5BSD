@@ -1315,8 +1315,13 @@ request
 without
 .Dv O_TRUNC
 and with
-.Dv O_CLOFORK ,
-and close it after the call returns 0; the call never closes it.
+.Dv O_CLOFORK .
+The kernel closes
+.Fa fd
+when it takes the file: after a return of 0 or
+.Er ECANCELED
+the descriptor number is no longer the controller's and must not be
+closed; after any other error it still is.
 .Fa flags
 is 0 or a combination of
 .Dv DQ_SWAP_F_NOXFER
@@ -1330,7 +1335,14 @@ refuse
 .Fa fd
 or the reply and leave the event in flight, so another answer may follow;
 .Er ESRCH
-means the requester is gone.
+means the requester is gone and
+.Fa fd
+was not taken;
+.Er ECANCELED ,
+returned only by this call, means the file was taken and
+.Fa fd
+closed, but the requester left before the installation and the file was
+dropped.
 .Er EBUSY
 (the open file has another reference, possibly a transient one taken by
 another thread) is retried once before it is returned.

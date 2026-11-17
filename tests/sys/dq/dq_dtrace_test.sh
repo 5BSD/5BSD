@@ -157,6 +157,31 @@ quota_wait_fires_body()
 	atf_check -o ignore grep -qx '2 5' fired
 }
 
+atf_test_case subst_fires
+subst_fires_head()
+{
+	atf_set "descr" "dqres:::subst-refuse, subst-install and " \
+	    "subst-consume fire for a refused and an accepted substitute"
+	atf_set "require.user" "root"
+}
+subst_fires_body()
+{
+	require_dtrace
+	# A substitute that was read from: refused at the take for an open
+	# (DQ_ROP_OPEN 1), reason 23 (its offset), EFTYPE (79).
+	fire dqres:::subst-refuse "%d %d %d" "arg0, arg1, arg2" \
+	    dq_swap_test swap_offset_carried
+	atf_check -o ignore grep -qx '1 23 79' fired
+	# An accepted one: the supervisor's descriptor is closed with the
+	# take, and the program's installed.
+	fire dqres:::subst-consume "consume %d" "arg1" dq_swap_test \
+	    swap_regular
+	atf_check -o ignore grep -Eqx 'consume [0-9]+' fired
+	fire dqres:::subst-install "install %d %d" "arg0, arg1" dq_swap_test \
+	    swap_regular
+	atf_check -o ignore grep -Eqx 'install 1 [0-9]+' fired
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case dq_probes_present
@@ -165,4 +190,5 @@ atf_init_test_cases()
 	atf_add_test_case fop_local_fires
 	atf_add_test_case namei_served_fires
 	atf_add_test_case quota_wait_fires
+	atf_add_test_case subst_fires
 }
