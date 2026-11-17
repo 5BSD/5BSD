@@ -1409,6 +1409,60 @@ ATF_TC_BODY(restricted_under_served, tc)
 	ts_stop(&s);
 }
 
+/*
+ * T-A13: fchdir(2) of a regular file is ENOTDIR whatever else is true of
+ * it (kern_fchdir tests the type before the search permission).  A served
+ * file is held by an unattached process, by one attached to its queue,
+ * and by both once revoked.
+ */
+static void
+fchdir_errno_fn(void *arg, void *result)
+{
+	const int *fds = arg;
+	int *r = result;
+
+	r[0] = TS_ERR(fchdir(fds[0]));
+	r[1] = TS_ERR(fchdir(fds[1]));
+}
+
+TS_TC(fchdir_file_errno_order);
+ATF_TC_BODY(fchdir_file_errno_order, tc)
+{
+	static unsigned char fdata[64];
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	char opath[DQT_PATH_MAX];
+	int fds[2], r[2], oracle;
+
+	oracle = dqt_make_oracle("oracle", fdata, sizeof(fdata), opath,
+	    sizeof(opath));
+	dqt_init(&c);
+	o = dqt_mint(&c, oracle, opath, fdata, sizeof(fdata), NULL);
+	fds[0] = o->fd;
+	fds[1] = oracle;
+
+	memset(r, 0, sizeof(r));
+	dqt_run_child(fchdir_errno_fn, fds, r, sizeof(r));
+	TS_CHECK_ERRNO(ENOTDIR, r[1], "real file");
+	/* Pin: unattached, the start check answers first (EACCES). */
+	TS_CHECK_ERRNO(EACCES, r[0], "served file, unattached");
+	memset(r, 0, sizeof(r));
+	dqt_attach_run(&c, fchdir_errno_fn, fds, r, sizeof(r));
+	TS_CHECK_ERRNO(ENOTDIR, r[1], "real file, attached");
+	TS_CHECK_ERRNO(ENOTDIR, r[0], "served file, attached");
+
+	ATF_REQUIRE_EQ(0, dq_revoke(c.q, o->id));
+	memset(r, 0, sizeof(r));
+	dqt_run_child(fchdir_errno_fn, fds, r, sizeof(r));
+	TS_CHECK_ERRNO(EACCES, r[0], "revoked served file, unattached");
+	memset(r, 0, sizeof(r));
+	dqt_attach_run(&c, fchdir_errno_fn, fds, r, sizeof(r));
+	/* Pin: attached, the revoked object answers first (EIO). */
+	TS_CHECK_ERRNO(EIO, r[0], "revoked served file, attached");
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1429,5 +1483,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, real_fd_outside_pass);
 	ATF_TP_ADD_TC(tp, guard_outside_root);
 	ATF_TP_ADD_TC(tp, restricted_under_served);
+	ATF_TP_ADD_TC(tp, fchdir_file_errno_order);
 	return (atf_no_error());
 }

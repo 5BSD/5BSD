@@ -31,7 +31,7 @@
 #include <unistd.h>
 
 #define	DQ_WANT_PC_NAMES
-#include "dq_test.h"
+#include "dq_tree_harness.h"
 
 #define	DATA_LEN	8192
 
@@ -457,6 +457,171 @@ ATF_TC_BODY(setident_changes_stat, tc)
 	(void)close(oracle);
 }
 
+/*
+ * T-R01: _PC_ASYNC_IO is answered before any served code for fpathconf
+ * (kern_fpathconf) and for pathconf of a name answered ATTR
+ * (dqres_ident_pathconf): both equal the real file's answer.
+ */
+static void
+pathconf_async_fn(void *arg __unused, void *out)
+{
+	long *r = out;
+
+	errno = 0;
+	r[0] = pathconf("/a", _PC_ASYNC_IO);
+	r[1] = r[0] == -1 ? errno : 0;
+}
+
+ATF_TC(pathconf_async_io_agree);
+ATF_TC_HEAD(pathconf_async_io_agree, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "_PC_ASYNC_IO: fpathconf of a served "
+	    "file, pathconf of a served name and the real file agree (T-R01)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "120");
+}
+ATF_TC_BODY(pathconf_async_io_agree, tc)
+{
+	struct dqt_ctl c;
+	struct snapshot snap;
+	struct dqt_object *o;
+	struct ts s;
+	long r[2];
+	int oracle;
+
+	dqt_fill(data, sizeof(data), 9);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	o = mint_snapshot(&c, oracle, &snap, NULL);
+	ATF_CHECK_EQ(_POSIX_ASYNCHRONOUS_IO, fpathconf(oracle, _PC_ASYNC_IO));
+	ATF_CHECK_EQ(_POSIX_ASYNCHRONOUS_IO, pathconf(oracle_path,
+	    _PC_ASYNC_IO));
+	ATF_CHECK_EQ(_POSIX_ASYNCHRONOUS_IO, fpathconf(o->fd, _PC_ASYNC_IO));
+	dqt_fini(&c);
+	(void)close(oracle);
+
+	ts_make_tree("t");
+	ts_start(&s, "t", DQ_TREE_F_ROOT);
+	memset(r, 0, sizeof(r));
+	dqt_require_exit0(ts_child(&s, s.sroot, s.sroot, pathconf_async_fn,
+	    NULL, r, sizeof(r)), "child");
+	ATF_CHECK_EQ_MSG(_POSIX_ASYNCHRONOUS_IO, r[0], "pathconf /a: %ld "
+	    "errno %ld", r[0], r[1]);
+	ts_stop(&s);
+}
+
+/*
+ * T-A01: st_gen.  A vnode answers it only to a credential with
+ * PRIV_VFS_GENERATION (vn_stat); the uid-1001 child below has none.
+ */
+struct gen_res {
+	int		 err[4];
+	uint64_t	 gen[4];
+};
+
+struct gen_arg {
+	int	served;
+	int	real;
+};
+
+static void
+gen_fstat_fn(void *argp, void *out)
+{
+	struct gen_arg *a = argp;
+	struct gen_res *r = out;
+	struct stat st;
+
+	if (setuid(1001) != 0) {
+		r->err[0] = r->err[1] = errno;
+		return;
+	}
+	r->err[0] = DQT_ERRNO_OF(fstat(a->served, &st));
+	r->gen[0] = r->err[0] == 0 ? st.st_gen : 0;
+	r->err[1] = DQT_ERRNO_OF(fstat(a->real, &st));
+	r->gen[1] = r->err[1] == 0 ? st.st_gen : 0;
+}
+
+/* Under the served root, as uid 1001: stat of a name (ATTR) and fstat. */
+static void
+gen_tree_fn(void *arg __unused, void *out)
+{
+	struct gen_res *r = out;
+	struct stat st;
+	int fd;
+
+	r->err[2] = DQT_ERRNO_OF(stat("/a", &st));
+	r->gen[2] = r->err[2] == 0 ? st.st_gen : 0;
+	fd = open("/a", O_RDONLY);
+	r->err[3] = fd < 0 ? errno : DQT_ERRNO_OF(fstat(fd, &st));
+	r->gen[3] = r->err[3] == 0 ? st.st_gen : 0;
+	if (fd >= 0)
+		(void)close(fd);
+}
+
+ATF_TC(stat_gen_unpriv);
+ATF_TC_HEAD(stat_gen_unpriv, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "st_gen of a served file and of a "
+	    "served name for a caller without PRIV_VFS_GENERATION (T-A01)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "120");
+}
+ATF_TC_BODY(stat_gen_unpriv, tc)
+{
+	struct dqt_ctl c;
+	struct snapshot snap;
+	struct dqt_object *o;
+	struct gen_arg a;
+	struct gen_res r;
+	struct stat st;
+	struct ts s;
+	char path[PATH_MAX];
+	int oracle;
+
+	dqt_fill(data, sizeof(data), 10);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	o = mint_snapshot(&c, oracle, &snap, NULL);
+	/* A generation of 0 would make every row below vacuous. */
+	ATF_REQUIRE_MSG(snap.st.st_gen != 0, "the work directory's file "
+	    "system reports no generation");
+	/* Root: both answer it. */
+	ATF_REQUIRE_EQ(0, fstat(o->fd, &st));
+	ATF_CHECK_EQ(snap.st.st_gen, st.st_gen);
+	memset(&r, 0, sizeof(r));
+	a.served = o->fd;
+	a.real = oracle;
+	dqt_run_child(gen_fstat_fn, &a, &r, sizeof(r));
+	ATF_CHECK_EQ(0, r.err[0]);
+	ATF_CHECK_EQ(0, r.err[1]);
+	ATF_CHECK_EQ_MSG(0, r.gen[1], "real file: st_gen %ju for uid 1001",
+	    (uintmax_t)r.gen[1]);
+	/* Pin: today the served file shows its generation to anyone. */
+	ATF_CHECK_EQ_MSG(snap.st.st_gen, r.gen[0], "served fstat: st_gen %ju",
+	    (uintmax_t)r.gen[0]);
+	dqt_fini(&c);
+	(void)close(oracle);
+
+	ts_make_tree("t");
+	ATF_REQUIRE(realpath("t/a", path) != NULL);
+	ATF_REQUIRE_EQ(0, stat(path, &st));
+	ATF_REQUIRE(st.st_gen != 0);
+	ts_start(&s, "t", DQ_TREE_F_ROOT);
+	memset(&r, 0, sizeof(r));
+	dqt_require_exit0(ts_child_uid(&s, s.sroot, s.sroot, 1001,
+	    gen_tree_fn, NULL, &r, sizeof(r)), "child");
+	ATF_CHECK_EQ(0, r.err[2]);
+	ATF_CHECK_EQ(0, r.err[3]);
+	/* Pin: today both show the backing generation. */
+	ATF_CHECK_EQ_MSG(st.st_gen, r.gen[2], "served stat: st_gen %ju",
+	    (uintmax_t)r.gen[2]);
+	ATF_CHECK_EQ_MSG(st.st_gen, r.gen[3], "served fstat: st_gen %ju",
+	    (uintmax_t)r.gen[3]);
+	ts_stop(&s);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -468,5 +633,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, mac_get_fd);
 	ATF_TP_ADD_TC(tp, getfl_no_served_bit);
 	ATF_TP_ADD_TC(tp, setident_changes_stat);
+	ATF_TP_ADD_TC(tp, pathconf_async_io_agree);
+	ATF_TP_ADD_TC(tp, stat_gen_unpriv);
 	return (atf_no_error());
 }

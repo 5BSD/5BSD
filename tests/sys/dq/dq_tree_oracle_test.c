@@ -32,7 +32,7 @@
 
 #include <libdq.h>
 
-#include "dq_test.h"
+#include "dq_tree_harness.h"
 
 /* Every case is root (a controller of /dev/dq) and bounded in time. */
 #define	DQ_TC_HEAD_BODY(name)						\
@@ -364,9 +364,67 @@ ATF_TC_BODY(tree_oracle, tc)
 	free(served);
 }
 
+/*
+ * T-A12: lpathconf(2) of a served symbolic link (ATTR, no pathconf in its
+ * identity) against the real link.
+ */
+static const int lpc_names[] = { _PC_LINK_MAX, _PC_NAME_MAX, _PC_PATH_MAX,
+    _PC_SYMLINK_MAX, _PC_FILESIZEBITS };
+#define	LPC_N	nitems(lpc_names)
+
+struct lpc_res {
+	long	value[LPC_N];
+	int	err[LPC_N];
+};
+
+static void
+lpc_fill(const char *path, struct lpc_res *r)
+{
+	size_t i;
+
+	for (i = 0; i < LPC_N; i++) {
+		errno = 0;
+		r->value[i] = lpathconf(path, lpc_names[i]);
+		r->err[i] = r->value[i] == -1 ? errno : 0;
+	}
+}
+
+static void
+lpc_fn(void *arg __unused, void *out)
+{
+
+	lpc_fill("/l", out);
+}
+
+TS_TC(lpathconf_symlink);
+ATF_TC_BODY(lpathconf_symlink, tc)
+{
+	struct lpc_res real, served;
+	struct ts s;
+	size_t i;
+
+	ts_make_tree("t");
+	lpc_fill("t/l", &real);
+	ts_start(&s, "t", DQ_TREE_F_ROOT);
+	memset(&served, 0, sizeof(served));
+	dqt_require_exit0(ts_child(&s, s.sroot, s.sroot, lpc_fn, NULL, &served,
+	    sizeof(served)), "child");
+	for (i = 0; i < LPC_N; i++) {
+		ATF_CHECK_MSG(real.value[i] != -1, "real lpathconf %d: %s",
+		    lpc_names[i], strerror(real.err[i]));
+		/* Pin: a served link presents no pathconf: EINVAL. */
+		ATF_CHECK_EQ_MSG(-1, served.value[i], "name %d: served %ld",
+		    lpc_names[i], served.value[i]);
+		ATF_CHECK_EQ_MSG(EINVAL, served.err[i], "name %d: errno %d",
+		    lpc_names[i], served.err[i]);
+	}
+	ts_stop(&s);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, tree_oracle);
+	ATF_TP_ADD_TC(tp, lpathconf_symlink);
 	return (atf_no_error());
 }

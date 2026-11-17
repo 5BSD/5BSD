@@ -107,6 +107,9 @@ int	ts_child_ex(struct ts *s, int rootfd, int cwdfd, bool keep_sroot,
 	    size_t outlen);
 int	ts_child(struct ts *s, int rootfd, int cwdfd, ts_child_fn fn,
 	    void *arg, void *out, size_t outlen);
+/* As ts_child, the child running as uid (set before the attach). */
+int	ts_child_uid(struct ts *s, int rootfd, int cwdfd, uid_t uid,
+	    ts_child_fn fn, void *arg, void *out, size_t outlen);
 
 /* An errno of a call: 0 on success. */
 #define	TS_ERR(x)	DQT_ERRNO_OF(x)

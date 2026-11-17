@@ -15,9 +15,13 @@
  */
 
 #include <sys/param.h>
+#include <sys/linker.h>
 #include <sys/mman.h>
+#include <sys/module.h>
+#include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/uio.h>
 #include <sys/user.h>
 #include <sys/wait.h>
 
@@ -30,7 +34,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dq_tree_harness.h"
 
 #define	NPAGES		3
 #define	TAIL		100
@@ -917,6 +921,219 @@ ATF_TC_BODY(short_reply_inside_size, tc)
 	dqt_fixture_fini(&f);
 }
 
+/*
+ * T-R02: the path a served mapping reports (kinfo_getvmmap, which procstat
+ * -v reads, and linprocfs maps).  A runs under a served root with /a
+ * mapped; it reads its own rows, and the test, unattached, reads A's.
+ */
+struct vmp_arg {
+	int	 tochild[2];
+	int	 toparent[2];
+	int	 lpfd;		/* a real directory holding linprocfs */
+};
+
+struct vmp_res {
+	int	 err[4];
+	char	 kve[PATH_MAX];	/* A's own kinfo_getvmmap row */
+	char	 kf[PATH_MAX];	/* A's own kinfo_getfile row of the fd */
+	char	 lp[PATH_MAX];	/* A's own linprocfs maps row */
+};
+
+/* The path of the mapping at start in a kinfo_getvmmap table, or NULL. */
+static bool
+vm_kve_path(pid_t pid, uintptr_t start, char *out)
+{
+	struct kinfo_vmentry *kve;
+	int cnt, i;
+	bool found;
+
+	out[0] = '\0';
+	kve = kinfo_getvmmap(pid, &cnt);
+	if (kve == NULL)
+		return (false);
+	found = false;
+	for (i = 0; i < cnt; i++) {
+		if (kve[i].kve_start == start) {
+			strlcpy(out, kve[i].kve_path, PATH_MAX);
+			found = true;
+			break;
+		}
+	}
+	free(kve);
+	return (found);
+}
+
+/* The name field of a linprocfs maps line starting at start. */
+static int
+vm_lp_path(int lpfd, pid_t pid, uintptr_t start, char *out)
+{
+	char name[64], buf[16384], key[32], *line, *next, *sp;
+	ssize_t n;
+	int fd;
+
+	out[0] = '\0';
+	snprintf(name, sizeof(name), "%d/maps", (int)pid);
+	fd = openat(lpfd, name, O_RDONLY);
+	if (fd < 0)
+		return (errno);
+	n = dqt_read_full(fd, buf, sizeof(buf) - 1);
+	(void)close(fd);
+	buf[n] = '\0';
+	snprintf(key, sizeof(key), "%016lx-", (unsigned long)start);
+	for (line = buf; line != NULL && *line != '\0'; line = next) {
+		next = strchr(line, '\n');
+		if (next != NULL)
+			*next++ = '\0';
+		if (strncmp(line, key, strlen(key)) != 0)
+			continue;
+		sp = strrchr(line, ' ');
+		strlcpy(out, sp != NULL ? sp + 1 : "", PATH_MAX);
+		return (0);
+	}
+	return (ENOENT);
+}
+
+static void
+vm_a_fn(void *argp, void *out)
+{
+	struct vmp_arg *v = argp;
+	struct vmp_res *r = out;
+	struct kinfo_file *kif;
+	volatile unsigned char *p;
+	uintptr_t start;
+	pid_t me;
+	int cnt, fd, i;
+	char c;
+
+	fd = open("/a", O_RDONLY);
+	r->err[0] = fd < 0 ? errno : 0;
+	p = fd < 0 ? MAP_FAILED :
+	    mmap(NULL, PAGE_SIZE, PROT_READ, MAP_SHARED, fd, 0);
+	r->err[1] = p == MAP_FAILED ? errno : 0;
+	start = p == MAP_FAILED ? 0 : (uintptr_t)p;
+	if (p != MAP_FAILED)
+		(void)p[0];
+	if (!vm_kve_path(getpid(), start, r->kve))
+		r->err[2] = ENOENT;
+	kif = kinfo_getfile(getpid(), &cnt);
+	for (i = 0; kif != NULL && i < cnt; i++)
+		if (kif[i].kf_fd == fd)
+			strlcpy(r->kf, kif[i].kf_path, sizeof(r->kf));
+	free(kif);
+	r->err[3] = vm_lp_path(v->lpfd, getpid(), start, r->lp);
+	me = getpid();
+	(void)write(v->toparent[1], &me, sizeof(me));
+	(void)write(v->toparent[1], &start, sizeof(start));
+	(void)read(v->tochild[0], &c, 1);
+}
+
+static bool
+vm_mount_linprocfs(const char *dir)
+{
+	struct iovec iov[4];
+
+	if (modfind("linprocfs") < 0 && kldload("linprocfs") < 0 &&
+	    errno != EEXIST)
+		return (false);
+	if (mkdir(dir, 0755) != 0)
+		return (false);
+	iov[0].iov_base = __DECONST(char *, "fstype");
+	iov[0].iov_len = sizeof("fstype");
+	iov[1].iov_base = __DECONST(char *, "linprocfs");
+	iov[1].iov_len = sizeof("linprocfs");
+	iov[2].iov_base = __DECONST(char *, "fspath");
+	iov[2].iov_len = sizeof("fspath");
+	iov[3].iov_base = __DECONST(char *, dir);
+	iov[3].iov_len = strlen(dir) + 1;
+	return (nmount(iov, 4, 0) == 0);
+}
+
+TS_TC_CLEANUP(vmmap_path_served_root);
+ATF_TC_BODY(vmmap_path_served_root, tc)
+{
+	struct ts s;
+	struct vmp_arg v;
+	struct vmp_res ra;
+	char raw[PATH_MAX], viewed[PATH_MAX];
+	uintptr_t start;
+	size_t got;
+	int pd, status, ready[2], go[2], back[2];
+	pid_t apid, pid;
+	char c;
+
+	ts_make_tree("t");
+	/* A reads linprocfs through a real directory: PASS it. */
+	ts_start(&s, "t", DQ_TREE_F_ROOT | DQ_TREE_F_OUTSIDE_PASS);
+	ATF_REQUIRE_MSG(vm_mount_linprocfs("lp"), "linprocfs: %s",
+	    strerror(errno));
+	memset(&v, 0, sizeof(v));
+	v.lpfd = open("lp", O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(v.lpfd >= 0);
+	ATF_REQUIRE(pipe(v.tochild) == 0 && pipe(v.toparent) == 0);
+	snprintf(raw, sizeof(raw), "%s/a", s.backing);
+
+	/* A, run by hand: it stays alive while the test looks at it. */
+	ATF_REQUIRE(pipe(ready) == 0 && pipe(go) == 0 && pipe(back) == 0);
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		close(s.q);
+		close(s.sroot);
+		close(s.bfd);
+		(void)write(ready[1], "r", 1);
+		if (read(go[0], &c, 1) != 1)
+			_exit(1);
+		memset(&ra, 0, sizeof(ra));
+		vm_a_fn(&v, &ra);
+		_exit(write(back[1], &ra, sizeof(ra)) == (ssize_t)sizeof(ra) ?
+		    0 : DQT_EXIT_NORESULT);
+	}
+	close(ready[1]);
+	close(go[0]);
+	close(back[1]);
+	ATF_REQUIRE(read(ready[0], &c, 1) == 1);
+	ATF_REQUIRE(dq_attach_starts(s.q, pd, s.sroot, s.sroot) == 0);
+	ATF_REQUIRE(write(go[1], "g", 1) == 1);
+	ATF_REQUIRE(read(v.toparent[0], &apid, sizeof(apid)) ==
+	    sizeof(apid));
+	ATF_REQUIRE(read(v.toparent[0], &start, sizeof(start)) ==
+	    sizeof(start));
+
+	/* The test, unattached: the raw di_path, by both routes. */
+	ATF_CHECK_MSG(vm_kve_path(apid, start, viewed), "no row at %#jx",
+	    (uintmax_t)start);
+	ATF_CHECK_STREQ(raw, viewed);
+	ATF_CHECK_EQ(0, vm_lp_path(v.lpfd, apid, start, viewed));
+	ATF_CHECK_STREQ(raw, viewed);
+
+	ATF_REQUIRE(write(v.tochild[1], "g", 1) == 1);
+	memset(&ra, 0, sizeof(ra));
+	got = dqt_read_full(back[0], &ra, sizeof(ra));
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	dqt_require_exit0(status, "A");
+	ATF_REQUIRE_EQ(sizeof(ra), got);
+	TS_CHECK_ERRNO(0, ra.err[0], "open /a");
+	TS_CHECK_ERRNO(0, ra.err[1], "mmap /a");
+	TS_CHECK_ERRNO(0, ra.err[2], "own vmmap row");
+	TS_CHECK_ERRNO(0, ra.err[3], "own linprocfs row");
+	/* The descriptor's own row is presented (D174). */
+	ATF_CHECK_STREQ("/a", ra.kf);
+	/*
+	 * Pin (B2): today the mapping's rows show A the raw di_path, the
+	 * backing path outside its root, by both routes.
+	 */
+	ATF_CHECK_STREQ(raw, ra.kve);
+	ATF_CHECK_STREQ(raw, ra.lp);
+	close(pd);
+	close(v.lpfd);
+	ts_stop(&s);
+}
+ATF_TC_CLEANUP(vmmap_path_served_root, tc)
+{
+
+	(void)unmount("lp", MNT_FORCE);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -934,5 +1151,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, fork_mapping_revoke);
 	ATF_TP_ADD_TC(tp, vmmap_identity);
 	ATF_TP_ADD_TC(tp, short_reply_inside_size);
+	ATF_TP_ADD_TC(tp, vmmap_path_served_root);
 	return (atf_no_error());
 }
