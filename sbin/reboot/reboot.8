@@ -66,7 +66,15 @@ Both utilities have two distinct modes of operation.
 In normal mode, they request an ordered shutdown through
 .Xr capsulectl 8 .
 If the capability plane is unavailable or refuses the request, they
-fall back to the process termination sequence used in fast mode.
+fall back to the process termination sequence used in fast mode;
+.Fl r
+falls back instead to signalling
+.Xr init 8
+with
+.Dv SIGEMT ,
+which only a stock
+.Xr init 8
+accepts.
 In fast mode, they flush the file system cache to disk, send all
 running processes a
 .Dv SIGTERM
