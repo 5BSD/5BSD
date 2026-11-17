@@ -20,10 +20,16 @@ for s in "sys/dq" "sys/dq lib/libdq" "lib/libdq sys/dq" \
 	loader "$s" | grep -qx 'dtraceall_load="YES"' ||
 	    { echo "FAIL: no dtraceall for \"$s\""; exit 1; }
 done
-for s in "sys/file" "lib/libdq" "sys/dq_regress" "usr.sbin/BSDTime"; do
+for s in "sys/mac_capability" "sys/mac_capability/authority_issuer_probe_test" \
+    "sys/mac_capability/authority_test_issuer_anchor_test:anchor"; do
+	[ "$(loader "$s")" = 'dtraceall_load="YES"' ] ||
+	    { echo "FAIL: no dtraceall alone for \"$s\""; exit 1; }
+done
+for s in "sys/file" "lib/libdq" "sys/dq_regress" "usr.sbin/BSDTime" \
+    "sys/mac_capability/mac_capability_test"; do
 	[ -z "$(loader "$s")" ] ||
 	    { echo "FAIL: dq modules for \"$s\""; exit 1; }
 done
 # Written to the image's loader.conf ahead of LOADER_EXTRA.
 grep -q '^\[ -z "\$dq_loader" \] || printf .*"\$x/loader.conf"$' "$root/vm-provider.sh"
-echo 'PASS the dq suites get imgact_binmisc and dtraceall preloaded, others nothing'
+echo 'PASS the dq suites get imgact_binmisc and dtraceall, the issuer-decision probe programs dtraceall, others nothing'

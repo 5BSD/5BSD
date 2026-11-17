@@ -573,6 +573,77 @@ TX limit, instead of through the service taskqueue.
 Ordering, flow control and peer-death behavior are unchanged.
 Set to 0 to always use the taskqueue path.
 .El
+.Sh TEST KERNELS
+Only PID 1 creates the authority issuer, the boot trust anchor that
+SwitchBoard issues unit authority from; any other caller, and any jailed
+one, is refused with
+.Er EPERM .
+A kernel built with
+.Bd -ragged -offset indent
+.Cd "options MAC_CAPABILITY_TEST_PERMISSIVE"
+.Ed
+.Pp
+and booted with the loader tunable
+.Va kern.mac_capability.test_issuer=1
+also lets an unjailed root process, outside capability mode and holding
+.Dv PRIV_DRIVER ,
+create a test issuer, so that a test-local Capsule can launch units.
+.Dv PRIV_DRIVER
+is held by root, and by any credential a loaded grant policy gives it.
+That lasts until PID 1 attempts its own issuer: the attempt, whether it
+succeeds or not, anchors the boot for good, and every test issuer still
+alive is revoked.
+From then on no kernel decision honours a test issuer or anything it
+produced; an authority stamp already delivered in a queued message, or kept
+by a service, is not recalled.
+A revoked issuer refuses
+.Dv CAP_AUTH_ISSUE ,
+.Dv CAP_AUTH_CONSTRAIN ,
+.Dv CAP_AUTH_LEASE_CREATE ,
+.Dv CAP_AUTH_BIND
+and
+.Dv CAP_AUTH_REGISTER_APP
+with
+.Er EPERM .
+Every creation and revocation is logged as TEST MODE.
+.Pp
+The configuration
+.Pa GENERIC-TEST
+carries the option; it is a row of the test-kernel option ledger,
+.Pa sys/conf/test-options .
+Such a kernel must never be published:
+.Pa release/scripts/check-test-kernel.sh
+refuses it, and
+.Xr build-bsd 8
+refuses to plan packages or media for a configuration that carries it.
+The option is not in NOTES, and is not available to a module.
+.Pp
+On such a kernel only:
+.Bl -tag -width debug.mac_capability.test_issuer_fail_init
+.It Va kern.mac_capability.test_issuer
+The tunable, read once at boot; only 1 enables test issuers.
+It cannot be changed afterwards.
+.It Va kern.mac_capability.test_issuers
+Test issuers created.
+.It Va kern.mac_capability.test_issuers_live
+Test issuers not yet freed.
+.It Va kern.mac_capability.test_issuer_state
+.Cm none ,
+.Cm test
+(a test issuer was created) or
+.Cm anchored .
+.It Va debug.mac_capability.test_issuer_anchor
+Writing 1 anchors the boot as PID 1's attempt does.
+For tests that need revocation while test issuers are alive.
+.It Va debug.mac_capability.test_issuer_fail_init
+An errno
+.Pq Er ENOSPC , ENFILE No or Er EMFILE ,
+or 0 to clear, that PID 1's next issuer creation fails with, once, after it
+has anchored.
+.El
+.Pp
+Neither debug control is a tunable, and neither can be written from a
+jail; both only restrict.
 .Sh DTRACE PROBES
 The
 .Nm
@@ -593,6 +664,17 @@ service-create, service-destroy.
 queue-pressure, rxq-discard (a revoked or dead instance discards
 the messages still queued for its service; arguments: service name,
 badge, number of messages).
+.Ss Authority issuers
+issuer-decision: every
+.Dv CAP_AUTH_ISSUER_CREATE ,
+allowed or refused, and every test issuer revoked when PID 1 anchors the
+boot.
+Its arguments are the issuer identity (0 when none was installed), the
+outcome
+.Pq Dv CAP_AUTH_ISSUER_O_ALLOW , CAP_AUTH_ISSUER_O_DENY , CAP_AUTH_ISSUER_O_REVOKE ,
+the reason
+.Pq Dv CAP_AUTH_ISSUER_R_* No in In sys/cap_authority.h ,
+a latency that is always 0, and the errno returned.
 .Pp
 The descriptor probes include the service name, badge, fd, pid,
 credential pointer, and nonce.

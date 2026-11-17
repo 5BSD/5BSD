@@ -17,7 +17,7 @@ setup()
 {
     tool=$(atf_config_get bsd_build /usr/sbin/build-bsd)
     [ -f "$tool" ] || atf_fail 'build-bsd not installed'
-    [ -f /usr/src/Makefile ] || atf_skip 'source build frontend requires /usr/src'
+    [ -f /usr/src/Makefile ] || atf_skip 'DEFERRED_SOURCE_TIER: source build frontend requires /usr/src (vm-provider.sh SRC_IMAGE)'
     here=$(atf_get_srcdir)
     check="$here/check-test-kernel.sh"
     [ -f "$check" ] || atf_fail 'check-test-kernel.sh not installed beside the test'

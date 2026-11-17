@@ -42,6 +42,7 @@ service_ready_protocol_head()
 }
 service_ready_protocol_body()
 {
+	capd_require_unit_issuer
 	prepare_paths
 	install_naming_fixture ready-test \
 	    'arguments = ["ready", "ready.result"];'
@@ -106,6 +107,7 @@ naming_lookup_nonexistent_head()
 }
 naming_lookup_nonexistent_body()
 {
+	capd_require_unit_issuer
 	prepare_paths
 	install_naming_fixture lookup-client \
 	    'arguments = ["lookup-missing", "lookup.result"];'
@@ -184,6 +186,7 @@ naming_unauthorized_name_rejected_head()
 }
 naming_unauthorized_name_rejected_body()
 {
+	capd_require_unit_issuer
 	prepare_paths
 	install_naming_fixture squat-test \
 	    'activation { boot = true; ipc = ["org.test.allowed"]; }
@@ -207,6 +210,7 @@ naming_self_lookup_eloop_head()
 }
 naming_self_lookup_eloop_body()
 {
+	capd_require_unit_issuer
 	prepare_paths
 	install_naming_fixture selfloop.test \
 	    'activation { boot = true; ipc = ["selfloop.test"]; }

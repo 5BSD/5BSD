@@ -14,7 +14,7 @@ LEDGER=/usr/src/sys/conf/test-options
 
 setup()
 {
-    [ -f /usr/src/Makefile ] || atf_skip 'source build frontend requires /usr/src'
+    [ -f /usr/src/Makefile ] || atf_skip 'DEFERRED_SOURCE_TIER: source build frontend requires /usr/src (vm-provider.sh SRC_IMAGE)'
     [ -f "$LEDGER" ] || atf_fail "$LEDGER is missing"
     check="$(atf_get_srcdir)/check-test-kernel.sh"
     [ -f "$check" ] || atf_fail 'check-test-kernel.sh not installed beside the test'
