@@ -22,6 +22,7 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -990,6 +991,44 @@ ATF_TC_BODY(sigalrm_no_restart, tc)
 	(void)close(oracle);
 }
 
+ATF_TC(same_identity_atime_diverges);
+ATF_TC_HEAD(same_identity_atime_diverges, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "pin (review 1 L7): two objects of one "
+	    "identity stamp their own access times, where two opens of one "
+	    "file share the inode's; the identity group (C10) flips it");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(same_identity_atime_diverges, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o1, *o2;
+	struct atime_res r1, r2;
+	struct stat st1, st2;
+	int fd, oracle;
+
+	dqt_fill(data, sizeof(data), 27);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	o1 = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
+	o2 = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
+	fd = o1->fd;
+	memset(&r1, 0, sizeof(r1));
+	dqt_run_child(child_read_atime, &fd, &r1, sizeof(r1));
+	ATF_REQUIRE_EQ(16, r1.rv);
+	fd = o2->fd;
+	memset(&r2, 0, sizeof(r2));
+	dqt_run_child(child_read_atime, &fd, &r2, sizeof(r2));
+	ATF_REQUIRE_EQ(16, r2.rv);
+	ATF_REQUIRE_EQ(0, fstat(o1->fd, &st1));
+	ATF_REQUIRE_EQ(0, fstat(o2->fd, &st2));
+	/* Pin: each kept its own stamp (one file would show one atime). */
+	ATF_CHECK(timespeccmp(&st1.st_atim, &st2.st_atim, !=));
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
 ATF_TC(eintr_reply_refused);
 ATF_TC_HEAD(eintr_reply_refused, tc)
 {
@@ -1118,7 +1157,7 @@ child_read_storm(void *arg, void *result)
 {
 	struct storm_res *r = result;
 	struct sigaction sa;
-	struct rusage ru;
+	struct rusage ru0, ru1;
 	int fd = *(int *)arg;
 	char buf[16];
 
@@ -1126,10 +1165,81 @@ child_read_storm(void *arg, void *result)
 	sa.sa_handler = on_storm;
 	sa.sa_flags = SA_RESTART;
 	(void)sigaction(SIGUSR1, &sa, NULL);
+	(void)getrusage(RUSAGE_THREAD, &ru0);
 	DQT_RR(r->rr, read(fd, buf, sizeof(buf)));
-	(void)getrusage(RUSAGE_THREAD, &ru);
-	r->cpu_ms = ru.ru_utime.tv_sec * 1000 + ru.ru_utime.tv_usec / 1000 +
-	    ru.ru_stime.tv_sec * 1000 + ru.ru_stime.tv_usec / 1000;
+	(void)getrusage(RUSAGE_THREAD, &ru1);
+	/* The read's own CPU time, user and system, from before it. */
+	r->cpu_ms = (ru1.ru_utime.tv_sec - ru0.ru_utime.tv_sec) * 1000 +
+	    (ru1.ru_utime.tv_usec - ru0.ru_utime.tv_usec) / 1000 +
+	    (ru1.ru_stime.tv_sec - ru0.ru_stime.tv_sec) * 1000 +
+	    (ru1.ru_stime.tv_usec - ru0.ru_stime.tv_usec) / 1000;
+}
+
+struct unintr_res {
+	struct dqt_rr	 rr;
+	long		 ms;
+	int		 signals;
+};
+
+static void
+child_read_sigint(void *arg, void *result)
+{
+	struct unintr_res *r = result;
+	struct sigaction sa;
+	int fd = *(int *)arg;
+	int64_t start;
+	char buf[16];
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = on_storm;	/* caught, no SA_RESTART */
+	(void)sigaction(SIGINT, &sa, NULL);
+	start = dqt_now_ms();
+	DQT_RR(r->rr, read(fd, buf, sizeof(buf)));
+	r->ms = (long)(dqt_now_ms() - start);
+	r->signals = storm_seen;
+}
+
+ATF_TC(deadline_unintr);
+ATF_TC_HEAD(deadline_unintr, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a SIGINT storm during a read of a "
+	    "200 ms object the controller never answers: the read ends EIO "
+	    "at its deadline, not EINTR (rev 8 3.5, D192)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(deadline_unintr, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct dq_policy pol;
+	struct unintr_res r;
+	struct dqt_child ch;
+	int fd, i, oracle;
+
+	dqt_fill(data, sizeof(data), 26);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	dq_policy_default(&pol);
+	pol.dp_deadline_ms = 200;
+	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
+	dqt_hold(&c, true);
+	fd = o->fd;
+	dqt_spawn(&ch, child_read_sigint, &fd);
+	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	for (i = 0; i < 200; i++)
+		if (kill(ch.pid, SIGINT) != 0)
+			break;
+	memset(&r, 0, sizeof(r));
+	dqt_collect(&ch, &r, sizeof(r));
+	ATF_CHECK_EQ(-1, r.rr.rv);
+	ATF_CHECK_EQ(EIO, r.rr.err);
+	ATF_CHECK_MSG(r.ms >= 150 && r.ms < 1500, "the read took %ld ms",
+	    r.ms);
+	ATF_CHECK(r.signals >= 1);
+	dqt_hold(&c, false);
+	dqt_fini(&c);
+	(void)close(oracle);
 }
 
 ATF_TC(signal_storm_no_spin);
@@ -1172,7 +1282,8 @@ ATF_TC_BODY(signal_storm_no_spin, tc)
 	 * The handler runs once the read returns (pending signals merge);
 	 * the waiting thread itself did nearly nothing for 2 s.
 	 */
-	ATF_CHECK_MSG(r.cpu_ms < 200, "the reader used %ld ms of CPU",
+	printf("the reader used %ld ms of CPU\n", r.cpu_ms);
+	ATF_CHECK_MSG(r.cpu_ms < 50, "the reader used %ld ms of CPU",
 	    r.cpu_ms);
 	dqt_hold(&c, false);
 	dqt_fini(&c);
@@ -1196,7 +1307,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, atime_after_read);
 	ATF_TP_ADD_TC(tp, sigalrm_no_restart);
 	ATF_TP_ADD_TC(tp, eintr_reply_refused);
+	ATF_TP_ADD_TC(tp, same_identity_atime_diverges);
 	ATF_TP_ADD_TC(tp, read_deadline0_exit_sibling);
 	ATF_TP_ADD_TC(tp, signal_storm_no_spin);
+	ATF_TP_ADD_TC(tp, deadline_unintr);
 	return (atf_no_error());
 }

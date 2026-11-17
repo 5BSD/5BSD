@@ -435,6 +435,68 @@ ATF_TC_BODY(setlkw_no_deadline, tc)
 	dqt_fixture_fini(&f);
 }
 
+/* flock(LOCK_EX) blocking, with SIGUSR1 caught without SA_RESTART. */
+static void
+child_flock_block(void *arg, void *result)
+{
+	struct wait_arg *a = arg;
+	struct dqt_rr *r = result;
+	struct sigaction sa;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = on_usr1;
+	(void)sigaction(SIGUSR1, &sa, NULL);
+	r->rv = flock(a->fd, LOCK_EX);
+	r->err = r->rv == -1 ? errno : 0;
+}
+
+ATF_TC(flock_block_interrupt);
+ATF_TC_HEAD(flock_block_interrupt, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a signal ends a blocked flock(LOCK_EX) "
+	    "with EINTR on a served file as on the real one: a lock wait "
+	    "always catches signals (rev 8 3.5, D192)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(flock_block_interrupt, tc)
+{
+	struct dqt_fixture f;
+	struct dqt_child hch, wch;
+	struct holder_arg h;
+	struct holder_res hr;
+	struct wait_arg w;
+	struct dqt_rr r;
+
+	setup(&f, 4);
+	memset(&h, 0, sizeof(h));
+	h.sfd = f.o->fd;
+	h.ofd = f.oracle;
+	h.cmd = 0;		/* flock, on both files */
+	holder_start(&h, &hch);
+
+	/* The real file: the waiter sleeps in the lock; signal it there. */
+	memset(&w, 0, sizeof(w));
+	w.fd = f.oracle;
+	dqt_spawn(&wch, child_flock_block, &w);
+	ATF_REQUIRE(dqt_wait_wmesg(wch.pid, "lockf", DQT_WAIT_MS));
+	ATF_REQUIRE_EQ(0, kill(wch.pid, SIGUSR1));
+	dqt_collect(&wch, &r, sizeof(r));
+	ATF_CHECK_EQ(-1, r.rv);
+	ATF_CHECK_EQ(EINTR, r.err);
+
+	/* The served file: the waiter sleeps for its LOCK's reply. */
+	w.fd = f.o->fd;
+	dqt_spawn(&wch, child_flock_block, &w);
+	ATF_REQUIRE(dqt_wait_wmesg(wch.pid, DQT_WMESG_REPLY, DQT_WAIT_MS));
+	ATF_REQUIRE_EQ(0, kill(wch.pid, SIGUSR1));
+	dqt_collect(&wch, &r, sizeof(r));
+	ATF_CHECK_EQ(-1, r.rv);
+	ATF_CHECK_EQ(EINTR, r.err);
+	ATF_CHECK(dqt_wait_interrupts(&f.c, 1, DQT_WAIT_MS));
+	holder_release(&h, &hch, &hr);
+	dqt_fixture_fini(&f);
+}
+
 ATF_TC(setlkw_interrupt);
 ATF_TC_HEAD(setlkw_interrupt, tc)
 {
@@ -1269,6 +1331,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, posix_oracle);
 	ATF_TP_ADD_TC(tp, setlkw_no_deadline);
 	ATF_TP_ADD_TC(tp, setlkw_interrupt);
+	ATF_TP_ADD_TC(tp, flock_block_interrupt);
 	ATF_TP_ADD_TC(tp, flock_owners_and_release);
 	ATF_TP_ADD_TC(tp, flock_gone_when_last_close_returns);
 	ATF_TP_ADD_TC(tp, normalisation_and_errnos);
