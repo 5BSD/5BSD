@@ -815,6 +815,76 @@ ATF_TC_BODY(read_error_reply, tc)
 	(void)close(oracle);
 }
 
+/*
+ * T-A02: st_atime after a read of a served file whose controller sends no
+ * attributes, on a presented file system with and without MNT_NOATIME.
+ */
+struct atime_res {
+	long		 rv;
+	struct stat	 before, after;
+};
+
+static void
+child_read_atime(void *arg, void *result)
+{
+	struct atime_res *r = result;
+	int fd = *(int *)arg;
+	char buf[16];
+
+	(void)fstat(fd, &r->before);
+	dqt_msleep(20);
+	r->rv = read(fd, buf, sizeof(buf));
+	(void)fstat(fd, &r->after);
+}
+
+ATF_TC(atime_after_read);
+ATF_TC_HEAD(atime_after_read, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "st_atime after a read of a served "
+	    "file (T-A02)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(atime_after_read, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct dq_ident_file *ident;
+	struct dq_policy pol;
+	struct atime_res r;
+	struct statfs sfs;
+	struct stat st;
+	int fd, oracle;
+
+	dqt_fill(data, sizeof(data), 61);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	ident = calloc(1, sizeof(*ident));
+	ATF_REQUIRE(ident != NULL);
+	dqt_ident_of(oracle, oracle_path, ident, &st, &sfs);
+	ident->di_statfs.ds_flags &= ~(uint64_t)MNT_NOATIME;
+	dq_policy_default(&pol);
+	dqt_init(&c);
+	o = dqt_mint_ident(&c, ident, &pol, data, sizeof(data));
+	fd = o->fd;
+	memset(&r, 0, sizeof(r));
+	dqt_run_child(child_read_atime, &fd, &r, sizeof(r));
+	ATF_REQUIRE_EQ(16, r.rv);
+	/* Pin: a read leaves the presented access time where it was. */
+	ATF_CHECK(timespeccmp(&r.after.st_atim, &r.before.st_atim, ==));
+
+	/* Presented MNT_NOATIME: never stamped. */
+	ident->di_statfs.ds_flags |= MNT_NOATIME;
+	o = dqt_mint_ident(&c, ident, &pol, data, sizeof(data));
+	fd = o->fd;
+	memset(&r, 0, sizeof(r));
+	dqt_run_child(child_read_atime, &fd, &r, sizeof(r));
+	ATF_REQUIRE_EQ(16, r.rv);
+	ATF_CHECK(timespeccmp(&r.after.st_atim, &r.before.st_atim, ==));
+	free(ident);
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -829,5 +899,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, shared_offset_two_threads);
 	ATF_TP_ADD_TC(tp, two_objects_same_identity);
 	ATF_TP_ADD_TC(tp, read_error_reply);
+	ATF_TP_ADD_TC(tp, atime_after_read);
 	return (atf_no_error());
 }

@@ -420,10 +420,61 @@ ATF_TC_BODY(lpathconf_symlink, tc)
 	ts_stop(&s);
 }
 
+/*
+ * T-A02: under the served root, fstat(2) of a file just written against
+ * stat(2) of its name (answered from the backing file).
+ */
+struct fs_res {
+	int		 err[4];
+	struct stat	 before, fst, st;
+};
+
+static void
+fs_fn(void *arg __unused, void *out)
+{
+	struct fs_res *r = out;
+	int fd;
+
+	fd = open("/a", O_RDWR);
+	r->err[0] = fd < 0 ? errno : 0;
+	if (fd < 0)
+		return;
+	r->err[1] = TS_ERR(fstat(fd, &r->before));
+	dqt_msleep(20);
+	r->err[2] = write(fd, "more", 4) == 4 ? 0 : errno;
+	r->err[3] = TS_ERR(fstat(fd, &r->fst));
+	if (stat("/a", &r->st) != 0)
+		r->err[3] = errno;
+	(void)close(fd);
+}
+
+TS_TC(fstat_stat_after_write);
+ATF_TC_BODY(fstat_stat_after_write, tc)
+{
+	struct fs_res r;
+	struct ts s;
+
+	ts_make_tree("t");
+	ts_start(&s, "t", DQ_TREE_F_ROOT | DQ_TREE_F_WRITE);
+	memset(&r, 0, sizeof(r));
+	dqt_require_exit0(ts_child(&s, s.sroot, s.sroot, fs_fn, NULL, &r,
+	    sizeof(r)), "child");
+	TS_CHECK_ERRNO(0, r.err[0], "open /a");
+	TS_CHECK_ERRNO(0, r.err[2], "write");
+	TS_CHECK_ERRNO(0, r.err[3], "fstat, stat");
+	ATF_CHECK_EQ(r.st.st_size, r.fst.st_size);
+	ATF_REQUIRE(timespeccmp(&r.st.st_mtim, &r.before.st_mtim, >));
+	/* Pin: fstat keeps the open-time times; stat has the new ones. */
+	ATF_CHECK(timespeccmp(&r.fst.st_mtim, &r.before.st_mtim, ==));
+	ATF_CHECK(!timespeccmp(&r.fst.st_mtim, &r.st.st_mtim, ==));
+	ts_stop(&s);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, tree_oracle);
 	ATF_TP_ADD_TC(tp, lpathconf_symlink);
+	ATF_TP_ADD_TC(tp, fstat_stat_after_write);
 	return (atf_no_error());
 }

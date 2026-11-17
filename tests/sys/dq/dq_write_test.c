@@ -868,6 +868,130 @@ ATF_TC_BODY(reply_offset_and_zero, tc)
 	dqt_fixture_fini(&f);
 }
 
+/*
+ * T-A02: the attributes fstat(2) shows after a served write, against what
+ * stat(2) of the backing file shows.  The requester stats, writes 16
+ * bytes and stats again.
+ */
+struct times_res {
+	struct dqt_rr	 w;
+	struct stat	 before, after;
+};
+
+static void
+child_write_times(void *arg, void *result)
+{
+	struct times_res *r = result;
+	int fd = *(int *)arg;
+	char buf[16];
+
+	memset(buf, 'm', sizeof(buf));
+	(void)fstat(fd, &r->before);
+	/* A clock tick past the open-time times. */
+	dqt_msleep(20);
+	DQT_RR(r->w, pwrite(fd, buf, sizeof(buf), DATA_LEN - 8));
+	(void)fstat(fd, &r->after);
+}
+
+ATF_TC(mtime_after_write);
+ATF_TC_HEAD(mtime_after_write, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "fstat(2) after a served write shows "
+	    "the times, size and blocks of the backing file (T-A02)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(mtime_after_write, tc)
+{
+	struct dqt_fixture f;
+	struct times_res r;
+	struct stat bs;
+	int fd;
+
+	setup(&f, 14);
+	fd = f.o->fd;
+	memset(&r, 0, sizeof(r));
+	dqt_run_child(child_write_times, &fd, &r, sizeof(r));
+	ATF_REQUIRE_EQ(16, r.w.rv);
+	ATF_REQUIRE_EQ(0, fstat(f.backing, &bs));
+	ATF_CHECK_EQ(DATA_LEN + 8, bs.st_size);
+	ATF_CHECK_EQ(bs.st_size, r.after.st_size);
+	/* The backing file's times moved. */
+	ATF_REQUIRE(timespeccmp(&bs.st_mtim, &r.before.st_mtim, >));
+	/*
+	 * Pin: the served file's times do not move with a write; fstat
+	 * keeps the open-time ones.
+	 */
+	ATF_CHECK(timespeccmp(&r.after.st_mtim, &r.before.st_mtim, ==));
+	ATF_CHECK(timespeccmp(&r.after.st_ctim, &r.before.st_ctim, ==));
+	dqt_fixture_fini(&f);
+}
+
+/*
+ * T-A24: fspacectl(2) past the end of the file.  vop_stddeallocate
+ * answers {EOF, 0}, or {offset, 0} past it, which the requester then
+ * sees; the served file's controller says the same and is refused.
+ */
+struct space_res {
+	struct dqt_rr		 r;
+	struct spacectl_range	 rm;
+};
+
+static void
+child_space_past_eof(void *arg, void *result)
+{
+	struct space_res *r = result;
+	struct spacectl_range rq;
+	int fd = *(int *)arg;
+
+	rq.r_offset = DATA_LEN - 100;
+	rq.r_len = 1000;
+	DQT_RR(r->r, fspacectl(fd, SPACECTL_DEALLOC, &rq, 0, &r->rm));
+}
+
+ATF_TC(fspacectl_past_eof);
+ATF_TC_HEAD(fspacectl_past_eof, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "fspacectl(2) of a range that ends "
+	    "past the end of the file (T-A24)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(fspacectl_past_eof, tc)
+{
+	struct dqt_fixture f;
+	struct dq_policy pol;
+	struct space_res s, o;
+	int fd;
+
+	dqt_policy_write(&pol);
+	pol.dp_deadline_ms = 1000;
+	dqt_fill(data, sizeof(data), 15);
+	dqt_fixture_init(&f, data, sizeof(data), backing_path, oracle_path,
+	    &pol, DQ_MINT_F_WRITE);
+	memset(&o, 0, sizeof(o));
+	fd = f.oracle;
+	dqt_run_child(child_space_past_eof, &fd, &o, sizeof(o));
+	ATF_CHECK_EQ(0, o.r.rv);
+	ATF_CHECK_EQ(DATA_LEN, o.rm.r_offset);
+	ATF_CHECK_EQ(0, o.rm.r_len);
+	memset(&s, 0, sizeof(s));
+	fd = f.o->fd;
+	dqt_run_child(child_space_past_eof, &fd, &s, sizeof(s));
+	/*
+	 * Pin: the controller's {EOF, 0} is refused (EINVAL to it), the
+	 * event stays in flight, and the requester fails EIO at its deadline.
+	 */
+	ATF_CHECK_EQ(-1, s.r.rv);
+	ATF_CHECK_EQ(EIO, s.r.err);
+	dqt_lock(&f.c);
+	ATF_CHECK_EQ(1, f.c.reply_failures);
+	ATF_CHECK_EQ(EINVAL, f.c.last_reply_errno);
+	dqt_unlock(&f.c);
+	dqt_fini(&f.c);
+	(void)close(f.backing);
+	(void)close(f.oracle);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -883,5 +1007,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, controller_errnos);
 	ATF_TP_ADD_TC(tp, edeadlk_while_held);
 	ATF_TP_ADD_TC(tp, reply_offset_and_zero);
+	ATF_TP_ADD_TC(tp, mtime_after_write);
+	ATF_TP_ADD_TC(tp, fspacectl_past_eof);
 	return (atf_no_error());
 }
