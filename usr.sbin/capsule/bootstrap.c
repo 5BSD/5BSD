@@ -384,11 +384,17 @@ bootstrap_start(int kq)
 	}
 
 	/* Only PID 1 can create this boot trust anchor. The environment merely
-	 * names a descriptor; the kernel validates its unforgeable object type. */
+	 * names a descriptor; the kernel validates its unforgeable object type.
+	 * A test kernel (options MAC_CAPABILITY_TEST_PERMISSIVE, booted with
+	 * kern.mac_capability.test_issuer=1) also gives a test-local Capsule a
+	 * test issuer until PID 1 anchors the boot; that is said loudly. */
 	dfds.authority_fd = syscall(SYS_cap_process, CAP_AUTH_ISSUER_CREATE,
 	    -1, 0, NULL);
 	if (dfds.authority_fd < 0)
 		syslog(LOG_ERR, "bootstrap: protected authority issuer unavailable: %m");
+	else if (getpid() != 1)
+		syslog(LOG_WARNING,
+		    "bootstrap: TEST MODE: authority issuer created off PID 1");
 
 	/* Capture bundle-dir overrides here — getenv is not safe post-fork. */
 	dfds.bundle_dir_system = getenv("SWITCHBOARD_BUNDLE_DIR_SYSTEM");
