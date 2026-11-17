@@ -462,7 +462,7 @@ dq_object_set_ident(struct dq_object *o, const struct dq_ident_file *di,
 	DQ_LOCK(q);
 	dq_object_set_ident_locked(q, o, di, hint);
 	DQ_UNLOCK(q);
-	dq_object_setsize(o, di->di_size);	/* B10 */
+	dq_object_sync_vmsize(o);	/* B10 */
 }
 
 /*
@@ -2479,7 +2479,7 @@ dq_queue_setident(struct dq_queue *q, struct dq_setident_args *args)
 	dq_object_hold(o);
 	DQ_UNLOCK(q);
 	/* B10: the pager object's size follows, with no dq lock held. */
-	dq_object_setsize(o, args->dsi_ident.di_size);
+	dq_object_sync_vmsize(o);
 	dq_object_rele(o);
 	return (0);
 }

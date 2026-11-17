@@ -1020,7 +1020,7 @@ ATF_TC_BODY(mtime_after_write, tc)
  * A requester writes 10 bytes at 100 and fstats; the controller answers
  * with a block whose size is above, or below, what the write proves.
  */
-#define	POSTOP_SEC	1000000000	/* a time no stamp gives */
+#define	POSTOP_SEC	4000000000LL	/* later than any stamp (2096) */
 
 struct postop_res {
 	struct dqt_rr	 w;
@@ -1139,9 +1139,8 @@ ATF_TC_BODY(postop_size_smaller_ignored, tc)
  * Review 1 H1: two disjoint extending writers whose replies carry
  * post-operation sizes, answered A (the smaller end) then B, with A's
  * apply held back a second (debug.dq.delay_postop_apply) so that B's
- * larger size is applied first.  Pin: A's older block then moves the
- * presented size back to A's end, the VM object is cut there, and B's page
- * of a mapping raises SIGBUS, while the backing file ends at B's end.
+ * larger size is applied first.  The presented size, the backing file and
+ * the mapping must end at B's end: no apply may move the size back.
  */
 #define	TWO_A_OFF	(DATA_LEN)
 #define	TWO_B_OFF	(DATA_LEN + 6000)
@@ -1257,11 +1256,11 @@ ATF_TC_BODY(postop_two_writers_size, tc)
 	memset(&m, 0, sizeof(m));
 	fd = f.o->fd;
 	dqt_run_child(child_two_map, &fd, &m, sizeof(m));
-	/* Pin (review 1 H1): the size went back to A's end. */
-	ATF_CHECK_EQ_MSG(TWO_A_OFF + TWO_LEN, m.st.st_size, "presented size "
-	    "%jd, backing %jd", (intmax_t)m.st.st_size, (intmax_t)bs.st_size);
-	ATF_CHECK_EQ_MSG(SIGBUS, m.sig_b, "B's page: signal %d", m.sig_b);
+	ATF_CHECK_EQ_MSG(bs.st_size, m.st.st_size, "presented size %jd, "
+	    "backing %jd", (intmax_t)m.st.st_size, (intmax_t)bs.st_size);
+	ATF_CHECK_EQ_MSG(0, m.sig_b, "B's page: signal %d", m.sig_b);
 	ATF_CHECK_EQ_MSG(0, m.sig_a, "A's page: signal %d", m.sig_a);
+	ATF_CHECK_EQ('B', m.vb);
 	ATF_CHECK_EQ('A', m.va);
 	dqt_fixture_fini(&f);
 }
@@ -1338,6 +1337,61 @@ ATF_TC_BODY(fspacectl_past_eof, tc)
 	(void)close(f.oracle);
 }
 
+/*
+ * Review 1 H1: a deallocation changes no size, so an FSPACECTL reply's
+ * post-operation size is not applied, even one that would shrink the file.
+ */
+static void
+child_space_mid(void *arg, void *result)
+{
+	struct space_res *r = result;
+	struct spacectl_range rq;
+	int fd = *(int *)arg;
+
+	rq.r_offset = 0;
+	rq.r_len = 4096;
+	DQT_RR(r->r, fspacectl(fd, SPACECTL_DEALLOC, &rq, 0, &r->rm));
+}
+
+ATF_TC(postop_fspacectl_no_size);
+ATF_TC_HEAD(postop_fspacectl_no_size, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "the size of an FSPACECTL reply's "
+	    "post-operation block is not applied: a deallocation changes none "
+	    "(review 1 H1)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(postop_fspacectl_no_size, tc)
+{
+	struct dqt_fixture f;
+	struct dq_postop_attr pa;
+	struct dq_fspacectl_reply sr;
+	struct dqt_child ch;
+	struct space_res s;
+	struct stat st;
+	int fd;
+
+	setup(&f, 19);
+	dqt_hold(&f.c, true);
+	fd = f.o->fd;
+	memset(&s, 0, sizeof(s));
+	dqt_spawn(&ch, child_space_mid, &fd);
+	ATF_REQUIRE(dqt_wait_held(&f.c, 1, DQT_WAIT_MS));
+	memset(&pa, 0, sizeof(pa));
+	pa.dpa_valid = DQ_PA_SIZE;
+	pa.dpa_size = 10;		/* a shrink, were it applied */
+	sr.dscr_offset = 4096;
+	sr.dscr_len = 0;
+	ATF_REQUIRE_MSG(dq_reply_postop(f.c.q, dqt_held_id(&f.c, 0), &sr,
+	    sizeof(sr), &pa) == 0, "dq_reply_postop: %s", strerror(errno));
+	dqt_collect(&ch, &s, sizeof(s));
+	ATF_CHECK_EQ_MSG(0, s.r.rv, "fspacectl: %s", strerror(s.r.err));
+	ATF_REQUIRE_EQ(0, fstat(f.o->fd, &st));
+	ATF_CHECK_EQ(DATA_LEN, st.st_size);
+	dqt_hold(&f.c, false);
+	dqt_fixture_fini(&f);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1359,6 +1413,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, postop_size_larger_accepted);
 	ATF_TP_ADD_TC(tp, postop_size_smaller_ignored);
 	ATF_TP_ADD_TC(tp, postop_two_writers_size);
+	ATF_TP_ADD_TC(tp, postop_fspacectl_no_size);
 	ATF_TP_ADD_TC(tp, fspacectl_past_eof);
 	return (atf_no_error());
 }

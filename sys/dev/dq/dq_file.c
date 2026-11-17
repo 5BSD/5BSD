@@ -634,19 +634,33 @@ dq_file_knote(struct dq_object *o, long hint)
 
 /*
  * A size the controller's post-operation attributes report, made the
- * object's (o_mtx held).  The one place C7's size write happens, so the
- * identity group's ordered apply can take it over.  Returns whether the
- * pager's size must follow (dq_object_setsize, with no dq lock).
+ * object's (o_mtx held): grow-only (review 1 H1).  Replies to disjoint
+ * writers are applied by their requesters in whatever order they wake, so
+ * a block can be older than the size already presented; a larger size is
+ * kept, never moved back.  A shrink is the controller's to state with
+ * SETIDENT, or a truncation's.  C10's ordered apply (dq_object_size_apply,
+ * with its generation rule) takes this over.  Returns whether the pager's
+ * size must follow (dq_object_sync_vmsize, with no dq lock).
  */
 static bool
 dq_object_postop_size(struct dq_object *o, uint64_t size)
 {
 
 	DQO_LOCK_ASSERT(o);
-	if (o->o_ident.di_size == size)
+	if (size <= o->o_ident.di_size)
 		return (false);
 	o->o_ident.di_size = size;
 	return (true);
+}
+
+/* A time of a block, grow-only for the same reason as the size. */
+static void
+dq_object_postop_time(struct dq_timespec *cur, const struct dq_timespec *ts)
+{
+
+	if (ts->tv_sec > cur->tv_sec ||
+	    (ts->tv_sec == cur->tv_sec && ts->tv_nsec > cur->tv_nsec))
+		*cur = *ts;
 }
 
 /*
@@ -659,7 +673,10 @@ dq_object_postop_size(struct dq_object *o, uint64_t size)
  * presented file system is MNT_NOATIME.  DQ_PF_NO_STAMP leaves the times
  * to the controller.  A block that fails its checks (minsize: the size
  * the operation itself proves) is ignored and counted, never an error:
- * the operation has happened.  No dq lock is held.
+ * the operation has happened.  The size and times of a block only move
+ * forward, and a deallocation's block carries no size: fspacectl(2) never
+ * changes it (vn_deallocate), so DQ_PA_SIZE there is not applied.  No dq
+ * lock is held.
  */
 void
 dq_object_postop(struct dq_object *o, uint32_t op, const struct dq_data *reply,
@@ -697,14 +714,17 @@ dq_object_postop(struct dq_object *o, uint32_t op, const struct dq_data *reply,
 	resize = false;
 	DQO_LOCK(o);
 	if (block) {
-		if ((pa.dpa_valid & DQ_PA_SIZE) != 0)
+		if ((pa.dpa_valid & DQ_PA_SIZE) != 0 && op != DQ_OP_FSPACECTL)
 			resize = dq_object_postop_size(o, pa.dpa_size);
 		if ((pa.dpa_valid & DQ_PA_MTIME) != 0)
-			o->o_ident.di_mtime = pa.dpa_mtime;
+			dq_object_postop_time(&o->o_ident.di_mtime,
+			    &pa.dpa_mtime);
 		if ((pa.dpa_valid & DQ_PA_CTIME) != 0)
-			o->o_ident.di_ctime = pa.dpa_ctime;
+			dq_object_postop_time(&o->o_ident.di_ctime,
+			    &pa.dpa_ctime);
 		if ((pa.dpa_valid & DQ_PA_ATIME) != 0)
-			o->o_ident.di_atime = pa.dpa_atime;
+			dq_object_postop_time(&o->o_ident.di_atime,
+			    &pa.dpa_atime);
 		if ((pa.dpa_valid & DQ_PA_BLOCKS) != 0)
 			o->o_ident.di_blocks = pa.dpa_blocks;
 		SDT_PROBE4(dq, , , postop__attr, o, op, pa.dpa_valid, 0);
@@ -728,7 +748,7 @@ dq_object_postop(struct dq_object *o, uint32_t op, const struct dq_data *reply,
 	}
 	DQO_UNLOCK(o);
 	if (resize)
-		dq_object_setsize(o, pa.dpa_size);	/* B10 */
+		dq_object_sync_vmsize(o);	/* B10 */
 }
 
 static inline struct dq_object *
@@ -1193,7 +1213,7 @@ dq_write(struct file *fp, struct uio *uio, struct ucred *active_cred __unused,
 			dq_file_knote(o, hint);
 		DQO_UNLOCK(o);
 		if (extended) {
-			dq_object_setsize(o, newend);	/* B10 */
+			dq_object_sync_vmsize(o);	/* B10 */
 			extended = false;
 		}
 		/* The times, and the controller's size (T-A02, Q2). */
@@ -1586,7 +1606,7 @@ dq_setattr_post(struct dq_object *o, struct dq_setattr_body *sb,
 	dq_file_knote(o, NOTE_ATTRIB);
 	DQO_UNLOCK(o);
 	if ((mask & DQ_SETATTR_SIZE) != 0)
-		dq_object_setsize(o, sb->dsa_size);	/* B10 */
+		dq_object_sync_vmsize(o);	/* B10 */
 	return (0);
 }
 
@@ -1763,7 +1783,7 @@ dq_fallocate(struct file *fp, off_t offset, off_t len, struct thread *td)
 		dq_file_knote(o, hint);
 		DQO_UNLOCK(o);
 		if ((hint & NOTE_EXTEND) != 0)
-			dq_object_setsize(o, end);	/* B10 */
+			dq_object_sync_vmsize(o);	/* B10 */
 		dq_object_postop(o, DQ_OP_FALLOCATE, reply, end, 0);
 		dq_reply_free(reply);
 	}

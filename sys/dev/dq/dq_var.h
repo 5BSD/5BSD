@@ -625,7 +625,7 @@ void	dq_object_cancel_async(struct dq_object *o);
 bool	dq_object_vm_hold(struct dq_object *o, struct vm_object **objp);
 void	dq_object_vm_drop(struct dq_object *o);
 void	dq_object_vm_teardown(struct dq_object *o, bool close);
-void	dq_object_setsize(struct dq_object *o, off_t newsize);
+void	dq_object_sync_vmsize(struct dq_object *o);
 void	dq_object_close_begin(struct dq_object *o);
 void	dq_object_close_deferred(struct dq_object *o);
 void	dq_async_cut_locked(struct dq_queue *q, struct dq_object *o,

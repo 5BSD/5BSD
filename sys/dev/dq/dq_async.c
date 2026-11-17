@@ -627,22 +627,33 @@ dq_object_vm_teardown(struct dq_object *o, bool close)
  * it never sleeps on a page only the controller's reply would free; a
  * growth sets the size and drops the old last page if it is partial, clean
  * and idle, since its zeroed tail is now inside the file and only the
- * controller knows what is there.  Called on SETIDENT, a GETATTR reply, an
- * extending WRITE, FALLOCATE and SETATTR{size}, never with a dq lock held.
+ * controller knows what is there.  Called after SETIDENT, a GETATTR reply,
+ * an extending WRITE, FALLOCATE, SETATTR{size} and a post-operation size,
+ * never with a dq lock held.
+ *
+ * The target is the presented size as it is now, read under the VM object
+ * lock (review 1 H1), never a size the caller saw: two callers that race
+ * each sync to the latest di_size, whichever runs last, so the VM object
+ * cannot end smaller than the presented size because a stale caller ran
+ * second.
  */
 void
-dq_object_setsize(struct dq_object *o, off_t newsize)
+dq_object_sync_vmsize(struct dq_object *o)
 {
 	vm_object_t obj;
 	vm_pindex_t nobjsize;
 	vm_page_t m;
+	off_t newsize;
 	int base, start;
 	bool busy;
 
 	if (!dq_object_vm_hold(o, &obj))
 		return;
-	nobjsize = OFF_TO_IDX((uint64_t)newsize + PAGE_MASK);
 	VM_OBJECT_WLOCK(obj);
+	DQO_LOCK(o);
+	newsize = (off_t)o->o_ident.di_size;
+	DQO_UNLOCK(o);
+	nobjsize = OFF_TO_IDX((uint64_t)newsize + PAGE_MASK);
 	if (newsize == o->o_vmsize) {
 		VM_OBJECT_WUNLOCK(obj);
 		dq_object_vm_drop(o);
