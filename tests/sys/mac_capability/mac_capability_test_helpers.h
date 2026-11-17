@@ -152,8 +152,8 @@ require_racct(bool need_rctl)
 	len = sizeof(enabled);
 	ATF_REQUIRE_MSG(sysctlbyname("kern.racct.enable", &enabled, &len,
 	    NULL, 0) == 0, "sysctl kern.racct.enable: %s", strerror(errno));
-	if (enabled == 0)
-		atf_tc_skip("kern.racct.enable=0: racct is disabled");
+	/* 5BSD cannot turn resource accounting off (kern_racct.c). */
+	ATF_REQUIRE_MSG(enabled != 0, "kern.racct.enable reads 0");
 	if (need_rctl && !feature_present("rctl"))
 		atf_tc_skip("kernel built without options RCTL");
 }

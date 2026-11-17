@@ -197,9 +197,10 @@ is attached.
 The resources it charges are therefore whatever racct(4) counts: CPU
 time, RSS, swap, memory locked, file descriptors, processes, and the rest
 of the `RACCT_*` set. A kernel built without `RACCT` or `RCTL` answers
-`ACCT_STATUS_ERR`; 5BSD kernels build with both on by default (the
-`RACCT_DEFAULT_TO_DISABLED` option is gone, so rctl rules are effective
-without a loader knob). Related read-only views live in the `node`
+`ACCT_STATUS_ERR`; 5BSD kernels build with both on by default, and resource
+accounting cannot be disabled at boot: the `RACCT_DEFAULT_TO_DISABLED`
+option is gone and a `kern.racct.enable=0` tunable is ignored with a
+console notice, so rctl rules are always effective. Related read-only views live in the `node`
 service: `NODE_OP_GET_RACCT` reads one counter with its limit and headroom,
 `NODE_OP_GET_RLIMIT`/`SET_RLIMIT` read and set one rlimit, and
 `NODE_OP_RUSAGE` reads live usage, all through an attached process
