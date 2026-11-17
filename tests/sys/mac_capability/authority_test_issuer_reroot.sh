@@ -21,7 +21,15 @@ set -eu
 helper=/usr/tests/sys/mac_capability/authority_issuer_helper
 variant=$(kenv -q vm_reroot_variant || echo fail_init)
 ENOSPC=28
-fail() { echo "REROOT_CHECK_FAIL: $*"; exit 1; }
+fail() {
+	echo "REROOT_CHECK_FAIL: $*"
+	if [ "${VM_REROOT:-}" = after ]; then
+		mount -p; ps -axo pid,ppid,comm
+		tail -n 40 /var/log/messages /var/log/capability.log 2>/dev/null
+		dmesg -a | grep 'mac_capability' || true
+	fi
+	exit 1
+}
 knob() { sysctl -n "$1" 2>/dev/null || echo absent; }
 
 echo "reroot $VM_REROOT, variant $variant, pid1=$(ps -o comm= -p 1 | tr -d ' ')"
@@ -59,11 +67,12 @@ after)
 	[ "$out" = "refused errno=1" ] || fail "relaxed create after the anchor: $out"
 	[ "$(knob debug.mac_capability.test_issuer_fail_init)" = 0 ] ||
 	    fail 'fail_init was not consumed'
-	# Capsule's bootstrap logs through syslog; wait for it to reach a log.
+	# Capsule's bootstrap logs through syslog(3) before syslogd runs: to
+	# the console, which the message buffer keeps.
 	line= i=0
 	while [ "$i" -lt 60 ]; do
-		line=$(cat /var/log/messages /var/log/capability.log 2>/dev/null |
-		    grep 'protected authority issuer unavailable' || true)
+		line=$({ dmesg -a; cat /var/log/messages /var/log/capability.log; } 2>/dev/null |
+		    grep 'protected authority issuer unavailable' | tail -n 1 || true)
 		[ -n "$line" ] && break
 		[ "$variant" = plain ] && [ "$i" -ge 20 ] && break
 		i=$((i + 1)); sleep 1

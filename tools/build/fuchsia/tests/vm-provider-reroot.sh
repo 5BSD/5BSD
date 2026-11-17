@@ -85,6 +85,10 @@ guest 1 no "$work/after.sh" | grep -qx 'rerooted=no VM_REROOT=before' ||
 guest 0 no "$work/after.sh" | grep -qx 'rerooted=no VM_REROOT=none' ||
     fail 'REROOT=0 not VM_REROOT=none'
 
+# Both login profiles start the script again when saved results wait.
+[ "$(grep -c '\[ ! -e /tmp/.kyua-planeon-started \] || \[ -e /var/db/vm-provider-reroot.tar \]; }; then$' \
+    "$root/vm-provider.sh")" = 2 ] || fail 'a login profile does not resume after the reroot'
+
 # The verdict needs Capsule as PID 1 after the reroot and no REROOT_FAIL.
 verdict() { log=$work/log reroot=$1 sh "$work/verdict.sh"; }
 printf 'REROOT_AFTER: pid1=capsule capability_plane=unset\n' > "$work/log"

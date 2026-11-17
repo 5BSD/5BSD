@@ -395,8 +395,10 @@ printf 'ttyu0\t"/usr/libexec/getty kyuaplane"\tvt100\ton\tsecure\n' > "$x/ttys"
 { cat "$stage/root/.profile"; cat <<'EOF'
 
 # vm-provider: one-shot serial-login action (interactive ttyu0 login only).
+# A reroot (REROOT=1) need not clear /tmp: the results it saved under /var/db
+# start the script again.
 case "$-" in *i*) ;; *) return ;; esac
-if [ "$(tty)" = /dev/ttyu0 ] && [ ! -e /tmp/.kyua-planeon-started ]; then
+if [ "$(tty)" = /dev/ttyu0 ] && { [ ! -e /tmp/.kyua-planeon-started ] || [ -e /var/db/vm-provider-reroot.tar ]; }; then
 	: > /tmp/.kyua-planeon-started
 	sh /root/kyua-planeon.sh
 	# 99: log out once so capsule respawns getty with the ambient channel.
@@ -408,7 +410,7 @@ EOF
 { cat "$stage/root/.zprofile"; cat <<'EOF'
 
 # vm-provider: one-shot serial-login action (zsh login shells).
-if [[ -o interactive ]] && [ "$(tty)" = /dev/ttyu0 ] && [ ! -e /tmp/.kyua-planeon-started ]; then
+if [[ -o interactive ]] && [ "$(tty)" = /dev/ttyu0 ] && { [ ! -e /tmp/.kyua-planeon-started ] || [ -e /var/db/vm-provider-reroot.tar ]; }; then
 	: > /tmp/.kyua-planeon-started
 	sh /root/kyua-planeon.sh
 	[ $? = 99 ] && exit
