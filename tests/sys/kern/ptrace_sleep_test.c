@@ -18,6 +18,9 @@
  * the signal: the sleep ends with ERESTART and the call is restarted after
  * the detach, apart from calls that turn ERESTART into EINTR (nanosleep).
  *
+ * The sce cases check what a memory write still does: written at a
+ * system call entry stop, it is what the call reads as its arguments.
+ *
  * The test process is the target's parent and its debugger; for
  * posix_spawn(3) the debuggee is the spawn child, asleep in the file
  * action's open(2).  Nothing synchronises by sleeping: a state is waited
@@ -25,8 +28,10 @@
  */
 
 #include <sys/param.h>
+#include <sys/mman.h>
 #include <sys/ptrace.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/sysctl.h>
 #include <sys/user.h>
 #include <sys/wait.h>
@@ -39,6 +44,7 @@
 #include <poll.h>
 #include <signal.h>
 #include <spawn.h>
+#include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -72,6 +78,8 @@ enum wr {
 	WR_POKE,	/* PT_WRITE_D */
 	WR_REGS,	/* PT_GETREGS, PT_SETREGS of the same values */
 	WR_PC,		/* PT_CONTINUE at the pc PT_GETREGS gave */
+	WR_TEXT_IO,	/* PIOD_WRITE_I of target()'s first word, unchanged */
+	WR_TEXT_POKE,	/* PT_WRITE_I of the same */
 };
 
 /* How the target's system call ends. */
@@ -465,6 +473,28 @@ run(int transparent, enum op op, enum wr wr, enum res expect)
 		addr = (caddr_t)regs.pc;
 #endif
 		break;
+	case WR_TEXT_IO:
+		/* Put back what is there: the text write path, no change. */
+		piod.piod_op = PIOD_READ_I;
+		piod.piod_offs = (void *)(uintptr_t)target;
+		piod.piod_addr = &val;
+		piod.piod_len = sizeof(val);
+		ATF_REQUIRE_EQ_MSG(0, ptrace(PT_IO, dbg, (caddr_t)&piod, 0),
+		    "PT_IO read text: %s", strerror(errno));
+		piod.piod_op = PIOD_WRITE_I;
+		piod.piod_len = sizeof(val);
+		ATF_REQUIRE_EQ_MSG(0, ptrace(PT_IO, dbg, (caddr_t)&piod, 0),
+		    "PT_IO write text: %s", strerror(errno));
+		ATF_REQUIRE_EQ(sizeof(val), piod.piod_len);
+		break;
+	case WR_TEXT_POKE:
+		errno = 0;
+		val = ptrace(PT_READ_I, dbg, (caddr_t)(uintptr_t)target, 0);
+		ATF_REQUIRE_MSG(errno == 0, "PT_READ_I: %s", strerror(errno));
+		ATF_REQUIRE_EQ_MSG(0, ptrace(PT_WRITE_I, dbg,
+		    (caddr_t)(uintptr_t)target, val),
+		    "PT_WRITE_I: %s", strerror(errno));
+		break;
 	}
 	show("resume", dbg);
 	if (wr == WR_PC) {
@@ -545,6 +575,14 @@ CASE(transparent__fifo_open__io_write,
 CASE(transparent__fifo_open__write_d,
     "Transparent attach, PT_WRITE_D: the FIFO open completes",
     1, OP_FIFO, WR_POKE, RES_DONE)
+CASE(transparent__fifo_open__text_io_write,
+    "Transparent attach, PIOD_WRITE_I of unchanged text: the FIFO open "
+    "completes",
+    1, OP_FIFO, WR_TEXT_IO, RES_DONE)
+CASE(transparent__fifo_open__text_write_i,
+    "Transparent attach, PT_WRITE_I of unchanged text: the FIFO open "
+    "completes",
+    1, OP_FIFO, WR_TEXT_POKE, RES_DONE)
 CASE(transparent__spawn_fifo__io_write,
     "Transparent attach to a posix_spawn child, PT_IO write: the file "
     "action's FIFO open completes and posix_spawn succeeds",
@@ -589,11 +627,123 @@ CASE(legacy__nanosleep__io_write,
     "(it turns the stop's ERESTART into EINTR)",
     0, OP_NANOSLEEP, WR_IO, RES_EINTR)
 
+/*
+ * A memory write at a system call entry stop still makes the kernel fetch
+ * the call's arguments again (syscallenter()), whatever flag records the
+ * write.  amd64: __syscall(SYS_mmap, ...) leaves the sixth mmap argument,
+ * the offset, on the stack, one word above the return address at %rsp,
+ * where cpu_fetch_syscall_args_fallback() copies it in from.  MAP_ANON
+ * with a non-zero offset is EINVAL; the debugger writes 0 over the offset.
+ */
+static void
+run_sce(bool write)
+{
+#if defined(__amd64__)
+	struct ptrace_io_desc piod;
+	struct ptrace_lwpinfo pl;
+	struct reg regs;
+	uint64_t off;
+	void *p;
+	pid_t pid;
+	int i, st;
+
+	pid = fork();
+	ATF_REQUIRE(pid != -1);
+	if (pid == 0) {
+		if (ptrace(PT_TRACE_ME, 0, NULL, 0) != 0)
+			_exit(100);
+		raise(SIGSTOP);
+		p = (void *)(intptr_t)__syscall(SYS_mmap, NULL,
+		    (size_t)PAGE_SIZE, PROT_READ, MAP_ANON | MAP_PRIVATE, -1,
+		    (off_t)PAGE_SIZE);
+		_exit(p == MAP_FAILED ? errno : 0);
+	}
+	note_pid(pid);
+	ATF_REQUIRE_EQ(pid, waitpid(pid, &st, 0));
+	ATF_REQUIRE(WIFSTOPPED(st) && WSTOPSIG(st) == SIGSTOP);
+	for (i = 0;; i++) {
+		ATF_REQUIRE_MSG(i < 16, "no system call entry stop for mmap");
+		ATF_REQUIRE_EQ(0, ptrace(PT_TO_SCE, pid, (caddr_t)1, 0));
+		ATF_REQUIRE_EQ(pid, waitpid(pid, &st, 0));
+		ATF_REQUIRE(WIFSTOPPED(st) && WSTOPSIG(st) == SIGTRAP);
+		ATF_REQUIRE_EQ(0, ptrace(PT_LWPINFO, pid, (caddr_t)&pl,
+		    sizeof(pl)));
+		ATF_REQUIRE((pl.pl_flags & PL_FLAG_SCE) != 0);
+		if (pl.pl_syscall_code == SYS_mmap)
+			break;
+	}
+	ATF_REQUIRE_EQ(0, ptrace(PT_GETREGS, pid, (caddr_t)&regs, 0));
+	ATF_REQUIRE_EQ(SYS___syscall, regs.r_rax);
+	off = 0;
+	piod.piod_op = PIOD_READ_D;
+	piod.piod_offs = (void *)(uintptr_t)(regs.r_rsp + sizeof(register_t));
+	piod.piod_addr = &off;
+	piod.piod_len = sizeof(off);
+	ATF_REQUIRE_EQ(0, ptrace(PT_IO, pid, (caddr_t)&piod, 0));
+	ATF_REQUIRE_EQ_MSG(PAGE_SIZE, off,
+	    "the stack slot holds %#jx, not the offset", (uintmax_t)off);
+	if (write) {
+		off = 0;
+		piod.piod_op = PIOD_WRITE_D;
+		piod.piod_len = sizeof(off);
+		ATF_REQUIRE_EQ(0, ptrace(PT_IO, pid, (caddr_t)&piod, 0));
+		ATF_REQUIRE_EQ(sizeof(off), piod.piod_len);
+	}
+	/* The exit(2) stops at its entry too; continue until it is gone. */
+	for (i = 0;; i++) {
+		ATF_REQUIRE_MSG(i < 16, "the target does not exit");
+		ATF_REQUIRE_EQ(0, ptrace(PT_CONTINUE, pid, (caddr_t)1, 0));
+		ATF_REQUIRE_EQ(pid, waitpid(pid, &st, 0));
+		if (!WIFSTOPPED(st))
+			break;
+	}
+	(void)unlink(PIDS_FILE);
+	ATF_REQUIRE_MSG(WIFEXITED(st), "status %#x", st);
+	ATF_CHECK_EQ_MSG(write ? 0 : EINVAL, WEXITSTATUS(st),
+	    "mmap ended with %d", WEXITSTATUS(st));
+#else
+	(void)write;
+	atf_tc_skip("amd64 only: the stack-passed argument slot is per ABI");
+#endif
+}
+
+ATF_TC_WITH_CLEANUP(sce__memory_write__args_refetched);
+ATF_TC_HEAD(sce__memory_write__args_refetched, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "A PT_IO write of a stack-passed "
+	    "argument at a system call entry stop is what the call uses");
+}
+ATF_TC_BODY(sce__memory_write__args_refetched, tc)
+{
+	run_sce(true);
+}
+ATF_TC_CLEANUP(sce__memory_write__args_refetched, tc)
+{
+	cleanup();
+}
+
+ATF_TC_WITH_CLEANUP(sce__no_write__args_kept);
+ATF_TC_HEAD(sce__no_write__args_kept, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "Control: without the write the "
+	    "stack-passed offset makes the MAP_ANON mmap fail with EINVAL");
+}
+ATF_TC_BODY(sce__no_write__args_kept, tc)
+{
+	run_sce(false);
+}
+ATF_TC_CLEANUP(sce__no_write__args_kept, tc)
+{
+	cleanup();
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, transparent__fifo_open__read);
 	ATF_TP_ADD_TC(tp, transparent__fifo_open__io_write);
 	ATF_TP_ADD_TC(tp, transparent__fifo_open__write_d);
+	ATF_TP_ADD_TC(tp, transparent__fifo_open__text_io_write);
+	ATF_TP_ADD_TC(tp, transparent__fifo_open__text_write_i);
 	ATF_TP_ADD_TC(tp, transparent__spawn_fifo__io_write);
 	ATF_TP_ADD_TC(tp, transparent__pipe_read__io_write);
 	ATF_TP_ADD_TC(tp, transparent__nanosleep__io_write);
@@ -606,5 +756,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, legacy__pipe_read__io_write);
 	ATF_TP_ADD_TC(tp, legacy__wait4__io_write);
 	ATF_TP_ADD_TC(tp, legacy__nanosleep__io_write);
+	ATF_TP_ADD_TC(tp, sce__memory_write__args_refetched);
+	ATF_TP_ADD_TC(tp, sce__no_write__args_kept);
 	return (atf_no_error());
 }
