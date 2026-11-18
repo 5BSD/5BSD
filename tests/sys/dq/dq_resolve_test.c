@@ -1788,6 +1788,153 @@ ATF_TC_BODY(link_eagain_eio, tc)
 	dqt_fini(&c);
 }
 
+/*
+ * Pins before the standing rules (dq-standing-decisions §9.1): what an
+ * attached process's lookups post today, the reserved statistics and the
+ * free ioctl numbers.  Standing rules change none of these for a queue
+ * that installs no rule.
+ */
+#define	EVERY_N		8
+
+static void
+child_every(void *arg, void *result)
+{
+	const char *path = arg;
+	struct one_res *r = result;
+	struct stat sb;
+	int i, bad;
+
+	bad = 0;
+	for (i = 0; i < EVERY_N; i++)
+		if (stat(path, &sb) != 0)
+			bad++;
+	r->r[0].rv = bad;
+}
+
+ATF_TC(every_lookup_posts);
+ATF_TC_HEAD(every_lookup_posts, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "each of N stat(2) calls of one "
+	    "absolute path posts its own RESOLVE event, start REAL_ROOT with "
+	    "no start hint, and counts in ds2_resolves: nothing outlives the "
+	    "system call that consulted");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(every_lookup_posts, tc)
+{
+	struct dqt_resolve_seen rs;
+	struct dqt_ctl c;
+	struct dqt_achild ch;
+	struct one_res r;
+	struct dq_stats2 st;
+	char cwd[PATH_MAX], path[PATH_MAX];
+	int fd, i, n;
+
+	ATF_REQUIRE(getcwd(cwd, sizeof(cwd)) != NULL);
+	snprintf(path, sizeof(path), "%s/rt-every", cwd);
+	fd = open(path, O_CREAT | O_WRONLY, 0644);
+	ATF_REQUIRE(fd != -1);
+	(void)close(fd);
+	dqt_init(&c);
+	dqt_attach_spawn(&c, &ch, child_every, path);
+	memset(&r, 0, sizeof(r));
+	dqt_attach_collect(&ch, &r, sizeof(r));
+	ATF_CHECK_EQ_MSG(0, r.r[0].rv, "%ld stat calls failed", r.r[0].rv);
+	ATF_CHECK_EQ(EVERY_N, dqt_count_resolve(&c, "rt-every", DQ_ROP_STAT));
+	n = 0;
+	for (i = dqt_find_resolve(&c, "rt-every", DQ_ROP_STAT, 0); i != -1;
+	    i = dqt_find_resolve(&c, "rt-every", DQ_ROP_STAT, i + 1)) {
+		dqt_resolve_at(&c, i, &rs);
+		ATF_CHECK_STREQ(path, rs.path);
+		ATF_CHECK_EQ(DQ_START_REAL_ROOT, rs.start_kind);
+		ATF_CHECK((rs.rflags & (DQ_RF_STARTPATH_VALID |
+		    DQ_RF_SYMLINK_RESTART)) == 0);
+		ATF_CHECK_STREQ("", rs.startpath);
+		n++;
+	}
+	ATF_CHECK_EQ(EVERY_N, n);
+	dqt_stats2(&c, &st);
+	ATF_CHECK_MSG(st.ds2_resolves >= EVERY_N, "ds2_resolves %ju",
+	    (uintmax_t)st.ds2_resolves);
+	ATF_CHECK_MSG(st.ds2_resolve_pass >= EVERY_N, "ds2_resolve_pass %ju",
+	    (uintmax_t)st.ds2_resolve_pass);
+	dqt_fini(&c);
+}
+
+static void
+child_some_lookups(void *arg __unused, void *result)
+{
+	struct one_res *r = result;
+	struct stat sb;
+
+	r->r[0].rv = stat("/bin/sh", &sb);
+	r->r[1].rv = stat("rt-missing", &sb);
+}
+
+ATF_TC(stats2_reserved_zero);
+ATF_TC_HEAD(stats2_reserved_zero, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "struct dq_stats2 is 320 bytes and its "
+	    "reserved counters read 0 on a fresh queue and after attached "
+	    "lookups");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(stats2_reserved_zero, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_achild ch;
+	struct one_res r;
+	struct dq_stats2 st;
+	size_t i;
+
+	ATF_REQUIRE_EQ(320, sizeof(struct dq_stats2));
+	dqt_init(&c);
+	dqt_stats2(&c, &st);
+	ATF_CHECK_EQ(sizeof(st), st.ds2_size);
+	for (i = 0; i < nitems(st.ds2_reserved); i++)
+		ATF_CHECK_EQ_MSG(0, st.ds2_reserved[i], "fresh: reserved[%zu] "
+		    "%ju", i, (uintmax_t)st.ds2_reserved[i]);
+	dqt_attach_spawn(&c, &ch, child_some_lookups, NULL);
+	memset(&r, 0, sizeof(r));
+	dqt_attach_collect(&ch, &r, sizeof(r));
+	dqt_stats2(&c, &st);
+	ATF_CHECK(st.ds2_resolves >= 2);
+	for (i = 0; i < nitems(st.ds2_reserved); i++)
+		ATF_CHECK_EQ_MSG(0, st.ds2_reserved[i], "after lookups: "
+		    "reserved[%zu] %ju", i, (uintmax_t)st.ds2_reserved[i]);
+	dqt_fini(&c);
+}
+
+/* The argument sizes of the numbers the standing rules claim. */
+struct ioc_1064 {
+	char		 b[1064];
+};
+
+ATF_TC(standing_ioctls_absent);
+ATF_TC_HEAD(standing_ioctls_absent, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "queue ioctls 'j' 40, 41 and 42 are "
+	    "ENOTTY to the owner, and the queue still works after them");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(standing_ioctls_absent, tc)
+{
+	struct ioc_1064 a;
+	struct dq_stats2 st;
+	uint64_t id;
+	int q;
+
+	q = dqt_open_queue();
+	memset(&a, 0, sizeof(a));
+	id = 1;
+	DQT_CHECK_REFUSED(ioctl(q, _IOWR('j', 40, struct ioc_1064), &a),
+	    ENOTTY);
+	DQT_CHECK_REFUSED(ioctl(q, _IOW('j', 41, uint64_t), &id), ENOTTY);
+	DQT_CHECK_REFUSED(ioctl(q, _IO('j', 42)), ENOTTY);
+	ATF_CHECK_EQ(0, dq_get_stats2(q, &st));
+	(void)close(q);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1808,5 +1955,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, swapon_consult_ahead);
 	ATF_TP_ADD_TC(tp, unmount_refused);
 	ATF_TP_ADD_TC(tp, link_eagain_eio);
+	ATF_TP_ADD_TC(tp, every_lookup_posts);
+	ATF_TP_ADD_TC(tp, stats2_reserved_zero);
+	ATF_TP_ADD_TC(tp, standing_ioctls_absent);
 	return (atf_no_error());
 }
