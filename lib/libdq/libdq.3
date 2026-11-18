@@ -1719,9 +1719,8 @@ answered with the backing file's size, times and block count as
 post-operation attributes.
 .It Dv DQ_OP_FSPACECTL
 .Xr fspacectl 2 ,
-answering the range it left, with the backing file's times, block count
-and size (the kernel applies no size for a deallocation, which changes
-none; the size dates the block count).
+answering the range it left, with the backing file's times and block
+count (no size: a deallocation changes none).
 .It Dv DQ_OP_LOCK
 each owner gets its own open of the backing file
 .Po

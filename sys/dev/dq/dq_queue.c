@@ -442,11 +442,14 @@ static void
 dq_object_set_ident_locked(struct dq_queue *q, struct dq_object *o,
     const struct dq_ident_file *di, long hint)
 {
+	int i;
 
 	DQ_LOCK_ASSERT(q);
 	DQO_LOCK(o);
 	o->o_ident = *di;
-	dq_object_tgen_bump_locked(o);	/* the controller set the times */
+	/* Every attribute is now as of the newest reply so far. */
+	for (i = 0; i < DQ_GEN_N; i++)
+		o->o_gen[i] = o->o_agen;
 	if (hint != 0)
 		dq_file_knote(o, hint);
 	DQO_UNLOCK(o);
@@ -1253,6 +1256,21 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
     size_t bodylen, struct thread *td, int flags, struct dq_data **replyp,
     int *errnop)
 {
+
+	return (dq_event_post_wait_agen(o, op, body, bodylen, td, flags,
+	    replyp, errnop, NULL));
+}
+
+/*
+ * dq_event_post_wait, and the reply's generation in *agenp (0 when no
+ * reply came): the order the controller answered in, for
+ * dq_object_gen_newer.
+ */
+int
+dq_event_post_wait_agen(struct dq_object *o, uint32_t op, const void *body,
+    size_t bodylen, struct thread *td, int flags, struct dq_data **replyp,
+    int *errnop, uint64_t *agenp)
+{
 	struct dq_queue *q;
 	struct dq_event_k *ev;
 	struct dq_requester *rq, *newrq;
@@ -1265,6 +1283,8 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 	q = o->o_queue;
 	*replyp = NULL;
 	*errnop = 0;
+	if (agenp != NULL)
+		*agenp = 0;
 	interrupt = drop_list_ref = false;
 	memset(&pw, 0, sizeof(pw));
 	lock = (flags & DQ_POST_LOCK) != 0;
@@ -1398,6 +1418,8 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 	case DQ_EV_REPLIED:
 		*replyp = ev->ev_reply;	/* the reply's own reference */
 		*errnop = ev->ev_errno;
+		if (agenp != NULL)
+			*agenp = ev->ev_agen;
 		ev->ev_reply = NULL;
 		error = 0;
 		break;
@@ -2446,6 +2468,9 @@ dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 	ev->ev_linked = false;
 	ev->ev_reply = dd;	/* the waiter takes this reference */
 	ev->ev_errno = rerrno;
+	/* The order the controller answered in (dq_object_gen_newer). */
+	if (o != NULL)
+		ev->ev_agen = ++o->o_agen;
 	ev->ev_state = DQ_EV_REPLIED;
 	async = ev->ev_async != NULL;
 	if (async) {

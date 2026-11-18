@@ -633,73 +633,60 @@ dq_file_knote(struct dq_object *o, long hint)
 }
 
 /*
- * A size the controller's post-operation attributes report, made the
- * object's (o_mtx held): grow-only (review 1 H1).  Replies to disjoint
- * writers are applied by their requesters in whatever order they wake, so
- * a block can be older than the size already presented; a larger size is
- * kept, never moved back.  A shrink is the controller's to state with
- * SETIDENT, or a truncation's.  C10's ordered apply (dq_object_size_apply,
- * with its generation rule) takes this over.  Returns whether the pager's
- * size must follow (dq_object_sync_vmsize, with no dq lock).
+ * Reply generations (C10's rule, review 2 and the bad-fix audit).  Every
+ * reply to an object's event is numbered under q_mtx in the order the
+ * controller answered (ev_agen, from o_agen), and each presented
+ * attribute remembers the generation it was last set from (o_gen[]).  A
+ * value from a reply is applied only when its generation is newer, so
+ * replies applied in the order their requesters wake, not the order they
+ * were answered, never put an older value over a newer one, while a newer
+ * one replaces whatever is presented: a smaller size after another party
+ * truncated the backing file, a modification time of now after
+ * futimens(2) set it in the future.  A change the kernel applies from a
+ * SETATTR reply follows the same rule with that reply's generation;
+ * SETIDENT and a GETATTR answer set every attribute from the newest
+ * generation so far.  Generation 0 is the kernel's own (no reply): it
+ * stamps unconditionally and records nothing.
  */
-static bool
-dq_object_postop_size(struct dq_object *o, uint64_t size)
+bool
+dq_object_gen_newer(struct dq_object *o, int field, uint64_t agen)
 {
 
 	DQO_LOCK_ASSERT(o);
-	if (size <= o->o_ident.di_size)
+	if (agen == 0)
+		return (true);
+	if (agen <= o->o_gen[field])
+		return (false);
+	o->o_gen[field] = agen;
+	return (true);
+}
+
+/*
+ * A size the controller's post-operation attributes report (o_mtx held),
+ * by the generation rule.  Returns whether the pager's size must follow
+ * (dq_object_sync_vmsize, with no dq lock).
+ */
+static bool
+dq_object_postop_size(struct dq_object *o, uint64_t size, uint64_t agen)
+{
+
+	DQO_LOCK_ASSERT(o);
+	if (!dq_object_gen_newer(o, DQ_GEN_SIZE, agen) ||
+	    size == o->o_ident.di_size)
 		return (false);
 	o->o_ident.di_size = size;
 	return (true);
 }
 
-/*
- * The time generation (o_tgen, o_mtx).  Replies are applied by their
- * requesters in the order they wake, so a block's times are applied only
- * forward among blocks; but a time-setting operation (SETATTR of a time,
- * SETIDENT, a GETATTR reply) may have put a time in the future, and the
- * next operation must still set its own, as a local file system's write
- * sets the modification time to now after utimes(2) to 2030.  So each
- * time-set starts a generation: the first block (or stamp) for a time
- * from an operation posted in the current generation replaces that time,
- * later ones of the generation move it only forward, and a block from an
- * operation posted before the last time-set (an older generation) moves
- * it only forward.  o_tset holds the DQ_PA_*TIME bits already applied in
- * the current generation.
- */
-uint64_t
-dq_object_tgen(struct dq_object *o)
-{
-	uint64_t tgen;
-
-	DQO_LOCK(o);
-	tgen = o->o_tgen;
-	DQO_UNLOCK(o);
-	return (tgen);
-}
-
-void
-dq_object_tgen_bump_locked(struct dq_object *o)
-{
-
-	DQO_LOCK_ASSERT(o);
-	o->o_tgen++;
-	o->o_tset = 0;
-}
-
-/* One time of a block, posted in generation tgen, applied by that rule. */
+/* One time of a block or a stamp, by the generation rule. */
 static void
 dq_object_postop_time(struct dq_object *o, struct dq_timespec *cur,
-    const struct dq_timespec *ts, uint32_t bit, uint64_t tgen)
+    const struct dq_timespec *ts, int field, uint64_t agen)
 {
 
 	DQO_LOCK_ASSERT(o);
-	if ((tgen == o->o_tgen && (o->o_tset & bit) == 0) ||
-	    ts->tv_sec > cur->tv_sec ||
-	    (ts->tv_sec == cur->tv_sec && ts->tv_nsec > cur->tv_nsec))
+	if (dq_object_gen_newer(o, field, agen))
 		*cur = *ts;
-	if (tgen == o->o_tgen)
-		o->o_tset |= bit;
 }
 
 /*
@@ -713,20 +700,19 @@ dq_object_postop_time(struct dq_object *o, struct dq_timespec *cur,
  * MNT_NOATIME or MNT_RDONLY (ffs_read, zfs_read).  DQ_PF_NO_STAMP leaves
  * the times to the controller.  A block that fails its checks (minsize:
  * the size the operation itself proves) is ignored and counted, never an
- * error: the operation has happened.  A block's size only grows; its
- * times follow the generation rule above (tgen: o_tgen when the operation
- * was posted, dq_object_tgen); its block count is applied with the size it
- * was reported with, only when that size is the presented one, or only
- * forward when the block names no size, so st_blocks never goes back to
- * an older extent than st_size shows.  A deallocation changes no size
- * (vn_deallocate), so an FSPACECTL block's size only dates its block
- * count.  No dq lock is held.
+ * error: the operation has happened.  Each value of a block, and each
+ * stamp, is applied by the generation rule above (agen: the reply's
+ * generation, from dq_event_post_wait_agen; 0 for a read served from the
+ * pages, which had no reply).  A deallocation changes no size
+ * (vn_deallocate), so an FSPACECTL block's size is not applied.  No dq
+ * lock is held.
  */
 void
 dq_object_postop(struct dq_object *o, uint32_t op, const struct dq_data *reply,
-    uint64_t minsize, size_t done, uint64_t tgen)
+    uint64_t minsize, size_t done, uint64_t agen)
 {
 	struct dq_postop_attr pa;
+	struct dq_timespec ts;
 	struct timespec now;
 	uint32_t allowed;
 	bool block, resize, stamp;
@@ -759,20 +745,18 @@ dq_object_postop(struct dq_object *o, uint32_t op, const struct dq_data *reply,
 	DQO_LOCK(o);
 	if (block) {
 		if ((pa.dpa_valid & DQ_PA_SIZE) != 0 && op != DQ_OP_FSPACECTL)
-			resize = dq_object_postop_size(o, pa.dpa_size);
+			resize = dq_object_postop_size(o, pa.dpa_size, agen);
 		if ((pa.dpa_valid & DQ_PA_MTIME) != 0)
 			dq_object_postop_time(o, &o->o_ident.di_mtime,
-			    &pa.dpa_mtime, DQ_PA_MTIME, tgen);
+			    &pa.dpa_mtime, DQ_GEN_MTIME, agen);
 		if ((pa.dpa_valid & DQ_PA_CTIME) != 0)
 			dq_object_postop_time(o, &o->o_ident.di_ctime,
-			    &pa.dpa_ctime, DQ_PA_CTIME, tgen);
+			    &pa.dpa_ctime, DQ_GEN_CTIME, agen);
 		if ((pa.dpa_valid & DQ_PA_ATIME) != 0)
 			dq_object_postop_time(o, &o->o_ident.di_atime,
-			    &pa.dpa_atime, DQ_PA_ATIME, tgen);
+			    &pa.dpa_atime, DQ_GEN_ATIME, agen);
 		if ((pa.dpa_valid & DQ_PA_BLOCKS) != 0 &&
-		    ((pa.dpa_valid & DQ_PA_SIZE) != 0 ?
-		    pa.dpa_size == o->o_ident.di_size :
-		    pa.dpa_blocks > o->o_ident.di_blocks))
+		    dq_object_gen_newer(o, DQ_GEN_BLOCKS, agen))
 			o->o_ident.di_blocks = pa.dpa_blocks;
 		SDT_PROBE4(dq, , , postop__attr, o, op, pa.dpa_valid, 0);
 	} else if ((o->o_policy.dp_flags & DQ_PF_NO_STAMP) == 0) {
@@ -783,15 +767,16 @@ dq_object_postop(struct dq_object *o, uint32_t op, const struct dq_data *reply,
 			stamp = op != DQ_OP_WRITE || done > 0;
 		if (stamp) {
 			vfs_timestamp(&now);
-			if (op == DQ_OP_READ) {
-				o->o_ident.di_atime.tv_sec = now.tv_sec;
-				o->o_ident.di_atime.tv_nsec = now.tv_nsec;
-				o->o_tset |= DQ_PA_ATIME;
-			} else {
-				o->o_ident.di_mtime.tv_sec = now.tv_sec;
-				o->o_ident.di_mtime.tv_nsec = now.tv_nsec;
-				o->o_ident.di_ctime = o->o_ident.di_mtime;
-				o->o_tset |= DQ_PA_MTIME | DQ_PA_CTIME;
+			ts.tv_sec = now.tv_sec;
+			ts.tv_nsec = now.tv_nsec;
+			if (op == DQ_OP_READ)
+				dq_object_postop_time(o, &o->o_ident.di_atime,
+				    &ts, DQ_GEN_ATIME, agen);
+			else {
+				dq_object_postop_time(o, &o->o_ident.di_mtime,
+				    &ts, DQ_GEN_MTIME, agen);
+				dq_object_postop_time(o, &o->o_ident.di_ctime,
+				    &ts, DQ_GEN_CTIME, agen);
 			}
 		}
 	}
@@ -947,7 +932,7 @@ dq_read_events(struct dq_object *o, struct uio *uio, struct thread *td)
 	struct dq_read_body rb;
 	struct dq_data *reply;
 	size_t replylen, chunk;
-	uint64_t tgen;
+	uint64_t agen;
 	int error, rerror;
 
 	error = 0;
@@ -960,9 +945,8 @@ dq_read_events(struct dq_object *o, struct uio *uio, struct thread *td)
 		rb.dr_offset = uio->uio_offset;
 		rb.dr_len = chunk;
 		rb.dr_pad0 = 0;
-		tgen = dq_object_tgen(o);
-		error = dq_event_post_wait(o, DQ_OP_READ, &rb, sizeof(rb), td,
-		    0, &reply, &rerror);
+		error = dq_event_post_wait_agen(o, DQ_OP_READ, &rb, sizeof(rb),
+		    td, 0, &reply, &rerror, &agen);
 		if (error != 0)
 			break;
 		if (rerror != 0) {
@@ -975,7 +959,7 @@ dq_read_events(struct dq_object *o, struct uio *uio, struct thread *td)
 			error = uiomove(reply->dd_bytes, replylen, uio);
 		if (error == 0)
 			dq_object_postop(o, DQ_OP_READ, reply, 0, replylen,
-			    tgen);
+			    agen);
 		dq_reply_free(reply);
 		if (error != 0 || replylen < chunk)
 			break;	/* a short answer is the end of the file */
@@ -1129,7 +1113,7 @@ dq_write(struct file *fp, struct uio *uio, struct ucred *active_cred __unused,
 	ssize_t resid, resid_adj, done;
 	off_t start, lim, newend, woff;
 	size_t chunk, bodylen, written;
-	uint64_t tgen;
+	uint64_t agen;
 	uint32_t wflags;
 	long hint;
 	int error, rerror;
@@ -1221,9 +1205,8 @@ dq_write(struct file *fp, struct uio *uio, struct ucred *active_cred __unused,
 			free(wb, M_DQ);
 			break;
 		}
-		tgen = dq_object_tgen(o);
-		error = dq_event_post_wait(o, DQ_OP_WRITE, wb, bodylen, td, 0,
-		    &reply, &rerror);
+		error = dq_event_post_wait_agen(o, DQ_OP_WRITE, wb, bodylen,
+		    td, 0, &reply, &rerror, &agen);
 		if (error != 0) {
 			free(wb, M_DQ);
 			break;
@@ -1261,7 +1244,12 @@ dq_write(struct file *fp, struct uio *uio, struct ucred *active_cred __unused,
 		newend = woff + written;
 		DQO_LOCK(o);
 		hint = NOTE_WRITE;
-		if ((uint64_t)newend > o->o_ident.di_size) {
+		/*
+		 * The size the write proves, unless a newer reply set the
+		 * size (another party may have truncated the file since).
+		 */
+		if ((uint64_t)newend > o->o_ident.di_size &&
+		    agen > o->o_gen[DQ_GEN_SIZE]) {
 			o->o_ident.di_size = newend;
 			hint |= NOTE_EXTEND;
 			extended = true;
@@ -1275,7 +1263,7 @@ dq_write(struct file *fp, struct uio *uio, struct ucred *active_cred __unused,
 		}
 		/* The times, and the controller's size (T-A02, Q2). */
 		dq_object_postop(o, DQ_OP_WRITE, reply, newend, written,
-		    tgen);
+		    agen);
 		dq_reply_free(reply);
 		if (written < chunk)
 			break;	/* a short write ends the call */
@@ -1590,7 +1578,9 @@ dq_setattr_post(struct dq_object *o, struct dq_setattr_body *sb,
 {
 	struct dq_ident_file *di;
 	struct dq_data *reply;
+	struct dq_timespec ts;
 	struct timespec now;
+	uint64_t agen;
 	uint32_t mask;
 	int error, rerror;
 
@@ -1628,15 +1618,21 @@ dq_setattr_post(struct dq_object *o, struct dq_setattr_body *sb,
 	if ((sb->dsa_mask & DQ_SETATTR_MODE) != 0)
 		sb->dsa_mode &= ALLPERMS;	/* as ufs_chmod applies it */
 
-	error = dq_event_post_wait(o, DQ_OP_SETATTR, sb, sizeof(*sb), td, 0,
-	    &reply, &rerror);
+	error = dq_event_post_wait_agen(o, DQ_OP_SETATTR, sb, sizeof(*sb), td,
+	    0, &reply, &rerror, &agen);
 	if (error != 0)
 		return (error);
 	dq_reply_free(reply);
 	if (rerror != 0)
 		return (rerror);
 
+	/*
+	 * The size and the times by the generation rule, with this reply's
+	 * generation: a newer reply already applied keeps its values.
+	 */
 	vfs_timestamp(&now);
+	ts.tv_sec = now.tv_sec;
+	ts.tv_nsec = now.tv_nsec;
 	mask = sb->dsa_mask;
 	DQO_LOCK(o);
 	if ((mask & DQ_SETATTR_MODE) != 0)
@@ -1646,31 +1642,31 @@ dq_setattr_post(struct dq_object *o, struct dq_setattr_body *sb,
 		o->o_ident.di_uid = sb->dsa_uid;
 	if ((mask & DQ_SETATTR_GID) != 0)
 		o->o_ident.di_gid = sb->dsa_gid;
-	if ((mask & DQ_SETATTR_SIZE) != 0)
+	if ((mask & DQ_SETATTR_SIZE) != 0 &&
+	    dq_object_gen_newer(o, DQ_GEN_SIZE, agen))
 		o->o_ident.di_size = sb->dsa_size;
 	if ((mask & DQ_SETATTR_FLAGS) != 0)
 		o->o_ident.di_flags = sb->dsa_flags;
 	if ((mask & DQ_SETATTR_ATIME) != 0)
-		o->o_ident.di_atime = sb->dsa_atime;
+		dq_object_postop_time(o, &o->o_ident.di_atime, &sb->dsa_atime,
+		    DQ_GEN_ATIME, agen);
 	if ((mask & DQ_SETATTR_MTIME) != 0)
-		o->o_ident.di_mtime = sb->dsa_mtime;
+		dq_object_postop_time(o, &o->o_ident.di_mtime, &sb->dsa_mtime,
+		    DQ_GEN_MTIME, agen);
 	if ((mask & DQ_SETATTR_BIRTHTIME) != 0)
 		o->o_ident.di_birthtime = sb->dsa_birthtime;
-	/* A time-set: the next operation's times replace these. */
-	if ((mask & (DQ_SETATTR_ATIME | DQ_SETATTR_MTIME |
-	    DQ_SETATTR_BIRTHTIME)) != 0)
-		dq_object_tgen_bump_locked(o);
 	/*
 	 * The change time, and for a truncation the data's (ffs_truncate),
 	 * unless the controller keeps the times (DQ_PF_NO_STAMP, review 1
 	 * L4).
 	 */
 	if ((o->o_policy.dp_flags & DQ_PF_NO_STAMP) == 0) {
-		o->o_ident.di_ctime.tv_sec = now.tv_sec;
-		o->o_ident.di_ctime.tv_nsec = now.tv_nsec;
+		dq_object_postop_time(o, &o->o_ident.di_ctime, &ts,
+		    DQ_GEN_CTIME, agen);
 		if ((mask & (DQ_SETATTR_SIZE | DQ_SETATTR_MTIME)) ==
 		    DQ_SETATTR_SIZE)
-			o->o_ident.di_mtime = o->o_ident.di_ctime;
+			dq_object_postop_time(o, &o->o_ident.di_mtime, &ts,
+			    DQ_GEN_MTIME, agen);
 	}
 	dq_file_knote(o, NOTE_ATTRIB);
 	DQO_UNLOCK(o);
@@ -1822,7 +1818,7 @@ dq_fallocate(struct file *fp, off_t offset, off_t len, struct thread *td)
 	struct dq_fallocate_body fb;
 	struct dq_data *reply;
 	void *cookie;
-	uint64_t end, tgen;
+	uint64_t end, agen;
 	long hint;
 	int error, rerror;
 
@@ -1836,9 +1832,8 @@ dq_fallocate(struct file *fp, off_t offset, off_t len, struct thread *td)
 	fb.dfa_offset = offset;
 	fb.dfa_len = len;
 	cookie = rangelock_wlock(&o->o_rl, offset, offset + len);
-	tgen = dq_object_tgen(o);
-	error = dq_event_post_wait(o, DQ_OP_FALLOCATE, &fb, sizeof(fb), td, 0,
-	    &reply, &rerror);
+	error = dq_event_post_wait_agen(o, DQ_OP_FALLOCATE, &fb, sizeof(fb), td,
+	    0, &reply, &rerror, &agen);
 	if (error == 0 && rerror != 0) {
 		dq_reply_free(reply);
 		error = rerror;
@@ -1846,7 +1841,8 @@ dq_fallocate(struct file *fp, off_t offset, off_t len, struct thread *td)
 		end = (uint64_t)offset + (uint64_t)len;
 		DQO_LOCK(o);
 		hint = NOTE_WRITE;
-		if (end > o->o_ident.di_size) {
+		if (end > o->o_ident.di_size &&
+		    agen > o->o_gen[DQ_GEN_SIZE]) {
 			o->o_ident.di_size = end;
 			hint |= NOTE_EXTEND;
 		}
@@ -1854,7 +1850,7 @@ dq_fallocate(struct file *fp, off_t offset, off_t len, struct thread *td)
 		DQO_UNLOCK(o);
 		if ((hint & NOTE_EXTEND) != 0)
 			dq_object_sync_vmsize(o);	/* B10 */
-		dq_object_postop(o, DQ_OP_FALLOCATE, reply, end, 0, tgen);
+		dq_object_postop(o, DQ_OP_FALLOCATE, reply, end, 0, agen);
 		dq_reply_free(reply);
 	}
 	rangelock_unlock(&o->o_rl, cookie);
@@ -1870,7 +1866,7 @@ dq_fspacectl(struct file *fp, int cmd, off_t *offset, off_t *length,
 	const struct dq_fspacectl_reply *sr;
 	struct dq_data *reply;
 	void *cookie;
-	uint64_t tgen;
+	uint64_t agen;
 	int error, rerror;
 
 	o = dq_fp_object(fp);
@@ -1885,9 +1881,8 @@ dq_fspacectl(struct file *fp, int cmd, off_t *offset, off_t *length,
 	sb.dsc_offset = *offset;
 	sb.dsc_len = *length;
 	cookie = rangelock_wlock(&o->o_rl, *offset, *offset + *length);
-	tgen = dq_object_tgen(o);
-	error = dq_event_post_wait(o, DQ_OP_FSPACECTL, &sb, sizeof(sb), td, 0,
-	    &reply, &rerror);
+	error = dq_event_post_wait_agen(o, DQ_OP_FSPACECTL, &sb, sizeof(sb), td,
+	    0, &reply, &rerror, &agen);
 	if (error == 0 && rerror == 0) {
 		/* Validated by the reply path against the invariant. */
 		sr = (const struct dq_fspacectl_reply *)reply->dd_bytes;
@@ -1897,7 +1892,7 @@ dq_fspacectl(struct file *fp, int cmd, off_t *offset, off_t *length,
 		dq_file_knote(o, NOTE_WRITE);	/* B7 */
 		DQO_UNLOCK(o);
 		/* A deallocation proves no size. */
-		dq_object_postop(o, DQ_OP_FSPACECTL, reply, 0, 0, tgen);
+		dq_object_postop(o, DQ_OP_FSPACECTL, reply, 0, 0, agen);
 	}
 	if (error == 0) {
 		dq_reply_free(reply);

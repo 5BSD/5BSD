@@ -226,6 +226,8 @@ struct dq_event_k {
 	bool			 ev_pagein;	/* a pager READ (DQ_POST_FAULT):
 						   a shrink may fail it */
 	sbintime_t		 ev_deadline;	/* 0 = none */
+	uint64_t		 ev_agen;	/* the reply's generation
+						   (o_agen), q_mtx */
 	struct dq_object	*ev_object;	/* held; NULL for queue-level */
 	struct dq_object	*ev_robj;	/* RESOLVE FD (1c-iii): the object
 						   minted at the reply, linked,
@@ -345,10 +347,20 @@ struct dq_object {
 						   before the object is linked */
 	size_t			 o_targetlen;	/* == o_ident.di_size */
 	struct dq_ident_file	 o_ident;
-	uint64_t		 o_tgen;	/* o_mtx: time-sets of o_ident
-						   (dq_object_tgen) */
-	uint32_t		 o_tset;	/* o_mtx: DQ_PA_*TIME applied in
-						   generation o_tgen */
+	/*
+	 * Reply generations (dq_object_gen_newer): o_agen numbers the
+	 * replies to this object's events in the order the controller
+	 * answered (q_mtx); o_gen[] is the generation each presented
+	 * attribute was last set from (o_mtx, and q_mtx too for SETIDENT).
+	 */
+	uint64_t		 o_agen;
+#define	DQ_GEN_SIZE		0
+#define	DQ_GEN_BLOCKS		1
+#define	DQ_GEN_MTIME		2
+#define	DQ_GEN_CTIME		3
+#define	DQ_GEN_ATIME		4
+#define	DQ_GEN_N		5
+	uint64_t		 o_gen[DQ_GEN_N];
 	struct dq_policy	 o_policy;
 	struct rangelock	 o_rl;
 	struct selinfo		 o_sel;		/* EVFILT_* knotes, on o_mtx */
@@ -569,6 +581,9 @@ void	dq_data_rele(struct dq_data *dd);
 int	dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 	    size_t bodylen, struct thread *td, int flags,
 	    struct dq_data **replyp, int *errnop);
+int	dq_event_post_wait_agen(struct dq_object *o, uint32_t op,
+	    const void *body, size_t bodylen, struct thread *td, int flags,
+	    struct dq_data **replyp, int *errnop, uint64_t *agenp);
 void	dq_event_post_nowait(struct dq_queue *q, struct dq_object *o,
 	    uint32_t op, const void *body, size_t bodylen, struct thread *td);
 void	dq_reply_free(struct dq_data *reply);
@@ -687,9 +702,8 @@ void	dq_file_knote(struct dq_object *o, long hint);
 extern counter_u64_t dq_postop_ignored;	/* kern.dq.postop_ignored */
 void	dq_object_postop(struct dq_object *o, uint32_t op,
 	    const struct dq_data *reply, uint64_t minsize, size_t done,
-	    uint64_t tgen);
-uint64_t dq_object_tgen(struct dq_object *o);
-void	dq_object_tgen_bump_locked(struct dq_object *o);
+	    uint64_t agen);
+bool	dq_object_gen_newer(struct dq_object *o, int field, uint64_t agen);
 int	dq_file_bind(struct thread *td, struct dq_object *o, int fflags,
 	    struct file **fpp);
 

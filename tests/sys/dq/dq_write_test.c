@@ -23,7 +23,9 @@
 #include <atf-c.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <setjmp.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -981,6 +983,98 @@ child_write_times(void *arg, void *result)
 	(void)fstat(fd, &r->after);
 }
 
+/*
+ * Bad-fix audit (327e7e3f415, the size): another party truncates the backing
+ * file; a served write inside the new size then carries a post-operation
+ * block with the backing file's size.  The served file must show what the
+ * real file shows: the smaller size through fstat(2) and lseek(SEEK_END),
+ * and a mapping's page past the new end raises SIGBUS.
+ */
+struct trunc_res {
+	struct dqt_rr	 w;
+	struct stat	 st;
+	off_t		 end;
+	int		 bus;		/* 1: touching page 1 raised SIGBUS */
+};
+
+static sigjmp_buf trunc_jb;
+
+static void
+trunc_bus(int sig __unused)
+{
+
+	siglongjmp(trunc_jb, 1);
+}
+
+static void
+trunc_probe(int fd, struct trunc_res *r)
+{
+	volatile char *p;
+	char buf[16];
+
+	memset(buf, 't', sizeof(buf));
+	DQT_RR(r->w, pwrite(fd, buf, sizeof(buf), 0));
+	(void)fstat(fd, &r->st);
+	r->end = lseek(fd, 0, SEEK_END);
+	p = mmap(NULL, DATA_LEN, PROT_READ, MAP_SHARED, fd, 0);
+	if (p == MAP_FAILED) {
+		r->bus = -1;
+		return;
+	}
+	signal(SIGBUS, trunc_bus);
+	signal(SIGSEGV, trunc_bus);
+	if (sigsetjmp(trunc_jb, 1) == 0) {
+		(void)p[PAGE_SIZE];
+		r->bus = 0;
+	} else
+		r->bus = 1;
+	(void)munmap(__DEVOLATILE(char *, p), DATA_LEN);
+}
+
+static void
+child_trunc_probe(void *arg, void *result)
+{
+
+	trunc_probe(*(int *)arg, result);
+}
+
+ATF_TC(postop_size_after_external_truncate);
+ATF_TC_HEAD(postop_size_after_external_truncate, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a backing file truncated by another "
+	    "party: a served write's post-operation size shows the smaller "
+	    "size, as the real file does (bad-fix audit)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(postop_size_after_external_truncate, tc)
+{
+	struct dqt_fixture f;
+	struct trunc_res s, o;
+	struct stat bs;
+	int fd;
+
+	setup(&f, 63);
+	ATF_REQUIRE_EQ(0, ftruncate(f.backing, 100));
+	ATF_REQUIRE_EQ(0, ftruncate(f.oracle, 100));
+	memset(&s, 0, sizeof(s));
+	memset(&o, 0, sizeof(o));
+	fd = f.o->fd;
+	dqt_run_child(child_trunc_probe, &fd, &s, sizeof(s));
+	fd = f.oracle;
+	dqt_run_child(child_trunc_probe, &fd, &o, sizeof(o));
+	ATF_REQUIRE_EQ(0, fstat(f.backing, &bs));
+	printf("backing %jd; served st_size %jd end %jd bus %d; oracle "
+	    "st_size %jd end %jd bus %d\n", (intmax_t)bs.st_size,
+	    (intmax_t)s.st.st_size, (intmax_t)s.end, s.bus,
+	    (intmax_t)o.st.st_size, (intmax_t)o.end, o.bus);
+	ATF_REQUIRE_EQ(16, s.w.rv);
+	ATF_CHECK_EQ(100, bs.st_size);
+	ATF_CHECK_EQ(o.st.st_size, s.st.st_size);
+	ATF_CHECK_EQ(o.end, s.end);
+	ATF_CHECK_EQ(o.bus, s.bus);
+	dqt_fixture_fini(&f);
+}
+
 ATF_TC(mtime_after_write);
 ATF_TC_HEAD(mtime_after_write, tc)
 {
@@ -1144,6 +1238,8 @@ ATF_TC_BODY(postop_size_smaller_ignored, tc)
  */
 #define	TWO_A_OFF	(DATA_LEN)
 #define	TWO_B_OFF	(DATA_LEN + 6000)
+#define	TWO_A_BLOCKS	1000
+#define	TWO_B_BLOCKS	2000
 #define	TWO_LEN		100
 #define	DELAY_POSTOP	"debug.dq.delay_postop_apply"
 
@@ -1195,7 +1291,10 @@ two_reply(struct dqt_fixture *f, int i, off_t off)
 	memset(buf, off == TWO_A_OFF ? 'A' : 'B', sizeof(buf));
 	ATF_REQUIRE_EQ(TWO_LEN, pwrite(f->backing, buf, TWO_LEN, off));
 	ATF_REQUIRE_EQ(0, fstat(f->backing, &bs));
-	dq_postop_from_stat(&pa, &bs, DQ_PA_SIZE | DQ_PA_MTIME | DQ_PA_CTIME);
+	dq_postop_from_stat(&pa, &bs, DQ_PA_SIZE | DQ_PA_MTIME | DQ_PA_CTIME |
+	    DQ_PA_BLOCKS);
+	/* A count of each writer's own, to see whose block was applied. */
+	pa.dpa_blocks = off == TWO_A_OFF ? TWO_A_BLOCKS : TWO_B_BLOCKS;
 	memset(&wr, 0, sizeof(wr));
 	wr.dwr_written = TWO_LEN;
 	wr.dwr_offset = (uint64_t)off;
@@ -1313,6 +1412,9 @@ ATF_TC_BODY(postop_two_writers_size, tc)
 	ATF_CHECK_EQ_MSG(0, m.sig_a, "A's page: signal %d", m.sig_a);
 	ATF_CHECK_EQ('B', m.vb);
 	ATF_CHECK_EQ('A', m.va);
+	/* The block count goes with the newer reply too (review 2). */
+	ATF_CHECK_EQ_MSG(TWO_B_BLOCKS, m.st.st_blocks, "st_blocks %jd",
+	    (intmax_t)m.st.st_blocks);
 	dqt_fixture_fini(&f);
 }
 ATF_TC_CLEANUP(postop_two_writers_size, tc)
@@ -1514,73 +1616,6 @@ ATF_TC_BODY(postop_time_after_future_set, tc)
 	dqt_fixture_fini(&f);
 }
 
-/*
- * Review 2: a block's block count goes with the size it names.  The
- * controller answers a write of 10 bytes at 100 with a block whose size
- * is the write's end (110, a lower bound that passes) but below the
- * presented size: an older extent.  Its block count must not be applied;
- * a block naming the presented size is.
- */
-static void
-blocks_round(struct dqt_fixture *f, uint64_t size, int64_t blocks,
-    struct postop_res *r)
-{
-	struct dq_postop_attr pa;
-	struct dq_write_reply wr;
-	struct dqt_child ch;
-	int fd, n;
-
-	dqt_hold(&f->c, true);
-	dqt_lock(&f->c);
-	n = f->c.nheld;
-	dqt_unlock(&f->c);
-	fd = f->o->fd;
-	memset(r, 0, sizeof(*r));
-	dqt_spawn(&ch, child_write_fstat, &fd);
-	ATF_REQUIRE(dqt_wait_held(&f->c, n + 1, DQT_WAIT_MS));
-	memset(&pa, 0, sizeof(pa));
-	pa.dpa_valid = DQ_PA_SIZE | DQ_PA_BLOCKS;
-	pa.dpa_size = size;
-	pa.dpa_blocks = (uint64_t)blocks;
-	memset(&wr, 0, sizeof(wr));
-	wr.dwr_written = 10;
-	wr.dwr_offset = 100;
-	ATF_REQUIRE_MSG(dq_reply_postop(f->c.q, dqt_held_id(&f->c, n), &wr,
-	    sizeof(wr), &pa) == 0, "dq_reply_postop: %s", strerror(errno));
-	dqt_collect(&ch, r, sizeof(*r));
-	dqt_hold(&f->c, false);
-}
-
-ATF_TC(postop_blocks_follow_size);
-ATF_TC_HEAD(postop_blocks_follow_size, tc)
-{
-	atf_tc_set_md_var(tc, "descr", "a post-operation block count is "
-	    "applied only with the presented size: an older block's never "
-	    "takes st_blocks back (review 2)");
-	atf_tc_set_md_var(tc, "require.user", "root");
-}
-ATF_TC_BODY(postop_blocks_follow_size, tc)
-{
-	struct dqt_fixture f;
-	struct postop_res r;
-	blkcnt_t b0;
-
-	setup(&f, 21);
-	blocks_round(&f, 110, 0, &r);
-	ATF_REQUIRE_EQ(10, r.w.rv);
-	ATF_CHECK_EQ(DATA_LEN, r.after.st_size);
-	b0 = r.before.st_blocks;
-	ATF_REQUIRE(b0 > 0);
-	ATF_CHECK_EQ_MSG(b0, r.after.st_blocks, "st_blocks %jd -> %jd with "
-	    "st_size %jd", (intmax_t)b0, (intmax_t)r.after.st_blocks,
-	    (intmax_t)r.after.st_size);
-	/* Naming the presented size: applied. */
-	blocks_round(&f, DATA_LEN, b0 + 8, &r);
-	ATF_REQUIRE_EQ(10, r.w.rv);
-	ATF_CHECK_EQ(b0 + 8, r.after.st_blocks);
-	dqt_fixture_fini(&f);
-}
-
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1599,12 +1634,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, edeadlk_while_held);
 	ATF_TP_ADD_TC(tp, reply_offset_and_zero);
 	ATF_TP_ADD_TC(tp, mtime_after_write);
+	ATF_TP_ADD_TC(tp, postop_size_after_external_truncate);
 	ATF_TP_ADD_TC(tp, postop_size_larger_accepted);
 	ATF_TP_ADD_TC(tp, postop_size_smaller_ignored);
 	ATF_TP_ADD_TC(tp, postop_two_writers_size);
 	ATF_TP_ADD_TC(tp, postop_fspacectl_no_size);
 	ATF_TP_ADD_TC(tp, postop_time_after_future_set);
-	ATF_TP_ADD_TC(tp, postop_blocks_follow_size);
 	ATF_TP_ADD_TC(tp, fspacectl_past_eof);
 	return (atf_no_error());
 }
