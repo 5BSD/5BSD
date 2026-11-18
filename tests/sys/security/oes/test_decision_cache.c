@@ -324,7 +324,12 @@ main(void)
 	entry.ece_key.eck_exec_id = msg->em_process.ep_exec_id;
 	entry.ece_key.eck_file = msg->em_event_data.open.file.ef_token;
 	entry.ece_result = OES_AUTH_ALLOW;
-	entry.ece_ttl_ms = 300;
+	/*
+	 * Long enough to outlive the hit and the stats read below in a slow
+	 * guest (300 ms did not: the check below then saw the entry gone),
+	 * short enough for the expiry check after it.
+	 */
+	entry.ece_ttl_ms = 1500;
 	if (ioctl(fd, OES_IOC_CACHE_ADD, &entry) < 0) {
 		perror("OES_IOC_CACHE_ADD allow");
 		goto fail;
@@ -354,7 +359,7 @@ main(void)
 		goto fail;
 	}
 
-	sleep_ms(400);
+	sleep_ms(1600);
 
 	cmd = 'o';
 	(void)write(ctl_pipe[1], &cmd, 1);
