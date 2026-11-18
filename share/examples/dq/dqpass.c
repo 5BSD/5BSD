@@ -97,8 +97,9 @@ handle(int q, const struct dq_event *ev, struct counts *c)
 		c->op[op][cls]++;
 		if (verbose)
 			fprintf(stderr, "dqpass: pid %d %s class %u rflags %#x "
-			    "\"%s\"%s%s%s\n", ev->de_caller.dc_pid,
-			    opnames[op], rb->drs_flags, rb->drs_rflags, path,
+			    "start %u \"%s\"%s%s%s\n", ev->de_caller.dc_pid,
+			    opnames[op], rb->drs_flags, rb->drs_rflags,
+			    rb->drs_start_kind, path,
 			    path2[0] != '\0' ? " \"" : "", path2,
 			    path2[0] != '\0' ? "\"" : "");
 		/* A late reply (the requester gave up) is ESRCH: not an error. */
