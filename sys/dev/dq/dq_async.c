@@ -378,7 +378,10 @@ dq_async_complete(struct dq_async *da)
 		 * error, not cached zeros; an INVALIDATE while the event was
 		 * out (it skipped these busy pages) makes the data suspect,
 		 * so nothing is validated and sendfile gets EIO; the bytes
-		 * past the size are zeros.
+		 * past the size are zeros.  dd_len is all data: the reply
+		 * path refuses DQ_REPLY_F_POSTOP for READ_ASYNC (only READ,
+		 * WRITE, FALLOCATE and FSPACECTL carry a block), so dd_len
+		 * equals dd_plen here.
 		 */
 		rlen = reply != NULL ? reply->dd_len : 0;
 		if (error == 0 && rlen < da->da_len &&
