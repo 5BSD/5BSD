@@ -494,6 +494,13 @@ package_format_body()
 }
 
 atf_test_case odd_names
+odd_names_head()
+{
+    # About twenty check runs over packages and trees: 17 to 228 s in
+    # passing 2-vCPU guest runs, past the default 300 s while the host was
+    # contended.
+    atf_set timeout 900
+}
 odd_names_body()
 {
     setup

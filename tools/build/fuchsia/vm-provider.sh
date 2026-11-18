@@ -34,7 +34,8 @@
 #   can occupy, so ENOMEM there is expected), PARALLELISM (kyua, default 1),
 #   with sys/dq (or a program under it) in the suites, imgact_binmisc and
 #   dtraceall are preloaded for them; with sys/mac_capability or its
-#   issuer-decision probe programs, dtraceall,
+#   issuer-decision probe programs, dtraceall; with usr.sbin/bsd-build,
+#   zfs (an md-backed pool gives one case ACLs),
 #   ROOT_FS (ufs, the default, or zfs: a ZFS root pool for the suites that
 #   require one, such as the Linux ptrace ones),
 #   GATE_TIMEOUT (guest seconds to wait for provider convergence, 600),
@@ -162,6 +163,10 @@ case $reroot in 0|1) ;; *) die "REROOT must be 0 or 1";; esac
 # archive), attached read-only as a third disk and mounted read-only at
 # /usr/src, for suites that read the tree (usr.sbin/bsd-build).  The image
 # is test data and is never written; without it the guest has no source tree.
+# With it the guest is a build host, so the image also gets the empty standard
+# object root build-bsd(8) writes to, /usr/obj/usr/src and its repo
+# directory (the bsd_build_test cases that run build-bsd there skip without
+# them).
 src_image=${SRC_IMAGE:-}
 if [ -n "$src_image" ]; then
 	# die is defined further down.
@@ -211,10 +216,19 @@ dtraceall_load="YES"' ;;
 *" sys/mac_capability/authority_test_issuer_anchor_test"*)
 	dq_loader='dtraceall_load="YES"' ;;
 esac
+# bsd_build_test:generation_reconciliation runs its ACL subtest on an
+# md-backed ZFS pool (GENERIC has no UFS_ACL); the plane refuses a late
+# kldload of zfs.
+case " $suites " in
+*" usr.sbin/bsd-build "*|*" usr.sbin/bsd-build/bsd_build_test"*)
+	dq_loader="${dq_loader:+$dq_loader
+}zfs_load=\"YES\"" ;;
+esac
 cpus=${CPUS:-4} mem=${MEM_MB:-$mem_default} par=${PARALLELISM:-1} gate=${GATE_TIMEOUT:-600}
 root_fs=${ROOT_FS:-ufs}
 # ROOT_SIZE: the guest root filesystem (makefs -s; default 8g).  Long
-# bsd-build runs with python and the source and ports images fill 8g.
+# bsd-build runs with python and the source and ports images fill 8g.  The
+# guest reports ROOT_DF before and after the suites.
 root_size=${ROOT_SIZE:-8g}
 case $root_size in [1-9]g|[1-9][0-9]g) ;; *) echo "ROOT_SIZE must be 1g to 99g" >&2; exit 64;; esac
 case "$root_fs" in ufs|zfs) ;; *) echo "ROOT_FS must be ufs or zfs" >&2; exit 64;; esac
@@ -671,6 +685,7 @@ if [ "$REROOT" = 1 ] && [ "$rerooted" = no ]; then
 	fi
 fi
 # --- end of the reroot
+echo "ROOT_DF_BEFORE: $(df -k / | awk 'NR == 2 { print $2 "K total, " $4 "K free" }')"
 cd /usr/tests
 suites=$(cat /root/kyua-planeon.suites)
 vars=; for v in $KYUA_VARS; do vars="$vars -v $v"; done
@@ -699,6 +714,7 @@ kyua report -r "$R/results.db" --verbose --results-filter broken,failed 2>&1 | h
 cp /var/log/capability.log /var/log/messages "$R/" 2>/dev/null || true
 dmesg -a > "$R/dmesg.txt" 2>&1 || true
 echo "KYUA_SUMMARY: $(tail -n 1 "$R/kyua-test.out")"
+echo "ROOT_DF_AFTER: $(df -k / | awk 'NR == 2 { print $2 "K total, " $4 "K free" }')"
 # The ledger's knobs again, after the suites, in tier.txt.
 {
 	echo "after-suites:"
@@ -757,6 +773,11 @@ re=$(for p in $over; do printf '%s|' "$p"; done | sed -e 's/|$//' -e 's/\./\\./g
 	[ -z "$sysctl_write" ] || m "$sysctl_conf" 0644 sysctl.conf
 	# A stage has /usr/src and /usr/obj but no ports mount point.
 	[ -z "$ports_image" ] || echo "./usr/obj/5BSD-ports type=dir uname=root gname=wheel mode=0755"
+	if [ -n "$src_image" ]; then
+		for d in usr/obj/usr usr/obj/usr/src usr/obj/usr/src/repo; do
+			echo "./$d type=dir uname=root gname=wheel mode=0755"
+		done
+	fi
 	if [ -n "$extra_dir" ]; then
 		echo "./root/vm-extra.d type=dir uname=root gname=wheel mode=0755"
 		for f in "$extra_dir"/*; do
@@ -945,7 +966,7 @@ echo "skipped=$nskip (a skip in a plane-on suite is not a pass; see KYUA_SKIPPED
 # a run of the same stage and suites in that tier.
 for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER \
     DEFERRED_STACK_TIER DEFERRED_PID1_ONLY DEFERRED_SOURCE_TIER \
-    "configuration property 'authority_anchor'"; do
+    DEFERRED_GUEST_SETUP "configuration property 'authority_anchor'"; do
 	ndefer=$(tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c "$token" || true)
 	[ "$ndefer" -eq 0 ] || case $token in
 	DEFERRED_ENFORCED_TIER)
@@ -958,6 +979,8 @@ for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER 
 		echo "DEFERRED_PID1_ONLY=$ndefer (they need the PID 1 Capsule; no tier runs them; not a pass)";;
 	DEFERRED_SOURCE_TIER)
 		echo "DEFERRED_TO_SOURCE_TIER=$ndefer (they read /usr/src: run with SRC_IMAGE; not a pass)";;
+	DEFERRED_GUEST_SETUP)
+		echo "DEFERRED_GUEST_SETUP=$ndefer (they need a guest setup no tier provides yet, such as a scratch disk or a stopped devd; not a pass)";;
 	"configuration property 'authority_anchor'")
 		echo "DEFERRED_TO_ANCHOR_RUN=$ndefer (they anchor the boot: run alone with KYUA_VARS=test_suites.FreeBSD.authority_anchor=1; not a pass)";;
 	*)
