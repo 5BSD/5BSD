@@ -34,8 +34,10 @@
  * abac_rule_count: number of non-NULL rules (for stats/limits)
  * abac_rule_end: index after last rule (for iteration bounds)
  *
- * Rules are appended at abac_rule_end. Removals leave holes (NULL).
- * Iteration must scan 0..abac_rule_end-1, skipping NULLs.
+ * Rules are appended at abac_rule_end.  A removal closes its hole under the
+ * write lock (abac_rules_compact_locked()), keeping the remaining rules in
+ * the order they were added, so the table holds ABAC_MAX_RULES live rules,
+ * not ABAC_MAX_RULES additions.  Iteration skips NULL slots.
  */
 struct abac_rule *abac_rules[ABAC_MAX_RULES];
 int abac_rule_count;
@@ -306,6 +308,31 @@ out:
 }
 
 /*
+ * Close the holes left by removals, keeping the remaining rules in the order
+ * they were added (evaluation is first-match within a set).  Called with
+ * abac_rules_lock held for writing.
+ */
+static void
+abac_rules_compact_locked(void)
+{
+	int i, n;
+
+	rw_assert(&abac_rules_lock, RA_WLOCKED);
+	for (i = n = 0; i < abac_rule_end; i++) {
+		if (abac_rules[i] == NULL)
+			continue;
+		if (i != n) {
+			abac_rules[n] = abac_rules[i];
+			abac_rules[i] = NULL;
+		}
+		n++;
+	}
+	KASSERT(n == abac_rule_count,
+	    ("abac: %d rules in the table, count %d", n, abac_rule_count));
+	abac_rule_end = n;
+}
+
+/*
  * Remove a rule by ID
  *
  * Returns:
@@ -320,11 +347,12 @@ abac_rule_remove(uint32_t id)
 
 	rw_wlock(&abac_rules_lock);
 
-	for (i = 0; i < ABAC_MAX_RULES; i++) {
+	for (i = 0; i < abac_rule_end; i++) {
 		rule = abac_rules[i];
 		if (rule != NULL && rule->vr_id == id) {
 			abac_rules[i] = NULL;
 			abac_rule_count--;
+			abac_rules_compact_locked();
 			rw_wunlock(&abac_rules_lock);
 			/* DTrace: rule removed */
 			SDT_PROBE1(abac, rules, rule, remove, id);
@@ -575,6 +603,7 @@ abac_set_clear(uint16_t set)
 		}
 	}
 
+	abac_rules_compact_locked();
 	abac_rebuild_active_sets();
 
 	rw_wunlock(&abac_rules_lock);
