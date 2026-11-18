@@ -34,7 +34,8 @@
 #   can occupy, so ENOMEM there is expected), PARALLELISM (kyua, default 1),
 #   with sys/dq (or a program under it) in the suites, imgact_binmisc and
 #   dtraceall are preloaded for them; with sys/mac_capability or its
-#   issuer-decision probe programs, dtraceall,
+#   issuer-decision probe programs, dtraceall; with usr.sbin/bsd-build,
+#   zfs (an md-backed pool gives one case ACLs),
 #   ROOT_FS (ufs, the default, or zfs: a ZFS root pool for the suites that
 #   require one, such as the Linux ptrace ones),
 #   GATE_TIMEOUT (guest seconds to wait for provider convergence, 600),
@@ -214,6 +215,14 @@ dtraceall_load="YES"' ;;
 *" sys/mac_capability "*|*" sys/mac_capability/authority_issuer_probe_test"*|\
 *" sys/mac_capability/authority_test_issuer_anchor_test"*)
 	dq_loader='dtraceall_load="YES"' ;;
+esac
+# bsd_build_test:generation_reconciliation runs its ACL subtest on an
+# md-backed ZFS pool (GENERIC has no UFS_ACL); the plane refuses a late
+# kldload of zfs.
+case " $suites " in
+*" usr.sbin/bsd-build "*|*" usr.sbin/bsd-build/bsd_build_test"*)
+	dq_loader="${dq_loader:+$dq_loader
+}zfs_load=\"YES\"" ;;
 esac
 cpus=${CPUS:-4} mem=${MEM_MB:-$mem_default} par=${PARALLELISM:-1} gate=${GATE_TIMEOUT:-600}
 root_fs=${ROOT_FS:-ufs}

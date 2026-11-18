@@ -183,8 +183,8 @@ installed_support_body()
 {
     dir=$(atf_config_get support_dir "$(atf_get_srcdir)")
     [ -f "$dir/construction.py" ] || atf_fail "no installed helpers in $dir"
-    # Two reference forms are read: Path(__file__).with_name('NAME') with a
-    # literal NAME, and $(atf_get_srcdir)/NAME in the sh cases.  Names built
+    # Two reference forms are read: Path(__file__).with_name() with a literal
+    # name, and files named after atf_get_srcdir in the sh cases.  Names built
     # at run time (database_payload.py's sibling()), source-tree paths
     # through parents[N] (overridden by the cases' BSD_BUILD_* variables)
     # and sys.path imports are not checked here.
@@ -951,33 +951,53 @@ generation_reconciliation_body()
     helper=$(atf_config_get generation_helper "$(atf_get_srcdir)/generation_check.py")
     tests=$(atf_config_get generation_tests "$(atf_get_srcdir)/generation_check_test.py")
     # The ACL subtest needs a file system with ACLs, which the work
-    # directory's often lacks (a guest's UFS root has none): as root, the
-    # program's temporary files go to an md(4)-backed UFS mounted with acls.
+    # directory's often lacks (a guest's UFS root has none, and GENERIC has
+    # no options UFS_ACL): as root, the program's temporary files go to an
+    # md(4)-backed ZFS pool (NFSv4 ACLs), or else to a UFS mounted with acls
+    # where the kernel supports that.
     tmp=${TMPDIR:-/tmp}
     if [ "$(id -u)" = 0 ] && md=$(mdconfig -a -t swap -s 256m 2>/dev/null); then
         echo "$md" > acl_md
-        if newfs -U "/dev/$md" > /dev/null 2>&1 && mkdir acl &&
+        mkdir acl
+        pool=bbtacl$$
+        if zpool create -o cachefile=none -O mountpoint="$PWD/acl" \
+            "$pool" "/dev/$md" > /dev/null 2>&1; then
+            echo "$pool" > acl_pool
+            tmp=$PWD/acl
+        elif newfs -U "/dev/$md" > /dev/null 2>&1 &&
             mount -o acls "/dev/$md" "$PWD/acl"; then
-            chmod 1777 acl
             tmp=$PWD/acl
         fi
     fi
+    # pathconf(2) _PC_ACL_EXTENDED (59) or _PC_ACL_NFS4 (64), as the subtest
+    # itself decides.
+    acl_fs=$(python3.12 -c 'import os, sys
+def ok(n):
+    try:
+        return os.pathconf(sys.argv[1], n) == 1
+    except OSError:
+        return False
+print("yes" if ok(59) or ok(64) else "no")' "$tmp")
     atf_check -s exit:0 -o ignore -e save:stderr env TMPDIR="$tmp" \
         BSD_BUILD_GENERATION_HELPER="$helper" python3.12 -B "$tests" -v
     atf_check -s exit:0 -o ignore grep -q '^OK' stderr
+    [ "$acl_fs" = no ] || atf_check -s exit:0 -o ignore \
+        grep -q '^test_acl_not_discarded .* ok$' stderr
     # A skipped ACL subtest is a gap, never a silent pass.
     if grep -q 'supports no ACL type' stderr; then
-        [ "$tmp" != "$PWD/acl" ] ||
-            atf_fail 'the ACL subtest skipped on the ACL-enabled file system'
-        atf_skip 'DEFERRED_GUEST_SETUP: the ACL subtest needs root and an md(4)-backed UFS with acls (the other subtests passed)'
+        [ "$acl_fs" = no ] ||
+            atf_fail "the ACL subtest skipped on $tmp, which supports ACLs"
+        atf_skip 'DEFERRED_GUEST_SETUP: the ACL subtest needs root, md(4) and ZFS, or a UFS_ACL kernel (the other subtests passed)'
     fi
 }
 generation_reconciliation_cleanup()
 {
-    if [ -f acl_md ]; then
+    if [ -f acl_pool ]; then
+        zpool destroy -f "$(cat acl_pool)" || true
+    elif [ -f acl_md ]; then
         umount "$PWD/acl" 2>/dev/null || true
-        mdconfig -d -u "$(cat acl_md)" || true
     fi
+    [ ! -f acl_md ] || mdconfig -d -u "$(cat acl_md)" || true
 }
 atf_test_case inventory_plan
 inventory_plan_head()
