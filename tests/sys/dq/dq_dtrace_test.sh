@@ -33,7 +33,8 @@ dq_probes_present_body()
 	require_dtrace
 	for probe in queue-open queue-close mint revoke object-close \
 	    event-post event-deliver event-reply event-drop event-interrupt \
-	    event-deadline reply-late attach resolve-post resolve-reply; do
+	    event-deadline reply-late attach resolve-post resolve-reply \
+	    standing-match standing-miss standing-change; do
 		atf_check -o ignore dtrace -l -n "dq:::${probe}"
 	done
 }
@@ -70,6 +71,77 @@ dq_probes_fire_body()
 	done
 }
 
+atf_test_case standing_probes cleanup
+standing_probes_head()
+{
+	atf_set "descr" "the standing-rule probes fire for dqpass -r: " \
+	    "standing-match with the rule's id and PASS, standing-miss " \
+	    "for no fitting rule, an ineligible lookup (an AF_UNIX " \
+	    "connect, a Linux RINROOT open) and a '..' name, and " \
+	    "standing-change at the rule's ADD and the queue's death"
+	atf_set "require.user" "root"
+	atf_set "require.kmods" "linux64"
+	atf_set "require.arch" "amd64"
+}
+standing_probes_body()
+{
+	require_dtrace
+	# The Linux program's lookups are native ones without an ABI root
+	# (dq_standing_test rinroot_posts): only RINROOT makes it ineligible.
+	sysctl -n compat.linux.emul_path > emul_path.saved ||
+	    atf_fail "compat.linux.emul_path"
+	atf_check -o ignore sysctl compat.linux.emul_path=/nonexistent-dq-standing
+	mkdir lx
+	touch lx/rin-f
+	cp "$(atf_get_srcdir)/dq_standing_linux" . ||
+	    atf_fail "dq_standing_linux is not installed"
+	# The command: covered names, a name no rule fits, a '..' name,
+	# an AF_UNIX connect and the Linux program (descriptor 9: lx).
+	cat > cmd.sh <<'EOS'
+test -d /usr/share/misc
+test -d /etc
+test -d /usr/share/../share
+nc -lU sock > /dev/null & i=0
+while [ ! -S sock ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+echo x | nc -NU sock
+wait
+./dq_standing_linux 9< lx
+echo $? > linux.status
+EOS
+	printf '%s -o report -r /usr/share:read /bin/sh cmd.sh\necho $? > status\n' \
+	    "$(atf_get_srcdir)/dqpass" > run.sh
+	atf_check -o save:fired -e ignore dtrace -q -n '
+	    dq:::standing-match /progenyof($target)/
+	    { @m[arg2, arg3] = count(); }
+	    dq:::standing-miss /progenyof($target)/
+	    { @w[arg2] = count(); }
+	    dq:::standing-change /progenyof($target)/
+	    { @c[arg1, arg2] = count(); }
+	    END {
+		printa("match %d %d %@d\n", @m);
+		printa("miss %d %@d\n", @w);
+		printa("change %d %d %@d\n", @c);
+	    }' -c "/bin/sh run.sh"
+	cat fired report >&2
+	atf_check -o inline:"0\n" cat status
+	atf_check -o inline:"0\n" cat linux.status
+	# The rule is the queue's first: id 1, verdict 0 (PASS).
+	atf_check -o ignore grep -Eq '^match 1 0 [1-9][0-9]*$' fired
+	# Why: 0 no rule fits (/etc), 1 ineligible (connect, RINROOT), 2 "..".
+	for why in 0 1 2; do
+		atf_check -o ignore grep -Eq "^miss ${why} [1-9][0-9]*\$" fired
+	done
+	# What: 1 ADD (id 1), 4 the queue's death.
+	atf_check -o ignore grep -Eq '^change 1 1 1$' fired
+	atf_check -o ignore grep -Eq '^change 4 0 1$' fired
+	atf_check -o match:'standing pass [1-9]' cat report
+}
+standing_probes_cleanup()
+{
+	[ -s emul_path.saved ] &&
+	    sysctl compat.linux.emul_path="$(cat emul_path.saved)" >/dev/null
+}
+
 atf_test_case mac_file_notify_reply_present
 mac_file_notify_reply_present_head()
 {
@@ -89,5 +161,6 @@ atf_init_test_cases()
 {
 	atf_add_test_case dq_probes_present
 	atf_add_test_case dq_probes_fire
+	atf_add_test_case standing_probes
 	atf_add_test_case mac_file_notify_reply_present
 }

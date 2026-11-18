@@ -16,12 +16,29 @@
 # the per-case results must agree, except the cases dqpass.expected lists (I5, jail, setcred,
 # fplookup, core dumps).
 #
+# oracle_standing: both again under dqpass -r /:all, a standing rule that
+# passes every lookup a rule can cover without posting it
+# (dq-standing-decisions, stage 1): the results must agree just the same,
+# and every run must have counted standing passes.
+#
 
 . "$(atf_get_srcdir)/dq_suites.subr"
 
+# DQPASS_RULES: the standing rules dqpass installs (oracle_standing).
+DQPASS_RULES=
 dqpass()
 {
-	"$(atf_get_srcdir)/dqpass" "$@"
+	"$(atf_get_srcdir)/dqpass" ${DQPASS_RULES} "$@"
+}
+
+# With standing rules, a report must show that they decided something.
+require_standing()
+{
+	[ -z "${DQPASS_RULES}" ] && return 0
+	grep -Eq '^dqpass: standing pass [1-9]' "$1" || {
+		cat "$1" >&2
+		atf_fail "$2: no standing pass under ${DQPASS_RULES}"
+	}
 }
 
 require_dq()
@@ -53,6 +70,7 @@ same_both_ways()
 	fi
 	grep -q 'RESOLVE events' dqpass.report ||
 	    atf_fail "dqpass wrote no report for '$*'"
+	require_standing dqpass.report "$*"
 }
 
 atf_test_case commands
@@ -63,6 +81,11 @@ commands_head()
 	atf_set "require.user" "root"
 }
 commands_body()
+{
+	run_commands
+}
+
+run_commands()
 {
 	require_dq
 	mkdir work
@@ -83,7 +106,12 @@ commands_body()
 	chmod 755 work/s.sh
 	same_both_ways ./work/s.sh arg
 	dqpass -o r ./work/s.sh x >/dev/null
-	atf_check -o match:'exec_interp' cat r
+	if [ -z "${DQPASS_RULES}" ]; then
+		atf_check -o match:'exec_interp' cat r
+	else
+		# The standing rule covers it: no event.
+		atf_check -o not-match:'exec_interp' cat r
+	fi
 	# socket(2) and socketpair(2) (1c-ii): a program, and nc(1) over an
 	# AF_UNIX stream socket (bind, connect, socket).
 	same_both_ways "$(atf_get_srcdir)/dq_sockprog"
@@ -101,6 +129,11 @@ suites_head()
 	atf_set "require.progs" "kyua"
 }
 suites_body()
+{
+	run_suites
+}
+
+run_suites()
 {
 	local suite kf expected nsuites rc defaults
 
@@ -134,6 +167,7 @@ suites_body()
 			    "or unmarked consultation"
 		fi
 		[ -s pass.report ] || atf_fail "${suite}: dqpass wrote no report"
+		require_standing pass.report "${suite}"
 		dq_results plain.db plain.all
 		dq_results pass.db pass.all
 		echo "=== ${suite}: cases dqpass.expected excludes" >&2
@@ -165,8 +199,25 @@ suites_body()
 	    dq_pattern_verdict "$(atf_get_srcdir)/dqpass.expected" used
 }
 
+atf_test_case oracle_standing
+oracle_standing_head()
+{
+	atf_set "descr" "the commands and suites give the same results " \
+	    "under dqpass -r /:all, whose standing rule passes every " \
+	    "lookup a rule covers without posting it, as unattached"
+	atf_set "require.user" "root"
+	atf_set "require.progs" "kyua"
+}
+oracle_standing_body()
+{
+	DQPASS_RULES="-r /:all"
+	run_commands
+	run_suites
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case commands
 	atf_add_test_case suites
+	atf_add_test_case oracle_standing
 }
