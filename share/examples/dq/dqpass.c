@@ -6,7 +6,7 @@
  * dqpass: run a command attached to a DescriptorQueue that lets every
  * lookup through.
  *
- *   dqpass [-v] [-o file] command [argument ...]
+ *   dqpass [-v] [-o file] [-r path[:read|all]] ... command [argument ...]
  *
  * dqpass opens a queue, pdfork(2)s, attaches the child (DQ_IOC_ATTACH)
  * before it execs the command, and answers every RESOLVE event its
@@ -23,10 +23,15 @@
  * kernel ledger failure), which a pass-everything run must never see.
  *
  * -v prints one line per event; -o writes the report to a file instead of
- * the standard error.  Build with -ldq; see dq(4) and libdq(3).
+ * the standard error.  -r installs a standing rule before the command
+ * starts (dq(4)): a subtree PASS of path under dqpass's own root, for the
+ * lookups that read (":read", the default) or for every operation a rule
+ * covers, write-class opens included (":all"); those lookups post no event
+ * and the report counts them as "standing pass".  Build with -ldq; see
+ * dq(4) and libdq(3).
  */
 
-#include <sys/types.h>
+#include <sys/param.h>
 #include <sys/procdesc.h>
 #include <sys/wait.h>
 
@@ -166,14 +171,40 @@ report(FILE *out, const struct counts *c, const struct dq_stats2 *st)
 	    (uintmax_t)st->ds2_attached, (uintmax_t)st->ds2_events_dropped,
 	    (uintmax_t)st->ds2_interrupts, (uintmax_t)st->ds2_deadline_misses,
 	    (uintmax_t)st->ds2_bad_replies);
+	fprintf(out, "dqpass: standing pass %ju standing deny %ju\n",
+	    (uintmax_t)st->ds2_standing_pass, (uintmax_t)st->ds2_standing_deny);
 }
 
 static void
 usage(void)
 {
 
-	fprintf(stderr, "usage: dqpass [-v] [-o file] command [argument ...]\n");
+	fprintf(stderr, "usage: dqpass [-v] [-o file] [-r path[:read|all]] ... "
+	    "command [argument ...]\n");
 	exit(2);
+}
+
+/* -r path[:read|all]: a subtree PASS rule under this process's root. */
+static void
+add_rule(int q, char *arg)
+{
+	uint32_t flags, ops;
+	char *colon;
+
+	flags = DQ_STANDING_F_SUBTREE;
+	ops = DQ_STANDING_OPS_READ;
+	colon = strrchr(arg, ':');
+	if (colon != NULL) {
+		*colon = '\0';
+		if (strcmp(colon + 1, "all") == 0) {
+			ops = DQ_STANDING_OPS_ALL;
+			flags |= DQ_STANDING_F_OPEN_WRITE;
+		} else if (strcmp(colon + 1, "read") != 0)
+			usage();
+	}
+	if (dq_standing_add(q, -1, arg, flags, ops, DQ_STANDING_PASS, 0,
+	    NULL) == -1)
+		err(2, "standing rule %s", arg);
 }
 
 int
@@ -183,17 +214,23 @@ main(int argc, char **argv)
 	struct dq_stats2 st;
 	struct pollfd pfd[2];
 	FILE *out;
-	char *buf, b;
+	char *buf, b, *rules[64];
 	pid_t pid;
-	int ch, go[2], i, pd, q, status, rv;
+	int ch, go[2], i, nrules, pd, q, status, rv;
 
 	out = stderr;
-	while ((ch = getopt(argc, argv, "o:v")) != -1) {
+	nrules = 0;
+	while ((ch = getopt(argc, argv, "o:r:v")) != -1) {
 		switch (ch) {
 		case 'o':
 			out = fopen(optarg, "w");
 			if (out == NULL)
 				err(2, "%s", optarg);
+			break;
+		case 'r':
+			if (nrules == (int)nitems(rules))
+				errx(2, "too many -r");
+			rules[nrules++] = optarg;
 			break;
 		case 'v':
 			verbose = 1;
@@ -216,6 +253,8 @@ main(int argc, char **argv)
 		err(2, "dq_open (%s)", DQ_DEVICE);
 	if (fcntl(q, F_SETFL, O_NONBLOCK) == -1)
 		err(2, "F_SETFL");
+	for (i = 0; i < nrules; i++)
+		add_rule(q, rules[i]);
 	if (pipe2(go, O_CLOEXEC) == -1)
 		err(2, "pipe");
 
