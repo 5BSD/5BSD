@@ -957,7 +957,7 @@ echo "skipped=$nskip (a skip in a plane-on suite is not a pass; see KYUA_SKIPPED
 # a run of the same stage and suites in that tier.
 for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER \
     DEFERRED_STACK_TIER DEFERRED_PID1_ONLY DEFERRED_SOURCE_TIER \
-    "configuration property 'authority_anchor'"; do
+    DEFERRED_GUEST_SETUP "configuration property 'authority_anchor'"; do
 	ndefer=$(tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c "$token" || true)
 	[ "$ndefer" -eq 0 ] || case $token in
 	DEFERRED_ENFORCED_TIER)
@@ -970,6 +970,8 @@ for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER 
 		echo "DEFERRED_PID1_ONLY=$ndefer (they need the PID 1 Capsule; no tier runs them; not a pass)";;
 	DEFERRED_SOURCE_TIER)
 		echo "DEFERRED_TO_SOURCE_TIER=$ndefer (they read /usr/src: run with SRC_IMAGE; not a pass)";;
+	DEFERRED_GUEST_SETUP)
+		echo "DEFERRED_GUEST_SETUP=$ndefer (they need a guest setup no tier provides yet, such as a scratch disk or a stopped devd; not a pass)";;
 	"configuration property 'authority_anchor'")
 		echo "DEFERRED_TO_ANCHOR_RUN=$ndefer (they anchor the boot: run alone with KYUA_VARS=test_suites.FreeBSD.authority_anchor=1; not a pass)";;
 	*)

@@ -76,8 +76,9 @@ ATF_TC_BODY(disk_import_and_binding, tc)
 	 * cannot be read, or is malformed, still fails.
 	 */
 	if (file == NULL && errno == ENOENT)
-		atf_tc_skip("requires the explicit disposable scratch-device "
-		    "input %s (a disk of a disposable VM)", input);
+		atf_tc_skip("DEFERRED_GUEST_SETUP: requires the explicit "
+		    "disposable scratch-device input %s (a disk of a disposable "
+		    "VM)", input);
 	ATF_REQUIRE_MSG(file != NULL, "cannot read the scratch-device input %s: %s",
 	    input, strerror(errno));
 	ATF_REQUIRE(fgets(device, sizeof(device), file) != NULL);

@@ -177,12 +177,17 @@ PYTHON
 atf_test_case installed_support
 installed_support_head()
 {
-    atf_set descr 'Every file the installed helpers and cases load from beside themselves is installed'
+    atf_set descr 'Every literal sibling the installed helpers and cases name is installed'
 }
 installed_support_body()
 {
     dir=$(atf_config_get support_dir "$(atf_get_srcdir)")
     [ -f "$dir/construction.py" ] || atf_fail "no installed helpers in $dir"
+    # Two reference forms are read: Path(__file__).with_name('NAME') with a
+    # literal NAME, and $(atf_get_srcdir)/NAME in the sh cases.  Names built
+    # at run time (database_payload.py's sibling()), source-tree paths
+    # through parents[N] (overridden by the cases' BSD_BUILD_* variables)
+    # and sys.path imports are not checked here.
     : > needed
     # Python modules name their siblings with Path(__file__).with_name('NAME').
     for file in "$dir"/*.py; do
@@ -935,7 +940,7 @@ PYTHON
     [ ! -e candidate ] || atf_fail 'plan created the deployment target'
     atf_check -s not-exit:0 -o empty -e match:'derives inventory' "$tool" plan deploy --root "$(pwd)/candidate" --repository "$(pwd)/repository" --pkg-public-key "$(pwd)/public" --public-key "$(pwd)/public" --generated "$(pwd)/generated.json" --inventory "$(pwd)/generated.json"
 }
-atf_test_case generation_reconciliation
+atf_test_case generation_reconciliation cleanup
 generation_reconciliation_head()
 {
     atf_set require.progs 'python3.12 setextattr setfacl cc'
@@ -945,7 +950,34 @@ generation_reconciliation_body()
 {
     helper=$(atf_config_get generation_helper "$(atf_get_srcdir)/generation_check.py")
     tests=$(atf_config_get generation_tests "$(atf_get_srcdir)/generation_check_test.py")
-    atf_check -s exit:0 -o ignore -e match:'OK' env BSD_BUILD_GENERATION_HELPER="$helper" python3.12 -B "$tests"
+    # The ACL subtest needs a file system with ACLs, which the work
+    # directory's often lacks (a guest's UFS root has none): as root, the
+    # program's temporary files go to an md(4)-backed UFS mounted with acls.
+    tmp=${TMPDIR:-/tmp}
+    if [ "$(id -u)" = 0 ] && md=$(mdconfig -a -t swap -s 256m 2>/dev/null); then
+        echo "$md" > acl_md
+        if newfs -U "/dev/$md" > /dev/null 2>&1 && mkdir acl &&
+            mount -o acls "/dev/$md" "$PWD/acl"; then
+            chmod 1777 acl
+            tmp=$PWD/acl
+        fi
+    fi
+    atf_check -s exit:0 -o ignore -e save:stderr env TMPDIR="$tmp" \
+        BSD_BUILD_GENERATION_HELPER="$helper" python3.12 -B "$tests" -v
+    atf_check -s exit:0 -o ignore grep -q '^OK' stderr
+    # A skipped ACL subtest is a gap, never a silent pass.
+    if grep -q 'supports no ACL type' stderr; then
+        [ "$tmp" != "$PWD/acl" ] ||
+            atf_fail 'the ACL subtest skipped on the ACL-enabled file system'
+        atf_skip 'DEFERRED_GUEST_SETUP: the ACL subtest needs root and an md(4)-backed UFS with acls (the other subtests passed)'
+    fi
+}
+generation_reconciliation_cleanup()
+{
+    if [ -f acl_md ]; then
+        umount "$PWD/acl" 2>/dev/null || true
+        mdconfig -d -u "$(cat acl_md)" || true
+    fi
 }
 atf_test_case inventory_plan
 inventory_plan_head()

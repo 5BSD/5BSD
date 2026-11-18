@@ -27,14 +27,14 @@ ATF_TC_BODY(event_device, tc)
 	int fd, second, status, nonblock;
 
 	if (!atf_tc_get_config_var_as_bool_wd(tc, "disposable_vm", false))
-		atf_tc_skip("requires disposable_vm=yes and a guest with devd stopped");
+		atf_tc_skip("DEFERRED_GUEST_SETUP: requires disposable_vm=yes and a guest with devd stopped");
 	ATF_REQUIRE(stat("/dev/devctl", &st) == 0);
 	ATF_REQUIRE(S_ISCHR(st.st_mode));
 	ATF_REQUIRE_EQ(st.st_uid, 0);
 	ATF_REQUIRE_EQ(st.st_mode & 0777, 0600);
 	fd = open("/dev/devctl", O_RDONLY | O_NONBLOCK | O_CLOEXEC);
 	if (fd < 0 && errno == EBUSY)
-		atf_tc_skip("devctl already has a reader; do not stop host services");
+		atf_tc_skip("DEFERRED_GUEST_SETUP: devctl already has a reader; do not stop host services");
 	ATF_REQUIRE_MSG(fd >= 0, "root event-device open: errno %d", errno);
 	second = open("/dev/devctl", O_RDONLY | O_NONBLOCK);
 	ATF_REQUIRE_ERRNO(EBUSY, second == -1);
@@ -76,14 +76,14 @@ ATF_TC_BODY(audit_event_device, tc)
 	int fd, second, status;
 
 	if (!atf_tc_get_config_var_as_bool_wd(tc, "disposable_vm", false))
-		atf_tc_skip("requires disposable_vm=yes and a guest with auditd stopped");
+		atf_tc_skip("DEFERRED_GUEST_SETUP: requires disposable_vm=yes and a guest with auditd stopped");
 	ATF_REQUIRE(stat(AUDIT_TRIGGER_FILE, &st) == 0);
 	ATF_REQUIRE(S_ISCHR(st.st_mode));
 	ATF_REQUIRE_EQ(st.st_uid, 0);
 	ATF_REQUIRE_EQ(st.st_mode & 0777, 0600);
 	fd = open(AUDIT_TRIGGER_FILE, O_RDWR | O_CLOEXEC);
 	if (fd < 0 && errno == EBUSY)
-		atf_tc_skip("audit already has a reader; do not stop host services");
+		atf_tc_skip("DEFERRED_GUEST_SETUP: audit already has a reader; do not stop host services");
 	ATF_REQUIRE_MSG(fd >= 0, "root audit-device open: errno %d", errno);
 	second = open(AUDIT_TRIGGER_FILE, O_RDONLY);
 	ATF_REQUIRE_ERRNO(EBUSY, second == -1);

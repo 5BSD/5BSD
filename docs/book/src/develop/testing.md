@@ -316,7 +316,11 @@ create fails after it anchors; `LOADER_EXTRA` with
 source tree need `SRC_IMAGE` (and `PORTS_IMAGE` for package plans); without it
 they are counted as `DEFERRED_TO_SOURCE_TIER=N`.  With python, the source and
 the ports images, a long bsd-build run fills the default 8 GB guest root:
-give it `ROOT_SIZE=16g`.
+give it `ROOT_SIZE=16g`.  Cases that need a guest setup no tier provides yet
+(`storage_test:disk_import_and_binding`'s scratch disk, `devctl_device_test`
+with devd and auditd stopped, `bsd_build_test:generation_reconciliation`'s
+ACL subtest without root and md(4)) skip with `DEFERRED_GUEST_SETUP` and are
+counted as `DEFERRED_GUEST_SETUP=N`, not as passes.
 Cases that drive their private SwitchBoard with `switchboardctl` call
 `use_private_control` (`usr.sbin/switchboard/tests/test_helpers.sh`): it runs
 `switchboardctl` through `capd_lookup_exec`, which installs the private
