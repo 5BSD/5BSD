@@ -342,6 +342,8 @@ abac_socketpeer_set_from_mbuf(struct mbuf *m, struct label *mlabel,
 	/* mac_abac labels no mbuf: the peer keeps what it has. */
 	if (mlabel == NULL || sopeerlabel == NULL || SLOT(mlabel) == NULL)
 		return;
+	KASSERT(SLOT(sopeerlabel) == NULL,
+	    ("%s: peer label set twice", __func__));
 	abac_label_share(sopeerlabel, abac_slot, SLOT(mlabel));
 }
 
@@ -363,6 +365,9 @@ abac_socketpeer_set_from_socket(struct socket *oldso,
 
 	if (oldsolabel == NULL || newsopeerlabel == NULL)
 		return;
+	/* Once per socket, at connect: abac_label_share() takes no lock. */
+	KASSERT(SLOT(newsopeerlabel) == NULL,
+	    ("%s: peer label set twice", __func__));
 	abac_label_share(newsopeerlabel, abac_slot, SLOT(oldsolabel));
 }
 
