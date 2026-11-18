@@ -71,7 +71,7 @@ enum wr {
 	WR_IO,		/* PT_IO PIOD_WRITE_D */
 	WR_POKE,	/* PT_WRITE_D */
 	WR_REGS,	/* PT_GETREGS, PT_SETREGS of the same values */
-	WR_PC,		/* PT_DETACH at the pc PT_GETREGS gave */
+	WR_PC,		/* PT_CONTINUE at the pc PT_GETREGS gave */
 };
 
 /* How the target's system call ends. */
@@ -466,9 +466,18 @@ run(int transparent, enum op op, enum wr wr, enum res expect)
 #endif
 		break;
 	}
-	show("detach", dbg);
-	ATF_REQUIRE_EQ_MSG(0, ptrace(PT_DETACH, dbg, addr, 0),
-	    "PT_DETACH: %s", strerror(errno));
+	show("resume", dbg);
+	if (wr == WR_PC) {
+		/*
+		 * PT_DETACH takes no pc: continue at one, traced; the
+		 * target exits traced, to this process, its parent too.
+		 */
+		ATF_REQUIRE_EQ_MSG(0, ptrace(PT_CONTINUE, dbg, addr, 0),
+		    "PT_CONTINUE: %s", strerror(errno));
+	} else {
+		ATF_REQUIRE_EQ_MSG(0, ptrace(PT_DETACH, dbg, addr, 0),
+		    "PT_DETACH: %s", strerror(errno));
+	}
 
 	/* Watch for the call ending before its sleep is satisfied. */
 	early = op != OP_NANOSLEEP && read_report(rep[0], EARLY_MS, &r);
@@ -557,9 +566,9 @@ CASE(transparent__fifo_open__setregs,
 CASE(transparent__pipe_read__setregs,
     "Transparent attach, PT_SETREGS: the pipe read fails with EINTR",
     1, OP_PIPE, WR_REGS, RES_EINTR)
-CASE(transparent__fifo_open__detach_pc,
-    "Transparent attach, PT_DETACH with a pc: the FIFO open fails with "
-    "EINTR",
+CASE(transparent__fifo_open__continue_pc,
+    "Transparent attach, PT_CONTINUE with a pc: the FIFO open fails "
+    "with EINTR",
     1, OP_FIFO, WR_PC, RES_EINTR)
 
 /* Attach by SIGSTOP (not transparent): unchanged FreeBSD behaviour. */
@@ -591,7 +600,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, transparent__wait4__io_write);
 	ATF_TP_ADD_TC(tp, transparent__fifo_open__setregs);
 	ATF_TP_ADD_TC(tp, transparent__pipe_read__setregs);
-	ATF_TP_ADD_TC(tp, transparent__fifo_open__detach_pc);
+	ATF_TP_ADD_TC(tp, transparent__fifo_open__continue_pc);
 	ATF_TP_ADD_TC(tp, legacy__fifo_open__read);
 	ATF_TP_ADD_TC(tp, legacy__fifo_open__io_write);
 	ATF_TP_ADD_TC(tp, legacy__pipe_read__io_write);
