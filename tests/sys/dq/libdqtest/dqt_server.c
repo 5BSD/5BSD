@@ -5,7 +5,7 @@
  *
  * A controller thread that hands every record of a queue to a dq_handler_t
  * through dq_dispatch(): the loop the served-tree and served-start tests
- * each had a copy of.  See dq_test.h.
+ * each had a copy of.  See dqt.h.
  */
 
 #include <sys/param.h>
@@ -20,7 +20,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 static void *
 dqt_server_main(void *arg)

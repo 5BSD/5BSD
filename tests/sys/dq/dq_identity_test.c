@@ -31,7 +31,7 @@
 #include <unistd.h>
 
 #define	DQ_WANT_PC_NAMES
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	DATA_LEN	8192
 

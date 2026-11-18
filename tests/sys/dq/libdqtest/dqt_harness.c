@@ -5,7 +5,7 @@
  *
  * The controller harness of the DescriptorQueue tests: reader threads that
  * answer from memory or through dq_serve_file(), forked requesters, and the
- * waits and oracle comparisons the tests share; see dq_test.h.
+ * waits and oracle comparisons the tests share; see dqt.h.
  */
 
 #include <sys/param.h>
@@ -31,7 +31,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	DQT_READ_BUFSIZE	(65536 + 131072 + 128)	/* a whole max_io WRITE fits */
 #define	DQT_POLL_MS		50
@@ -65,7 +65,7 @@ struct dqt_pending_reply {
 };
 
 /*
- * Record a stage 1b body on the object (and WRITE bodies on the controller)
+ * Record a write-path body on the object (and WRITE bodies on the controller)
  * for the tests' field assertions.  The mutex is held.
  */
 static void
@@ -256,7 +256,7 @@ dqt_handle_record(struct dqt_ctl *c, const struct dq_event *ev,
 	body = dq_event_body(ev, &bodylen);
 	o = dqt_object_by_id(c, ev->de_object);
 	if (o != NULL && o->fence) {
-		/* A fence's records are its own: see dq_test.h. */
+		/* A fence's records are its own: see dqt.h. */
 		dqt_record_seq(c, ev->de_seq);
 		if (ev->de_op == DQ_OP_CLOSE)
 			c->fence_closes++;
@@ -384,7 +384,7 @@ dqt_handle_record(struct dqt_ctl *c, const struct dq_event *ev,
 		return (false);
 	default:
 		/*
-		 * A stage 1b event on a memory object: held when asked, else
+		 * A write-path event on a memory object: held when asked, else
 		 * answered with the object's serve_errno (EIO, or ENOLCK for
 		 * a lock, when none is set) and no body.
 		 */
@@ -1803,7 +1803,7 @@ dqt_sync_wait(int fd, int ms)
 }
 
 /*
- * Resolution (1c)
+ * Resolution
  */
 
 void

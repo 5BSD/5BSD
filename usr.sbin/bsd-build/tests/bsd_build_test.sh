@@ -4,7 +4,7 @@ setup()
 {
     tool=$(atf_config_get bsd_build /usr/sbin/build-bsd)
     [ -f "$tool" ] || atf_skip 'build-bsd not installed'
-    [ -f /usr/src/Makefile ] || atf_skip 'source build frontend requires /usr/src'
+    [ -f /usr/src/Makefile ] || atf_skip 'DEFERRED_SOURCE_TIER: source build frontend requires /usr/src (vm-provider.sh SRC_IMAGE)'
 }
 atf_test_case plans
 plans_body()

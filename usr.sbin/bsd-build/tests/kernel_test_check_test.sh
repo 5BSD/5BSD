@@ -130,6 +130,20 @@ ledger_body()
     atf_check -s exit:0 -o empty -e empty cmp rows expected
     atf_check -s exit:0 -o match:'^DQ_TEST_OPEN\|live\|GENERIC-TEST\|dq_testopen_\|' \
         head -n 1 rows
+    # Every live row of the installed ledger: its marker and its prefix are
+    # each refused, naming the row's option.
+    while IFS='|' read -r option status config prefix marker knobs; do
+        [ "$status" = live ] || continue
+        for sample in "$marker" "${prefix}symbol"; do
+            [ "$sample" != "-symbol" ] || continue
+            rm -rf bad
+            tree bad
+            printf 'ELF\0%s\0' "$sample" > bad/boot/kernel/kernel
+            atf_check -s exit:1 -o empty \
+                -e match:"was built with options $option, a test-kernel option" \
+                ./check -d bad < /dev/null
+        done
+    done < rows
 
     # A private ledger: a live row, a reserved row, a row without prefix.
     cat > private <<'EOF'

@@ -17,7 +17,7 @@
 
 #include <libutil.h>
 
-#include "dq_tree_harness.h"
+#include "dqt_tree.h"
 
 #define	HELPER	"dq_exec_helper"
 
@@ -66,9 +66,9 @@ make_exec_tree(const atf_tc_t *tc, const char *dir)
 			copy_into(dir, line, line, 0444);
 	}
 	pclose(f);
-	ts_symlink(dir, "lnk", "bin");
-	ts_file(dir, "s.sh", "#!/bin/helper\n");
-	ts_file(dir, "rel.sh", "#!bin/helper\n");
+	dqt_tree_symlink(dir, "lnk", "bin");
+	dqt_tree_file(dir, "s.sh", "#!/bin/helper\n");
+	dqt_tree_file(dir, "rel.sh", "#!bin/helper\n");
 	{
 		char p[PATH_MAX];
 
@@ -92,8 +92,8 @@ struct xrun {
  * waits on its standard input.
  */
 static void
-xrun(struct ts *s, const char *cwd, const char *path, bool wait,
-    void (*waitfn)(struct ts *, pid_t, void *), void *arg, struct xrun *x)
+xrun(struct dqt_tree *s, const char *cwd, const char *path, bool wait,
+    void (*waitfn)(struct dqt_tree *, pid_t, void *), void *arg, struct xrun *x)
 {
 	char *argv[3];
 	int ready[2], go[2], outp[2], inp[2], pd;
@@ -168,27 +168,27 @@ check_line(const struct xrun *x, const char *want)
 	    "\"%s\" not in output:\n%s", want, x->out);
 }
 
-TS_TC(exec_default_eacces);
+DQT_TREE_TC(exec_default_eacces);
 ATF_TC_BODY(exec_default_eacces, tc)
 {
-	struct ts s;
+	struct dqt_tree s;
 	struct xrun x;
 
 	make_exec_tree(tc, "t");
-	ts_start(&s, "t", DQ_TREE_F_ROOT);
+	dqt_tree_start(&s, "t", DQ_TREE_F_ROOT);
 	xrun(&s, NULL, "/bin/helper", false, NULL, NULL, &x);
 	check_line(&x, "execve 13\n");
-	ts_stop(&s);
+	dqt_tree_stop(&s);
 }
 
-TS_TC(exec_real_execpath);
+DQT_TREE_TC(exec_real_execpath);
 ATF_TC_BODY(exec_real_execpath, tc)
 {
-	struct ts s;
+	struct dqt_tree s;
 	struct xrun x;
 
 	make_exec_tree(tc, "t");
-	ts_start(&s, "t", DQ_TREE_F_ROOT | DQ_TREE_F_EXEC_REAL);
+	dqt_tree_start(&s, "t", DQ_TREE_F_ROOT | DQ_TREE_F_EXEC_REAL);
 	/* An absolute name: verbatim. */
 	xrun(&s, NULL, "/bin/helper", false, NULL, NULL, &x);
 	ATF_CHECK(WIFEXITED(x.status) && WEXITSTATUS(x.status) == 0);
@@ -206,7 +206,7 @@ ATF_TC_BODY(exec_real_execpath, tc)
 	xrun(&s, "/", "lnk/helper", false, NULL, NULL, &x);
 	ATF_CHECK(WIFEXITED(x.status) && WEXITSTATUS(x.status) == 0);
 	check_line(&x, "execpath=/lnk/helper\n");
-	ts_stop(&s);
+	dqt_tree_stop(&s);
 }
 
 struct interp_arg {
@@ -215,7 +215,7 @@ struct interp_arg {
 };
 
 static void
-find_interp(struct ts *s __unused, pid_t pid, void *arg)
+find_interp(struct dqt_tree *s __unused, pid_t pid, void *arg)
 {
 	struct interp_arg *a = arg;
 	struct kinfo_vmentry *kve;
@@ -230,17 +230,17 @@ find_interp(struct ts *s __unused, pid_t pid, void *arg)
 	free(kve);
 }
 
-TS_TC(interp_from_tree);
+DQT_TREE_TC(interp_from_tree);
 ATF_TC_BODY(interp_from_tree, tc)
 {
-	struct ts s;
+	struct dqt_tree s;
 	struct xrun x;
 	struct interp_arg a;
-	struct ts_ev *e;
+	struct dqt_tree_ev *e;
 	int i, n;
 
 	make_exec_tree(tc, "t");
-	ts_start(&s, "t", DQ_TREE_F_ROOT | DQ_TREE_F_EXEC_REAL);
+	dqt_tree_start(&s, "t", DQ_TREE_F_ROOT | DQ_TREE_F_EXEC_REAL);
 	memset(&a, 0, sizeof(a));
 	snprintf(a.want, sizeof(a.want), "%s/libexec/ld-elf.so.1", s.backing);
 	xrun(&s, NULL, "/bin/helper", true, find_interp, &a, &x);
@@ -262,17 +262,17 @@ ATF_TC_BODY(interp_from_tree, tc)
 	}
 	pthread_mutex_unlock(&s.mtx);
 	ATF_CHECK(n >= 1);
-	ts_stop(&s);
+	dqt_tree_stop(&s);
 }
 
-TS_TC(shell_interp);
+DQT_TREE_TC(shell_interp);
 ATF_TC_BODY(shell_interp, tc)
 {
-	struct ts s;
+	struct dqt_tree s;
 	struct xrun x;
 
 	make_exec_tree(tc, "t");
-	ts_start(&s, "t", DQ_TREE_F_ROOT | DQ_TREE_F_EXEC_REAL);
+	dqt_tree_start(&s, "t", DQ_TREE_F_ROOT | DQ_TREE_F_EXEC_REAL);
 	/* #! from the tree: the interpreter runs with the script. */
 	xrun(&s, NULL, "/s.sh", false, NULL, NULL, &x);
 	ATF_CHECK(WIFEXITED(x.status) && WEXITSTATUS(x.status) == 0);
@@ -282,11 +282,11 @@ ATF_TC_BODY(shell_interp, tc)
 	/* A relative #! interpreter under a served cwd: EXDEV (D175). */
 	xrun(&s, NULL, "/rel.sh", false, NULL, NULL, &x);
 	check_line(&x, "execve 18\n");
-	ts_stop(&s);
+	dqt_tree_stop(&s);
 }
 
 static int
-interp_enoent(struct ts *s, const struct dq_event *ev,
+interp_enoent(struct dqt_tree *s, const struct dq_event *ev,
     const struct dq_resolve_body *rb, const char *path __unused)
 {
 
@@ -300,20 +300,20 @@ interp_enoent(struct ts *s, const struct dq_event *ev,
  * The interpreter is consulted after exec_new_vmspace: an errno kills
  * the new image (the old one is gone), as 1c-i's class-3 lookups do.
  */
-TS_TC(interp_errno_kills);
+DQT_TREE_TC(interp_errno_kills);
 ATF_TC_BODY(interp_errno_kills, tc)
 {
-	struct ts s;
+	struct dqt_tree s;
 	struct xrun x;
 
 	make_exec_tree(tc, "t");
-	ts_start(&s, "t", DQ_TREE_F_ROOT | DQ_TREE_F_EXEC_REAL);
+	dqt_tree_start(&s, "t", DQ_TREE_F_ROOT | DQ_TREE_F_EXEC_REAL);
 	s.hook = interp_enoent;
 	xrun(&s, NULL, "/bin/helper", false, NULL, NULL, &x);
 	ATF_CHECK_MSG(WIFSIGNALED(x.status), "status %#x, output:\n%s",
 	    x.status, x.out);
 	ATF_CHECK(strstr(x.out, "execve") == NULL);
-	ts_stop(&s);
+	dqt_tree_stop(&s);
 }
 
 ATF_TP_ADD_TCS(tp)

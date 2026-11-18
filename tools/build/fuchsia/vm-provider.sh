@@ -33,10 +33,8 @@
 #   range, and an 8 GB guest has only four, which incidental cached pages
 #   can occupy, so ENOMEM there is expected), PARALLELISM (kyua, default 1),
 #   with sys/dq (or a program under it) in the suites, imgact_binmisc and
-#   dtraceall are preloaded for them,
-#   ROOT_SIZE (the root file system's size, default 8g: a run that adds
-#   large test data, such as the build-host Python for usr.sbin/bsd-build,
-#   can fill 8g; the guest reports ROOT_DF before and after the suites),
+#   dtraceall are preloaded for them; with sys/mac_capability or its
+#   issuer-decision probe programs, dtraceall,
 #   ROOT_FS (ufs, the default, or zfs: a ZFS root pool for the suites that
 #   require one, such as the Linux ptrace ones),
 #   GATE_TIMEOUT (guest seconds to wait for provider convergence, 600),
@@ -59,6 +57,10 @@
 #   sys/kern/kern_descrip_test:kern_maxfiles__increase:
 #   SYSCTL_WRITE=kern.maxfiles with
 #   KYUA_VARS=test_suites.FreeBSD.allow_sysctl_side_effects=1.
+#   STACK_TIER=1 requires the stack tier: KERNEL_TIER=test, PLANE_OFF=1, and in
+#   the guest kern.mac_capability.test_issuer=1 with the boot not anchored.
+#   A run that asks for it and does not get it fails (STACK_TIER_FAIL) rather
+#   than counting every stack case as deferred.
 #   KERNEL_TIER (main or test; default main): the kernel tier of the run.
 #   main is GENERIC, or any kernel without a test-kernel option; test is
 #   GENERIC-TEST, and must be asked for: a stage whose kernel carries a
@@ -122,6 +124,12 @@ kyua_vars=${KYUA_VARS:-}
 # as root in the guest before Kyua; its output is captured in the results.
 # EXTRA_DIR: a host directory whose regular files are installed executable in
 # the guest under /root/vm-extra.d (for example legacy latency benches).
+# REROOT=1 (with PLANE_OFF=1, KERNEL_TIER=test and EXTRA_SCRIPT): the reroot
+#   stage.  The extra script runs twice, with VM_REROOT=before on the plane-off
+#   boot and, once it exits 0, the guest reroots into Capsule as PID 1 with
+#   the plane on (kenv -u capability_plane; kenv init_path=/sbin/capsule;
+#   reboot -r) and runs it again with VM_REROOT=after, then the suites.  Both
+#   runs must exit 0.  Otherwise VM_REROOT=none.
 plane_off=${PLANE_OFF:-0}
 case "$plane_off" in 0|1) ;; *) echo "PLANE_OFF must be 0 or 1" >&2; exit 64;; esac
 # No Capsule claims the device with the plane off, so that tier enforces the
@@ -136,6 +144,14 @@ extra_script=${EXTRA_SCRIPT:-}
 [ -z "$extra_script" ] || [ -f "$extra_script" ] || die "no such EXTRA_SCRIPT: $extra_script"
 extra_dir=${EXTRA_DIR:-}
 [ -z "$extra_dir" ] || [ -d "$extra_dir" ] || die "no such EXTRA_DIR: $extra_dir"
+# --- reroot request (tests/vm-provider-reroot.sh runs this block)
+reroot=${REROOT:-0}
+case $reroot in 0|1) ;; *) die "REROOT must be 0 or 1";; esac
+[ "$reroot" = 0 ] ||
+    { [ "$plane_off" = 1 ] && [ "${KERNEL_TIER:-main}" = test ] &&
+      [ -n "$extra_script" ] && [ "${STACK_TIER:-0}" = 0 ]; } ||
+    die "REROOT=1 needs PLANE_OFF=1, KERNEL_TIER=test and EXTRA_SCRIPT, without STACK_TIER=1"
+# --- end of the reroot request
 # LINUX_COMPAT_DIR: a host directory holding compat/linux/... (test data, e.g.
 # the overlay staged by stage-linux-compat.sh); its tree is installed under
 # /compat/linux with its symlinks and modes, and linprocfs and linsysfs are
@@ -185,7 +201,9 @@ esac
 # The modules the dq suites need that nothing else preloads: the plane
 # refuses a late kldload, and those suites fail (never skip) without
 # them.  imgact_binmisc for dq_resolve_test's binmisc row, dtraceall for
-# dq_dtrace_test and dq_socket_test's probes.  LOADER_EXTRA still carries
+# dq_dtrace_test and dq_socket_test's probes, and for the issuer-decision
+# probe in authority_issuer_probe_test and authority_test_issuer_anchor_test.
+# LOADER_EXTRA still carries
 # the Linux modules, mac_test_hooks and the rest of the recipe (DQ chapter
 # of the book, section 17); a module named twice is loaded once.
 dq_loader=
@@ -193,13 +211,18 @@ case " $suites " in
 *" sys/dq "*|*" sys/dq/"*)
 	dq_loader='imgact_binmisc_load="YES"
 dtraceall_load="YES"' ;;
+*" sys/mac_capability "*|*" sys/mac_capability/authority_issuer_probe_test"*|\
+*" sys/mac_capability/authority_test_issuer_anchor_test"*)
+	dq_loader='dtraceall_load="YES"' ;;
 esac
 cpus=${CPUS:-4} mem=${MEM_MB:-$mem_default} par=${PARALLELISM:-1} gate=${GATE_TIMEOUT:-600}
 root_fs=${ROOT_FS:-ufs}
-case "$root_fs" in ufs|zfs) ;; *) echo "ROOT_FS must be ufs or zfs" >&2; exit 64;; esac
+# ROOT_SIZE: the guest root filesystem (makefs -s; default 8g).  Long
+# bsd-build runs with python and the source and ports images fill 8g.  The
+# guest reports ROOT_DF before and after the suites.
 root_size=${ROOT_SIZE:-8g}
-case "$root_size" in [1-9]*[0-9]g|[1-9]g|[1-9]*[0-9]m) ;; *) echo "ROOT_SIZE must be a size in g or m" >&2; exit 64;; esac
-case "$root_size" in *[!0-9gm]*|*[gm]*[gm]) echo "ROOT_SIZE must be a size in g or m" >&2; exit 64;; esac
+case $root_size in [1-9]g|[1-9][0-9]g) ;; *) echo "ROOT_SIZE must be 1g to 99g" >&2; exit 64;; esac
+case "$root_fs" in ufs|zfs) ;; *) echo "ROOT_FS must be ufs or zfs" >&2; exit 64;; esac
 units=${REQUIRE_UNITS:-system.Log/bsdlog system.Network/bsdnetwork system.Trace/bsdtrace system.Filesystem/bsdfilesystem system.Audit/bsdaudit system.Time/bsdtime system.SystemExtension/bsdextension system.Notify/bsdnotify system.Device/bsddevice system.Power/bsdpower system.Sysctl/bsdsysctl system.Crypto/bsdcrypto}
 
 isnum() { case $1 in ''|*[!0-9]*) return 1;; esac; [ "$1" -gt 0 ]; }
@@ -264,6 +287,11 @@ work=$(cd "$work" && pwd)
 # anything else is a check that read nothing, and the run stops.
 # --- kernel tier, host side (tests/vm-provider-test-kernel-proof.sh runs this block)
 kernel_tier=${KERNEL_TIER:-main}
+stack_tier_request=${STACK_TIER:-0}
+case $stack_tier_request in 0|1) ;; *) die "STACK_TIER must be 0 or 1";; esac
+[ "$stack_tier_request" = 0 ] ||
+    { [ "$kernel_tier" = test ] && [ "${PLANE_OFF:-0}" = 1 ]; } ||
+    die "STACK_TIER=1 needs KERNEL_TIER=test and PLANE_OFF=1"
 case $kernel_tier in main|test) ;; *) die "KERNEL_TIER must be main or test";; esac
 src_root=$(cd "$(dirname "$0")/../../.." && pwd)
 tk_check=$src_root/release/scripts/check-test-kernel.sh
@@ -372,8 +400,10 @@ printf 'ttyu0\t"/usr/libexec/getty kyuaplane"\tvt100\ton\tsecure\n' > "$x/ttys"
 { cat "$stage/root/.profile"; cat <<'EOF'
 
 # vm-provider: one-shot serial-login action (interactive ttyu0 login only).
+# A reroot (REROOT=1) need not clear /tmp: the results it saved under /var/db
+# start the script again.
 case "$-" in *i*) ;; *) return ;; esac
-if [ "$(tty)" = /dev/ttyu0 ] && [ ! -e /tmp/.kyua-planeon-started ]; then
+if [ "$(tty)" = /dev/ttyu0 ] && { [ ! -e /tmp/.kyua-planeon-started ] || [ -e /var/db/vm-provider-reroot.tar ]; }; then
 	: > /tmp/.kyua-planeon-started
 	sh /root/kyua-planeon.sh
 	# 99: log out once so capsule respawns getty with the ambient channel.
@@ -385,7 +415,7 @@ EOF
 { cat "$stage/root/.zprofile"; cat <<'EOF'
 
 # vm-provider: one-shot serial-login action (zsh login shells).
-if [[ -o interactive ]] && [ "$(tty)" = /dev/ttyu0 ] && [ ! -e /tmp/.kyua-planeon-started ]; then
+if [[ -o interactive ]] && [ "$(tty)" = /dev/ttyu0 ] && { [ ! -e /tmp/.kyua-planeon-started ] || [ -e /var/db/vm-provider-reroot.tar ]; }; then
 	: > /tmp/.kyua-planeon-started
 	sh /root/kyua-planeon.sh
 	[ $? = 99 ] && exit
@@ -419,16 +449,33 @@ KYUA_VARS="$kyua_vars"
 PLANE_OFF=$plane_off
 ISOLATION_ENFORCE=$isolation
 KERNEL_TIER=$kernel_tier
+STACK_TIER_REQUEST=$stack_tier_request
 TEST_KERNEL_HOST=$test_kernel_host
 TEST_OPTION=$test_option
 KERNEL_SHA256=$kernel_sha256
 KERNEL_VERSION="$kernel_version"
 TEST_KNOBS="$test_knobs"
+REROOT=$reroot
 EOF
 cat >> "$x/kyua-planeon.sh" <<'EOF'
 R=/tmp/kyua-results
 mkdir -p "$R"
 echo KYUA_PLANEON_START
+# --- reroot, after (REROOT=1): the reroot cleared /tmp; restore the results
+# and skip what the plane-off boot already proved.
+rerooted=no stack_tier=no
+VM_REROOT=none
+if [ "$REROOT" = 1 ]; then
+	VM_REROOT=before
+	if [ -e /var/db/vm-provider-reroot.tar ]; then
+		rerooted=yes VM_REROOT=after
+		tar -xf /var/db/vm-provider-reroot.tar -C /tmp
+		rm -f /var/db/vm-provider-reroot.tar
+		echo "REROOT_AFTER: pid1=$(ps -o comm= -p 1 | tr -d ' ') capability_plane=$(kenv -q capability_plane || echo unset)"
+	fi
+fi
+export VM_REROOT
+if [ "$rerooted" = no ]; then
 # --- test-kernel proof (tests/vm-provider-test-kernel-proof.sh runs this block)
 # The booted kernel must be the file the host checked, and the ledger's knobs
 # must exist exactly when the host found a test-kernel option.
@@ -466,6 +513,27 @@ main:no|test:yes) echo TEST_KERNEL_PROOF_PASS ;;
 *) echo "TEST_KERNEL_PROOF_FAIL: tier $KERNEL_TIER, booted kernel $test_kernel" ;;
 esac
 # --- end of the test-kernel proof
+# --- stack tier (tests/vm-provider-test-kernel-proof.sh runs this block)
+# A test kernel, plane off, with test issuers on and the boot not anchored:
+# test-local Capsule stacks get a unit issuer.  The cases that need one fail
+# here, rather than skip, when it is missing (atf config stack_tier=1).
+stack_tier=no
+if [ "$test_kernel" = yes ] && [ "$PLANE_OFF" = 1 ] &&
+    [ "$(sysctl -n kern.mac_capability.test_issuer 2>/dev/null)" = 1 ] &&
+    [ "$(sysctl -n kern.mac_capability.test_issuer_state 2>/dev/null)" != anchored ]; then
+	stack_tier=yes
+	KYUA_VARS="$KYUA_VARS test_suites.FreeBSD.stack_tier=1"
+fi
+stack_issuers_before=$(sysctl -n kern.mac_capability.test_issuers 2>/dev/null || echo 0)
+echo "stack-tier=$stack_tier" >> "$R/tier.txt"
+echo "TIER_INFO: stack-tier=$stack_tier"
+if [ "${STACK_TIER_REQUEST:-0}" = 1 ] && [ "$stack_tier" != yes ]; then
+	echo "STACK_TIER_FAIL: the stack tier was requested and is not met:" \
+	    "test kernel=$test_kernel plane-off=$PLANE_OFF" \
+	    "test_issuer=$(sysctl -n kern.mac_capability.test_issuer 2>/dev/null || echo absent)" \
+	    "state=$(sysctl -n kern.mac_capability.test_issuer_state 2>/dev/null || echo absent)"
+fi
+# --- end of the stack tier
 if [ "$PLANE_OFF" = 1 ]; then
 echo "PLANEOFF_PID1=$(ps -o comm= -p 1 | tr -d ' ')"
 enf=$(sysctl -n kern.mac_capability_isolation.enforce 2>/dev/null || echo unset)
@@ -581,6 +649,7 @@ else
 fi
 echo "BSDTIME_LIFECYCLE_$lc"
 fi
+fi # rerooted = no
 if [ -s /root/vm-extra.sh ]; then
 	echo EXTRA_SCRIPT_BEGIN
 	( set +e; sh /root/vm-extra.sh; extra_status=$?
@@ -589,6 +658,24 @@ if [ -s /root/vm-extra.sh ]; then
 	echo "EXTRA_SCRIPT_STATUS=$(cat "$R/extra.exit")"
 	echo EXTRA_SCRIPT_END
 fi
+# --- reroot, before (REROOT=1; tests/vm-provider-reroot.sh runs this block)
+if [ "$REROOT" = 1 ] && [ "$rerooted" = no ]; then
+	if [ "$(cat "$R/extra.exit" 2>/dev/null)" = 0 ]; then
+		mv "$R/extra.out" "$R/extra.before.out"
+		tar -cf /var/db/vm-provider-reroot.tar -C /tmp kyua-results
+		sync
+		echo REROOT_BEGIN
+		kenv -u capability_plane
+		kenv init_path=/sbin/capsule
+		reboot -r
+		# reboot -r kills this shell; reaching here is a failure.
+		sleep 600
+		echo "REROOT_FAIL: reboot -r returned"
+	else
+		echo "REROOT_FAIL: the extra script failed before the reroot"
+	fi
+fi
+# --- end of the reroot
 echo "ROOT_DF_BEFORE: $(df -k / | awk 'NR == 2 { print $2 "K total, " $4 "K free" }')"
 cd /usr/tests
 suites=$(cat /root/kyua-planeon.suites)
@@ -625,13 +712,30 @@ echo "ROOT_DF_AFTER: $(df -k / | awk 'NR == 2 { print $2 "K total, " $4 "K free"
 	for k in $TEST_KNOBS; do echo "knob $k=$(sysctl -n "$k" 2>/dev/null || echo absent)"; done
 } >> "$R/tier.txt"
 sed -n '/^after-suites:$/,$s/^/TIER_INFO: /p' "$R/tier.txt"
+# The stack tier must have given its stacks test issuers, and freed them.
+if [ "$stack_tier" = yes ]; then
+	i=0
+	while [ "$(sysctl -n kern.mac_capability.test_issuers_live)" -ne 0 ] && [ "$i" -lt 50 ]; do
+		i=$((i + 1)); sleep 0.1
+	done
+	after=$(sysctl -n kern.mac_capability.test_issuers)
+	live=$(sysctl -n kern.mac_capability.test_issuers_live)
+	echo "STACK_TIER: test issuers created=$((after - stack_issuers_before)) live=$live state=$(sysctl -n kern.mac_capability.test_issuer_state)" |
+	    tee -a "$R/tier.txt"
+	case " $(cat /root/kyua-planeon.suites) " in
+	*" usr.sbin/switchboard"*|*" usr.sbin/capsule"*|*" lib/libservice"*)
+		[ "$after" -gt "$stack_issuers_before" ] ||
+		    echo "STACK_TIER_FAIL: stack suites ran and no test issuer was created" ;;
+	esac
+	[ "$live" -eq 0 ] || echo "NOTE: $live test issuers still alive after the suites"
+fi
 # Results disk: only the explicitly identified second disk is written.
 if [ "$(geom disk list vtbd1 2>/dev/null | awk '/ident:/ {print $2}')" = kyua-results ]; then
 	tar -cf /dev/vtbd1 -C /tmp kyua-results && echo KYUA_RESULTS_DISK_WRITTEN
 fi
 sync
 echo KYUA_VM_DONE
-if [ "$PLANE_OFF" = 1 ]; then shutdown -p now; else
+if [ "$PLANE_OFF" = 1 ] && [ "$rerooted" = no ]; then shutdown -p now; else
 /usr/sbin/capsulectl poweroff || { echo PLANEON_CAPSULECTL_POWEROFF_FAILED; shutdown -p now; }
 fi
 EOF
@@ -814,10 +918,25 @@ guest_off=0
 python3.12 -c 'import json,sys
 ev=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]
 sys.exit(0 if any(e.get("event")=="SHUTDOWN" and e.get("data",{}).get("guest") is True and e["data"].get("reason")=="guest-shutdown" for e in ev) else 1)' "$work/qmp-events.jsonl" 2>/dev/null && guest_off=1
+# --- stack-tier verdict (tests/vm-provider-stack-tier-verdict.sh runs this block)
+# STACK_TIER=1 also needs the results disk's tier.txt, which tar writes whole,
+# to show the tier met and its test issuers created and all freed: a kernel
+# message landing mid-line on the console can hide a STACK_TIER_FAIL line.
+stack_tier_met() {
+	[ "$stack_tier_request" = 1 ] || return 0
+	t=$work/results/kyua-results/tier.txt
+	[ -f "$t" ] && grep -qx 'stack-tier=yes' "$t" &&
+	    awk '$1 == "STACK_TIER:" && $4 ~ /^created=[0-9]+$/ && $5 ~ /^live=[0-9]+$/ {
+		split($4, c, "="); split($5, l, "=")
+		ok = (c[2] + 0 > 0 && l[2] + 0 == 0)
+	    } END { exit !ok }' "$t"
+}
+# --- end of the stack-tier verdict
 verdict=VM_NOT_CLEAN
-if [ $forced = 0 ] && [ $rc = 0 ] && [ $guest_off = 1 ] &&
+if [ $forced = 0 ] && [ $rc = 0 ] && [ $guest_off = 1 ] && stack_tier_met &&
     [ "$(cat "$work/results/kyua-results/kyua-test.status" 2>/dev/null)" = 0 ] &&
     tr -d '\r' < "$log" | grep -aqx 'KYUA_VM_DONE' &&
+    ! tr -d '\r' < "$log" | grep -aq '^STACK_TIER_FAIL' &&
     [ "$(tr -d '\r' < "$log" | grep -acx 'TEST_KERNEL_PROOF_PASS')" = 1 ] &&
     ! tr -d '\r' < "$log" | grep -aq '^TEST_KERNEL_PROOF_FAIL' &&
     { [ "$plane_off" = 1 ] && tr -d '\r' < "$log" | grep -aqx 'PLANEOFF_READY' ||
@@ -825,22 +944,34 @@ if [ $forced = 0 ] && [ $rc = 0 ] && [ $guest_off = 1 ] &&
         tr -d '\r' < "$log" | grep -aqx 'BSDTIME_LIFECYCLE_PASS'; }; } &&
     { [ -z "$extra_script" ] ||
       [ "$(cat "$work/results/kyua-results/extra.exit" 2>/dev/null)" = 0 ]; } &&
+    { [ "$reroot" = 0 ] || { tr -d '\r' < "$log" | grep -aq '^REROOT_AFTER: pid1=capsule ' &&
+      ! tr -d '\r' < "$log" | grep -aq '^REROOT_FAIL'; }; } &&
     grep -aq 'Powering system off' "$log" && ! grep -aqE "$fatal" "$log"; then
 	verdict=VM_CLEAN
 fi
 echo "qemu_exit=$rc forced=$forced guest_poweroff=$guest_off"
-tr -d '\r' < "$log" | grep -aE '^(TIER_INFO: (KERNEL_TIER|TEST_KERNEL)=|TEST_KERNEL_PROOF|PLANEON_GATE|PLANEOFF|KYUA_SUMMARY|PLANEON_PID1|PLANEON_ISOLATION|BSDTIME)' || true
+tr -d '\r' < "$log" | grep -aE '^(TIER_INFO: (KERNEL_TIER|TEST_KERNEL|stack-tier)=|STACK_TIER|REROOT_|TEST_KERNEL_PROOF|PLANEON_GATE|PLANEOFF|KYUA_SUMMARY|PLANEON_PID1|PLANEON_ISOLATION|BSDTIME)' || true
 nskip=$(tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c ' -> ' || true)
 echo "skipped=$nskip (a skip in a plane-on suite is not a pass; see KYUA_SKIPPED_LIST in $log)"
 # Cases that named the tier they belong to: the run is not complete without
 # a run of the same stage and suites in that tier.
-for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER; do
+for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER \
+    DEFERRED_STACK_TIER DEFERRED_PID1_ONLY DEFERRED_SOURCE_TIER \
+    "configuration property 'authority_anchor'"; do
 	ndefer=$(tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c "$token" || true)
 	[ "$ndefer" -eq 0 ] || case $token in
 	DEFERRED_ENFORCED_TIER)
 		echo "DEFERRED_TO_ENFORCED_TIER=$ndefer (run PLANE_OFF=1 with the same stage and suites; not a pass)";;
 	DEFERRED_PLANEOFF_TIER)
-		echo "DEFERRED_TO_PLANEOFF_TIER=$ndefer (test-local stacks: need PLANE_OFF=1 and a kernel that lets a test-local Capsule issue authority, which the tree does not provide yet; not a pass)";;
+		echo "DEFERRED_TO_PLANEOFF_TIER=$ndefer (test-local stacks: run PLANE_OFF=1, and their unit cases on the stack tier; not a pass)";;
+	DEFERRED_STACK_TIER)
+		echo "DEFERRED_TO_STACK_TIER=$ndefer (run on GENERIC-TEST with KERNEL_TIER=test PLANE_OFF=1 and kern.mac_capability.test_issuer=1; not a pass)";;
+	DEFERRED_PID1_ONLY)
+		echo "DEFERRED_PID1_ONLY=$ndefer (they need the PID 1 Capsule; no tier runs them; not a pass)";;
+	DEFERRED_SOURCE_TIER)
+		echo "DEFERRED_TO_SOURCE_TIER=$ndefer (they read /usr/src: run with SRC_IMAGE; not a pass)";;
+	"configuration property 'authority_anchor'")
+		echo "DEFERRED_TO_ANCHOR_RUN=$ndefer (they anchor the boot: run alone with KYUA_VARS=test_suites.FreeBSD.authority_anchor=1; not a pass)";;
 	*)
 		echo "DEFERRED_TO_DEVICE_TIER=$ndefer (run without ISOLATION_ENFORCE=1 with the same stage and suites; not a pass)";;
 	esac

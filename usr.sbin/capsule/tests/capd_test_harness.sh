@@ -37,26 +37,75 @@ capd_paths_init()
 # Only PID 1 may create the protected authority issuer (CAP_AUTH_ISSUER_CREATE),
 # so a test-local Capsule normally cannot issue unit authority and its
 # switchboard fails every unit launch.  A kernel built with
-# options MAC_CAPABILITY_TEST_RELAX and booted with kern.mac_capability.test_relax=1
-# lets a test-local Capsule create one, loudly logged as TEST MODE; that is the
-# tier these stack cases run in (docs/book/src/develop/testing.md).  On any
-# other kernel, cases that require launched units must explicitly check this
-# prerequisite before starting their stack. Cases that need no launched unit
-# still run. A daemon log message must never turn an assertion into a skip.
+# options MAC_CAPABILITY_TEST_PERMISSIVE (GENERIC-TEST) and booted with
+# kern.mac_capability.test_issuer=1 lets a test-local Capsule create a test
+# issuer until PID 1 anchors the boot, loudly logged as TEST MODE; that is the
+# stack tier these cases run in, plane off (docs/book/src/develop/testing.md;
+# mac_capability(4)).  On any other kernel, cases that require launched units
+# check this prerequisite before starting their stack and skip with
+# DEFERRED_STACK_TIER, which the runner counts as not a pass; on the stack
+# tier (atf config stack_tier=1) the same check fails instead.  Cases that
+# need no launched unit still run.  A daemon log message must never turn an
+# assertion into a skip.
 # ----------------------------------------------------------------------------
 
-CAPD_ISSUER_SKIP="requires an authority issuer: a test-local Capsule off PID 1 needs a MAC_CAPABILITY_TEST_RELAX kernel booted with kern.mac_capability.test_relax=1"
+CAPD_ISSUER_SKIP="DEFERRED_STACK_TIER: requires a unit issuer: a test-local Capsule off PID 1 needs a GENERIC-TEST kernel booted plane-off with kern.mac_capability.test_issuer=1"
 
+# True when a test-local Capsule gets a test issuer: the switch is on and
+# PID 1 has not anchored the boot.
 capd_test_relax()
 {
-	[ "$(sysctl -n kern.mac_capability.test_relax 2>/dev/null)" = 1 ]
+	[ "$(sysctl -n kern.mac_capability.test_issuer 2>/dev/null)" = 1 ] &&
+	    [ "$(sysctl -n kern.mac_capability.test_issuer_state 2>/dev/null)" != anchored ]
 }
 
 # Call only from cases that require successful unit authority issuance.
 # Check the environment before launching processes, never after an assertion.
 capd_require_unit_issuer()
 {
-	capd_test_relax || atf_skip "$CAPD_ISSUER_SKIP"
+	capd_test_relax && return 0
+	if [ "$(atf_config_get stack_tier 0)" = 1 ]; then
+		atf_fail "the stack tier has no unit issuer:" \
+		    "kern.mac_capability.test_issuer=$(sysctl -n kern.mac_capability.test_issuer 2>&1)" \
+		    "state=$(sysctl -n kern.mac_capability.test_issuer_state 2>&1)"
+	fi
+	atf_skip "$CAPD_ISSUER_SKIP"
+}
+
+# After a stack start on a kernel that gives test issuers: the test-local Capsule
+# must have created one, which the kernel logs with its pid.  Print the
+# issuer's identity; fail at once without one, never running on into
+# secondary "service did not start" failures.
+capd_expect_test_issuer()
+{
+	local i pid line
+
+	capd_test_relax || return 0
+	pid=$("$capd_guardian_bin" ctl -s "$CAPD_GUARDIAN_SOCKET" status 2>/dev/null |
+	    sed -n 's/^running pid=//p')
+	[ -n "$pid" ] || atf_fail "cannot read the test-local Capsule's pid"
+	i=0
+	while [ "$i" -lt 100 ]; do
+		line=$(dmesg -a 2>/dev/null | grep -a "mac_capability: TEST MODE: pid $pid ([^)]*) created authority issuer " | tail -n 1)
+		[ -z "$line" ] || break
+		i=$((i + 1))
+		sleep 0.1
+	done
+	if [ -z "$line" ]; then
+		capd_dump_diagnostics
+		atf_fail "test-local Capsule did not create a relaxed issuer (pid $pid)"
+	fi
+	# A reused pid could match an older stack's line: the count must have
+	# grown since this Capsule was launched.
+	[ "$(sysctl -n kern.mac_capability.test_issuers)" -gt "${CAPD_TEST_ISSUERS_BEFORE:-0}" ] ||
+	    atf_fail "no test issuer was created since the test-local Capsule (pid $pid) was launched"
+	echo "test issuer: $(echo "$line" | sed -n 's/.* created authority issuer \([0-9]*\) off PID 1.*/\1/p') (Capsule pid $pid)"
+}
+
+# The test issuers still alive; empty on a kernel without them.
+capd_test_issuers_live()
+{
+	sysctl -n kern.mac_capability.test_issuers_live 2>/dev/null
 }
 
 capd_require_stack_kmods()
@@ -302,6 +351,8 @@ capd_launch_capsule()
 	# descriptor in the guardian process; only the test shell owns the writer.
 	exec 9<>"$CAPD_LEASE"
 	capd_find_capsule
+	# The test issuers created before this Capsule: its own must be a new one.
+	CAPD_TEST_ISSUERS_BEFORE=$(sysctl -n kern.mac_capability.test_issuers 2>/dev/null || echo 0)
 	"$capd_guardian_bin" run -l "$CAPD_LEASE" \
 	    -s "$CAPD_GUARDIAN_SOCKET" -- \
 	    "$capd_capsule_bin" -d -f "$CAPD_CONFIG" >"$CAPD_LOG" 2>&1 9>&- &
@@ -354,6 +405,7 @@ capd_start_stack()
 		capd_dump_diagnostics
 		atf_fail "switchboard did not become ready"
 	fi
+	capd_expect_test_issuer
 }
 
 capd_wait_guardian_exit()
@@ -452,6 +504,19 @@ capd_cleanup_stack()
 	done
 	if capd_guardian_is_running; then
 		capd_dump_diagnostics
+		return 1
+	fi
+	# The stack is gone, so is its test issuer (freed asynchronously).
+	i=0
+	while [ -n "$(capd_test_issuers_live)" ] &&
+	    [ "$(capd_test_issuers_live)" -ne 0 ] && [ "$i" -lt 50 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	if [ -n "$(capd_test_issuers_live)" ] && [ "$(capd_test_issuers_live)" -ne 0 ]; then
+		echo "test issuers still alive after the stack stopped:" \
+		    "$(capd_test_issuers_live)" >&2
+		dmesg -a | grep -a 'mac_capability: TEST MODE' | tail -n 5 >&2
 		return 1
 	fi
 	rm -rf "$CAPD_PIDFILE" "$CAPD_CONFIG" "$CAPD_CAPSULE_SOCKET" \

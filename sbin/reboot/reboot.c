@@ -300,6 +300,19 @@ reboot_request(int howto)
 		exit(0);
 	}
 
+	/*
+	 * A reroot has no kernel escape: reboot(2) refuses RB_REROOT to
+	 * anything but init itself.  Stock init(8), as on a plane-free boot,
+	 * reroots on SIGEMT, as in FreeBSD; protected Capsule rejects the
+	 * signal, and was asked above.
+	 */
+	if ((howto & RB_REROOT) != 0) {
+		BOOTTRACE("capsulectl unavailable; SIGEMT to init(8)...");
+		if (kill(1, SIGEMT) == -1)
+			err(1, "SIGEMT init");
+		exit(0);
+	}
+
 	BOOTTRACE("capsulectl unavailable; terminating processes before reboot(2)");
 }
 
