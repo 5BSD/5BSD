@@ -20,6 +20,11 @@ import unittest
 from unittest.mock import patch
 
 sys.dont_write_bytecode = True
+
+# A bound on a helper run that hangs, not on a slow one: under host
+# contention an emulated guest runs every exec up to 20 times slower.
+HELPER_TIMEOUT = 120
+
 helper = os.environ.get('BSD_BUILD_DEPLOY_HELPER', str(Path(__file__).resolve().parents[3] / 'tools/build/capimage/deploy.py'))
 spec = importlib.util.spec_from_file_location('deploy', helper)
 deploy = importlib.util.module_from_spec(spec)
@@ -435,7 +440,7 @@ class Deployment(unittest.TestCase):
         baseline = subprocess.run([str(pkg), '-C', '/dev/null',
                                    'config', 'PKG_ENABLE_PLUGINS'],
             env=dict(os.environ, PKG_ENABLE_PLUGINS='yes'),
-            capture_output=True, text=True, timeout=30, check=True)
+            capture_output=True, text=True, timeout=HELPER_TIMEOUT, check=True)
         self.assertEqual(baseline.stdout.strip(), 'yes',
                          'probe requires plugin-capable dynamic pkg')
         self.invoke('--bootenv', 'review')
@@ -450,7 +455,7 @@ class Deployment(unittest.TestCase):
             result = subprocess.run([str(pkg), '-C', '/dev/null', '-o', options[0],
                                      'config', 'PKG_ENABLE_PLUGINS'],
                 env=dict(os.environ, PKG_ENABLE_PLUGINS='yes'),
-                capture_output=True, text=True, timeout=30, check=True)
+                capture_output=True, text=True, timeout=HELPER_TIMEOUT, check=True)
             self.assertEqual(result.stdout.strip(), 'no')
 
     def test_payload_inventory_precedes_be_creation(self):
