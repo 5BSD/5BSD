@@ -56,6 +56,14 @@ witness_reversal(const char *a, const char *b)
 	return (found);
 }
 
+/*
+ * WITNESS reports a reversal between two lock classes once per boot and keeps
+ * it in debug.witness.badstacks.  A reversal already there when a case starts
+ * was taken by this kernel earlier in the boot (another case of this program,
+ * or any earlier quota unmount such as dq_resolve_test's): that is the defect
+ * this program pins, so the case fails rather than skips, which would let a
+ * kernel with the reversal pass whenever something else hit it first.
+ */
 static void
 require_quota_witness(void)
 {
@@ -69,8 +77,10 @@ require_quota_witness(void)
 	if (sysctlbyname("debug.witness.watch", &watch, &len, NULL, 0) != 0 ||
 	    watch < 1)
 		atf_tc_skip("WITNESS is not running");
-	if (witness_reversal("\"struct mount mtx\"", "\"FFS Lock\""))
-		atf_tc_skip("the reversal was recorded earlier in this boot");
+	ATF_REQUIRE_MSG(!witness_reversal("\"struct mount mtx\"",
+	    "\"FFS Lock\""), "WITNESS recorded a struct mount mtx / FFS Lock "
+	    "reversal before this case ran: the kernel took both orders "
+	    "earlier in this boot (see debug.witness.badstacks)");
 }
 
 /* A soft updates UFS on md(4), mounted with userquota; returns the path. */
