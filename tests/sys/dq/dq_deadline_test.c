@@ -756,6 +756,104 @@ ATF_TC_CLEANUP(name, tc)						\
 		(void)dqt_sysctl_restore(DEFAULT_DEADLINE);		\
 }
 
+/*
+ * A READ given up delivered by a signal caught with SA_RESTART: the wait
+ * ends with ERESTART, which withdraws the event as EINTR does (one
+ * INTERRUPT names it, one interrupt counted, its late reply is ESRCH), and
+ * the restarted pread(2) posts a new READ whose answer the caller gets.
+ */
+struct wr_res {
+	struct dqt_rr	 rr;
+	int		 signals;
+	int		 same;
+};
+
+static void
+wr_child_read(void *argp, void *result)
+{
+	struct wd_arg *a = argp;
+	struct wr_res *r = result;
+	struct sigaction sa;
+	unsigned char buf[100];
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = wd_on_signal;
+	sa.sa_flags = SA_RESTART;
+	(void)sigaction(SIGALRM, &sa, NULL);
+	DQT_RR(r->rr, pread(a->fd, buf, sizeof(buf), 0));
+	r->signals = wd_signals;
+	r->same = r->rr.rv == (ssize_t)sizeof(buf) &&
+	    memcmp(buf, data, sizeof(buf)) == 0;
+}
+
+ATF_TC(withdraw_read_delivered_restart);
+ATF_TC_HEAD(withdraw_read_delivered_restart, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a READ given up delivered by an "
+	    "SA_RESTART signal: one INTERRUPT, then the restarted READ is "
+	    "posted and answered");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(withdraw_read_delivered_restart, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct dq_policy pol;
+	struct dqt_child ch;
+	struct dq_stats st;
+	struct wd_arg a;
+	struct wr_res r;
+	uint64_t first, second;
+	int oracle;
+
+	dqt_fill(data, sizeof(data), 85);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	dq_policy_default(&pol);
+	pol.dp_deadline_ms = 0;
+	pol.dp_flags = DQ_PF_INTR;
+	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
+	dqt_hold(&c, true);
+
+	memset(&a, 0, sizeof(a));
+	a.fd = o->fd;
+	dqt_spawn(&ch, wr_child_read, &a);
+	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	ATF_REQUIRE(dqt_wait_wmesg(ch.pid, DQT_WMESG_REPLY, DQT_WAIT_MS));
+	ATF_REQUIRE_EQ(0, kill(ch.pid, SIGALRM));
+	/* The restarted READ is posted and held in its turn. */
+	ATF_REQUIRE(dqt_wait_held(&c, 2, DQT_WAIT_MS));
+	ATF_REQUIRE(dqt_wait_interrupts(&c, 1, DQT_WAIT_MS));
+	first = dqt_held_id(&c, 0);
+	second = dqt_held_id(&c, 1);
+	ATF_CHECK(first != second);
+	dqt_lock(&c);
+	ATF_CHECK_EQ(1, c.ninterrupted);
+	ATF_CHECK_EQ(first, c.interrupted[0]);
+	dqt_unlock(&c);
+	errno = 0;
+	ATF_CHECK_EQ(-1, dq_reply(c.q, first, 0, data, 100));
+	ATF_CHECK_EQ(ESRCH, errno);
+	ATF_REQUIRE_EQ(0, dq_reply(c.q, second, 0, data, 100));
+	memset(&r, 0, sizeof(r));
+	dqt_collect(&ch, &r, sizeof(r));
+	ATF_CHECK_EQ_MSG(100, r.rr.rv, "restarted pread: %s",
+	    strerror(r.rr.err));
+	ATF_CHECK(r.same);
+	ATF_CHECK_EQ(1, r.signals);
+	ATF_CHECK_EQ(2u, dqt_events(&c, DQ_OP_READ));
+	dqt_stats(&c, &st);
+	ATF_CHECK_EQ(1u, st.ds_interrupts);
+	ATF_CHECK_EQ(0u, st.ds_deadline_misses);
+	ATF_CHECK_EQ(0, st.ds_inflight);
+	ATF_CHECK_EQ(0, st.ds_queue_current);
+	dqt_hold(&c, false);
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
 WD_OBJECT_TC(withdraw_read_pending_deadline, WD_PENDING, WD_DEADLINE, 81)
 WD_OBJECT_TC(withdraw_read_pending_signal, WD_PENDING, WD_SIGNAL, 82)
 WD_OBJECT_TC(withdraw_read_delivered_deadline, WD_DELIVERED, WD_DEADLINE, 83)
@@ -779,6 +877,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, withdraw_read_pending_signal);
 	ATF_TP_ADD_TC(tp, withdraw_read_delivered_deadline);
 	ATF_TP_ADD_TC(tp, withdraw_read_delivered_signal);
+	ATF_TP_ADD_TC(tp, withdraw_read_delivered_restart);
 	ATF_TP_ADD_TC(tp, withdraw_resolve_pending_deadline);
 	ATF_TP_ADD_TC(tp, withdraw_resolve_pending_signal);
 	ATF_TP_ADD_TC(tp, withdraw_resolve_delivered_deadline);
