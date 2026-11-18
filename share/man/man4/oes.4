@@ -341,6 +341,15 @@ operation, its errno, the object id, the controller's identity nonce and the
 reply length; it never carries reply data.
 Any other descriptor type returns from these hooks at once and produces no
 event.
+.Pp
+NOTIFY events generated where the kernel may not sleep (process fork and
+exit, and the hooks that run with filesystem locks held) are handed to a
+deferred delivery thread.
+While 16384 such events wait for it, a new one is dropped for every client and
+counted in the
+.Va es_nosleep_drops
+field returned by
+.Dv OES_IOC_GET_STATS .
 .Ss DTrace
 The framework defines an
 .Nm
