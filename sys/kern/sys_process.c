@@ -1694,16 +1694,15 @@ ptrace_action_impl(struct thread *td, int req, bool pd_mode, pid_t pid, int pfd,
 			proc_wkilled(p);
 
 		/*
-		 * If the PT_CONTINUE-like operation is attempted on
-		 * the thread on sleepq, this is possible only after
-		 * the transparent PT_ATTACH.  In this case, if the
-		 * caller modified the thread state, e.g. by writing
-		 * register file or specifying the pc, make the thread
-		 * xstopped by waking it up.  A memory write (TDB_MEMWR)
-		 * does not change what the sleeping thread does next,
-		 * and leaves the sleep alone: a sleep that ended with
-		 * EINTR here would be seen by a program that caught no
-		 * signal.
+		 * A transparent PT_ATTACH stops a thread where it
+		 * sleeps, still on its sleep queue.  If the debugger
+		 * changed its registers or pc there, abort an
+		 * interruptible sleep with EINTR, so that the system
+		 * call returns and the change takes effect when the
+		 * thread resumes.  A memory write (TDB_MEMWR) does
+		 * not change what the sleeping thread does next and
+		 * leaves the sleep alone: the EINTR would be seen by a
+		 * program that caught no signal.
 		 */
 		if ((td2->td_dbgflags & TDB_USERWR) != 0 &&
 		    pt_attach_transparent) {
