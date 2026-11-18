@@ -31,7 +31,7 @@ field()
 # LINT configurations config(8) cannot read on this tree, by architecture
 # (none today: amd64 joined the sweep once its NOTES stopped naming the
 # retired floppy and AGP drivers,
-# /home/koryheard/5bsd-issues/2026-11-16-amd64-lint-does-not-configure.md).
+# recorded as "amd64 LINT does not configure on dev", 2026-11-16).
 # A listed architecture's LINT text is still checked.  An entry that starts
 # to configure fails, so the list cannot go stale; a LINT that stops
 # configuring fails config_sweep like any other configuration.
