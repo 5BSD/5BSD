@@ -1217,7 +1217,7 @@ assert len(rows) == 4 and [row['name'] for row in rows[1:]] == ['kernel-test-opt
 assert rows[2]['argv'] == ['sh', '/usr/src/release/scripts/check-mandatory-kernel.sh', '-a', rows[1]['argv'][3]]
 assert rows[1]['argv'][:3] == ['sh', '/usr/src/release/scripts/check-test-kernel.sh', '-a']
 assert rows[1]['argv'][3].endswith('/boot.tar') and len(rows[1]['argv']) == 4
-assert '--output' in rows[2]['argv']
+assert '--output' in rows[3]['argv']
 PYTHON
 }
 
@@ -1276,9 +1276,10 @@ PYTHON
     atf_check -s exit:0 -o empty -e empty python3.12 - <<'PYTHON'
 import json, os
 rows = [json.loads(line) for line in open('layout-image-plan.jsonl')]
-assert rows[2]['argv'][-2:] == ['--storage-layout-policy', os.path.realpath('layout.json')]
-assert '--boot-archive' in rows[2]['argv']
-assert rows[2]['argv'][rows[2]['argv'].index('--verity-policy')+1] == os.path.realpath('verity.json')
+image = next(r['argv'] for r in rows if r['name'] == 'image')
+assert image[-2:] == ['--storage-layout-policy', os.path.realpath('layout.json')]
+assert '--boot-archive' in image
+assert image[image.index('--verity-policy')+1] == os.path.realpath('verity.json')
 PYTHON
     atf_check -s not-exit:0 -o empty -e match:'usage: build-bsd' "$tool" plan image --storage-bindings "$PWD/storage-bindings.json"
     atf_check -s not-exit:0 -o empty -e match:'usage: build-bsd' "$tool" plan image --storage-layout-policy "$PWD/layout.json" --storage-bindings "$PWD/storage-bindings.json"
