@@ -31,8 +31,6 @@
 
 # A served directory: dq_fileops does not apply the vnode type rules of
 # vn_fadvise, vn_fcntl and vn_copy_file_range to DQ_KIND_DIR objects.
-^fadvise_test:directory[[:space:]]  # ux-1 D245: dq_fadvise returns 0 for a DIR object (dq_file.c), vn_fadvise ENODEV for non-VREG
-^fcntl_fileop_test:directory[[:space:]]  # ux-1 D245: dq_fcntl F_READAHEAD/F_RDAHEAD succeed on a DIR object (dq_file.c), vn_fcntl ENOTTY
 ^copy_file_range_test:directory[[:space:]]  # ux-1 D245: dq_fileops has no fo_copy_file_range, default EINVAL (vfs_syscalls.c), base EISDIR
 
 # copy_file_range(2) between served files: no fo_copy_file_range.

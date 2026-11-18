@@ -554,12 +554,24 @@ ATF_TC_BODY(full_deadline_eio, tc)
 	(void)close(oracle);
 }
 
+/* Whether a child's result is ready (it has finished) within ms. */
+static bool
+child_done_within(struct dqt_child *ch, int ms)
+{
+	struct pollfd pfd;
+
+	pfd.fd = ch->pipefd;
+	pfd.events = POLLIN;
+	pfd.revents = 0;
+	return (poll(&pfd, 1, ms) == 1);
+}
+
 ATF_TC(full_close_wakes);
 ATF_TC_HEAD(full_close_wakes, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "a post waiting for a slot of a full "
-	    "queue with no deadline ends EIO at once when the queue dies "
-	    "(D205)");
+	    "queue with no deadline ends EIO when the queue dies: the close "
+	    "wakes it (D205)");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(full_close_wakes, tc)
@@ -570,14 +582,19 @@ ATF_TC_BODY(full_close_wakes, tc)
 	struct one_read_arg a;
 	struct one_read_res r[2];
 	struct dqt_child ch[2];
-	int64_t start, ms;
 	int i, oracle;
 
 	dqt_fill(data, sizeof(data), 66);
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
 	    sizeof(oracle_path));
 	dqt_init(&c);
-	dq_policy_default(&pol);
+	/*
+	 * DQ_PF_INTR with no deadline: the slot wait catches signals and so
+	 * sleeps without 100 ms slices (a non-catching wait re-checks the
+	 * queue every slice, and would end even if the close woke nobody).
+	 * Only the close's wakeup can end it here.
+	 */
+	policy_intr(&pol);
 	pol.dp_deadline_ms = 0;
 	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
 	ATF_REQUIRE_EQ(0, dq_set_queue_depth(c.q, 1));
@@ -589,35 +606,18 @@ ATF_TC_BODY(full_close_wakes, tc)
 	ATF_REQUIRE(dqt_wait_stats(&c, posted_or_dropped_is, 1, DQT_WAIT_MS));
 	dqt_spawn(&ch[1], child_one_pread, &a);
 	ATF_REQUIRE(full_waits_reach(&c, 1, DQT_WAIT_MS));
-	start = dqt_now_ms();
+	ATF_REQUIRE(dqt_wait_wmesg(ch[1].pid, "dqfull", DQT_WAIT_MS));
 	dqt_fini(&c);		/* the queue's last descriptor */
+	ATF_CHECK_MSG(child_done_within(&ch[1], 30000), "the post waiting "
+	    "for a slot still sleeps 30 s after the queue died");
 	for (i = 0; i < 2; i++) {
+		if (i == 1 && !child_done_within(&ch[1], 0))
+			(void)kill(ch[1].pid, SIGKILL);
 		dqt_collect(&ch[i], &r[i], sizeof(r[i]));
 		ATF_CHECK_EQ_MSG(-1, r[i].rr.rv, "reader %d", i);
 		ATF_CHECK_EQ_MSG(EIO, r[i].rr.err, "reader %d", i);
 	}
-	/*
-	 * With no deadline, a reader the close did not wake would sleep
-	 * until the case times out.  The bound only says the end came from
-	 * the close: it is loose because a loaded 2-vCPU TCG guest has taken
-	 * 2.1 s for the close, the two exits and their reaping.
-	 */
-	ms = dqt_now_ms() - start;
-	ATF_CHECK_MSG(ms < 10000, "the readers ended %jd ms after the close",
-	    (intmax_t)ms);
 	(void)close(oracle);
-}
-
-/* Whether a child's result is ready (it has finished) within ms. */
-static bool
-child_done_within(struct dqt_child *ch, int ms)
-{
-	struct pollfd pfd;
-
-	pfd.fd = ch->pipefd;
-	pfd.events = POLLIN;
-	pfd.revents = 0;
-	return (poll(&pfd, 1, ms) == 1);
 }
 
 ATF_TC(full_revoke_wakes);
