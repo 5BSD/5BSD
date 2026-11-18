@@ -2406,6 +2406,8 @@ ATF_TC_BODY(peer_close_frees_endpoint_carrying_itself, tc)
 	child = fork();
 	ATF_REQUIRE(child >= 0);
 	if (child == 0) {
+		/* A close that never returns must not hold up the test's group. */
+		(void)setsid();
 		close(sv[1]);
 		close(go[1]);
 		(void)read(go[0], &c, 1);
