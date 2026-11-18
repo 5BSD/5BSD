@@ -596,6 +596,7 @@ int	dq_object_create(struct dq_queue *q, u_int kind,
 	    const struct dq_ident_file *ident, const struct dq_policy *pol,
 	    struct dq_object **op);
 void	dq_object_link_locked(struct dq_queue *q, struct dq_object *o);
+int	dq_object_link_minted_locked(struct dq_queue *q, struct dq_object *o);
 void	dq_object_destroy_unlinked(struct dq_object *o);
 void	dq_object_retire_unbound(struct dq_object *o, struct thread *td);
 
@@ -606,10 +607,25 @@ bool	dq_resolve_errno_allowed(uint32_t rop, int error);
 bool	dq_resolve_errno_allowed_ev(const struct dq_resolve_body *rb, int error);
 int	dq_resolve_reply_validate(const struct dq_event_k *ev, int rerrno,
 	    const void *buf, size_t len);
-int	dq_resolve_mint_prepare(struct dq_queue *q, uint64_t id,
-	    struct dq_data *dd, struct dq_object **robjp, uint64_t **objectpp);
-int	dq_resolve_swap_prepare(struct dq_queue *q, uint64_t id,
-	    struct dq_data *dd, struct thread *td, struct fdswap *sw);
+bool	dq_resolve_reply_errno_allowed(const struct dq_event_k *ev, int error);
+/*
+ * A RESOLVE reply's own work (M11): an FD answer's object, minted before
+ * the lock and linked under it, and where its id was written; a SWAP
+ * answer's file, taken before the lock and moved to the event under it.
+ * Empty for every other reply.
+ */
+struct dq_resolve_rctx {
+	struct dq_object *rc_robj;
+	uint64_t	*rc_objectp;
+	struct fdswap	 rc_swap;
+};
+int	dq_resolve_reply_pre(struct dq_queue *q, const struct dq_reply *r,
+	    struct dq_data *dd, size_t len, bool postop, struct thread *td,
+	    struct dq_resolve_rctx *rc);
+int	dq_resolve_reply_commit_locked(struct dq_queue *q,
+	    struct dq_event_k *ev, int rerrno, const struct dq_data *dd,
+	    struct dq_resolve_rctx *rc);
+int	dq_resolve_reply_abort(struct dq_resolve_rctx *rc, struct thread *td);
 int	dq_queue_attach(struct dq_queue *q, const struct dq_attach_args *args,
 	    struct thread *td);
 

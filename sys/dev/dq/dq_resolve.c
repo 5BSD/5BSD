@@ -16,6 +16,8 @@
  * which they can return, where a lookup gets EIO.
  */
 
+#include "opt_dq.h"
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/capsicum.h>
@@ -626,6 +628,14 @@ dq_resolve_ev_body(const struct dq_event_k *ev)
 	    sizeof(struct dq_event)));
 }
 
+/* dq_resolve_errno_allowed_ev for a RESOLVE event, for dq_queue_reply. */
+bool
+dq_resolve_reply_errno_allowed(const struct dq_event_k *ev, int error)
+{
+
+	return (dq_resolve_errno_allowed_ev(dq_resolve_ev_body(ev), error));
+}
+
 /*
  * A symlink target or a REAL path in a reply: drt_len bytes (1 ..
  * DQ_PATH_MAX - 1, or 0 for a symlink target when emptyok) with no NUL,
@@ -761,7 +771,7 @@ dq_resolve_mint_reason(const struct dq_resolve_mint *rm, int reason,
  * *robjp is the unlinked object; dq_queue_reply links it or destroys it.
  * The two pointers are cleared in dd, which observers copy.
  */
-int
+static int
 dq_resolve_mint_prepare(struct dq_queue *q, uint64_t id, struct dq_data *dd,
     struct dq_object **robjp, uint64_t **objectpp)
 {
@@ -906,7 +916,7 @@ dq_resolve_swap_admit(struct file *fp, const cap_rights_t *rights, void *arg)
  * or releases it.  drw_fd is cleared in dd, which observers copy: a
  * descriptor number of the controller means nothing to them.
  */
-int
+static int
 dq_resolve_swap_prepare(struct dq_queue *q, uint64_t id, struct dq_data *dd,
     struct thread *td, struct fdswap *sw)
 {
@@ -972,6 +982,116 @@ dq_resolve_swap_prepare(struct dq_queue *q, uint64_t id, struct dq_data *dd,
 	return (0);
 refused:
 	SDT_PROBE3(dq, , , swap__refused, q, id, error);
+	return (error);
+}
+
+/*
+ * A RESOLVE reply's own work around dq_queue_reply (M11), in three steps:
+ * before the queue lock, under it once the reply is valid, and the undoing
+ * when the reply is refused or its event has gone.
+ *
+ * Before the lock: an FD answer's mint (dq_resolve_mint_prepare) and a
+ * SWAP answer's take of the file (dq_resolve_swap_prepare: the table lock
+ * orders before q_mtx).  Nothing for any other reply, an errno, or a reply
+ * with a post-operation block, which a RESOLVE never has: that one is
+ * refused under the lock before anything is minted or taken.  A refusal
+ * here leaves the event in flight and *rc empty.
+ */
+int
+dq_resolve_reply_pre(struct dq_queue *q, const struct dq_reply *r,
+    struct dq_data *dd, size_t len, bool postop, struct thread *td,
+    struct dq_resolve_rctx *rc)
+{
+	int error;
+
+	bzero(rc, sizeof(*rc));
+	if (r->dr_errno != 0 || postop || len < sizeof(struct dq_resolve_reply))
+		return (0);
+	switch (((const struct dq_resolve_reply *)dd->dd_bytes)->drr_kind) {
+	case DQ_RESOLVE_FD:
+		return (dq_resolve_mint_prepare(q, r->dr_id, dd, &rc->rc_robj,
+		    &rc->rc_objectp));
+	case DQ_RESOLVE_SWAP:
+		error = dq_resolve_swap_prepare(q, r->dr_id, dd, td,
+		    &rc->rc_swap);
+#ifdef DQ_FAULT_INJECTION
+		if (error == 0 && rc->rc_swap.fs_fp != NULL)
+			dq_faultinj_swap_take_pause();
+#endif
+		return (error);
+	default:
+		return (0);
+	}
+}
+
+/*
+ * Under q_mtx, after dq_reply_validate accepted the reply to ev: link an
+ * FD answer's object to the queue and the event, and move a SWAP answer's
+ * file to the event.  An FD or SWAP answer of an event the peek before the
+ * lock did not see (the prepare raced) is EINVAL; so is the link failing
+ * (ENXIO, ENOSPC).  Nothing fails after a file has moved.
+ */
+int
+dq_resolve_reply_commit_locked(struct dq_queue *q, struct dq_event_k *ev,
+    int rerrno, const struct dq_data *dd, struct dq_resolve_rctx *rc)
+{
+	int error;
+
+	DQ_LOCK_ASSERT(q);
+	if (ev->ev_hdr.de_op != DQ_OP_RESOLVE || rerrno != 0) {
+		KASSERT(rc->rc_robj == NULL && rc->rc_swap.fs_fp == NULL,
+		    ("dq: RESOLVE answer for op %u errno %d",
+		    ev->ev_hdr.de_op, rerrno));
+		return (0);
+	}
+	switch (((const struct dq_resolve_reply *)dd->dd_bytes)->drr_kind) {
+	case DQ_RESOLVE_FD:
+		if (rc->rc_robj == NULL)
+			return (EINVAL);
+		/* The link step (as dq_queue_mint links). */
+		error = dq_object_link_minted_locked(q, rc->rc_robj);
+		if (error != 0)
+			return (error);
+		ev->ev_robj = rc->rc_robj;	/* the creation reference */
+		rc->rc_robj = NULL;
+		SDT_PROBE2(dq, , , mint, q, ev->ev_robj);
+		return (0);
+	case DQ_RESOLVE_SWAP:
+		if (rc->rc_swap.fs_fp == NULL)
+			return (EINVAL);
+		ev->ev_rswap = rc->rc_swap;	/* the event owns the file */
+		bzero(&rc->rc_swap, sizeof(rc->rc_swap));
+		return (0);
+	default:
+		return (0);
+	}
+}
+
+/*
+ * Undo what dq_resolve_reply_pre did, with no dq lock held: an FD answer's
+ * object is destroyed unlinked, its id never used (D171), and *drm_objectp
+ * gets a best-effort zero (undefined on error, dq(4)); a taken file is
+ * released.  Returns ESRCH when no file had been taken and ECANCELED when a
+ * SWAP answer's take ran.  For a reply whose event has gone (the requester
+ * was interrupted or reached its deadline), that is the supervisor's
+ * answer: its descriptor was closed by the take, and ECANCELED tells it
+ * so, while ESRCH keeps meaning "nothing was taken".
+ */
+int
+dq_resolve_reply_abort(struct dq_resolve_rctx *rc, struct thread *td)
+{
+	uint64_t zero;
+	int error;
+
+	if (rc->rc_robj != NULL) {
+		dq_object_destroy_unlinked(rc->rc_robj);
+		rc->rc_robj = NULL;
+		zero = 0;
+		if (rc->rc_objectp != NULL)
+			(void)copyout(&zero, rc->rc_objectp, sizeof(zero));
+	}
+	error = rc->rc_swap.fs_fp != NULL ? ECANCELED : ESRCH;
+	fdswap_release(&rc->rc_swap, td);
 	return (error);
 }
 
