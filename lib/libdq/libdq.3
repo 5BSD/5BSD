@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 15, 2026
+.Dd November 18, 2026
 .Dt LIBDQ 3
 .Os
 .Sh NAME
@@ -55,6 +55,9 @@
 .Nm dq_event_readdir ,
 .Nm dq_dirent_add ,
 .Nm dq_reply_readdir ,
+.Nm dq_standing_add ,
+.Nm dq_standing_del ,
+.Nm dq_standing_flush ,
 .Nm dq_tree_root ,
 .Nm dq_tree_create ,
 .Nm dq_tree_destroy ,
@@ -241,6 +244,15 @@ DescriptorQueue controller library
 .Fa "int q" "uint64_t id" "uint64_t next" "int eof" "const void *records"
 .Fa "size_t len"
 .Fc
+.Ft int
+.Fo dq_standing_add
+.Fa "int q" "int rootfd" "const char *path" "uint32_t flags" "uint32_t ops"
+.Fa "uint32_t action" "int error" "uint64_t *idp"
+.Fc
+.Ft int
+.Fn dq_standing_del "int q" "uint64_t id"
+.Ft int
+.Fn dq_standing_flush "int q"
 .Ft int
 .Fn dq_tree_root "struct dq_tree *t" "int *fdp" "uint64_t *objectp"
 .Ft "struct dq_tree *"
@@ -1530,6 +1542,84 @@ is 0 (or, from a non-local file system, while
 is 0), are
 .Er ENOTCAPABLE
 .Pq Dv RINROOT No clamps at the start instead .
+.Ss Standing rules
+A standing rule is an answer the queue gives without posting
+.Dv DQ_OP_RESOLVE ,
+for lookups the controller always answers the same way
+.Pq Xr dq 4 .
+.Fn dq_standing_add
+installs one: for the root
+.Fa rootfd
+(a directory descriptor with
+.Dv CAP_LOOKUP ,
+or \-1 for the calling process's own root; a lookup matches only when its
+process root is that directory), the normalized absolute
+.Fa path
+under it, exactly or, with
+.Dv DQ_STANDING_F_SUBTREE
+in
+.Fa flags ,
+with every name beneath it, the operations
+.Fa ops
+.Pq Dv DQ_STANDING_OP Ns Pq Dv DQ_ROP_* ,
+and the
+.Fa action :
+.Dv DQ_STANDING_PASS ,
+.Dv DQ_STANDING_ERRNO
+with
+.Fa error ,
+or
+.Dv DQ_STANDING_ASK ,
+which posts the event: an exception to a shorter rule.
+An open is covered only when it is read-class
+.Po
+.Dv O_RDONLY
+without
+.Dv O_CREAT
+or
+.Dv O_TRUNC
+.Pc ,
+unless
+.Dv DQ_STANDING_F_OPEN_WRITE
+is set.
+.Dv DQ_STANDING_OPS_ALL
+names every operation a rule may cover and
+.Dv DQ_STANDING_OPS_READ
+the ones that only read
+.Po
+.Dv DQ_ROP_XATTR
+and
+.Dv DQ_ROP_ACL
+are not among them: each covers both get and set
+.Pc .
+.Fa error
+is 0 unless the action is
+.Dv DQ_STANDING_ERRNO ;
+then it is an errno of the RESOLVE allow-list other than
+.Er EAGAIN ,
+.Er EINTR
+and
+.Er ENOTCAPABLE .
+.Fa *idp ,
+when
+.Fa idp
+is not
+.Dv NULL ,
+receives the rule's id.
+Among the rules that fit an event the one with the longest path decides.
+.Fn dq_standing_del
+removes the rule
+.Fa id
+.Pq Er ESRCH No for an unknown one ,
+.Fn dq_standing_flush
+every rule of the queue.
+A covered lookup posts no event, leaves no observer record, and counts in
+.Va ds2_standing_pass
+or
+.Va ds2_standing_deny
+of
+.Fn dq_get_stats2 .
+Rules are meant to change rarely.
 .Ss Serving a backing file
 .Fn dq_serve_file
 answers one event from a real file open on
