@@ -25,9 +25,11 @@
 #include <fcntl.h>
 #include <jail.h>
 #include <pthread.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <libdq.h>
@@ -350,6 +352,19 @@ ATF_TC_BODY(validation, tc)
 		rule_init(&r, unnormalized[i], OP(STAT));
 		ADD_REFUSED(q, &r, EINVAL);
 	}
+	/*
+	 * EXEC_INTERP only in an exact rule (review M1): the interpreter
+	 * lookup is not consulted again at symbolic links.  Neither mask
+	 * names it.
+	 */
+	rule_init(&r, "/a", OP(STAT) | OP(EXEC_INTERP));
+	ADD_REFUSED(q, &r, EINVAL);
+	rule_init(&r, "/a", OP(EXEC_INTERP));
+	r.dqs_rootfd = 1000;
+	ADD_REFUSED(q, &r, EINVAL);
+	ATF_CHECK((DQ_STANDING_OPS_ALL & OP(EXEC_INTERP)) == 0);
+	ATF_CHECK((DQ_STANDING_OPS_READ & OP(EXEC_INTERP)) == 0);
+	ATF_CHECK((DQ_STANDING_OPS_READ & ~DQ_STANDING_OPS_ALL) == 0);
 	/* Not NUL-terminated at dqs_pathlen; an inner NUL; too long. */
 	rule_init(&r, "/abc", OP(STAT));
 	r.dqs_pathlen = 2;
@@ -365,6 +380,8 @@ ATF_TC_BODY(validation, tc)
 	path[DQ_PATH_MAX] = '\0';
 	DQT_CHECK_REFUSED(dq_standing_add(q, -1, path, 0, OP(STAT),
 	    DQ_STANDING_PASS, 0, NULL), ENAMETOOLONG);
+	DQT_CHECK_REFUSED(dq_standing_add(q, -1, NULL, 0, OP(STAT),
+	    DQ_STANDING_PASS, 0, NULL), EINVAL);
 	/* The errno: only with ERRNO, from the allow-list, not EAGAIN... */
 	for (i = 0; i < nitems(badnos); i++) {
 		rule_init(&r, "/a", OP(STAT));
@@ -422,6 +439,12 @@ ATF_TC_BODY(validation, tc)
 	}
 	id = rule_ok(q, -1, "/ops", DQ_STANDING_F_OPEN_WRITE,
 	    DQ_STANDING_OPS_ALL, DQ_STANDING_ERRNO, ENOENT);
+	ATF_CHECK_EQ(0, dq_standing_del(q, id));
+	id = rule_ok(q, -1, "/ops", DQ_STANDING_F_SUBTREE |
+	    DQ_STANDING_F_OPEN_WRITE, DQ_STANDING_OPS_ALL, DQ_STANDING_PASS, 0);
+	ATF_CHECK_EQ(0, dq_standing_del(q, id));
+	id = rule_ok(q, -1, "/ops", 0, DQ_STANDING_OPS_ALL | OP(EXEC_INTERP),
+	    DQ_STANDING_PASS, 0);
 	ATF_CHECK_EQ(0, dq_standing_del(q, id));
 
 	/* EEXIST: same root and path, overlapping operations. */
@@ -1345,6 +1368,77 @@ ATF_TC_BODY(exec_interp_exact, tc)
 }
 
 /*
+ * Review M1: the interpreter lookup (class 3) is not consulted again at
+ * symbolic links (dqres_namei_symlink), so a subtree rule naming
+ * EXEC_INTERP would pass a link out of its tree.  A #! script in a tree
+ * whose interpreter is a link out of it: under a subtree rule of every
+ * operation a subtree may name the script's exec posts nothing, its
+ * interpreter lookup still posts and its answer decides the exec; a
+ * subtree rule naming EXEC_INTERP is EINVAL and changes nothing.
+ */
+#define	INTERP_ENOENT	66
+
+static void
+c_exec_script(void *arg, void *out)
+{
+	const char *path = arg;
+	struct jres *r = out;
+	pid_t pid;
+	int status;
+
+	pid = fork();
+	if (pid == 0) {
+		execl(path, path, (char *)NULL);
+		_exit(errno == ENOENT ? INTERP_ENOENT : 127);
+	}
+	r->r[0].rv = pid < 0 || waitpid(pid, &status, 0) != pid ||
+	    !WIFEXITED(status) ? -1 : WEXITSTATUS(status);
+}
+
+DQ_TC(exec_interp_subtree_link);
+ATF_TC_BODY(exec_interp_subtree_link, tc)
+{
+	struct dqt_ctl c;
+	struct jres r;
+	char script[PATH_MAX], interp[PATH_MAX];
+	int fd;
+
+	wd_init();
+	mkdirs(at("il"));
+	strlcpy(interp, at("il/l"), sizeof(interp));
+	strlcpy(script, at("il/s"), sizeof(script));
+	ATF_REQUIRE_EQ(0, symlink("/bin/sh", interp));
+	fd = open(script, O_CREAT | O_WRONLY | O_TRUNC, 0755);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(dprintf(fd, "#!%s\nexit 0\n", interp) > 0);
+	(void)close(fd);
+	dqt_init(&c);
+	(void)rule_ok(c.q, -1, at("il"), DQ_STANDING_F_SUBTREE |
+	    DQ_STANDING_F_OPEN_WRITE, DQ_STANDING_OPS_ALL, DQ_STANDING_PASS, 0);
+	memset(&r, 0, sizeof(r));
+	dqt_attach_run(&c, c_exec_script, script, &r, sizeof(r));
+	ATF_CHECK_EQ(0, r.r[0].rv);
+	ATF_CHECK_EQ(0, nposted(&c, DQ_ROP_EXEC, script));
+	ATF_CHECK_EQ(1, nposted(&c, DQ_ROP_EXEC_INTERP, interp));
+	/* The controller's answer to the interpreter decides the exec. */
+	dqt_resolve_fail(&c, "il/l", ENOENT);
+	memset(&r, 0, sizeof(r));
+	dqt_attach_run(&c, c_exec_script, script, &r, sizeof(r));
+	ATF_CHECK_EQ(INTERP_ENOENT, r.r[0].rv);
+	ATF_CHECK_EQ(2, nposted(&c, DQ_ROP_EXEC_INTERP, interp));
+	/* A subtree rule naming EXEC_INTERP is refused, not installed. */
+	ATF_REQUIRE_EQ(0, dq_standing_flush(c.q));
+	DQT_CHECK_REFUSED(dq_standing_add(c.q, -1, at("il"),
+	    DQ_STANDING_F_SUBTREE, OP(EXEC) | OP(EXEC_INTERP),
+	    DQ_STANDING_PASS, 0, NULL), EINVAL);
+	memset(&r, 0, sizeof(r));
+	dqt_attach_run(&c, c_exec_script, script, &r, sizeof(r));
+	ATF_CHECK_EQ(INTERP_ENOENT, r.r[0].rv);
+	ATF_CHECK_EQ(3, nposted(&c, DQ_ROP_EXEC_INTERP, interp));
+	dqt_fini(&c);
+}
+
+/*
  * Rules apply to the attached process's descendants, across fork and
  * exec: test(1) in a grandchild stats a covered name with no event.
  */
@@ -1467,9 +1561,10 @@ ATF_TC_BODY(del_then_posts, tc)
 }
 
 /*
- * Eight threads stat a name while the controller adds and deletes the rule
- * covering it 10000 times: no panic or lock-order report, every lookup
- * either covered or posted, never both or neither.
+ * Eight threads stat a name while the controller adds the rule covering it
+ * and removes it again 10000 times, by DEL or by FLUSH: no panic or
+ * lock-order report, every lookup either covered or posted, never both or
+ * neither, and none fails.
  */
 #define	STRESS_THREADS	8
 #define	STRESS_LOOKUPS	1500
@@ -1509,13 +1604,8 @@ c_stress(void *arg, void *out)
 	r->r[0].rv = s->fails;
 }
 
-ATF_TC(stress_change_while_lookups);
-ATF_TC_HEAD(stress_change_while_lookups, tc)
-{
-	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "timeout", "900");
-}
-ATF_TC_BODY(stress_change_while_lookups, tc)
+static void
+stress_changes(bool flush)
 {
 	struct dqt_ctl c;
 	struct dqt_achild ch;
@@ -1533,7 +1623,10 @@ ATF_TC_BODY(stress_change_while_lookups, tc)
 	dqt_attach_spawn(&c, &ch, c_stress, &s);
 	for (i = 0; i < STRESS_CHANGES; i++) {
 		id = rule_ok(c.q, -1, s.path, 0, OP(STAT), DQ_STANDING_PASS, 0);
-		ATF_REQUIRE_EQ(0, dq_standing_del(c.q, id));
+		if (flush)
+			ATF_REQUIRE_EQ(0, dq_standing_flush(c.q));
+		else
+			ATF_REQUIRE_EQ(0, dq_standing_del(c.q, id));
 	}
 	/* Some lookups also run while the rule stays. */
 	(void)rule_ok(c.q, -1, s.path, 0, OP(STAT), DQ_STANDING_PASS, 0);
@@ -1548,6 +1641,141 @@ ATF_TC_BODY(stress_change_while_lookups, tc)
 	ATF_CHECK_EQ(0, st.ds2_resolve_failclosed);
 	printf("standing pass %ju, posted %ju\n",
 	    (uintmax_t)st.ds2_standing_pass, (uintmax_t)st.ds2_resolves);
+	dqt_fini(&c);
+}
+
+ATF_TC(stress_change_while_lookups);
+ATF_TC_HEAD(stress_change_while_lookups, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "900");
+}
+ATF_TC_BODY(stress_change_while_lookups, tc)
+{
+
+	stress_changes(false);
+}
+
+ATF_TC(stress_flush_while_lookups);
+ATF_TC_HEAD(stress_flush_while_lookups, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "900");
+}
+ATF_TC_BODY(stress_flush_while_lookups, tc)
+{
+
+	stress_changes(true);
+}
+
+/*
+ * The controller closes its queue while eight threads stat a covered name
+ * (review L1): each lookup returns 0 or EIO, a thread never succeeds after
+ * its first EIO, nothing failed closed before the close, and every thread
+ * meets the close.
+ */
+#define	STRESS_EIO	20
+#define	STRESS_DEADLINE	120	/* s */
+
+struct stress_close {
+	char		 path[PATH_MAX];
+	struct dqt_sync	 sy;
+	long		 ok, eio, other, ok_after_eio, threads_eio;
+};
+
+struct stress_close_res {
+	long		 ok, eio, other, ok_after_eio, threads_eio;
+};
+
+static void *
+stress_close_thread(void *arg)
+{
+	struct stress_close *s = arg;
+	struct timespec now, end;
+	struct stat st;
+	int eio;
+
+	(void)clock_gettime(CLOCK_MONOTONIC, &end);
+	end.tv_sec += STRESS_DEADLINE;
+	for (eio = 0; eio < STRESS_EIO;) {
+		if (stat(s->path, &st) == 0) {
+			__atomic_add_fetch(&s->ok, 1, __ATOMIC_RELAXED);
+			if (eio > 0)
+				__atomic_add_fetch(&s->ok_after_eio, 1,
+				    __ATOMIC_RELAXED);
+		} else if (errno == EIO) {
+			eio++;
+			__atomic_add_fetch(&s->eio, 1, __ATOMIC_RELAXED);
+		} else
+			__atomic_add_fetch(&s->other, 1, __ATOMIC_RELAXED);
+		(void)clock_gettime(CLOCK_MONOTONIC, &now);
+		if (now.tv_sec >= end.tv_sec)
+			break;
+	}
+	if (eio > 0)
+		__atomic_add_fetch(&s->threads_eio, 1, __ATOMIC_RELAXED);
+	return (NULL);
+}
+
+static void
+c_stress_close(void *arg, void *out)
+{
+	struct stress_close *s = arg;
+	struct stress_close_res *r = out;
+	pthread_t thr[STRESS_THREADS];
+	int i;
+
+	for (i = 0; i < STRESS_THREADS; i++)
+		if (pthread_create(&thr[i], NULL, stress_close_thread, s) != 0)
+			_exit(7);
+	dqt_sync_post(s->sy.toparent[1]);
+	for (i = 0; i < STRESS_THREADS; i++)
+		(void)pthread_join(thr[i], NULL);
+	r->ok = s->ok;
+	r->eio = s->eio;
+	r->other = s->other;
+	r->ok_after_eio = s->ok_after_eio;
+	r->threads_eio = s->threads_eio;
+}
+
+ATF_TC(stress_close_while_lookups);
+ATF_TC_HEAD(stress_close_while_lookups, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "600");
+}
+ATF_TC_BODY(stress_close_while_lookups, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_achild ch;
+	struct stress_close s;
+	struct stress_close_res r;
+	struct dq_stats2 st;
+
+	wd_init();
+	mkfile(at("sc"));
+	memset(&s, 0, sizeof(s));
+	strlcpy(s.path, at("sc"), sizeof(s.path));
+	dqt_sync_init(&s.sy);
+	dqt_init(&c);
+	(void)rule_ok(c.q, -1, s.path, 0, OP(STAT), DQ_STANDING_PASS, 0);
+	dqt_attach_spawn(&c, &ch, c_stress_close, &s);
+	ATF_REQUIRE(dqt_sync_wait(s.sy.toparent[0], 30000));
+	/* Let the threads run under the rule for a while. */
+	(void)usleep(200000);
+	dqt_stats2(&c, &st);
+	ATF_CHECK_EQ(0, st.ds2_resolve_failclosed);
+	ATF_CHECK(st.ds2_standing_pass > 0);
+	dqt_close_queue(&c);
+	memset(&r, 0, sizeof(r));
+	dqt_attach_collect(&ch, &r, sizeof(r));
+	printf("ok %ld, EIO %ld, other %ld, ok after EIO %ld, threads that "
+	    "met the close %ld\n", r.ok, r.eio, r.other, r.ok_after_eio,
+	    r.threads_eio);
+	ATF_CHECK_EQ(0, r.other);
+	ATF_CHECK_EQ(0, r.ok_after_eio);
+	ATF_CHECK(r.ok > 0);
+	ATF_CHECK_EQ(STRESS_THREADS, r.threads_eio);
 	dqt_fini(&c);
 }
 
@@ -1720,10 +1948,13 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, rinroot_posts);
 	ATF_TP_ADD_TC(tp, linux_abi_posts);
 	ATF_TP_ADD_TC(tp, exec_interp_exact);
+	ATF_TP_ADD_TC(tp, exec_interp_subtree_link);
 	ATF_TP_ADD_TC(tp, fork_exec_inherit);
 	ATF_TP_ADD_TC(tp, controller_death_fails_closed);
 	ATF_TP_ADD_TC(tp, del_then_posts);
 	ATF_TP_ADD_TC(tp, stress_change_while_lookups);
+	ATF_TP_ADD_TC(tp, stress_flush_while_lookups);
+	ATF_TP_ADD_TC(tp, stress_close_while_lookups);
 	ATF_TP_ADD_TC(tp, relative_starts_post);
 	ATF_TP_ADD_TC(tp, never_relaxes_beneath);
 	ATF_TP_ADD_TC(tp, never_relaxes_capmode);

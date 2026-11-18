@@ -101,17 +101,13 @@ run_commands()
 	same_both_ways /bin/sh -c 'exec /usr/bin/true'
 	same_both_ways /bin/sh -c 'exit 3'
 	same_both_ways /usr/bin/env -i /bin/sh -c 'cd /usr/share && pwd -P'
-	# A #! script: the interpreter lookup is consulted as EXEC_INTERP.
+	# A #! script: the interpreter lookup is consulted as EXEC_INTERP,
+	# under -r too: a subtree rule never covers it (dq(4)).
 	printf '#!/bin/sh\necho script $1\n' > work/s.sh
 	chmod 755 work/s.sh
 	same_both_ways ./work/s.sh arg
 	dqpass -o r ./work/s.sh x >/dev/null
-	if [ -z "${DQPASS_RULES}" ]; then
-		atf_check -o match:'exec_interp' cat r
-	else
-		# The standing rule covers it: no event.
-		atf_check -o not-match:'exec_interp' cat r
-	fi
+	atf_check -o match:'exec_interp' cat r
 	# socket(2) and socketpair(2) (1c-ii): a program, and nc(1) over an
 	# AF_UNIX stream socket (bind, connect, socket).
 	same_both_ways "$(atf_get_srcdir)/dq_sockprog"
@@ -199,6 +195,50 @@ run_suites()
 	    dq_pattern_verdict "$(atf_get_srcdir)/dqpass.expected" used
 }
 
+atf_test_case rules_option
+rules_option_head()
+{
+	atf_set "descr" "dqpass -r splits off only a final :read or :all; " \
+	    "any other ':' belongs to the path"
+	atf_set "require.user" "root"
+}
+rules_option_body()
+{
+	local d rule
+
+	require_dq
+	d=$(realpath .)
+	mkdir "a:b"
+	echo x > "a:b/f"
+	for rule in "$d/a:b" "$d/a:b:read" "$d/a:b:all"; do
+		atf_check -o inline:'x\n' -e save:ev \
+		    "$(atf_get_srcdir)/dqpass" -v -o r -r "${rule}" \
+		    /bin/cat "$d/a:b/f"
+		atf_check -o match:'^dqpass: standing pass [1-9]' cat r
+		posted open "$d/a:b/f" && atf_fail "-r ${rule}: the open posted"
+	done
+	# Neither suffix: the whole argument is the rule's path, which
+	# covers nothing here.
+	atf_check -o inline:'x\n' -e save:ev "$(atf_get_srcdir)/dqpass" -v \
+	    -o r -r "$d/a:b:x" /bin/cat "$d/a:b/f"
+	atf_check -o match:'^dqpass: standing pass 0 ' cat r
+	posted open "$d/a:b/f" || atf_fail "-r $d/a:b:x: the open did not post"
+	# :all covers a write-class open, :read does not.
+	atf_check -e save:ev "$(atf_get_srcdir)/dqpass" -v -o r \
+	    -r "$d/a:b:read" /usr/bin/truncate -s 0 "$d/a:b/f"
+	posted open "$d/a:b/f" || atf_fail ":read: the write open did not post"
+	atf_check -e save:ev "$(atf_get_srcdir)/dqpass" -v -o r \
+	    -r "$d/a:b:all" /usr/bin/truncate -s 0 "$d/a:b/f"
+	posted open "$d/a:b/f" && atf_fail ":all: the write open posted"
+	return 0
+}
+
+# posted OP PATH: dqpass -v (in ev) printed an OP event for exactly PATH.
+posted()
+{
+	grep '^dqpass: pid ' ev | grep -F " $1 class " | grep -qF "\"$2\""
+}
+
 atf_test_case oracle_standing
 oracle_standing_head()
 {
@@ -219,5 +259,6 @@ atf_init_test_cases()
 {
 	atf_add_test_case commands
 	atf_add_test_case suites
+	atf_add_test_case rules_option
 	atf_add_test_case oracle_standing
 }
