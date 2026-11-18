@@ -298,6 +298,131 @@ ATF_TC_BODY(object_context_operations, tc)
 	free(rule);
 }
 
+static uint32_t
+matched_rule(uint32_t operation, uint32_t expected)
+{
+	static const char subject[] = "type=subject";
+	static const char object[] = "type=object";
+	struct abac_test_arg *test;
+	char *data;
+	uint32_t id;
+
+	test = calloc(1, sizeof(*test) + sizeof(subject) + sizeof(object));
+	ATF_REQUIRE(test != NULL);
+	test->vt_operation = operation;
+	test->vt_subject_len = sizeof(subject);
+	test->vt_object_len = sizeof(object);
+	data = (char *)(test + 1);
+	memcpy(data, subject, sizeof(subject));
+	memcpy(data + sizeof(subject), object, sizeof(object));
+	call_ok(ABAC_SYS_TEST, test);
+	ATF_REQUIRE_EQ(expected, test->vt_result);
+	id = test->vt_rule_id;
+	free(test);
+	return (id);
+}
+
+static int
+rule_count(void)
+{
+	size_t length;
+	int value;
+
+	length = sizeof(value);
+	ATF_REQUIRE(sysctlbyname("security.mac.mac_abac.rule_count", &value,
+	    &length, NULL, 0) == 0);
+	return (value);
+}
+
+/*
+ * A removed rule's slot is reusable: a long-lived add/remove workload keeps
+ * adding rules after ABAC_MAX_RULES additions in total.  The table used to
+ * append at a high-water mark that only a full clear reset, so the add after
+ * the ABAC_MAX_RULES-th failed with ENOSPC while one rule was loaded.
+ */
+ATF_TC(remove_frees_slot);
+ATF_TC_HEAD(remove_frees_slot, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "removing a rule frees its slot for later additions");
+}
+ATF_TC_BODY(remove_frees_slot, tc)
+{
+	uint32_t first, id;
+	int i;
+	(void)tc;
+
+	reset_policy(0);
+	first = add_rule(ABAC_ACTION_DENY, ABAC_OP_EXEC, 0);
+	for (i = 0; i < ABAC_MAX_RULES + 16; i++) {
+		id = add_rule(ABAC_ACTION_ALLOW, ABAC_OP_EXEC, 0);
+		call_ok(ABAC_SYS_RULE_REMOVE, &id);
+	}
+	ATF_REQUIRE_EQ(1, rule_count());
+	ATF_REQUIRE_EQ(first, matched_rule(ABAC_OP_EXEC, EACCES));
+	reset_policy(0);
+}
+
+/* The same for rules removed by clearing their set. */
+ATF_TC(set_clear_frees_slots);
+ATF_TC_HEAD(set_clear_frees_slots, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "clearing a set frees its rules' slots for later additions");
+}
+ATF_TC_BODY(set_clear_frees_slots, tc)
+{
+	uint16_t set;
+	uint32_t first;
+	int i, j;
+	(void)tc;
+
+	reset_policy(0);
+	first = add_rule(ABAC_ACTION_DENY, ABAC_OP_EXEC, 0);
+	set = 7;
+	for (i = 0; i < ABAC_MAX_RULES / 256 + 1; i++) {
+		for (j = 0; j < 256; j++)
+			(void)add_rule(ABAC_ACTION_ALLOW, ABAC_OP_EXEC, set);
+		call_ok(ABAC_SYS_SET_CLEAR, &set);
+	}
+	ATF_REQUIRE_EQ(1, rule_count());
+	ATF_REQUIRE_EQ(first, matched_rule(ABAC_OP_EXEC, EACCES));
+	reset_policy(0);
+}
+
+/*
+ * Reusing slots keeps first-match order: a rule added after a removal is
+ * evaluated after every rule added before it, whichever slot the removal
+ * freed.
+ */
+ATF_TC(remove_keeps_order);
+ATF_TC_HEAD(remove_keeps_order, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "rules added after a removal match after older rules");
+}
+ATF_TC_BODY(remove_keeps_order, tc)
+{
+	uint32_t a, b, c, d;
+	(void)tc;
+
+	reset_policy(0);
+	a = add_rule(ABAC_ACTION_DENY, ABAC_OP_EXEC, 0);
+	b = add_rule(ABAC_ACTION_ALLOW, ABAC_OP_EXEC, 0);
+	c = add_rule(ABAC_ACTION_DENY, ABAC_OP_EXEC, 0);
+	ATF_REQUIRE_EQ(a, matched_rule(ABAC_OP_EXEC, EACCES));
+	call_ok(ABAC_SYS_RULE_REMOVE, &a);
+	ATF_REQUIRE_EQ(b, matched_rule(ABAC_OP_EXEC, 0));
+	d = add_rule(ABAC_ACTION_DENY, ABAC_OP_EXEC, 0);
+	ATF_REQUIRE_EQ(b, matched_rule(ABAC_OP_EXEC, 0));
+	call_ok(ABAC_SYS_RULE_REMOVE, &b);
+	ATF_REQUIRE_EQ(c, matched_rule(ABAC_OP_EXEC, EACCES));
+	call_ok(ABAC_SYS_RULE_REMOVE, &c);
+	ATF_REQUIRE_EQ(d, matched_rule(ABAC_OP_EXEC, EACCES));
+	ATF_REQUIRE_EQ(1, rule_count());
+	reset_policy(0);
+}
+
 #define ADD_KERNEL_OPERATION_CASES(name, value)                              \
 	ATF_TP_ADD_TC(tp, kernel_allow_##name);                               \
 	ATF_TP_ADD_TC(tp, kernel_deny_##name);                                \
@@ -312,5 +437,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, load_reserved);
 	ATF_TP_ADD_TC(tp, set_full_range);
 	ATF_TP_ADD_TC(tp, default_policy_validation);
+	ATF_TP_ADD_TC(tp, remove_frees_slot);
+	ATF_TP_ADD_TC(tp, set_clear_frees_slots);
+	ATF_TP_ADD_TC(tp, remove_keeps_order);
 	return (atf_no_error());
 }

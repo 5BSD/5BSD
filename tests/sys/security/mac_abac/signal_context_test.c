@@ -591,8 +591,8 @@ mutual_signals(const atf_tc_t *tc, bool rule_updates)
 	}
 	/*
 	 * Re-enabling the default set, which stays enabled, takes the rule
-	 * lock as a writer without changing what the rules decide, and
-	 * without using rule slots (removed rules do not free theirs).
+	 * lock as a writer without changing what the rules decide or the
+	 * rule table.
 	 */
 	range.vsr_start = range.vsr_end = 0;
 	done = 0;
