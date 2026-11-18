@@ -500,10 +500,19 @@ sysctl is set (the default), a thread that was in an interruptible sleep
 is stopped where it sleeps, and the sleep is not interrupted: once the
 process is resumed or detached, the system call completes as it would
 have without the debugger.
-If the debugger changed the thread's registers or its pc while it was
-stopped there, resuming it ends the sleep, and the interrupted system
-call fails with
+If the debugger changed that thread's registers with
+.Dv PT_SETREGS ,
+.Dv PT_SETFPREGS
+or
+.Dv PT_SETDBREGS ,
+or gives it a new pc in the request that resumes the process, and that
+request names the thread, the sleep ends and the interrupted system call fails
+with
 .Er EINTR .
+Other threads stay asleep.
+Registers written with
+.Dv PT_SETREGSET
+do not end the sleep.
 Reading or writing the process's memory does not end the sleep.
 When the sysctl is not set, the attach stops the process with
 .Dv SIGSTOP ,
