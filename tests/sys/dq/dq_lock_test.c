@@ -494,9 +494,14 @@ ATF_TC_BODY(flock_block_interrupt, tc)
 	ATF_CHECK_EQ(-1, r.rv);
 	ATF_CHECK_EQ(EINTR, r.err);
 
-	/* The served file: the waiter sleeps for its LOCK's reply. */
+	/*
+	 * The served file: the waiter sleeps for its LOCK's reply.  Signal
+	 * it once the controller has read the LOCK, as setlkw_interrupt
+	 * does: a LOCK still pending is withdrawn with no INTERRUPT.
+	 */
 	w.fd = o2->fd;
 	dqt_spawn(&wch, child_flock_block, &w);
+	ATF_REQUIRE(dqt_wait_locks(&f.c, o2, 1, DQT_WAIT_MS));
 	ATF_REQUIRE(dqt_wait_wmesg(wch.pid, DQT_WMESG_REPLY, DQT_WAIT_MS));
 	ATF_REQUIRE_EQ(0, kill(wch.pid, SIGUSR1));
 	dqt_collect(&wch, &r, sizeof(r));
