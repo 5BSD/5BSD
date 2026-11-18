@@ -617,6 +617,12 @@ mac_policy_fastpath_set(struct mac_policy_conf *mpc, const u_short *hooks,
 	if (nhooks == 0)
 		return (0);
 	ops = (const void * const *)mpc->mpc_ops;
+	/*
+	 * A policy publishes its own state (its live hooks) before it turns a
+	 * flag on.  Taking the mutex is only an acquire: order those stores
+	 * before the flag stores below.
+	 */
+	atomic_thread_fence_rel();
 	mtx_lock(&mac_policy_fp_mtx);
 	if ((mpc->mpc_fp_active & MAC_FP_COUNTED) == 0) {
 		mtx_unlock(&mac_policy_fp_mtx);
