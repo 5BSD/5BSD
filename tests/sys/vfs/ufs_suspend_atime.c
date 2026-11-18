@@ -80,6 +80,24 @@ make_file(const char *path)
 }
 
 /*
+ * The defect closed_at_resume and repeated_suspensions pin shows only as
+ * the INVARIANTS assertion in ffs_unlock_debug(): without INVARIANTS the
+ * inode is left modified off the lazy list, which nothing they check sees.
+ */
+static void
+require_invariants(void)
+{
+	int on;
+	size_t len;
+
+	len = sizeof(on);
+	if (sysctlbyname("kern.features.invariants", &on, &len, NULL, 0) != 0 ||
+	    on == 0)
+		atf_tc_skip("detects the defect only through an INVARIANTS "
+		    "assertion; the kernel has no kern.features.invariants");
+}
+
+/*
  * A soft updates UFS on a swap-backed md(4) device, with NFILLER files and
  * then NREAD files to read.
  */
@@ -380,6 +398,7 @@ ATF_TC_BODY(closed_at_resume, tc)
 	pid_t pids[NREAD];
 	int sfd;
 
+	require_invariants();
 	fixture();
 	holder_start(&h);
 	sfd = suspend();
@@ -447,6 +466,7 @@ ATF_TC_BODY(repeated_suspensions, tc)
 	pid_t pids[NREAD];
 	int i, sfd;
 
+	require_invariants();
 	fixture();
 	for (i = 0; i < 10; i++) {
 		holder_start(&h);
