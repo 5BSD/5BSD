@@ -10,8 +10,9 @@
  * thread where it sleeps and leaves the sleep alone, so the program sees
  * its system call end as it would have without the debugger.  A thread
  * whose registers or pc the debugger changed must come out of the sleep
- * for the change to take effect: its system call fails with EINTR.  Today
- * a memory write has the same effect, which the memory-write cases pin.
+ * for the change to take effect: its system call fails with EINTR.  The
+ * debugger reading memory, or writing it, changes nothing the sleeping
+ * thread is about to do, and the sleep is kept.
  *
  * Without a transparent attach the attach's SIGSTOP stops the thread at
  * the signal: the sleep ends with ERESTART and the call is restarted after
@@ -528,30 +529,26 @@ CASE(transparent__fifo_open__read,
     "Transparent attach, memory read: the FIFO open completes",
     1, OP_FIFO, WR_NONE, RES_DONE)
 
-/*
- * Transparent attach, memory written.  Pins of today's behaviour: the
- * write makes PT_DETACH abort the sleep with EINTR, as a register change
- * does.
- */
+/* Transparent attach, memory written. */
 CASE(transparent__fifo_open__io_write,
-    "Transparent attach, PT_IO write: the FIFO open fails with EINTR",
-    1, OP_FIFO, WR_IO, RES_EINTR)
+    "Transparent attach, PT_IO write: the FIFO open completes",
+    1, OP_FIFO, WR_IO, RES_DONE)
 CASE(transparent__fifo_open__write_d,
-    "Transparent attach, PT_WRITE_D: the FIFO open fails with EINTR",
-    1, OP_FIFO, WR_POKE, RES_EINTR)
+    "Transparent attach, PT_WRITE_D: the FIFO open completes",
+    1, OP_FIFO, WR_POKE, RES_DONE)
 CASE(transparent__spawn_fifo__io_write,
-    "Transparent attach to a posix_spawn child, PT_IO write: posix_spawn "
-    "fails with EINTR",
-    1, OP_SPAWN, WR_IO, RES_EINTR)
+    "Transparent attach to a posix_spawn child, PT_IO write: the file "
+    "action's FIFO open completes and posix_spawn succeeds",
+    1, OP_SPAWN, WR_IO, RES_DONE)
 CASE(transparent__pipe_read__io_write,
-    "Transparent attach, PT_IO write: the pipe read fails with EINTR",
-    1, OP_PIPE, WR_IO, RES_EINTR)
+    "Transparent attach, PT_IO write: the pipe read completes",
+    1, OP_PIPE, WR_IO, RES_DONE)
 CASE(transparent__nanosleep__io_write,
-    "Transparent attach, PT_IO write: nanosleep fails with EINTR",
-    1, OP_NANOSLEEP, WR_IO, RES_EINTR)
+    "Transparent attach, PT_IO write: nanosleep completes",
+    1, OP_NANOSLEEP, WR_IO, RES_DONE)
 CASE(transparent__wait4__io_write,
-    "Transparent attach, PT_IO write: wait4 fails with EINTR",
-    1, OP_WAIT4, WR_IO, RES_EINTR)
+    "Transparent attach, PT_IO write: wait4 completes",
+    1, OP_WAIT4, WR_IO, RES_DONE)
 
 /* Transparent attach, registers or pc changed: the sleep is left. */
 CASE(transparent__fifo_open__setregs,
