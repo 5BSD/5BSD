@@ -393,7 +393,9 @@ ATF_TC_HEAD(reply_validation, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "a RESOLVE reply other than an errno "
 	    "with no body or exactly PASS (another kind, a padded PASS, a body "
-	    "with an errno) is EINVAL and the event stays in flight");
+	    "with an errno, a post-operation block) is EINVAL and the event "
+	    "stays in flight; an FD answer with a post-operation block mints "
+	    "nothing");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(reply_validation, tc)
@@ -402,8 +404,14 @@ ATF_TC_BODY(reply_validation, tc)
 	struct dqt_achild ch;
 	struct one_res r;
 	struct dq_resolve_reply rr;
+	struct {
+		struct dq_resolve_reply	rr;
+		struct dq_resolve_mint	rm;
+	} fdr;
+	struct dq_postop_attr pa;
+	struct dq_stats st0, st1;
 	char big[16];
-	uint64_t id;
+	uint64_t id, oid;
 
 	dqt_init(&c);
 	dqt_resolve_hold(&c, "rt-deny", 0);
@@ -434,6 +442,31 @@ ATF_TC_BODY(reply_validation, tc)
 	errno = 0;
 	ATF_CHECK_EQ(-1, dq_reply(c.q, id, 0, NULL, 0));
 	ATF_CHECK_EQ(EINVAL, errno);
+	/*
+	 * A RESOLVE has no post-operation block.  A PASS with one is EINVAL,
+	 * and so is an FD answer with one, refused before the mint: no id is
+	 * written and no object is made.
+	 */
+	memset(&pa, 0, sizeof(pa));
+	memset(&rr, 0, sizeof(rr));
+	rr.drr_kind = DQ_RESOLVE_PASS;
+	errno = 0;
+	ATF_CHECK_EQ(-1, dq_reply_postop(c.q, id, &rr, sizeof(rr), &pa));
+	ATF_CHECK_EQ(EINVAL, errno);
+	memset(&fdr, 0, sizeof(fdr));
+	fdr.rr.drr_kind = DQ_RESOLVE_FD;
+	fdr.rm.drm_kind = DQ_KIND_FILE;
+	fdr.rm.drm_ident.di_mode = S_IFREG | 0644;
+	dq_policy_default(&fdr.rm.drm_policy);
+	oid = UINT64_MAX;
+	fdr.rm.drm_objectp = &oid;
+	dqt_stats(&c, &st0);
+	errno = 0;
+	ATF_CHECK_EQ(-1, dq_reply_postop(c.q, id, &fdr, sizeof(fdr), &pa));
+	ATF_CHECK_EQ(EINVAL, errno);
+	ATF_CHECK_EQ(UINT64_MAX, oid);
+	dqt_stats(&c, &st1);
+	ATF_CHECK_EQ(st0.ds_objects_total, st1.ds_objects_total);
 	/* Still in flight: answer it, then let the rest through. */
 	dqt_resolve_hold(&c, "", 0);
 	ATF_CHECK_EQ(0, dq_reply_resolve_errno(c.q, id, EROFS));
