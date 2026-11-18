@@ -1789,10 +1789,10 @@ ATF_TC_BODY(link_eagain_eio, tc)
 }
 
 /*
- * Pins before the standing rules (dq-standing-decisions §9.1): what an
- * attached process's lookups post today, the reserved statistics and the
- * free ioctl numbers.  Standing rules change none of these for a queue
- * that installs no rule.
+ * Pins taken before the standing rules (dq-standing-decisions §9.1): what
+ * an attached process's lookups post, and the statistics.  A queue that
+ * installs no rule posts exactly as before; dq_standing_test covers the
+ * ioctls.
  */
 #define	EVERY_N		8
 
@@ -1871,12 +1871,29 @@ child_some_lookups(void *arg __unused, void *result)
 	r->r[1].rv = stat("rt-missing", &sb);
 }
 
+/*
+ * The standing counters took two of the three reserved slots (review 2
+ * N1): with no rule installed they and the slot left read 0, on a fresh
+ * queue and after attached lookups, all of which post.
+ */
+static void
+check_stats2_zero(const struct dq_stats2 *st, const char *when)
+{
+
+	ATF_CHECK_EQ_MSG(0, st->ds2_reserved[0], "%s: reserved[0] %ju", when,
+	    (uintmax_t)st->ds2_reserved[0]);
+	ATF_CHECK_EQ_MSG(0, st->ds2_standing_pass, "%s: standing pass %ju",
+	    when, (uintmax_t)st->ds2_standing_pass);
+	ATF_CHECK_EQ_MSG(0, st->ds2_standing_deny, "%s: standing deny %ju",
+	    when, (uintmax_t)st->ds2_standing_deny);
+}
+
 ATF_TC(stats2_reserved_zero);
 ATF_TC_HEAD(stats2_reserved_zero, tc)
 {
-	atf_tc_set_md_var(tc, "descr", "struct dq_stats2 is 320 bytes and its "
-	    "reserved counters read 0 on a fresh queue and after attached "
-	    "lookups");
+	atf_tc_set_md_var(tc, "descr", "struct dq_stats2 is 320 bytes; with "
+	    "no standing rule its standing counters and its reserved counter "
+	    "read 0 on a fresh queue and after attached lookups");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(stats2_reserved_zero, tc)
@@ -1885,54 +1902,20 @@ ATF_TC_BODY(stats2_reserved_zero, tc)
 	struct dqt_achild ch;
 	struct one_res r;
 	struct dq_stats2 st;
-	size_t i;
 
 	ATF_REQUIRE_EQ(320, sizeof(struct dq_stats2));
+	ATF_REQUIRE_EQ(1, nitems(st.ds2_reserved));
 	dqt_init(&c);
 	dqt_stats2(&c, &st);
 	ATF_CHECK_EQ(sizeof(st), st.ds2_size);
-	for (i = 0; i < nitems(st.ds2_reserved); i++)
-		ATF_CHECK_EQ_MSG(0, st.ds2_reserved[i], "fresh: reserved[%zu] "
-		    "%ju", i, (uintmax_t)st.ds2_reserved[i]);
+	check_stats2_zero(&st, "fresh");
 	dqt_attach_spawn(&c, &ch, child_some_lookups, NULL);
 	memset(&r, 0, sizeof(r));
 	dqt_attach_collect(&ch, &r, sizeof(r));
 	dqt_stats2(&c, &st);
 	ATF_CHECK(st.ds2_resolves >= 2);
-	for (i = 0; i < nitems(st.ds2_reserved); i++)
-		ATF_CHECK_EQ_MSG(0, st.ds2_reserved[i], "after lookups: "
-		    "reserved[%zu] %ju", i, (uintmax_t)st.ds2_reserved[i]);
+	check_stats2_zero(&st, "after lookups");
 	dqt_fini(&c);
-}
-
-/* The argument sizes of the numbers the standing rules claim. */
-struct ioc_1064 {
-	char		 b[1064];
-};
-
-ATF_TC(standing_ioctls_absent);
-ATF_TC_HEAD(standing_ioctls_absent, tc)
-{
-	atf_tc_set_md_var(tc, "descr", "queue ioctls 'j' 40, 41 and 42 are "
-	    "ENOTTY to the owner, and the queue still works after them");
-	atf_tc_set_md_var(tc, "require.user", "root");
-}
-ATF_TC_BODY(standing_ioctls_absent, tc)
-{
-	struct ioc_1064 a;
-	struct dq_stats2 st;
-	uint64_t id;
-	int q;
-
-	q = dqt_open_queue();
-	memset(&a, 0, sizeof(a));
-	id = 1;
-	DQT_CHECK_REFUSED(ioctl(q, _IOWR('j', 40, struct ioc_1064), &a),
-	    ENOTTY);
-	DQT_CHECK_REFUSED(ioctl(q, _IOW('j', 41, uint64_t), &id), ENOTTY);
-	DQT_CHECK_REFUSED(ioctl(q, _IO('j', 42)), ENOTTY);
-	ATF_CHECK_EQ(0, dq_get_stats2(q, &st));
-	(void)close(q);
 }
 
 ATF_TP_ADD_TCS(tp)
@@ -1957,6 +1940,5 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, link_eagain_eio);
 	ATF_TP_ADD_TC(tp, every_lookup_posts);
 	ATF_TP_ADD_TC(tp, stats2_reserved_zero);
-	ATF_TP_ADD_TC(tp, standing_ioctls_absent);
 	return (atf_no_error());
 }

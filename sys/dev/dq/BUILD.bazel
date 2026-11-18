@@ -10,7 +10,7 @@ cc_library(name = "kernel_headers", hdrs = ["dq.h", "dq_kern.h", "dq_observe_pro
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
 load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
 _KERNEL_SOURCES = ["dq_dev.c", "dq_queue.c", "dq_file.c", "dq_observer.c", "dq_observe.c",
-        "dq_pager.c", "dq_async.c", "dq_resolve.c", "dq_dir.c"]
+        "dq_pager.c", "dq_async.c", "dq_resolve.c", "dq_dir.c", "dq_standing.c"]
 _KERNEL_DEPS = [":kernel_headers", "//sys/amd64/conf:generic_opt_dq_header", "//sys/amd64/conf:generic_opt_mac_header",
         "//sys/security/mac:framework_headers", "//sys/security/mac:policy_headers",
         "//sys/crypto/siphash:kernel_headers", "//sys/dev/mac_capability:label_headers",
