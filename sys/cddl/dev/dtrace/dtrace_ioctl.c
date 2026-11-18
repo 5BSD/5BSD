@@ -26,6 +26,135 @@ SYSCTL_INT(_debug_dtrace, OID_AUTO, verbose_ioctl, CTLFLAG_RW,
 
 #define DTRACE_IOCTL_PRINTF(fmt, ...)	if (dtrace_verbose_ioctl) printf(fmt, ## __VA_ARGS__ )
 
+/*
+ * 5BSD: DTRACEHIOC_ADDDOF for another process.  Upstream accepts it only
+ * for a stopped, traced child of the caller, which made registering a
+ * process's USDT probes a debugging operation: libdtrace attached with
+ * ptrace, stopped the process and read its memory.  Here it needs the
+ * DTrace process privilege and inspect permission (p_caninspect(9)), and
+ * the target keeps running.
+ *
+ * The DOF must lie in a read-only, file-backed mapping whose bytes are the
+ * file's own: the mapping entry's own object is a vnode object (not an
+ * anonymous shadow, so the target has not written its private copy), and
+ * the mapping is not writable.  The target can still change its map
+ * between the check and the copy; the map timestamp, which every exclusive
+ * map lock bumps, detects that, and the check and copy are repeated a few
+ * times before the call fails.  The target is held with exec blocked, and
+ * its address space is read through a reference of its own, never through
+ * p_vmspace.
+ *
+ * Errors: EPERM (no PRIV_DTRACE_PROC, or the Unix debug rules), ESRCH (no
+ * such process), EINVAL (a system process), EACCES (a MAC policy), EBUSY
+ * (exec in progress), EFAULT (the address is not in such a mapping, or the
+ * map kept changing), and the DOF parser's errors.
+ */
+SDT_PROVIDER_DEFINE(dtrace_helper);
+/* target pid, errno */
+SDT_PROBE_DEFINE2(dtrace_helper, , , adddof__other, "pid_t", "int");
+
+#define	DTRACE_ADDDOF_TRIES	3
+
+/*
+ * The mapping check of another process's DOF.  On success, *limitp is the
+ * end of the mapping and *tsp the map timestamp at the check.
+ */
+static int
+dtrace_adddof_mapping(struct vmspace *vm, uintptr_t uaddr, uintptr_t *limitp,
+    u_int *tsp)
+{
+	vm_map_t map;
+	vm_map_entry_t entry;
+	vm_object_t obj;
+	int error;
+
+	map = &vm->vm_map;
+	error = EFAULT;
+	vm_map_lock_read(map);
+	if (vm_map_lookup_entry(map, uaddr, &entry) &&
+	    (entry->eflags & MAP_ENTRY_IS_SUB_MAP) == 0 &&
+	    (obj = entry->object.vm_object) != NULL &&
+	    obj->type == OBJT_VNODE && (obj->flags & OBJ_ANON) == 0 &&
+	    (entry->protection & VM_PROT_WRITE) == 0 &&
+	    entry->end - uaddr >= sizeof(dof_hdr_t)) {
+		*limitp = entry->end;
+		*tsp = map->timestamp;
+		error = 0;
+	}
+	vm_map_unlock_read(map);
+	return (error);
+}
+
+static int
+dtrace_adddof_other(struct thread *td, dof_helper_t *dhp)
+{
+	struct vmspace *vm;
+	struct proc *p;
+	dof_hdr_t *dof;
+	uintptr_t limit, uaddr;
+	u_int ts;
+	bool changed;
+	int error, rval, tries;
+
+	uaddr = (uintptr_t)dhp->dofhp_dof;
+	dof = NULL;
+	error = priv_check(td, DTRACE_FREEBSD_PRIV_PROC);
+	if (error != 0)
+		goto out;
+	error = pget(dhp->dofhp_pid, PGET_HOLD | PGET_NOTWEXIT, &p);
+	if (error != 0)
+		goto out;
+	PROC_LOCK(p);
+	if ((p->p_flag & P_SYSTEM) != 0) {
+		/* No USDT; an aio daemon's p_vmspace may be borrowed. */
+		_PRELE(p);
+		PROC_UNLOCK(p);
+		error = EINVAL;
+		goto out;
+	}
+	execve_block_wait(td, p);
+	error = p_caninspect(td, p);
+	PROC_UNLOCK(p);
+	vm = NULL;
+	if (error == 0 && (vm = vmspace_acquire_ref(p)) == NULL)
+		error = ESRCH;
+	for (tries = 0; error == 0; tries++) {
+		error = dtrace_adddof_mapping(vm, uaddr, &limit, &ts);
+		if (error != 0)
+			break;
+		dof = dtrace_dof_copyin_vm(vm, uaddr, limit, &error);
+		vm_map_lock_read(&vm->vm_map);
+		changed = vm->vm_map.timestamp != ts;
+		vm_map_unlock_read(&vm->vm_map);
+		if (!changed)
+			break;
+		/* The map changed under the copy: check and copy again. */
+		if (dof != NULL) {
+			kmem_free(dof, dof->dofh_loadsz);
+			dof = NULL;
+		}
+		error = tries + 1 < DTRACE_ADDDOF_TRIES ? 0 : EFAULT;
+	}
+	if (vm != NULL)
+		vmspace_free(vm);
+	if (dof != NULL) {
+		mutex_enter(&dtrace_lock);
+		if ((rval = dtrace_helper_slurp(dof, dhp, p)) != -1) {
+			dhp->dofhp_gen = rval;
+			error = 0;
+		} else
+			error = EINVAL;
+		mutex_exit(&dtrace_lock);
+	}
+	PROC_LOCK(p);
+	execve_unblock(td, p);
+	_PRELE(p);
+	PROC_UNLOCK(p);
+out:
+	SDT_PROBE2(dtrace_helper, , , adddof__other, dhp->dofhp_pid, error);
+	return (error);
+}
+
 static int
 dtrace_ioctl_helper(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
     struct thread *td)
@@ -43,28 +172,13 @@ dtrace_ioctl_helper(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 		dhp = (dof_helper_t *)addr;
 		addr = (caddr_t)(uintptr_t)dhp->dofhp_dof;
 		p = curproc;
-		if (p->p_pid == dhp->dofhp_pid) {
-			dof = dtrace_dof_copyin((uintptr_t)addr, &rval);
-		} else {
-			p = pfind(dhp->dofhp_pid);
-			if (p == NULL)
-				return (EINVAL);
-			if (!P_SHOULDSTOP(p) ||
-			    (p->p_flag & (P_TRACED | P_WEXIT)) != P_TRACED ||
-			    p->p_pptr != curproc) {
-				PROC_UNLOCK(p);
-				return (EINVAL);
-			}
-			_PHOLD(p);
-			PROC_UNLOCK(p);
-			dof = dtrace_dof_copyin_proc(p, (uintptr_t)addr, &rval);
-		}
-
-		if (dof == NULL) {
-			if (p != curproc)
-				PRELE(p);
+		if (p->p_pid != dhp->dofhp_pid) {
+			rval = dtrace_adddof_other(td, dhp);
 			break;
 		}
+		dof = dtrace_dof_copyin((uintptr_t)addr, &rval);
+		if (dof == NULL)
+			break;
 
 		mutex_enter(&dtrace_lock);
 		if ((rval = dtrace_helper_slurp(dof, dhp, p)) != -1) {
@@ -74,8 +188,6 @@ dtrace_ioctl_helper(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 			rval = EINVAL;
 		}
 		mutex_exit(&dtrace_lock);
-		if (p != curproc)
-			PRELE(p);
 		break;
 	case DTRACEHIOC_REMOVE:
 		mutex_enter(&dtrace_lock);

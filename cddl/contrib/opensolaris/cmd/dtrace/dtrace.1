@@ -20,7 +20,7 @@
 .\"
 .\" $FreeBSD$
 .\"
-.Dd October 30, 2026
+.Dd November 17, 2026
 .Dt DTRACE 1
 .Os
 .Sh NAME
@@ -1901,6 +1901,30 @@ command line to define a set of macro variables and so forth).
 The additional arguments can be used in D programs specified using the
 .Fl s
 option or on the command line.
+.Sh PROCESS PROBES
+A program's USDT probes are described by the DOF in the
+.Li .SUNW_dof
+section of each of its objects.
+A program run by root registers its own DOF at start-up through
+.Pa /dev/dtrace/helper ;
+other programs cannot open that device.
+.Pp
+The kernel also accepts the DOF of another process, without stopping it,
+from a caller that has the DTrace process privilege
+.Pq Dv PRIV_DTRACE_PROC ,
+which root outside a jail holds, and may inspect the process
+.Pq Xr p_caninspect 9 .
+The DOF must lie in a read-only mapping of a file whose bytes are the
+file's own: a mapping the process made writable and wrote, even if it made
+it read-only again, is refused, and so is DOF the process copied into other
+memory.
+Files on
+.Xr tmpfs 4
+map as anonymous memory, so programs and libraries run from tmpfs cannot
+have their probes registered by another process.
+When the process changes its address space while its DOF is read, the
+kernel reads it again, up to three times, and then fails with
+.Er EFAULT .
 .Sh ENVIRONMENT
 .Bl -tag -width 'DTRACE_DEBUG'
 .It Ev DTRACE_DEBUG

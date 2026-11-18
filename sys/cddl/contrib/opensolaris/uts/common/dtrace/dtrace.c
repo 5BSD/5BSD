@@ -145,12 +145,18 @@
 #include <sys/malloc.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
+#include <sys/imgact.h>
 #include <sys/ptrace.h>
 #include <sys/random.h>
+#include <sys/sdt.h>
 #include <sys/rwlock.h>
 #include <sys/sx.h>
 #include <sys/sysctl.h>
 #include <sys/hash.h>
+#include <vm/vm.h>
+#include <vm/pmap.h>
+#include <vm/vm_map.h>
+#include <vm/vm_object.h>
 #include <machine/vmm.h>
 #if defined(__amd64__)
 #include <cddl/dev/dtrace/x86/regset.h>
@@ -419,6 +425,17 @@ static kmutex_t		dtrace_meta_lock;	/* meta-provider state lock */
 #define ttoproc(_a)	((_a)->td_proc)
 #define SNOCD		0
 #define CPU_ON_INTR(_a)	0
+
+/*
+ * FreeBSD's privilege to attach DTrace to another process
+ * (DTRACEHIOC_ADDDOF, dtrace_ioctl.c), captured before the illumos names
+ * below take over the PRIV_DTRACE_* macros.
+ */
+#include <sys/priv.h>
+enum { DTRACE_FREEBSD_PRIV_PROC = PRIV_DTRACE_PROC };
+#undef PRIV_DTRACE_KERNEL
+#undef PRIV_DTRACE_PROC
+#undef PRIV_DTRACE_USER
 
 #define PRIV_EFFECTIVE		(1 << 0)
 #define PRIV_DTRACE_KERNEL	(1 << 1)
@@ -17644,8 +17661,16 @@ dtrace_dof_copyin(uintptr_t uarg, int *errp)
 }
 
 #ifdef __FreeBSD__
+/*
+ * Copy in the DOF at uarg of another process's address space vm, on which
+ * the caller holds a reference (vmspace_acquire_ref()): the process may be
+ * running, and its p_vmspace may change under the copy.  When limit is not
+ * 0, the whole DOF must lie below it: it is the end of the mapping the
+ * caller checked (5BSD, DTRACEHIOC_ADDDOF for another process).
+ */
 static dof_hdr_t *
-dtrace_dof_copyin_proc(struct proc *p, uintptr_t uarg, int *errp)
+dtrace_dof_copyin_vm(struct vmspace *vm, uintptr_t uarg, uintptr_t limit,
+    int *errp)
 {
 	dof_hdr_t hdr, *dof;
 	struct thread *td;
@@ -17658,7 +17683,8 @@ dtrace_dof_copyin_proc(struct proc *p, uintptr_t uarg, int *errp)
 	/*
 	 * First, we're going to copyin() the sizeof (dof_hdr_t).
 	 */
-	if (proc_readmem(td, p, uarg, &hdr, sizeof(hdr)) != sizeof(hdr)) {
+	if (vmspace_iop(td, vm, uarg, &hdr, sizeof(hdr), UIO_READ) !=
+	    sizeof(hdr)) {
 		dtrace_dof_error(NULL, "failed to copyin DOF header");
 		*errp = EFAULT;
 		return (NULL);
@@ -17681,9 +17707,15 @@ dtrace_dof_copyin_proc(struct proc *p, uintptr_t uarg, int *errp)
 		return (NULL);
 	}
 
+	if (limit != 0 && loadsz > limit - uarg) {
+		dtrace_dof_error(&hdr, "DOF extends past its mapping");
+		*errp = EFAULT;
+		return (NULL);
+	}
+
 	dof = kmem_alloc(loadsz, KM_SLEEP);
 
-	if (proc_readmem(td, p, uarg, dof, loadsz) != loadsz ||
+	if (vmspace_iop(td, vm, uarg, dof, loadsz, UIO_READ) != loadsz ||
 	    dof->dofh_loadsz != loadsz) {
 		kmem_free(dof, hdr.dofh_loadsz);
 		*errp = EFAULT;

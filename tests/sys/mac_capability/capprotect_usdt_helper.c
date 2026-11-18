@@ -36,6 +36,16 @@
  *                     the executable's load base, as drti passes them to
  *                     DTRACEHIOC_ADDDOF; "DOF 0 0" without a provider
  *   heapdof           HEAPDOF ADDR: a copy of that DOF in the heap
+ *   cowdof            COWDOF ERRNO: makes the pages of that DOF writable,
+ *                     rewrites one byte with its own value (so the pages
+ *                     become private copies) and makes them read-only
+ *   loop MODE         LOOP ERRNO, then a thread changes the map until
+ *                     "stop": "unmap" unmaps the DOF's pages and maps the
+ *                     file back; "crafted" first puts anonymous read-only
+ *                     pages there holding the same bytes with the provider
+ *                     renamed cpusdx; "churn" maps and unmaps anonymous
+ *                     memory elsewhere
+ *   stop              STOP N: stops the loop thread after N rounds
  *   exec              re-executes this program in "plain" mode; the new
  *                     image prints a new READY line
  *   exit              the server exits with status 0
@@ -49,6 +59,7 @@
 #include <sys/param.h>
 #include <sys/capsicum.h>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/uio.h>
@@ -58,6 +69,7 @@
 #include <gelf.h>
 #include <libelf.h>
 #include <link.h>
+#include <pthread.h>
 #include <fcntl.h>
 #include <inttypes.h>
 #include <poll.h>
@@ -362,40 +374,256 @@ report_heapdof(void)
 #endif
 }
 
+#ifdef WITH_DTRACE
+/*
+ * The map-changing loops.  The DOF pages may hold other read-only data of
+ * this program, so the loop replaces them only while it holds cp_maplock,
+ * and the command loop holds it while it handles a command.
+ */
+static pthread_mutex_t cp_maplock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_t cp_loop_thread;
+static bool cp_loop_running;
+static volatile int cp_loop_stop;
+static volatile unsigned long cp_loop_rounds;
+static char *cp_dof_page;		/* first page of the DOF */
+static size_t cp_dof_len;		/* the DOF's pages, in bytes */
+static off_t cp_dof_off;		/* their offset in the executable */
+static int cp_self_fd = -1;
+static char *cp_crafted;		/* the same bytes, provider renamed */
+
+struct cp_phdr_find {
+	uintptr_t	addr;
+	off_t		off;
+	bool		found;
+};
+
+static int
+find_phdr(struct dl_phdr_info *info, size_t size __unused, void *arg)
+{
+	struct cp_phdr_find *f = arg;
+	const Elf_Phdr *ph;
+	uintptr_t start;
+
+	for (int i = 0; i < info->dlpi_phnum; i++) {
+		ph = &info->dlpi_phdr[i];
+		if (ph->p_type != PT_LOAD)
+			continue;
+		start = info->dlpi_addr + ph->p_vaddr;
+		if (f->addr >= start && f->addr < start + ph->p_memsz) {
+			f->off = ph->p_offset + (f->addr - start);
+			f->found = true;
+			return (1);
+		}
+	}
+	return (0);
+}
+
+/* Locate the DOF's pages and their offset in the executable file. */
+static int
+dof_pages(void)
+{
+	const struct cp_dof_hdr *hdr = (const void *)cp_dof;
+	struct cp_phdr_find f;
+	uintptr_t start, end;
+
+	if (cp_dof == NULL)
+		return (ENOENT);
+	start = trunc_page((uintptr_t)cp_dof);
+	end = round_page((uintptr_t)cp_dof + hdr->dofh_loadsz);
+	f.addr = start;
+	f.found = false;
+	dl_iterate_phdr(find_phdr, &f);
+	if (!f.found || (f.off & PAGE_MASK) != 0)
+		return (ENOENT);
+	cp_dof_page = (char *)start;
+	cp_dof_len = end - start;
+	cp_dof_off = f.off;
+	return (0);
+}
+
+/* Turn the DOF's pages into private copies holding the same bytes. */
+static int
+cow_dof(void)
+{
+	volatile char *c;
+	int error;
+
+	error = dof_pages();
+	if (error == 0 && mprotect(cp_dof_page, cp_dof_len,
+	    PROT_READ | PROT_WRITE) != 0)
+		error = errno;
+	if (error == 0) {
+		c = cp_dof_page;
+		*c = *c;
+		if (mprotect(cp_dof_page, cp_dof_len, PROT_READ) != 0)
+			error = errno;
+	}
+	return (error);
+}
+
+static void
+map_file_back(void)
+{
+
+	if (mmap(cp_dof_page, cp_dof_len, PROT_READ, MAP_PRIVATE | MAP_FIXED,
+	    cp_self_fd, cp_dof_off) == MAP_FAILED)
+		_exit(80);
+}
+
+static void *
+loop_unmap(void *arg)
+{
+	bool crafted = arg != NULL;
+
+	while (!cp_loop_stop) {
+		pthread_mutex_lock(&cp_maplock);
+		if (munmap(cp_dof_page, cp_dof_len) != 0)
+			_exit(81);
+		if (crafted) {
+			if (mmap(cp_dof_page, cp_dof_len, PROT_READ | PROT_WRITE,
+			    MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0) ==
+			    MAP_FAILED)
+				_exit(82);
+			memcpy(cp_dof_page, cp_crafted, cp_dof_len);
+			if (mprotect(cp_dof_page, cp_dof_len, PROT_READ) != 0)
+				_exit(83);
+			usleep(200);
+			if (munmap(cp_dof_page, cp_dof_len) != 0)
+				_exit(84);
+		}
+		map_file_back();
+		pthread_mutex_unlock(&cp_maplock);
+		cp_loop_rounds++;
+		usleep(200);
+	}
+	return (NULL);
+}
+
+static void *
+loop_churn(void *arg __unused)
+{
+	void *p;
+
+	while (!cp_loop_stop) {
+		p = mmap(NULL, 64 * 1024, PROT_READ | PROT_WRITE,
+		    MAP_PRIVATE | MAP_ANON, -1, 0);
+		if (p != MAP_FAILED)
+			munmap(p, 64 * 1024);
+		cp_loop_rounds++;
+		usleep(1000);
+	}
+	return (NULL);
+}
+
+static int
+loop_start(const char *mode)
+{
+	void *(*fn)(void *);
+	void *arg;
+	char *name;
+
+	if (cp_loop_running)
+		return (EBUSY);
+	arg = NULL;
+	if (strcmp(mode, "churn") == 0)
+		fn = loop_churn;
+	else if (strcmp(mode, "unmap") == 0 || strcmp(mode, "crafted") == 0) {
+		fn = loop_unmap;
+		if (dof_pages() != 0)
+			return (ENOENT);
+		if (cp_self_fd < 0 && (cp_self_fd = open(cp_self, O_RDONLY)) < 0)
+			return (errno);
+		if (strcmp(mode, "crafted") == 0) {
+			cp_crafted = malloc(cp_dof_len);
+			if (cp_crafted == NULL)
+				return (ENOMEM);
+			memcpy(cp_crafted, cp_dof_page, cp_dof_len);
+			name = memmem(cp_crafted, cp_dof_len, "cpusdt", 7);
+			if (name == NULL)
+				return (ENOENT);
+			name[5] = 'x';
+			arg = cp_crafted;
+		}
+	} else
+		return (EINVAL);
+	cp_loop_stop = 0;
+	cp_loop_rounds = 0;
+	if (pthread_create(&cp_loop_thread, NULL, fn, arg) != 0)
+		return (EAGAIN);
+	cp_loop_running = true;
+	return (0);
+}
+
+static void
+loop_end(void)
+{
+
+	if (cp_loop_running) {
+		cp_loop_stop = 1;
+		pthread_join(cp_loop_thread, NULL);
+		cp_loop_running = false;
+	}
+	reply("STOP %lu\n", (unsigned long)cp_loop_rounds);
+}
+#endif
+
+static void
+handle(const char *cmd)
+{
+	unsigned long long v;
+
+	if (strcmp(cmd, "canary") == 0)
+		reply("CANARY %#" PRIx64 "\n", (uint64_t)cp_canary);
+	else if (sscanf(cmd, "set %llx", &v) == 1) {
+		cp_canary = v;
+		reply("SET 0\n");
+	} else if (sscanf(cmd, "shield %llx", &v) == 1)
+		reply("SHIELD %d\n", shield_self((uint32_t)v));
+	else if (sscanf(cmd, "mint %llx", &v) == 1)
+		mint_token((uint32_t)v);
+	else if (strcmp(cmd, "pid") == 0)
+		reply("PID %d\n", (int)getpid());
+	else if (strcmp(cmd, "sigcount") == 0)
+		reply("SIGCOUNT %d\n", (int)cp_sigusr1);
+	else if (strcmp(cmd, "exec") == 0) {
+		execl(cp_self, "capprotect_usdt_helper", "plain",
+		    (char *)NULL);
+		reply("EXEC %d\n", errno);
+	} else if (strcmp(cmd, "ticks") == 0)
+		reply("TICKS %d\n", cp_ticks);
+	else if (strcmp(cmd, "dof") == 0)
+		report_dof();
+	else if (strcmp(cmd, "heapdof") == 0)
+		report_heapdof();
+#ifdef WITH_DTRACE
+	else if (strcmp(cmd, "cowdof") == 0)
+		reply("COWDOF %d\n", cow_dof());
+	else if (strncmp(cmd, "loop ", 5) == 0)
+		reply("LOOP %d\n", loop_start(cmd + 5));
+#endif
+	else if (strcmp(cmd, "exit") == 0)
+		_exit(0);
+	else
+		reply("ERROR unknown command\n");
+}
+
 static void __dead2
 serve(void)
 {
 	char cmd[128];
-	unsigned long long v;
 
 	while (read_command(cmd, sizeof(cmd))) {
-		if (strcmp(cmd, "canary") == 0)
-			reply("CANARY %#" PRIx64 "\n", (uint64_t)cp_canary);
-		else if (sscanf(cmd, "set %llx", &v) == 1) {
-			cp_canary = v;
-			reply("SET 0\n");
-		} else if (sscanf(cmd, "shield %llx", &v) == 1)
-			reply("SHIELD %d\n", shield_self((uint32_t)v));
-		else if (sscanf(cmd, "mint %llx", &v) == 1)
-			mint_token((uint32_t)v);
-		else if (strcmp(cmd, "pid") == 0)
-			reply("PID %d\n", (int)getpid());
-		else if (strcmp(cmd, "sigcount") == 0)
-			reply("SIGCOUNT %d\n", (int)cp_sigusr1);
-		else if (strcmp(cmd, "exec") == 0) {
-			execl(cp_self, "capprotect_usdt_helper", "plain",
-			    (char *)NULL);
-			reply("EXEC %d\n", errno);
-		} else if (strcmp(cmd, "ticks") == 0)
-			reply("TICKS %d\n", cp_ticks);
-		else if (strcmp(cmd, "dof") == 0)
-			report_dof();
-		else if (strcmp(cmd, "heapdof") == 0)
-			report_heapdof();
-		else if (strcmp(cmd, "exit") == 0)
-			_exit(0);
-		else
-			reply("ERROR unknown command\n");
+#ifdef WITH_DTRACE
+		if (strcmp(cmd, "stop") == 0) {
+			loop_end();
+			continue;
+		}
+		pthread_mutex_lock(&cp_maplock);
+		handle(cmd);
+		pthread_mutex_unlock(&cp_maplock);
+#else
+		handle(cmd);
+#endif
 	}
 	_exit(0);
 }

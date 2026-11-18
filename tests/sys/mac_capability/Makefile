@@ -62,6 +62,7 @@ SRCS.capprotect_usdt_helper=	capprotect_usdt_helper.c
 SRCS.capprotect_usdt_helper+=	capprotect_usdt_helper_provider.d
 CFLAGS.capprotect_usdt_helper+=	-DWITH_DTRACE
 LIBADD.capprotect_usdt_helper+=	elf
+LIBADD.capprotect_usdt_helper+=	pthread
 .endif
 ATF_TESTS_SH+=	process_context_test
 PROGS+=		process_context_helper process_context_edge_helper \

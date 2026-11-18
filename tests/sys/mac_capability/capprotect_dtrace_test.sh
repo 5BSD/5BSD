@@ -26,6 +26,8 @@ ADDDOF=capprotect_adddof_helper
 CANARY_SECRET=0x1122334455667788
 
 # An errno, and the flag values of mac_capability_capprotect_proto.h.
+EPERM=1
+EFAULT=14
 EINVAL=22
 CP_SF_PTRACE=1
 
@@ -37,11 +39,12 @@ require_dtrace()
 	fi
 }
 
+# common_head [TIMEOUT]: root, dtrace, and a timeout (300 s by default).
 common_head()
 {
 	atf_set "require.user" "root"
 	atf_set "require.progs" "dtrace"
-	atf_set "timeout" "300"
+	atf_set "timeout" "${1:-300}"
 }
 
 # fixture_start MODE [UID]: start the fixture, with its control on fds 3
@@ -394,8 +397,9 @@ adddof_other_pid_priv_body()
 	require_dtrace
 	[ "$(stat -f %Sg /dev/dtrace/helper)" = wheel ] ||
 	    atf_fail "/dev/dtrace/helper is not group wheel"
-	# Today: refused because the child is not a stopped, traced child.
-	atf_check_equal $EINVAL \
+	# Refused: PRIV_DTRACE_PROC is root's (it was EINVAL, not a stopped,
+	# traced child, before DTRACEHIOC_ADDDOF accepted other processes).
+	atf_check_equal $EPERM \
 	    "$(adddof_child chroot -u 6501 -g 6501 -G wheel /)"
 }
 adddof_other_pid_priv_cleanup()
@@ -419,7 +423,8 @@ adddof_other_pid_jail_body()
 	    command="$(atf_get_srcdir)/$ADDDOF" child \
 	    "$(atf_get_srcdir)/$FIXTURE" >ad.out 2>ad.err ||
 	    atf_fail "jailed adddof helper: $(cat ad.err | tr "\n" " ")"
-	atf_check_equal "ADDDOF $EINVAL" "$(cat ad.out)"
+	# Refused: a jail has no PRIV_DTRACE_PROC (it was EINVAL before).
+	atf_check_equal "ADDDOF $EPERM" "$(cat ad.out)"
 }
 adddof_other_pid_jail_cleanup()
 {
@@ -439,7 +444,7 @@ adddof_heap_address_body()
 	local base heap
 
 	require_dtrace
-	fixture_start plain
+	fixture_start plain 65534
 	cmd dof
 	base=${REPLY##* }
 	cmd heapdof
@@ -447,11 +452,234 @@ adddof_heap_address_body()
 	[ "$heap" != 0 ] || atf_fail "no DOF in the fixture"
 	"$(atf_get_srcdir)/$ADDDOF" "$FXPID" "$heap" "$base" >ad.out 2>ad.err ||
 	    atf_fail "adddof helper: $(cat ad.err | tr "\n" " ")"
-	# Today: refused because the target is not a stopped, traced child.
-	atf_check_equal "ADDDOF $EINVAL" "$(cat ad.out)"
+	# Refused: not a read-only file mapping (it was EINVAL, not a stopped,
+	# traced child, before).  Nothing is registered.
+	atf_check_equal "ADDDOF $EFAULT" "$(cat ad.out)"
+	listed 'cpusdt*:::tick' | grep -qx "cpusdt$FXPID" &&
+	    atf_fail "the heap DOF was registered"
 	fixture_stop
 }
 adddof_heap_address_cleanup()
+{
+	pkill -f "$FIXTURE" 2>/dev/null || true
+}
+
+# adddof_fixture N: register the fixture's own DOF from root, N times;
+# prints the errnos, one per line.
+adddof_fixture()
+{
+	local dof base i=0
+
+	cmd dof
+	set -- "$1" $REPLY
+	dof=$3 base=$4
+	[ "$dof" != 0 ] || atf_fail "no DOF in the fixture"
+	while [ $i -lt "$1" ]; do
+		"$(atf_get_srcdir)/$ADDDOF" "$FXPID" "$dof" "$base" 2>>ad.err |
+		    sed -n 's/^ADDDOF //p'
+		i=$((i + 1))
+	done
+}
+
+# The number of probes dtrace lists for the fixture's provider.
+fixture_probes()
+{
+	dtrace -l -n "cpusdt$FXPID:::" 2>/dev/null | awk 'NR > 1' | wc -l |
+	    tr -d ' '
+}
+
+atf_test_case adddof_other_pid_registers cleanup
+adddof_other_pid_registers_head()
+{
+	atf_set "descr" "Root registers the DOF in an unprivileged process's" \
+	    "read-only file mapping, without a stop"
+	common_head
+}
+adddof_other_pid_registers_body()
+{
+	require_dtrace
+	fixture_start plain 65534
+	listed 'cpusdt*:::tick' | grep -qx "cpusdt$FXPID" &&
+	    atf_fail "the fixture registered itself"
+	atf_check_equal 0 "$(adddof_fixture 1)"
+	atf_check_equal 2 "$(fixture_probes)"
+	# Registering again creates nothing more (EALREADY in the kernel).
+	atf_check_equal 0 "$(adddof_fixture 1)"
+	atf_check_equal 2 "$(fixture_probes)"
+	fixture_stop
+}
+adddof_other_pid_registers_cleanup()
+{
+	pkill -f "$FIXTURE" 2>/dev/null || true
+}
+
+atf_test_case adddof_system_process
+adddof_system_process_head()
+{
+	atf_set "descr" "DTRACEHIOC_ADDDOF for a kernel process is refused" \
+	    "with EINVAL"
+	common_head
+}
+adddof_system_process_body()
+{
+	require_dtrace
+	# PID 0 is the kernel's process (P_SYSTEM).
+	"$(atf_get_srcdir)/$ADDDOF" 0 1000 0 >ad.out 2>ad.err ||
+	    atf_fail "adddof helper: $(cat ad.err | tr "\n" " ")"
+	atf_check_equal "ADDDOF $EINVAL" "$(cat ad.out)"
+}
+
+atf_test_case adddof_cow_modified cleanup
+adddof_cow_modified_head()
+{
+	atf_set "descr" "DOF in pages the process made private (writable," \
+	    "written, read-only again) is refused"
+	common_head
+}
+adddof_cow_modified_body()
+{
+	require_dtrace
+	fixture_start plain 65534
+	cmd cowdof
+	atf_check_equal "COWDOF 0" "$REPLY"
+	atf_check_equal $EFAULT "$(adddof_fixture 1)"
+	atf_check_equal 0 "$(fixture_probes)"
+	fixture_stop
+}
+adddof_cow_modified_cleanup()
+{
+	pkill -f "$FIXTURE" 2>/dev/null || true
+}
+
+# loop_registrations MODE N: run the fixture's MODE loop while root
+# registers its DOF N times; the errnos are in reg.out.
+loop_registrations()
+{
+	cmd "loop $1"
+	atf_check_equal "LOOP 0" "$REPLY"
+	adddof_fixture "$2" >reg.out
+	cmd stop
+	case "$REPLY" in
+	STOP\ [1-9]*) ;;
+	*) atf_fail "the $1 loop did not run: $REPLY" ;;
+	esac
+}
+
+atf_test_case adddof_check_copy_race cleanup
+adddof_check_copy_race_head()
+{
+	atf_set "descr" "A process that swaps crafted anonymous DOF in and out" \
+	    "of its DOF pages never gets the crafted DOF registered"
+	common_head 600
+}
+adddof_check_copy_race_body()
+{
+	require_dtrace
+	fixture_start plain 65534
+	loop_registrations crafted 100
+	# Each call registered the file's DOF or failed with EFAULT.
+	grep -qvx "0\|$EFAULT" reg.out &&
+	    atf_fail "unexpected errno: $(sort reg.out | uniq -c)"
+	[ "$(wc -l < reg.out)" -eq 100 ] || atf_fail "missing results"
+	if listed 'cpusdx*:::tick' | grep -q cpusdx; then
+		atf_fail "the crafted DOF was registered"
+	fi
+	echo "results: $(sort reg.out | uniq -c | tr '\n' ' ')"
+	fixture_stop
+}
+adddof_check_copy_race_cleanup()
+{
+	pkill -f "$FIXTURE" 2>/dev/null || true
+}
+
+atf_test_case adddof_unmap_race cleanup
+adddof_unmap_race_head()
+{
+	atf_set "descr" "A process that unmaps and remaps its DOF pages while" \
+	    "root registers them: each call registers or fails with EFAULT"
+	common_head 600
+}
+adddof_unmap_race_body()
+{
+	require_dtrace
+	fixture_start plain 65534
+	loop_registrations unmap 100
+	grep -qvx "0\|$EFAULT" reg.out &&
+	    atf_fail "unexpected errno: $(sort reg.out | uniq -c)"
+	# Providers are created once, however often the DOF registered.
+	case "$(fixture_probes)" in
+	0|2) ;;
+	*) atf_fail "probes multiplied: $(fixture_probes)" ;;
+	esac
+	echo "results: $(sort reg.out | uniq -c | tr '\n' ' ')"
+	fixture_stop
+}
+adddof_unmap_race_cleanup()
+{
+	pkill -f "$FIXTURE" 2>/dev/null || true
+}
+
+atf_test_case adddof_map_churn_retries cleanup
+adddof_map_churn_retries_head()
+{
+	atf_set "descr" "Unrelated mmap/munmap in the target while root" \
+	    "registers its DOF: the kernel retries and registers"
+	common_head 600
+}
+adddof_map_churn_retries_body()
+{
+	require_dtrace
+	fixture_start plain 65534
+	loop_registrations churn 50
+	atf_check_equal 50 "$(grep -cx 0 reg.out)"
+	atf_check_equal 2 "$(fixture_probes)"
+	fixture_stop
+}
+adddof_map_churn_retries_cleanup()
+{
+	pkill -f "$FIXTURE" 2>/dev/null || true
+}
+
+concurrent_adddof()
+{
+	local i=0
+
+	while [ $i -lt 50 ]; do
+		"$(atf_get_srcdir)/$ADDDOF" "$FXPID" "$1" "$2" |
+		    sed -n 's/^ADDDOF //p'
+		i=$((i + 1))
+	done
+}
+
+atf_test_case adddof_concurrent_dedupe cleanup
+adddof_concurrent_dedupe_head()
+{
+	atf_set "descr" "Two consumers register a self-registered process's" \
+	    "DOF at once: providers are created once"
+	common_head 600
+}
+adddof_concurrent_dedupe_body()
+{
+	local dof base c1 c2
+
+	require_dtrace
+	# A root fixture: drti registered it at start-up.
+	fixture_start plain
+	atf_check_equal 2 "$(fixture_probes)"
+	cmd dof
+	set -- $REPLY
+	dof=$2 base=$3
+	concurrent_adddof "$dof" "$base" >con1.out &
+	c1=$!
+	concurrent_adddof "$dof" "$base" >con2.out &
+	c2=$!
+	wait $c1 $c2
+	cat con1.out con2.out >reg.out
+	atf_check_equal 100 "$(grep -cx 0 reg.out)"
+	atf_check_equal 2 "$(fixture_probes)"
+	fixture_stop
+}
+adddof_concurrent_dedupe_cleanup()
 {
 	pkill -f "$FIXTURE" 2>/dev/null || true
 }
@@ -468,4 +696,11 @@ atf_init_test_cases()
 	atf_add_test_case adddof_other_pid_priv
 	atf_add_test_case adddof_other_pid_jail
 	atf_add_test_case adddof_heap_address
+	atf_add_test_case adddof_other_pid_registers
+	atf_add_test_case adddof_system_process
+	atf_add_test_case adddof_cow_modified
+	atf_add_test_case adddof_check_copy_race
+	atf_add_test_case adddof_unmap_race
+	atf_add_test_case adddof_map_churn_retries
+	atf_add_test_case adddof_concurrent_dedupe
 }
