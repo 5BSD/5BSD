@@ -358,14 +358,14 @@ dq_st_open_read(uint32_t mode)
 }
 
 /*
- * The consultation's question, after the guard and before the post, for
- * an absolute name or absolute symbolic link target (a relative start
- * always posts):
+ * The consultation's question, after the guard and before the post:
  * DQ_SD_PASS (ans is a PASS of this queue), DQ_SD_ERRNO (*errorp) or
- * DQ_SD_NONE (post the event).  rq_st_root is the process root of an
- * eligible event, set by the core (kern_dqres.c); every other request
- * builder leaves it NULL, and the conditions it stands for are tested
- * again here, so a builder that sets it by mistake still posts.
+ * DQ_SD_NONE (post the event).  Only an absolute name or an absolute
+ * symbolic link target is decided; a relative start always posts.
+ * rq_st_root is the process root of an eligible event, set by the core
+ * (kern_dqres.c); every other request builder leaves it NULL, and the
+ * conditions it stands for are tested again here, so a builder that sets
+ * it by mistake still posts.
  */
 int
 dq_standing_decide(struct dq_queue *q, const struct dqres_req *rq,
@@ -383,7 +383,7 @@ dq_standing_decide(struct dq_queue *q, const struct dqres_req *rq,
 	    rq->rq_start_kind == DQ_START_REAL_ROOT &&
 	    (rq->rq_rflags & (DQ_RF_RINROOT | DQ_RF_ABSTRACT)) == 0 &&
 	    rq->rq_class != 2 && rq->rq_op <= DQ_ROP_MAX;
-	/* A stale count is harmless: an ADD not yet returned promised nothing. */
+	/* A stale count is harmless: an unfinished ADD promised nothing. */
 	if (atomic_load_int(&q->q_st_n) == 0)
 		return (DQ_SD_NONE);
 	if (!eligible) {
