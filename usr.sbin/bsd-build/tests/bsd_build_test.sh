@@ -1064,6 +1064,9 @@ loader_build_configuration_head()
 {
     atf_set descr 'Loader build configuration is derived from the source tree'
     atf_set require.progs python3.12
+    # Sixteen make(1) parses of the stand tree: 47 to 101 s in 2-vCPU guest
+    # runs, past 300 s while the host was contended.
+    atf_set timeout 900
 }
 loader_build_configuration_body()
 {
@@ -1083,6 +1086,7 @@ boot_transport_head()
 {
     atf_set descr 'Complete boot transport, signing and GPT payload checks'
     atf_set require.progs 'python3.12 openssl'
+    # 47 to 70 s in 2-vCPU guest runs; 120 s broke under host contention.
     atf_set timeout 900
 }
 boot_transport_body()
