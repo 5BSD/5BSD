@@ -319,7 +319,8 @@ the ports images, a long bsd-build run fills the default 8 GB guest root:
 give it `ROOT_SIZE=16g`.  Cases that need a guest setup no tier provides yet
 (`storage_test:disk_import_and_binding`'s scratch disk, `devctl_device_test`
 with devd and auditd stopped, `bsd_build_test:generation_reconciliation`'s
-ACL subtest without root and md(4)) skip with `DEFERRED_GUEST_SETUP` and are
+ACL subtest without root, md(4) and the zfs module, or a kernel with
+`options UFS_ACL`) skip with `DEFERRED_GUEST_SETUP` and are
 counted as `DEFERRED_GUEST_SETUP=N`, not as passes.
 Cases that drive their private SwitchBoard with `switchboardctl` call
 `use_private_control` (`usr.sbin/switchboard/tests/test_helpers.sh`): it runs
