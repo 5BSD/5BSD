@@ -97,11 +97,15 @@ kernel_checked_body()
         atf_check -s exit:1 -o empty -e match:"built without options $option\$" \
             ./check -k without
     done
-    fake_kernel none
+    # A kernel with other kern.features but none of the ledger's.
+    fake_kernel none compat_freebsd11
     atf_check -s exit:1 -o empty \
         -e match:'built without options AUDIT CAPABILITY_MODE CAPABILITIES RACCT RCTL$' \
         ./check -k none
-    # No symbol table: nothing can be concluded.
+    # No kern.features symbol at all, or no symbol table: nothing can be
+    # concluded.
+    fake_kernel nofeatures
+    atf_check -s exit:1 -o empty -e match:'no symbol table' ./check -k nofeatures
     cp kernel stripped
     atf_check -s exit:0 strip stripped
     atf_check -s exit:1 -o empty -e match:'no symbol table' ./check -k stripped
@@ -242,7 +246,8 @@ world_without_audit_body()
     atf_check -s exit:0 -o inline:'yes\n' -e empty \
         env WITHOUT_AUTO_OBJ=yes MAKEOBJDIRPREFIX="$PWD/obj" \
         make -m /usr/src/share/mk -C /usr/src/usr.bin/id -V MK_AUDIT
-    atf_check -s not-exit:0 -o empty \
+    # make reports where it stopped on stdout; no value is printed.
+    atf_check -s not-exit:0 -o not-match:'^(yes|no)$' \
         -e match:'WITHOUT_AUDIT is refused in 5BSD: BSM audit is mandatory' \
         env WITHOUT_AUTO_OBJ=yes MAKEOBJDIRPREFIX="$PWD/obj" \
         make -m /usr/src/share/mk -C /usr/src/usr.bin/id -V MK_AUDIT WITHOUT_AUDIT=yes

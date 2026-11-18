@@ -591,7 +591,7 @@ ledger_unreadable_body()
                     ./plan $action --kernel PLAIN
             done
             atf_check -s exit:0 -o match:'kernel-mandatory-option-configuration=not-performed' \
-                -e empty ./plan world
+                -e empty env NO_KERNEL_DIR=1 ./plan world
         elif [ $kind = many ]; then
             configuration LAST 'ident LAST' 'options LG3_200'
             atf_check -s exit:1 -o empty \

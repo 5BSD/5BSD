@@ -1276,7 +1276,7 @@ PYTHON
     atf_check -s exit:0 -o empty -e empty python3.12 - <<'PYTHON'
 import json, os
 rows = [json.loads(line) for line in open('layout-image-plan.jsonl')]
-image = next(r['argv'] for r in rows if r['name'] == 'image')
+image = next(r['argv'] for r in rows[1:] if r['name'] == 'image')
 assert image[-2:] == ['--storage-layout-policy', os.path.realpath('layout.json')]
 assert '--boot-archive' in image
 assert image[image.index('--verity-policy')+1] == os.path.realpath('verity.json')
