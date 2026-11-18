@@ -152,10 +152,13 @@ dtrace_wait()
 
 	while kill -0 "$DTPID" 2>/dev/null; do
 		i=$((i + 1))
-		if [ $i -ge 300 ]; then
-			kill -INT "$DTPID" 2>/dev/null
-			break
-		fi
+		# A background job of a non-interactive shell ignores SIGINT,
+		# so a consumer whose exit() never ran is ended with SIGTERM
+		# (and SIGKILL), not left for wait to block on.
+		case $i in
+		300) kill -TERM "$DTPID" 2>/dev/null ;;
+		400) kill -KILL "$DTPID" 2>/dev/null; break ;;
+		esac
 		sleep 0.1
 	done
 	wait "$DTPID" 2>/dev/null
