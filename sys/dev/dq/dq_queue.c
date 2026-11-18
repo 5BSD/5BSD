@@ -524,6 +524,31 @@ dq_object_rele(struct dq_object *o)
 	dq_queue_rele(q);
 }
 
+/*
+ * Take a linked event off the queue: off the pending list, whose slot then
+ * goes to a post waiting on a full queue (D205), or out of the in-flight
+ * tree.  The list reference stays with the caller.
+ */
+static void
+dq_event_unlink_locked(struct dq_queue *q, struct dq_event_k *ev)
+{
+
+	DQ_LOCK_ASSERT(q);
+	KASSERT(ev->ev_linked, ("dq: unlinking event %p twice", ev));
+	if (ev->ev_state == DQ_EV_PENDING) {
+		TAILQ_REMOVE(&q->q_pending, ev, ev_link);
+		q->q_count--;
+		q->q_bytes -= ev->ev_size;
+		dq_queue_slots_freed(q, 1);
+	} else {
+		KASSERT(ev->ev_state == DQ_EV_DELIVERED,
+		    ("dq: event %p linked in state %d", ev, ev->ev_state));
+		RB_REMOVE(dq_inflight_tree, &q->q_inflight, ev);
+		q->q_stats.ds2_inflight--;
+	}
+	ev->ev_linked = false;
+}
+
 /* Fail one event: unlink it, wake its waiter, hand the list reference back. */
 static void
 dq_event_fail_locked(struct dq_queue *q, struct dq_event_k *ev, int error,
@@ -538,16 +563,7 @@ dq_event_fail_locked(struct dq_queue *q, struct dq_event_k *ev, int error,
 		dq_async_fail_locked(q, ev->ev_async);
 		return;
 	}
-	if (ev->ev_state == DQ_EV_PENDING) {
-		TAILQ_REMOVE(&q->q_pending, ev, ev_link);
-		q->q_count--;
-		q->q_bytes -= ev->ev_size;
-		dq_queue_slots_freed(q, 1);
-	} else {
-		RB_REMOVE(dq_inflight_tree, &q->q_inflight, ev);
-		q->q_stats.ds2_inflight--;
-	}
-	ev->ev_linked = false;
+	dq_event_unlink_locked(q, ev);
 	ev->ev_state = DQ_EV_FAILED;
 	ev->ev_errno = error;
 	cv_broadcast(&ev->ev_cv);
@@ -766,7 +782,7 @@ dq_event_rele(struct dq_event_k *ev)
 		dq_object_retire_unbound(ev->ev_robj, NULL);
 	/*
 	 * A RESOLVE SWAP answer nobody took.  The waiter of a REPLIED event
-	 * always takes it (dq_event_post_wait_q), so this is the event whose
+	 * always takes it (dq_event_post_wait_ev), so this is the event whose
 	 * waiter is gone; the drop can be a last close, which may sleep.
 	 */
 	if (ev->ev_rswap.fs_fp != NULL) {
@@ -1235,65 +1251,83 @@ dq_wait_event(struct dq_queue *q, struct dq_event_k *ev, struct thread *td,
 	return (error);
 }
 
-int
-dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
-    size_t bodylen, struct thread *td, int flags, struct dq_data **replyp,
-    int *errnop)
+/*
+ * What a waited post's answer carries to its caller: the reply data (its
+ * own reference), the controller's errno, and for a RESOLVE an FD
+ * answer's object and a SWAP answer's file, each moved out of the event
+ * under q_mtx (D91: the state before the wake reason).
+ */
+struct dq_post_answer {
+	struct dq_data	*pa_reply;
+	int		 pa_errno;
+	struct dq_object *pa_robj;
+	struct fdswap	 pa_rswap;
+};
+
+/*
+ * Give up a waited event its waiter stopped waiting for (H4): the wait
+ * ended with error (the deadline's EWOULDBLOCK, a caught signal, or
+ * dq_wait_abandon's EINTR) and no answer came.  Pending, the controller
+ * never read it: it is withdrawn with no record.  Delivered, the
+ * controller has it: *interruptp asks the caller to post the INTERRUPT
+ * that says the answer is no longer wanted, once q_mtx is dropped.
+ * Returns the waiter's errno, EIO at the deadline.  The caller drops the
+ * list reference.
+ */
+static int
+dq_event_withdraw_locked(struct dq_queue *q, struct dq_event_k *ev, int error,
+    bool *interruptp)
 {
-	struct dq_queue *q;
-	struct dq_event_k *ev;
+	bool delivered;
+
+	DQ_LOCK_ASSERT(q);
+	KASSERT(error != 0, ("dq: withdrawing event %p with no error", ev));
+	delivered = ev->ev_state == DQ_EV_DELIVERED;
+	dq_event_unlink_locked(q, ev);
+	*interruptp = delivered;
+	if (error == EWOULDBLOCK) {
+		ev->ev_state = DQ_EV_FAILED;
+		q->q_stats.ds2_deadline_misses++;
+		SDT_PROBE2(dq, , , event__deadline, q, ev);
+		return (EIO);
+	}
+	ev->ev_state = DQ_EV_INTERRUPTED;
+	if (delivered) {
+		q->q_stats.ds2_interrupts++;
+		SDT_PROBE2(dq, , , event__interrupt, q, ev);
+	}
+	return (error);
+}
+
+/*
+ * The waited post (H4), for an object's event (o) or a queue-level one (o
+ * NULL: no per-object quota, revoke or page bound; the queue closing
+ * fails it).  ev is the caller's: allocated, filled, and its reference
+ * kept.  The wait for room before the post (the quotas, a full queue) and
+ * the wait for the answer after it are both in mode and bounded by the
+ * one deadline (0: none).  Returns 0 with the answer in *pa; otherwise ev
+ * was never posted, failed, or was withdrawn, and *pa is empty.
+ */
+static int
+dq_event_post_wait_ev(struct dq_queue *q, struct dq_object *o,
+    struct dq_event_k *ev, struct thread *td, int mode, sbintime_t deadline,
+    struct dq_post_answer *pa)
+{
 	struct dq_requester *rq, *newrq;
 	struct dq_interrupt_body ib;
-	sbintime_t deadline;
-	int error, mode;
 	struct dq_post_waits pw;
-	bool interrupt, drop_list_ref, lock, fault;
+	int error;
+	bool interrupt, drop_list_ref, lock;
 
-	q = o->o_queue;
-	*replyp = NULL;
-	*errnop = 0;
-	interrupt = drop_list_ref = false;
+	memset(pa, 0, sizeof(*pa));
 	memset(&pw, 0, sizeof(pw));
-	lock = (flags & DQ_POST_LOCK) != 0;
-	fault = (flags & DQ_POST_FAULT) != 0;
-	KASSERT(!fault || (td == curthread && !lock),
-	    ("dq: fault wait flags %#x", flags));
-
-	/*
-	 * A fault takes no FILEDESC lock: it may run under a filesystem's
-	 * vnode lock (a write(2) whose buffer maps a served file), and
-	 * vnode -> filedesc would invert the order kinfo export takes.  A
-	 * controller faulting on its own served object waits out the page
-	 * deadline and gets SIGBUS instead of EDEADLK.
-	 */
-	if (!fault && dq_caller_holds_queue(q, td))
-		return (EDEADLK);
-
-	ev = dq_event_alloc(o, op, body, bodylen, td);
+	interrupt = drop_list_ref = false;
+	lock = ev->ev_lock;
+	KASSERT(o != NULL || (!lock && !ev->ev_pagein),
+	    ("dq: queue-level event %p with object flags", ev));
 	ev->ev_waited = true;
-	ev->ev_lock = lock;
-	ev->ev_pagein = fault && op == DQ_OP_READ;
-	newrq = lock ? NULL : malloc(sizeof(*newrq), M_DQ, M_WAITOK | M_ZERO);
-
-	/*
-	 * The wait's mode (D192): a fault never catches a signal; a lock
-	 * catches them, as lf_advlock's sleep does; the data and attribute
-	 * waits catch them only under DQ_PF_INTR (an NFS intr mount), and
-	 * otherwise wait as a local file system's I/O does.
-	 */
-	if (fault) {
-		/* A page never waits forever (B1, B4). */
-		deadline = dq_page_deadline(o);
-		mode = DQ_WAIT_FAULT;
-	} else {
-		DQO_LOCK(o);
-		deadline = (flags & DQ_POST_NODEADLINE) != 0 ? 0 :
-		    dq_deadline(&o->o_policy);
-		mode = lock || (o->o_policy.dp_flags & DQ_PF_INTR) != 0 ?
-		    DQ_WAIT_CATCH : DQ_WAIT_UNINTR;
-		DQO_UNLOCK(o);
-	}
 	ev->ev_deadline = deadline;
+	newrq = lock ? NULL : malloc(sizeof(*newrq), M_DQ, M_WAITOK | M_ZERO);
 	rq = NULL;
 
 	DQ_LOCK(q);
@@ -1302,35 +1336,42 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 			error = EIO;
 			goto out_locked;
 		}
-		DQO_LOCK(o);
-		if (o->o_state == DQ_OBJ_REVOKED) {
-			DQO_UNLOCK(o);
-			error = EIO;
-			goto out_locked;
-		}
-		/*
-		 * A page-in past the pager's size is refused here, under the
-		 * locks a shrink fails page-ins under (dq_object_cut), so one
-		 * that read the old size cannot slip in after it.
-		 */
-		if (ev->ev_pagein) {
-			const struct dq_read_body *prb = body;
-
-			if (prb->dr_offset + prb->dr_len >
-			    (uint64_t)round_page(o->o_vmsize)) {
+		if (o != NULL) {
+			DQO_LOCK(o);
+			if (o->o_state == DQ_OBJ_REVOKED) {
 				DQO_UNLOCK(o);
 				error = EIO;
 				goto out_locked;
 			}
+			/*
+			 * A page-in past the pager's size is refused here,
+			 * under the locks a shrink fails page-ins under
+			 * (dq_object_cut), so one that read the old size
+			 * cannot slip in after it.
+			 */
+			if (ev->ev_pagein) {
+				const struct dq_read_body *prb;
+
+				prb = (const struct dq_read_body *)
+				    ((const char *)&ev->ev_hdr +
+				    sizeof(struct dq_event));
+				if (prb->dr_offset + prb->dr_len >
+				    (uint64_t)round_page(o->o_vmsize)) {
+					DQO_UNLOCK(o);
+					error = EIO;
+					goto out_locked;
+				}
+			}
+			DQO_UNLOCK(o);
 		}
-		DQO_UNLOCK(o);
 		/*
 		 * B6: a LOCK is bounded by the queue depth alone.  A blocked
 		 * SETLKW is a legitimate long wait on a real file; counting
 		 * it against the in-flight quotas would let lockers starve
 		 * readers.
 		 */
-		if (!lock && o->o_inflight >= dq_max_inflight_per_object) {
+		if (o != NULL && !lock &&
+		    o->o_inflight >= dq_max_inflight_per_object) {
 			error = dq_post_quota_sleep(q, ev, &o->o_inflight,
 			    "dqinfl", td, mode, deadline, &pw);
 			if (error != 0)
@@ -1372,8 +1413,11 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 			    rq, rq_link);
 		}
 		rq->rq_inflight++;
-		o->o_inflight++;
+		if (o != NULL)
+			o->o_inflight++;
 	}
+	if (o == NULL)
+		SDT_PROBE2(dq, , , resolve__post, q, ev);
 
 	error = dq_wait_event(q, ev, td, mode, deadline);
 
@@ -1383,53 +1427,22 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 	 */
 	switch (ev->ev_state) {
 	case DQ_EV_REPLIED:
-		*replyp = ev->ev_reply;	/* the reply's own reference */
-		*errnop = ev->ev_errno;
+		pa->pa_reply = ev->ev_reply;	/* the reply's own reference */
+		pa->pa_errno = ev->ev_errno;
+		pa->pa_robj = ev->ev_robj;
+		pa->pa_rswap = ev->ev_rswap;	/* SWAP: the reference moves */
 		ev->ev_reply = NULL;
+		ev->ev_robj = NULL;
+		bzero(&ev->ev_rswap, sizeof(ev->ev_rswap));
 		error = 0;
 		break;
 	case DQ_EV_FAILED:
 		error = EIO;
 		break;
 	case DQ_EV_PENDING:
-		/* Unread by the controller: withdraw it silently. */
-		KASSERT(error != 0, ("dq: pending event with no error"));
-		TAILQ_REMOVE(&q->q_pending, ev, ev_link);
-		q->q_count--;
-		q->q_bytes -= ev->ev_size;
-		dq_queue_slots_freed(q, 1);
-		ev->ev_linked = false;
-		drop_list_ref = true;
-		if (error == EWOULDBLOCK) {
-			ev->ev_state = DQ_EV_FAILED;
-			q->q_stats.ds2_deadline_misses++;
-			SDT_PROBE2(dq, , , event__deadline, q, ev);
-			error = EIO;
-		} else {
-			ev->ev_state = DQ_EV_INTERRUPTED;
-		}
-		break;
 	case DQ_EV_DELIVERED:
-		KASSERT(error != 0, ("dq: delivered event with no error"));
-		RB_REMOVE(dq_inflight_tree, &q->q_inflight, ev);
-		q->q_stats.ds2_inflight--;
-		ev->ev_linked = false;
+		error = dq_event_withdraw_locked(q, ev, error, &interrupt);
 		drop_list_ref = true;
-		/*
-		 * The controller has it: whichever way the waiter gives up,
-		 * tell the controller the answer is no longer wanted.
-		 */
-		interrupt = true;
-		if (error == EWOULDBLOCK) {
-			ev->ev_state = DQ_EV_FAILED;
-			q->q_stats.ds2_deadline_misses++;
-			SDT_PROBE2(dq, , , event__deadline, q, ev);
-			error = EIO;
-		} else {
-			ev->ev_state = DQ_EV_INTERRUPTED;
-			q->q_stats.ds2_interrupts++;
-			SDT_PROBE2(dq, , , event__interrupt, q, ev);
-		}
 		break;
 	default:
 		panic("dq: event %p in state %d", ev, ev->ev_state);
@@ -1437,8 +1450,10 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 	if (lock) {
 		o->o_locks--;
 	} else {
-		o->o_inflight--;
-		wakeup(&o->o_inflight);
+		if (o != NULL) {
+			o->o_inflight--;
+			wakeup(&o->o_inflight);
+		}
 		dq_requester_release_locked(q, ev->ev_requester);
 	}
 out_locked:
@@ -1452,6 +1467,68 @@ out_locked:
 	}
 	if (drop_list_ref)
 		dq_event_rele(ev);
+	return (error);
+}
+
+int
+dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
+    size_t bodylen, struct thread *td, int flags, struct dq_data **replyp,
+    int *errnop)
+{
+	struct dq_queue *q;
+	struct dq_event_k *ev;
+	struct dq_post_answer pa;
+	sbintime_t deadline;
+	int error, mode;
+	bool lock, fault;
+
+	q = o->o_queue;
+	*replyp = NULL;
+	*errnop = 0;
+	lock = (flags & DQ_POST_LOCK) != 0;
+	fault = (flags & DQ_POST_FAULT) != 0;
+	KASSERT(!fault || (td == curthread && !lock),
+	    ("dq: fault wait flags %#x", flags));
+
+	/*
+	 * A fault takes no FILEDESC lock: it may run under a filesystem's
+	 * vnode lock (a write(2) whose buffer maps a served file), and
+	 * vnode -> filedesc would invert the order kinfo export takes.  A
+	 * controller faulting on its own served object waits out the page
+	 * deadline and gets SIGBUS instead of EDEADLK.
+	 */
+	if (!fault && dq_caller_holds_queue(q, td))
+		return (EDEADLK);
+
+	ev = dq_event_alloc(o, op, body, bodylen, td);
+	ev->ev_lock = lock;
+	ev->ev_pagein = fault && op == DQ_OP_READ;
+
+	/*
+	 * The wait's mode (D192): a fault never catches a signal; a lock
+	 * catches them, as lf_advlock's sleep does; the data and attribute
+	 * waits catch them only under DQ_PF_INTR (an NFS intr mount), and
+	 * otherwise wait as a local file system's I/O does.
+	 */
+	if (fault) {
+		/* A page never waits forever (B1, B4). */
+		deadline = dq_page_deadline(o);
+		mode = DQ_WAIT_FAULT;
+	} else {
+		DQO_LOCK(o);
+		deadline = (flags & DQ_POST_NODEADLINE) != 0 ? 0 :
+		    dq_deadline(&o->o_policy);
+		mode = lock || (o->o_policy.dp_flags & DQ_PF_INTR) != 0 ?
+		    DQ_WAIT_CATCH : DQ_WAIT_UNINTR;
+		DQO_UNLOCK(o);
+	}
+	error = dq_event_post_wait_ev(q, o, ev, td, mode, deadline, &pa);
+	if (error == 0) {
+		KASSERT(pa.pa_robj == NULL && pa.pa_rswap.fs_fp == NULL,
+		    ("dq: object event %p answered with a RESOLVE kind", ev));
+		*replyp = pa.pa_reply;
+		*errnop = pa.pa_errno;
+	}
 	dq_event_rele(ev);
 	return (error);
 }
@@ -1492,130 +1569,25 @@ dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
     struct fdswap *rswapp)
 {
 	struct dq_event_k *ev;
-	struct dq_requester *rq, *newrq;
-	struct dq_interrupt_body ib;
-	int error, mode;
-	struct dq_post_waits pw;
-	bool interrupt, drop_list_ref;
+	struct dq_post_answer pa;
+	int error;
 
 	*replyp = NULL;
 	*errnop = 0;
 	*robjp = NULL;
 	bzero(rswapp, sizeof(*rswapp));
-	interrupt = drop_list_ref = false;
-	memset(&pw, 0, sizeof(pw));
 	if (dq_caller_holds_queue(q, td))
 		return (EDEADLK);
-	mode = catching ? DQ_WAIT_CATCH : DQ_WAIT_UNINTR;
 	ev = dq_event_alloc(NULL, op, body, bodylen, td);
-	ev->ev_waited = true;
-	ev->ev_deadline = deadline;
 	ev->ev_hdr.de_caller.dc_flags |= DQ_CALLER_F_ATTACHED;
-	newrq = malloc(sizeof(*newrq), M_DQ, M_WAITOK | M_ZERO);
-	rq = NULL;
-
-	DQ_LOCK(q);
-	for (;;) {
-		if ((q->q_flags & DQ_Q_CLOSING) != 0) {
-			error = EIO;
-			goto out_locked;
-		}
-		rq = dq_requester_find_locked(q, ev->ev_requester);
-		if (rq != NULL && rq->rq_inflight >= dq_max_inflight_per_requester) {
-			/* The quota wait is bounded by the same deadline. */
-			error = dq_post_quota_sleep(q, ev, &q->q_requesters,
-			    "dqreq", td, mode, deadline, &pw);
-			if (error != 0)
-				goto out_locked;
-			continue;
-		}
-		if (q->q_count >= q->q_depth) {
-			error = dq_post_space_sleep(q, ev, td, mode, deadline,
-			    &pw);
-			if (error != 0)
-				goto out_locked;
-			continue;
-		}
-		break;
+	error = dq_event_post_wait_ev(q, NULL, ev, td,
+	    catching ? DQ_WAIT_CATCH : DQ_WAIT_UNINTR, deadline, &pa);
+	if (error == 0) {
+		*replyp = pa.pa_reply;
+		*errnop = pa.pa_errno;
+		*robjp = pa.pa_robj;
+		*rswapp = pa.pa_rswap;
 	}
-	pw.pw_pass = false;		/* the slot is this post's */
-	dq_post_waits_done(q, ev, &pw, 0);
-	error = dq_event_enqueue_locked(q, ev);
-	if (error != 0)
-		goto out_locked;
-	if (rq == NULL) {
-		rq = newrq;
-		newrq = NULL;
-		rq->rq_key = ev->ev_requester;
-		LIST_INSERT_HEAD(&q->q_requesters[rq->rq_key % DQ_REQUESTER_HASH],
-		    rq, rq_link);
-	}
-	rq->rq_inflight++;
-	SDT_PROBE2(dq, , , resolve__post, q, ev);
-
-	error = dq_wait_event(q, ev, td, mode, deadline);
-	switch (ev->ev_state) {
-	case DQ_EV_REPLIED:
-		*replyp = ev->ev_reply;
-		*errnop = ev->ev_errno;
-		*robjp = ev->ev_robj;	/* state before the wake reason (D91) */
-		*rswapp = ev->ev_rswap;	/* SWAP: the reference moves */
-		ev->ev_reply = NULL;
-		ev->ev_robj = NULL;
-		bzero(&ev->ev_rswap, sizeof(ev->ev_rswap));
-		error = 0;
-		break;
-	case DQ_EV_FAILED:
-		error = EIO;
-		break;
-	case DQ_EV_PENDING:
-		TAILQ_REMOVE(&q->q_pending, ev, ev_link);
-		q->q_count--;
-		q->q_bytes -= ev->ev_size;
-		dq_queue_slots_freed(q, 1);
-		ev->ev_linked = false;
-		drop_list_ref = true;
-		if (error == EWOULDBLOCK) {
-			ev->ev_state = DQ_EV_FAILED;
-			q->q_stats.ds2_deadline_misses++;
-			SDT_PROBE2(dq, , , event__deadline, q, ev);
-			error = EIO;
-		} else
-			ev->ev_state = DQ_EV_INTERRUPTED;
-		break;
-	case DQ_EV_DELIVERED:
-		RB_REMOVE(dq_inflight_tree, &q->q_inflight, ev);
-		q->q_stats.ds2_inflight--;
-		ev->ev_linked = false;
-		drop_list_ref = true;
-		interrupt = true;
-		if (error == EWOULDBLOCK) {
-			ev->ev_state = DQ_EV_FAILED;
-			q->q_stats.ds2_deadline_misses++;
-			SDT_PROBE2(dq, , , event__deadline, q, ev);
-			error = EIO;
-		} else {
-			ev->ev_state = DQ_EV_INTERRUPTED;
-			q->q_stats.ds2_interrupts++;
-			SDT_PROBE2(dq, , , event__interrupt, q, ev);
-		}
-		break;
-	default:
-		panic("dq: event %p in state %d", ev, ev->ev_state);
-	}
-	dq_requester_release_locked(q, ev->ev_requester);
-out_locked:
-	dq_post_waits_done(q, ev, &pw, error);
-	DQ_UNLOCK(q);
-	if (newrq != NULL)
-		free(newrq, M_DQ);
-	if (interrupt) {
-		ib.din_id = ev->ev_hdr.de_id;
-		dq_event_post_nowait(q, NULL, DQ_OP_INTERRUPT, &ib, sizeof(ib),
-		    td);
-	}
-	if (drop_list_ref)
-		dq_event_rele(ev);
 	dq_event_rele(ev);
 	return (error);
 }
