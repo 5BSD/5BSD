@@ -928,9 +928,13 @@ dq_serve_fspacectl(int q, const struct dq_event *ev,
 		    dq_serve_map(DQ_OP_FSPACECTL, errno), NULL, 0));
 	sr.dscr_offset = (uint64_t)rmsr.r_offset;
 	sr.dscr_len = (uint64_t)rmsr.r_len;
-	/* A deallocation changes no size: none is reported. */
+	/*
+	 * A deallocation changes no size; the size is reported only to date
+	 * the block count (the kernel applies blocks with the size they
+	 * were reported with), never applied.
+	 */
 	rv = dq_serve_reply_postop(q, ev->de_id, backing, &sr, sizeof(sr),
-	    DQ_PA_MTIME | DQ_PA_CTIME | DQ_PA_BLOCKS);
+	    DQ_PA_SIZE | DQ_PA_MTIME | DQ_PA_CTIME | DQ_PA_BLOCKS);
 	if (rv == 0 && opts != NULL &&
 	    (opts->so_flags & DQ_SERVE_F_SYNC_IDENT) != 0)
 		rv = dq_serve_ident_sync(q, ev, opts, backing);

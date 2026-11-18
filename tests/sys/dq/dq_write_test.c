@@ -1443,6 +1443,144 @@ ATF_TC_BODY(postop_fspacectl_no_size, tc)
 	dqt_fixture_fini(&f);
 }
 
+/*
+ * Review 2: futimens(2) sets the times in the future (2030) and a write
+ * follows.  A local file system's write sets the modification time to
+ * now; the served file's must be the backing file's after the write (the
+ * reply's post-operation block names now), not 2030.
+ */
+#define	FUTURE_SEC	1900000000	/* 2030 */
+
+struct future_res {
+	struct dqt_rr	 t, w;
+	struct stat	 set, after;
+};
+
+static void
+future_then_write(int fd, struct future_res *r)
+{
+	struct timespec ts[2];
+	char buf[16];
+
+	ts[0].tv_sec = ts[1].tv_sec = FUTURE_SEC;
+	ts[0].tv_nsec = ts[1].tv_nsec = 0;
+	memset(buf, 'f', sizeof(buf));
+	DQT_RR(r->t, futimens(fd, ts));
+	(void)fstat(fd, &r->set);
+	DQT_RR(r->w, pwrite(fd, buf, sizeof(buf), 100));
+	(void)fstat(fd, &r->after);
+}
+
+static void
+child_future_write(void *arg, void *result)
+{
+
+	future_then_write(*(int *)arg, result);
+}
+
+ATF_TC(postop_time_after_future_set);
+ATF_TC_HEAD(postop_time_after_future_set, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a write after futimens(2) to 2030 "
+	    "shows the modification time its reply names (now), as a local "
+	    "file's write sets it (review 2)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(postop_time_after_future_set, tc)
+{
+	struct dqt_fixture f;
+	struct future_res r, o;
+	struct stat bs;
+	int fd;
+
+	setup(&f, 20);
+	fd = f.o->fd;
+	memset(&r, 0, sizeof(r));
+	dqt_run_child(child_future_write, &fd, &r, sizeof(r));
+	ATF_REQUIRE_EQ_MSG(0, r.t.rv, "futimens: %s", strerror(r.t.err));
+	ATF_REQUIRE_EQ(16, r.w.rv);
+	ATF_CHECK_EQ(FUTURE_SEC, r.set.st_mtim.tv_sec);
+	ATF_REQUIRE_EQ(0, fstat(f.backing, &bs));
+	/* The oracle: the same two calls on a local file. */
+	memset(&o, 0, sizeof(o));
+	future_then_write(f.oracle, &o);
+	ATF_REQUIRE_EQ(16, o.w.rv);
+	ATF_CHECK(o.after.st_mtim.tv_sec < FUTURE_SEC);
+	ATF_CHECK(bs.st_mtim.tv_sec < FUTURE_SEC);
+	ATF_CHECK_MSG(r.after.st_mtim.tv_sec < FUTURE_SEC,
+	    "the served mtime stayed at %jd", (intmax_t)r.after.st_mtim.tv_sec);
+	ATF_CHECK(timespeccmp(&r.after.st_mtim, &bs.st_mtim, ==));
+	ATF_CHECK(timespeccmp(&r.after.st_ctim, &bs.st_ctim, ==));
+	dqt_fixture_fini(&f);
+}
+
+/*
+ * Review 2: a block's block count goes with the size it names.  The
+ * controller answers a write of 10 bytes at 100 with a block whose size
+ * is the write's end (110, a lower bound that passes) but below the
+ * presented size: an older extent.  Its block count must not be applied;
+ * a block naming the presented size is.
+ */
+static void
+blocks_round(struct dqt_fixture *f, uint64_t size, int64_t blocks,
+    struct postop_res *r)
+{
+	struct dq_postop_attr pa;
+	struct dq_write_reply wr;
+	struct dqt_child ch;
+	int fd, n;
+
+	dqt_hold(&f->c, true);
+	dqt_lock(&f->c);
+	n = f->c.nheld;
+	dqt_unlock(&f->c);
+	fd = f->o->fd;
+	memset(r, 0, sizeof(*r));
+	dqt_spawn(&ch, child_write_fstat, &fd);
+	ATF_REQUIRE(dqt_wait_held(&f->c, n + 1, DQT_WAIT_MS));
+	memset(&pa, 0, sizeof(pa));
+	pa.dpa_valid = DQ_PA_SIZE | DQ_PA_BLOCKS;
+	pa.dpa_size = size;
+	pa.dpa_blocks = (uint64_t)blocks;
+	memset(&wr, 0, sizeof(wr));
+	wr.dwr_written = 10;
+	wr.dwr_offset = 100;
+	ATF_REQUIRE_MSG(dq_reply_postop(f->c.q, dqt_held_id(&f->c, n), &wr,
+	    sizeof(wr), &pa) == 0, "dq_reply_postop: %s", strerror(errno));
+	dqt_collect(&ch, r, sizeof(*r));
+	dqt_hold(&f->c, false);
+}
+
+ATF_TC(postop_blocks_follow_size);
+ATF_TC_HEAD(postop_blocks_follow_size, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a post-operation block count is "
+	    "applied only with the presented size: an older block's never "
+	    "takes st_blocks back (review 2)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(postop_blocks_follow_size, tc)
+{
+	struct dqt_fixture f;
+	struct postop_res r;
+	blkcnt_t b0;
+
+	setup(&f, 21);
+	blocks_round(&f, 110, 0, &r);
+	ATF_REQUIRE_EQ(10, r.w.rv);
+	ATF_CHECK_EQ(DATA_LEN, r.after.st_size);
+	b0 = r.before.st_blocks;
+	ATF_REQUIRE(b0 > 0);
+	ATF_CHECK_EQ_MSG(b0, r.after.st_blocks, "st_blocks %jd -> %jd with "
+	    "st_size %jd", (intmax_t)b0, (intmax_t)r.after.st_blocks,
+	    (intmax_t)r.after.st_size);
+	/* Naming the presented size: applied. */
+	blocks_round(&f, DATA_LEN, b0 + 8, &r);
+	ATF_REQUIRE_EQ(10, r.w.rv);
+	ATF_CHECK_EQ(b0 + 8, r.after.st_blocks);
+	dqt_fixture_fini(&f);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1465,6 +1603,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, postop_size_smaller_ignored);
 	ATF_TP_ADD_TC(tp, postop_two_writers_size);
 	ATF_TP_ADD_TC(tp, postop_fspacectl_no_size);
+	ATF_TP_ADD_TC(tp, postop_time_after_future_set);
+	ATF_TP_ADD_TC(tp, postop_blocks_follow_size);
 	ATF_TP_ADD_TC(tp, fspacectl_past_eof);
 	return (atf_no_error());
 }

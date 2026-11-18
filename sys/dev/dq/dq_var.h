@@ -345,6 +345,10 @@ struct dq_object {
 						   before the object is linked */
 	size_t			 o_targetlen;	/* == o_ident.di_size */
 	struct dq_ident_file	 o_ident;
+	uint64_t		 o_tgen;	/* o_mtx: time-sets of o_ident
+						   (dq_object_tgen) */
+	uint32_t		 o_tset;	/* o_mtx: DQ_PA_*TIME applied in
+						   generation o_tgen */
 	struct dq_policy	 o_policy;
 	struct rangelock	 o_rl;
 	struct selinfo		 o_sel;		/* EVFILT_* knotes, on o_mtx */
@@ -682,7 +686,10 @@ int	dq_file_install(struct thread *td, struct dq_object *o,
 void	dq_file_knote(struct dq_object *o, long hint);
 extern counter_u64_t dq_postop_ignored;	/* kern.dq.postop_ignored */
 void	dq_object_postop(struct dq_object *o, uint32_t op,
-	    const struct dq_data *reply, uint64_t minsize, size_t done);
+	    const struct dq_data *reply, uint64_t minsize, size_t done,
+	    uint64_t tgen);
+uint64_t dq_object_tgen(struct dq_object *o);
+void	dq_object_tgen_bump_locked(struct dq_object *o);
 int	dq_file_bind(struct thread *td, struct dq_object *o, int fflags,
 	    struct file **fpp);
 

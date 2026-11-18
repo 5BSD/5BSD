@@ -1699,17 +1699,34 @@ the backing file, and failing it would make the program repeat it.
 A larger size is applied: the backing file may have grown by another
 writer.
 .Pp
-The size and the times of a block only move forward.
 Requesters apply their replies' blocks in the order they wake, not the
 order the controller answered, so a block can be older than what another
-writer's reply has already presented; it never takes the size or a time
-back.
-A shrink is stated by
+writer's reply has already presented.
+The size of a block only grows; a shrink is stated by
 .Dv DQ_IOC_SETIDENT
 or comes from a truncation.
+The times follow the operations that set them: a time set by
+.Dv DQ_OP_SETATTR
+.Pq Xr futimens 2 ,
+.Dv DQ_IOC_SETIDENT
+or a
+.Dv DQ_OP_GETATTR
+answer starts a new generation, and the first block (or stamp) for a
+time from an operation posted after it replaces that time, as a local
+file system's write sets the modification time to now after
+.Xr utimes 2
+set it in the future; within a generation, and for a block of an
+operation posted before the last time-set, a time only moves forward.
+.Va dpa_blocks
+is applied with the size it was reported with: only when that size is
+the presented one, so the block count never describes an older extent
+than
+.Va st_size ;
+a block that names no size moves the block count only forward.
 A
 .Dv DQ_OP_FSPACECTL
-block sets no size, whatever it names: a deallocation changes none.
+block sets no size, whatever it names: a deallocation changes none; the
+size it names only dates its block count.
 The pages of a mapping follow the presented size as it is when they are
 resized, never a size an earlier operation saw.
 A controller that answers from several threads and also sends
@@ -1725,10 +1742,18 @@ and
 .Va di_ctime
 to
 .Fn vfs_timestamp ;
-a read that returned bytes, from the queue or from the cached pages, sets
+a read that asked for bytes and succeeded, from the queue or from the
+cached pages and at the end of the file too, sets
 .Va di_atime
 unless the presented file system is
-.Dv MNT_NOATIME .
+.Dv MNT_NOATIME
+or
+.Dv MNT_RDONLY ,
+as
+.Fn ffs_read
+and
+.Fn zfs_read
+do.
 A controller that keeps the times itself (by
 .Dv DQ_IOC_SETIDENT ,
 .Dv DQ_OP_GETATTR

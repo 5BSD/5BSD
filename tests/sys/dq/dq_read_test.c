@@ -911,6 +911,77 @@ ATF_TC_BODY(atime_after_read, tc)
 }
 
 /*
+ * Review 2: the access time a read stamps when no attributes came, as
+ * ffs_read and zfs_read stamp it: a read at the end of the file (0 bytes)
+ * stamps it too, and a presented MNT_RDONLY file system never does.
+ */
+static void
+child_read_atime_eof(void *arg, void *result)
+{
+	struct atime_res *r = result;
+	int fd = *(int *)arg;
+	char buf[16];
+
+	(void)lseek(fd, 0, SEEK_END);
+	(void)fstat(fd, &r->before);
+	dqt_msleep(20);
+	r->rv = read(fd, buf, sizeof(buf));
+	(void)fstat(fd, &r->after);
+}
+
+ATF_TC(atime_eof_and_rdonly);
+ATF_TC_HEAD(atime_eof_and_rdonly, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "st_atime after a served read at the "
+	    "end of the file moves, and on a presented MNT_RDONLY file system "
+	    "never does (review 2)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(atime_eof_and_rdonly, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct dq_ident_file *ident;
+	struct dq_policy pol;
+	struct atime_res r;
+	struct statfs sfs;
+	struct stat st;
+	int fd, oracle;
+
+	dqt_fill(data, sizeof(data), 63);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	ident = calloc(1, sizeof(*ident));
+	ATF_REQUIRE(ident != NULL);
+	dqt_ident_of(oracle, oracle_path, ident, &st, &sfs);
+	ident->di_statfs.ds_flags &= ~(uint64_t)(MNT_NOATIME | MNT_RDONLY);
+	dq_policy_default(&pol);
+	dqt_init(&c);
+
+	/* At the end of the file: 0 bytes, stamped. */
+	o = dqt_mint_ident(&c, ident, &pol, data, sizeof(data));
+	fd = o->fd;
+	memset(&r, 0, sizeof(r));
+	dqt_run_child(child_read_atime_eof, &fd, &r, sizeof(r));
+	ATF_REQUIRE_EQ(0, r.rv);
+	ATF_CHECK_MSG(timespeccmp(&r.after.st_atim, &r.before.st_atim, >),
+	    "a read at the end of the file left st_atime");
+
+	/* Presented MNT_RDONLY: never stamped. */
+	ident->di_statfs.ds_flags |= MNT_RDONLY;
+	o = dqt_mint_ident(&c, ident, &pol, data, sizeof(data));
+	fd = o->fd;
+	memset(&r, 0, sizeof(r));
+	dqt_run_child(child_read_atime, &fd, &r, sizeof(r));
+	ATF_REQUIRE_EQ(16, r.rv);
+	ATF_CHECK_MSG(timespeccmp(&r.after.st_atim, &r.before.st_atim, ==),
+	    "a read on a read-only file system moved st_atime");
+	free(ident);
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
+/*
  * T-A28: a signal, caught by a handler installed without SA_RESTART,
  * during a read of a served regular file that the controller answers
  * 300 ms later.  A local file system's read completes, and so does this
@@ -1397,6 +1468,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, two_objects_same_identity);
 	ATF_TP_ADD_TC(tp, read_error_reply);
 	ATF_TP_ADD_TC(tp, atime_after_read);
+	ATF_TP_ADD_TC(tp, atime_eof_and_rdonly);
 	ATF_TP_ADD_TC(tp, sigalrm_no_restart);
 	ATF_TP_ADD_TC(tp, eintr_reply_refused);
 	ATF_TP_ADD_TC(tp, same_identity_atime_diverges);

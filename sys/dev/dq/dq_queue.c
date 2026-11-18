@@ -446,6 +446,7 @@ dq_object_set_ident_locked(struct dq_queue *q, struct dq_object *o,
 	DQ_LOCK_ASSERT(q);
 	DQO_LOCK(o);
 	o->o_ident = *di;
+	dq_object_tgen_bump_locked(o);	/* the controller set the times */
 	if (hint != 0)
 		dq_file_knote(o, hint);
 	DQO_UNLOCK(o);
