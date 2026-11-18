@@ -74,11 +74,27 @@ mbufid_assert_sanity(mbufid_t *mbufidp __unused)
 }
 #endif
 
+/*
+ * The node identity is DTrace's (kern_dtrace.c, KDTRACE_HOOKS).  A kernel
+ * without it has none: its origin is never ready and it generates only the
+ * reserved empty ID.
+ */
+static hostid_t
+mbufid_node_id(void)
+{
+
+#ifdef KDTRACE_HOOKS
+	return (dtrace_node_id);
+#else
+	return (0);
+#endif
+}
+
 int
 mbufid_origin_ready(void)
 {
 
-	return (dtrace_node_id != 0);
+	return (mbufid_node_id() != 0);
 }
 
 void
@@ -94,7 +110,7 @@ mbufid_generate(mbufid_t *mbufidp)
 	 * case use the reserved empty ID instead of emitting an ID that
 	 * can never pass the canonical wire-format check.
 	 */
-	node_id = dtrace_node_id;
+	node_id = mbufid_node_id();
 	if (node_id == 0) {
 		memset(mbufidp, 0, sizeof(*mbufidp));
 		return;

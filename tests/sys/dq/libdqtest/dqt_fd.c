@@ -5,7 +5,7 @@
  *
  * Passing a descriptor over a UNIX domain socket (SCM_RIGHTS) with one
  * byte of data, for requesters and helpers: no ATF call, errno set on
- * failure.  See dq_test.h.
+ * failure.  See dqt.h.
  */
 
 #include <sys/param.h>
@@ -15,7 +15,7 @@
 #include <errno.h>
 #include <string.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 int
 dqt_send_fd(int sock, int fd)

@@ -7,6 +7,11 @@ import subprocess
 import tempfile
 import unittest
 
+
+# A bound on a helper run that hangs, not on a slow one: under host
+# contention an emulated guest runs every exec up to 20 times slower.
+HELPER_TIMEOUT = 120
+
 SCRIPT = Path(os.environ.get('BSD_BUILD_SIGN_STAGE',
     str(Path(__file__).resolve().parents[3] / 'tools/build/capimage/sign-stage.sh')))
 
@@ -28,7 +33,7 @@ class SigningCustody(unittest.TestCase):
         before = (self.stage / 'METALOG').read_bytes()
         before_entries = sorted(str(p.relative_to(self.stage)) for p in self.stage.rglob('*'))
         result = subprocess.run(['sh', str(SCRIPT), '-r', str(self.stage),
-            '-k', str(key or self.key)], capture_output=True, text=True, timeout=10,
+            '-k', str(key or self.key)], capture_output=True, text=True, timeout=HELPER_TIMEOUT,
             env=dict(os.environ, CAPSIGN='/nonexistent/signing-must-not-run'))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(message, result.stderr)

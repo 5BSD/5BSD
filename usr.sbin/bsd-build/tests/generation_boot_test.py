@@ -14,6 +14,11 @@ import sys
 import unittest
 from unittest.mock import patch
 
+
+# A bound on a helper run that hangs, not on a slow one: under host
+# contention an emulated guest runs every exec up to 20 times slower.
+HELPER_TIMEOUT = 120
+
 backend = Path(os.environ.get('BSD_BUILD_HELPERS', Path(__file__).resolve().parents[3] / 'tools/build/capimage'))
 modules = {}
 for name in ('generation_image', 'generation_boot'):
@@ -43,7 +48,7 @@ except ValueError as error:
 """
             result = subprocess.run([sys.executable, '-B', '-c', code,
                 str(backend / 'generation_boot.py'), str(fifo)],
-                capture_output=True, text=True, timeout=5)
+                capture_output=True, text=True, timeout=HELPER_TIMEOUT)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_regular_file_and_nonregular_inputs(self):
@@ -219,7 +224,7 @@ class BootCheck(unittest.TestCase):
             '--image', str(self.image), '--boot-archive', str(self.archive),
             '--image-receipt', str(self.receipt_path), '--verity-image', str(combined),
             '--verity-descriptor', str(descriptor), '--boot-policy', str(policy_file)],
-            check=True, text=True, capture_output=True, timeout=10)
+            check=True, text=True, capture_output=True, timeout=HELPER_TIMEOUT)
         contract = json.loads(checked.stdout)['startup_contract']
         self.assertEqual(contract['payload'], payload)
         self.assertFalse(contract['signed'])
@@ -277,7 +282,7 @@ class BootCheck(unittest.TestCase):
             '--verity-descriptor', str(descriptor), '--boot-policy', str(policy_file),
             '--generated', str(generated_file), '--output', str(self.base/'disk-cli-stage'),
             '--signing-key', str(signing['key']), '--signing-certificate', str(signing['certificate']),
-            '--openssl', str(signing['openssl'])], check=True, text=True, capture_output=True, timeout=10)
+            '--openssl', str(signing['openssl'])], check=True, text=True, capture_output=True, timeout=HELPER_TIMEOUT)
         cli_report = json.loads(cli.stdout)
         self.assertEqual(json.loads((self.base/'disk-cli-stage/stage.json').read_text()), cli_report)
         self.assertTrue(cli_report['startup_contract']['staged_paths_bound'])

@@ -44,7 +44,7 @@
 ^advlock_fd_test:directory[[:space:]]  # ux-0 D247: flock(LOCK_EX) on a served directory: an OFD write lock on the read-only reopen of a directory (libdq_serve.c), base allows
 ^flock_test:main[[:space:]]  # ux-0 D247: lock events on flock_helper's open-unlinked temp file answer EIO (owner reopen libdq_serve.c, dq_serve_map EIO); test 2's parent then blocks reading its own pipe (flock_helper.c), a test-side wait, not a kernel hang
 ^flock_shared_test:blocking_upgrade_drops_shared[[:space:]]  # ux-0 D247, parked: a blocking flock SH-to-EX upgrade on a served file keeps its shared lock while it sleeps (one atomic F_OFD_SETLKW conversion on the owner reopen, libdq_serve.c); base unlocks first, so another shared holder gets LOCK_EX|LOCK_NB there and EWOULDBLOCK here
-^flock_shared_test:interrupted_upgrade[[:space:]]  # ux-0 D247, parked: a blocking flock SH-to-EX upgrade on a served file that ends in EINTR still holds its shared lock (the cancelled F_OFD_SETLKW converted nothing, libdq_serve.c), so LOCK_EX|LOCK_NB by others stays EWOULDBLOCK until it unlocks or closes; base has dropped the shared lock
+^flock_shared_test:interrupted_upgrade_state[[:space:]]  # ux-0 D247, parked: a blocking flock SH-to-EX upgrade on a served file that ends in EINTR still holds its shared lock (the cancelled F_OFD_SETLKW converted nothing, libdq_serve.c), so LOCK_EX|LOCK_NB by others stays EWOULDBLOCK until it unlocks or closes; base has dropped the shared lock
 
 # fspacectl(2) past EOF: the reply invariant requires dscr_len == end -
 # dscr_offset (sys/dev/dq/dq_queue.c); FreeBSD's VOP_DEALLOCATE

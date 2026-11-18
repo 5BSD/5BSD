@@ -30,7 +30,7 @@
 
 #include <liboes.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	DATA_LEN	8192
 #define	READ_LEN	100
