@@ -595,8 +595,14 @@ ATF_TC_BODY(full_close_wakes, tc)
 		ATF_CHECK_EQ_MSG(-1, r[i].rr.rv, "reader %d", i);
 		ATF_CHECK_EQ_MSG(EIO, r[i].rr.err, "reader %d", i);
 	}
+	/*
+	 * With no deadline, a reader the close did not wake would sleep
+	 * until the case times out.  The bound only says the end came from
+	 * the close: it is loose because a loaded 2-vCPU TCG guest has taken
+	 * 2.1 s for the close, the two exits and their reaping.
+	 */
 	ms = dqt_now_ms() - start;
-	ATF_CHECK_MSG(ms < 2000, "the readers ended %jd ms after the close",
+	ATF_CHECK_MSG(ms < 10000, "the readers ended %jd ms after the close",
 	    (intmax_t)ms);
 	(void)close(oracle);
 }

@@ -465,7 +465,9 @@ ATF_TC_BODY(flock_block_interrupt, tc)
 	struct holder_arg h;
 	struct holder_res hr;
 	struct wait_arg w;
+	struct dqt_object *o2;
 	struct dqt_rr r;
+	int oracle2;
 
 	setup(&f, 4);
 	memset(&h, 0, sizeof(h));
@@ -473,10 +475,18 @@ ATF_TC_BODY(flock_block_interrupt, tc)
 	h.ofd = f.oracle;
 	h.cmd = 0;		/* flock, on both files */
 	holder_start(&h, &hch);
+	/*
+	 * A flock belongs to the open file: the waiter asks through other
+	 * open files of the same two files, or it would already hold it.
+	 */
+	o2 = dqt_mint_backing(&f.c, f.backing, backing_path, NULL,
+	    DQ_MINT_F_WRITE);
+	oracle2 = open(oracle_path, O_RDWR);
+	ATF_REQUIRE(oracle2 >= 0);
 
 	/* The real file: the waiter sleeps in the lock; signal it there. */
 	memset(&w, 0, sizeof(w));
-	w.fd = f.oracle;
+	w.fd = oracle2;
 	dqt_spawn(&wch, child_flock_block, &w);
 	ATF_REQUIRE(dqt_wait_wmesg(wch.pid, "lockf", DQT_WAIT_MS));
 	ATF_REQUIRE_EQ(0, kill(wch.pid, SIGUSR1));
@@ -485,7 +495,7 @@ ATF_TC_BODY(flock_block_interrupt, tc)
 	ATF_CHECK_EQ(EINTR, r.err);
 
 	/* The served file: the waiter sleeps for its LOCK's reply. */
-	w.fd = f.o->fd;
+	w.fd = o2->fd;
 	dqt_spawn(&wch, child_flock_block, &w);
 	ATF_REQUIRE(dqt_wait_wmesg(wch.pid, DQT_WMESG_REPLY, DQT_WAIT_MS));
 	ATF_REQUIRE_EQ(0, kill(wch.pid, SIGUSR1));
@@ -494,6 +504,7 @@ ATF_TC_BODY(flock_block_interrupt, tc)
 	ATF_CHECK_EQ(EINTR, r.err);
 	ATF_CHECK(dqt_wait_interrupts(&f.c, 1, DQT_WAIT_MS));
 	holder_release(&h, &hch, &hr);
+	(void)close(oracle2);
 	dqt_fixture_fini(&f);
 }
 
