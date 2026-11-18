@@ -608,6 +608,50 @@ doubles up to a maximum of 30 seconds.
 After 10 consecutive fast crashes, the circuit breaker trips and
 .Nm
 gives up restarting.
+.Pp
+Each start of
+.Xr switchboard 8
+first creates PID 1's authority issuer, which
+.Xr switchboard 8
+needs to grant applications and units anything, and passes it as
+.Ev SWITCHBOARD_AUTHORITY_FD .
+If the creation fails for a reason that can clear
+.Pq Er ENFILE , EMFILE , ENOMEM ,
+.Nm
+logs that it is waiting and retries, backing off from 1 to 10 seconds,
+for up to 60 seconds before it starts
+.Xr switchboard 8 ;
+a wait is not a failed start.
+If the issuer is still missing after that, or the failure cannot clear
+.Po
+.Er EPERM
+for a jailed or non-PID-1
+.Nm ,
+.Er ENOSPC
+when the identity sequence is exhausted
+.Pc ,
+.Nm
+starts
+.Xr switchboard 8
+degraded, without an issuer, and logs
+.Dq no authority issuer
+at
+.Dv LOG_CRIT .
+A degraded
+.Xr switchboard 8
+registers no applications and issues no grants: exec-activated tools such as
+.Xr capsulectl 8
+and
+.Xr switchboardctl 8
+lose their administrative attributes, and native units that need a grant do
+not start.
+After a transient failure
+.Nm
+keeps retrying in the background; once it holds an issuer it stops the
+degraded
+.Xr switchboard 8
+and starts it again with the issuer.
+That planned restart does not count toward the circuit breaker.
 .Sh DTRACE PROBES
 .Nm
 is instrumented with DTrace USDT probes in the

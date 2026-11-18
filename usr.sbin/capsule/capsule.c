@@ -1283,8 +1283,12 @@ capsule_engine_start(void)
 	od.running = true;
 	capsule_engine_up = true;
 	CAPSULE_PROBE_CAPSULE_ENGINE_UP(bootstrap_pid());
-	syslog(LOG_INFO, "Capsule engine started; switchboard pid %jd",
-	    (intmax_t)bootstrap_pid());
+	if (bootstrap_pid() == 0)
+		syslog(LOG_INFO, "Capsule engine started; switchboard waits "
+		    "for the authority issuer");
+	else
+		syslog(LOG_INFO, "Capsule engine started; switchboard pid %jd",
+		    (intmax_t)bootstrap_pid());
 	BOOTTRACE("Capsule engine started");
 }
 
@@ -1402,7 +1406,7 @@ capsule_dispatch(struct kevent *kev)
 	}
 
 	if (bootstrap_is_timer(kev)) {
-		bootstrap_handle_timer(capsule_kq);
+		bootstrap_handle_timer(kev, capsule_kq);
 		return;
 	}
 }

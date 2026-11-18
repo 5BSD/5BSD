@@ -247,7 +247,7 @@ event_loop(void)
 
 		/* Bootstrap: restart timer for switchboard. */
 		if (bootstrap_is_timer(&kev)) {
-			bootstrap_handle_timer(kq);
+			bootstrap_handle_timer(&kev, kq);
 			continue;
 		}
 

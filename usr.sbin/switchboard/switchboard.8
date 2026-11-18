@@ -190,7 +190,29 @@ Delegated capprotect service instance.
 uses this to apply an integrity shield at startup and retains it because
 closing the descriptor would revoke the shield.
 Required.
+.It identity (fd 7)
+Delegated identity service instance, for on-demand attribution.
+Optional.
+.It authority (fd 8)
+PID 1's authority issuer, named by
+.Ev SWITCHBOARD_AUTHORITY_FD .
+.Nm
+issues every application and unit grant from it and never delegates it.
+Without it
+.Nm
+runs degraded: it logs
+.Dq no authority issuer
+at
+.Dv LOG_CRIT ,
+validates but does not register the application catalogue, and issues no
+grants.
+.Xr capsule 8
+restarts it with the issuer once it can create one.
 .El
+.Pp
+The
+.Dq inherited service fds
+log line names each descriptor, or \-1 when it is absent.
 .Pp
 After exec, all manager-owned descriptors are irreversibly restricted against
 transfer, fork inheritance, and exec inheritance.

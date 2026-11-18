@@ -416,10 +416,13 @@ main(int argc, char *argv[])
 	if (sd.channel_svc_fd >= 0) {
 		(void)fcntl(sd.channel_svc_fd, F_SETFL, O_NONBLOCK);
 		syslog(LOG_INFO, "inherited service fds: channel=%d "
-		    "coalition=%d capprotect=%d identity=%d",
+		    "coalition=%d capprotect=%d identity=%d authority=%d",
 		    sd.channel_svc_fd, sd.coalition_svc_fd,
-		    sd.capprotect_fd, sd.identity_fd);
+		    sd.capprotect_fd, sd.identity_fd, sd.authority_issuer_fd);
 	}
+	if (sd.authority_issuer_fd < 0)
+		syslog(LOG_CRIT, "no authority issuer: running degraded; "
+		    "applications and units get no grants");
 	if (sd.coalition_svc_fd >= 0)
 		(void)fcntl(sd.coalition_svc_fd, F_SETFL, O_NONBLOCK);
 	/*
