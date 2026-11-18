@@ -1925,6 +1925,34 @@ have their probes registered by another process.
 When the process changes its address space while its DOF is read, the
 kernel reads it again, up to three times, and then fails with
 .Er EFAULT .
+.Pp
+For a USDT probe description that names a process, such as
+.Li myprov1234:::start ,
+.Nm
+first asks whether the kernel already has a matching probe, as for a
+program that registered itself; then nothing more is done.
+Otherwise it finds the process's DOF in its object files and registers it
+as described above, through a read-only process handle that never attaches
+to the process with
+.Xr ptrace 2
+or stops it.
+When the kernel refuses the registration
+.Pq Er EPERM No or Er EACCES ,
+.Nm
+reports that it cannot register the process's USDT probes, unless
+.Fl Z
+allows the description to match nothing.
+.Pp
+The pid provider places breakpoints at addresses the consumer chooses.
+It attaches to the process, which needs permission to debug it
+.Pq Xr p_candebug 9 ;
+a process protected from debuggers, such as one with a
+.Xr mac_capability_capprotect 4
+ptrace shield, refuses it.
+.Fl p
+and
+.Fl c
+attach to or create the process in the same way.
 .Sh ENVIRONMENT
 .Bl -tag -width 'DTRACE_DEBUG'
 .It Ev DTRACE_DEBUG

@@ -128,6 +128,15 @@ is refused towards it for good. The stripped process's own exec ends only the
 protection of the stripped process itself; its authority stays invalid and it
 passes the check for no process it was refused before.
 
+Debugging and inspection are separate questions. The authority's debug
+protection (and the no-ambient protection of a `PD_PROTECTED` child) refuses
+debugging: stopping the process, reading or writing its memory, its
+environment and descriptors. It does not refuse inspection, the process's
+memory map, auxv, ps_strings and signal trampoline locations, umask and
+kernel stacks (`p_caninspect(9)`), which `procstat -v -k -x` and DTrace's
+symbolisation and USDT registration need. Inspection never reads the
+process's memory contents.
+
 These rules were not decided by the project owner. The form of the strip
 (D362), the debug protection lasting until exec (D363), and the refusal of
 the stripped process as a debugger in all four cases, were decided by the

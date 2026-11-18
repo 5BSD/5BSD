@@ -142,12 +142,9 @@ live_switchboard_usdt_exact_body()
 	# SwitchBoard registered itself (drti, as root, before its shield).
 	dtrace -l -n 'switchboard*:::startup-begin' 2>/dev/null |
 	    grep -q "switchboard$sb" || atf_fail "switchboard$sb not registered"
-	# Today: the exact description re-grabs and the shield refuses it.
-	if usdt_exact "switchboard$sb" startup-begin; then
-		atf_fail "exact description matched: $(cat dt.out | tr "\n" " ")"
-	fi
-	grep -q 'failed to grab process' dt.err ||
-	    atf_fail "unexpected error: $(cat dt.err | tr "\n" " ")"
+	# A full match needs no grab (the shield refused the grab before).
+	usdt_exact "switchboard$sb" startup-begin ||
+	    atf_fail "exact description failed: $(cat dt.err | tr "\n" " ")"
 }
 
 atf_test_case live_capsule_usdt_exact
@@ -163,11 +160,8 @@ live_capsule_usdt_exact_body()
 	require_dtrace
 	dtrace -l -n 'capsule*:::startup' 2>/dev/null | grep -q 'capsule1' ||
 	    atf_fail "capsule1 not registered"
-	if usdt_exact capsule1 startup; then
-		atf_fail "exact description matched: $(cat dt.out | tr "\n" " ")"
-	fi
-	grep -q 'failed to grab process' dt.err ||
-	    atf_fail "unexpected error: $(cat dt.err | tr "\n" " ")"
+	usdt_exact capsule1 startup ||
+	    atf_fail "exact description failed: $(cat dt.err | tr "\n" " ")"
 }
 
 atf_test_case live_switchboard_ustack_symbols
@@ -200,7 +194,7 @@ atf_test_case live_unit_usdt_exact
 live_unit_usdt_exact_head()
 {
 	atf_set "descr" "The USDT probes of a protected unprivileged unit" \
-	    "(bsdlog) are not registered"
+	    "(bsdlog) are registered for an exact description"
 	common_head
 	atf_set "require.progs" "dtrace"
 }
@@ -218,12 +212,10 @@ live_unit_usdt_exact_body()
 	    grep -q "bsdlog$pid"; then
 		atf_fail "bsdlog$pid registered itself"
 	fi
-	# Today: the exact description needs a grab, which its shield refuses.
-	if usdt_exact "bsdlog$pid" pool-start; then
-		atf_fail "exact description matched: $(cat dt.out | tr "\n" " ")"
-	fi
-	grep -q 'failed to grab process' dt.err ||
-	    atf_fail "unexpected error: $(cat dt.err | tr "\n" " ")"
+	# Registered through a read-only handle, without a grab (its shield
+	# refused the grab before).
+	usdt_exact "bsdlog$pid" pool-start ||
+	    atf_fail "exact description failed: $(cat dt.err | tr "\n" " ")"
 }
 
 atf_test_case live_capsule_securelevel1

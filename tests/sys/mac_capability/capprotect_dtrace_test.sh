@@ -165,7 +165,7 @@ atf_test_case usdt_exact_probe cleanup
 usdt_exact_probe_head()
 {
 	atf_set "descr" "An exact USDT description of a self-shielded process" \
-	    "fails: libdtrace grabs it with ptrace (today)"
+	    "matches its self-registered probes"
 	common_head
 }
 usdt_exact_probe_body()
@@ -175,11 +175,11 @@ usdt_exact_probe_body()
 	# The root fixture registered itself (drti, path 1) before shielding.
 	listed 'cpusdt*:::tick' | grep -qx "cpusdt$FXPID" ||
 	    atf_fail "the fixture did not register itself"
-	dtrace_once -l -n "cpusdt$FXPID:::tick"
-	# Today: the exact description re-grabs and the shield refuses it.
-	[ "$DTRC" -ne 0 ] || atf_fail "exact description matched: $(cat dt.out | tr "\n" " ")"
-	grep -q 'failed to grab process' dt.err ||
-	    atf_fail "unexpected error: $(cat dt.err | tr "\n" " ")"
+	# The full match needs no grab (it failed on the shield's refusal of
+	# a ptrace grab before).
+	dtrace_once -q -n "cpusdt$FXPID:::tick { printf(\"TICK\\n\"); exit(0); }"
+	[ "$DTRC" -eq 0 ] && grep -q TICK dt.out ||
+	    atf_fail "the exact description did not fire: $(cat dt.err | tr "\n" " ")"
 	fixture_stop
 }
 usdt_exact_probe_cleanup()
@@ -273,13 +273,13 @@ ptrace_calls()
 }
 
 # One usdt_unregistered_target target.  The fixture did not register itself
-# (it cannot: unprivileged or capability mode, or it is not asked to).
-# Today libdtrace registers it with a ptrace grab, which stops it, or the
-# shield refuses the grab.  REGISTERED is "yes" when the exact description
-# lists; GRABBED is "yes" when dtrace called ptrace(2).
+# (it cannot: unprivileged or capability mode).  libdtrace registers it
+# through a read-only handle and the kernel's DTRACEHIOC_ADDDOF for another
+# process: no ptrace(2), no stop.  REGISTERED is "yes" when the exact
+# description lists; GRABBED is "yes" when dtrace called ptrace(2).
 unregistered_check()
 {
-	local label=$1 registered=$2 grabbed=$3
+	local label=$1 registered=$2 grabbed=$3 t0
 
 	if listed 'cpusdt*:::tick' | grep -qx "cpusdt$FXPID"; then
 		atf_fail "$label: the fixture registered itself"
@@ -297,6 +297,14 @@ unregistered_check()
 	else
 		[ "$grabbed" = no ] || atf_fail "$label: dtrace did not grab"
 	fi
+	[ "$registered" = yes ] || return 0
+	# The probes fire, and the process kept running throughout.
+	cmd ticks
+	t0=${REPLY#TICKS }
+	dtrace_once -q -n "cpusdt$FXPID:::tick { printf(\"TICK\\n\"); exit(0); }"
+	grep -q TICK dt.out || atf_fail "$label: did not fire: $(cat dt.err | tr "\n" " ")"
+	cmd ticks
+	[ "${REPLY#TICKS }" -gt "$t0" ] || atf_fail "$label: ticks stopped"
 }
 
 atf_test_case usdt_unregistered_target cleanup
@@ -309,18 +317,18 @@ usdt_unregistered_target_head()
 usdt_unregistered_target_body()
 {
 	require_dtrace
-	# Today: registered through a ptrace grab (which stops the process).
+	# Registered without a grab (before, through a ptrace grab that
+	# stopped the process, or not at all under the shield).
 	fixture_start plain 65534
-	unregistered_check "plain unprivileged" yes yes
+	unregistered_check "plain unprivileged" yes no
 	fixture_stop
 	fixture_start capmode 65534
-	unregistered_check "capmode unprivileged" yes yes
+	unregistered_check "capmode unprivileged" yes no
 	fixture_stop
-	# Today: the shield refuses the grab; nothing is registered.  The
-	# agent's child execs the fixture as root, so drti registers it unless
-	# it cannot: run it in capability mode.
+	# The agent's child execs the fixture as root, so drti registers it
+	# unless it cannot: run it in capability mode.
 	agent_spawn 0 $CP_SF_PTRACE capmode
-	unregistered_check "protected capmode" no yes
+	unregistered_check "protected capmode" yes no
 	fixture_stop
 }
 usdt_unregistered_target_cleanup()
@@ -333,7 +341,7 @@ atf_test_case usdt_full_match_no_grab cleanup
 usdt_full_match_no_grab_head()
 {
 	atf_set "descr" "An exact USDT description of a self-registered process" \
-	    "makes dtrace try a ptrace grab (today)"
+	    "makes dtrace call no ptrace(2)"
 	common_head
 }
 usdt_full_match_no_grab_body()
@@ -343,9 +351,9 @@ usdt_full_match_no_grab_body()
 	listed 'cpusdt*:::tick' | grep -qx "cpusdt$FXPID" ||
 	    atf_fail "the fixture did not register itself"
 	ptrace_calls -l -n "cpusdt$FXPID:::tick"
-	# Today: the grab is attempted and refused.
-	[ "$PTRACE_CALLS" -gt 0 ] || atf_fail "no grab: $(cat dt.err | tr "\n" " ")"
-	[ "$DTRC" -ne 0 ] || atf_fail "listed: $(cat dt.out | tr "\n" " ")"
+	# The full match skips the grab (it was attempted and refused before).
+	atf_check_equal 0 "$PTRACE_CALLS"
+	[ "$DTRC" -eq 0 ] || atf_fail "not listed: $(cat dt.err | tr "\n" " ")"
 	fixture_stop
 }
 usdt_full_match_no_grab_cleanup()
@@ -366,7 +374,7 @@ pid_provider_still_refused_body()
 	fixture_start self
 	dtrace_once -l -n "pid$FXPID::main:entry"
 	[ "$DTRC" -ne 0 ] || atf_fail "pid probes created: $(cat dt.out | tr "\n" " ")"
-	grep -q 'failed to grab process' dt.err ||
+	grep -q 'the pid provider needs permission to debug it' dt.err ||
 	    atf_fail "unexpected error: $(cat dt.err | tr "\n" " ")"
 	fixture_stop
 }
