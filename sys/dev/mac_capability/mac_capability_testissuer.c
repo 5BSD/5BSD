@@ -138,6 +138,10 @@ mac_capability_test_issuer_fail_init_sysctl(SYSCTL_HANDLER_ARGS)
 	case ENFILE:
 	case EMFILE:
 		atomic_store_int(&mac_capability_test_issuer_fail_init, value);
+		/* Clearing also restores the one-shot default. */
+		if (value == 0)
+			atomic_store_int(&mac_capability_test_issuer_fail_count,
+			    1);
 		return (0);
 	default:
 		return (EINVAL);
@@ -147,7 +151,34 @@ SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuer_fail_init,
     CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
     mac_capability_test_issuer_fail_init_sysctl, "I",
     "Test kernel only: the errno (ENOSPC, ENFILE, EMFILE, or 0) PID 1's next "
-    "issuer creation fails with, once, after it anchors");
+    "issuer creations fail with, test_issuer_fail_init_count times, after it "
+    "anchors");
+
+/*
+ * How many consecutive PID 1 creates fail_init fails: 1 (the default) is one
+ * transient failure, a larger count an outage that outlasts Capsule's wait.
+ */
+volatile u_int mac_capability_test_issuer_fail_count = 1;
+
+static int
+mac_capability_test_issuer_fail_count_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	int error, value;
+
+	value = atomic_load_int(&mac_capability_test_issuer_fail_count);
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	if (value < 1 || value > MAC_CAPABILITY_TEST_ISSUER_FAIL_MAX)
+		return (EINVAL);
+	atomic_store_int(&mac_capability_test_issuer_fail_count, value);
+	return (0);
+}
+SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuer_fail_init_count,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+    mac_capability_test_issuer_fail_count_sysctl, "I",
+    "Test kernel only: how many of PID 1's issuer creations in a row "
+    "test_issuer_fail_init fails (1-1000, default 1)");
 
 static void
 mac_capability_test_issuer_init(void *arg __unused)

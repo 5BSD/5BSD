@@ -1729,7 +1729,16 @@ issuer_create(struct thread *td)
 #ifdef MAC_CAPABILITY_TEST_PERMISSIVE
 		/* The attempt anchors, whether or not it succeeds. */
 		mac_capability_test_issuer_anchor();
-		error = atomic_swap_int(&mac_capability_test_issuer_fail_init, 0);
+		/*
+		 * Fail test_issuer_fail_init_count creates in a row, then
+		 * clear.  Only PID 1 reaches this, one create at a time.
+		 */
+		error = atomic_load_int(&mac_capability_test_issuer_fail_init);
+		if (error != 0 && atomic_fetchadd_int(
+		    &mac_capability_test_issuer_fail_count, -1) <= 1) {
+			atomic_store_int(&mac_capability_test_issuer_fail_init, 0);
+			atomic_store_int(&mac_capability_test_issuer_fail_count, 1);
+		}
 		if (error != 0) {
 			reason = error == ENOSPC ? CAP_AUTH_ISSUER_R_NOSPC :
 			    CAP_AUTH_ISSUER_R_RESOURCE;
