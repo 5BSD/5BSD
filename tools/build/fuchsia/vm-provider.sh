@@ -62,6 +62,10 @@
 #   the guest kern.mac_capability.test_issuer=1 with the boot not anchored.
 #   A run that asks for it and does not get it fails (STACK_TIER_FAIL) rather
 #   than counting every stack case as deferred.
+#   TESTS_SRC_ROOTS (space-separated checkout paths; default none): the
+#   stage's test programs must all come from one checkout, or from these
+#   (a deliberate overlay); otherwise the run stops with STALE_TESTS before
+#   the image is built (check-stage-tests.py prints each TESTS_SRC_ROOT).
 #   KERNEL_TIER (main or test; default main): the kernel tier of the run.
 #   main is GENERIC, or any kernel without a test-kernel option; test is
 #   GENERIC-TEST, and must be asked for: a stage whose kernel carries a
@@ -241,6 +245,8 @@ case $units in *[!A-Za-z0-9_./\ -]*) die "REQUIRE_UNITS has unexpected character
 case $kyua_vars in *[!A-Za-z0-9_.=\ -]*) die "KYUA_VARS has unexpected characters";; esac
 sysctl_write=${SYSCTL_WRITE:-}
 case $sysctl_write in *[!A-Za-z0-9_.\ ]*) die "SYSCTL_WRITE has unexpected characters";; esac
+tests_src_roots=${TESTS_SRC_ROOTS:-}
+case $tests_src_roots in *[!A-Za-z0-9_./+\ -]*) die "TESTS_SRC_ROOTS has unexpected characters";; esac
 sysctl_conf=Capabilities/System/Sysctl.cap/Units/bsdsysctl.unit/Config/sysctl.conf
 
 stage=$(cd "$stage" 2>/dev/null && pwd) || die "no stage dir"
@@ -280,6 +286,15 @@ for s in $suites; do
 		;;
 	esac
 done
+# Every test program of the stage must come from one checkout (or from the
+# checkouts TESTS_SRC_ROOTS names): a stage copied forward with only some
+# test directories reinstalled runs another branch's tests under the
+# oracles (check-stage-tests.py; 5bsd-issues
+# 2026-11-18-guest-stage-stale-tests-sys-file-binaries.md).
+set --
+for r in $tests_src_roots; do set -- "$@" --allow "$r"; done
+python3.12 -I "$(dirname "$0")/check-stage-tests.py" "$stage" "$@" ||
+    die "STALE_TESTS: the stage's test programs are not from one checkout (see above)"
 [ -n "$qemu" ] || die "no runnable QEMU (set QEMU=)"
 echo "qemu: $qemu ($("$qemu" --version | head -n 1))"
 [ -d "$qemu_data" ] || die "no QEMU firmware dir $qemu_data"
@@ -909,17 +924,37 @@ for b in blocks:
 sys.exit(1)
 PYEOF
 }
+# --- monitor loop (tests/vm-provider-kill-after-exit.sh runs this block)
+# The guest may power off on its own between the problem and the kill (a
+# reversal printed at shutdown, then "Powering system off" within the grace
+# sleep): kill then fails with ESRCH, which must not end the script under
+# set -e before the results disk is extracted and the verdict printed.
+# forced=1 already keeps the verdict VM_NOT_CLEAN.
 while kill -0 "$qpid" 2>/dev/null; do
 	if grep -aqE "$fatal" "$log" 2>/dev/null || unknown_lor; then
-		echo "KERNEL/INIT PROBLEM in serial log"; sleep 5; forced=1; kill "$qpid"; break
+		echo "KERNEL/INIT PROBLEM in serial log"; sleep 5; forced=1
+		kill "$qpid" 2>/dev/null || echo "qemu had already exited"; break
 	fi
-	if [ "$(date +%s)" -ge "$end" ]; then echo TIMEOUT; forced=1; kill "$qpid"; break; fi
+	if [ "$(date +%s)" -ge "$end" ]; then
+		echo TIMEOUT; forced=1
+		kill "$qpid" 2>/dev/null || echo "qemu had already exited"; break
+	fi
 	sleep 10
 done
 rc=0; wait "$qpid" 2>/dev/null || rc=$?
+# --- end of the monitor loop
 n=$(grep -ac 'lock order reversal' "$log" 2>/dev/null || true)
-[ "${n:-0}" -gt 0 ] && ! unknown_lor && [ "${FATAL_LOR:-yes}" != no ] &&
-    echo "KNOWN_LOR=$n (matched known-lor.txt; see the serial log)"
+# --- LOR verdict (tests/vm-provider-known-lor.sh runs this block)
+# The loop polls every 10 s: a reversal printed at shutdown, just before the
+# guest powers off, may never have been seen by it, so decide here as well.
+lor_unknown=0
+if unknown_lor; then
+	lor_unknown=1
+	echo "UNKNOWN_LOR (a reversal matches no known-lor.txt entry; see the serial log)"
+elif [ "${n:-0}" -gt 0 ] && [ "${FATAL_LOR:-yes}" != no ]; then
+	echo "KNOWN_LOR=$n (matched known-lor.txt; see the serial log)"
+fi
+# --- end of the LOR verdict
 wait "$mpid" 2>/dev/null || true
 mkdir -p "$work/results"
 bsdtar -xf "$work/results.img" -C "$work/results" 2>/dev/null || echo "results disk: no archive"
@@ -942,7 +977,7 @@ stack_tier_met() {
 }
 # --- end of the stack-tier verdict
 verdict=VM_NOT_CLEAN
-if [ $forced = 0 ] && [ $rc = 0 ] && [ $guest_off = 1 ] && stack_tier_met &&
+if [ $forced = 0 ] && [ $lor_unknown = 0 ] && [ $rc = 0 ] && [ $guest_off = 1 ] && stack_tier_met &&
     [ "$(cat "$work/results/kyua-results/kyua-test.status" 2>/dev/null)" = 0 ] &&
     tr -d '\r' < "$log" | grep -aqx 'KYUA_VM_DONE' &&
     ! tr -d '\r' < "$log" | grep -aq '^STACK_TIER_FAIL' &&

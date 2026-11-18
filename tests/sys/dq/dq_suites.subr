@@ -150,9 +150,11 @@ dq_report_zero()
 }
 
 # Record, for the patterns of PATTERNS (one per line, numbered from 1),
-# which matched a case line of A or B ("program:case result") and which
-# matched a case whose results differ between A and B: lines "matched N"
-# and "hides N" appended to USED.
+# which matched a case line of A or B ("program:case result"), which
+# matched a case whose results differ between A and B, and whose
+# "^program:case[[:space:]]" part alone (the entry without its result
+# alternation) matched a case line: lines "matched N", "hides N" and
+# "ran N" appended to USED.
 # usage: dq_pattern_use PATTERNS A B USED
 dq_pattern_use()
 {
@@ -167,7 +169,9 @@ dq_pattern_use()
 		}
 	}
 	{
-		n++; m = 0; h = 0
+		n++; m = 0; h = 0; r = 0
+		i = index($0, "[[:space:]]")
+		pc = i > 0 ? substr($0, 1, i + 10) : $0
 		for (c in seen) {
 			if (((c in ra) && (c " " ra[c]) ~ $0) ||
 			    ((c in rb) && (c " " rb[c]) ~ $0)) {
@@ -175,29 +179,62 @@ dq_pattern_use()
 				if (!(c in ra) || !(c in rb) || ra[c] != rb[c])
 					h = 1
 			}
+			if ((c " ") ~ pc)
+				r = 1
 		}
 		if (m)
 			print "matched " n
 		if (h)
 			print "hides " n
+		if (r)
+			print "ran " n
 	}' "$1" >> "$4"
+}
+
+# The command name of PID 1 ("capsule" when the capability plane is on).
+dq_pid1()
+{
+
+	ps -o comm= -p 1 2>/dev/null | sed -e 's/[[:space:]]*$//'
 }
 
 # After every suite of the default set has run: fail on an entry of FILE
 # (its patterns numbered from 1, in file order) that matched no case, and
 # report one that hid no difference as stale unless its comment says
 # "intermittent".
+#
+# An entry whose owner tag carries "[plane-on]" ("# by-design D138
+# [plane-on]: ...") describes a difference that exists only with the
+# capability plane on.  On a guest whose PID 1 is not capsule (PLANE_OFF=1)
+# such an entry is reported "not exercised" rather than failing, provided
+# its program and case part matched a case of the runs: those cases ran,
+# ended outside the entry's result alternation, and were therefore
+# compared like any other case.  An entry whose cases did not run at all
+# (a renamed or removed case) still fails on every tier.
 # usage: dq_pattern_verdict FILE USED
 dq_pattern_verdict()
 {
-	local n line none
+	local n line none pid1
 
 	n=0
 	none=
+	pid1=$(dq_pid1)
 	grep -v -E '^[[:space:]]*(#|$)' "$1" > verdict.lines
 	while IFS= read -r line; do
 		n=$((n + 1))
 		if ! grep -q -x "matched ${n}" "$2"; then
+			case "${pid1}:${line}" in
+			capsule:*) ;;
+			*'[plane-on]'*)
+				if grep -q -x "ran ${n}" "$2"; then
+					echo "not exercised (PID 1 is" \
+					    "${pid1:-unknown}, a [plane-on]" \
+					    "entry; its cases ran and were" \
+					    "compared): ${line}" >&2
+					continue
+				fi
+				;;
+			esac
 			echo "matches no case: ${line}" >&2
 			none=yes
 		elif ! grep -q -x "hides ${n}" "$2"; then

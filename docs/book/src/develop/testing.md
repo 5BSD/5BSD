@@ -351,8 +351,39 @@ and the loaded MAC policy modules (`kldstat -v`) are written to `tier.txt`
 in the results, next to the Kyua database, and the knobs are appended again
 after the suites.
 
+A stage's test programs must all come from one checkout. Before it builds
+the image the runner reads the source file names recorded in every ELF
+program under the stage's `usr/tests`
+(`tools/build/fuchsia/check-stage-tests.py`, one `TESTS_SRC_ROOT=` line per
+checkout) and stops with `STALE_TESTS` when there is more than one, naming
+programs of each minority checkout. A stage copied forward from another
+branch's stage with only some test directories reinstalled fails this way:
+the oracles that run whole suites (`dq_tree_suites_test`,
+`dq_oracle_test`) would otherwise compare another branch's tests. Make the
+stage fresh from the branch's world, or reinstall all of `usr/tests` from
+the branch; a deliberate overlay names every checkout in `TESTS_SRC_ROOTS`.
+The check proves which checkout built each program, not which commit.
+
+With `FATAL_LOR=yes` (the default) a WITNESS lock order reversal stops the
+run unless its report matches an entry of `tools/build/fuchsia/known-lor.txt`
+(Python regular expressions over the first 40 lines of the report, each
+entry naming the analysis that classes its family; reported as
+`KNOWN_LOR=N`). The runner checks the serial log again after the guest
+exits, so a reversal printed during shutdown, which the 10-second poll can
+miss, still makes the run `VM_NOT_CLEAN` (`UNKNOWN_LOR`). A guest that
+powers off by itself between the runner noticing a problem and stopping
+QEMU still has its results disk extracted and its verdict printed.
+
+The dq oracles' expected-differences files (`tests/sys/dq/dqpass.expected`,
+`dqtree.expected`) fail on an entry that matches no case. An entry whose
+difference exists only with the capability plane on carries `[plane-on]` in
+its owner tag; on a `PLANE_OFF=1` guest it is reported `not exercised`
+instead, provided its cases ran (they were then compared like any other
+case).
+
 The runner's own checks (the tier selection and gate above, the stage root
-metadata preflight, the extra-script status) are shell scripts under
+metadata preflight, the stage's test checkout, the monitor loop, the
+known-lor classes, the extra-script status) are shell scripts under
 `tools/build/fuchsia/tests/`; `make -C tools/build/fuchsia check-runner`
 runs them on the build host without booting a guest, and `check` includes it.
 
