@@ -61,7 +61,8 @@ static volatile int usr1_where;
 /* SIGUSR1 bumps it, so a wait on it that begins after the handler ran
  * fails with EAGAIN rather than sleeping for a signal already taken. */
 static int usr1_word;
-/* Never changes: an SA_RESTART-restarted wait on it keeps sleeping. */
+/* 0 while a round runs, so an SA_RESTART-restarted wait on it keeps
+ * sleeping; set only to release a worker the signal missed. */
 static int still_word;
 /* Each round is repeated only when the signal provably missed the wait. */
 #define	ROUNDS		20
@@ -143,6 +144,7 @@ worker_start(struct thread *th, int *word)
 {
 	worker_ready = 0; worker_go = 0; worker_wait_result = 1;
 	usr1_where = USR1_NONE; usr1_word = 0; hits[SIGUSR1] = 0;
+	*word = 0;
 	if (thread_create(th, worker, word) != 0)
 		return (-1);
 	while (!__atomic_load_n(&worker_ready, __ATOMIC_ACQUIRE))
@@ -237,10 +239,15 @@ test(int argc, char **argv, char **envp)
 		if (!usr1_seen(1)) { msg("worker (SA_RESTART): no handler\n"); return (4); }
 		if (usr1_where != USR1_EARLY)
 			break;
-		/* The handler ran before the wait began: release, again. */
+		/*
+		 * The handler ran before the wait began.  Release the worker
+		 * whether or not it has reached the wait yet: a changed word
+		 * fails a wait not yet begun (EAGAIN) and the wake ends one
+		 * in progress.  Then again.
+		 */
 		msg("bsig: 4 signal arrived before the wait, again\n");
-		if (set_handler(SIGUSR1, 0) != 0) return (4);
-		if (sys3(SYS_tgkill, pid, target_tid, SIGUSR1) != 0) return (4);
+		__atomic_store_n(&still_word, 1, __ATOMIC_RELEASE);
+		(void)futex_wake(&still_word, 1);
 		if (!worker_returned() || worker_finish(&th) != 0) return (4);
 	}
 	/*

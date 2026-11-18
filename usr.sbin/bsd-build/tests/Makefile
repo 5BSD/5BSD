@@ -16,7 +16,7 @@ ${PACKAGE}FILES+= hardware-profile-cases
 ${PACKAGE}FILES+= generation_boot.py generation_boot_test.py
 # Files the installed helpers and tests load from beside themselves
 # (Path(__file__).with_name, atf_get_srcdir); bsd_build_test:installed_support
-# checks that every one is installed.
+# checks every literal reference of those two forms.
 ${PACKAGE}FILES+= verity_artifacts.py verity_tree.py verify-stage.sh library-policy.json
 ${PACKAGE}FILES+= ${SRCTOP}/tools/test/construction/verify_retained.py \
 	${SRCTOP}/tools/test/construction/installation_transport.py
