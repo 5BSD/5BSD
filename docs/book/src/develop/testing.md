@@ -351,6 +351,13 @@ and the loaded MAC policy modules (`kldstat -v`) are written to `tier.txt`
 in the results, next to the Kyua database, and the knobs are appended again
 after the suites.
 
+Every guest mounts UFS, and the plane gate needs bsdcrypto, which opens
+`/dev/crypto`.  A stage kernel that compiles neither in, such as `MINIMAL`,
+gets the stage's `ufs.ko` and `cryptodev.ko` preloaded, since the plane
+refuses a late kldload; the runner reads the kernel's symbol table to decide
+and prints `BASE_MODULES_HOST: preloaded=...`.  A stage with neither the
+module nor its `.ko` stops the run.
+
 The runner's own checks (the tier selection and gate above, the stage root
 metadata preflight, the extra-script status) are shell scripts under
 `tools/build/fuchsia/tests/`; `make -C tools/build/fuchsia check-runner`

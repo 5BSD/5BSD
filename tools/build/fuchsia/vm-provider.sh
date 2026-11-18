@@ -35,7 +35,8 @@
 #   with sys/dq (or a program under it) in the suites, imgact_binmisc and
 #   dtraceall are preloaded for them; with sys/mac_capability or its
 #   issuer-decision probe programs, dtraceall; with usr.sbin/bsd-build,
-#   zfs (an md-backed pool gives one case ACLs),
+#   zfs (an md-backed pool gives one case ACLs), and with a kernel that
+#   does not compile them in (MINIMAL), ufs and cryptodev from the stage,
 #   ROOT_FS (ufs, the default, or zfs: a ZFS root pool for the suites that
 #   require one, such as the Linux ptrace ones),
 #   GATE_TIMEOUT (guest seconds to wait for provider convergence, 600),
@@ -360,6 +361,30 @@ test:no) die "KERNEL_TIER=test, but the stage's kernel carries no test-kernel op
 esac
 # --- end of the kernel tier, host side
 
+# --- base modules, host side (tests/vm-provider-base-modules.sh runs this block)
+# Every guest mounts UFS (its root, the source and ports images, the
+# suites' md(4) file systems), and the plane gate requires bsdcrypto, which
+# opens /dev/crypto.  The plane refuses a late kldload, so a kernel that does
+# not compile ufs or cryptodev in (MINIMAL) gets the stage's module
+# preloaded.  The kernel's symbol table names its compiled-in modules
+# (_mod_metadata_md_<name>); the mandatory-option check above has already
+# refused a kernel without a symbol table.
+base_loader= base_preloaded=
+readelf -sW "$stage/boot/kernel/kernel" > "$work/kernel-symbols" 2> /dev/null ||
+    die "cannot read the symbol table of the stage's kernel"
+for module in ufs cryptodev; do
+	awk -v s="_mod_metadata_md_$module" '$8 == s { found = 1 }
+	    END { exit !found }' "$work/kernel-symbols" && continue
+	[ -f "$stage/boot/kernel/$module.ko" ] ||
+	    die "the stage's kernel has no $module module compiled in, and the stage has no boot/kernel/$module.ko to preload"
+	base_loader="$base_loader${module}_load=\"YES\"
+"
+	base_preloaded="${base_preloaded:+$base_preloaded }$module"
+done
+rm -f "$work/kernel-symbols"
+echo "BASE_MODULES_HOST: preloaded=${base_preloaded:-none}"
+# --- end of the base modules, host side
+
 # ---------------------------------------------------------------- overlay ---
 x=$work/extra
 mkdir -p "$x"
@@ -390,6 +415,7 @@ fi
 if [ "$root_fs" = zfs ]; then
 	printf 'zfs_load="YES"\nvfs.root.mountfrom="zfs:kyuaroot"\n' >> "$x/loader.conf"
 fi
+[ -z "$base_loader" ] || printf '%s' "$base_loader" >> "$x/loader.conf"
 [ -z "$dq_loader" ] || printf '%s\n' "$dq_loader" >> "$x/loader.conf"
 [ -z "${LOADER_EXTRA:-}" ] || printf '%s\n' "$LOADER_EXTRA" >> "$x/loader.conf"
 if [ -n "$extra_script" ]; then cp "$extra_script" "$x/extra.sh"; else : > "$x/extra.sh"; fi

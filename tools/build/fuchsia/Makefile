@@ -72,7 +72,8 @@ check-runner:
 .for t in vm-provider-extra-status vm-provider-root-metadata \
     vm-provider-plane-off-enforce vm-provider-deferred-tiers \
     vm-provider-kmod-skips vm-provider-test-kernel-proof \
-    vm-provider-dq-preload vm-provider-reroot vm-provider-stack-tier-verdict
+    vm-provider-dq-preload vm-provider-reroot vm-provider-stack-tier-verdict \
+    vm-provider-base-modules
 	sh ${.CURDIR}/tests/${t}.sh
 .endfor
 check: check-bindings check-runner
