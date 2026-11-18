@@ -4980,58 +4980,93 @@ ATF_TC_HEAD(watchdog_reset_extends, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Heartbeat resets watchdog, extending the deadline");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
-	atf_tc_set_md_var(tc, "timeout", "10");
+	atf_tc_set_md_var(tc, "timeout", "60");
 }
+
+static long
+watchdog_ms_since(const struct timespec *t)
+{
+	struct timespec now;
+
+	ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &now) == 0);
+	return ((now.tv_sec - t->tv_sec) * 1000 +
+	    (now.tv_nsec - t->tv_nsec) / 1000000);
+}
+
+/*
+ * A 4 s watchdog, a heartbeat 2 s after arming, and a check 5 s after the
+ * arming call returned: an unreset watchdog would have fired 1 s before the
+ * check, and the reset one fires 1 s after it.  An attempt counts only when
+ * the timing held, measured around each call: the heartbeat returned before
+ * the first deadline, and the check was answered before the second.  A
+ * loaded guest can oversleep and miss them, so the case makes up to three
+ * attempts, each on a fresh coalition, and fails, never skips, when none
+ * counts: a heartbeat that never returns in time is a defect too.
+ */
+#define	WATCHDOG_MS		4000
+#define	WATCHDOG_HEARTBEAT_MS	2000
+#define	WATCHDOG_CHECK_MS	5000
+#define	WATCHDOG_ATTEMPTS	3
+
 ATF_TC_BODY(watchdog_reset_extends, tc)
 {
 	struct coalition_set_watchdog_req wr;
 	struct coalition_stat_reply sr;
 	struct coalition_reply rpl;
+	struct timespec armed, armed_end, beat;
+	long heartbeat_ms = 0, check_ms = 0, wait_ms;
+	unsigned attempt;
 	int cfd;
-	struct timespec t0, t1;
-	long elapsed_ms;
 	int32_t status;
 
-	cfd = mac_capability_connect("coalition");
-	ATF_REQUIRE(cfd >= 0);
+	for (attempt = 0; attempt < WATCHDOG_ATTEMPTS; attempt++) {
+		cfd = mac_capability_connect("coalition");
+		ATF_REQUIRE(cfd >= 0);
 
-	/*
-	 * A 2 s watchdog, a heartbeat at 1 s and a check at 2.5 s: wide
-	 * margins, because a loaded guest can oversleep by hundreds of ms.
-	 * The sleeps are periods, not synchronisation: the case asserts that
-	 * the watchdog has NOT fired 2.5 s after arming because the heartbeat
-	 * moved it.
-	 */
-	ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &t0) == 0);
-	wr.op = COALITION_OP_SET_WATCHDOG;
-	wr.timeout_ms = 2000;
-	ATF_REQUIRE(coalition_call(cfd, &wr, sizeof(wr), NULL, 0,
-	    &rpl, sizeof(rpl)) == 0);
-	ATF_CHECK_EQ(rpl.status, 0);
+		/* Times are taken before each call that starts a window. */
+		ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &armed) == 0);
+		memset(&wr, 0, sizeof(wr));
+		wr.op = COALITION_OP_SET_WATCHDOG;
+		wr.timeout_ms = WATCHDOG_MS;
+		ATF_REQUIRE(coalition_call(cfd, &wr, sizeof(wr), NULL, 0,
+		    &rpl, sizeof(rpl)) == 0);
+		ATF_REQUIRE_EQ(rpl.status, 0);
+		ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &armed_end) == 0);
 
-	usleep(1000000);
-	ATF_REQUIRE(coalition_op(cfd, COALITION_OP_HEARTBEAT, &status) == 0);
-	ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &t1) == 0);
-	ATF_CHECK_EQ(status, 0);
-	elapsed_ms = (t1.tv_sec - t0.tv_sec) * 1000 +
-	    (t1.tv_nsec - t0.tv_nsec) / 1000000;
-	if (elapsed_ms >= 1800)
-		atf_tc_skip("heartbeat sent %ld ms after arming a 2000 ms "
-		    "watchdog: the window was missed", elapsed_ms);
+		wait_ms = WATCHDOG_HEARTBEAT_MS - watchdog_ms_since(&armed);
+		if (wait_ms > 0)
+			usleep(wait_ms * 1000);
+		ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &beat) == 0);
+		ATF_REQUIRE(coalition_op(cfd, COALITION_OP_HEARTBEAT,
+		    &status) == 0);
+		heartbeat_ms = watchdog_ms_since(&armed);
+		ATF_CHECK_EQ(status, 0);
 
-	/* 1.5 s after the heartbeat, inside its fresh 2 s window. */
-	usleep(1500000);
+		wait_ms = WATCHDOG_CHECK_MS - watchdog_ms_since(&armed_end);
+		if (wait_ms > 0)
+			usleep(wait_ms * 1000);
+		ATF_REQUIRE(coalition_stat(cfd, &sr) == 0);
+		check_ms = watchdog_ms_since(&beat);
 
-	ATF_REQUIRE(coalition_stat(cfd, &sr) == 0);
-	ATF_CHECK(sr.flags & COF_WATCHDOG_ACTIVE);
-	ATF_CHECK_EQ(sr.flags & COF_TERMINATING, 0);
+		/* Cancel the watchdog before the coalition is closed. */
+		wr.timeout_ms = 0;
+		(void)coalition_call(cfd, &wr, sizeof(wr), NULL, 0,
+		    &rpl, sizeof(rpl));
+		close(cfd);
 
-	/* Cancel watchdog to clean up */
-	wr.timeout_ms = 0;
-	ATF_REQUIRE(coalition_call(cfd, &wr, sizeof(wr), NULL, 0,
-	    &rpl, sizeof(rpl)) == 0);
-
-	close(cfd);
+		if (heartbeat_ms >= WATCHDOG_MS || check_ms >= WATCHDOG_MS)
+			continue;
+		ATF_CHECK_MSG(sr.flags & COF_WATCHDOG_ACTIVE,
+		    "watchdog not active %d ms after arming", WATCHDOG_CHECK_MS);
+		ATF_CHECK_MSG((sr.flags & COF_TERMINATING) == 0,
+		    "the watchdog fired: the heartbeat at %ld ms did not move "
+		    "its %d ms deadline", heartbeat_ms, WATCHDOG_MS);
+		return;
+	}
+	atf_tc_fail("no attempt of %d kept its timing: last heartbeat "
+	    "returned %ld ms after arming, last check %ld ms after the "
+	    "heartbeat (both must be under %d ms)", WATCHDOG_ATTEMPTS,
+	    heartbeat_ms, check_ms, WATCHDOG_MS);
 }
 
 ATF_TC(enlist_after_close);
