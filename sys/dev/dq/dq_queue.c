@@ -2314,6 +2314,10 @@ dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 	    (postop && (r->dr_errno != 0 ||
 	    r->dr_len < sizeof(struct dq_postop_attr))))
 		return (EINVAL);
+#ifdef DQ_FAULT_INJECTION
+	if (postop && dq_faultinj_postop_refuse())
+		return (EINVAL);
+#endif
 	len = r->dr_len;
 	dd = NULL;
 	if (len != 0) {

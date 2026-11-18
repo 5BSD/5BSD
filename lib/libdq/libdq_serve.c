@@ -619,16 +619,36 @@ dq_serve_ident_sync(int q, const struct dq_event *ev,
  * Operations
  */
 
-/* Set once a kernel refused a post-operation block that a plain reply
-   then answered: the block is not offered again (dq_serve_reply_postop). */
-static atomic_bool dq_serve_no_postop;
+/*
+ * Whether the kernel takes post-operation blocks: FEATURE(dq_postop),
+ * looked up once (0 not yet, 1 yes, 2 no).
+ */
+static atomic_int dq_serve_postop_kernel;
+
+static bool
+dq_serve_postop_supported(void)
+{
+	int k;
+
+	k = atomic_load_explicit(&dq_serve_postop_kernel,
+	    memory_order_relaxed);
+	if (k == 0) {
+		k = feature_present("dq_postop") ? 1 : 2;
+		atomic_store_explicit(&dq_serve_postop_kernel, k,
+		    memory_order_relaxed);
+	}
+	return (k == 1);
+}
 
 /*
  * A successful reply with the backing file's attributes after the
  * operation (DQ_REPLY_F_POSTOP): the kernel presents them, so fstat(2)
- * of the served file and stat(2) of the backing file agree (T-A02).  If
- * the backing file cannot be asked, the reply goes without them and the
- * kernel stamps the times itself.
+ * of the served file and stat(2) of the backing file agree (T-A02).  A
+ * kernel without FEATURE(dq_postop) gets the reply without them, as does
+ * one whose backing file cannot be asked, and stamps the times itself.
+ * A kernel that has the feature and refuses the block refuses a reply
+ * this code built wrong: that is the caller's error (dq_serve_failclosed
+ * then answers EIO), and the next reply still carries a block.
  */
 static int
 dq_serve_reply_postop(int q, uint64_t id, int backing, const void *data,
@@ -637,25 +657,10 @@ dq_serve_reply_postop(int q, uint64_t id, int backing, const void *data,
 	struct dq_postop_attr pa;
 	struct stat sb;
 
-	if (atomic_load_explicit(&dq_serve_no_postop, memory_order_relaxed) ||
-	    fstat(backing, &sb) == -1)
+	if (!dq_serve_postop_supported() || fstat(backing, &sb) == -1)
 		return (dq_reply(q, id, 0, data, len));
 	dq_postop_from_stat(&pa, &sb, valid);
-	if (dq_reply_postop(q, id, data, len, &pa) == 0)
-		return (0);
-	if (errno != EINVAL)
-		return (-1);
-	/*
-	 * A kernel from before post-operation attributes refuses the flag
-	 * (dr_pad0 was zero), and any kernel may refuse a block it does not
-	 * take: the reply goes without it, and the kernel stamps the times.
-	 * Once a plain reply was taken where the block was refused, the
-	 * block is not offered again in this process.
-	 */
-	if (dq_reply(q, id, 0, data, len) == -1)
-		return (-1);
-	atomic_store_explicit(&dq_serve_no_postop, true, memory_order_relaxed);
-	return (0);
+	return (dq_reply_postop(q, id, data, len, &pa));
 }
 
 static int

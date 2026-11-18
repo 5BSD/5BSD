@@ -660,6 +660,7 @@ void	dq_pager_unregister(void);
 /* dq_faultinj.c (options DQ_FAULT_INJECTION): test-kernel windows. */
 void	dq_faultinj_swap_take_pause(void);
 void	dq_faultinj_postop_apply_pause(void);
+bool	dq_faultinj_postop_refuse(void);
 #endif
 int	dq_object_vm_create(struct dq_object *o);
 boolean_t dq_pager_flush(struct dq_object *o, struct vm_object *obj,

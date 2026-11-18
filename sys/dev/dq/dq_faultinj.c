@@ -5,10 +5,11 @@
  * DescriptorQueue: fault injection for the test suites (options
  * DQ_FAULT_INJECTION).
  *
- * Each knob widens one window a test must hit, by sleeping one second at
- * a point where no lock is held, for the next N times the point is
- * reached.  Everything the option adds is in this file, built only with
- * the option (sys/conf/files); the call sites are under the option.
+ * Each knob acts the next N times its point is reached: most widen one
+ * window a test must hit, by sleeping one second at a point where no lock
+ * is held; refuse_postop_reply refuses a reply instead.  Everything the
+ * option adds is in this file, built only with the option
+ * (sys/conf/files); the call sites are under the option.
  *
  * A kernel built with the option is a test kernel and must never be
  * published.  release/scripts/check-test-kernel.sh refuses any kernel or
@@ -71,17 +72,36 @@ SYSCTL_UINT(_debug_dq, OID_AUTO, delay_postop_apply, CTLFLAG_RW,
     "Test kernel only: the next N post-operation applies sleep one second "
     "first");
 
-static void
-dq_faultinj_pause(u_int *counter, const char *wmesg)
+/*
+ * A post-operation block the kernel refuses (EINVAL, the event left in
+ * flight), so a test can see that libdq reports the refusal and keeps
+ * offering blocks.
+ */
+static u_int dq_faultinj_postop_refusals;
+SYSCTL_UINT(_debug_dq, OID_AUTO, refuse_postop_reply, CTLFLAG_RW,
+    &dq_faultinj_postop_refusals, 0,
+    "Test kernel only: the next N replies that carry a post-operation "
+    "block are refused with EINVAL");
+
+static bool
+dq_faultinj_take(u_int *counter)
 {
 	u_int n;
 
 	do {
 		n = atomic_load_int(counter);
 		if (n == 0)
-			return;
+			return (false);
 	} while (!atomic_cmpset_int(counter, n, n - 1));
-	pause_sbt(wmesg, SBT_1S, 0, 0);
+	return (true);
+}
+
+static void
+dq_faultinj_pause(u_int *counter, const char *wmesg)
+{
+
+	if (dq_faultinj_take(counter))
+		pause_sbt(wmesg, SBT_1S, 0, 0);
 }
 
 void
@@ -96,4 +116,11 @@ dq_faultinj_postop_apply_pause(void)
 {
 
 	dq_faultinj_pause(&dq_faultinj_postop_apply, "dqpoap");
+}
+
+bool
+dq_faultinj_postop_refuse(void)
+{
+
+	return (dq_faultinj_take(&dq_faultinj_postop_refusals));
 }

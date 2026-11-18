@@ -1616,6 +1616,71 @@ ATF_TC_BODY(postop_time_after_future_set, tc)
 	dqt_fixture_fini(&f);
 }
 
+/*
+ * Bad-fix audit (7cad15105ff): a post-operation block the kernel refuses
+ * is an error dq_serve_file reports (and answers EIO, so the write fails
+ * at once), not a reason to stop offering blocks: the next reply still
+ * carries one.  DQ_PF_NO_STAMP keeps the kernel's stamp out, so only a
+ * block moves the presented times.
+ */
+#define	REFUSE_POSTOP	"debug.dq.refuse_postop_reply"
+
+ATF_TC_WITH_CLEANUP(postop_refused_reported);
+ATF_TC_HEAD(postop_refused_reported, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a refused post-operation block is "
+	    "reported by dq_serve_file and the write fails EIO; the next "
+	    "reply still carries a block (bad-fix audit)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(postop_refused_reported, tc)
+{
+	struct dqt_fixture f;
+	struct dq_policy pol;
+	struct postop_res r;
+	struct stat bs;
+	int fd, failures, last;
+
+	dqt_require_fault_knob(REFUSE_POSTOP);
+	dq_policy_default(&pol);
+	pol.dp_flags = DQ_PF_NO_STAMP;
+	dqt_fill(data, sizeof(data), 22);
+	dqt_fixture_init(&f, data, sizeof(data), backing_path, oracle_path,
+	    &pol, DQ_MINT_F_WRITE);
+	fd = f.o->fd;
+
+	dqt_sysctl_save_set_uint(REFUSE_POSTOP, 1);
+	memset(&r, 0, sizeof(r));
+	dqt_run_child(child_write_fstat, &fd, &r, sizeof(r));
+	ATF_REQUIRE(dqt_sysctl_restore(REFUSE_POSTOP));
+	ATF_CHECK_EQ(-1, r.w.rv);
+	ATF_CHECK_EQ(EIO, r.w.err);
+	dqt_lock(&f.c);
+	failures = f.c.reply_failures;
+	last = f.c.last_reply_errno;
+	f.c.reply_failures = 0;
+	dqt_unlock(&f.c);
+	ATF_CHECK_EQ_MSG(1, failures, "dq_serve_file failures %d", failures);
+	ATF_CHECK_EQ_MSG(EINVAL, last, "last errno %d", last);
+
+	memset(&r, 0, sizeof(r));
+	dqt_run_child(child_write_fstat, &fd, &r, sizeof(r));
+	ATF_REQUIRE_EQ(10, r.w.rv);
+	ATF_REQUIRE_EQ(0, fstat(f.backing, &bs));
+	ATF_CHECK_MSG(timespeccmp(&r.after.st_mtim, &bs.st_mtim, ==),
+	    "the second reply carried no block: served mtime %jd.%09ld, "
+	    "backing %jd.%09ld", (intmax_t)r.after.st_mtim.tv_sec,
+	    r.after.st_mtim.tv_nsec, (intmax_t)bs.st_mtim.tv_sec,
+	    bs.st_mtim.tv_nsec);
+	ATF_CHECK(timespeccmp(&r.after.st_mtim, &r.before.st_mtim, !=));
+	dqt_fixture_fini(&f);
+}
+ATF_TC_CLEANUP(postop_refused_reported, tc)
+{
+
+	(void)dqt_sysctl_restore(REFUSE_POSTOP);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1640,6 +1705,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, postop_two_writers_size);
 	ATF_TP_ADD_TC(tp, postop_fspacectl_no_size);
 	ATF_TP_ADD_TC(tp, postop_time_after_future_set);
+	ATF_TP_ADD_TC(tp, postop_refused_reported);
 	ATF_TP_ADD_TC(tp, fspacectl_past_eof);
 	return (atf_no_error());
 }

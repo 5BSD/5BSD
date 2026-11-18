@@ -105,6 +105,13 @@ SYSCTL_NODE(_kern, OID_AUTO, dq, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
     "DescriptorQueue");
 
 /*
+ * Replies may carry post-operation attributes (DQ_REPLY_F_POSTOP, T-A02):
+ * libdq offers a block only when this feature is present, and reports a
+ * refused one as the error it is.
+ */
+FEATURE(dq_postop, "DescriptorQueue post-operation attributes in replies");
+
+/*
  * Post-operation attribute blocks ignored, system-wide (counter(9): the
  * reply path does not contend on one line).  Per-queue attribution is the
  * dq:::postop-attr probe's; struct dq_stats2 has no word for it (its three

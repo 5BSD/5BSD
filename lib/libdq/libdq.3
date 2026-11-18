@@ -1822,11 +1822,17 @@ owners belong to the identity and go with
 .Dv DQ_OP_UNLOCK_ALL .
 .El
 .Pp
-A kernel that refuses a post-operation block with
-.Er EINVAL
-(one from before them, which required the reply's flags word to be 0)
-gets the same reply without it; from then on the process sends none, and
-the kernel stamps the times itself.
+Post-operation blocks go only to a kernel that lists the
+.Va dq_postop
+feature
+.Pq Xr feature_present 3 ;
+an older one gets the same replies without them, and stamps the times
+itself.
+A block such a kernel refuses
+.Pq Er EINVAL
+is a reply built wrong: it is answered
+.Er EIO
+and reported as above, and the next reply still carries its block.
 A
 .Dv DQ_SERVE_F_SYNC_IDENT
 refresh that finds the object closed after its operation was answered
