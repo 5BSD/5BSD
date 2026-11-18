@@ -3,3 +3,12 @@ load("@rules_cc//cc:defs.bzl", "cc_binary")
 cc_binary(name = "mac_capability_shield_helper", srcs = ["mac_capability_shield_helper.c"],
     deps = ["//sys/dev/mac_capability:shield_test_headers"], copts = ["-fPIE"], linkopts = ["-pie"],
     visibility = ["//usr.sbin/capsule/tests:__pkg__"])
+# The capprotect debug and tracing fixtures (capprotect_debug_pins_test.c,
+# capprotect_dtrace_test.sh).  The Make build adds the fixture's cpusdt USDT
+# provider (dtrace -G); this build compiles it without probes.
+cc_binary(name = "capprotect_usdt_helper", srcs = ["capprotect_usdt_helper.c"],
+    deps = ["//sys/dev/mac_capability:shield_test_headers", "//lib/libelf:elf"], copts = ["-fPIE"], linkopts = ["-pie"])
+cc_binary(name = "capprotect_protector_helper", srcs = ["capprotect_protector_helper.c"],
+    deps = ["//sys/dev/mac_capability:shield_test_headers"], copts = ["-fPIE"], linkopts = ["-pie"])
+cc_binary(name = "capprotect_adddof_helper", srcs = ["capprotect_adddof_helper.c"],
+    copts = ["-fPIE"], linkopts = ["-pie"])

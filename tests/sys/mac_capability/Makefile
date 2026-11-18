@@ -3,6 +3,8 @@
 # enforced tier; docs/book/src/develop/testing.md).  The fixture services the
 # keystore/kernelstore cases require are built from sys/modules and shipped in
 # this package; see fixtures/README.
+.include <src.opts.mk>
+
 PACKAGE=	mac-capability-tests
 TESTSDIR=	${TESTSBASE}/sys/mac_capability
 SCRIPTSDIR=	${TESTSDIR}
@@ -40,6 +42,27 @@ PROGS+=		mac_capability_exec_helper
 PROGS+=		mac_capability_channel_helper
 PROGS+=		mac_capability_isolation_helper
 PROGS+=		mac_capability_shield_helper
+# Debug and inspect answers for protected processes, and DTrace against
+# them (dtrace-under-shield-minimal design).  The fixture carries a USDT
+# provider; the agent plays the protector, prober and tracer as a separate
+# process; the ADDDOF helper registers DOF for another process.  The DTrace
+# cases need dtraceall preloaded: the plane refuses a late kldload.
+ATF_TESTS_C+=	capprotect_debug_pins_test
+TEST_METADATA.capprotect_debug_pins_test+=	is_exclusive="true"
+CFLAGS.capprotect_debug_pins_test+=	-I${SRCTOP}/tests/sys/security/oes
+LIBADD.capprotect_debug_pins_test+=	jail
+ATF_TESTS_SH+=	capprotect_dtrace_test
+TEST_METADATA.capprotect_dtrace_test+=	is_exclusive="true"
+ATF_TESTS_SH+=	capprotect_live_plane_test
+TEST_METADATA.capprotect_live_plane_test+=	is_exclusive="true"
+PROGS+=		capprotect_usdt_helper capprotect_protector_helper \
+		capprotect_adddof_helper
+SRCS.capprotect_usdt_helper=	capprotect_usdt_helper.c
+.if ${MK_DTRACE} != "no"
+SRCS.capprotect_usdt_helper+=	capprotect_usdt_helper_provider.d
+CFLAGS.capprotect_usdt_helper+=	-DWITH_DTRACE
+LIBADD.capprotect_usdt_helper+=	elf
+.endif
 ATF_TESTS_SH+=	process_context_test
 PROGS+=		process_context_helper process_context_edge_helper \
 		process_context_ipc_helper
