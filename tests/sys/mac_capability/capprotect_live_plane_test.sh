@@ -83,9 +83,9 @@ live_capsule_procstat_v_k_head()
 live_capsule_procstat_v_k_body()
 {
 	require_plane
-	# Today: debug-class, and Capsule's shield refuses it.
-	atf_check_equal $EACCES "$(agent "proc $KERN_PROC_VMMAP 1")"
-	atf_check_equal $EACCES "$(agent "proc $KERN_PROC_KSTACK 1")"
+	# Inspect class: the shield refuses debug, not inspect (EACCES before).
+	atf_check_equal 0 "$(agent "proc $KERN_PROC_VMMAP 1")"
+	atf_check_equal 0 "$(agent "proc $KERN_PROC_KSTACK 1")"
 }
 
 atf_test_case live_switchboard_procstat_v_k
@@ -100,8 +100,8 @@ live_switchboard_procstat_v_k_body()
 
 	require_plane
 	sb=$(switchboard_pid)
-	atf_check_equal $EACCES "$(agent "proc $KERN_PROC_VMMAP $sb")"
-	atf_check_equal $EACCES "$(agent "proc $KERN_PROC_KSTACK $sb")"
+	atf_check_equal 0 "$(agent "proc $KERN_PROC_VMMAP $sb")"
+	atf_check_equal 0 "$(agent "proc $KERN_PROC_KSTACK $sb")"
 }
 
 atf_test_case live_ptrace_refused
@@ -173,7 +173,7 @@ live_capsule_usdt_exact_body()
 atf_test_case live_switchboard_ustack_symbols
 live_switchboard_ustack_symbols_head()
 {
-	atf_set "descr" "ustack() in SwitchBoard is not symbolised"
+	atf_set "descr" "ustack() in SwitchBoard is symbolised"
 	common_head
 	atf_set "require.progs" "dtrace switchboardctl"
 }
@@ -191,10 +191,9 @@ live_switchboard_ustack_symbols_body()
 	switchboardctl status >/dev/null 2>&1 || true
 	wait $dt
 	grep -q '0x[0-9a-f]' dt.out || atf_fail "no frames: $(cat dt.out dt.err | tr "\n" " ")"
-	# Today: kern.proc.vmmap is refused, so no frame has a symbol.
-	if grep -q '`' dt.out; then
-		atf_fail "symbolised today: $(cat dt.out | tr "\n" " ")"
-	fi
+	# kern.proc.vmmap is inspect-class: frames are symbolised (they were
+	# raw addresses while it was refused).
+	grep -q '`' dt.out || atf_fail "not symbolised: $(cat dt.out | tr "\n" " ")"
 }
 
 atf_test_case live_unit_usdt_exact
@@ -230,8 +229,8 @@ live_unit_usdt_exact_body()
 atf_test_case live_capsule_securelevel1
 live_capsule_securelevel1_head()
 {
-	atf_set "descr" "At securelevel 1, Capsule (init) refuses kern.proc.vmmap" \
-	    "and PT_ATTACH; this case raises the securelevel for good"
+	atf_set "descr" "At securelevel 1, Capsule (init) allows kern.proc.vmmap" \
+	    "and refuses PT_ATTACH; this case raises the securelevel for good"
 	common_head
 	atf_set "is.exclusive" "true"
 }
@@ -247,8 +246,9 @@ live_capsule_securelevel1_body()
 		    atf_fail "cannot raise kern.securelevel"
 	fi
 	atf_check_equal 1 "$(sysctl -n kern.securelevel)"
-	# Today: MAC (step 5) refuses before the securelevel step (10).
-	atf_check_equal $EACCES "$(agent "proc $KERN_PROC_VMMAP 1")"
+	# Q11: init is inspectable at securelevel 1, and debug stays refused
+	# (inspect was EACCES while it asked the debug question).
+	atf_check_equal 0 "$(agent "proc $KERN_PROC_VMMAP 1")"
 	atf_check_equal $EACCES "$(agent "attach 1")"
 }
 

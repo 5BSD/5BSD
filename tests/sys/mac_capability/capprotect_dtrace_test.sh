@@ -210,8 +210,8 @@ usdt_glob_provider_cleanup()
 atf_test_case ustack_symbols cleanup
 ustack_symbols_head()
 {
-	atf_set "descr" "ustack() of a self-shielded process is not" \
-	    "symbolised (kern.proc.vmmap is refused); a plain one is"
+	atf_set "descr" "ustack() of a self-shielded process is symbolised" \
+	    "(kern.proc.vmmap and auxv are inspect-class), as a plain one is"
 	common_head
 }
 ustack_symbols_body()
@@ -225,11 +225,10 @@ ustack_symbols_body()
 	fixture_start self
 	dtrace_once -q -n "syscall::poll:entry /pid == $FXPID/ { ustack(); exit(0); }"
 	[ "$DTRC" -eq 0 ] || atf_fail "dtrace failed: $(cat dt.err | tr "\n" " ")"
-	# Today: raw addresses only.
-	if grep -q 'libc.so.7`' dt.out; then
-		atf_fail "shielded: symbolised today: $(cat dt.out | tr "\n" " ")"
-	fi
-	grep -q '0x[0-9a-f]' dt.out || atf_fail "no frames: $(cat dt.out | tr "\n" " ")"
+	# kern.proc.vmmap and auxv are inspect-class: symbolised (they were
+	# raw addresses while refused).
+	grep -q 'libc.so.7`' dt.out ||
+	    atf_fail "shielded: no symbols: $(cat dt.out dt.err | tr "\n" " ")"
 	fixture_stop
 }
 ustack_symbols_cleanup()

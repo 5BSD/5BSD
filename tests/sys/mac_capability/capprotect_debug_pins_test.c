@@ -700,22 +700,26 @@ PIN_PROBE(pin_pdopenpid, probe_pdopenpid, 0, EACCES, EPERM,
 PIN_PROBE(pin_pddupfd, probe_pddupfd, 0, EACCES, EPERM,
     "pddupfd(2) stays debug-class")
 
-/* Inspect class: today debug-class; S1d moves them to p_caninspect. */
-PIN_PROBE(pin_sysctl_vmmap, probe_vmmap, 0, EACCES, EPERM,
+/*
+ * Inspect class (p_caninspect(9)): the shield and no-ambient refuse debug,
+ * not inspect.  They were EACCES and EPERM while these callers asked the
+ * debug question.
+ */
+PIN_PROBE(pin_sysctl_vmmap, probe_vmmap, 0, 0, 0,
     "kern.proc.vmmap of protected processes")
-PIN_PROBE(pin_sysctl_vm_layout, probe_vm_layout, 0, EACCES, EPERM,
+PIN_PROBE(pin_sysctl_vm_layout, probe_vm_layout, 0, 0, 0,
     "kern.proc.vm_layout of protected processes")
-PIN_PROBE(pin_sysctl_auxv, probe_auxv, 0, EACCES, EPERM,
+PIN_PROBE(pin_sysctl_auxv, probe_auxv, 0, 0, 0,
     "kern.proc.auxv of protected processes")
-PIN_PROBE(pin_sysctl_ps_strings, probe_ps_strings, 0, EACCES, EPERM,
+PIN_PROBE(pin_sysctl_ps_strings, probe_ps_strings, 0, 0, 0,
     "kern.proc.ps_strings of protected processes")
-PIN_PROBE(pin_sysctl_sigtramp, probe_sigtramp, 0, EACCES, EPERM,
+PIN_PROBE(pin_sysctl_sigtramp, probe_sigtramp, 0, 0, 0,
     "kern.proc.sigtramp of protected processes")
-PIN_PROBE(pin_sysctl_sigfastblk, probe_sigfastblk, 0, EACCES, EPERM,
+PIN_PROBE(pin_sysctl_sigfastblk, probe_sigfastblk, 0, 0, 0,
     "kern.proc.sigfastblk of protected processes")
-PIN_PROBE(pin_sysctl_umask, probe_umask, 0, EACCES, EPERM,
+PIN_PROBE(pin_sysctl_umask, probe_umask, 0, 0, 0,
     "kern.proc.umask of protected processes")
-PIN_PROBE(pin_sysctl_kstack, probe_kstack, 0, EACCES, EPERM,
+PIN_PROBE(pin_sysctl_kstack, probe_kstack, 0, 0, 0,
     "kern.proc.kstack of protected processes")
 
 /* linprocfs, when it is mounted at /compat/linux/proc. */
@@ -792,9 +796,12 @@ ATF_TC_HEAD(pin_linprocfs_maps_auxv, tc)
 ATF_TC_BODY(pin_linprocfs_maps_auxv, tc)
 {
 	static const char *const files[] = { "maps", "auxv", NULL };
-	static const int expect[] = { EACCES, ENOENT };
+	static const int expect[] = { 0, 0 };
 
-	/* Today: maps refuses its read; auxv is hidden from the caller. */
+	/*
+	 * Inspect class: readable.  As debug checks, maps was EACCES and
+	 * auxv hidden (ENOENT).
+	 */
 	linprocfs_case(tc, files, expect);
 }
 
@@ -1003,32 +1010,35 @@ ATF_TC(pin_mac_test_counters);
 ATF_TC_HEAD(pin_mac_test_counters, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "kern.proc.vmmap of another process "
-	    "asks the MAC policies their debug question");
+	    "asks the MAC policies their inspect question");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(pin_mac_test_counters, tc)
 {
 	struct fx f;
-	unsigned int before, after;
+	unsigned int before, after, debug;
 
 	if (modfind("mac_test") < 0)
 		atf_tc_skip("mac_test is not loaded (LOADER_EXTRA="
 		    "mac_test_load=YES)");
 	paths_init(tc);
 	fixture_start(&f, "plain");
-	before = mac_test_counter("proc_check_debug");
+	/* kern.proc.vmmap asks proc_check_inspect, not proc_check_debug. */
+	before = mac_test_counter("proc_check_inspect");
+	debug = mac_test_counter("proc_check_debug");
 	ATF_REQUIRE_EQ(probe_vmmap(f.pid), 0);
-	after = mac_test_counter("proc_check_debug");
-	ATF_CHECK_MSG(after > before, "proc_check_debug %u -> %u", before,
+	after = mac_test_counter("proc_check_inspect");
+	ATF_CHECK_MSG(after > before, "proc_check_inspect %u -> %u", before,
 	    after);
+	ATF_CHECK_EQ(mac_test_counter("proc_check_debug"), debug);
 	fixture_stop(&f);
 }
 
 ATF_TC(pin_oes_notify_ptrace);
 ATF_TC_HEAD(pin_oes_notify_ptrace, tc)
 {
-	atf_tc_set_md_var(tc, "descr", "kern.proc.vmmap and PT_ATTACH by "
-	    "another process each produce an OES NOTIFY_PTRACE event");
+	atf_tc_set_md_var(tc, "descr", "PT_ATTACH by another process produces "
+	    "an OES NOTIFY_PTRACE event; kern.proc.vmmap produces none");
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "timeout", "120");
 }
@@ -1059,11 +1069,13 @@ ATF_TC_BODY(pin_oes_notify_ptrace, tc)
 	fixture_start(&f, "plain");
 	agent_start(&prober, -1);
 	test_drain_events(oes);
-	/* Today the vmmap is a debug check, and OES reports it as ptrace. */
+	/*
+	 * The vmmap is an inspect check, and OES reports nothing for it (Q4).
+	 * It was reported as NOTIFY_PTRACE while it was a debug check.
+	 */
 	ATF_REQUIRE_EQ(agent_do(&prober, "VMMAP", NULL, "vmmap %d", f.pid), 0);
 	ATF_CHECK_EQ(test_wait_event_pid(oes, prober.pid,
-	    OES_EVENT_NOTIFY_PTRACE, 5000, &buf.msg), 0);
-	ATF_CHECK_EQ(buf.msg.em_event_data.ptrace.target.ep_pid, f.pid);
+	    OES_EVENT_NOTIFY_PTRACE, 2000, &buf.msg), ETIMEDOUT);
 	test_drain_events(oes);
 	ATF_REQUIRE_EQ(agent_attach(&prober, f.pid), 0);
 	ATF_CHECK_EQ(test_wait_event_pid(oes, prober.pid,
