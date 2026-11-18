@@ -28,10 +28,12 @@
 #include <sys/event.h>
 #include <sys/procdesc.h>
 #include <sys/procctl.h>
+#include <sys/sysctl.h>
 #include <sys/wait.h>
 
 #include <errno.h>
 #include <fcntl.h>
+#include <kenv.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -349,6 +351,31 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 }
 
 /*
+ * PID 1 has no environment to carry SWITCHBOARD_TEST_SHIELD_NO_SIGKILL, so a
+ * test kernel also takes it from the loader: switchboard_test_no_sigkill="1"
+ * lets a guest test kill SwitchBoard to exercise a crash restart.  Ignored on
+ * any kernel without the test-kernel knob kern.mac_capability.test_issuer.
+ */
+static bool
+bootstrap_test_no_sigkill(void)
+{
+	char value[8];
+	size_t len;
+	int knob;
+
+	len = sizeof(knob);
+	if (sysctlbyname("kern.mac_capability.test_issuer", &knob, &len,
+	    NULL, 0) == -1)
+		return (false);
+	if (kenv(KENV_GET, "switchboard_test_no_sigkill", value,
+	    sizeof(value)) <= 0 || strcmp(value, "1") != 0)
+		return (false);
+	syslog(LOG_WARNING, "bootstrap: TEST MODE: switchboard shield without "
+	    "SIGKILL (switchboard_test_no_sigkill)");
+	return (true);
+}
+
+/*
  * Create PID 1's authority issuer.  Only PID 1 can create this boot trust
  * anchor.  The environment merely names a descriptor; the kernel validates
  * its unforgeable object type.  A test kernel (options
@@ -615,6 +642,8 @@ bootstrap_start(int kq)
 	dfds.watch_settle = getenv("SWITCHBOARD_REGISTRY_WATCH_SETTLE");
 	dfds.skip_rc = getenv("SWITCHBOARD_SKIP_RC");
 	dfds.test_no_sigkill = getenv("SWITCHBOARD_TEST_SHIELD_NO_SIGKILL");
+	if (dfds.test_no_sigkill == NULL && bootstrap_test_no_sigkill())
+		dfds.test_no_sigkill = "1";
 
 	/*
 	 * These descriptors cross exactly one fork edge into switchboard.  They
