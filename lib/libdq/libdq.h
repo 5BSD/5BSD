@@ -373,8 +373,9 @@ int	dq_reply_readdir(int q, uint64_t id, uint64_t next, int eof,
  * rootfd (a directory descriptor with CAP_LOOKUP, or -1 for the caller's
  * own root; the lookup's process root must be it), the normalized
  * absolute path under it (DQ_STANDING_F_SUBTREE: with every name beneath
- * it), the operations ops (DQ_STANDING_OP(DQ_ROP_*); an open is covered
- * only when read-class unless DQ_STANDING_F_OPEN_WRITE is set) and the
+ * it), the operations ops (DQ_STANDING_OP(DQ_ROP_*); DQ_ROP_EXEC_INTERP
+ * only without DQ_STANDING_F_SUBTREE; an open is covered only when
+ * read-class unless DQ_STANDING_F_OPEN_WRITE is set) and the
  * action DQ_STANDING_PASS, DQ_STANDING_ERRNO (error, from the RESOLVE
  * allow-list, not EAGAIN, EINTR or ENOTCAPABLE) or DQ_STANDING_ASK (post
  * the event: an exception to a shorter rule); *idp (may be NULL) receives
@@ -383,8 +384,11 @@ int	dq_reply_readdir(int q, uint64_t id, uint64_t next, int eof,
  * dq_standing_flush() all.  Covered lookups post no event and count in
  * ds2_standing_pass or ds2_standing_deny; see dq(4).
  */
-/* Every operation a rule may name: one path, never RENAME, LINK, sockets
-   (CONNECT and BIND are consulted ahead) or INTERNAL. */
+/* Every operation a subtree rule may name: one path, never RENAME, LINK,
+   sockets (CONNECT and BIND are consulted ahead) or INTERNAL, and not
+   EXEC_INTERP, which only an exact rule may name (the interpreter lookup
+   is not consulted again at symbolic links, so a subtree would pass a
+   link out of it). */
 #define	DQ_STANDING_OPS_ALL						\
 	(DQ_STANDING_OP(DQ_ROP_OPEN) | DQ_STANDING_OP(DQ_ROP_STAT) |	\
 	DQ_STANDING_OP(DQ_ROP_ACCESS) | DQ_STANDING_OP(DQ_ROP_READLINK) | \
@@ -393,17 +397,17 @@ int	dq_reply_readdir(int q, uint64_t id, uint64_t next, int eof,
 	DQ_STANDING_OP(DQ_ROP_SYMLINK) | DQ_STANDING_OP(DQ_ROP_MKDIR) |	\
 	DQ_STANDING_OP(DQ_ROP_MKNOD) | DQ_STANDING_OP(DQ_ROP_MKFIFO) |	\
 	DQ_STANDING_OP(DQ_ROP_SETATTR) | DQ_STANDING_OP(DQ_ROP_TRUNCATE) | \
-	DQ_STANDING_OP(DQ_ROP_EXEC) | DQ_STANDING_OP(DQ_ROP_EXEC_INTERP) | \
-	DQ_STANDING_OP(DQ_ROP_CHDIR) | DQ_STANDING_OP(DQ_ROP_CHROOT) |	\
-	DQ_STANDING_OP(DQ_ROP_INOTIFY) | DQ_STANDING_OP(DQ_ROP_XATTR) |	\
-	DQ_STANDING_OP(DQ_ROP_ACL) | DQ_STANDING_OP(DQ_ROP_REVOKE))
+	DQ_STANDING_OP(DQ_ROP_EXEC) | DQ_STANDING_OP(DQ_ROP_CHDIR) |	\
+	DQ_STANDING_OP(DQ_ROP_CHROOT) | DQ_STANDING_OP(DQ_ROP_INOTIFY) | \
+	DQ_STANDING_OP(DQ_ROP_XATTR) | DQ_STANDING_OP(DQ_ROP_ACL) |	\
+	DQ_STANDING_OP(DQ_ROP_REVOKE))
 /* The lookups that read: XATTR and ACL are left out (one bit covers get
-   and set). */
+   and set), EXEC_INTERP as in DQ_STANDING_OPS_ALL. */
 #define	DQ_STANDING_OPS_READ						\
 	(DQ_STANDING_OP(DQ_ROP_OPEN) | DQ_STANDING_OP(DQ_ROP_STAT) |	\
 	DQ_STANDING_OP(DQ_ROP_ACCESS) | DQ_STANDING_OP(DQ_ROP_READLINK) | \
 	DQ_STANDING_OP(DQ_ROP_REALPATH) | DQ_STANDING_OP(DQ_ROP_EXEC) |	\
-	DQ_STANDING_OP(DQ_ROP_EXEC_INTERP) | DQ_STANDING_OP(DQ_ROP_CHDIR))
+	DQ_STANDING_OP(DQ_ROP_CHDIR))
 int	dq_standing_add(int q, int rootfd, const char *path, uint32_t flags,
 	    uint32_t ops, uint32_t action, int error, uint64_t *idp);
 int	dq_standing_del(int q, uint64_t id);

@@ -1582,8 +1582,14 @@ or
 unless
 .Dv DQ_STANDING_F_OPEN_WRITE
 is set.
+.Dv DQ_ROP_EXEC_INTERP ,
+the interpreter lookup of an
+.Xr execve 2
+.Pq Dv PT_INTERP No or Ql #! ,
+may be named only in an exact rule: that lookup is not consulted again at
+symbolic links, so a subtree rule would pass a link out of its tree.
 .Dv DQ_STANDING_OPS_ALL
-names every operation a rule may cover and
+names every operation a subtree rule may cover and
 .Dv DQ_STANDING_OPS_READ
 the ones that only read
 .Po
@@ -1591,7 +1597,9 @@ the ones that only read
 and
 .Dv DQ_ROP_ACL
 are not among them: each covers both get and set
-.Pc .
+.Pc ;
+neither includes
+.Dv DQ_ROP_EXEC_INTERP .
 .Fa error
 is 0 unless the action is
 .Dv DQ_STANDING_ERRNO ;
@@ -1607,6 +1615,21 @@ is not
 .Dv NULL ,
 receives the rule's id.
 Among the rules that fit an event the one with the longest path decides.
+.Fn dq_standing_add
+fails with
+.Er EINVAL
+when
+.Fa path
+is
+.Dv NULL
+and with
+.Er ENAMETOOLONG
+when it is
+.Dv DQ_PATH_MAX
+bytes or longer, before the queue is asked; otherwise with the errors of
+.Dv DQ_IOC_STANDING_ADD
+in
+.Xr dq 4 .
 .Fn dq_standing_del
 removes the rule
 .Fa id
