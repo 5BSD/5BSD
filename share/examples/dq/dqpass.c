@@ -25,10 +25,12 @@
  * -v prints one line per event; -o writes the report to a file instead of
  * the standard error.  -r installs a standing rule before the command
  * starts (dq(4)): a subtree PASS of path under dqpass's own root, for the
- * lookups that read (":read", the default) or for every operation a rule
- * covers, write-class opens included (":all"); those lookups post no event
- * and the report counts them as "standing pass".  Build with -ldq; see
- * dq(4) and libdq(3).
+ * lookups that read (":read", the default) or for every operation a
+ * subtree rule covers, write-class opens included (":all"); those lookups
+ * post no event and the report counts them as "standing pass".  Only a
+ * final ":read" or ":all" is split off the path.  An interpreter lookup
+ * (exec_interp) is never covered: only an exact rule may name it.  Build
+ * with -ldq; see dq(4) and libdq(3).
  */
 
 #include <sys/param.h>
@@ -184,7 +186,12 @@ usage(void)
 	exit(2);
 }
 
-/* -r path[:read|all]: a subtree PASS rule under this process's root. */
+/*
+ * -r path[:read|all]: a subtree PASS rule under this process's root.  Only
+ * a suffix that is exactly ":read" or ":all" after the last ':' is split
+ * off; any other ':' belongs to the path ("/a:b" is a path, and a path that
+ * itself ends in ":read" is written "path:read:read").
+ */
 static void
 add_rule(int q, char *arg)
 {
@@ -195,12 +202,12 @@ add_rule(int q, char *arg)
 	ops = DQ_STANDING_OPS_READ;
 	colon = strrchr(arg, ':');
 	if (colon != NULL) {
-		*colon = '\0';
 		if (strcmp(colon + 1, "all") == 0) {
+			*colon = '\0';
 			ops = DQ_STANDING_OPS_ALL;
 			flags |= DQ_STANDING_F_OPEN_WRITE;
-		} else if (strcmp(colon + 1, "read") != 0)
-			usage();
+		} else if (strcmp(colon + 1, "read") == 0)
+			*colon = '\0';
 	}
 	if (dq_standing_add(q, -1, arg, flags, ops, DQ_STANDING_PASS, 0,
 	    NULL) == -1)
