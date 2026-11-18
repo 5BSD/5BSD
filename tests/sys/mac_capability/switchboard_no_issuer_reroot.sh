@@ -131,20 +131,27 @@ fixed:persistent)
 	[ "$sr" != 0 ] || fail 'degraded: switchboardctl reload was allowed'
 	[ "$(knob debug.mac_capability.test_issuer_fail_init)" = $EMFILE ] ||
 	    fail 'persistent: the fault cleared on its own'
+	degraded_pid=$(pgrep -x switchboard | head -n 1)
 	# Clear the outage; Capsule's next retry gets the issuer.
 	sysctl debug.mac_capability.test_issuer_fail_init=0 ||
 	    fail 'cannot clear fail_init after the reroot'
 	await 'bootstrap: authority issuer acquired' 60 ||
 	    fail 'Capsule did not acquire the issuer after the fault cleared'
-	await 'inherited service fds: .* authority=8' 60 ||
-	    fail 'no SwitchBoard with the issuer after the planned restart'
+	# After the reroot only NOTICE and above reach the log files, so the
+	# new SwitchBoard is found by its process, not its INFO start line.
+	i=0 new_pid=
+	while [ "$i" -lt 60 ]; do
+		new_pid=$(pgrep -x switchboard | head -n 1)
+		[ -n "$new_pid" ] && [ "$new_pid" != "$degraded_pid" ] && break
+		i=$((i + 1)); sleep 1
+	done
+	[ -n "$new_pid" ] && [ "$new_pid" != "$degraded_pid" ] ||
+	    fail 'no new SwitchBoard after the planned restart'
 	sleep 20
-	starts=$(count 'bootstrap: started switchboard pid [0-9]*')
 	sched=$(count 'bootstrap: scheduling restart in [0-9]*s')
 	planned=$(count 'bootstrap: planned switchboard restart')
-	note "recovered starts=$starts restart_scheduled=$sched planned=$planned"
-	logs | grep -E 'bootstrap: |inherited service fds|authority issuer|catalogue' | sort -u | sed 's/^/SB_NO_ISSUER_LOG: /'
-	[ "$starts" = 2 ] || fail "persistent: $starts starts, not 2"
+	note "recovered switchboard $degraded_pid -> $new_pid restart_scheduled=$sched planned=$planned"
+	logs | grep -E 'bootstrap: |inherited service fds|authority issuer|catalogue|etc-rc' | sort -u | sed 's/^/SB_NO_ISSUER_LOG: /'
 	[ "$planned" = 1 ] || fail "persistent: $planned planned restarts, not 1"
 	[ "$sched" = 0 ] || fail 'persistent: the planned restart used the restart limit'
 	tools recovered
