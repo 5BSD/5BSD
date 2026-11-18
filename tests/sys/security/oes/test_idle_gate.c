@@ -795,6 +795,7 @@ g6_no_record_lost(void)
 struct g6b_shared {
 	volatile int	gen;
 	volatile int	go;
+	volatile int	stop;
 	int		after[G6_WORKERS];	/* writes started after gen */
 };
 
@@ -805,7 +806,7 @@ g6b_pipe_write_flag(void)
 	struct g6b_shared *sh;
 	test_msg_buf buf;
 	pid_t pids[G6_WORKERS];
-	int fd, i, k, p[2], status, need, have[G6_WORKERS], total;
+	int fd, i, p[2], status, need, have[G6_WORKERS], total;
 	char c;
 
 	TEST_BEGIN("G-6b every pipe write after SUBSCRIBE returns is delivered");
@@ -843,7 +844,12 @@ g6b_pipe_write_flag(void)
 				_exit(1);
 			while (!sh->go)
 				;
-			for (k = 0; k < G6B_WRITES; k++) {
+			/*
+			 * Until told to stop, and at least G6B_WRITES after
+			 * the generation is seen: a fast SUBSCRIBE must not
+			 * leave nothing to count.
+			 */
+			while (!sh->stop || sh->after[i] < G6B_WRITES) {
 				if (__atomic_load_n(&sh->gen,
 				    __ATOMIC_ACQUIRE) != 0)
 					sh->after[i]++;
@@ -859,6 +865,7 @@ g6b_pipe_write_flag(void)
 	ASSERT_MSG(test_subscribe(fd, &ev, 1, OES_SUB_REPLACE) == 0,
 	    "subscribe: %s", strerror(errno));
 	__atomic_store_n(&sh->gen, 1, __ATOMIC_RELEASE);
+	sh->stop = 1;
 	for (i = 0; i < G6_WORKERS; i++) {
 		ASSERT_MSG(waitpid(pids[i], &status, 0) == pids[i] &&
 		    WIFEXITED(status) && WEXITSTATUS(status) == 0,
