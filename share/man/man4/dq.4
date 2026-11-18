@@ -832,13 +832,17 @@ returns, and a stop
 takes effect then.
 Only the answer, the deadline,
 .Dv SIGKILL ,
-the process's exit and another thread's
+the process's exit, another thread's
 .Xr _exit 2
-(which single-threads the process before it marks it exiting) end it,
-the last three with the operation abandoned.
+(which single-threads the process before it marks it exiting) and a
+signal that terminates the process, one that dumps core included (the
+dump single-threads the process first, and after it no
+.Dv SIGKILL
+is delivered), end it, the last four with the operation abandoned; the
+thread that writes the core still waits for its own answers.
 Another thread's
 .Xr execve 2
-or a core dump waits for the answer, as for a disk read in progress.
+waits for the answer, as for a disk read in progress.
 The wait sleeps in slices of 100 ms, whatever is pending, so a storm of
 signals costs it nothing.
 A deadline of 0 is then a hard mount: only the answer,

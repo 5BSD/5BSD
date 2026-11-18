@@ -1135,6 +1135,98 @@ ATF_TC_BODY(read_deadline0_exit_sibling, tc)
 }
 
 /*
+ * Review 2: as read_deadline0_exit_sibling, but thread B calls abort(3):
+ * a signal that dumps core (RLIMIT_CORE 0 still single-threads for the
+ * dump).  sigexit marks the process exiting (P2_WEXIT) and single-threads
+ * with SINGLE_NO_EXIT, which sets no P_SINGLE_EXIT, and no SIGKILL is
+ * delivered after P2_WEXIT; A's wait must still see it within a slice.
+ */
+static bool
+reaped_within(pid_t pid, int *status, int ms)
+{
+	int64_t end;
+	pid_t rv;
+
+	end = dqt_now_ms() + ms;
+	for (;;) {
+		rv = waitpid(pid, status, WNOHANG);
+		ATF_REQUIRE_MSG(rv != -1, "waitpid: %s", strerror(errno));
+		if (rv == pid)
+			return (true);
+		if (dqt_now_ms() >= end)
+			return (false);
+		dqt_msleep(10);
+	}
+}
+
+ATF_TC(read_deadline0_abort_sibling);
+ATF_TC_HEAD(read_deadline0_abort_sibling, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a sibling's abort(3), a signal that "
+	    "dumps core, ends a read that waits with no deadline within a "
+	    "slice; the controller gets the INTERRUPT (review 2)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(read_deadline0_abort_sibling, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct dq_policy pol;
+	struct rlimit rl;
+	pthread_t thr;
+	int64_t start, ms;
+	int fd, go[2], oracle, status;
+	bool reaped;
+	pid_t pid;
+	char ch;
+
+	dqt_fill(data, sizeof(data), 27);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	dq_policy_default(&pol);
+	pol.dp_deadline_ms = 0;
+	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
+	dqt_hold(&c, true);
+	ATF_REQUIRE_EQ(0, pipe(go));
+	fd = o->fd;
+	pid = fork();
+	ATF_REQUIRE(pid != -1);
+	if (pid == 0) {
+		rl.rlim_cur = rl.rlim_max = 0;
+		if (setrlimit(RLIMIT_CORE, &rl) != 0)
+			_exit(2);
+		if (pthread_create(&thr, NULL, read_forever, &fd) != 0)
+			_exit(3);
+		if (read(go[0], &ch, 1) != 1)
+			_exit(4);
+		abort();
+	}
+	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	start = dqt_now_ms();
+	ATF_REQUIRE_EQ(1, write(go[1], "g", 1));
+	reaped = reaped_within(pid, &status, 10000);
+	ms = dqt_now_ms() - start;
+	if (!reaped) {
+		/* Release the read, so the process can finish dying. */
+		(void)dq_reply(c.q, dqt_held_id(&c, 0), 0, data, 16);
+		ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+	}
+	ATF_CHECK_MSG(reaped, "the process was still dying 10 s after the "
+	    "abort, its read waiting for the controller");
+	ATF_CHECK_MSG(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT,
+	    "status %#x", status);
+	ATF_CHECK_MSG(ms < 1500, "the abort took %jd ms", (intmax_t)ms);
+	ATF_CHECK(dqt_wait_interrupts(&c, 1, DQT_WAIT_MS));
+	(void)close(go[0]);
+	(void)close(go[1]);
+	dqt_hold(&c, false);
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
+/*
  * D192 (B1): a signal storm during an uninterruptible wait does not make
  * it spin: the waiter sleeps its slices whatever is pending.
  */
@@ -1309,6 +1401,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, eintr_reply_refused);
 	ATF_TP_ADD_TC(tp, same_identity_atime_diverges);
 	ATF_TP_ADD_TC(tp, read_deadline0_exit_sibling);
+	ATF_TP_ADD_TC(tp, read_deadline0_abort_sibling);
 	ATF_TP_ADD_TC(tp, signal_storm_no_spin);
 	ATF_TP_ADD_TC(tp, deadline_unintr);
 	return (atf_no_error());

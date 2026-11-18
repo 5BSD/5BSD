@@ -1013,8 +1013,13 @@ dq_deadline(const struct dq_policy *pol)
 /*
  * The abandon predicate of a wait that catches no signal (D192): the
  * process is being killed, is exiting, or another of its threads is
- * single-threading it for exit (exit1 starts thread_single(SINGLE_EXIT)
- * before it sets P_WEXIT, and weed_inhib aborts only sleeps that catch).
+ * taking it down.  weed_inhib aborts only sleeps that catch, so the wait
+ * looks for itself: exit1 starts thread_single(SINGLE_EXIT) before it
+ * sets P_WEXIT, and sigexit sets P2_WEXIT and, for a signal that dumps
+ * core (even with RLIMIT_CORE 0), single-threads with SINGLE_NO_EXIT,
+ * which sets no P_SINGLE_EXIT; after P2_WEXIT no SIGKILL is delivered
+ * either.  The thread taking the process down (p_singlethread) keeps
+ * waiting, so a core it writes to a served file is still answered.
  * Called with no dq lock held.
  */
 static bool
@@ -1028,7 +1033,8 @@ dq_wait_abandon(struct thread *td)
 	p = td->td_proc;
 	PROC_LOCK(p);
 	dying = (p->p_flag & P_WEXIT) != 0 ||
-	    ((p->p_flag & P_SINGLE_EXIT) != 0 && p->p_singlethread != td);
+	    (((p->p_flag & P_SINGLE_EXIT) != 0 ||
+	    (p->p_flag2 & P2_WEXIT) != 0) && p->p_singlethread != td);
 	PROC_UNLOCK(p);
 	return (dying);
 }
