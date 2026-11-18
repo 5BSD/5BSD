@@ -48,6 +48,7 @@ private_tree()
         cp "$script" src/release/scripts/
     done
     cp "$here/test-options" src/sys/conf/test-options
+    cp "$here/mandatory-options" src/sys/conf/mandatory-options
     # pkg stands in for pkg(8): it answers the package ABI question
     # Makefile.hardware asks when it is read, and every other call succeeds.
     cat > pkg <<'SCRIPT'
@@ -72,13 +73,25 @@ SCRIPT
 }
 
 
-# kernel_package repository name content: a package holding one kernel.
+# kernel_package repository name content [feature...]: a package holding
+# one kernel, an ELF object carrying the string content and the kern.features
+# symbols check-mandatory-kernel.sh looks for: those named, or by default
+# every one the mandatory-option ledger lists.
 kernel_package()
 {
-    mkdir -p "$1" pkgroot/boot/kernel
-    printf 'ELF %s\n' "$3" > pkgroot/boot/kernel/kernel
-    tar -cf "$1/$2" -C pkgroot boot
-    rm -rf pkgroot
+    repository=$1 name=$2 content=$3
+    shift 3
+    [ $# -gt 0 ] || set -- $(awk '!/^#/ && NF == 3 { print $3 }' \
+        "$here/mandatory-options")
+    mkdir -p "$repository" pkgroot/boot/kernel
+    printf 'const char kernel_content[] = "%s";\n' "$content" > kernel.c
+    for feature in "$@"; do
+        echo "int sysctl___kern_features_$feature;" >> kernel.c
+    done
+    cc -c -o pkgroot/boot/kernel/kernel kernel.c ||
+        atf_fail "cannot compile the $name kernel"
+    tar -cf "$repository/$name" -C pkgroot boot
+    rm -rf pkgroot kernel.c
 }
 
 # A base repository the malloc(3) check accepts.
@@ -383,6 +396,7 @@ atf_test_case hardware_check
 hardware_check_head()
 {
     atf_set descr 'hardware-packages-check on a fresh tree passes; a repository is always read'
+    atf_set require.progs 'cc readelf'
 }
 hardware_check_body()
 {
@@ -435,7 +449,8 @@ hardware_check_body()
 atf_test_case publish_refused
 publish_refused_head()
 {
-    atf_set descr 'Publication refuses a test kernel in either input and creates nothing'
+    atf_set descr 'Publication refuses a test kernel in either input, or a hardware kernel without a mandatory option, and creates nothing'
+    atf_set require.progs 'cc readelf'
 }
 publish_refused_body()
 {
@@ -472,6 +487,18 @@ publish_refused_body()
         -e match:'base/5BSD-kernel-generic-1.pkg: boot/kernel/kernel was built' \
         ./recipe publish-packages
     [ ! -e published ] || atf_fail 'a refused publication created the destination'
+
+    # A hardware kernel without a mandatory option, here RCTL.
+    kernel_package base 5BSD-kernel-generic-1.pkg plain
+    kernel_package hardware 5BSD-kernel-generic-nodebug-1.pkg plain \
+        audit security_capability_mode security_capabilities racct
+    atf_check -s not-exit:0 -o match:'2 kernel and boot files checked' \
+        -e match:'hardware/5BSD-kernel-generic-nodebug-1.pkg: boot/kernel/kernel was built without options RCTL$' \
+        ./recipe publish-packages
+    [ ! -e published ] || atf_fail 'a refused publication created the destination'
+    atf_check -s not-exit:0 -o not-match:'kernel\(s\) carry' \
+        -e match:'built without options RCTL$' \
+        env HARDWARE_BUILDER=/usr/bin/true ./recipe hardware-packages-check
 
     # A hardware repository that cannot be checked.
     kernel_package base 5BSD-kernel-generic-1.pkg plain
@@ -518,7 +545,7 @@ ledger_options_body()
 atf_test_case ledger_unreadable cleanup
 ledger_unreadable_head()
 {
-    atf_set descr 'A ledger the check script refuses refuses packages and media plans; others read nothing'
+    atf_set descr 'A test-option ledger the check script refuses refuses packages and media plans, others read nothing; an unreadable mandatory-option ledger refuses every kernel plan'
     atf_set require.user root
     atf_set require.kmods nullfs
     atf_set is.exclusive true
@@ -528,13 +555,19 @@ ledger_unreadable_body()
     setup
     configuration PLAIN 'ident PLAIN' 'options FOO'
     # Each crafted directory is mounted over /usr/src/sys/conf, where
-    # build-bsd reads the ledger through the check script.
+    # build-bsd reads the ledger through the check script.  It carries the
+    # real mandatory-option ledger, which build-bsd also reads there, except
+    # in the last one, which carries the real test-option ledger alone.
     m='test kernel: not for publication'
-    for kind in missing empty malformed symlink many; do
+    for kind in missing empty malformed symlink many no-mandatory; do
         rm -rf crafted
         mkdir crafted
+        cp /usr/src/sys/conf/mandatory-options crafted/mandatory-options
         case $kind in
         missing) ;;
+        no-mandatory)
+            rm crafted/mandatory-options
+            cp /usr/src/sys/conf/test-options crafted/test-options ;;
         empty) printf '# only a comment\n' > crafted/test-options ;;
         malformed) printf 'LG3|live|-|-|@(#)5BSD LG3 %s\n' "$m" > crafted/test-options ;;
         symlink)
@@ -550,7 +583,16 @@ ledger_unreadable_body()
         esac
         mount -t nullfs "$PWD/crafted" /usr/src/sys/conf ||
             atf_fail "cannot mount the crafted $kind ledger"
-        if [ $kind = many ]; then
+        if [ $kind = no-mandatory ]; then
+            # Every plan that builds or carries a kernel is refused.
+            for action in kernel stage packages media; do
+                atf_check -s exit:1 -o empty \
+                    -e match:'mandatory kernel option ledger /usr/src/sys/conf/mandatory-options cannot be read .*: no kernel is built or carried without it' \
+                    ./plan $action --kernel PLAIN
+            done
+            atf_check -s exit:0 -o match:'kernel-mandatory-option-configuration=not-performed' \
+                -e empty ./plan world
+        elif [ $kind = many ]; then
             configuration LAST 'ident LAST' 'options LG3_200'
             atf_check -s exit:1 -o empty \
                 -e match:'carries options LG3_200, a test-kernel option' \

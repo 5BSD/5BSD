@@ -587,13 +587,13 @@ validate(void)
  const char *paths[]={"src-conf","make-conf","src-env-conf"};
  for(size_t i=0;i<nitems(paths);i++) {if(*get(paths[i])!='/' || strchr(get(paths[i]),'$'))fail("world configuration paths must be absolute without make expansion");if(selected(paths[i]) && strcmp(get(paths[i]),"/dev/null"))regular(get(paths[i]),false);}
  if(*get("kernel-dir")){canonical("kernel-dir");regular(format("%s/%s",get("kernel-dir"),get("kernel")),false);}
- /* Actions that build or carry the kernel of this configuration. */
  /* Actions that build a world: BSM audit is mandatory. */
  if(oneof(request.action,"build|world|stage|packages|media")){
   const char *audit=world_without_audit();
   if(audit && world_audit_read)errx(1,"%s defines WITHOUT_AUDIT: BSM audit is mandatory in 5BSD (%s), and there is no override",audit,MANDATORY_OPTION_LEDGER);
   if(audit)errx(1,"%s cannot be read, so whether it defines WITHOUT_AUDIT is unknown; a world is not built",audit);
  }
+ /* Actions that build or carry the kernel of this configuration. */
  if(oneof(request.action,"build|kernel|stage|packages|media")){
   /*
    * KERNFAST and NO_KERNELCONFIG reuse an objdir configured earlier under

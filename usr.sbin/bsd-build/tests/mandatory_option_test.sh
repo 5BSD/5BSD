@@ -20,6 +20,9 @@ setup()
     ledger="$here/mandatory-options"
     [ -f "$check" ] || atf_fail 'check-mandatory-kernel.sh not installed beside the test'
     [ -f "$ledger" ] || atf_fail 'mandatory-options not installed beside the test'
+    # atf_check runs a program, not a shell function.
+    printf '#!/bin/sh\nexec sh "%s" -l "%s" "$@"\n' "$check" "$ledger" > check
+    chmod +x check
 }
 
 need_source()
@@ -41,11 +44,6 @@ fake_kernel()
     atf_check -s exit:0 -o empty -e empty cc -c -o "$out" fake.c
 }
 
-check()
-{
-    sh "$check" -l "$ledger" "$@"
-}
-
 atf_test_case ledger_list
 ledger_list_head()
 {
@@ -55,7 +53,7 @@ ledger_list_body()
 {
     setup
     atf_check -s exit:0 -o inline:"AUDIT\nCAPABILITY_MODE\nCAPABILITIES\nRACCT\nRCTL\n" \
-        -e empty check -L
+        -e empty ./check -L
 }
 
 atf_test_case ledger_refused
@@ -91,24 +89,24 @@ kernel_checked_body()
     setup
     fake_kernel kernel $FEATURES
     atf_check -s exit:0 -o match:'1 kernel\(s\) carry AUDIT CAPABILITY_MODE CAPABILITIES RACCT RCTL' \
-        -e empty check -k kernel
+        -e empty ./check -k kernel
     set -- $MANDATORY
     for f in $FEATURES; do
         option=$1; shift
         fake_kernel without $(echo $FEATURES | tr ' ' '\n' | grep -vx "$f")
         atf_check -s exit:1 -o empty -e match:"built without options $option\$" \
-            check -k without
+            ./check -k without
     done
     fake_kernel none
     atf_check -s exit:1 -o empty \
         -e match:'built without options AUDIT CAPABILITY_MODE CAPABILITIES RACCT RCTL$' \
-        check -k none
+        ./check -k none
     # No symbol table: nothing can be concluded.
     cp kernel stripped
     atf_check -s exit:0 strip stripped
-    atf_check -s exit:1 -o empty -e match:'no symbol table' check -k stripped
+    atf_check -s exit:1 -o empty -e match:'no symbol table' ./check -k stripped
     printf 'not an elf file\n' > text
-    atf_check -s exit:1 -o empty -e match:'cannot be read|no symbol table' check -k text
+    atf_check -s exit:1 -o empty -e match:'cannot be read|no symbol table' ./check -k text
 }
 
 atf_test_case trees_and_archives
@@ -127,27 +125,27 @@ trees_and_archives_body()
     cp obj/GOOD/kernel stage/boot/kernel.old/kernel
     cp obj/GOOD/kernel image/boot/kernel/kernel
     fake_kernel bad/boot/kernel/kernel audit racct rctl
-    atf_check -s exit:0 -o match:'1 kernel' -e empty check -o obj/GOOD
-    atf_check -s exit:0 -o match:'2 kernel' -e empty check -d stage
-    atf_check -s exit:0 -o match:'1 kernel' -e empty check -i image
+    atf_check -s exit:0 -o match:'1 kernel' -e empty ./check -o obj/GOOD
+    atf_check -s exit:0 -o match:'2 kernel' -e empty ./check -d stage
+    atf_check -s exit:0 -o match:'1 kernel' -e empty ./check -i image
     # An image root may carry no kernel; a staged tree may not.
-    atf_check -s exit:0 -o match:'0 kernel' -e empty check -i noboot
-    atf_check -s exit:1 -o empty -e match:'no boot directory' check -d noboot
+    atf_check -s exit:0 -o match:'0 kernel' -e empty ./check -i noboot
+    atf_check -s exit:1 -o empty -e match:'no boot directory' ./check -d noboot
     atf_check -s exit:1 -o empty \
-        -e match:'built without options CAPABILITY_MODE CAPABILITIES$' check -d bad
+        -e match:'built without options CAPABILITY_MODE CAPABILITIES$' ./check -d bad
     # Every argument is checked.
-    atf_check -s exit:1 -o empty -e match:'built without' check -d stage -d bad
+    atf_check -s exit:1 -o empty -e match:'built without' ./check -d stage -d bad
     # Archives and repositories: every boot/*/kernel member.
     atf_check -s exit:0 tar -cf repo/All/kernel-good.pkg -C stage boot
     atf_check -s exit:0 tar -cf good.tar -C stage boot
-    atf_check -s exit:0 -o match:'2 kernel' -e empty check -a good.tar
-    atf_check -s exit:0 -o match:'2 kernel' -e empty check -r repo
+    atf_check -s exit:0 -o match:'2 kernel' -e empty ./check -a good.tar
+    atf_check -s exit:0 -o match:'2 kernel' -e empty ./check -r repo
     atf_check -s exit:0 tar -cf repo/All/kernel-bad.pkg -C bad boot
-    atf_check -s exit:1 -o empty -e match:'built without' check -r repo
+    atf_check -s exit:1 -o empty -e match:'built without' ./check -r repo
     atf_check -s exit:0 tar -cf nokernel.tar fake.c
-    atf_check -s exit:1 -o empty -e match:'no boot/\*/kernel member' check -a nokernel.tar
+    atf_check -s exit:1 -o empty -e match:'no boot/\*/kernel member' ./check -a nokernel.tar
     mkdir emptyrepo
-    atf_check -s exit:1 -o empty -e match:'no kernel in any package' check -r emptyrepo
+    atf_check -s exit:1 -o empty -e match:'no kernel in any package' ./check -r emptyrepo
 }
 
 atf_test_case source_agrees
@@ -206,12 +204,16 @@ nooptions_fails_build_body()
     need_source
     conf=/usr/src/sys/$(uname -m)/conf
     [ -d "$conf" ] || atf_skip "no kernel configurations for $(uname -m)"
+    work=$PWD
     for option in $MANDATORY ""; do
         name=NO${option:-NE}
         printf 'include GENERIC\nident %s\n' $name > $name.conf
         [ -z "$option" ] || printf 'nooptions %s\n' $option >> $name.conf
         mkdir $name
-        (cd "$conf" && config -I "$conf" -d "$PWD/$name" "$OLDPWD/$name.conf") \
+        # config(8) finds the source tree from the configuration directory;
+        # the compile directory is the work directory's, since /usr/src may
+        # be read-only.
+        (cd "$conf" && config -I "$conf" -d "$work/$name" "$work/$name.conf") \
             > $name.config 2>&1 || atf_fail "config $name: $(cat $name.config)"
         atf_check -s exit:0 -o ignore grep -q 'kern_mandatory\.o' $name/Makefile
         if [ -n "$option" ]; then
@@ -235,11 +237,16 @@ world_without_audit_body()
 {
     setup
     need_source
+    # No object directory: reading a variable must not create one, under
+    # /usr/obj or anywhere else, nor report doing so on stderr.
     atf_check -s exit:0 -o inline:'yes\n' -e empty \
+        env WITHOUT_AUTO_OBJ=yes MAKEOBJDIRPREFIX="$PWD/obj" \
         make -m /usr/src/share/mk -C /usr/src/usr.bin/id -V MK_AUDIT
     atf_check -s not-exit:0 -o empty \
         -e match:'WITHOUT_AUDIT is refused in 5BSD: BSM audit is mandatory' \
+        env WITHOUT_AUTO_OBJ=yes MAKEOBJDIRPREFIX="$PWD/obj" \
         make -m /usr/src/share/mk -C /usr/src/usr.bin/id -V MK_AUDIT WITHOUT_AUDIT=yes
+    [ ! -e obj ] || atf_fail 'make -V created an object directory'
 }
 
 atf_test_case plan_refusals
@@ -269,8 +276,12 @@ plan_refusals_body()
         "$tool" plan kernel --kernel VIA --kernel-dir "$PWD/kconf"
     atf_check -s exit:0 -o match:'kernel-mandatory-option-configuration=complete kernel-mandatory-option-binary-check=not-performed$' \
         -e empty "$tool" plan kernel --kernel GENERIC
+    # A kernel-identity-only profile compiles no ports, so the packages plan
+    # needs no ports checkout.
+    printf 'no-hardware-ports # kernel identity only\n' > none
     atf_check -s exit:0 -o match:'"kernel_mandatory_option_configuration":"complete","kernel_mandatory_option_binary_check":"requested"' \
-        -e empty "$tool" plan packages --kernel GENERIC --format json
+        -e empty "$tool" plan packages --kernel GENERIC --format json \
+        --hardware-profile "$PWD/none" --ports /nonexistent/ports
     atf_check -s exit:0 -o match:'kernel-mandatory-option-configuration=not-performed' \
         -e empty "$tool" plan world
     printf 'WITHOUT_AUDIT=yes\n' > src.conf
