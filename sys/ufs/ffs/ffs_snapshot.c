@@ -2546,6 +2546,11 @@ readblock(struct vnode *vp,
 #endif
 
 SDT_PROVIDER_DECLARE(ffs);
+/*
+ * ffs:::deferred-inactive-update: the resume wrote the inode of a vnode
+ * accessed during the suspension and no longer in use (ffs(4)).
+ * args: the vnode, the error UFS_UPDATE() returned.
+ */
 SDT_PROBE_DEFINE2(ffs, , , deferred__inactive__update, "struct vnode *",
     "int");
 

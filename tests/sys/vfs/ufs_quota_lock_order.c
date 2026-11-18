@@ -4,9 +4,10 @@
  * Copyright (c) 2026 Kory Heard
  *
  * UFS takes its per-mount "FFS Lock" (UFS_LOCK) before the mount interlock
- * ("struct mount mtx"): quotaon() and quotaoff_inchange() hold the first
- * while they update mnt_flag under the second.  The unmount of a soft
- * updates file system on a kernel with options QUOTA must keep that order:
+ * ("struct mount mtx"): quotaoff_inchange() holds the first while it clears
+ * MNT_QUOTA under the second (quotaon() sets MNT_QUOTA under the mount
+ * interlock alone).  The unmount of a soft updates file system on a kernel
+ * with options QUOTA must keep that order:
  * turning quotas on and off and unmounting must leave no reversal between
  * the two in debug.witness.badstacks.
  */
