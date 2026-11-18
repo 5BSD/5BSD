@@ -15,8 +15,10 @@
  * and for a vnode no longer in use it must write the inode then: once the
  * last hold is dropped the vnode leaves the mount's lazy list, and an
  * INVARIANTS kernel asserts in ffs_unlock_debug() ("modified vnode not on
- * lazy list") at the next unlock of the vnode, such as the lookup of the
- * next stat(2) or open(2) of the file.
+ * lazy list") at the next unlock of the vnode while it is in use, such as
+ * the one that ends the next open(2) of the file.  A stat(2) does not show
+ * it: its vput() releases the last use, and the inactivation that follows
+ * writes the inode before the unlock.
  *
  * The readers are child processes: the suspending process must not close a
  * file on the suspended file system itself, or it would wait for its own
@@ -318,7 +320,11 @@ reap_readers(pid_t *pids)
 	}
 }
 
-/* Use every read file: lookups lock and unlock its vnode. */
+/*
+ * Use every read file.  The open(2) comes first: it unlocks the vnode while
+ * holding a use of it, where an unwritten modified inode is caught.  A
+ * stat(2) first would write the inode at the vput() of its last use.
+ */
 static void
 use_files(void)
 {
@@ -328,13 +334,13 @@ use_files(void)
 
 	for (i = 0; i < NREAD; i++) {
 		path_of(path, sizeof(path), "f", i);
-		ATF_REQUIRE_EQ_MSG(0, stat(path, &sb), "stat %s: %s", path,
-		    strerror(errno));
-		ATF_CHECK_EQ(5, sb.st_size);
 		fd = open(path, O_RDONLY);
 		ATF_REQUIRE_MSG(fd >= 0, "open %s: %s", path, strerror(errno));
 		ATF_CHECK_EQ(5, read(fd, buf, sizeof(buf)));
 		ATF_REQUIRE_EQ(0, close(fd));
+		ATF_REQUIRE_EQ_MSG(0, stat(path, &sb), "stat %s: %s", path,
+		    strerror(errno));
+		ATF_CHECK_EQ(5, sb.st_size);
 	}
 }
 
