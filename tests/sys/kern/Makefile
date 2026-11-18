@@ -219,6 +219,10 @@ ATF_TESTS_C+=	ptrace_test
 TEST_METADATA.ptrace_test+=		timeout="15"
 # ptrace__kill_paths_unattached sets kern.kill_on_debugger_exit.
 TEST_METADATA.ptrace_test+=		is_exclusive="true"
+# What an interruptible sleep returns after a debugger attached, read or
+# wrote, and detached; sets debug.ptrace_attach_transparent.
+ATF_TESTS_C+=	ptrace_sleep_test
+TEST_METADATA.ptrace_sleep_test+=	is_exclusive="true" timeout="300"
 ATF_TESTS_C+=	reaper
 ATF_TESTS_C+=	resolve_beneath_test
 ATF_TESTS_C+=	sched_affinity
