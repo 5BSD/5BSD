@@ -144,9 +144,19 @@ Otherwise the hook returns at its first test, which is what evaluation
 would have returned, and counts toward none of the MAC framework's
 fast-path flags: with no rule loaded and default allow, the policy makes
 the framework enter no system call path on its own account.
-A rule is in force for every operation that starts after the call that
-loaded it, or enabled its set, returns; removing the last rule that names
-an operation makes its hooks idle again.
+A rule is in force for every operation that reaches its hook after the
+call that loaded it, or enabled its set, returns; removing the last rule
+that names an operation makes its hooks idle again.
+A rule that names
+.Cm lookup
+or
+.Cm read
+(which also checks
+.Xr readlink 2 )
+turns lockless name lookup off
+.Pq Va vfs.cache.param.fast_lookup_active ;
+a lookup that had already begun without locks when the call returned may
+finish without being checked, as when a MAC policy is loaded at run time.
 .Pp
 Labels are kept for every subject and object whether or not any rule is
 loaded, and the label-integrity checks (relabel, and the label attribute

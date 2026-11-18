@@ -343,7 +343,8 @@ Any other descriptor type returns from these hooks at once and produces no
 event.
 .Ss Idle behaviour
 .Nm
-costs nothing while nothing listens.
+costs close to nothing while nothing listens: one predicted branch on a
+hook that another policy keeps hot.
 A hook is live while some open client subscribes to the AUTH or NOTIFY
 event it produces; while
 .Va security.oes.require_auth_clients ,
