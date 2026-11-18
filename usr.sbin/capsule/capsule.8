@@ -622,14 +622,21 @@ logs that it is waiting and retries, backing off from 1 to 10 seconds,
 for up to 60 seconds before it starts
 .Xr switchboard 8 ;
 a wait is not a failed start.
-If the issuer is still missing after that, or the failure cannot clear
+If the failure cannot clear
 .Po
 .Er EPERM
 for a jailed or non-PID-1
 .Nm ,
 .Er ENOSPC
-when the identity sequence is exhausted
+when the identity sequence is exhausted, or a kernel without the operation
 .Pc ,
+.Nm
+does not start
+.Xr switchboard 8 ;
+as PID 1 it logs
+.Dq no authority issuer
+and enters single-user recovery.
+If a transient failure outlasts the 60 seconds,
 .Nm
 starts
 .Xr switchboard 8
@@ -639,19 +646,44 @@ at
 .Dv LOG_CRIT .
 A degraded
 .Xr switchboard 8
-registers no applications and issues no grants: exec-activated tools such as
+registers no applications and issues no grants: native units that need a
+grant do not start, and exec-activated tools such as
 .Xr capsulectl 8
 and
 .Xr switchboardctl 8
-lose their administrative attributes, and native units that need a grant do
-not start.
-After a transient failure
+hold no attributes.
+Host root can still query status and request reboot, halt, poweroff,
+powercycle, single-user and catatonia; every other control operation is
+refused.
 .Nm
 keeps retrying in the background; once it holds an issuer it stops the
 degraded
 .Xr switchboard 8
 and starts it again with the issuer.
 That planned restart does not count toward the circuit breaker.
+.Pp
+.Nm
+creates the system discovery channel once and keeps it for its lifetime.
+Its client end is the route installed in every getty and in each
+.Xr switchboard 8
+process; its server end is passed to each
+.Xr switchboard 8
+as
+.Ev SWITCHBOARD_DISCOVERY_FD .
+Shells and daemons started under one
+.Xr switchboard 8
+therefore reach the next one after a restart.
+Once a
+.Xr switchboard 8
+has reported that the boot converged, every later start in the same boot
+(a crash restart or a planned restart) is passed
+.Ev SWITCHBOARD_BOOT_COMPLETE=1
+and does not run
+.Pa /etc/rc
+again.
+Stopping the capability world (shutdown or single-user) ends the boot: the
+next start runs
+.Pa /etc/rc .
 .Sh DTRACE PROBES
 .Nm
 is instrumented with DTrace USDT probes in the

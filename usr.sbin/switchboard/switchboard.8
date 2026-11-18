@@ -208,7 +208,36 @@ validates but does not register the application catalogue, and issues no
 grants.
 .Xr capsule 8
 restarts it with the issuer once it can create one.
+While degraded, host root (uid 0 outside any jail, as the kernel stamps the
+sender) may still use
+.Dq system.switchboard
+for status, services and tree, and
+.Dq system.lifecycle
+for status, reboot, halt, poweroff, powercycle, single-user and catatonia.
+.It discovery (fd 9)
+The server end of the system discovery channel, named by
+.Ev SWITCHBOARD_DISCOVERY_FD .
+.Xr capsule 8
+keeps the channel for the whole boot and installs its client end in this
+process's kernel discovery slot.
+.Nm
+serves it and passes the route to
+.Pa /etc/rc
+and the rc.d services it starts.
+Without it
+.Nm
+creates its own route and hands the client end to
+.Xr capsule 8 .
 .El
+.Pp
+.Ev SWITCHBOARD_BOOT_COMPLETE=1
+tells
+.Nm
+that this boot has already converged under an earlier instance: it does not
+run
+.Pa /etc/rc
+again, and logs
+.Dq restart after boot: /etc/rc not replayed .
 .Pp
 The
 .Dq inherited service fds

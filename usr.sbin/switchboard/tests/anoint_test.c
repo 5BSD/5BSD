@@ -114,10 +114,20 @@ static unsigned adopt_count;
 static uint64_t last_adopt_rights;
 static uid_t last_adopt_uid;
 
+bool
+sctl_degraded_root_sender(const struct channel_sender *sender)
+{
+
+	(void)sender;
+	return (false);
+}
+
 int
 sctl_adopt_channel(int provider_fd, uint64_t rights, uid_t uid,
-    bool capsule_relay)
+    bool capsule_relay, bool degraded_root)
 {
+
+	(void)degraded_root;
 
 	(void)capsule_relay;
 	/*

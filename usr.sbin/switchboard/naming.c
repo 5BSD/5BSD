@@ -353,15 +353,22 @@ naming_lookup_self_control(const char *name, struct svc_runtime *requester,
 	uint64_t rights;
 	bool management_eligible;
 
-	(void)sender;
-	(void)requester;
+	bool degraded_root = false;
+
 	if (domain == NULL || domain->authority_identity == 0) {
-		/* Route possession alone is not software authority. */
-		*errp = EACCES;
-		return (-1);
+		/*
+		 * Route possession alone is not software authority.  Without an
+		 * issuer nobody holds any: host root may still observe and stop
+		 * the system (sctl_degraded_root_sender()).
+		 */
+		if (requester != NULL || !sctl_degraded_root_sender(sender)) {
+			*errp = EACCES;
+			return (-1);
+		}
+		degraded_root = true;
 	}
-	management_eligible = svc_anoint_holds(&domain->anoint,
-	    SVC_ANOINT_SWITCHBOARD_ADMIN);
+	management_eligible = !degraded_root &&
+	    svc_anoint_holds(&domain->anoint, SVC_ANOINT_SWITCHBOARD_ADMIN);
 	rights = management_eligible ? SVC_RIGHTS_ALL :
 	    (SVC_RIGHTS_ALL & ~SVC_RIGHTS_ADMIN);
 	SWITCHBOARD_PROBE_ANOINT_ALLOW(name, NAMING_SESSION_LABEL,
@@ -381,14 +388,16 @@ naming_lookup_self_control(const char *name, struct svc_runtime *requester,
 		*errp = ENOTCAPABLE;
 		return (-1);
 	}
-	if (svc_authority_bind_invocation(domain, client_end) == -1) {
+	if (!degraded_root &&
+	    svc_authority_bind_invocation(domain, client_end) == -1) {
 		*errp = errno;
 		close(provider_end);
 		close(client_end);
 		return (-1);
 	}
-	if (sctl_adopt_channel(provider_end, rights, domain->uid,
-	    capsule_relay) == -1) {
+	if (sctl_adopt_channel(provider_end, rights,
+	    degraded_root ? 0 : domain->uid, capsule_relay,
+	    degraded_root) == -1) {
 		/* adopt() took ownership of provider_end (closed on failure). */
 		close(client_end);
 		*errp = errno != 0 ? errno : EIO;

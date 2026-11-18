@@ -1275,8 +1275,13 @@ capsule_engine_start(void)
 
 	od.shutting_down = false;
 	if (bootstrap_start(capsule_kq) == -1) {
-		warning("bootstrap: switchboard start failed; "
-		    "capability engine unavailable; entering recovery");
+		if (bootstrap_issuer_refused() != 0)
+			warning("bootstrap: no authority issuer (%s); "
+			    "switchboard not started; entering recovery",
+			    strerror(bootstrap_issuer_refused()));
+		else
+			warning("bootstrap: switchboard start failed; "
+			    "capability engine unavailable; entering recovery");
 		return;
 	}
 

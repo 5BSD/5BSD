@@ -117,10 +117,20 @@ switchboard_fd_budget_check(size_t count, const char *what)
  * SWITCHBOARD_CONTROL_NAME self-serve path is exercised by the VM integration test,
  * not here.  Take ownership of the provider fd (close it) and report success.
  */
+bool
+sctl_degraded_root_sender(const struct channel_sender *sender)
+{
+
+	(void)sender;
+	return (false);
+}
+
 int
 sctl_adopt_channel(int provider_fd, uint64_t rights, uid_t uid,
-    bool capsule_relay)
+    bool capsule_relay, bool degraded_root)
 {
+
+	(void)degraded_root;
 
 	(void)rights;
 	(void)uid;

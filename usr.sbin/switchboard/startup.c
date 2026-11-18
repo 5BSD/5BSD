@@ -74,6 +74,31 @@ startup_ambient_lookup(void)
 	 * If provisioning fails, rc still runs without discovery so a broken
 	 * channel does not prevent ordinary UNIX boot.
 	 */
+	/*
+	 * Capsule keeps the SYSTEM route for the whole boot and hands each
+	 * SwitchBoard its server end, with the client end already in this
+	 * process's slot: rc daemons and shells started under an earlier
+	 * SwitchBoard keep reaching discovery after a restart.  Capsule already
+	 * holds the client end for logins, so nothing is handed back.
+	 */
+	if (switchboard_ambient_lookup_fd < 0 && sd.discovery_fd >= 0) {
+		int server_fd = sd.discovery_fd, lookup_fd;
+
+		sd.discovery_fd = -1;
+		if (domain_adopt_system_channel(server_fd, switchboard_kq) == -1)
+			syslog(LOG_ERR, "startup: cannot serve Capsule's system "
+			    "lookup channel: %m");
+		else if ((lookup_fd = service_get_ambient_lookup()) == -1 ||
+		    svc_fd_make_ambient(lookup_fd) == -1) {
+			syslog(LOG_ERR, "startup: no system lookup route in "
+			    "this process: %m");
+			if (lookup_fd >= 0)
+				(void)close(lookup_fd);
+		} else
+			switchboard_ambient_lookup_fd = lookup_fd;
+		return;
+	}
+
 	if (switchboard_ambient_lookup_fd < 0) {
 		int lookup_fd = -1;
 
@@ -417,8 +442,18 @@ startup_launch_system(int kq)
 	 * would flip the machine's runlevel state from inside a test).  Per-service
 	 * rc units replace this monolithic step in a later phase.
 	 */
+	/*
+	 * /etc/rc runs once per boot.  Capsule says when this boot already
+	 * converged (a crash restart or a planned restart after boot): rc's
+	 * daemons are still running and its mounts and checks are done, so it is
+	 * not replayed.  Adopted rc.d services below still find their running
+	 * instance through onestatus.
+	 */
 	if (skip_rc)
 		syslog(LOG_INFO, "startup: /etc/rc skipped by environment");
+	else if (sd.boot_complete)
+		syslog(LOG_NOTICE, "startup: restart after boot: /etc/rc not "
+		    "replayed");
 	else
 		(void)run_rc_bootstrap(kq);
 

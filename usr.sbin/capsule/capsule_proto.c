@@ -321,6 +321,7 @@ handle_ready(uint64_t reply_token)
 		switchboard_ready = true;
 		syslog(LOG_INFO, "capsule_proto: switchboard ready");
 	}
+	bootstrap_note_ready();
 	proto_reply(0, reply_token, NULL, 0);
 }
 

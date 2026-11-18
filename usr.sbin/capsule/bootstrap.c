@@ -42,10 +42,12 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "capsule.h"
 #include "capsule_daemon.h"
 #include "capsule_svc_proto.h"
 #include "probes.h"
 #include "bootstrap_exec.h"
+#include "service_bootstrap.h"
 
 /* Restart policy constants. */
 #define	BOOTSTRAP_MIN_UPTIME	5	/* seconds before reset */
@@ -73,7 +75,8 @@
 #define	SWITCHBOARD_CAPPROTECT_FD	6	/* capprotect service instance */
 #define	SWITCHBOARD_IDENTITY_FD	7	/* identity service instance */
 #define	SWITCHBOARD_AUTHORITY_FD	8
-#define	SWITCHBOARD_LAST_FD	8	/* highest well-known fd */
+#define	SWITCHBOARD_DISCOVERY_FD	9	/* system discovery, server end */
+#define	SWITCHBOARD_LAST_FD	9	/* highest well-known fd */
 
 static struct {
 	pid_t		pid;
@@ -91,7 +94,18 @@ static struct {
 	bool		issuer_waiting;	/* a start waits for the retry */
 	bool		degraded;	/* the running switchboard has no issuer */
 	bool		planned_restart; /* its exit is ours: restart, uncounted */
-} bs = { .issuer_fd = -1 };
+	int		issuer_refused;	/* errno of a permanent failure, or 0 */
+	/*
+	 * The system discovery channel, kept for the whole boot.  Its client
+	 * end is capsule.c's ambient lookup (every getty, and each
+	 * SwitchBoard's own slot); its server end goes to each SwitchBoard.
+	 * Every slot names this one channel, so a restarted SwitchBoard serves
+	 * the routes of processes started under the one before it.
+	 */
+	int		discovery_fd;	/* server end */
+	/* The boot converged (a SwitchBoard reported READY): no rc replay. */
+	bool		boot_complete;
+} bs = { .issuer_fd = -1, .discovery_fd = -1 };
 
 static uintptr_t next_timer_ident = 90000;
 /* Fixed, below the restart idents, so long retrying cannot use up idents. */
@@ -113,6 +127,9 @@ struct bootstrap_delegate_fds {
 	int	capprotect_fd;
 	int	identity_fd;
 	int	authority_fd;
+	int	discovery_fd;	/* dup of the discovery server end, or -1 */
+	int	lookup_fd;	/* discovery client end for the slot, or -1 */
+	bool	boot_complete;
 	/*
 	 * Bundle-directory overrides forwarded to switchboard.  Captured from
 	 * capsule's environment in the parent (getenv is not async-signal-safe,
@@ -141,14 +158,14 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 {
 	char channel_env[64];
 	char channel_svc_env[64], coalition_svc_env[64], capprotect_env[64];
-	char identity_env[64], authority_env[64];
+	char identity_env[64], authority_env[64], discovery_env[64];
 	char bundle_sys_env[PATH_MAX + 32], bundle_usr_env[PATH_MAX + 32];
 	char skip_rc_env[32], no_sigkill_env[40];
 	char run_dir_env[PATH_MAX + 32], settle_env[64];
-	char *env[16];
+	char *env[20];
 	char *argv[2];
 	int nullfd, fd, safe_base;
-	int src_fds[6], dst_fds[6];
+	int src_fds[8], dst_fds[8];
 	unsigned envc, i, nfds;
 
 	/*
@@ -168,6 +185,13 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 	}
 	if (nullfd > STDERR_FILENO)
 		(void)close(nullfd);
+
+	/*
+	 * The system discovery route goes into the kernel slot, as for getty:
+	 * SwitchBoard's own lookups, rc and the rc-world daemons inherit it.
+	 */
+	if (d->lookup_fd >= 0 && service_install_ambient_lookup(d->lookup_fd) == -1)
+		_exit(126);
 
 	/*
 	 * Collect source→dest fd mappings, then move all sources
@@ -201,6 +225,10 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 	if (d->authority_fd >= 0) {
 		src_fds[nfds] = d->authority_fd;
 		dst_fds[nfds++] = SWITCHBOARD_AUTHORITY_FD;
+	}
+	if (d->discovery_fd >= 0) {
+		src_fds[nfds] = d->discovery_fd;
+		dst_fds[nfds++] = SWITCHBOARD_DISCOVERY_FD;
 	}
 
 
@@ -286,6 +314,13 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 		    "SWITCHBOARD_AUTHORITY_FD=%d", SWITCHBOARD_AUTHORITY_FD);
 		env[envc++] = authority_env;
 	}
+	if (d->discovery_fd >= 0) {
+		(void)snprintf(discovery_env, sizeof(discovery_env),
+		    "SWITCHBOARD_DISCOVERY_FD=%d", SWITCHBOARD_DISCOVERY_FD);
+		env[envc++] = discovery_env;
+	}
+	if (d->boot_complete)
+		env[envc++] = __DECONST(char *, "SWITCHBOARD_BOOT_COMPLETE=1");
 
 
 	/* Forward bundle-directory overrides when present (see struct comment). */
@@ -466,8 +501,9 @@ bootstrap_issuer_acquired(int fd)
 
 /*
  * Decide whether a start may proceed: with an issuer (now in bs.issuer_fd),
- * or degraded without one.  Returns false when the start is deferred until
- * the issuer retry timer.
+ * or degraded without one once a transient outage outlasts the wait.  Returns
+ * false when the start is deferred until the issuer retry timer, or refused
+ * (bs.issuer_refused set) when the failure is permanent.
  */
 static bool
 bootstrap_issuer_ready(int kq)
@@ -482,11 +518,13 @@ bootstrap_issuer_ready(int kq)
 	}
 	error = errno;
 	if (!bootstrap_issuer_transient(error)) {
+		/* Waiting cannot help: refuse; PID 1 enters recovery. */
 		syslog(LOG_ERR, "bootstrap: protected authority issuer "
 		    "unavailable: %s", strerror(error));
-		syslog(LOG_CRIT, "bootstrap: no authority issuer: starting "
-		    "switchboard degraded; applications and units get no grants");
-		return (true);
+		syslog(LOG_CRIT, "bootstrap: no authority issuer: %s cannot "
+		    "clear; not starting switchboard", strerror(error));
+		bs.issuer_refused = error;
+		return (false);
 	}
 	clock_gettime(CLOCK_MONOTONIC, &now);
 	if (!bs.issuer_outage) {
@@ -557,6 +595,61 @@ bootstrap_handle_issuer_timer(int kq)
 }
 
 /*
+ * A descriptor for the discovery server end to delegate, creating the channel
+ * on the first start of this Capsule.  Its client end becomes capsule.c's
+ * ambient lookup for logins.  -1 when it cannot be created: SwitchBoard then
+ * mints its own route, as before.
+ */
+static int
+bootstrap_discovery_dup(void)
+{
+	int client, fd, server;
+
+	if (bs.discovery_fd < 0) {
+		if (mac_capability_create_channel(&server, &client) == -1) {
+			syslog(LOG_WARNING, "bootstrap: no boot discovery "
+			    "channel: %m");
+			return (-1);
+		}
+		if (capsule_set_ambient_lookup(client) == -1) {
+			syslog(LOG_WARNING, "bootstrap: boot discovery channel "
+			    "client end: %m");
+			(void)close(server);
+			return (-1);
+		}
+		(void)fcntl(server, F_SETFD, FD_CLOEXEC);
+		bs.discovery_fd = server;
+		syslog(LOG_INFO, "bootstrap: boot discovery channel created");
+	}
+	fd = fcntl(bs.discovery_fd, F_DUPFD_CLOEXEC, 0);
+	if (fd == -1)
+		syslog(LOG_WARNING, "bootstrap: dup discovery channel: %m");
+	return (fd);
+}
+
+/*
+ * The SwitchBoard that was started reported READY: the boot converged, and
+ * any later start in this boot is a restart, which must not replay /etc/rc.
+ */
+void
+bootstrap_note_ready(void)
+{
+
+	if (!bs.boot_complete)
+		syslog(LOG_INFO, "bootstrap: boot converged; later switchboard "
+		    "starts do not replay /etc/rc");
+	bs.boot_complete = true;
+}
+
+/* The errno that made Capsule refuse to start SwitchBoard, or 0. */
+int
+bootstrap_issuer_refused(void)
+{
+
+	return (bs.issuer_refused);
+}
+
+/*
  * Start switchboard.  Creates a channel, pdforks, and registers the
  * process descriptor and channel fd on the kqueue.
  * Returns 0 on success, -1 on failure.
@@ -583,8 +676,9 @@ bootstrap_start(int kq)
 	}
 
 	/* Defer the start while a transient issuer outage lasts. */
+	bs.issuer_refused = 0;
 	if (bs.issuer_fd < 0 && !bootstrap_issuer_ready(kq))
-		return (0);
+		return (bs.issuer_refused != 0 ? -1 : 0);
 
 	/* Create channel. */
 	if (mac_capability_create_channel(&capsule_end, &child_end) == -1) {
@@ -635,6 +729,11 @@ bootstrap_start(int kq)
 	dfds.authority_fd = bs.issuer_fd;
 	bs.issuer_fd = -1;
 
+	/* The boot-long discovery route (see bs.discovery_fd). */
+	dfds.discovery_fd = bootstrap_discovery_dup();
+	dfds.lookup_fd = dfds.discovery_fd >= 0 ? capsule_ambient_lookup() : -1;
+	dfds.boot_complete = bs.boot_complete;
+
 	/* Capture bundle-dir overrides here — getenv is not safe post-fork. */
 	dfds.bundle_dir_system = getenv("SWITCHBOARD_BUNDLE_DIR_SYSTEM");
 	dfds.bundle_dir_user = getenv("SWITCHBOARD_BUNDLE_DIR_USER");
@@ -659,7 +758,9 @@ bootstrap_start(int kq)
 	    (dfds.identity_fd >= 0 &&
 	    cap_xfer_limit(dfds.identity_fd, CAP_XFER_NONE) == -1) ||
 	    (dfds.authority_fd >= 0 &&
-	    cap_xfer_limit(dfds.authority_fd, CAP_XFER_NONE) == -1)) {
+	    cap_xfer_limit(dfds.authority_fd, CAP_XFER_NONE) == -1) ||
+	    (dfds.discovery_fd >= 0 &&
+	    cap_xfer_limit(dfds.discovery_fd, CAP_XFER_NONE) == -1)) {
 		syslog(LOG_ERR, "bootstrap: confine delegated fd: %m");
 		close(capsule_end);
 		close(child_end);
@@ -670,6 +771,8 @@ bootstrap_start(int kq)
 			close(dfds.identity_fd);
 		if (dfds.authority_fd >= 0)
 			close(dfds.authority_fd);
+		if (dfds.discovery_fd >= 0)
+			close(dfds.discovery_fd);
 		return (-1);
 	}
 
@@ -684,6 +787,7 @@ bootstrap_start(int kq)
 		if (dfds.capprotect_fd >= 0) close(dfds.capprotect_fd);
 		if (dfds.identity_fd >= 0) close(dfds.identity_fd);
 		if (dfds.authority_fd >= 0) close(dfds.authority_fd);
+		if (dfds.discovery_fd >= 0) close(dfds.discovery_fd);
 		return (-1);
 	}
 
@@ -705,6 +809,8 @@ bootstrap_start(int kq)
 		close(dfds.identity_fd);
 	if (dfds.authority_fd >= 0)
 		close(dfds.authority_fd);
+	if (dfds.discovery_fd >= 0)
+		close(dfds.discovery_fd);
 
 	/*
 	 * The process descriptor is capsule's explicit and exclusive authority
@@ -834,7 +940,9 @@ bootstrap_teardown_and_restart(int kq, int status)
 	capsule_proto_reset();
 
 	if (od.shutting_down) {
+		/* The world stopped: the next start is a boot again. */
 		bs.planned_restart = false;
+		bs.boot_complete = false;
 		return;
 	}
 
