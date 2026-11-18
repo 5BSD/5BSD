@@ -7938,20 +7938,33 @@ check_unload_waits_for_admission(unsigned stage, bool fail, bool mint)
 		ATF_REQUIRE_EQ(0, close(fd));
 	}
 	/*
-	 * An instance's last reference can be dropped by a task after close
-	 * and unload return: poll (at most 5 s) for the count to settle.
+	 * Every instance this sequence made is gone once the unload and the
+	 * last close have returned: the close path frees the instance before
+	 * close(2) returns, and the processes that shared fd have been reaped.
+	 * The count must match at once.  A difference fails; the case then
+	 * watches the count for up to 5 s only to report whether it was a late
+	 * release or a leak.
 	 */
-	for (unsigned i = 0; i < 500; i++) {
-		len = sizeof(after);
-		ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",
-		    &after, &len, NULL, 0));
-		if (after == before)
-			break;
-		usleep(10000);
+	len = sizeof(after);
+	ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",
+	    &after, &len, NULL, 0));
+	if (after != before) {
+		uint64_t later = after;
+		unsigned waited;
+
+		for (waited = 0; waited < 500 && later != before; waited++) {
+			usleep(10000);
+			len = sizeof(later);
+			ATF_REQUIRE_EQ(0, sysctlbyname(
+			    "kern.mac_capability.instances", &later, &len,
+			    NULL, 0));
+		}
+		ATF_CHECK_MSG(false, "instances before %ju, after the unload "
+		    "and the last close %ju, %s (stage %u fail=%d mint=%d)",
+		    (uintmax_t)before, (uintmax_t)after, later == before ?
+		    "back to before within 5 s: a late release" :
+		    "still different after 5 s", stage, fail, mint);
 	}
-	ATF_CHECK_EQ_MSG(before, after, "instances before %ju after %ju "
-	    "(stage %u fail=%d mint=%d)", (uintmax_t)before, (uintmax_t)after,
-	    stage, fail, mint);
 }
 
 ATF_TC(unload_waits_for_admission);
