@@ -258,6 +258,8 @@ void	mac_capability_call_cancel_locked(struct mac_capability_instance *s,
 void	mac_capability_instance_drain_rxq(struct mac_capability_instance *s,
 	    struct mac_capability_msgq *q);
 void	mac_capability_free_msgq(struct mac_capability_msgq *q);
+void	mac_capability_reap_init(void);
+void	mac_capability_reap_uninit(void);
 void	mac_capability_service_free(struct mac_capability_service *svc);
 extern const struct fileops mac_capability_instance_ops;
 

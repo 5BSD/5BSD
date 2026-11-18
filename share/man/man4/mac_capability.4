@@ -23,7 +23,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd November 17, 2026
+.Dd November 18, 2026
 .Dt MAC_CAPABILITY 4
 .Os
 .Sh NAME
@@ -663,7 +663,10 @@ service-create, service-destroy.
 .Ss Queue
 queue-pressure, rxq-discard (a revoked or dead instance discards
 the messages still queued for its service; arguments: service name,
-badge, number of messages).
+badge, number of messages), reap-defer (a revoke or a dispatch task hands
+messages that carry descriptors to the reaper thread, which frees them
+holding no lock and no instance reference, since dropping a carried
+descriptor may run its close; argument: number of messages).
 .Ss Authority issuers
 issuer-decision: every
 .Dv CAP_AUTH_ISSUER_CREATE ,

@@ -53,6 +53,7 @@ SDT_PROBE_DECLARE(mac_capability, , , service__create);
 SDT_PROBE_DECLARE(mac_capability, , , service__destroy);
 SDT_PROBE_DECLARE(mac_capability, , , queue__pressure);
 SDT_PROBE_DECLARE(mac_capability, , , rxq__discard);
+SDT_PROBE_DECLARE(mac_capability, , , reap__defer);
 
 /*
  * Resolve target process: attached procdesc or self.
@@ -137,6 +138,109 @@ mac_capability_free_msgq(struct mac_capability_msgq *q)
 		STAILQ_REMOVE_HEAD(q, cm_link);
 		mac_capability_msg_free(msg);
 	}
+}
+
+/*
+ * Deferred frees.  Dropping the last reference to a descriptor a message
+ * carries runs the descriptor's close, and a channel endpoint's close
+ * drains its service taskqueue and then waits until it holds the only
+ * reference to its instance.  The dispatch task runs on that taskqueue and
+ * holds a reference to its instance, and the caller of a revoke may hold
+ * one to the instance it revokes (a channel revokes its peer that way, and
+ * a handler may revoke its own instance).  A message can hold the last
+ * reference to such an instance: an endpoint sent on itself and then
+ * closed by its holder.  Freed from those contexts, its close would wait
+ * for its own caller.  So the revoke and the dispatch task hand the
+ * messages they free that carry descriptors to the reaper, a task on a
+ * taskqueue of its own that holds no lock and no instance reference.
+ * Messages without descriptors are freed at once.
+ */
+static struct mtx mac_capability_reap_mtx;
+static struct mac_capability_msgq mac_capability_reapq =
+    STAILQ_HEAD_INITIALIZER(mac_capability_reapq);	/* (reap_mtx) */
+static struct task mac_capability_reap_task;
+static struct taskqueue *mac_capability_reap_tq;
+
+static void
+mac_capability_reap(void *arg __unused, int pending __unused)
+{
+	struct mac_capability_msgq q;
+
+	/* A close run here may hand over more; take them in this pass. */
+	for (;;) {
+		STAILQ_INIT(&q);
+		mtx_lock(&mac_capability_reap_mtx);
+		STAILQ_CONCAT(&q, &mac_capability_reapq);
+		mtx_unlock(&mac_capability_reap_mtx);
+		if (STAILQ_EMPTY(&q))
+			break;
+		mac_capability_free_msgq(&q);
+	}
+}
+
+void
+mac_capability_reap_init(void)
+{
+
+	mtx_init(&mac_capability_reap_mtx, "mac_capability reap", NULL,
+	    MTX_DEF);
+	TASK_INIT(&mac_capability_reap_task, 0, mac_capability_reap, NULL);
+	mac_capability_reap_tq = taskqueue_create("mac_capability reap",
+	    M_WAITOK, taskqueue_thread_enqueue, &mac_capability_reap_tq);
+	taskqueue_start_threads(&mac_capability_reap_tq, 1, PWAIT,
+	    "mac_capability reap");
+}
+
+void
+mac_capability_reap_uninit(void)
+{
+
+	taskqueue_drain(mac_capability_reap_tq, &mac_capability_reap_task);
+	KASSERT(STAILQ_EMPTY(&mac_capability_reapq),
+	    ("%s: messages left to reap", __func__));
+	taskqueue_free(mac_capability_reap_tq);
+	mtx_destroy(&mac_capability_reap_mtx);
+}
+
+/*
+ * Free the messages of q, handing those that carry descriptors to the
+ * reaper.  Called without ci_mtx, from the revoke and the dispatch task.
+ */
+static void
+mac_capability_free_msgq_deferred(struct mac_capability_msgq *q)
+{
+	struct mac_capability_msgq carrying;
+	struct mac_capability_msg *msg;
+	int n;
+
+	STAILQ_INIT(&carrying);
+	n = 0;
+	while ((msg = STAILQ_FIRST(q)) != NULL) {
+		STAILQ_REMOVE_HEAD(q, cm_link);
+		if (msg->cm_nfds == 0) {
+			mac_capability_msg_free(msg);
+			continue;
+		}
+		STAILQ_INSERT_TAIL(&carrying, msg, cm_link);
+		n++;
+	}
+	if (n == 0)
+		return;
+	SDT_PROBE1(mac_capability, , , reap__defer, n);
+	mtx_lock(&mac_capability_reap_mtx);
+	STAILQ_CONCAT(&mac_capability_reapq, &carrying);
+	mtx_unlock(&mac_capability_reap_mtx);
+	taskqueue_enqueue(mac_capability_reap_tq, &mac_capability_reap_task);
+}
+
+static void
+mac_capability_msg_free_deferred(struct mac_capability_msg *msg)
+{
+	struct mac_capability_msgq q;
+
+	STAILQ_INIT(&q);
+	STAILQ_INSERT_TAIL(&q, msg, cm_link);
+	mac_capability_free_msgq_deferred(&q);
 }
 
 /*
@@ -343,7 +447,7 @@ mac_capability_auto_reply(struct mac_capability_instance *s, uint64_t reply_toke
 	tx_error = mac_capability_instance_enqueue_tx(s, msg, true, &discard);
 	mtx_unlock(&s->ci_mtx);
 	if (discard != NULL)
-		mac_capability_msg_free(discard);
+		mac_capability_msg_free_deferred(discard);
 	if (tx_error != 0 && s->ci_service != NULL)
 		SDT_PROBE5(mac_capability, , , queue__pressure,
 		    s->ci_service->csvc_name, s->ci_badge, "auto-reply-drop",
@@ -497,8 +601,9 @@ mac_capability_dispatch_task(void *context, int pending __unused)
 		retry = error == MAC_CAPABILITY_HANDLER_RETRY;
 		if (error != 0 && !retry)
 			mac_capability_auto_reply(s, msg->cm_reply_token, error);
+		/* This task holds s: the reaper frees what it carries. */
 		if (!retry)
-			mac_capability_msg_free(msg);
+			mac_capability_msg_free_deferred(msg);
 
 		mtx_lock(&s->ci_mtx);
 		s->ci_handler_td = NULL;
@@ -508,7 +613,7 @@ mac_capability_dispatch_task(void *context, int pending __unused)
 			STAILQ_INSERT_HEAD(&s->ci_rxq, msg, cm_link);
 			s->ci_rxqlen++;
 		} else {
-			/* Freed after ci_mtx is dropped, as the RX queue is. */
+			/* Freed after ci_mtx is dropped, by the reaper. */
 			if (retry)
 				STAILQ_INSERT_TAIL(&deadq, msg, cm_link);
 			/* SENDMSG capacity was genuinely released. */
@@ -562,7 +667,7 @@ mac_capability_dispatch_task(void *context, int pending __unused)
 	}
 
 	mtx_unlock(&s->ci_mtx);
-	mac_capability_free_msgq(&deadq);
+	mac_capability_free_msgq_deferred(&deadq);
 	mac_capability_instance_rele(s);
 }
 
@@ -657,9 +762,10 @@ mac_capability_instance_revoke_reason(struct mac_capability_instance *s,
 	}
 	s->ci_flags |= MAC_CAPABILITY_SF_REVOKED;
 	/*
-	 * Detach the RX queue now and free it at "out", with ci_mtx dropped:
-	 * a queued message may carry the last reference to a descriptor,
-	 * whose close can sleep (a channel endpoint drains its taskqueue).
+	 * Detach the RX queue now and free it at "out", with ci_mtx dropped
+	 * and through the reaper: a queued message may carry the last
+	 * reference to a descriptor, whose close can sleep, and the caller
+	 * may hold a reference to the instance that descriptor is.
 	 */
 	mac_capability_instance_drain_rxq(s, &deadq);
 	/* Do NOT drain the TX queue here — let the receiver read
@@ -714,7 +820,7 @@ mac_capability_instance_revoke_reason(struct mac_capability_instance *s,
 	mac_capability_revoke_callback(s, reason);
 
 out:
-	mac_capability_free_msgq(&deadq);
+	mac_capability_free_msgq_deferred(&deadq);
 	if (svc != NULL) {
 		SDT_PROBE4(mac_capability, , , revoke__done, svc->csvc_name,
 		    s->ci_badge, reason, getsbinuptime() - start);
@@ -930,7 +1036,7 @@ mac_capability_reply(struct mac_capability_instance *s, uint64_t reply_token,
 	error = mac_capability_instance_enqueue_tx(s, msg, true, &discard);
 	mtx_unlock(&s->ci_mtx);
 	if (discard != NULL)
-		mac_capability_msg_free(discard);
+		mac_capability_msg_free_deferred(discard);
 
 done:
 	if (error == 0 && s->ci_service != NULL)
@@ -973,7 +1079,7 @@ mac_capability_notify(struct mac_capability_instance *s, const void *data, size_
 	error = mac_capability_instance_enqueue_tx(s, msg, false, &discard);
 	mtx_unlock(&s->ci_mtx);
 	if (discard != NULL)
-		mac_capability_msg_free(discard);
+		mac_capability_msg_free_deferred(discard);
 
 done:
 	if (error == 0 && s->ci_service != NULL)
@@ -1023,7 +1129,7 @@ mac_capability_forward(struct mac_capability_instance *s, const struct mac_capab
 	error = mac_capability_instance_enqueue_tx(s, msg, false, &discard);
 	mtx_unlock(&s->ci_mtx);
 	if (discard != NULL)
-		mac_capability_msg_free(discard);
+		mac_capability_msg_free_deferred(discard);
 
 	if (s->ci_service != NULL)
 		SDT_PROBE5(mac_capability, , , forward__done,
