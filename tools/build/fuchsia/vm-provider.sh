@@ -49,6 +49,9 @@
 #   checks; the default 0 permits raw-device provider test fixtures.
 #   With PLANE_OFF=1 the default is 1 (the enforced tier, below), and the
 #   guest gate checks the booted value either way.
+#   SCRATCH_DISK (auto, 1 or 0; default auto): a blank 1 GB disk with the
+#   serial kyua-scratch for storage_test:disk_import_and_binding, attached
+#   when a suite selects that case (see the block below).
 #   SYSCTL_WRITE (space-separated sysctl names; default none): the image's
 #   system.Sysctl policy lets every client write these names through the
 #   provider (the policy matches prefixes: each name also covers the
@@ -224,6 +227,32 @@ case " $suites " in
 	dq_loader="${dq_loader:+$dq_loader
 }zfs_load=\"YES\"" ;;
 esac
+# SCRATCH_DISK (auto, 1 or 0; default auto): a blank 1 GB disk attached last,
+# with the serial kyua-scratch, for the one case that destroys a disk,
+# usr.sbin/capsule/storage_test:disk_import_and_binding.  The guest writes its
+# device name to that case's scratch-device input, and the case refuses a disk
+# whose ident is not kyua-scratch.  auto attaches it when a suite selects that
+# case (usr.sbin, usr.sbin/capsule, the program or the case); zfs is then
+# preloaded too (the plane refuses a late kldload).
+scratch_disk=${SCRATCH_DISK:-auto}
+case "$scratch_disk" in
+auto)
+	scratch_disk=0
+	for s in $suites; do
+		case "usr.sbin/capsule/storage_test:disk_import_and_binding" in
+		"${s%/}"|"${s%/}"/*|"${s%/}":*) scratch_disk=1 ;;
+		esac
+	done ;;
+0|1) ;;
+*) echo "SCRATCH_DISK must be auto, 0 or 1" >&2; exit 64;;
+esac
+if [ "$scratch_disk" = 1 ]; then
+	case "$dq_loader" in
+	*zfs_load*) ;;
+	*) dq_loader="${dq_loader:+$dq_loader
+}zfs_load=\"YES\"" ;;
+	esac
+fi
 cpus=${CPUS:-4} mem=${MEM_MB:-$mem_default} par=${PARALLELISM:-1} gate=${GATE_TIMEOUT:-600}
 root_fs=${ROOT_FS:-ufs}
 # ROOT_SIZE: the guest root filesystem (makefs -s; default 8g).  Long
@@ -465,6 +494,7 @@ KERNEL_SHA256=$kernel_sha256
 KERNEL_VERSION="$kernel_version"
 TEST_KNOBS="$test_knobs"
 REROOT=$reroot
+SCRATCH_DISK=$scratch_disk
 EOF
 cat >> "$x/kyua-planeon.sh" <<'EOF'
 R=/tmp/kyua-results
@@ -685,6 +715,19 @@ if [ "$REROOT" = 1 ] && [ "$rerooted" = no ]; then
 	fi
 fi
 # --- end of the reroot
+# The scratch disk (SCRATCH_DISK=1): name it in storage_test's input.
+if [ "$SCRATCH_DISK" = 1 ]; then
+	sd=
+	for d in $(sysctl -n kern.disks); do
+		[ "$(diskinfo -s "/dev/$d" 2>/dev/null)" = kyua-scratch ] && sd=/dev/$d
+	done
+	if [ -n "$sd" ] && [ -d /usr/tests/usr.sbin/capsule ]; then
+		printf '%s\n' "$sd" > /usr/tests/usr.sbin/capsule/scratch-device
+		echo "SCRATCH_DISK=$sd"
+	else
+		echo "SCRATCH_DISK_MISSING: no kyua-scratch disk or no usr.sbin/capsule tests"
+	fi
+fi
 echo "ROOT_DF_BEFORE: $(df -k / | awk 'NR == 2 { print $2 "K total, " $4 "K free" }')"
 cd /usr/tests
 suites=$(cat /root/kyua-planeon.suites)
@@ -833,6 +876,7 @@ mkimg -s gpt -f raw -b "$stage/boot/pmbr" -p "freebsd-boot:=$stage/boot/gptboot"
 fi
 rm -f "$work/root.ufs"
 truncate -s 512m "$work/results.img"
+[ "$scratch_disk" = 0 ] || truncate -s 1g "$work/scratch.img"
 echo "image: $work/guest.img"
 if [ "${DRYRUN:-0}" = 1 ]; then echo DRYRUN_IMAGE_OK; exit 0; fi
 
@@ -878,6 +922,9 @@ set -- "$qemu" -L "$qemu_data" -accel tcg,thread=multi -machine q35 -cpu max \
 [ -z "$ports_image" ] || set -- "$@" \
     -drive "file=$ports_image,format=raw,if=none,id=ports,readonly=on" \
     -device virtio-blk-pci,drive=ports,serial=usr-ports
+[ "$scratch_disk" = 0 ] || set -- "$@" \
+    -drive "file=$work/scratch.img,format=raw,if=none,id=scratch" \
+    -device virtio-blk-pci,drive=scratch,serial=kyua-scratch
 printf '%s\n' "$@" > "$work/command.txt"
 "$@" > "$work/qemu.log" 2>&1 &
 qpid=$!
