@@ -21,6 +21,7 @@
 #include <atf-c.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
@@ -607,6 +608,76 @@ ATF_TC_BODY(full_close_wakes, tc)
 	(void)close(oracle);
 }
 
+/* Whether a child's result is ready (it has finished) within ms. */
+static bool
+child_done_within(struct dqt_child *ch, int ms)
+{
+	struct pollfd pfd;
+
+	pfd.fd = ch->pipefd;
+	pfd.events = POLLIN;
+	pfd.revents = 0;
+	return (poll(&pfd, 1, ms) == 1);
+}
+
+ATF_TC(full_revoke_wakes);
+ATF_TC_HEAD(full_revoke_wakes, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a post of a DQ_PF_INTR object with no "
+	    "deadline waiting for a slot of a full queue ends EIO at once when "
+	    "its object is revoked (review 2)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(full_revoke_wakes, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o0, *o1;
+	struct dq_policy pol;
+	struct one_read_arg a0, a1;
+	struct one_read_res r0, r1;
+	struct dqt_child ch0, ch1;
+	int oracle;
+	bool done;
+
+	dqt_fill(data, sizeof(data), 67);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	dq_policy_default(&pol);
+	pol.dp_deadline_ms = 0;
+	o0 = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
+	policy_intr(&pol);
+	pol.dp_deadline_ms = 0;
+	o1 = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
+	ATF_REQUIRE_EQ(0, dq_set_queue_depth(c.q, 1));
+
+	/* The one slot taken by o0's read, unread. */
+	dqt_pause(&c);
+	memset(&a0, 0, sizeof(a0));
+	a0.fd = o0->fd;
+	a0.len = 100;
+	dqt_spawn(&ch0, child_one_pread, &a0);
+	ATF_REQUIRE(dqt_wait_stats(&c, posted_or_dropped_is, 1, DQT_WAIT_MS));
+	a1 = a0;
+	a1.fd = o1->fd;
+	dqt_spawn(&ch1, child_one_pread, &a1);
+	ATF_REQUIRE(full_waits_reach(&c, 1, DQT_WAIT_MS));
+	ATF_REQUIRE(dqt_wait_wmesg(ch1.pid, "dqfull", DQT_WAIT_MS));
+	ATF_REQUIRE_EQ(0, dq_revoke(c.q, o1->id));
+	done = child_done_within(&ch1, 5000);
+	ATF_CHECK_MSG(done, "the revoked object's post still waits for a "
+	    "slot 5 s after the revoke");
+	/* A slot frees o1's waiter either way. */
+	dqt_resume(&c);
+	dqt_collect(&ch1, &r1, sizeof(r1));
+	ATF_CHECK_EQ(-1, r1.rr.rv);
+	ATF_CHECK_EQ(EIO, r1.rr.err);
+	dqt_collect(&ch0, &r0, sizeof(r0));
+	ATF_CHECK_EQ(100, r0.rr.rv);
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
 /* Read exactly one record (a READ) off a manual queue. */
 static uint64_t
 read_one_record(int q)
@@ -1060,6 +1131,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, full_waits_then_posts);
 	ATF_TP_ADD_TC(tp, full_deadline_eio);
 	ATF_TP_ADD_TC(tp, full_close_wakes);
+	ATF_TP_ADD_TC(tp, full_revoke_wakes);
 	ATF_TP_ADD_TC(tp, full_signal_one);
 	ATF_TP_ADD_TC(tp, edeadlk_controller);
 	ATF_TP_ADD_TC(tp, edeadlk_pdfork);

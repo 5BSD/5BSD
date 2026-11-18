@@ -579,6 +579,12 @@ dq_object_revoke_locked(struct dq_queue *q, struct dq_object *o, int why,
 	}
 	wakeup(&o->o_inflight);
 	wakeup(&q->q_requesters);
+	/*
+	 * A post of this object waiting for a slot of a full queue fails
+	 * now: one that catches signals with no deadline sleeps without a
+	 * slice, and no slot need come.  The others look again and sleep on.
+	 */
+	wakeup(&q->q_space);
 	q->q_stats.ds2_objects_revoked++;
 	SDT_PROBE3(dq, , , revoke, q, o, why);
 }
