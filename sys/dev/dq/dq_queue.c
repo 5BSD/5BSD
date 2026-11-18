@@ -1524,8 +1524,18 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 	}
 	error = dq_event_post_wait_ev(q, o, ev, td, mode, deadline, &pa);
 	if (error == 0) {
+		/*
+		 * Only a queue-level RESOLVE carries an FD or SWAP answer
+		 * (dq_resolve_reply_commit_locked).  Should an object event
+		 * ever get one, it is released as an untaken answer is
+		 * (dq_event_rele), not leaked.
+		 */
 		KASSERT(pa.pa_robj == NULL && pa.pa_rswap.fs_fp == NULL,
 		    ("dq: object event %p answered with a RESOLVE kind", ev));
+		if (__predict_false(pa.pa_robj != NULL))
+			dq_object_retire_unbound(pa.pa_robj, NULL);
+		if (__predict_false(pa.pa_rswap.fs_fp != NULL))
+			fdswap_release(&pa.pa_rswap, curthread);
 		*replyp = pa.pa_reply;
 		*errnop = pa.pa_errno;
 	}
