@@ -24,7 +24,9 @@
 #include <sys/time.h>
 #include <sys/wait.h>
 
+#include <sys/stat.h>
 #include <errno.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <fcntl.h>
 #include <stdint.h>
@@ -1902,22 +1904,67 @@ revoke_witness_counts(int counts[nitems(revoke_witness_needles)])
 }
 
 /*
- * Leave a message carrying the only reference to carried in P[0]'s RX
- * queue: fill P[1]'s receive queue and P[0]'s RX queue, take one message
- * off P[1] so the dispatch task moves one queued message on, and queue
- * the carrying message behind the rest.  The caller's descriptor is closed.
+ * These cases see a free under the instance mutex only through WITNESS: a
+ * kernel without it, or with checking off (debug.witness.watch <= 0), cannot
+ * fail them.  WITNESS reports a lock order reversal once per pair of locks,
+ * so a boot that has already recorded one naming the instance mutex
+ * (debug.witness.badstacks) would print nothing new either.
  */
 static void
-queue_carried_fd(int P[2], int carried)
+require_witness_reports(void)
+{
+	char *buf;
+	size_t len;
+	int on, watch;
+
+	len = sizeof(on);
+	if (sysctlbyname("kern.features.witness", &on, &len, NULL, 0) != 0 ||
+	    on == 0)
+		atf_tc_skip("detects the defect only through WITNESS; the "
+		    "kernel has no kern.features.witness");
+	len = sizeof(watch);
+	ATF_REQUIRE_MSG(sysctlbyname("debug.witness.watch", &watch, &len,
+	    NULL, 0) == 0, "debug.witness.watch: %s", strerror(errno));
+	if (watch <= 0)
+		atf_tc_skip("WITNESS checking is off (debug.witness.watch=%d)",
+		    watch);
+	len = 0;
+	ATF_REQUIRE_MSG(sysctlbyname("debug.witness.badstacks", NULL, &len,
+	    NULL, 0) == 0, "debug.witness.badstacks: %s", strerror(errno));
+	len += 4096;
+	buf = malloc(len + 1);
+	ATF_REQUIRE(buf != NULL);
+	ATF_REQUIRE_MSG(sysctlbyname("debug.witness.badstacks", buf, &len,
+	    NULL, 0) == 0, "debug.witness.badstacks: %s", strerror(errno));
+	buf[len] = '\0';
+	if (strstr(buf, "\"mac_capability instance\"") != NULL) {
+		free(buf);
+		atf_tc_skip("this boot already recorded a lock order reversal "
+		    "naming \"mac_capability instance\"; WITNESS would not "
+		    "report it again");
+	}
+	free(buf);
+}
+
+/*
+ * Leave a message carrying the only references to carried[0..n-1] in
+ * P[0]'s RX queue: fill P[1]'s receive queue and P[0]'s RX queue, take one
+ * message off P[1] so the dispatch task moves one queued message on, and
+ * queue the carrying message behind the rest.  The caller's descriptors are
+ * closed; carried[] may name P[0] itself.
+ */
+static void
+queue_carried_fds(int P[2], int *carried, int n)
 {
 	struct mac_capability_sendmsg_args sa;
 	unsigned char rx[64];
 	uint32_t rxlen, seq;
-	int fl, tries;
+	int fl, i, tries;
 	static const char note[] = "carrier";
 
-	ATF_REQUIRE_MSG(cap_xfer_limit(carried, CAP_XFER_ONCE) == 0,
-	    "cap_xfer_limit: %s", strerror(errno));
+	for (i = 0; i < n; i++)
+		ATF_REQUIRE_MSG(cap_xfer_limit(carried[i], CAP_XFER_ONCE) == 0,
+		    "cap_xfer_limit: %s", strerror(errno));
 	fl = fcntl(P[0], F_GETFL);
 	ATF_REQUIRE(fcntl(P[0], F_SETFL, fl | O_NONBLOCK) == 0);
 	for (seq = 0; seq < 100000; seq++) {
@@ -1939,8 +1986,8 @@ queue_carried_fd(int P[2], int carried)
 	memset(&sa, 0, sizeof(sa));
 	sa.payload = note;
 	sa.payload_len = sizeof(note);
-	sa.fds = &carried;
-	sa.nfds = 1;
+	sa.fds = carried;
+	sa.nfds = n;
 	for (tries = 0; tries < 5000; tries++) {
 		if (ioctl(P[0], MAC_CAPABILITY_SENDMSG, &sa) == 0)
 			break;
@@ -1949,7 +1996,15 @@ queue_carried_fd(int P[2], int carried)
 		usleep(1000);
 	}
 	ATF_REQUIRE_MSG(tries < 5000, "the carrying message was never queued");
-	ATF_REQUIRE_EQ(0, close(carried));
+	for (i = 0; i < n; i++)
+		ATF_REQUIRE_EQ(0, close(carried[i]));
+}
+
+static void
+queue_carried_fd(int P[2], int carried)
+{
+
+	queue_carried_fds(P, &carried, 1);
 }
 
 static void
@@ -1984,6 +2039,7 @@ ATF_TC_BODY(revoke_frees_queued_endpoint, tc)
 	char rx[32];
 	int P[2], Q[2], tries;
 
+	require_witness_reports();
 	ATF_REQUIRE(chan_create_required(P) == 0);
 	ATF_REQUIRE(chan_create(Q) == 0);
 	queue_carried_fd(P, Q[0]);
@@ -2020,6 +2076,7 @@ ATF_TC_BODY(revoke_frees_queued_socket, tc)
 	char c;
 	int P[2], sv[2];
 
+	require_witness_reports();
 	ATF_REQUIRE(chan_create_required(P) == 0);
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
 	queue_carried_fd(P, sv[0]);
@@ -2032,6 +2089,392 @@ ATF_TC_BODY(revoke_frees_queued_socket, tc)
 	    sizeof(tv)) == 0);
 	ATF_CHECK_EQ_MSG(0, read(sv[1], &c, 1), "read: %s", strerror(errno));
 	close(P[0]);
+	close(P[1]);
+	close(sv[1]);
+}
+
+/*
+ * Freeing a message may drop the last reference to a descriptor it carries,
+ * and that runs the descriptor's close.  The dispatch task and a revoke run
+ * where such a close cannot be allowed to complete synchronously: under the
+ * instance mutex (a socket's close takes sleepable locks), on the service
+ * taskqueue a channel endpoint's close drains, or while a reference to the
+ * very instance being closed is held.  The cases below put a message in
+ * each of those places.
+ */
+
+/* Messages on fd's TX queue (what a receive on fd would read). */
+static off_t
+txq_len(int fd)
+{
+	struct stat st;
+
+	ATF_REQUIRE_MSG(fstat(fd, &st) == 0, "fstat: %s", strerror(errno));
+	return (st.st_size);
+}
+
+/*
+ * Leave P[1]'s TX queue at its limit and P[0]'s RX queue empty: send until
+ * a message is not forwarded within a second, then take one message off
+ * P[1] so the one left waiting in P[0]'s RX queue moves on.
+ */
+static void
+fill_peer_tx(int P[2])
+{
+	unsigned char rx[64];
+	off_t before;
+	uint32_t rxlen, seq;
+	int tries;
+
+	before = 0;
+	for (seq = 0; seq < 100000; seq++) {
+		before = txq_len(P[1]);
+		ATF_REQUIRE_MSG(chan_send(P[0], &seq, sizeof(seq)) == 0,
+		    "fill: %s", strerror(errno));
+		for (tries = 0; tries < 1000; tries++) {
+			if (txq_len(P[1]) > before)
+				break;
+			usleep(1000);
+		}
+		if (tries == 1000)
+			break;
+	}
+	ATF_REQUIRE_MSG(seq > 0 && seq < 100000, "P[1]'s queue never filled");
+	ATF_REQUIRE_MSG(chan_recv(P[1], rx, sizeof(rx), &rxlen, NULL) == 0,
+	    "recv: %s", strerror(errno));
+	for (tries = 0; tries < 5000; tries++) {
+		if (txq_len(P[1]) == before)
+			break;
+		usleep(1000);
+	}
+	ATF_REQUIRE_MSG(tries < 5000, "the waiting message was not forwarded");
+}
+
+/* Send a message carrying fds[0..n-1], each limited to one transfer. */
+static void
+send_carrier(int fd, const void *payload, size_t len, int *fds, int n)
+{
+	struct mac_capability_sendmsg_args sa;
+	int i;
+
+	for (i = 0; i < n; i++)
+		ATF_REQUIRE_MSG(cap_xfer_limit(fds[i], CAP_XFER_ONCE) == 0,
+		    "cap_xfer_limit: %s", strerror(errno));
+	memset(&sa, 0, sizeof(sa));
+	sa.payload = payload;
+	sa.payload_len = len;
+	sa.fds = fds;
+	sa.nfds = n;
+	ATF_REQUIRE_MSG(ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) == 0,
+	    "send carrier: %s", strerror(errno));
+}
+
+/* Whether the peer of a socket reads end of file within secs seconds. */
+static bool
+socket_closed_within(int s, int secs)
+{
+	struct timeval tv;
+	char c;
+
+	tv.tv_sec = secs;
+	tv.tv_usec = 0;
+	ATF_REQUIRE(setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv,
+	    sizeof(tv)) == 0);
+	if (read(s, &c, 1) == 0)
+		return (true);
+	ATF_REQUIRE_MSG(errno == EAGAIN || errno == EWOULDBLOCK,
+	    "read: %s", strerror(errno));
+	return (false);
+}
+
+/*
+ * Hold the handler that forwards a message of payload length len in
+ * mac_capability:::forward for chill_ns, with dtrace(1) (destructive), so
+ * a step of the test lands while it is in flight.  The providers are
+ * preloaded (dtraceall_load): a late kldload is refused with the plane on.
+ */
+#define	HELD_LEN	733
+#define	HELD_NS		450000000
+
+static pid_t
+hold_forward_start(void)
+{
+	char program[256], out[64];
+	char buf[64];
+	ssize_t n;
+	pid_t pid;
+	int fd, i;
+
+	snprintf(out, sizeof(out), "hold.%d.out", (int)getpid());
+	snprintf(program, sizeof(program),
+	    "mac_capability:::forward /arg2 == %d/ { chill(%d); }", HELD_LEN,
+	    HELD_NS);
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		execl("/usr/sbin/dtrace", "dtrace", "-q", "-w", "-o", out,
+		    "-n", "BEGIN { printf(\"READY\\n\"); }", "-n", program,
+		    (char *)NULL);
+		_exit(127);
+	}
+	for (i = 0; i < 600; i++) {
+		fd = open(out, O_RDONLY);
+		if (fd >= 0) {
+			n = read(fd, buf, sizeof(buf) - 1);
+			close(fd);
+			if (n > 0) {
+				buf[n] = '\0';
+				if (strstr(buf, "READY") != NULL)
+					return (pid);
+			}
+		}
+		usleep(100000);
+	}
+	kill(pid, SIGKILL);
+	atf_tc_fail("dtrace did not start holding mac_capability:::forward");
+}
+
+static void
+hold_forward_stop(pid_t pid)
+{
+	int status;
+
+	ATF_REQUIRE(kill(pid, SIGINT) == 0);
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "dtrace status %#x", status);
+}
+
+ATF_TC(refused_forward_frees_outside_mutex);
+ATF_TC_HEAD(refused_forward_frees_outside_mutex, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "a forward its peer refuses frees the copy carrying descriptors "
+	    "outside the instance mutex");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(refused_forward_frees_outside_mutex, tc)
+{
+	struct mac_capability_recvmsg_args ra;
+	int after[nitems(revoke_witness_needles)];
+	int before[nitems(revoke_witness_needles)];
+	unsigned char rx[64];
+	int fds[4], P[2], got, sv[2], tries;
+	u_int i;
+	static const char note[] = "carrier";
+
+	require_witness_reports();
+	ATF_REQUIRE(chan_create_required(P) == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	fill_peer_tx(P);
+	revoke_witness_counts(before);
+	/* P[1] is full: the dispatch task's forward is refused and retried. */
+	send_carrier(P[0], note, sizeof(note), &sv[0], 1);
+	ATF_REQUIRE_EQ(0, close(sv[0]));
+	usleep(200000);
+
+	/* Let it through: read P[1] until the carrying message arrives. */
+	got = -1;
+	for (tries = 0; tries < 100000 && got < 0; tries++) {
+		memset(&ra, 0, sizeof(ra));
+		ra.payload = rx;
+		ra.payload_len = sizeof(rx);
+		ra.fds = fds;
+		ra.nfds = nitems(fds);
+		if (ioctl(P[1], MAC_CAPABILITY_RECVMSG, &ra) != 0) {
+			ATF_REQUIRE_MSG(errno == EAGAIN, "recv: %s",
+			    strerror(errno));
+			usleep(1000);
+			continue;
+		}
+		if (ra.nfds == 1)
+			got = fds[0];
+	}
+	ATF_REQUIRE_MSG(got >= 0, "the carrying message never arrived");
+	revoke_witness_counts(after);
+	for (i = 0; i < nitems(revoke_witness_needles); i++)
+		ATF_CHECK_MSG(after[i] <= before[i],
+		    "the refused forwards logged %d new kernel message(s) "
+		    "naming '%s'", after[i] - before[i],
+		    revoke_witness_needles[i]);
+	/* The descriptor arrived intact: closing it closes the socket. */
+	ATF_REQUIRE_EQ(0, close(got));
+	ATF_CHECK_MSG(socket_closed_within(sv[1], 5),
+	    "the delivered socket did not close");
+	close(P[0]);
+	close(P[1]);
+	close(sv[1]);
+}
+
+ATF_TC(dispatch_retry_on_revoked_frees_outside_mutex);
+ATF_TC_HEAD(dispatch_retry_on_revoked_frees_outside_mutex, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "a message its handler retries on an instance revoked meanwhile "
+	    "is freed outside the instance mutex");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.progs", "/usr/sbin/dtrace");
+	atf_tc_set_md_var(tc, "timeout", "180");
+}
+ATF_TC_BODY(dispatch_retry_on_revoked_frees_outside_mutex, tc)
+{
+	static unsigned char payload[HELD_LEN];
+	struct timespec t0, t1;
+	int after[nitems(revoke_witness_needles)];
+	int before[nitems(revoke_witness_needles)];
+	int64_t ms;
+	pid_t hold;
+	int P[2], attempt, sv[2];
+	bool overlapped;
+	u_int i;
+
+	require_witness_reports();
+	overlapped = false;
+	for (attempt = 0; attempt < 3 && !overlapped; attempt++) {
+		ATF_REQUIRE(chan_create_required(P) == 0);
+		ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+		fill_peer_tx(P);
+		hold = hold_forward_start();
+		revoke_witness_counts(before);
+		/*
+		 * The handler forwards the carrier while dtrace holds it; P[1]
+		 * is full, so it will return RETRY.  The revoke lands while it
+		 * is held and waits for it: the retried message is then on a
+		 * dead instance and is freed.
+		 */
+		send_carrier(P[0], payload, sizeof(payload), &sv[0], 1);
+		ATF_REQUIRE_EQ(0, close(sv[0]));
+		usleep(150000);
+		ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &t0) == 0);
+		ATF_REQUIRE_MSG(ioctl(P[0], MAC_CAPABILITY_TERMINATE, NULL) == 0,
+		    "terminate: %s", strerror(errno));
+		ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &t1) == 0);
+		hold_forward_stop(hold);
+		ms = (t1.tv_sec - t0.tv_sec) * 1000 +
+		    (t1.tv_nsec - t0.tv_nsec) / 1000000;
+		/* The revoke waited for the held handler. */
+		overlapped = ms >= 100;
+		revoke_witness_counts(after);
+		for (i = 0; i < nitems(revoke_witness_needles); i++)
+			ATF_CHECK_MSG(after[i] <= before[i],
+			    "the revoke logged %d new kernel message(s) naming "
+			    "'%s'", after[i] - before[i],
+			    revoke_witness_needles[i]);
+		ATF_CHECK_MSG(socket_closed_within(sv[1], 10),
+		    "the retried message's socket was never closed");
+		close(P[0]);
+		close(P[1]);
+		close(sv[1]);
+	}
+	ATF_REQUIRE_MSG(overlapped,
+	    "the revoke never overlapped the held handler (test timing)");
+}
+
+ATF_TC(peer_close_frees_endpoint_carrying_itself);
+ATF_TC_HEAD(peer_close_frees_endpoint_carrying_itself, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "closing an endpoint frees its peer's queued message that holds "
+	    "the last reference to the peer itself");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "180");
+}
+ATF_TC_BODY(peer_close_frees_endpoint_carrying_itself, tc)
+{
+	int carried[2], go[2], P[2], status, sv[2], tries;
+	pid_t child;
+	char c;
+
+	ATF_REQUIRE(chan_create_required(P) == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	/*
+	 * P[0]'s RX queue holds the only references to P[0] and to sv[0], in
+	 * that order.  Closing P[1] revokes P[0] while holding a reference to
+	 * it; the revoke frees the message, and the last reference to P[0]
+	 * runs P[0]'s close, which waits for that reference to go.
+	 */
+	carried[0] = P[0];
+	carried[1] = sv[0];
+	queue_carried_fds(P, carried, 2);
+	ATF_REQUIRE(pipe(go) == 0);
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		close(sv[1]);
+		close(go[1]);
+		(void)read(go[0], &c, 1);
+		close(P[1]);
+		_exit(0);
+	}
+	close(go[0]);
+	/* The child's descriptor is the last one: its close revokes P[0]. */
+	ATF_REQUIRE_EQ(0, close(P[1]));
+	ATF_REQUIRE_EQ(1, write(go[1], "g", 1));
+	close(go[1]);
+	ATF_CHECK_MSG(socket_closed_within(sv[1], 30),
+	    "the queued message was never freed: P[0]'s close did not finish");
+	for (tries = 0; tries < 300; tries++) {
+		if (waitpid(child, &status, WNOHANG) == child)
+			break;
+		usleep(100000);
+	}
+	ATF_REQUIRE_MSG(tries < 300,
+	    "the child's close of P[1] has not returned after 30 s");
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	close(sv[1]);
+}
+
+ATF_TC(handler_revoke_frees_endpoint_carrying_itself);
+ATF_TC_HEAD(handler_revoke_frees_endpoint_carrying_itself, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "a handler that revokes its own endpoint frees a queued message "
+	    "holding the last reference to that endpoint");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.progs", "/usr/sbin/dtrace");
+	atf_tc_set_md_var(tc, "timeout", "180");
+}
+ATF_TC_BODY(handler_revoke_frees_endpoint_carrying_itself, tc)
+{
+	static unsigned char payload[HELD_LEN];
+	static const char note[] = "carrier";
+	int carried[2], P[2], sv[2];
+	pid_t hold;
+
+	ATF_REQUIRE(chan_create_required(P) == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	/*
+	 * P[1] is revoked but not closed, so the channel still names it as
+	 * P[0]'s peer: P[0]'s handler fails to forward to it and revokes
+	 * P[0] from the dispatch task.
+	 */
+	ATF_REQUIRE_MSG(ioctl(P[1], MAC_CAPABILITY_TERMINATE, NULL) == 0,
+	    "terminate: %s", strerror(errno));
+	hold = hold_forward_start();
+	/* The handler is held in its forward of this message... */
+	ATF_REQUIRE_MSG(chan_send(P[0], payload, sizeof(payload)) == 0,
+	    "send: %s", strerror(errno));
+	/*
+	 * ...while the message holding the last references to P[0] and to
+	 * sv[0] is queued behind it.  The handler's revoke frees it on the
+	 * service taskqueue, where P[0]'s close would drain P[0]'s own task.
+	 */
+	carried[0] = P[0];
+	carried[1] = sv[0];
+	send_carrier(P[0], note, sizeof(note), carried, 2);
+	ATF_REQUIRE_EQ(0, close(P[0]));
+	ATF_REQUIRE_EQ(0, close(sv[0]));
+	ATF_CHECK_MSG(socket_closed_within(sv[1], 30),
+	    "the queued message was never freed: the dispatch task is stuck");
+	hold_forward_stop(hold);
 	close(P[1]);
 	close(sv[1]);
 }
@@ -2069,6 +2512,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, peer_close_race);
 	ATF_TP_ADD_TC(tp, revoke_frees_queued_endpoint);
 	ATF_TP_ADD_TC(tp, revoke_frees_queued_socket);
+	ATF_TP_ADD_TC(tp, refused_forward_frees_outside_mutex);
+	ATF_TP_ADD_TC(tp, dispatch_retry_on_revoked_frees_outside_mutex);
+	ATF_TP_ADD_TC(tp, peer_close_frees_endpoint_carrying_itself);
+	ATF_TP_ADD_TC(tp, handler_revoke_frees_endpoint_carrying_itself);
 
 	return (atf_no_error());
 }
