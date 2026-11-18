@@ -1165,7 +1165,11 @@ and return its id in
 In this order:
 .Er EINVAL
 for a wrong version, an unknown flag or action, nonzero padding, an empty
-mask or one with an operation no rule may name, a path not
+mask or one with an operation no rule may name,
+.Dv DQ_ROP_EXEC_INTERP
+with
+.Dv DQ_STANDING_F_SUBTREE ,
+a path not
 NUL-terminated at
 .Va dqs_pathlen
 or not absolute and normalized, an errno with
@@ -4084,7 +4088,12 @@ and
 (always consulted ahead) and
 .Dv DQ_ROP_INTERNAL
 are
-.Er EINVAL .
+.Er EINVAL ,
+and so is
+.Dv DQ_ROP_EXEC_INTERP
+with
+.Dv DQ_STANDING_F_SUBTREE
+(see below).
 Without
 .Dv DQ_STANDING_F_OPEN_WRITE ,
 .Dv DQ_ROP_OPEN
@@ -4145,11 +4154,13 @@ matches the directory (the walk still requires one).
 A name with a
 .Ql ..
 component is never matched.
-Only the requester's own lookups (class 1) and the run-time linker's
-lookup of a
+Only the requester's own lookups (class 1) and the kernel's lookup of an
+image's interpreter, a
 .Dv PT_INTERP
+run-time linker or a
+.Ql #!
 interpreter
-.Pq Dv DQ_ROP_EXEC_INTERP , No class 3
+.Pq Dv DQ_ROP_EXEC_INTERP , No class 3 ,
 are decided; these always post: class 2, a lookup from a served start or
 under a served root, one naming a served descriptor
 .Pq Va drs_object ,
@@ -4171,10 +4182,12 @@ A rule's PASS is cached in the lookup's intent slot as a reply's is, and
 every symbolic link a covered lookup meets is matched again with its
 target and the remaining path, so a link out of the rule's tree, like
 any relative link, posts.
-The run-time linker's lookup is not consulted again at symbolic links:
-use exact rules for
-.Dv DQ_ROP_EXEC_INTERP ,
-since the binary chooses its interpreter.
+The interpreter lookup is not consulted again at symbolic links, so a
+subtree rule would pass a link out of its tree: only an exact rule may
+name
+.Dv DQ_ROP_EXEC_INTERP
+.Pq Er EINVAL No otherwise ,
+and it decides that one name, as a reply to it would.
 The lookup then walks with the program's own credential, MAC labels,
 Capsicum rights and
 .Dv O_RESOLVE_BENEATH

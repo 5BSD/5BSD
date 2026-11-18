@@ -19,9 +19,9 @@
  * class (read or write), the lookup class and the path text, nothing
  * else: every one of them is in the event the controller would have read.
  *
- * Locking.  q_st_lock is a non-sleepable rmlock and a leaf: it is never
- * held with q_mtx, a pwddesc, proc or vnode lock, and never across vhold,
- * vdrop, vrele or malloc.  Readers come from the consultation after the
+ * Locking.  q_st_lock is a non-sleepable rmlock and a leaf: no lock is
+ * taken under it, and it is never held across vhold, vdrop, vrele or
+ * malloc.  Readers come from the consultation after the
  * wait guard, which proved they hold no lock; inside they only scan, count
  * and fire a probe.  Writers (ADD, DEL, FLUSH and the queue's death)
  * allocate and take the root's hold before the write lock and release what
@@ -122,6 +122,14 @@ dq_standing_add(struct dq_queue *q, struct dq_standing_rule *r,
 	    r->dqs_action != DQ_STANDING_ERRNO &&
 	    r->dqs_action != DQ_STANDING_ASK) || r->dqs_pad0 != 0 ||
 	    r->dqs_ops == 0 || (r->dqs_ops & ~DQ_STANDING_OPS_ELIGIBLE) != 0)
+		return (EINVAL);
+	/*
+	 * The run-time linker's lookup (class 3) is not consulted again at
+	 * symbolic links (dqres_namei_symlink), so a subtree would pass a
+	 * link out of it: EXEC_INTERP only in exact rules.
+	 */
+	if ((r->dqs_flags & DQ_STANDING_F_SUBTREE) != 0 &&
+	    (r->dqs_ops & DQ_STANDING_OP(DQ_ROP_EXEC_INTERP)) != 0)
 		return (EINVAL);
 	len = r->dqs_pathlen;
 	if (len >= DQ_PATH_MAX || r->dqs_path[len] != '\0' ||
