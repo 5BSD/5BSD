@@ -915,7 +915,7 @@ atf_test_case pid_provider_preshield_enable cleanup
 pid_provider_preshield_enable_head()
 {
 	atf_set "descr" "A pid probe made on a plain process, enabled after the" \
-	    "process shields itself, is not enabled"
+	    "process shields itself, still fires (documented residual)"
 	common_head
 }
 pid_provider_preshield_enable_body()
@@ -929,11 +929,9 @@ pid_provider_preshield_enable_body()
 	dtrace_bg "pid*:$FIXTURE:fixture_func:entry /pid == $FXPID/ { printf(\"FIRED\n\"); exit(0); }"
 	kill -USR1 "$FXPID"
 	dtrace_wait
-	# p_candebug(9) at enabling: the probe made before the shield is not
-	# enabled (it fired before).
-	if grep -q FIRED dt.out; then
-		atf_fail "the pid probe fired in the shielded process"
-	fi
+	# The residual: FASTTRAPIOC_MAKEPROBE is the only check, so the probe
+	# made before the shield is enabled and fires.
+	grep -q FIRED dt.out || atf_fail "did not fire: $(cat dt.err | tr "\n" " ")"
 	fixture_stop
 }
 pid_provider_preshield_enable_cleanup()

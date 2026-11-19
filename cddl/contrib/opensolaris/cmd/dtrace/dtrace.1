@@ -1972,17 +1972,35 @@ permission again when the probe is made
 which fails with
 .Er EACCES
 or
-.Er EPERM ,
-and when it is enabled, which leaves a probe the consumer may no longer
-debug the process for disabled.
+.Er EPERM .
 A process protected from debuggers, such as one with a
 .Xr mac_capability_capprotect 4
-ptrace shield, therefore refuses the pid provider, including probes made
-before it was shielded.
+ptrace shield, therefore refuses new pid probes.
+The check is made only then: a pid probe made before the process was
+protected can still be enabled, by any consumer, until the process exits
+or executes another image, and a probe already enabled keeps firing.
 .Fl p
 and
 .Fl c
 attach to or create the process in the same way.
+.Pp
+The kernel providers are not checked against a process's protection.
+A consumer with the DTrace kernel privilege can read a protected process's
+memory with
+.Fn copyin
+from
+.Sy syscall ,
+.Sy fbt
+or
+.Sy profile
+probes that fire in it, and with
+.Fl w
+write it with
+.Fn copyout
+and signal or stop it with
+.Fn raise
+and
+.Fn stop .
 .Sh ENVIRONMENT
 .Bl -tag -width 'DTRACE_DEBUG'
 .It Ev DTRACE_DEBUG

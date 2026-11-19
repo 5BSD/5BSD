@@ -86,11 +86,23 @@ Block
 attach from foreign processes, and every other debugging access
 .Pq Xr p_candebug 9 :
 reading or writing the process's memory, its environment, descriptors and
-working directory, and the pid provider of
-.Xr dtrace 1 ,
-whose probes the kernel neither makes nor enables for the process
-.Pq Dv FASTTRAPIOC_MAKEPROBE ,
-including probes made before it was shielded.
+working directory, and new probes of the pid provider of
+.Xr dtrace 1
+.Pq Dv FASTTRAPIOC_MAKEPROBE .
+A pid probe made before the shield can still be enabled, and an enabled
+one keeps firing.
+The shield does not apply to the DTrace kernel providers: a consumer with
+the DTrace kernel privilege reads the process's memory with
+.Fn copyin
+from
+.Sy syscall ,
+.Sy fbt
+or
+.Sy profile
+probes that fire in it, and with
+.Fl w
+writes it, signals it or stops it
+.Pq Fn copyout , Fn raise , Fn stop .
 Inspection is not blocked: the process's memory map, auxiliary vector,
 ps_strings and signal trampoline locations, umask and kernel stacks
 .Pq Xr p_caninspect 9 ,
