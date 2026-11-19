@@ -619,7 +619,13 @@ If the creation fails for a reason that can clear
 .Pq Er ENFILE , EMFILE , ENOMEM ,
 .Nm
 logs that it is waiting and retries, backing off from 1 to 10 seconds,
-for up to 60 seconds before it starts
+for up to 60 seconds
+.Po
+.Va authority_issuer
+in
+.Xr capsule.conf 5
+.Pc
+before it starts
 .Xr switchboard 8 ;
 a wait is not a failed start.
 If the failure cannot clear

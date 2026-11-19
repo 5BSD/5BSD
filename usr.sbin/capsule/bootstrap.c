@@ -13,13 +13,14 @@
  * Every start first acquires PID 1's authority issuer, which SwitchBoard
  * needs to grant applications and units anything.  A transient creation
  * failure (a descriptor or memory shortage) defers the start: Capsule retries
- * for up to BOOTSTRAP_ISSUER_WAIT seconds, so a shortage costs neither an
- * aborted SwitchBoard nor the restart limit.  Past that, SwitchBoard starts
- * degraded, without the issuer and so without grants, rather than leaving PID
- * 1 with no service manager; Capsule keeps retrying and, once it holds an
- * issuer, restarts SwitchBoard with it.  That planned restart is not counted
- * as a failure.  A permanent failure (not PID 1, a jailed Capsule, the
- * identity sequence exhausted) starts SwitchBoard degraded at once.
+ * for up to the configured wait (capsule.conf(5) authority_issuer), so a
+ * shortage costs neither an aborted SwitchBoard nor the restart limit.  Past
+ * that, SwitchBoard starts degraded, without the issuer and so without grants,
+ * rather than leaving PID 1 with no service manager; Capsule retries a bounded
+ * number of times and, once it holds an issuer, restarts SwitchBoard with it.
+ * That planned restart is not counted as a failure.  A permanent failure (not
+ * PID 1, a jailed Capsule, the identity sequence exhausted) is refused: PID 1
+ * enters recovery.
  */
 
 #include <sys/capsicum.h>
@@ -56,26 +57,12 @@
 #define	BOOTSTRAP_MAX_FAILURES	10	/* circuit breaker threshold */
 
 /*
- * Authority issuer outage policy.  A descriptor shortage at boot clears when
- * a process exits or kern.maxfiles is raised: seconds, not minutes.  One that
- * lasts a minute, with little but PID 1 running, is not transient, and the
- * console has said why since the first attempt.  60 s also stays well inside
- * the ~2.5 minutes the restart limit takes to give up, so the fallback starts
- * SwitchBoard sooner than the old abort loop reached recovery.  Retries back
- * off from BOOTSTRAP_BASE_DELAY to BOOTSTRAP_ISSUER_RETRY_MAX seconds; each
- * is one system call.
- *
- * No event announces that a descriptor shortage has cleared, so the retries
- * are bounded rather than open-ended.  The wait is a deadline.  Once
- * SwitchBoard runs degraded, Capsule makes BOOTSTRAP_ISSUER_BG_RETRIES more
- * attempts, doubling from BOOTSTRAP_ISSUER_RETRY_MAX to
- * BOOTSTRAP_ISSUER_BG_MAX_DELAY (about ten minutes in all), then stops and
- * says so.  After that, only a SwitchBoard restart, or a reboot, tries again.
+ * Authority issuer outage policy: od.cfg.issuer_* (capsule.conf(5)
+ * authority_issuer; defaults and their reasons in config.h).  Retries back
+ * off from BOOTSTRAP_BASE_DELAY.  No event announces that a descriptor
+ * shortage cleared, so they are bounded: by the wait before the start, and by
+ * a number of attempts while SwitchBoard runs degraded.
  */
-#define	BOOTSTRAP_ISSUER_WAIT		60	/* seconds before a degraded start */
-#define	BOOTSTRAP_ISSUER_RETRY_MAX	10	/* max seconds between retries */
-#define	BOOTSTRAP_ISSUER_BG_RETRIES	6	/* attempts while degraded */
-#define	BOOTSTRAP_ISSUER_BG_MAX_DELAY	320	/* max seconds between them */
 
 /* Well-known fds for switchboard. */
 #define	SWITCHBOARD_CHANNEL_FD	3	/* channel to capsule */
@@ -469,9 +456,9 @@ bootstrap_issuer_transient(int error)
 
 /*
  * Arm the issuer retry timer.  Before the start (background false) it backs
- * off to BOOTSTRAP_ISSUER_RETRY_MAX; while SwitchBoard runs degraded it backs
- * off to BOOTSTRAP_ISSUER_BG_MAX_DELAY and stops after
- * BOOTSTRAP_ISSUER_BG_RETRIES attempts.  Returns -1 if no retry is armed.
+ * off to issuer_retry_max_delay; while SwitchBoard runs degraded it backs off
+ * to issuer_background_max_delay and stops after issuer_background_retries
+ * attempts.  Returns -1 if no retry is armed.
  */
 static int
 bootstrap_issuer_schedule(int kq, bool background)
@@ -482,7 +469,7 @@ bootstrap_issuer_schedule(int kq, bool background)
 	if (bs.issuer_timer_armed)
 		return (0);
 	if (background) {
-		if (bs.issuer_bg_attempts >= BOOTSTRAP_ISSUER_BG_RETRIES) {
+		if (bs.issuer_bg_attempts >= od.cfg.issuer_background_retries) {
 			syslog(LOG_CRIT, "bootstrap: no authority issuer after "
 			    "%u more attempts; stopped retrying: restart "
 			    "switchboard or reboot to restore grants",
@@ -490,11 +477,11 @@ bootstrap_issuer_schedule(int kq, bool background)
 			return (-1);
 		}
 		bs.issuer_bg_attempts++;
-		if (bs.issuer_retry_delay < BOOTSTRAP_ISSUER_RETRY_MAX)
-			bs.issuer_retry_delay = BOOTSTRAP_ISSUER_RETRY_MAX;
+		if (bs.issuer_retry_delay < od.cfg.issuer_retry_max_delay)
+			bs.issuer_retry_delay = od.cfg.issuer_retry_max_delay;
 	}
-	max = background ? BOOTSTRAP_ISSUER_BG_MAX_DELAY :
-	    BOOTSTRAP_ISSUER_RETRY_MAX;
+	max = background ? od.cfg.issuer_background_max_delay :
+	    od.cfg.issuer_retry_max_delay;
 	delay = bs.issuer_retry_delay == 0 ? BOOTSTRAP_BASE_DELAY :
 	    bs.issuer_retry_delay;
 	bs.issuer_retry_delay = delay * 2 > max ? max : delay * 2;
@@ -559,10 +546,10 @@ bootstrap_issuer_ready(int kq)
 		bs.issuer_retry_delay = 0;
 		bs.issuer_bg_attempts = 0;
 		syslog(LOG_WARNING, "bootstrap: protected authority issuer "
-		    "unavailable: %s; waiting up to %ds before starting "
-		    "switchboard", strerror(error), BOOTSTRAP_ISSUER_WAIT);
+		    "unavailable: %s; waiting up to %us before starting "
+		    "switchboard", strerror(error), od.cfg.issuer_wait);
 	}
-	if (now.tv_sec - bs.issuer_outage_start.tv_sec < BOOTSTRAP_ISSUER_WAIT &&
+	if (now.tv_sec - bs.issuer_outage_start.tv_sec < od.cfg.issuer_wait &&
 	    bootstrap_issuer_schedule(kq, false) == 0) {
 		bs.issuer_waiting = true;
 		return (false);

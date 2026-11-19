@@ -104,6 +104,42 @@ ATF_TC_BODY(selected_inputs, tc)
 	config_free(&cfg);
 }
 
+/* authority_issuer: defaults, a full override, and refused values. */
+ATF_TC_WITHOUT_HEAD(authority_issuer_policy);
+ATF_TC_BODY(authority_issuer_policy, tc)
+{
+	struct capsule_config cfg = {0};
+	static const char *const bad[] = {
+	    "authority_issuer { wait = 3601; }",
+	    "authority_issuer { wait = -1; }",
+	    "authority_issuer { wait = \"60\"; }",
+	    "authority_issuer { retry_max_delay = 0; }",
+	    "authority_issuer { background_retries = 101; }",
+	    "authority_issuer { background_max_delay = 0; }",
+	    "authority_issuer { unknown = 1; }",
+	    "authority_issuer = 1;",
+	};
+
+	config_init_defaults(&cfg);
+	ATF_CHECK_EQ(60, cfg.issuer_wait);
+	ATF_CHECK_EQ(10, cfg.issuer_retry_max_delay);
+	ATF_CHECK_EQ(6, cfg.issuer_background_retries);
+	ATF_CHECK_EQ(320, cfg.issuer_background_max_delay);
+	ATF_REQUIRE_EQ(0, load(&cfg, "authority_issuer { wait = 0; "
+	    "retry_max_delay = 5; background_retries = 0; "
+	    "background_max_delay = 30; }"));
+	ATF_CHECK_EQ(0, cfg.issuer_wait);
+	ATF_CHECK_EQ(5, cfg.issuer_retry_max_delay);
+	ATF_CHECK_EQ(0, cfg.issuer_background_retries);
+	ATF_CHECK_EQ(30, cfg.issuer_background_max_delay);
+	for (size_t i = 0; i < nitems(bad); i++) {
+		/* A refused file leaves the accepted policy unchanged. */
+		ATF_CHECK_EQ_MSG(-1, load(&cfg, bad[i]), "%s", bad[i]);
+		ATF_CHECK_EQ(5, cfg.issuer_retry_max_delay);
+	}
+	config_free(&cfg);
+}
+
 ATF_TC_WITHOUT_HEAD(invalid_policy_is_atomic);
 ATF_TC_BODY(invalid_policy_is_atomic, tc)
 {
@@ -600,6 +636,7 @@ ATF_TC_BODY(storage_allocation_failure, tc)
 
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, authority_issuer_policy);
 	ATF_TP_ADD_TC(tp, storage_allocation_failure);
 	ATF_TP_ADD_TC(tp, storage_dynamic_lifetime);
 	ATF_TP_ADD_TC(tp, storage_policy_file);
