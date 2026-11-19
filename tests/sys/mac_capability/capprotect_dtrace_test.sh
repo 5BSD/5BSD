@@ -31,6 +31,7 @@ EPERM=1
 EACCES=13
 EFAULT=14
 EINVAL=22
+ECAPMODE=94
 CP_SF_PTRACE=1
 
 require_dtrace()
@@ -659,7 +660,8 @@ atf_test_case adddof_map_churn_retries cleanup
 adddof_map_churn_retries_head()
 {
 	atf_set "descr" "Unrelated mmap/munmap in the target while root" \
-	    "registers its DOF: the kernel retries and registers"
+	    "registers its DOF: the kernel reads the DOF from the file and" \
+	    "registers"
 	common_head 600
 }
 adddof_map_churn_retries_body()
@@ -724,7 +726,7 @@ atf_test_case adddof_wrong_base cleanup
 adddof_wrong_base_head()
 {
 	atf_set "descr" "DTRACEHIOC_ADDDOF for another process with a load base" \
-	    "that is not the object's (today: accepted as given)"
+	    "that is not the object's is refused with EINVAL"
 	common_head
 }
 adddof_wrong_base_body()
@@ -740,9 +742,10 @@ adddof_wrong_base_body()
 	"$(atf_get_srcdir)/$ADDDOF" "$FXPID" "$dof" \
 	    "$(printf %x $((base + 0x10000)))" >ad.out 2>ad.err ||
 	    atf_fail "adddof helper: $(cat ad.err | tr "\n" " ")"
-	# Today: the caller's base relocates the probe sites.
-	atf_check_equal "ADDDOF 0" "$(cat ad.out)"
-	atf_check_equal 2 "$(fixture_probes)"
+	# The kernel derives the base (the caller's relocated the probe
+	# sites before).  Nothing is registered.
+	atf_check_equal "ADDDOF $EINVAL" "$(cat ad.out)"
+	atf_check_equal 0 "$(fixture_probes)"
 	fixture_stop
 }
 adddof_wrong_base_cleanup()
@@ -793,16 +796,17 @@ atf_test_case adddof_site_outside cleanup
 adddof_site_outside_head()
 {
 	atf_set "descr" "A DOF whose probe site lies outside its object's text" \
-	    "(today: registered)"
+	    "is refused with EFAULT"
 	common_head
 }
 adddof_site_outside_body()
 {
 	require_dtrace
 	fixture_start plain 65534
-	# Today: no site is checked.
-	atf_check_equal 0 "$(copy_registration 1)"
-	atf_check_equal 2 "$(fixture_probes)"
+	# Every site must lie in an executable mapping of the object (no site
+	# was checked before).  Nothing is registered.
+	atf_check_equal $EFAULT "$(copy_registration 1)"
+	atf_check_equal 0 "$(fixture_probes)"
 	fixture_stop
 }
 adddof_site_outside_cleanup()
@@ -815,7 +819,7 @@ atf_test_case adddof_capmode cleanup
 adddof_capmode_head()
 {
 	atf_set "descr" "DTRACEHIOC_ADDDOF for another process from capability" \
-	    "mode (today: accepted)"
+	    "mode is refused with ECAPMODE"
 	common_head
 }
 adddof_capmode_body()
@@ -831,8 +835,9 @@ adddof_capmode_body()
 	"$(atf_get_srcdir)/$ADDDOF" capmode "$FXPID" "$dof" "$base" \
 	    >ad.out 2>ad.err ||
 	    atf_fail "adddof helper: $(cat ad.err | tr "\n" " ")"
-	# Today: capability mode is not checked.
-	atf_check_equal "ADDDOF 0" "$(cat ad.out)"
+	# It was accepted before.
+	atf_check_equal "ADDDOF $ECAPMODE" "$(cat ad.out)"
+	atf_check_equal 0 "$(fixture_probes)"
 	fixture_stop
 }
 adddof_capmode_cleanup()
