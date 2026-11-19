@@ -10,6 +10,7 @@
  */
 
 #include <sys/param.h>
+#include <sys/event.h>
 #include <sys/module.h>
 #include <sys/resource.h>
 #include <sys/sysctl.h>
@@ -1232,22 +1233,30 @@ ATF_TC_BODY(read_deadline0_exit_sibling, tc)
  * with SINGLE_NO_EXIT, which sets no P_SINGLE_EXIT, and no SIGKILL is
  * delivered after P2_WEXIT; A's wait must still see it within a slice.
  */
+/*
+ * Reap pid if it exits within ms: a kqueue EVFILT_PROC NOTE_EXIT wait, no
+ * polling.
+ */
 static bool
 reaped_within(pid_t pid, int *status, int ms)
 {
-	int64_t end;
-	pid_t rv;
+	struct kevent kev;
+	struct timespec ts;
+	int kq, n;
 
-	end = dqt_now_ms() + ms;
-	for (;;) {
-		rv = waitpid(pid, status, WNOHANG);
-		ATF_REQUIRE_MSG(rv != -1, "waitpid: %s", strerror(errno));
-		if (rv == pid)
-			return (true);
-		if (dqt_now_ms() >= end)
-			return (false);
-		dqt_msleep(10);
-	}
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	EV_SET(&kev, pid, EVFILT_PROC, EV_ADD | EV_ONESHOT, NOTE_EXIT, 0,
+	    NULL);
+	ts.tv_sec = ms / 1000;
+	ts.tv_nsec = (long)(ms % 1000) * 1000000;
+	n = kevent(kq, &kev, 1, &kev, 1, &ts);
+	ATF_REQUIRE_MSG(n != -1, "kevent: %s", strerror(errno));
+	(void)close(kq);
+	if (n == 0)
+		return (false);
+	ATF_REQUIRE_EQ(pid, waitpid(pid, status, 0));
+	return (true);
 }
 
 ATF_TC(read_deadline0_abort_sibling);
