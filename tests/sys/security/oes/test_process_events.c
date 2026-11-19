@@ -70,6 +70,29 @@ read_events(int fd, pid_t child_pid, int *fork_seen, int *exec_seen,
 	}
 }
 
+/* In the actor: fork a child that execs true(1); report it, reap it. */
+static int
+fork_true(void *arg)
+{
+	int report = *(int *)arg, status;
+	pid_t pid;
+
+	pid = fork();
+	if (pid < 0)
+		return (126);
+	if (pid == 0) {
+		execl("/usr/bin/true", "true", (char *)NULL);
+		_exit(127);
+	}
+	if (write(report, &pid, sizeof(pid)) != sizeof(pid))
+		return (125);
+	if (waitpid(pid, &status, 0) != pid)
+		return (124);
+	if (WIFSIGNALED(status))
+		return (123);
+	return (WEXITSTATUS(status));
+}
+
 int
 main(void)
 {
@@ -81,7 +104,8 @@ main(void)
 		OES_EVENT_NOTIFY_EXEC,
 		OES_EVENT_NOTIFY_EXIT,
 	};
-	pid_t pid;
+	pid_t pid, actor;
+	int pids[2];
 	int fork_seen = 0;
 	int exec_seen = 0;
 	int exit_seen = 0;
@@ -114,30 +138,29 @@ main(void)
 	}
 
 	/*
-	 * Unmute ourselves so we receive NOTIFY_FORK events.
-	 * By default (security.oes.default_self_mute=1), the client process
-	 * is self-muted. FORK events have em_process set to the parent (us),
-	 * so they would be filtered out unless we unmute.
-	 *
-	 * Use UNMUTE_ALL_PROCESSES which clears the self-mute flag.
+	 * NOTIFY_FORK names the forking process, and the test opened the
+	 * client, so its own forks never reach it (oes(4), "A client's own
+	 * processes").  An actor child forks the child that execs true(1),
+	 * reports its pid over a pipe and reaps it.
 	 */
-	if (ioctl(fd, OES_IOC_UNMUTE_ALL_PROCESSES, NULL) < 0) {
-		perror("OES_IOC_UNMUTE_ALL_PROCESSES");
+	if (pipe(pids) != 0) {
+		perror("pipe");
 		close(fd);
 		return (1);
 	}
-
-	pid = fork();
-	if (pid < 0) {
-		perror("fork");
+	actor = test_in_child(fork_true, &pids[1], &status);
+	close(pids[1]);
+	if (read(pids[0], &pid, sizeof(pid)) != sizeof(pid)) {
+		fprintf(stderr, "actor did not report its child\n");
+		close(pids[0]);
 		close(fd);
 		return (1);
 	}
-
-	if (pid == 0) {
-		/* O_CLOEXEC will close fd during exec */
-		execl("/usr/bin/true", "true", (char *)NULL);
-		_exit(127);
+	close(pids[0]);
+	if (actor < 0 || !WIFEXITED(status)) {
+		fprintf(stderr, "actor failed\n");
+		close(fd);
+		return (1);
 	}
 
 	clock_gettime(CLOCK_MONOTONIC, &start);
@@ -166,15 +189,13 @@ main(void)
 			break;
 	}
 
-	(void)waitpid(pid, &status, 0);
+	/* The actor's exit status is its child's. */
 	if (WIFEXITED(status)) {
 		int code = WEXITSTATUS(status);
 		if (code == 127)
 			fprintf(stderr, "child exec failed (exit 127)\n");
 		else if (code != 0)
 			fprintf(stderr, "child exited with status %d\n", code);
-	} else if (WIFSIGNALED(status)) {
-		fprintf(stderr, "child killed by signal %d\n", WTERMSIG(status));
 	}
 	close(fd);
 
