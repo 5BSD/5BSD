@@ -666,10 +666,10 @@ ATF_TC_BODY(p11_mmap_read, tc)
  * P12's stall capture, for diagnosis only: with the configuration
  * variable dq_p12_stall_ms set, a watchdog thread waits for each spawn to
  * complete, and when one has not completed within that many milliseconds
- * it records every thread's state (ps) and kernel stack (procstat -kk
- * -a, in the background: it waits out an exec held in its commit) once
- * per stalled spawn, into dq_p12_capture_dir (default the work
- * directory).  Unset, there is no watchdog.
+ * it writes every thread's state (ps) and kernel stack (procstat -kk
+ * -a, in the background: it waits out an exec held in its commit) to
+ * standard error, which kyua keeps with the result, once per stalled
+ * spawn.  Unset, there is no watchdog.
  */
 struct p12_watch {
 	pthread_mutex_t	 mtx;
@@ -677,7 +677,6 @@ struct p12_watch {
 	long		 done;		/* spawns completed */
 	bool		 stop;
 	long		 stall_ms;
-	const char	*dir;
 	int		 captures;
 };
 
@@ -686,7 +685,7 @@ p12_watchdog(void *arg)
 {
 	struct p12_watch *w = arg;
 	struct timespec dl;
-	char cmd[PATH_MAX * 2 + 256];
+	char cmd[512];
 	long seen, captured;
 	int rc;
 
@@ -709,14 +708,12 @@ p12_watchdog(void *arg)
 		captured = seen;
 		w->captures++;
 		pthread_mutex_unlock(&w->mtx);
-		snprintf(cmd, sizeof(cmd), "f=%s/p12-stall.%d.%ld; "
-		    "{ date -u; sysctl vm.loadavg kern.cp_times; "
-		    "ps -axHwwo pid,ppid,lwp,state,wchan,mwchan,time,command; "
-		    "} > $f 2>&1; (procstat -kk -a >> $f 2>&1 &)",
-		    w->dir, getpid(), seen);
+		fprintf(stderr, "p12: spawn %ld stalled %ld ms\n", seen,
+		    w->stall_ms);
+		snprintf(cmd, sizeof(cmd), "{ date -u; sysctl vm.loadavg "
+		    "kern.cp_times; ps -axHwwo pid,ppid,lwp,state,wchan,"
+		    "mwchan,time,command; } 1>&2; (procstat -kk -a 1>&2 &)");
 		(void)system(cmd);
-		fprintf(stderr, "p12: spawn %ld stalled %ld ms: %s/p12-stall."
-		    "%d.%ld\n", seen, w->stall_ms, w->dir, getpid(), seen);
 		pthread_mutex_lock(&w->mtx);
 	}
 	pthread_mutex_unlock(&w->mtx);
@@ -752,8 +749,6 @@ ATF_TC_BODY(p12_thousand_true, tc)
 		w.stall_ms = strtol(atf_tc_get_config_var(tc,
 		    "dq_p12_stall_ms"), NULL, 10);
 		ATF_REQUIRE(w.stall_ms > 0);
-		w.dir = atf_tc_has_config_var(tc, "dq_p12_capture_dir") ?
-		    atf_tc_get_config_var(tc, "dq_p12_capture_dir") : ".";
 		ATF_REQUIRE_EQ(0, pthread_mutex_init(&w.mtx, NULL));
 		ATF_REQUIRE_EQ(0, pthread_condattr_init(&ca));
 		ATF_REQUIRE_EQ(0, pthread_condattr_setclock(&ca,
