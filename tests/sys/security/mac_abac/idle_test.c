@@ -344,6 +344,12 @@ IDLE_TC(a12_write_rule_leaves_reads,
  * the framework is not entered at all unless mac_abac has counted the flag.
  */
 #define	NREADERS	4
+/*
+ * Reads checked after the load: every reader runs its loop many times over
+ * (a hundred reads each), so a window that let any read through after the
+ * load returned would show in some reader.
+ */
+#define	A8_CHECKS	(NREADERS * 100)
 
 enum load_kind { LOAD_ADD, LOAD_REPLACE, LOAD_SET_ENABLE };
 
@@ -353,9 +359,15 @@ struct a8_state {
 	atomic_int	bad;
 	atomic_int	checked;
 	int		fds[NREADERS][2];
+	pthread_mutex_t	mtx;		/* Protects started and wakes cv */
+	pthread_cond_t	cv;
+	int		started;	/* Readers that have read once */
 };
 
-static struct a8_state a8;
+static struct a8_state a8 = {
+	.mtx = PTHREAD_MUTEX_INITIALIZER,
+	.cv = PTHREAD_COND_INITIALIZER,
+};
 
 static void *
 a8_reader(void *arg)
@@ -363,14 +375,28 @@ a8_reader(void *arg)
 	int i = (int)(intptr_t)arg;
 	char c;
 	int seen, r;
+	bool first;
 
+	first = true;
 	while (!atomic_load(&a8.stop)) {
 		seen = atomic_load_explicit(&a8.gen, memory_order_acquire);
 		if (write(a8.fds[i][1], "x", 1) != 1)
 			break;
 		r = read(a8.fds[i][0], &c, 1) == 1 ? 0 : errno;
+		if (first) {
+			/* Running before the load: tell the main thread. */
+			first = false;
+			pthread_mutex_lock(&a8.mtx);
+			a8.started++;
+			pthread_cond_broadcast(&a8.cv);
+			pthread_mutex_unlock(&a8.mtx);
+		}
 		if (seen == 1) {
-			atomic_fetch_add(&a8.checked, 1);
+			if (atomic_fetch_add(&a8.checked, 1) + 1 == A8_CHECKS) {
+				pthread_mutex_lock(&a8.mtx);
+				pthread_cond_broadcast(&a8.cv);
+				pthread_mutex_unlock(&a8.mtx);
+			}
 			if (r != EACCES)
 				atomic_fetch_add(&a8.bad, 1);
 		}
@@ -411,7 +437,10 @@ a8_run(enum load_kind kind)
 		for (i = 0; i < NREADERS; i++)
 			pthread_create(&t[i], NULL, a8_reader,
 			    (void *)(intptr_t)i);
-		usleep(200000);
+		pthread_mutex_lock(&a8.mtx);
+		while (a8.started < NREADERS)
+			pthread_cond_wait(&a8.cv, &a8.mtx);
+		pthread_mutex_unlock(&a8.mtx);
 		switch (kind) {
 		case LOAD_ADD:
 			(void)idle_add_rule_full(ABAC_ACTION_DENY,
@@ -428,8 +457,10 @@ a8_run(enum load_kind kind)
 			break;
 		}
 		atomic_store_explicit(&a8.gen, 1, memory_order_release);
-		while (atomic_load(&a8.checked) < 400)
-			usleep(1000);
+		pthread_mutex_lock(&a8.mtx);
+		while (atomic_load(&a8.checked) < A8_CHECKS)
+			pthread_cond_wait(&a8.cv, &a8.mtx);
+		pthread_mutex_unlock(&a8.mtx);
 		atomic_store(&a8.stop, 1);
 		for (i = 0; i < NREADERS; i++)
 			(void)close(a8.fds[i][1]);
