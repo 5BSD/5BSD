@@ -1079,6 +1079,18 @@ restart:
 	}
 	VM_OBJECT_WUNLOCK(obj);
 	/*
+	 * This pass is the last.  Nothing enqueues the task any more (no I/O
+	 * is pending, o_closing refuses new I/O, o_vmdropped new users, and
+	 * the object left q_roomq when this pass began), but the page
+	 * deadline an earlier park armed, or a kick queued while this pass
+	 * ran, would run it again after the object is gone: an enqueue with
+	 * no delay does not stop an armed callout (taskqueue_enqueue_timeout).
+	 */
+	DQO_LOCK(o);
+	o->o_destroying = false;
+	DQO_UNLOCK(o);
+	(void)taskqueue_cancel_timeout(dq_taskq, &o->o_destroy, NULL);
+	/*
 	 * The bounded sleeps left (dq_var.h): the terminate's pip wait when
 	 * this was the last VM reference, knlist_clear in the retire.
 	 */
