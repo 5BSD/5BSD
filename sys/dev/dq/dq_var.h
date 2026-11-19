@@ -429,12 +429,24 @@ struct dq_object {
 	u_long			 o_writemappings; /* atomic: bytes mapped
 						   shared and writable */
 	struct task		 o_rele_task;	/* pgo_dealloc's release */
-	struct timeout_task	 o_destroy;	/* deferred close (dq_taskq) */
+	struct task		 o_destroy;	/* deferred close (dq_taskq) */
+	struct callout		 o_destroy_co;	/* its page deadline (o_mtx) */
 	struct dq_event_k	*o_closeev;	/* its CLOSE, allocated ahead */
 	sbintime_t		 o_destroy_deadline; /* the destroy task's */
-	bool			 o_destroying;	/* o_mtx: o_destroy is set up;
-						   the events it waits for
-						   enqueue it */
+	/*
+	 * o_mtx: the destroy task's state.  dq_taskq has two threads and
+	 * runs a task queued while it runs on the other one, so the kicks
+	 * (dq_object_destroy_kick_locked) never queue it while it runs:
+	 * they mark it to run again when the pass ends.
+	 */
+	enum {
+		DQ_DESTROY_NONE = 0,	/* not closed yet */
+		DQ_DESTROY_IDLE,	/* waiting for an event */
+		DQ_DESTROY_QUEUED,
+		DQ_DESTROY_RUNNING,
+		DQ_DESTROY_AGAIN,	/* running, kicked meanwhile */
+		DQ_DESTROY_DONE,	/* the last pass ran */
+	}			 o_destroy_state;
 	/*
 	 * Room (q_mtx): an async post refused AGAIN, or the destroy task
 	 * short of memory, records q_roomgen in o_roomgen; the next room
@@ -712,6 +724,7 @@ void	dq_async_timeout(void *arg);
 void	dq_async_queue_init(struct dq_queue *q);
 bool	dq_async_wait(struct dq_object *o, sbintime_t deadline, bool all);
 void	dq_queue_room_locked(struct dq_queue *q);
+void	dq_object_destroy_kick_locked(struct dq_object *o);
 void	dq_object_cancel_async(struct dq_object *o);
 bool	dq_object_vm_hold(struct dq_object *o, struct vm_object **objp);
 void	dq_object_vm_drop(struct dq_object *o);

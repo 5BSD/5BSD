@@ -85,8 +85,54 @@ dq_queue_room_locked(struct dq_queue *q)
 	while ((o = TAILQ_FIRST(&q->q_roomq)) != NULL) {
 		TAILQ_REMOVE(&q->q_roomq, o, o_roomlink);
 		o->o_onroomq = false;
-		taskqueue_enqueue_timeout(dq_taskq, &o->o_destroy, 0);
+		DQO_LOCK(o);
+		dq_object_destroy_kick_locked(o);
+		DQO_UNLOCK(o);
 	}
+}
+
+/*
+ * An event the destroy task waits for (o_mtx held): queue it, or, while
+ * a pass runs, have that pass run again.
+ */
+void
+dq_object_destroy_kick_locked(struct dq_object *o)
+{
+
+	DQO_LOCK_ASSERT(o);
+	switch (o->o_destroy_state) {
+	case DQ_DESTROY_IDLE:
+		o->o_destroy_state = DQ_DESTROY_QUEUED;
+		taskqueue_enqueue(dq_taskq, &o->o_destroy);
+		break;
+	case DQ_DESTROY_RUNNING:
+		o->o_destroy_state = DQ_DESTROY_AGAIN;
+		break;
+	default:
+		break;
+	}
+}
+
+/* The page deadline (o_mtx held, callout_init_mtx). */
+static void
+dq_object_destroy_deadline(void *arg)
+{
+
+	dq_object_destroy_kick_locked(arg);
+}
+
+/* A pass that did not finish (no lock held): idle, or run again. */
+static void
+dq_object_destroy_pass_end(struct dq_object *o)
+{
+
+	DQO_LOCK(o);
+	if (o->o_destroy_state == DQ_DESTROY_AGAIN) {
+		o->o_destroy_state = DQ_DESTROY_QUEUED;
+		taskqueue_enqueue(dq_taskq, &o->o_destroy);
+	} else
+		o->o_destroy_state = DQ_DESTROY_IDLE;
+	DQO_UNLOCK(o);
 }
 
 /* Record that o's async post found no room (q_mtx held). */
@@ -489,8 +535,8 @@ dq_async_complete(struct dq_async *da)
 	o->o_async_done++;
 	cv_broadcast(&o->o_async_cv);
 	/* The destroy task waits for the last of them. */
-	if (o->o_async == 0 && o->o_destroying && DQ_WAKE(DQ_WAKE_DESTROY))
-		taskqueue_enqueue_timeout(dq_taskq, &o->o_destroy, 0);
+	if (o->o_async == 0 && DQ_WAKE(DQ_WAKE_DESTROY))
+		dq_object_destroy_kick_locked(o);
 	DQO_UNLOCK(o);
 	dq_queue_room_locked(q);
 	DQ_UNLOCK(q);
@@ -625,8 +671,8 @@ dq_object_vm_drop(struct dq_object *o)
 	KASSERT(o->o_vmusers > 0, ("dq: vm users"));
 	if (--o->o_vmusers == 0) {
 		wakeup(&o->o_vmusers);
-		if (o->o_destroying && DQ_WAKE(DQ_WAKE_DESTROY))
-			taskqueue_enqueue_timeout(dq_taskq, &o->o_destroy, 0);
+		if (DQ_WAKE(DQ_WAKE_DESTROY))
+			dq_object_destroy_kick_locked(o);
 	}
 	DQO_UNLOCK(o);
 }
@@ -877,13 +923,15 @@ out:
  * asked for, follows the write-backs) and the file's reference released.
  * A pass never sleeps for dq's own work: the completions it waits for run
  * on the same task queue (two threads).  When the object has not settled
- * the pass returns, and the event it waits for enqueues it again, with no
+ * the pass returns, and the event it waits for kicks it again, with no
  * polling (owner, 2026-11-19): the completion that drops o_async to 0 or
- * the release that drops o_vmusers to 0 (o_destroying), or a room event
- * for a write-back refused AGAIN, a busy page skipped, or a CLOSE record
- * short of memory (q_roomq, dq_queue_room_locked).  The page deadline, the
- * caller's, is armed as the one timeout: then the task settles with what
- * is left.
+ * the release that drops o_vmusers to 0, or a room event for a write-back
+ * refused AGAIN, a busy page skipped, or a CLOSE record short of memory
+ * (q_roomq, dq_queue_room_locked).  The page deadline, the caller's, is
+ * armed as the one timeout (o_destroy_co): then the task settles with
+ * what is left.  A kick never queues the task while a pass runs
+ * (o_destroy_state): dq_taskq's second thread would run it at the same
+ * time.
  */
 
 /*
@@ -958,20 +1006,23 @@ dq_object_destroy_park(struct dq_object *o, uint64_t roomgen)
 
 	q = o->o_queue;
 	DQ_LOCK(q);
+	DQO_LOCK(o);
 	if (q->q_roomgen != roomgen || (q->q_flags & DQ_Q_CLOSING) != 0) {
-		DQ_UNLOCK(q);
-		taskqueue_enqueue_timeout(dq_taskq, &o->o_destroy, 0);
-		return;
-	}
-	if (!o->o_onroomq) {
+		/* Room came meanwhile: run again at once. */
+		o->o_destroy_state = DQ_DESTROY_AGAIN;
+	} else if (!o->o_onroomq) {
 		TAILQ_INSERT_TAIL(&q->q_roomq, o, o_roomlink);
 		o->o_onroomq = true;
 	}
-	DQ_UNLOCK(q);
 	now = sbinuptime();
-	(void)taskqueue_enqueue_timeout_sbt(dq_taskq, &o->o_destroy,
-	    o->o_destroy_deadline > now ? o->o_destroy_deadline - now : 0, 0,
-	    0);
+	if (o->o_destroy_deadline > now)
+		callout_reset_sbt(&o->o_destroy_co, o->o_destroy_deadline, 0,
+		    dq_object_destroy_deadline, o, C_ABSOLUTE);
+	else
+		o->o_destroy_state = DQ_DESTROY_AGAIN;
+	DQO_UNLOCK(o);
+	DQ_UNLOCK(q);
+	dq_object_destroy_pass_end(o);
 }
 
 static void
@@ -989,6 +1040,11 @@ dq_object_destroy_task(void *arg, int pending __unused)
 	o = arg;
 	q = o->o_queue;
 	obj = o->o_object;
+	DQO_LOCK(o);
+	KASSERT(o->o_destroy_state == DQ_DESTROY_QUEUED,
+	    ("dq: destroy task state %d", o->o_destroy_state));
+	o->o_destroy_state = DQ_DESTROY_RUNNING;
+	DQO_UNLOCK(o);
 	DQ_LOCK(q);
 	if (o->o_onroomq) {
 		TAILQ_REMOVE(&q->q_roomq, o, o_roomlink);
@@ -1009,9 +1065,10 @@ dq_object_destroy_task(void *arg, int pending __unused)
 		again = dq_pager_flush_nowait(o, obj, &skipped);
 	DQO_LOCK(o);
 	if (o->o_async != 0 || o->o_vmusers != 0) {
-		/* The completion or release that ends them enqueues us. */
+		/* The completion or release that ends them kicks us. */
 		DQO_UNLOCK(o);
 		VM_OBJECT_WUNLOCK(obj);
+		dq_object_destroy_pass_end(o);
 		return;
 	}
 	if (flush && (again || skipped)) {
@@ -1079,17 +1136,14 @@ restart:
 	}
 	VM_OBJECT_WUNLOCK(obj);
 	/*
-	 * This pass is the last.  Nothing enqueues the task any more (no I/O
-	 * is pending, o_closing refuses new I/O, o_vmdropped new users, and
-	 * the object left q_roomq when this pass began), but the page
-	 * deadline an earlier park armed, or a kick queued while this pass
-	 * ran, would run it again after the object is gone: an enqueue with
-	 * no delay does not stop an armed callout (taskqueue_enqueue_timeout).
+	 * This pass is the last: no kick may queue the task again (the state
+	 * is DONE), and the page deadline an earlier park armed is stopped
+	 * under its lock, so it cannot fire after the object is gone.
 	 */
 	DQO_LOCK(o);
-	o->o_destroying = false;
+	o->o_destroy_state = DQ_DESTROY_DONE;
+	callout_stop(&o->o_destroy_co);	/* o_mtx: it cannot run after */
 	DQO_UNLOCK(o);
-	(void)taskqueue_cancel_timeout(dq_taskq, &o->o_destroy, NULL);
 	/*
 	 * The bounded sleeps left (dq_var.h): the terminate's pip wait when
 	 * this was the last VM reference, knlist_clear in the retire.
@@ -1119,10 +1173,10 @@ dq_object_close_deferred(struct dq_object *o)
 	DQO_UNLOCK(o);
 	VM_OBJECT_WUNLOCK(obj);
 	o->o_destroy_deadline = 0;
-	TIMEOUT_TASK_INIT(dq_taskq, &o->o_destroy, 0, dq_object_destroy_task,
-	    o);
+	TASK_INIT(&o->o_destroy, 0, dq_object_destroy_task, o);
+	callout_init_mtx(&o->o_destroy_co, &o->o_mtx, 0);
 	DQO_LOCK(o);
-	o->o_destroying = true;		/* its events may enqueue it now */
+	o->o_destroy_state = DQ_DESTROY_QUEUED;	/* events kick it now */
+	taskqueue_enqueue(dq_taskq, &o->o_destroy);
 	DQO_UNLOCK(o);
-	taskqueue_enqueue_timeout(dq_taskq, &o->o_destroy, 0);
 }
