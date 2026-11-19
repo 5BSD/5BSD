@@ -432,6 +432,18 @@ struct dq_object {
 	struct timeout_task	 o_destroy;	/* deferred close (dq_taskq) */
 	struct dq_event_k	*o_closeev;	/* its CLOSE, allocated ahead */
 	sbintime_t		 o_destroy_deadline; /* the destroy task's */
+	bool			 o_destroying;	/* o_mtx: o_destroy is set up;
+						   the events it waits for
+						   enqueue it */
+	/*
+	 * Room (q_mtx): an async post refused AGAIN, or the destroy task
+	 * short of memory, records q_roomgen in o_roomgen; the next room
+	 * event (dq_queue_room_locked) wakes msync's wait and enqueues a
+	 * destroy task parked on q_roomq.
+	 */
+	uint64_t		 o_roomgen;
+	TAILQ_ENTRY(dq_object)	 o_roomlink;
+	bool			 o_onroomq;
 };
 #define	DQ_IDHASH		64
 
@@ -478,6 +490,9 @@ struct dq_queue {
 	LIST_ENTRY(dq_queue)	 q_all;		/* dq_queues, under dq_mtx */
 	/* Async page operations (B1, B3), under q_mtx. */
 	TAILQ_HEAD(, dq_async)	 q_async;	/* posted, oldest first */
+	uint64_t		 q_roomgen;	/* room events (q_mtx) */
+	TAILQ_HEAD(, dq_object)	 q_roomq;	/* destroy tasks waiting for
+						   room (q_mtx) */
 	uint64_t		 q_async_bytes;
 	u_int			 q_nasync;
 	struct callout		 q_callout;	/* earliest da_deadline; q_mtx */
@@ -696,6 +711,7 @@ void	dq_async_replied_locked(struct dq_queue *q, struct dq_async *da);
 void	dq_async_timeout(void *arg);
 void	dq_async_queue_init(struct dq_queue *q);
 bool	dq_async_wait(struct dq_object *o, sbintime_t deadline, bool all);
+void	dq_queue_room_locked(struct dq_queue *q);
 void	dq_object_cancel_async(struct dq_object *o);
 bool	dq_object_vm_hold(struct dq_object *o, struct vm_object **objp);
 void	dq_object_vm_drop(struct dq_object *o);
@@ -715,6 +731,27 @@ void	dq_pager_unregister(void);
 void	dq_faultinj_swap_take_pause(void);
 void	dq_faultinj_postop_apply_pause(void);
 bool	dq_faultinj_postop_refuse(void);
+bool	dq_faultinj_wake(u_int site);
+#endif
+/*
+ * The wakeups a waiter depends on (dq-served-wait-model.md, section 3).
+ * On a test kernel debug.dq.drop_wakeup can drop each, so a test proves
+ * its waiter has no other way out.
+ */
+#define	DQ_WAKE_ANSWER		0x0001	/* a reply's cv_signal */
+#define	DQ_WAKE_FAIL		0x0002	/* a failed event's cv_broadcast */
+#define	DQ_WAKE_INFLIGHT	0x0004	/* an object's in-flight slot */
+#define	DQ_WAKE_REQUESTER	0x0008	/* a requester's in-flight slot */
+#define	DQ_WAKE_SLOT		0x0010	/* a slot of the queue freed */
+#define	DQ_WAKE_DIE_SPACE	0x0020	/* the queue's death, slot waiters */
+#define	DQ_WAKE_REVOKE_SPACE	0x0040	/* a revoke, slot waiters */
+#define	DQ_WAKE_REVOKE_QUOTA	0x0080	/* a revoke, quota waiters */
+#define	DQ_WAKE_ASYNC_ROOM	0x0100	/* room for an async post */
+#define	DQ_WAKE_DESTROY		0x0200	/* a closing object's settle */
+#ifdef DQ_FAULT_INJECTION
+#define	DQ_WAKE(site)		dq_faultinj_wake(site)
+#else
+#define	DQ_WAKE(site)		true
 #endif
 int	dq_object_vm_create(struct dq_object *o);
 boolean_t dq_pager_flush(struct dq_object *o, struct vm_object *obj,

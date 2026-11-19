@@ -1321,6 +1321,77 @@ ATF_TC_BODY(read_deadline0_abort_sibling, tc)
 }
 
 /*
+ * Design 2.4 (a) (dq-served-wait-model.md): thread A waits in a read of an
+ * object with no deadline, which the controller never answers; thread B
+ * calls execve(2).  exec single-threads the process to the user boundary
+ * (SINGLE_BOUNDARY) and aborts each catching sleep it finds, so A's wait
+ * gives up its operation (INTERRUPT to the controller) and the exec goes
+ * on, instead of waiting for an answer that never comes.
+ */
+ATF_TC(read_deadline0_exec_sibling);
+ATF_TC_HEAD(read_deadline0_exec_sibling, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a sibling's execve ends a read that "
+	    "waits with no deadline; the controller gets the INTERRUPT and "
+	    "the new image runs (no polling, design 2.4 (a))");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(read_deadline0_exec_sibling, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct dq_policy pol;
+	pthread_t thr;
+	int64_t start, ms;
+	int fd, go[2], oracle, status;
+	bool reaped;
+	pid_t pid;
+	char ch;
+
+	dqt_fill(data, sizeof(data), 28);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	dq_policy_default(&pol);
+	pol.dp_deadline_ms = 0;
+	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
+	dqt_hold(&c, true);
+	ATF_REQUIRE_EQ(0, pipe(go));
+	fd = o->fd;
+	pid = fork();
+	ATF_REQUIRE(pid != -1);
+	if (pid == 0) {
+		if (pthread_create(&thr, NULL, read_forever, &fd) != 0)
+			_exit(3);
+		if (read(go[0], &ch, 1) != 1)
+			_exit(4);
+		execl("/usr/bin/true", "true", (char *)NULL);
+		_exit(5);
+	}
+	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	start = dqt_now_ms();
+	ATF_REQUIRE_EQ(1, write(go[1], "g", 1));
+	reaped = reaped_within(pid, &status, DQT_WAIT_MS);
+	ms = dqt_now_ms() - start;
+	if (!reaped) {
+		/* Release the read, so the exec can go on. */
+		(void)dq_reply(c.q, dqt_held_id(&c, 0), 0, data, 16);
+		ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+	}
+	ATF_CHECK_MSG(reaped, "the exec still waited %jd ms after it began, "
+	    "for the sibling's read", (intmax_t)ms);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "status %#x", status);
+	ATF_CHECK(dqt_wait_interrupts(&c, 1, DQT_WAIT_MS));
+	(void)close(go[0]);
+	(void)close(go[1]);
+	dqt_hold(&c, false);
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
+/*
  * D192 (B1): a signal storm during an uninterruptible wait does not make
  * it spin: the waiter sleeps its slices whatever is pending.
  */
@@ -1497,6 +1568,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, same_identity_atime_diverges);
 	ATF_TP_ADD_TC(tp, read_deadline0_exit_sibling);
 	ATF_TP_ADD_TC(tp, read_deadline0_abort_sibling);
+	ATF_TP_ADD_TC(tp, read_deadline0_exec_sibling);
 	ATF_TP_ADD_TC(tp, signal_storm_no_spin);
 	ATF_TP_ADD_TC(tp, deadline_unintr);
 	return (atf_no_error());

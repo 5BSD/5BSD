@@ -83,6 +83,24 @@ SYSCTL_UINT(_debug_dq, OID_AUTO, refuse_postop_reply, CTLFLAG_RW,
     "Test kernel only: the next N replies that carry a post-operation "
     "block are refused with EINVAL");
 
+/*
+ * Wakeups a test drops to prove that its waiter has no other way out
+ * (DQ_WAKE_* of dq_var.h, a mask): with the bit set, that wakeup is not
+ * issued until the bit is cleared.  The dq waits are event-driven (no
+ * polling), so a dropped wakeup leaves its waiter asleep.
+ */
+static u_int dq_faultinj_drop_wakeups;
+SYSCTL_UINT(_debug_dq, OID_AUTO, drop_wakeup, CTLFLAG_RW,
+    &dq_faultinj_drop_wakeups, 0,
+    "Test kernel only: a mask of DQ_WAKE_* wakeups not issued");
+
+bool
+dq_faultinj_wake(u_int site)
+{
+
+	return ((atomic_load_int(&dq_faultinj_drop_wakeups) & site) == 0);
+}
+
 static bool
 dq_faultinj_take(u_int *counter)
 {

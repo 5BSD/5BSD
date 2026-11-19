@@ -247,7 +247,8 @@ dq_queue_die(struct dq_queue *q)
 	}
 	wakeup(&q->q_pending);
 	wakeup(&q->q_requesters);
-	wakeup(&q->q_space);
+	if (DQ_WAKE(DQ_WAKE_DIE_SPACE))
+		wakeup(&q->q_space);
 	selwakeup(&q->q_sel);
 	KNOTE_LOCKED(&q->q_sel.si_note, 0);
 	dq_observer_unlink_all(q);
@@ -563,7 +564,8 @@ dq_event_fail_locked(struct dq_queue *q, struct dq_event_k *ev, int error,
 	ev->ev_linked = false;
 	ev->ev_state = DQ_EV_FAILED;
 	ev->ev_errno = error;
-	cv_broadcast(&ev->ev_cv);
+	if (DQ_WAKE(DQ_WAKE_FAIL))
+		cv_broadcast(&ev->ev_cv);
 	TAILQ_INSERT_TAIL(freed, ev, ev_link);
 }
 
@@ -590,14 +592,17 @@ dq_object_revoke_locked(struct dq_queue *q, struct dq_object *o, int why,
 		if (ev->ev_object == o)
 			dq_event_fail_locked(q, ev, EIO, freed);
 	}
-	wakeup(&o->o_inflight);
-	wakeup(&q->q_requesters);
+	if (DQ_WAKE(DQ_WAKE_REVOKE_QUOTA)) {
+		wakeup(&o->o_inflight);
+		wakeup(&q->q_requesters);
+	}
 	/*
 	 * A post of this object waiting for a slot of a full queue fails
 	 * now: one that catches signals with no deadline sleeps without a
 	 * slice, and no slot need come.  The others look again and sleep on.
 	 */
-	wakeup(&q->q_space);
+	if (DQ_WAKE(DQ_WAKE_REVOKE_SPACE))
+		wakeup(&q->q_space);
 	q->q_stats.ds2_objects_revoked++;
 	SDT_PROBE3(dq, , , revoke, q, o, why);
 }
@@ -1013,7 +1018,8 @@ dq_requester_release_locked(struct dq_queue *q, uint64_t key)
 		LIST_REMOVE(rq, rq_link);
 		free(rq, M_DQ);
 	}
-	wakeup(&q->q_requesters);
+	if (DQ_WAKE(DQ_WAKE_REQUESTER))
+		wakeup(&q->q_requesters);
 }
 
 static sbintime_t
@@ -1203,6 +1209,8 @@ dq_queue_slots_freed(struct dq_queue *q, u_int n)
 {
 
 	DQ_LOCK_ASSERT(q);
+	if (!DQ_WAKE(DQ_WAKE_SLOT))
+		return;
 	while (n-- > 0)
 		wakeup_one(&q->q_space);
 }
@@ -1482,7 +1490,8 @@ dq_event_post_wait_agen(struct dq_object *o, uint32_t op, const void *body,
 		o->o_locks--;
 	} else {
 		o->o_inflight--;
-		wakeup(&o->o_inflight);
+		if (DQ_WAKE(DQ_WAKE_INFLIGHT))
+			wakeup(&o->o_inflight);
 		dq_requester_release_locked(q, ev->ev_requester);
 	}
 out_locked:
@@ -2494,7 +2503,8 @@ dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 		 */
 		dq_async_replied_locked(q, ev->ev_async);
 	} else
-		cv_signal(&ev->ev_cv);
+		if (DQ_WAKE(DQ_WAKE_ANSWER))
+			cv_signal(&ev->ev_cv);
 	SDT_PROBE4(dq, , , event__reply, q, ev, r->dr_errno, len);
 	/* Observers and the policies see what the controller said. */
 	dq_observer_fanout_reply(q, r->dr_id, r->dr_errno, dd);
