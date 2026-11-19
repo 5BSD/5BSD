@@ -14,6 +14,8 @@
  *	report, then execv(PATH, ARGS); on failure print "exec=<errno>".
  *   cap_exclusion_helper jail
  *	enter a new jail (path "/"), then report.
+ *   cap_exclusion_helper wait
+ *	report, then read standard input until end of file.
  */
 
 #include <sys/param.h>
@@ -69,6 +71,15 @@ main(int argc, char *argv[])
 		printf("exec=%d\n", errno);
 		return (1);
 	}
+	if (argc >= 2 && strcmp(argv[1], "wait") == 0) {
+		char c;
+
+		report();
+		/* Until the test closes our standard input. */
+		while (read(STDIN_FILENO, &c, 1) > 0)
+			;
+		return (0);
+	}
 	if (argc >= 2 && strcmp(argv[1], "jail") == 0) {
 		if (jail(&j) < 0) {
 			printf("jail=%d\n", errno);
@@ -77,6 +88,6 @@ main(int argc, char *argv[])
 		report();
 		return (0);
 	}
-	fprintf(stderr, "usage: cap_exclusion_helper report|exec PATH ...|jail\n");
+	fprintf(stderr, "usage: cap_exclusion_helper report|exec PATH ...|jail|wait\n");
 	return (64);
 }

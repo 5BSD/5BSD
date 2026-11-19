@@ -213,6 +213,45 @@ and cleared when the process is traced with
 or
 .Xr ktrace 2 ,
 or enters another jail.
+A process that is not excluded, root included, cannot debug, trace or pull
+from an excluded process: every check made by
+.Xr p_candebug 9
+refuses it with
+.Er EPERM
+after the MAC policies have been asked.
+That covers
+.Xr ptrace 2 ,
+.Xr procfs 4
+.Pa mem ,
+.Pa regs
+and the other debug nodes,
+.Xr ktrace 2 ,
+.Xr pdopenpid 2 ,
+.Xr pddupfd 2 ,
+.Xr kcmp 2 ,
+the
+.Xr procctl 2
+control operations, hwpmc, filemon, the DTrace pid provider, the Linux
+process interfaces, and the
+.Va kern.proc
+sysctls filedesc, cwd, env, kqueue and the rlimit and osrel writes.
+Inspection
+.Pq Xr p_caninspect 9 :
+the memory map, auxiliary vector, kernel stacks,
+.Va ps_strings ,
+umask, signal trampoline, vm layout and USDT probes
+is not refused.
+For process 1 these debug interfaces were previously refused only at
+.Va kern.securelevel
+greater than 0 or by a capprotect shield.
+Excluded processes may debug one another.
+Only a test kernel
+.Pq Cd options MAC_CAPABILITY_TEST_PERMISSIVE ,
+never published, has the loader tunable
+.Va security.cap_exclusion.debug_allowed
+that lifts the refusal; attaching then clears the target's exclusion.
+.Va security.cap_exclusion.refused_debug
+counts refusals.
 Exclusion grants no privilege.
 .Xr ps 1
 shows it as

@@ -655,6 +655,11 @@ for a traced, ktraced, jailed or attached caller or in capability mode.
 No debug control is a tunable, and none can be written from a jail.
 The first two only restrict; the third stands in for process 1 and exists
 only on these test kernels.
+.Pp
+Also only on these kernels, the loader tunable
+.Va security.cap_exclusion.debug_allowed
+lets processes that are not excluded debug excluded ones
+.Pq BASE EXCLUSION in Xr cap_process 2 .
 .Sh DTRACE PROBES
 The
 .Nm

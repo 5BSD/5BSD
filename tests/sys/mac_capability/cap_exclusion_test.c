@@ -775,20 +775,42 @@ struct expect_row {
 	int		 want;
 };
 
+/*
+ * Commit 4: against an excluded target, a debug row that today answered
+ * anything but a refusal (0, or an errno its handler gave after
+ * p_candebug()) is refused: EPERM, or ENOENT from linprocfs.
+ * Inspect rows keep today's answer.
+ */
+static int
+excluded_answer(const struct iface_row *row, int today)
+{
+
+	if (row->inspect || today == EPERM || today == EACCES ||
+	    today == ENOENT)
+		return (today);
+	/* linprocfs hides a debug-class node: ENOENT. */
+	return (strncmp(row->name, "P21 ", 4) == 0 ||
+	    strncmp(row->name, "P45 ", 4) == 0 ? ENOENT : EPERM);
+}
+
 static void
 check_interfaces(pid_t pid, const struct expect_row *want, size_t nwant)
 {
 	struct iface_row rows[MAX_ROWS];
+	bool excluded;
 	size_t n;
+	int expect;
 
+	excluded = proc_excluded(pid);
 	run_interfaces(pid, rows, &n);
 	ATF_REQUIRE_EQ(n, nwant);
 	for (size_t i = 0; i < n; i++) {
 		ATF_REQUIRE_STREQ(rows[i].name, want[i].name);
-		ATF_CHECK_EQ_MSG(rows[i].got, want[i].want,
+		expect = excluded ? excluded_answer(&rows[i], want[i].want) :
+		    want[i].want;
+		ATF_CHECK_EQ_MSG(rows[i].got, expect,
 		    "%s: got %d (%s), want %d (%s)", rows[i].name, rows[i].got,
-		    strerror(rows[i].got), want[i].want,
-		    strerror(want[i].want));
+		    strerror(rows[i].got), expect, strerror(expect));
 	}
 }
 
@@ -814,7 +836,7 @@ ATF_TC(pid1_debug_interfaces);
 ATF_TC_HEAD(pid1_debug_interfaces, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "P20-P41 against PID 1 as root: today's answers (cap_exclusion_pins.h); debug rows flip in commit 4, inspect rows never");
+	    "P20-P41 against PID 1 as root: the pre-change answers (cap_exclusion_pins.h); debug rows refused from commit 4, inspect rows never change");
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "is.exclusive", "true");
 }
@@ -895,7 +917,7 @@ ATF_TC(switchboard_debug_interfaces);
 ATF_TC_HEAD(switchboard_debug_interfaces, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "P20-P41 against switchboard as root: today's answers; debug rows flip in commits 3+4, inspect rows never");
+	    "P20-P41 against switchboard as root: the pre-change answers; debug rows refused from commits 3+4, inspect rows never change");
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "is.exclusive", "true");
 }
@@ -1489,6 +1511,147 @@ ATF_TC_BODY(x21_interpreter_pass_not_excluded, tc)
 	xcase_fini(&x);
 }
 
+/* ------------------------------------------------------------------ */
+/* Debugging an excluded process (D rows, commit 4). */
+
+/* An excluded fork child that has not executed: blocks on its pipe. */
+struct parked {
+	pid_t	pid;
+	int	pd;
+	int	release;	/* write end: closing it lets the child exit */
+};
+
+static void
+park_excluded(struct parked *k)
+{
+	int go[2], ready[2], e;
+	char c;
+
+	ATF_REQUIRE(pipe(go) == 0 && pipe(ready) == 0);
+	k->pid = pdfork(&k->pd, 0);
+	ATF_REQUIRE(k->pid >= 0);
+	if (k->pid == 0) {
+		close(go[1]);
+		close(ready[0]);
+		e = exclude_self(NULL);
+		(void)write(ready[1], &e, sizeof(e));
+		(void)read(go[0], &c, 1);
+		_exit(0);
+	}
+	close(go[0]);
+	close(ready[1]);
+	ATF_REQUIRE(read(ready[0], &e, sizeof(e)) == sizeof(e));
+	close(ready[0]);
+	ATF_REQUIRE_EQ_MSG(e, 0, "exclude_self: %s", strerror(e));
+	ATF_REQUIRE(proc_excluded(k->pid));
+	k->release = go[1];
+}
+
+static void
+unpark(struct parked *k)
+{
+	int status;
+
+	close(k->release);
+	ATF_REQUIRE(waitpid(k->pid, &status, 0) == k->pid);
+	close(k->pd);
+}
+
+ATF_TC(d1_d3_debug_excluded_refused);
+ATF_TC_HEAD(d1_d3_debug_excluded_refused, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "D1-D3: a root process that is not excluded cannot ptrace, pddupfd or ktrace an excluded process, its own child included (EPERM; refused_debug counts); inspection still works");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(d1_d3_debug_excluded_refused, tc)
+{
+	struct parked k;
+	struct xcase x;
+	uint64_t refused;
+	char trace[PATH_MAX];
+
+	xcase_init(tc, &x);
+	park_excluded(&k);
+	refused = counter("security.cap_exclusion.refused_debug");
+	ATF_CHECK_ERRNO(EPERM, ptrace(PT_ATTACH, k.pid, NULL, 0) == -1);
+	ATF_CHECK_ERRNO(EPERM, pddupfd(k.pd, 0, 0) == -1);
+	ATF_REQUIRE(getcwd(trace, sizeof(trace)) != NULL);
+	strlcat(trace, "/ktrace.out", sizeof(trace));
+	ATF_REQUIRE(close(open(trace, O_WRONLY | O_CREAT, 0600)) == 0);
+	ATF_CHECK_ERRNO(EPERM,
+	    ktrace(trace, KTROP_SET, KTRFAC_SYSCALL, k.pid) == -1);
+	ATF_CHECK(counter("security.cap_exclusion.refused_debug") >=
+	    refused + 3);
+	/* Inspection is not debugging. */
+	ATF_CHECK_EQ(iface_sysctl_read(k.pid, KERN_PROC_VMMAP, 0, false), 0);
+	ATF_CHECK_EQ(iface_sysctl_read(k.pid, KERN_PROC_KSTACK, 0, false), 0);
+	ATF_CHECK(proc_excluded(k.pid));
+	unpark(&k);
+	xcase_fini(&x);
+}
+
+ATF_TC(d11_d12_core_daemon_debug);
+ATF_TC_HEAD(d11_d12_core_daemon_debug, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "D11: a Core image holding its valid authority is refused by the authority check (refused_debug unchanged); D12: once its issuer is revoked, by the exclusion rule (refused_debug +1)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(d11_d12_core_daemon_debug, tc)
+{
+	char *argv[] = { __DECONST(char *, HELPER),
+	    __DECONST(char *, "wait"), NULL };
+	struct xcase x;
+	uint64_t refused;
+	unsigned flag2, valid;
+	char buf[128];
+	ssize_t n;
+	int in[2], out[2], token, status;
+	pid_t pid;
+
+	xcase_init(tc, &x);
+	token = core_token(&x, CAP_AUTH_ROLE_CORE);
+	ATF_REQUIRE(pipe(in) == 0 && pipe(out) == 0);
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		dup2(in[0], STDIN_FILENO);
+		dup2(out[1], STDOUT_FILENO);
+		close(in[1]);
+		if (op(CAP_AUTH_INSTALL, token, NULL) != 0 ||
+		    exclude_self(NULL) != 0)
+			_exit(120);
+		close(token);
+		close(x.issuer);
+		execv(x.helper, argv);
+		_exit(121);
+	}
+	close(in[0]);
+	close(out[1]);
+	n = read(out[0], buf, sizeof(buf) - 1);
+	ATF_REQUIRE(n > 0);
+	buf[n] = '\0';
+	ATF_REQUIRE(sscanf(buf, "flag2=%x valid=%u", &flag2, &valid) == 2);
+	ATF_REQUIRE((flag2 & P2_CAP_EXCLUDED_BIT) != 0 && valid == 1);
+
+	refused = counter("security.cap_exclusion.refused_debug");
+	ATF_CHECK_ERRNO(EPERM, ptrace(PT_ATTACH, pid, NULL, 0) == -1);
+	ATF_CHECK_EQ(counter("security.cap_exclusion.refused_debug"), refused);
+
+	close(token);
+	close(x.issuer);
+	x.issuer = -1;
+	ATF_CHECK_ERRNO(EPERM, ptrace(PT_ATTACH, pid, NULL, 0) == -1);
+	ATF_CHECK_EQ(counter("security.cap_exclusion.refused_debug"),
+	    refused + 1);
+	ATF_CHECK(proc_excluded(pid));
+
+	close(in[1]);
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	close(x.image);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, test_process_not_excluded);
@@ -1514,5 +1677,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, x17_core_script_refused);
 	ATF_TP_ADD_TC(tp, x19_revoked_issuer_not_excluded);
 	ATF_TP_ADD_TC(tp, x21_interpreter_pass_not_excluded);
+	ATF_TP_ADD_TC(tp, d1_d3_debug_excluded_refused);
+	ATF_TP_ADD_TC(tp, d11_d12_core_daemon_debug);
 	return (atf_no_error());
 }

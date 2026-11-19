@@ -993,6 +993,53 @@ cap_exclusion_exec(struct proc *p, struct image_params *imgp)
 	SDT_PROBE2(cap_exclusion, , , exec, p->p_pid, imgp->cap_will_exclude);
 }
 
+static COUNTER_U64_DEFINE_EARLY(cap_exclusion_refused_debug);
+SYSCTL_COUNTER_U64(_security_cap_exclusion, OID_AUTO, refused_debug,
+    CTLFLAG_RD, &cap_exclusion_refused_debug,
+    "Debug requests refused by base exclusion");
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+/*
+ * Test kernels only (options MAC_CAPABILITY_TEST_PERMISSIVE, a row of the
+ * test-kernel option ledger: never published).  On every other kernel
+ * there is no way, at run time or by a loader tunable, for a process that
+ * is not excluded to debug an excluded one (rev 3 delta 3.3).
+ */
+static bool mac_capability_test_issuer_exclusion_debug;
+SYSCTL_BOOL(_security_cap_exclusion, OID_AUTO, debug_allowed, CTLFLAG_RDTUN,
+    &mac_capability_test_issuer_exclusion_debug, 0,
+    "Test kernel only: processes that are not excluded may debug excluded "
+    "ones (an attach clears the target's exclusion)");
+#endif
+
+/*
+ * May td debug, trace or pull from p (p_candebug(9), after the MAC hook)?
+ * An excluded process is refused to every actor that is not excluded
+ * itself, root included (EPERM).  Inside DQ_IOC_ATTACH the attach decides
+ * for itself, more narrowly (cap_exclusion_attach_check()); ptrace, ktrace
+ * and procfs never reach here with TDP2_DQ_ATTACH set.  Inspection
+ * (p_caninspect(9): memory map, auxv, kernel stack, USDT) is not refused.
+ * PROC_LOCK(p) held; the actor's own p_flag2 is read unlocked: it is the
+ * caller's process.
+ */
+int
+cap_exclusion_debug_check(struct thread *td, struct proc *p)
+{
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	if (__predict_true(!P_CAP_EXCLUDED(p)) ||
+	    (atomic_load_int(&td->td_proc->p_flag2) & P2_CAP_EXCLUDED) != 0)
+		return (0);
+	if ((td->td_pflags2 & TDP2_DQ_ATTACH) != 0)
+		return (0);
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+	if (mac_capability_test_issuer_exclusion_debug)
+		return (0);
+#endif
+	counter_u64_add(cap_exclusion_refused_debug, 1);
+	SDT_PROBE3(cap_exclusion, , , refuse, p->p_pid, CAPX_R_DEBUG, EPERM);
+	return (EPERM);
+}
+
 /*
  * Clear exclusion for a reason other than an exec (CAPX_CLEAR_*): tracing,
  * a prison change, a Capability Broker attach.  PROC_LOCK held.

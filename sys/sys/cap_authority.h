@@ -349,5 +349,6 @@ int	cap_exclusion_refused_interp(struct proc *);
 #define	CAPX_R_DEBUG		3
 #define	CAPX_R_ATTACH		4
 void	cap_exclusion_clear_locked(struct proc *, int);
+int	cap_exclusion_debug_check(struct thread *, struct proc *);
 #endif
 #endif
