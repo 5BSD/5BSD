@@ -34,6 +34,7 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <syslog.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -74,6 +75,11 @@ pair(int P[2])
 	ATF_REQUIRE_MSG(chan_create(P) == 0, "channel pair: %s",
 	    strerror(errno));
 	ATF_REQUIRE(fcntl(P[0], F_SETFL, O_NONBLOCK) == 0);
+	/*
+	 * The client logs dropped replies; connect the log socket now so it
+	 * is not mistaken for a leaked descriptor.
+	 */
+	openlog("capsule_client_test", LOG_NDELAY, LOG_USER);
 }
 
 static int
@@ -340,8 +346,8 @@ ATF_TC_BODY(rpc_stale_fd_reply_drained, tc)
 	pid_t pid;
 
 	pair(P);
-	before = lowest_free_fd();
 	pid = peer_start(P, PEER_STALE_FD_FIRST, CAPSULE_OP_READY);
+	before = lowest_free_fd();
 	r = capsule_send_ready(P[0]);
 	saved = errno;
 	ATF_CHECK_EQ_MSG(0, r, "%s", strerror(saved));
