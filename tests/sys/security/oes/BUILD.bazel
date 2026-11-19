@@ -52,8 +52,7 @@ bsd_kyuafile(name = "kyuafile", suite = "FreeBSD",
     names = sorted(_PLAIN + _ATF + ["test_unsupported_32bit"]),
     interfaces = {program: "plain" for program in _PLAIN} |
         {program: "atf" for program in _ATF + ["test_unsupported_32bit"]},
-    metadata = {program: json.encode({"is_exclusive": "true"} |
-        ({"timeout": "900"} if program in ["test_idle_gate", "test_idle_storm"] else {}))
+    metadata = {program: json.encode({"is_exclusive": "true"})
         for program in _PLAIN + _ATF + ["test_unsupported_32bit"]})
 bsd_install_file(name = "kyuafile_install", src = ":kyuafile", destination = _DIRECTORY + "/Kyuafile",
     owner = "root", group = "wheel", mode = "0444", install_tags = ["package=oes-tests"])
