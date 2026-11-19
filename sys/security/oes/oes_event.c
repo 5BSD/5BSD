@@ -541,6 +541,17 @@ oes_pending_init(struct oes_pending *ep, oes_event_type_t event, struct proc *p)
 			/* Best-effort: fill what we can without the lock */
 			ep->ep_msg.em_process.ep_pid = p->p_pid;
 			ep->ep_msg.em_process.ep_token.ept_id = p->p_pid;
+			/*
+			 * The identity a client's reader set matches on
+			 * (oes_client_is_reader()) must not depend on the
+			 * trylock: genid needs no lock, and the subject's
+			 * execution is its thread's own credential.
+			 */
+			ep->ep_msg.em_process.ep_token.ept_genid =
+			    oes_proc_genid_unlocked(p);
+			if (curthread->td_proc == p)
+				ep->ep_msg.em_process.ep_exec_id =
+				    oes_cred_get_exec_id(curthread->td_ucred);
 			strlcpy(ep->ep_msg.em_process.ep_comm, p->p_comm,
 			    sizeof(ep->ep_msg.em_process.ep_comm));
 			oes_process_mark_path_unavailable(&ep->ep_msg,

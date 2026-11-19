@@ -256,7 +256,8 @@ typedef struct {
 #define EP_FLAG_WEXIT		0x0040	/* Process is exiting */
 #define EP_FLAG_EXEC		0x0080	/* Process did exec */
 #define EP_FLAG_CONTROLT	0x0100	/* Has controlling terminal */
-#define EP_FLAG_OES_CLIENT	0x0400	/* Owns an active OES client */
+#define EP_FLAG_OES_CLIENT	0x0400	/* Acts as an OES client (a reader
+						   of one: oes(4)) */
 #define EP_FLAG_CAP_EXCLUDED	0x0800	/* Excluded by the kernel (base
 					   exclusion, cap_process(2)) */
 #define EP_FLAG_CAP_MANAGED	0x1000	/* Runs the image pinned by a valid

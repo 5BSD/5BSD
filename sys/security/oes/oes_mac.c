@@ -228,6 +228,23 @@ oes_mac_pipe_copy_label(struct label *src, struct label *dst)
 		dst_epl->epl_id = src_epl->epl_id;
 }
 
+/*
+ * The execution identity recorded in a credential's OES label (0 without
+ * one).  A thread's own td_ucred is stable for the thread, so this needs no
+ * process lock; exec gives the new image a credential with a new id, and
+ * credential copies keep it.
+ */
+uint64_t
+oes_cred_get_exec_id(struct ucred *cred)
+{
+	struct oes_cred_label *ecl;
+
+	if (cred == NULL || cred->cr_label == NULL)
+		return (0);
+	ecl = SLOT(cred->cr_label);
+	return (ecl != NULL ? ecl->ecl_exec_id : 0);
+}
+
 uint64_t
 oes_proc_get_exec_id(struct proc *p)
 {
@@ -657,6 +674,7 @@ oes_dispatch_auth_notification(const struct oes_pending *ep, struct proc *p,
     struct ucred *cred, oes_event_type_t notify_event,
     oes_auth_result_t result)
 {
+	struct epoch_tracker et;
 	struct oes_client *ec;
 	struct oes_pending *ep_notify;
 	oes_event_type_t auth_event;
@@ -668,6 +686,7 @@ oes_dispatch_auth_notification(const struct oes_pending *ep, struct proc *p,
 
 	auth_event = ep->ep_msg.em_event;
 	OES_LOCK();
+	oes_readers_enter(&et);
 	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
 		if (!oes_pending_visible_to_client(ep, ec))
 			continue;
@@ -711,6 +730,7 @@ oes_dispatch_auth_notification(const struct oes_pending *ep, struct proc *p,
 		}
 		EC_UNLOCK(ec);
 	}
+	oes_readers_exit(&et);
 	OES_UNLOCK();
 }
 
@@ -718,6 +738,7 @@ static int
 oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
     oes_event_type_t notify_event)
 {
+	struct epoch_tracker et;
 	struct oes_client *ec;
 	struct oes_pending *ep_client;
 	struct oes_auth_group *ag = NULL;
@@ -851,6 +872,7 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 		}
 	}
 
+	oes_readers_enter(&et);
 	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
 		oes_event_type_t mute_event;
 
@@ -986,6 +1008,7 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 		}
 		EC_UNLOCK(ec);
 	}
+	oes_readers_exit(&et);
 
 	OES_UNLOCK();
 
@@ -1833,6 +1856,7 @@ oes_accmode_to_access(accmode_t accmode)
 static void
 oes_deliver_notify_locked(struct oes_pending *ep)
 {
+	struct epoch_tracker et;
 	struct oes_client *ec;
 	struct oes_pending *ep_clone;
 	oes_event_type_t notify_event;
@@ -1843,6 +1867,7 @@ oes_deliver_notify_locked(struct oes_pending *ep)
 		notify_event = ep->ep_msg.em_event;
 
 	OES_LOCK();
+	oes_readers_enter(&et);
 	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
 		if (!oes_pending_visible_to_client(ep, ec))
 			continue;
@@ -1891,6 +1916,7 @@ oes_deliver_notify_locked(struct oes_pending *ep)
 			oes_pending_rele(ep_clone);
 		EC_UNLOCK(ec);
 	}
+	oes_readers_exit(&et);
 	OES_UNLOCK();
 }
 

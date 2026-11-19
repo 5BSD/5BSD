@@ -490,8 +490,10 @@ test_in_child(int (*fn)(void *), void *arg, int *status)
 		return (-1);
 	if (pid == 0)
 		_exit(fn(arg));
-	while (waitpid(pid, &st, 0) < 0 && errno == EINTR)
-		;
+	while (waitpid(pid, &st, 0) < 0) {
+		if (errno != EINTR)
+			return (-1);
+	}
 	if (status != NULL)
 		*status = st;
 	return (pid);

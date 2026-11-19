@@ -11,6 +11,7 @@
  * and OES_IOC_UNMUTE_ALL_TARGET_PATHS.
  */
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 
 #include <fcntl.h>
@@ -37,7 +38,8 @@ main(void)
 	oes_event_type_t events[] = {
 		OES_EVENT_NOTIFY_OPEN,
 	};
-	int ret, pipefd[2] = { -1, -1 };
+	int ret, pipefd[2] = { -1, -1 }, ackfd[2] = { -1, -1 };
+	char ack;
 	pid_t child = -1;
 
 	printf("Testing unmute-all...\n");
@@ -73,6 +75,11 @@ main(void)
 	 * client, so its own events never reach it (oes(4), "A client's own
 	 * processes").  The child never touches the client.
 	 */
+	if (pipe(ackfd) != 0) {
+		perror("pipe");
+		close(fd);
+		return (1);
+	}
 	if (pipe(pipefd) != 0) {
 		perror("pipe");
 		close(fd);
@@ -94,6 +101,8 @@ main(void)
 				(void)open("/etc/passwd", O_RDONLY);
 			if (c == 'h')
 				(void)open("/etc/hosts", O_RDONLY);
+			/* Acknowledge: the open has happened. */
+			(void)write(ackfd[1], &c, 1);
 		}
 		_exit(0);
 	}
@@ -107,8 +116,12 @@ main(void)
 		goto fail;
 	}
 
-	/* A muted open, before the unmute */
+	/* A muted open, finished before the unmute. */
 	(void)write(pipefd[1], "p", 1);
+	if (read(ackfd[0], &ack, 1) != 1) {
+		fprintf(stderr, "FAIL: child did not open /etc/passwd\n");
+		goto fail;
+	}
 
 	/* Unmute all processes */
 	if (ioctl(fd, OES_IOC_UNMUTE_ALL_PROCESSES, NULL) < 0) {
@@ -140,15 +153,35 @@ main(void)
 	(void)write(pipefd[1], "h", 1);
 	{
 		test_msg_buf buf;
+		const oes_file_t *f;
+		struct stat passwd_sb, hosts_sb;
+
+		if (stat("/etc/passwd", &passwd_sb) != 0 ||
+		    stat("/etc/hosts", &hosts_sb) != 0) {
+			perror("stat");
+			goto fail;
+		}
 
 		ret = -1;
 		while (test_wait_event(fd, &buf.msg, 1000) == 0) {
 			if (buf.msg.em_event != OES_EVENT_NOTIFY_OPEN ||
 			    buf.msg.em_process.ep_pid != child)
 				continue;
-			if (strcmp(oes_msg_string(&buf.msg,
-			    buf.msg.em_event_data.open.file.ef_path_off),
-			    "/etc/hosts") == 0) {
+			/*
+			 * Matched by inode and device: these open records need
+			 * not carry a path.  The muted open came first; one
+			 * subject's events arrive in order, so it would precede
+			 * /etc/hosts.
+			 */
+			f = &buf.msg.em_event_data.open.file;
+			if (f->ef_ino == (uint64_t)passwd_sb.st_ino &&
+			    f->ef_dev == (uint64_t)passwd_sb.st_dev) {
+				fprintf(stderr, "FAIL: muted open delivered\n");
+				ret = 1;
+				break;
+			}
+			if (f->ef_ino == (uint64_t)hosts_sb.st_ino &&
+			    f->ef_dev == (uint64_t)hosts_sb.st_dev) {
 				ret = 0;
 				break;
 			}

@@ -229,7 +229,10 @@ and terminal data, jail and login-class identity, ABI, start time, process
 state, thread count, nice value, OS release, and routing FIB.
 The
 .Dv EP_FLAG_OES_CLIENT
-bit reports whether the source process owns an active OES client, analogous to
+bit reports whether the source process acts as an OES client, that is, is a
+reader of one
+.Pq Sx A client's own processes ,
+analogous to
 Apple's
 .Va es_process_t.is_es_client
 field.
@@ -278,11 +281,15 @@ A process stops being a reader when it exits or executes a new image;
 the new image becomes a reader again by the same operations.
 Readers are identified by process ID, start time and execution, so a
 reused process ID never inherits membership.
+A process that already holds a client inherited across
+.Xr fork 2 ,
+or through a copied kqueue, is not a reader until it does one of the
+operations above itself.
 .Pp
 The rule holds for every scope, mode and mute setting, process-mute
 inversion included, and cannot be turned off.
-An AUTH event caused by a reader is allowed without being delivered to
-that client.
+An AUTH event caused by a reader is not delivered to that client and counts
+as an allow from it; other AUTH clients still decide.
 Other clients still receive the reader's events, unless the reader is
 excluded by the kernel
 .Pq Sx Excluded processes .
@@ -308,7 +315,8 @@ does this in every constructor.
 in a mute request is accepted and has no further effect; in an unmute
 request it fails with
 .Er EINVAL .
-Mute queries never list the client's own processes.
+It adds no mute entry, so mute queries list a client's own process only if
+it was muted by an explicit token.
 The former
 .Va security.oes.default_self_mute
 sysctl no longer exists.

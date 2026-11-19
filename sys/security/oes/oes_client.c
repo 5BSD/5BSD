@@ -52,6 +52,20 @@ extern struct sx proctree_lock;
  * Get process generation ID (start time as microseconds).
  * Requires: PROC_LOCK(p) held by caller.
  */
+/*
+ * The same value without the process lock: p_stats->p_start is written
+ * once, in fork1(), before the process can be found, and never again.
+ */
+uint64_t
+oes_proc_genid_unlocked(struct proc *p)
+{
+
+	if (p->p_stats == NULL)
+		return (0);
+	return ((uint64_t)p->p_stats->p_start.tv_sec * 1000000ULL +
+	    (uint64_t)p->p_stats->p_start.tv_usec);
+}
+
 static uint64_t
 oes_proc_genid(struct proc *p)
 {
@@ -369,7 +383,8 @@ oes_client_validate_token(struct oes_client *ec,
 
 /*
  * The readers of each client (struct oes_readers, oes_internal.h).
- * oes_client_is_reader() is the dispatch side: no lock, no allocation.
+ * oes_client_is_reader() is the dispatch side, inside oes_readers_enter():
+ * no lock, no allocation.
  * oes_client_join() is the reader side: it may sleep and is called only
  * from oes_open, oes_read, oes_write, oes_poll, oes_kqfilter and
  * OES_IOC_JOIN, never from event generation or delivery.
@@ -381,18 +396,19 @@ oes_client_validate_token(struct oes_client *ec,
  */
 static epoch_t oes_readers_epoch;
 
-void
+int
 oes_readers_init(void)
 {
 
 	oes_readers_epoch = epoch_alloc("oes_readers", EPOCH_PREEMPT);
+	return (oes_readers_epoch != NULL ? 0 : ENOMEM);
 }
 
 void
 oes_readers_fini(void)
 {
 
-	epoch_drain_callbacks(oes_readers_epoch);
+	/* epoch_free() drains the pending epoch_call()s first. */
 	epoch_free(oes_readers_epoch);
 }
 
@@ -403,47 +419,83 @@ oes_readers_free_cb(epoch_context_t ctx)
 	free(__containerof(ctx, struct oes_readers, ors_ctx), M_OES);
 }
 
+void
+oes_readers_enter(struct epoch_tracker *et)
+{
+
+	epoch_enter_preempt(oes_readers_epoch, et);
+}
+
+void
+oes_readers_exit(struct epoch_tracker *et)
+{
+
+	epoch_exit_preempt(oes_readers_epoch, et);
+}
+
+/*
+ * Entries are sorted by pid and a join leaves at most one live entry per
+ * pid (it drops the dead ones), so the lookup is a binary search; stale
+ * entries of an exited process may share a pid with a newer one until the
+ * next join, so neighbours with the same pid are checked too.
+ */
 static bool
 oes_readers_match(const struct oes_readers *r, pid_t pid, uint64_t genid,
     uint64_t exec_id)
 {
+	u_int lo, hi, mid, i;
 
-	for (u_int i = 0; r != NULL && i < r->ors_count; i++)
-		if (r->ors_r[i].or_pid == pid &&
-		    r->ors_r[i].or_genid == genid &&
+	if (r == NULL)
+		return (false);
+	lo = 0;
+	hi = r->ors_count;
+	while (lo < hi) {
+		mid = lo + (hi - lo) / 2;
+		if (r->ors_r[mid].or_pid < pid)
+			lo = mid + 1;
+		else
+			hi = mid;
+	}
+	for (i = lo; i < r->ors_count && r->ors_r[i].or_pid == pid; i++)
+		if (r->ors_r[i].or_genid == genid &&
 		    r->ors_r[i].or_exec_id == exec_id)
 			return (true);
 	return (false);
 }
 
-/* Is the subject of this record one of ec's readers? */
+/*
+ * Is the subject of this record one of ec's readers?  The caller is inside
+ * oes_readers_enter(); no lock is taken and nothing is allocated.
+ */
 bool
 oes_client_is_reader(struct oes_client *ec, const oes_process_t *ep)
 {
-	struct epoch_tracker et;
-	struct oes_readers *r;
-	bool found;
+	const struct oes_readers *r;
 
-	epoch_enter_preempt(oes_readers_epoch, &et);
-	r = (struct oes_readers *)atomic_load_acq_ptr(
+	r = (const struct oes_readers *)atomic_load_acq_ptr(
 	    (volatile uintptr_t *)&ec->ec_readers);
-	found = oes_readers_match(r, ep->ep_pid, ep->ep_token.ept_genid,
-	    ep->ep_exec_id);
-	epoch_exit_preempt(oes_readers_epoch, &et);
-	return (found);
+	return (oes_readers_match(r, ep->ep_pid, ep->ep_token.ept_genid,
+	    ep->ep_exec_id));
 }
 
 /* Is the subject of this record a reader of any client (is_es_client)? */
 bool
 oes_process_is_reader(const oes_process_t *ep)
 {
+	struct epoch_tracker et;
 	struct oes_client *ec;
+	bool found = false;
 
 	OES_LOCK_ASSERT();
-	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link)
-		if (oes_client_is_reader(ec, ep))
-			return (true);
-	return (false);
+	oes_readers_enter(&et);
+	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
+		if (oes_client_is_reader(ec, ep)) {
+			found = true;
+			break;
+		}
+	}
+	oes_readers_exit(&et);
+	return (found);
 }
 
 /* Is p, in the image it runs, still the process the entry recorded? */
@@ -463,34 +515,35 @@ oes_reader_live(const struct oes_reader *r)
 }
 
 /*
- * Make td's process a reader of ec.  Compacts away the entries of processes
- * that exited or exec'd and replaces the array; may sleep.
+ * Make td's process a reader of ec.  The fast path (already a reader) takes
+ * no lock: genid from p_start, exec id from the thread's own credential.
+ * Otherwise, under ec_readers_lock, the array is rebuilt sorted by pid
+ * without the entries of processes that exited or exec'd, and the old one
+ * is freed after an epoch.  May sleep; never called from event delivery.
  */
 void
 oes_client_join(struct oes_client *ec, struct thread *td)
 {
+	struct epoch_tracker et;
 	struct oes_readers *old, *new;
-	struct proc *p = td->td_proc;
 	struct oes_reader self;
-	u_int size;
+	u_int size, i, n;
+	bool found, inserted;
 
-	WITNESS_WARN(WARN_GIANTOK | WARN_SLEEPOK, NULL, "oes_client_join");
+	KASSERT(td == curthread, ("%s: not curthread", __func__));
+	WITNESS_WARN(WARN_SLEEPOK, NULL, "oes_client_join");
 	memset(&self, 0, sizeof(self));
-	PROC_LOCK(p);
-	self.or_pid = p->p_pid;
-	self.or_genid = oes_proc_genid(p);
-	self.or_exec_id = oes_proc_get_exec_id(p);
-	PROC_UNLOCK(p);
+	self.or_pid = td->td_proc->p_pid;
+	self.or_genid = oes_proc_genid_unlocked(td->td_proc);
+	self.or_exec_id = oes_cred_get_exec_id(td->td_ucred);
 
-	{
-		oes_process_t key;
-
-		key.ep_pid = self.or_pid;
-		key.ep_token.ept_genid = self.or_genid;
-		key.ep_exec_id = self.or_exec_id;
-		if (oes_client_is_reader(ec, &key))
-			return;		/* every read after the first */
-	}
+	oes_readers_enter(&et);
+	found = oes_readers_match((const struct oes_readers *)
+	    atomic_load_acq_ptr((volatile uintptr_t *)&ec->ec_readers),
+	    self.or_pid, self.or_genid, self.or_exec_id);
+	oes_readers_exit(&et);
+	if (found)
+		return;			/* every read after the first */
 
 	sx_xlock(&ec->ec_readers_lock);
 	/* Joins are serialised here: the array cannot change under us. */
@@ -504,11 +557,20 @@ oes_client_join(struct oes_client *ec, struct thread *td)
 	size = (old != NULL ? old->ors_count : 0) + 1;
 	new = malloc(sizeof(*new) + size * sizeof(new->ors_r[0]), M_OES,
 	    M_WAITOK | M_ZERO);
-	new->ors_size = size;
-	for (u_int i = 0; old != NULL && i < old->ors_count; i++)
+	n = 0;
+	inserted = false;
+	for (i = 0; old != NULL && i < old->ors_count; i++) {
+		/* Keep pid order: the caller goes before the first larger pid. */
+		if (!inserted && old->ors_r[i].or_pid > self.or_pid) {
+			new->ors_r[n++] = self;
+			inserted = true;
+		}
 		if (oes_reader_live(&old->ors_r[i]))
-			new->ors_r[new->ors_count++] = old->ors_r[i];
-	new->ors_r[new->ors_count++] = self;
+			new->ors_r[n++] = old->ors_r[i];
+	}
+	if (!inserted)
+		new->ors_r[n++] = self;
+	new->ors_count = n;
 	atomic_store_rel_ptr((volatile uintptr_t *)&ec->ec_readers,
 	    (uintptr_t)new);
 	sx_xunlock(&ec->ec_readers_lock);
@@ -680,7 +742,11 @@ oes_client_free(struct oes_client *ec)
 	/* Destroy knlist (must be done without lock) */
 	knlist_destroy(&ec->ec_selinfo.si_note);
 
-	/* Unpublished: no dispatch can reach a client being freed. */
+	/*
+	 * Every dispatch-side reader runs under OES_LOCK, and the client left
+	 * sc_clients under it before this; the join fast path holds a file
+	 * reference.  Nothing can still read the array.
+	 */
 	free(ec->ec_readers, M_OES);
 	sx_destroy(&ec->ec_readers_lock);
 	mtx_destroy(&ec->ec_mtx);
@@ -1193,7 +1259,6 @@ oes_client_is_muted(struct oes_client *ec, struct proc *p, oes_event_type_t even
 			PROC_UNLOCK(p);
 	}
 
-
 	/* Check mute list - use hash bucket for O(1) average lookup */
 	LIST_FOREACH(em, &ec->ec_muted[oes_mute_proc_bucket(p->p_pid)], em_link) {
 		if (em->em_pid != p->p_pid)
@@ -1237,7 +1302,6 @@ oes_client_is_muted_by_token(struct oes_client *ec, const oes_proc_token_t *toke
 
 	pid = (pid_t)token->ept_id;
 	genid = token->ept_genid;
-
 
 	/* Check mute list - use hash bucket for O(1) average lookup */
 	LIST_FOREACH(em, &ec->ec_muted[oes_mute_proc_bucket(pid)], em_link) {

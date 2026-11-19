@@ -144,7 +144,6 @@ SYSCTL_STRING(_security_oes, OID_AUTO, default_muted_paths_literal, CTLFLAG_RW,
     oes_default_muted_paths_literal, sizeof(oes_default_muted_paths_literal),
     "Colon-separated paths to mute by default (literal match)");
 
-
 /*
  * Device operations
  */
@@ -307,7 +306,7 @@ oes_open(struct cdev *dev __unused, int oflags __unused, int devtype __unused,
 	ec->ec_id = oes_softc.sc_next_client_id++;
 	OES_UNLOCK();
 
-	/* Record owner identity for self-mute */
+	/* The opener's identity anchors OES_SCOPE_DESCENDANTS. */
 	PROC_LOCK(td->td_proc);
 	ec->ec_owner_pid = td->td_proc->p_pid;
 	if (td->td_proc->p_stats != NULL) {
@@ -1351,10 +1350,11 @@ oes_kqfilter(struct cdev *dev, struct knote *kn)
 	error = devfs_get_cdevpriv((void **)&ec);
 	if (error)
 		return (error);
-	oes_client_join(ec, curthread);
 
 	switch (kn->kn_filter) {
 	case EVFILT_READ:
+		/* Registering for events makes a reader, as reading does. */
+		oes_client_join(ec, curthread);
 		kn->kn_fop = &oes_rfiltops;
 		kn->kn_hook = ec;
 		EC_LOCK(ec);
@@ -1466,7 +1466,14 @@ oes_dev_init(void)
 	taskqueue_start_threads(&oes_softc.sc_defer_tq, 1, PI_SOFT,
 	    "oes_deferq");
 
-	oes_readers_init();
+	if (oes_readers_init() != 0) {
+		taskqueue_free(oes_softc.sc_defer_tq);
+		mtx_destroy(&oes_softc.sc_defer_mtx);
+		oes_jail_counters_free();
+		rm_destroy(&oes_softc.sc_jail_lock);
+		mtx_destroy(&oes_softc.sc_mtx);
+		return (ENOMEM);
+	}
 
 	oes_softc.sc_cdev = make_dev(&oes_cdevsw, 0, UID_ROOT, GID_WHEEL,
 	    0600, "oes");

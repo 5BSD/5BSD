@@ -15,6 +15,7 @@
 
 #include <sys/param.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/uio.h>
 #include <sys/wait.h>
@@ -135,6 +136,39 @@ count_until_fence(int fd, pid_t subject, pid_t fence, uint32_t *flags)
 			if (flags != NULL)
 				*flags = msg->em_process.ep_flags;
 		}
+	}
+}
+
+/*
+ * As count_until_fence(), counting only NOTIFY_OPENs of path by any of the
+ * n subjects.  The file is matched by its inode and device: these open
+ * records need not carry a path (OES fills it only where it can resolve
+ * one without the vnode lock).
+ */
+static int
+count_path_until_fence(int fd, const pid_t *subjects, int n, const char *path,
+    pid_t fence)
+{
+	test_msg_buf buf;
+	oes_message_t *msg = &buf.msg;
+	struct stat sb;
+	int count = 0;
+
+	ATF_REQUIRE(stat(path, &sb) == 0);
+	for (;;) {
+		ATF_REQUIRE_MSG(test_wait_event(fd, msg, EVENT_DEADLINE_MS) == 0,
+		    "no fence event within %d ms", EVENT_DEADLINE_MS);
+		if (msg->em_event != OES_EVENT_NOTIFY_OPEN)
+			continue;
+		if (msg->em_process.ep_pid == fence)
+			return (count);
+		for (int i = 0; i < n; i++)
+			if (msg->em_process.ep_pid == subjects[i] &&
+			    msg->em_event_data.open.file.ef_ino ==
+			    (uint64_t)sb.st_ino &&
+			    msg->em_event_data.open.file.ef_dev ==
+			    (uint64_t)sb.st_dev)
+				count++;
 	}
 }
 
@@ -444,6 +478,174 @@ ATF_TC_BODY(n13_reader_flagged_oes_client, tc)
 	close(d);
 }
 
+/* Receive a passed client, join it with OES_IOC_JOIN only, open probe. */
+static int
+joiner(int sock, const char *probe)
+{
+	char c = 'j';
+	int fd;
+
+	fd = recv_fd(sock);
+	if (fd < 0)
+		return (101);
+	if (ioctl(fd, OES_IOC_JOIN) != 0)
+		return (102);
+	open_close(probe);
+	if (write(sock, &c, 1) != 1)
+		return (103);
+	/* Hold the client until the parent has counted. */
+	if (read(sock, &c, 1) != 1)
+		return (104);
+	return (0);
+}
+
+ATF_TC(n7b_join_before_first_read);
+ATF_TC_HEAD(n7b_join_before_first_read, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "N6/N7: a receiver that only calls OES_IOC_JOIN is a reader at once: its opens are not delivered to the client, nor are the opener's");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(n7b_join_before_first_read, tc)
+{
+	struct paths p;
+	pid_t c, fence, subjects[2];
+	int sv[2], fd, gate, status;
+	char ch;
+
+	paths_init(&p);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	c = fork();
+	ATF_REQUIRE(c >= 0);
+	if (c == 0) {
+		close(sv[0]);
+		_exit(joiner(sv[1], p.probe));
+	}
+	close(sv[1]);
+	fd = open_client(false);
+	send_fd(sv[0], fd);
+	ATF_REQUIRE(read(sv[0], &ch, 1) == 1);
+	open_close(p.probe);		/* the opener */
+	fence = fence_child(p.marker, &gate);
+	release(gate, fence);
+	subjects[0] = c;
+	subjects[1] = getpid();
+	ATF_CHECK_EQ(count_path_until_fence(fd, subjects, 2, p.probe, fence),
+	    0);
+	ATF_REQUIRE(write(sv[0], "x", 1) == 1);
+	ATF_REQUIRE(waitpid(c, &status, 0) == c);
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	close(fd);
+}
+
+/*
+ * N8: a reader's exec ends its membership.  The receiver joins, opens the
+ * probe (hidden), then execs cat(1) on the probe with the client still
+ * open: the new image is not a reader until it joins, so its open of the
+ * probe is delivered.
+ */
+static int
+exec_after_join(int sock, const char *probe)
+{
+	char *const argv[] = { __DECONST(char *, "cat"),
+	    __DECONST(char *, probe), NULL };
+	int fd, devnull;
+
+	fd = recv_fd(sock);
+	if (fd < 0)
+		return (101);
+	if (ioctl(fd, OES_IOC_JOIN) != 0)
+		return (102);
+	open_close(probe);
+	devnull = open("/dev/null", O_WRONLY);
+	if (devnull < 0 || dup2(devnull, STDOUT_FILENO) < 0)
+		return (103);
+	execv("/bin/cat", argv);
+	return (104);
+}
+
+ATF_TC(n8_exec_ends_membership);
+ATF_TC_HEAD(n8_exec_ends_membership, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "N8: a reader that executes a new image stops being a reader: the old image's opens are hidden from the client, the new image's are delivered");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(n8_exec_ends_membership, tc)
+{
+	struct paths p;
+	pid_t c, fence;
+	int sv[2], fd, gate, status, n;
+
+	paths_init(&p);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	c = fork();
+	ATF_REQUIRE(c >= 0);
+	if (c == 0) {
+		close(sv[0]);
+		_exit(exec_after_join(sv[1], p.probe));
+	}
+	close(sv[1]);
+	fd = open_client(false);
+	send_fd(sv[0], fd);
+	ATF_REQUIRE(waitpid(c, &status, 0) == c);
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "receiver status %#x", status);
+	fence = fence_child(p.marker, &gate);
+	release(gate, fence);
+	/* Two opens of the probe by c: only the one after exec arrives. */
+	n = count_path_until_fence(fd, &c, 1, p.probe, fence);
+	ATF_CHECK_EQ_MSG(n, 1, "%d opens of %s by %d delivered", n, p.probe,
+	    (int)c);
+	close(fd);
+}
+
+ATF_TC(n9_two_readers);
+ATF_TC_HEAD(n9_two_readers, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "N9: two readers of one client: neither one's opens reach that client; another client sees both");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(n9_two_readers, tc)
+{
+	struct paths p;
+	pid_t r[2], fence;
+	int sv[2][2], fd, d, gate, status, i, n;
+	char ch;
+
+	paths_init(&p);
+	d = open_client(true);
+	for (i = 0; i < 2; i++) {
+		ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv[i]) == 0);
+		r[i] = fork();
+		ATF_REQUIRE(r[i] >= 0);
+		if (r[i] == 0) {
+			close(sv[i][0]);
+			close(d);
+			_exit(joiner(sv[i][1], p.probe));
+		}
+		close(sv[i][1]);
+	}
+	fd = open_client(false);
+	for (i = 0; i < 2; i++) {
+		send_fd(sv[i][0], fd);
+		ATF_REQUIRE(read(sv[i][0], &ch, 1) == 1);
+	}
+	fence = fence_child(p.marker, &gate);
+	release(gate, fence);
+	n = count_path_until_fence(fd, r, 2, p.probe, fence);
+	ATF_CHECK_EQ_MSG(n, 0, "the shared client got %d", n);
+	n = count_path_until_fence(d, r, 2, p.probe, fence);
+	ATF_CHECK_EQ_MSG(n, 2, "the other client got %d", n);
+	for (i = 0; i < 2; i++) {
+		ATF_REQUIRE(write(sv[i][0], "x", 1) == 1);
+		ATF_REQUIRE(waitpid(r[i], &status, 0) == r[i]);
+	}
+	close(fd);
+	close(d);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, n1_opener_global);
@@ -454,5 +656,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, n6_passed_client_receiver);
 	ATF_TP_ADD_TC(tp, n7_join_ioctl);
 	ATF_TP_ADD_TC(tp, n13_reader_flagged_oes_client);
+	ATF_TP_ADD_TC(tp, n7b_join_before_first_read);
+	ATF_TP_ADD_TC(tp, n8_exec_ends_membership);
+	ATF_TP_ADD_TC(tp, n9_two_readers);
 	return (atf_no_error());
 }

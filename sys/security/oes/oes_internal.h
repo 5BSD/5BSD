@@ -151,12 +151,6 @@ LIST_HEAD(oes_cache_bucket, oes_cache_entry);
 TAILQ_HEAD(oes_cache_lru, oes_cache_entry);
 
 /*
- * Per-client state (one per open())
- *
- * Each open() creates a new client with independent subscriptions,
- * event queue, and configuration.
- */
-/*
  * The processes that act as a client: its readers (oes(4), "A client's own
  * processes"; oes-no-self-events.md).  An event whose subject is a reader
  * is never delivered to that client.  A process joins at open (the opener),
@@ -185,17 +179,23 @@ struct oes_reader {
 };
 struct oes_readers {
 	struct epoch_context	ors_ctx;
-	u_int			ors_count;	/* entries used */
-	u_int			ors_size;	/* entries allocated */
+	u_int			ors_count;	/* entries, sorted by pid */
 	struct oes_reader	ors_r[];
 };
 
+/*
+ * Per-client state (one per open())
+ *
+ * Each open() creates a new client with independent subscriptions,
+ * event queue, and configuration.
+ */
 struct oes_client {
 	LIST_ENTRY(oes_client)	ec_link;	/* Link in global list */
 	struct mtx		ec_mtx;		/* Protects this client */
 	uint64_t		ec_id;		/* Unique client ID */
 	struct oes_readers	*ec_readers;	/* Epoch-published; see above */
-	struct sx		ec_readers_lock; /* Joins only; a leaf */
+	struct sx		ec_readers_lock; /* Joins only; before pfind's
+						    pid hash sx and PROC_LOCK */
 	pid_t			ec_owner_pid;	/* Owner pid (open()) */
 	uint64_t		ec_owner_genid;	/* Owner generation */
 	uint64_t		ec_scope_marker;	/* Inherited descendants marker */
@@ -261,7 +261,7 @@ struct oes_client {
 
 /* Client flags */
 #define EC_FLAG_CLOSING		0x0001	/* Client is closing */
-#define EC_FLAG_MUTED_SELF	0x0002	/* Self-muted */
+/*	0x0002		   was EC_FLAG_MUTED_SELF (self-mute); free */
 #define EC_FLAG_MODE_SET	0x0004	/* Mode has been explicitly set */
 #define EC_FLAG_SCOPE_SETTING	0x0008	/* Scope credential update in flight */
 
@@ -686,9 +686,13 @@ void	oes_set_auth_deadline(struct oes_pending *ep, uint32_t deadline_ms);
  */
 int	oes_mac_init(void);
 uint64_t oes_proc_get_exec_id(struct proc *p);
-void	oes_readers_init(void);
+int	oes_readers_init(void);
 void	oes_readers_fini(void);
+void	oes_readers_enter(struct epoch_tracker *);
+void	oes_readers_exit(struct epoch_tracker *);
 bool	oes_client_is_reader(struct oes_client *, const oes_process_t *);
+uint64_t oes_proc_genid_unlocked(struct proc *);
+uint64_t oes_cred_get_exec_id(struct ucred *);
 void	oes_client_join(struct oes_client *, struct thread *);
 bool	oes_process_is_reader(const oes_process_t *);
 const char *oes_proc_get_exec_path(struct proc *p, uint32_t *meta_flags);
