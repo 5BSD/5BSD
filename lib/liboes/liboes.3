@@ -194,6 +194,10 @@ An unavailable endpoint returns the discovery error.
 Delivered clients have NOTIFY-only, global event scope and cannot be transferred
 again or changed to AUTH, descendant or jail scope.
 Their original opener identity is the broker worker.
+The constructor makes the calling process one of the client's readers
+.Pq Dv OES_IOC_JOIN ,
+so events the caller causes are not delivered to it
+.Pq see Xr oes 4 .
 Factory-session closure does not revoke the descriptor; ordinary last-close
 semantics apply.
 .Sh DESCRIPTOR OWNERSHIP
@@ -204,8 +208,16 @@ instead takes ownership on success and closes that descriptor on destruction.
 On failure, ownership remains with the caller.
 The caller must supply an OES descriptor and establish close-on-exec behavior
 before adoption.
-Adoption checks descriptor validity but does not verify its device type or issue
-ioctls, duplicate it, change rights, or change client scope.
+Both make the calling process one of the client's readers with
+.Dv OES_IOC_JOIN
+.Pq Xr oes 4 ,
+the one ioctl they issue.
+If the descriptor refuses it, for example because its ioctl limit leaves it
+out, the wrapper is still created and errno is unchanged; the process then
+joins at its first read, poll or kevent registration, and until then the
+events it causes reach the client.
+Adoption checks descriptor validity but does not verify its device type,
+duplicate it, change rights, or change client scope.
 An attenuated descriptor need not permit configuration or query ioctls.
 .Pp
 Closing one duplicate does not destroy the kernel client while another remains.
