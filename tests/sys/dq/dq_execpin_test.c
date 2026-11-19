@@ -567,7 +567,6 @@ ATF_TC_HEAD(p12_thousand_true, tc)
 	atf_tc_set_md_var(tc, "descr", "P12: 1000 posix_spawn(2)s of "
 	    "/usr/bin/true complete; the time is information (flips at BX-1: "
 	    "the hold's fast path fires 1000 times)");
-	atf_tc_set_md_var(tc, "timeout", "600");
 }
 ATF_TC_BODY(p12_thousand_true, tc)
 {
@@ -665,6 +664,10 @@ pin_inotify_count(int ifd, uint32_t mask)
 	return (count);
 }
 
+/*
+ * inotify queues an event in the changing call itself, so each count is
+ * read right after its call returns: nothing to wait for.
+ */
 static void
 p16_changes(int ifd, int counts[3])
 {
@@ -674,10 +677,8 @@ p16_changes(int ifd, int counts[3])
 	fd = open("changed", O_RDWR | O_APPEND);
 	ATF_REQUIRE(fd != -1);
 	ATF_REQUIRE_EQ(4, write(fd, "more", 4));
-	dqt_msleep(100);
 	counts[0] = ifd == -1 ? 0 : pin_inotify_count(ifd, IN_MODIFY);
 	ATF_REQUIRE_EQ(0, ftruncate(fd, 2));
-	dqt_msleep(100);
 	counts[1] = ifd == -1 ? 0 : pin_inotify_count(ifd, IN_MODIFY);
 	ATF_REQUIRE_EQ(0, ftruncate(fd, getpagesize()));
 	if (ifd != -1)
@@ -688,7 +689,6 @@ p16_changes(int ifd, int counts[3])
 	p[0] = 'X';
 	ATF_REQUIRE_EQ(0, msync(p, (size_t)getpagesize(), MS_SYNC));
 	ATF_REQUIRE_EQ(0, munmap(p, (size_t)getpagesize()));
-	dqt_msleep(100);
 	counts[2] = ifd == -1 ? 0 : pin_inotify_count(ifd, IN_MODIFY);
 	ATF_REQUIRE_EQ(0, close(fd));
 }
