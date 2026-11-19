@@ -20898,13 +20898,16 @@ dtrace_helper_provider_validate(dof_hdr_t *dof, dof_sec_t *sec)
  * from (DTRACEHIOC_ADDDOF, dtrace_ioctl.c).  Every probe and is-enabled
  * site of its helper providers must lie in one of them.
  */
-#define	DTRACE_HELPER_PCS_MAX	16
+typedef struct dtrace_helper_range {
+	uintptr_t	dhr_start;
+	uintptr_t	dhr_end;
+} dtrace_helper_range_t;
 
 typedef struct dtrace_helper_pcs {
-	int		dhpc_n;
-	uintptr_t	dhpc_start[DTRACE_HELPER_PCS_MAX];
-	uintptr_t	dhpc_end[DTRACE_HELPER_PCS_MAX];
-	int		dhpc_error;	/* EFAULT when a site lies outside */
+	size_t			dhpc_n;		/* ranges in dhpc_r */
+	size_t			dhpc_cap;	/* ranges allocated */
+	dtrace_helper_range_t	*dhpc_r;	/* kmem_alloc()ed, or NULL */
+	int			dhpc_error;	/* EFAULT: a site lies outside */
 } dtrace_helper_pcs_t;
 
 static bool
@@ -20912,13 +20915,14 @@ dtrace_helper_pc_ok(const dtrace_helper_pcs_t *pcs, uint64_t base,
     uint32_t off)
 {
 	uint64_t pc;
-	int i;
+	size_t i;
 
 	pc = base + off;
 	if (pc < base)
 		return (false);
 	for (i = 0; i < pcs->dhpc_n; i++) {
-		if (pc >= pcs->dhpc_start[i] && pc < pcs->dhpc_end[i])
+		if (pc >= pcs->dhpc_r[i].dhr_start &&
+		    pc < pcs->dhpc_r[i].dhr_end)
 			return (true);
 	}
 	return (false);

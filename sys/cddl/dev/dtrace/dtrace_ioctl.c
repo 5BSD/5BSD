@@ -46,8 +46,9 @@ SYSCTL_INT(_debug_dtrace, OID_AUTO, verbose_ioctl, CTLFLAG_RW,
  *   the file (vn_rdwr()), at the offsets that mapping covered, and never
  *   from the process's memory.
  * - The load base is derived here, not taken from the caller: the start of
- *   the mapping of the same vnode object at file offset 0 for an ET_DYN
- *   object, 0 for ET_EXEC.  A dofhp_addr that differs is refused.
+ *   the mapping of the same vnode object (or of a private copy of it, one
+ *   shadow deep) at file offset 0 for an ET_DYN object, 0 for ET_EXEC.  A
+ *   dofhp_addr that differs is refused.
  * - Every probe and is-enabled site the DOF names, once relocated, must lie
  *   in an executable mapping of that file (dtrace_helper_slurp() checks
  *   them against the ranges recorded here): a DOF cannot name a site in
@@ -79,8 +80,8 @@ SDT_PROBE_DEFINE2(dtrace_helper, , , adddof__other, "pid_t", "int");
 struct dtrace_adddof_obj {
 	struct vnode		*dao_vp;	/* referenced */
 	vm_ooffset_t		dao_off;	/* file offset of the DOF */
-	vm_ooffset_t		dao_end;	/* file offset of its mapping's end */
-	uintptr_t		dao_base;	/* start of the offset-0 mapping */
+	vm_ooffset_t		dao_end;	/* file offset of its end */
+	uintptr_t		dao_base;	/* offset 0 mapping start */
 	bool			dao_hasbase;
 	dtrace_helper_pcs_t	dao_pcs;	/* executable mappings */
 };
@@ -99,8 +100,50 @@ dtrace_adddof_backed_by(vm_object_t obj, vm_object_t target)
 }
 
 /*
- * Find the mapping of the DOF at uaddr in vm and the object behind it.
- * On success dao holds a reference on the file's vnode.
+ * The entry of the DOF at uaddr, under the map's read lock: a read-only
+ * mapping whose own object is a file's vnode object.
+ */
+static vm_object_t
+dtrace_adddof_entry(vm_map_t map, uintptr_t uaddr, vm_map_entry_t *entryp)
+{
+	vm_map_entry_t entry;
+	vm_object_t obj;
+
+	if (!vm_map_lookup_entry(map, uaddr, &entry) ||
+	    (entry->eflags & MAP_ENTRY_IS_SUB_MAP) != 0 ||
+	    (obj = entry->object.vm_object) == NULL ||
+	    (entry->protection & VM_PROT_WRITE) != 0 ||
+	    entry->end - uaddr < sizeof(dof_hdr_t))
+		return (NULL);
+	/* The type of an object and OBJ_ANON never change. */
+	if (obj->type != OBJT_VNODE || (obj->flags & OBJ_ANON) != 0)
+		return (NULL);
+	*entryp = entry;
+	return (obj);
+}
+
+/* The executable mappings of obj (or of a private copy of it) in map. */
+static size_t
+dtrace_adddof_count_text(vm_map_t map, vm_object_t obj)
+{
+	vm_map_entry_t e;
+	size_t n;
+
+	n = 0;
+	VM_MAP_ENTRY_FOREACH(e, map) {
+		if ((e->eflags & MAP_ENTRY_IS_SUB_MAP) == 0 &&
+		    (e->protection & VM_PROT_EXECUTE) != 0 &&
+		    dtrace_adddof_backed_by(e->object.vm_object, obj))
+			n++;
+	}
+	return (n);
+}
+
+/*
+ * Find the mapping of the DOF at uaddr in vm and the object behind it, the
+ * object's load base and its executable mappings.  On success dao holds a
+ * reference on the file's vnode and the ranges in dao->dao_pcs, which the
+ * caller frees with dtrace_adddof_obj_free().
  */
 static int
 dtrace_adddof_object(struct vmspace *vm, uintptr_t uaddr,
@@ -110,52 +153,84 @@ dtrace_adddof_object(struct vmspace *vm, uintptr_t uaddr,
 	vm_map_entry_t entry, e;
 	vm_object_t obj;
 	dtrace_helper_pcs_t *pcs;
-	int error;
+	dtrace_helper_range_t *r;
+	size_t n;
 
 	map = &vm->vm_map;
 	pcs = &dao->dao_pcs;
-	error = EFAULT;
-	vm_map_lock_read(map);
-	if (!vm_map_lookup_entry(map, uaddr, &entry) ||
-	    (entry->eflags & MAP_ENTRY_IS_SUB_MAP) != 0 ||
-	    (obj = entry->object.vm_object) == NULL ||
-	    (entry->protection & VM_PROT_WRITE) != 0 ||
-	    entry->end - uaddr < sizeof(dof_hdr_t))
-		goto out;
 	/*
-	 * The type of an object and OBJ_ANON never change.  The entry's
-	 * reference on the object holds a use reference on its vnode, so the
-	 * vnode stays allocated while the map is locked; a forced unmount may
-	 * clear the handle, which is then refused.
+	 * Size the ranges from the map.  An allocation that cannot be made
+	 * without sleeping is made with the map unlocked, and the map is
+	 * looked at again.
 	 */
-	if (obj->type != OBJT_VNODE || (obj->flags & OBJ_ANON) != 0 ||
-	    (dao->dao_vp = atomic_load_ptr(&obj->handle)) == NULL)
-		goto out;
+	for (;;) {
+		vm_map_lock_read(map);
+		if ((obj = dtrace_adddof_entry(map, uaddr, &entry)) == NULL) {
+			vm_map_unlock_read(map);
+			return (EFAULT);
+		}
+		n = dtrace_adddof_count_text(map, obj);
+		if (n <= pcs->dhpc_cap)
+			break;
+		r = kmem_alloc(n * sizeof(*r), KM_NOSLEEP);
+		if (r != NULL) {
+			if (pcs->dhpc_r != NULL)
+				kmem_free(pcs->dhpc_r,
+				    pcs->dhpc_cap * sizeof(*r));
+			pcs->dhpc_r = r;
+			pcs->dhpc_cap = n;
+			break;
+		}
+		vm_map_unlock_read(map);
+		if (pcs->dhpc_r != NULL)
+			kmem_free(pcs->dhpc_r, pcs->dhpc_cap * sizeof(*r));
+		pcs->dhpc_r = kmem_alloc(n * sizeof(*r), KM_SLEEP);
+		pcs->dhpc_cap = n;
+	}
+
+	/*
+	 * The entry's reference on the object holds a use reference on its
+	 * vnode, so the vnode stays allocated while the map is locked; a
+	 * forced unmount may clear the handle, which is then refused.
+	 */
+	if ((dao->dao_vp = atomic_load_ptr(&obj->handle)) == NULL) {
+		vm_map_unlock_read(map);
+		return (EFAULT);
+	}
 	vref(dao->dao_vp);
 	dao->dao_off = entry->offset + (uaddr - entry->start);
 	dao->dao_end = entry->offset + (entry->end - entry->start);
 
 	/* The load base, and the executable mappings of the same file. */
 	VM_MAP_ENTRY_FOREACH(e, map) {
-		if ((e->eflags & MAP_ENTRY_IS_SUB_MAP) != 0)
+		if ((e->eflags & MAP_ENTRY_IS_SUB_MAP) != 0 ||
+		    !dtrace_adddof_backed_by(e->object.vm_object, obj))
 			continue;
-		if (e->object.vm_object == obj && e->offset == 0 &&
+		if (e->offset == 0 &&
 		    (!dao->dao_hasbase || e->start < dao->dao_base)) {
 			dao->dao_base = e->start;
 			dao->dao_hasbase = true;
 		}
 		if ((e->protection & VM_PROT_EXECUTE) != 0 &&
-		    pcs->dhpc_n < DTRACE_HELPER_PCS_MAX &&
-		    dtrace_adddof_backed_by(e->object.vm_object, obj)) {
-			pcs->dhpc_start[pcs->dhpc_n] = e->start;
-			pcs->dhpc_end[pcs->dhpc_n] = e->end;
+		    pcs->dhpc_n < n) {
+			pcs->dhpc_r[pcs->dhpc_n].dhr_start = e->start;
+			pcs->dhpc_r[pcs->dhpc_n].dhr_end = e->end;
 			pcs->dhpc_n++;
 		}
 	}
-	error = 0;
-out:
 	vm_map_unlock_read(map);
-	return (error);
+	return (0);
+}
+
+static void
+dtrace_adddof_obj_free(struct dtrace_adddof_obj *dao)
+{
+
+	if (dao->dao_vp != NULL)
+		vrele(dao->dao_vp);
+	if (dao->dao_pcs.dhpc_r != NULL)
+		kmem_free(dao->dao_pcs.dhpc_r,
+		    dao->dao_pcs.dhpc_cap * sizeof(*dao->dao_pcs.dhpc_r));
 }
 
 static int
@@ -296,8 +371,6 @@ dtrace_adddof_other(struct thread *td, dof_helper_t *dhp)
 		error = EINVAL;
 	if (error == 0)
 		dof = dtrace_adddof_copyin(td, &dao, &error);
-	if (dao.dao_vp != NULL)
-		vrele(dao.dao_vp);
 	if (dof != NULL) {
 		mutex_enter(&dtrace_lock);
 		if ((rval = dtrace_helper_slurp(dof, dhp, p,
@@ -309,6 +382,7 @@ dtrace_adddof_other(struct thread *td, dof_helper_t *dhp)
 			    dao.dao_pcs.dhpc_error : EINVAL;
 		mutex_exit(&dtrace_lock);
 	}
+	dtrace_adddof_obj_free(&dao);
 	PROC_LOCK(p);
 	execve_unblock(td, p);
 	_PRELE(p);
