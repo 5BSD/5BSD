@@ -2493,13 +2493,6 @@ oes_jail_scopes_finish(void)
  * deliveries.  The task returns when a round finds nothing queued and
  * nothing to end; whatever is queued or marked after that round's look
  * enqueues the task again.
- *
- * Producers that never let the queue empty keep this PI_SOFT thread
- * running indefinitely, and a thread queued on its CPU behind it would not
- * run until they stop: a killed producer could not even exit.  So the task
- * sleeps for a tick once it has run for a scheduler hog limit.  The sleep
- * keeps the thread's priority, which kern_yield(PRI_UNCHANGED) would not
- * give up and kern_yield(PRI_USER) would lower for good.
  */
 void
 oes_defer_task_fn(void *arg __unused, int pending __unused)
@@ -2530,8 +2523,6 @@ oes_defer_task_fn(void *arg __unused, int pending __unused)
 
 			oes_deliver_notify_locked(ep);
 			oes_pending_rele(ep);
-			if (should_yield())
-				pause("oesdqy", 1);
 		}
 
 		if (ending)
