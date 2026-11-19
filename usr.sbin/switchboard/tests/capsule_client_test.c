@@ -55,6 +55,13 @@ struct switchboard_state sd;
 #define	SLOW_PEER_MS	1000
 
 /*
+ * Stale replies the stand-in sends ahead of the real one in the many-stale
+ * case: more than the 8 an earlier client dropped before giving up with
+ * EPROTO, which lost the real reply that followed.
+ */
+#define	STALE_REPLIES	9
+
+/*
  * Exact counts of the client's waits.  This program defines ioctl(2) and
  * poll(2), so the code under test, linked into it, calls these; they count
  * and forward to the C library's.  While counting is on, every
@@ -77,6 +84,8 @@ ioctl(int fd, unsigned long request, ...)
 	if (real_ioctl == NULL)
 		real_ioctl = (int (*)(int, unsigned long, ...))dlsym(RTLD_NEXT,
 		    "ioctl");
+	if (real_ioctl == NULL)
+		abort();
 	if (counting && request == MAC_CAPABILITY_RECVMSG)
 		recv_calls++;
 	return (real_ioctl(fd, request, arg));
@@ -90,6 +99,8 @@ poll(struct pollfd fds[], nfds_t nfds, int timeout)
 	if (real_poll == NULL)
 		real_poll = (int (*)(struct pollfd *, nfds_t, int))dlsym(
 		    RTLD_NEXT, "poll");
+	if (real_poll == NULL)
+		abort();
 	if (counting)
 		poll_calls++;
 	return (real_poll(fds, nfds, timeout));
@@ -203,6 +214,7 @@ enum peer_mode {
 	PEER_SLOW,		/* reply after SLOW_PEER_MS */
 	PEER_STALE_FIRST,	/* a reply with another token, then the reply */
 	PEER_STALE_FD_FIRST,	/* the same, the stale one carrying a pipe */
+	PEER_MANY_STALE_FIRST,	/* STALE_REPLIES stale replies, then the reply */
 	PEER_CLOSE,		/* read the request, close without replying */
 	PEER_SLOW_DIE,		/* read the request, exit after SLOW_PEER_MS */
 };
@@ -241,6 +253,11 @@ peer_start(int P[2], enum peer_mode mode, uint32_t want_op)
 		if (peer_reply(P[1], token + 1000, EIO, -1) != 0)
 			_exit(11);
 		break;
+	case PEER_MANY_STALE_FIRST:
+		for (int i = 0; i < STALE_REPLIES; i++)
+			if (peer_reply(P[1], token + 1000 + i, EIO, -1) != 0)
+				_exit(11);
+		break;
 	case PEER_STALE_FD_FIRST:
 		if (peer_reply(P[1], token + 1000, 0, pipe_read_end()) != 0)
 			_exit(11);
@@ -274,23 +291,31 @@ peer_finish(int P[2], pid_t pid)
 }
 
 /*
- * Whether a message (or EOF) is queued on fd now: the channel's EVFILT_READ
- * as the SwitchBoard event loop sees it.
+ * Whether a message (or EOF) is queued on fd, waiting no longer than *ts
+ * (NULL: until one is): the channel's EVFILT_READ as the SwitchBoard event
+ * loop sees it.
  */
 static int
-readable_now(int fd)
+readable(int fd, const struct timespec *ts)
 {
 	struct kevent kev;
-	struct timespec zero = { 0, 0 };
 	int kq, n;
 
 	kq = kqueue();
 	ATF_REQUIRE(kq >= 0);
 	EV_SET(&kev, fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
-	n = kevent(kq, &kev, 1, &kev, 1, &zero);
+	n = kevent(kq, &kev, 1, &kev, 1, ts);
 	ATF_REQUIRE_MSG(n >= 0, "kevent: %s", strerror(errno));
 	close(kq);
 	return (n);
+}
+
+static int
+readable_now(int fd)
+{
+	static const struct timespec zero = { 0, 0 };
+
+	return (readable(fd, &zero));
 }
 
 /* The lowest descriptor number free in this process. */
@@ -363,6 +388,20 @@ ATF_TC_BODY(rpc_stale_reply_drained, tc)
 
 	pair(P);
 	pid = peer_start(P, PEER_STALE_FIRST, CAPSULE_OP_READY);
+	ATF_CHECK_EQ_MSG(0, capsule_send_ready(P[0]), "%s", strerror(errno));
+	ATF_CHECK_EQ(0, readable_now(P[0]));
+	peer_finish(P, pid);
+}
+
+CHANNEL_TC_HEAD(rpc_many_stale_replies_drained,
+    "an RPC drops any number of stale replies and takes the real one")
+ATF_TC_BODY(rpc_many_stale_replies_drained, tc)
+{
+	int P[2];
+	pid_t pid;
+
+	pair(P);
+	pid = peer_start(P, PEER_MANY_STALE_FIRST, CAPSULE_OP_READY);
 	ATF_CHECK_EQ_MSG(0, capsule_send_ready(P[0]), "%s", strerror(errno));
 	ATF_CHECK_EQ(0, readable_now(P[0]));
 	peer_finish(P, pid);
@@ -544,8 +583,9 @@ ATF_TC_BODY(unexpected_message_dropped, tc)
 	ATF_REQUIRE(fd >= 0);
 	ATF_REQUIRE(peer_reply(P[1], 42, 0, fd) == 0);
 	close(fd);
+	/* Delivery is asynchronous: wait for the message to be queued. */
+	ATF_REQUIRE_EQ(1, readable(P[0], NULL));
 	/* Level-triggered: the queued message keeps the channel ready. */
-	ATF_CHECK_EQ(1, readable_now(P[0]));
 	ATF_CHECK_EQ(1, readable_now(P[0]));
 	ATF_CHECK_EQ(1, capsule_drop_unexpected(P[0]));
 	ATF_CHECK_EQ_MSG(0, readable_now(P[0]),
@@ -562,6 +602,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, rpc_prompt_reply);
 	ATF_TP_ADD_TC(tp, rpc_slow_reply_waited);
 	ATF_TP_ADD_TC(tp, rpc_stale_reply_drained);
+	ATF_TP_ADD_TC(tp, rpc_many_stale_replies_drained);
 	ATF_TP_ADD_TC(tp, rpc_stale_fd_reply_drained);
 	ATF_TP_ADD_TC(tp, rpc_peer_closed);
 	ATF_TP_ADD_TC(tp, rpc_peer_dies_while_waiting);
