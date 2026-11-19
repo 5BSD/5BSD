@@ -454,7 +454,8 @@ pre_memfd(void *arg)
 
 	in = open("helper", O_RDONLY);
 	fd = memfd_create("dqpin", 0);
-	if (in == -1 || fd == -1)
+	/* rtld -f refuses an image without an execute bit. */
+	if (in == -1 || fd == -1 || fchmod(fd, 0755) != 0)
 		_exit(124);
 	while ((n = read(in, buf, sizeof(buf))) > 0)
 		if (write(fd, buf, (size_t)n) != n)
@@ -571,24 +572,40 @@ ATF_TC_HEAD(p12_thousand_true, tc)
 ATF_TC_BODY(p12_thousand_true, tc)
 {
 	char *argv[] = { __DECONST(char *, "true"), NULL };
-	struct timespec t0, t1;
+	struct timespec t0, t1, ts, te;
+	long ms, worst;
 	pid_t pid;
-	int i, failed, status;
+	int i, failed, status, worst_i;
 
 	failed = 0;
+	worst = 0;
+	worst_i = -1;
 	ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &t0));
 	for (i = 0; i < 1000; i++) {
+		ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &ts));
 		ATF_REQUIRE_EQ(0, posix_spawn(&pid, "/usr/bin/true", NULL,
 		    NULL, argv, environ));
 		ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+		ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &te));
 		if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
 			failed++;
+		ms = (long)((te.tv_sec - ts.tv_sec) * 1000 +
+		    (te.tv_nsec - ts.tv_nsec) / 1000000);
+		if (ms > worst) {
+			worst = ms;
+			worst_i = i;
+		}
+		/* Progress, so a timed-out run shows where it stalled. */
+		if ((i + 1) % 100 == 0)
+			fprintf(stderr, "p12: %d execs, %ld ms\n", i + 1,
+			    (long)((te.tv_sec - t0.tv_sec) * 1000 +
+			    (te.tv_nsec - t0.tv_nsec) / 1000000));
 	}
 	ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &t1));
 	ATF_CHECK_EQ(0, failed);
-	printf("p12: 1000 execs in %ld ms\n",
+	printf("p12: 1000 execs in %ld ms, slowest %ld ms (#%d)\n",
 	    (long)((t1.tv_sec - t0.tv_sec) * 1000 +
-	    (t1.tv_nsec - t0.tv_nsec) / 1000000));
+	    (t1.tv_nsec - t0.tv_nsec) / 1000000), worst, worst_i);
 }
 
 ATF_TC(p14_posix_spawn);
@@ -681,9 +698,9 @@ ATF_TC_HEAD(p16_changes_inotify, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "P16: append, ftruncate and a write "
 	    "through a shared mapping succeed with and without an inotify "
-	    "watch; a watch sees IN_MODIFY for the append and the truncate "
-	    "and none for the mapped store (never flips; BX-1 adds the "
-	    "change-note sites)");
+	    "watch; a watch sees one IN_MODIFY each for the append, the "
+	    "truncate and the msync'ed store through the mapping (never "
+	    "flips; BX-1 adds the change-note sites)");
 }
 ATF_TC_BODY(p16_changes_inotify, tc)
 {
@@ -699,7 +716,7 @@ ATF_TC_BODY(p16_changes_inotify, tc)
 	p16_changes(ifd, counts);
 	ATF_CHECK_EQ_MSG(1, counts[0], "append: %d IN_MODIFY", counts[0]);
 	ATF_CHECK_EQ_MSG(1, counts[1], "ftruncate: %d IN_MODIFY", counts[1]);
-	ATF_CHECK_EQ_MSG(0, counts[2], "mapped store: %d IN_MODIFY",
+	ATF_CHECK_EQ_MSG(1, counts[2], "mapped store: %d IN_MODIFY",
 	    counts[2]);
 	ATF_CHECK_EQ(0, close(ifd));
 }
