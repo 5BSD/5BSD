@@ -1399,7 +1399,9 @@ thread_suspend_check_needed(void)
  *       1       | thread exits       |   returns 1
  *               |                    |  immediately
  * 0 = thread_exit() or suspension ok,
- * other = return error instead of stopping the thread.
+ * other = return error instead of stopping the thread, or, with
+ * return_instead, TDSC_INPLACE: the caller is to stop the thread where it
+ * is about to sleep (only sig_ast_checksusp() callers see it).
  *
  * While a full suspension is under effect, even a single threading
  * thread would be suspended if it made this call (but it shouldn't).
@@ -1455,20 +1457,22 @@ thread_suspend_check(int return_instead)
 		 * other checks missed it.  Then we must not suspend
 		 * regardless of P_SHOULDSTOP() or debugger request.
 		 *
-		 * A transparent PT_ATTACH stops the process from
-		 * outside, with no thread reporting the stop (p_xthread
-		 * is NULL).  It leaves a thread that is already asleep
-		 * on its sleep queue; a thread caught on its way into a
-		 * sleep cannot stop there and backs out to the user
-		 * boundary instead.  Back out with ERESTART, so that the
-		 * system call is restarted when the debugger resumes the
-		 * process, as if the thread had been asleep already.
+		 * A stop made from outside by a transparent PT_ATTACH
+		 * or by PT_KERN_INTERRUPT (P2_PTRACE_OUTSTOP) leaves a
+		 * thread that is asleep where it sleeps.  A thread on
+		 * its way into an interruptible sleep is to be stopped
+		 * the same way, asleep: TDSC_INPLACE tells the sleep
+		 * queue code (sleepq_check_ast_sc_locked()) to do that.
+		 * Only the sleep queue may act on it; sig_intr() turns
+		 * it back into EINTR.
 		 */
 		if (return_instead) {
-			if (pt_attach_transparent &&
-			    (p->p_flag & P_STOPPED_TRACE) != 0 &&
-			    p->p_xthread == NULL)
-				return (ERESTART);
+			KASSERT((p->p_flag2 & P2_PTRACE_OUTSTOP) == 0 ||
+			    (p->p_flag & P_STOPPED_TRACE) != 0,
+			    ("P2_PTRACE_OUTSTOP without P_STOPPED_TRACE"));
+			if ((p->p_flag2 & P2_PTRACE_OUTSTOP) != 0 &&
+			    (p->p_flag & P_STOPPED_SINGLE) == 0)
+				return (TDSC_INPLACE);
 			return (EINTR);
 		}
 

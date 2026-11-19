@@ -515,27 +515,43 @@ Registers written with
 do not end the sleep.
 Reading or writing the process's memory does not end the sleep.
 A thread that the attach finds on its way into an interruptible sleep,
-not yet asleep, cannot stop there: it leaves the system call to stop at
-the user boundary, and the call is restarted when the process is resumed
-or detached.
-Its registers, while it is stopped, are those of the restarted call.
-Registers the debugger changes there are the ones the restarted call
-uses, and a new pc resumes the thread there instead of restarting the
-call; in neither case does the call fail with
-.Er EINTR .
-System calls that are not restarted after a signal, such as
-.Xr nanosleep 2 ,
-.Xr poll 2 ,
-.Xr select 2
-and
-.Xr kevent 2 ,
-fail with
-.Er EINTR
-in that case.
+not yet asleep, is stopped the same way, in the sleep.
+A signal delivered when the process is resumed, by the request that
+resumes it or otherwise, ends such a sleep as it ends any interruptible
+sleep: the handler runs, and the system call fails with
+.Er EINTR ,
+is restarted if the handler was installed with
+.Dv SA_RESTART ,
+or returns the count it had transferred already.
+A thread that the attach finds running in the kernel outside a sleep,
+in a system call that checks for stops between its steps (such as
+.Xr copy_file_range 2 ) ,
+stops at the user boundary instead, and the call ends early as it does
+when a signal arrives:
+.Xr copy_file_range 2
+returns the count it has copied.
+.Dv PT_KERN_INTERRUPT ,
+used by the Linux ABI's
+.Dv PTRACE_INTERRUPT ,
+stops the process the same way whatever the sysctl says.
 When the sysctl is not set, the attach stops the process with
 .Dv SIGSTOP ,
 which ends interruptible sleeps as a stop signal does; most interrupted
 system calls are restarted when the process is resumed.
+Some are not, and fail with
+.Er EINTR :
+.Xr nanosleep 2 ,
+.Xr poll 2 ,
+.Xr select 2 ,
+.Xr kevent 2 ,
+.Xr sigtimedwait 2
+and
+.Xr connect 2 .
+A thread that a non-transparent attach finds on its way into a sleep
+fails its system call with
+.Er EINTR
+if the process is resumed with
+.Dv PT_CONTINUE .
 .Pp
 A tracing process that is not the parent collects the exit status of the
 traced process with
