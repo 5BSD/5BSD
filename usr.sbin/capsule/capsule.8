@@ -656,7 +656,12 @@ Host root can still query status and request reboot, halt, poweroff,
 powercycle, single-user and catatonia; every other control operation is
 refused.
 .Nm
-keeps retrying in the background; once it holds an issuer it stops the
+then retries in the background, six more times, backing off from 10 to 320
+seconds (about ten minutes); after that it stops and says so, and only a
+restart of
+.Xr switchboard 8
+or a reboot tries again.
+Once it holds an issuer it stops the
 degraded
 .Xr switchboard 8
 and starts it again with the issuer.

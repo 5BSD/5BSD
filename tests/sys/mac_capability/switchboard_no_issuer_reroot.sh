@@ -171,7 +171,8 @@ wait:persistent|fixed:persistent)
 	# Clear the outage; Capsule's next retry gets the issuer.
 	sysctl debug.mac_capability.test_issuer_fail_init=0 ||
 	    fail 'cannot clear fail_init after the reroot'
-	await 'bootstrap: authority issuer acquired' 60 ||
+	# Degraded retries back off to 320 s (capsule(8)).
+	await 'bootstrap: authority issuer acquired' 400 ||
 	    fail 'Capsule did not acquire the issuer after the fault cleared'
 	new=$(await_new_pid "$old" 60) || fail 'no new SwitchBoard after the planned restart'
 	sleep 20

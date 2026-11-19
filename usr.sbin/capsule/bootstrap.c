@@ -64,9 +64,18 @@
  * SwitchBoard sooner than the old abort loop reached recovery.  Retries back
  * off from BOOTSTRAP_BASE_DELAY to BOOTSTRAP_ISSUER_RETRY_MAX seconds; each
  * is one system call.
+ *
+ * No event announces that a descriptor shortage has cleared, so the retries
+ * are bounded rather than open-ended.  The wait is a deadline.  Once
+ * SwitchBoard runs degraded, Capsule makes BOOTSTRAP_ISSUER_BG_RETRIES more
+ * attempts, doubling from BOOTSTRAP_ISSUER_RETRY_MAX to
+ * BOOTSTRAP_ISSUER_BG_MAX_DELAY (about ten minutes in all), then stops and
+ * says so.  After that, only a SwitchBoard restart, or a reboot, tries again.
  */
 #define	BOOTSTRAP_ISSUER_WAIT		60	/* seconds before a degraded start */
 #define	BOOTSTRAP_ISSUER_RETRY_MAX	10	/* max seconds between retries */
+#define	BOOTSTRAP_ISSUER_BG_RETRIES	6	/* attempts while degraded */
+#define	BOOTSTRAP_ISSUER_BG_MAX_DELAY	320	/* max seconds between them */
 
 /* Well-known fds for switchboard. */
 #define	SWITCHBOARD_CHANNEL_FD	3	/* channel to capsule */
@@ -90,6 +99,7 @@ static struct {
 	bool		issuer_outage;	/* creates are failing transiently */
 	struct timespec	issuer_outage_start;
 	unsigned	issuer_retry_delay;
+	unsigned	issuer_bg_attempts;	/* background attempts made */
 	bool		issuer_timer_armed;
 	bool		issuer_waiting;	/* a start waits for the retry */
 	bool		degraded;	/* the running switchboard has no issuer */
@@ -458,21 +468,36 @@ bootstrap_issuer_transient(int error)
 }
 
 /*
- * Arm the issuer retry timer, backing off to BOOTSTRAP_ISSUER_RETRY_MAX.
- * Returns -1 if it cannot be armed.
+ * Arm the issuer retry timer.  Before the start (background false) it backs
+ * off to BOOTSTRAP_ISSUER_RETRY_MAX; while SwitchBoard runs degraded it backs
+ * off to BOOTSTRAP_ISSUER_BG_MAX_DELAY and stops after
+ * BOOTSTRAP_ISSUER_BG_RETRIES attempts.  Returns -1 if no retry is armed.
  */
 static int
-bootstrap_issuer_schedule(int kq)
+bootstrap_issuer_schedule(int kq, bool background)
 {
 	struct kevent kev;
-	unsigned delay;
+	unsigned delay, max;
 
 	if (bs.issuer_timer_armed)
 		return (0);
+	if (background) {
+		if (bs.issuer_bg_attempts >= BOOTSTRAP_ISSUER_BG_RETRIES) {
+			syslog(LOG_CRIT, "bootstrap: no authority issuer after "
+			    "%u more attempts; stopped retrying: restart "
+			    "switchboard or reboot to restore grants",
+			    bs.issuer_bg_attempts);
+			return (-1);
+		}
+		bs.issuer_bg_attempts++;
+		if (bs.issuer_retry_delay < BOOTSTRAP_ISSUER_RETRY_MAX)
+			bs.issuer_retry_delay = BOOTSTRAP_ISSUER_RETRY_MAX;
+	}
+	max = background ? BOOTSTRAP_ISSUER_BG_MAX_DELAY :
+	    BOOTSTRAP_ISSUER_RETRY_MAX;
 	delay = bs.issuer_retry_delay == 0 ? BOOTSTRAP_BASE_DELAY :
 	    bs.issuer_retry_delay;
-	bs.issuer_retry_delay = delay * 2 > BOOTSTRAP_ISSUER_RETRY_MAX ?
-	    BOOTSTRAP_ISSUER_RETRY_MAX : delay * 2;
+	bs.issuer_retry_delay = delay * 2 > max ? max : delay * 2;
 	EV_SET(&kev, BOOTSTRAP_ISSUER_TIMER_IDENT, EVFILT_TIMER,
 	    EV_ADD | EV_ONESHOT, 0, (int)(delay * 1000), NULL);
 	if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1) {
@@ -497,6 +522,7 @@ bootstrap_issuer_acquired(int fd)
 	bs.issuer_fd = fd;
 	bs.issuer_outage = false;
 	bs.issuer_retry_delay = 0;
+	bs.issuer_bg_attempts = 0;
 }
 
 /*
@@ -531,12 +557,13 @@ bootstrap_issuer_ready(int kq)
 		bs.issuer_outage = true;
 		bs.issuer_outage_start = now;
 		bs.issuer_retry_delay = 0;
+		bs.issuer_bg_attempts = 0;
 		syslog(LOG_WARNING, "bootstrap: protected authority issuer "
 		    "unavailable: %s; waiting up to %ds before starting "
 		    "switchboard", strerror(error), BOOTSTRAP_ISSUER_WAIT);
 	}
 	if (now.tv_sec - bs.issuer_outage_start.tv_sec < BOOTSTRAP_ISSUER_WAIT &&
-	    bootstrap_issuer_schedule(kq) == 0) {
+	    bootstrap_issuer_schedule(kq, false) == 0) {
 		bs.issuer_waiting = true;
 		return (false);
 	}
@@ -575,7 +602,7 @@ bootstrap_handle_issuer_timer(int kq)
 	fd = bootstrap_issuer_create();
 	if (fd < 0) {
 		if (bootstrap_issuer_transient(errno))
-			(void)bootstrap_issuer_schedule(kq);
+			(void)bootstrap_issuer_schedule(kq, true);
 		else
 			syslog(LOG_ERR, "bootstrap: protected authority issuer "
 			    "unavailable: %m; no further retries");
@@ -875,7 +902,7 @@ bootstrap_start(int kq)
 	CAPSULE_PROBE_BOOTSTRAP_START(pid);
 	/* Degraded through an outage: keep trying for the issuer. */
 	if (bs.degraded && bs.issuer_outage)
-		(void)bootstrap_issuer_schedule(kq);
+		(void)bootstrap_issuer_schedule(kq, true);
 	return (0);
 }
 
