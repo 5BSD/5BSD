@@ -492,6 +492,33 @@ ATF_TC_BODY(create_channel_direct, tc)
 	close(ca.fd);
 }
 
+CHANNEL_TC_HEAD(unexpected_message_dropped,
+    "a message queued outside an RPC is dropped with its descriptors and "
+    "the channel stops reading ready")
+ATF_TC_BODY(unexpected_message_dropped, tc)
+{
+	int P[2], before, fd;
+
+	pair(P);
+	/* Nothing queued: nothing dropped. */
+	ATF_CHECK_EQ(0, capsule_drop_unexpected(P[0]));
+	before = lowest_free_fd();
+	fd = pipe_read_end();
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(peer_reply(P[1], 42, 0, fd) == 0);
+	close(fd);
+	/* Level-triggered: the queued message keeps the channel ready. */
+	ATF_CHECK_EQ(1, readable_now(P[0]));
+	ATF_CHECK_EQ(1, readable_now(P[0]));
+	ATF_CHECK_EQ(1, capsule_drop_unexpected(P[0]));
+	ATF_CHECK_EQ_MSG(0, readable_now(P[0]),
+	    "the channel still reads ready after the message was dropped");
+	ATF_CHECK_EQ_MSG(before, lowest_free_fd(),
+	    "the message's descriptor was not closed");
+	close(P[0]);
+	close(P[1]);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -505,5 +532,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, release_slow_reply_waited);
 	ATF_TP_ADD_TC(tp, release_matches_token);
 	ATF_TP_ADD_TC(tp, create_channel_direct);
+	ATF_TP_ADD_TC(tp, unexpected_message_dropped);
 	return (0);
 }

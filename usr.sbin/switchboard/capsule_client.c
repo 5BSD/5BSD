@@ -10,7 +10,7 @@
  * uses a unique reply_token for correlation.
  */
 
-#include <sys/types.h>
+#include <sys/param.h>
 
 #include <dev/mac_capability/mac_capability_ioctl.h>
 #include <dev/mac_capability/mac_capability_isolation_proto.h>
@@ -18,7 +18,6 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#include <poll.h>
 #include <string.h>
 #include <syslog.h>
 #include <unistd.h>
@@ -28,9 +27,70 @@
 
 static volatile uint64_t next_reply_token = 1;
 
-/* Timeout for Capsule replies (milliseconds). */
-#define	CAPSULE_RPC_TIMEOUT_MS	SWITCHBOARD_RPC_TIMEOUT_MS
-#define	CAPSULE_DRAIN_REPOLL_MS	10	/* short re-poll for stragglers */
+/* Stale replies one RPC drops before it gives up on the channel. */
+#define	CAPSULE_RPC_MAX_STALE	8
+
+/*
+ * Receive buffers for one Capsule-channel message.  SwitchBoard's event loop
+ * is the only caller, so one set suffices.  A message is always received
+ * whole, whatever its shape: the kernel refuses a message that does not fit
+ * the caller's buffers with EMSGSIZE and leaves it at the head of the queue,
+ * so receiving into the expected reply shape would wedge the channel on the
+ * first stale or malformed reply.
+ */
+static char capsule_rx_payload[MAC_CAPABILITY_MAX_MSG];
+static int capsule_rx_fds[MAC_CAPABILITY_MAX_FDS];
+
+static void
+capsule_rx_init(struct mac_capability_recvmsg_args *ra)
+{
+
+	memset(ra, 0, sizeof(*ra));
+	ra->payload = capsule_rx_payload;
+	ra->payload_len = sizeof(capsule_rx_payload);
+	ra->fds = capsule_rx_fds;
+	ra->nfds = nitems(capsule_rx_fds);
+}
+
+static void
+capsule_rx_close_fds(const struct mac_capability_recvmsg_args *ra)
+{
+	uint32_t i;
+
+	for (i = 0; i < ra->nfds; i++)
+		if (capsule_rx_fds[i] >= 0)
+			close(capsule_rx_fds[i]);
+}
+
+/*
+ * Receive the next message on a capability channel, sleeping until one is
+ * queued.  Channels are kqueue-only: poll(2) answers POLLNVAL (b08ea010c98),
+ * so a poll(2) readiness wait never sleeps.  The wait is the receive itself:
+ * MAC_CAPABILITY_RECV_F_WAIT sleeps on the channel until a message is queued
+ * or the channel is revoked, on a blocking or a non-blocking descriptor
+ * alike.  There is no deadline: the peer's death revokes the channel and
+ * fails the receive with ECONNRESET.  A closed channel answers an empty
+ * message, reported as ECONNRESET too.  A signal whose handler does not
+ * restart system calls interrupts the wait (EINTR); it is resumed.
+ */
+int
+mac_cap_recv_wait(int fd, struct mac_capability_recvmsg_args *ra)
+{
+
+	for (;;) {
+		ra->flags = MAC_CAPABILITY_RECV_F_WAIT;
+		ra->_reserved[0] = MAC_CAPABILITY_RECV_WAIT_FOREVER;
+		if (ioctl(fd, MAC_CAPABILITY_RECVMSG, ra) == 0)
+			break;
+		if (errno != EINTR)
+			return (-1);
+	}
+	if (ra->payload_len == 0 && ra->nfds == 0 && ra->reply_token == 0) {
+		errno = ECONNRESET;
+		return (-1);
+	}
+	return (0);
+}
 
 /*
  * Send a request (optionally with attached descriptors) and wait for the reply.
@@ -50,7 +110,7 @@ capsule_rpc_fds_impl(int channel_fd, const void *req, uint32_t reqlen,
 	struct mac_capability_recvmsg_args ra;
 	struct capsule_reply rpl;
 	uint64_t token;
-	int i;
+	int i, saved, stale;
 
 	token = __atomic_fetch_add(&next_reply_token, 1,
 	    __ATOMIC_RELAXED);
@@ -67,90 +127,36 @@ capsule_rpc_fds_impl(int channel_fd, const void *req, uint32_t reqlen,
 		return (-1);
 	}
 
-	memset(&rpl, 0, sizeof(rpl));
-	memset(&ra, 0, sizeof(ra));
-	ra.payload = &rpl;
-	ra.payload_len = sizeof(rpl);
-	if (max_reply_fds > 0) {
-		ra.fds = reply_fds;
-		ra.nfds = (uint32_t)max_reply_fds;
-		/* Initialize to -1 so caller can detect unfilled slots. */
-		for (i = 0; i < max_reply_fds; i++)
-			reply_fds[i] = -1;
-	}
+	/* Initialize to -1 so caller can detect unfilled slots. */
+	for (i = 0; i < max_reply_fds; i++)
+		reply_fds[i] = -1;
 
 	/*
-	 * Wait for the reply with a timeout.  The channel fd should be
-	 * non-blocking; poll() for readiness before attempting RECVMSG
-	 * to avoid hanging the event loop if capsule drops a reply.
-	 *
-	 * On token mismatch, drain the stale reply and retry up to 8
-	 * times.  This prevents a single stale reply from corrupting
-	 * all subsequent RPCs on this channel.
+	 * Wait for the reply on the channel itself; Capsule's death ends the
+	 * wait (ECONNRESET).  A reply with another token is stale: it is
+	 * dropped, its descriptors closed, and the wait goes on, up to
+	 * CAPSULE_RPC_MAX_STALE of them.
 	 */
-	{
-		struct pollfd pfd;
-		int rv, retries;
-
-		pfd.fd = channel_fd;
-		pfd.events = POLLIN;
-		retries = 0;
-
-retry:
-		for (;;) {
-			rv = poll(&pfd, 1, CAPSULE_RPC_TIMEOUT_MS);
-			if (rv == -1) {
-				if (errno == EINTR)
-					continue;
-				syslog(LOG_WARNING,
-				    "capsule_rpc: poll: %m");
-				return (-1);
-			}
-			if (rv == 0) {
-				syslog(LOG_ERR,
-				    "capsule_rpc: timeout waiting for reply");
-				errno = ETIMEDOUT;
-				return (-1);
-			}
-			if (pfd.revents & (POLLERR | POLLHUP)) {
-				syslog(LOG_ERR,
-				    "capsule_rpc: channel closed");
-				errno = ECONNRESET;
-				return (-1);
-			}
-			if (ioctl(channel_fd, MAC_CAPABILITY_RECVMSG, &ra) == 0)
-				break;
-			if (errno == EAGAIN)
-				continue;
-			syslog(LOG_WARNING,
-			    "capsule_rpc: recvmsg: %m");
+	for (stale = 0;; stale++) {
+		capsule_rx_init(&ra);
+		if (mac_cap_recv_wait(channel_fd, &ra) == -1) {
+			saved = errno;
+			if (saved == ECONNRESET)
+				syslog(LOG_ERR, "capsule_rpc: channel closed");
+			else
+				syslog(LOG_WARNING, "capsule_rpc: recvmsg: %m");
+			errno = saved;
 			return (-1);
 		}
-
-		if (ra.reply_token != token) {
-			SWITCHBOARD_TRACE_CAPSULE_STALE_REPLY(retries + 1);
-			syslog(LOG_WARNING,
-			    "capsule_rpc: draining stale reply "
-			    "(got %ju, expected %ju)",
-			    (uintmax_t)ra.reply_token, (uintmax_t)token);
-			/* Close any fds from the stale reply. */
-			for (i = 0; i < max_reply_fds; i++) {
-				if (reply_fds[i] >= 0) {
-					close(reply_fds[i]);
-					reply_fds[i] = -1;
-				}
-			}
-			if (++retries < 8) {
-				/* Re-initialize ra for the next recv. */
-				memset(&ra, 0, sizeof(ra));
-				ra.payload = &rpl;
-				ra.payload_len = sizeof(rpl);
-				if (max_reply_fds > 0) {
-					ra.fds = reply_fds;
-					ra.nfds = (uint32_t)max_reply_fds;
-				}
-				goto retry;
-			}
+		if (ra.reply_token == token)
+			break;
+		SWITCHBOARD_TRACE_CAPSULE_STALE_REPLY(stale + 1);
+		syslog(LOG_WARNING, "capsule_rpc: dropping stale reply "
+		    "(got %ju, expected %ju, %u fds)",
+		    (uintmax_t)ra.reply_token, (uintmax_t)token,
+		    (unsigned)ra.nfds);
+		capsule_rx_close_fds(&ra);
+		if (stale + 1 >= CAPSULE_RPC_MAX_STALE) {
 			syslog(LOG_ERR,
 			    "capsule_rpc: too many stale replies, giving up");
 			errno = EPROTO;
@@ -163,20 +169,19 @@ retry:
 	 * operations must return the requested number of fds; errors and
 	 * status-only operations must return none.
 	 */
+	if (ra.payload_len == sizeof(rpl))
+		memcpy(&rpl, capsule_rx_payload, sizeof(rpl));
 	if (ra.payload_len != sizeof(rpl) ||
 	    ra.nfds != (uint32_t)(rpl.status == 0 ? max_reply_fds : 0)) {
 		SWITCHBOARD_TRACE_CAPSULE_MALFORMED_REPLY(ra.payload_len, ra.nfds);
 		syslog(LOG_ERR, "capsule_rpc: malformed reply (%u bytes, %u fds)",
 		    (unsigned)ra.payload_len, (unsigned)ra.nfds);
-		for (i = 0; i < max_reply_fds; i++) {
-			if (reply_fds[i] >= 0) {
-				close(reply_fds[i]);
-				reply_fds[i] = -1;
-			}
-		}
+		capsule_rx_close_fds(&ra);
 		errno = EPROTO;
 		return (-1);
 	}
+	for (i = 0; i < (int)ra.nfds; i++)
+		reply_fds[i] = capsule_rx_fds[i];
 
 	if (nfds_out != NULL)
 		*nfds_out = (int)ra.nfds;
@@ -500,76 +505,84 @@ capsule_release_send(int channel_fd, const void *req, uint32_t reqlen)
 }
 
 /*
- * Drain pending release replies.  Blocks once for up to
- * CAPSULE_RPC_TIMEOUT_MS, then reads as many replies as are
- * available.  Returns the number of replies successfully drained.
+ * Wait for the replies to the release requests sent with tokens[0..n-1].
+ * A reply whose token is not one of them is stale and dropped.  Returns the
+ * number of replies received.
  */
 static int
-capsule_release_drain(int channel_fd, unsigned expected)
+capsule_release_drain(int channel_fd, uint64_t *tokens, unsigned n)
 {
 	struct mac_capability_recvmsg_args ra;
-	struct capsule_reply rpl;
-	struct pollfd pfd;
-	unsigned drained;
-	int rv, timeout;
+	unsigned drained, i;
 
-	if (expected == 0)
-		return (0);
-
-	pfd.fd = channel_fd;
-	pfd.events = POLLIN;
-	drained = 0;
-	timeout = CAPSULE_RPC_TIMEOUT_MS;
-
-	/*
-	 * Poll-and-read loop: wait for replies, drain what's
-	 * available, re-poll if more are expected.  Use the full
-	 * timeout on the first poll; subsequent polls use a short
-	 * timeout since Capsule is actively processing.
-	 */
-	while (drained < expected) {
-		rv = poll(&pfd, 1, timeout);
-		if (rv == -1) {
-			if (errno == EINTR)
-				continue;
+	for (drained = 0; drained < n;) {
+		capsule_rx_init(&ra);
+		if (mac_cap_recv_wait(channel_fd, &ra) == -1) {
 			syslog(LOG_WARNING,
-			    "capsule_release_drain: poll: %m");
+			    "capsule_release_drain: recvmsg: %m");
 			break;
 		}
-		if (rv == 0)
-			break;		/* timeout */
-		if (pfd.revents & (POLLERR | POLLHUP))
-			break;
-
-		while (drained < expected) {
-			memset(&ra, 0, sizeof(ra));
-			ra.payload = &rpl;
-			ra.payload_len = sizeof(rpl);
-
-			if (ioctl(channel_fd, MAC_CAPABILITY_RECVMSG, &ra) == -1) {
-				if (errno == EAGAIN)
-					break;	/* back to poll */
-				syslog(LOG_WARNING,
-				    "capsule_release_drain: recvmsg: %m");
-				return ((int)drained);
+		capsule_rx_close_fds(&ra);
+		for (i = 0; i < n; i++) {
+			if (tokens[i] != 0 && tokens[i] == ra.reply_token) {
+				tokens[i] = 0;
+				drained++;
+				break;
 			}
-			drained++;
 		}
-
-		timeout = CAPSULE_DRAIN_REPOLL_MS;
+		if (i == n)
+			syslog(LOG_WARNING, "capsule_release_drain: dropping "
+			    "stale reply (token %ju)",
+			    (uintmax_t)ra.reply_token);
 	}
-
 	return ((int)drained);
 }
 
 /*
+ * Receive and drop every message already queued on the Capsule channel,
+ * closing the descriptors any of them carries.  Each reply is consumed by
+ * the request that sent it, so the event loop finds a queued message only if
+ * Capsule answered a request twice or sent one unasked.  The event loop calls
+ * this on EVFILT_READ: the filter is level-triggered, and a message left
+ * queued would fire it again at once.  Returns the number of messages dropped.
+ */
+int
+capsule_drop_unexpected(int channel_fd)
+{
+	struct mac_capability_recvmsg_args ra;
+	int n;
+
+	for (n = 0;; n++) {
+		capsule_rx_init(&ra);
+		/* A zero wait never sleeps, even on a blocking descriptor. */
+		ra.flags = MAC_CAPABILITY_RECV_F_WAIT;
+		ra._reserved[0] = 0;
+		if (ioctl(channel_fd, MAC_CAPABILITY_RECVMSG, &ra) == -1) {
+			if (errno != EAGAIN && errno != EINTR)
+				syslog(LOG_WARNING,
+				    "capsule_drop_unexpected: recvmsg: %m");
+			break;
+		}
+		/* A closed channel answers an empty message; EV_EOF follows. */
+		if (ra.payload_len == 0 && ra.nfds == 0 && ra.reply_token == 0)
+			break;
+		capsule_rx_close_fds(&ra);
+		syslog(LOG_WARNING, "capsule channel: dropped unexpected "
+		    "message (token %ju, %u fds)", (uintmax_t)ra.reply_token,
+		    (unsigned)ra.nfds);
+	}
+	return (n);
+}
+
+/*
  * Release all capabilities from a manifest in one burst.
- * Sends all release messages, then drains replies in a single
- * blocking window.  Returns the number of releases sent.
+ * Sends all release messages, then waits for their replies.
+ * Returns the number of releases sent.
  */
 int
 capsule_release_manifest(int channel_fd, const struct svc_manifest *m)
 {
+	uint64_t tokens[1];	/* one per release kind: system gates */
 	unsigned nsent;
 
 	nsent = 0;
@@ -579,7 +592,9 @@ capsule_release_manifest(int channel_fd, const struct svc_manifest *m)
 
 		fill_system_req(&req, CAPSULE_OP_RELEASE_SYSTEM,
 		    m->cap_system);
-		if (capsule_release_send(channel_fd, &req, sizeof(req)) != 0)
+		tokens[nsent] = capsule_release_send(channel_fd, &req,
+		    sizeof(req));
+		if (tokens[nsent] != 0)
 			nsent++;
 	}
 	/*
@@ -589,9 +604,8 @@ capsule_release_manifest(int channel_fd, const struct svc_manifest *m)
 	 * mints nor releases storage.
 	 */
 
-	/* One blocking window to drain all replies. */
 	if (nsent > 0)
-		capsule_release_drain(channel_fd, nsent);
+		capsule_release_drain(channel_fd, tokens, nsent);
 
 	return ((int)nsent);
 }

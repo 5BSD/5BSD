@@ -24,7 +24,6 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#include <poll.h>
 #include <string.h>
 #include <syslog.h>
 #include <unistd.h>
@@ -32,9 +31,6 @@
 #include <capability.h>
 
 #include "switchboard.h"
-
-/* Timeout for mac_capability channel recvmsg (milliseconds). */
-#define	MAC_CAP_DIRECT_TIMEOUT_MS	SWITCHBOARD_RPC_TIMEOUT_MS
 
 static int
 kernel_call(int fd, const void *request, size_t request_length,
@@ -111,46 +107,19 @@ mac_cap_create_channel(int *our_end, int *child_end)
 	ra.fds = &peer_fd;
 	ra.nfds = 1;
 
-	{
-		struct pollfd pfd;
-		int rv;
+	/*
+	 * The kernel channel service answers CHANNEL_OP_CREATE from its
+	 * dispatch task, with the peer or with an automatic error reply, so
+	 * the wait on the channel ends without a deadline.  An error reply
+	 * carries a payload the receive has no room for: EMSGSIZE.
+	 */
+	if (mac_cap_recv_wait(channel_fd, &ra) == -1) {
+		int saved = errno;
 
-		pfd.fd = channel_fd;
-		pfd.events = POLLIN;
-
-		for (;;) {
-			rv = poll(&pfd, 1, MAC_CAP_DIRECT_TIMEOUT_MS);
-			if (rv == -1) {
-				if (errno == EINTR)
-					continue;
-				syslog(LOG_WARNING,
-				    "mac_cap_direct: channel poll: %m");
-				close(channel_fd);
-				return (-1);
-			}
-			if (rv == 0) {
-				syslog(LOG_ERR,
-				    "mac_cap_direct: channel recvmsg timeout");
-				close(channel_fd);
-				errno = ETIMEDOUT;
-				return (-1);
-			}
-			if (pfd.revents & (POLLERR | POLLHUP)) {
-				syslog(LOG_ERR,
-				    "mac_cap_direct: channel closed");
-				close(channel_fd);
-				errno = ECONNRESET;
-				return (-1);
-			}
-			if (ioctl(channel_fd, MAC_CAPABILITY_RECVMSG, &ra) == 0)
-				break;
-			if (errno == EAGAIN)
-				continue;
-			syslog(LOG_WARNING,
-			    "mac_cap_direct: channel recvmsg: %m");
-			close(channel_fd);
-			return (-1);
-		}
+		syslog(LOG_WARNING, "mac_cap_direct: channel recvmsg: %m");
+		close(channel_fd);
+		errno = saved;
+		return (-1);
 	}
 
 	if (peer_fd < 0) {
