@@ -69,6 +69,17 @@ run 1 600 yes "cat '$u' >> \"\$1\"; echo 'next line' >> \"\$1\"; exec sleep 600"
 [ $mrc = 3 ] || fail "unknown report: exit $mrc ($out)"
 run 1 600 no "cat '$u' >> \"\$1\"; echo 'next line' >> \"\$1\"; sleep 1"
 [ $mrc = 0 ] || fail "FATAL_LOR=no: exit $mrc ($out)"
+# QEMU gone (and reaped) before the monitor could watch it: never signalled,
+# the log still read, exit 5 (not clean).
+echo "panic: early" > "$log"
+/usr/bin/true & z=$!
+wait $z
+mrc=0
+out=$(python3.12 -I "$mon" --pid $z --log "$log" --deadline $(($(date +%s) + 600)) \
+    --fatal "$fatal" --known "$root/known-lor.txt" --grace 1) || mrc=$?
+[ $mrc = 5 ] || fail "gone before watched: exit $mrc ($out)"
+echo "$out" | grep -qx 'KERNEL/INIT PROBLEM in serial log' || fail "early log not read: $out"
+grep -q '^3|4|5)	forced=1 ;;$' "$root/vm-provider.sh" || fail 'exit 5 not counted forced'
 # The shell block of vm-provider.sh, with the guest gone before the grace ends.
 sed -n '/^# --- monitor (tests/,/^# --- end of the monitor$/p' \
     "$root/vm-provider.sh" > "$work/block.sh"

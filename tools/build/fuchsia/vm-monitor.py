@@ -24,12 +24,14 @@
 # returns only after QEMU has exited.
 #
 # Exit status: 0, QEMU exited by itself with no problem seen; 3, stopped for
-# a problem; 4, stopped at the deadline; 2, usage or setup failure (the
-# caller must then stop QEMU itself).
+# a problem; 4, stopped at the deadline; 5, QEMU had exited before the
+# monitor could watch it (the run is not clean); 2, usage or setup failure
+# (the caller must then stop QEMU itself).
 #
 # The second form reads a whole serial log after the run: exit 0 when some
-# reversal report matches no known-lor.txt entry, 1 when none does.  Both
-# forms classify a report the same way: the text after "lock order
+# reversal report matches no known-lor.txt entry, 1 when none does, 2 when
+# the log or the list cannot be read (the caller must count that as an
+# unknown reversal).  Both forms classify a report the same way: the text after "lock order
 # reversal:" up to the next report, at most 40 lines, against each entry
 # with re.search.
 
@@ -52,6 +54,8 @@ FATAL_GRACE_S = 5.0
 HEADER = "lock order reversal:"
 REPORT_LINES = 40
 # Lines that belong to a WITNESS reversal report (after the header).
+# The frame that ends a kernel stack in a report: syscall or thread entry.
+STACK_END = re.compile(r"^#\d+ \S+ at (fast_syscall_common|Xfast_syscall|fork_trampoline|fork_exit)\+")
 REPORT_LINE = re.compile(r'^(\s*$| 1st | 2nd | 3rd |lock order |All lock orders|"|#\d+ )')
 
 
@@ -70,6 +74,7 @@ def is_known(block, pats):
 
 
 def has_unknown_lor(log, known):
+    """True when some reversal report in log matches no entry of known."""
     pats = load_known(known)
     with open(log, errors="replace") as f:
         text = f.read()
@@ -103,12 +108,16 @@ class Watch:
         for i in range(first, len(self.lines)):
             if HEADER in self.lines[i]:
                 self.open_reports.append(i)
-        return self.classify(final=False)
+        return self.classify()
 
     def report(self, i):
-        """The report starting at header line i, and whether it is complete."""
+        """The report starting at header line i, and whether it is complete:
+        followed by a line that is not part of a report (or another report),
+        REPORT_LINES long, or its "attempted at" stack has reached the
+        syscall or kernel-thread entry frame that ends a WITNESS stack."""
         rest = self.lines[i].split(HEADER, 1)[1]
         out = [rest]
+        attempted = False
         for l in self.lines[i + 1:i + REPORT_LINES]:
             if HEADER in l:
                 out.append(l.split(HEADER, 1)[0])
@@ -116,14 +125,20 @@ class Watch:
             if not REPORT_LINE.match(l):
                 return "\n".join(out), True
             out.append(l)
+            if l.startswith("lock order ") and l.rstrip().endswith("attempted at:"):
+                attempted = True
+            elif attempted and STACK_END.search(l):
+                return "\n".join(out), True
         return "\n".join(out), len(out) >= REPORT_LINES
 
-    def classify(self, final):
+    def classify(self):
+        """Judge the open reports that are complete; keep the others open.
+        Returns a problem description or None."""
         still = []
         problem = None
         for i in self.open_reports:
             block, done = self.report(i)
-            if not done and not final:
+            if not done:
                 still.append(i)
             elif not is_known(block, self.pats) and problem is None:
                 problem = "lock order reversal matching no known-lor.txt entry"
@@ -132,9 +147,12 @@ class Watch:
 
 
 def stop(pid, kq, grace):
-    """Wait up to grace seconds for pid to exit, then SIGTERM it; then wait
-    for its exit.  Returns True if it had exited by itself."""
-    exited = grace > 0 and wait_exit(kq, grace)
+    """Wait up to grace seconds (0: only look) for pid's exit event, then
+    SIGTERM it and wait for its exit.  The shell reaps QEMU as soon as it
+    exits, after which its pid may name another process: never signal it
+    once its exit event has arrived.  Returns True if it had exited by
+    itself."""
+    exited = wait_exit(kq, grace)
     if not exited:
         try:
             os.kill(pid, signal.SIGTERM)
@@ -149,7 +167,8 @@ def stop(pid, kq, grace):
 
 
 def wait_exit(kq, timeout):
-    """Block until the EVFILT_PROC exit event (or timeout); True on exit."""
+    """Block until the EVFILT_PROC exit event, or for at most timeout
+    seconds (None: no limit, 0: only look); True when it arrived."""
     deadline = None if timeout is None else time.monotonic() + timeout
     while True:
         left = None if deadline is None else max(0.0, deadline - time.monotonic())
@@ -177,7 +196,18 @@ def monitor(args):
     except OSError as e:
         if e.errno != errno.ESRCH:
             raise
-        return 0                    # already gone: nothing to watch
+        # QEMU is gone before it could be watched (and may already be
+        # reaped): never signal the pid; read what it wrote.
+        while True:
+            d = os.read(fd, 1 << 16)
+            if not d:
+                break
+            p = w.feed(d)
+            if p:
+                print("KERNEL/INIT PROBLEM in serial log", flush=True)
+                break
+        print("qemu had exited before the monitor started", flush=True)
+        return 5
 
     def drain():
         while True:
@@ -213,7 +243,11 @@ def monitor(args):
 
 def main(argv):
     if len(argv) == 4 and argv[1] == "--has-unknown-lor":
-        return 0 if has_unknown_lor(argv[2], argv[3]) else 1
+        try:
+            return 0 if has_unknown_lor(argv[2], argv[3]) else 1
+        except (OSError, ValueError, re.error) as e:
+            print("vm-monitor: %s" % e, file=sys.stderr)
+            return 2
     args, it = {}, iter(argv[1:])
     for a in it:
         args[a] = next(it, None)

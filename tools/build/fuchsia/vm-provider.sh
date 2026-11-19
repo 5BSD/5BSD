@@ -920,14 +920,21 @@ monitor=$(dirname "$0")/vm-monitor.py
 unknown_lor() {
 	[ "${FATAL_LOR:-yes}" = no ] && return 1
 	grep -aq 'lock order reversal' "$log" 2>/dev/null || return 1
-	python3.12 -I "$monitor" --has-unknown-lor "$log" "$known_lor"
+	ul=0; python3.12 -I "$monitor" --has-unknown-lor "$log" "$known_lor" || ul=$?
+	case $ul in
+	0)	return 0 ;;
+	1)	return 1 ;;
+	*)	echo "vm-monitor could not classify the reversals (exit $ul): counted as unknown"
+		return 0 ;;
+	esac
 }
 # --- monitor (tests/vm-provider-kill-after-exit.sh runs this block)
 # vm-monitor.py waits on QEMU's exit, the serial log's writes and the
 # deadline (one kqueue, no polling), stops QEMU on a fatal console line or
 # an unknown reversal (after a short grace, unless the guest exits first)
 # or at the deadline, and returns once QEMU has exited: 0 by itself, 3
-# stopped for a problem, 4 at the deadline.  Anything else is the monitor
+# stopped for a problem, 4 at the deadline, 5 gone before it could be
+# watched (not clean: nothing was checked live).  Anything else is the monitor
 # failing; QEMU is then stopped here so the run still ends with its
 # results and verdict.
 python3.12 -I "$monitor" --pid "$qpid" --log "$log" --deadline "$end" \
@@ -936,7 +943,7 @@ wpid=$!
 mrc=0; wait "$wpid" || mrc=$?
 case $mrc in
 0)	;;
-3|4)	forced=1 ;;
+3|4|5)	forced=1 ;;
 *)	echo "vm-monitor failed (exit $mrc): stopping qemu"; forced=1
 	kill "$qpid" 2>/dev/null || echo "qemu had already exited" ;;
 esac

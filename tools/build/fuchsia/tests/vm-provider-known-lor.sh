@@ -43,6 +43,15 @@ for f in "$fix"/known-*.txt "$fix"/unknown-*.txt; do
 	esac
 	n=$((n + 1))
 done
+# A log the classifier cannot read is an unknown reversal, not none.
+python3.12 -I "$root/vm-monitor.py" --has-unknown-lor "$work/missing" "$root/known-lor.txt" 2>/dev/null &&
+    fail 'an unreadable log classified'
+rc=0; python3.12 -I "$root/vm-monitor.py" --has-unknown-lor "$work/missing" "$root/known-lor.txt" 2>/dev/null || rc=$?
+[ $rc = 2 ] || fail "unreadable log: exit $rc, not 2"
+echo 'lock order reversal:' > "$work/hdr"
+sh -c 'log=$1 known_lor=$2 monitor=$4; . "$3"; unknown_lor' sh "$work/hdr" \
+    "$root/known-lor.txt" "$work/fn.sh" "$work/nonexistent-monitor.py" > /dev/null 2>&1 ||
+    fail 'a failed classification counted as no unknown reversal'
 : > "$work/none"
 unknown "$work/none" && fail 'a log without reversals reported one'
 # After the run: a reversal the 10 s poll never saw (printed just before
