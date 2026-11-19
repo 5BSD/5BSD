@@ -28,7 +28,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 /* A stat(2) of a path naming the tag: posts STAT when attached. */
 static int
@@ -70,22 +70,23 @@ ATF_TC_BODY(attach_basic, tc)
 	struct dqt_achild ch;
 	struct basic_res r;
 	struct dq_stats2 st;
-	int i, status;
+	int i;
 
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ch, child_basic, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(ENOENT, r.probe);		/* PASS: the real answer */
 	ATF_CHECK_EQ(0, r.nnp_rv);
 	ATF_CHECK_EQ(PROC_NO_NEW_PRIVS_ENABLE, r.nnp);
 	i = dqt_find_resolve(&c, "dqt-probe-basic", DQ_ROP_STAT, 0);
 	ATF_REQUIRE_MSG(i != -1, "no RESOLVE STAT for the probe");
+	dqt_lock(&c);
 	ATF_CHECK_EQ(DQ_RCLASS_USER, c.rs[i].cls);
 	ATF_CHECK((c.rs[i].rflags & DQ_RF_USER) != 0);
 	ATF_CHECK((c.rs[i].caller_flags & DQ_CALLER_F_ATTACHED) != 0);
 	ATF_CHECK_EQ(ch.pid, c.rs[i].pid);
+	dqt_unlock(&c);
 	ATF_CHECK_EQ(1, dqt_count_resolve(&c, "dqt-probe-basic", 0));
 	dqt_stats2(&c, &st);
 	ATF_CHECK_EQ(1, st.ds2_attached);
@@ -94,70 +95,6 @@ ATF_TC_BODY(attach_basic, tc)
 	ATF_CHECK_EQ(0, st.ds2_resolve_unmarked);
 	dqt_fini(&c);
 }
-
-/*
- * A pdfork child that waits on a pipe until told to exit; with a path,
- * until told to exec it (idle_exec()).
- */
-struct idle {
-	pid_t		 pid;
-	int		 pd;
-	int		 go[2];
-};
-
-static void
-idle_spawn(struct idle *s, int rfflags, const char *exec_path)
-{
-	char b;
-
-	ATF_REQUIRE_EQ(0, pipe(s->go));
-	if (rfflags != 0)
-		s->pid = pdrfork(&s->pd, 0, rfflags);
-	else
-		s->pid = pdfork(&s->pd, 0);
-	ATF_REQUIRE_MSG(s->pid != -1, "pdfork: %s", strerror(errno));
-	if (s->pid == 0) {
-		if (exec_path != NULL) {
-			/*
-			 * Not before the parent says so: a NOTE_EXEC filter
-			 * added after the exec never reports it.
-			 */
-			if (read(s->go[0], &b, 1) != 1)
-				_exit(4);
-			execl(exec_path, exec_path, "30", (char *)NULL);
-			_exit(3);
-		}
-		(void)read(s->go[0], &b, 1);
-		_exit(0);
-	}
-}
-
-static void
-idle_exec(struct idle *s)
-{
-
-	ATF_REQUIRE_EQ(1, write(s->go[1], "g", 1));
-}
-
-static void
-idle_end(struct idle *s)
-{
-	int status;
-
-	(void)write(s->go[1], "x", 1);
-	(void)pdkill(s->pd, SIGKILL);
-	(void)pdwait(s->pd, &status, WEXITED, NULL, NULL);
-	(void)close(s->pd);
-	(void)close(s->go[0]);
-	(void)close(s->go[1]);
-}
-
-#define	REFUSED(call, want) do {					\
-	errno = 0;							\
-	ATF_CHECK_EQ_MSG(-1, (call), "%s succeeded", #call);		\
-	ATF_CHECK_EQ_MSG((want), errno, "%s: errno %d want %d", #call,	\
-	    errno, (want));						\
-} while (0)
 
 ATF_TC(attach_refusals);
 ATF_TC_HEAD(attach_refusals, tc)
@@ -175,7 +112,7 @@ ATF_TC_BODY(attach_refusals, tc)
 {
 	struct dqt_ctl c, c2;
 	struct dq_attach_args args;
-	struct idle s;
+	struct dqt_idle s;
 	struct kevent kev;
 	struct timespec ts = { 120, 0 };
 	int fd, kq, qdup, self, status;
@@ -186,53 +123,53 @@ ATF_TC_BODY(attach_refusals, tc)
 	/* Not a process descriptor; malformed arguments. */
 	fd = open("/dev/null", O_RDONLY);
 	ATF_REQUIRE(fd != -1);
-	REFUSED(dq_attach(c.q, fd), EINVAL);
+	DQT_CHECK_REFUSED(dq_attach(c.q, fd), EINVAL);
 	(void)close(fd);
-	idle_spawn(&s, 0, NULL);
+	dqt_idle_spawn(&s, 0, 0, NULL, "30", NULL, NULL);
 	memset(&args, 0, sizeof(args));
 	args.da_version = DQ_API_VERSION + 1;
 	args.da_procfd = s.pd;
 	args.da_rootfd = args.da_cwdfd = -1;
-	REFUSED(ioctl(c.q, DQ_IOC_ATTACH, &args), EINVAL);
+	DQT_CHECK_REFUSED(ioctl(c.q, DQ_IOC_ATTACH, &args), EINVAL);
 	/* Version 1 had a 96-byte RESOLVE body: refused (D184). */
 	ATF_REQUIRE_EQ(2, DQ_API_VERSION);
 	args.da_version = 1;
-	REFUSED(ioctl(c.q, DQ_IOC_ATTACH, &args), EINVAL);
+	DQT_CHECK_REFUSED(ioctl(c.q, DQ_IOC_ATTACH, &args), EINVAL);
 	args.da_version = DQ_API_VERSION;
 	args.da_flags = ~(uint32_t)DQ_ATTACH_F_NODIRS;	/* undefined bits */
-	REFUSED(ioctl(c.q, DQ_IOC_ATTACH, &args), EINVAL);
+	DQT_CHECK_REFUSED(ioctl(c.q, DQ_IOC_ATTACH, &args), EINVAL);
 	args.da_flags = 0;
 	args.da_rootfd = 0;	/* not a served directory */
-	REFUSED(ioctl(c.q, DQ_IOC_ATTACH, &args), EINVAL);
+	DQT_CHECK_REFUSED(ioctl(c.q, DQ_IOC_ATTACH, &args), EINVAL);
 	args.da_rootfd = -1;
 	args.da_pad0 = 1;
-	REFUSED(ioctl(c.q, DQ_IOC_ATTACH, &args), EINVAL);
+	DQT_CHECK_REFUSED(ioctl(c.q, DQ_IOC_ATTACH, &args), EINVAL);
 
 	/* Attached once; again here or elsewhere is EBUSY. */
 	ATF_REQUIRE_EQ(0, dq_attach(c.q, s.pd));
-	REFUSED(dq_attach(c.q, s.pd), EBUSY);
-	REFUSED(dq_attach(c2.q, s.pd), EBUSY);
-	idle_end(&s);
+	DQT_CHECK_REFUSED(dq_attach(c.q, s.pd), EBUSY);
+	DQT_CHECK_REFUSED(dq_attach(c2.q, s.pd), EBUSY);
+	dqt_idle_end(&s);
 
 	/* Itself. */
 	self = pdopenpid(getpid(), 0);
 	if (self != -1) {
-		REFUSED(dq_attach(c.q, self), EBUSY);
+		DQT_CHECK_REFUSED(dq_attach(c.q, self), EBUSY);
 		(void)close(self);
 	}
 
 	/* A child that exec'd (P_EXEC). */
 	kq = kqueue();
 	ATF_REQUIRE(kq != -1);
-	idle_spawn(&s, 0, "/bin/sleep");
+	dqt_idle_spawn(&s, 0, 0, "/bin/sleep", "30", NULL, NULL);
 	EV_SET(&kev, s.pd, EVFILT_PROCDESC, EV_ADD, NOTE_EXEC, 0, NULL);
 	if (kevent(kq, &kev, 1, NULL, 0, NULL) == 0) {
-		idle_exec(&s);
+		dqt_idle_exec(&s);
 		ATF_REQUIRE_EQ_MSG(1, kevent(kq, NULL, 0, &kev, 1, &ts),
 		    "no NOTE_EXEC from the child");
-		REFUSED(dq_attach(c.q, s.pd), EBUSY);
+		DQT_CHECK_REFUSED(dq_attach(c.q, s.pd), EBUSY);
 	}
-	idle_end(&s);
+	dqt_idle_end(&s);
 	(void)close(kq);
 
 	/*
@@ -243,10 +180,10 @@ ATF_TC_BODY(attach_refusals, tc)
 	qdup = fcntl(c.q, F_DUPFD, 0);
 	ATF_REQUIRE(qdup != -1);
 	ATF_CHECK_EQ(0, fcntl(qdup, F_GETFD));
-	idle_spawn(&s, 0, NULL);
+	dqt_idle_spawn(&s, 0, 0, NULL, "30", NULL, NULL);
 	ATF_CHECK_EQ_MSG(0, dq_attach(c.q, s.pd), "attach: %s",
 	    strerror(errno));
-	idle_end(&s);
+	dqt_idle_end(&s);
 	(void)close(qdup);
 
 	/*
@@ -259,15 +196,15 @@ ATF_TC_BODY(attach_refusals, tc)
 	 * owner that can reach the queue; what it is answered there is
 	 * dq_owner_test's sharer_cannot_operate.
 	 */
-	idle_spawn(&s, RFPROC | RFPROCDESC, NULL);
-	REFUSED(dq_attach(c.q, s.pd), EBUSY);
-	idle_end(&s);
+	dqt_idle_spawn(&s, RFPROC | RFPROCDESC, 0, NULL, "30", NULL, NULL);
+	DQT_CHECK_REFUSED(dq_attach(c.q, s.pd), EBUSY);
+	dqt_idle_end(&s);
 
 	/* An exited child (not reaped: the descriptor still names it). */
-	idle_spawn(&s, 0, NULL);
+	dqt_idle_spawn(&s, 0, 0, NULL, "30", NULL, NULL);
 	(void)write(s.go[1], "x", 1);
 	ATF_REQUIRE_EQ(0, pdwait(s.pd, &status, WEXITED, NULL, NULL));
-	REFUSED(dq_attach(c.q, s.pd), ESRCH);
+	DQT_CHECK_REFUSED(dq_attach(c.q, s.pd), ESRCH);
 	(void)close(s.pd);
 	(void)close(s.go[0]);
 	(void)close(s.go[1]);
@@ -355,13 +292,12 @@ ATF_TC_BODY(inheritance, tc)
 	struct dqt_achild ch;
 	struct inh_res r;
 	char tag[64];
-	int i, k, status;
+	int i, k;
 
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ch, child_inherit, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	for (k = 0; k < INH_NKINDS; k++) {
 		(void)snprintf(tag, sizeof(tag), "dqt-probe-%s", inh_tag[k]);
 		ATF_CHECK_EQ_MSG(ENOENT, r.probe[k], "%s: probe %d", inh_tag[k],
@@ -370,8 +306,10 @@ ATF_TC_BODY(inheritance, tc)
 		ATF_CHECK_MSG(i != -1, "%s: not consulted", inh_tag[k]);
 		if (i == -1)
 			continue;
+		dqt_lock(&c);
 		ATF_CHECK_EQ_MSG(r.pid[k], c.rs[i].pid, "%s: pid", inh_tag[k]);
 		ATF_CHECK((c.rs[i].caller_flags & DQ_CALLER_F_ATTACHED) != 0);
+		dqt_unlock(&c);
 	}
 	dqt_fini(&c);
 }
@@ -387,7 +325,7 @@ ATF_TC_HEAD(failed_exec_still_attachable, tc)
 ATF_TC_BODY(failed_exec_still_attachable, tc)
 {
 	struct dqt_ctl c;
-	struct idle s;
+	struct dqt_idle s;
 	struct dqt_sync y;
 	char b;
 
@@ -405,7 +343,7 @@ ATF_TC_BODY(failed_exec_still_attachable, tc)
 	ATF_REQUIRE(dqt_sync_wait(y.toparent[0], DQT_WAIT_MS));
 	ATF_CHECK_EQ_MSG(0, dq_attach(c.q, s.pd), "ATTACH: %s",
 	    strerror(errno));
-	idle_end(&s);
+	dqt_idle_end(&s);
 	dqt_fini(&c);
 }
 
@@ -443,14 +381,13 @@ sigchld_noop(int sig __unused)
 {
 }
 
-/* Take the one pending SIGCHLD; nothing else may be pending afterwards. */
+/* Take the one pending SIGCHLD. */
 static void
 one_sigchld(const char *what, pid_t pid, int code, int st)
 {
 	struct timespec ts = { 5, 0 };
-	sigset_t chld, pend;
+	sigset_t chld;
 	siginfo_t si;
-	int sig;
 
 	sigemptyset(&chld);
 	sigaddset(&chld, SIGCHLD);
@@ -462,7 +399,18 @@ one_sigchld(const char *what, pid_t pid, int code, int st)
 	    si.si_code);
 	ATF_CHECK_EQ_MSG(st, si.si_status, "%s: si_status %d", what,
 	    si.si_status);
-	dqt_msleep(100);
+}
+
+/*
+ * Nothing else is pending.  Called once the child is reaped: its exit has
+ * then finished, and every signal its exit sends has been sent.
+ */
+static void
+no_other_signal(const char *what)
+{
+	sigset_t pend;
+	int sig;
+
 	sigemptyset(&pend);
 	ATF_REQUIRE_EQ(0, sigpending(&pend));
 	for (sig = 1; sig < NSIG; sig++)
@@ -521,6 +469,7 @@ ATF_TC_BODY(attached_exit_status, tc)
 	ATF_REQUIRE_EQ(ch.pid, waitpid(ch.pid, &status, 0));
 	ATF_CHECK_EQ_MSG(W_EXITCODE(3, 0), status, "exit 3: status %#x",
 	    status);
+	no_other_signal("exit 3");
 	ATF_CHECK_EQ(0, close(ch.pd));
 	(void)close(ch.pipefd);
 
@@ -542,6 +491,7 @@ ATF_TC_BODY(attached_exit_status, tc)
 	ATF_REQUIRE_EQ(ch.pid, waitpid(ch.pid, &status, 0));
 	ATF_CHECK_EQ_MSG(W_EXITCODE(0, SIGTERM), status,
 	    "SIGTERM: status %#x", status);
+	no_other_signal("SIGTERM");
 	ATF_CHECK_EQ(0, close(ch.pd));
 	(void)close(ch.pipefd);
 

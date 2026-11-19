@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 15, 2026
+.Dd November 18, 2026
 .Dt DQ 4
 .Os
 .Sh NAME
@@ -1157,6 +1157,47 @@ become the process's served root and working directory
 .Va da_flags
 is 0 or
 .Dv DQ_ATTACH_F_NODIRS .
+.It Dv DQ_IOC_STANDING_ADD Vt "struct dq_standing_rule"
+Install a standing rule
+.Pq Sx Standing rules
+and return its id in
+.Va dqs_id .
+In this order:
+.Er EINVAL
+for a wrong version, an unknown flag or action, nonzero padding, an empty
+mask or one with an operation no rule may name,
+.Dv DQ_ROP_EXEC_INTERP
+with
+.Dv DQ_STANDING_F_SUBTREE ,
+a path not
+NUL-terminated at
+.Va dqs_pathlen
+or not absolute and normalized, an errno with
+.Dv DQ_STANDING_PASS
+or
+.Dv DQ_STANDING_ASK ,
+or an errno that is not allowed;
+.Er EBADF
+for a bad
+.Va dqs_rootfd ,
+.Er ENOTCAPABLE
+when it lacks
+.Dv CAP_LOOKUP ,
+.Er EINVAL
+when it has no vnode (a served descriptor),
+.Er ENOTDIR
+when it is not a directory;
+.Er EEXIST
+for a rule with the same root and path and an overlapping operation;
+.Er ENOSPC
+past
+.Dv DQ_STANDING_MAX .
+.It Dv DQ_IOC_STANDING_DEL Vt uint64_t
+Remove the rule with this id;
+.Er ESRCH
+for an id the queue has no rule of.
+.It Dv DQ_IOC_STANDING_FLUSH
+Remove every rule.
 .It Dv DQ_IOC_GET_STATS2 Vt "struct dq_stats2"
 Everything
 .Vt struct dq_stats
@@ -1205,7 +1246,12 @@ or
 .Xr fhlink 2
 into a served directory, refused with no event) and
 .Va ds2_readdirs
-.Pq Dv DQ_OP_READDIR No events .
+.Pq Dv DQ_OP_READDIR No events ;
+.Va ds2_standing_pass
+and
+.Va ds2_standing_deny
+(lookups a standing rule decided with no event, see
+.Sx Standing rules ) .
 The kernel writes
 .Va ds2_size
 .Pq 320 .
@@ -3972,6 +4018,214 @@ link's name, where an unattached process gets the resolved path.
 and
 .Va kern.proc.pathname
 show the real image.
+.Ss Standing rules
+A controller can answer in advance the lookups it always answers the same
+way.
+A
+.Em standing rule
+names a root, a path under it, the operations it covers and an answer;
+a lookup the rule decides posts no event and returns exactly what the
+controller's reply would have made it return.
+A rule is a function of the root, the operation, the open's class, the
+lookup class and the path text, and of nothing else in the event: it
+reads the lookup flags only to exclude events, and ignores
+.Dv DQ_RF_NOFOLLOW , DQ_RF_EMPTYPATH , DQ_RF_BENEATH ,
+the
+.Dv DQ_ROP_SYMLINK
+target, the
+.Dv DQ_ROP_SETATTR
+body,
+.Va drs_cmode
+and
+.Va drs_dev .
+.Pp
+.Sy The rule .
+.Vt struct dq_standing_rule
+.Pq Dv DQ_IOC_STANDING_ADD
+gives:
+.Bl -tag -width "dqs_action" -offset indent
+.It Va dqs_rootfd
+a directory descriptor with
+.Dv CAP_LOOKUP ,
+or \-1 for the caller's own root.
+The rule applies only to lookups whose process root is that directory,
+compared by vnode, which the rule holds with
+.Fn vhold
+(it does not block an unmount).
+.It Va dqs_path
+an absolute, normalized path of
+.Va dqs_pathlen
+bytes and a NUL: no empty,
+.Ql \&.
+or
+.Ql ..
+component and no trailing
+.Ql /
+except for
+.Ql /
+itself.
+It matches exactly, or with
+.Dv DQ_STANDING_F_SUBTREE
+the path and every name beneath it.
+Matching is by component:
+.Pa /usr/lib
+does not match
+.Pa /usr/lib32 .
+.It Va dqs_ops
+operations,
+.Dv DQ_STANDING_OP Ns Pq Dv DQ_ROP_* .
+.Dv DQ_ROP_RENAME
+and
+.Dv DQ_ROP_LINK
+(two paths),
+.Dv DQ_ROP_SOCKET
+and
+.Dv DQ_ROP_SOCKETPAIR
+(no path),
+.Dv DQ_ROP_CONNECT
+and
+.Dv DQ_ROP_BIND
+(always consulted ahead) and
+.Dv DQ_ROP_INTERNAL
+are
+.Er EINVAL ,
+and so is
+.Dv DQ_ROP_EXEC_INTERP
+with
+.Dv DQ_STANDING_F_SUBTREE
+(see below).
+Without
+.Dv DQ_STANDING_F_OPEN_WRITE ,
+.Dv DQ_ROP_OPEN
+covers only read-class opens:
+.Dv O_RDONLY
+without
+.Dv O_CREAT
+or
+.Dv O_TRUNC
+.Po
+.Dv O_EXEC , O_SEARCH
+and
+.Dv O_PATH
+are read-class
+.Pc .
+.Dv DQ_ROP_XATTR
+and
+.Dv DQ_ROP_ACL
+each cover both get and set.
+.It Va dqs_action
+.Dv DQ_STANDING_PASS ;
+.Dv DQ_STANDING_ERRNO
+with
+.Va dqs_errno ,
+an errno of the
+.Dv DQ_OP_RESOLVE
+allow-list other than
+.Er EAGAIN ,
+.Er EINTR
+and
+.Er ENOTCAPABLE ;
+or
+.Dv DQ_STANDING_ASK ,
+which posts the event: an exception to a shorter rule.
+.El
+.Pp
+Among the rules whose root, operation and open class fit an event, the
+one with the longest path decides; if none fits, the event is posted.
+Two rules with the same root and path must name disjoint operations
+.Pq Er EEXIST ,
+so there are no ties.
+A queue holds at most
+.Dv DQ_STANDING_MAX
+(128) rules.
+.Pp
+.Sy What a rule matches .
+The text a rule is matched against is the event's path, and only for an
+absolute name or an absolute symbolic link target
+.Pq Dv DQ_START_REAL_ROOT .
+A relative name
+.Pq Dv DQ_START_REAL_CWD , DQ_START_REAL_DIRFD , DQ_START_REAL_SYMDIR
+always posts.
+Empty components and
+.Ql \&.
+are skipped, and a trailing
+.Ql /
+matches the directory (the walk still requires one).
+A name with a
+.Ql ..
+component is never matched.
+Only the requester's own lookups (class 1) and the kernel's lookup of an
+image's interpreter, a
+.Dv PT_INTERP
+run-time linker or a
+.Ql #!
+interpreter
+.Pq Dv DQ_ROP_EXEC_INTERP , No class 3 ,
+are decided; these always post: class 2, a lookup from a served start or
+under a served root, one naming a served descriptor
+.Pq Va drs_object ,
+a
+.Dv DQ_RF_RINROOT
+or
+.Dv DQ_RF_ABSTRACT
+lookup, a lookup consulted ahead (the AF_UNIX names, swap and quota
+files), and every lookup of a process with an ABI root (the Linux ABI
+under
+.Va compat.linux.emul_path ) .
+.Pp
+.Sy When .
+The rules are checked in the consultation after the dead-controller test
+and the wait guard
+.Pq Sx Waiting, deadlines and interruption ,
+immediately before the event would be posted.
+A rule's PASS is cached in the lookup's intent slot as a reply's is, and
+every symbolic link a covered lookup meets is matched again with its
+target and the remaining path, so a link out of the rule's tree, like
+any relative link, posts.
+The interpreter lookup is not consulted again at symbolic links, so a
+subtree rule would pass a link out of its tree: only an exact rule may
+name
+.Dv DQ_ROP_EXEC_INTERP
+.Pq Er EINVAL No otherwise ,
+and it decides that one name, as a reply to it would.
+The lookup then walks with the program's own credential, MAC labels,
+Capsicum rights and
+.Dv O_RESOLVE_BENEATH
+scope; a rule never relaxes them, and the errno a rule answers comes
+before the walk, as a reply's does.
+The program sees no difference but timing: a covered lookup cannot be
+interrupted by a signal and meets no deadline.
+.Pp
+.Sy What the controller sees .
+A covered lookup posts no event, leaves no observer record and does not
+count in
+.Va ds2_resolves ;
+it counts in
+.Va ds2_standing_pass
+or
+.Va ds2_standing_deny
+and fires
+.Li dq:::standing-match
+.Pq Sx DTRACE .
+Text decides: what is renamed, linked or mounted into a covered subtree by
+another process becomes reachable, exactly as under a controller that
+passes the same names, so pass subtrees only whose writers and mounts are
+trusted.
+.Pp
+.Sy Changes .
+.Dv DQ_IOC_STANDING_DEL
+and
+.Dv DQ_IOC_STANDING_FLUSH
+wait for every consultation that is reading the rules; once they return,
+no lookup that starts afterwards is decided by a removed rule.
+A lookup decided just before is like one whose reply was sent before the
+controller changed its mind.
+Removing a rule and then adding its replacement is always safe.
+A change makes every processor pass a rendezvous: rules are meant to
+change rarely.
+The rules end with the queue's death, after which every lookup of the
+attached processes fails closed
+.Pq Er EIO .
 .Sh READ-ONLY OBJECTS
 A descriptor minted without
 .Dv DQ_MINT_F_WRITE
@@ -4304,10 +4558,13 @@ is a test kernel for the
 .Nm
 test suite.
 The configuration
-.Pa GENERIC-DQTEST
+.Pa GENERIC-TEST
 is
 .Pa GENERIC
-with the option.
+with the test-kernel options, this one among them; the test-kernel option
+ledger,
+.Pa sys/conf/test-options ,
+lists them.
 The option requires
 .Cd "device dq" ;
 it is not available to the
@@ -4315,8 +4572,8 @@ it is not available to the
 module, and no published configuration carries it.
 .Pp
 Such a kernel must never be published.
-.Pa release/scripts/check-kernel-no-dq-test.sh
-refuses a kernel or module built with the option where the maintained
+.Pa release/scripts/check-test-kernel.sh
+refuses a kernel or module built with any of them where the maintained
 package publication targets and the release media, virtual machine,
 Firecracker and arm image recipes run it, and
 .Xr build-bsd 8
@@ -4408,6 +4665,28 @@ reply refused before the event was answered)
 .Fa "uint32_t rop" ,
 .Fa "uint32_t kind"
 (a re-consultation at a symbolic link and the kind it was answered)
+.It dq:::standing-match
+.Fa "struct dq_queue *" ,
+.Fa "uint32_t rop" ,
+.Fa "uint64_t id" ,
+.Fa "int32_t verdict"
+(a standing rule decided a lookup: 0 PASS, an errno, or \-1 for ASK,
+which posts it; aggregate on the id for per-rule counts)
+.It dq:::standing-miss
+.Fa "struct dq_queue *" ,
+.Fa "uint32_t rop" ,
+.Fa "uint32_t why"
+(a queue with rules posts a lookup: 0 no rule fits, 1 the lookup is not
+one a rule decides, 2 its name has a
+.Ql ..
+component)
+.It dq:::standing-change
+.Fa "struct dq_queue *" ,
+.Fa "uint32_t what" ,
+.Fa "uint64_t id" ,
+.Fa "uint32_t nrules"
+(the rules changed: 1 ADD, 2 DEL, 3 FLUSH, 4 the queue's death with
+rules; the rule's id or 0, the rules left)
 .El
 .Pp
 Every reply also runs the

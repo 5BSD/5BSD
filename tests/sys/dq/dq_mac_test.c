@@ -9,14 +9,15 @@
  * mac_file_check_write at the boundary for every descriptor type; on a
  * served file that is the only check (no vnode is reached).  The test
  * counts the mac_framework file_check_write probe for the requester's pid
- * with dtrace(1), and skips where dtrace or the probe is unavailable (under
- * the capability plane a late kldload of the dtrace modules is denied) or
- * where no policy implements the hook (the framework then never calls it).
+ * with dtrace(1).  It fails where dtrace or the probe is unavailable (the
+ * test guests preload dtraceall: under the capability plane a late kldload
+ * is denied) or where no policy implements the hook (the guests preload
+ * mac_test_hooks, which does): a skip in a plane-on run is not a pass.
  *
  * abac: a served object carries no label of its own; mac_abac evaluates the
  * requester against the label of the controller's credential, captured when
- * the queue was opened.  Skipped unless mac_abac is present, its default
- * is allow, and it can be switched to enforcing for the test.
+ * the queue was opened.  Fails unless mac_abac is present, its default is
+ * allow, and it can be switched to enforcing for the test.
  */
 
 #include <sys/param.h>
@@ -37,7 +38,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	DATA_LEN	4096
 #define	DTRACE		"/usr/sbin/dtrace"
@@ -204,11 +205,8 @@ ATF_TC_BODY(fallocate_fspacectl_check_write, tc)
 	int backing;
 
 	dqt_fill(data, sizeof(data), 1);
-	backing = dqt_make_oracle("backing", data, sizeof(data), path,
+	backing = dqt_make_rw("backing", data, sizeof(data), path,
 	    sizeof(path));
-	(void)close(backing);
-	backing = open(path, O_RDWR);
-	ATF_REQUIRE(backing != -1);
 
 	/*
 	 * The requester's own harness write counts too: dqt_spawn returns
@@ -220,13 +218,13 @@ ATF_TC_BODY(fallocate_fspacectl_check_write, tc)
 	base = count_hook("file_check_write", child_noop, NULL, &r, sizeof(r),
 	    why, sizeof(why));
 	if (base == -1)
-		atf_tc_skip("dtrace: %s", why);
+		atf_tc_fail("dtrace: %s", why);
 	memset(&r, 0, sizeof(r));
 	n = count_hook("file_check_write", child_real_write, &backing, &r,
 	    sizeof(r), why, sizeof(why));
 	ATF_REQUIRE_MSG(n != -1, "dtrace: %s", why);
 	if (n == base)
-		atf_tc_skip("no MAC policy implements file_check_write");
+		atf_tc_fail("no MAC policy implements file_check_write");
 	ATF_REQUIRE_EQ(8, r.write.rv);
 	ATF_REQUIRE_EQ_MSG(base + 1, n, "calibration: baseline %ld, a real "
 	    "write %ld", base, n);
@@ -239,8 +237,10 @@ ATF_TC_BODY(fallocate_fspacectl_check_write, tc)
 	ATF_REQUIRE_MSG(n != -1, "dtrace: %s", why);
 	ATF_CHECK_EQ_MSG(2, n - base, "file_check_write fired %ld times over "
 	    "a baseline of %ld", n, base);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(1, c.events[DQ_OP_FALLOCATE]);
 	ATF_CHECK_EQ(1, c.events[DQ_OP_FSPACECTL]);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(backing);
 }
@@ -298,13 +298,13 @@ ATF_TC_BODY(sendfile_check_read, tc)
 	base = count_hook("file_check_read", child_noop, NULL, &r, sizeof(r),
 	    why, sizeof(why));
 	if (base == -1)
-		atf_tc_skip("dtrace: %s", why);
+		atf_tc_fail("dtrace: %s", why);
 	memset(&r, 0, sizeof(r));
 	n = count_hook("file_check_read", child_real_read, &oracle, &r,
 	    sizeof(r), why, sizeof(why));
 	ATF_REQUIRE_MSG(n != -1, "dtrace: %s", why);
 	if (n == base)
-		atf_tc_skip("no MAC policy implements file_check_read");
+		atf_tc_fail("no MAC policy implements file_check_read");
 	ATF_REQUIRE_EQ_MSG(base + 1, n, "calibration: baseline %ld, a real "
 	    "read %ld", base, n);
 
@@ -384,37 +384,36 @@ struct abac_ctl {
 	struct dq_serve_opts opts;
 };
 
+static bool
+abac_stopped(void *arg)
+{
+
+	return (((struct abac_ctl *)arg)->stop != 0);
+}
+
+static void
+abac_event(const struct dq_event *ev, void *arg)
+{
+	struct abac_ctl *a = arg;
+	const void *body;
+	size_t bodylen;
+
+	body = dq_event_body(ev, &bodylen);
+	(void)dq_serve_file(a->q, ev, body, bodylen, a->backing, &a->opts);
+}
+
 /* C's controller thread: every record to dq_serve_file. */
 static void *
 abac_serve(void *arg)
 {
 	struct abac_ctl *a = arg;
-	const struct dq_event *ev;
-	const void *body;
-	struct pollfd pfd;
-	size_t bodylen;
-	ssize_t got;
-	char *buf;
+	int error;
 
-	buf = malloc(256 * 1024);
-	if (buf == NULL)
-		return (NULL);
-	while (!a->stop) {
-		pfd.fd = a->q;
-		pfd.events = POLLIN;
-		pfd.revents = 0;
-		if (poll(&pfd, 1, 50) <= 0)
-			continue;
-		if (dq_read_events(a->q, buf, 256 * 1024, &got) != 0)
-			continue;
-		for (ev = dq_event_first(buf, (size_t)got); ev != NULL;
-		    ev = dq_event_next(buf, (size_t)got, ev)) {
-			body = dq_event_body(ev, &bodylen);
-			(void)dq_serve_file(a->q, ev, body, bodylen, a->backing,
-			    &a->opts);
-		}
-	}
-	free(buf);
+	/* Wake every 50 ms to see stop; only a real error ends it early. */
+	do {
+		error = dqt_serve_until(a->q, -1, abac_stopped, abac_event, a,
+		    50);
+	} while (error == ETIMEDOUT);
 	return (NULL);
 }
 
@@ -515,12 +514,12 @@ ATF_TC_BODY(abac_controller_label, tc)
 	int backing, resp[2], status;
 
 	if (!abac_present())
-		atf_tc_skip("mac_abac is not present");
+		atf_tc_fail("mac_abac is not present");
 	if (run(ABAC_CTL " default", out, sizeof(out)) != 0 ||
 	    strstr(out, "allow") == NULL)
-		atf_tc_skip("mac_abac default is not allow: %s", out);
+		atf_tc_fail("mac_abac default is not allow: %s", out);
 	if (run(ABAC_CTL " mode", out, sizeof(out)) != 0)
-		atf_tc_skip("mac_abac_ctl mode failed");
+		atf_tc_fail("mac_abac_ctl mode failed");
 	/* Remember the mode for the cleanup. */
 	f = fopen(ABAC_STATE, "w");
 	ATF_REQUIRE(f != NULL);
@@ -529,11 +528,8 @@ ATF_TC_BODY(abac_controller_label, tc)
 	(void)fclose(f);
 
 	dqt_fill(data, sizeof(data), 2);
-	backing = dqt_make_oracle("backing", data, sizeof(data), path,
+	backing = dqt_make_rw("backing", data, sizeof(data), path,
 	    sizeof(path));
-	(void)close(backing);
-	backing = open(path, O_RDWR);
-	ATF_REQUIRE(backing != -1);
 	ident = calloc(1, sizeof(*ident));
 	ATF_REQUIRE(ident != NULL);
 	dqt_ident_of(backing, path, ident, &sb, &sfs);
@@ -571,7 +567,7 @@ ATF_TC_BODY(abac_controller_label, tc)
 	(void)run(ABAC_CTL " mode permissive", NULL, 0);
 
 	if (WIFEXITED(status) && WEXITSTATUS(status) == ABAC_C_LABEL)
-		atf_tc_skip("mac_set_proc to the controller label refused");
+		atf_tc_fail("mac_set_proc to the controller label refused");
 	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == ABAC_C_OK,
 	    "labelled controller status %#x", status);
 	ATF_REQUIRE_EQ_MSG((ssize_t)sizeof(r), n, "result read %zd", n);
@@ -584,7 +580,7 @@ ATF_TC_BODY(abac_controller_label, tc)
 	ATF_CHECK_EQ(EACCES, r.stat2.err);
 	ATF_CHECK_EQ(-1, r.write2.rv);
 	ATF_CHECK_EQ(EACCES, r.write2.err);
-	ATF_CHECK_EQ(1, c1.events[DQ_OP_READ]);
+	ATF_CHECK_EQ(1, dqt_events(&c1, DQ_OP_READ));
 	dqt_fini(&c1);
 	free(ident);
 	(void)close(backing);

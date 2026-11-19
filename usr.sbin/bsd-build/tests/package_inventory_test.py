@@ -9,6 +9,11 @@ import tarfile
 import tempfile
 import unittest
 
+
+# A bound on a helper run that hangs, not on a slow one: under host
+# contention an emulated guest runs every exec up to 20 times slower.
+HELPER_TIMEOUT = 120
+
 helper = os.environ.get('BSD_BUILD_INVENTORY_HELPER') or str(
     Path(__file__).resolve().parents[3] / 'tools/build/capimage/package_inventory.py')
 spec = importlib.util.spec_from_file_location('package_inventory', helper)
@@ -465,7 +470,7 @@ class SelectionCLI(PackageFixture):
     def invoke(self, selection):
         import subprocess, sys
         return subprocess.run([sys.executable, '-B', helper, '--selection', str(selection),
-            '--output', str(self.root / 'inventory.json')], capture_output=True, text=True, timeout=10)
+            '--output', str(self.root / 'inventory.json')], capture_output=True, text=True, timeout=HELPER_TIMEOUT)
 
     def test_real_cli_binds_selection_and_preserves_existing_output(self):
         selection = self.selection()

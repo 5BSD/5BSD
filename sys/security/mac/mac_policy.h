@@ -463,6 +463,14 @@ typedef int	(*mpo_priv_grant_t)(struct ucred *cred, int priv);
 
 typedef int	(*mpo_proc_check_debug_t)(struct ucred *cred,
 		    struct proc *p);
+/*
+ * 5BSD: may cred see p's memory map, auxv and kernel stack (metadata, not
+ * memory contents)?  A policy that implements both hooks must not refuse
+ * inspect where it allows debug.  A policy without this hook is asked its
+ * proc_check_debug instead (MAC_POLICY_CHECK_NOSLEEP_FALLBACK).
+ */
+typedef int	(*mpo_proc_check_inspect_t)(struct ucred *cred,
+		    struct proc *p);
 typedef int	(*mpo_proc_check_sched_t)(struct ucred *cred,
 		    struct proc *p);
 typedef int	(*mpo_proc_check_signal_t)(struct ucred *cred,
@@ -1112,6 +1120,7 @@ struct mac_policy_ops {
 
 	mpo_proc_check_core_t			mpo_proc_check_core;
 	mpo_proc_check_debug_t			mpo_proc_check_debug;
+	mpo_proc_check_inspect_t		mpo_proc_check_inspect;
 	mpo_proc_check_fork_t			mpo_proc_check_fork;
 	mpo_proc_check_mmap_anon_t		mpo_proc_check_mmap_anon;
 	mpo_proc_check_mprotect_t		mpo_proc_check_mprotect;
@@ -1402,7 +1411,9 @@ struct mac_policy_conf {
  * Version 32 supplies live ancestry during ZFS mount admission.
  * Version 33 checks dataset boundary preservation during reparenting. */
 /* Version 34 supplies VFS-classified export-only mount updates. */
-#define	MAC_VERSION	34
+/* Version 35 adds proc_check_inspect, answered by proc_check_debug where a
+ * policy lacks it. */
+#define	MAC_VERSION	35
 
 #define	MAC_POLICY_SET(mpops, mpname, mpfullname, mpflags, privdata_wanted) \
 	static struct mac_policy_conf mpname##_mac_policy_conf = {	\

@@ -26,28 +26,30 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	DATA_LEN	8192
 
 static unsigned char data[DATA_LEN];
 static char oracle_path[DQT_PATH_MAX];
 
-struct one_read_arg {
-	int		 fd;
-	size_t		 len;
-};
-
-/* read(2) once; the pipe carries the result. */
+/*
+ * The object is still referenced: it is still counted live (a CLOSE is
+ * posted only after it retires), and no CLOSE was due before the fence's.
+ */
 static void
-child_one_read(void *arg, void *result)
+no_close_yet(struct dqt_ctl *c)
+    __requires_unlocked(c->mtx)
 {
-	struct one_read_arg *a = arg;
-	struct dqt_rr *r = result;
-	unsigned char buf[4096];
+	struct dq_stats2 st;
 
-	r->rv = read(a->fd, buf, MIN(a->len, sizeof(buf)));
-	r->err = r->rv == -1 ? errno : 0;
+	dqt_close_fence(c);
+	dqt_stats2(c, &st);
+	ATF_CHECK_EQ_MSG(1, st.ds2_objects_live, "%ju objects live",
+	    (uintmax_t)st.ds2_objects_live);
+	dqt_lock(c);
+	ATF_CHECK_EQ(0, c->events[DQ_OP_CLOSE]);
+	dqt_unlock(c);
 }
 
 ATF_TC_WITH_CLEANUP(close_once);
@@ -62,7 +64,8 @@ ATF_TC_BODY(close_once, tc)
 	struct dqt_ctl c;
 	struct dqt_object *o;
 	struct dq_policy pol;
-	struct one_read_arg a;
+	struct dq_stats2 st;
+	struct dqt_read_arg a;
 	struct dqt_rr r;
 	char link[64];
 	int d, oracle, reopen;
@@ -86,29 +89,41 @@ ATF_TC_BODY(close_once, tc)
 	/* A child's copies go away at its exit: no CLOSE yet. */
 	a.fd = o->fd;
 	a.len = 100;
-	dqt_run_child(child_one_read, &a, &r, sizeof(r));
+	dqt_run_child(dqt_child_read, &a, &r, sizeof(r));
 	ATF_CHECK_EQ(100, r.rv);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(1, c.events[DQ_OP_READ]);
-	dqt_msleep(100);
-	ATF_CHECK_EQ(0, c.events[DQ_OP_CLOSE]);
+	dqt_unlock(&c);
+	no_close_yet(&c);
 
 	ATF_REQUIRE_EQ(0, close(o->fd));
 	o->fd = -1;
 	ATF_REQUIRE_EQ(0, close(d));
-	dqt_msleep(100);
-	ATF_CHECK_EQ(0, c.events[DQ_OP_CLOSE]);
+	no_close_yet(&c);
 	ATF_REQUIRE_EQ(0, close(reopen));
 	ATF_CHECK(dqt_wait_events(&c, DQ_OP_CLOSE, 1, DQT_WAIT_MS));
-	dqt_msleep(100);
+	/*
+	 * Retired: no longer counted, so no other CLOSE is due from it (the
+	 * retire is once, o_retired).  The object has no pages, so a second
+	 * CLOSE would also have been dispatched before the fence's.
+	 */
+	dqt_stats2(&c, &st);
+	ATF_CHECK_EQ_MSG(0, st.ds2_objects_live, "%ju objects live",
+	    (uintmax_t)st.ds2_objects_live);
+	dqt_close_fence(&c);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(1, c.events[DQ_OP_CLOSE]);
 	ATF_CHECK_EQ(1, o->closes);
+	dqt_unlock(&c);
 	/*
 	 * Series ii: CLOSE is posted by the deferred destroy task after the
 	 * write-back of any dirty pages, as a kernel caller (pid 0); the
 	 * record needs no answer.
 	 */
+	dqt_lock(&c);
 	ATF_CHECK((c.op_caller[DQ_OP_CLOSE].dc_flags & DQ_CALLER_F_KERNEL) != 0);
 	ATF_CHECK_EQ(0, c.op_caller[DQ_OP_CLOSE].dc_pid);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -174,7 +189,7 @@ ATF_TC_BODY(revoke, tc)
 {
 	struct dqt_ctl c;
 	struct dqt_object *o;
-	struct one_read_arg a;
+	struct dqt_read_arg a;
 	struct dqt_rr r;
 	struct kevent kev[3], out[3];
 	struct timespec zero = { 0, 0 };
@@ -204,20 +219,22 @@ ATF_TC_BODY(revoke, tc)
 
 	a.fd = o->fd;
 	a.len = 100;
-	dqt_run_child(child_one_read, &a, &r, sizeof(r));
+	dqt_run_child(dqt_child_read, &a, &r, sizeof(r));
 	ATF_CHECK_EQ(100, r.rv);
 
 	ATF_REQUIRE_EQ(0, dq_revoke(c.q, o->id));
 	/* Idempotent: the object is still in the table, already revoked. */
 	ATF_CHECK_EQ(0, dq_revoke(c.q, o->id));
 
-	dqt_run_child(child_one_read, &a, &r, sizeof(r));
+	dqt_run_child(dqt_child_read, &a, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.rv);
 	ATF_CHECK_EQ(EIO, r.err);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(1, c.events[DQ_OP_READ]);	/* nothing was posted */
 
 	/* Design 9: fstat, F_KINFO, fstatfs, fpathconf keep answering. */
 	ATF_REQUIRE_EQ(0, fstat(o->fd, &after));
+	dqt_unlock(&c);
 	dqt_check_stat_eq(&after, &before);
 	memset(&kif, 0, sizeof(kif));
 	kif.kf_structsize = sizeof(kif);
@@ -272,11 +289,11 @@ ATF_TC_BODY(revoke_wakes_waiter, tc)
 {
 	struct dqt_ctl c;
 	struct dqt_object *o;
-	struct one_read_arg a;
+	struct dqt_read_arg a;
 	struct dqt_child ch;
 	struct dqt_rr r;
 	struct dq_stats st;
-	int oracle, status;
+	int oracle;
 
 	dqt_fill(data, sizeof(data), 54);
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
@@ -287,17 +304,16 @@ ATF_TC_BODY(revoke_wakes_waiter, tc)
 
 	a.fd = o->fd;
 	a.len = 100;
-	dqt_spawn(&ch, child_one_read, &a);
+	dqt_spawn(&ch, dqt_child_read, &a);
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
 	ATF_REQUIRE_EQ(0, dq_revoke(c.q, o->id));
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.rv);
 	ATF_CHECK_EQ(EIO, r.err);
 
 	/* The event left the in-flight tree with the revoke. */
 	errno = 0;
-	ATF_CHECK_EQ(-1, dq_reply(c.q, c.held[0].id, 0, data, 100));
+	ATF_CHECK_EQ(-1, dq_reply(c.q, dqt_held_id(&c, 0), 0, data, 100));
 	ATF_CHECK_EQ(ESRCH, errno);
 	dqt_stats(&c, &st);
 	ATF_CHECK_EQ(1, st.ds_late_replies);
@@ -406,6 +422,81 @@ struct holder_res {
 	int		 attached;	/* PROC_NO_NEW_PRIVS_STATUS: ATTACH sets it */
 };
 
+/*
+ * The supervisor's queue and object, in a forked child: libdq only, and an
+ * exit status (60 + step) where a body would have failed.
+ */
+static int
+sup_mint(int oracle, int *qp)
+{
+	struct dq_ident_file ident;
+	struct dq_policy pol;
+	struct statfs sfs;
+	struct stat st;
+	uint64_t id;
+	int fd, q;
+
+	q = dq_open();
+	if (q == -1)
+		_exit(60);
+	if (fstat(oracle, &st) != 0 || fstatfs(oracle, &sfs) != 0 ||
+	    dq_ident_from_stat(&ident, oracle_path, &st, &sfs, oracle) != 0)
+		_exit(61);
+	dq_policy_default(&pol);
+	if (dq_mint_file(q, &ident, &pol, &id, &fd, NULL) != 0)
+		_exit(62);
+	*qp = q;
+	return (fd);
+}
+
+/* Answer the first READ on q from data; any other waited event EIO. */
+struct sup_read {
+	int		 q;
+	int		 error;		/* -1: not answered yet */
+};
+
+static bool
+sup_read_done(void *arg)
+{
+
+	return (((struct sup_read *)arg)->error != -1);
+}
+
+static void
+sup_read_event(const struct dq_event *ev, void *arg)
+{
+	struct sup_read *sr = arg;
+	const struct dq_read_body *rb;
+	size_t len;
+
+	if (sr->error != -1)
+		return;
+	if (ev->de_op != DQ_OP_READ) {
+		if (ev->de_id != 0)
+			(void)dq_reply(sr->q, ev->de_id, EIO, NULL, 0);
+		return;
+	}
+	if (dq_event_read(ev, &rb) != 0) {
+		sr->error = 1;
+		return;
+	}
+	len = rb->dr_offset >= sizeof(data) ? 0 :
+	    MIN(rb->dr_len, sizeof(data) - rb->dr_offset);
+	sr->error = dq_reply(sr->q, ev->de_id, 0,
+	    data + (len != 0 ? rb->dr_offset : 0), len) == 0 ? 0 : 1;
+}
+
+static int
+sup_serve_read(int q)
+{
+	struct sup_read sr = { q, -1 };
+
+	if (dqt_serve_until(q, -1, sup_read_done, sup_read_event, &sr,
+	    30000) != 0)
+		return (-1);
+	return (sr.error == 0 ? 0 : -1);
+}
+
 ATF_TC(unattached_holder_survives);
 ATF_TC_HEAD(unattached_holder_survives, tc)
 {
@@ -418,15 +509,13 @@ ATF_TC_HEAD(unattached_holder_survives, tc)
 }
 ATF_TC_BODY(unattached_holder_survives, tc)
 {
-	struct dqt_ctl c;
-	struct dqt_object *o;
 	struct holder_res r;
 	struct procctl_reaper_status rs;
 	struct stat sb;
 	unsigned char buf[100];
 	sigset_t all, pend;
 	pid_t holder, sup;
-	int go[2], hp[2], oracle, ready[2], res[2], sig, status;
+	int fd, go[2], hp[2], oracle, q, ready[2], res[2], sig, status;
 	char b;
 
 	dqt_require_plane();
@@ -447,10 +536,12 @@ ATF_TC_BODY(unattached_holder_survives, tc)
 	sup = fork();
 	ATF_REQUIRE_MSG(sup != -1, "fork: %s", strerror(errno));
 	if (sup == 0) {
-		/* The supervisor: a queue, one object, one reader thread. */
-		dqt_init(&c);
-		o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data),
-		    NULL);
+		/*
+		 * The supervisor: a queue and one object, made with libdq
+		 * alone (no ATF call in a forked child); it answers the
+		 * holder's first read itself.
+		 */
+		fd = sup_mint(oracle, &q);
 		holder = fork();
 		if (holder == -1)
 			_exit(70);
@@ -462,7 +553,7 @@ ATF_TC_BODY(unattached_holder_survives, tc)
 			sigfillset(&all);
 			(void)sigprocmask(SIG_BLOCK, &all, NULL);
 			memset(&r, 0, sizeof(r));
-			r.before.rv = read(o->fd, buf, sizeof(buf));
+			r.before.rv = read(fd, buf, sizeof(buf));
 			r.before.err = r.before.rv == -1 ? errno : 0;
 			if (procctl(P_PID, getpid(), PROC_NO_NEW_PRIVS_STATUS,
 			    &r.attached) != 0)
@@ -471,16 +562,19 @@ ATF_TC_BODY(unattached_holder_survives, tc)
 				_exit(71);
 			if (read(go[0], &b, 1) != 1)
 				_exit(72);
-			r.after.rv = pread(o->fd, buf, sizeof(buf), 4096);
+			r.after.rv = pread(fd, buf, sizeof(buf), 4096);
 			r.after.err = r.after.rv == -1 ? errno : 0;
-			r.st.rv = fstat(o->fd, &sb);
+			r.st.rv = fstat(fd, &sb);
 			r.st.err = r.st.rv == -1 ? errno : 0;
-			r.cl.rv = close(o->fd);
+			r.cl.rv = close(fd);
 			r.cl.err = r.cl.rv == -1 ? errno : 0;
 			if (write(res[1], &r, sizeof(r)) != sizeof(r))
 				_exit(73);
-			/* Still here a while later, with nothing pending. */
-			dqt_msleep(500);
+			/*
+			 * Nothing pending.  The supervisor was reaped before
+			 * the go byte: its exit had finished, and whatever
+			 * its exit sends had been sent.
+			 */
 			sigemptyset(&pend);
 			(void)sigpending(&pend);
 			for (sig = 1; sig < NSIG; sig++)
@@ -491,6 +585,8 @@ ATF_TC_BODY(unattached_holder_survives, tc)
 		if (write(hp[1], &holder, sizeof(holder)) != sizeof(holder))
 			_exit(74);
 		/* Serve the holder's first read, then exit: not a close. */
+		if (sup_serve_read(q) != 0)
+			_exit(76);
 		if (read(ready[0], &b, 1) != 1)
 			_exit(75);
 		_exit(0);
@@ -511,7 +607,6 @@ ATF_TC_BODY(unattached_holder_survives, tc)
 	ATF_REQUIRE_EQ(0, procctl(P_PID, getpid(), PROC_REAP_STATUS, &rs));
 	ATF_CHECK_EQ_MSG(1, (int)rs.rs_children, "%u children",
 	    rs.rs_children);
-	dqt_msleep(200);
 	ATF_CHECK_EQ_MSG(0, waitpid(holder, &status, WNOHANG),
 	    "the holder did not outlive the supervisor: status %#x", status);
 	ATF_CHECK_EQ(0, kill(holder, 0));
@@ -548,11 +643,6 @@ ATF_TC_BODY(scm_rights_refused, tc)
 {
 	struct dqt_ctl c;
 	struct dqt_object *o;
-	struct msghdr msg;
-	struct cmsghdr *cm;
-	struct iovec iov;
-	char cbuf[CMSG_SPACE(sizeof(int))];
-	char byte;
 	int oracle, sv[2];
 
 	dqt_fill(data, sizeof(data), 56);
@@ -562,25 +652,11 @@ ATF_TC_BODY(scm_rights_refused, tc)
 	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
 	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
 
-	byte = 'x';
-	iov.iov_base = &byte;
-	iov.iov_len = 1;
-	memset(&msg, 0, sizeof(msg));
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	msg.msg_control = cbuf;
-	msg.msg_controllen = sizeof(cbuf);
-	cm = CMSG_FIRSTHDR(&msg);
-	cm->cmsg_level = SOL_SOCKET;
-	cm->cmsg_type = SCM_RIGHTS;
-	cm->cmsg_len = CMSG_LEN(sizeof(int));
-	memcpy(CMSG_DATA(cm), &o->fd, sizeof(int));
 	errno = 0;
-	ATF_CHECK_EQ(-1, sendmsg(sv[0], &msg, 0));
+	ATF_CHECK_EQ(-1, dqt_send_fd(sv[0], o->fd));
 	ATF_CHECK_EQ(ENOTCAPABLE, errno);
 	/* The real file travels; only the served one is refused. */
-	memcpy(CMSG_DATA(cm), &oracle, sizeof(int));
-	ATF_CHECK_EQ(1, sendmsg(sv[0], &msg, 0));
+	ATF_CHECK_EQ(0, dqt_send_fd(sv[0], oracle));
 	/* dup and fork share it; the dup is as untransferable. */
 	ATF_CHECK(dup(o->fd) >= 0);
 	(void)close(sv[0]);

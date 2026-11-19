@@ -32,6 +32,8 @@
 
 #include <libdq.h>
 
+#include "dqt.h"
+
 #define	DATA_LEN	8192
 
 static unsigned char data[DATA_LEN];
@@ -348,8 +350,7 @@ ATF_TC_BODY(errno_allow_lists, tc)
 struct ctl {
 	int		 q;
 	int		 backing;
-	pthread_t	 thr;
-	volatile bool	 stop;
+	struct dqt_server server;	/* the controller thread */
 	struct dq_serve_state *st;
 	struct dq_ident_file ident;
 	struct dq_serve_opts opts;
@@ -360,69 +361,26 @@ struct ctl {
 	pthread_mutex_t	 mtx;
 };
 
-static void *
-serve_loop(void *arg)
+/* Every record to dq_serve_file(), counted by operation. */
+static int
+serve_one(int q, const struct dq_event *ev, const void *body, size_t bodylen,
+    void *arg)
 {
 	struct ctl *c = arg;
-	const struct dq_event *ev;
-	struct pollfd pfd;
-	const void *body;
-	size_t bodylen, size;
-	ssize_t got;
-	char *buf;
 
-	size = 256 * 1024;
-	buf = malloc(size);
-	while (!c->stop) {
-		pfd.fd = c->q;
-		pfd.events = POLLIN;
-		pfd.revents = 0;
-		if (poll(&pfd, 1, 50) <= 0)
-			continue;
-		if (dq_read_events(c->q, buf, size, &got) != 0)
-			continue;
-		for (ev = dq_event_first(buf, (size_t)got); ev != NULL;
-		    ev = dq_event_next(buf, (size_t)got, ev)) {
-			body = dq_event_body(ev, &bodylen);
-			pthread_mutex_lock(&c->mtx);
-			if (ev->de_op <= DQ_OP_REPLY)
-				c->ops[ev->de_op]++;
-			pthread_mutex_unlock(&c->mtx);
-			if (dq_serve_file(c->q, ev, body, bodylen, c->backing,
-			    &c->opts) != 0) {
-				pthread_mutex_lock(&c->mtx);
-				c->failures++;
-				pthread_mutex_unlock(&c->mtx);
-			}
-		}
+	pthread_mutex_lock(&c->mtx);
+	if (ev->de_op <= DQ_OP_REPLY)
+		c->ops[ev->de_op]++;
+	pthread_mutex_unlock(&c->mtx);
+	if (dq_serve_file(q, ev, body, bodylen, c->backing, &c->opts) != 0) {
+		pthread_mutex_lock(&c->mtx);
+		c->failures++;
+		pthread_mutex_unlock(&c->mtx);
 	}
-	free(buf);
-	return (NULL);
+	return (0);
 }
 
 static char backing_path[PATH_MAX];
-
-/*
- * Only a kernel built with options DQ_TEST_OPEN has this sysctl; on it the
- * loader must have given the tests access (see tests/sys/dq/dq_test.c).
- */
-static void
-require_test_access(void)
-{
-	size_t len;
-	int v;
-
-	len = sizeof(v);
-	if (sysctlbyname("debug.dq.unverified_open", &v, &len, NULL, 0) != 0) {
-		if (errno == ENOENT)
-			return;
-		atf_tc_fail("debug.dq.unverified_open: %s", strerror(errno));
-	}
-	if (len != sizeof(v) || v != 1)
-		atf_tc_fail("test kernel without test access: set "
-		    "debug.dq.unverified_open=\"1\" in loader.conf "
-		    "(it reads %d)", v);
-}
 
 static void
 ctl_start(struct ctl *c, unsigned seed, uint32_t events)
@@ -431,7 +389,7 @@ ctl_start(struct ctl *c, unsigned seed, uint32_t events)
 	struct statfs sfs;
 	struct stat sb;
 	size_t i;
-	int fd, flags, reason;
+	int fd, reason;
 
 	memset(c, 0, sizeof(*c));
 	for (i = 0; i < sizeof(data); i++)
@@ -441,10 +399,7 @@ ctl_start(struct ctl *c, unsigned seed, uint32_t events)
 	ATF_REQUIRE_EQ((ssize_t)sizeof(data), write(fd, data, sizeof(data)));
 	ATF_REQUIRE(realpath("backing", backing_path) != NULL);
 	c->backing = fd;
-	require_test_access();
-	c->q = dq_open();
-	if (c->q == -1)
-		atf_tc_fail("%s: %s", DQ_DEVICE, strerror(errno));
+	c->q = dqt_open_queue();
 	ATF_REQUIRE_EQ(0, fstat(fd, &sb));
 	ATF_REQUIRE_EQ(0, fstatfs(fd, &sfs));
 	ATF_REQUIRE_EQ(0, dq_ident_from_stat(&c->ident, backing_path, &sb,
@@ -463,17 +418,16 @@ ctl_start(struct ctl *c, unsigned seed, uint32_t events)
 	c->opts.so_ident = &c->ident;
 	c->opts.so_flags = DQ_SERVE_F_SYNC_IDENT;
 	ATF_REQUIRE_EQ(0, pthread_mutex_init(&c->mtx, NULL));
-	flags = fcntl(c->q, F_GETFL);
-	ATF_REQUIRE_EQ(0, fcntl(c->q, F_SETFL, flags | O_NONBLOCK));
-	ATF_REQUIRE_EQ(0, pthread_create(&c->thr, NULL, serve_loop, c));
+	dqt_server_start(&c->server, c->q, serve_one, c);
 }
 
 static void
 ctl_stop(struct ctl *c)
 {
+	int error;
 
-	c->stop = true;
-	(void)pthread_join(c->thr, NULL);
+	error = dqt_server_stop(&c->server);
+	ATF_CHECK_EQ_MSG(0, error, "controller thread: %s", strerror(error));
 	ATF_CHECK_EQ_MSG(0, c->failures, "dq_serve_file failed %u times",
 	    c->failures);
 	(void)close(c->fd);
@@ -524,11 +478,6 @@ struct io_res {
 	struct flock	 fl;
 };
 
-#define	DO(i, expr) do {						\
-	r->r[i].rv = (long)(expr);					\
-	r->r[i].err = r->r[i].rv == -1 ? errno : 0;			\
-} while (0)
-
 static void
 child_io(void *arg, void *result)
 {
@@ -539,24 +488,24 @@ child_io(void *arg, void *result)
 	int e;
 
 	memset(w, 0xee, sizeof(w));
-	DO(0, pread(fd, r->buf, sizeof(r->buf), 100));
-	DO(1, pwrite(fd, w, sizeof(w), 200));
+	DQT_RR(r->r[0], pread(fd, r->buf, sizeof(r->buf), 100));
+	DQT_RR(r->r[1], pwrite(fd, w, sizeof(w), 200));
 	(void)fcntl(fd, F_SETFL, O_APPEND);
-	DO(2, write(fd, w, sizeof(w)));
-	DO(3, lseek(fd, 0, SEEK_CUR));
+	DQT_RR(r->r[2], write(fd, w, sizeof(w)));
+	DQT_RR(r->r[3], lseek(fd, 0, SEEK_CUR));
 	(void)fcntl(fd, F_SETFL, 0);
-	DO(4, fchmod(fd, 0600));
-	DO(5, fsync(fd));
-	DO(6, fdatasync(fd));
+	DQT_RR(r->r[4], fchmod(fd, 0600));
+	DQT_RR(r->r[5], fsync(fd));
+	DQT_RR(r->r[6], fdatasync(fd));
 	e = posix_fallocate(fd, 0, DATA_LEN * 2);
 	r->r[7].rv = e == 0 ? 0 : -1;
 	r->r[7].err = e;
 	rq.r_offset = 1024;	/* clear of the bytes written at 200 */
 	rq.r_len = 512;
-	DO(8, fspacectl(fd, SPACECTL_DEALLOC, &rq, 0, &r->rmsr));
-	DO(9, ioctl(fd, FIODTYPE, &e));
-	DO(10, ftruncate(fd, DATA_LEN + 16));
-	DO(11, fstat(fd, &r->st));
+	DQT_RR(r->r[8], fspacectl(fd, SPACECTL_DEALLOC, &rq, 0, &r->rmsr));
+	DQT_RR(r->r[9], ioctl(fd, FIODTYPE, &e));
+	DQT_RR(r->r[10], ftruncate(fd, DATA_LEN + 16));
+	DQT_RR(r->r[11], fstat(fd, &r->st));
 }
 
 ATF_TC(serve_each_op);
@@ -614,8 +563,10 @@ ATF_TC_BODY(serve_each_op, tc)
 	memset(w, 0, sizeof(w));
 	ATF_REQUIRE_EQ(16, pread(c.backing, got, sizeof(got), 1024 + 496));
 	ATF_CHECK(memcmp(got, w, 16) == 0);
+	pthread_mutex_lock(&c.mtx);
 	ATF_CHECK(c.ops[DQ_OP_GETATTR] >= 1);
 	ATF_CHECK_EQ(2, c.ops[DQ_OP_FSYNC]);
+	pthread_mutex_unlock(&c.mtx);
 	ctl_stop(&c);
 }
 
@@ -654,9 +605,9 @@ child_try_lock(void *arg, void *result)
 	r->fl.l_whence = SEEK_SET;
 	r->fl.l_start = 5;
 	r->fl.l_len = 1;
-	DO(0, fcntl(fd, F_SETLK, &r->fl));
-	DO(1, fcntl(fd, F_GETLK, &r->fl));
-	DO(2, flock(fd, LOCK_EX | LOCK_NB));
+	DQT_RR(r->r[0], fcntl(fd, F_SETLK, &r->fl));
+	DQT_RR(r->r[1], fcntl(fd, F_GETLK, &r->fl));
+	DQT_RR(r->r[2], flock(fd, LOCK_EX | LOCK_NB));
 }
 
 ATF_TC(serve_locks);
@@ -711,6 +662,7 @@ ATF_TC_BODY(serve_locks, tc)
 			break;
 		usleep(10000);
 	}
+	ATF_REQUIRE_MSG(b, "no UNLOCK_ALL for the holder's exit in 5 s");
 	memset(&r, 0, sizeof(r));
 	requester(child_try_lock, &fd, &r, sizeof(r));
 	ATF_CHECK_EQ_MSG(0, r.r[0].rv, "after release: %s",
@@ -734,8 +686,8 @@ child_map_write(void *arg, void *result)
 	/* A fault (READ) and a store, then the write-back (WRITE_ASYNC). */
 	memcpy(r->buf, p + 4096, 16);
 	p[4096 + 5] = 0x77;
-	DO(1, msync(p, DATA_LEN, MS_SYNC));
-	DO(2, munmap(p, DATA_LEN));
+	DQT_RR(r->r[1], msync(p, DATA_LEN, MS_SYNC));
+	DQT_RR(r->r[2], munmap(p, DATA_LEN));
 }
 
 ATF_TC(serve_mmap_writeback);
@@ -763,7 +715,9 @@ ATF_TC_BODY(serve_mmap_writeback, tc)
 	ATF_CHECK_EQ(0, r.r[2].rv);
 	ATF_REQUIRE_EQ(1, pread(c.backing, &got, 1, 4096 + 5));
 	ATF_CHECK_EQ(0x77, got);
+	pthread_mutex_lock(&c.mtx);
 	ATF_CHECK(c.ops[DQ_OP_WRITE_ASYNC] >= 1);
+	pthread_mutex_unlock(&c.mtx);
 	ctl_stop(&c);
 }
 

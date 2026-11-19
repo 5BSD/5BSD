@@ -27,7 +27,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	DATA_LEN	8192
 #define	MAX_OPS		8
@@ -36,57 +36,25 @@ static unsigned char data[DATA_LEN];
 static char backing_path[DQT_PATH_MAX];
 static char oracle_path[DQT_PATH_MAX];
 
-struct fixture {
-	struct dqt_ctl	 c;
-	struct dqt_object *o;
-	int		 backing;	/* served through dq_serve_file */
-	int		 oracle;	/* the same bytes, O_RDWR */
-};
-
-static int
-open_rw(const char *name, char *path)
-{
-	int fd;
-
-	fd = dqt_make_oracle(name, data, sizeof(data), path, DQT_PATH_MAX);
-	(void)close(fd);
-	fd = open(path, O_RDWR);
-	ATF_REQUIRE_MSG(fd != -1, "open %s: %s", path, strerror(errno));
-	return (fd);
-}
-
 static void
-setup_flags(struct fixture *f, unsigned seed, uint32_t mflags)
+setup_flags(struct dqt_fixture *f, unsigned seed, uint32_t mflags)
 {
 
 	dqt_fill(data, sizeof(data), seed);
-	f->backing = open_rw("backing", backing_path);
-	f->oracle = open_rw("oracle", oracle_path);
-	dqt_init(&f->c);
-	f->o = dqt_mint_backing(&f->c, f->backing, backing_path, NULL, mflags);
+	dqt_fixture_init(f, data, sizeof(data), backing_path, oracle_path, NULL,
+	    mflags);
 }
 
 static void
-setup(struct fixture *f, unsigned seed)
+setup(struct dqt_fixture *f, unsigned seed)
 {
 
 	setup_flags(f, seed, DQ_MINT_F_WRITE);
 }
 
-static void
-teardown(struct fixture *f)
-{
-
-	ATF_CHECK_EQ_MSG(0, f->c.reply_failures, "reply failures: last %d",
-	    f->c.last_reply_errno);
-	dqt_fini(&f->c);
-	(void)close(f->backing);
-	(void)close(f->oracle);
-}
-
 /* The two files hold the same bytes. */
 static void
-check_same_contents(struct fixture *f)
+check_same_contents(struct dqt_fixture *f)
 {
 	struct stat bs, os;
 	unsigned char *b, *o;
@@ -124,7 +92,11 @@ struct ops_arg {
 
 #define	BOTH(r, call) do {						\
 	int _fd;							\
-	struct pair *_p = &(r)->p[(r)->n++];				\
+	struct pair *_p;						\
+									\
+	if ((r)->n >= (int)nitems((r)->p))				\
+		_exit(DQT_EXIT_NORESULT);	/* a child: no ATF */	\
+	_p = &(r)->p[(r)->n++];						\
 	_fd = a->sfd;							\
 	_p->s.rv = (long)(call);					\
 	_p->s.err = _p->s.rv == -1 ? errno : 0;				\
@@ -191,7 +163,7 @@ ATF_TC_HEAD(write_pwrite_writev, tc)
 }
 ATF_TC_BODY(write_pwrite_writev, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct ops_arg a;
 	struct ops_res r;
 
@@ -204,6 +176,7 @@ ATF_TC_BODY(write_pwrite_writev, tc)
 	check_same_contents(&f);
 	ATF_CHECK_EQ(r.ost.st_size, r.sst.st_size);
 	/* Length 0 and the negative offset posted nothing: 4 writes. */
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(4, f.c.events[DQ_OP_WRITE]);
 	ATF_REQUIRE(f.c.nwr >= 4);
 	ATF_CHECK_EQ(0, f.c.wr[0].offset);
@@ -212,7 +185,8 @@ ATF_TC_BODY(write_pwrite_writev, tc)
 	ATF_CHECK_EQ(100, f.c.wr[2].offset);	/* the implicit offset */
 	ATF_CHECK_EQ(207, f.c.wr[2].len);
 	ATF_CHECK_EQ(0, f.c.wr[0].flags);
-	teardown(&f);
+	dqt_unlock(&f.c);
+	dqt_fixture_fini(&f);
 }
 
 static void
@@ -260,7 +234,7 @@ ATF_TC_HEAD(aio_write, tc)
 }
 ATF_TC_BODY(aio_write, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct ops_arg a;
 	struct ops_res r;
 	u_int unsafe;
@@ -274,13 +248,17 @@ ATF_TC_BODY(aio_write, tc)
 	if (dqt_sysctl_get_uint("vfs.aio.enable_unsafe", &unsafe) && unsafe == 0) {
 		ATF_CHECK_EQ(-1, r.p[0].s.rv);
 		ATF_CHECK_EQ(EOPNOTSUPP, r.p[0].s.err);
+		dqt_lock(&f.c);
 		ATF_CHECK_EQ(0, f.c.events[DQ_OP_WRITE]);
+		dqt_unlock(&f.c);
 	} else {
 		ATF_CHECK_EQ(64, r.p[0].s.rv);
 		check_same_contents(&f);
+		dqt_lock(&f.c);
 		ATF_CHECK((f.c.last_caller.dc_flags & DQ_CALLER_F_KERNEL) != 0);
+		dqt_unlock(&f.c);
 	}
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 static void
@@ -313,7 +291,7 @@ ATF_TC_HEAD(append, tc)
 }
 ATF_TC_BODY(append, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct ops_arg a;
 	struct ops_res r;
 	int i;
@@ -326,10 +304,12 @@ ATF_TC_BODY(append, tc)
 	check_pairs(&r);
 	check_same_contents(&f);
 	ATF_CHECK_EQ(r.ost.st_size, r.sst.st_size);
+	dqt_lock(&f.c);
 	ATF_REQUIRE_EQ(3, f.c.nwr);
 	for (i = 0; i < 3; i++)
 		ATF_CHECK((f.c.wr[i].flags & DQ_WRITE_F_APPEND) != 0);
-	teardown(&f);
+	dqt_unlock(&f.c);
+	dqt_fixture_fini(&f);
 }
 
 static void
@@ -360,21 +340,20 @@ ATF_TC_HEAD(append_two_writers, tc)
 }
 ATF_TC_BODY(append_two_writers, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_child ch[2];
 	struct dqt_rr r[2];
 	struct stat st;
 	unsigned char *buf;
 	off_t off;
-	int i, status;
+	int i;
 
 	setup(&f, 4);
 	ATF_REQUIRE_EQ(0, fcntl(f.o->fd, F_SETFL, O_APPEND));
 	for (i = 0; i < 2; i++)
 		dqt_spawn(&ch[i], child_appender, &f.o->fd);
 	for (i = 0; i < 2; i++) {
-		status = dqt_wait(&ch[i], &r[i], sizeof(r[i]));
-		ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+		dqt_collect(&ch[i], &r[i], sizeof(r[i]));
 		ATF_CHECK_EQ_MSG(0, r[i].rv, "appender %d: %s", i,
 		    strerror(r[i].err));
 	}
@@ -391,7 +370,7 @@ ATF_TC_BODY(append_two_writers, tc)
 			ATF_CHECK_EQ(buf[off], buf[off + i]);
 	}
 	free(buf);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 static void
@@ -426,7 +405,7 @@ ATF_TC_HEAD(sync_flags, tc)
 }
 ATF_TC_BODY(sync_flags, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct ops_arg a;
 	struct ops_res r;
 
@@ -437,12 +416,14 @@ ATF_TC_BODY(sync_flags, tc)
 	dqt_run_child(child_sync_flags, &a, &r, sizeof(r));
 	check_pairs(&r);
 	check_same_contents(&f);
+	dqt_lock(&f.c);
 	ATF_REQUIRE_EQ(4, f.c.nwr);
 	ATF_CHECK_EQ(DQ_WRITE_F_SYNC, f.c.wr[0].flags);
 	ATF_CHECK_EQ(DQ_WRITE_F_DSYNC, f.c.wr[1].flags);
 	ATF_CHECK_EQ(DQ_WRITE_F_SYNC, f.c.wr[2].flags);
 	ATF_CHECK_EQ(0, f.c.wr[3].flags);
-	teardown(&f);
+	dqt_unlock(&f.c);
+	dqt_fixture_fini(&f);
 }
 
 struct big_arg {
@@ -480,10 +461,11 @@ child_big_pwrite(void *arg, void *result)
 
 /* Answer the held event i as a write of n bytes at off. */
 static void
-answer_write(struct fixture *f, int i, uint64_t n, uint64_t off)
+answer_write(struct dqt_fixture *f, int i, uint64_t n, uint64_t off)
 {
 
-	ATF_REQUIRE_MSG(dq_reply_write(f->c.q, f->c.held[i].id, n, off) == 0,
+	ATF_REQUIRE_MSG(dq_reply_write(f->c.q, dqt_held_id(&f->c, i), n,
+	    off) == 0,
 	    "dq_reply_write: %s", strerror(errno));
 }
 
@@ -498,13 +480,12 @@ ATF_TC_HEAD(short_write, tc)
 }
 ATF_TC_BODY(short_write, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_child ch;
 	struct big_arg a;
 	struct dqt_rr r;
 	struct stat st;
 	u_int max_io;
-	int status;
 
 	ATF_REQUIRE(dqt_sysctl_get_uint("kern.dq.max_io", &max_io));
 	setup(&f, 6);
@@ -514,22 +495,26 @@ ATF_TC_BODY(short_write, tc)
 	a.off = 0;
 	dqt_spawn(&ch, child_big_pwrite, &a);
 	ATF_REQUIRE(dqt_wait_held(&f.c, 1, DQT_WAIT_MS));
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(DQ_OP_WRITE, f.c.held[0].op);
+	dqt_unlock(&f.c);
 	errno = 0;
-	ATF_CHECK_EQ(-1, dq_reply_write(f.c.q, f.c.held[0].id,
+	ATF_CHECK_EQ(-1, dq_reply_write(f.c.q, dqt_held_id(&f.c, 0),
 	    (uint64_t)max_io + 1, 0));
 	ATF_CHECK_EQ(EINVAL, errno);
 	answer_write(&f, 0, 5, 0);
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(5, r.rv);
-	dqt_msleep(100);
+	/* A second chunk would have been posted before the fence. */
+	dqt_fence(&f.c);
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(1, f.c.nheld);	/* no second chunk */
 	/* The kernel's size follows the controller's word, not the request. */
 	ATF_REQUIRE_EQ(0, fstat(f.o->fd, &st));
+	dqt_unlock(&f.c);
 	ATF_CHECK_EQ(DATA_LEN, st.st_size);
 	dqt_hold(&f.c, false);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 ATF_TC(eintr_mid_chunk);
@@ -542,12 +527,11 @@ ATF_TC_HEAD(eintr_mid_chunk, tc)
 }
 ATF_TC_BODY(eintr_mid_chunk, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_child ch;
 	struct big_arg a;
 	struct dqt_rr r;
 	u_int max_io;
-	int status;
 
 	ATF_REQUIRE(dqt_sysctl_get_uint("kern.dq.max_io", &max_io));
 	setup(&f, 7);
@@ -559,21 +543,25 @@ ATF_TC_BODY(eintr_mid_chunk, tc)
 	ATF_REQUIRE(dqt_wait_held(&f.c, 1, DQT_WAIT_MS));
 	answer_write(&f, 0, max_io, 0);
 	ATF_REQUIRE(dqt_wait_held(&f.c, 2, DQT_WAIT_MS));
+	dqt_lock(&f.c);
 	ATF_REQUIRE_EQ(2, f.c.nwr);
 	ATF_CHECK_EQ((uint64_t)max_io, f.c.wr[1].offset);
 	ATF_CHECK_EQ(max_io, f.c.wr[1].len);
+	dqt_unlock(&f.c);
 	ATF_REQUIRE_EQ(0, kill(ch.pid, SIGUSR1));
 	ATF_CHECK(dqt_wait_interrupts(&f.c, 1, DQT_WAIT_MS));
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(f.c.held[1].id, f.c.interrupted[0]);
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_unlock(&f.c);
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ_MSG((long)max_io, r.rv, "rv %ld errno %d", r.rv, r.err);
 	/* The late reply to the abandoned chunk is ESRCH. */
 	errno = 0;
-	ATF_CHECK_EQ(-1, dq_reply_write(f.c.q, f.c.held[1].id, max_io, max_io));
+	ATF_CHECK_EQ(-1, dq_reply_write(f.c.q, dqt_held_id(&f.c, 1), max_io,
+	    max_io));
 	ATF_CHECK_EQ(ESRCH, errno);
 	dqt_hold(&f.c, false);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 static volatile sig_atomic_t got_xfsz;
@@ -625,7 +613,7 @@ ATF_TC_HEAD(rlimit_fsize, tc)
 }
 ATF_TC_BODY(rlimit_fsize, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct ops_arg a;
 	struct fsize_res r;
 
@@ -640,9 +628,11 @@ ATF_TC_BODY(rlimit_fsize, tc)
 	/* One SIGXFSZ per file. */
 	ATF_CHECK_EQ(2, r.xfsz);
 	check_same_contents(&f);
+	dqt_lock(&f.c);
 	ATF_REQUIRE_EQ(2, f.c.nwr);
 	ATF_CHECK_EQ(50, f.c.wr[0].len);
-	teardown(&f);
+	dqt_unlock(&f.c);
+	dqt_fixture_fini(&f);
 }
 
 struct note_res {
@@ -687,7 +677,7 @@ ATF_TC_HEAD(notes_and_size, tc)
 }
 ATF_TC_BODY(notes_and_size, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct note_res r;
 	struct stat st;
 	char buf[4];
@@ -702,7 +692,7 @@ ATF_TC_BODY(notes_and_size, tc)
 	ATF_CHECK_EQ(NOTE_WRITE | NOTE_EXTEND, r.fflags[1]);
 	ATF_REQUIRE_EQ(0, fstat(f.o->fd, &st));
 	ATF_CHECK_EQ(DATA_LEN + 10, st.st_size);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 
 	/* Read-only: the generic layer's EBADF, in the controller, no event. */
 	setup_flags(&f, 10, 0);
@@ -710,8 +700,10 @@ ATF_TC_BODY(notes_and_size, tc)
 	errno = 0;
 	ATF_CHECK_EQ(-1, write(f.o->fd, buf, sizeof(buf)));
 	ATF_CHECK_EQ(EBADF, errno);
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(0, f.c.records);
-	teardown(&f);
+	dqt_unlock(&f.c);
+	dqt_fixture_fini(&f);
 }
 
 ATF_TC(controller_errnos);
@@ -724,12 +716,11 @@ ATF_TC_HEAD(controller_errnos, tc)
 }
 ATF_TC_BODY(controller_errnos, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_child ch;
 	struct big_arg a;
 	struct dqt_rr r;
 	struct dq_stats2 st;
-	int status;
 
 	setup(&f, 11);
 	dqt_hold(&f.c, true);
@@ -738,9 +729,9 @@ ATF_TC_BODY(controller_errnos, tc)
 	a.off = 0;
 	dqt_spawn(&ch, child_big_pwrite, &a);
 	ATF_REQUIRE(dqt_wait_held(&f.c, 1, DQT_WAIT_MS));
-	ATF_REQUIRE_EQ(0, dq_reply(f.c.q, f.c.held[0].id, ENOSPC, NULL, 0));
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	ATF_REQUIRE_EQ(0, dq_reply(f.c.q, dqt_held_id(&f.c, 0), ENOSPC, NULL,
+	    0));
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(ENOSPC, r.err);
 	dqt_spawn(&ch, child_big_pwrite, &a);
 	ATF_REQUIRE(dqt_wait_held(&f.c, 2, DQT_WAIT_MS));
@@ -749,17 +740,19 @@ ATF_TC_BODY(controller_errnos, tc)
 		struct dq_write_reply wr = { 0, 0 };
 
 		errno = 0;
-		ATF_CHECK_EQ(-1, dq_reply(f.c.q, f.c.held[1].id, ENOSPC, &wr,
+		ATF_CHECK_EQ(-1, dq_reply(f.c.q, dqt_held_id(&f.c, 1), ENOSPC,
+		    &wr,
 		    sizeof(wr)));
 		ATF_CHECK_EQ(EINVAL, errno);
 		/* So is a reply body of the wrong size. */
 		errno = 0;
-		ATF_CHECK_EQ(-1, dq_reply(f.c.q, f.c.held[1].id, 0, &wr, 8));
+		ATF_CHECK_EQ(-1, dq_reply(f.c.q, dqt_held_id(&f.c, 1), 0, &wr,
+		    8));
 		ATF_CHECK_EQ(EINVAL, errno);
 	}
-	ATF_REQUIRE_EQ(0, dq_reply(f.c.q, f.c.held[1].id, EPIPE, NULL, 0));
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_CHECK_MSG(WIFEXITED(status), "status %#x (SIGPIPE?)", status);
+	ATF_REQUIRE_EQ(0, dq_reply(f.c.q, dqt_held_id(&f.c, 1), EPIPE, NULL,
+	    0));
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.rv);
 	ATF_CHECK_EQ(EIO, r.err);
 	dqt_stats2(&f.c, &st);
@@ -767,7 +760,7 @@ ATF_TC_BODY(controller_errnos, tc)
 	ATF_CHECK(!dq_reply_errno_allowed(DQ_OP_WRITE, EPIPE));
 	ATF_CHECK(dq_reply_errno_allowed(DQ_OP_WRITE, ENOSPC));
 	dqt_hold(&f.c, false);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 static long
@@ -793,13 +786,12 @@ ATF_TC_HEAD(edeadlk_while_held, tc)
 }
 ATF_TC_BODY(edeadlk_while_held, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_child ch;
 	struct big_arg a;
 	struct dqt_rr r;
 	struct timespec t0;
 	char buf[8];
-	int status;
 
 	setup(&f, 12);
 	dqt_hold(&f.c, true);
@@ -826,14 +818,15 @@ ATF_TC_BODY(edeadlk_while_held, tc)
 	ATF_CHECK_EQ(EDEADLK, errno);
 	ATF_CHECK_MSG(elapsed_ms(&t0) < 2000, "took %ld ms", elapsed_ms(&t0));
 	/* Nothing the controller tried reached its own queue. */
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(1, f.c.nwr);
+	dqt_unlock(&f.c);
 
 	answer_write(&f, 0, 10, 0);
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(10, r.rv);
 	dqt_hold(&f.c, false);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 ATF_TC(reply_offset_and_zero);
@@ -847,11 +840,10 @@ ATF_TC_HEAD(reply_offset_and_zero, tc)
 }
 ATF_TC_BODY(reply_offset_and_zero, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_child ch;
 	struct big_arg a;
 	struct dqt_rr r;
-	int status;
 
 	setup(&f, 13);
 	dqt_hold(&f.c, true);
@@ -860,19 +852,20 @@ ATF_TC_BODY(reply_offset_and_zero, tc)
 	a.off = 100;
 	dqt_spawn(&ch, child_big_pwrite, &a);
 	ATF_REQUIRE(dqt_wait_held(&f.c, 1, DQT_WAIT_MS));
+	dqt_lock(&f.c);
 	ATF_REQUIRE_EQ(1, f.c.nwr);
 	ATF_CHECK_EQ(0, f.c.wr[0].flags & DQ_WRITE_F_APPEND);
+	dqt_unlock(&f.c);
 	errno = 0;
-	ATF_CHECK_EQ(-1, dq_reply_write(f.c.q, f.c.held[0].id, 10, 101));
+	ATF_CHECK_EQ(-1, dq_reply_write(f.c.q, dqt_held_id(&f.c, 0), 10, 101));
 	ATF_CHECK_EQ(EINVAL, errno);
 	/* Still in flight: the correct offset with nothing written. */
-	ATF_CHECK_EQ(0, dq_reply_write(f.c.q, f.c.held[0].id, 0, 100));
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	ATF_CHECK_EQ(0, dq_reply_write(f.c.q, dqt_held_id(&f.c, 0), 0, 100));
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.rv);
 	ATF_CHECK_EQ(EIO, r.err);
 	dqt_hold(&f.c, false);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 ATF_TP_ADD_TCS(tp)

@@ -145,12 +145,19 @@
 #include <sys/malloc.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
+#include <sys/elf_common.h>
+#include <sys/imgact.h>
 #include <sys/ptrace.h>
 #include <sys/random.h>
+#include <sys/sdt.h>
 #include <sys/rwlock.h>
 #include <sys/sx.h>
 #include <sys/sysctl.h>
 #include <sys/hash.h>
+#include <vm/vm.h>
+#include <vm/pmap.h>
+#include <vm/vm_map.h>
+#include <vm/vm_object.h>
 #include <machine/vmm.h>
 #if defined(__amd64__)
 #include <cddl/dev/dtrace/x86/regset.h>
@@ -419,6 +426,17 @@ static kmutex_t		dtrace_meta_lock;	/* meta-provider state lock */
 #define ttoproc(_a)	((_a)->td_proc)
 #define SNOCD		0
 #define CPU_ON_INTR(_a)	0
+
+/*
+ * FreeBSD's privilege to attach DTrace to another process
+ * (DTRACEHIOC_ADDDOF, dtrace_ioctl.c), captured before the illumos names
+ * below take over the PRIV_DTRACE_* macros.
+ */
+#include <sys/priv.h>
+enum { DTRACE_FREEBSD_PRIV_PROC = PRIV_DTRACE_PROC };
+#undef PRIV_DTRACE_KERNEL
+#undef PRIV_DTRACE_PROC
+#undef PRIV_DTRACE_USER
 
 #define PRIV_EFFECTIVE		(1 << 0)
 #define PRIV_DTRACE_KERNEL	(1 << 1)
@@ -17644,55 +17662,6 @@ dtrace_dof_copyin(uintptr_t uarg, int *errp)
 }
 
 #ifdef __FreeBSD__
-static dof_hdr_t *
-dtrace_dof_copyin_proc(struct proc *p, uintptr_t uarg, int *errp)
-{
-	dof_hdr_t hdr, *dof;
-	struct thread *td;
-	size_t loadsz;
-
-	ASSERT(!MUTEX_HELD(&dtrace_lock));
-
-	td = curthread;
-
-	/*
-	 * First, we're going to copyin() the sizeof (dof_hdr_t).
-	 */
-	if (proc_readmem(td, p, uarg, &hdr, sizeof(hdr)) != sizeof(hdr)) {
-		dtrace_dof_error(NULL, "failed to copyin DOF header");
-		*errp = EFAULT;
-		return (NULL);
-	}
-
-	/*
-	 * Now we'll allocate the entire DOF and copy it in -- provided
-	 * that the length isn't outrageous.
-	 */
-	if (hdr.dofh_loadsz >= dtrace_dof_maxsize) {
-		dtrace_dof_error(&hdr, "load size exceeds maximum");
-		*errp = E2BIG;
-		return (NULL);
-	}
-	loadsz = (size_t)hdr.dofh_loadsz;
-
-	if (loadsz < sizeof (hdr)) {
-		dtrace_dof_error(&hdr, "invalid load size");
-		*errp = EINVAL;
-		return (NULL);
-	}
-
-	dof = kmem_alloc(loadsz, KM_SLEEP);
-
-	if (proc_readmem(td, p, uarg, dof, loadsz) != loadsz ||
-	    dof->dofh_loadsz != loadsz) {
-		kmem_free(dof, hdr.dofh_loadsz);
-		*errp = EFAULT;
-		return (NULL);
-	}
-
-	return (dof);
-}
-
 static __inline uchar_t
 dtrace_dof_char(char c)
 {
@@ -20923,8 +20892,93 @@ dtrace_helper_provider_validate(dof_hdr_t *dof, dof_sec_t *sec)
 	return (0);
 }
 
+#ifdef __FreeBSD__
+/*
+ * 5BSD: the executable mappings of the object another process's DOF came
+ * from (DTRACEHIOC_ADDDOF, dtrace_ioctl.c).  Every probe and is-enabled
+ * site of its helper providers must lie in one of them.
+ */
+typedef struct dtrace_helper_range {
+	uintptr_t	dhr_start;
+	uintptr_t	dhr_end;
+} dtrace_helper_range_t;
+
+typedef struct dtrace_helper_pcs {
+	size_t			dhpc_n;		/* ranges in dhpc_r */
+	size_t			dhpc_cap;	/* ranges allocated */
+	dtrace_helper_range_t	*dhpc_r;	/* kmem_alloc()ed, or NULL */
+	int			dhpc_error;	/* EFAULT: a site lies outside */
+} dtrace_helper_pcs_t;
+
+static bool
+dtrace_helper_pc_ok(const dtrace_helper_pcs_t *pcs, uint64_t base,
+    uint32_t off)
+{
+	uint64_t pc;
+	size_t i;
+
+	pc = base + off;
+	if (pc < base)
+		return (false);
+	for (i = 0; i < pcs->dhpc_n; i++) {
+		if (pc >= pcs->dhpc_r[i].dhr_start &&
+		    pc < pcs->dhpc_r[i].dhr_end)
+			return (true);
+	}
+	return (false);
+}
+
+/*
+ * Check the sites of the (relocated, validated) helper provider in sec
+ * against pcs.  The indexes were checked by
+ * dtrace_helper_provider_validate().
+ */
 static int
-dtrace_helper_slurp(dof_hdr_t *dof, dof_helper_t *dhp, struct proc *p)
+dtrace_helper_provider_pcs(dof_hdr_t *dof, dof_sec_t *sec,
+    const dtrace_helper_pcs_t *pcs)
+{
+	uintptr_t daddr = (uintptr_t)dof;
+	dof_provider_t *provider;
+	dof_sec_t *prb_sec, *off_sec, *enoff_sec;
+	dof_probe_t *probe;
+	uint32_t *off, *enoff;
+	uint_t i, j, nprobes;
+
+	provider = (dof_provider_t *)(uintptr_t)(daddr + sec->dofs_offset);
+	prb_sec = (dof_sec_t *)(uintptr_t)(daddr + dof->dofh_secoff +
+	    provider->dofpv_probes * dof->dofh_secsize);
+	off_sec = (dof_sec_t *)(uintptr_t)(daddr + dof->dofh_secoff +
+	    provider->dofpv_proffs * dof->dofh_secsize);
+	off = (uint32_t *)(uintptr_t)(daddr + off_sec->dofs_offset);
+	enoff = NULL;
+	if (dof->dofh_ident[DOF_ID_VERSION] != DOF_VERSION_1 &&
+	    provider->dofpv_prenoffs != DOF_SECT_NONE) {
+		enoff_sec = (dof_sec_t *)(uintptr_t)(daddr + dof->dofh_secoff +
+		    provider->dofpv_prenoffs * dof->dofh_secsize);
+		enoff = (uint32_t *)(uintptr_t)(daddr + enoff_sec->dofs_offset);
+	}
+	nprobes = prb_sec->dofs_size / prb_sec->dofs_entsize;
+	for (i = 0; i < nprobes; i++) {
+		probe = (dof_probe_t *)(uintptr_t)(daddr +
+		    prb_sec->dofs_offset + i * prb_sec->dofs_entsize);
+		for (j = 0; j < probe->dofpr_noffs; j++) {
+			if (!dtrace_helper_pc_ok(pcs, probe->dofpr_addr,
+			    off[probe->dofpr_offidx + j]))
+				return (-1);
+		}
+		for (j = 0; enoff != NULL && j < probe->dofpr_nenoffs; j++) {
+			if (!dtrace_helper_pc_ok(pcs, probe->dofpr_addr,
+			    enoff[probe->dofpr_enoffidx + j]))
+				return (-1);
+		}
+	}
+	return (0);
+}
+#endif
+
+static int
+dtrace_helper_slurp(dof_hdr_t *dof, dof_helper_t *dhp, struct proc *p,
+    dtrace_helper_pcs_t *pcs)
 {
 	dtrace_helpers_t *help;
 	dtrace_vstate_t *vstate;
@@ -20960,6 +21014,18 @@ dtrace_helper_slurp(dof_hdr_t *dof, dof_helper_t *dhp, struct proc *p)
 			dtrace_dof_destroy(dof);
 			return (-1);
 		}
+
+#ifdef __FreeBSD__
+		/* 5BSD: another process's DOF names sites in its own object. */
+		if (pcs != NULL && dtrace_helper_provider_pcs(dof, sec, pcs) != 0) {
+			dtrace_dof_error(dof, "probe site outside the object's "
+			    "executable mappings");
+			pcs->dhpc_error = EFAULT;
+			dtrace_enabling_destroy(enab);
+			dtrace_dof_destroy(dof);
+			return (-1);
+		}
+#endif
 
 		nprovs++;
 	}

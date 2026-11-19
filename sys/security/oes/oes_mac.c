@@ -5200,6 +5200,22 @@ oes_mac_proc_check_debug(struct ucred *cred, struct proc *p)
 	return (0);
 }
 
+/*
+ * MAC hook: proc_check_inspect (p_caninspect(9): the memory map, auxv and
+ * kernel stack of another process).  OES reports no event for it: before
+ * the inspect question existed, every such read reached
+ * oes_mac_proc_check_debug() and was reported as NOTIFY_PTRACE, which it
+ * is not.  Without this hook the framework would ask that debug hook
+ * instead.  There is no NOTIFY_INSPECT event yet.
+ */
+static int
+oes_mac_proc_check_inspect(struct ucred *cred __unused,
+    struct proc *p __unused)
+{
+
+	return (0);
+}
+
 static void
 oes_fill_sockaddr(oes_sockaddr_t *esa, const struct sockaddr *sa)
 {
@@ -5851,6 +5867,7 @@ static struct mac_policy_ops oes_mac_ops = {
 
 	/* Process checks - NOSLEEP (cannot block for AUTH response) */
 	.mpo_proc_check_debug = oes_mac_proc_check_debug,
+	.mpo_proc_check_inspect = oes_mac_proc_check_inspect,
 	.mpo_proc_check_signal = oes_mac_proc_check_signal,
 
 	/* Socket checks - NOSLEEP (cannot block for AUTH response) */

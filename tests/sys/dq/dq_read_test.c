@@ -23,7 +23,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	DATA_LEN	20000
 #define	MAX_CALLS	8
@@ -31,22 +31,6 @@
 static unsigned char data[DATA_LEN];
 static unsigned char data2[DATA_LEN];
 static char oracle_path[DQT_PATH_MAX];
-
-/* FNV-1a over what a child read: the pipe carries a digest, not the bytes. */
-static uint64_t
-digest(const void *p, size_t len)
-{
-	const unsigned char *b = p;
-	uint64_t h;
-	size_t i;
-
-	h = 14695981039346656037ULL;
-	for (i = 0; i < len; i++) {
-		h ^= b[i];
-		h *= 1099511628211ULL;
-	}
-	return (h);
-}
 
 struct io_arg {
 	int		 fd;
@@ -94,7 +78,7 @@ child_read_all(void *arg, void *result)
 			total += (size_t)n;
 		}
 	}
-	r->hash = digest(all, total);
+	r->hash = dqt_digest(all, total);
 	free(all);
 	free(buf);
 }
@@ -123,7 +107,7 @@ child_pread(void *arg, void *result)
 		}
 	}
 	r->n = a->noffsets;
-	r->hash = digest(all, total);
+	r->hash = dqt_digest(all, total);
 	free(all);
 	free(buf);
 }
@@ -149,7 +133,7 @@ child_readv(void *arg, void *result)
 	r->rv[0] = n;
 	r->err[0] = n == -1 ? errno : 0;
 	r->n = 1;
-	r->hash = digest(buf, n > 0 ? (size_t)n : 0);
+	r->hash = dqt_digest(buf, n > 0 ? (size_t)n : 0);
 	free(buf);
 }
 
@@ -216,11 +200,13 @@ ATF_TC_BODY(read_oracle, tc)
 	a.fd = oracle;
 	dqt_run_child(child_read_all, &a, &oracle_res, sizeof(oracle_res));
 	check_same(&served, &oracle_res);
-	ATF_CHECK_EQ(digest(data, sizeof(data)), served.hash);
+	ATF_CHECK_EQ(dqt_digest(data, sizeof(data)), served.hash);
 	/* 20000/4096: four full chunks, one short, one at EOF. */
 	ATF_CHECK_EQ(6, served.n);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(6, c.events[DQ_OP_READ]);
 	ATF_CHECK_EQ(0, c.reply_failures);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -266,7 +252,9 @@ ATF_TC_BODY(pread_oracle, tc)
 	ATF_CHECK_EQ(0, served.rv[6]);
 	/* pread never moves the shared offset. */
 	ATF_CHECK_EQ(0, lseek(o->fd, 0, SEEK_CUR));
+	dqt_lock(&c);
 	ATF_CHECK_EQ(7, c.events[DQ_OP_READ]);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -299,10 +287,12 @@ ATF_TC_BODY(readv_oracle, tc)
 	dqt_run_child(child_readv, &a, &oracle_res, sizeof(oracle_res));
 	check_same(&served, &oracle_res);
 	ATF_CHECK_EQ(11100, served.rv[0]);
-	ATF_CHECK_EQ(digest(data, 11100), served.hash);
+	ATF_CHECK_EQ(dqt_digest(data, 11100), served.hash);
 	/* One uio, one event: the iovecs are not visible to the controller. */
+	dqt_lock(&c);
 	ATF_CHECK_EQ(1, c.events[DQ_OP_READ]);
 	ATF_CHECK_EQ(11100, c.rd[0].len);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -338,7 +328,7 @@ child_aio_read(void *arg, void *result)
 		r->ret = aio_waitcomplete(&done, NULL);
 		r->reterr = r->ret == -1 ? errno : 0;
 		if (r->ret > 0)
-			r->hash = digest(buf, (size_t)r->ret);
+			r->hash = dqt_digest(buf, (size_t)r->ret);
 	}
 	free(buf);
 }
@@ -360,8 +350,8 @@ ATF_TC_BODY(aio_read_oracle, tc)
 	size_t len;
 	int oracle, unsafe;
 
-	if (modfind("aio") == -1)
-		atf_tc_skip("aio module: %s", strerror(errno));
+	ATF_REQUIRE_MSG(modfind("aio") != -1, "aio module: %s",
+	    strerror(errno));
 	len = sizeof(unsafe);
 	ATF_REQUIRE_EQ(0, sysctlbyname("vfs.aio.enable_unsafe", &unsafe, &len,
 	    NULL, 0));
@@ -389,24 +379,41 @@ ATF_TC_BODY(aio_read_oracle, tc)
 		 */
 		ATF_CHECK_EQ(-1, served.rv);
 		ATF_CHECK_EQ(EOPNOTSUPP, served.err);
+		dqt_lock(&c);
 		ATF_CHECK_EQ(0, c.events[DQ_OP_READ]);
+		dqt_unlock(&c);
 	} else {
 		ATF_CHECK_EQ(0, served.rv);
 		ATF_CHECK_EQ(6000, served.ret);
 		ATF_CHECK_EQ(oracle_res.hash, served.hash);
-		ATF_CHECK_EQ(digest(data + 1000, 6000), served.hash);
+		ATF_CHECK_EQ(dqt_digest(data + 1000, 6000), served.hash);
+		dqt_lock(&c);
 		ATF_CHECK_EQ(1, c.events[DQ_OP_READ]);
+		dqt_unlock(&c);
 		/*
 		 * The aio daemon posted it: a kernel process, so the caller
 		 * is flagged DQ_CALLER_F_KERNEL with pid 0 and carries the
 		 * requester's credential (aio_process_rw swaps td_ucred).
 		 */
+		dqt_lock(&c);
 		ATF_CHECK((c.last_caller.dc_flags & DQ_CALLER_F_KERNEL) != 0);
 		ATF_CHECK_EQ(0, c.last_caller.dc_pid);
 		ATF_CHECK_EQ(getuid(), c.last_caller.dc_uid);
+		dqt_unlock(&c);
 	}
 	dqt_fini(&c);
 	(void)close(oracle);
+	if (unsafe == 0) {
+		/*
+		 * The pin above holds today; the real file's answer is the
+		 * one owed.  A kernel that closes the difference reports an
+		 * unexpected pass here.
+		 */
+		atf_tc_expect_fail("recorded difference: aio_read of a served "
+		    "file is EOPNOTSUPP without vfs.aio.enable_unsafe");
+		ATF_CHECK_EQ(oracle_res.rv, served.rv);
+		ATF_CHECK_EQ(oracle_res.ret, served.ret);
+	}
 }
 
 ATF_TC(chunk_boundaries);
@@ -444,8 +451,9 @@ ATF_TC_BODY(chunk_boundaries, tc)
 	ATF_CHECK_EQ(2, served.n);
 	ATF_CHECK_EQ((long)len, served.rv[0]);
 	ATF_CHECK_EQ(0, served.rv[1]);
-	ATF_CHECK_EQ(digest(big, len), served.hash);
+	ATF_CHECK_EQ(dqt_digest(big, len), served.hash);
 	/* Three chunks for the first read, one zero-length answer for the second. */
+	dqt_lock(&c);
 	ATF_REQUIRE_EQ(4, c.nrd);
 	ATF_CHECK_EQ(0, c.rd[0].offset);
 	ATF_CHECK_EQ(max_io, c.rd[0].len);
@@ -454,8 +462,11 @@ ATF_TC_BODY(chunk_boundaries, tc)
 	ATF_CHECK_EQ(2 * (uint64_t)max_io, c.rd[2].offset);
 	ATF_CHECK_EQ(100, c.rd[2].len);
 	ATF_CHECK_EQ(len, c.rd[3].offset);
+	dqt_unlock(&c);
 	/* Sequence numbers are consecutive: nothing was dropped. */
+	dqt_lock(&c);
 	ATF_CHECK_EQ(0, c.gaps);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	free(big);
 	(void)close(oracle);
@@ -491,11 +502,13 @@ ATF_TC_BODY(eof_short_reply, tc)
 	check_same(&served, &oracle_res);
 	ATF_CHECK_EQ(1000, served.rv[0]);
 	ATF_CHECK_EQ(0, served.rv[1]);
+	dqt_lock(&c);
 	ATF_REQUIRE_EQ(2, c.nrd);
 	ATF_CHECK_EQ(0, c.rd[0].offset);
 	ATF_CHECK_EQ(2000, c.rd[0].len);
 	ATF_CHECK_EQ(1000, c.rd[1].offset);
 	ATF_CHECK_EQ(2000, c.rd[1].len);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -533,9 +546,11 @@ ATF_TC_BODY(read_zero_and_past_eof, tc)
 	ATF_CHECK_EQ(DATA_LEN + 100, served.rv[1]);
 	ATF_CHECK_EQ(0, served.rv[2]);
 	/* Only the read past the end reached the controller. */
+	dqt_lock(&c);
 	ATF_REQUIRE_EQ(1, c.nrd);
 	ATF_CHECK_EQ(DATA_LEN + 100, c.rd[0].offset);
 	ATF_CHECK_EQ(16, c.rd[0].len);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -599,7 +614,9 @@ ATF_TC_BODY(seek_data_hole, tc)
 	ATF_CHECK_EQ(-1, lseek(o->fd, -1, SEEK_HOLE));
 	ATF_CHECK_EQ(ENXIO, errno);
 	/* Seeking is local: no event reached the controller. */
+	dqt_lock(&c);
 	ATF_CHECK_EQ(0, c.records);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -697,6 +714,7 @@ ATF_TC_BODY(shared_offset_two_threads, tc)
 	 * reads that found the end asked at the size and were answered 0.
 	 */
 	n = 0;
+	dqt_lock(&c);
 	for (i = 0; i < c.nrd; i++) {
 		if (c.rd[i].offset >= DATA_LEN) {
 			ATF_CHECK_EQ(DATA_LEN, c.rd[i].offset);
@@ -709,6 +727,7 @@ ATF_TC_BODY(shared_offset_two_threads, tc)
 		if (n < (int)nitems(seen))
 			seen[n++] = c.rd[i].offset;
 	}
+	dqt_unlock(&c);
 	ATF_CHECK_EQ(DATA_LEN / 1000, n);
 	dqt_fini(&c);
 	(void)close(oracle);
@@ -745,15 +764,17 @@ ATF_TC_BODY(two_objects_same_identity, tc)
 	dqt_run_child(child_read_all, &a, &r1, sizeof(r1));
 	a.fd = o2->fd;
 	dqt_run_child(child_read_all, &a, &r2, sizeof(r2));
-	ATF_CHECK_EQ(digest(data, sizeof(data)), r1.hash);
-	ATF_CHECK_EQ(digest(data2, sizeof(data2)), r2.hash);
+	ATF_CHECK_EQ(dqt_digest(data, sizeof(data)), r1.hash);
+	ATF_CHECK_EQ(dqt_digest(data2, sizeof(data2)), r2.hash);
 	ATF_CHECK(r1.hash != r2.hash);
 	/* Same identity: fstat cannot tell them apart. */
 	ATF_REQUIRE_EQ(0, fstat(o1->fd, &st1));
 	ATF_REQUIRE_EQ(0, fstat(o2->fd, &st2));
 	dqt_check_stat_eq(&st1, &st2);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(6, o1->reads);
 	ATF_CHECK_EQ(6, o2->reads);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -778,7 +799,7 @@ ATF_TC_BODY(read_error_reply, tc)
 	    sizeof(oracle_path));
 	dqt_init(&c);
 	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
-	o->read_errno = EACCES;
+	dqt_object_read_errno(&c, o, EACCES);
 
 	memset(&a, 0, sizeof(a));
 	a.chunk = 4096;
@@ -787,7 +808,9 @@ ATF_TC_BODY(read_error_reply, tc)
 	ATF_CHECK_EQ(1, served.n);
 	ATF_CHECK_EQ(-1, served.rv[0]);
 	ATF_CHECK_EQ(EACCES, served.err[0]);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(0, c.reply_failures);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }

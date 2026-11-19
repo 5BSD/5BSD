@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
+# The test-kernel option ledger.  A kernel built with any option listed here
+# is a test kernel: it is never packaged, published or placed on release
+# media.  This file is the one list of those options.  Its readers:
+#
+#   release/scripts/check-test-kernel.sh   refuses kernels and modules that
+#                                          carry a row's marker or symbol
+#                                          prefix (the check that decides);
+#   usr.sbin/bsd-build (build-bsd)         reads it from the source tree at
+#                                          run time and refuses a package or
+#                                          media plan whose configuration
+#                                          names a row's option;
+#   usr.sbin/bsd-build/tests               test_options_test checks that the
+#                                          tree agrees with it (config(8)
+#                                          sweep, options, markers);
+#   tools/build/fuchsia/vm-provider.sh     reports a guest's test knobs.
+#
+# One row per option, six fields separated by "|", no spaces around them:
+#
+#   option     the config(8) option name ([A-Z0-9_]);
+#   status     "live": the option exists in sys/conf/options and its code
+#              carries the marker; "reserved": the name and marker are
+#              fixed here for a design that has not landed, and no code
+#              or configuration may use them yet;
+#   config     the one configuration in the tree allowed to name the
+#              option (a file name under sys/<arch>/conf), or "-" for none;
+#   prefix     a symbol prefix that only the option's code uses, or "-";
+#   marker     the "@(#)5BSD ..." string the option's code carries;
+#   knobs      the sysctl names the option adds, comma-separated, or "-".
+#
+# Adding a row is enough for build-bsd, the check script and the runner.  A
+# live row's marker and prefix must never occur in a kernel built without
+# the option: the check reads kernels as bytes, including CTF and sysctl
+# descriptions.
+#
+DQ_TEST_OPEN|live|GENERIC-TEST|dq_testopen_|@(#)5BSD DQ_TEST_OPEN test kernel: not for publication|debug.dq.unverified_open,debug.dq.test_opens
+DQ_FAULT_INJECTION|reserved|GENERIC-TEST|-|@(#)5BSD DQ_FAULT_INJECTION test kernel: not for publication|-
+MAC_CAPABILITY_TEST_PERMISSIVE|live|GENERIC-TEST|mac_capability_test_issuer_|@(#)5BSD MAC_CAPABILITY_TEST_PERMISSIVE test kernel: not for publication|kern.mac_capability.test_issuer,kern.mac_capability.test_issuers,kern.mac_capability.test_issuers_live,kern.mac_capability.test_issuer_state,debug.mac_capability.test_issuer_anchor,debug.mac_capability.test_issuer_fail_init
+CAPABILITY_BROKER_TEST_PERMISSIVE|reserved|GENERIC-TEST|-|@(#)5BSD CAPABILITY_BROKER_TEST_PERMISSIVE test kernel: not for publication|-
+SDT_5BSD_OMIT|reserved|-|-|@(#)5BSD SDT_5BSD_OMIT measurement kernel: not for publication|-

@@ -3,13 +3,24 @@
 #
 # Copyright (c) 2026 Kory Heard
 #
-# Refuse to publish a kernel or kernel module built with the dq(4) test
-# option (options DQ_TEST_OPEN, sys/dev/dq/dq_testopen.c).  A kernel with
-# the option is for the test suite only: with the loader setting it opens
-# the supervisor queue to test access.
+# Refuse to publish a test kernel: a kernel or kernel module built with any
+# option of the test-kernel option ledger, sys/conf/test-options (for
+# example options DQ_TEST_OPEN, the dq(4) test option).  Such a kernel is
+# for the test suites only.
 #
-# usage: check-kernel-no-dq-test.sh -r repository | -p package-directory |
-#	    -a archive | -o kernel-objdir | -d root | -i root
+# usage: check-test-kernel.sh [-l ledger] -r repository |
+#	    -p package-directory | -a archive | -o kernel-objdir | -d root |
+#	    -i root
+#        check-test-kernel.sh [-l ledger] -L
+#
+#   -l  The ledger to read (default: sys/conf/test-options in the source
+#       tree this script belongs to, ../../sys/conf/test-options from its
+#       own directory).  It is read before anything is checked, wherever
+#       -l stands.  A ledger that is missing, unreadable, malformed,
+#       empty or a symbolic link is a refusal: nothing is checked against a
+#       partial list.
+#   -L  Print the ledger's rows as they are written, one per line, and
+#       check nothing.
 #
 #   -r  Every archive below a repository directory (*.pkg, *.txz, *.tzst,
 #       *.tbz, *.tgz, *.tar), whatever package it claims to be: each
@@ -28,8 +39,10 @@
 #       the root named kernel, kernel.*, *.ko or *.ko.*.
 #
 # The modes may be repeated and combined; every argument is checked.  The
-# check looks at the binaries themselves, for either of two signatures, so
-# it does not depend on how they were configured or named.  It fails
+# check looks at the binaries themselves, for the signatures every ledger
+# row names (its marker string and, when it has one, its symbol prefix),
+# reserved rows included, so it does not depend on how they were configured
+# or named.  It fails
 # closed: anything it cannot read, list or extract is a refusal, a tree or
 # repository with no kernel in it is a refusal (except with -a, -i and
 # -p), and there is no override.
@@ -52,7 +65,7 @@
 # member name that tar(1) reads as a pattern, or one holding a newline,
 # does not extract under its own name and is refused.
 #
-# This catches an accident.  It does not stop someone who removes both
+# This catches an accident.  It does not stop someone who removes the
 # signatures on purpose, and it says nothing about the boot chain of an
 # installed system.
 
@@ -61,14 +74,12 @@ set -eu
 LC_ALL=C
 export LC_ALL
 
-# Both are defined in sys/dev/dq/dq_testopen.c; keep the three in step.
-MARKER='@(#)5BSD DQ_TEST_OPEN test kernel: not for publication'
-SYMBOLS='dq_testopen_'
-
 usage()
 {
-	echo "usage: ${0##*/} -r repository | -p package-directory |" \
-	    "-a archive | -o kernel-objdir | -d root | -i root" >&2
+	echo "usage: ${0##*/} [-l ledger] -r repository |" \
+	    "-p package-directory | -a archive | -o kernel-objdir |" \
+	    "-d root | -i root" >&2
+	echo "       ${0##*/} [-l ledger] -L" >&2
 	exit 2
 }
 
@@ -76,13 +87,72 @@ refuse()
 {
 	cat >&2 <<EOM
 ERROR: $*
-A kernel or module built with options DQ_TEST_OPEN (the dq(4) test
-option, for example GENERIC-DQTEST) must not be published or placed on
-release media, and nothing that cannot be checked for it is published.
-Build the kernel from a configuration without the option.  There is no
-override.
+A kernel or module built with a test-kernel option (sys/conf/test-options,
+for example options DQ_TEST_OPEN in GENERIC-TEST) must not be published or
+placed on release media, and nothing that cannot be checked for one is
+published.  Build the kernel from a configuration without them.
+There is no override.
 EOM
 	exit 1
+}
+
+# load_ledger file: read and validate the ledger into ${work}/patterns (one
+# fixed string per line: every marker, and every prefix other than "-")
+# and ${work}/rows (the rows as written).  Anything unexpected is a
+# refusal.
+load_ledger()
+{
+	[ ! -L "$1" ] ||
+	    refuse "the test-kernel option ledger is a symbolic link: $1"
+	[ -f "$1" ] && [ -r "$1" ] ||
+	    refuse "the test-kernel option ledger cannot be read: $1"
+	: > "${work}/patterns"
+	: > "${work}/rows"
+	awk -F'|' -v patterns="${work}/patterns" -v rows="${work}/rows" '
+	    function bad(why) {
+		printf "line %d: %s\n", NR, why > "/dev/stderr"; failed = 1
+	    }
+	    /^#/ || /^$/ { next }
+	    {
+		if (NF != 6) { bad("expected 6 fields"); next }
+		if ($1 !~ /^[A-Z][A-Z0-9_]*$/) bad("bad option name")
+		if ($1 in seen) bad("duplicate option " $1)
+		seen[$1] = 1
+		if ($2 != "live" && $2 != "reserved") bad("bad status")
+		if ($3 != "-" && $3 !~ /^[A-Za-z0-9_.-]+$/) bad("bad config")
+		if ($4 != "-" && $4 !~ /^[a-z_][a-z0-9_]*_$/) bad("bad prefix")
+		if ($5 !~ /^@\(#\)5BSD [A-Z0-9_]+ [a-z]+ kernel: not for publication$/ ||
+		    index($5, " " $1 " ") == 0)
+			bad("bad marker")
+		if ($6 != "-" && $6 !~ /^[a-z0-9_.]+(,[a-z0-9_.]+)*$/)
+			bad("bad knobs")
+		if ($2 == "reserved" && $4 != "-")
+			bad("a reserved row has no prefix")
+		print $5 > patterns
+		if ($4 != "-") print $4 > patterns
+		print > rows
+		n++
+	    }
+	    END {
+		if (n == 0) { printf "no rows\n" > "/dev/stderr"; failed = 1 }
+		exit failed
+	    }' "$1" 2> "${work}/ledger.err" ||
+	    refuse "the test-kernel option ledger $1 is malformed:" \
+	    "$(head -n 1 "${work}/ledger.err")"
+}
+
+# option_of file: the option of the first row whose marker or prefix the
+# file carries, in option.
+option_of()
+{
+	while IFS='|' read -r option status config prefix marker knobs; do
+		if grep -a -q -F -e "${marker}" -- "$1" ||
+		    { [ "${prefix}" != - ] &&
+		    grep -a -q -F -e "${prefix}" -- "$1"; }; then
+			return
+		fi
+	done < "${work}/rows"
+	option=unknown
 }
 
 work=
@@ -119,9 +189,11 @@ refuse_compressed()
 scan_file()
 {
 	status=0
-	grep -a -q -F -e "${MARKER}" -e "${SYMBOLS}" -- "$1" || status=$?
+	grep -a -q -F -f "${work}/patterns" -- "$1" || status=$?
 	case "${status}" in
-	0)	refuse "$2 was built with the dq(4) test option" ;;
+	0)	option_of "$1"
+		refuse "$2 was built with options ${option}," \
+		    "a test-kernel option" ;;
 	1)	;;
 	*)	refuse "$2 could not be read (grep status ${status})" ;;
 	esac
@@ -368,11 +440,40 @@ check_archive()
 }
 
 [ $# -gt 0 ] || usage
-work=$(mktemp -d "${TMPDIR:-/tmp}/check-kernel-no-dq-test.XXXXXXXX")
+case "$0" in
+*/*)	ledger=${0%/*}/../../sys/conf/test-options ;;
+*)	ledger=../../sys/conf/test-options ;;
+esac
+# The ledger first, wherever -l stands; the arguments are checked after.
+list=no
+modes=0
+while getopts "a:d:i:l:Lo:p:r:" opt; do
+	case "${opt}" in
+	l)	ledger=${OPTARG} ;;
+	L)	list=yes ;;
+	[adiopr]) modes=$((modes + 1)) ;;
+	*)	usage ;;
+	esac
+done
+# Nothing may follow the options; the arguments stay for the second pass.
+[ "${OPTIND}" -gt $# ] || usage
+if [ "${list}" = yes ]; then
+	[ "${modes}" -eq 0 ] || usage
+elif [ "${modes}" -eq 0 ]; then
+	usage
+fi
+OPTIND=1
+work=$(mktemp -d "${TMPDIR:-/tmp}/check-test-kernel.XXXXXXXX")
+load_ledger "${ledger}"
+if [ "${list}" = yes ]; then
+	cat "${work}/rows"
+	exit 0
+fi
 scanned=0
 checked=0
-while getopts "a:d:i:o:p:r:" opt; do
+while getopts "a:d:i:l:o:p:r:" opt; do
 	case "${opt}" in
+	l)	continue ;;
 	a)	check_archive "${OPTARG}" ;;
 	d)	check_root "${OPTARG%/}" ;;
 	i)	check_image_root "${OPTARG%/}" ;;
@@ -385,5 +486,5 @@ while getopts "a:d:i:o:p:r:" opt; do
 done
 shift $((OPTIND - 1))
 [ $# -eq 0 ] && [ "${checked}" -gt 0 ] || usage
-echo "check-kernel-no-dq-test: ${scanned} kernel and boot files checked," \
-    "no dq(4) test option"
+echo "check-test-kernel: ${scanned} kernel and boot files checked," \
+    "no test-kernel option"

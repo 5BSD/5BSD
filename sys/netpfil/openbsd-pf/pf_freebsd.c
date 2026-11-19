@@ -572,7 +572,9 @@ pf_fbsd_ip_hdr_cksum(struct mbuf *m)
 	ip->ip_sum = 0;
 	ip->ip_sum = in_cksum_hdr(ip);
 }
+#endif /* INET */
 
+#if defined(INET) || defined(INET6)
 /*
  * OpenBSD's ip_input()/ip6_input() hand pf a contiguous IP header and pf
  * reads it in place (pf_setup_pdesc()); a pfil hook ahead of pf may have
@@ -605,7 +607,9 @@ pf_fbsd_pullup(int af, struct mbuf **m)
 	}
 	return (1);
 }
+#endif /* INET || INET6 */
 
+#ifdef INET
 static pfil_return_t
 pf_fbsd_check_in(struct mbuf **m, struct ifnet *ifp, int flags,
     void *ruleset, struct inpcb *inp)
@@ -1135,7 +1139,7 @@ pf_fbsd_open(struct cdev *dev, int flags, int fmt, struct thread *td)
 	 * would administer the host's pf: only the host and vnet jails may
 	 * open /dev/pf, whatever devfs exposes.
 	 */
-	if (jailed(td->td_ucred) && !prison_owns_vnet(td->td_ucred->cr_prison))
+	if (jailed(td->td_ucred) && !pf_prison_owns_vnet(td->td_ucred->cr_prison))
 		return (EPERM);
 
 	mtx_lock(&pf_units_mtx);
@@ -1195,7 +1199,7 @@ pf_fbsd_bindjail(struct pf_fbsd_open *po, int jid, struct thread *td)
 		error = ESRCH;
 	else if (!prison_ischild(po->cred->cr_prison, pr))
 		error = EPERM;
-	else if (!prison_owns_vnet(pr))
+	else if (!pf_prison_owns_vnet(pr))
 		/* As pf_fbsd_open(): its pf would be the parent's. */
 		error = EPERM;
 	else {

@@ -23,7 +23,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	DATA_LEN	4096
 
@@ -66,6 +66,19 @@ notes(int kq, int ms)
 	return (got);
 }
 
+/*
+ * Nothing arrived but the fence: a note pushed to o now.  The kqueue is
+ * EV_CLEAR and accumulates; a note raised before the push is reported
+ * with it.
+ */
+static u_int
+notes_fenced(int kq, struct dqt_ctl *c, struct dqt_object *o)
+{
+
+	ATF_REQUIRE_EQ(0, dq_push_vnode_note(c->q, o->id, NOTE_ATTRIB));
+	return (notes(kq, 500));
+}
+
 static int backing;
 
 static struct dqt_object *
@@ -73,11 +86,8 @@ setup(struct dqt_ctl *c, unsigned seed)
 {
 
 	dqt_fill(data, sizeof(data), seed);
-	backing = dqt_make_oracle("backing", data, sizeof(data), path,
+	backing = dqt_make_rw("backing", data, sizeof(data), path,
 	    sizeof(path));
-	(void)close(backing);
-	backing = open(path, O_RDWR);
-	ATF_REQUIRE(backing != -1);
 	dqt_init(c);
 	return (dqt_mint_backing(c, backing, path, NULL, DQ_MINT_F_WRITE));
 }
@@ -237,13 +247,13 @@ ATF_TC_BODY(siblings, tc)
 	other = dqt_mint_ident(&c, id, &pol, data, sizeof(data));
 	(void)close(other->fd);
 	other->fd = -1;
-	ATF_CHECK_EQ(0, notes(kq, 300));
+	ATF_CHECK_EQ(NOTE_ATTRIB, notes_fenced(kq, &c, o));
 	/* The same identity on another queue: nothing. */
 	dqt_init(&c2);
 	far = dqt_mint_ident(&c2, &o->ident, &pol, data, sizeof(data));
 	(void)close(far->fd);
 	far->fd = -1;
-	ATF_CHECK_EQ(0, notes(kq, 300));
+	ATF_CHECK_EQ(NOTE_ATTRIB, notes_fenced(kq, &c, o));
 	dqt_fini(&c2);
 	free(id);
 	(void)close(kq);
@@ -280,7 +290,9 @@ ATF_TC_BODY(pushed, tc)
 	dqt_stats2(&c, &st);
 	ATF_CHECK_EQ(nitems(each), st.ds2_pushes);
 	/* Nothing reached the controller as an event. */
+	dqt_lock(&c);
 	ATF_CHECK_EQ(0, c.records);
+	dqt_unlock(&c);
 	(void)close(kq);
 	teardown(&c);
 }
@@ -304,35 +316,30 @@ ATF_TC_BODY(push_refusals, tc)
 
 	o = setup(&c, 4);
 	kq = watch(o->fd);
-#define	REFUSED(call, want) do {					\
-	errno = 0;							\
-	ATF_CHECK_EQ(-1, (call));					\
-	ATF_CHECK_EQ_MSG(want, errno, "%s: errno %d", #call, errno);	\
-} while (0)
-	REFUSED(dq_push_vnode_note(c.q, o->id, 0), EINVAL);
-	REFUSED(dq_push_vnode_note(c.q, o->id, NOTE_REVOKE), EINVAL);
-	REFUSED(dq_push_vnode_note(c.q, o->id, NOTE_WRITE | NOTE_REVOKE),
+	DQT_CHECK_REFUSED(dq_push_vnode_note(c.q, o->id, 0), EINVAL);
+	DQT_CHECK_REFUSED(dq_push_vnode_note(c.q, o->id, NOTE_REVOKE), EINVAL);
+	DQT_CHECK_REFUSED(dq_push_vnode_note(c.q, o->id, NOTE_WRITE | NOTE_REVOKE),
 	    EINVAL);
-	REFUSED(dq_push_vnode_note(c.q, o->id, 0x80000000u), EINVAL);
-	REFUSED(dq_push_vnode_note(c.q, o->id + 1000, NOTE_WRITE), ESRCH);
+	DQT_CHECK_REFUSED(dq_push_vnode_note(c.q, o->id, 0x80000000u), EINVAL);
+	DQT_CHECK_REFUSED(dq_push_vnode_note(c.q, o->id + 1000, NOTE_WRITE), ESRCH);
 	memset(&pa, 0, sizeof(pa));
 	pa.dp_version = DQ_API_VERSION + 1;
 	pa.dp_op = DQ_PUSH_NOTIFY_VNODE;
 	pa.dp_object = o->id;
 	pa.dp_note = NOTE_WRITE;
-	REFUSED(ioctl(c.q, DQ_IOC_PUSH, &pa), EINVAL);
+	DQT_CHECK_REFUSED(ioctl(c.q, DQ_IOC_PUSH, &pa), EINVAL);
 	pa.dp_version = DQ_API_VERSION;
 	pa.dp_pad0 = 1;
-	REFUSED(ioctl(c.q, DQ_IOC_PUSH, &pa), EINVAL);
+	DQT_CHECK_REFUSED(ioctl(c.q, DQ_IOC_PUSH, &pa), EINVAL);
 	pa.dp_pad0 = 0;
 	pa.dp_op = DQ_PUSH_INVALIDATE;
-	REFUSED(ioctl(c.q, DQ_IOC_PUSH, &pa), EINVAL);
+	DQT_CHECK_REFUSED(ioctl(c.q, DQ_IOC_PUSH, &pa), EINVAL);
 	pa.dp_op = 99;
-	REFUSED(ioctl(c.q, DQ_IOC_PUSH, &pa), EINVAL);
+	DQT_CHECK_REFUSED(ioctl(c.q, DQ_IOC_PUSH, &pa), EINVAL);
 #undef REFUSED
-	ATF_CHECK_EQ(0, notes(kq, 300));
+	ATF_CHECK_EQ(NOTE_ATTRIB, notes_fenced(kq, &c, o));
 	dqt_stats2(&c, &st);
-	ATF_CHECK_EQ(0, st.ds2_pushes);
+	ATF_CHECK_EQ(1, st.ds2_pushes);		/* the fence's */
 	/* An observer cannot push: its ioctl set is the stats commands. */
 	{
 		int obs = dq_mint_observer(c.q, 0);

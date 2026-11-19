@@ -32,6 +32,8 @@
 
 #include <libdq.h>
 
+#include "dqt.h"
+
 /* Every case is root (a controller of /dev/dq) and bounded in time. */
 #define	DQ_TC_HEAD_BODY(name)						\
 	ATF_TC_HEAD(name, tc)						\
@@ -47,6 +49,7 @@
 struct out {
 	char	buf[OUT_MAX];
 	size_t	len;
+	bool	truncated;	/* a line or a listing did not fit */
 };
 
 static void
@@ -58,6 +61,8 @@ emit(struct out *o, const char *fmt, ...)
 	va_start(ap, fmt);
 	n = vsnprintf(o->buf + o->len, sizeof(o->buf) - o->len, fmt, ap);
 	va_end(ap);
+	if (n < 0 || o->len + (size_t)n >= sizeof(o->buf))
+		o->truncated = true;
 	if (n > 0)
 		o->len = MIN(o->len + (size_t)n, sizeof(o->buf) - 1);
 }
@@ -87,9 +92,13 @@ listing(struct out *o, int d)
 	while ((n = getdirentries(d, buf, sizeof(buf), &base)) > 0) {
 		for (p = buf; p < buf + n; p += dp->d_reclen) {
 			dp = (struct dirent *)(void *)p;
-			if (k < 64)
-				asprintf(&names[k++], "%s:%u", dp->d_name,
-				    dp->d_type);
+			if (k == (int)nitems(names))
+				o->truncated = true;
+			else if (asprintf(&names[k], "%s:%u", dp->d_name,
+			    dp->d_type) == -1)
+				o->truncated = true;
+			else
+				k++;
 		}
 	}
 	if (n < 0)
@@ -226,8 +235,7 @@ script(int D, struct out *o)
 
 struct srv {
 	int		 q;
-	pthread_t	 thr;
-	volatile int	 stop;
+	struct dqt_server server;	/* the controller thread */
 	struct dq_tree	*tree;
 };
 
@@ -240,22 +248,6 @@ srv_handler(int q, const struct dq_event *ev, const void *body,
 	(void)q;
 	(void)dq_serve_tree(s->tree, ev, body, bodylen);
 	return (0);
-}
-
-static void *
-srv_main(void *arg)
-{
-	struct srv *s = arg;
-	struct pollfd pfd;
-
-	while (!s->stop) {
-		pfd.fd = s->q;
-		pfd.events = POLLIN;
-		if (poll(&pfd, 1, 50) <= 0)
-			continue;
-		(void)dq_dispatch(s->q, srv_handler, s);
-	}
-	return (NULL);
 }
 
 /* One tree: a, l -> a, d/f, a FIFO p and a listening socket "sock". */
@@ -302,13 +294,12 @@ ATF_TC_BODY(tree_oracle, tc)
 	struct srv s;
 	struct out *real, *served;
 	char cwd[PATH_MAX], prefix[PATH_MAX], bpath[PATH_MAX];
-	int go[2], back[2], pd, status, ofd, bfd, sroot, ls1, ls2, fd;
+	int go[2], back[2], pd, status, ofd, bfd, sroot, ls1, ls2, fd, error;
+	size_t got;
 	uint64_t rootid;
 	pid_t pid;
 	char c;
 
-	if (access("/dev/dq", F_OK) != 0)
-		atf_tc_skip("no /dev/dq");
 	ATF_REQUIRE(getcwd(cwd, sizeof(cwd)) != NULL);
 	snprintf(bpath, sizeof(bpath), "%s/backing", cwd);
 	snprintf(prefix, sizeof(prefix), "%s/served", cwd);
@@ -318,13 +309,12 @@ ATF_TC_BODY(tree_oracle, tc)
 	ofd = make_tree("oracle", &ls1);
 	bfd = make_tree(bpath, &ls2);
 	memset(&s, 0, sizeof(s));
-	s.q = dq_open();
-	ATF_REQUIRE(s.q >= 0);
+	s.q = dqt_open_queue();
 	s.tree = dq_tree_create(s.q, bfd, prefix,
 	    DQ_TREE_F_SERVED | DQ_TREE_F_WRITE);
 	ATF_REQUIRE(s.tree != NULL);
 	ATF_REQUIRE(dq_tree_root(s.tree, &sroot, &rootid) == 0);
-	ATF_REQUIRE(pthread_create(&s.thr, NULL, srv_main, &s) == 0);
+	dqt_server_start(&s.server, s.q, srv_handler, &s);
 
 	served = calloc(1, sizeof(*served));
 	real = calloc(1, sizeof(*real));
@@ -337,23 +327,33 @@ ATF_TC_BODY(tree_oracle, tc)
 		if (read(go[0], &c, 1) != 1)
 			_exit(1);
 		script(sroot, served);
-		(void)write(back[1], served, sizeof(*served));
-		_exit(0);
+		_exit(write(back[1], served, sizeof(*served)) ==
+		    (ssize_t)sizeof(*served) ? 0 : DQT_EXIT_NORESULT);
 	}
+	/* Only the child holds the write ends: its death is an EOF here. */
+	close(go[0]);
+	close(back[1]);
 	ATF_REQUIRE_MSG(dq_attach(s.q, pd) == 0, "attach: %s",
 	    strerror(errno));
 	ATF_REQUIRE(write(go[1], "g", 1) == 1);
-	ATF_REQUIRE_EQ((ssize_t)sizeof(*served),
-	    read(back[0], served, sizeof(*served)));
+	got = dqt_read_full(back[0], served, sizeof(*served));
 	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	dqt_require_exit0(status, "the served script");
+	ATF_REQUIRE_EQ(sizeof(*served), got);
+	close(go[1]);
+	close(back[0]);
 
 	script(ofd, real);
+	/* Two transcripts cut at the same length compare nothing past it. */
+	ATF_REQUIRE_MSG(!real->truncated && !served->truncated, "a transcript "
+	    "was truncated (real %d, served %d): raise OUT_MAX",
+	    real->truncated, served->truncated);
 	if (strcmp(real->buf, served->buf) != 0) {
 		printf("--- real\n%s--- served\n%s", real->buf, served->buf);
 		atf_tc_fail("the served transcript differs from the real one");
 	}
-	s.stop = 1;
-	pthread_join(s.thr, NULL);
+	error = dqt_server_stop(&s.server);
+	ATF_CHECK_EQ_MSG(0, error, "controller thread: %s", strerror(error));
 	close(sroot);
 	dq_tree_destroy(s.tree);
 	close(s.q);

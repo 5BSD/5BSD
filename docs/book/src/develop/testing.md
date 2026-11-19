@@ -279,12 +279,48 @@ drives the device itself and is not part of it.  A case of a deployed-tier
 suite that needs the device skips with `DEFERRED_DEVICE_TIER`, counted as
 `DEFERRED_TO_DEVICE_TIER=N`: it runs in the plane-on test tier.  Cases that
 start a test-local Capsule and switchboard skip with any plane on as
-`DEFERRED_PLANEOFF_TIER` (`DEFERRED_TO_PLANEOFF_TIER=N`).  They need a
-plane-off guest whose kernel lets a test-local Capsule create the protected
-authority issuer (the `MAC_CAPABILITY_TEST_RELAX` option and
-`kern.mac_capability.test_relax=1` that `capd_test_harness.sh` names), which
-the tree does not provide yet; plane-off on GENERIC their units never launch.
-Until it exists they are not covered by any tier.
+`DEFERRED_PLANEOFF_TIER` (`DEFERRED_TO_PLANEOFF_TIER=N`).  Those that launch
+no unit run plane-off on any kernel.  Those that launch units need a unit
+issuer, which only PID 1 creates on GENERIC; they call
+`capd_require_unit_issuer` and skip elsewhere with `DEFERRED_STACK_TIER`
+(`DEFERRED_TO_STACK_TIER=N`, not a pass).  They run on the stack tier:
+`GENERIC-TEST` booted plane-off with `kern.mac_capability.test_issuer=1`
+(`STACK_TIER=1 KERNEL_TIER=test PLANE_OFF=1 LOADER_EXTRA='kern.mac_capability.test_issuer="1"'`).
+There a test-local Capsule gets a test issuer until PID 1 anchors the boot
+(`options MAC_CAPABILITY_TEST_PERMISSIVE`, mac_capability(4)).  The runner
+labels such a run `stack-tier=yes`; `STACK_TIER=1` requires it, so a run that
+asks for the stack tier and misses a condition fails (`STACK_TIER_FAIL`)
+instead of counting every stack case as deferred.  It passes `stack_tier=1` to the suites so a
+missing issuer fails instead of skipping, and fails the run when stack
+suites ran and no test issuer was created.  The harness checks the kernel's
+TEST MODE line for each stack it starts, prints the issuer's identity, and
+fails a case whose stack leaves a test issuer alive.
+`sys/mac_capability/authority_test_issuer_anchor_test` anchors the boot, so
+it runs only in a guest of its own, with
+`KYUA_VARS=test_suites.FreeBSD.authority_anchor=1`; elsewhere it is counted as
+`DEFERRED_TO_ANCHOR_RUN=N`.  It and
+`sys/mac_capability/authority_issuer_probe_test` read the
+`mac_capability:::issuer-decision` probe with dtrace(1); the runner preloads
+`dtraceall` for them, since the plane refuses a late kldload.  What happens
+when PID 1 itself anchors is the reroot stage: `REROOT=1` with
+`KERNEL_TIER=test PLANE_OFF=1` and
+`EXTRA_SCRIPT=tests/sys/mac_capability/authority_test_issuer_reroot.sh`.  The
+extra script runs with `VM_REROOT=before` on the plane-off boot, the guest
+then reroots into Capsule as PID 1 with the plane on (`kenv -u
+capability_plane; kenv init_path=/sbin/capsule; reboot -r`), and runs it
+again with `VM_REROOT=after` before the suites.  The run is clean only when
+both runs exit 0 and Capsule is PID 1 after the reroot.  By default the
+script also sets `debug.mac_capability.test_issuer_fail_init`, so PID 1's
+create fails after it anchors; `LOADER_EXTRA` with
+`vm_reroot_variant="plain"` selects the plain reroot.  The `usr.sbin/bsd-build` cases that read the
+source tree need `SRC_IMAGE` (and `PORTS_IMAGE` for package plans); without it
+they are counted as `DEFERRED_TO_SOURCE_TIER=N`.  With python, the source and
+the ports images, a long bsd-build run fills the default 8 GB guest root:
+give it `ROOT_SIZE=16g`.  Cases that need a guest setup no tier provides yet
+(`storage_test:disk_import_and_binding`'s scratch disk, `devctl_device_test`
+with devd and auditd stopped, `bsd_build_test:generation_reconciliation`'s
+ACL subtest without root and md(4)) skip with `DEFERRED_GUEST_SETUP` and are
+counted as `DEFERRED_GUEST_SETUP=N`, not as passes.
 Cases that drive their private SwitchBoard with `switchboardctl` call
 `use_private_control` (`usr.sbin/switchboard/tests/test_helpers.sh`): it runs
 `switchboardctl` through `capd_lookup_exec`, which installs the private
@@ -292,8 +328,76 @@ Capsule's discovery route (control operation `CTL_OP_LOOKUP`) in the process
 slot in place of the inherited one, so a test can never drive the system
 SwitchBoard.  The private SwitchBoard admits a copy of the shipped control
 bundle registered by the test-local issuer.
+
+Each of these tiers also has a kernel tier.  The main tiers (plane on,
+`PLANE_OFF=1`, `ISOLATION_ENFORCE=1`) boot a kernel without any test-kernel
+option (`GENERIC`); the knob tier boots `GENERIC-TEST`, which carries every
+live option of the test-kernel option ledger, `sys/conf/test-options` (today
+`DQ_TEST_OPEN`), and whose knobs the loader sets
+(`debug.dq.unverified_open="1"` through `LOADER_EXTRA`).  `KERNEL_TIER`
+defaults to `main`; the knob tier must be asked for with `KERNEL_TIER=test`,
+and the runner refuses a stage whose kernel carries a test-kernel option
+otherwise.  The runner proves the tier rather than trusting a configuration
+name: on the host it runs `release/scripts/check-test-kernel.sh` on the
+stage's `boot/kernel` (a refusal means a test kernel) and on its whole boot
+directory, which must agree, and records the kernel file's SHA-256 and
+version string; in the guest the booted `kern.bootfile` must have that
+hash, `kern.version` must be that version, and the ledger's knobs must
+exist exactly on a test kernel.  Only then does it print
+`TIER_INFO: TEST_KERNEL=yes` or `=no` and `TEST_KERNEL_PROOF_PASS`; a run
+is `VM_CLEAN` only with exactly one such line and no
+`TEST_KERNEL_PROOF_FAIL`.  The proof, every knob's value, the plane state
+and the loaded MAC policy modules (`kldstat -v`) are written to `tier.txt`
+in the results, next to the Kyua database, and the knobs are appended again
+after the suites.
+
+A stage's ELF test programs must all come from one checkout. Before it
+builds the image the runner reads the source file names recorded in every
+ELF program under the stage's `usr/tests`
+(`tools/build/fuchsia/check-stage-tests.py`, one `TESTS_SRC_ROOT=` line per
+checkout) and stops with `STALE_TESTS` when there is more than one, naming
+programs of each minority checkout. A stage copied forward from another
+branch's stage with only some test directories reinstalled fails this way:
+the oracles that run whole suites (`dq_tree_suites_test`,
+`dq_oracle_test`) would otherwise compare another branch's tests. Make the
+stage fresh from the branch's world, or reinstall all of `usr/tests` from
+the branch; a deliberate overlay lists every checkout its programs come
+from, the main one included, in `TESTS_SRC_ROOTS`. The check proves which
+checkout built each program, not which commit, and scripts and data under
+`usr/tests` (Kyuafiles, atf-sh programs, `dq_suites.subr`, `*.expected`)
+record no source path and are not checked.
+
+The runner watches the guest without polling: `tools/build/fuchsia/vm-monitor.py`
+waits on one kqueue for QEMU's exit, writes to the serial log and the
+deadline. A fatal console line (panic, fatal trap, a mountroot or shell
+prompt, init dying) or, with `FATAL_LOR=yes` (the default), a complete
+WITNESS lock order reversal report that matches no entry of
+`tools/build/fuchsia/known-lor.txt` stops the run: the monitor prints
+`KERNEL/INIT PROBLEM in serial log`, lets the guest finish printing for at
+most `FATAL_GRACE_S` (5 s, ending at once if QEMU exits) and then stops
+QEMU, or reports that it had already exited; the deadline prints `TIMEOUT`.
+Either way the results disk is extracted and the verdict printed.
+`known-lor.txt` holds Python regular expressions matched against the first
+40 lines of a report, each entry naming the analysis that classes its
+family; matched reports are counted as `KNOWN_LOR=N`. An entry hides more
+than its report: WITNESS reports a pair of lock classes once per boot, so
+every later reversal between the same two classes goes unreported for the
+rest of the boot. Entries should therefore match only at shutdown, where
+nothing follows; the tmpfs-unmount family entry does. After the guest exits
+the runner classifies the whole log again, so a reversal printed just
+before power-off still makes the run `VM_NOT_CLEAN` (`UNKNOWN_LOR`).
+
+The dq oracles' expected-differences files (`tests/sys/dq/dqpass.expected`,
+`dqtree.expected`) fail on an entry that matches no case. An entry whose
+difference exists only with the capability plane on carries `[plane-on]` in
+its owner tag. On a guest whose PID 1 is known and not `capsule`
+(`PLANE_OFF=1`) such an entry is reported `not exercised` instead, provided
+its cases ran (they were then compared like any other case); a PID 1 that
+cannot be read counts as the plane on.
+
 The runner's own checks (the tier selection and gate above, the stage root
-metadata preflight, the extra-script status) are shell scripts under
+metadata preflight, the stage's test checkout, the monitor, the
+known-lor classes, the extra-script status) are shell scripts under
 `tools/build/fuchsia/tests/`; `make -C tools/build/fuchsia check-runner`
 runs them on the build host without booting a guest, and `check` includes it.
 

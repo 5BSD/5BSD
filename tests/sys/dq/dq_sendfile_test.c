@@ -29,7 +29,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	DATA_LEN	70000		/* several socket-buffer fills */
 
@@ -80,7 +80,7 @@ send_and_collect(int fd, unsigned char *buf, size_t cap, struct sf_res *r)
 	struct pollfd pfd;
 	size_t got;
 	ssize_t n;
-	int sv[2], status;
+	int sv[2];
 
 	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
 	a.fd = fd;
@@ -104,9 +104,7 @@ send_and_collect(int fd, unsigned char *buf, size_t cap, struct sf_res *r)
 			break;
 	}
 	(void)close(sv[1]);
-	status = dqt_wait(&ch, r, sizeof(*r));
-	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
-	    "sender status %#x", status);
+	dqt_collect(&ch, r, sizeof(*r));
 	return (got);
 }
 
@@ -149,7 +147,9 @@ ATF_TC_BODY(oracle_redacted, tc)
 	ATF_CHECK_EQ(no, ns);
 	ATF_CHECK(memcmp(bs, redacted, DATA_LEN) == 0);
 	ATF_CHECK(memcmp(bo, data, DATA_LEN) == 0);
+	dqt_lock(&c);
 	ATF_CHECK(c.events[DQ_OP_READ_ASYNC] >= 1);
+	dqt_unlock(&c);
 	free(bs);
 	free(bo);
 	dqt_fini(&c);
@@ -172,7 +172,7 @@ ATF_TC_BODY(revoke_eio, tc)
 	struct sf_res r;
 	unsigned char buf[4096];
 	int gop[2];
-	int oracle, status, sv[2];
+	int oracle, sv[2];
 
 	dqt_fill(data, sizeof(data), 2);
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
@@ -189,15 +189,16 @@ ATF_TC_BODY(revoke_eio, tc)
 	dqt_spawn(&ch, child_sendfile, &a);
 	(void)close(sv[0]);
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	dqt_lock(&c);
 	ATF_CHECK_EQ(DQ_OP_READ_ASYNC, c.held[0].op);
+	dqt_unlock(&c);
 	ATF_REQUIRE_EQ(0, dq_revoke(c.q, o->id));
 	dqt_sync_post(gop[1]);
 	/* Drain whatever was sent before the revoke. */
 	while (read(sv[1], buf, sizeof(buf)) > 0)
 		continue;
 	(void)close(sv[1]);
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_collect(&ch, &r, sizeof(r));
 	/*
 	 * The pages are filled asynchronously: a failed fill aborts the
 	 * transfer and the socket reports EIO (so_error).  The call itself may
@@ -211,7 +212,7 @@ ATF_TC_BODY(revoke_eio, tc)
 	ATF_CHECK(r.sbytes < DATA_LEN);
 	/* The late reply finds nothing in flight. */
 	errno = 0;
-	ATF_CHECK_EQ(-1, dq_reply(c.q, c.held[0].id, 0, data, 16));
+	ATF_CHECK_EQ(-1, dq_reply(c.q, dqt_held_id(&c, 0), 0, data, 16));
 	ATF_CHECK_EQ(ESRCH, errno);
 	dqt_hold(&c, false);
 	dqt_fini(&c);
@@ -239,17 +240,18 @@ static unsigned char data2[NR_LEN2];
 /* Wait until the held READ_ASYNC fills of object id cover want bytes. */
 static bool
 held_bytes(struct dqt_ctl *c, uint64_t id, size_t want)
+    __requires_unlocked(c->mtx)
 {
 	size_t held;
 	int i, waited;
 
 	for (waited = 0;; waited += 10) {
-		pthread_mutex_lock(&c->mtx);
+		dqt_lock(c);
 		for (held = 0, i = 0; i < c->nheld; i++)
 			if (c->held[i].op == DQ_OP_READ_ASYNC &&
 			    c->held[i].object == id)
 				held += c->held[i].len;
-		pthread_mutex_unlock(&c->mtx);
+		dqt_unlock(c);
 		if (held >= want)
 			return (true);
 		if (waited >= DQT_WAIT_MS)
@@ -262,12 +264,13 @@ held_bytes(struct dqt_ctl *c, uint64_t id, size_t want)
 static void
 answer_fills(struct dqt_ctl *c, struct dqt_object *o,
     const unsigned char *bytes, size_t len, int error)
+    __requires_unlocked(c->mtx)
 {
 	struct dqt_held *h;
 	size_t n;
 	int i, rv;
 
-	pthread_mutex_lock(&c->mtx);
+	dqt_lock(c);
 	for (i = 0; i < c->nheld; i++) {
 		h = &c->held[i];
 		if (h->op != DQ_OP_READ_ASYNC || h->object != o->id)
@@ -278,7 +281,7 @@ answer_fills(struct dqt_ctl *c, struct dqt_object *o,
 		    dq_reply(c->q, h->id, error, NULL, 0);
 		ATF_CHECK_EQ_MSG(0, rv, "dq_reply: %s", strerror(errno));
 	}
-	pthread_mutex_unlock(&c->mtx);
+	dqt_unlock(c);
 }
 
 /* Not readable, no EOF: recv, poll, select and kevent agree. */
@@ -394,8 +397,9 @@ reader_start(struct reader *rd, int fd, unsigned char *buf, size_t cap)
 	ATF_REQUIRE_EQ(0, pthread_mutex_init(&rd->mtx, NULL));
 	ATF_REQUIRE_EQ(0, pthread_cond_init(&rd->cv, NULL));
 	ATF_REQUIRE_EQ(0, pthread_create(&rd->thr, NULL, reader_main, rd));
-	/* Let it block in read(2), so that the answer has to wake it. */
-	dqt_msleep(200);
+	/* It blocks in read(2), so that the answer has to wake it. */
+	ATF_REQUIRE_MSG(dqt_wait_wmesg(getpid(), "sbwait", DQT_WAIT_MS),
+	    "the reader thread did not block in read(2)");
 }
 
 static bool
@@ -1057,7 +1061,9 @@ ATF_TC_BODY(controller_edeadlk, tc)
 	ATF_CHECK_EQ(-1, sendfile(o->fd, sv[0], 0, 100, NULL, &sbytes, 0));
 	ATF_CHECK_EQ(EDEADLK, errno);
 	ATF_CHECK_EQ(0, sbytes);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(0, c.records);
+	dqt_unlock(&c);
 	(void)close(sv[0]);
 	(void)close(sv[1]);
 	dqt_fini(&c);

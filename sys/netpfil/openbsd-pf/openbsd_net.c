@@ -825,17 +825,23 @@ obsd_output_tso(struct ifnet *ifp, struct mbuf **mp, int af,
 	/* route-to skips ip_output(): finish a delayed SCTP CRC32c here. */
 	if (m->m_pkthdr.csum_flags & (CSUM_SCTP | CSUM_SCTP_IPV6) &
 	    ~ifp->if_hwassist) {
-		int nxt, off;
+		int off;
 		uint32_t sum = 0;
 
 		if (af == AF_INET)
 			off = mtod(m, struct ip *)->ip_hl << 2;
+#ifdef INET6
 		else {
-			nxt = -1;
+			int nxt = -1;
+
 			off = ip6_lasthdr(m, 0, IPPROTO_IPV6, &nxt);
 			if (nxt != IPPROTO_SCTP)
 				off = -1;
 		}
+#else
+		else
+			off = -1;	/* no IPv6 stack to have sent it */
+#endif
 		if (off < 0 || off + 12 > m->m_pkthdr.len) {
 			m_freem(m);
 			*mp = NULL;

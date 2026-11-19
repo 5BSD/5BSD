@@ -31,7 +31,7 @@
 #include <unistd.h>
 
 #define	DQ_WANT_PC_NAMES
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	DATA_LEN	8192
 
@@ -111,7 +111,9 @@ ATF_TC_BODY(fstat_fields, tc)
 	dqt_check_stat_eq(&st, &snap.st);
 	ATF_CHECK(S_ISREG(st.st_mode));
 	/* No GETATTR event was asked for: the identity answered locally. */
+	dqt_lock(&c);
 	ATF_CHECK_EQ(0, c.events[DQ_OP_GETATTR]);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -314,7 +316,7 @@ ATF_TC_BODY(mac_get_fd, tc)
 	struct snapshot snap;
 	struct dqt_object *o;
 	mac_t label;
-	int oracle;
+	int oracle, real, real_errno, served;
 
 	dqt_fill(data, sizeof(data), 6);
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
@@ -322,8 +324,8 @@ ATF_TC_BODY(mac_get_fd, tc)
 	dqt_init(&c);
 	o = mint_snapshot(&c, oracle, &snap, NULL);
 
-	if (mac_prepare_file_label(&label) != 0)
-		atf_tc_skip("mac_prepare_file_label: %s", strerror(errno));
+	ATF_REQUIRE_MSG(mac_prepare_file_label(&label) == 0,
+	    "mac_prepare_file_label: %s", strerror(errno));
 	/*
 	 * Stage 1a: __mac_get_fd dispatches on f_type and has no DTYPE_DQ
 	 * arm (mac_syscalls.c), so a served file answers the default EINVAL
@@ -333,9 +335,23 @@ ATF_TC_BODY(mac_get_fd, tc)
 	errno = 0;
 	ATF_CHECK_EQ(-1, mac_get_fd(o->fd, label));
 	ATF_CHECK_EQ(EINVAL, errno);
+	/* The oracle: the real file answers its label. */
+	errno = 0;
+	real = mac_get_fd(oracle, label);
+	real_errno = errno;
+	served = mac_get_fd(o->fd, label);
 	mac_free(label);
 	dqt_fini(&c);
 	(void)close(oracle);
+	/*
+	 * Not the real file's answer: a difference, not a pass.  Should the
+	 * kernel close it, this reports an unexpected pass and the pin above
+	 * fails, and both are updated together.
+	 */
+	atf_tc_expect_fail("stage 1a difference: __mac_get_fd has no "
+	    "DTYPE_DQ arm, a served file answers EINVAL");
+	ATF_CHECK_EQ_MSG(real, served, "real %d (errno %d), served %d", real,
+	    real_errno, served);
 }
 
 ATF_TC(getfl_no_served_bit);

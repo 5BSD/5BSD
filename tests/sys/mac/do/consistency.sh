@@ -12,17 +12,61 @@ concurrent_rules_exec_paths_changes_head()
 {
     atf_set descr "Consistency of rules and exec paths changes on same jail"
 }
+
+# Step $2 of a concurrent loop: write knob $1 to $4, then to $5, with one
+# sysctl(8), which prints "name: old -> new" for each assignment, reading the
+# knob again after the write.  The knob must have held $3 (the previous step's
+# last value) just before, and each write must read back, so a write of the
+# other knob that clobbered this one at any point since the previous step
+# fails the step.  One process per step also keeps the case within its
+# timeout on emulated CPUs.
+set_and_read_back()
+{
+    local knob step prev v1 v2 out l1 l2
+
+    knob=$1
+    step=$2
+    prev=$3
+    v1=$4
+    v2=$5
+    if ! out=$(sysctl "$knob=$v1" "$knob=$v2"); then
+        echo "step $step: sysctl $knob=$v1 $knob=$v2 failed" >&2
+        return 1
+    fi
+    { IFS= read -r l1; IFS= read -r l2; } <<EOF
+$out
+EOF
+    if [ "$l1" != "$knob: $prev -> $v1" ] ||
+        [ "$l2" != "$knob: $v1 -> $v2" ]; then
+        printf 'step %s: expected\n%s\n%s\ngot\n%s\n' "$step" \
+            "$knob: $prev -> $v1" "$knob: $v1 -> $v2" "$out" >&2
+        return 1
+    fi
+}
+
 concurrent_rules_exec_paths_changes_body()
 {
     local rules exec_paths rules_es exec_paths_es
 
+    # Known values before the loops start, so that step 1 knows what its
+    # knob held.
+    sysctl_set_and_check_rules "uid=0>uid=1001"
+    sysctl_set_and_check_exec_paths /nowhere/nonexistent0
+
+    # As sysctl_set_and_check_rules() and _exec_paths() do, each step writes
+    # its knob twice, with the older in-rule separator (':') first (an exec
+    # path has none, so its two writes are equal), while the other loop
+    # changes the other knob.
     for I in $(jot - 1 1000); do
-        sysctl_set_and_check_rules "uid=$I>uid=1001"
+        set_and_read_back ${RULES_KNOB} $I "uid=$((I - 1))>uid=1001" \
+            "uid=$I:uid=1001" "uid=$I>uid=1001" || exit 1
     done &
     rules=$!
 
     for I in $(jot - 1 1000); do
-        sysctl_set_and_check_exec_paths /nowhere/nonexistent$I
+        set_and_read_back ${EXEC_PATHS_KNOB} $I \
+            /nowhere/nonexistent$((I - 1)) \
+            /nowhere/nonexistent$I /nowhere/nonexistent$I || exit 1
     done &
     exec_paths=$!
 
@@ -32,15 +76,13 @@ concurrent_rules_exec_paths_changes_body()
     wait $exec_paths
     exec_paths_es=$?
 
-    # atf_check called in the asynchronous AND-OR lists above causes exit of the
-    # subshells and also a write to the ATF result file.  These writes are
-    # concurrent and may cause the result file to be malformed.  Consequently,
-    # it is important that, once execution becomes sequential again, atf_fail() is
-    # called again (and not just exit()).
     if [ $rules_es -ne 0 ] || [ $exec_paths_es -ne 0 ]; then
         atf_fail "Rules exit status: $rules_es, \
 exec paths exit status: $exec_paths_es"
     fi
+    # The last values written must have stuck.
+    sysctl_check_rules "uid=1000>uid=1001"
+    sysctl_check_exec_paths /nowhere/nonexistent1000
 }
 
 atf_test_case inheritance cleanup
@@ -106,6 +148,12 @@ inheritance_relax_parent_jail_head()
 {
     atf_set descr \
             "Test sequential consistency in a \"relax parent rules\" scenario"
+    # An iteration (three execs, two credential transitions in a subjail)
+    # costs what the same execs cost outside the case: about 0.1 s on an
+    # idle 2-vCPU emulated guest, but up to 20 times that while the host is
+    # contended, when 1000 of them overran 300 s.  The body now ends 50
+    # iterations after the parent's change; this bound still ends a hang.
+    atf_set timeout 900
 }
 inheritance_relax_parent_jail_body()
 {
@@ -130,11 +178,29 @@ inheritance_relax_parent_jail_body()
 
     # Launch a process that tries to become 'root' from user 1002, and verify
     # that this always fails.
-    { for I in $(jot - 1 1000); do
+    # The parent changes the rules only once the loop runs, so that the
+    # change is made while transitions are being attempted.  The loop goes
+    # on for 50 transitions after the change is complete (the decoupled
+    # subjail keeps refusing), at most 1000 in all.
+    rm -f loop_started parent_changed
+    { I=0; after=0
+      while [ $I -lt 1000 ] && [ $after -lt 50 ]; do
+          I=$((I + 1))
+          [ ! -e parent_changed ] || after=$((after + 1))
           jexec $sj "$MDO" -u 1002 -g 1002 -G 1002 "$MDO" -i true 2>/dev/null &&
               exit 1
-      done; true; } &
+          [ $I -ne 1 ] || : > loop_started
+      done
+      echo "$I transitions refused, $after after the parent's change"; true; } &
     subproc=$!
+    I=0
+    while [ ! -e loop_started ]; do
+        kill -0 $subproc 2>/dev/null ||
+            { wait $subproc; atf_fail "A transition wrongly succeeded in the subjail!"; }
+        I=$((I + 1))
+        [ $I -le 600 ] || atf_fail "The transition loop did not start within 60 s"
+        sleep 0.1
+    done
 
     # Decouple the subjail from the parent jail, copying its parameters
     jail -m jid=$sj ${ROOT_JAIL_PARAM}=new
@@ -146,6 +212,7 @@ inheritance_relax_parent_jail_body()
     [ "$(sysctl_exec_paths)" == $exec_paths ] ||
         atf_fail "Exec paths not copied"
     JEXEC=
+    : > parent_changed
 
     wait $subproc || atf_fail "A transition wrongly succeeded in the subjail!"
 }

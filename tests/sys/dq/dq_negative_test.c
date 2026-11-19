@@ -13,17 +13,20 @@
 #include <sys/capsicum.h>
 #include <sys/filio.h>
 #include <sys/ioctl.h>
+#include <sys/linker.h>
+#include <sys/module.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 
 #include <atf-c.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	DATA_LEN	8192
 #define	NOBODY_UID	65534
@@ -461,33 +464,18 @@ ATF_TC_BODY(nonroot_open_refused, tc)
 	struct dqt_rr r;
 	int q;
 
-	q = dqt_open_queue();	/* skip when the device is absent */
+	q = dqt_open_queue();	/* fails when the device is absent */
 	dqt_run_child(child_open_as_nobody, NULL, &r, sizeof(r));
 	ATF_REQUIRE_MSG(r.rv != -2, "setuid: %s", strerror(r.err));
 	ATF_CHECK_EQ(-1, r.rv);
 	/*
 	 * The node's mode refuses first (EACCES from the permission check);
-	 * the privilege check behind it would answer EPERM.  Either is the
-	 * refusal D85 requires.
+	 * the privilege check behind it answers EPERM only once the mode
+	 * lets the caller through (dq_legitimacy_test's
+	 * nonroot_open_behind_mode).  The order is part of the behaviour.
 	 */
-	ATF_CHECK_MSG(r.err == EACCES || r.err == EPERM, "errno %d", r.err);
+	ATF_CHECK_EQ_MSG(EACCES, r.err, "errno %d", r.err);
 	(void)close(q);
-}
-
-struct one_read_arg {
-	int		 fd;
-	size_t		 len;
-};
-
-static void
-child_one_read(void *arg, void *result)
-{
-	struct one_read_arg *a = arg;
-	struct dqt_rr *r = result;
-	unsigned char buf[4096];
-
-	r->rv = read(a->fd, buf, MIN(a->len, sizeof(buf)));
-	r->err = r->rv == -1 ? errno : 0;
 }
 
 struct stat_res {
@@ -498,7 +486,7 @@ struct stat_res {
 static void
 child_fstat(void *arg, void *result)
 {
-	struct one_read_arg *a = arg;
+	struct dqt_read_arg *a = arg;
 	struct stat_res *r = result;
 
 	r->rr.rv = fstat(a->fd, &r->st);
@@ -521,12 +509,11 @@ ATF_TC_BODY(reply_errors, tc)
 	struct dq_reply rep;
 	struct dq_ident_file *bad;
 	struct dq_stats st;
-	struct one_read_arg a;
+	struct dqt_read_arg a;
 	struct dqt_child ch;
 	struct dqt_rr r;
 	struct stat_res sr;
 	u_int max_io;
-	int status;
 
 	setup(&f, 103);
 	ATF_REQUIRE(dqt_sysctl_get_uint("kern.dq.max_io", &max_io));
@@ -577,50 +564,57 @@ ATF_TC_BODY(reply_errors, tc)
 	dqt_hold(&f.c, true);
 	a.fd = o->fd;
 	a.len = 100;
-	dqt_spawn(&ch, child_one_read, &a);
+	dqt_spawn(&ch, dqt_child_read, &a);
 	ATF_REQUIRE(dqt_wait_held(&f.c, 1, DQT_WAIT_MS));
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(DQ_OP_READ, f.c.held[0].op);
+	dqt_unlock(&f.c);
 	errno = 0;
-	ATF_CHECK_EQ(-1, dq_reply(f.c.q, f.c.held[0].id, 0, data, 101));
+	ATF_CHECK_EQ(-1, dq_reply(f.c.q, dqt_held_id(&f.c, 0), 0, data, 101));
 	ATF_CHECK_EQ(EINVAL, errno);
 	errno = 0;
-	ATF_CHECK_EQ(-1, dq_reply(f.c.q, f.c.held[0].id, EIO, data, 1));
+	ATF_CHECK_EQ(-1, dq_reply(f.c.q, dqt_held_id(&f.c, 0), EIO, data, 1));
 	ATF_CHECK_EQ(EINVAL, errno);
 	dqt_stats(&f.c, &st);
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(1, st.ds_inflight);	/* a refused reply changes nothing */
 	ATF_CHECK_EQ(0, dq_reply(f.c.q, f.c.held[0].id, EACCES, NULL, 0));
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_unlock(&f.c);
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.rv);
 	ATF_CHECK_EQ(EACCES, r.err);
 	/* Answered: a second reply is late. */
 	errno = 0;
-	ATF_CHECK_EQ(-1, dq_reply(f.c.q, f.c.held[0].id, 0, NULL, 0));
+	ATF_CHECK_EQ(-1, dq_reply(f.c.q, dqt_held_id(&f.c, 0), 0, NULL, 0));
 	ATF_CHECK_EQ(ESRCH, errno);
 
 	/* A GETATTR in flight: exactly one identity that validates. */
 	a.fd = og->fd;
 	dqt_spawn(&ch, child_fstat, &a);
 	ATF_REQUIRE(dqt_wait_held(&f.c, 2, DQT_WAIT_MS));
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(DQ_OP_GETATTR, f.c.held[1].op);
+	dqt_unlock(&f.c);
 	bad = calloc(1, sizeof(*bad));
 	ATF_REQUIRE(bad != NULL);
 	*bad = f.ident;
 	errno = 0;
-	ATF_CHECK_EQ(-1, dq_reply(f.c.q, f.c.held[1].id, 0, bad, 10));
+	ATF_CHECK_EQ(-1, dq_reply(f.c.q, dqt_held_id(&f.c, 1), 0, bad, 10));
 	ATF_CHECK_EQ(EINVAL, errno);
 	bad->di_mode = S_IFDIR | 0755;
 	errno = 0;
-	ATF_CHECK_EQ(-1, dq_reply(f.c.q, f.c.held[1].id, 0, bad, sizeof(*bad)));
+	ATF_CHECK_EQ(-1, dq_reply(f.c.q, dqt_held_id(&f.c, 1), 0, bad,
+	    sizeof(*bad)));
 	ATF_CHECK_EQ(EINVAL, errno);
 	errno = 0;
-	ATF_CHECK_EQ(-1, dq_reply(f.c.q, f.c.held[1].id, EIO, bad, sizeof(*bad)));
+	ATF_CHECK_EQ(-1, dq_reply(f.c.q, dqt_held_id(&f.c, 1), EIO, bad,
+	    sizeof(*bad)));
 	ATF_CHECK_EQ(EINVAL, errno);
 	*bad = f.ident;
 	bad->di_size = 4242;
-	ATF_CHECK_EQ(0, dq_reply(f.c.q, f.c.held[1].id, 0, bad, sizeof(*bad)));
-	status = dqt_wait(&ch, &sr, sizeof(sr));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	ATF_CHECK_EQ(0, dq_reply(f.c.q, dqt_held_id(&f.c, 1), 0, bad,
+	    sizeof(*bad)));
+	dqt_collect(&ch, &sr, sizeof(sr));
 	ATF_CHECK_EQ(0, sr.rr.rv);
 	ATF_CHECK_EQ(4242, sr.st.st_size);	/* the reply became the identity */
 	free(bad);
@@ -640,6 +634,7 @@ ATF_TC_HEAD(control_errors, tc)
 }
 ATF_TC_BODY(control_errors, tc)
 {
+	int64_t deadline;
 	struct fixture f;
 	struct dqt_object *o;
 	struct dq_object_args oa;
@@ -647,7 +642,7 @@ ATF_TC_BODY(control_errors, tc)
 	struct dq_setpolicy_args spa;
 	struct dq_policy p;
 	struct dq_ident_file *id;
-	struct one_read_arg a;
+	struct dqt_read_arg a;
 	struct dqt_child ch;
 	struct dqt_rr r;
 	struct dq_stats st;
@@ -655,7 +650,7 @@ ATF_TC_BODY(control_errors, tc)
 	char buf[256];
 	const size_t recsize = sizeof(struct dq_event) + sizeof(struct dq_read_body);
 	ssize_t got;
-	int flags, status, type;
+	int flags, type;
 
 	setup(&f, 104);
 	o = dqt_mint_ident(&f.c, &f.ident, &f.pol, data, sizeof(data));
@@ -755,10 +750,11 @@ ATF_TC_BODY(control_errors, tc)
 	ATF_CHECK_EQ(EAGAIN, errno);
 	a.fd = o->fd;
 	a.len = 100;
-	dqt_spawn(&ch, child_one_read, &a);
-	for (flags = 0; flags < DQT_WAIT_MS; flags += 10) {
+	dqt_spawn(&ch, dqt_child_read, &a);
+	deadline = dqt_now_ms() + DQT_WAIT_MS;
+	for (;;) {
 		dqt_stats(&f.c, &st);
-		if (st.ds_queue_current == 1)
+		if (st.ds_queue_current == 1 || dqt_now_ms() >= deadline)
 			break;
 		dqt_msleep(10);
 	}
@@ -776,8 +772,7 @@ ATF_TC_BODY(control_errors, tc)
 	ATF_CHECK_EQ(getpid(), ev->de_caller.dc_ppid);
 	ATF_CHECK_EQ(0, ev->de_caller.dc_flags & DQ_CALLER_F_KERNEL);
 	ATF_CHECK_EQ(0, dq_reply(f.c.q, ev->de_id, 0, data, 100));
-	status = dqt_wait(&ch, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(100, r.rv);
 
 	free(id);
@@ -791,18 +786,57 @@ ATF_TC_HEAD(kldunload_refused, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "the dq module never unloads");
 	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "require.progs", "kldstat kldunload");
 }
+/* Whether module modid belongs to linker file fileid. */
+static bool
+module_in_file(int fileid, int modid)
+{
+	int m;
+
+	for (m = kldfirstmod(fileid); m > 0; m = modfnext(m))
+		if (m == modid)
+			return (true);
+	return (false);
+}
+
 ATF_TC_BODY(kldunload_refused, tc)
 {
-	int q;
+	int fileid, modid, q;
 
 	q = dqt_open_queue();
-	if (system("kldstat -q -m dq") != 0)
-		atf_tc_skip("no dq module is registered");
-	/* Static: not a file to unload; loaded: MOD_UNLOAD answers EBUSY. */
-	ATF_CHECK(system("kldunload dq >/dev/null 2>&1") != 0);
-	ATF_CHECK_EQ(0, system("kldstat -q -m dq"));
+	modid = modfind("dq");
+	ATF_REQUIRE_MSG(modid != -1, "no dq module is registered: %s",
+	    strerror(errno));
+	fileid = kldfind("dq.ko");
+	if (fileid == -1) {
+		/*
+		 * Compiled in: no file holds dq but the kernel, whose own
+		 * unload is refused before any module is asked.  What can be
+		 * checked is that dq is the kernel's: the module list of the
+		 * kernel file contains it.  This is the GENERIC case; the
+		 * EBUSY of MOD_UNLOAD is checked when dq is a module.
+		 */
+		ATF_CHECK_EQ_MSG(ENOENT, errno, "kldfind dq.ko: %s",
+		    strerror(errno));
+		fileid = kldfind("kernel");
+		ATF_REQUIRE_MSG(fileid != -1, "kldfind kernel: %s",
+		    strerror(errno));
+		ATF_CHECK_MSG(module_in_file(fileid, modid), "dq (module %d) "
+		    "is neither dq.ko's nor the kernel's", modid);
+		printf("dq is compiled into the kernel: MOD_UNLOAD not "
+		    "reachable\n");
+	} else {
+		/*
+		 * Loaded from dq.ko: MOD_UNLOAD answers EBUSY.  An EPERM
+		 * would be a policy refusing the unload before dq is asked,
+		 * and would show nothing about dq.
+		 */
+		errno = 0;
+		ATF_CHECK_EQ(-1, kldunload(fileid));
+		ATF_CHECK_EQ_MSG(EBUSY, errno, "kldunload dq.ko: %s",
+		    strerror(errno));
+	}
+	ATF_CHECK_MSG(modfind("dq") != -1, "dq is gone");
 	/* The device still works. */
 	(void)close(q);
 	q = dqt_open_queue();

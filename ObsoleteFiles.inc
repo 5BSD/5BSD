@@ -1,3 +1,7 @@
+# 20261116: the test-kernel check became release/scripts/check-test-kernel.sh,
+# which reads the ledger sys/conf/test-options.
+OLD_FILES+= usr/tests/usr.sbin/bsd-build/check-kernel-no-dq-test.sh
+
 # 20261115: the stale plane-free runner of tests/sys/mac_capability is
 # retired (the suite runs under kyua in the VM tiers).  Its fixture modules
 # ship with the mac-capability-tests package in

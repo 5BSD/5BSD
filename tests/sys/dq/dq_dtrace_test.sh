@@ -9,25 +9,137 @@
 # The MAC framework gains the file_notify_reply hook the reply path calls,
 # visible as a mac_framework probe pair like every other hook.
 #
+# Under the capability plane a module load after boot is refused, so the
+# DTrace modules must be preloaded (dtraceall_load="YES" in loader.conf).
+# Without them these cases fail: a skip in a plane-on run is not a pass.
+#
+
+# Fail unless the queue device and DTrace are there.
+require_dtrace()
+{
+	[ -c /dev/dq ] || atf_fail "/dev/dq is absent"
+	dtrace -l >/dev/null 2>dtrace.err ||
+	    atf_fail "dtrace -l: $(cat dtrace.err) (preload dtraceall)"
+}
 
 atf_test_case dq_probes_present
 dq_probes_present_head()
 {
 	atf_set "descr" "every dq provider probe is registered"
 	atf_set "require.user" "root"
-	atf_set "require.progs" "dtrace"
 }
 dq_probes_present_body()
 {
-	[ -c /dev/dq ] || atf_skip "/dev/dq is absent"
-	# Under the plane a late kldload is denied: no dtrace modules, no list.
-	dtrace -l >/dev/null 2>dtrace.err || atf_skip "dtrace -l: 1001 0 20 43 44 145 1001cat dtrace.err)"
-	atf_check -o save:dq dtrace -l -P dq
+	require_dtrace
 	for probe in queue-open queue-close mint revoke object-close \
 	    event-post event-deliver event-reply event-drop event-interrupt \
-	    event-deadline reply-late; do
-		atf_check -o ignore grep -q " ${probe}\$" dq
+	    event-deadline reply-late attach resolve-post resolve-reply \
+	    standing-match standing-miss standing-change; do
+		atf_check -o ignore dtrace -l -n "dq:::${probe}"
 	done
+}
+
+atf_test_case dq_probes_fire
+dq_probes_fire_head()
+{
+	atf_set "descr" "the dq probes fire for dqpass's own queue: it opens " \
+	    "a queue, attaches a command whose lookups are posted and " \
+	    "answered, and closes it, and dqpass itself exits 0"
+	atf_set "require.user" "root"
+}
+dq_probes_fire_body()
+{
+	require_dtrace
+	# The traced command is a shell running dqpass: every probe counted
+	# is in that shell's progeny (dqpass, its attached command), never
+	# in Capsule's, SwitchBoard's or another supervisor's queue.  The
+	# shell records dqpass's exit status.  (dtrace -c splits its command
+	# on blanks, so the shell reads a script.)
+	printf '%s -o report /bin/test -e /\necho $? > status\n' \
+	    "$(atf_get_srcdir)/dqpass" > run.sh
+	atf_check -o save:fired -e ignore dtrace -q -n '
+	    dq:::queue-open, dq:::queue-close, dq:::attach,
+	    dq:::resolve-post, dq:::resolve-reply
+	    /progenyof($target)/
+	    { @n[probename] = count(); }
+	    END { printa("%s %@d\n", @n); }' \
+	    -c "/bin/sh run.sh"
+	atf_check -o inline:"0\n" cat status
+	for probe in queue-open queue-close attach resolve-post \
+	    resolve-reply; do
+		atf_check -o ignore grep -Eq "^${probe} [1-9][0-9]*\$" fired
+	done
+}
+
+atf_test_case standing_probes cleanup
+standing_probes_head()
+{
+	atf_set "descr" "the standing-rule probes fire for dqpass -r: " \
+	    "standing-match with the rule's id and PASS, standing-miss " \
+	    "for no fitting rule, an ineligible lookup (an AF_UNIX " \
+	    "connect, a Linux RINROOT open) and a '..' name, and " \
+	    "standing-change at the rule's ADD and the queue's death"
+	atf_set "require.user" "root"
+	atf_set "require.kmods" "linux64"
+	atf_set "require.arch" "amd64"
+}
+standing_probes_body()
+{
+	require_dtrace
+	# The Linux program's lookups are native ones without an ABI root
+	# (dq_standing_test rinroot_posts): only RINROOT makes it ineligible.
+	sysctl -n compat.linux.emul_path > emul_path.saved ||
+	    atf_fail "compat.linux.emul_path"
+	atf_check -o ignore sysctl compat.linux.emul_path=/nonexistent-dq-standing
+	mkdir lx
+	touch lx/rin-f
+	cp "$(atf_get_srcdir)/dq_standing_linux" . ||
+	    atf_fail "dq_standing_linux is not installed"
+	# The command: covered names, a name no rule fits, a '..' name,
+	# an AF_UNIX connect and the Linux program (descriptor 9: lx).
+	cat > cmd.sh <<'EOS'
+test -d /usr/share/misc
+test -d /etc
+test -d /usr/share/../share
+nc -lU sock > /dev/null & i=0
+while [ ! -S sock ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+echo x | nc -NU sock
+wait
+./dq_standing_linux 9< lx
+echo $? > linux.status
+EOS
+	printf '%s -o report -r /usr/share:read /bin/sh cmd.sh\necho $? > status\n' \
+	    "$(atf_get_srcdir)/dqpass" > run.sh
+	atf_check -o save:fired -e ignore dtrace -q -n '
+	    dq:::standing-match /progenyof($target)/
+	    { @m[arg2, arg3] = count(); }
+	    dq:::standing-miss /progenyof($target)/
+	    { @w[arg2] = count(); }
+	    dq:::standing-change /progenyof($target)/
+	    { @c[arg1, arg2] = count(); }
+	    END {
+		printa("match %d %d %@d\n", @m);
+		printa("miss %d %@d\n", @w);
+		printa("change %d %d %@d\n", @c);
+	    }' -c "/bin/sh run.sh"
+	cat fired report >&2
+	atf_check -o inline:"0\n" cat status
+	atf_check -o inline:"0\n" cat linux.status
+	# The rule is the queue's first: id 1, verdict 0 (PASS).
+	atf_check -o ignore grep -Eq '^match 1 0 [1-9][0-9]*$' fired
+	# Why: 0 no rule fits (/etc), 1 ineligible (connect, RINROOT), 2 "..".
+	for why in 0 1 2; do
+		atf_check -o ignore grep -Eq "^miss ${why} [1-9][0-9]*\$" fired
+	done
+	# What: 1 ADD (id 1), 4 the queue's death.
+	atf_check -o ignore grep -Eq '^change 1 1 1$' fired
+	atf_check -o ignore grep -Eq '^change 4 0 1$' fired
+	atf_check -o match:'standing pass [1-9]' cat report
+}
+standing_probes_cleanup()
+{
+	[ -s emul_path.saved ] &&
+	    sysctl compat.linux.emul_path="$(cat emul_path.saved)" >/dev/null
 }
 
 atf_test_case mac_file_notify_reply_present
@@ -35,18 +147,20 @@ mac_file_notify_reply_present_head()
 {
 	atf_set "descr" "mac_framework exposes the file_notify_reply hook"
 	atf_set "require.user" "root"
-	atf_set "require.progs" "dtrace"
 }
 mac_file_notify_reply_present_body()
 {
-	[ -c /dev/dq ] || atf_skip "/dev/dq is absent"
-	dtrace -l >/dev/null 2>dtrace.err || atf_skip "dtrace -l: 1001 0 20 43 44 145 1001cat dtrace.err)"
-	atf_check -o save:mac dtrace -l -P mac_framework
-	atf_check -o ignore grep -q 'file_notify_reply' mac
+	require_dtrace
+	for name in mac-check-ok mac-check-err; do
+		atf_check -o ignore \
+		    dtrace -l -n "mac_framework::file_notify_reply:${name}"
+	done
 }
 
 atf_init_test_cases()
 {
 	atf_add_test_case dq_probes_present
+	atf_add_test_case dq_probes_fire
+	atf_add_test_case standing_probes
 	atf_add_test_case mac_file_notify_reply_present
 }

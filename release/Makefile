@@ -229,8 +229,8 @@ malloc-production-check:
 	@${MALLOC_PRODUCTION_CHECK}
 
 #
-# Release media never carry a kernel or module built with the dq(4) test
-# option (options DQ_TEST_OPEN); see scripts/check-kernel-no-dq-test.sh.
+# Release media never carry a kernel or module built with a test-kernel
+# option (sys/conf/test-options); see scripts/check-test-kernel.sh.
 # The check reads what was staged, straight after it is installed, or the
 # package repository that goes onto the media.  There is no override.
 # Media trees are read a second time once packages and firmware have been
@@ -238,7 +238,7 @@ malloc-production-check:
 # staging fills: the package store, the distribution sets and the staged
 # hardware repository.
 #
-KERNEL_TEST_OPTION_CHECK= sh ${.CURDIR}/scripts/check-kernel-no-dq-test.sh
+KERNEL_TEST_OPTION_CHECK= sh ${.CURDIR}/scripts/check-test-kernel.sh
 MEDIA_KERNEL_TEST_OPTION_CHECK= \
 	${KERNEL_TEST_OPTION_CHECK} -d ${.OBJDIR}/${.TARGET} && \
 	for store in usr/5bsd-packages usr/5bsd-dist usr/obj; do \

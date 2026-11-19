@@ -39,9 +39,16 @@
 
 #include <libdq.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	SRV_MAX_SEEN	256
+
+/* Global knobs some cases change; each such case restores them. */
+#define	MAX_OBJECTS		"kern.dq.max_objects"
+#define	FAIL_BIND_ENFILE	"debug.dq.fail_bind_enfile"
+#define	FAIL_LINK_CLOSING	"debug.dq.fail_link_closing"
+#define	FAIL_VM_CREATE		"debug.dq.fail_vm_create"
+#define	DROP_COMPLETION		"debug.dqres.drop_completion"
 
 struct srv;
 /* A hook returns 1 when it answered the event itself. */
@@ -50,9 +57,8 @@ typedef int (*srv_hook_t)(struct srv *, const struct dq_event *,
 
 struct srv {
 	int		 q;
-	pthread_t	 thr;
+	struct dqt_server server;	/* the controller thread */
 	pthread_mutex_t	 mtx;
-	volatile int	 stop;
 	int		 rootfd;		/* the backing tree */
 	char		 backing[PATH_MAX];
 	char		 prefix[PATH_MAX];	/* its real-namespace name */
@@ -128,22 +134,6 @@ srv_handler(int q, const struct dq_event *ev, const void *body,
 	return (0);
 }
 
-static void *
-srv_main(void *arg)
-{
-	struct srv *s = arg;
-	struct pollfd pfd;
-
-	while (!s->stop && s->q >= 0) {
-		pfd.fd = s->q;
-		pfd.events = POLLIN;
-		if (poll(&pfd, 1, 50) <= 0)
-			continue;
-		(void)dq_dispatch(s->q, srv_handler, s);
-	}
-	return (NULL);
-}
-
 /*
  * A backing tree in the test's work directory with a file "a" (bytes
  * "served\n"), a directory "d" and a symlink "l" -> "a"; the prefix is a
@@ -169,19 +159,19 @@ srv_start(struct srv *s, uint32_t flags)
 	(void)symlink("a", "backing/l");
 	s->rootfd = open(s->backing, O_DIRECTORY | O_RDONLY);
 	ATF_REQUIRE(s->rootfd >= 0);
-	s->q = dq_open();
-	ATF_REQUIRE_MSG(s->q >= 0, "dq_open: %s", strerror(errno));
+	s->q = dqt_open_queue();
 	s->tree = dq_tree_create(s->q, s->rootfd, s->prefix, flags);
 	ATF_REQUIRE(s->tree != NULL);
-	ATF_REQUIRE(pthread_create(&s->thr, NULL, srv_main, s) == 0);
+	dqt_server_start(&s->server, s->q, srv_handler, s);
 }
 
 static void
 srv_stop(struct srv *s)
 {
+	int error;
 
-	s->stop = 1;
-	pthread_join(s->thr, NULL);
+	error = dqt_server_stop(&s->server);
+	ATF_CHECK_EQ_MSG(0, error, "controller thread: %s", strerror(error));
 	dq_tree_destroy(s->tree);
 	if (s->q >= 0)
 		close(s->q);
@@ -220,13 +210,14 @@ static uint64_t
 srv_wait_live(struct srv *s, uint64_t n)
 {
 	struct dq_stats2 st;
-	int i;
+	int64_t deadline;
 
-	for (i = 0; i < 500; i++) {
+	deadline = dqt_now_ms() + DQT_WAIT_MS;
+	for (;;) {
 		srv_stats(s, &st);
-		if (st.ds2_objects_live == n)
+		if (st.ds2_objects_live == n || dqt_now_ms() >= deadline)
 			break;
-		usleep(10000);
+		dqt_msleep(10);
 	}
 	return (st.ds2_objects_live);
 }
@@ -240,15 +231,17 @@ srv_wait_live(struct srv *s, uint64_t n)
 static int
 srv_wait_closes(struct srv *s, int n)
 {
-	int closes, i;
+	int64_t deadline;
+	int closes;
 
-	for (i = 0; i < 500; i++) {
+	deadline = dqt_now_ms() + DQT_WAIT_MS;
+	for (;;) {
 		pthread_mutex_lock(&s->mtx);
 		closes = s->closes;
 		pthread_mutex_unlock(&s->mtx);
-		if (closes >= n)
+		if (closes >= n || dqt_now_ms() >= deadline)
 			break;
-		usleep(10000);
+		dqt_msleep(10);
 	}
 	return (closes);
 }
@@ -259,40 +252,26 @@ srv_wait_closes(struct srv *s, int n)
 #define	RES_MAX		32
 typedef void (*child_fn_t)(struct srv *, int *res);
 
+/* fn's s is the server; the call is made in the child. */
+struct run_arg {
+	struct srv	*s;
+	child_fn_t	 fn;
+};
+
+static void
+run_fn(void *arg, int *res)
+{
+	struct run_arg *ra = arg;
+
+	ra->fn(ra->s, res);
+}
+
 static void
 run_child_as(struct srv *s, child_fn_t fn, int *res, uid_t uid, bool attach)
 {
-	int go[2], back[2], pd, status;
-	pid_t pid;
-	char c;
+	struct run_arg ra = { s, fn };
 
-	memset(res, 0, sizeof(int) * RES_MAX);
-	ATF_REQUIRE(pipe(go) == 0 && pipe(back) == 0);
-	pid = pdfork(&pd, 0);
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		int r[RES_MAX];
-
-		close(s->q);
-		/* An attached process cannot change credentials (I5). */
-		if (uid != (uid_t)-1 && (setgid(uid) != 0 || setuid(uid) != 0))
-			_exit(2);
-		memset(r, 0, sizeof(r));
-		if (read(go[0], &c, 1) != 1)
-			_exit(1);
-		fn(s, r);
-		(void)write(back[1], r, sizeof(r));
-		_exit(0);
-	}
-	if (attach)
-		ATF_REQUIRE_MSG(dq_attach(s->q, pd) == 0, "attach: %s",
-		    strerror(errno));
-	ATF_REQUIRE(write(go[1], "g", 1) == 1);
-	ATF_REQUIRE_EQ((ssize_t)(sizeof(int) * RES_MAX),
-	    read(back[0], res, sizeof(int) * RES_MAX));
-	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
-	close(pd);
-	close(go[0]); close(go[1]); close(back[0]); close(back[1]);
+	dqt_run_ints(s->q, run_fn, &ra, res, RES_MAX, uid, attach);
 }
 
 static void
@@ -330,8 +309,6 @@ srv_ident(struct srv *s, const char *rel, const char *name,
 	ATF_REQUIRE(dq_ident_from_stat(id, name, &st, &sf, -1) == 0);
 }
 
-#define	ERR(x)	((x) < 0 ? errno : 0)
-
 /* open -> FD: data, fstat, the identity's name, no write. */
 static void
 c_open(struct srv *s, int *r)
@@ -348,20 +325,20 @@ c_open(struct srv *s, int *r)
 		return;
 	r[1] = (int)read(fd, buf, sizeof(buf));
 	r[2] = r[1] == 7 && memcmp(buf, "served\n", 7) == 0;
-	r[3] = ERR(fstat(fd, &st));
+	r[3] = DQT_ERRNO_OF(fstat(fd, &st));
 	r[4] = (int)st.st_size;
 	r[5] = S_ISREG(st.st_mode);
 	r[6] = write(fd, "x", 1) < 0 ? errno : 0;
 	memset(&kif, 0, sizeof(kif));
 	kif.kf_structsize = sizeof(kif);
-	r[7] = ERR(fcntl(fd, F_KINFO, &kif));
+	r[7] = DQT_ERRNO_OF(fcntl(fd, F_KINFO, &kif));
 	/* kf_path presents the served name. */
 	r[9] = strcmp(kif.kf_path, path) == 0;
 	/* realpath(3) of the served name presents it (D174, real root). */
 	r[8] = realpath(path, rp) != NULL && strcmp(rp, path) == 0;
 	close(fd);
 	/* One real lookup outside the prefix: the tree PASSes it. */
-	r[10] = ERR(stat("/", &st));
+	r[10] = DQT_ERRNO_OF(stat("/", &st));
 }
 
 ATF_TC_WITHOUT_HEAD(open_fd);
@@ -469,22 +446,22 @@ c_stat(struct srv *s, int *r)
 
 	snprintf(path, sizeof(path), "%s/a", s->prefix);
 	snprintf(lpath, sizeof(lpath), "%s/l", s->prefix);
-	r[0] = ERR(stat(path, &st));
+	r[0] = DQT_ERRNO_OF(stat(path, &st));
 	r[1] = (int)st.st_size;
 	r[2] = (int)st.st_ino;
-	r[3] = ERR(access(path, R_OK));
-	r[4] = ERR(lstat(lpath, &lst));
+	r[3] = DQT_ERRNO_OF(access(path, R_OK));
+	r[4] = DQT_ERRNO_OF(lstat(lpath, &lst));
 	r[5] = S_ISLNK(lst.st_mode);
 	n = readlink(lpath, buf, sizeof(buf));
 	r[6] = (int)n;
 	r[7] = n == 1 && buf[0] == 'a';
-	r[8] = ERR(stat(lpath, &st));	/* follows l -> a */
+	r[8] = DQT_ERRNO_OF(stat(lpath, &st));	/* follows l -> a */
 	r[9] = (int)st.st_ino;
-	r[10] = ERR(statfs(path, &sf));
+	r[10] = DQT_ERRNO_OF(statfs(path, &sf));
 	r[11] = pathconf(path, _PC_NAME_MAX) > 0;
-	r[12] = ERR(readlink(path, buf, sizeof(buf)));	/* not a link */
+	r[12] = DQT_ERRNO_OF(readlink(path, buf, sizeof(buf)));	/* not a link */
 	snprintf(path, sizeof(path), "%s/missing", s->prefix);
-	r[13] = ERR(stat(path, &st));
+	r[13] = DQT_ERRNO_OF(stat(path, &st));
 }
 
 ATF_TC_WITHOUT_HEAD(stat_attr);
@@ -524,27 +501,27 @@ c_mutate(struct srv *s, int *r)
 	umask(022);
 #define	P(buf, name) snprintf(buf, sizeof(buf), "%s/%s", s->prefix, name)
 	P(a, "m");
-	r[0] = ERR(mkdir(a, 0777));
+	r[0] = DQT_ERRNO_OF(mkdir(a, 0777));
 	P(a, "f");
-	r[1] = ERR(mkfifo(a, 0666));
+	r[1] = DQT_ERRNO_OF(mkfifo(a, 0666));
 	P(a, "a"); P(b, "b");
-	r[2] = ERR(link(a, b));
+	r[2] = DQT_ERRNO_OF(link(a, b));
 	P(a, "b"); P(b, "c");
-	r[3] = ERR(rename(a, b));
+	r[3] = DQT_ERRNO_OF(rename(a, b));
 	P(a, "c");
-	r[4] = ERR(unlink(a));
+	r[4] = DQT_ERRNO_OF(unlink(a));
 	P(a, "m");
-	r[5] = ERR(rmdir(a));
+	r[5] = DQT_ERRNO_OF(rmdir(a));
 	P(a, "s");
-	r[6] = ERR(symlink("target-text", a));
+	r[6] = DQT_ERRNO_OF(symlink("target-text", a));
 	P(a, "a");
-	r[7] = ERR(chmod(a, 0600));
-	r[8] = ERR(truncate(a, 3));
-	r[9] = ERR(utimes(a, NULL));
+	r[7] = DQT_ERRNO_OF(chmod(a, 0600));
+	r[8] = DQT_ERRNO_OF(truncate(a, 3));
+	r[9] = DQT_ERRNO_OF(utimes(a, NULL));
 	/* Set-id bits never reach a served identity (I3): EPERM. */
-	r[10] = ERR(chmod(a, 04600));
+	r[10] = DQT_ERRNO_OF(chmod(a, 04600));
 	/* A rename across the prefix: EXDEV. */
-	r[11] = ERR(rename(a, "/tmp/dq_served_outside"));
+	r[11] = DQT_ERRNO_OF(rename(a, "/tmp/dq_served_outside"));
 #undef P
 }
 
@@ -1016,7 +993,7 @@ ATF_TC_BODY(post_reply_enfile, tc)
  * The same ENFILE through debug.dq.fail_bind_enfile: dq_file_bind fails
  * as falloc would, the object retires with exactly one CLOSE.
  */
-ATF_TC(post_reply_enfile_inject);
+ATF_TC_WITH_CLEANUP(post_reply_enfile_inject);
 ATF_TC_HEAD(post_reply_enfile_inject, tc)
 {
 
@@ -1026,22 +1003,24 @@ ATF_TC_BODY(post_reply_enfile_inject, tc)
 {
 	struct srv s;
 	struct dq_stats2 st;
-	u_int one = 1, zero = 0;
 	int r[RES_MAX];
 
 	srv_start(&s, 0);
 	s.hook = h_fd_close;
-	ATF_REQUIRE(sysctlbyname("debug.dq.fail_bind_enfile", NULL, NULL,
-	    &one, sizeof(one)) == 0);
+	dqt_knob_arm(FAIL_BIND_ENFILE, 1);
 	run_child(&s, c_enfile, r);
-	(void)sysctlbyname("debug.dq.fail_bind_enfile", NULL, NULL, &zero,
-	    sizeof(zero));
+	dqt_knob_check_consumed(FAIL_BIND_ENFILE);
 	ATF_CHECK_EQ(ENFILE, r[0]);
 	ATF_CHECK_EQ(0, srv_wait_live(&s, 0));
 	srv_stats(&s, &st);
 	ATF_CHECK_EQ(1, st.ds2_resolve_retired);
 	ATF_CHECK_EQ(1, srv_wait_closes(&s, 1));
 	srv_stop(&s);
+}
+ATF_TC_CLEANUP(post_reply_enfile_inject, tc)
+{
+
+	dqt_knob_disarm(FAIL_BIND_ENFILE);
 }
 
 /*
@@ -1057,11 +1036,11 @@ c_stat_one(struct srv *s, int *r)
 	struct stat st;
 
 	snprintf(path, sizeof(path), "%s/a", s->prefix);
-	r[0] = ERR(stat(path, &st));
-	r[1] = ERR(stat(path, &st));	/* the next one completes */
+	r[0] = DQT_ERRNO_OF(stat(path, &st));
+	r[1] = DQT_ERRNO_OF(stat(path, &st));	/* the next one completes */
 }
 
-ATF_TC(dropped_completion_eio);
+ATF_TC_WITH_CLEANUP(dropped_completion_eio);
 ATF_TC_HEAD(dropped_completion_eio, tc)
 {
 
@@ -1070,18 +1049,20 @@ ATF_TC_HEAD(dropped_completion_eio, tc)
 ATF_TC_BODY(dropped_completion_eio, tc)
 {
 	struct srv s;
-	u_int one = 1, zero = 0;
 	int r[RES_MAX];
 
 	srv_start(&s, 0);
-	ATF_REQUIRE(sysctlbyname("debug.dqres.drop_completion", NULL, NULL,
-	    &one, sizeof(one)) == 0);
+	dqt_knob_arm(DROP_COMPLETION, 1);
 	run_child(&s, c_stat_one, r);
-	(void)sysctlbyname("debug.dqres.drop_completion", NULL, NULL, &zero,
-	    sizeof(zero));
+	dqt_knob_check_consumed(DROP_COMPLETION);
 	ATF_CHECK_EQ(EIO, r[0]);
 	ATF_CHECK_EQ(0, r[1]);
 	srv_stop(&s);
+}
+ATF_TC_CLEANUP(dropped_completion_eio, tc)
+{
+
+	dqt_knob_disarm(DROP_COMPLETION);
 }
 
 /* The reply's pager object cannot be made: ENOMEM, event in flight. */
@@ -1103,15 +1084,15 @@ h_vmfail(struct srv *s, const struct dq_event *ev,
 	strlcpy(sf.f_mntonname, "/", sizeof(sf.f_mntonname));
 	(void)dq_ident_from_stat(&id, path, &st, &sf, -1);
 	dq_policy_default(&pol);
-	(void)sysctlbyname("debug.dq.fail_vm_create", NULL, NULL, &one,
-	    sizeof(one));
+	/* Armed here, so that only this reply's object creation fails. */
+	(void)sysctlbyname(FAIL_VM_CREATE, NULL, NULL, &one, sizeof(one));
 	if (dq_reply_resolve_fd(s->q, ev->de_id, DQ_KIND_FILE, 0, &id, &pol,
 	    &oid, NULL) != 0)
 		s->hook_errno = errno;
 	return (0);
 }
 
-ATF_TC(vm_create_enomem);
+ATF_TC_WITH_CLEANUP(vm_create_enomem);
 ATF_TC_HEAD(vm_create_enomem, tc)
 {
 
@@ -1122,13 +1103,20 @@ ATF_TC_BODY(vm_create_enomem, tc)
 	struct srv s;
 	int r[RES_MAX];
 
+	dqt_knob_save(FAIL_VM_CREATE);
 	srv_start(&s, 0);
 	s.hook = h_vmfail;
 	run_child(&s, c_open, r);
+	dqt_knob_check_consumed(FAIL_VM_CREATE);
 	ATF_CHECK_EQ(ENOMEM, s.hook_errno);
 	ATF_CHECK_EQ(0, r[0]);		/* the tree's answer completed it */
 	ATF_CHECK_EQ(0, srv_wait_live(&s, 0));
 	srv_stop(&s);
+}
+ATF_TC_CLEANUP(vm_create_enomem, tc)
+{
+
+	dqt_knob_disarm(FAIL_VM_CREATE);
 }
 
 /*
@@ -1138,12 +1126,9 @@ ATF_TC_BODY(vm_create_enomem, tc)
 static void
 c_opath(struct srv *s, int *r)
 {
-	char path[PATH_MAX], buf[4], cbuf[CMSG_SPACE(sizeof(int))];
+	char path[PATH_MAX], buf[4];
 	struct pollfd pfd;
 	struct stat st;
-	struct msghdr msg;
-	struct cmsghdr *cm;
-	struct iovec iov;
 	int fd, sv[2];
 
 	snprintf(path, sizeof(path), "%s/a", s->prefix);
@@ -1152,7 +1137,7 @@ c_opath(struct srv *s, int *r)
 	if (fd < 0)
 		return;
 	r[1] = read(fd, buf, 1) < 0 ? errno : 0;
-	r[2] = ERR(fstat(fd, &st));
+	r[2] = DQT_ERRNO_OF(fstat(fd, &st));
 	r[3] = fchmod(fd, 0644) < 0 ? errno : 0;
 	pfd.fd = fd;
 	pfd.events = POLLIN;
@@ -1163,20 +1148,8 @@ c_opath(struct srv *s, int *r)
 	r[5] = fd < 0 ? errno : 0;
 	if (fd < 0)
 		return;
-	r[6] = ERR(socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
-	memset(&msg, 0, sizeof(msg));
-	iov.iov_base = buf;
-	iov.iov_len = 1;
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	msg.msg_control = cbuf;
-	msg.msg_controllen = sizeof(cbuf);
-	cm = CMSG_FIRSTHDR(&msg);
-	cm->cmsg_level = SOL_SOCKET;
-	cm->cmsg_type = SCM_RIGHTS;
-	cm->cmsg_len = CMSG_LEN(sizeof(int));
-	memcpy(CMSG_DATA(cm), &fd, sizeof(int));
-	r[7] = sendmsg(sv[0], &msg, 0) < 0 ? errno : 0;
+	r[6] = DQT_ERRNO_OF(socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+	r[7] = dqt_send_fd(sv[0], fd) == -1 ? errno : 0;
 	r[8] = (fcntl(fd, F_GETFD) & FD_CLOEXEC) != 0;
 	close(fd);
 }
@@ -1255,49 +1228,49 @@ c_opath_calls(struct srv *s, int *r)
 	int fd, n;
 
 	fd = opath_open(s, O_PATH);
-	r[OP_OPEN] = ERR(fd);
+	r[OP_OPEN] = DQT_ERRNO_OF(fd);
 	if (fd < 0)
 		return;
-	r[OP_READ] = ERR(read(fd, &c, 1));
-	r[OP_LSEEK] = ERR(lseek(fd, 0, SEEK_CUR));
-	r[OP_IOCTL] = ERR(ioctl(fd, FIONREAD, &n));
+	r[OP_READ] = DQT_ERRNO_OF(read(fd, &c, 1));
+	r[OP_LSEEK] = DQT_ERRNO_OF(lseek(fd, 0, SEEK_CUR));
+	r[OP_IOCTL] = DQT_ERRNO_OF(ioctl(fd, FIONREAD, &n));
 	pfd.fd = fd;
 	pfd.events = POLLIN;
 	r[OP_POLL] = poll(&pfd, 1, 0) == 1 ? pfd.revents : -1;
 	p = mmap(NULL, getpagesize(), PROT_READ, MAP_PRIVATE, fd, 0);
 	r[OP_MMAP] = p == MAP_FAILED ? errno : 0;
-	r[OP_FSYNC] = ERR(fsync(fd));
-	r[OP_FDATASYNC] = ERR(fdatasync(fd));
-	r[OP_FTRUNCATE] = ERR(ftruncate(fd, 7));
-	r[OP_FCHMOD] = ERR(fchmod(fd, 0600));
-	r[OP_FCHOWN] = ERR(fchown(fd, OPATH_UID, -1));
-	r[OP_FUTIMENS] = ERR(futimens(fd, NULL));
-	r[OP_FCHFLAGS] = ERR(fchflags(fd, 0));
-	r[OP_FLOCK] = ERR(flock(fd, LOCK_SH | LOCK_NB));
+	r[OP_FSYNC] = DQT_ERRNO_OF(fsync(fd));
+	r[OP_FDATASYNC] = DQT_ERRNO_OF(fdatasync(fd));
+	r[OP_FTRUNCATE] = DQT_ERRNO_OF(ftruncate(fd, 7));
+	r[OP_FCHMOD] = DQT_ERRNO_OF(fchmod(fd, 0600));
+	r[OP_FCHOWN] = DQT_ERRNO_OF(fchown(fd, OPATH_UID, -1));
+	r[OP_FUTIMENS] = DQT_ERRNO_OF(futimens(fd, NULL));
+	r[OP_FCHFLAGS] = DQT_ERRNO_OF(fchflags(fd, 0));
+	r[OP_FLOCK] = DQT_ERRNO_OF(flock(fd, LOCK_SH | LOCK_NB));
 	memset(&fl, 0, sizeof(fl));
 	fl.l_type = F_RDLCK;
 	fl.l_whence = SEEK_SET;
-	r[OP_SETLK] = ERR(fcntl(fd, F_SETLK, &fl));
-	r[OP_SETFL] = ERR(fcntl(fd, F_SETFL, O_NONBLOCK));
-	r[OP_FSTAT] = ERR(fstat(fd, &st));
-	r[OP_FSTATFS] = ERR(fstatfs(fd, &sf));
-	r[OP_FPATHCONF] = ERR(fpathconf(fd, _PC_NAME_MAX));
+	r[OP_SETLK] = DQT_ERRNO_OF(fcntl(fd, F_SETLK, &fl));
+	r[OP_SETFL] = DQT_ERRNO_OF(fcntl(fd, F_SETFL, O_NONBLOCK));
+	r[OP_FSTAT] = DQT_ERRNO_OF(fstat(fd, &st));
+	r[OP_FSTATFS] = DQT_ERRNO_OF(fstatfs(fd, &sf));
+	r[OP_FPATHCONF] = DQT_ERRNO_OF(fpathconf(fd, _PC_NAME_MAX));
 
 	memset(&cb, 0, sizeof(cb));
 	cb.aio_fildes = fd;
-	r[OP_AIO_FSYNC] = ERR(aio_fsync(O_SYNC, &cb));
+	r[OP_AIO_FSYNC] = DQT_ERRNO_OF(aio_fsync(O_SYNC, &cb));
 	memset(&cb, 0, sizeof(cb));
 	cb.aio_fildes = fd;
 	cb.aio_lio_opcode = LIO_NOP;
 	list[0] = &cb;
-	r[OP_LIO_NOP] = ERR(lio_listio(LIO_NOWAIT, list, 1, NULL));
+	r[OP_LIO_NOP] = DQT_ERRNO_OF(lio_listio(LIO_NOWAIT, list, 1, NULL));
 	r[OP_LIO_NOP_ERROR] = aio_error(&cb);
 
 	snprintf(path, sizeof(path), DQT_FDESC_DIR "/%d", fd);
-	r[OP_FD_CHMOD] = ERR(chmod(path, 0600));
-	r[OP_FD_CHOWN] = ERR(chown(path, OPATH_UID, -1));
-	r[OP_FD_UTIMES] = ERR(utimes(path, NULL));
-	r[OP_FD_TRUNCATE] = ERR(truncate(path, 0));
+	r[OP_FD_CHMOD] = DQT_ERRNO_OF(chmod(path, 0600));
+	r[OP_FD_CHOWN] = DQT_ERRNO_OF(chown(path, OPATH_UID, -1));
+	r[OP_FD_UTIMES] = DQT_ERRNO_OF(utimes(path, NULL));
+	r[OP_FD_TRUNCATE] = DQT_ERRNO_OF(truncate(path, 0));
 	close(fd);
 }
 
@@ -1328,8 +1301,6 @@ ATF_TC_BODY(opath_as_vnode, tc)
 	struct srv s;
 	int i, served[RES_MAX], vnode[RES_MAX];
 
-	if (atf_tc_get_config_var_as_bool_wd(tc, "pre1c", false))
-		atf_tc_skip("pre1c: the kernel has no served directories");
 	srv_start(&s, 0);
 	dqt_mount_fdesc(NULL);
 	opath_served = false;
@@ -1382,15 +1353,15 @@ c_served_fexecve_aio(struct srv *s, int *r)
 
 	opath_served = true;
 	fd = opath_open(s, O_PATH);
-	r[0] = ERR(fd);
-	r[1] = ERR(fexecve(fd, argv, envp));
+	r[0] = DQT_ERRNO_OF(fd);
+	r[1] = DQT_ERRNO_OF(fexecve(fd, argv, envp));
 	close(fd);
 	fd = opath_open(s, O_RDONLY);
-	r[2] = ERR(fd);
-	r[3] = ERR(fexecve(fd, argv, envp));
+	r[2] = DQT_ERRNO_OF(fd);
+	r[3] = DQT_ERRNO_OF(fexecve(fd, argv, envp));
 	memset(&cb, 0, sizeof(cb));
 	cb.aio_fildes = fd;
-	r[4] = ERR(aio_fsync(O_SYNC, &cb));
+	r[4] = DQT_ERRNO_OF(aio_fsync(O_SYNC, &cb));
 	if (r[4] == 0) {
 		r[5] = aio_waitcomplete(&done, NULL) < 0 ? errno : 0;
 		r[6] = done == &cb;
@@ -1405,8 +1376,6 @@ ATF_TC_BODY(served_fexecve_aio_fsync, tc)
 	size_t len;
 	int r[RES_MAX], unsafe;
 
-	if (atf_tc_get_config_var_as_bool_wd(tc, "pre1c", false))
-		atf_tc_skip("pre1c: the kernel has no served directories");
 	len = sizeof(unsafe);
 	ATF_REQUIRE_EQ(0, sysctlbyname("vfs.aio.enable_unsafe", &unsafe, &len,
 	    NULL, 0));
@@ -1443,7 +1412,7 @@ c_opath_linux(struct srv *s, int *r)
 	int fd, status;
 
 	fd = opath_open(s, O_PATH);
-	r[0] = ERR(fd);
+	r[0] = DQT_ERRNO_OF(fd);
 	if (fd < 0)
 		return;
 	pid = fork();
@@ -1462,23 +1431,15 @@ ATF_TC(opath_linux);
 ATF_TC_HEAD(opath_linux, tc)
 {
 	atf_tc_set_md_var(tc, "require.arch", "amd64");
-	atf_tc_set_md_var(tc, "require.progs", "clang");
-	atf_tc_set_md_var(tc, "require.kmods", "linux64");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(opath_linux, tc)
 {
 	struct srv s;
-	char cmd[PATH_MAX + 256];
 	int r[RES_MAX];
 
-	if (atf_tc_get_config_var_as_bool_wd(tc, "pre1c", false))
-		atf_tc_skip("pre1c: the kernel has no served directories");
-	snprintf(cmd, sizeof(cmd), "clang --target=x86_64-linux-gnu "
-	    "-fuse-ld=lld -nostdlib -static -fno-stack-protector "
-	    "-fno-builtin -O2 -Wall -Wextra -Werror -o dq_opath_linux "
-	    "%s/dq_opath_linux.c", atf_tc_get_config_var(tc, "srcdir"));
-	ATF_REQUIRE_EQ_MSG(0, system(cmd), "%s", cmd);
+	/* Built with the tests (Makefile); missing, the row fails. */
+	dqt_copy_helper(tc, "dq_opath_linux", "dq_opath_linux");
 
 	srv_start(&s, 0);
 	opath_served = false;
@@ -1508,12 +1469,12 @@ c_emptypath_unattached(struct srv *s, int *r)
 	char buf[8];
 
 	(void)s;
-	r[0] = ERR(faccessat(emptypath_mfd, "", R_OK, AT_EMPTY_PATH));
-	r[1] = ERR(fstatat(emptypath_mfd, "", &st, AT_EMPTY_PATH));
-	r[2] = ERR(readlinkat(emptypath_mfd, "", buf, sizeof(buf)));
-	r[3] = ERR(linkat(emptypath_mfd, "", AT_FDCWD, "lnk", AT_EMPTY_PATH));
-	r[4] = ERR(fchmodat(emptypath_mfd, "", 0640, AT_EMPTY_PATH));
-	r[5] = ERR(fchownat(emptypath_mfd, "", -1, -1, AT_EMPTY_PATH));
+	r[0] = DQT_ERRNO_OF(faccessat(emptypath_mfd, "", R_OK, AT_EMPTY_PATH));
+	r[1] = DQT_ERRNO_OF(fstatat(emptypath_mfd, "", &st, AT_EMPTY_PATH));
+	r[2] = DQT_ERRNO_OF(readlinkat(emptypath_mfd, "", buf, sizeof(buf)));
+	r[3] = DQT_ERRNO_OF(linkat(emptypath_mfd, "", AT_FDCWD, "lnk", AT_EMPTY_PATH));
+	r[4] = DQT_ERRNO_OF(fchmodat(emptypath_mfd, "", 0640, AT_EMPTY_PATH));
+	r[5] = DQT_ERRNO_OF(fchownat(emptypath_mfd, "", -1, -1, AT_EMPTY_PATH));
 }
 
 ATF_TC_WITHOUT_HEAD(emptypath_fallbacks);
@@ -1571,14 +1532,14 @@ c_emptypath_attached(struct srv *s, int *r)
 	r[0] = fd < 0 ? errno : 0;
 	if (fd < 0)
 		return;
-	r[1] = ERR(faccessat(fd, "", R_OK, AT_EMPTY_PATH));
-	r[2] = ERR(fstatat(fd, "", &st, AT_EMPTY_PATH));
-	r[3] = ERR(fchmodat(fd, "", 0640, AT_EMPTY_PATH));
-	r[4] = ERR(linkat(fd, "", AT_FDCWD, "lnk2", AT_EMPTY_PATH));
+	r[1] = DQT_ERRNO_OF(faccessat(fd, "", R_OK, AT_EMPTY_PATH));
+	r[2] = DQT_ERRNO_OF(fstatat(fd, "", &st, AT_EMPTY_PATH));
+	r[3] = DQT_ERRNO_OF(fchmodat(fd, "", 0640, AT_EMPTY_PATH));
+	r[4] = DQT_ERRNO_OF(linkat(fd, "", AT_FDCWD, "lnk2", AT_EMPTY_PATH));
 	close(fd);
 	rfd = open("backing/a", O_RDONLY);	/* a real descriptor */
 	r[5] = rfd < 0 ? errno : 0;
-	r[6] = ERR(fstatat(rfd, "", &st, AT_EMPTY_PATH));
+	r[6] = DQT_ERRNO_OF(fstatat(rfd, "", &st, AT_EMPTY_PATH));
 	ofd = openat(rfd, "", O_EMPTY_PATH | O_RDONLY);
 	r[7] = ofd < 0 ? errno : 0;
 	if (ofd >= 0)
@@ -1646,7 +1607,7 @@ c_two(struct srv *s, int *r)
 	memset(&fl, 0, sizeof(fl));
 	fl.l_type = F_WRLCK;
 	fl.l_whence = SEEK_SET;
-	r[4] = ERR(fcntl(fd, F_GETLK, &fl));
+	r[4] = DQT_ERRNO_OF(fcntl(fd, F_GETLK, &fl));
 	r[5] = fl.l_type == F_UNLCK;
 	close(fd);
 }
@@ -1754,7 +1715,7 @@ h_close(struct srv *s, const struct dq_event *ev,
 	    &id, &pol, &oid, NULL) == 0 ? 0 : errno;
 	q = s->q;
 	s->q = -1;
-	s->stop = 1;
+	dqt_server_stop_async(&s->server);
 	close(q);
 	return (1);
 }
@@ -1798,15 +1759,15 @@ h_enxio(struct srv *s, const struct dq_event *ev,
 		return (0);
 	srv_ident(s, "a", path, &id);
 	dq_policy_default(&pol);
-	(void)sysctlbyname("debug.dq.fail_link_closing", NULL, NULL, &one,
-	    sizeof(one));
+	/* Armed here, so that only this reply's link fails. */
+	(void)sysctlbyname(FAIL_LINK_CLOSING, NULL, NULL, &one, sizeof(one));
 	if (dq_reply_resolve_fd(s->q, ev->de_id, DQ_KIND_FILE, 0, &id, &pol,
 	    &oid, NULL) != 0)
 		s->hook_errno = errno;
 	return (0);	/* the event is still in flight: the tree answers */
 }
 
-ATF_TC(link_enospc_enxio);
+ATF_TC_WITH_CLEANUP(link_enospc_enxio);
 ATF_TC_HEAD(link_enospc_enxio, tc)
 {
 
@@ -1818,33 +1779,41 @@ ATF_TC_BODY(link_enospc_enxio, tc)
 	struct dq_policy pol;
 	struct dq_ident_file id;
 	char cwd[PATH_MAX], name[PATH_MAX];
-	u_int one = 1, save;
-	size_t len;
 	uint64_t oid;
 	int r[RES_MAX], mfd;
 
+	dqt_knob_save(FAIL_LINK_CLOSING);
 	srv_start(&s, 0);
 	ATF_REQUIRE(getcwd(cwd, sizeof(cwd)) != NULL);
 	snprintf(name, sizeof(name), "%s/backing/a", cwd);
 	srv_ident(&s, "a", name, &id);
 	dq_policy_default(&pol);
 	ATF_REQUIRE(dq_mint_file(s.q, &id, &pol, &oid, &mfd, NULL) == 0);
-	len = sizeof(save);
-	ATF_REQUIRE(sysctlbyname("kern.dq.max_objects", &save, &len, &one,
-	    sizeof(one)) == 0);
+	/*
+	 * The limit is global: every queue on the system, Capsule's and
+	 * SwitchBoard's too, is held at one object until it is restored,
+	 * at once here and by the cleanup should the body stop early.
+	 */
+	dqt_sysctl_save_set_uint(MAX_OBJECTS, 1);
 	run_child(&s, c_open, r);
-	(void)sysctlbyname("kern.dq.max_objects", NULL, NULL, &save,
-	    sizeof(save));
+	ATF_REQUIRE(dqt_sysctl_restore(MAX_OBJECTS));
 	ATF_CHECK_EQ(EIO, r[0]);	/* ENOSPC to the tree, EIO after */
 	close(mfd);
 	ATF_CHECK_EQ(0, srv_wait_live(&s, 0));
 
 	s.hook = h_enxio;
 	run_child(&s, c_open, r);
+	dqt_knob_check_consumed(FAIL_LINK_CLOSING);
 	ATF_CHECK_EQ(ENXIO, s.hook_errno);
 	ATF_CHECK_EQ(0, r[0]);
 	ATF_CHECK_EQ(0, srv_wait_live(&s, 0));
 	srv_stop(&s);
+}
+ATF_TC_CLEANUP(link_enospc_enxio, tc)
+{
+
+	(void)dqt_sysctl_restore(MAX_OBJECTS);
+	dqt_knob_disarm(FAIL_LINK_CLOSING);
 }
 
 /*
@@ -1987,7 +1956,7 @@ c_trunc(struct srv *s, int *r)
 	rl.rlim_cur = rl.rlim_max = 4;
 	(void)setrlimit(RLIMIT_FSIZE, &rl);
 	snprintf(path, sizeof(path), "%s/a", s->prefix);
-	r[0] = ERR(truncate(path, 100));
+	r[0] = DQT_ERRNO_OF(truncate(path, 100));
 	r[1] = xfsz;
 	rl.rlim_cur = rl.rlim_max = RLIM_INFINITY;
 	(void)setrlimit(RLIMIT_FSIZE, &rl);
@@ -2031,15 +2000,15 @@ c_items34(struct srv *s, int *r)
 	int fd;
 
 	snprintf(a, sizeof(a), "%s/a", s->prefix);
-	r[0] = ERR(chflags(a, 1UL << 40));
-	r[1] = ERR(utimes(a, NULL));
+	r[0] = DQT_ERRNO_OF(chflags(a, 1UL << 40));
+	r[1] = DQT_ERRNO_OF(utimes(a, NULL));
 	snprintf(b, sizeof(b), "%s/m", s->prefix);
-	r[2] = ERR(mkdir(b, 0755));
-	r[3] = ERR(unlink(a));
+	r[2] = DQT_ERRNO_OF(mkdir(b, 0755));
+	r[3] = DQT_ERRNO_OF(unlink(a));
 	fd = open(a, O_WRONLY);
 	r[4] = fd < 0 ? errno : 0;
 	snprintf(b, sizeof(b), "%s/l", s->prefix);
-	r[5] = ERR(renameat2(AT_FDCWD, a, AT_FDCWD, b, AT_RENAME_NOREPLACE));
+	r[5] = DQT_ERRNO_OF(renameat2(AT_FDCWD, a, AT_FDCWD, b, AT_RENAME_NOREPLACE));
 }
 
 ATF_TC_WITHOUT_HEAD(chflags_readonly_tree);
@@ -2083,9 +2052,9 @@ c_noreplace(struct srv *s, int *r)
 
 	snprintf(a, sizeof(a), "%s/a", s->prefix);
 	snprintf(b, sizeof(b), "%s/l", s->prefix);
-	r[0] = ERR(renameat2(AT_FDCWD, a, AT_FDCWD, b, AT_RENAME_NOREPLACE));
+	r[0] = DQT_ERRNO_OF(renameat2(AT_FDCWD, a, AT_FDCWD, b, AT_RENAME_NOREPLACE));
 	/* A flags word wider than 32 bits: FD, the file's EOPNOTSUPP. */
-	r[1] = ERR(chflags(a, 1UL << 40));
+	r[1] = DQT_ERRNO_OF(chflags(a, 1UL << 40));
 }
 
 ATF_TC_WITHOUT_HEAD(rename_noreplace);

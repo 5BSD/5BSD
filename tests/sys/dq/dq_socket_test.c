@@ -46,7 +46,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	DTRACE		"/usr/sbin/dtrace"
 
@@ -57,50 +57,48 @@ struct sock_res {
 	char		 pairbuf[4];
 };
 
-#define	RR(rr, call) do {						\
-	errno = 0;							\
-	(rr).rv = (long)(call);						\
-	(rr).err = (rr).rv == -1 ? errno : 0;				\
-} while (0)
-
 /* The index of the n-th (from 0) recorded event of op, or -1. */
 static int
 nth_event(struct dqt_ctl *c, uint32_t op, int n)
+    __requires_unlocked(c->mtx)
 {
 	int i;
 
-	pthread_mutex_lock(&c->mtx);
+	dqt_lock(c);
 	for (i = 0; i < c->nrs; i++)
 		if (c->rs[i].op == op && n-- == 0)
 			break;
 	if (i == c->nrs)
 		i = -1;
-	pthread_mutex_unlock(&c->mtx);
+	dqt_unlock(c);
 	return (i);
 }
 
 static int
 count_events(struct dqt_ctl *c, uint32_t op, int domain, int type)
+    __requires_unlocked(c->mtx)
 {
 	int i, n;
 
 	n = 0;
-	pthread_mutex_lock(&c->mtx);
+	dqt_lock(c);
 	for (i = 0; i < c->nrs; i++)
 		if (c->rs[i].op == op && (domain == -1 ||
 		    c->rs[i].domain == domain) && (type == -1 ||
 		    c->rs[i].type == type))
 			n++;
-	pthread_mutex_unlock(&c->mtx);
+	dqt_unlock(c);
 	return (n);
 }
 
 static void
 check_socket_event(struct dqt_ctl *c, int i, uint32_t op, int domain,
     int type, int protocol)
+    __requires_unlocked(c->mtx)
 {
 
 	ATF_REQUIRE_MSG(i != -1, "no event of op %u", op);
+	dqt_lock(c);
 	ATF_CHECK_EQ(op, c->rs[i].op);
 	ATF_CHECK_EQ(domain, c->rs[i].domain);
 	ATF_CHECK_EQ_MSG(type, c->rs[i].type, "type %d", c->rs[i].type);
@@ -115,6 +113,7 @@ check_socket_event(struct dqt_ctl *c, int i, uint32_t op, int domain,
 	ATF_CHECK_EQ(op == DQ_ROP_SOCKET ? SYS_socket : SYS_socketpair,
 	    (int)c->rs[i].syscall);
 	ATF_CHECK((c->rs[i].caller_flags & DQ_CALLER_F_ATTACHED) != 0);
+	dqt_unlock(c);
 }
 
 /*
@@ -127,19 +126,19 @@ child_protocols(void *arg __unused, void *result)
 	struct sock_res *r = result;
 	int s;
 
-	RR(r->r[0], s = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC |
+	DQT_RR(r->r[0], s = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC |
 	    SOCK_NONBLOCK, 0));
 	if (s != -1) {
 		r->fdflags = fcntl(s, F_GETFD);
 		r->flflags = fcntl(s, F_GETFL);
 	}
-	RR(r->r[1], socket(AF_INET, SOCK_DGRAM, 0));
+	DQT_RR(r->r[1], socket(AF_INET, SOCK_DGRAM, 0));
 	/* Raw IP is a wildcard protosw: the requested protocol is posted. */
-	RR(r->r[2], socket(AF_INET, SOCK_RAW, IPPROTO_ICMP));
-	RR(r->r[3], socket(AF_UNIX, SOCK_SEQPACKET, 0));
+	DQT_RR(r->r[2], socket(AF_INET, SOCK_RAW, IPPROTO_ICMP));
+	DQT_RR(r->r[3], socket(AF_UNIX, SOCK_SEQPACKET, 0));
 	/* Refused by the protocol lookup: nothing is posted. */
-	RR(r->r[4], socket(AF_UNIX, SOCK_RAW, 0));
-	RR(r->r[5], socket(AF_MAX + 10, SOCK_STREAM, 0));
+	DQT_RR(r->r[4], socket(AF_UNIX, SOCK_RAW, 0));
+	DQT_RR(r->r[5], socket(AF_MAX + 10, SOCK_STREAM, 0));
 }
 
 ATF_TC(protocol_resolved);
@@ -159,13 +158,11 @@ ATF_TC_BODY(protocol_resolved, tc)
 	struct dqt_achild ch;
 	struct sock_res r;
 	struct dq_stats2 st;
-	int status;
 
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ch, child_protocols, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_MSG(r.r[0].rv >= 0, "socket: %s", strerror(r.r[0].err));
 	ATF_CHECK((r.fdflags & FD_CLOEXEC) != 0);
 	ATF_CHECK((r.flflags & O_NONBLOCK) != 0);
@@ -203,15 +200,15 @@ child_pair(void *arg __unused, void *result)
 	struct sock_res *r = result;
 	int sv[2];
 
-	RR(r->r[0], socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sv));
+	DQT_RR(r->r[0], socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sv));
 	if (r->r[0].rv == 0) {
 		r->fdflags = fcntl(sv[1], F_GETFD);
-		RR(r->r[1], write(sv[0], "abc", 3));
-		RR(r->r[2], read(sv[1], r->pairbuf, 3));
+		DQT_RR(r->r[1], write(sv[0], "abc", 3));
+		DQT_RR(r->r[2], read(sv[1], r->pairbuf, 3));
 	}
-	RR(r->r[3], socketpair(AF_UNIX, SOCK_DGRAM, 0, sv));
+	DQT_RR(r->r[3], socketpair(AF_UNIX, SOCK_DGRAM, 0, sv));
 	/* Found, consulted, then refused by the protocol (no connect2). */
-	RR(r->r[4], socketpair(AF_INET, SOCK_STREAM, 0, sv));
+	DQT_RR(r->r[4], socketpair(AF_INET, SOCK_STREAM, 0, sv));
 }
 
 ATF_TC(socketpair_one_event);
@@ -228,7 +225,6 @@ ATF_TC_BODY(socketpair_one_event, tc)
 	struct dqt_ctl c;
 	struct dqt_achild ch;
 	struct sock_res o, r;
-	int status;
 
 	memset(&o, 0, sizeof(o));
 	dqt_run_child(child_pair, NULL, &o, sizeof(o));
@@ -236,8 +232,7 @@ ATF_TC_BODY(socketpair_one_event, tc)
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ch, child_pair, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(0, r.r[0].rv);
 	ATF_CHECK((r.fdflags & FD_CLOEXEC) != 0);
 	ATF_CHECK_EQ(3, r.r[2].rv);
@@ -269,10 +264,10 @@ child_capmode(void *arg __unused, void *result)
 	if (cap_enter() != 0)
 		_exit(5);
 	/* Raw IP has no PR_CAPATTACH: ECAPMODE before any consultation. */
-	RR(r->r[0], socket(AF_INET, SOCK_RAW, IPPROTO_ICMP));
+	DQT_RR(r->r[0], socket(AF_INET, SOCK_RAW, IPPROTO_ICMP));
 	/* TCP and AF_UNIX may be created in capability mode: consulted. */
-	RR(r->r[1], socket(AF_INET, SOCK_STREAM, 0));
-	RR(r->r[2], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+	DQT_RR(r->r[1], socket(AF_INET, SOCK_STREAM, 0));
+	DQT_RR(r->r[2], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
 }
 
 ATF_TC(capmode_no_event);
@@ -288,13 +283,11 @@ ATF_TC_BODY(capmode_no_event, tc)
 	struct dqt_ctl c;
 	struct dqt_achild ch;
 	struct sock_res r;
-	int status;
 
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ch, child_capmode, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.r[0].rv);
 	ATF_CHECK_EQ(ECAPMODE, r.r[0].err);
 	ATF_CHECK_EQ(0, count_events(&c, DQ_ROP_SOCKET, AF_INET, SOCK_RAW));
@@ -337,14 +330,14 @@ child_mac_denied(void *arg __unused, void *result)
 
 	if (mac_create_deny(EPERM) != 0)
 		_exit(6);
-	RR(r->r[0], socket(AF_INET, SOCK_DGRAM, 0));
+	DQT_RR(r->r[0], socket(AF_INET, SOCK_DGRAM, 0));
 	if (mac_create_deny(0) != 0 || mac_create_deny(EPERM) != 0)
 		_exit(7);
-	RR(r->r[1], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+	DQT_RR(r->r[1], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
 	if (mac_create_deny(0) != 0)
 		_exit(8);
 	/* The same call once the policy allows it: consulted. */
-	RR(r->r[2], socket(AF_INET, SOCK_DGRAM, 0));
+	DQT_RR(r->r[2], socket(AF_INET, SOCK_DGRAM, 0));
 }
 
 ATF_TC_WITH_CLEANUP(mac_denial_no_event);
@@ -373,7 +366,7 @@ ATF_TC_BODY(mac_denial_no_event, tc)
 	if (kldfind(MAC_HOOKS) == -1) {
 		/* The capability plane refuses a module load this late. */
 		if (kldload(MAC_HOOKS) == -1)
-			atf_tc_skip("%s is not loaded and cannot be loaded "
+			atf_tc_fail("%s is not loaded and cannot be loaded "
 			    "now (%s); preload it", MAC_HOOKS, strerror(errno));
 		/* Loaded here, so the cleanup unloads it. */
 		fd = open(MAC_HOOKS_LOADED, O_CREAT | O_WRONLY, 0600);
@@ -383,7 +376,7 @@ ATF_TC_BODY(mac_denial_no_event, tc)
 	len = sizeof(before);
 	if (sysctlbyname(MAC_CREATE_COUNT, &before, &len, NULL, 0) != 0) {
 		if (errno == ENOENT)
-			atf_tc_skip("this kernel's %s has no "
+			atf_tc_fail("this kernel's %s has no "
 			    "socket_check_create hook", MAC_HOOKS);
 		atf_tc_fail("%s: %s", MAC_CREATE_COUNT, strerror(errno));
 	}
@@ -437,10 +430,10 @@ child_one_socket(void *arg __unused, void *result)
 	r->nextfd = dup(0);
 	if (r->nextfd != -1)
 		(void)close(r->nextfd);
-	RR(r->r[0], socket(AF_INET, SOCK_DGRAM, 0));
-	RR(r->r[1], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+	DQT_RR(r->r[0], socket(AF_INET, SOCK_DGRAM, 0));
+	DQT_RR(r->r[1], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
 	/* No descriptor was used by a refusal. */
-	RR(r->r[2], dup(0));
+	DQT_RR(r->r[2], dup(0));
 }
 
 ATF_TC(errno_answers);
@@ -458,15 +451,13 @@ ATF_TC_BODY(errno_answers, tc)
 	struct dqt_achild ch;
 	struct sock_res r;
 	struct dq_stats2 st;
-	int status;
 
 	dqt_init(&c);
-	c.resolve_errno[DQ_ROP_SOCKET] = EACCES;
-	c.resolve_errno[DQ_ROP_SOCKETPAIR] = EPERM;
+	dqt_resolve_errno(&c, DQ_ROP_SOCKET, EACCES);
+	dqt_resolve_errno(&c, DQ_ROP_SOCKETPAIR, EPERM);
 	dqt_attach_spawn(&c, &ch, child_one_socket, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.r[0].rv);
 	ATF_CHECK_EQ(EACCES, r.r[0].err);
 	ATF_CHECK_EQ(-1, r.r[1].rv);
@@ -477,12 +468,11 @@ ATF_TC_BODY(errno_answers, tc)
 	dqt_fini(&c);
 
 	dqt_init(&c);
-	c.resolve_errno[DQ_ROP_SOCKET] = ENOENT;	/* a lookup's errno */
-	c.resolve_errno[DQ_ROP_SOCKETPAIR] = EINTR;	/* not on the list */
+	dqt_resolve_errno(&c, DQ_ROP_SOCKET, ENOENT);	/* a lookup's errno */
+	dqt_resolve_errno(&c, DQ_ROP_SOCKETPAIR, EINTR);	/* not on the list */
 	dqt_attach_spawn(&c, &ch, child_one_socket, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(EIO, r.r[0].err);
 	ATF_CHECK_EQ(EIO, r.r[1].err);
 	dqt_stats2(&c, &st);
@@ -508,7 +498,7 @@ child_slot(void *arg, void *result)
 	if (r->nextfd != -1)
 		(void)close(r->nextfd);
 	(void)write(a->tellfd, &r->nextfd, sizeof(r->nextfd));
-	RR(r->r[0], socket(AF_INET, SOCK_STREAM, 0));
+	DQT_RR(r->r[0], socket(AF_INET, SOCK_STREAM, 0));
 }
 
 /* Files of pid: the count and whether descriptor fd is among them. */
@@ -547,12 +537,12 @@ ATF_TC_BODY(no_fd_slot_while_waiting, tc)
 	struct dq_resolve_reply rr;
 	uint64_t id;
 	bool has;
-	int tell[2], next, n1, n2, status;
+	int tell[2], next, n1, n2;
 
 	ATF_REQUIRE_EQ(0, pipe(tell));
 	a.tellfd = tell[1];
 	dqt_init(&c);
-	c.resolve_hold_op = DQ_ROP_SOCKET;
+	dqt_resolve_hold(&c, NULL, DQ_ROP_SOCKET);
 	dqt_attach_spawn(&c, &ch, child_slot, &a);
 	(void)close(tell[1]);
 	ATF_REQUIRE_EQ((ssize_t)sizeof(next), read(tell[0], &next,
@@ -560,7 +550,7 @@ ATF_TC_BODY(no_fd_slot_while_waiting, tc)
 	ATF_REQUIRE(next >= 0);
 	n1 = files_of(ch.pid, next, &has);
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
-	id = c.held[0].id;
+	id = dqt_held_id(&c, 0);
 	n2 = files_of(ch.pid, next, &has);
 	ATF_CHECK_MSG(!has, "descriptor %d is allocated while the SOCKET "
 	    "event waits", next);
@@ -575,13 +565,10 @@ ATF_TC_BODY(no_fd_slot_while_waiting, tc)
 	ATF_CHECK_EQ(EINVAL, errno);
 	n2 = files_of(ch.pid, next, &has);
 	ATF_CHECK(!has);
-	pthread_mutex_lock(&c.mtx);
-	c.resolve_hold_op = 0;
-	pthread_mutex_unlock(&c.mtx);
+	dqt_resolve_hold(&c, NULL, 0);
 	ATF_CHECK_EQ(0, dq_reply_resolve_pass(c.q, id));
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(next, r.r[0].rv);
 	ATF_CHECK_EQ(1, count_events(&c, DQ_ROP_SOCKET, -1, -1));
 	(void)close(tell[0]);
@@ -599,10 +586,10 @@ child_dead(void *arg __unused, void *result)
 	struct stat sb;
 	int sv[2];
 
-	RR(r->r[0], socket(AF_INET, SOCK_STREAM, 0));	/* held */
-	RR(r->r[1], socket(AF_INET, SOCK_STREAM, 0));
-	RR(r->r[2], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
-	RR(r->r[3], stat("/bin/sh", &sb));		/* a lookup: EIO */
+	DQT_RR(r->r[0], socket(AF_INET, SOCK_STREAM, 0));	/* held */
+	DQT_RR(r->r[1], socket(AF_INET, SOCK_STREAM, 0));
+	DQT_RR(r->r[2], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+	DQT_RR(r->r[3], stat("/bin/sh", &sb));		/* a lookup: EIO */
 }
 
 /* dtrace counting a probe for one pid; -1 and a reason when it cannot. */
@@ -700,10 +687,9 @@ dead_controller(uint64_t *delta, bool trace, char *why, size_t whylen)
 	char prog[256];
 	uint64_t before;
 	long n;
-	int status;
 
 	dqt_init(&c);
-	c.resolve_hold_op = DQ_ROP_SOCKET;
+	dqt_resolve_hold(&c, NULL, DQ_ROP_SOCKET);
 	before = gstat("resolve_failclosed");
 	dqt_attach_spawn(&c, &ch, child_dead, NULL);
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
@@ -717,8 +703,7 @@ dead_controller(uint64_t *delta, bool trace, char *why, size_t whylen)
 	}
 	dqt_close_queue(&c);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.r[0].rv);
 	ATF_CHECK_EQ_MSG(EACCES, r.r[0].err, "waiting socket: %s",
 	    strerror(r.r[0].err));
@@ -767,10 +752,10 @@ ATF_TC_BODY(dead_controller_probe, tc)
 
 	why[0] = '\0';
 	if (access(DTRACE, X_OK) != 0)
-		atf_tc_skip("no %s", DTRACE);
+		atf_tc_fail("no %s", DTRACE);
 	n = dead_controller(&delta, true, why, sizeof(why));
 	if (n == -1)
-		atf_tc_skip("dtrace: %s", why[0] != '\0' ? why :
+		atf_tc_fail("dtrace: %s", why[0] != '\0' ? why :
 		    "printed no count");
 	ATF_CHECK_EQ_MSG(4, n, "resolve-failclosed fired %ld times", n);
 }
@@ -779,7 +764,7 @@ ATF_TC_BODY(dead_controller_probe, tc)
  * The counter itself, while the queue is open: a SOCKET wait that misses
  * its deadline is EIO (not a dead controller) and counts as failed closed.
  */
-#define	DEADLINE_SAVED	"default_deadline_ms.saved"
+#define	DEFAULT_DEADLINE	"kern.dq.default_deadline_ms"
 
 ATF_TC_WITH_CLEANUP(deadline_counts_failclosed);
 ATF_TC_HEAD(deadline_counts_failclosed, tc)
@@ -795,22 +780,13 @@ ATF_TC_BODY(deadline_counts_failclosed, tc)
 	struct dqt_achild ch;
 	struct sock_res r;
 	struct dq_stats2 st;
-	FILE *f;
-	u_int saved;
-	int status;
 
-	ATF_REQUIRE(dqt_sysctl_get_uint("kern.dq.default_deadline_ms", &saved));
-	f = fopen(DEADLINE_SAVED, "w");
-	ATF_REQUIRE(f != NULL);
-	(void)fprintf(f, "%u\n", saved);
-	(void)fclose(f);
-	dqt_sysctl_set_uint("kern.dq.default_deadline_ms", 500);
+	dqt_sysctl_save_set_uint(DEFAULT_DEADLINE, 500);
 	dqt_init(&c);
-	c.resolve_hold_op = DQ_ROP_SOCKET;
+	dqt_resolve_hold(&c, NULL, DQ_ROP_SOCKET);
 	dqt_attach_spawn(&c, &ch, child_one_socket, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(EIO, r.r[0].err);
 	ATF_CHECK_EQ(0, r.r[1].rv);	/* socketpair is not held */
 	dqt_stats2(&c, &st);
@@ -820,16 +796,8 @@ ATF_TC_BODY(deadline_counts_failclosed, tc)
 }
 ATF_TC_CLEANUP(deadline_counts_failclosed, tc)
 {
-	FILE *f;
-	u_int v;
 
-	f = fopen(DEADLINE_SAVED, "r");
-	if (f == NULL)
-		return;
-	if (fscanf(f, "%u", &v) == 1)
-		(void)sysctlbyname("kern.dq.default_deadline_ms", NULL, NULL,
-		    &v, sizeof(v));
-	(void)fclose(f);
+	(void)dqt_sysctl_restore(DEFAULT_DEADLINE);
 }
 
 /*
@@ -876,19 +844,19 @@ child_full(void *arg, void *result)
 		if (cap_enter() != 0)
 			_exit(5);
 		/* Raw IP has no PR_CAPATTACH: ECAPMODE with room. */
-		RR(r->r[0], socket(AF_INET, SOCK_RAW, IPPROTO_ICMP));
-		RR(r->r[1], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+		DQT_RR(r->r[0], socket(AF_INET, SOCK_RAW, IPPROTO_ICMP));
+		DQT_RR(r->r[1], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
 		return;
 	}
-	RR(r->r[0], socket(AF_INET, SOCK_STREAM, 0));
-	RR(r->r[1], socket(AF_UNIX, SOCK_RAW, 0));	/* EPROTOTYPE */
-	RR(r->r[2], socket(AF_MAX + 10, SOCK_STREAM, 0)); /* EAFNOSUPPORT */
-	RR(r->r[3], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
-	RR(r->r[4], socketpair(AF_UNIX, SOCK_RAW, 0, sv));
+	DQT_RR(r->r[0], socket(AF_INET, SOCK_STREAM, 0));
+	DQT_RR(r->r[1], socket(AF_UNIX, SOCK_RAW, 0));	/* EPROTOTYPE */
+	DQT_RR(r->r[2], socket(AF_MAX + 10, SOCK_STREAM, 0)); /* EAFNOSUPPORT */
+	DQT_RR(r->r[3], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+	DQT_RR(r->r[4], socketpair(AF_UNIX, SOCK_RAW, 0, sv));
 	/* One free slot: socket(2) fits, socketpair(2) does not. */
 	(void)close(last);
-	RR(r->r[5], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
-	RR(r->r[6], socket(AF_INET, SOCK_STREAM, 0));
+	DQT_RR(r->r[5], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+	DQT_RR(r->r[6], socket(AF_INET, SOCK_STREAM, 0));
 	r->nextfd = last;
 }
 
@@ -960,7 +928,7 @@ ATF_TC_BODY(full_table_attached, tc)
 	struct dqt_achild ch;
 	struct full_arg a;
 	struct sock_res o, r;
-	int i, status;
+	int i;
 
 	a.capmode = false;
 	memset(&o, 0, sizeof(o));
@@ -968,8 +936,7 @@ ATF_TC_BODY(full_table_attached, tc)
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ch, child_full, &a);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	check_full(&r, false, "attached");
 	for (i = 0; i < 7; i++) {
 		ATF_CHECK_EQ_MSG(o.r[i].err, r.r[i].err, "row %d: unattached "
@@ -987,8 +954,7 @@ ATF_TC_BODY(full_table_attached, tc)
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ch, child_full, &a);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	check_full(&r, true, "attached");
 	ATF_CHECK_EQ(0, count_events(&c, DQ_ROP_SOCKET, -1, -1));
 	ATF_CHECK_EQ(0, count_events(&c, DQ_ROP_SOCKETPAIR, -1, -1));
@@ -1010,8 +976,8 @@ child_jail_inet(void *arg __unused, void *result)
 {
 	struct sock_res *r = result;
 
-	RR(r->r[0], socket(AF_INET, SOCK_STREAM, 0));
-	RR(r->r[1], socket(AF_UNIX, SOCK_STREAM, 0));
+	DQT_RR(r->r[0], socket(AF_INET, SOCK_STREAM, 0));
+	DQT_RR(r->r[1], socket(AF_UNIX, SOCK_STREAM, 0));
 }
 
 /* dqt_attach_spawn, with the child entering the jail before ATTACH. */
@@ -1073,26 +1039,24 @@ ATF_TC_BODY(jail_af_before_consult, tc)
 	struct dqt_ctl c;
 	struct dqt_achild ch;
 	struct sock_res o, r;
-	int jid, status;
+	int jid;
 
 	jid = jail_setv(JAIL_CREATE, "path", "/", "name", JAILNAME,
 	    "ip4", "disable", "persist", NULL, NULL);
 	if (jid < 0)
-		atf_tc_skip("jail_setv: %s", jail_errmsg);
+		atf_tc_fail("jail_setv: %s", jail_errmsg);
 
 	/* The oracle: the same jail, unattached. */
 	spawn_jailed(NULL, &ch, jid, child_jail_inet);
 	memset(&o, 0, sizeof(o));
-	status = dqt_attach_wait(&ch, &o, sizeof(o));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &o, sizeof(o));
 	ATF_REQUIRE_EQ_MSG(EPROTONOSUPPORT, o.r[0].err, "unattached jailed "
 	    "socket(AF_INET): %s", strerror(o.r[0].err));
 
 	dqt_init(&c);
 	spawn_jailed(&c, &ch, jid, child_jail_inet);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.r[0].rv);
 	ATF_CHECK_EQ(EPROTONOSUPPORT, r.r[0].err);
 	ATF_CHECK(r.r[1].rv >= 0);
@@ -1102,11 +1066,10 @@ ATF_TC_BODY(jail_af_before_consult, tc)
 
 	/* A refusing controller is not asked about the refused family. */
 	dqt_init(&c);
-	c.resolve_errno[DQ_ROP_SOCKET] = EACCES;
+	dqt_resolve_errno(&c, DQ_ROP_SOCKET, EACCES);
 	spawn_jailed(&c, &ch, jid, child_jail_inet);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(EPROTONOSUPPORT, r.r[0].err);
 	ATF_CHECK_EQ(EACCES, r.r[1].err);
 	ATF_CHECK_EQ(0, count_events(&c, DQ_ROP_SOCKET, AF_INET, -1));
@@ -1129,7 +1092,6 @@ ATF_TC_CLEANUP(jail_af_before_consult, tc)
 
 #define	TUNPORT		"net.inet.tcp.udp_tunneling_port"
 #define	TUNPORT_VALUE	9899
-#define	TUNPORT_SAVED	"tunport.saved"
 
 static void
 child_tunport(void *arg __unused, void *result)
@@ -1138,8 +1100,8 @@ child_tunport(void *arg __unused, void *result)
 	u_int v;
 
 	v = TUNPORT_VALUE;
-	RR(r->r[0], sysctlbyname(TUNPORT, NULL, NULL, &v, sizeof(v)));
-	RR(r->r[1], socket(AF_INET, SOCK_DGRAM, 0));
+	DQT_RR(r->r[0], sysctlbyname(TUNPORT, NULL, NULL, &v, sizeof(v)));
+	DQT_RR(r->r[1], socket(AF_INET, SOCK_DGRAM, 0));
 }
 
 ATF_TC_WITH_CLEANUP(kernel_socreate_not_consulted);
@@ -1157,27 +1119,21 @@ ATF_TC_BODY(kernel_socreate_not_consulted, tc)
 	struct dqt_achild ch;
 	struct sock_res r;
 	struct dq_stats2 st;
-	FILE *f;
 	u_int v;
-	int status;
 
 	if (!dqt_sysctl_get_uint(TUNPORT, &v))
-		atf_tc_skip("no " TUNPORT);
+		atf_tc_fail("no " TUNPORT);
 	if (v != 0)
-		atf_tc_skip(TUNPORT " is in use (%u)", v);
-	/* What the cleanup restores; without the file it touches nothing. */
-	f = fopen(TUNPORT_SAVED, "w");
-	ATF_REQUIRE(f != NULL);
-	(void)fprintf(f, "%u\n", v);
-	(void)fclose(f);
+		atf_tc_fail(TUNPORT " is in use (%u)", v);
+	/* What the cleanup restores (the child sets it). */
+	dqt_sysctl_save(TUNPORT);
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ch, child_tunport, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	if (r.r[0].rv == -1 && r.r[0].err == EADDRINUSE) {
 		dqt_fini(&c);
-		atf_tc_skip("UDP port %d is in use", TUNPORT_VALUE);
+		atf_tc_fail("UDP port %d is in use", TUNPORT_VALUE);
 	}
 	ATF_CHECK_EQ_MSG(0, r.r[0].rv, TUNPORT ": %s", strerror(r.r[0].err));
 	ATF_CHECK(dqt_sysctl_get_uint(TUNPORT, &v) && v == TUNPORT_VALUE);
@@ -1191,15 +1147,8 @@ ATF_TC_BODY(kernel_socreate_not_consulted, tc)
 }
 ATF_TC_CLEANUP(kernel_socreate_not_consulted, tc)
 {
-	FILE *f;
-	u_int v;
 
-	f = fopen(TUNPORT_SAVED, "r");
-	if (f == NULL)
-		return;
-	if (fscanf(f, "%u", &v) == 1)
-		(void)sysctlbyname(TUNPORT, NULL, NULL, &v, sizeof(v));
-	(void)fclose(f);
+	(void)dqt_sysctl_restore(TUNPORT);
 }
 
 /*
@@ -1227,11 +1176,11 @@ child_abstract(void *arg __unused, void *result)
 	len = offsetof(struct sockaddr_un, sun_path) + 7;
 	sun.sun_len = len;
 	s = socket(AF_UNIX, SOCK_STREAM, 0);
-	RR(r->r[0], bind(s, (struct sockaddr *)&sun, len));
+	DQT_RR(r->r[0], bind(s, (struct sockaddr *)&sun, len));
 	(void)close(s);
 	memcpy(sun.sun_path, "\0rt-abc", 7);
 	s = socket(AF_UNIX, SOCK_STREAM, 0);
-	RR(r->r[1], connect(s, (struct sockaddr *)&sun, len));
+	DQT_RR(r->r[1], connect(s, (struct sockaddr *)&sun, len));
 	(void)close(s);
 }
 
@@ -1250,30 +1199,33 @@ ATF_TC_BODY(abstract_names, tc)
 	struct dqt_achild ch;
 	struct sock_res o, r;
 	struct dq_stats2 st;
-	int i, status;
+	int i;
 
 	memset(&o, 0, sizeof(o));
 	dqt_run_child(child_abstract, NULL, &o, sizeof(o));
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ch, child_abstract, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	for (i = 0; i < 2; i++) {
 		ATF_CHECK_EQ(o.r[i].rv, r.r[i].rv);
 		ATF_CHECK_EQ(o.r[i].err, r.r[i].err);
 	}
 	i = dqt_find_resolve(&c, "rt-abs", DQ_ROP_BIND, 0);
 	ATF_REQUIRE(i != -1);
+	dqt_lock(&c);
 	ATF_CHECK_STREQ("rt-abs", c.rs[i].path);
 	ATF_CHECK_EQ(6, c.rs[i].pathlen);
 	ATF_CHECK_EQ(DQ_RF_USER | DQ_RF_ABSTRACT, c.rs[i].rflags);
 	ATF_CHECK_EQ(DQ_START_NONE, c.rs[i].start_kind);
 	ATF_CHECK_EQ(DQ_RCLASS_USER, c.rs[i].cls);
+	dqt_unlock(&c);
 	i = dqt_find_resolve(&c, "rt-abc", DQ_ROP_CONNECT, 0);
 	ATF_REQUIRE(i != -1);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(DQ_RF_USER | DQ_RF_ABSTRACT, c.rs[i].rflags);
 	ATF_CHECK_EQ(DQ_START_NONE, c.rs[i].start_kind);
+	dqt_unlock(&c);
 	ATF_CHECK_EQ(1, dqt_count_resolve(&c, "rt-abs", DQ_ROP_BIND));
 	ATF_CHECK_EQ(1, dqt_count_resolve(&c, "rt-abc", DQ_ROP_CONNECT));
 	/* The native protocol's lookup of the empty path is no ledger gap. */

@@ -21,13 +21,15 @@
 
 #include <libutil.h>
 
-#include "dq_tree_harness.h"
+#include "dqt_tree.h"
 
 /* The kernel's answers, without libc's userland fallbacks. */
 int	__getcwd(char *, size_t);
 int	__sys___realpathat(int, const char *, char *, size_t, int);
 
 #define	NPATH	12
+
+#define	ALLOW	"kern.chroot_allow_open_directories"
 
 struct pres {
 	int	err[NPATH];
@@ -119,7 +121,7 @@ own_fn(void *arg __unused, void *out)
 	struct pres *r = out;
 	int fd, e;
 
-	r->err[0] = TS_ERR(chdir("d"));
+	r->err[0] = DQT_ERRNO_OF(chdir("d"));
 	cwd_into(r->path[1], &r->err[1]);
 	realpath_into("f", r->path[2], &r->err[2]);
 	realpath_into("/ds/f", r->path[3], &r->err[3]);
@@ -135,36 +137,37 @@ own_fn(void *arg __unused, void *out)
 		close(fd);
 }
 
-TS_TC(own_presented);
+DQT_TREE_TC(own_presented);
 ATF_TC_BODY(own_presented, tc)
 {
-	struct ts s;
+	struct dqt_tree s;
 	struct pres r;
 	int status;
 
-	ts_make_tree("t");
-	ts_start(&s, "t", DQ_TREE_F_ROOT);
+	dqt_tree_make("t");
+	dqt_tree_start(&s, "t", DQ_TREE_F_ROOT);
 	memset(&r, 0, sizeof(r));
-	status = ts_child(&s, s.sroot, s.sroot, own_fn, NULL, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
-	TS_CHECK_ERRNO(0, r.err[0], "chdir d");
+	status = dqt_tree_child(&s, s.sroot, s.sroot, own_fn, NULL, &r,
+	    sizeof(r));
+	dqt_require_exit0(status, "child");
+	DQT_CHECK_ERRNO(0, r.err[0], "chdir d");
 	ATF_CHECK_STREQ("/d", r.path[1]);
-	TS_CHECK_ERRNO(0, r.err[2], "realpath f");
+	DQT_CHECK_ERRNO(0, r.err[2], "realpath f");
 	ATF_CHECK_STREQ("/d/f", r.path[2]);
-	TS_CHECK_ERRNO(0, r.err[3], "realpath /ds/f");
+	DQT_CHECK_ERRNO(0, r.err[3], "realpath /ds/f");
 	ATF_CHECK_STREQ("/d/f", r.path[3]);
-	TS_CHECK_ERRNO(0, r.err[4], "realpath ../a");
+	DQT_CHECK_ERRNO(0, r.err[4], "realpath ../a");
 	ATF_CHECK_STREQ("/a", r.path[4]);
-	TS_CHECK_ERRNO(0, r.err[5], "open f");
-	TS_CHECK_ERRNO(0, r.err[6], "kinfo_getfile");
+	DQT_CHECK_ERRNO(0, r.err[5], "open f");
+	DQT_CHECK_ERRNO(0, r.err[6], "kinfo_getfile");
 	ATF_CHECK_STREQ("/d", r.path[5]);
 	ATF_CHECK_EQ(KF_VTYPE_VDIR, r.vtype[5]);
 	ATF_CHECK_STREQ("/", r.path[6]);
 	ATF_CHECK_STREQ("/d/f", r.path[7]);
-	TS_CHECK_ERRNO(0, r.err[8], "KERN_PROC_CWD");
+	DQT_CHECK_ERRNO(0, r.err[8], "KERN_PROC_CWD");
 	ATF_CHECK_STREQ("/d", r.path[8]);
-	TS_CHECK_ERRNO(ENOENT, r.err[9], "realpath nope");
-	ts_stop(&s);
+	DQT_CHECK_ERRNO(ENOENT, r.err[9], "realpath nope");
+	dqt_tree_stop(&s);
 }
 
 /*
@@ -178,7 +181,7 @@ struct real_arg {
 };
 
 static int
-real_hook(struct ts *s, const struct dq_event *ev,
+real_hook(struct dqt_tree *s, const struct dq_event *ev,
     const struct dq_resolve_body *rb, const char *path)
 {
 	char p[PATH_MAX];
@@ -200,7 +203,7 @@ real_fn(void *arg, void *out)
 
 	/* REALPATH answered REAL: ENOENT (Q6, D167). */
 	realpath_into("/hookreal", r->path[0], &r->err[0]);
-	r->err[1] = TS_ERR(fchdir(a->realfd));
+	r->err[1] = DQT_ERRNO_OF(fchdir(a->realfd));
 	cwd_into(r->path[2], &r->err[2]);
 	realpath_into("x", r->path[3], &r->err[3]);
 	kinfo_rows(getpid(), -1, r->path[4], root, fdp, &r->vtype[4], &e);
@@ -208,36 +211,37 @@ real_fn(void *arg, void *out)
 	strlcpy(r->path[5], root, PATH_MAX);
 }
 
-TS_TC(real_under_served_root);
+DQT_TREE_TC(real_under_served_root);
 ATF_TC_BODY(real_under_served_root, tc)
 {
-	struct ts s;
+	struct dqt_tree s;
 	struct pres r;
 	struct real_arg a;
 	int status;
 
-	ts_make_tree("t");
+	dqt_tree_make("t");
 	ATF_REQUIRE(mkdir("w", 0755) == 0);
-	ts_file("w", "x", "x\n");
+	dqt_tree_file("w", "x", "x\n");
 	/* The real object is PASSed: the kernel's ENOENT is under test. */
-	ts_start(&s, "t", DQ_TREE_F_ROOT | DQ_TREE_F_OUTSIDE_PASS);
+	dqt_tree_start(&s, "t", DQ_TREE_F_ROOT | DQ_TREE_F_OUTSIDE_PASS);
 	s.hook = real_hook;
 	a.realfd = open("w", O_RDONLY | O_DIRECTORY);
 	ATF_REQUIRE(a.realfd >= 0);
 	ATF_REQUIRE(realpath("w", a.real) != NULL);
 	memset(&r, 0, sizeof(r));
-	status = ts_child(&s, s.sroot, s.sroot, real_fn, &a, &r, sizeof(r));
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
-	TS_CHECK_ERRNO(ENOENT, r.err[0], "realpath answered REAL");
-	TS_CHECK_ERRNO(0, r.err[1], "fchdir real");
-	TS_CHECK_ERRNO(ENOENT, r.err[2], "getcwd: real cwd, served root");
-	TS_CHECK_ERRNO(ENOENT, r.err[3], "realpath of a real object");
-	TS_CHECK_ERRNO(0, r.err[4], "kinfo");
+	status = dqt_tree_child(&s, s.sroot, s.sroot, real_fn, &a, &r,
+	    sizeof(r));
+	dqt_require_exit0(status, "child");
+	DQT_CHECK_ERRNO(ENOENT, r.err[0], "realpath answered REAL");
+	DQT_CHECK_ERRNO(0, r.err[1], "fchdir real");
+	DQT_CHECK_ERRNO(ENOENT, r.err[2], "getcwd: real cwd, served root");
+	DQT_CHECK_ERRNO(ENOENT, r.err[3], "realpath of a real object");
+	DQT_CHECK_ERRNO(0, r.err[4], "kinfo");
 	/* Observation, not resolution: the real vnode's path. */
 	ATF_CHECK_STREQ(a.real, r.path[4]);
 	ATF_CHECK_STREQ("/", r.path[5]);
 	close(a.realfd);
-	ts_stop(&s);
+	dqt_tree_stop(&s);
 }
 
 /*
@@ -264,7 +268,7 @@ a_fn(void *arg, void *out)
 	int fd;
 	char c;
 
-	r->err[0] = TS_ERR(chdir("d"));
+	r->err[0] = DQT_ERRNO_OF(chdir("d"));
 	fd = open("f", O_RDONLY);
 	r->err[1] = fd < 0 ? errno : 0;
 	me = getpid();
@@ -299,7 +303,7 @@ viewer_fn(void *arg, void *out)
 	int e;
 
 	if (v->chroot_d)
-		r->err[0] = TS_ERR(chroot("d"));
+		r->err[0] = DQT_ERRNO_OF(chroot("d"));
 	kinfo_rows(v->apid, v->afd, r->path[1], r->path[2], r->path[3],
 	    &r->vtype[1], &e);
 	r->err[1] = e;
@@ -333,22 +337,22 @@ mount_linprocfs(const char *dir)
 	return (nmount(iov, 4, 0) == 0);
 }
 
-TS_TC_CLEANUP(viewer_rule);
+DQT_TREE_TC_CLEANUP(viewer_rule);
 ATF_TC_BODY(viewer_rule, tc)
 {
-	struct ts s;
+	struct dqt_tree s;
 	struct pres ra, rb, rc, rt;
 	struct view_arg v;
 	char buf[PATH_MAX], fdname[32];
-	size_t len;
-	int pd, status, e, ready[2], go[2], back[2], allow, oldallow;
+	size_t got;
+	int pd, status, e, ready[2], go[2], back[2];
 	pid_t pid;
 	char c;
 	bool lp;
 
-	ts_make_tree("t");
+	dqt_tree_make("t");
 	/* The viewers read linprocfs through a real directory: PASS it. */
-	ts_start(&s, "t", DQ_TREE_F_ROOT | DQ_TREE_F_OUTSIDE_PASS);
+	dqt_tree_start(&s, "t", DQ_TREE_F_ROOT | DQ_TREE_F_OUTSIDE_PASS);
 	lp = mount_linprocfs("lp");
 	memset(&v, 0, sizeof(v));
 	v.lpfd = lp ? open("lp", O_RDONLY | O_DIRECTORY) : -1;
@@ -367,9 +371,13 @@ ATF_TC_BODY(viewer_rule, tc)
 			_exit(1);
 		memset(&ra, 0, sizeof(ra));
 		a_fn(&v, &ra);
-		(void)write(back[1], &ra, sizeof(ra));
-		_exit(0);
+		_exit(write(back[1], &ra, sizeof(ra)) == (ssize_t)sizeof(ra) ?
+		    0 : DQT_EXIT_NORESULT);
 	}
+	/* Only A holds the write ends: its death is an EOF here. */
+	close(ready[1]);
+	close(go[0]);
+	close(back[1]);
 	ATF_REQUIRE(read(ready[0], &c, 1) == 1);
 	ATF_REQUIRE(dq_attach_starts(s.q, pd, s.sroot, s.sroot) == 0);
 	ATF_REQUIRE(write(go[1], "g", 1) == 1);
@@ -383,7 +391,7 @@ ATF_TC_BODY(viewer_rule, tc)
 	memset(&rt, 0, sizeof(rt));
 	kinfo_rows(v.apid, v.afd, rt.path[1], rt.path[2], rt.path[3],
 	    &rt.vtype[1], &e);
-	TS_CHECK_ERRNO(0, e, "unattached kinfo");
+	DQT_CHECK_ERRNO(0, e, "unattached kinfo");
 	snprintf(buf, sizeof(buf), "%s/d", s.backing);
 	ATF_CHECK_STREQ(buf, rt.path[1]);
 	ATF_CHECK_STREQ(s.backing, rt.path[2]);
@@ -405,10 +413,10 @@ ATF_TC_BODY(viewer_rule, tc)
 
 	/* B: same queue, same served root: presented. */
 	memset(&rb, 0, sizeof(rb));
-	status = ts_child(&s, s.sroot, s.sroot, viewer_fn, &v, &rb,
+	status = dqt_tree_child(&s, s.sroot, s.sroot, viewer_fn, &v, &rb,
 	    sizeof(rb));
 	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
-	TS_CHECK_ERRNO(0, rb.err[1], "B kinfo");
+	DQT_CHECK_ERRNO(0, rb.err[1], "B kinfo");
 	ATF_CHECK_STREQ("/d", rb.path[1]);
 	ATF_CHECK_STREQ("/", rb.path[2]);
 	ATF_CHECK_STREQ("/d/f", rb.path[3]);
@@ -427,16 +435,12 @@ ATF_TC_BODY(viewer_rule, tc)
 	 */
 	memset(&rc, 0, sizeof(rc));
 	v.chroot_d = true;
-	allow = 2;
-	len = sizeof(oldallow);
-	ATF_REQUIRE(sysctlbyname("kern.chroot_allow_open_directories",
-	    &oldallow, &len, &allow, sizeof(allow)) == 0);
-	status = ts_child(&s, s.sroot, s.sroot, viewer_fn, &v, &rc,
+	dqt_sysctl_save_set_int(ALLOW, 2);
+	status = dqt_tree_child(&s, s.sroot, s.sroot, viewer_fn, &v, &rc,
 	    sizeof(rc));
-	(void)sysctlbyname("kern.chroot_allow_open_directories", NULL, NULL,
-	    &oldallow, sizeof(oldallow));
+	ATF_REQUIRE(dqt_sysctl_restore(ALLOW));
 	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
-	TS_CHECK_ERRNO(0, rc.err[0], "C chroot d");
+	DQT_CHECK_ERRNO(0, rc.err[0], "C chroot d");
 	ATF_CHECK_STREQ("/", rc.path[1]);
 	ATF_CHECK_STREQ("", rc.path[2]);
 	ATF_CHECK_STREQ("/f", rc.path[3]);
@@ -448,22 +452,22 @@ ATF_TC_BODY(viewer_rule, tc)
 	/* A's own view. */
 	ATF_REQUIRE(write(v.tochild[1], "g", 1) == 1);
 	memset(&ra, 0, sizeof(ra));
-	(void)read(back[0], &ra, sizeof(ra));
+	got = dqt_read_full(back[0], &ra, sizeof(ra));
 	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
-	TS_CHECK_ERRNO(0, ra.err[0], "A chdir d");
+	dqt_require_exit0(status, "A");
+	ATF_REQUIRE_EQ(sizeof(ra), got);
+	DQT_CHECK_ERRNO(0, ra.err[0], "A chdir d");
 	close(pd);
 	if (v.lpfd >= 0)
 		close(v.lpfd);
-	ts_stop(&s);
+	dqt_tree_stop(&s);
 }
 ATF_TC_CLEANUP(viewer_rule, tc)
 {
-	int v = 1;
 
 	(void)unmount("lp", MNT_FORCE);
-	/* The body restores it; after a failure, the default. */
-	(void)sysctlbyname("kern.chroot_allow_open_directories", NULL, NULL,
-	    &v, sizeof(v));
+	/* The body restores it; after a failure, the value it found. */
+	(void)dqt_sysctl_restore(ALLOW);
 }
 
 /*
@@ -486,14 +490,14 @@ revoked_fn(void *arg, void *out)
 	kinfo_rows(getpid(), -1, r->path[1], r->path[2], fdp, &r->vtype[1],
 	    &e);
 	r->err[1] = e;
-	r->err[2] = TS_ERR(stat("a", &st));
-	r->err[3] = TS_ERR(stat("/a", &st));
+	r->err[2] = DQT_ERRNO_OF(stat("a", &st));
+	r->err[3] = DQT_ERRNO_OF(stat("/a", &st));
 }
 
 static void *
 revoker(void *arg)
 {
-	struct ts *s = arg;
+	struct dqt_tree *s = arg;
 	struct view_arg *v = s->hookarg;
 	char c;
 
@@ -503,35 +507,35 @@ revoker(void *arg)
 	return (NULL);
 }
 
-TS_TC(revoked_frozen);
+DQT_TREE_TC(revoked_frozen);
 ATF_TC_BODY(revoked_frozen, tc)
 {
-	struct ts s;
+	struct dqt_tree s;
 	struct pres r;
 	struct view_arg v;
 	pthread_t thr;
 	int status;
 
-	ts_make_tree("t");
-	ts_start(&s, "t", DQ_TREE_F_ROOT);
+	dqt_tree_make("t");
+	dqt_tree_start(&s, "t", DQ_TREE_F_ROOT);
 	memset(&v, 0, sizeof(v));
 	ATF_REQUIRE(pipe(v.tochild) == 0 && pipe(v.toparent) == 0);
 	s.hookarg = &v;
 	ATF_REQUIRE(pthread_create(&thr, NULL, revoker, &s) == 0);
 	memset(&r, 0, sizeof(r));
-	status = ts_child(&s, s.sroot, s.sroot, revoked_fn, &v, &r,
+	status = dqt_tree_child(&s, s.sroot, s.sroot, revoked_fn, &v, &r,
 	    sizeof(r));
 	pthread_join(thr, NULL);
-	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
-	TS_CHECK_ERRNO(0, r.err[0], "getcwd, revoked");
+	dqt_require_exit0(status, "child");
+	DQT_CHECK_ERRNO(0, r.err[0], "getcwd, revoked");
 	ATF_CHECK_STREQ("/", r.path[0]);
-	TS_CHECK_ERRNO(0, r.err[1], "kinfo, revoked");
+	DQT_CHECK_ERRNO(0, r.err[1], "kinfo, revoked");
 	/* The row is the frozen presented path, the same as getcwd's. */
 	ATF_CHECK_STREQ(r.path[0], r.path[1]);
 	ATF_CHECK_STREQ("/", r.path[2]);
-	TS_CHECK_ERRNO(EIO, r.err[2], "relative lookup, revoked cwd");
-	TS_CHECK_ERRNO(EIO, r.err[3], "absolute lookup, revoked root");
-	ts_stop(&s);
+	DQT_CHECK_ERRNO(EIO, r.err[2], "relative lookup, revoked cwd");
+	DQT_CHECK_ERRNO(EIO, r.err[3], "absolute lookup, revoked root");
+	dqt_tree_stop(&s);
 }
 
 ATF_TP_ADD_TCS(tp)

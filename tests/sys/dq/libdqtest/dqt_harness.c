@@ -3,10 +3,13 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Shared harness of the DescriptorQueue tests; see dq_test.h.
+ * The controller harness of the DescriptorQueue tests: reader threads that
+ * answer from memory or through dq_serve_file(), forked requesters, and the
+ * waits and oracle comparisons the tests share; see dqt.h.
  */
 
 #include <sys/param.h>
+#include <sys/event.h>
 #include <sys/procdesc.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
@@ -22,12 +25,13 @@
 #include <pthread.h>
 #include <setjmp.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	DQT_READ_BUFSIZE	(65536 + 131072 + 128)	/* a whole max_io WRITE fits */
 #define	DQT_POLL_MS		50
@@ -36,64 +40,9 @@
  * Queue and controller threads
  */
 
-void
-dqt_require_plane(void)
-{
-	struct kinfo_proc kp;
-	size_t len;
-	int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, 1 };
-
-	len = sizeof(kp);
-	if (sysctl(mib, nitems(mib), &kp, &len, NULL, 0) != 0)
-		atf_tc_fail("kern.proc.pid.1: %s", strerror(errno));
-	if (strcmp(kp.ki_comm, "capsule") != 0)
-		atf_tc_fail("the capability plane is off: PID 1 is %s, not "
-		    "capsule", kp.ki_comm);
-	if (access(DQ_DEVICE, F_OK) != 0)
-		atf_tc_fail("%s: %s", DQ_DEVICE, strerror(errno));
-}
-
-/*
- * A kernel built with options DQ_TEST_OPEN, and only such a kernel, has the
- * debug.dq.unverified_open sysctl.  On it the tests must have been given
- * test access by the loader (debug.dq.unverified_open="1"): a test kernel
- * booted without the setting is a rig that was not set up, and fails here
- * by name instead of in whatever the first refused open breaks.  A kernel
- * without the sysctl is not a test kernel and is opened as before.
- */
-void
-dqt_require_test_access(void)
-{
-	size_t len;
-	int v;
-
-	len = sizeof(v);
-	if (sysctlbyname("debug.dq.unverified_open", &v, &len, NULL, 0) != 0) {
-		if (errno == ENOENT)
-			return;
-		atf_tc_fail("debug.dq.unverified_open: %s", strerror(errno));
-	}
-	if (len != sizeof(v) || v != 1)
-		atf_tc_fail("test kernel without test access: set "
-		    "debug.dq.unverified_open=\"1\" in loader.conf "
-		    "(it reads %d)", v);
-}
-
-/* Never skips: a queue device that is absent or refuses is a failure. */
-int
-dqt_open_queue(void)
-{
-	int q;
-
-	dqt_require_test_access();
-	q = dq_open();
-	if (q == -1)
-		atf_tc_fail("%s: %s", DQ_DEVICE, strerror(errno));
-	return (q);
-}
-
 static void
 dqt_record_seq(struct dqt_ctl *c, uint64_t seq)
+    __requires_exclusive(c->mtx)
 {
 
 	if (c->nseqs < DQT_MAX_SEQS)
@@ -116,12 +65,13 @@ struct dqt_pending_reply {
 };
 
 /*
- * Record a stage 1b body on the object (and WRITE bodies on the controller)
+ * Record a write-path body on the object (and WRITE bodies on the controller)
  * for the tests' field assertions.  The mutex is held.
  */
 static void
 dqt_record_body(struct dqt_ctl *c, struct dqt_object *o,
     const struct dq_event *ev)
+    __requires_exclusive(c->mtx)
 {
 	const struct dq_read_body *rbp;
 	const struct dq_write_body *wb;
@@ -207,6 +157,7 @@ dqt_record_body(struct dqt_ctl *c, struct dqt_object *o,
 static void
 dqt_hold_event(struct dqt_ctl *c, const struct dq_event *ev, uint32_t len,
     uint64_t offset)
+    __requires_exclusive(c->mtx)
 {
 	const struct dq_read_body *rb;
 	const struct dq_write_body *wb;
@@ -234,16 +185,17 @@ static const struct dq_resolve_reply dqt_pass = { DQ_RESOLVE_PASS, 0 };
 static bool
 dqt_handle_resolve(struct dqt_ctl *c, const struct dq_event *ev,
     struct dqt_pending_reply *pr)
+    __requires_exclusive(c->mtx)
 {
 	const struct dq_resolve_body *rb;
-	const char *path, *path2, *sp2;
+	const char *path, *path2, *sp, *sp2;
 	struct dqt_resolve_seen *s;
 	int error;
 
 	pr->id = ev->de_id;
 	pr->data = NULL;
 	pr->len = 0;
-	if (dq_event_resolve(ev, &rb, &path, &path2, NULL, &sp2) != 0) {
+	if (dq_event_resolve(ev, &rb, &path, &path2, &sp, &sp2) != 0) {
 		pr->error = EIO;
 		return (true);
 	}
@@ -265,6 +217,7 @@ dqt_handle_resolve(struct dqt_ctl *c, const struct dq_event *ev,
 		s->type = rb->drs_type;
 		s->protocol = rb->drs_protocol;
 		s->pathlen = rb->drs_pathlen;
+		(void)strlcpy(s->startpath, sp, sizeof(s->startpath));
 		(void)strlcpy(s->startpath2, sp2, sizeof(s->startpath2));
 		(void)strlcpy(s->path, path, sizeof(s->path));
 		(void)strlcpy(s->path2, path2, sizeof(s->path2));
@@ -293,6 +246,7 @@ dqt_handle_resolve(struct dqt_ctl *c, const struct dq_event *ev,
 static bool
 dqt_handle_record(struct dqt_ctl *c, const struct dq_event *ev,
     struct dqt_pending_reply *pr)
+    __requires_exclusive(c->mtx)
 {
 	const struct dq_read_body *rb;
 	const struct dq_interrupt_body *ib;
@@ -301,6 +255,23 @@ dqt_handle_record(struct dqt_ctl *c, const struct dq_event *ev,
 	const void *body;
 
 	body = dq_event_body(ev, &bodylen);
+	o = dqt_object_by_id(c, ev->de_object);
+	if (o != NULL && o->fence) {
+		/* A fence's records are its own: see dqt.h. */
+		dqt_record_seq(c, ev->de_seq);
+		if (ev->de_op == DQ_OP_CLOSE)
+			c->fence_closes++;
+		if (ev->de_op != DQ_OP_READ || ev->de_id == 0)
+			return (false);
+		c->fence_reads++;
+		pr->serve_ev = NULL;
+		pr->serve_obj = NULL;
+		pr->id = ev->de_id;
+		pr->error = 0;
+		pr->data = o->data;
+		pr->len = o->len;
+		return (true);
+	}
 	c->records++;
 	if (ev->de_op <= DQ_OP_REPLY)
 		c->events[ev->de_op]++;
@@ -310,7 +281,6 @@ dqt_handle_record(struct dqt_ctl *c, const struct dq_event *ev,
 		c->op_seq[ev->de_op] = ev->de_seq;
 		c->op_caller[ev->de_op] = ev->de_caller;
 	}
-	o = dqt_object_by_id(c, ev->de_object);
 	pr->serve_ev = NULL;
 	pr->serve_obj = NULL;
 	dqt_record_body(c, o, ev);
@@ -415,7 +385,7 @@ dqt_handle_record(struct dqt_ctl *c, const struct dq_event *ev,
 		return (false);
 	default:
 		/*
-		 * A stage 1b event on a memory object: held when asked, else
+		 * A write-path event on a memory object: held when asked, else
 		 * answered with the object's serve_errno (EIO, or ENOLCK for
 		 * a lock, when none is set) and no body.
 		 */
@@ -442,7 +412,7 @@ dqt_process_batch(struct dqt_ctl *c, const char *buf, size_t len)
 	const struct dq_event *recs[DQT_READ_BUFSIZE / sizeof(struct dq_event)];
 	struct dqt_pending_reply replies[nitems(recs)];
 	const struct dq_event *ev;
-	int i, n, nreplies, step, start;
+	int delay, i, n, nreplies, step, start;
 
 	n = 0;
 	for (ev = dq_event_first(buf, len); ev != NULL;
@@ -468,12 +438,13 @@ dqt_process_batch(struct dqt_ctl *c, const char *buf, size_t len)
 		if (dqt_handle_record(c, recs[i], &replies[nreplies]))
 			nreplies++;
 	}
+	delay = c->reply_delay_ms;
 	pthread_mutex_unlock(&c->mtx);
 
 	if (nreplies == 0)
 		return;
-	if (c->reply_delay_ms > 0)
-		dqt_msleep(c->reply_delay_ms);
+	if (delay > 0)
+		dqt_msleep(delay);
 	for (i = 0; i < nreplies; i++) {
 		if (replies[i].serve_ev != NULL) {
 			struct dqt_object *so = replies[i].serve_obj;
@@ -505,15 +476,26 @@ dqt_process_batch(struct dqt_ctl *c, const char *buf, size_t len)
 	}
 }
 
+static void
+dqt_batch_done(struct dqt_ctl *c)
+{
+
+	pthread_mutex_lock(&c->mtx);
+	c->inbatch--;
+	pthread_cond_broadcast(&c->cv);
+	pthread_mutex_unlock(&c->mtx);
+}
+
 static void *
 dqt_reader(void *arg)
 {
-	struct dqt_ctl *c = arg;
+	struct dqt_reader_arg *ra = arg;
+	struct dqt_ctl *c = ra->c;
 	struct pollfd pfd;
 	struct timespec ts;
 	char *buf;
 	ssize_t got;
-	int q;
+	int err, q;
 
 	buf = malloc(DQT_READ_BUFSIZE);
 	if (buf == NULL)
@@ -552,17 +534,25 @@ dqt_reader(void *arg)
 			pthread_mutex_unlock(&c->mtx);
 			continue;
 		}
+		/* From here to the last reply: dqt_pause waits for it. */
+		c->inbatch++;
 		pthread_mutex_unlock(&c->mtx);
 		/*
 		 * The queue is non-blocking: with two readers both wake on
 		 * poll and the loser must not sleep in read(2) forever.
 		 */
 		if (dq_read_events(q, buf, DQT_READ_BUFSIZE, &got) == -1) {
-			if (errno == EAGAIN || errno == EINTR)
+			err = errno;
+			dqt_batch_done(c);
+			if (err == EAGAIN || err == EINTR)
 				continue;
 			break;	/* ENXIO: the queue is gone */
 		}
+		pthread_mutex_lock(&c->mtx);
+		c->thr_batches[ra->idx]++;
+		pthread_mutex_unlock(&c->mtx);
 		dqt_process_batch(c, buf, (size_t)got);
+		dqt_batch_done(c);
 	}
 	free(buf);
 	return (NULL);
@@ -591,9 +581,12 @@ dqt_start(struct dqt_ctl *c, int nreaders)
 	ATF_REQUIRE(flags != -1);
 	ATF_REQUIRE_EQ(0, fcntl(c->q, F_SETFL, flags | O_NONBLOCK));
 	c->nthr = nreaders;
-	for (i = 0; i < nreaders; i++)
+	for (i = 0; i < nreaders; i++) {
+		c->rarg[i].c = c;
+		c->rarg[i].idx = i;
 		ATF_REQUIRE_EQ(0, pthread_create(&c->thr[i], NULL, dqt_reader,
-		    c));
+		    &c->rarg[i]));
+	}
 }
 
 void
@@ -632,10 +625,13 @@ dqt_close_queue(struct dqt_ctl *c)
 void
 dqt_fini(struct dqt_ctl *c)
 {
-	int i;
+	int i, n;
 
 	dqt_stop(c);
-	for (i = 0; i < c->nobjs; i++) {
+	pthread_mutex_lock(&c->mtx);
+	n = c->nobjs;
+	pthread_mutex_unlock(&c->mtx);
+	for (i = 0; i < n; i++) {
 		if (c->objs[i].fd != -1) {
 			(void)close(c->objs[i].fd);
 			c->objs[i].fd = -1;
@@ -654,15 +650,130 @@ dqt_fini(struct dqt_ctl *c)
 	pthread_mutex_destroy(&c->mtx);
 }
 
+/*
+ * A lock taken twice (EDEADLK from the error-checking mutex) or released
+ * unheld (EPERM) is a test bug that would read state unlocked: abort.
+ */
+void
+dqt_lock(struct dqt_ctl *c)
+{
+	int error;
+
+	error = pthread_mutex_lock(&c->mtx);
+	if (error != 0) {
+		fprintf(stderr, "dqt_lock: %s\n", strerror(error));
+		abort();
+	}
+}
+
+void
+dqt_unlock(struct dqt_ctl *c)
+{
+	int error;
+
+	error = pthread_mutex_unlock(&c->mtx);
+	if (error != 0) {
+		fprintf(stderr, "dqt_unlock: %s\n", strerror(error));
+		abort();
+	}
+}
+
+unsigned
+dqt_events(struct dqt_ctl *c, uint32_t op)
+{
+	unsigned n;
+
+	ATF_REQUIRE(op <= DQ_OP_REPLY);
+	pthread_mutex_lock(&c->mtx);
+	n = c->events[op];
+	pthread_mutex_unlock(&c->mtx);
+	return (n);
+}
+
+void
+dqt_set_order(struct dqt_ctl *c, enum dqt_order order)
+{
+
+	pthread_mutex_lock(&c->mtx);
+	c->order = order;
+	pthread_mutex_unlock(&c->mtx);
+}
+
+void
+dqt_set_reply_delay(struct dqt_ctl *c, int ms)
+{
+
+	pthread_mutex_lock(&c->mtx);
+	c->reply_delay_ms = ms;
+	pthread_mutex_unlock(&c->mtx);
+}
+
+void
+dqt_resolve_fail(struct dqt_ctl *c, const char *match, int error)
+{
+
+	pthread_mutex_lock(&c->mtx);
+	if (match != NULL)
+		(void)strlcpy(c->resolve_fail_match, match,
+		    sizeof(c->resolve_fail_match));
+	c->resolve_fail_errno = error;
+	pthread_mutex_unlock(&c->mtx);
+	ATF_REQUIRE(match == NULL || strlen(match) < DQT_RPATH);
+}
+
+void
+dqt_resolve_hold(struct dqt_ctl *c, const char *match, uint32_t op)
+{
+
+	pthread_mutex_lock(&c->mtx);
+	(void)strlcpy(c->resolve_hold_match, match != NULL ? match : "",
+	    sizeof(c->resolve_hold_match));
+	c->resolve_hold_op = op;
+	pthread_mutex_unlock(&c->mtx);
+	ATF_REQUIRE(match == NULL || strlen(match) < DQT_RPATH);
+}
+
+void
+dqt_resolve_errno(struct dqt_ctl *c, uint32_t op, int error)
+{
+
+	ATF_REQUIRE(op <= DQ_ROP_MAX);
+	pthread_mutex_lock(&c->mtx);
+	c->resolve_errno[op] = error;
+	pthread_mutex_unlock(&c->mtx);
+}
+
+void
+dqt_object_serve_errno(struct dqt_ctl *c, struct dqt_object *o, int error)
+{
+
+	pthread_mutex_lock(&c->mtx);
+	o->serve_errno = error;
+	pthread_mutex_unlock(&c->mtx);
+}
+
+void
+dqt_object_read_errno(struct dqt_ctl *c, struct dqt_object *o, int error)
+{
+
+	pthread_mutex_lock(&c->mtx);
+	o->read_errno = error;
+	pthread_mutex_unlock(&c->mtx);
+}
+
 void
 dqt_pause(struct dqt_ctl *c)
 {
 
 	pthread_mutex_lock(&c->mtx);
 	c->paused = true;
+	/*
+	 * A reader already past the check finishes its current batch,
+	 * replies (and any reply_delay_ms) included; none starts another.
+	 */
+	while (c->inbatch > 0)
+		pthread_cond_wait(&c->cv, &c->mtx);
 	pthread_mutex_unlock(&c->mtx);
-	/* A reader already past the check finishes its current batch. */
-	dqt_msleep(2 * DQT_POLL_MS);
 }
 
 void
@@ -700,6 +811,47 @@ dqt_fill(unsigned char *buf, size_t len, unsigned seed)
 		x = x * 1103515245u + 12345u;
 		buf[i] = (unsigned char)(x >> 16);
 	}
+}
+
+int
+dqt_make_rw(const char *name, const void *data, size_t len, char *path,
+    size_t pathlen)
+{
+	int fd;
+
+	fd = dqt_make_oracle(name, data, len, path, pathlen);
+	(void)close(fd);
+	fd = open(path, O_RDWR);
+	ATF_REQUIRE_MSG(fd != -1, "open %s: %s", path, strerror(errno));
+	return (fd);
+}
+
+void
+dqt_fixture_init(struct dqt_fixture *f, const void *data, size_t len,
+    char *backing_path, char *oracle_path, const struct dq_policy *pol,
+    uint32_t mflags)
+{
+
+	f->backing = dqt_make_rw("backing", data, len, backing_path,
+	    DQT_PATH_MAX);
+	f->oracle = oracle_path == NULL ? -1 :
+	    dqt_make_rw("oracle", data, len, oracle_path, DQT_PATH_MAX);
+	dqt_init(&f->c);
+	f->o = dqt_mint_backing(&f->c, f->backing, backing_path, pol, mflags);
+}
+
+void
+dqt_fixture_fini(struct dqt_fixture *f)
+{
+
+	dqt_lock(&f->c);
+	ATF_CHECK_EQ_MSG(0, f->c.reply_failures, "reply failures: last %d",
+	    f->c.last_reply_errno);
+	dqt_unlock(&f->c);
+	dqt_fini(&f->c);
+	(void)close(f->backing);
+	if (f->oracle != -1)
+		(void)close(f->oracle);
 }
 
 int
@@ -760,14 +912,18 @@ dqt_mint_common(struct dqt_ctl *c, const struct dq_ident_file *ident,
 {
 	struct dq_policy defpol;
 	struct dqt_object *o;
-	int reason;
+	int reason, slot;
 
 	if (pol == NULL) {
 		dq_policy_default(&defpol);
 		pol = &defpol;
 	}
-	ATF_REQUIRE(c->nobjs < DQT_MAX_OBJECTS);
-	o = &c->objs[c->nobjs];
+	/* Only this thread mints: the slot stays free until it is counted. */
+	pthread_mutex_lock(&c->mtx);
+	slot = c->nobjs;
+	pthread_mutex_unlock(&c->mtx);
+	ATF_REQUIRE(slot < DQT_MAX_OBJECTS);
+	o = &c->objs[slot];
 	memset(o, 0, sizeof(*o));
 	o->ident = *ident;
 	o->data = data;
@@ -855,6 +1011,7 @@ dqt_mint(struct dqt_ctl *c, int oracle_fd, const char *path, const void *data,
 
 struct dqt_object *
 dqt_object_by_id(struct dqt_ctl *c, uint64_t id)
+    __requires_exclusive(c->mtx)
 {
 	int i;
 
@@ -866,8 +1023,344 @@ dqt_object_by_id(struct dqt_ctl *c, uint64_t id)
 }
 
 /*
+ * Fences
+ */
+
+static const unsigned char dqt_fence_byte = 'f';
+
+static void
+dqt_fence_child(void *arg, void *result)
+{
+	struct dqt_rr *r = result;
+	unsigned char b;
+
+	r->rv = pread(*(int *)arg, &b, 1, 0);
+	r->err = r->rv == -1 ? errno : 0;
+}
+
+/* A sentinel object presenting the identity of a file of its own. */
+static struct dqt_object *
+dqt_fence_mint(struct dqt_ctl *c, const char *name, uint32_t events)
+{
+	char path[DQT_PATH_MAX];
+	struct dq_policy pol;
+	struct dqt_object *o;
+	int fd;
+
+	fd = dqt_make_oracle(name, &dqt_fence_byte, 1, path, sizeof(path));
+	dq_policy_default(&pol);
+	pol.dp_events = events;
+	o = dqt_mint(c, fd, path, &dqt_fence_byte, 1, &pol);
+	(void)close(fd);
+	pthread_mutex_lock(&c->mtx);
+	o->fence = true;
+	pthread_mutex_unlock(&c->mtx);
+	return (o);
+}
+
+void
+dqt_fence(struct dqt_ctl *c)
+{
+	struct dqt_rr r;
+	unsigned before, after;
+	bool paused;
+
+	pthread_mutex_lock(&c->mtx);
+	paused = c->paused;
+	before = c->fence_reads;
+	pthread_mutex_unlock(&c->mtx);
+	ATF_REQUIRE_MSG(c->nthr == 1 && !paused, "a fence needs one reader "
+	    "thread, not paused");
+	if (c->fence_obj == NULL)
+		c->fence_obj = dqt_fence_mint(c, "dqt-fence", 0);
+	dqt_run_child(dqt_fence_child, &c->fence_obj->fd, &r, sizeof(r));
+	ATF_REQUIRE_EQ_MSG(1, r.rv, "the fence's read: %s", strerror(r.err));
+	pthread_mutex_lock(&c->mtx);
+	after = c->fence_reads;
+	pthread_mutex_unlock(&c->mtx);
+	ATF_REQUIRE_MSG(after > before, "the fence's READ was answered but "
+	    "not recorded");
+}
+
+static bool
+dqt_cond_fence_closes(struct dqt_ctl *c, uintptr_t n,
+    uintptr_t unused __unused)
+    __requires_exclusive(c->mtx)
+{
+
+	return (c->fence_closes >= (unsigned)n);
+}
+
+void
+dqt_close_fence(struct dqt_ctl *c)
+{
+	struct dqt_object *o;
+	unsigned before;
+
+	pthread_mutex_lock(&c->mtx);
+	before = c->fence_closes;
+	pthread_mutex_unlock(&c->mtx);
+	o = dqt_fence_mint(c, "dqt-close-fence", DQ_EVENTS_CLOSE);
+	ATF_REQUIRE_EQ(0, close(o->fd));
+	o->fd = -1;
+	ATF_REQUIRE_MSG(dqt_wait_cond(c, dqt_cond_fence_closes,
+	    (uintptr_t)before + 1, 0, DQT_WAIT_MS), "the close fence's CLOSE "
+	    "did not arrive");
+}
+
+/*
  * Requesters
  */
+
+/*
+ * The child's half: run fn, send the whole result and exit 0, or exit
+ * DQT_EXIT_NORESULT when the result could not be sent.  A child that dies
+ * in fn never writes, and its parent sees a short result.
+ */
+static void
+dqt_child_run(int resfd, dqt_child_fn fn, void *arg)
+{
+	char result[DQT_RESULT_MAX];
+
+	memset(result, 0, sizeof(result));
+	fn(arg, result);
+	_exit(write(resfd, result, sizeof(result)) == (ssize_t)sizeof(result) ?
+	    0 : DQT_EXIT_NORESULT);
+}
+
+size_t
+dqt_read_full(int fd, void *buf, size_t len)
+{
+	char *p;
+	ssize_t n;
+	size_t off;
+
+	p = buf;
+	for (off = 0; off < len; off += (size_t)n) {
+		n = read(fd, p + off, len - off);
+		if (n == -1 && errno == EINTR) {
+			n = 0;
+			continue;
+		}
+		if (n <= 0)
+			break;
+	}
+	return (off);
+}
+
+const char *
+dqt_status_str(int status, char *buf, size_t len)
+{
+
+	if (WIFEXITED(status))
+		snprintf(buf, len, "exit %d", WEXITSTATUS(status));
+	else if (WIFSIGNALED(status))
+		snprintf(buf, len, "signal %d%s", WTERMSIG(status),
+		    WCOREDUMP(status) ? " (core dumped)" : "");
+	else
+		snprintf(buf, len, "status %#x", status);
+	return (buf);
+}
+
+void
+dqt_run_ints(int q, dqt_int_fn fn, void *arg, int *res, int nres, uid_t uid,
+    bool attach)
+{
+	int go[2], back[2], pd, status;
+	size_t got, len;
+	pid_t pid;
+	char c;
+
+	len = sizeof(int) * (size_t)nres;
+	memset(res, 0, len);
+	ATF_REQUIRE(pipe(go) == 0 && pipe(back) == 0);
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		int *r;
+
+		(void)close(q);
+		if (uid != (uid_t)-1 && (setgid(uid) != 0 || setuid(uid) != 0))
+			_exit(2);
+		r = calloc((size_t)nres, sizeof(int));
+		if (r == NULL || read(go[0], &c, 1) != 1)
+			_exit(1);
+		fn(arg, r);
+		_exit(write(back[1], r, len) == (ssize_t)len ? 0 :
+		    DQT_EXIT_NORESULT);
+	}
+	/* Only the child holds the write ends: its death is an EOF here. */
+	(void)close(go[0]);
+	(void)close(back[1]);
+	if (attach)
+		ATF_REQUIRE_MSG(dq_attach(q, pd) == 0, "attach: %s",
+		    strerror(errno));
+	ATF_REQUIRE(write(go[1], "g", 1) == 1);
+	got = dqt_read_full(back[0], res, len);
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	(void)close(pd);
+	(void)close(go[1]);
+	(void)close(back[0]);
+	dqt_require_exit0(status, "requester");
+	ATF_REQUIRE_EQ(len, got);
+}
+
+bool
+dqt_pred_current(const struct dq_stats *st, uintptr_t n)
+{
+
+	return (st->ds_queue_current >= n);
+}
+
+uint64_t
+dqt_digest(const void *p, size_t len)
+{
+	const unsigned char *b = p;
+	uint64_t h;
+	size_t i;
+
+	h = 14695981039346656037ULL;
+	for (i = 0; i < len; i++) {
+		h ^= b[i];
+		h *= 1099511628211ULL;
+	}
+	return (h);
+}
+
+void
+dqt_idle_spawn(struct dqt_idle *s, int rfflags, int pdflags,
+    const char *exec_path, const char *exec_arg, dqt_idle_prep prep,
+    void *arg)
+{
+	ssize_t n;
+	char b;
+	int error, ready[2];
+	bool copied;
+
+	/* A table shared with the parent: rfork without RFFDG or RFCFDG. */
+	copied = rfflags == 0 || (rfflags & (RFFDG | RFCFDG)) != 0;
+	ATF_REQUIRE_EQ(0, pipe(s->go));
+	ATF_REQUIRE_EQ(0, pipe(ready));
+	if (rfflags != 0)
+		s->pid = pdrfork(&s->pd, pdflags, rfflags);
+	else
+		s->pid = pdfork(&s->pd, pdflags);
+	ATF_REQUIRE_MSG(s->pid != -1, "pdfork: %s", strerror(errno));
+	if (s->pid != 0) {
+		/*
+		 * The target is what the caller asked for (in its jail, as
+		 * nobody) only once prep has run: wait for that.  In a
+		 * copied table the parent's write end goes first, so a child
+		 * that fails prep is an end of file here.
+		 */
+		if (copied)
+			(void)close(ready[1]);
+		n = dqt_read_full(ready[0], &b, 1);
+		(void)close(ready[0]);
+		if (!copied)
+			(void)close(ready[1]);
+		ATF_REQUIRE_MSG(n == 1, "the idle target ended before it was "
+		    "ready (prep failed)");
+		return;
+	}
+	/*
+	 * A copied table drops its write ends, so a parent that dies is an
+	 * end of file.  A shared table must keep them: the close would be
+	 * the parent's.
+	 */
+	if (copied) {
+		(void)close(s->go[1]);
+		(void)close(ready[0]);
+	}
+	if (prep != NULL && (error = prep(arg)) != 0)
+		_exit(error);
+	if (write(ready[1], "r", 1) != 1)
+		_exit(6);
+	if (copied)
+		(void)close(ready[1]);
+	/*
+	 * Not before the parent says so: a NOTE_EXEC filter added after the
+	 * exec never reports it.
+	 */
+	if (read(s->go[0], &b, 1) != 1)
+		_exit(exec_path != NULL ? 4 : 0);
+	if (exec_path != NULL) {
+		execl(exec_path, exec_path, exec_arg, (char *)NULL);
+		_exit(3);
+	}
+	_exit(0);
+}
+
+void
+dqt_idle_exec(struct dqt_idle *s)
+{
+	struct kevent kev;
+	struct timespec ts = { 30, 0 };
+	int kq;
+
+	kq = kqueue();
+	ATF_REQUIRE(kq != -1);
+	EV_SET(&kev, s->pd, EVFILT_PROCDESC, EV_ADD, NOTE_EXEC | NOTE_EXIT, 0,
+	    NULL);
+	ATF_REQUIRE_EQ(0, kevent(kq, &kev, 1, NULL, 0, NULL));
+	ATF_REQUIRE_EQ(1, write(s->go[1], "g", 1));
+	ATF_REQUIRE_EQ_MSG(1, kevent(kq, NULL, 0, &kev, 1, &ts),
+	    "the target neither exec'd nor exited in 30 s");
+	ATF_REQUIRE_MSG((kev.fflags & NOTE_EXIT) == 0 &&
+	    (kev.fflags & NOTE_EXEC) != 0, "the target did not exec: %#x",
+	    kev.fflags);
+	(void)close(kq);
+}
+
+void
+dqt_idle_end(struct dqt_idle *s)
+{
+	int status;
+
+	(void)write(s->go[1], "x", 1);
+	(void)pdkill(s->pd, SIGKILL);
+	(void)pdwait(s->pd, &status, WEXITED, NULL, NULL);
+	(void)close(s->pd);
+	(void)close(s->go[0]);
+	(void)close(s->go[1]);
+}
+
+void
+dqt_child_read(void *arg, void *result)
+{
+	struct dqt_read_arg *a = arg;
+	struct dqt_rr *r = result;
+	unsigned char buf[4096];
+
+	r->rv = read(a->fd, buf, MIN(a->len, sizeof(buf)));
+	r->err = r->rv == -1 ? errno : 0;
+}
+
+void
+dqt_require_exit0(int status, const char *what)
+{
+	char sbuf[64];
+
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "%s: %s", what, dqt_status_str(status, sbuf, sizeof(sbuf)));
+}
+
+/*
+ * The parent's half of collecting a result: got bytes arrived out of
+ * resultlen.  A result is only trusted whole; a short one is zeroed so
+ * that no assertion reads stale bytes.  A child that exited 0 without its
+ * whole result is a harness failure, whatever the caller expects.
+ */
+static void
+dqt_result_check(int status, size_t got, void *result, size_t resultlen)
+{
+
+	if (got == resultlen)
+		return;
+	memset(result, 0, resultlen);
+	ATF_REQUIRE_MSG(!WIFEXITED(status) || WEXITSTATUS(status) != 0,
+	    "requester exited 0 with %zu of %zu result bytes", got, resultlen);
+}
 
 void
 dqt_spawn(struct dqt_child *ch, dqt_child_fn fn, void *arg)
@@ -878,14 +1371,8 @@ dqt_spawn(struct dqt_child *ch, dqt_child_fn fn, void *arg)
 	ch->pid = fork();
 	ATF_REQUIRE_MSG(ch->pid != -1, "fork: %s", strerror(errno));
 	if (ch->pid == 0) {
-		char result[4096];
-
 		(void)close(pfd[0]);
-		memset(result, 0, sizeof(result));
-		fn(arg, result);
-		/* The parent reads what it expects; the rest is ignored. */
-		(void)write(pfd[1], result, sizeof(result));
-		_exit(0);
+		dqt_child_run(pfd[1], fn, arg);
 	}
 	(void)close(pfd[1]);
 	ch->pipefd = pfd[0];
@@ -894,35 +1381,33 @@ dqt_spawn(struct dqt_child *ch, dqt_child_fn fn, void *arg)
 int
 dqt_wait(struct dqt_child *ch, void *result, size_t resultlen)
 {
-	char *p;
-	ssize_t n;
-	size_t off;
+	size_t got;
 	int status;
 
-	ATF_REQUIRE(resultlen <= 4096);
-	p = result;
-	for (off = 0; off < resultlen; off += (size_t)n) {
-		n = read(ch->pipefd, p + off, resultlen - off);
-		if (n <= 0)
-			break;
-	}
+	ATF_REQUIRE(resultlen <= DQT_RESULT_MAX);
+	got = dqt_read_full(ch->pipefd, result, resultlen);
 	(void)close(ch->pipefd);
 	ch->pipefd = -1;
 	ATF_REQUIRE_MSG(waitpid(ch->pid, &status, 0) == ch->pid, "waitpid: %s",
 	    strerror(errno));
+	dqt_result_check(status, got, result, resultlen);
 	return (status);
+}
+
+void
+dqt_collect(struct dqt_child *ch, void *result, size_t resultlen)
+{
+
+	dqt_require_exit0(dqt_wait(ch, result, resultlen), "requester");
 }
 
 void
 dqt_run_child(dqt_child_fn fn, void *arg, void *result, size_t resultlen)
 {
 	struct dqt_child ch;
-	int status;
 
 	dqt_spawn(&ch, fn, arg);
-	status = dqt_wait(&ch, result, resultlen);
-	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
-	    "requester child failed, status %#x", status);
+	dqt_collect(&ch, result, resultlen);
 }
 
 /*
@@ -940,18 +1425,67 @@ dqt_msleep(int ms)
 		continue;
 }
 
-static bool
-dqt_wait_cond(struct dqt_ctl *c, bool (*cond)(struct dqt_ctl *, uintptr_t,
-    uintptr_t), uintptr_t a, uintptr_t b, int ms)
+bool
+dqt_wait_wmesg(pid_t pid, const char *wmesg, int ms)
 {
-	int waited;
+	struct kinfo_proc *kp;
+	int64_t deadline;
+	size_t len;
+	int i, mib[4], n;
+	bool found;
+
+	mib[0] = CTL_KERN;
+	mib[1] = KERN_PROC;
+	mib[2] = KERN_PROC_PID | KERN_PROC_INC_THREAD;
+	mib[3] = pid;
+	deadline = dqt_now_ms() + ms;
+	for (;;) {
+		found = false;
+		len = 0;
+		if (sysctl(mib, nitems(mib), NULL, &len, NULL, 0) == 0 &&
+		    len != 0) {
+			len *= 2;
+			kp = malloc(len);
+			if (kp != NULL &&
+			    sysctl(mib, nitems(mib), kp, &len, NULL, 0) == 0) {
+				n = (int)(len / sizeof(*kp));
+				for (i = 0; i < n && !found; i++)
+					found = strcmp(kp[i].ki_wmesg,
+					    wmesg) == 0;
+			}
+			free(kp);
+		}
+		if (found)
+			return (true);
+		if (dqt_now_ms() >= deadline)
+			return (false);
+		dqt_msleep(5);
+	}
+}
+
+int64_t
+dqt_now_ms(void)
+{
+	struct timespec ts;
+
+	(void)clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ((int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+}
+
+/* cond(c, a, b) under the lock, until it holds or ms have passed. */
+bool
+dqt_wait_cond(struct dqt_ctl *c, dqt_cond_fn cond, uintptr_t a, uintptr_t b,
+    int ms)
+{
+	int64_t deadline;
 	bool ok;
 
-	for (waited = 0;; waited += 10) {
+	deadline = dqt_now_ms() + ms;
+	for (;;) {
 		pthread_mutex_lock(&c->mtx);
 		ok = cond(c, a, b);
 		pthread_mutex_unlock(&c->mtx);
-		if (ok || waited >= ms)
+		if (ok || dqt_now_ms() >= deadline)
 			return (ok);
 		dqt_msleep(10);
 	}
@@ -959,6 +1493,7 @@ dqt_wait_cond(struct dqt_ctl *c, bool (*cond)(struct dqt_ctl *, uintptr_t,
 
 static bool
 dqt_cond_events(struct dqt_ctl *c, uintptr_t op, uintptr_t n)
+    __requires_exclusive(c->mtx)
 {
 
 	return (c->events[op] >= (unsigned)n);
@@ -966,6 +1501,7 @@ dqt_cond_events(struct dqt_ctl *c, uintptr_t op, uintptr_t n)
 
 static bool
 dqt_cond_held(struct dqt_ctl *c, uintptr_t n, uintptr_t unused __unused)
+    __requires_exclusive(c->mtx)
 {
 
 	return (c->nheld >= (int)n);
@@ -973,6 +1509,7 @@ dqt_cond_held(struct dqt_ctl *c, uintptr_t n, uintptr_t unused __unused)
 
 static bool
 dqt_cond_interrupts(struct dqt_ctl *c, uintptr_t n, uintptr_t unused __unused)
+    __requires_exclusive(c->mtx)
 {
 
 	return (c->ninterrupted >= (int)n);
@@ -1001,6 +1538,7 @@ dqt_wait_interrupts(struct dqt_ctl *c, int n, int ms)
 
 static bool
 dqt_cond_locks(struct dqt_ctl *c __unused, uintptr_t o, uintptr_t n)
+    __requires_exclusive(c->mtx)
 {
 
 	return (((struct dqt_object *)o)->nlocks >= (int)n);
@@ -1034,16 +1572,38 @@ bool
 dqt_wait_stats(struct dqt_ctl *c, dqt_stats_pred pred, uintptr_t arg, int ms)
 {
 	struct dq_stats st;
-	int waited;
+	int64_t deadline;
 
-	for (waited = 0;; waited += 10) {
+	deadline = dqt_now_ms() + ms;
+	for (;;) {
 		dqt_stats(c, &st);
 		if (pred(&st, arg))
 			return (true);
-		if (waited >= ms)
+		if (dqt_now_ms() >= deadline)
 			return (false);
 		dqt_msleep(10);
 	}
+}
+
+void
+dqt_copy_helper(const atf_tc_t *tc, const char *prog, const char *name)
+{
+	char buf[8192], path[PATH_MAX];
+	ssize_t n;
+	int in, out;
+
+	ATF_REQUIRE((size_t)snprintf(path, sizeof(path), "%s/%s",
+	    atf_tc_get_config_var(tc, "srcdir"), prog) < sizeof(path));
+	in = open(path, O_RDONLY);
+	ATF_REQUIRE_MSG(in != -1, "%s: %s", path, strerror(errno));
+	out = open(name, O_WRONLY | O_CREAT | O_TRUNC, 0755);
+	ATF_REQUIRE_MSG(out != -1, "%s: %s", name, strerror(errno));
+	while ((n = read(in, buf, sizeof(buf))) > 0)
+		ATF_REQUIRE_EQ(n, write(out, buf, (size_t)n));
+	ATF_REQUIRE_MSG(n == 0, "%s: %s", path, strerror(errno));
+	ATF_REQUIRE_EQ(0, close(in));
+	ATF_REQUIRE_EQ(0, fchmod(out, 0755));
+	ATF_REQUIRE_EQ(0, close(out));
 }
 
 /* As tests/sys/file/fsetattr_test.c mount_fdesc(), plus one option. */
@@ -1244,7 +1804,7 @@ dqt_sync_wait(int fd, int ms)
 }
 
 /*
- * Resolution (1c)
+ * Resolution
  */
 
 void
@@ -1259,16 +1819,11 @@ dqt_attach_spawn(struct dqt_ctl *c, struct dqt_achild *ch, dqt_child_fn fn,
 	ch->pid = pdfork(&ch->pd, 0);
 	ATF_REQUIRE_MSG(ch->pid != -1, "pdfork: %s", strerror(errno));
 	if (ch->pid == 0) {
-		char result[4096];
-
 		(void)close(go[1]);
 		(void)close(res[0]);
 		if (read(go[0], &b, 1) != 1)
-			_exit(2);
-		memset(result, 0, sizeof(result));
-		fn(arg, result);
-		(void)write(res[1], result, sizeof(result));
-		_exit(0);
+			_exit(DQT_EXIT_NOGO);
+		dqt_child_run(res[1], fn, arg);
 	}
 	(void)close(go[0]);
 	(void)close(res[1]);
@@ -1283,25 +1838,37 @@ dqt_attach_spawn(struct dqt_ctl *c, struct dqt_achild *ch, dqt_child_fn fn,
 int
 dqt_attach_wait(struct dqt_achild *ch, void *result, size_t resultlen)
 {
-	char *p;
-	ssize_t n;
-	size_t off;
+	size_t got;
 	int status;
 
-	ATF_REQUIRE(resultlen <= 4096);
-	p = result;
-	for (off = 0; off < resultlen; off += (size_t)n) {
-		n = read(ch->pipefd, p + off, resultlen - off);
-		if (n <= 0)
-			break;
-	}
+	ATF_REQUIRE(resultlen <= DQT_RESULT_MAX);
+	got = dqt_read_full(ch->pipefd, result, resultlen);
 	(void)close(ch->pipefd);
 	ch->pipefd = -1;
 	ATF_REQUIRE_MSG(pdwait(ch->pd, &status, WEXITED, NULL, NULL) == 0,
 	    "pdwait: %s", strerror(errno));
 	(void)close(ch->pd);
 	ch->pd = -1;
+	dqt_result_check(status, got, result, resultlen);
 	return (status);
+}
+
+void
+dqt_attach_collect(struct dqt_achild *ch, void *result, size_t resultlen)
+{
+
+	dqt_require_exit0(dqt_attach_wait(ch, result, resultlen),
+	    "attached requester");
+}
+
+void
+dqt_attach_run(struct dqt_ctl *c, dqt_child_fn fn, void *arg, void *result,
+    size_t resultlen)
+{
+	struct dqt_achild ch;
+
+	dqt_attach_spawn(c, &ch, fn, arg);
+	dqt_attach_collect(&ch, result, resultlen);
 }
 
 int
@@ -1321,6 +1888,28 @@ dqt_find_resolve(struct dqt_ctl *c, const char *match, uint32_t op, int from)
 	}
 	pthread_mutex_unlock(&c->mtx);
 	return (found);
+}
+
+uint64_t
+dqt_held_id(struct dqt_ctl *c, int i)
+{
+	uint64_t id;
+
+	pthread_mutex_lock(&c->mtx);
+	ATF_REQUIRE_MSG(i >= 0 && i < c->nheld, "held[%d] of %d", i, c->nheld);
+	id = c->held[i].id;
+	pthread_mutex_unlock(&c->mtx);
+	return (id);
+}
+
+void
+dqt_resolve_at(struct dqt_ctl *c, int i, struct dqt_resolve_seen *rs)
+{
+
+	pthread_mutex_lock(&c->mtx);
+	ATF_REQUIRE_MSG(i >= 0 && i < c->nrs, "rs[%d] of %d", i, c->nrs);
+	*rs = c->rs[i];
+	pthread_mutex_unlock(&c->mtx);
 }
 
 int

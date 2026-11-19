@@ -70,7 +70,17 @@ ATF_TC_BODY(disk_import_and_binding, tc)
 
 	snprintf(input, sizeof(input), "%s/scratch-device", atf_tc_get_config_var(tc, "srcdir"));
 	file = fopen(input, "r");
-	ATF_REQUIRE_MSG(file != NULL, "explicit disposable scratch-device input required");
+	/*
+	 * The input is an environment requirement: without it there is no
+	 * disk this destructive case may use.  An input that exists but
+	 * cannot be read, or is malformed, still fails.
+	 */
+	if (file == NULL && errno == ENOENT)
+		atf_tc_skip("DEFERRED_GUEST_SETUP: requires the explicit "
+		    "disposable scratch-device input %s (a disk of a disposable "
+		    "VM)", input);
+	ATF_REQUIRE_MSG(file != NULL, "cannot read the scratch-device input %s: %s",
+	    input, strerror(errno));
 	ATF_REQUIRE(fgets(device, sizeof(device), file) != NULL);
 	ATF_REQUIRE_EQ(EOF, fgetc(file)); fclose(file);
 	device[strcspn(device, "\n")] = '\0';
@@ -143,6 +153,9 @@ ATF_TC_CLEANUP(disk_import_and_binding, tc)
 {
 	char pool[128];
 	zht_poolname(tc, pool, sizeof(pool));
+	/* A body that skipped or failed early created no pool. */
+	if (zht_systemf("zpool list -H -o name %s >/dev/null 2>&1", pool) != 0)
+		return;
 	for (unsigned i = 0; i < 20; i++) {
 		if (zht_systemf("zpool destroy -f %s", pool) == 0) return;
 		usleep(100000);

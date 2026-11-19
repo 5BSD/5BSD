@@ -1,0 +1,253 @@
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
+# Shared by dq_oracle_test and dq_tree_suites_test, which run kyua suites
+# twice and compare the per-case results apart from the expected
+# differences (dqpass.expected, dqtree.expected).  A comparison must have
+# compared something: every function here fails rather than let an empty
+# or missing result pass.
+#
+
+# kyua test, whose status must be 0 (all passed) or 1 (some did not):
+# anything else is kyua failing, and its results cannot be trusted.  A
+# prefix command (dqpass, dqtree) may instead exit 125: the suite ran, but
+# the controller saw a dropped, failed-closed or unmarked consultation or
+# a malformed reply.  Returns the status: 0, 1 or 125.  kyua's output is
+# kept in RESULTS_FILE's base name plus ".out" in the work directory and
+# printed when kyua itself failed.
+# usage: dq_kyua_test RESULTS_FILE KYUAFILE [prefix command ...]
+dq_kyua_test()
+{
+	local db kf out rc
+
+	db="$1"; kf="$2"; shift 2
+	out="$(basename "${db}").out"
+	"$@" kyua test --results-file="${db}" -k "${kf}" > "${out}" 2>&1
+	rc=$?
+	case "${rc}" in
+	0|1)	return 0 ;;
+	125)	[ $# -gt 0 ] && return 125 ;;
+	esac
+	tail -n 100 "${out}" >&2
+	atf_fail "kyua test of ${kf}${1:+ under $1} exited ${rc}"
+}
+
+# Both runs of a suite compared something: after the exclusions, each has
+# at least one passed case (a suite whose remaining cases all skipped, in
+# both runs, agrees and has compared nothing).
+# usage: dq_require_passed WHAT RES...
+dq_require_passed()
+{
+	local what r
+
+	what="$1"; shift
+	for r in "$@"; do
+		grep -q ' passed$' "${r}" ||
+		    atf_fail "${what}: no case passed in ${r%.res}'s run"
+	done
+}
+
+# kyua's per-case results of a results file, normalized and sorted:
+# "program:case result".  Fails when kyua report fails or finds no case.
+# usage: dq_results RESULTS_FILE OUT
+dq_results()
+{
+
+	kyua report --results-file="$1" \
+	    --results-filter=passed,skipped,xfail,broken,failed \
+	    > "$2.kyua" 2> "$2.err" ||
+	    atf_fail "kyua report $1: $(cat "$2.err")"
+	sed -n -e 's/^\([^ ]*:[^ ]*\)  *->  *\([a-z_]*\).*/\1 \2/p' \
+	    "$2.kyua" | sort > "$2"
+	[ -s "$2" ] || atf_fail "kyua report $1: no case results"
+}
+
+# Check an expected-differences file: every entry is anchored to one
+# program and case ("^program:case[[:space:]]", the case part names cases:
+# letters, digits and "_", with "|", "(", ")" and "?" for alternatives,
+# no wildcard) and carries an owner tag ("# owner: cause").  An unanchored
+# word excludes every case whose name merely contains it, and hides real
+# differences in them.
+# usage: dq_check_expected FILE...
+dq_check_expected()
+{
+	local bad
+
+	bad=$(grep -h -v -E '^[[:space:]]*(#|$)' "$@" | awk '
+	{
+		line = $0
+		i = index(line, "#")
+		p = i > 0 ? substr(line, 1, i - 1) : line
+		sub(/[[:space:]]+$/, "", p)
+		if (i == 0 || substr(line, i + 1) !~ /^[[:space:]]*[^[:space:]:]+[^:]*:/)
+			print "untagged: " line
+		else if (p !~ /^\^[A-Za-z0-9_\/]+:[A-Za-z0-9_|()?]+\[\[:space:\]\]/)
+			print "unanchored: " p
+	}')
+	[ -z "${bad}" ] || {
+		printf '%s\n' "${bad}" >&2
+		atf_fail "expected differences must be \"^program:case[[:space:]]" \
+		    "# owner: cause\""
+	}
+}
+
+# The patterns of expected-differences files, without comments.
+# usage: dq_patterns OUT FILE...
+dq_patterns()
+{
+	local out
+
+	out="$1"; shift
+	sed -e 's/[[:space:]]*#.*$//' -e '/^[[:space:]]*$/d' "$@" > "${out}"
+	[ -s "${out}" ] || atf_fail "no expected-difference patterns"
+}
+
+# Report, for the record, the cases the patterns excluded and how each
+# run ended: an excluded case whose results agree hides nothing, one that
+# differs is the expected difference.
+# usage: dq_excluded PATTERNS A B
+dq_excluded()
+{
+
+	cat "$2" "$3" | grep -E -f "$1" | cut -d ' ' -f 1 | sort -u |
+	    while read -r c; do
+		printf 'excluded %s: %s / %s\n' "${c}" \
+		    "$(grep "^${c} " "$2" | cut -d ' ' -f 2)" \
+		    "$(grep "^${c} " "$3" | cut -d ' ' -f 2)"
+	done >&2
+}
+
+# The value after the word KEY in a controller's report ("... key N ..."),
+# wherever the field stands on its line; empty when KEY is not there.
+# usage: dq_report_value REPORT KEY
+dq_report_value()
+{
+
+	awk -v k="$2" '{
+		for (i = 1; i < NF; i++)
+			if ($i == k) { print $(i + 1); exit }
+	}' "$1"
+}
+
+# The report's counters KEY... are all 0; prints the first that is not
+# (or is missing) and returns 1.
+# usage: dq_report_zero REPORT KEY...
+dq_report_zero()
+{
+	local r k v
+
+	r="$1"; shift
+	for k in "$@"; do
+		v=$(dq_report_value "${r}" "${k}")
+		if [ "${v}" != 0 ]; then
+			echo "${k} ${v:-missing}"
+			return 1
+		fi
+	done
+	return 0
+}
+
+# Record, for the patterns of PATTERNS (one per line, numbered from 1),
+# which matched a case line of A or B ("program:case result"), which
+# matched a case whose results differ between A and B, and whose
+# "^program:case[[:space:]]" part alone (the entry without its result
+# alternation) matched a case line: lines "matched N", "hides N" and
+# "ran N" appended to USED.
+# usage: dq_pattern_use PATTERNS A B USED
+dq_pattern_use()
+{
+
+	awk -v a="$2" -v b="$3" '
+	BEGIN {
+		while ((getline l < a) > 0) {
+			split(l, f, " "); ra[f[1]] = f[2]; seen[f[1]] = 1
+		}
+		while ((getline l < b) > 0) {
+			split(l, f, " "); rb[f[1]] = f[2]; seen[f[1]] = 1
+		}
+	}
+	{
+		n++; m = 0; h = 0; r = 0
+		i = index($0, "[[:space:]]")
+		pc = i > 0 ? substr($0, 1, i + 10) : $0
+		for (c in seen) {
+			if (((c in ra) && (c " " ra[c]) ~ $0) ||
+			    ((c in rb) && (c " " rb[c]) ~ $0)) {
+				m = 1
+				if (!(c in ra) || !(c in rb) || ra[c] != rb[c])
+					h = 1
+			}
+			if ((c " ") ~ pc)
+				r = 1
+		}
+		if (m)
+			print "matched " n
+		if (h)
+			print "hides " n
+		if (r)
+			print "ran " n
+	}' "$1" >> "$4"
+}
+
+# The command name of PID 1 ("capsule" when the capability plane is on):
+# ki_comm of the kern.proc.pid.1 sysctl, which ps(1) prints and
+# procnet_outside_test's require_plane() reads.  Empty when it cannot be
+# read; callers treat that as unknown, never as "plane off".
+dq_pid1()
+{
+
+	ps -o comm= -p 1 2>/dev/null | sed -e 's/[[:space:]]*$//'
+}
+
+# After every suite of the default set has run: fail on an entry of FILE
+# (its patterns numbered from 1, in file order) that matched no case, and
+# report one that hid no difference as stale unless its comment says
+# "intermittent".
+#
+# An entry whose owner tag carries "[plane-on]" ("# by-design D138
+# [plane-on]: ...") describes a difference that exists only with the
+# capability plane on.  On a guest whose PID 1 is not capsule (PLANE_OFF=1)
+# (known, and not capsule: a PID 1 that cannot be read counts as the plane
+# on) such an entry is reported "not exercised" rather than failing, provided
+# its program and case part matched a case of the runs: those cases ran,
+# ended outside the entry's result alternation, and were therefore
+# compared like any other case.  An entry whose cases did not run at all
+# (a renamed or removed case) still fails on every tier.
+# usage: dq_pattern_verdict FILE USED
+dq_pattern_verdict()
+{
+	local n line none pid1
+
+	n=0
+	none=
+	pid1=$(dq_pid1)
+	grep -v -E '^[[:space:]]*(#|$)' "$1" > verdict.lines
+	while IFS= read -r line; do
+		n=$((n + 1))
+		if ! grep -q -x "matched ${n}" "$2"; then
+			case "${pid1}:${line}" in
+			capsule:*|:*) ;;
+			*'[plane-on]'*)
+				if grep -q -x "ran ${n}" "$2"; then
+					echo "not exercised (PID 1 is" \
+					    "${pid1}, a [plane-on]" \
+					    "entry; its cases ran and were" \
+					    "compared): ${line}" >&2
+					continue
+				fi
+				;;
+			esac
+			echo "matches no case: ${line}" >&2
+			none=yes
+		elif ! grep -q -x "hides ${n}" "$2"; then
+			case "${line}" in
+			*intermittent*) ;;
+			*)	echo "stale (hid no difference): ${line}" >&2 ;;
+			esac
+		fi
+	done < verdict.lines
+	[ -z "${none}" ] || atf_fail "$(basename "$1"): entries that match" \
+	    "no case of the suites they are for"
+}

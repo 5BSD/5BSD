@@ -424,6 +424,7 @@ mac_priv_grant(struct ucred *cred, int priv)
 
 int	mac_proc_check_core(struct ucred *cred, struct proc *p);
 int	mac_proc_check_debug(struct ucred *cred, struct proc *p);
+int	mac_proc_check_inspect(struct ucred *cred, struct proc *p);
 
 int	mac_proc_check_fork_impl(struct ucred *cred, int flags);
 #ifdef MAC

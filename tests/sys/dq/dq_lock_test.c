@@ -32,7 +32,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	DATA_LEN	4096
 #define	MAX_OPS		10
@@ -41,53 +41,20 @@ static unsigned char data[DATA_LEN];
 static char backing_path[DQT_PATH_MAX];
 static char oracle_path[DQT_PATH_MAX];
 
-struct fixture {
-	struct dqt_ctl	 c;
-	struct dqt_object *o;
-	int		 backing;
-	int		 oracle;
-};
-
-static int
-open_rw(const char *name, char *path)
-{
-	int fd;
-
-	fd = dqt_make_oracle(name, data, sizeof(data), path, DQT_PATH_MAX);
-	(void)close(fd);
-	fd = open(path, O_RDWR);
-	ATF_REQUIRE_MSG(fd != -1, "open %s: %s", path, strerror(errno));
-	return (fd);
-}
-
 static void
-setup_pol(struct fixture *f, unsigned seed, const struct dq_policy *pol)
+setup_pol(struct dqt_fixture *f, unsigned seed, const struct dq_policy *pol)
 {
 
 	dqt_fill(data, sizeof(data), seed);
-	f->backing = open_rw("backing", backing_path);
-	f->oracle = open_rw("oracle", oracle_path);
-	dqt_init(&f->c);
-	f->o = dqt_mint_backing(&f->c, f->backing, backing_path, pol,
+	dqt_fixture_init(f, data, sizeof(data), backing_path, oracle_path, pol,
 	    DQ_MINT_F_WRITE);
 }
 
 static void
-setup(struct fixture *f, unsigned seed)
+setup(struct dqt_fixture *f, unsigned seed)
 {
 
 	setup_pol(f, seed, NULL);
-}
-
-static void
-teardown(struct fixture *f)
-{
-
-	ATF_CHECK_EQ_MSG(0, f->c.reply_failures, "reply failures: last %d",
-	    f->c.last_reply_errno);
-	dqt_fini(&f->c);
-	(void)close(f->backing);
-	(void)close(f->oracle);
 }
 
 /*
@@ -166,13 +133,11 @@ holder_release(struct holder_arg *a, struct dqt_child *ch,
     struct holder_res *r)
 {
 	char b;
-	int status;
 
 	b = 'g';
 	(void)write(a->go[1], &b, 1);
 	(void)close(a->go[1]);
-	status = dqt_wait(ch, r, sizeof(*r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_collect(ch, r, sizeof(*r));
 }
 
 /* A second requester's attempts, each on both files. */
@@ -251,33 +216,35 @@ check_probe(const struct probe_arg *a, const struct probe_res *r)
 
 /* The UNLOCK_ALL records naming owner of kind. */
 static int
-count_unlocks(const struct dqt_object *o, uint32_t kind, uint64_t owner)
+count_unlocks(struct dqt_ctl *c, const struct dqt_object *o, uint32_t kind,
+    uint64_t owner)
+    __requires_unlocked(c->mtx)
 {
 	int i, n;
 
+	dqt_lock(c);
 	for (i = n = 0; i < o->nunlocks; i++) {
 		if (o->unlocks[i].dua_kind == kind &&
 		    o->unlocks[i].dua_owner == owner)
 			n++;
 	}
+	dqt_unlock(c);
 	return (n);
+}
+
+static bool
+cond_unlocks(struct dqt_ctl *c __unused, uintptr_t o, uintptr_t n)
+{
+
+	return (((const struct dqt_object *)o)->nunlocks >= (int)n);
 }
 
 static bool
 wait_unlocks(struct dqt_ctl *c, const struct dqt_object *o, int n)
 {
-	int waited;
-	bool ok;
 
-	for (waited = 0; waited < DQT_WAIT_MS; waited += 10) {
-		pthread_mutex_lock(&c->mtx);
-		ok = o->nunlocks >= n;
-		pthread_mutex_unlock(&c->mtx);
-		if (ok)
-			return (true);
-		dqt_msleep(10);
-	}
-	return (false);
+	return (dqt_wait_cond(c, cond_unlocks, (uintptr_t)o, (uintptr_t)n,
+	    DQT_WAIT_MS));
 }
 
 ATF_TC(posix_oracle);
@@ -292,7 +259,7 @@ ATF_TC_HEAD(posix_oracle, tc)
 }
 ATF_TC_BODY(posix_oracle, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_object *sib, *other;
 	struct dq_ident_file *id;
 	struct dqt_child ch;
@@ -350,6 +317,7 @@ ATF_TC_BODY(posix_oracle, tc)
 	ATF_CHECK_EQ(0, hr.s.rv);
 	ATF_CHECK_EQ(0, hr.o.rv);
 	/* The holder's lock body: kind, owner, pid, range. */
+	dqt_lock(&f.c);
 	ATF_REQUIRE(f.o->nlocks >= 1);
 	ATF_CHECK_EQ(DQ_LOCK_SETLK, f.o->locks[0].dl_op);
 	ATF_CHECK_EQ(DQ_LOCK_POSIX, f.o->locks[0].dl_kind);
@@ -367,14 +335,19 @@ ATF_TC_BODY(posix_oracle, tc)
 		if (f.o->locks[i].dl_type == F_UNLCK)
 			ATF_CHECK_EQ(DQ_LOCK_UNLCK, f.o->locks[i].dl_op);
 	}
+	dqt_unlock(&f.c);
 	/* Exit released the holder's POSIX locks: one UNLOCK_ALL. */
 	ATF_REQUIRE(wait_unlocks(&f.c, f.o, 2));
-	ATF_CHECK_EQ(1, count_unlocks(f.o, DQ_LOCK_POSIX, (uint64_t)hr.pid));
+	ATF_CHECK_EQ(1, count_unlocks(&f.c, f.o, DQ_LOCK_POSIX,
+	    (uint64_t)hr.pid));
 	ATF_REQUIRE(wait_unlocks(&f.c, sib, 1));
-	ATF_CHECK_EQ(1, count_unlocks(sib, DQ_LOCK_POSIX, (uint64_t)hr.pid));
+	ATF_CHECK_EQ(1, count_unlocks(&f.c, sib, DQ_LOCK_POSIX,
+	    (uint64_t)hr.pid));
 	ATF_CHECK_EQ(0, sib->nlocks);
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(0, other->nunlocks);
 	ATF_CHECK_EQ(0, other->nlocks);
+	dqt_unlock(&f.c);
 
 	/* The range is free for a third process. */
 	memset(&pa, 0, sizeof(pa));
@@ -385,7 +358,7 @@ ATF_TC_BODY(posix_oracle, tc)
 	dqt_run_child(child_probe, &pa, &pr, sizeof(pr));
 	check_probe(&pa, &pr);
 	ATF_CHECK_EQ(0, pr.s[0].rv);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 struct wait_arg {
@@ -424,7 +397,7 @@ ATF_TC_HEAD(setlkw_no_deadline, tc)
 }
 ATF_TC_BODY(setlkw_no_deadline, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dq_policy pol;
 	struct dqt_child hch, wch;
 	struct holder_arg h;
@@ -448,17 +421,18 @@ ATF_TC_BODY(setlkw_no_deadline, tc)
 	w.cmd = F_SETLKW;
 	dqt_spawn(&wch, child_setlkw, &w);
 	ATF_REQUIRE(dqt_wait_locks(&f.c, f.o, 2, DQT_WAIT_MS));
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(DQ_LOCK_SETLKW, f.o->locks[1].dl_op);
+	dqt_unlock(&f.c);
 	dqt_msleep(800);	/* four deadlines */
 	ATF_CHECK_EQ(0, waitpid(wch.pid, &status, WNOHANG));
 	dqt_stats2(&f.c, &st);
 	ATF_CHECK_EQ(0, st.ds2_deadline_misses);
 	ATF_CHECK(st.ds2_locks >= 2);
 	holder_release(&h, &hch, &hr);
-	status = dqt_wait(&wch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_collect(&wch, &r, sizeof(r));
 	ATF_CHECK_EQ_MSG(0, r.rv, "F_SETLKW: %s", strerror(r.err));
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 ATF_TC(setlkw_interrupt);
@@ -472,7 +446,7 @@ ATF_TC_HEAD(setlkw_interrupt, tc)
 }
 ATF_TC_BODY(setlkw_interrupt, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_child hch, wch;
 	struct holder_arg h;
 	struct holder_res hr;
@@ -480,7 +454,7 @@ ATF_TC_BODY(setlkw_interrupt, tc)
 	struct probe_arg pa;
 	struct probe_res pr;
 	struct dqt_rr r;
-	int k, status;
+	int k;
 
 	setup(&f, 3);
 	memset(&h, 0, sizeof(h));
@@ -495,17 +469,26 @@ ATF_TC_BODY(setlkw_interrupt, tc)
 		w.cmd = k == 0 ? F_SETLKW : F_OFD_SETLKW;
 		dqt_spawn(&wch, child_setlkw, &w);
 		ATF_REQUIRE(dqt_wait_locks(&f.c, f.o, 2 + k, DQT_WAIT_MS));
-		dqt_msleep(50);
+		/* The waiter sleeps for the LOCK's reply: signal it there. */
+		ATF_REQUIRE(dqt_wait_wmesg(wch.pid, DQT_WMESG_REPLY,
+		    DQT_WAIT_MS));
 		ATF_REQUIRE_EQ(0, kill(wch.pid, SIGUSR1));
-		status = dqt_wait(&wch, &r, sizeof(r));
-		ATF_CHECK(WIFEXITED(status));
+		dqt_collect(&wch, &r, sizeof(r));
 		ATF_CHECK_EQ(-1, r.rv);
 		ATF_CHECK_EQ(EINTR, r.err);
 		ATF_CHECK(dqt_wait_interrupts(&f.c, k + 1, DQT_WAIT_MS));
 	}
 	holder_release(&h, &hch, &hr);
-	/* Nobody holds the range: the waiters' proxies were cancelled. */
-	dqt_msleep(100);
+	/*
+	 * Nobody holds the range: the waiters' proxies were cancelled.  The
+	 * fence orders the records: the INTERRUPTs and the holder's
+	 * UNLOCK_ALL were posted, and served, before the fence's READ.  It
+	 * does not order libdq's own waiter threads, which the cancel does
+	 * not join (dq_serve_file's F_SETLKW proxies); what shows that their
+	 * locks are gone is the probe below, whose F_SETLK of the whole range
+	 * succeeds.
+	 */
+	dqt_fence(&f.c);
 	memset(&pa, 0, sizeof(pa));
 	pa.sfd = f.o->fd;
 	pa.ofd = f.oracle;
@@ -514,7 +497,7 @@ ATF_TC_BODY(setlkw_interrupt, tc)
 	dqt_run_child(child_probe, &pa, &pr, sizeof(pr));
 	check_probe(&pa, &pr);
 	ATF_CHECK_EQ(0, pr.s[0].rv);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 ATF_TC(flock_owners_and_release);
@@ -529,7 +512,7 @@ ATF_TC_HEAD(flock_owners_and_release, tc)
 }
 ATF_TC_BODY(flock_owners_and_release, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_object *o2;
 	struct dqt_child ch;
 	struct holder_arg h;
@@ -552,12 +535,14 @@ ATF_TC_BODY(flock_owners_and_release, tc)
 	holder_release(&h, &ch, &hr);
 	ATF_CHECK_EQ(0, hr.s.rv);
 	ATF_CHECK_EQ(0, hr.o.rv);
+	dqt_lock(&f.c);
 	ATF_REQUIRE(f.o->nlocks >= 1);
 	ATF_CHECK_EQ(DQ_LOCK_FLOCK, f.o->locks[0].dl_kind);
 	ATF_CHECK_EQ(0, f.o->locks[0].dl_start);
 	ATF_CHECK_EQ(0, f.o->locks[0].dl_len);
 	ATF_CHECK_EQ(-1, f.o->locks[0].dl_pid);
 	owner = f.o->locks[0].dl_owner;
+	dqt_unlock(&f.c);
 	/* This process still references both open files: still locked. */
 	memset(&pa, 0, sizeof(pa));
 	pa.sfd = o2->fd;
@@ -567,22 +552,24 @@ ATF_TC_BODY(flock_owners_and_release, tc)
 	dqt_run_child(child_probe, &pa, &pr, sizeof(pr));
 	check_probe(&pa, &pr);
 	ATF_CHECK_EQ(EWOULDBLOCK, pr.s[0].err);
+	dqt_lock(&f.c);
 	ATF_REQUIRE(o2->nlocks >= 1);
 	ATF_CHECK(o2->locks[0].dl_owner != owner);	/* another open */
-	ATF_CHECK_EQ(0, count_unlocks(f.o, DQ_LOCK_FLOCK, owner));
+	dqt_unlock(&f.c);
+	ATF_CHECK_EQ(0, count_unlocks(&f.c, f.o, DQ_LOCK_FLOCK, owner));
 	/* The last references go: the locks with them. */
 	(void)close(f.o->fd);
 	f.o->fd = -1;
 	(void)close(f.oracle);
 	f.oracle = open(oracle_path, O_RDWR);
 	ATF_REQUIRE(wait_unlocks(&f.c, f.o, 1));
-	ATF_CHECK_EQ(1, count_unlocks(f.o, DQ_LOCK_FLOCK, owner));
+	ATF_CHECK_EQ(1, count_unlocks(&f.c, f.o, DQ_LOCK_FLOCK, owner));
 	memset(&pr, 0, sizeof(pr));
 	dqt_run_child(child_probe, &pa, &pr, sizeof(pr));
 	check_probe(&pa, &pr);
 	ATF_CHECK_EQ(0, pr.s[0].rv);
 	(void)close(oracle2);
-	teardown(&f);
+	dqt_fixture_fini(&f);
 }
 
 /*
@@ -635,14 +622,13 @@ child_lastclose(void *arg, void *result)
 static void
 lastclose_round(int how)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_object *o2;
 	struct dqt_child ch;
 	struct lastclose_arg a;
 	struct lastclose_res r;
-	size_t len;
 	uint64_t owner;
-	u_int left, n;
+	u_int left;
 	int status;
 	char b;
 
@@ -659,18 +645,14 @@ lastclose_round(int how)
 	(void)close(f.o->fd);
 	f.o->fd = -1;
 	/* The next reply about an open file is the lock's. */
-	n = 1;
-	ATF_REQUIRE_EQ_MSG(0, sysctlbyname(DELAY_NOTIFY, NULL, NULL, &n,
-	    sizeof(n)), "%s: %s", DELAY_NOTIFY, strerror(errno));
+	dqt_knob_arm(DELAY_NOTIFY, 1);
 	b = 'g';
 	ATF_REQUIRE_EQ(1, write(a.go[1], &b, 1));
 	(void)close(a.go[1]);
 	memset(&r, 0, sizeof(r));
 	status = dqt_wait(&ch, &r, sizeof(r));
-	len = sizeof(left);
-	ATF_REQUIRE_EQ(0, sysctlbyname(DELAY_NOTIFY, &left, &len, NULL, 0));
-	n = 0;
-	(void)sysctlbyname(DELAY_NOTIFY, NULL, NULL, &n, sizeof(n));
+	ATF_REQUIRE(dqt_sysctl_get_uint(DELAY_NOTIFY, &left));
+	dqt_knob_disarm(DELAY_NOTIFY);
 	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
 	    "how %#x: the requester: status %#x", how, status);
 	ATF_CHECK_EQ_MSG(0, left, "how %#x: no reply was delayed", how);
@@ -693,12 +675,12 @@ lastclose_round(int how)
 		ATF_CHECK_MSG(r.close_ms >= LASTCLOSE_MIN_MS, "how %#x: the "
 		    "close took %ld ms: it did not meet the delayed reply, "
 		    "so the round shows nothing", how, r.close_ms);
-	pthread_mutex_lock(&f.c.mtx);
+	dqt_lock(&f.c);
 	ATF_REQUIRE(f.o->nlocks >= 1);
 	owner = f.o->locks[0].dl_owner;
-	pthread_mutex_unlock(&f.c.mtx);
-	ATF_CHECK_EQ(1, count_unlocks(f.o, DQ_LOCK_FLOCK, owner));
-	teardown(&f);
+	dqt_unlock(&f.c);
+	ATF_CHECK_EQ(1, count_unlocks(&f.c, f.o, DQ_LOCK_FLOCK, owner));
+	dqt_fixture_fini(&f);
 }
 
 ATF_TC_WITH_CLEANUP(flock_gone_when_last_close_returns);
@@ -714,21 +696,14 @@ ATF_TC_HEAD(flock_gone_when_last_close_returns, tc)
 }
 ATF_TC_BODY(flock_gone_when_last_close_returns, tc)
 {
-	size_t len;
-	u_int v;
 
-	len = sizeof(v);
-	if (sysctlbyname(DELAY_NOTIFY, &v, &len, NULL, 0) != 0 &&
-	    errno == ENOENT)
-		atf_tc_skip("this kernel has no %s", DELAY_NOTIFY);
 	lastclose_round(LOCK_EX | LOCK_NB);
 	lastclose_round(LOCK_EX);
 }
 ATF_TC_CLEANUP(flock_gone_when_last_close_returns, tc)
 {
-	u_int zero = 0;
 
-	(void)sysctlbyname(DELAY_NOTIFY, NULL, NULL, &zero, sizeof(zero));
+	dqt_knob_disarm(DELAY_NOTIFY);
 }
 
 struct norm_res {
@@ -809,12 +784,13 @@ ATF_TC_BODY(normalisation_and_errnos, tc)
 	dqt_policy_write(&pol);
 	o = dqt_mint_ident_flags(&c, id, &pol, 0, data, sizeof(data));
 	free(id);
-	o->serve_errno = EDEADLK;
+	dqt_object_serve_errno(&c, o, EDEADLK);
 	memset(&r, 0, sizeof(r));
 	dqt_run_child(child_norm, &o->fd, &r, sizeof(r));
 	ATF_CHECK_EQ(EDEADLK, r.r[0].err);
 	ATF_CHECK_EQ(EINVAL, r.r[2].err);
 	ATF_CHECK_EQ(EOVERFLOW, r.r[3].err);
+	dqt_lock(&c);
 	ATF_REQUIRE_EQ(3, o->nlocks);
 	ATF_CHECK_EQ(DATA_LEN - 10, o->locks[0].dl_start);
 	ATF_CHECK_EQ(5, o->locks[0].dl_len);
@@ -822,7 +798,8 @@ ATF_TC_BODY(normalisation_and_errnos, tc)
 	ATF_CHECK_EQ(20, o->locks[1].dl_len);
 	ATF_CHECK_EQ(10, o->locks[2].dl_start);
 	ATF_CHECK_EQ(0, o->locks[2].dl_len);
-	o->serve_errno = EPERM;
+	dqt_unlock(&c);
+	dqt_object_serve_errno(&c, o, EPERM);
 	memset(&r, 0, sizeof(r));
 	dqt_run_child(child_norm, &o->fd, &r, sizeof(r));
 	ATF_CHECK_EQ(EIO, r.r[0].err);
@@ -831,7 +808,9 @@ ATF_TC_BODY(normalisation_and_errnos, tc)
 	errno = 0;
 	ATF_CHECK_EQ(-1, fcntl(o->fd, F_SETLK, &fl));
 	ATF_CHECK_EQ(EDEADLK, errno);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(6, o->nlocks);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -927,13 +906,13 @@ ATF_TC_HEAD(posix_spans_siblings, tc)
 }
 ATF_TC_BODY(posix_spans_siblings, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_object *b;
 	struct dqt_child ch;
 	struct sib_arg s;
 	struct sib_res r;
 	struct probe_res pr;
-	int k, ob, status;
+	int k, ob;
 
 	for (k = 0; k < 2; k++) {
 		setup(&f, 10 + k);
@@ -963,7 +942,8 @@ ATF_TC_BODY(posix_spans_siblings, tc)
 		/* The owner closes its second descriptor of each file. */
 		sib_step(&s);
 		ATF_REQUIRE(wait_unlocks(&f.c, b, 1));
-		dqt_msleep(50);
+		/* The UNLOCK_ALL was served before the fence's READ. */
+		dqt_fence(&f.c);
 		sib_probe(f.o->fd, f.oracle, &pr);
 		ATF_CHECK_EQ_MSG(0, pr.s[0].rv, "after the close (lock_b %d): %s",
 		    k == 0, strerror(pr.s[0].err));
@@ -974,8 +954,7 @@ ATF_TC_BODY(posix_spans_siblings, tc)
 		}
 		(void)close(s.go[1]);
 		(void)close(s.ready[0]);
-		status = dqt_wait(&ch, &r, sizeof(r));
-		ATF_CHECK(WIFEXITED(status));
+		dqt_collect(&ch, &r, sizeof(r));
 		ATF_CHECK_EQ(0, r.sa.rv);
 		ATF_CHECK_EQ(0, r.oa.rv);
 		if (k == 0) {
@@ -983,10 +962,10 @@ ATF_TC_BODY(posix_spans_siblings, tc)
 			    strerror(r.sb.err));
 			ATF_CHECK_EQ(r.ob.rv, r.sb.rv);
 		}
-		ATF_CHECK_EQ(1, count_unlocks(b, DQ_LOCK_POSIX,
+		ATF_CHECK_EQ(1, count_unlocks(&f.c, b, DQ_LOCK_POSIX,
 		    (uint64_t)r.pid));
 		(void)close(ob);
-		teardown(&f);
+		dqt_fixture_fini(&f);
 	}
 }
 
@@ -1025,7 +1004,7 @@ ATF_TC_HEAD(getlk_creates_no_owner, tc)
 }
 ATF_TC_BODY(getlk_creates_no_owner, tc)
 {
-	struct fixture f;
+	struct dqt_fixture f;
 	struct dqt_rr r;
 	int before, i, after;
 
@@ -1042,18 +1021,12 @@ ATF_TC_BODY(getlk_creates_no_owner, tc)
 	    before, after);
 	ATF_CHECK_EQ(0, dq_serve_state_owners(f.c.lockstate));
 	/* events[] counts every LOCK; locks[] keeps the first DQT_MAX_LOCKS. */
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(100, f.c.events[DQ_OP_LOCK]);
 	ATF_CHECK_EQ(MIN(100, DQT_MAX_LOCKS), f.o->nlocks);
 	ATF_CHECK_EQ(DQ_LOCK_GETLK, f.o->locks[0].dl_op);
-	teardown(&f);
-}
-
-
-static bool
-pred_current(const struct dq_stats *st, uintptr_t n)
-{
-
-	return (st->ds_queue_current >= n);
+	dqt_unlock(&f.c);
+	dqt_fixture_fini(&f);
 }
 
 static void
@@ -1086,14 +1059,14 @@ ATF_TC_BODY(unlock_all_over_depth, tc)
 	struct dqt_rr r;
 	struct dq_stats st;
 	struct dq_stats2 st2;
-	int oracle, status;
+	int oracle;
 
 	dqt_fill(data, sizeof(data), 13);
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
 	    sizeof(oracle_path));
 	dqt_init(&c);
 	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
-	o->serve_errno = EAGAIN;	/* the lock is refused; o_locked is set */
+	dqt_object_serve_errno(&c, o, EAGAIN);	/* the lock is refused; o_locked is set */
 	memset(&h, 0, sizeof(h));
 	h.sfd = o->fd;
 	h.ofd = oracle;
@@ -1106,21 +1079,21 @@ ATF_TC_BODY(unlock_all_over_depth, tc)
 	dqt_pause(&c);
 	ATF_REQUIRE_EQ(0, dq_set_queue_depth(c.q, 1));
 	dqt_spawn(&rch, child_read_one, &o->fd);
-	ATF_REQUIRE(dqt_wait_stats(&c, pred_current, 1, DQT_WAIT_MS));
+	ATF_REQUIRE(dqt_wait_stats(&c, dqt_pred_current, 1, DQT_WAIT_MS));
 	/* The locker exits: its UNLOCK_ALL goes past the full queue. */
 	holder_release(&h, &lch, &hr);
-	ATF_CHECK(dqt_wait_stats(&c, pred_current, 2, DQT_WAIT_MS));
+	ATF_CHECK(dqt_wait_stats(&c, dqt_pred_current, 2, DQT_WAIT_MS));
 	dqt_stats(&c, &st);
 	ATF_CHECK_EQ(0, st.ds_events_dropped);
 	dqt_stats2(&c, &st2);
 	ATF_CHECK_EQ(1, st2.ds2_overdepth);
 
 	dqt_resume(&c);
-	status = dqt_wait(&rch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_collect(&rch, &r, sizeof(r));
 	ATF_CHECK_EQ(16, r.rv);
 	ATF_CHECK(dqt_wait_events(&c, DQ_OP_UNLOCK_ALL, 1, DQT_WAIT_MS));
-	ATF_CHECK_EQ(1, count_unlocks(o, DQ_LOCK_POSIX, (uint64_t)hr.pid));
+	ATF_CHECK_EQ(1, count_unlocks(&c, o, DQ_LOCK_POSIX,
+	    (uint64_t)hr.pid));
 	dqt_fini(&c);
 	(void)close(oracle);
 }

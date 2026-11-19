@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd November 12, 2026
+.Dd November 16, 2026
 .Dt BUILD-BSD 8
 .Os
 .Sh NAME
@@ -393,12 +393,12 @@ The assembler uses the freshly rebuilt libservice for its new session API;
 other dependencies come from the matching world stage.
 These checks do not establish human authentication, protected login input,
 full user-service authorization or production authenticator enrollment.
-A kernel built with MAC_SYSTEM_INTEGRITY, such as the experimental
-GENERIC-INTEGRITY profile, additionally requires BIP bootstrap root-attack
-checks, rejects a mutable preload or disabled Secure Boot, and ignores alternate
-root selection. The runner checks the embedded kernel configuration, not just
-the configuration name. Plans report bootstrap_integrity_verification as
-kernel-dependent; the result records which policy actually ran.
+The BIP bootstrap root-attack checks applied only to a kernel built with the
+archived MAC_SYSTEM_INTEGRITY policy; the active tree has no such option or
+profile, so no kernel built from it selects them.
+Plans still report bootstrap_integrity_verification as kernel-dependent; the
+runner checks the embedded kernel configuration, not just the configuration
+name, and the result records which policy actually ran.
 The protected-profile fixture also checks protection at process creation,
 before initialization and across exec/fork, explicit process-descriptor lifecycle
 control, and core-dump suppression with an ordinary core-dump control.
@@ -1217,6 +1217,11 @@ Make configuration passed as __MAKE_CONF; defaults to /etc/make.conf.
 These configuration files are trusted make input, unlike the literal frontend config.
 .It Fl -kernel-dir Ar directory
 Directory containing the selected kernel configuration, passed as KERNCONFDIR.
+Without it, KERNCONFDIR is
+.Pa /usr/src/sys/ Ns Ar target Ns Pa /conf .
+The tool always passes KERNCONFDIR on the make command line, so a make
+configuration cannot build another kernel configuration than the one it
+read.
 .It Fl -pkg-key Ar file
 Existing unencrypted RSA private key for both base and combined repository
 catalogues.
@@ -1731,13 +1736,21 @@ Creating or writing the destination requires normal filesystem
 permissions; the tool does not relocate it on permission failure.
 
 .Sh TEST KERNEL REFUSAL
-A kernel built with
+A kernel built with any option of the test-kernel option ledger,
+.Pa /usr/src/sys/conf/test-options
+.Po for example
 .Cd "options DQ_TEST_OPEN" ,
 the
 .Xr dq 4
-test option
-.Pq for example Pa GENERIC-DQTEST ,
+test option, in
+.Pa GENERIC-TEST
+.Pc ,
 is a test kernel and is never published.
+The ledger is read from the source tree when the plan is made, through
+.Pa /usr/src/release/scripts/check-test-kernel.sh Fl L ;
+it is not compiled into the tool, so an installed tool older than the
+tree still sees every option the tree defines, and the tool and the check
+read it alike.
 Two separate things keep it out, and plans and results name each by what
 was actually done.
 .Pp
@@ -1757,15 +1770,34 @@ and
 .Pq and its alias Cm build
 and
 .Cm media
-are refused when the option is named anywhere in them outside a comment;
+are refused when any ledger option is named anywhere in them outside a
+comment;
 .Cm nooptions
 does not lift the refusal, and there is no override.
+.Cm packages
+and
+.Cm media
+are also refused when a make or src configuration names
+.Va KERNFAST
+or
+.Va NO_KERNELCONFIG :
+the kernel would not be reconfigured, so the configuration read would not
+be the one built.
+They are refused as well when the check script cannot read the ledger
+.Pq missing, empty, malformed or a symbolic link .
 The kernel_test_option_configuration field records
 .Cm absent ,
 .Cm present
 .Pq development actions only ,
 .Cm not-read
-when some part of the configuration could not be found or read, or
+when some part of the configuration could not be found or read, when the
+ledger could not be read
+.Pq Cm kernel No and Cm stage No only ,
+or when a make or src configuration names
+.Va KERNFAST
+or
+.Va NO_KERNELCONFIG
+for an action that may build a test kernel, or
 .Cm not-performed
 for actions that take no kernel configuration.
 A value of
@@ -1775,9 +1807,10 @@ or
 is a statement about configuration text, not about any kernel.
 .Pp
 Second,
-.Pa /usr/src/release/scripts/check-kernel-no-dq-test.sh
-reads the kernels and modules themselves and refuses any built with the
-option, any it cannot read, and any tree or repository that should hold a
+.Pa /usr/src/release/scripts/check-test-kernel.sh
+reads the kernels and modules themselves and refuses any built with
+a ledger option (by the marker string and symbol prefix of its row), any
+it cannot read, and any tree or repository that should hold a
 kernel and does not.
 The kernel_test_option_binary_check field is
 .Cm requested
@@ -1843,7 +1876,7 @@ may build a test kernel on purpose, and the bundle that
 or
 .Cm sign
 signs is then a signed bundle around a test kernel: the bundle signature
-says nothing about the test option.
+says nothing about the test options.
 .Cm inventory
 writes only an inventory.
 .Cm construct

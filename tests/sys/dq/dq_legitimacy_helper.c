@@ -24,18 +24,14 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "dqt.h"
+
 #define	LG_QFD		9
 
 /* Send the process descriptor of an idle child; stay until the peer is gone. */
 static int
 target_main(void)
 {
-	union {
-		struct cmsghdr	hdr;
-		char		buf[CMSG_SPACE(sizeof(int))];
-	} ctl;
-	struct msghdr msg;
-	struct iovec iov;
 	pid_t pid;
 	int pd, status;
 	char b = 't';
@@ -49,19 +45,7 @@ target_main(void)
 		for (;;)
 			(void)pause();
 	}
-	memset(&msg, 0, sizeof(msg));
-	memset(&ctl, 0, sizeof(ctl));
-	iov.iov_base = &b;
-	iov.iov_len = 1;
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	msg.msg_control = ctl.buf;
-	msg.msg_controllen = sizeof(ctl.buf);
-	ctl.hdr.cmsg_len = CMSG_LEN(sizeof(int));
-	ctl.hdr.cmsg_level = SOL_SOCKET;
-	ctl.hdr.cmsg_type = SCM_RIGHTS;
-	memcpy(CMSG_DATA(&ctl.hdr), &pd, sizeof(pd));
-	if (sendmsg(LG_QFD, &msg, 0) != 1)
+	if (dqt_send_fd(LG_QFD, pd) != 0)
 		return (6);
 	/* End of file: the test has closed its end. */
 	(void)read(LG_QFD, &b, 1);

@@ -2,8 +2,9 @@
 #
 # Copyright (c) 2026 Kory Heard
 #
-# release/scripts/check-kernel-no-dq-test.sh: the check that keeps a kernel
-# or module built with the dq(4) test option (options DQ_TEST_OPEN) out of
+# release/scripts/check-test-kernel.sh: the check that keeps a kernel or
+# module built with a test-kernel option (a row of sys/conf/test-options,
+# for example options DQ_TEST_OPEN, the dq(4) test option) out of
 # package repositories and release media.  The script is installed beside
 # this test.  Fixtures are plain files: the check reads bytes, it does not
 # parse ELF.  package_format writes archives the way pkg(8) does; no case
@@ -11,19 +12,27 @@
 
 MARKER='@(#)5BSD DQ_TEST_OPEN test kernel: not for publication'
 SYMBOL='dq_testopen_bind'
-REFUSED='was built with the dq\(4\) test option'
+REFUSED='was built with options DQ_TEST_OPEN, a test-kernel option'
 
+# The ledger is installed beside the test, as the script is.  check runs
+# the script with it; raw runs it as it is, with its own default ledger.
 setup()
 {
-    script="$(atf_get_srcdir)/check-kernel-no-dq-test.sh"
-    [ -f "$script" ] || atf_fail 'check-kernel-no-dq-test.sh not installed beside the test'
+    script="$(atf_get_srcdir)/check-test-kernel.sh"
+    ledger="$(atf_get_srcdir)/test-options"
+    [ -f "$script" ] || atf_fail 'check-test-kernel.sh not installed beside the test'
+    [ -f "$ledger" ] || atf_fail 'the test-options ledger not installed beside the test'
     mkdir tmp
     # atf_check runs programs, not shell functions.
     cat > check <<SCRIPT
 #!/bin/sh
-TMPDIR="$PWD/tmp" exec sh "$script" "\$@"
+TMPDIR="$PWD/tmp" exec sh "$script" -l "$ledger" "\$@"
 SCRIPT
-    chmod +x check
+    cat > raw <<SCRIPT
+#!/bin/sh
+TMPDIR="$PWD/tmp" exec sh "\$@"
+SCRIPT
+    chmod +x check raw
 }
 
 # The check leaves nothing behind, whether it passes or refuses.
@@ -50,6 +59,42 @@ package()
     tar -cf "$repository/$name" -C "$from" "$@"
 }
 
+atf_test_case default_ledger
+default_ledger_head()
+{
+    atf_set descr 'Without -l the script finds the ledger of its own source tree, however it is invoked'
+}
+default_ledger_body()
+{
+    setup
+    # A copied WORLDDIR: what the release and image recipes run, as
+    # sh ${WORLDDIR}/release/scripts/check-test-kernel.sh (arm.subr does so
+    # inside a chroot, where the path is just as absolute).
+    mkdir -p world/release/scripts world/sys/conf
+    cp "$script" world/release/scripts/check-test-kernel.sh
+    cp "$ledger" world/sys/conf/test-options
+    tree good
+    tree bad
+    printf 'ELF\0%s\0' "$MARKER" > bad/boot/kernel/kernel
+    w=$PWD/world
+    # Absolute path, path relative to the current directory, bare name.
+    atf_check -s exit:0 -o match:'no test-kernel option$' -e empty \
+        ./raw "$w/release/scripts/check-test-kernel.sh" -d "$PWD/good"
+    atf_check -s exit:1 -o empty -e match:"$REFUSED" \
+        ./raw "$w/release/scripts/check-test-kernel.sh" -d "$PWD/bad"
+    atf_check -s exit:0 -o match:'no test-kernel option$' -e empty \
+        sh -c "cd '$w' && TMPDIR='$PWD/tmp' sh release/scripts/check-test-kernel.sh -d '$PWD/good'"
+    atf_check -s exit:1 -o empty -e match:"$REFUSED" \
+        sh -c "cd '$w' && TMPDIR='$PWD/tmp' sh release/scripts/check-test-kernel.sh -d '$PWD/bad'"
+    atf_check -s exit:0 -o match:'no test-kernel option$' -e empty \
+        sh -c "cd '$w/release/scripts' && TMPDIR='$PWD/tmp' sh check-test-kernel.sh -d '$PWD/good'"
+    # The tree's own ledger, not another one: without it, a refusal.
+    mv world/sys/conf/test-options world/sys/conf/moved
+    atf_check -s exit:1 -o empty -e match:'ledger cannot be read' \
+        ./raw "$w/release/scripts/check-test-kernel.sh" -d "$PWD/good"
+    clean
+}
+
 atf_test_case usage
 usage_body()
 {
@@ -63,6 +108,107 @@ usage_body()
     for flag in -f -n -y; do
         atf_check -s exit:2 -o empty -e match:'usage: ' ./check $flag -d good
     done
+    # Listing checks nothing, and nothing is checked with it.
+    atf_check -s exit:2 -o empty -e match:'usage: ' ./check -L -d good
+    atf_check -s exit:2 -o empty -e match:'usage: ' ./check -L stray
+    clean
+}
+
+atf_test_case ledger
+ledger_head()
+{
+    atf_set descr 'Every ledger row is a signature; a ledger that cannot be read whole refuses'
+}
+ledger_body()
+{
+    setup
+    tree good
+    # The installed ledger lists what it lists, and its first row is the
+    # dq(4) test option.
+    atf_check -s exit:0 -o save:rows -e empty ./check -L
+    grep -v -e '^#' -e '^$' "$ledger" > expected
+    atf_check -s exit:0 -o empty -e empty cmp rows expected
+    atf_check -s exit:0 -o match:'^DQ_TEST_OPEN\|live\|GENERIC-TEST\|dq_testopen_\|' \
+        head -n 1 rows
+    # Every live row of the installed ledger: its marker and its prefix are
+    # each refused, naming the row's option.
+    while IFS='|' read -r option status config prefix marker knobs; do
+        [ "$status" = live ] || continue
+        for sample in "$marker" "${prefix}symbol"; do
+            [ "$sample" != "-symbol" ] || continue
+            rm -rf bad
+            tree bad
+            printf 'ELF\0%s\0' "$sample" > bad/boot/kernel/kernel
+            atf_check -s exit:1 -o empty \
+                -e match:"was built with options $option, a test-kernel option" \
+                ./check -d bad < /dev/null
+        done
+    done < rows
+
+    # A private ledger: a live row, a reserved row, a row without prefix.
+    cat > private <<'EOF'
+# comment
+LG3_LIVE|live|GENERIC-TEST|lg3_live_|@(#)5BSD LG3_LIVE test kernel: not for publication|debug.lg3.knob
+
+LG3_RESERVED|reserved|-|-|@(#)5BSD LG3_RESERVED measurement kernel: not for publication|-
+EOF
+    atf_check -s exit:0 -o match:'^check-test-kernel: 3 kernel and boot files checked, no test-kernel option$' \
+        -e empty ./check -l "$PWD/private" -d good
+    # -l counts wherever it stands; the last one wins.
+    atf_check -s exit:0 -o ignore -e empty ./check -d good -l "$PWD/private"
+    for sample in "LG3_LIVE:lg3_live_symbol" \
+        "LG3_LIVE:@(#)5BSD LG3_LIVE test kernel: not for publication" \
+        "LG3_RESERVED:@(#)5BSD LG3_RESERVED measurement kernel: not for publication"; do
+        rm -rf bad
+        tree bad
+        printf 'ELF\0%s\0' "${sample#*:}" > bad/boot/kernel/kernel
+        atf_check -s exit:1 -o empty \
+            -e match:"boot/kernel/kernel was built with options ${sample%%:*}, a test-kernel option" \
+            ./check -l "$PWD/private" -d bad
+    done
+    # The dq(4) signatures are not in the private ledger.
+    rm -rf bad
+    tree bad
+    printf 'ELF\0%s\0' "$MARKER" > bad/boot/kernel/kernel
+    atf_check -s exit:0 -o ignore -e empty ./check -l "$PWD/private" -d bad
+    atf_check -s exit:1 -o empty -e match:"$REFUSED" ./check -d bad
+
+    # Fail closed: no ledger, an empty one, and every malformed row.
+    atf_check -s exit:1 -o empty -e match:'ledger cannot be read' \
+        ./check -l "$PWD/absent" -d good
+    atf_check -s exit:1 -o empty -e match:'ledger cannot be read' \
+        ./check -l "$PWD/tmp" -d good
+    ln -s "$ledger" linked
+    atf_check -s exit:1 -o empty -e match:'ledger is a symbolic link' \
+        ./check -l "$PWD/linked" -d good
+    atf_check -s exit:1 -o empty -e match:'ledger is a symbolic link' \
+        ./check -l "$PWD/linked" -L
+    # The installed script has no source tree around it: no default ledger.
+    atf_check -s exit:1 -o empty -e match:'ledger cannot be read' \
+        ./raw "$script" -d good
+    printf '# only a comment\n\n' > empty
+    atf_check -s exit:1 -o empty -e match:'malformed: no rows' \
+        ./check -l "$PWD/empty" -d good
+    m='test kernel: not for publication'
+    for row in \
+        "A|live|-|-|@(#)5BSD A $m" \
+        "A|live|-|-|@(#)5BSD A $m|-|extra" \
+        "a|live|-|-|@(#)5BSD a $m|-" \
+        "A|maybe|-|-|@(#)5BSD A $m|-" \
+        "A|live|bad config|-|@(#)5BSD A $m|-" \
+        "A|live|-|nounderscore|@(#)5BSD A $m|-" \
+        "A|live|-|-|@(#)5BSD B $m|-" \
+        "A|live|-|-|5BSD A $m|-" \
+        "A|live|-|-|@(#)5BSD A $m|Knob" \
+        "A|reserved|-|a_|@(#)5BSD A $m|-" \
+        "A|live|-|-|@(#)5BSD A $m|-
+A|live|-|-|@(#)5BSD A $m|-"; do
+        printf '%s\n' "$row" > broken
+        atf_check -s exit:1 -o empty -e match:'ledger .* is malformed' \
+            ./check -l "$PWD/broken" -d good
+        atf_check -s exit:1 -o empty -e match:'ledger .* is malformed' \
+            ./check -l "$PWD/broken" -L
+    done
     clean
 }
 
@@ -71,7 +217,7 @@ staged_tree_body()
 {
     setup
     tree good
-    atf_check -s exit:0 -o match:'^check-kernel-no-dq-test: 3 kernel and boot files checked' \
+    atf_check -s exit:0 -o match:'^check-test-kernel: 3 kernel and boot files checked' \
         -e empty ./check -d good
     atf_check -s exit:0 -o ignore -e empty ./check -d good/
 
@@ -193,6 +339,11 @@ archive_body()
 }
 
 atf_test_case repository
+repository_head()
+{
+    # Every archive is listed and extracted: minutes on a small guest.
+    atf_set timeout 1800
+}
 repository_body()
 {
     setup
@@ -343,6 +494,13 @@ package_format_body()
 }
 
 atf_test_case odd_names
+odd_names_head()
+{
+    # About twenty check runs over packages and trees: 17 to 228 s in
+    # passing 2-vCPU guest runs, past the default 300 s while the host was
+    # contended.
+    atf_set timeout 900
+}
 odd_names_body()
 {
     setup
@@ -524,6 +682,8 @@ symbolic_links_body()
 atf_init_test_cases()
 {
     atf_add_test_case usage
+    atf_add_test_case default_ledger
+    atf_add_test_case ledger
     atf_add_test_case staged_tree
     atf_add_test_case object_directory
     atf_add_test_case image_root

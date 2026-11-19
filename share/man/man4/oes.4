@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 15, 2026
+.Dd November 19, 2026
 .Dt OES 4
 .Os
 .Sh NAME
@@ -276,6 +276,20 @@ events are delivered via the
 hook; because a close cannot be denied, close is a NOTIFY-only event.
 A signal that a process sends to itself generates no event: the kernel
 permits it before any MAC check is made.
+.Dv OES_EVENT_NOTIFY_PTRACE
+reports debugging access to another process
+.Pq Xr p_candebug 9 .
+Inspection of another process, its memory map, auxiliary vector and kernel
+stacks
+.Pq Xr p_caninspect 9 ,
+as
+.Xr procstat 1
+and
+.Xr dtrace 1
+read them, generates no event: before inspection had its own MAC question
+it was reported as
+.Dv NOTIFY_PTRACE ,
+and there is no inspection event yet.
 A reboot event reports a request made with
 .Xr reboot 2 ,
 before the kernel has decided whether the caller may make it; it does not

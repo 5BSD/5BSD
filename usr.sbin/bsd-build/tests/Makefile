@@ -1,8 +1,9 @@
 .include <src.opts.mk>
 PACKAGE= bsd-build-tests
 TESTSDIR= ${TESTSBASE}/usr.sbin/bsd-build
-ATF_TESTS_SH= bsd_build_test kernel_test_option_test kernel_test_check_test
-${PACKAGE}FILES+= ${SRCTOP}/release/Makefile.hardware ${SRCTOP}/release/scripts/check-malloc-production.sh ${SRCTOP}/release/scripts/check-kernel-no-dq-test.sh
+ATF_TESTS_SH= bsd_build_test kernel_test_option_test kernel_test_check_test \
+	test_options_test
+${PACKAGE}FILES+= ${SRCTOP}/release/Makefile.hardware ${SRCTOP}/release/scripts/check-malloc-production.sh ${SRCTOP}/release/scripts/check-test-kernel.sh ${SRCTOP}/sys/conf/test-options
 .PATH: ${SRCTOP}/tools/build/capimage
 ${PACKAGE}FILES+= deploy.py deploy_test.py installer.py installer_test.py be_vm_test.py
 ${PACKAGE}FILES+= package_closure_test.py
@@ -13,6 +14,12 @@ ${PACKAGE}FILES+= elf_dependencies.py elf_dependencies_test.py elf_features_buil
 ${PACKAGE}FILES+= sign-stage.sh signing_custody_test.py
 ${PACKAGE}FILES+= hardware-profile-cases
 ${PACKAGE}FILES+= generation_boot.py generation_boot_test.py
+# Files the installed helpers and tests load from beside themselves
+# (Path(__file__).with_name, atf_get_srcdir); bsd_build_test:installed_support
+# checks every literal reference of those two forms.
+${PACKAGE}FILES+= verity_artifacts.py verity_tree.py verify-stage.sh library-policy.json
+${PACKAGE}FILES+= ${SRCTOP}/tools/test/construction/verify_retained.py \
+	${SRCTOP}/tools/test/construction/installation_transport.py
 ${PACKAGE}FILES+= seed_initialize.py seed_dataset.py state_storage.py state_storage_test.py
 ${PACKAGE}FILES+= generation_image.py generation_image_test.py generation_check.py generation_check_test.py
 ${PACKAGE}FILES+= database_preflight.py database_preflight_test.py

@@ -50,7 +50,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 /*
  * The families.  Each step is one call on a tagged path, run first
@@ -142,6 +142,8 @@ chroot_child(const char *dir)
 	int status;
 
 	pid = fork();
+	if (pid == -1)
+		return (-1);
 	if (pid == 0)
 		_exit(chroot(dir) == 0 ? 0 : errno);
 	if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status))
@@ -244,12 +246,13 @@ ATF_TC_HEAD(families, tc)
 }
 ATF_TC_BODY(families, tc)
 {
+	struct dqt_resolve_seen rs;
 	struct dqt_ctl c;
 	struct dqt_achild ch;
 	struct fam_res o, a;
 	struct dq_stats2 st;
 	struct stat sb;
-	int i, k, status;
+	int i, k;
 
 	ATF_REQUIRE_EQ(0, mkdir("oracle", 0755));
 	ATF_REQUIRE_EQ(0, mkdir("attached", 0755));
@@ -260,8 +263,7 @@ ATF_TC_BODY(families, tc)
 	dqt_attach_spawn(&c, &ch, child_families,
 	    __DECONST(void *, "attached"));
 	memset(&a, 0, sizeof(a));
-	status = dqt_attach_wait(&ch, &a, sizeof(a));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &a, sizeof(a));
 	for (k = 0; k < S_NSTEPS; k++) {
 		ATF_CHECK_EQ_MSG(o.rv[k], a.rv[k], "step %d (%s): rv attached "
 		    "%ld unattached %ld", k, expects[k].tag, a.rv[k], o.rv[k]);
@@ -278,26 +280,31 @@ ATF_TC_BODY(families, tc)
 		    expects[k].tag, expects[k].op);
 		if (i == -1)
 			continue;
-		ATF_CHECK_EQ_MSG(expects[k].cls, c.rs[i].cls,
-		    "step %d (%s): class %u", k, expects[k].tag, c.rs[i].cls);
+		dqt_resolve_at(&c, i, &rs);
+		ATF_CHECK_EQ_MSG(expects[k].cls, rs.cls,
+		    "step %d (%s): class %u", k, expects[k].tag, rs.cls);
 		if (expects[k].cls == DQ_RCLASS_USER)
-			ATF_CHECK((c.rs[i].rflags & DQ_RF_USER) != 0);
+			ATF_CHECK((rs.rflags & DQ_RF_USER) != 0);
 		else
-			ATF_CHECK((c.rs[i].rflags & DQ_RF_USER) == 0);
+			ATF_CHECK((rs.rflags & DQ_RF_USER) == 0);
 		if (expects[k].cls == DQ_RCLASS_KCONSUMER)
-			ATF_CHECK((c.rs[i].rflags & DQ_RF_KCONSUMER) != 0);
+			ATF_CHECK((rs.rflags & DQ_RF_KCONSUMER) != 0);
 	}
 	/* RENAME and LINK carry both paths in one event. */
 	i = dqt_find_resolve(&c, "rt-link", DQ_ROP_RENAME, 0);
 	if (i != -1) {
+		dqt_lock(&c);
 		ATF_CHECK(strstr(c.rs[i].path, "rt-link") != NULL);
 		ATF_CHECK(strstr(c.rs[i].path2, "rt-renamed") != NULL);
+		dqt_unlock(&c);
 	}
 	ATF_CHECK_EQ(1, dqt_count_resolve(&c, "rt-renamed", DQ_ROP_RENAME));
 	i = dqt_find_resolve(&c, "rt-link", DQ_ROP_LINK, 0);
 	if (i != -1) {
+		dqt_lock(&c);
 		ATF_CHECK(strstr(c.rs[i].path, "rt-open") != NULL);
 		ATF_CHECK(strstr(c.rs[i].path2, "rt-link") != NULL);
+		dqt_unlock(&c);
 	}
 	/* Lookups resolve to the same objects. */
 	ATF_REQUIRE_EQ(0, stat("/bin/sh", &sb));
@@ -356,28 +363,28 @@ ATF_TC_BODY(errno_answers, tc)
 	struct dqt_achild ch;
 	struct one_res r;
 	struct dq_stats2 st;
-	int status;
 
 	dqt_init(&c);
-	(void)strlcpy(c.resolve_fail_match, "rt-deny",
-	    sizeof(c.resolve_fail_match));
-	c.resolve_fail_errno = EACCES;
+	dqt_resolve_fail(&c, "rt-deny", EACCES);
 	dqt_attach_spawn(&c, &ch, child_deny, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(EACCES, r.r[0].err);
 	ATF_CHECK_EQ(EACCES, r.r[1].err);
 	ATF_CHECK_EQ(ENOENT, r.r[2].err);
 	ATF_CHECK_EQ(-1, access("rt-deny", F_OK));
 
-	c.resolve_fail_errno = EPIPE;	/* not on the list */
+	dqt_resolve_fail(&c, NULL, EPIPE);	/* not on the list */
 	dqt_attach_spawn(&c, &ch, child_deny, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
+	dqt_attach_collect(&ch, &r, sizeof(r));
+	ATF_CHECK_EQ(EIO, r.r[0].err);
 	ATF_CHECK_EQ(EIO, r.r[1].err);
+	ATF_CHECK_EQ(ENOENT, r.r[2].err);
 	dqt_stats2(&c, &st);
-	ATF_CHECK(st.ds2_bad_replies >= 2);
+	/* The two lookups of rt-deny, each answered EPIPE: two bad replies. */
+	ATF_CHECK_EQ_MSG(2, st.ds2_bad_replies, "ds2_bad_replies %ju",
+	    (uintmax_t)st.ds2_bad_replies);
 	dqt_fini(&c);
 }
 
@@ -397,15 +404,15 @@ ATF_TC_BODY(reply_validation, tc)
 	struct dq_resolve_reply rr;
 	char big[16];
 	uint64_t id;
-	int status;
 
 	dqt_init(&c);
-	(void)strlcpy(c.resolve_hold_match, "rt-deny",
-	    sizeof(c.resolve_hold_match));
+	dqt_resolve_hold(&c, "rt-deny", 0);
 	dqt_attach_spawn(&c, &ch, child_deny, NULL);
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
-	id = c.held[0].id;
+	id = dqt_held_id(&c, 0);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(DQ_OP_RESOLVE, c.held[0].op);
+	dqt_unlock(&c);
 	memset(&rr, 0, sizeof(rr));
 	rr.drr_kind = DQ_RESOLVE_FD;	/* 1c-iii */
 	errno = 0;
@@ -428,18 +435,15 @@ ATF_TC_BODY(reply_validation, tc)
 	ATF_CHECK_EQ(-1, dq_reply(c.q, id, 0, NULL, 0));
 	ATF_CHECK_EQ(EINVAL, errno);
 	/* Still in flight: answer it, then let the rest through. */
-	pthread_mutex_lock(&c.mtx);
-	c.resolve_hold_match[0] = '\0';
-	pthread_mutex_unlock(&c.mtx);
+	dqt_resolve_hold(&c, "", 0);
 	ATF_CHECK_EQ(0, dq_reply_resolve_errno(c.q, id, EROFS));
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(EROFS, r.r[0].err);
 	dqt_fini(&c);
 }
 
-#define	DEADLINE_SAVED	"default_deadline_ms.saved"
+#define	DEFAULT_DEADLINE	"kern.dq.default_deadline_ms"
 
 static void
 child_hold_stat(void *arg, void *result)
@@ -473,46 +477,30 @@ ATF_TC_BODY(deadline_eio, tc)
 	struct dqt_ctl c;
 	struct dqt_achild ch;
 	struct one_res r;
-	u_int saved;
-	FILE *fp;
-	int status;
 
-	ATF_REQUIRE(dqt_sysctl_get_uint("kern.dq.default_deadline_ms", &saved));
-	fp = fopen(DEADLINE_SAVED, "w");
-	ATF_REQUIRE(fp != NULL);
-	(void)fprintf(fp, "%u\n", saved);
-	(void)fclose(fp);
-	dqt_sysctl_set_uint("kern.dq.default_deadline_ms", 500);
+	dqt_sysctl_save_set_uint(DEFAULT_DEADLINE, 500);
 
 	dqt_init(&c);
-	(void)strlcpy(c.resolve_hold_match, "rt-hold",
-	    sizeof(c.resolve_hold_match));
+	dqt_resolve_hold(&c, "rt-hold", 0);
 	dqt_attach_spawn(&c, &ch, child_hold_stat,
 	    __DECONST(void *, "rt-hold"));
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(EIO, r.r[0].err);
 	ATF_CHECK_MSG(r.elapsed_ms >= 400 && r.elapsed_ms < 5000,
 	    "waited %ld ms", r.elapsed_ms);
 	ATF_CHECK_EQ(0, r.r[1].rv);
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
 	ATF_CHECK(dqt_wait_interrupts(&c, 1, DQT_WAIT_MS));
+	dqt_lock(&c);
 	ATF_CHECK_EQ(c.held[0].id, c.interrupted[0]);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 }
 ATF_TC_CLEANUP(deadline_eio, tc)
 {
-	FILE *fp;
-	u_int saved;
 
-	fp = fopen(DEADLINE_SAVED, "r");
-	if (fp == NULL)
-		return;
-	if (fscanf(fp, "%u", &saved) == 1)
-		(void)sysctlbyname("kern.dq.default_deadline_ms", NULL, NULL,
-		    &saved, sizeof(saved));
-	(void)fclose(fp);
+	(void)dqt_sysctl_restore(DEFAULT_DEADLINE);
 }
 
 ATF_TC(controller_exit_fails_closed);
@@ -529,18 +517,15 @@ ATF_TC_BODY(controller_exit_fails_closed, tc)
 	struct dqt_ctl c;
 	struct dqt_achild ch;
 	struct one_res r;
-	int status;
 
 	dqt_init(&c);
-	(void)strlcpy(c.resolve_hold_match, "rt-exit",
-	    sizeof(c.resolve_hold_match));
+	dqt_resolve_hold(&c, "rt-exit", 0);
 	dqt_attach_spawn(&c, &ch, child_hold_stat,
 	    __DECONST(void *, "rt-exit"));
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
 	dqt_close_queue(&c);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(EIO, r.r[0].err);
 	ATF_CHECK_EQ(EIO, r.r[1].err);
 	ATF_CHECK_EQ(EIO, r.r[2].err);
@@ -590,22 +575,20 @@ child_signal(void *arg, void *result)
 static void
 signal_during(struct dqt_ctl *c, struct dqt_achild *ch, struct sig_arg *a,
     const char *match, struct one_res *r)
+    __requires_unlocked(c->mtx)
 {
-	int status;
 
-	(void)strlcpy(c->resolve_hold_match, match,
-	    sizeof(c->resolve_hold_match));
+	dqt_resolve_hold(c, match, 0);
 	dqt_attach_spawn(c, ch, child_signal, a);
 	ATF_REQUIRE(dqt_wait_held(c, 1, DQT_WAIT_MS));
-	pthread_mutex_lock(&c->mtx);
-	c->resolve_hold_match[0] = '\0';
-	pthread_mutex_unlock(&c->mtx);
+	dqt_resolve_hold(c, "", 0);
 	ATF_REQUIRE_EQ(0, pdkill(ch->pd, SIGUSR1));
 	memset(r, 0, sizeof(*r));
-	status = dqt_attach_wait(ch, r, sizeof(*r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_attach_collect(ch, r, sizeof(*r));
 	ATF_CHECK(dqt_wait_interrupts(c, 1, DQT_WAIT_MS));
+	dqt_lock(c);
 	ATF_CHECK_EQ(c->held[0].id, c->interrupted[0]);
+	dqt_unlock(c);
 }
 
 ATF_TC(signal_restart_rules);
@@ -710,13 +693,6 @@ child_depth(void *arg, void *result)
 }
 
 static bool
-pred_current(const struct dq_stats *st, uintptr_t n)
-{
-
-	return (st->ds_queue_current >= n);
-}
-
-static bool
 pred_dropped(const struct dq_stats *st, uintptr_t n)
 {
 
@@ -737,14 +713,13 @@ ATF_TC_BODY(depth_exhausted, tc)
 	struct depth_arg a;
 	struct one_res r;
 	struct dq_stats st;
-	int status;
 
 	dqt_init(&c);
 	ATF_REQUIRE_EQ(0, dq_set_queue_depth(c.q, 1));
 	dqt_sync_init(&a.s);
 	dqt_pause(&c);
 	dqt_attach_spawn(&c, &ch, child_depth, &a);
-	ATF_REQUIRE(dqt_wait_stats(&c, pred_current, 1, DQT_WAIT_MS));
+	ATF_REQUIRE(dqt_wait_stats(&c, dqt_pred_current, 1, DQT_WAIT_MS));
 	dqt_sync_post(a.s.tochild[1]);
 	/* The child's own lookup is refused at once (a drop). */
 	ATF_CHECK(dqt_wait_stats(&c, pred_dropped, 1, DQT_WAIT_MS));
@@ -752,8 +727,7 @@ ATF_TC_BODY(depth_exhausted, tc)
 	ATF_CHECK(st.ds_events_dropped >= 1);
 	dqt_resume(&c);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(EIO, r.r[0].err);
 	ATF_CHECK_EQ(ENOENT, r.r[1].rv);
 	dqt_fini(&c);
@@ -786,6 +760,11 @@ run_id(char *out, size_t outlen)
 	if (pipe(p) != 0)
 		return;
 	pid = fork();
+	if (pid == -1) {
+		(void)close(p[0]);
+		(void)close(p[1]);
+		return;
+	}
 	if (pid == 0) {
 		(void)dup2(p[1], STDOUT_FILENO);
 		execl("./rt-id", "rt-id", "-u", (char *)NULL);
@@ -795,7 +774,10 @@ run_id(char *out, size_t outlen)
 	n = read(p[0], out, outlen - 1);
 	out[n > 0 ? n : 0] = '\0';
 	(void)close(p[0]);
-	(void)waitpid(pid, &status, 0);
+	/* A child that did not exit 0 has printed no answer. */
+	if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) ||
+	    WEXITSTATUS(status) != 0)
+		out[0] = '\0';
 }
 
 static void
@@ -850,7 +832,9 @@ make_setid_copy(void)
 	ATF_REQUIRE_EQ(0, chmod("rt-id", 04755));
 }
 
-ATF_TC(i5_no_new_privileges);
+#define	I5_JAIL	"dqt_i5"
+
+ATF_TC_WITH_CLEANUP(i5_no_new_privileges);
 ATF_TC_HEAD(i5_no_new_privileges, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "I5: a set-user-id image exec'd "
@@ -865,12 +849,12 @@ ATF_TC_BODY(i5_no_new_privileges, tc)
 	struct dqt_achild ch;
 	struct i5_arg a;
 	struct i5_res o, r;
-	int status;
 
 	make_setid_copy();
 	memset(&a, 0, sizeof(a));
-	a.jid = jail_setv(JAIL_CREATE, "path", "/", "name", "dqt_i5",
+	a.jid = jail_setv(JAIL_CREATE, "path", "/", "name", I5_JAIL,
 	    "persist", NULL, NULL);
+	ATF_REQUIRE_MSG(a.jid > 0, "jail %s: %s", I5_JAIL, jail_errmsg);
 	a.coredir = 1;
 	memset(&o, 0, sizeof(o));
 	dqt_run_child(child_i5, &a, &o, sizeof(o));
@@ -878,27 +862,31 @@ ATF_TC_BODY(i5_no_new_privileges, tc)
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ch, child_i5, &a);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
-	if (strcmp(o.idout, "65534\n") == 0)
-		ATF_CHECK_STREQ("0\n", r.idout);
-	else
-		fprintf(stderr, "the work directory ignores set-id bits "
-		    "(unattached run printed \"%s\"): exec row not checked\n",
-		    o.idout);
+	dqt_attach_collect(&ch, &r, sizeof(r));
+	/* The oracle: unattached, the set-id copy runs as its owner. */
+	ATF_REQUIRE_STREQ_MSG("65534\n", o.idout, "the work directory "
+	    "ignores set-id bits: the exec row cannot be taken");
+	ATF_CHECK_STREQ("0\n", r.idout);
 	ATF_CHECK_EQ(-1, r.setcred.rv);
 	ATF_CHECK_EQ(EPERM, r.setcred.err);
-	if (a.jid > 0) {
-		ATF_CHECK_EQ(-1, r.jail_attach.rv);
-		ATF_CHECK_EQ(EPERM, r.jail_attach.err);
-		(void)jail_remove(a.jid);
-	}
+	ATF_CHECK_EQ(-1, r.jail_attach.rv);
+	ATF_CHECK_EQ(EPERM, r.jail_attach.err);
+	ATF_CHECK_EQ(0, jail_remove(a.jid));
 	ATF_CHECK_EQ(0, r.nnp.rv);
 	ATF_CHECK_EQ(PROC_NO_NEW_PRIVS_ENABLE, r.nnp.err);
 	ATF_CHECK(WIFSIGNALED(r.core_status));
 	ATF_CHECK_MSG(!WCOREDUMP(r.core_status), "an attached process dumped "
 	    "core");
 	dqt_fini(&c);
+}
+ATF_TC_CLEANUP(i5_no_new_privileges, tc)
+{
+	int jid;
+
+	/* A persistent jail left behind would refuse the next run's create. */
+	jid = jail_getid(I5_JAIL);
+	if (jid > 0)
+		(void)jail_remove(jid);
 }
 
 /*
@@ -975,10 +963,11 @@ ATF_TC_HEAD(two_path_calls, tc)
 }
 ATF_TC_BODY(two_path_calls, tc)
 {
+	struct dqt_resolve_seen rs;
 	struct dqt_ctl c;
 	struct dqt_achild ch;
 	struct two_res o, a;
-	int i, k, n, status;
+	int i, k, n;
 
 	ATF_REQUIRE_EQ(0, mkdir("oracle", 0755));
 	ATF_REQUIRE_EQ(0, mkdir("attached", 0755));
@@ -989,8 +978,7 @@ ATF_TC_BODY(two_path_calls, tc)
 	dqt_attach_spawn(&c, &ch, child_two_path,
 	    __DECONST(void *, "attached"));
 	memset(&a, 0, sizeof(a));
-	status = dqt_attach_wait(&ch, &a, sizeof(a));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &a, sizeof(a));
 	for (k = 0; k < T_NSTEPS; k++) {
 		ATF_CHECK_EQ_MSG(o.rv[k], a.rv[k], "%s: rv attached %ld "
 		    "unattached %ld", two_tag[k], a.rv[k], o.rv[k]);
@@ -1000,18 +988,24 @@ ATF_TC_BODY(two_path_calls, tc)
 		ATF_CHECK_EQ_MSG(1, n, "%s: %d events of op %u", two_tag[k], n,
 		    two_op[k]);
 		i = dqt_find_resolve(&c, two_tag[k], two_op[k], 0);
-		if (i != -1)
-			ATF_CHECK_MSG(c.rs[i].path[0] != '\0' &&
-			    c.rs[i].path2[0] != '\0', "%s: path \"%s\" path2 "
-			    "\"%s\"", two_tag[k], c.rs[i].path, c.rs[i].path2);
 		if (i != -1) {
+			dqt_resolve_at(&c, i, &rs);
+			ATF_CHECK_MSG(rs.path[0] != '\0' && rs.path2[0] != '\0',
+			    "%s: path \"%s\" path2 \"%s\"", two_tag[k], rs.path,
+			    rs.path2);
+		}
+		if (i != -1) {
+			dqt_lock(&c);
 			ATF_CHECK_EQ_MSG(two_start2[k], c.rs[i].start2_kind,
 			    "%s: start2_kind %u want %u", two_tag[k],
 			    c.rs[i].start2_kind, two_start2[k]);
+			dqt_unlock(&c);
 			/* Two real starts: PASS, OK or an errno (D170). */
+			dqt_lock(&c);
 			ATF_CHECK_EQ_MSG(DQ_RACCEPT(DQ_RESOLVE_PASS) |
 			    DQ_RACCEPT(DQ_RESOLVE_OK), c.rs[i].accept,
 			    "%s: drs_accept %#x", two_tag[k], c.rs[i].accept);
+			dqt_unlock(&c);
 		}
 	}
 	dqt_fini(&c);
@@ -1077,29 +1071,26 @@ ATF_TC_BODY(slot_revalidation, tc)
 	struct dqt_achild ch;
 	struct rv_arg a;
 	struct one_res r;
-	int i, status;
+	int i;
 
 	dqt_init(&c);
 	dqt_sync_init(&a.s);
-	(void)strlcpy(c.resolve_hold_match, "rt-sv-B1",
-	    sizeof(c.resolve_hold_match));
+	dqt_resolve_hold(&c, "rt-sv-B1", 0);
 	dqt_attach_spawn(&c, &ch, child_rename_swap, &a);
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	dqt_lock(&c);
 	ATF_REQUIRE_EQ(DQ_OP_RESOLVE, c.held[0].op);
+	dqt_unlock(&c);
 	/* Rewrite path2 while the event is held, then PASS the old bytes. */
 	dqt_sync_post(a.s.tochild[1]);
 	ATF_REQUIRE(dqt_sync_wait(a.s.toparent[0], DQT_WAIT_MS));
 	/* The second consultation (the new bytes) is refused. */
-	pthread_mutex_lock(&c.mtx);
-	c.resolve_hold_match[0] = '\0';
-	(void)strlcpy(c.resolve_fail_match, "rt-sv-B2",
-	    sizeof(c.resolve_fail_match));
-	c.resolve_fail_errno = EACCES;
-	pthread_mutex_unlock(&c.mtx);
-	ATF_REQUIRE_EQ(0, dq_reply_resolve_pass(c.q, c.held[0].id));
+	/* Refusal first, then release: no consultation slips through. */
+	dqt_resolve_fail(&c, "rt-sv-B2", EACCES);
+	dqt_resolve_hold(&c, "", 0);
+	ATF_REQUIRE_EQ(0, dq_reply_resolve_pass(c.q, dqt_held_id(&c, 0)));
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	i = dqt_find_resolve(&c, "rt-sv-B2", DQ_ROP_RENAME, 0);
 	ATF_CHECK_MSG(i != -1, "the new second path was never consulted");
 	ATF_CHECK_EQ(1, dqt_count_resolve(&c, "rt-sv-B1", DQ_ROP_RENAME));
@@ -1115,9 +1106,10 @@ ATF_TC_BODY(slot_revalidation, tc)
 
 /*
  * Kernel-consumer paths (class 2): swapon/swapoff of an md vnode device,
- * quotactl(Q_QUOTAON)'s quota file, unmount of a tmpfs, a nullfs mount's
- * mount point and target, extattrctl with a NULL file name.  Each row is
- * skipped (with a note) where this machine cannot provide it.
+ * unmount of a tmpfs, a nullfs mount's
+ * mount point and target, extattrctl with a NULL file name.  A row whose
+ * prerequisite is missing fails (one skip policy: a row not taken is not a
+ * pass).  quotactl(Q_QUOTAON)'s quota file is kernel_consumer_quotaon.
  */
 #define	KC_MD_SAVED	"rt-md.unit"
 
@@ -1129,8 +1121,8 @@ struct kc_arg {
 };
 
 struct kc_res {
-	struct dqt_rr	 swapon, swapoff, quotaon, unmount, nullmount,
-			 nullunmount, extattrctl;
+	struct dqt_rr	 swapon, swapoff, unmount, nullmount, nullunmount,
+			 extattrctl;
 };
 
 static int
@@ -1153,12 +1145,6 @@ nullfs_mount(const char *src, const char *mnt)
 	return (nmount(iov, 6, 0));
 }
 
-#define	RR(field, call) do {						\
-	errno = 0;							\
-	r->field.rv = (long)(call);					\
-	r->field.err = r->field.rv == -1 ? errno : 0;			\
-} while (0)
-
 static void
 child_kconsumers(void *arg, void *result)
 {
@@ -1166,18 +1152,16 @@ child_kconsumers(void *arg, void *result)
 	struct kc_res *r = result;
 
 	if (a->md[0] != '\0') {
-		RR(swapon, swapon(a->md));
+		DQT_RR(r->swapon, swapon(a->md));
 		if (r->swapon.rv == 0)
-			RR(swapoff, swapoff(a->md, 0));
+			DQT_RR(r->swapoff, swapoff(a->md, 0));
 	}
-	RR(quotaon, quotactl(".", QCMD(Q_QUOTAON, USRQUOTA), 0,
-	    __DECONST(char *, "rt-quota.user")));
 	if (a->tmpfs[0] != '\0')
-		RR(unmount, unmount(a->tmpfs, 0));
-	RR(nullmount, nullfs_mount(a->nullsrc, a->nullmnt));
+		DQT_RR(r->unmount, unmount(a->tmpfs, 0));
+	DQT_RR(r->nullmount, nullfs_mount(a->nullsrc, a->nullmnt));
 	if (r->nullmount.rv == 0)
-		RR(nullunmount, unmount(a->nullmnt, 0));
-	RR(extattrctl, extattrctl("rt-eactl-dir", UFS_EXTATTR_CMD_STOP, NULL, 0,
+		DQT_RR(r->nullunmount, unmount(a->nullmnt, 0));
+	DQT_RR(r->extattrctl, extattrctl("rt-eactl-dir", UFS_EXTATTR_CMD_STOP, NULL, 0,
 	    NULL));
 }
 
@@ -1201,33 +1185,38 @@ run_cmd(const char *cmd, char *out, size_t outlen)
 static void
 check_kconsumer(struct dqt_ctl *c, const char *tag, const char *what)
 {
+	struct dqt_resolve_seen rs;
 	int i;
 
-	i = dqt_find_resolve(c, tag, 0, 0);
-	while (i != -1 && c->rs[i].cls != DQ_RCLASS_KCONSUMER)
-		i = dqt_find_resolve(c, tag, 0, i + 1);
+	for (i = dqt_find_resolve(c, tag, 0, 0); i != -1;
+	    i = dqt_find_resolve(c, tag, 0, i + 1)) {
+		dqt_resolve_at(c, i, &rs);
+		if (rs.cls == DQ_RCLASS_KCONSUMER)
+			break;
+	}
 	ATF_CHECK_MSG(i != -1, "%s: no class-2 RESOLVE naming \"%s\"", what,
 	    tag);
 	if (i != -1)
-		ATF_CHECK((c->rs[i].rflags & DQ_RF_KCONSUMER) != 0 &&
-		    (c->rs[i].rflags & DQ_RF_USER) == 0);
+		ATF_CHECK((rs.rflags & DQ_RF_KCONSUMER) != 0 &&
+		    (rs.rflags & DQ_RF_USER) == 0);
 }
 
 /* How many class-2 events of op (0: any) name tag. */
 static int
 count_kconsumer(struct dqt_ctl *c, const char *tag, uint32_t op)
+    __requires_unlocked(c->mtx)
 {
 	int i, n;
 
 	n = 0;
-	pthread_mutex_lock(&c->mtx);
+	dqt_lock(c);
 	for (i = 0; i < c->nrs; i++) {
 		if (c->rs[i].cls == DQ_RCLASS_KCONSUMER &&
 		    (op == 0 || c->rs[i].op == op) &&
 		    strstr(c->rs[i].path, tag) != NULL)
 			n++;
 	}
-	pthread_mutex_unlock(&c->mtx);
+	dqt_unlock(c);
 	return (n);
 }
 
@@ -1235,9 +1224,9 @@ ATF_TC_WITH_CLEANUP(kernel_consumer_rows);
 ATF_TC_HEAD(kernel_consumer_rows, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "class-2 consultations: swapon and "
-	    "swapoff of an md device, quotactl Q_QUOTAON's quota file (UFS), "
-	    "unmount of a tmpfs, a nullfs mount's mount point and target, "
-	    "extattrctl with a NULL file name (no EFAULT)");
+	    "swapoff of an md device, unmount of a tmpfs, a nullfs mount's "
+	    "mount point and target, extattrctl with a NULL file name (no "
+	    "EFAULT)");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(kernel_consumer_rows, tc)
@@ -1248,7 +1237,7 @@ ATF_TC_BODY(kernel_consumer_rows, tc)
 	struct kc_res r;
 	char cwd[PATH_MAX], out[64], cmd[PATH_MAX + 64];
 	FILE *fp;
-	int fd, status;
+	int fd;
 
 	ATF_REQUIRE(getcwd(cwd, sizeof(cwd)) != NULL);
 	memset(&a, 0, sizeof(a));
@@ -1266,14 +1255,16 @@ ATF_TC_BODY(kernel_consumer_rows, tc)
 			(void)fclose(fp);
 		}
 	} else
-		fprintf(stderr, "no md device: swapon row skipped\n");
+		ATF_CHECK_MSG(false, "row not taken: no md device for swapon "
+		    "(%s)", out);
 	/* A tmpfs to unmount. */
 	ATF_REQUIRE_EQ(0, mkdir("rt-tmpfs", 0755));
 	if (run_cmd("mount -t tmpfs tmpfs rt-tmpfs 2>&1", out,
 	    sizeof(out)) == 0)
 		(void)snprintf(a.tmpfs, sizeof(a.tmpfs), "%s/rt-tmpfs", cwd);
 	else
-		fprintf(stderr, "no tmpfs: unmount row skipped (%s)\n", out);
+		ATF_CHECK_MSG(false, "row not taken: no tmpfs to unmount (%s)",
+		    out);
 	ATF_REQUIRE_EQ(0, mkdir("rt-nullsrc", 0755));
 	ATF_REQUIRE_EQ(0, mkdir("rt-nullmnt", 0755));
 	ATF_REQUIRE_EQ(0, mkdir("rt-eactl-dir", 0755));
@@ -1283,8 +1274,7 @@ ATF_TC_BODY(kernel_consumer_rows, tc)
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ch, child_kconsumers, &a);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 
 	if (a.md[0] != '\0') {
 		ATF_CHECK_EQ_MSG(0, r.swapon.rv, "swapon %s: %s", a.md,
@@ -1298,12 +1288,6 @@ ATF_TC_BODY(kernel_consumer_rows, tc)
 			    "swapoff's)", a.md, count_kconsumer(&c, a.md + 5, 0));
 		}
 	}
-	if (r.quotaon.rv == -1 && (r.quotaon.err == EOPNOTSUPP ||
-	    r.quotaon.err == EINVAL))
-		fprintf(stderr, "quotas unavailable here (%s): quotactl row "
-		    "skipped\n", strerror(r.quotaon.err));
-	else
-		check_kconsumer(&c, "rt-quota.user", "quotactl Q_QUOTAON");
 	if (a.tmpfs[0] != '\0') {
 		ATF_CHECK_EQ_MSG(0, r.unmount.rv, "unmount: %s",
 		    strerror(r.unmount.err));
@@ -1332,6 +1316,108 @@ ATF_TC_CLEANUP(kernel_consumer_rows, tc)
 	(void)system("swapoff /dev/$(cat " KC_MD_SAVED " 2>/dev/null) "
 	    "2>/dev/null");
 	fp = fopen(KC_MD_SAVED, "r");
+	if (fp == NULL)
+		return;
+	if (fscanf(fp, "%31s", unit) == 1) {
+		(void)snprintf(cmd, sizeof(cmd), "mdconfig -d -u %s", unit);
+		(void)system(cmd);
+	}
+	(void)fclose(fp);
+}
+
+/*
+ * kernel_consumer_quotaon: the quota file named to quotactl(Q_QUOTAON) is
+ * opened by the file system (ufs_quota.c quotaon), a class-2 consumer.
+ * It needs a kernel with options QUOTA, which the GENERIC test kernel does
+ * not have; that is the case's one skip, taken before anything is done
+ * (kern.features.ufs_quota, set by options QUOTA).  With it, the case
+ * makes its own UFS (md swap, newfs, mount -o userquota) and accepts only
+ * success.
+ */
+#define	QC_MD_SAVED	"rt-qmd.unit"
+#define	QC_MNT		"rt-qmnt"
+
+struct qc_arg {
+	char		 mnt[PATH_MAX];
+	char		 qfile[PATH_MAX];
+};
+
+struct qc_res {
+	struct dqt_rr	 quotaon, quotaoff;
+};
+
+static void
+child_quotaon(void *arg, void *result)
+{
+	struct qc_arg *a = arg;
+	struct qc_res *r = result;
+
+	DQT_RR(r->quotaon, quotactl(a->mnt, QCMD(Q_QUOTAON, USRQUOTA), 0,
+	    a->qfile));
+	if (r->quotaon.rv == 0)
+		DQT_RR(r->quotaoff, quotactl(a->mnt, QCMD(Q_QUOTAOFF,
+		    USRQUOTA), 0, NULL));
+}
+
+ATF_TC_WITH_CLEANUP(kernel_consumer_quotaon);
+ATF_TC_HEAD(kernel_consumer_quotaon, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "class-2 consultation: the quota file "
+	    "of quotactl Q_QUOTAON on a UFS mounted with userquota (needs "
+	    "options QUOTA)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.progs", "mdconfig newfs");
+}
+ATF_TC_BODY(kernel_consumer_quotaon, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_achild ch;
+	struct qc_arg a;
+	struct qc_res r;
+	char cwd[PATH_MAX], out[64], cmd[PATH_MAX + 64];
+	size_t len;
+	int fd, on;
+
+	len = sizeof(on);
+	if (sysctlbyname("kern.features.ufs_quota", &on, &len, NULL, 0) != 0)
+		atf_tc_skip("kernel without options QUOTA (no "
+		    "kern.features.ufs_quota): quotaon cannot open a file");
+	ATF_REQUIRE(getcwd(cwd, sizeof(cwd)) != NULL);
+	ATF_REQUIRE_EQ_MSG(0, run_cmd("mdconfig -a -t swap -s 32m", out,
+	    sizeof(out)), "mdconfig: %s", out);
+	ATF_REQUIRE_MSG(strncmp(out, "md", 2) == 0, "mdconfig: %s", out);
+	atf_utils_create_file(QC_MD_SAVED, "%s\n", out);
+	(void)snprintf(cmd, sizeof(cmd), "newfs -U /dev/%s >/dev/null", out);
+	ATF_REQUIRE_EQ_MSG(0, system(cmd), "%s", cmd);
+	ATF_REQUIRE_EQ(0, mkdir(QC_MNT, 0755));
+	(void)snprintf(cmd, sizeof(cmd), "mount -o userquota /dev/%s %s", out,
+	    QC_MNT);
+	ATF_REQUIRE_EQ_MSG(0, system(cmd), "%s", cmd);
+	memset(&a, 0, sizeof(a));
+	(void)snprintf(a.mnt, sizeof(a.mnt), "%s/%s", cwd, QC_MNT);
+	(void)snprintf(a.qfile, sizeof(a.qfile), "%s/rt-quota.user", a.mnt);
+	fd = open(a.qfile, O_CREAT | O_RDWR, 0600);
+	ATF_REQUIRE_MSG(fd != -1, "%s: %s", a.qfile, strerror(errno));
+	(void)close(fd);
+
+	dqt_init(&c);
+	dqt_attach_spawn(&c, &ch, child_quotaon, &a);
+	memset(&r, 0, sizeof(r));
+	dqt_attach_collect(&ch, &r, sizeof(r));
+	ATF_CHECK_EQ_MSG(0, r.quotaon.rv, "quotactl Q_QUOTAON: %s",
+	    strerror(r.quotaon.err));
+	ATF_CHECK_EQ_MSG(0, r.quotaoff.rv, "quotactl Q_QUOTAOFF: %s",
+	    strerror(r.quotaoff.err));
+	check_kconsumer(&c, "rt-quota.user", "quotactl Q_QUOTAON");
+	dqt_fini(&c);
+}
+ATF_TC_CLEANUP(kernel_consumer_quotaon, tc)
+{
+	char unit[32], cmd[128];
+	FILE *fp;
+
+	(void)system("umount -f " QC_MNT " 2>/dev/null");
+	fp = fopen(QC_MD_SAVED, "r");
 	if (fp == NULL)
 		return;
 	if (fscanf(fp, "%31s", unit) == 1) {
@@ -1377,7 +1463,7 @@ child_round5(void *arg, void *result)
 		/* A valid size, as mdconfig sets it, so only the refusal can fail it. */
 		mdio.md_mediasize = 1024 * 1024;
 		mdio.md_sectorsize = 512;
-		RR(mdattach, ioctl(fd, MDIOCATTACH, &mdio));
+		DQT_RR(r->mdattach, ioctl(fd, MDIOCATTACH, &mdio));
 		if (r->mdattach.rv == 0) {
 			/* Not refused: undo it. */
 			(void)ioctl(fd, MDIOCDETACH, &mdio);
@@ -1396,15 +1482,15 @@ child_round5(void *arg, void *result)
 		    IBE_INTERP_LEN_MAX);
 		memcpy(xbe.xbe_magic, "DQTBM1", 6);
 		xbe.xbe_msize = 6;
-		RR(binmisc, sysctlbyname(IBE_SYSCTL_NAME_ADD, NULL, NULL, &xbe,
+		DQT_RR(r->binmisc, sysctlbyname(IBE_SYSCTL_NAME_ADD, NULL, NULL, &xbe,
 		    sizeof(xbe)));
 		if (r->binmisc.rv == 0)
 			(void)sysctlbyname(IBE_SYSCTL_NAME_REMOVE, NULL, NULL,
 			    &xbe, sizeof(xbe));
 	}
-	RR(unmount, unmount("rt-no-such-mount/x", 0));
+	DQT_RR(r->unmount, unmount("rt-no-such-mount/x", 0));
 	if (a->have_fh)
-		RR(fhlink, fhlink(&a->fh, "rt-fh-link"));
+		DQT_RR(r->fhlink, fhlink(&a->fh, "rt-fh-link"));
 }
 
 ATF_TC(attached_kernel_paths);
@@ -1418,12 +1504,13 @@ ATF_TC_HEAD(attached_kernel_paths, tc)
 }
 ATF_TC_BODY(attached_kernel_paths, tc)
 {
+	struct dqt_resolve_seen rs;
 	struct dqt_ctl c;
 	struct dqt_achild ch;
 	struct r5_arg a;
 	struct r5_res r;
 	size_t len;
-	int fd, i, status;
+	int fd, i;
 
 	memset(&a, 0, sizeof(a));
 	fd = open("rt-mdfile", O_CREAT | O_RDWR, 0600);
@@ -1434,23 +1521,19 @@ ATF_TC_BODY(attached_kernel_paths, tc)
 	ATF_REQUIRE(fd != -1);
 	(void)close(fd);
 	a.have_fh = getfh("rt-fh-src", &a.fh) == 0;
-	if (!a.have_fh)
-		fprintf(stderr, "getfh: %s: fhlink row skipped\n",
-		    strerror(errno));
+	ATF_CHECK_MSG(a.have_fh, "row not taken: getfh: %s", strerror(errno));
 	len = 0;
 	a.have_binmisc = sysctlbyname(IBE_SYSCTL_NAME_LIST, NULL, &len, NULL,
 	    0) == 0;
-	if (!a.have_binmisc)
-		fprintf(stderr, "imgact_binmisc not loaded: binmisc row "
-		    "skipped\n");
+	ATF_CHECK_MSG(a.have_binmisc, "row not taken: imgact_binmisc is not "
+	    "loaded");
 
 	dqt_init(&c);
 	dqt_attach_spawn(&c, &ch, child_round5, &a);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	if (r.mdattach.rv == -2)
-		fprintf(stderr, "no /dev/mdctl (%s): md row skipped\n",
+		ATF_CHECK_MSG(false, "row not taken: no /dev/mdctl (%s)",
 		    strerror(r.mdattach.err));
 	else {
 		ATF_CHECK_EQ(-1, r.mdattach.rv);
@@ -1470,8 +1553,10 @@ ATF_TC_BODY(attached_kernel_paths, tc)
 		    strerror(r.fhlink.err));
 		i = dqt_find_resolve(&c, "rt-fh-link", DQ_ROP_LINK, 0);
 		ATF_CHECK_MSG(i != -1, "fhlink posted no LINK");
-		if (i != -1)
-			ATF_CHECK_EQ(DQ_RCLASS_USER, c.rs[i].cls);
+		if (i != -1) {
+			dqt_resolve_at(&c, i, &rs);
+			ATF_CHECK_EQ(DQ_RCLASS_USER, rs.cls);
+		}
 		ATF_CHECK_EQ(0, access("rt-fh-link", F_OK));
 	}
 	dqt_fini(&c);
@@ -1562,7 +1647,7 @@ ATF_TC_BODY(swapon_consult_ahead, tc)
 	struct one_res r;
 	char out[64];
 	FILE *fp;
-	int fd, k, status;
+	int fd, k;
 
 	fd = open("rt-ahead-swap", O_CREAT | O_RDWR, 0600);
 	ATF_REQUIRE(fd != -1);
@@ -1570,7 +1655,7 @@ ATF_TC_BODY(swapon_consult_ahead, tc)
 	(void)close(fd);
 	if (run_cmd("mdconfig -a -t vnode -f rt-ahead-swap 2>/dev/null", out,
 	    sizeof(out)) != 0 || strncmp(out, "md", 2) != 0)
-		atf_tc_skip("no md device");
+		atf_tc_fail("no md device");
 	fp = fopen(AH_MD_SAVED, "w");
 	if (fp != NULL) {
 		(void)fprintf(fp, "%s\n", out);
@@ -1582,19 +1667,16 @@ ATF_TC_BODY(swapon_consult_ahead, tc)
 		(void)strlcpy(a.md, out, sizeof(a.md));
 		dqt_sync_init(&a.s);
 		dqt_init(&c);
-		(void)strlcpy(c.resolve_hold_match, a.md,
-		    sizeof(c.resolve_hold_match));
+		dqt_resolve_hold(&c, a.md, 0);
 		dqt_attach_spawn(&c, &ch, child_ahead, &a);
 		ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
 		dqt_sync_post(a.s.tochild[1]);
 		ATF_REQUIRE(dqt_sync_wait(a.s.toparent[0], DQT_WAIT_MS));
-		pthread_mutex_lock(&c.mtx);
-		c.resolve_hold_match[0] = '\0';
-		pthread_mutex_unlock(&c.mtx);
-		ATF_REQUIRE_EQ(0, dq_reply_resolve_pass(c.q, c.held[0].id));
+		dqt_resolve_hold(&c, "", 0);
+		ATF_REQUIRE_EQ(0, dq_reply_resolve_pass(c.q, dqt_held_id(&c,
+		    0)));
 		memset(&r, 0, sizeof(r));
-		status = dqt_attach_wait(&ch, &r, sizeof(r));
-		ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+		dqt_attach_collect(&ch, &r, sizeof(r));
 		ATF_CHECK_EQ_MSG(-1, r.r[0].rv, "%s variant: swapon succeeded",
 		    k ? "chdir" : "rewrite");
 		ATF_CHECK_EQ_MSG(EIO, r.r[0].err, "%s variant: %s",
@@ -1643,19 +1725,15 @@ ATF_TC_BODY(unmount_refused, tc)
 	struct one_res r;
 	struct statfs sfs;
 	char out[128];
-	int status;
 
 	ATF_REQUIRE_EQ(0, mkdir("rt-umnt", 0755));
 	if (run_cmd("mount -t tmpfs tmpfs rt-umnt 2>&1", out, sizeof(out)) != 0)
-		atf_tc_skip("no tmpfs: %s", out);
+		atf_tc_fail("no tmpfs: %s", out);
 	dqt_init(&c);
-	(void)strlcpy(c.resolve_fail_match, "rt-umnt",
-	    sizeof(c.resolve_fail_match));
-	c.resolve_fail_errno = EACCES;
+	dqt_resolve_fail(&c, "rt-umnt", EACCES);
 	dqt_attach_spawn(&c, &ch, child_unmount_refused, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.r[0].rv);
 	ATF_CHECK_EQ_MSG(EACCES, r.r[0].err, "unmount: %s",
 	    strerror(r.r[0].err));
@@ -1693,23 +1771,150 @@ ATF_TC_BODY(link_eagain_eio, tc)
 	struct dqt_ctl c;
 	struct dqt_achild ch;
 	struct one_res r;
-	int fd, status;
+	int fd;
 
 	fd = open("rt-lagain-src", O_CREAT | O_WRONLY, 0644);
 	ATF_REQUIRE(fd != -1);
 	(void)close(fd);
 	dqt_init(&c);
-	(void)strlcpy(c.resolve_fail_match, "rt-lagain",
-	    sizeof(c.resolve_fail_match));
-	c.resolve_fail_errno = EAGAIN;
+	dqt_resolve_fail(&c, "rt-lagain", EAGAIN);
 	dqt_attach_spawn(&c, &ch, child_link_again, NULL);
 	memset(&r, 0, sizeof(r));
-	status = dqt_attach_wait(&ch, &r, sizeof(r));
-	ATF_CHECK(WIFEXITED(status));
+	dqt_attach_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.r[0].rv);
 	ATF_CHECK_EQ_MSG(EIO, r.r[0].err, "link: %s", strerror(r.r[0].err));
 	ATF_CHECK_EQ(1, dqt_count_resolve(&c, "rt-lagain", DQ_ROP_LINK));
 	ATF_CHECK_EQ(-1, access("rt-lagain-dst", F_OK));
+	dqt_fini(&c);
+}
+
+/*
+ * Pins taken before the standing rules (dq-standing-decisions §9.1): what
+ * an attached process's lookups post, and the statistics.  A queue that
+ * installs no rule posts exactly as before; dq_standing_test covers the
+ * ioctls.
+ */
+#define	EVERY_N		8
+
+static void
+child_every(void *arg, void *result)
+{
+	const char *path = arg;
+	struct one_res *r = result;
+	struct stat sb;
+	int i, bad;
+
+	bad = 0;
+	for (i = 0; i < EVERY_N; i++)
+		if (stat(path, &sb) != 0)
+			bad++;
+	r->r[0].rv = bad;
+}
+
+ATF_TC(every_lookup_posts);
+ATF_TC_HEAD(every_lookup_posts, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "each of N stat(2) calls of one "
+	    "absolute path posts its own RESOLVE event, start REAL_ROOT with "
+	    "no start hint, and counts in ds2_resolves: nothing outlives the "
+	    "system call that consulted");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(every_lookup_posts, tc)
+{
+	struct dqt_resolve_seen rs;
+	struct dqt_ctl c;
+	struct dqt_achild ch;
+	struct one_res r;
+	struct dq_stats2 st;
+	char cwd[PATH_MAX], path[PATH_MAX];
+	int fd, i, n;
+
+	ATF_REQUIRE(getcwd(cwd, sizeof(cwd)) != NULL);
+	snprintf(path, sizeof(path), "%s/rt-every", cwd);
+	fd = open(path, O_CREAT | O_WRONLY, 0644);
+	ATF_REQUIRE(fd != -1);
+	(void)close(fd);
+	dqt_init(&c);
+	dqt_attach_spawn(&c, &ch, child_every, path);
+	memset(&r, 0, sizeof(r));
+	dqt_attach_collect(&ch, &r, sizeof(r));
+	ATF_CHECK_EQ_MSG(0, r.r[0].rv, "%ld stat calls failed", r.r[0].rv);
+	ATF_CHECK_EQ(EVERY_N, dqt_count_resolve(&c, "rt-every", DQ_ROP_STAT));
+	n = 0;
+	for (i = dqt_find_resolve(&c, "rt-every", DQ_ROP_STAT, 0); i != -1;
+	    i = dqt_find_resolve(&c, "rt-every", DQ_ROP_STAT, i + 1)) {
+		dqt_resolve_at(&c, i, &rs);
+		ATF_CHECK_STREQ(path, rs.path);
+		ATF_CHECK_EQ(DQ_START_REAL_ROOT, rs.start_kind);
+		ATF_CHECK((rs.rflags & (DQ_RF_STARTPATH_VALID |
+		    DQ_RF_SYMLINK_RESTART)) == 0);
+		ATF_CHECK_STREQ("", rs.startpath);
+		n++;
+	}
+	ATF_CHECK_EQ(EVERY_N, n);
+	dqt_stats2(&c, &st);
+	ATF_CHECK_MSG(st.ds2_resolves >= EVERY_N, "ds2_resolves %ju",
+	    (uintmax_t)st.ds2_resolves);
+	ATF_CHECK_MSG(st.ds2_resolve_pass >= EVERY_N, "ds2_resolve_pass %ju",
+	    (uintmax_t)st.ds2_resolve_pass);
+	dqt_fini(&c);
+}
+
+static void
+child_some_lookups(void *arg __unused, void *result)
+{
+	struct one_res *r = result;
+	struct stat sb;
+
+	r->r[0].rv = stat("/bin/sh", &sb);
+	r->r[1].rv = stat("rt-missing", &sb);
+}
+
+/*
+ * The standing counters took two of the three reserved slots (review 2
+ * N1): with no rule installed they and the slot left read 0, on a fresh
+ * queue and after attached lookups, all of which post.
+ */
+static void
+check_stats2_zero(const struct dq_stats2 *st, const char *when)
+{
+
+	ATF_CHECK_EQ_MSG(0, st->ds2_reserved[0], "%s: reserved[0] %ju", when,
+	    (uintmax_t)st->ds2_reserved[0]);
+	ATF_CHECK_EQ_MSG(0, st->ds2_standing_pass, "%s: standing pass %ju",
+	    when, (uintmax_t)st->ds2_standing_pass);
+	ATF_CHECK_EQ_MSG(0, st->ds2_standing_deny, "%s: standing deny %ju",
+	    when, (uintmax_t)st->ds2_standing_deny);
+}
+
+ATF_TC(stats2_reserved_zero);
+ATF_TC_HEAD(stats2_reserved_zero, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "struct dq_stats2 is 320 bytes; with "
+	    "no standing rule its standing counters and its reserved counter "
+	    "read 0 on a fresh queue and after attached lookups");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(stats2_reserved_zero, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_achild ch;
+	struct one_res r;
+	struct dq_stats2 st;
+
+	ATF_REQUIRE_EQ(320, sizeof(struct dq_stats2));
+	ATF_REQUIRE_EQ(1, nitems(st.ds2_reserved));
+	dqt_init(&c);
+	dqt_stats2(&c, &st);
+	ATF_CHECK_EQ(sizeof(st), st.ds2_size);
+	check_stats2_zero(&st, "fresh");
+	dqt_attach_spawn(&c, &ch, child_some_lookups, NULL);
+	memset(&r, 0, sizeof(r));
+	dqt_attach_collect(&ch, &r, sizeof(r));
+	dqt_stats2(&c, &st);
+	ATF_CHECK(st.ds2_resolves >= 2);
+	check_stats2_zero(&st, "after lookups");
 	dqt_fini(&c);
 }
 
@@ -1728,9 +1933,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, two_path_calls);
 	ATF_TP_ADD_TC(tp, slot_revalidation);
 	ATF_TP_ADD_TC(tp, kernel_consumer_rows);
+	ATF_TP_ADD_TC(tp, kernel_consumer_quotaon);
 	ATF_TP_ADD_TC(tp, attached_kernel_paths);
 	ATF_TP_ADD_TC(tp, swapon_consult_ahead);
 	ATF_TP_ADD_TC(tp, unmount_refused);
 	ATF_TP_ADD_TC(tp, link_eagain_eio);
+	ATF_TP_ADD_TC(tp, every_lookup_posts);
+	ATF_TP_ADD_TC(tp, stats2_reserved_zero);
 	return (atf_no_error());
 }
