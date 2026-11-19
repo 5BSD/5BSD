@@ -65,8 +65,6 @@ struct sctl_conn {
 	 * applications use (uid_t)-1. Bound-channel and sender checks enforce
 	 * software authority independently of this compatibility field. */
 	uid_t			uid;
-	/* Admitted without software authority on a degraded SwitchBoard. */
-	bool			degraded_root;
 };
 
 static TAILQ_HEAD(, sctl_conn) conn_list = TAILQ_HEAD_INITIALIZER(conn_list);
@@ -119,9 +117,6 @@ sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 		    "%u done)", nrunning, nstopped, nstarting, nstopping,
 		    ndone);
 	BUF_APPEND(summary, sumlen, &off, "\n");
-	if (sd.authority_issuer_fd < 0)
-		BUF_APPEND(summary, sumlen, &off,
-		    "authority: no authority issuer (degraded: no grants)\n");
 	switchboard_fd_budget_get_stats(&fd_stats);
 	BUF_APPEND(summary, sumlen, &off,
 	    "fd-budget: soft=%ju hard=%ju reserve=%zu denied=%ju "
@@ -643,30 +638,7 @@ sctl_cap_request(struct channel *ch __unused, struct channel_message *request,
 	data = channel_message_data(request);
 	len = channel_message_length(request);
 
-	if (c->degraded_root) {
-		/*
-		 * Degraded: host root may read, nothing more.  Recheck the
-		 * kernel-stamped sender and the degraded state every request.
-		 */
-		req = data;
-		if (!sctl_degraded_root_sender(
-		    channel_message_sender(request))) {
-			reply.status = EPERM;
-		} else if (data == NULL || len != sizeof(*req) ||
-		    req->flags != 0 || req->datalen != 0) {
-			reply.status = EINVAL;
-		} else if (req->op != SCTL_OP_STATUS &&
-		    req->op != SCTL_OP_SERVICES && req->op != SCTL_OP_TREE) {
-			trace_opcode = req->op;
-			reply.status = EPERM;
-			snprintf(summary, sizeof(summary), "no authority issuer: "
-			    "only status is available while degraded");
-		} else {
-			trace_opcode = req->op;
-			sctl_execute_op(req->op, payload, 0, false, 0, &reply,
-			    summary, sizeof(summary));
-		}
-	} else if (svc_authority_resolve(request, &actual, &sender) == -1 ||
+	if (svc_authority_resolve(request, &actual, &sender) == -1 ||
 	    actual.authority_identity == 0 || actual.uid != c->uid) {
 		reply.status = EPERM;
 	} else if (data == NULL || len < sizeof(*req)) {
@@ -759,56 +731,7 @@ sctl_capsule_request(struct channel *ch __unused,
 	data = channel_message_data(request);
 	len = channel_message_length(request);
 
-	if (c->degraded_root) {
-		/*
-		 * Degraded: host root may get status and stop the system, the
-		 * operations reboot(2) and init's signal ABI already give it.
-		 */
-		req = data;
-		if (!sctl_degraded_root_sender(
-		    channel_message_sender(request))) {
-			reply.status = EPERM;
-		} else if (data == NULL || len != sizeof(*req) ||
-		    req->flags != 0 || req->datalen != 0) {
-			reply.status = EINVAL;
-		} else {
-			switch (req->op) {
-			case CTL_OP_REBOOT:
-			case CTL_OP_HALT:
-			case CTL_OP_POWEROFF:
-			case CTL_OP_POWERCYCLE:
-			case CTL_OP_SINGLE:
-			case CTL_OP_CATATONIA:
-				status = capsule_lifecycle(sd.capsule_channel_fd,
-				    req->op);
-				reply.status = (status < 0) ? EIO :
-				    (uint32_t)status;
-				if (reply.status == 0)
-					syslog(LOG_NOTICE, "sctl: relayed "
-					    "lifecycle op %u to Capsule for "
-					    "root (no authority issuer)", req->op);
-				break;
-			case CTL_OP_STATUS:
-				snprintf(summary, sizeof(summary),
-				    "Capsule: %s (spine, PID 1)\n"
-				    "control plane: capability "
-				    "(system.lifecycle)\n"
-				    "authority: no authority issuer "
-				    "(degraded: no grants)\n"
-				    "services loaded: %u\n",
-				    sd.capsule_channel_fd >= 0 ? "reachable" :
-				    "unreachable", sd.nservices);
-				reply.status = 0;
-				break;
-			default:
-				reply.status = EPERM;
-				snprintf(summary, sizeof(summary),
-				    "no authority issuer: operation refused "
-				    "while degraded");
-				break;
-			}
-		}
-	} else if (svc_authority_resolve(request, &actual, &sender) == -1 ||
+	if (svc_authority_resolve(request, &actual, &sender) == -1 ||
 	    actual.authority_identity == 0 || actual.uid != c->uid ||
 	    !svc_anoint_holds(&actual.anoint, SVC_ANOINT_SWITCHBOARD_ADMIN)) {
 		reply.status = EPERM;
@@ -858,9 +781,16 @@ sctl_capsule_request(struct channel *ch __unused,
 				    "Capsule: %s (spine, PID 1)\n"
 				    "control plane: capability "
 				    "(system.lifecycle)\n"
-				    "services loaded: %u\n",
+				    "services loaded: %u\n%s%s%s",
 				    sd.capsule_channel_fd >= 0 ? "reachable" :
-				    "unreachable", sd.nservices);
+				    "unreachable", sd.nservices,
+				    sd.next_issuer_error != 0 ?
+				    "next authority issuer: none (" : "",
+				    sd.next_issuer_error != 0 ?
+				    strerror(sd.next_issuer_error) : "",
+				    sd.next_issuer_error != 0 ? "); the next "
+				    "switchboard start creates one or enters "
+				    "single-user\n" : "");
 				reply.status = 0;
 				break;
 			default:
@@ -888,7 +818,7 @@ sctl_capsule_request(struct channel *ch __unused,
 
 int
 sctl_adopt_channel(int provider_fd, uint64_t rights, uid_t uid,
-    bool capsule_relay, bool degraded_root)
+    bool capsule_relay)
 {
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
@@ -934,7 +864,6 @@ sctl_adopt_channel(int provider_fd, uint64_t rights, uid_t uid,
 	}
 	c->cap_rights = rights;
 	c->uid = uid;
-	c->degraded_root = degraded_root;
 	c->fd = channel_fd(c->cap_channel);
 	/*
 	 * system.switchboard connections run the switchboard control dispatch;
@@ -958,28 +887,10 @@ sctl_adopt_channel(int provider_fd, uint64_t rights, uid_t uid,
 		return (-1);
 	}
 	SWITCHBOARD_PROBE_CONN_ACCEPT((uid_t)-1, nconns);
-	syslog(degraded_root ? LOG_NOTICE : LOG_INFO,
+	syslog(LOG_INFO,
 	    "capability control connection adopted (%s)",
-	    degraded_root ? "root, no authority issuer" :
 	    (rights & SVC_RIGHTS_ADMIN) != 0 ? "admin" : "unprivileged");
 	return (0);
-}
-
-/*
- * Degraded control.  Without PID 1's authority issuer no software authority
- * exists, so the ordinary admission (a kernel-stamped grant) admits nobody and
- * the system could be neither inspected nor stopped through the plane.  Host
- * root (uid 0 outside any jail, as the kernel stamps it) is then admitted for
- * status and for the lifecycle operations it already holds through reboot(2):
- * reboot, halt, poweroff, powercycle, single-user and catatonia.  Everything
- * else stays refused.  Never applies while SwitchBoard holds an issuer.
- */
-bool
-sctl_degraded_root_sender(const struct channel_sender *sender)
-{
-
-	return (sd.authority_issuer_fd < 0 && sender != NULL &&
-	    sender->uid == 0 && sender->prison_id == 0);
 }
 
 /* ----------------------------------------------------------------

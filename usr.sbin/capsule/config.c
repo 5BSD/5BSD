@@ -239,10 +239,6 @@ config_init_defaults(struct capsule_config *cfg)
 
 	strlcpy(cfg->service_manager, CAPSULE_DEFAULT_SVC_MANAGER,
 	    sizeof(cfg->service_manager));
-	cfg->issuer_wait = CAPSULE_DEFAULT_ISSUER_WAIT;
-	cfg->issuer_retry_max_delay = CAPSULE_DEFAULT_ISSUER_RETRY_MAX_DELAY;
-	cfg->issuer_background_retries = CAPSULE_DEFAULT_ISSUER_BG_RETRIES;
-	cfg->issuer_background_max_delay = CAPSULE_DEFAULT_ISSUER_BG_MAX_DELAY;
 
 	/* rc(8) administers Capsule through its root-only control socket. */
 	cfg->integrity_flags = CP_SF_PTRACE | CP_SF_WAIT | CP_SF_SCHED |
@@ -298,56 +294,6 @@ cfg_bool(const ucl_object_t *obj, const char *key, bool *out)
 	if (o->next != NULL || ucl_object_type(o) != UCL_BOOLEAN)
 		return (-1);
 	*out = ucl_object_toboolean(o);
-	return (0);
-}
-
-/* An absent key keeps *out; a present one must be an integer in [min, max]. */
-static int
-cfg_uint(const ucl_object_t *obj, const char *key, unsigned min, unsigned max,
-    unsigned *out)
-{
-	const ucl_object_t *o;
-	int64_t v;
-
-	o = ucl_object_lookup(obj, key);
-	if (o == NULL)
-		return (0);
-	if (o->next != NULL || ucl_object_type(o) != UCL_INT)
-		return (-1);
-	v = ucl_object_toint(o);
-	if (v < min || v > max)
-		return (-1);
-	*out = (unsigned)v;
-	return (0);
-}
-
-/*
- * authority_issuer { wait; retry_max_delay; background_retries;
- * background_max_delay; }: the outage policy bootstrap.c applies when PID 1
- * cannot create its authority issuer.  Bounds keep a typo from turning the
- * wait into hours or the retries into a busy loop.
- */
-static int
-cfg_issuer(const ucl_object_t *root, struct capsule_config *cfg)
-{
-	static const char *const keys[] = {
-	    "wait", "retry_max_delay", "background_retries",
-	    "background_max_delay"
-	};
-	const ucl_object_t *sec;
-
-	sec = ucl_object_lookup(root, "authority_issuer");
-	if (sec == NULL)
-		return (0);
-	if (sec->next != NULL || !cfg_keys(sec, keys, nitems(keys)) ||
-	    cfg_uint(sec, "wait", 0, 3600, &cfg->issuer_wait) ||
-	    cfg_uint(sec, "retry_max_delay", 1, 300,
-	    &cfg->issuer_retry_max_delay) ||
-	    cfg_uint(sec, "background_retries", 0, 100,
-	    &cfg->issuer_background_retries) ||
-	    cfg_uint(sec, "background_max_delay", 1, 86400,
-	    &cfg->issuer_background_max_delay))
-		return (-1);
 	return (0);
 }
 
@@ -751,7 +697,7 @@ config_load_fd(struct capsule_config *cfg, int fd)
 {
 	static const char *const keys[] = {
 	    "pidfile", "control_socket", "control_socket_mode", "lookup_route_export",
-	    "service_manager", "authority_issuer",
+	    "service_manager",
 	    "integrity", "claims", "storage", "hostuuid", "crypto_recipient"
 	};
 	struct capsule_config candidate = {0};
@@ -823,8 +769,7 @@ config_load_fd(struct capsule_config *cfg, int fd)
 	    sizeof(candidate.service_manager)) ||
 	    cfg_bool(root, "lookup_route_export",
 	    &candidate.lookup_route_export) ||
-	    cfg_mode(root, &candidate) || cfg_issuer(root, &candidate) ||
-	    cfg_integrity(root, &candidate) ||
+	    cfg_mode(root, &candidate) || cfg_integrity(root, &candidate) ||
 	    cfg_claims(root, &candidate) || cfg_storage(root, &candidate) ||
 	    cfg_crypto(root, &candidate) ||
 	    cfg_string(root, "hostuuid", candidate.hostuuid, sizeof(candidate.hostuuid))))
@@ -889,10 +834,6 @@ config_log(const struct capsule_config *cfg)
 	syslog(LOG_INFO, "config: lookup_route_export=%s",
 	    cfg->lookup_route_export ? "true" : "false");
 	syslog(LOG_INFO, "config: integrity_flags=0x%x", cfg->integrity_flags);
-	syslog(LOG_INFO, "config: authority_issuer wait=%us retry_max_delay=%us "
-	    "background_retries=%u background_max_delay=%us", cfg->issuer_wait,
-	    cfg->issuer_retry_max_delay, cfg->issuer_background_retries,
-	    cfg->issuer_background_max_delay);
 	syslog(LOG_INFO, "config: claims network=%d system=0x%x",
 	    cfg->nclaim_net, cfg->claim_system);
 }

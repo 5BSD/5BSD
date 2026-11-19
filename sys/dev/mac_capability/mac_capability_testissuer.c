@@ -138,10 +138,13 @@ mac_capability_test_issuer_fail_init_sysctl(SYSCTL_HANDLER_ARGS)
 	case ENFILE:
 	case EMFILE:
 		atomic_store_int(&mac_capability_test_issuer_fail_init, value);
-		/* Clearing also restores the one-shot default. */
-		if (value == 0)
+		/* Clearing also restores the one-shot, no-skip default. */
+		if (value == 0) {
 			atomic_store_int(&mac_capability_test_issuer_fail_count,
 			    1);
+			atomic_store_int(&mac_capability_test_issuer_fail_skip,
+			    0);
+		}
 		return (0);
 	default:
 		return (EINVAL);
@@ -179,6 +182,32 @@ SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuer_fail_init_count,
     mac_capability_test_issuer_fail_count_sysctl, "I",
     "Test kernel only: how many of PID 1's issuer creations in a row "
     "test_issuer_fail_init fails (1-1000, default 1)");
+
+/*
+ * How many of PID 1's creates succeed before fail_init applies: 1 fails the
+ * issuer Capsule creates in advance for the next start, not the first one.
+ */
+volatile u_int mac_capability_test_issuer_fail_skip;
+
+static int
+mac_capability_test_issuer_fail_skip_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	int error, value;
+
+	value = atomic_load_int(&mac_capability_test_issuer_fail_skip);
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	if (value < 0 || value > MAC_CAPABILITY_TEST_ISSUER_FAIL_MAX)
+		return (EINVAL);
+	atomic_store_int(&mac_capability_test_issuer_fail_skip, value);
+	return (0);
+}
+SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuer_fail_init_skip,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+    mac_capability_test_issuer_fail_skip_sysctl, "I",
+    "Test kernel only: how many of PID 1's issuer creations succeed before "
+    "test_issuer_fail_init applies (0-1000, default 0)");
 
 static void
 mac_capability_test_issuer_init(void *arg __unused)

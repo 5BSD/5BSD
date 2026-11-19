@@ -384,6 +384,72 @@ ATF_TC_BODY(relaxed_issuer, tc)
 	ATF_CHECK_EQ(test_issuers_live(), live);
 }
 
+/*
+ * Capsule holds the next SwitchBoard start's issuer unused (usr.sbin/capsule
+ * bootstrap.c).  Pin that holding a second issuer changes nothing for the
+ * first: grants record the issuer that made them, closing the first revokes
+ * its grants while the second is held, closing the held one revokes none of
+ * the first's, and the held one issues normally once used.
+ */
+ATF_TC(held_issuer_independent);
+ATF_TC_HEAD(held_issuer_independent, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A held second issuer neither keeps nor revokes the first issuer's grants");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(held_issuer_independent, tc)
+{
+	struct cap_authority_spec spec = {
+		.version = CAP_AUTH_VERSION, .kind = CAP_AUTH_MANAGED,
+	};
+	struct cap_authority_info a_info, b_info, info;
+	int a, b, a_token, a_token2, b_token;
+
+	if (!relaxed())
+		atf_tc_skip("DEFERRED_STACK_TIER: needs a relaxed test kernel "
+		    "(kern.mac_capability.test_issuer=1, boot not anchored) to "
+		    "create issuers off PID 1");
+	a = op(CAP_AUTH_ISSUER_CREATE, -1, NULL);
+	ATF_REQUIRE_MSG(a >= 0, "create a: %s", strerror(errno));
+	b = op(CAP_AUTH_ISSUER_CREATE, -1, NULL);
+	ATF_REQUIRE_MSG(b >= 0, "create b: %s", strerror(errno));
+
+	/* Closing the held issuer revokes none of the running one's grants. */
+	a_token = op(CAP_AUTH_ISSUE, a, &spec);
+	ATF_REQUIRE_MSG(a_token >= 0, "issue a: %s", strerror(errno));
+	ATF_REQUIRE(op(CAP_AUTH_TOKEN_INFO, a_token, &a_info) == 0);
+	ATF_REQUIRE(close(b) == 0);
+	ATF_REQUIRE(op(CAP_AUTH_TOKEN_INFO, a_token, &info) == 0);
+	ATF_CHECK_EQ_MSG(info.revoked, 0, "closing a held issuer revoked "
+	    "another issuer's grant");
+
+	/* With a second issuer held, closing the first still revokes its own. */
+	b = op(CAP_AUTH_ISSUER_CREATE, -1, NULL);
+	ATF_REQUIRE_MSG(b >= 0, "create b again: %s", strerror(errno));
+	a_token2 = op(CAP_AUTH_ISSUE, a, &spec);
+	ATF_REQUIRE_MSG(a_token2 >= 0, "issue a again: %s", strerror(errno));
+	ATF_REQUIRE(close(a) == 0);
+	ATF_REQUIRE(op(CAP_AUTH_TOKEN_INFO, a_token, &info) == 0);
+	ATF_CHECK_EQ_MSG(info.revoked, 1, "a held issuer kept the closed "
+	    "issuer's grant alive");
+	ATF_REQUIRE(op(CAP_AUTH_TOKEN_INFO, a_token2, &info) == 0);
+	ATF_CHECK_EQ(info.revoked, 1);
+
+	/* The held issuer issues normally once used, under its own identity. */
+	b_token = op(CAP_AUTH_ISSUE, b, &spec);
+	ATF_REQUIRE_MSG(b_token >= 0, "issue b: %s", strerror(errno));
+	ATF_REQUIRE(op(CAP_AUTH_TOKEN_INFO, b_token, &b_info) == 0);
+	ATF_CHECK_EQ(b_info.revoked, 0);
+	ATF_CHECK(b_info.issuer != a_info.issuer);
+	ATF_REQUIRE(close(b) == 0);
+	ATF_REQUIRE(op(CAP_AUTH_TOKEN_INFO, b_token, &info) == 0);
+	ATF_CHECK_EQ(info.revoked, 1);
+	(void)close(a_token);
+	(void)close(a_token2);
+	(void)close(b_token);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, create_refused);
@@ -392,5 +458,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_sysctls);
 	ATF_TP_ADD_TC(tp, create_refused_capmode_unprivileged);
 	ATF_TP_ADD_TC(tp, relaxed_issuer);
+	ATF_TP_ADD_TC(tp, held_issuer_independent);
 	return (atf_no_error());
 }

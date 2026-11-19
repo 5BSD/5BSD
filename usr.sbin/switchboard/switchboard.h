@@ -322,6 +322,8 @@ struct switchboard_state {
 	int		discovery_fd;
 	/* Capsule says this boot already converged: do not replay /etc/rc. */
 	bool		boot_complete;
+	/* Capsule could not create the next start's issuer (errno), or 0. */
+	int		next_issuer_error;
 	/*
 	 * The system's own attribution root: a member-less coalition that
 	 * stands for switchboard itself.  Boot-launched and operator-started
@@ -365,13 +367,7 @@ bool	sctl_is_conn_event(struct kevent *kev);
  * Takes ownership of provider_fd (closes it on failure).
  */
 int	sctl_adopt_channel(int provider_fd, uint64_t rights, uid_t uid,
-	    bool capsule_relay, bool degraded_root);
-/*
- * True when SwitchBoard runs degraded (no authority issuer) and sender is host
- * root (kernel-stamped uid 0, not jailed): it may observe and stop the system
- * without software authority.  See sctl.c.
- */
-bool	sctl_degraded_root_sender(const struct channel_sender *sender);
+	    bool capsule_relay);
 
 /* mac_capability_direct.c — direct mac_capability operations using delegated fd */
 int	mac_cap_create_channel(int *our_end, int *child_end);

@@ -197,23 +197,19 @@ Optional.
 PID 1's authority issuer, named by
 .Ev SWITCHBOARD_AUTHORITY_FD .
 .Nm
-issues every application and unit grant from it and never delegates it.
-Without it
+issues every application and unit grant from it and never delegates it;
+its grants are revoked when
 .Nm
-runs degraded: it logs
-.Dq no authority issuer
-at
-.Dv LOG_CRIT ,
-validates but does not register the application catalogue, and issues no
-grants.
+exits.
 .Xr capsule 8
-restarts it with the issuer once it can create one.
-While degraded, host root (uid 0 outside any jail, as the kernel stamps the
-sender) may still use
-.Dq system.switchboard
-for status, services and tree, and
-.Dq system.lifecycle
-for status, reboot, halt, poweroff, powercycle, single-user and catatonia.
+does not start
+.Nm
+without one.
+Started without it (only possible outside
+.Xr capsule 8 ) ,
+.Nm
+cannot register its application catalogue and exits, logging
+.Dq no authority issuer .
 .It discovery (fd 9)
 The server end of the system discovery channel, named by
 .Ev SWITCHBOARD_DISCOVERY_FD .
@@ -238,6 +234,14 @@ run
 .Pa /etc/rc
 again, and logs
 .Dq restart after boot: /etc/rc not replayed .
+.Pp
+.Ev SWITCHBOARD_NEXT_ISSUER_ERROR
+carries the errno with which
+.Xr capsule 8
+failed to create the issuer for the next start;
+.Xr capsulectl 8
+.Cm status
+reports it.
 .Pp
 The
 .Dq inherited service fds

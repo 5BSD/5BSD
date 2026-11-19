@@ -1730,11 +1730,17 @@ issuer_create(struct thread *td)
 		/* The attempt anchors, whether or not it succeeds. */
 		mac_capability_test_issuer_anchor();
 		/*
-		 * Fail test_issuer_fail_init_count creates in a row, then
-		 * clear.  Only PID 1 reaches this, one create at a time.
+		 * Let test_issuer_fail_init_skip creates succeed, then fail
+		 * test_issuer_fail_init_count in a row, then clear.  Only PID 1
+		 * reaches this, one create at a time.
 		 */
 		error = atomic_load_int(&mac_capability_test_issuer_fail_init);
-		if (error != 0 && atomic_fetchadd_int(
+		if (error != 0 &&
+		    atomic_load_int(&mac_capability_test_issuer_fail_skip) > 0) {
+			atomic_subtract_int(&mac_capability_test_issuer_fail_skip,
+			    1);
+			error = 0;
+		} else if (error != 0 && atomic_fetchadd_int(
 		    &mac_capability_test_issuer_fail_count, -1) <= 1) {
 			atomic_store_int(&mac_capability_test_issuer_fail_init, 0);
 			atomic_store_int(&mac_capability_test_issuer_fail_count, 1);

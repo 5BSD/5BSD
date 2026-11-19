@@ -10,17 +10,9 @@
  * monitors the process descriptor and restarts switchboard on crash
  * with exponential backoff.
  *
- * Every start first acquires PID 1's authority issuer, which SwitchBoard
- * needs to grant applications and units anything.  A transient creation
- * failure (a descriptor or memory shortage) defers the start: Capsule retries
- * for up to the configured wait (capsule.conf(5) authority_issuer), so a
- * shortage costs neither an aborted SwitchBoard nor the restart limit.  Past
- * that, SwitchBoard starts degraded, without the issuer and so without grants,
- * rather than leaving PID 1 with no service manager; Capsule retries a bounded
- * number of times and, once it holds an issuer, restarts SwitchBoard with it.
- * That planned restart is not counted as a failure.  A permanent failure (not
- * PID 1, a jailed Capsule, the identity sequence exhausted) is refused: PID 1
- * enters recovery.
+ * Every start hands SwitchBoard its own authority issuer (see "PID 1's
+ * authority issuer" below).  Without one SwitchBoard is not started: PID 1
+ * enters single-user, saying "no authority issuer".
  */
 
 #include <sys/capsicum.h>
@@ -44,6 +36,7 @@
 #include <unistd.h>
 
 #include "capsule.h"
+#include "capsule_ctl.h"	/* CTL_OP_SINGLE */
 #include "capsule_daemon.h"
 #include "capsule_svc_proto.h"
 #include "probes.h"
@@ -55,14 +48,6 @@
 #define	BOOTSTRAP_BASE_DELAY	1	/* initial restart delay (seconds) */
 #define	BOOTSTRAP_MAX_DELAY	30	/* max restart delay (seconds) */
 #define	BOOTSTRAP_MAX_FAILURES	10	/* circuit breaker threshold */
-
-/*
- * Authority issuer outage policy: od.cfg.issuer_* (capsule.conf(5)
- * authority_issuer; defaults and their reasons in config.h).  Retries back
- * off from BOOTSTRAP_BASE_DELAY.  No event announces that a descriptor
- * shortage cleared, so they are bounded: by the wait before the start, and by
- * a number of attempts while SwitchBoard runs degraded.
- */
 
 /* Well-known fds for switchboard. */
 #define	SWITCHBOARD_CHANNEL_FD	3	/* channel to capsule */
@@ -82,16 +67,10 @@ static struct {
 	struct timespec	last_start;
 	bool		started;
 	uintptr_t	timer_ident;	/* kevent timer ident */
-	int		issuer_fd;	/* issuer held for the next start */
-	bool		issuer_outage;	/* creates are failing transiently */
-	struct timespec	issuer_outage_start;
-	unsigned	issuer_retry_delay;
-	unsigned	issuer_bg_attempts;	/* background attempts made */
-	bool		issuer_timer_armed;
-	bool		issuer_waiting;	/* a start waits for the retry */
-	bool		degraded;	/* the running switchboard has no issuer */
-	bool		planned_restart; /* its exit is ours: restart, uncounted */
-	int		issuer_refused;	/* errno of a permanent failure, or 0 */
+	int		issuer_next_fd;	/* the next start's issuer, held unused */
+	int		issuer_next_error; /* errno of its failed create, or 0 */
+	int		issuer_refused;	/* errno that refused this start, or 0 */
+	int		reserve_fd;	/* released for each create: no EMFILE */
 	/*
 	 * The system discovery channel, kept for the whole boot.  Its client
 	 * end is capsule.c's ambient lookup (every getty, and each
@@ -102,11 +81,9 @@ static struct {
 	int		discovery_fd;	/* server end */
 	/* The boot converged (a SwitchBoard reported READY): no rc replay. */
 	bool		boot_complete;
-} bs = { .issuer_fd = -1, .discovery_fd = -1 };
+} bs = { .issuer_next_fd = -1, .discovery_fd = -1, .reserve_fd = -1 };
 
 static uintptr_t next_timer_ident = 90000;
-/* Fixed, below the restart idents, so long retrying cannot use up idents. */
-#define	BOOTSTRAP_ISSUER_TIMER_IDENT	89999
 
 static void	bootstrap_backoff(int kq);
 
@@ -127,6 +104,7 @@ struct bootstrap_delegate_fds {
 	int	discovery_fd;	/* dup of the discovery server end, or -1 */
 	int	lookup_fd;	/* discovery client end for the slot, or -1 */
 	bool	boot_complete;
+	int	issuer_next_error;	/* the next start's issuer failed, or 0 */
 	/*
 	 * Bundle-directory overrides forwarded to switchboard.  Captured from
 	 * capsule's environment in the parent (getenv is not async-signal-safe,
@@ -156,6 +134,7 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 	char channel_env[64];
 	char channel_svc_env[64], coalition_svc_env[64], capprotect_env[64];
 	char identity_env[64], authority_env[64], discovery_env[64];
+	char next_issuer_env[64];
 	char bundle_sys_env[PATH_MAX + 32], bundle_usr_env[PATH_MAX + 32];
 	char skip_rc_env[32], no_sigkill_env[40];
 	char run_dir_env[PATH_MAX + 32], settle_env[64];
@@ -318,6 +297,12 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 	}
 	if (d->boot_complete)
 		env[envc++] = __DECONST(char *, "SWITCHBOARD_BOOT_COMPLETE=1");
+	/* Reported by capsulectl status: the next start must create its own. */
+	if (d->issuer_next_error != 0) {
+		(void)snprintf(next_issuer_env, sizeof(next_issuer_env),
+		    "SWITCHBOARD_NEXT_ISSUER_ERROR=%d", d->issuer_next_error);
+		env[envc++] = next_issuer_env;
+	}
 
 
 	/* Forward bundle-directory overrides when present (see struct comment). */
@@ -408,23 +393,53 @@ bootstrap_test_no_sigkill(void)
 }
 
 /*
- * Create PID 1's authority issuer.  Only PID 1 can create this boot trust
- * anchor.  The environment merely names a descriptor; the kernel validates
- * its unforgeable object type.  A test kernel (options
- * MAC_CAPABILITY_TEST_PERMISSIVE, booted with kern.mac_capability.test_issuer=1)
- * also gives a test-local Capsule a test issuer until PID 1 anchors the boot;
- * that is said loudly.
+ * PID 1's authority issuer.  Each SwitchBoard start is handed its own; when
+ * that SwitchBoard exits its descriptor closes, and issuer_close() revokes
+ * every grant the issuer made and removes its application catalogue
+ * (sys/dev/mac_capability/mac_capability_authority.c).
+ *
+ * Capsule creates the next start's issuer as soon as one is handed out and
+ * holds it unused, so that a restart does not depend on a create succeeding
+ * at that moment.  A held issuer authorises nothing: authority exists only as
+ * grants an issuer has made, and Capsule makes none.  Holding it does not
+ * change the running SwitchBoard's revocation either: issuer_revoke() acts on
+ * one issuer's own grants, leases and applications, and every grant records
+ * the issuer that made it (tests/sys/mac_capability
+ * authority_test_issuer_test:held_issuer_independent).
+ *
+ * No failure of CAP_AUTH_ISSUER_CREATE ends with an event Capsule could wait
+ * on.  EPERM, EINVAL, ENOSPC (the identity sequence never wraps) and a kernel
+ * without the operation are permanent.  ENFILE, the system file table full,
+ * clears only when something closes a file, which nothing reports.  So a
+ * start without an issuer is refused, and PID 1 enters single-user.  EMFILE,
+ * Capsule's own table being full, is prevented: a reserved descriptor is
+ * released just before each create.  The kernel's allocations wait rather
+ * than fail (M_WAITOK), so there is no ENOMEM.
+ *
+ * A test kernel (options MAC_CAPABILITY_TEST_PERMISSIVE, booted with
+ * kern.mac_capability.test_issuer=1) also gives a test-local Capsule a test
+ * issuer until PID 1 anchors the boot; that is said loudly.
  */
 static int
 bootstrap_issuer_create(void)
 {
-	int fd;
+	int error, fd;
 
+	if (bs.reserve_fd >= 0) {
+		(void)close(bs.reserve_fd);
+		bs.reserve_fd = -1;
+	}
 	fd = syscall(SYS_cap_process, CAP_AUTH_ISSUER_CREATE, -1, 0, NULL);
-	if (fd < 0)
+	error = errno;
+	bs.reserve_fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+	if (bs.reserve_fd == -1)
+		syslog(LOG_WARNING, "bootstrap: descriptor reserve: %m");
+	if (fd < 0) {
+		errno = error;
 		return (-1);
-	/* Held across a wait or a reroot exec: never leak it into init's
-	 * successor.  The child's dup2 to its fixed slot clears this. */
+	}
+	/* Held until the next start: never leak it into init's successor on a
+	 * reroot.  The child's dup2 to its fixed slot clears this. */
 	(void)fcntl(fd, F_SETFD, FD_CLOEXEC);
 	if (getpid() != 1)
 		syslog(LOG_WARNING,
@@ -433,179 +448,46 @@ bootstrap_issuer_create(void)
 }
 
 /*
- * Failures that can clear on their own: descriptor and memory shortages end
- * when other processes exit.  Everything else is permanent for this boot:
- * EPERM (not PID 1, or jailed), ENOSPC (the identity sequence never wraps),
- * and a kernel without the operation.
- */
-static bool
-bootstrap_issuer_transient(int error)
-{
-
-	switch (error) {
-	case ENFILE:
-	case EMFILE:
-	case ENOMEM:
-	case EAGAIN:
-	case EINTR:
-		return (true);
-	default:
-		return (false);
-	}
-}
-
-/*
- * Arm the issuer retry timer.  Before the start (background false) it backs
- * off to issuer_retry_max_delay; while SwitchBoard runs degraded it backs off
- * to issuer_background_max_delay and stops after issuer_background_retries
- * attempts.  Returns -1 if no retry is armed.
+ * The issuer for this start: the one held from the last start, or, when that
+ * create failed or this is the first start, one created now.  Then the next
+ * start's issuer is created.  Returns -1 with bs.issuer_refused set when this
+ * start has none.
  */
 static int
-bootstrap_issuer_schedule(int kq, bool background)
-{
-	struct kevent kev;
-	unsigned delay, max;
-
-	if (bs.issuer_timer_armed)
-		return (0);
-	if (background) {
-		if (bs.issuer_bg_attempts >= od.cfg.issuer_background_retries) {
-			syslog(LOG_CRIT, "bootstrap: no authority issuer after "
-			    "%u more attempts; stopped retrying: restart "
-			    "switchboard or reboot to restore grants",
-			    bs.issuer_bg_attempts);
-			return (-1);
-		}
-		bs.issuer_bg_attempts++;
-		if (bs.issuer_retry_delay < od.cfg.issuer_retry_max_delay)
-			bs.issuer_retry_delay = od.cfg.issuer_retry_max_delay;
-	}
-	max = background ? od.cfg.issuer_background_max_delay :
-	    od.cfg.issuer_retry_max_delay;
-	delay = bs.issuer_retry_delay == 0 ? BOOTSTRAP_BASE_DELAY :
-	    bs.issuer_retry_delay;
-	bs.issuer_retry_delay = delay * 2 > max ? max : delay * 2;
-	EV_SET(&kev, BOOTSTRAP_ISSUER_TIMER_IDENT, EVFILT_TIMER,
-	    EV_ADD | EV_ONESHOT, 0, (int)(delay * 1000), NULL);
-	if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1) {
-		syslog(LOG_ERR, "bootstrap: issuer retry timer: %m");
-		return (-1);
-	}
-	bs.issuer_timer_armed = true;
-	return (0);
-}
-
-static void
-bootstrap_issuer_acquired(int fd)
-{
-	struct timespec now;
-
-	if (bs.issuer_outage) {
-		clock_gettime(CLOCK_MONOTONIC, &now);
-		syslog(LOG_NOTICE, "bootstrap: authority issuer acquired "
-		    "after %jds", (intmax_t)(now.tv_sec -
-		    bs.issuer_outage_start.tv_sec));
-	}
-	bs.issuer_fd = fd;
-	bs.issuer_outage = false;
-	bs.issuer_retry_delay = 0;
-	bs.issuer_bg_attempts = 0;
-}
-
-/*
- * Decide whether a start may proceed: with an issuer (now in bs.issuer_fd),
- * or degraded without one once a transient outage outlasts the wait.  Returns
- * false when the start is deferred until the issuer retry timer, or refused
- * (bs.issuer_refused set) when the failure is permanent.
- */
-static bool
-bootstrap_issuer_ready(int kq)
-{
-	struct timespec now;
-	int error, fd;
-
-	fd = bootstrap_issuer_create();
-	if (fd >= 0) {
-		bootstrap_issuer_acquired(fd);
-		return (true);
-	}
-	error = errno;
-	if (!bootstrap_issuer_transient(error)) {
-		/* Waiting cannot help: refuse; PID 1 enters recovery. */
-		syslog(LOG_ERR, "bootstrap: protected authority issuer "
-		    "unavailable: %s", strerror(error));
-		syslog(LOG_CRIT, "bootstrap: no authority issuer: %s cannot "
-		    "clear; not starting switchboard", strerror(error));
-		bs.issuer_refused = error;
-		return (false);
-	}
-	clock_gettime(CLOCK_MONOTONIC, &now);
-	if (!bs.issuer_outage) {
-		bs.issuer_outage = true;
-		bs.issuer_outage_start = now;
-		bs.issuer_retry_delay = 0;
-		bs.issuer_bg_attempts = 0;
-		syslog(LOG_WARNING, "bootstrap: protected authority issuer "
-		    "unavailable: %s; waiting up to %us before starting "
-		    "switchboard", strerror(error), od.cfg.issuer_wait);
-	}
-	if (now.tv_sec - bs.issuer_outage_start.tv_sec < od.cfg.issuer_wait &&
-	    bootstrap_issuer_schedule(kq, false) == 0) {
-		bs.issuer_waiting = true;
-		return (false);
-	}
-	syslog(LOG_CRIT, "bootstrap: no authority issuer: starting switchboard "
-	    "degraded after %jds (%s); applications and units get no grants "
-	    "until it is acquired", (intmax_t)(now.tv_sec -
-	    bs.issuer_outage_start.tv_sec), strerror(error));
-	return (true);
-}
-
-/*
- * The issuer retry timer.  A deferred start retries the whole start; with
- * switchboard running degraded (or between restarts) only the issuer is
- * retried, and once held, a degraded switchboard is restarted with it.
- */
-static void
-bootstrap_handle_issuer_timer(int kq)
+bootstrap_issuer_take(void)
 {
 	int fd;
 
-	bs.issuer_timer_armed = false;
-	if (od.shutting_down) {
-		bs.issuer_waiting = false;
-		return;
+	fd = bs.issuer_next_fd;
+	bs.issuer_next_fd = -1;
+	if (fd < 0 && (fd = bootstrap_issuer_create()) < 0) {
+		bs.issuer_refused = errno;
+		syslog(LOG_CRIT, "bootstrap: no authority issuer: %s; "
+		    "switchboard not started", strerror(bs.issuer_refused));
+		return (-1);
 	}
-	if (bs.issuer_waiting) {
-		bs.issuer_waiting = false;
-		if (bootstrap_start(kq) == 0)
-			return;
-		syslog(LOG_ERR, "bootstrap: restart failed");
-		bootstrap_backoff(kq);
-		return;
-	}
-	if (bs.issuer_fd >= 0 || !bs.issuer_outage)
-		return;
-	fd = bootstrap_issuer_create();
-	if (fd < 0) {
-		if (bootstrap_issuer_transient(errno))
-			(void)bootstrap_issuer_schedule(kq, true);
-		else
-			syslog(LOG_ERR, "bootstrap: protected authority issuer "
-			    "unavailable: %m; no further retries");
-		return;
-	}
-	bootstrap_issuer_acquired(fd);
-	if (bs.started && bs.degraded && bs.pd_fd >= 0) {
-		/* Its exit restarts it with the issuer; see teardown. */
-		bs.planned_restart = true;
-		syslog(LOG_NOTICE, "bootstrap: stopping degraded switchboard "
-		    "to restart it with the authority issuer");
-		if (pdkill(bs.pd_fd, SIGTERM) == -1) {
-			syslog(LOG_WARNING, "bootstrap: pdkill(SIGTERM): %m");
-			bs.planned_restart = false;
-		}
-	}
+	bs.issuer_next_fd = bootstrap_issuer_create();
+	bs.issuer_next_error = bs.issuer_next_fd < 0 ? errno : 0;
+	if (bs.issuer_next_fd < 0)
+		syslog(LOG_CRIT, "bootstrap: no authority issuer for the next "
+		    "switchboard start: %s; that start will create one, or "
+		    "refuse", strerror(bs.issuer_next_error));
+	return (fd);
+}
+
+/*
+ * A start refused for want of an issuer.  At first boot capsule_engine_start()
+ * reports it and enters recovery; on a running system (a restart) PID 1 goes to
+ * single-user the same way an operator's "capsulectl single" would.
+ */
+static void
+bootstrap_issuer_refuse(void)
+{
+
+	syslog(LOG_CRIT, "bootstrap: no authority issuer: %s; entering "
+	    "single-user", strerror(bs.issuer_refused));
+	if (getpid() == 1)
+		(void)capsule_lifecycle(CTL_OP_SINGLE);
 }
 
 /*
@@ -689,10 +571,11 @@ bootstrap_start(int kq)
 		return (-1);
 	}
 
-	/* Defer the start while a transient issuer outage lasts. */
 	bs.issuer_refused = 0;
-	if (bs.issuer_fd < 0 && !bootstrap_issuer_ready(kq))
-		return (bs.issuer_refused != 0 ? -1 : 0);
+	/* The descriptor reserve that keeps EMFILE from the issuer create. */
+	if (bs.reserve_fd < 0 &&
+	    (bs.reserve_fd = open("/dev/null", O_RDONLY | O_CLOEXEC)) == -1)
+		syslog(LOG_WARNING, "bootstrap: descriptor reserve: %m");
 
 	/* Create channel. */
 	if (mac_capability_create_channel(&capsule_end, &child_end) == -1) {
@@ -739,9 +622,18 @@ bootstrap_start(int kq)
 		    "on-demand attribution disabled");
 	}
 
-	/* The issuer bootstrap_issuer_ready() acquired, or none: degraded. */
-	dfds.authority_fd = bs.issuer_fd;
-	bs.issuer_fd = -1;
+	dfds.authority_fd = bootstrap_issuer_take();
+	if (dfds.authority_fd < 0) {
+		close(capsule_end);
+		close(child_end);
+		close(dfds.channel_svc_fd);
+		close(dfds.coalition_svc_fd);
+		close(dfds.capprotect_fd);
+		if (dfds.identity_fd >= 0)
+			close(dfds.identity_fd);
+		return (-1);
+	}
+	dfds.issuer_next_error = bs.issuer_next_error;
 
 	/* The boot-long discovery route (see bs.discovery_fd). */
 	dfds.discovery_fd = bootstrap_discovery_dup();
@@ -860,7 +752,6 @@ bootstrap_start(int kq)
 	bs.pd_fd = pd_fd;
 	bs.channel_fd = capsule_end;
 	bs.started = true;
-	bs.degraded = dfds.authority_fd < 0;
 	clock_gettime(CLOCK_MONOTONIC, &bs.last_start);
 
 	/* Tell the protocol handler about the channel fd. */
@@ -884,12 +775,9 @@ bootstrap_start(int kq)
 		return (-1);
 	}
 
-	syslog(LOG_INFO, "bootstrap: started switchboard pid %jd%s",
-	    (intmax_t)pid, bs.degraded ? " without an authority issuer" : "");
+	syslog(LOG_INFO, "bootstrap: started switchboard pid %jd",
+	    (intmax_t)pid);
 	CAPSULE_PROBE_BOOTSTRAP_START(pid);
-	/* Degraded through an outage: keep trying for the issuer. */
-	if (bs.degraded && bs.issuer_outage)
-		(void)bootstrap_issuer_schedule(kq, true);
 	return (0);
 }
 
@@ -955,20 +843,7 @@ bootstrap_teardown_and_restart(int kq, int status)
 
 	if (od.shutting_down) {
 		/* The world stopped: the next start is a boot again. */
-		bs.planned_restart = false;
 		bs.boot_complete = false;
-		return;
-	}
-
-	/* We stopped it to hand it the issuer; this exit is not a failure. */
-	if (bs.planned_restart) {
-		bs.planned_restart = false;
-		syslog(LOG_NOTICE, "bootstrap: planned switchboard restart "
-		    "with the authority issuer (not counted)");
-		if (bootstrap_start(kq) == 0)
-			return;
-		syslog(LOG_ERR, "bootstrap: restart failed");
-		bootstrap_backoff(kq);
 		return;
 	}
 
@@ -1023,15 +898,9 @@ bootstrap_handle_exit(struct kevent *kev, int kq)
  * backoff rather than leaving switchboard permanently dead.
  */
 void
-bootstrap_handle_timer(struct kevent *kev, int kq)
+bootstrap_handle_timer(int kq)
 {
 
-	if (kev->ident == BOOTSTRAP_ISSUER_TIMER_IDENT) {
-		bootstrap_handle_issuer_timer(kq);
-		return;
-	}
-	if (od.shutting_down)
-		return;
 	syslog(LOG_INFO, "bootstrap: restart timer fired");
 	if (bootstrap_start(kq) == 0)
 		return;
@@ -1049,6 +918,11 @@ bootstrap_backoff(int kq)
 {
 	unsigned delay;
 
+	/* Without an issuer no restart can succeed: do not count, refuse. */
+	if (bs.issuer_refused != 0) {
+		bootstrap_issuer_refuse();
+		return;
+	}
 	bs.restart_count++;
 	if (bs.restart_count >= BOOTSTRAP_MAX_FAILURES) {
 		syslog(LOG_CRIT,
@@ -1133,9 +1007,9 @@ bool
 bootstrap_is_timer(struct kevent *kev)
 {
 
-	return (kev->filter == EVFILT_TIMER && kev->udata == NULL &&
-	    (kev->ident == bs.timer_ident ||
-	    kev->ident == BOOTSTRAP_ISSUER_TIMER_IDENT));
+	return (kev->filter == EVFILT_TIMER &&
+	    kev->ident == bs.timer_ident &&
+	    kev->udata == NULL);
 }
 
 pid_t

@@ -482,7 +482,11 @@ startup_launch_system(int kq)
 		(void)rc_adopt_register(kq);
 	launched += startup_launch_stopped(kq);
 
-	syslog(LOG_INFO, "startup: launched %u services", launched);
+	if (sd.boot_complete)
+		syslog(LOG_NOTICE, "startup: restart after boot: launched %u "
+		    "services", launched);
+	else
+		syslog(LOG_INFO, "startup: launched %u services", launched);
 	SWITCHBOARD_PROBE_STARTUP_TIER(0, launched);
 
 	/*

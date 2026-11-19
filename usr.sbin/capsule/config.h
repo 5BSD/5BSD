@@ -23,23 +23,6 @@
 #define	CAPSULE_DEFAULT_CTLMODE	0700
 #define	CAPSULE_DEFAULT_SVC_MANAGER	"/usr/libexec/switchboard"
 
-/*
- * Authority issuer outage defaults (capsule.conf(5), authority_issuer).
- * WAIT: a descriptor shortage at boot (ENFILE/EMFILE) clears within seconds
- * once a process exits; one that lasts a minute is not transient, and 60 s
- * still starts SwitchBoard well before the ~2.5 minutes in which the
- * restart circuit breaker (10 quick failures, 1-30 s backoff) used to send
- * PID 1 to recovery.  RETRY_MAX_DELAY: backing off 1, 2, 4, 8, 10 s gives
- * eight attempts inside that minute.  BG_*: six more attempts while degraded,
- * doubling from 10 s to 320 s, cover about ten minutes; after that only a
- * SwitchBoard start tries again (nothing signals that the shortage ended, so
- * the retries are bounded rather than open-ended).
- */
-#define	CAPSULE_DEFAULT_ISSUER_WAIT		60
-#define	CAPSULE_DEFAULT_ISSUER_RETRY_MAX_DELAY	10
-#define	CAPSULE_DEFAULT_ISSUER_BG_RETRIES	6
-#define	CAPSULE_DEFAULT_ISSUER_BG_MAX_DELAY	320
-
 #define	CAPSULE_MAX_NET_CLAIMS		32
 #define	CAPSULE_MAX_VSOCK_CLAIMS	32
 #define	CAPSULE_SYSTEM_GATE_NBITS	32	/* bits in uint32_t gate bitmask */
@@ -99,17 +82,6 @@ struct capsule_config {
 
 	/* Service manager binary (started by bootstrap) */
 	char		service_manager[PATH_MAX];
-
-	/*
-	 * Authority issuer outage policy (capsule.conf(5) authority_issuer):
-	 * seconds a start waits for PID 1's issuer before SwitchBoard starts
-	 * degraded; the longest pause between those retries; the attempts made
-	 * while degraded and the longest pause between them.
-	 */
-	unsigned	issuer_wait;
-	unsigned	issuer_retry_max_delay;
-	unsigned	issuer_background_retries;
-	unsigned	issuer_background_max_delay;
 
 	/* Set by config_load if a file was actually parsed. */
 	bool		loaded_from_file;

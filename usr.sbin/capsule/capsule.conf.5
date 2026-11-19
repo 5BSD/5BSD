@@ -79,35 +79,6 @@ May be overridden with
 .Xr capsule 8 Ns 's
 .Fl b
 option.
-.It Va authority_issuer
-An object with the policy for a transient failure to create PID 1's authority
-issuer (see
-.Xr capsule 8 ) ,
-all in whole seconds except the count:
-.Bl -tag -width "background_max_delay"
-.It Va wait
-How long a start waits for the issuer before
-.Xr switchboard 8
-starts degraded; 0 starts it degraded at once.
-Default 60, range 0-3600: a descriptor shortage clears within seconds once a
-process exits, and 60 seconds stays well inside the time the restart circuit
-breaker takes to give up.
-.It Va retry_max_delay
-The longest pause between retries during the wait; retries start at 1 second
-and double.
-Default 10, range 1-300.
-.It Va background_retries
-How many more attempts are made while
-.Xr switchboard 8
-runs degraded; after them only a start of
-.Xr switchboard 8
-tries again.
-Default 6, range 0-100.
-.It Va background_max_delay
-The longest pause between those attempts, which double from
-.Va retry_max_delay .
-Default 320 (six attempts span about ten minutes), range 1-86400.
-.El
 .El
 .Ss Integrity
 The

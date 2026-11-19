@@ -415,6 +415,14 @@ main(int argc, char *argv[])
 		}
 		s = getenv("SWITCHBOARD_BOOT_COMPLETE");
 		sd.boot_complete = s != NULL && strcmp(s, "1") == 0;
+		s = getenv("SWITCHBOARD_NEXT_ISSUER_ERROR");
+		if (s != NULL) {
+			errno = 0;
+			val = strtol(s, &endp, 10);
+			if (errno == 0 && *endp == '\0' && val > 0 &&
+			    val <= ELAST)
+				sd.next_issuer_error = (int)val;
+		}
 		s = getenv("SWITCHBOARD_AUTHORITY_FD");
 		if (s != NULL) {
 			errno = 0;
@@ -435,9 +443,6 @@ main(int argc, char *argv[])
 		    sd.capprotect_fd, sd.identity_fd, sd.authority_issuer_fd,
 		    sd.discovery_fd, sd.boot_complete ? " boot-complete" : "");
 	}
-	if (sd.authority_issuer_fd < 0)
-		syslog(LOG_CRIT, "no authority issuer: running degraded; "
-		    "applications and units get no grants");
 	if (sd.coalition_svc_fd >= 0)
 		(void)fcntl(sd.coalition_svc_fd, F_SETFL, O_NONBLOCK);
 	/*

@@ -88,7 +88,7 @@ void	event_loop(void);
 int	bootstrap_start(int kq);
 void	bootstrap_handle_exit(struct kevent *kev, int kq);
 void	bootstrap_handle_channel_eof(void);
-void	bootstrap_handle_timer(struct kevent *kev, int kq);
+void	bootstrap_handle_timer(int kq);
 void	bootstrap_signal(int sig);
 void	bootstrap_stop(void);
 bool	bootstrap_is_stopped(void);

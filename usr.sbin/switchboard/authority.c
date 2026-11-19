@@ -433,18 +433,6 @@ svc_authority_applications_sync(void)
 			svc_anoint_set_from_manifest(&a->domain.anoint, m);
 		}
 	}
-	/*
-	 * Degraded start (capsule(8)): without PID 1's issuer nothing can be
-	 * granted, so no record exists either.  The catalogue was validated
-	 * above; fail closed by registering nothing.
-	 */
-	if (sd.authority_issuer_fd < 0) {
-		if (count != 0)
-			syslog(LOG_CRIT, "no authority issuer: application "
-			    "catalogue not registered; %u application(s) run "
-			    "without grants", count);
-		goto out;
-	}
 	/* Preserve unchanged contexts and their already-bound endpoints. */
 	for (unsigned h = 0; h < AUTH_BUCKETS; h++) {
 		for (r = records[h]; r != NULL; r = r->next) {
@@ -547,7 +535,12 @@ out:
 	}
 	free(m);
 	if (saved != 0) {
-		syslog(LOG_ERR, "application catalogue update failed: %s", strerror(saved));
+		if (sd.authority_issuer_fd < 0)
+			syslog(LOG_CRIT, "application catalogue update failed: "
+			    "no authority issuer");
+		else
+			syslog(LOG_ERR, "application catalogue update failed: %s",
+			    strerror(saved));
 		return (errno = saved, -1);
 	}
 	return (0);
