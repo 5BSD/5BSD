@@ -351,7 +351,8 @@ atf_test_case usdt_full_match_no_grab cleanup
 usdt_full_match_no_grab_head()
 {
 	atf_set "descr" "An exact USDT description of a self-registered process" \
-	    "makes dtrace neither call ptrace(2) nor register DOF"
+	    "makes dtrace neither call ptrace(2) nor register DOF; a partial one" \
+	    "registers again"
 	common_head
 }
 usdt_full_match_no_grab_body()
@@ -376,11 +377,12 @@ usdt_full_match_no_grab_body()
 	atf_check_equal 0 "$PTRACE_CALLS"
 	atf_check_equal "$base" "$HELPER_OPENS"
 	[ "$DTRC" -eq 0 ] || atf_fail "not listed: $(cat dt.err | tr "\n" " ")"
-	# Today a partial description that matches anything skips the
-	# registration as well.
+	# A partial description may name probes of objects not registered
+	# yet: it registers again (it skipped the registration when anything
+	# matched), still without ptrace(2).
 	ptrace_calls -l -n "cpusdt$FXPID:::tick"
 	atf_check_equal 0 "$PTRACE_CALLS"
-	atf_check_equal "$base" "$HELPER_OPENS"
+	[ "$HELPER_OPENS" -gt "$base" ] || atf_fail "no registration"
 	fixture_stop
 }
 usdt_full_match_no_grab_cleanup()
@@ -943,8 +945,7 @@ atf_test_case usdt_glob_later_dlopen cleanup
 usdt_glob_later_dlopen_head()
 {
 	atf_set "descr" "A globbed USDT description after the process loaded" \
-	    "another object with probes (today: the new object is not" \
-	    "registered)"
+	    "another object with probes registers the new object"
 	common_head
 }
 usdt_glob_later_dlopen_body()
@@ -960,10 +961,10 @@ usdt_glob_later_dlopen_body()
 	# A glob that cannot match the pid provider's name (pidPID), which
 	# would make dtrace grab the process for pid probes.
 	dtrace_once -l -n "cpu*$FXPID:::"
-	# Today: cpusdt matches the glob, so nothing is registered.
-	if grep -q "cpulib$FXPID" dt.out; then
-		atf_fail "the late object's probes were registered"
-	fi
+	# The glob is not an exact description: libdtrace registers the
+	# process's objects again (it skipped them because cpusdt matched).
+	grep -q "cpulib$FXPID" dt.out ||
+	    atf_fail "the late object's probes were not registered: $(cat dt.err | tr "\n" " ")"
 	fixture_stop
 }
 usdt_glob_later_dlopen_cleanup()

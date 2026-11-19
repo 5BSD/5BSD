@@ -602,7 +602,7 @@ dt_pid_usdt_etype(const prmap_t *pmp, GElf_Half *e_type)
 	return (ret);
 }
 
-static int dt_pid_usdt_matched(dtrace_hdl_t *, const dtrace_probedesc_t *);
+static int dt_pid_usdt_anymatch(dtrace_hdl_t *, const dtrace_probedesc_t *);
 
 static int
 dt_pid_usdt_mapping(void *data, const prmap_t *pmp, const char *oname)
@@ -718,15 +718,25 @@ dt_pid_create_usdt_probes(dtrace_probedesc_t *pdp, dtrace_hdl_t *dtp,
 	dpu.dpu_dpr = dpr;
 	dpu.dpu_err = 0;
 	(void) Pupdate_maps(P);
+	/*
+	 * A failure to (re)register the process's objects is reported only
+	 * when the description matches no probe: a process that registered
+	 * itself has its probes even when a read-only handle cannot list its
+	 * objects (as for Capsule, PID 1).
+	 */
 	if (Pobject_iter(P, dt_pid_usdt_mapping, &dpu) != 0) {
-		ret = -1;
-		(void) dt_pid_error(dtp, pcb, dpr, NULL, D_PROC_USDT,
-		    "failed to instantiate probes for pid %d: %s",
+		int iter_errno = errno;
+
+		if (!dt_pid_usdt_anymatch(dtp, pdp)) {
+			ret = -1;
+			(void) dt_pid_error(dtp, pcb, dpr, NULL, D_PROC_USDT,
+			    "failed to instantiate probes for pid %d: %s",
 #ifdef illumos
-		    (int)Pstatus(P)->pr_pid, strerror(errno));
+			    (int)Pstatus(P)->pr_pid, strerror(iter_errno));
 #else
-		    (int)proc_getpid(P), strerror(errno));
+			    (int)proc_getpid(P), strerror(iter_errno));
 #endif
+		}
 	}
 
 	/*
@@ -740,7 +750,7 @@ dt_pid_create_usdt_probes(dtrace_probedesc_t *pdp, dtrace_hdl_t *dtp,
 	 * matched anyway or unmatched descriptions are allowed (-Z).
 	 */
 	if (ret == 0 && (dpu.dpu_err == EPERM || dpu.dpu_err == EACCES) &&
-	    !dt_pid_usdt_matched(dtp, pdp) &&
+	    !dt_pid_usdt_anymatch(dtp, pdp) &&
 	    (pcb == NULL || !(pcb->pcb_cflags & DTRACE_C_ZDEFS))) {
 		ret = -1;
 		(void) dt_pid_error(dtp, pcb, dpr, NULL, D_PROC_USDT,
@@ -767,18 +777,48 @@ dt_pid_rematch(dtrace_hdl_t *dtp)
 }
 
 /*
- * Whether the kernel already has a probe matching the whole description:
- * a process that registered its own probes (drti), or one registered
- * earlier, needs no registration.
+ * Whether the description names one probe: all four fields given, none a
+ * pattern.
  */
 static int
-dt_pid_usdt_matched(dtrace_hdl_t *dtp, const dtrace_probedesc_t *pdp)
+dt_pid_desc_exact(const dtrace_probedesc_t *pdp)
+{
+	const char *f[] = { pdp->dtpd_provider, pdp->dtpd_mod,
+	    pdp->dtpd_func, pdp->dtpd_name };
+
+	for (size_t i = 0; i < sizeof (f) / sizeof (f[0]); i++) {
+		if (f[i][0] == '\0' || strpbrk(f[i], "*?[\\") != NULL)
+			return (0);
+	}
+	return (1);
+}
+
+/*
+ * Whether the kernel has a host probe matching the description.
+ */
+static int
+dt_pid_usdt_anymatch(dtrace_hdl_t *dtp, const dtrace_probedesc_t *pdp)
 {
 	dtrace_probedesc_t pd;
 
 	pd = *pdp;
+	pd.dtpd_vmid = 0;
 	pd.dtpd_id = DTRACE_IDNONE;
 	return (dt_ioctl(dtp, DTRACEIOC_PROBEMATCH, &pd) == 0);
+}
+
+/*
+ * Whether the kernel already has the one probe an exact description names:
+ * a process that registered its own probes (drti), or one registered
+ * earlier, needs no registration for it.  A partial or globbed description
+ * may also name probes of objects not registered yet (a library loaded
+ * later), so it never counts as matched.
+ */
+static int
+dt_pid_usdt_matched(dtrace_hdl_t *dtp, const dtrace_probedesc_t *pdp)
+{
+
+	return (dt_pid_desc_exact(pdp) && dt_pid_usdt_anymatch(dtp, pdp));
 }
 
 static pid_t
@@ -877,9 +917,9 @@ dt_pid_create_probes(dtrace_probedesc_t *pdp, dtrace_hdl_t *dtp, dt_pcb_t *pcb)
 
 	/*
 	 * If it's not strictly a pid provider, we might match a USDT provider.
-	 * A probe that already matches the whole description (the process
-	 * registered itself, or an earlier pass registered it) needs nothing
-	 * more.  Otherwise register the process's DOF through a read-only
+	 * An exact description whose probe exists (the process registered
+	 * itself, or an earlier pass registered it) needs nothing more.
+	 * Otherwise register the process's DOF through a read-only
 	 * handle, which never attaches or stops the process: the kernel
 	 * accepts another process's DOF from its read-only file mappings
 	 * when the caller may inspect it.

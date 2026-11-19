@@ -1941,13 +1941,18 @@ have their probes registered by another process.
 For a USDT probe description that names a process, such as
 .Li myprov1234:::start ,
 .Nm
-first asks whether the kernel already has a matching probe, as for a
-program that registered itself; then nothing more is done.
-Otherwise it finds the process's DOF in its object files and registers it
-as described above, through a read-only process handle that never attaches
-to the process with
+finds the process's DOF in its object files and registers it as described
+above, through a read-only process handle that never attaches to the
+process with
 .Xr ptrace 2
 or stops it.
+Only a description that gives all four fields without a pattern, such as
+.Li myprov1234:a.out:main:start ,
+is first looked up in the kernel; when the probe it names exists, as for a
+program that registered itself, nothing more is done.
+A partial or globbed description may name probes of objects the process
+loaded later, so it always registers the process's objects again; the
+kernel creates nothing twice.
 When the kernel refuses the registration
 .Pq Er EPERM No or Er EACCES ,
 .Nm
