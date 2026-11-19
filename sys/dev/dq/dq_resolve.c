@@ -913,9 +913,10 @@ dq_resolve_swap_admit(struct file *fp, const cap_rights_t *rights, void *arg)
  * leaves the event in flight; dq:::swap-refused carries it.  Any other
  * reply (not a RESOLVE that accepts SWAP, or an event that is gone) is
  * left to dq_reply_validate and the ESRCH path, with *sw empty.  On
- * success *sw holds the reference; dq_resolve_reply_commit_locked moves it
- * to the event, or dq_resolve_reply_abort releases it.  drw_fd is cleared in dd, which observers copy: a
- * descriptor number of the controller means nothing to them.
+ * success *sw holds the reference; dq_resolve_reply_commit_locked moves
+ * it to the event, or dq_resolve_reply_abort releases it.  drw_fd is
+ * cleared in dd, which observers copy: a descriptor number of the
+ * controller means nothing to them.
  */
 static int
 dq_resolve_swap_prepare(struct dq_queue *q, uint64_t id, struct dq_data *dd,

@@ -793,7 +793,6 @@ ATF_TC_HEAD(withdraw_read_delivered_restart, tc)
 	    "SA_RESTART signal: one INTERRUPT, then the restarted READ is "
 	    "posted and answered");
 	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "timeout", "60");
 }
 ATF_TC_BODY(withdraw_read_delivered_restart, tc)
 {
