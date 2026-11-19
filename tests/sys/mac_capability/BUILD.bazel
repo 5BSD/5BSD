@@ -12,3 +12,9 @@ cc_binary(name = "capprotect_protector_helper", srcs = ["capprotect_protector_he
     deps = ["//sys/dev/mac_capability:shield_test_headers"], copts = ["-fPIE"], linkopts = ["-pie"])
 cc_binary(name = "capprotect_adddof_helper", srcs = ["capprotect_adddof_helper.c"],
     copts = ["-fPIE"], linkopts = ["-pie"])
+cc_binary(name = "capprotect_fasttrap_helper", srcs = ["capprotect_fasttrap_helper.c"],
+    deps = ["//sys/dev/mac_capability:shield_test_headers"], copts = ["-fPIE"], linkopts = ["-pie"])
+# The shared object the fixture loads late (usdtlib/); this build compiles
+# it without its cpulib provider.
+cc_binary(name = "usdtlib/libcapprotect_usdt.so", srcs = ["usdtlib/capprotect_usdt_lib.c"],
+    linkshared = True, copts = ["-fPIC"])

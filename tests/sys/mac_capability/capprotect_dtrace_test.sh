@@ -22,11 +22,13 @@
 FIXTURE=capprotect_usdt_helper
 AGENT=capprotect_protector_helper
 ADDDOF=capprotect_adddof_helper
+FASTTRAP=capprotect_fasttrap_helper
 
 CANARY_SECRET=0x1122334455667788
 
 # An errno, and the flag values of mac_capability_capprotect_proto.h.
 EPERM=1
+EACCES=13
 EFAULT=14
 EINVAL=22
 CP_SF_PTRACE=1
@@ -266,13 +268,17 @@ kernel_provider_predicate_cleanup()
 }
 
 # ptrace_calls ARGS...: run dtrace ARGS under ktrace; the exit status is in
-# DTRC and the number of ptrace(2) calls dtrace made in PTRACE_CALLS.
+# DTRC, the number of ptrace(2) calls dtrace made in PTRACE_CALLS, and the
+# number of times it opened the helper device (to register DOF with
+# DTRACEHIOC_ADDDOF) in HELPER_OPENS.
 ptrace_calls()
 {
 	rm -f kt.out
-	timeout 60 ktrace -i -t c -f kt.out dtrace "$@" >dt.out 2>dt.err
+	timeout 60 ktrace -i -t cn -f kt.out dtrace "$@" >dt.out 2>dt.err
 	DTRC=$?
 	PTRACE_CALLS=$(kdump -f kt.out 2>/dev/null | grep -c 'CALL  ptrace(')
+	HELPER_OPENS=$(kdump -f kt.out 2>/dev/null |
+	    grep -c 'NAMI  "/dev/dtrace/helper"')
 }
 
 # One usdt_unregistered_target target.  The fixture did not register itself
@@ -344,19 +350,36 @@ atf_test_case usdt_full_match_no_grab cleanup
 usdt_full_match_no_grab_head()
 {
 	atf_set "descr" "An exact USDT description of a self-registered process" \
-	    "makes dtrace call no ptrace(2)"
+	    "makes dtrace neither call ptrace(2) nor register DOF"
 	common_head
 }
 usdt_full_match_no_grab_body()
 {
+	local mod func base
+
 	require_dtrace
 	fixture_start self
 	listed 'cpusdt*:::tick' | grep -qx "cpusdt$FXPID" ||
 	    atf_fail "the fixture did not register itself"
-	ptrace_calls -l -n "cpusdt$FXPID:::tick"
-	# The full match skips the grab (it was attempted and refused before).
+	set -- $(dtrace -l -n "cpusdt$FXPID:::tick" 2>/dev/null |
+	    awk 'NR == 2 { print $3, $4 }')
+	mod=$1 func=$2
+	[ -n "$func" ] || atf_fail "no tick probe listed"
+	echo "exact description: cpusdt$FXPID:$mod:$func:tick"
+	# dtrace's own libraries register their DOF when it starts: count the
+	# helper opens of a listing that registers nothing (a globbed provider).
+	ptrace_calls -l -n 'cpusdt*:::tick'
+	base=$HELPER_OPENS
+	# All four fields, no glob: a probe that matches it needs nothing more.
+	ptrace_calls -l -n "cpusdt$FXPID:$mod:$func:tick"
 	atf_check_equal 0 "$PTRACE_CALLS"
+	atf_check_equal "$base" "$HELPER_OPENS"
 	[ "$DTRC" -eq 0 ] || atf_fail "not listed: $(cat dt.err | tr "\n" " ")"
+	# Today a partial description that matches anything skips the
+	# registration as well.
+	ptrace_calls -l -n "cpusdt$FXPID:::tick"
+	atf_check_equal 0 "$PTRACE_CALLS"
+	atf_check_equal "$base" "$HELPER_OPENS"
 	fixture_stop
 }
 usdt_full_match_no_grab_cleanup()
@@ -492,11 +515,13 @@ adddof_fixture()
 	done
 }
 
-# The number of probes dtrace lists for the fixture's provider.
+# The number of probes the kernel has for the fixture's provider.  The
+# provider is globbed, so that dtrace does not register the fixture's DOF
+# itself (a description naming the pid would).
 fixture_probes()
 {
-	dtrace -l -n "cpusdt$FXPID:::" 2>/dev/null | awk 'NR > 1' | wc -l |
-	    tr -d ' '
+	dtrace -l -n 'cpusdt*:::' 2>/dev/null |
+	    awk -v p="cpusdt$FXPID" 'NR > 1 && $2 == p' | wc -l | tr -d ' '
 }
 
 atf_test_case adddof_other_pid_registers cleanup
@@ -695,6 +720,249 @@ adddof_concurrent_dedupe_cleanup()
 	pkill -f "$FIXTURE" 2>/dev/null || true
 }
 
+atf_test_case adddof_wrong_base cleanup
+adddof_wrong_base_head()
+{
+	atf_set "descr" "DTRACEHIOC_ADDDOF for another process with a load base" \
+	    "that is not the object's (today: accepted as given)"
+	common_head
+}
+adddof_wrong_base_body()
+{
+	local dof base
+
+	require_dtrace
+	fixture_start plain 65534
+	cmd dof
+	set -- $REPLY
+	dof=$2 base=$3
+	[ "$dof" != 0 ] || atf_fail "no DOF in the fixture"
+	"$(atf_get_srcdir)/$ADDDOF" "$FXPID" "$dof" \
+	    "$(printf %x $((base + 0x10000)))" >ad.out 2>ad.err ||
+	    atf_fail "adddof helper: $(cat ad.err | tr "\n" " ")"
+	# Today: the caller's base relocates the probe sites.
+	atf_check_equal "ADDDOF 0" "$(cat ad.out)"
+	atf_check_equal 2 "$(fixture_probes)"
+	fixture_stop
+}
+adddof_wrong_base_cleanup()
+{
+	pkill -f "$FIXTURE" 2>/dev/null || true
+}
+
+# copy_registration PATCH: the fixture maps a copy of its executable as an
+# object of its own (PATCH 1 moves a probe site of the copy's DOF out of
+# the copy's text); root registers the copy's DOF.  Prints the errno.
+copy_registration()
+{
+	local copy dof base
+
+	copy=/var/tmp/capprotect_copy.$$
+	rm -f "$copy"
+	cmd "copy $copy $1"
+	set -- $REPLY
+	[ "$2" = 0 ] || atf_fail "copy: $REPLY"
+	dof=$3 base=$4
+	"$(atf_get_srcdir)/$ADDDOF" "$FXPID" "${dof#0x}" "${base#0x}" \
+	    2>ad.err | sed -n 's/^ADDDOF //p'
+	rm -f "$copy"
+}
+
+atf_test_case adddof_copy_registers cleanup
+adddof_copy_registers_head()
+{
+	atf_set "descr" "The DOF of a second object mapped from a file, whose" \
+	    "probe sites lie in its own text, registers"
+	common_head
+}
+adddof_copy_registers_body()
+{
+	require_dtrace
+	fixture_start plain 65534
+	atf_check_equal 0 "$(copy_registration 0)"
+	atf_check_equal 2 "$(fixture_probes)"
+	fixture_stop
+}
+adddof_copy_registers_cleanup()
+{
+	pkill -f "$FIXTURE" 2>/dev/null || true
+	rm -f /var/tmp/capprotect_copy.*
+}
+
+atf_test_case adddof_site_outside cleanup
+adddof_site_outside_head()
+{
+	atf_set "descr" "A DOF whose probe site lies outside its object's text" \
+	    "(today: registered)"
+	common_head
+}
+adddof_site_outside_body()
+{
+	require_dtrace
+	fixture_start plain 65534
+	# Today: no site is checked.
+	atf_check_equal 0 "$(copy_registration 1)"
+	atf_check_equal 2 "$(fixture_probes)"
+	fixture_stop
+}
+adddof_site_outside_cleanup()
+{
+	pkill -f "$FIXTURE" 2>/dev/null || true
+	rm -f /var/tmp/capprotect_copy.*
+}
+
+atf_test_case adddof_capmode cleanup
+adddof_capmode_head()
+{
+	atf_set "descr" "DTRACEHIOC_ADDDOF for another process from capability" \
+	    "mode (today: accepted)"
+	common_head
+}
+adddof_capmode_body()
+{
+	local dof base
+
+	require_dtrace
+	fixture_start plain 65534
+	cmd dof
+	set -- $REPLY
+	dof=$2 base=$3
+	[ "$dof" != 0 ] || atf_fail "no DOF in the fixture"
+	"$(atf_get_srcdir)/$ADDDOF" capmode "$FXPID" "$dof" "$base" \
+	    >ad.out 2>ad.err ||
+	    atf_fail "adddof helper: $(cat ad.err | tr "\n" " ")"
+	# Today: capability mode is not checked.
+	atf_check_equal "ADDDOF 0" "$(cat ad.out)"
+	fixture_stop
+}
+adddof_capmode_cleanup()
+{
+	pkill -f "$FIXTURE" 2>/dev/null || true
+}
+
+atf_test_case adddof_exit_race
+adddof_exit_race_head()
+{
+	atf_set "descr" "DTRACEHIOC_ADDDOF for processes that are exiting: no" \
+	    "provider outlives its process"
+	common_head 600
+}
+adddof_exit_race_body()
+{
+	local pid left
+
+	require_dtrace
+	"$(atf_get_srcdir)/$ADDDOF" exitrace "$(atf_get_srcdir)/$FIXTURE" 200 \
+	    >race.out 2>ad.err ||
+	    atf_fail "adddof helper: $(cat ad.err | tr "\n" " ")"
+	atf_check_equal 200 "$(grep -c '^PID ' race.out)"
+	echo "results: $(awk '{ print $3 }' race.out | sort | uniq -c |
+	    tr '\n' ' ')"
+	listed 'cpusdt*:::' >providers.out
+	left=0
+	for pid in $(awk '{ print $2 }' race.out); do
+		if grep -qx "cpusdt$pid" providers.out; then
+			echo "cpusdt$pid outlived its process" >&2
+			left=$((left + 1))
+		fi
+	done
+	atf_check_equal 0 "$left"
+}
+
+# makeprobe PID: the errno of a raw FASTTRAPIOC_MAKEPROBE on fixture_func.
+makeprobe()
+{
+	local addr
+
+	cmd func
+	addr=${REPLY#FUNC }
+	"$(atf_get_srcdir)/$FASTTRAP" "$1" "$FIXTURE" fixture_func "$addr" \
+	    >mp.out 2>mp.err || atf_fail "fasttrap helper: $(cat mp.err | tr "\n" " ")"
+	sed -n 's/^MAKEPROBE //p' mp.out
+}
+
+atf_test_case pid_provider_raw_makeprobe cleanup
+pid_provider_raw_makeprobe_head()
+{
+	atf_set "descr" "FASTTRAPIOC_MAKEPROBE without a grab, on a plain and" \
+	    "on a ptrace-shielded process (today: made on both)"
+	common_head
+}
+pid_provider_raw_makeprobe_body()
+{
+	require_dtrace
+	fixture_start plain
+	atf_check_equal 0 "$(makeprobe $FXPID)"
+	fixture_stop
+	fixture_start self
+	# Today: no check at all.
+	atf_check_equal 0 "$(makeprobe $FXPID)"
+	fixture_stop
+}
+pid_provider_raw_makeprobe_cleanup()
+{
+	pkill -f "$FIXTURE" 2>/dev/null || true
+}
+
+atf_test_case pid_provider_preshield_enable cleanup
+pid_provider_preshield_enable_head()
+{
+	atf_set "descr" "A pid probe made on a plain process, enabled after the" \
+	    "process shields itself (today: it fires)"
+	common_head
+}
+pid_provider_preshield_enable_body()
+{
+	require_dtrace
+	fixture_start plain
+	atf_check_equal 0 "$(makeprobe $FXPID)"
+	cmd "shield $CP_SF_PTRACE"
+	atf_check_equal "SHIELD 0" "$REPLY"
+	# The glob provider does not make libdtrace grab the process.
+	dtrace_bg "pid*:$FIXTURE:fixture_func:entry /pid == $FXPID/ { printf(\"FIRED\n\"); exit(0); }"
+	kill -USR1 "$FXPID"
+	dtrace_wait
+	# Today: the probe made before the shield fires.
+	grep -q FIRED dt.out || atf_fail "did not fire: $(cat dt.err | tr "\n" " ")"
+	fixture_stop
+}
+pid_provider_preshield_enable_cleanup()
+{
+	pkill -f "$FIXTURE" 2>/dev/null || true
+}
+
+atf_test_case usdt_glob_later_dlopen cleanup
+usdt_glob_later_dlopen_head()
+{
+	atf_set "descr" "A globbed USDT description after the process loaded" \
+	    "another object with probes (today: the new object is not" \
+	    "registered)"
+	common_head
+}
+usdt_glob_later_dlopen_body()
+{
+	require_dtrace
+	fixture_start plain 65534
+	# The first description registers the objects loaded so far.
+	dtrace_once -l -n "cpusdt$FXPID:::tick"
+	[ "$(awk 'NR > 1' dt.out | wc -l)" -gt 0 ] ||
+	    atf_fail "not registered: $(cat dt.err | tr "\n" " ")"
+	cmd "dlopen $(atf_get_srcdir)/libcapprotect_usdt.so"
+	atf_check_equal "DLOPEN 0" "$REPLY"
+	# A glob that cannot match the pid provider's name (pidPID), which
+	# would make dtrace grab the process for pid probes.
+	dtrace_once -l -n "cpu*$FXPID:::"
+	# Today: cpusdt matches the glob, so nothing is registered.
+	if grep -q "cpulib$FXPID" dt.out; then
+		atf_fail "the late object's probes were registered"
+	fi
+	fixture_stop
+}
+usdt_glob_later_dlopen_cleanup()
+{
+	pkill -f "$FIXTURE" 2>/dev/null || true
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case usdt_exact_probe
@@ -714,4 +982,12 @@ atf_init_test_cases()
 	atf_add_test_case adddof_unmap_race
 	atf_add_test_case adddof_map_churn_retries
 	atf_add_test_case adddof_concurrent_dedupe
+	atf_add_test_case adddof_wrong_base
+	atf_add_test_case adddof_copy_registers
+	atf_add_test_case adddof_site_outside
+	atf_add_test_case adddof_capmode
+	atf_add_test_case adddof_exit_race
+	atf_add_test_case pid_provider_raw_makeprobe
+	atf_add_test_case pid_provider_preshield_enable
+	atf_add_test_case usdt_glob_later_dlopen
 }

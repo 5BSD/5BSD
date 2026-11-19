@@ -39,6 +39,13 @@
  *   cowdof            COWDOF ERRNO: makes the pages of that DOF writable,
  *                     rewrites one byte with its own value (so the pages
  *                     become private copies) and makes them read-only
+ *   func              FUNC ADDR, the address of fixture_func(), which
+ *                     SIGUSR1 calls (a pid-provider target)
+ *   dlopen PATH       DLOPEN ERRNO, after dlopen(3) of PATH
+ *   copy PATH PATCH   COPY ERRNO DOF BASE: writes a copy of this executable
+ *                     to PATH and maps it as an object of its own; with
+ *                     PATCH 1, a probe site of the copy's DOF lies 1 GB
+ *                     past the copy's text
  *   loop MODE         LOOP ERRNO, then a thread changes the map until
  *                     "stop": "unmap" unmaps the DOF's pages and maps the
  *                     file back; "crafted" first puts anonymous read-only
@@ -125,11 +132,21 @@ on_alarm(int sig __unused)
 	_exit(99);
 }
 
+/* Called by the SIGUSR1 handler; the pid-provider pins probe its entry. */
+void fixture_func(void);
+void __noinline
+fixture_func(void)
+{
+
+	cp_sigusr1++;
+	__compiler_membar();
+}
+
 static void
 on_usr1(int sig __unused)
 {
 
-	cp_sigusr1++;
+	fixture_func();
 }
 
 /*
@@ -567,10 +584,147 @@ loop_end(void)
 }
 #endif
 
+#ifdef WITH_DTRACE
+/* The leading fields of dof_sec_t, and the probe offsets section type. */
+struct cp_dof_sec {
+	uint32_t	dofs_type;
+	uint32_t	dofs_align;
+	uint32_t	dofs_flags;
+	uint32_t	dofs_entsize;
+	uint64_t	dofs_offset;
+	uint64_t	dofs_size;
+};
+#define	CP_DOF_SECT_PROFFS	18
+
+struct cp_span {
+	uintptr_t	end;		/* end of the highest PT_LOAD */
+	const Elf_Phdr	*phdr;
+	int		phnum;
+};
+
+static int
+main_span(struct dl_phdr_info *info, size_t size __unused, void *arg)
+{
+	struct cp_span *s = arg;
+	const Elf_Phdr *ph;
+
+	s->phdr = info->dlpi_phdr;
+	s->phnum = info->dlpi_phnum;
+	for (int i = 0; i < info->dlpi_phnum; i++) {
+		ph = &info->dlpi_phdr[i];
+		if (ph->p_type == PT_LOAD && ph->p_vaddr + ph->p_memsz > s->end)
+			s->end = ph->p_vaddr + ph->p_memsz;
+	}
+	return (1);
+}
+
+/*
+ * "copy PATH PATCH": write a copy of this executable to PATH and map it as
+ * an object of its own: the whole file read-only at a new base, and its
+ * executable segments over it, read-execute, at that base.  With PATCH 1
+ * the first probe offset of the copy's DOF is moved 1 GB past its site, so
+ * that the site lies outside the copy's text.  Replies "COPY ERRNO DOF
+ * BASE" (the copy's DOF address and load base).
+ */
+static void
+copy_object(const char *path, int patch)
+{
+	struct cp_phdr_find f;
+	struct cp_span s;
+	const struct cp_dof_hdr *hdr;
+	struct cp_dof_sec *sec;
+	struct stat st;
+	const Elf_Phdr *ph;
+	uintptr_t start, end;
+	char *buf, *base, *dof;
+	uint32_t *off;
+	int error, fd, src;
+
+	buf = NULL;
+	fd = src = -1;
+	error = 0;
+	memset(&s, 0, sizeof(s));
+	f.addr = (uintptr_t)cp_dof;
+	f.found = false;
+	if (cp_dof == NULL)
+		error = ENOENT;
+	if (error == 0) {
+		dl_iterate_phdr(main_span, &s);
+		dl_iterate_phdr(find_phdr, &f);
+		if (!f.found)
+			error = ENOENT;
+	}
+	if (error == 0 && ((src = open(cp_self, O_RDONLY)) < 0 ||
+	    fstat(src, &st) != 0))
+		error = errno;
+	if (error == 0 && (buf = malloc(st.st_size)) == NULL)
+		error = ENOMEM;
+	if (error == 0 && pread(src, buf, st.st_size, 0) != st.st_size)
+		error = EIO;
+	if (error == 0 && patch) {
+		/* The DOF's own offsets section: move its first entry. */
+		dof = buf + f.off;
+		hdr = (const struct cp_dof_hdr *)(void *)dof;
+		error = ENOENT;
+		for (uint32_t i = 0; i < hdr->dofh_secnum; i++) {
+			sec = (struct cp_dof_sec *)(void *)(dof +
+			    hdr->dofh_secoff + i * hdr->dofh_secsize);
+			if (sec->dofs_type == CP_DOF_SECT_PROFFS &&
+			    sec->dofs_size >= sizeof(*off)) {
+				off = (uint32_t *)(void *)(dof +
+				    sec->dofs_offset);
+				*off += 0x40000000;
+				error = 0;
+				break;
+			}
+		}
+	}
+	if (error == 0 && ((fd = open(path, O_RDWR | O_CREAT | O_TRUNC,
+	    0644)) < 0 || write(fd, buf, st.st_size) != st.st_size ||
+	    fsync(fd) != 0))
+		error = errno != 0 ? errno : EIO;
+	base = MAP_FAILED;
+	if (error == 0) {
+		/* Reserve the span, then map the file at its base. */
+		base = mmap(NULL, round_page(s.end), PROT_NONE,
+		    MAP_PRIVATE | MAP_ANON, -1, 0);
+		if (base == MAP_FAILED ||
+		    mmap(base, MIN(round_page((uintptr_t)st.st_size),
+		    round_page(s.end)), PROT_READ, MAP_PRIVATE | MAP_FIXED, fd,
+		    0) == MAP_FAILED)
+			error = errno;
+	}
+	for (int i = 0; error == 0 && i < s.phnum; i++) {
+		ph = &s.phdr[i];
+		if (ph->p_type != PT_LOAD || (ph->p_flags & PF_X) == 0)
+			continue;
+		start = trunc_page(ph->p_vaddr);
+		end = round_page(ph->p_vaddr + ph->p_filesz);
+		if (mmap(base + start, end - start, PROT_READ | PROT_EXEC,
+		    MAP_PRIVATE | MAP_FIXED, fd, trunc_page(ph->p_offset)) ==
+		    MAP_FAILED)
+			error = errno;
+	}
+	if (fd >= 0)
+		close(fd);
+	if (src >= 0)
+		close(src);
+	free(buf);
+	if (error != 0)
+		reply("COPY %d 0 0\n", error);
+	else
+		reply("COPY 0 %p %p\n", (void *)(base + f.off), (void *)base);
+}
+#endif
+
 static void
 handle(const char *cmd)
 {
 	unsigned long long v;
+	char path[256];
+#ifdef WITH_DTRACE
+	int patch;
+#endif
 
 	if (strcmp(cmd, "canary") == 0)
 		reply("CANARY %#" PRIx64 "\n", (uint64_t)cp_canary);
@@ -595,11 +749,18 @@ handle(const char *cmd)
 		report_dof();
 	else if (strcmp(cmd, "heapdof") == 0)
 		report_heapdof();
+	else if (strcmp(cmd, "func") == 0)
+		reply("FUNC %p\n", (void *)(uintptr_t)fixture_func);
+	else if (sscanf(cmd, "dlopen %255s", path) == 1)
+		reply("DLOPEN %d\n",
+		    dlopen(path, RTLD_NOW) != NULL ? 0 : ENOENT);
 #ifdef WITH_DTRACE
 	else if (strcmp(cmd, "cowdof") == 0)
 		reply("COWDOF %d\n", cow_dof());
 	else if (strncmp(cmd, "loop ", 5) == 0)
 		reply("LOOP %d\n", loop_start(cmd + 5));
+	else if (sscanf(cmd, "copy %255s %d", path, &patch) == 2)
+		copy_object(path, patch);
 #endif
 	else if (strcmp(cmd, "exit") == 0)
 		_exit(0);
