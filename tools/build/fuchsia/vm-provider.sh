@@ -62,10 +62,13 @@
 #   the guest kern.mac_capability.test_issuer=1 with the boot not anchored.
 #   A run that asks for it and does not get it fails (STACK_TIER_FAIL) rather
 #   than counting every stack case as deferred.
-#   TESTS_SRC_ROOTS (space-separated checkout paths; default none): the
-#   stage's test programs must all come from one checkout, or from these
-#   (a deliberate overlay); otherwise the run stops with STALE_TESTS before
-#   the image is built (check-stage-tests.py prints each TESTS_SRC_ROOT).
+#   TESTS_SRC_ROOTS (space-separated checkout paths; default none): every
+#   ELF test program of the stage must come from one checkout; a deliberate
+#   overlay lists every checkout its programs come from, the main one
+#   included.  Otherwise the run stops with STALE_TESTS before the image is
+#   built (check-stage-tests.py prints each TESTS_SRC_ROOT).  Scripts and
+#   data under usr/tests (Kyuafiles, atf-sh programs, dq_suites.subr,
+#   *.expected) record no source path and are not checked.
 #   KERNEL_TIER (main or test; default main): the kernel tier of the run.
 #   main is GENERIC, or any kernel without a test-kernel option; test is
 #   GENERIC-TEST, and must be asked for: a stage whose kernel carries a
@@ -286,15 +289,20 @@ for s in $suites; do
 		;;
 	esac
 done
-# Every test program of the stage must come from one checkout (or from the
-# checkouts TESTS_SRC_ROOTS names): a stage copied forward with only some
-# test directories reinstalled runs another branch's tests under the
+# Every ELF test program of the stage must come from one checkout (or from
+# the checkouts TESTS_SRC_ROOTS names): a stage copied forward with only
+# some test directories reinstalled runs another branch's tests under the
 # oracles (check-stage-tests.py; 5bsd-issues
-# 2026-11-18-guest-stage-stale-tests-sys-file-binaries.md).
+# 2026-11-18-guest-stage-stale-tests-sys-file-binaries.md).  Scripts and
+# data files are not checked.
 set --
 for r in $tests_src_roots; do set -- "$@" --allow "$r"; done
-python3.12 -I "$(dirname "$0")/check-stage-tests.py" "$stage" "$@" ||
-    die "STALE_TESTS: the stage's test programs are not from one checkout (see above)"
+st=0; python3.12 -I "$(dirname "$0")/check-stage-tests.py" "$stage" "$@" || st=$?
+case $st in
+0)	;;
+3)	die "STALE_TESTS: the stage's ELF test programs are not from one checkout (see above)" ;;
+*)	die "check-stage-tests.py could not check the stage (exit $st)" ;;
+esac
 [ -n "$qemu" ] || die "no runnable QEMU (set QEMU=)"
 echo "qemu: $qemu ($("$qemu" --version | head -n 1))"
 [ -d "$qemu_data" ] || die "no QEMU firmware dir $qemu_data"
@@ -894,6 +902,9 @@ set -- "$qemu" -L "$qemu_data" -accel tcg,thread=multi -machine q35 -cpu max \
     -drive "file=$ports_image,format=raw,if=none,id=ports,readonly=on" \
     -device virtio-blk-pci,drive=ports,serial=usr-ports
 printf '%s\n' "$@" > "$work/command.txt"
+# The monitor watches this file for writes: it exists before QEMU starts
+# (QEMU opens it without replacing it).
+: > "$log"
 "$@" > "$work/qemu.log" 2>&1 &
 qpid=$!
 echo "$qpid" > "$work/qemu.pid"
@@ -905,48 +916,36 @@ fatal='panic:|Fatal trap|entering recovery|Enter full pathname of shell|mountroo
 # recorded false positive, reported as KNOWN_LOR) or FATAL_LOR=no, which a
 # comparison sweep sets and then reads the reversals from the serial log.
 known_lor=$(dirname "$0")/known-lor.txt
+monitor=$(dirname "$0")/vm-monitor.py
 unknown_lor() {
 	[ "${FATAL_LOR:-yes}" = no ] && return 1
 	grep -aq 'lock order reversal' "$log" 2>/dev/null || return 1
-	python3.12 -I - "$log" "$known_lor" <<'PYEOF'
-import re, sys
-log = open(sys.argv[1], errors="replace").read()
-try:
-    pats = [re.compile(l.strip()) for l in open(sys.argv[2])
-            if l.strip() and not l.lstrip().startswith("#")]
-except OSError:
-    pats = []
-blocks = log.split("lock order reversal:")[1:]
-for b in blocks:
-    b = "\n".join(b.splitlines()[:40])
-    if not any(p.search(b) for p in pats):
-        sys.exit(0)
-sys.exit(1)
-PYEOF
+	python3.12 -I "$monitor" --has-unknown-lor "$log" "$known_lor"
 }
-# --- monitor loop (tests/vm-provider-kill-after-exit.sh runs this block)
-# The guest may power off on its own between the problem and the kill (a
-# reversal printed at shutdown, then "Powering system off" within the grace
-# sleep): kill then fails with ESRCH, which must not end the script under
-# set -e before the results disk is extracted and the verdict printed.
-# forced=1 already keeps the verdict VM_NOT_CLEAN.
-while kill -0 "$qpid" 2>/dev/null; do
-	if grep -aqE "$fatal" "$log" 2>/dev/null || unknown_lor; then
-		echo "KERNEL/INIT PROBLEM in serial log"; sleep 5; forced=1
-		kill "$qpid" 2>/dev/null || echo "qemu had already exited"; break
-	fi
-	if [ "$(date +%s)" -ge "$end" ]; then
-		echo TIMEOUT; forced=1
-		kill "$qpid" 2>/dev/null || echo "qemu had already exited"; break
-	fi
-	sleep 10
-done
+# --- monitor (tests/vm-provider-kill-after-exit.sh runs this block)
+# vm-monitor.py waits on QEMU's exit, the serial log's writes and the
+# deadline (one kqueue, no polling), stops QEMU on a fatal console line or
+# an unknown reversal (after a short grace, unless the guest exits first)
+# or at the deadline, and returns once QEMU has exited: 0 by itself, 3
+# stopped for a problem, 4 at the deadline.  Anything else is the monitor
+# failing; QEMU is then stopped here so the run still ends with its
+# results and verdict.
+python3.12 -I "$monitor" --pid "$qpid" --log "$log" --deadline "$end" \
+    --fatal "$fatal" --known "$known_lor" --fatal-lor "${FATAL_LOR:-yes}" &
+wpid=$!
+mrc=0; wait "$wpid" || mrc=$?
+case $mrc in
+0)	;;
+3|4)	forced=1 ;;
+*)	echo "vm-monitor failed (exit $mrc): stopping qemu"; forced=1
+	kill "$qpid" 2>/dev/null || echo "qemu had already exited" ;;
+esac
 rc=0; wait "$qpid" 2>/dev/null || rc=$?
-# --- end of the monitor loop
+# --- end of the monitor
 n=$(grep -ac 'lock order reversal' "$log" 2>/dev/null || true)
 # --- LOR verdict (tests/vm-provider-known-lor.sh runs this block)
-# The loop polls every 10 s: a reversal printed at shutdown, just before the
-# guest powers off, may never have been seen by it, so decide here as well.
+# The monitor classifies only complete reports while QEMU runs: one printed
+# just before the guest powered off is decided here, on the whole log.
 lor_unknown=0
 if unknown_lor; then
 	lor_unknown=1

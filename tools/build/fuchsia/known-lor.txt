@@ -3,24 +3,29 @@
 # stacks: the first 40 lines) matches one of these Python regular expressions
 # (re.search; a leading (?s) lets . cross lines); it reports it as
 # KNOWN_LOR instead. Every entry names its analysis. Keep this list short: an
-# entry hides every reversal it matches.
+# entry hides every reversal it matches, and more: WITNESS reports a pair of
+# lock classes once per boot (subr_witness.c, WITNESS_REVERSAL in
+# w_rmatrix, both directions), so a report an entry matches also hides every
+# later reversal between the same two classes for the rest of the boot.
+# Prefer entries that can only match at shutdown, where nothing follows.
 
 # unionfs stacked over another filesystem: unmounting or looking up through
 # the stack records both orders between different vnodes of one WITNESS class
 # (5bsd-issues 2026-11-08-unionfs-fdescfs-unmount-witness-fp.md).
 unionfs_(root|lock|nodeget|lookup|unmount)
 
-# Unmount of a tmpfs mounted on a UFS or devfs directory (at shutdown, or a
-# test's unmount(2)), after a test unmounted a UFS (md(4)) it had mounted
-# under a tmpfs directory.  Established: kern_unmount -> dounmount holds the
-# covered tmpfs vnode and ffs_unmount locks vnodes of the UFS being
-# unmounted (vflush, or vput_final of its root) or releases its devfs device
-# vnode (vput_final).  Attempted: dounmount (from vfs_unmountall or
-# kern_unmount) holds the covered UFS or devfs directory and tmpfs_unmount ->
-# vflush locks the tmpfs vnodes.  Both are dounmount()'s
+# Shutdown unmount of a tmpfs mounted on a UFS or devfs directory (/tmp,
+# /Capabilities/Run; /compat/linux/dev/shm from rc.d/linux), after a test
+# unmounted a UFS (md(4)) it had mounted under a tmpfs directory.
+# Established: kern_unmount -> dounmount holds the covered tmpfs vnode and
+# ffs_unmount locks vnodes of the UFS being unmounted (vflush, or vput_final
+# of its root) or releases its devfs device vnode (vput_final).  Attempted:
+# vfs_unmountall -> dounmount holds the covered UFS or devfs directory and
+# tmpfs_unmount -> vflush locks the tmpfs vnodes.  Both are dounmount()'s
 # covered-vnode-before-mounted-file-system order on different mounts; a
 # cycle of instances would need a tmpfs and a UFS each mounted on the other
 # (5bsd-issues 2026-11-18-known-lor-lacks-shutdown-tmpfs-unmount-family.md,
-# analysis).  Matches only reports whose two locks, both stacks and both
-# sites are these.
-(?s)\A\s*1st \S+ (devfs|ufs) \(\1, lockmgr\) @ \S*/kern/vfs_mount\.c:\d+\s+2nd \S+ tmpfs \(tmpfs, lockmgr\) @ \S*/kern/vfs_subr\.c:\d+\s+lock order tmpfs -> \1 established at:\s+(?:#\d+ [^\n]*\n)*?#\d+ \S+ at (?:vput_final|ffs_unmount)\+[^\n]*\n(?:#\d+ [^\n]*\n)*?#\d+ \S+ at dounmount\+[^\n]*\n#\d+ \S+ at kern_unmount\+[^\n]*\n(?:#\d+ [^\n]*\n)*lock order \1 -> tmpfs attempted at:\s+(?:#\d+ [^\n]*\n)*?#\d+ \S+ at vflush\+[^\n]*\n#\d+ \S+ at tmpfs_unmount\+[^\n]*\n#\d+ \S+ at dounmount\+[^\n]*\n#\d+ \S+ at (?:vfs_unmountall|kern_unmount)\+
+# analysis).  Shutdown only: the same pair from a test's unmount(2) is
+# equally benign, but matching it mid-run would hide every later ufs/devfs
+# <-> tmpfs reversal of the boot, so it stops the run.
+(?s)\A\s*1st \S+ (devfs|ufs) \(\1, lockmgr\) @ \S*/kern/vfs_mount\.c:\d+\s+2nd \S+ tmpfs \(tmpfs, lockmgr\) @ \S*/kern/vfs_subr\.c:\d+\s+lock order tmpfs -> \1 established at:\s+(?:#\d+ [^\n]*\n)*?#\d+ \S+ at (?:vput_final|ffs_unmount)\+[^\n]*\n(?:#\d+ [^\n]*\n)*?#\d+ \S+ at dounmount\+[^\n]*\n#\d+ \S+ at kern_unmount\+[^\n]*\n(?:#\d+ [^\n]*\n)*lock order \1 -> tmpfs attempted at:\s+(?:#\d+ [^\n]*\n)*?#\d+ \S+ at vflush\+[^\n]*\n#\d+ \S+ at tmpfs_unmount\+[^\n]*\n#\d+ \S+ at dounmount\+[^\n]*\n#\d+ \S+ at vfs_unmountall\+

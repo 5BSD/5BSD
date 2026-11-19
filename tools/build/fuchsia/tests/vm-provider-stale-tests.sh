@@ -23,6 +23,8 @@ prog() {
 A=/usr/obj/5BSD-a B=/usr/obj/5BSD-b
 grep -q 'check-stage-tests.py" "\$stage" "\$@" ||' "$root/vm-provider.sh" ||
     fail 'vm-provider does not run check-stage-tests.py'
+grep -q "^3)	die \"STALE_TESTS" "$root/vm-provider.sh" ||
+    fail "vm-provider does not tell STALE_TESTS (exit 3) from a failed check"
 prog sys/file/flock_test $A/tests/sys/file/flock_test.c
 prog sys/kern/k_test $A/tests/sys/kern/k_test.c $A/contrib/netbsd-tests/lib/x.c
 # A generated source in the object directory is the same checkout.

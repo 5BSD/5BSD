@@ -15,11 +15,11 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 fail() { echo "FAIL: $*"; exit 1; }
 sed -n '/^unknown_lor() {/,/^}/p' "$root/vm-provider.sh" > "$work/fn.sh"
-grep -q 'PYEOF' "$work/fn.sh" || fail 'no unknown_lor function'
+grep -q has-unknown-lor "$work/fn.sh" || fail 'no unknown_lor function'
 # unknown_lor LOG: 0 when a report matches no known-lor.txt entry.
 unknown() {
-	sh -c 'log=$1 known_lor=$2; . "$3"; unknown_lor' sh "$1" \
-	    "$root/known-lor.txt" "$work/fn.sh"
+	sh -c 'log=$1 known_lor=$2 monitor=$4; . "$3"; unknown_lor' sh "$1" \
+	    "$root/known-lor.txt" "$work/fn.sh" "$root/vm-monitor.py"
 }
 crlf() { sed 's/$/\r/' "$1" > "$work/crlf"; }
 n=0
@@ -53,9 +53,9 @@ grep -q 'lor_unknown=1' "$work/verdict.sh" || fail 'no LOR verdict block'
 grep -q '^if \[ \$forced = 0 \] && \[ \$lor_unknown = 0 \] &&' "$root/vm-provider.sh" ||
     fail 'the verdict does not require lor_unknown=0'
 after() {
-	sh -c 'log=$1 known_lor=$2; . "$3"; n=$(grep -ac "lock order reversal" "$log" || true)
+	sh -c 'log=$1 known_lor=$2 monitor=$5; . "$3"; n=$(grep -ac "lock order reversal" "$log" || true)
 	    . "$4"; echo "lor_unknown=$lor_unknown"' sh "$1" \
-	    "$root/known-lor.txt" "$work/fn.sh" "$work/verdict.sh"
+	    "$root/known-lor.txt" "$work/fn.sh" "$work/verdict.sh" "$root/vm-monitor.py"
 }
 cat "$fix"/known-shutdown-tmpfs-devfs.txt "$fix"/unknown-quota.txt > "$work/log"
 after "$work/log" > "$work/out"
