@@ -1115,6 +1115,114 @@ PRESLEEP_CASE(transparent__presleep_fifo_open__continue_sigint_restart,
     "restarted and completes",
     1, false, false, 1, SIGINT, SA_RESTART, RES_DONE, 2)
 
+/*
+ * A signal already pending when the thread meets the outside stop on its
+ * way into the sleep.  SIGWINCH (default action: ignore) is sent after the
+ * attach while the target waits in its lookup, where fusefs blocks signals,
+ * so it is still pending when the lookup is answered.  The sleep queue's
+ * check then reports it to the debugger (ptracestop()), and the debugger
+ * resumes with contsig: SIGWINCH, ignored by default, or 0, discarding it.
+ * Nothing interrupts the open: it must sleep, unstopped, and complete when
+ * the FIFO gets a writer.  Every later stop is continued; a stop for
+ * SIGWINCH with contsig.  A thread left suspended in a running process
+ * never reports again and the case ends on its timeout.
+ */
+static void
+run_presleep_pending(int contsig, enum res expect, int lookups)
+{
+	struct report r;
+	struct fsrv s;
+	pid_t tgt;
+	int rep[2], st, wfd, stops;
+	char c;
+
+	sysctl_change(TRANSPARENT, 1);
+	fsrv_start(&s, 1);
+	ATF_REQUIRE_EQ(0, pipe(rep));
+
+	tgt = fork();
+	ATF_REQUIRE(tgt != -1);
+	if (tgt == 0) {
+		(void)close(rep[0]);
+		presleep_open(MNT_FIFO, &r);
+		_exit(write(rep[1], &r, sizeof(r)) == sizeof(r) ? 0 : 3);
+	}
+	note_pid(tgt);
+	(void)close(rep[1]);
+
+	ATF_REQUIRE_EQ(1, read(s.held[0], &c, 1));
+	ATF_REQUIRE_EQ_MSG(0, ptrace(PT_ATTACH, tgt, NULL, 0),
+	    "PT_ATTACH: %s", strerror(errno));
+	ATF_REQUIRE_EQ_MSG(0, waitpid(tgt, &st, WNOHANG),
+	    "the target stopped in its lookup: not the presleep window");
+	ATF_REQUIRE_EQ(0, kill(tgt, SIGWINCH));
+	ATF_REQUIRE_EQ(1, write(s.release[1], "r", 1));
+	ATF_REQUIRE_EQ(tgt, waitpid(tgt, &st, 0));
+	ATF_REQUIRE(WIFSTOPPED(st));
+	fprintf(stderr, "first stop: signal %d\n", WSTOPSIG(st));
+	show("stopped", tgt);
+
+	/* The target is stopped in its open: satisfy it for the resume. */
+	wfd = open(MNT_FIFO, O_RDWR);
+	ATF_REQUIRE_MSG(wfd != -1, "open %s: %s", MNT_FIFO, strerror(errno));
+	for (stops = 1; WIFSTOPPED(st); stops++) {
+		ATF_REQUIRE_EQ_MSG(0, ptrace(PT_CONTINUE, tgt, (caddr_t)1,
+		    WSTOPSIG(st) == SIGWINCH ? contsig : 0),
+		    "PT_CONTINUE: %s", strerror(errno));
+		ATF_REQUIRE_EQ(tgt, waitpid(tgt, &st, 0));
+		if (WIFSTOPPED(st))
+			fprintf(stderr, "stop %d: signal %d\n", stops + 1,
+			    WSTOPSIG(st));
+	}
+	ATF_REQUIRE_MSG(WIFEXITED(st) && WEXITSTATUS(st) == 0,
+	    "target status %#x", st);
+	ATF_REQUIRE_EQ(sizeof(r), read(rep[0], &r, sizeof(r)));
+	(void)close(wfd);
+	(void)unlink(PIDS_FILE);
+	(void)close(rep[0]);
+	fsrv_stop(&s);
+
+	fprintf(stderr, "target FIFO lookups %d; result rv %d error %d (%s)\n",
+	    s.lookups, r.rv, r.error, strerror(r.error));
+	if (expect == RES_EINTR)
+		ATF_CHECK_MSG(r.rv == -1 && r.error == EINTR,
+		    "expected EINTR, got rv %d error %d", r.rv, r.error);
+	else
+		ATF_CHECK_MSG(r.rv == 0 && r.error == 0,
+		    "expected the open to complete, got rv %d error %d",
+		    r.rv, r.error);
+	ATF_CHECK_EQ_MSG(lookups, s.lookups, "expected %d FIFO lookups, got %d",
+	    lookups, s.lookups);
+	sysctl_restore(TRANSPARENT);
+}
+
+#define	PRESLEEP_PENDING_CASE(name, descr, ...)				\
+ATF_TC_WITH_CLEANUP(name);						\
+ATF_TC_HEAD(name, tc)							\
+{									\
+	atf_tc_set_md_var(tc, "descr", descr);				\
+	atf_tc_set_md_var(tc, "require.user", "root");			\
+	atf_tc_set_md_var(tc, "require.kmods", "fusefs");		\
+	atf_tc_set_md_var(tc, "is.exclusive", "true");			\
+}									\
+ATF_TC_BODY(name, tc)							\
+{									\
+	run_presleep_pending(__VA_ARGS__);				\
+}									\
+ATF_TC_CLEANUP(name, tc)						\
+{									\
+	cleanup();							\
+}
+
+PRESLEEP_PENDING_CASE(transparent__presleep_fifo_open__pending_sigwinch,
+    "Transparent attach just before the FIFO open sleeps, SIGWINCH "
+    "pending and passed on by PT_CONTINUE: the open completes",
+    SIGWINCH, RES_DONE, 1)
+PRESLEEP_PENDING_CASE(transparent__presleep_fifo_open__pending_discarded,
+    "Transparent attach just before the FIFO open sleeps, SIGWINCH "
+    "pending and discarded by PT_CONTINUE: the open completes",
+    0, RES_DONE, 1)
+
 /* Non-transparent attach before the sleep: FreeBSD behaviour. */
 PRESLEEP_CASE(legacy__presleep_fifo_open__continue,
     "Non-transparent attach just before the FIFO open sleeps, "
@@ -1260,6 +1368,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, transparent__presleep_fifo_open__two_threads);
 	ATF_TP_ADD_TC(tp, transparent__presleep_fifo_open__continue_sigint);
 	ATF_TP_ADD_TC(tp, transparent__presleep_fifo_open__continue_sigint_restart);
+	ATF_TP_ADD_TC(tp, transparent__presleep_fifo_open__pending_sigwinch);
+	ATF_TP_ADD_TC(tp, transparent__presleep_fifo_open__pending_discarded);
 	ATF_TP_ADD_TC(tp, legacy__presleep_fifo_open__continue);
 	ATF_TP_ADD_TC(tp, legacy__presleep_fifo_open__detach);
 	ATF_TP_ADD_TC(tp, sce__memory_write__args_refetched);
