@@ -1055,6 +1055,213 @@ g14_idle_paths(void)
 }
 #endif
 
+
+/*
+ * G-18: the delivery thread's CPU share under an event storm.  Unprivileged
+ * processes write to and read from their own pipes; global clients that
+ * subscribe to pipe events and never read are added until the kernel
+ * discards events at the deferred queue's limit, so the delivery thread has
+ * more work than it can do.  Over a window the CPU time of the delivery
+ * thread (thread "oes_deferq" of process 0) is compared with each
+ * producer's.
+ *
+ * The producers are twice as many as the CPUs.  A delivery thread that
+ * preempts its producers keeps one CPU, nearly the whole window, while each
+ * producer shares the others: (ncpu - 1) / (2 * ncpu) of it, under half.
+ * A delivery thread scheduled as a timeshare thread gets about the share of
+ * any other CPU-bound thread, ncpu / (2 * ncpu + 1) of the window, and so
+ * no more than the busiest producer.
+ *
+ * The window is G18_PERIODS of ULE's balance interval
+ * (kern.sched.ule.balance_interval, in stathz ticks): the balancer places
+ * threads once per interval, and over ten intervals a placement that
+ * favours one thread for one interval moves its share by a tenth at most.
+ *
+ * G18_DELIVERY_FAIR is 0 while the delivery thread runs at PI_SOFT and
+ * preempts the producers (it is then expected ahead of every producer), 1
+ * once it runs as a timeshare thread.
+ */
+#ifndef G18_DELIVERY_FAIR
+#define	G18_DELIVERY_FAIR	0
+#endif
+#define	G18_PERIODS		10
+#define	G18_UNPRIV_ID		65534	/* nobody */
+
+/* CPU time in microseconds of process pid, or of its thread named tdname. */
+static int64_t
+g18_runtime(pid_t pid, const char *tdname)
+{
+	struct kinfo_proc *kp;
+	size_t len;
+	int64_t rt;
+	int mib[4], i, n;
+
+	mib[0] = CTL_KERN;
+	mib[1] = KERN_PROC;
+	mib[2] = KERN_PROC_PID | (tdname != NULL ? KERN_PROC_INC_THREAD : 0);
+	mib[3] = pid;
+	len = 0;
+	if (sysctl(mib, 4, NULL, &len, NULL, 0) != 0)
+		return (-1);
+	len += len / 2;
+	kp = malloc(len);
+	if (kp == NULL)
+		return (-1);
+	if (sysctl(mib, 4, kp, &len, NULL, 0) != 0) {
+		free(kp);
+		return (-1);
+	}
+	n = (int)(len / sizeof(*kp));
+	rt = -1;
+	for (i = 0; i < n; i++) {
+		if (tdname == NULL || strcmp(kp[i].ki_tdname, tdname) == 0) {
+			rt = (int64_t)kp[i].ki_runtime;
+			break;
+		}
+	}
+	free(kp);
+	return (rt);
+}
+
+static void
+g18_delivery_share(void)
+{
+	oes_event_type_t evs[] = { OES_EVENT_NOTIFY_PIPE_WRITE,
+	    OES_EVENT_NOTIFY_PIPE_READ };
+	int clients[JT_LOAD_MAXCLIENTS];
+	pid_t *prod = NULL;
+	int64_t *p0 = NULL, dq0, dq1, pmax, v;
+	uint64_t drops;
+	long period_ms;
+	size_t len;
+	pid_t parent;
+	int ncpu, nprod = 0, nclients = 0, interval, stathz, statfd, i, j, n, p[2];
+	struct clockinfo ci;
+	char c;
+
+	TEST_BEGIN("G-18 the delivery thread's CPU share under an event storm");
+	len = sizeof(ncpu);
+	if (sysctlbyname("hw.ncpu", &ncpu, &len, NULL, 0) != 0) {
+		TEST_FAIL("hw.ncpu: %s", strerror(errno));
+		return;
+	}
+	len = sizeof(interval);
+	if (sysctlbyname("kern.sched.ule.balance_interval", &interval, &len,
+	    NULL, 0) != 0) {
+		TEST_FAIL("kern.sched.ule.balance_interval: %s",
+		    strerror(errno));
+		return;
+	}
+	len = sizeof(ci);
+	if (sysctlbyname("kern.clockrate", &ci, &len, NULL, 0) != 0) {
+		TEST_FAIL("kern.clockrate: %s", strerror(errno));
+		return;
+	}
+	stathz = ci.stathz != 0 ? ci.stathz : ci.hz;
+	period_ms = (long)interval * 1000 / stathz;
+	if (period_ms < 1)
+		period_ms = 1;
+	statfd = test_open_oes();
+	if (statfd < 0) {
+		TEST_FAIL("client: %s", strerror(errno));
+		return;
+	}
+
+	nprod = 2 * ncpu;
+	prod = calloc(nprod, sizeof(*prod));
+	p0 = calloc(nprod, sizeof(*p0));
+	if (prod == NULL || p0 == NULL) {
+		TEST_FAIL("calloc");
+		goto out;
+	}
+	parent = getpid();
+	fflush(NULL);
+	for (i = 0; i < nprod; i++) {
+		prod[i] = fork();
+		if (prod[i] < 0) {
+			TEST_FAIL("fork: %s", strerror(errno));
+			goto out;
+		}
+		if (prod[i] == 0) {
+			if (setgid(G18_UNPRIV_ID) != 0 ||
+			    setuid(G18_UNPRIV_ID) != 0 || pipe(p) != 0)
+				_exit(1);
+			for (;;) {
+				for (n = 0; n < 256; n++) {
+					if (write(p[1], "x", 1) != 1 ||
+					    read(p[0], &c, 1) != 1)
+						_exit(1);
+				}
+				if (getppid() != parent)
+					_exit(0);
+			}
+		}
+	}
+
+	/* Clients until the queue discards: the delivery thread is saturated. */
+	drops = jt_nosleep_drops(statfd);
+	while (nclients < JT_LOAD_MAXCLIENTS) {
+		for (j = 0; j < JT_LOAD_STEP; j++) {
+			clients[nclients] = test_open_oes();
+			if (clients[nclients] < 0 ||
+			    jt_notify_setup(clients[nclients], evs, 2) != 0) {
+				TEST_FAIL("client: %s", strerror(errno));
+				goto out;
+			}
+			nclients++;
+		}
+		usleep(period_ms * 1000);
+		if (jt_nosleep_drops(statfd) > drops)
+			break;
+	}
+	if (jt_nosleep_drops(statfd) == drops) {
+		printf("    note: %d clients never filled the queue; not "
+		    "measured\n", nclients);
+		goto out;
+	}
+
+	dq0 = g18_runtime(0, "oes_deferq");
+	for (i = 0; i < nprod; i++)
+		p0[i] = g18_runtime(prod[i], NULL);
+	usleep(G18_PERIODS * period_ms * 1000);
+	dq1 = g18_runtime(0, "oes_deferq");
+	pmax = 0;
+	for (i = 0; i < nprod; i++) {
+		v = g18_runtime(prod[i], NULL) - p0[i];
+		if (v > pmax)
+			pmax = v;
+	}
+	if (dq0 < 0 || dq1 < 0) {
+		TEST_FAIL("no thread oes_deferq in process 0");
+		goto out;
+	}
+	printf("    %d CPUs, %d unprivileged producers, %d unread clients, "
+	    "%ld ms: delivery thread %jd ms, busiest producer %jd ms\n",
+	    ncpu, nprod, nclients, G18_PERIODS * period_ms,
+	    (intmax_t)((dq1 - dq0) / 1000), (intmax_t)(pmax / 1000));
+#if G18_DELIVERY_FAIR
+	ASSERT_MSG(dq1 - dq0 <= pmax, "the delivery thread ran %jd ms, more "
+	    "than the busiest producer's %jd ms",
+	    (intmax_t)((dq1 - dq0) / 1000), (intmax_t)(pmax / 1000));
+#else
+	ASSERT_MSG(dq1 - dq0 > pmax, "the delivery thread ran %jd ms, no more "
+	    "than the busiest producer's %jd ms",
+	    (intmax_t)((dq1 - dq0) / 1000), (intmax_t)(pmax / 1000));
+#endif
+out:
+	for (i = 0; prod != NULL && i < nprod; i++) {
+		if (prod[i] > 0) {
+			(void)kill(prod[i], SIGKILL);
+			(void)jt_reap(prod[i]);
+		}
+	}
+	for (i = 0; i < nclients; i++)
+		(void)close(clients[i]);
+	free(prod);
+	free(p0);
+	(void)close(statfd);
+}
+
 int
 main(void)
 {
@@ -1101,6 +1308,7 @@ main(void)
 	g15_passive();
 	g16_oes_only_flags();
 	g17_gate_under_load();
+	g18_delivery_share();
 
 	(void)unlink(work_file);
 	TEST_SUITE_END("OES idle gate");
