@@ -726,16 +726,20 @@ g6_gate_open(struct g6_gate *g, int n)
 #if OES_IDLE_LEVEL >= 3
 /*
  * G-6: no record is lost once SUBSCRIBE has returned.  Workers open
- * numbered files in a loop; after the ioctl returns the main process
- * publishes a generation, and every open a worker starts after seeing it
- * must be delivered.
+ * numbered files in a loop, and keep opening until told to stop and at
+ * least G6_OPENS times after seeing the generation the main process
+ * publishes once the ioctl has returned; every such open must be
+ * delivered.  Opens of a file are counted: the records of a file must be
+ * at least as many as the opens of it started after the generation.
  */
 #define	G6_WORKERS	4
 #define	G6_OPENS	150
 
 struct g6_shared {
 	volatile int	gen;		/* 1 once SUBSCRIBE has returned */
-	int		seen[G6_WORKERS][G6_OPENS];
+	volatile int	stop;
+	int		after[G6_WORKERS][G6_OPENS];	/* opens after gen */
+	int		nafter[G6_WORKERS];
 	ino_t		ino[G6_WORKERS][G6_OPENS];
 };
 
@@ -750,8 +754,8 @@ g6_no_record_lost(void)
 	pid_t pids[G6_WORKERS], mark;
 	struct stat sb;
 	ino_t mark_ino;
-	bool *got;
-	int fd, i, k, f, status, need, have, missing;
+	int *got;
+	int fd, i, k, f, g, op, status, need, have, missing;
 
 	TEST_BEGIN("G-6 every open after SUBSCRIBE returns is delivered");
 	sh = mmap(NULL, sizeof(*sh), PROT_READ | PROT_WRITE,
@@ -803,15 +807,20 @@ g6_no_record_lost(void)
 		if (pids[i] == 0) {
 			(void)close(fd);
 			g6_gate_wait(&gate);
-			for (k = 0; k < G6_OPENS; k++) {
-				sh->seen[i][k] = __atomic_load_n(&sh->gen,
-				    __ATOMIC_ACQUIRE);
+			for (op = 0; !sh->stop || sh->nafter[i] < G6_OPENS;
+			    op++) {
+				k = op % G6_OPENS;
+				g = __atomic_load_n(&sh->gen, __ATOMIC_ACQUIRE);
 				snprintf(path, sizeof(path), "%s.g6.%d.%d",
 				    work_file, i, k);
 				f = open(path, O_RDONLY);
 				if (f >= 0)
 					(void)close(f);
-				if (k == 0)
+				if (g != 0) {
+					sh->after[i][k]++;
+					sh->nafter[i]++;
+				}
+				if (op == 0)
 					g6_gate_ready(&gate);
 			}
 			_exit(0);
@@ -823,6 +832,7 @@ g6_no_record_lost(void)
 	ASSERT_MSG(test_subscribe(fd, &ev, 1, OES_SUB_REPLACE) == 0,
 	    "subscribe: %s", strerror(errno));
 	__atomic_store_n(&sh->gen, 1, __ATOMIC_RELEASE);
+	sh->stop = 1;
 	for (i = 0; i < G6_WORKERS; i++)
 		(void)waitpid(pids[i], &status, 0);
 	/*
@@ -854,18 +864,18 @@ g6_no_record_lost(void)
 			for (k = 0; k < G6_OPENS; k++)
 				if (sh->ino[i][k] ==
 				    buf.msg.em_event_data.open.file.ef_token.eft_id)
-					got[i * G6_OPENS + k] = true;
+					got[i * G6_OPENS + k]++;
 	}
 	need = have = missing = 0;
 	for (i = 0; i < G6_WORKERS; i++)
 		for (k = 0; k < G6_OPENS; k++) {
-			if (!sh->seen[i][k])
-				continue;
-			need++;
-			if (got[i * G6_OPENS + k])
-				have++;
-			else if (missing++ < 5)
-				printf("    missing: worker %d open %d\n", i, k);
+			need += sh->after[i][k];
+			have += MIN(got[i * G6_OPENS + k], sh->after[i][k]);
+			if (got[i * G6_OPENS + k] < sh->after[i][k] &&
+			    missing++ < 5)
+				printf("    missing: worker %d file %d: %d opens "
+				    "after, %d records\n", i, k, sh->after[i][k],
+				    got[i * G6_OPENS + k]);
 		}
 	printf("    %d opens after SUBSCRIBE returned, %d delivered\n", need,
 	    have);
