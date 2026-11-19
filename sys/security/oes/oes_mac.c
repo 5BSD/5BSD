@@ -5904,9 +5904,12 @@ static struct mac_policy_ops oes_mac_ops = {
  * UNLOADOK makes the policy non-unloadable as an additional safeguard: OES
  * never unloads, and the idle gates rely on its hooks, tables and locks
  * staying.  Its hooks count toward the framework's fast-path flags only
- * while live (oes_gate_reconcile()).
+ * while live (oes_gate_reconcile()).  Because it never unloads it joins the
+ * static list (MPC_LOADTIME_FLAG_LATE_STATIC): its hooks run outside the
+ * dynamic list's read lock, which pins the calling thread to its CPU.
  */
-#define	OES_MPC_FLAGS	MPC_LOADTIME_FLAG_FP_INACTIVE
+#define	OES_MPC_FLAGS	(MPC_LOADTIME_FLAG_FP_INACTIVE | \
+	    MPC_LOADTIME_FLAG_LATE_STATIC)
 _Static_assert((OES_MPC_FLAGS & MPC_LOADTIME_FLAG_UNLOADOK) == 0,
     "OES must never be unloadable");
 static struct mac_policy_conf oes_mac_policy_conf = {
