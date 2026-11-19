@@ -724,6 +724,26 @@ wake_dropped_holds(struct dqt_child *ch, const char *what)
 	(void)close(ch->pipefd);
 }
 
+/*
+ * For a quota wait under dqt_hold: the waiter, once woken, would post and
+ * then wait for an answer that is held, so it is the post that must not
+ * come.  The held events stay at n; then the waiter is killed.
+ */
+static void
+wake_dropped_unposted(struct dqt_ctl *c, int n, struct dqt_child *ch,
+    const char *what)
+{
+	int status;
+
+	ATF_CHECK_MSG(!dqt_wait_held(c, n + 1, DQT_WAIT_MS), "%s: the post "
+	    "went on with its wakeup dropped: something polls or another "
+	    "wakeup reached it", what);
+	ATF_REQUIRE(dqt_sysctl_restore(DROP_WAKEUP));
+	(void)kill(ch->pid, SIGKILL);
+	ATF_REQUIRE_EQ(ch->pid, waitpid(ch->pid, &status, 0));
+	(void)close(ch->pipefd);
+}
+
 static struct dqt_object *
 wake_object(struct dqt_ctl *c, int oracle)
 {
@@ -977,7 +997,7 @@ ATF_TC_BODY(wake_inflight, tc)
 	ATF_REQUIRE_EQ(0, dq_reply(c.q, dqt_held_id(&c, 0), 0, data, 100));
 	dqt_collect(&ch0, &r0, sizeof(r0));
 	ATF_CHECK_EQ(100, r0.rr.rv);
-	wake_dropped_holds(&ch1, "the object's in-flight slot");
+	wake_dropped_unposted(&c, 1, &ch1, "the object's in-flight slot");
 	dqt_hold(&c, false);
 	dqt_fini(&c);
 	(void)close(oracle);
@@ -1046,7 +1066,7 @@ ATF_TC_BODY(wake_requester, tc)
 	ATF_REQUIRE(dqt_wait_wmesg(ch.pid, "dqreq", DQT_WAIT_MS));
 	wake_drop(WAKE_REQUESTER);
 	ATF_REQUIRE_EQ(0, dq_reply(c.q, dqt_held_id(&c, 0), 0, data, 16));
-	wake_dropped_holds(&ch, "the requester's in-flight slot");
+	wake_dropped_unposted(&c, 1, &ch, "the requester's in-flight slot");
 	dqt_hold(&c, false);
 	dqt_fini(&c);
 	(void)close(oracle);
