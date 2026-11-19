@@ -320,6 +320,8 @@ struct switchboard_state {
 	int		discovery_fd;
 	/* Capsule says this boot already converged: do not replay /etc/rc. */
 	bool		boot_complete;
+	/* Capsule says /etc/rc runs without autoboot (after single-user). */
+	bool		rc_fastboot;
 	/* Capsule could not create the next start's issuer (errno), or 0. */
 	int		next_issuer_error;
 	/*
@@ -612,6 +614,8 @@ bool	svc_domain_permits(const struct svc_domain *chan,
 int	svc_fd_make_ambient(int fd);
 int	domain_mint_user_channel(uid_t uid, int *out_fd, int kq);
 int	domain_mint_system_channel(int *out_fd, int kq);
+/* startup.c: serve Capsule's boot-long discovery channel, if handed over. */
+int	startup_adopt_discovery(void);
 /* Serve the SYSTEM route on a server end Capsule holds; consumes server_fd. */
 int	domain_adopt_system_channel(int server_fd, int kq);
 int	domain_mint_session_channel(enum svc_domain_kind kind, uid_t uid,

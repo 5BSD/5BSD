@@ -426,6 +426,8 @@ main(int argc, char *argv[])
 		}
 		s = getenv("SWITCHBOARD_BOOT_COMPLETE");
 		sd.boot_complete = s != NULL && strcmp(s, "1") == 0;
+		s = getenv("SWITCHBOARD_RC_FASTBOOT");
+		sd.rc_fastboot = s != NULL && strcmp(s, "1") == 0;
 		s = getenv("SWITCHBOARD_NEXT_ISSUER_ERROR");
 		if (s != NULL) {
 			errno = 0;
@@ -631,6 +633,9 @@ main(int argc, char *argv[])
 		    svc_boot_id(bid, sizeof(bid)),
 		    (uintmax_t)sd.root_coalition_id);
 	}
+
+	if (startup_adopt_discovery() == -1)
+		return (1);
 
 	/* Launch system services (tier-based parallel). */
 	if (startup_launch_system(switchboard_kq) != 0) {

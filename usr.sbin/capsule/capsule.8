@@ -620,7 +620,10 @@ its grants are revoked when that
 exits.
 .Nm
 creates the next start's issuer as soon as one is handed out and holds it
-unused, so a restart does not depend on a create succeeding at that moment.
+unused, close-on-fork and not transferable, so a restart does not depend on
+a create succeeding at that moment and no other child of
+.Nm
+can keep it.
 If that create fails,
 .Nm
 logs
@@ -647,11 +650,15 @@ so
 .Nm
 logs
 .Dq no authority issuer: Ar reason
-and, as PID 1, enters single-user.
-.Er EMFILE
-cannot occur:
+and, as PID 1, enters single-user (recovery at first boot); off PID 1 it
+does not restart
+.Xr switchboard 8 .
 .Nm
-releases a reserved descriptor just before each create.
+keeps two descriptors in reserve and releases them for the creates of one
+start, so its own descriptor limit
+.Pq Er EMFILE
+does not fail them; if a reserve cannot be taken back it logs that at
+.Dv LOG_CRIT .
 .Pp
 .Nm
 creates the system discovery channel once and keeps it for its lifetime.
@@ -672,9 +679,19 @@ has reported that the boot converged, every later start in the same boot
 and does not run
 .Pa /etc/rc
 again.
-Stopping the capability world (shutdown or single-user) ends the boot: the
-next start runs
+Stopping the capability world (shutdown or single-user) ends the boot,
+whether or not a
+.Xr switchboard 8
+was running: the next start runs
 .Pa /etc/rc .
+After single-user, as with
+.Xr init 8 ,
+that
+.Pa /etc/rc
+runs without
+.Dq autoboot
+.Pq Ev SWITCHBOARD_RC_FASTBOOT=1 ,
+so mounted file systems are not checked again.
 .Sh DTRACE PROBES
 .Nm
 is instrumented with DTrace USDT probes in the

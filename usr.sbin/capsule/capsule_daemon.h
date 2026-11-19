@@ -98,6 +98,8 @@ bool	bootstrap_is_channel(struct kevent *kev);
 bool	bootstrap_is_timer(struct kevent *kev);
 pid_t	bootstrap_pid(void);
 void	bootstrap_note_ready(void);
+void	bootstrap_world_stopped(void);
+bool	bootstrap_owns_discovery(void);
 int	bootstrap_issuer_refused(void);
 
 /* capsule_proto.c — channel protocol handler */

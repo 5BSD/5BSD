@@ -211,8 +211,10 @@ without one.
 Started without it (only possible outside
 .Xr capsule 8 ) ,
 .Nm
-cannot register its application catalogue and exits, logging
-.Dq no authority issuer .
+exits, logging
+.Dq no authority issuer ,
+when its application catalogue has entries to register; with an empty
+catalogue it runs, and every grant it would issue fails.
 .It discovery (fd 9)
 The server end of the system discovery channel, named by
 .Ev SWITCHBOARD_DISCOVERY_FD .
@@ -237,6 +239,15 @@ run
 .Pa /etc/rc
 again, and logs
 .Dq restart after boot: /etc/rc not replayed .
+.Pp
+.Ev SWITCHBOARD_RC_FASTBOOT=1
+runs
+.Pa /etc/rc
+without
+.Dq autoboot ,
+as
+.Xr init 8
+does after single-user.
 .Pp
 .Ev SWITCHBOARD_NEXT_ISSUER_ERROR
 carries the errno with which

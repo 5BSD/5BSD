@@ -58,6 +58,45 @@ log_loaded_manifest(const struct svc_manifest *m)
  * into logins, and a daemon-personality Capsule hands it to its root control
  * client (CTL_OP_LOOKUP).  See startup_launch_system() for when it runs.
  */
+static bool discovery_adopted;
+
+/*
+ * Capsule keeps the SYSTEM route for the whole boot and hands each SwitchBoard
+ * its server end (SWITCHBOARD_DISCOVERY_FD), with the client end already in
+ * this process's slot: rc daemons and shells started under an earlier
+ * SwitchBoard keep reaching discovery after a restart.  Capsule already holds
+ * the client end for logins, so nothing is handed back.  Failing to serve it
+ * fails the start: Capsule refuses a route of SwitchBoard's own once it owns
+ * the channel, so a fallback would leave every existing route unserved.
+ * Returns 0 when no channel was handed over.
+ */
+int
+startup_adopt_discovery(void)
+{
+	int lookup_fd, server_fd;
+
+	if (sd.discovery_fd < 0)
+		return (0);
+	server_fd = sd.discovery_fd;
+	sd.discovery_fd = -1;
+	if (domain_adopt_system_channel(server_fd, switchboard_kq) == -1) {
+		syslog(LOG_CRIT, "startup: cannot serve Capsule's system lookup "
+		    "channel: %m");
+		return (-1);
+	}
+	if ((lookup_fd = service_get_ambient_lookup()) == -1 ||
+	    svc_fd_make_ambient(lookup_fd) == -1) {
+		syslog(LOG_CRIT, "startup: no system lookup route in this "
+		    "process: %m");
+		if (lookup_fd >= 0)
+			(void)close(lookup_fd);
+		return (-1);
+	}
+	switchboard_ambient_lookup_fd = lookup_fd;
+	discovery_adopted = true;
+	return (0);
+}
+
 static void
 startup_ambient_lookup(void)
 {
@@ -74,30 +113,9 @@ startup_ambient_lookup(void)
 	 * If provisioning fails, rc still runs without discovery so a broken
 	 * channel does not prevent ordinary UNIX boot.
 	 */
-	/*
-	 * Capsule keeps the SYSTEM route for the whole boot and hands each
-	 * SwitchBoard its server end, with the client end already in this
-	 * process's slot: rc daemons and shells started under an earlier
-	 * SwitchBoard keep reaching discovery after a restart.  Capsule already
-	 * holds the client end for logins, so nothing is handed back.
-	 */
-	if (switchboard_ambient_lookup_fd < 0 && sd.discovery_fd >= 0) {
-		int server_fd = sd.discovery_fd, lookup_fd;
-
-		sd.discovery_fd = -1;
-		if (domain_adopt_system_channel(server_fd, switchboard_kq) == -1)
-			syslog(LOG_ERR, "startup: cannot serve Capsule's system "
-			    "lookup channel: %m");
-		else if ((lookup_fd = service_get_ambient_lookup()) == -1 ||
-		    svc_fd_make_ambient(lookup_fd) == -1) {
-			syslog(LOG_ERR, "startup: no system lookup route in "
-			    "this process: %m");
-			if (lookup_fd >= 0)
-				(void)close(lookup_fd);
-		} else
-			switchboard_ambient_lookup_fd = lookup_fd;
+	/* Capsule's boot-long route (startup_adopt_discovery()) is in use. */
+	if (discovery_adopted)
 		return;
-	}
 
 	if (switchboard_ambient_lookup_fd < 0) {
 		int lookup_fd = -1;
@@ -178,15 +196,17 @@ run_rc_bootstrap(int kqunused)
 	strlcpy(rc.manifest.program, "/bin/sh", sizeof(rc.manifest.program));
 	strlcpy(rc.manifest.arguments[0], "/etc/rc",
 	    sizeof(rc.manifest.arguments[0]));
+	/* After single-user init runs rc without autoboot: no fsck. */
 	strlcpy(rc.manifest.arguments[1], "autoboot",
 	    sizeof(rc.manifest.arguments[1]));
-	rc.manifest.narguments = 2;
+	rc.manifest.narguments = sd.rc_fastboot ? 1 : 2;
 	rc.manifest.restart = SVC_RESTART_NEVER;
 	rc.state = SVC_STATE_STOPPED;
 	rc.want_console = true;		/* rc progress must be visible on console */
 	svc_runtime_init_fds(&rc);
 
-	syslog(LOG_INFO, "startup: running /etc/rc");
+	syslog(sd.rc_fastboot ? LOG_NOTICE : LOG_INFO, "startup: running /etc/rc%s",
+	    sd.rc_fastboot ? " (fastboot, after single-user)" : "");
 	if (svc_exec(&rc, switchboard_kq) == -1) {
 		syslog(LOG_ERR, "startup: cannot launch /etc/rc");
 		return (-1);

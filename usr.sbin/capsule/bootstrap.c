@@ -49,6 +49,12 @@
 #define	BOOTSTRAP_MAX_DELAY	30	/* max restart delay (seconds) */
 #define	BOOTSTRAP_MAX_FAILURES	10	/* circuit breaker threshold */
 
+/*
+ * Descriptors kept in reserve for issuer creates: one take makes at most two
+ * (this start's, when none is held, and the next start's).
+ */
+#define	BOOTSTRAP_ISSUER_RESERVE	2
+
 /* Well-known fds for switchboard. */
 #define	SWITCHBOARD_CHANNEL_FD	3	/* channel to capsule */
 #define	SWITCHBOARD_CHANNEL_SVC_FD	4	/* channel service instance (mintable) */
@@ -70,7 +76,8 @@ static struct {
 	int		issuer_next_fd;	/* the next start's issuer, held unused */
 	int		issuer_next_error; /* errno of its failed create, or 0 */
 	int		issuer_refused;	/* errno that refused this start, or 0 */
-	int		reserve_fd;	/* released for each create: no EMFILE */
+	/* Released for the creates in one take: Capsule's own limit never fails them. */
+	int		reserve_fd[BOOTSTRAP_ISSUER_RESERVE];
 	/*
 	 * The system discovery channel, kept for the whole boot.  Its client
 	 * end is capsule.c's ambient lookup (every getty, and each
@@ -79,9 +86,11 @@ static struct {
 	 * the routes of processes started under the one before it.
 	 */
 	int		discovery_fd;	/* server end */
+	bool		discovery_tried; /* created once per Capsule, or never */
 	/* The boot converged (a SwitchBoard reported READY): no rc replay. */
 	bool		boot_complete;
-} bs = { .issuer_next_fd = -1, .discovery_fd = -1, .reserve_fd = -1 };
+} bs = { .issuer_next_fd = -1, .discovery_fd = -1,
+    .reserve_fd = { [0 ... BOOTSTRAP_ISSUER_RESERVE - 1] = -1 } };
 
 static uintptr_t next_timer_ident = 90000;
 
@@ -104,6 +113,7 @@ struct bootstrap_delegate_fds {
 	int	discovery_fd;	/* dup of the discovery server end, or -1 */
 	int	lookup_fd;	/* discovery client end for the slot, or -1 */
 	bool	boot_complete;
+	bool	rc_fastboot;	/* /etc/rc without autoboot (after single-user) */
 	int	issuer_next_error;	/* the next start's issuer failed, or 0 */
 	/*
 	 * Bundle-directory overrides forwarded to switchboard.  Captured from
@@ -297,6 +307,8 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 	}
 	if (d->boot_complete)
 		env[envc++] = __DECONST(char *, "SWITCHBOARD_BOOT_COMPLETE=1");
+	else if (d->rc_fastboot)
+		env[envc++] = __DECONST(char *, "SWITCHBOARD_RC_FASTBOOT=1");
 	/* Reported by capsulectl status: the next start must create its own. */
 	if (d->issuer_next_error != 0) {
 		(void)snprintf(next_issuer_env, sizeof(next_issuer_env),
@@ -370,8 +382,8 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 /*
  * PID 1 has no environment to carry SWITCHBOARD_TEST_SHIELD_NO_SIGKILL, so a
  * test kernel also takes it from the loader: switchboard_test_no_sigkill="1"
- * lets a guest test kill SwitchBoard to exercise a crash restart.  Ignored on
- * any kernel without the test-kernel knob kern.mac_capability.test_issuer.
+ * lets a guest test kill SwitchBoard to exercise a crash restart.  Honoured
+ * only on a test kernel booted with kern.mac_capability.test_issuer=1.
  */
 static bool
 bootstrap_test_no_sigkill(void)
@@ -382,7 +394,7 @@ bootstrap_test_no_sigkill(void)
 
 	len = sizeof(knob);
 	if (sysctlbyname("kern.mac_capability.test_issuer", &knob, &len,
-	    NULL, 0) == -1)
+	    NULL, 0) == -1 || knob != 1)
 		return (false);
 	if (kenv(KENV_GET, "switchboard_test_no_sigkill", value,
 	    sizeof(value)) <= 0 || strcmp(value, "1") != 0)
@@ -412,35 +424,58 @@ bootstrap_test_no_sigkill(void)
  * without the operation are permanent.  ENFILE, the system file table full,
  * clears only when something closes a file, which nothing reports.  So a
  * start without an issuer is refused, and PID 1 enters single-user.  EMFILE,
- * Capsule's own table being full, is prevented: a reserved descriptor is
- * released just before each create.  The kernel's allocations wait rather
- * than fail (M_WAITOK), so there is no ENOMEM.
+ * Capsule's own table being full, is prevented: BOOTSTRAP_ISSUER_RESERVE
+ * reserved descriptors are released for the creates of one take.  The
+ * kernel's allocations wait rather than fail (M_WAITOK), so there is no
+ * ENOMEM.
+ *
+ * The held issuer is close-on-fork and not transferable from creation: a
+ * Capsule child that stalls between fork and exec (getty's respawn sleep,
+ * the window-system wait) must not hold a reference, or the issuer would
+ * outlive the SwitchBoard it was handed to and its grants and catalogue with
+ * it (issuer_close() revokes on the last close).  Only the pdfork into
+ * SwitchBoard carries it: bootstrap_issuer_take() clears close-on-fork for the
+ * issuer being handed out.
  *
  * A test kernel (options MAC_CAPABILITY_TEST_PERMISSIVE, booted with
  * kern.mac_capability.test_issuer=1) also gives a test-local Capsule a test
  * issuer until PID 1 anchors the boot; that is said loudly.
  */
+static void
+bootstrap_reserve(bool acquire)
+{
+	unsigned i;
+
+	for (i = 0; i < BOOTSTRAP_ISSUER_RESERVE; i++) {
+		if (!acquire) {
+			if (bs.reserve_fd[i] >= 0)
+				(void)close(bs.reserve_fd[i]);
+			bs.reserve_fd[i] = -1;
+		} else if (bs.reserve_fd[i] < 0 &&
+		    (bs.reserve_fd[i] = open("/dev/null",
+		    O_RDONLY | O_CLOEXEC | O_CLOFORK)) == -1)
+			syslog(LOG_CRIT, "bootstrap: descriptor reserve for "
+			    "issuer creates lost: %m; a create may fail with "
+			    "EMFILE");
+	}
+}
+
 static int
 bootstrap_issuer_create(void)
 {
-	int error, fd;
+	int fd;
 
-	if (bs.reserve_fd >= 0) {
-		(void)close(bs.reserve_fd);
-		bs.reserve_fd = -1;
-	}
 	fd = syscall(SYS_cap_process, CAP_AUTH_ISSUER_CREATE, -1, 0, NULL);
-	error = errno;
-	bs.reserve_fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
-	if (bs.reserve_fd == -1)
-		syslog(LOG_WARNING, "bootstrap: descriptor reserve: %m");
-	if (fd < 0) {
-		errno = error;
+	if (fd < 0)
+		return (-1);
+	/* Held: close on fork and exec, never transferable (see above). */
+	if (fcntl(fd, F_SETFD, FD_CLOEXEC | FD_CLOFORK) == -1 ||
+	    cap_xfer_limit(fd, CAP_XFER_NONE) == -1) {
+		syslog(LOG_ERR, "bootstrap: confine held issuer: %m");
+		(void)close(fd);
+		errno = EBADF;
 		return (-1);
 	}
-	/* Held until the next start: never leak it into init's successor on a
-	 * reroot.  The child's dup2 to its fixed slot clears this. */
-	(void)fcntl(fd, F_SETFD, FD_CLOEXEC);
 	if (getpid() != 1)
 		syslog(LOG_WARNING,
 		    "bootstrap: TEST MODE: authority issuer created off PID 1");
@@ -451,27 +486,41 @@ bootstrap_issuer_create(void)
  * The issuer for this start: the one held from the last start, or, when that
  * create failed or this is the first start, one created now.  Then the next
  * start's issuer is created.  Returns -1 with bs.issuer_refused set when this
- * start has none.
+ * start has none.  The returned issuer may be inherited by the next fork,
+ * which must be the pdfork into SwitchBoard.
  */
 static int
 bootstrap_issuer_take(void)
 {
-	int fd;
+	int error, fd;
 
+	bootstrap_reserve(false);
 	fd = bs.issuer_next_fd;
 	bs.issuer_next_fd = -1;
 	if (fd < 0 && (fd = bootstrap_issuer_create()) < 0) {
-		bs.issuer_refused = errno;
+		error = errno;
+		bootstrap_reserve(true);
+		bs.issuer_refused = error;
 		syslog(LOG_CRIT, "bootstrap: no authority issuer: %s; "
-		    "switchboard not started", strerror(bs.issuer_refused));
+		    "switchboard not started", strerror(error));
 		return (-1);
 	}
 	bs.issuer_next_fd = bootstrap_issuer_create();
 	bs.issuer_next_error = bs.issuer_next_fd < 0 ? errno : 0;
+	bootstrap_reserve(true);
 	if (bs.issuer_next_fd < 0)
 		syslog(LOG_CRIT, "bootstrap: no authority issuer for the next "
 		    "switchboard start: %s; that start will create one, or "
 		    "refuse", strerror(bs.issuer_next_error));
+	/* This one crosses the pdfork into SwitchBoard. */
+	if (fcntl(fd, F_SETFD, FD_CLOEXEC) == -1) {
+		error = errno;
+		(void)close(fd);
+		bs.issuer_refused = error;
+		syslog(LOG_CRIT, "bootstrap: no authority issuer: %s; "
+		    "switchboard not started", strerror(error));
+		return (-1);
+	}
 	return (fd);
 }
 
@@ -484,43 +533,76 @@ static void
 bootstrap_issuer_refuse(void)
 {
 
+	if (getpid() != 1) {
+		syslog(LOG_CRIT, "bootstrap: no authority issuer: %s; "
+		    "switchboard not restarted", strerror(bs.issuer_refused));
+		return;
+	}
 	syslog(LOG_CRIT, "bootstrap: no authority issuer: %s; entering "
 	    "single-user", strerror(bs.issuer_refused));
-	if (getpid() == 1)
-		(void)capsule_lifecycle(CTL_OP_SINGLE);
+	(void)capsule_lifecycle(CTL_OP_SINGLE);
 }
 
 /*
  * A descriptor for the discovery server end to delegate, creating the channel
  * on the first start of this Capsule.  Its client end becomes capsule.c's
- * ambient lookup for logins.  -1 when it cannot be created: SwitchBoard then
- * mints its own route, as before.
+ * ambient lookup for logins.  If the channel cannot be created on that first
+ * start, this Capsule never owns one: every SwitchBoard mints its own route
+ * and hands it over, as before (*fdp -1, return 0).  Once Capsule owns the
+ * channel, a failed dup fails the start (-1): a SwitchBoard with its own
+ * route would split discovery from the route every existing process holds.
  */
 static int
-bootstrap_discovery_dup(void)
+bootstrap_discovery_dup(int *fdp)
 {
-	int client, fd, server;
+	int client, server;
 
-	if (bs.discovery_fd < 0) {
+	*fdp = -1;
+	if (!bs.discovery_tried) {
+		bs.discovery_tried = true;
 		if (mac_capability_create_channel(&server, &client) == -1) {
 			syslog(LOG_WARNING, "bootstrap: no boot discovery "
-			    "channel: %m");
-			return (-1);
+			    "channel: %m; switchboard provides the route");
+			return (0);
 		}
 		if (capsule_set_ambient_lookup(client) == -1) {
 			syslog(LOG_WARNING, "bootstrap: boot discovery channel "
-			    "client end: %m");
+			    "client end: %m; switchboard provides the route");
 			(void)close(server);
-			return (-1);
+			return (0);
 		}
-		(void)fcntl(server, F_SETFD, FD_CLOEXEC);
+		(void)fcntl(server, F_SETFD, FD_CLOEXEC | FD_CLOFORK);
 		bs.discovery_fd = server;
 		syslog(LOG_INFO, "bootstrap: boot discovery channel created");
 	}
-	fd = fcntl(bs.discovery_fd, F_DUPFD_CLOEXEC, 0);
-	if (fd == -1)
-		syslog(LOG_WARNING, "bootstrap: dup discovery channel: %m");
-	return (fd);
+	if (bs.discovery_fd < 0)
+		return (0);
+	*fdp = fcntl(bs.discovery_fd, F_DUPFD_CLOEXEC, 0);
+	if (*fdp == -1) {
+		syslog(LOG_ERR, "bootstrap: dup discovery channel: %m");
+		return (-1);
+	}
+	return (0);
+}
+
+/* Capsule serves discovery itself: a SwitchBoard route must not replace it. */
+bool
+bootstrap_owns_discovery(void)
+{
+
+	return (bs.discovery_fd >= 0);
+}
+
+/*
+ * The capability world stopped (shutdown, single-user): the boot is over, and
+ * the next SwitchBoard start runs /etc/rc again.  Called from
+ * capsule_world_stop() whether or not a SwitchBoard was running.
+ */
+void
+bootstrap_world_stopped(void)
+{
+
+	bs.boot_complete = false;
 }
 
 /*
@@ -560,6 +642,7 @@ bootstrap_start(int kq)
 	int pd_fd;
 	pid_t pid;
 
+	bs.issuer_refused = 0;
 	if (od.cfg.service_manager[0] == '\0') {
 		syslog(LOG_INFO, "bootstrap: no service_manager configured");
 		return (0);
@@ -571,11 +654,8 @@ bootstrap_start(int kq)
 		return (-1);
 	}
 
-	bs.issuer_refused = 0;
-	/* The descriptor reserve that keeps EMFILE from the issuer create. */
-	if (bs.reserve_fd < 0 &&
-	    (bs.reserve_fd = open("/dev/null", O_RDONLY | O_CLOEXEC)) == -1)
-		syslog(LOG_WARNING, "bootstrap: descriptor reserve: %m");
+	/* The descriptor reserve that keeps EMFILE from the issuer creates. */
+	bootstrap_reserve(true);
 
 	/* Create channel. */
 	if (mac_capability_create_channel(&capsule_end, &child_end) == -1) {
@@ -636,9 +716,20 @@ bootstrap_start(int kq)
 	dfds.issuer_next_error = bs.issuer_next_error;
 
 	/* The boot-long discovery route (see bs.discovery_fd). */
-	dfds.discovery_fd = bootstrap_discovery_dup();
+	if (bootstrap_discovery_dup(&dfds.discovery_fd) == -1) {
+		close(capsule_end);
+		close(child_end);
+		close(dfds.channel_svc_fd);
+		close(dfds.coalition_svc_fd);
+		close(dfds.capprotect_fd);
+		if (dfds.identity_fd >= 0)
+			close(dfds.identity_fd);
+		close(dfds.authority_fd);
+		return (-1);
+	}
 	dfds.lookup_fd = dfds.discovery_fd >= 0 ? capsule_ambient_lookup() : -1;
 	dfds.boot_complete = bs.boot_complete;
+	dfds.rc_fastboot = !capsule_rc_autoboot();
 
 	/* Capture bundle-dir overrides here — getenv is not safe post-fork. */
 	dfds.bundle_dir_system = getenv("SWITCHBOARD_BUNDLE_DIR_SYSTEM");
@@ -841,11 +932,8 @@ bootstrap_teardown_and_restart(int kq, int status)
 	bs.started = false;
 	capsule_proto_reset();
 
-	if (od.shutting_down) {
-		/* The world stopped: the next start is a boot again. */
-		bs.boot_complete = false;
+	if (od.shutting_down)
 		return;
-	}
 
 	/* Check uptime for backoff. */
 	clock_gettime(CLOCK_MONOTONIC, &now);
