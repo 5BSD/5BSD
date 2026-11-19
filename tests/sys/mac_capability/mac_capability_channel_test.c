@@ -2164,6 +2164,72 @@ ATF_TC_BODY(revoke_frees_queued_socket, tc)
  * mac_capability_msg_free() reports any free under a mutex.
  */
 
+/*
+ * Events from dtrace(1): it prints a line per firing of the probes it is
+ * given on a pipe the test reads.  The providers are preloaded
+ * (dtraceall_load): a late kldload is refused with the plane on.
+ */
+struct tracer {
+	pid_t	pid;
+	FILE	*out;
+};
+
+static void
+tracer_start(struct tracer *t, const char *program)
+{
+	char line[128];
+	int p[2];
+
+	ATF_REQUIRE(pipe(p) == 0);
+	t->pid = fork();
+	ATF_REQUIRE(t->pid >= 0);
+	if (t->pid == 0) {
+		if (dup2(p[1], STDOUT_FILENO) < 0)
+			_exit(126);
+		/*
+		 * dtrace must not hold the test's descriptors: a reference
+		 * left there would keep an endpoint or a socket open.
+		 */
+		closefrom(3);
+		execl("/usr/sbin/dtrace", "dtrace", "-q", "-x",
+		    "switchrate=100hz", "-n", "BEGIN { printf(\"READY\\n\"); }",
+		    "-n", program, (char *)NULL);
+		_exit(127);
+	}
+	close(p[1]);
+	t->out = fdopen(p[0], "r");
+	ATF_REQUIRE(t->out != NULL);
+	while (fgets(line, sizeof(line), t->out) != NULL)
+		if (strcmp(line, "READY\n") == 0)
+			return;
+	atf_tc_fail("dtrace exited before tracing");
+}
+
+/* Block until dtrace prints the line want. */
+static void
+tracer_wait(struct tracer *t, const char *want)
+{
+	char line[128];
+
+	while (fgets(line, sizeof(line), t->out) != NULL)
+		if (strcmp(line, want) == 0)
+			return;
+	atf_tc_fail("dtrace exited before printing %s", want);
+}
+
+static void
+tracer_stop(struct tracer *t)
+{
+	int status;
+
+	ATF_REQUIRE(kill(t->pid, SIGINT) == 0);
+	fclose(t->out);
+	ATF_REQUIRE(waitpid(t->pid, &status, 0) == t->pid);
+}
+
+/* A payload length no other message in these cases has. */
+#define	CARRIER_LEN	733
+
 ATF_TC(refused_forward_frees_outside_mutex);
 ATF_TC_HEAD(refused_forward_frees_outside_mutex, tc)
 {
@@ -2173,34 +2239,46 @@ ATF_TC_HEAD(refused_forward_frees_outside_mutex, tc)
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_channel");
 	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.progs", "/usr/sbin/dtrace");
 }
 ATF_TC_BODY(refused_forward_frees_outside_mutex, tc)
 {
+	static unsigned char payload[CARRIER_LEN];
 	struct mac_capability_recvmsg_args ra;
+	struct tracer t;
 	int after[nitems(revoke_witness_needles)];
 	int before[nitems(revoke_witness_needles)];
-	unsigned char rx[64];
+	unsigned char rx[CARRIER_LEN];
+	char program[256];
 	int fds[4], P[2], got, sv[2];
-	uint32_t seq;
 	u_int i;
-	static const char note[] = "carrier";
 
 	require_witness_reports();
 	ATF_REQUIRE(chan_create_required(P) == 0);
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
 	fill_peer_tx(P, chan_tx_limit());
+	/* The forward of the carrier ends refused (EAGAIN): its copy is freed. */
+	snprintf(program, sizeof(program),
+	    "mac_capability:::forward-done /arg2 == %d && arg3 == %d/ "
+	    "{ printf(\"REFUSED\\n\"); }", CARRIER_LEN, EAGAIN);
+	tracer_start(&t, program);
 	revoke_witness_counts(before);
 	/*
-	 * P[1] is full: a message the dispatch task retries, then the
-	 * carrier.  Each read of P[1] lets one forward through, after which
-	 * the next is refused while P[1] is full again: the carrier's forward
-	 * is refused once it reaches the head, and is let through later.
+	 * P[1] is full and P[0]'s RX queue empty: the carrier goes to P[0]'s
+	 * RX queue, and its handler's forward is refused while nobody reads
+	 * P[1].
 	 */
-	seq = 0;
-	ATF_REQUIRE_MSG(chan_send(P[0], &seq, sizeof(seq)) == 0,
-	    "send: %s", strerror(errno));
-	send_carrier(P[0], note, sizeof(note), &sv[0], 1);
+	send_carrier(P[0], payload, sizeof(payload), &sv[0], 1);
 	ATF_REQUIRE_EQ(0, close(sv[0]));
+	tracer_wait(&t, "REFUSED\n");
+	tracer_stop(&t);
+	revoke_witness_counts(after);
+	for (i = 0; i < nitems(revoke_witness_needles); i++)
+		ATF_CHECK_MSG(after[i] <= before[i],
+		    "the refused forward logged %d new kernel message(s) "
+		    "naming '%s'", after[i] - before[i],
+		    revoke_witness_needles[i]);
+	/* Let it through: read P[1] until the carrying message arrives. */
 	got = -1;
 	while (got < 0) {
 		memset(&ra, 0, sizeof(ra));
@@ -2213,12 +2291,6 @@ ATF_TC_BODY(refused_forward_frees_outside_mutex, tc)
 		if (ra.nfds == 1)
 			got = fds[0];
 	}
-	revoke_witness_counts(after);
-	for (i = 0; i < nitems(revoke_witness_needles); i++)
-		ATF_CHECK_MSG(after[i] <= before[i],
-		    "the refused forwards logged %d new kernel message(s) "
-		    "naming '%s'", after[i] - before[i],
-		    revoke_witness_needles[i]);
 	/* The descriptor arrived intact: closing it closes the socket. */
 	ATF_REQUIRE_EQ(0, close(got));
 	ATF_CHECK_MSG(socket_closed(sv[1]), "the delivered socket was written");
