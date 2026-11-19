@@ -75,11 +75,11 @@ extern char **environ;
 #define	TRANSPARENT	"debug.ptrace_attach_transparent"
 #define	POKE_VAL	0x5bd5bd5
 #define	MNT		"mnt"		/* the presleep cases' fusefs */
-#define	MNT_FIFO	MNT "/" FIFO
-#define	FIFO_INO	(FUSE_ROOT_ID + 1)
 #define	FIFO2		"fifo2"		/* a second thread's FIFO */
-#define	MNT_FIFO2	MNT "/" FIFO2
-#define	FIFO2_INO	(FUSE_ROOT_ID + 2)
+#define	FSRV_DIR1	"d1"		/* FIFO's directory */
+#define	FSRV_DIR2	"d2"		/* FIFO2's directory */
+#define	MNT_FIFO	MNT "/" FSRV_DIR1 "/" FIFO
+#define	MNT_FIFO2	MNT "/" FSRV_DIR2 "/" FIFO2
 
 /* The sleep the target is in when the debugger attaches. */
 enum op {
@@ -649,14 +649,30 @@ CASE(legacy__nanosleep__io_write,
     0, OP_NANOSLEEP, WR_IO, RES_EINTR)
 
 /*
- * The presleep cases' file system: a root directory holding two FIFOs,
- * served from /dev/fuse by a thread of the test process.  The first
- * `hold' lookups of a FIFO by another process (the target, one lookup per
- * thread) are held: once all of them wait, the server reports it on held[]
- * and answers them once it reads from release[].  Names and attributes are
- * not cached, so a restarted open(2) asks again.
+ * The presleep cases' file system, served from /dev/fuse by a thread of
+ * the test process: d1/fifo and d2/fifo2.  Each FIFO has a directory of
+ * its own: fusefs locks the directory exclusively for a lookup, so a
+ * second thread's lookup in the same directory would wait for the held
+ * one.  The first `hold' lookups of a FIFO by another process (the
+ * target, one lookup per thread) are held: once all of them wait, the
+ * server reports it on held[] and answers them once it reads from
+ * release[].  Names and attributes are not cached, so a restarted open(2)
+ * asks again; the server counts the target's FIFO lookups.
  */
 #define	FSRV_HOLD_MAX	2
+
+static const struct fsrv_node {
+	uint64_t	ino;
+	uint64_t	parent;
+	const char	*name;
+	mode_t		mode;
+} fsrv_nodes[] = {
+	{ FUSE_ROOT_ID, FUSE_ROOT_ID, "", S_IFDIR | 0755 },
+	{ FUSE_ROOT_ID + 1, FUSE_ROOT_ID, FSRV_DIR1, S_IFDIR | 0755 },
+	{ FUSE_ROOT_ID + 2, FUSE_ROOT_ID, FSRV_DIR2, S_IFDIR | 0755 },
+	{ FUSE_ROOT_ID + 3, FUSE_ROOT_ID + 1, FIFO, S_IFIFO | 0666 },
+	{ FUSE_ROOT_ID + 4, FUSE_ROOT_ID + 2, FIFO2, S_IFIFO | 0666 },
+};
 
 struct fsrv {
 	int		fd;		/* /dev/fuse */
@@ -665,6 +681,7 @@ struct fsrv {
 	pid_t		self;		/* whose lookups are never held */
 	int		hold;		/* how many target lookups to hold */
 	int		nheld;
+	int		lookups;	/* the target's FIFO lookups */
 	uint64_t	held_unique[FSRV_HOLD_MAX];
 	uint64_t	held_ino[FSRV_HOLD_MAX];
 	pthread_t	thr;
@@ -697,17 +714,40 @@ fsrv_reply(const struct fsrv *s, uint64_t unique, int error,
 		    strerror(errno));
 }
 
+static const struct fsrv_node *
+fsrv_node(uint64_t ino)
+{
+	size_t i;
+
+	for (i = 0; i < nitems(fsrv_nodes); i++)
+		if (fsrv_nodes[i].ino == ino)
+			return (&fsrv_nodes[i]);
+	return (NULL);
+}
+
+static const struct fsrv_node *
+fsrv_child(uint64_t parent, const char *name)
+{
+	size_t i;
+
+	for (i = 1; i < nitems(fsrv_nodes); i++)
+		if (fsrv_nodes[i].parent == parent &&
+		    strcmp(fsrv_nodes[i].name, name) == 0)
+			return (&fsrv_nodes[i]);
+	return (NULL);
+}
+
 static void
 fsrv_attr(uint64_t ino, struct fuse_attr *a)
 {
+	const struct fsrv_node *nd;
+
 	memset(a, 0, sizeof(*a));
 	a->ino = ino;
-	if (ino == FUSE_ROOT_ID) {
-		a->mode = S_IFDIR | 0755;
-		a->nlink = 2;
-	} else {
-		a->mode = S_IFIFO | 0666;
-		a->nlink = 1;
+	nd = fsrv_node(ino);
+	if (nd != NULL) {
+		a->mode = nd->mode;
+		a->nlink = S_ISDIR(nd->mode) ? 2 : 1;
 	}
 }
 
@@ -731,6 +771,7 @@ fsrv_main(void *arg)
 	} in;
 	struct fsrv *s = arg;
 	const struct fuse_in_header *h;
+	const struct fsrv_node *nd;
 	const char *name;
 	union fsrv_out o;
 	uint64_t ino;
@@ -756,13 +797,18 @@ fsrv_main(void *arg)
 			break;
 		case FUSE_LOOKUP:
 			name = (const char *)(h + 1);
-			ino = strcmp(name, FIFO) == 0 ? FIFO_INO :
-			    strcmp(name, FIFO2) == 0 ? FIFO2_INO : 0;
-			if (h->nodeid != FUSE_ROOT_ID || ino == 0) {
+			nd = fsrv_child(h->nodeid, name);
+			if (nd == NULL) {
 				fsrv_reply(s, h->unique, ENOENT, NULL, 0);
 				break;
 			}
-			if (s->nheld < s->hold && (pid_t)h->pid != s->self) {
+			ino = nd->ino;
+			if (S_ISDIR(nd->mode) || (pid_t)h->pid == s->self) {
+				fsrv_entry(s, h->unique, ino);
+				break;
+			}
+			s->lookups++;
+			if (s->nheld < s->hold) {
 				s->held_unique[s->nheld] = h->unique;
 				s->held_ino[s->nheld] = ino;
 				/* Answered with the last one held. */
@@ -836,6 +882,7 @@ fsrv_start(struct fsrv *s, int hold)
 	s->self = getpid();
 	s->hold = hold;
 	s->nheld = 0;
+	s->lookups = 0;
 	ATF_REQUIRE_EQ(0, pthread_create(&s->thr, NULL, fsrv_main, s));
 }
 
@@ -853,14 +900,32 @@ fsrv_stop(struct fsrv *s)
  * sleep.  The attach comes while the target waits in its fusefs lookup
  * of the FIFO, which defers stops: a transparent attach cannot stop it
  * there, a non-transparent one leaves its SIGSTOP pending.  The lookup is
- * then answered, and the target meets the stop just before it sleeps, in
- * the sleep queue's check for stops and signals.
+ * then answered, and the target meets the stop on its way into the
+ * sleep, in the sleep queue's check for stops and signals.
+ *
+ * What proves the window: the attach happens before the lookup is
+ * answered, and waitpid(WNOHANG) reports no stop until it is (the thread
+ * was not stoppable in the lookup), so the stop was pending before the
+ * thread could sleep.  The server's count of the target's FIFO lookups
+ * tells a restarted open (a second lookup per thread) from one that was
+ * not restarted.
  *
  * With nthr 2 the target's main thread opens FIFO and a second thread
  * FIFO2; the attach comes once both wait in their lookups, so both meet
  * the stop on their way into the sleep, and the stop is reported once
  * both have stopped.
+ *
+ * With sig, the target catches it with a handler without SA_RESTART, and
+ * the debugger resumes it with PT_CONTINUE and that signal.
  */
+static volatile sig_atomic_t presleep_caught;
+
+static void
+presleep_handler(int sig __unused)
+{
+	presleep_caught = 1;
+}
+
 static void
 presleep_open(const char *path, struct report *r)
 {
@@ -870,7 +935,7 @@ presleep_open(const char *path, struct report *r)
 	rv = open(path, O_RDONLY);
 	r->error = rv < 0 ? errno : 0;
 	r->rv = rv < 0 ? -1 : 0;
-	r->poke = 0;
+	r->poke = presleep_caught;
 }
 
 static void *
@@ -880,37 +945,13 @@ presleep_thread(void *arg)
 	return (NULL);
 }
 
-/* True when a thread of the process is asleep in wmesg. */
-static bool
-thread_asleep_in(pid_t pid, const char *wmesg)
-{
-	struct kinfo_proc kp[FSRV_HOLD_MAX + 1];
-	size_t len;
-	int mib[4], i;
-
-	mib[0] = CTL_KERN;
-	mib[1] = KERN_PROC;
-	mib[2] = KERN_PROC_PID | KERN_PROC_INC_THREAD;
-	mib[3] = pid;
-	len = sizeof(kp);
-	ATF_REQUIRE_EQ_MSG(0, sysctl(mib, nitems(mib), kp, &len, NULL, 0),
-	    "kern.proc.pid %d: %s", pid, strerror(errno));
-	for (i = 0; i < (int)(len / sizeof(kp[0])); i++) {
-		fprintf(stderr, "thread %d stat %d wmesg \"%s\"\n",
-		    kp[i].ki_tid, kp[i].ki_stat, kp[i].ki_wmesg);
-		if (kp[i].ki_stat == SSLEEP &&
-		    strcmp(kp[i].ki_wmesg, wmesg) == 0)
-			return (true);
-	}
-	return (false);
-}
-
 static void
-run_presleep(int transparent, bool detach, bool setregs, int nthr,
-    enum res expect)
+run_presleep(int transparent, bool detach, bool setregs, int nthr, int sig,
+    enum res expect, int lookups)
 {
 	const char *paths[FSRV_HOLD_MAX] = { MNT_FIFO, MNT_FIFO2 };
 	struct report r[FSRV_HOLD_MAX];
+	struct sigaction sa;
 	struct fsrv s;
 	struct reg regs;
 	pthread_t thr;
@@ -919,6 +960,7 @@ run_presleep(int transparent, bool detach, bool setregs, int nthr,
 	char c;
 
 	ATF_REQUIRE(nthr >= 1 && nthr <= FSRV_HOLD_MAX);
+	ATF_REQUIRE(sig == 0 || (!detach && nthr == 1));
 	sysctl_change(TRANSPARENT, transparent);
 	fsrv_start(&s, nthr);
 	ATF_REQUIRE_EQ(0, pipe(rep));
@@ -927,6 +969,14 @@ run_presleep(int transparent, bool detach, bool setregs, int nthr,
 	ATF_REQUIRE(tgt != -1);
 	if (tgt == 0) {
 		(void)close(rep[0]);
+		if (sig != 0) {
+			memset(&sa, 0, sizeof(sa));
+			sa.sa_handler = presleep_handler;
+			sa.sa_flags = 0;	/* no SA_RESTART */
+			sigemptyset(&sa.sa_mask);
+			if (sigaction(sig, &sa, NULL) != 0)
+				_exit(2);
+		}
 		if (nthr == 2 &&
 		    pthread_create(&thr, NULL, presleep_thread, &r[1]) != 0)
 			_exit(2);
@@ -943,13 +993,12 @@ run_presleep(int transparent, bool detach, bool setregs, int nthr,
 	ATF_REQUIRE_EQ(1, read(s.held[0], &c, 1));
 	ATF_REQUIRE_EQ_MSG(0, ptrace(PT_ATTACH, tgt, NULL, 0),
 	    "PT_ATTACH: %s", strerror(errno));
+	ATF_REQUIRE_EQ_MSG(0, waitpid(tgt, &st, WNOHANG),
+	    "the target stopped in its lookup: not the presleep window");
 	ATF_REQUIRE_EQ(1, write(s.release[1], "r", 1));
 	ATF_REQUIRE_EQ(tgt, waitpid(tgt, &st, 0));
 	ATF_REQUIRE(WIFSTOPPED(st) && WSTOPSIG(st) == SIGSTOP);
 	show("stopped", tgt);
-	/* Not stopped asleep, as the other cases are: before the sleep. */
-	ATF_REQUIRE_MSG(!thread_asleep_in(tgt, "fifoor"),
-	    "a target thread stopped asleep in the FIFO open");
 
 	if (setregs) {
 		ATF_REQUIRE_EQ(0, ptrace(PT_GETREGS, tgt, (caddr_t)&regs, 0));
@@ -960,7 +1009,7 @@ run_presleep(int transparent, bool detach, bool setregs, int nthr,
 		ATF_REQUIRE_EQ_MSG(0, ptrace(PT_DETACH, tgt, (caddr_t)1, 0),
 		    "PT_DETACH: %s", strerror(errno));
 	else
-		ATF_REQUIRE_EQ_MSG(0, ptrace(PT_CONTINUE, tgt, (caddr_t)1, 0),
+		ATF_REQUIRE_EQ_MSG(0, ptrace(PT_CONTINUE, tgt, (caddr_t)1, sig),
 		    "PT_CONTINUE: %s", strerror(errno));
 
 	/*
@@ -983,9 +1032,11 @@ run_presleep(int transparent, bool detach, bool setregs, int nthr,
 	(void)close(rep[0]);
 	fsrv_stop(&s);
 
+	fprintf(stderr, "target FIFO lookups %d\n", s.lookups);
 	for (i = 0; i < nthr; i++) {
-		fprintf(stderr, "%s: result rv %d error %d (%s)\n", paths[i],
-		    r[i].rv, r[i].error, strerror(r[i].error));
+		fprintf(stderr, "%s: result rv %d error %d (%s) caught %d\n",
+		    paths[i], r[i].rv, r[i].error, strerror(r[i].error),
+		    r[i].poke);
 		if (expect == RES_EINTR)
 			ATF_CHECK_MSG(r[i].rv == -1 && r[i].error == EINTR,
 			    "%s: expected EINTR, got rv %d error %d",
@@ -995,6 +1046,11 @@ run_presleep(int transparent, bool detach, bool setregs, int nthr,
 			    "%s: expected the open to complete, got rv %d "
 			    "error %d", paths[i], r[i].rv, r[i].error);
 	}
+	if (sig != 0)
+		ATF_CHECK_MSG(r[0].poke == 1, "the handler did not run");
+	ATF_CHECK_EQ_MSG(lookups, s.lookups,
+	    "expected %d FIFO lookups (%s), got %d", lookups,
+	    lookups > nthr ? "the open restarted" : "no restart", s.lookups);
 	sysctl_restore(TRANSPARENT);
 }
 
@@ -1017,39 +1073,48 @@ ATF_TC_CLEANUP(name, tc)						\
 }
 
 /*
- * Transparent attach before the sleep: the thread backs out of the call
- * with ERESTART to stop, and the open is restarted when it is resumed.
- * It stops at the user boundary, so registers written there are the
- * restarted call's, as after a non-transparent attach of a sleeper: a
- * register or pc change made there applies to the restarted call (owner
- * decision 2026-11-19).
+ * Transparent attach before the sleep, as the branch's ERESTART change has
+ * it: the thread backs out of the call to stop, and the open is restarted
+ * (a second lookup) when it is resumed.  The thread stops at the user
+ * boundary, so registers written there are the restarted call's.
  */
 PRESLEEP_CASE(transparent__presleep_fifo_open__continue,
     "Transparent attach just before the FIFO open sleeps, PT_CONTINUE: "
     "the open is restarted and completes",
-    1, false, false, 1, RES_DONE)
+    1, false, false, 1, 0, RES_DONE, 2)
 PRESLEEP_CASE(transparent__presleep_fifo_open__detach,
     "Transparent attach just before the FIFO open sleeps, PT_DETACH: "
     "the open is restarted and completes",
-    1, true, false, 1, RES_DONE)
+    1, true, false, 1, 0, RES_DONE, 2)
 PRESLEEP_CASE(transparent__presleep_fifo_open__setregs,
     "Transparent attach just before the FIFO open sleeps, PT_SETREGS of "
     "the same values: the open is restarted and completes",
-    1, false, true, 1, RES_DONE)
+    1, false, true, 1, 0, RES_DONE, 2)
 PRESLEEP_CASE(transparent__presleep_fifo_open__two_threads,
     "Transparent attach just before two threads' FIFO opens sleep, "
     "PT_CONTINUE: both opens are restarted and complete",
-    1, false, false, 2, RES_DONE)
+    1, false, false, 2, 0, RES_DONE, 4)
+
+/*
+ * A signal the program catches without SA_RESTART, delivered on resume,
+ * must end the call with EINTR, as it does for a thread stopped asleep:
+ * the handler runs and the open is not restarted.
+ */
+PRESLEEP_CASE(transparent__presleep_fifo_open__continue_sigint,
+    "Transparent attach just before the FIFO open sleeps, PT_CONTINUE "
+    "with SIGINT caught without SA_RESTART: the handler runs and the open "
+    "fails with EINTR",
+    1, false, false, 1, SIGINT, RES_EINTR, 1)
 
 /* Non-transparent attach before the sleep: FreeBSD behaviour. */
 PRESLEEP_CASE(legacy__presleep_fifo_open__continue,
     "Non-transparent attach just before the FIFO open sleeps, "
     "PT_CONTINUE: the open fails with EINTR (the attach leader rule)",
-    0, false, false, 1, RES_EINTR)
+    0, false, false, 1, 0, RES_EINTR, 1)
 PRESLEEP_CASE(legacy__presleep_fifo_open__detach,
     "Non-transparent attach just before the FIFO open sleeps, PT_DETACH: "
     "the open completes",
-    0, true, false, 1, RES_DONE)
+    0, true, false, 1, 0, RES_DONE, 1)
 
 /*
  * A memory write at a system call entry stop still makes the kernel fetch
@@ -1184,6 +1249,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, transparent__presleep_fifo_open__detach);
 	ATF_TP_ADD_TC(tp, transparent__presleep_fifo_open__setregs);
 	ATF_TP_ADD_TC(tp, transparent__presleep_fifo_open__two_threads);
+	ATF_TP_ADD_TC(tp, transparent__presleep_fifo_open__continue_sigint);
 	ATF_TP_ADD_TC(tp, legacy__presleep_fifo_open__continue);
 	ATF_TP_ADD_TC(tp, legacy__presleep_fifo_open__detach);
 	ATF_TP_ADD_TC(tp, sce__memory_write__args_refetched);
