@@ -27,8 +27,6 @@
 
 static volatile uint64_t next_reply_token = 1;
 
-/* Stale replies one RPC drops before it gives up on the channel. */
-#define	CAPSULE_RPC_MAX_STALE	8
 
 /*
  * Receive buffers for one Capsule-channel message.  SwitchBoard's event loop
@@ -110,7 +108,8 @@ capsule_rpc_fds_impl(int channel_fd, const void *req, uint32_t reqlen,
 	struct mac_capability_recvmsg_args ra;
 	struct capsule_reply rpl;
 	uint64_t token;
-	int i, saved, stale;
+	unsigned stale;
+	int i, saved;
 
 	token = __atomic_fetch_add(&next_reply_token, 1,
 	    __ATOMIC_RELAXED);
@@ -134,10 +133,11 @@ capsule_rpc_fds_impl(int channel_fd, const void *req, uint32_t reqlen,
 	/*
 	 * Wait for the reply on the channel itself; Capsule's death ends the
 	 * wait (ECONNRESET).  A reply with another token is stale: it is
-	 * dropped, its descriptors closed, and the wait goes on, up to
-	 * CAPSULE_RPC_MAX_STALE of them.
+	 * dropped, its descriptors closed, and the wait goes on: each one
+	 * costs one blocking receive, and giving up early would drop the real
+	 * reply when it comes (leaking whatever Capsule granted with it).
 	 */
-	for (stale = 0;; stale++) {
+	for (stale = 1;; stale++) {
 		capsule_rx_init(&ra);
 		if (mac_cap_recv_wait(channel_fd, &ra) == -1) {
 			saved = errno;
@@ -150,18 +150,12 @@ capsule_rpc_fds_impl(int channel_fd, const void *req, uint32_t reqlen,
 		}
 		if (ra.reply_token == token)
 			break;
-		SWITCHBOARD_TRACE_CAPSULE_STALE_REPLY(stale + 1);
+		SWITCHBOARD_TRACE_CAPSULE_STALE_REPLY(stale);
 		syslog(LOG_WARNING, "capsule_rpc: dropping stale reply "
 		    "(got %ju, expected %ju, %u fds)",
 		    (uintmax_t)ra.reply_token, (uintmax_t)token,
 		    (unsigned)ra.nfds);
 		capsule_rx_close_fds(&ra);
-		if (stale + 1 >= CAPSULE_RPC_MAX_STALE) {
-			syslog(LOG_ERR,
-			    "capsule_rpc: too many stale replies, giving up");
-			errno = EPROTO;
-			return (-1);
-		}
 	}
 
 	/*
@@ -479,6 +473,9 @@ capsule_set_ambient_lookup(int channel_fd, int lookup_fd)
 
 /* --- Batched release --- */
 
+/* Release requests a manifest can send: system gates. */
+#define	CAPSULE_RELEASE_KINDS	1
+
 /*
  * Send a release message without waiting for the reply.
  * Returns a token that can be drained later, or 0 on send failure.
@@ -558,7 +555,8 @@ capsule_drop_unexpected(int channel_fd)
 		ra.flags = MAC_CAPABILITY_RECV_F_WAIT;
 		ra._reserved[0] = 0;
 		if (ioctl(channel_fd, MAC_CAPABILITY_RECVMSG, &ra) == -1) {
-			if (errno != EAGAIN && errno != EINTR)
+			if (errno != EAGAIN && errno != EINTR &&
+			    errno != ECONNRESET)
 				syslog(LOG_WARNING,
 				    "capsule_drop_unexpected: recvmsg: %m");
 			break;
@@ -582,7 +580,7 @@ capsule_drop_unexpected(int channel_fd)
 int
 capsule_release_manifest(int channel_fd, const struct svc_manifest *m)
 {
-	uint64_t tokens[1];	/* one per release kind: system gates */
+	uint64_t tokens[CAPSULE_RELEASE_KINDS];
 	unsigned nsent;
 
 	nsent = 0;
