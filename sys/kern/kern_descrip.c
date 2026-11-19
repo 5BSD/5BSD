@@ -5205,6 +5205,10 @@ pwd_hold_dqres(struct thread *td, struct dqres_snap *snap)
 	pwd = pwd_hold_pwddesc(pdp);
 	MPASS(pwd != NULL);
 	pwd_dqres_hold_locked(pdp, snap);
+	if (pdp->pd_dqres != NULL) {
+		snap->dsn_rdir = pwd->pwd_rdir;
+		snap->dsn_native = pwd->pwd_adir == pwd->pwd_rdir;
+	}
 	PWDDESC_XUNLOCK(pdp);
 	return (pwd);
 }

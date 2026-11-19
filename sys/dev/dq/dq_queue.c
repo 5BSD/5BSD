@@ -114,6 +114,7 @@ dq_queue_create(struct thread *td, struct file *fp)
 	dq_async_queue_init(q);
 	q->q_depth = dq_queue_depth;
 	q->q_stats.ds2_size = sizeof(struct dq_stats2);
+	dq_standing_init(q);
 
 	mtx_lock(&dq_mtx);
 	q->q_gid = ++dq_next_gid;
@@ -147,6 +148,7 @@ dq_queue_rele(struct dq_queue *q)
 	knlist_clear(&q->q_sel.si_note, 0);
 	knlist_destroy(&q->q_sel.si_note);
 	seldrain(&q->q_sel);
+	dq_standing_fini(q);
 	crfree(q->q_cred);
 	sx_destroy(&q->q_rdsx);
 	mtx_destroy(&q->q_mtx);
@@ -209,6 +211,13 @@ dq_queue_die(struct dq_queue *q)
 	nobjs = q->q_nobjects;
 	DQ_UNLOCK(q);
 	mtx_unlock(&dq_mtx);
+	/*
+	 * The standing rules end with the controller.  Consultations test
+	 * CLOSING before the rules; one that saw it clear finishes before
+	 * the flush's write lock is granted, as a reply sent before the
+	 * death would.
+	 */
+	dq_standing_flush(q, DQ_STANDING_CHANGE_DIE);
 	objs = nobjs != 0 ? malloc(nobjs * sizeof(*objs), M_DQ, M_WAITOK) :
 	    NULL;
 	n = 0;
@@ -2627,6 +2636,8 @@ dq_queue_stats2(struct dq_queue *q, struct dq_stats2 *st)
 	st->ds2_async_pending = q->q_nasync;
 	st->ds2_async_bytes = q->q_async_bytes;
 	DQ_UNLOCK(q);
+	st->ds2_standing_pass = dq_standing_count(q, false);
+	st->ds2_standing_deny = dq_standing_count(q, true);
 }
 
 /* The frozen 1a struct (B8): a projection of the full counters. */

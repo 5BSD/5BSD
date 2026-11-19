@@ -7,6 +7,8 @@
  * Lock order, outermost first:
  *   FILEDESC_SLOCK (the EDEADLK scan) -> foffset -> rangelock -> q_rdsx ->
  *   dq_mtx -> q_mtx -> o_mtx.
+ * q_st_lock (the standing rules, dq_standing.c) is a leaf apart from all
+ * of them: taken with no lock held, nothing taken under it.
  * The EDEADLK scan (dq_caller_holds_queue) runs at the top of every fileop
  * that serializes before posting, before foffset_lock_uio or any
  * rangelock, and again inside dq_event_post_wait: a controller touching
@@ -89,8 +91,10 @@
 #define	_DEV_DQ_DQ_VAR_H_
 
 #include <sys/param.h>
+#include <sys/_rmlock.h>
 #include <sys/_task.h>
 #include <sys/callout.h>
+#include <sys/counter.h>
 #include <sys/condvar.h>
 #include <sys/counter.h>
 #include <sys/file.h>
@@ -152,6 +156,9 @@ SDT_PROBE_DECLARE(dq, , , postop__attr);
 #define	DQ_FOP_SEEK		4
 #define	DQ_FOP_PATHCONF		5
 #define	DQ_FOP_STATFS		6
+SDT_PROBE_DECLARE(dq, , , standing__match);
+SDT_PROBE_DECLARE(dq, , , standing__miss);
+SDT_PROBE_DECLARE(dq, , , standing__change);
 
 /* Tunables (dq_dev.c), kern.dq.* */
 extern u_int dq_max_io;
@@ -477,6 +484,16 @@ struct dq_queue {
 	sbintime_t		 q_callout_at;	/* 0: not armed */
 	struct dqres_binding	*q_binding;	/* attachments (1c), under q_mtx;
 						   holds a q_refs */
+	/* Standing rules (dq_standing.c). */
+	struct rmlock		 q_st_lock;	/* the rules; a leaf */
+	struct dq_standing_k	*q_st_rule[DQ_STANDING_MAX]; /* sorted: root,
+						   then path length, longest
+						   first */
+	u_int			 q_st_n;	/* written under q_st_lock, read
+						   unlocked by the fast test */
+	uint64_t		 q_st_next_id;	/* under q_st_lock (write) */
+	counter_u64_t		 q_st_pass;	/* ds2_standing_pass */
+	counter_u64_t		 q_st_deny;	/* ds2_standing_deny */
 };
 
 #define	DQ_LOCK(q)		mtx_lock(&(q)->q_mtx)
@@ -631,6 +648,43 @@ int	dq_resolve_swap_prepare(struct dq_queue *q, uint64_t id,
 	    struct dq_data *dd, struct thread *td, struct fdswap *sw);
 int	dq_queue_attach(struct dq_queue *q, const struct dq_attach_args *args,
 	    struct thread *td);
+
+/*
+ * dq_standing.c: a rule as the queue keeps it.  Immutable once linked;
+ * the root is held with vhold, compared by pointer and never dereferenced
+ * by a reader.
+ */
+struct dq_standing_k {
+	uint64_t	 sk_id;
+	struct vnode	*sk_root;	/* vhold only */
+	uint32_t	 sk_ops, sk_flags, sk_action;
+	int		 sk_errno;
+	uint16_t	 sk_len;
+	char		 sk_path[];	/* sk_len bytes and a NUL */
+};
+/* dq_standing_decide's answer. */
+#define	DQ_SD_NONE		0	/* post the event */
+#define	DQ_SD_PASS		1
+#define	DQ_SD_ERRNO		2
+/* dq:::standing-change's what and dq:::standing-miss's why (dq.4). */
+#define	DQ_STANDING_CHANGE_ADD	1
+#define	DQ_STANDING_CHANGE_DEL	2
+#define	DQ_STANDING_CHANGE_FLUSH 3
+#define	DQ_STANDING_CHANGE_DIE	4
+#define	DQ_STANDING_MISS_NOFIT	0	/* no rule fits */
+#define	DQ_STANDING_MISS_INELIGIBLE 1
+#define	DQ_STANDING_MISS_DOTDOT	2	/* a ".." component */
+struct dqres_req;
+struct dqres_answer;
+void	dq_standing_init(struct dq_queue *q);
+void	dq_standing_fini(struct dq_queue *q);
+uint64_t dq_standing_count(struct dq_queue *q, bool deny);
+int	dq_standing_add(struct dq_queue *q, struct dq_standing_rule *r,
+	    struct thread *td);
+int	dq_standing_del(struct dq_queue *q, uint64_t id);
+void	dq_standing_flush(struct dq_queue *q, uint32_t what);
+int	dq_standing_decide(struct dq_queue *q, const struct dqres_req *rq,
+	    struct dqres_answer *ans, int *errorp);
 
 /* dq_async.c */
 int	dq_async_post(struct dq_object *o, struct vm_object *obj,

@@ -14,13 +14,32 @@ import os
 import re
 
 
+# Variable probes still enter auto.obj.mk, which creates the object
+# directory of every directory probed.  They get a private prefix, so the
+# test never writes the standard object tree (/usr/obj); its "[Creating
+# objdir ...]" notes go to the captured stderr.
+OBJ_PREFIX = None
+
+
+def probe_environment():
+    return dict(os.environ, MAKEOBJDIRPREFIX=OBJ_PREFIX)
+
+
+def objdir_environment():
+    """For builds that select MAKEOBJDIR, which MAKEOBJDIRPREFIX overrides."""
+    return {key: value for key, value in os.environ.items() if key != 'MAKEOBJDIRPREFIX'}
+
+
 def probe(source, directory, options=()):
     names = ('MACHINE', 'MK_LOADER_EFI_SECUREBOOT', 'MK_LOADER_EFI_TRUST_DB', 'MK_LOADER_VERIEXEC', 'MK_BEARSSL',
              'LIBSA', 'LIBSA32', 'LIBLUA', 'LIBLUA32', 'LIBFICL', 'LIBFICL32', 'CFLAGS', 'SRCS')
     argv = ['make', '-C', str(source / directory), 'SRCCONF=/dev/null', '__MAKE_CONF=/dev/null', *options]
     for name in names:
         argv += ['-V', '__probe_' + name + '=${' + name + '}']
-    output = subprocess.check_output(argv, text=True)
+    result = subprocess.run(argv, env=probe_environment(), capture_output=True, text=True)
+    if result.returncode:
+        raise ValueError('make probe failed in %s: %s' % (directory, result.stderr))
+    output = result.stdout
     values = {}
     for line in output.splitlines():
         if line.startswith('__probe_'):
@@ -38,6 +57,18 @@ def main():
     parser.add_argument('--src', type=Path, required=True)
     args = parser.parse_args()
     source = args.src.resolve(strict=True)
+    global OBJ_PREFIX
+    with tempfile.TemporaryDirectory(prefix='loader-build-obj-') as prefix:
+        OBJ_PREFIX = prefix
+        record = check(source)
+        # The probes used the private prefix (auto.obj.mk created the probed
+        # directories there), not the standard object tree.
+        probed = Path(prefix) / str(source).lstrip('/') / 'amd64.amd64/stand/efi/libsaefi'
+        assert probed.is_dir(), 'make probes did not use the private object prefix'
+    print(json.dumps(record, sort_keys=True))
+
+
+def check(source):
     variants = {}
     for directory in ('stand/efi/loader_lua', 'stand/efi/loader_ia32',
                       'stand/efi/libsaefi', 'stand/efi/libluaefi', 'stand/efi/ficlefi'):
@@ -71,7 +102,7 @@ def main():
     # because this test must not claim cryptographic or firmware validation.
     rejected = subprocess.run(['make', '-C', str(source / 'stand/efi/libsaefi'),
         'SRCCONF=/dev/null', '__MAKE_CONF=/dev/null',
-        'WITHOUT_LOADER_EFI_TRUST_DB=yes', '-V', 'CFLAGS'], capture_output=True, text=True)
+        'WITHOUT_LOADER_EFI_TRUST_DB=yes', '-V', 'CFLAGS'], env=probe_environment(), capture_output=True, text=True)
     assert rejected.returncode != 0 and 'requires explicit public TRUST_ANCHORS' in rejected.stderr
     with tempfile.TemporaryDirectory() as temporary:
         anchor = Path(temporary) / 'owner-public-anchor.crt'
@@ -82,7 +113,8 @@ def main():
         assert '-DVE_EFI_COMPILED_TRUST_ONLY' in restricted['CFLAGS'].split()
         payload = subprocess.check_output(['make', '-C', str(source / 'stand/efi/libsaefi'),
             'SRCCONF=/dev/null', '__MAKE_CONF=/dev/null', 'WITHOUT_LOADER_EFI_TRUST_DB=yes',
-            'TRUST_ANCHORS=' + str(anchor), '-V', '${TA_PEM_LIST}'], text=True).strip()
+            'TRUST_ANCHORS=' + str(anchor), '-V', '${TA_PEM_LIST}'], env=probe_environment(),
+            stderr=subprocess.DEVNULL, text=True).strip()
         assert payload == str(anchor)
         # Reuse one object directory while selecting an older replacement
         # input. Changed trust membership must not reuse the previous ta.h.
@@ -94,7 +126,7 @@ def main():
             subprocess.run(['make', '-C', str(source / 'stand/efi/libsaefi'),
                 'MAKEOBJDIR=' + str(obj), 'SRCCONF=/dev/null', '__MAKE_CONF=/dev/null',
                 'WITHOUT_LOADER_EFI_TRUST_DB=yes', 'TRUST_ANCHORS=' + str(selected),
-                'BUILD_UTC=1', 'ta.h'], check=True, capture_output=True)
+                'BUILD_UTC=1', 'ta.h'], env=objdir_environment(), check=True, capture_output=True)
             header = (obj / 'ta.h').read_text()
             data = header.split('static const char ta_PEM[] = {', 1)[1].split('};', 1)[0]
             decoded = bytes(int(value, 16) for value in re.findall(r'0x([0-9a-f]{2})', data))
@@ -106,14 +138,14 @@ def main():
         rejected = subprocess.run(['make', '-C', str(source / 'stand/efi/libsaefi'),
             'MAKEOBJDIR=' + str(obj), 'SRCCONF=/dev/null', '__MAKE_CONF=/dev/null',
             'WITHOUT_LOADER_EFI_TRUST_DB=yes', 'TRUST_ANCHORS=' + str(replacement),
-            'BUILD_UTC=1', 'ta.h'], capture_output=True, text=True)
+            'BUILD_UTC=1', 'ta.h'], env=objdir_environment(), capture_output=True, text=True)
         assert rejected.returncode != 0 and 'invalid public trust input' in rejected.stderr
         assert (obj / 'ta.h').read_bytes() == previous
         variants['compiled-manifest-trust'] = restricted
     assert variants['stand/efi/libsaefi']['MK_LOADER_EFI_TRUST_DB'] == 'yes'
     assert '-DVE_EFI_COMPILED_TRUST_ONLY' not in variants['stand/efi/libsaefi']['CFLAGS'].split()
-    print(json.dumps({'result': 'PASS', 'scope': 'amd64 EFI/BIOS build configuration',
-        'packaged_loader_qualified': False, 'firmware_qualified': False, 'variants': variants}, sort_keys=True))
+    return {'result': 'PASS', 'scope': 'amd64 EFI/BIOS build configuration',
+        'packaged_loader_qualified': False, 'firmware_qualified': False, 'variants': variants}
 
 
 if __name__ == '__main__':

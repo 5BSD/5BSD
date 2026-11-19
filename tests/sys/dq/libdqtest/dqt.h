@@ -193,6 +193,8 @@ struct dqt_ctl {
 		int32_t		 domain, type, protocol;	/* sockets */
 		uint32_t	 pathlen;	/* exact: abstract names */
 		char		 path[DQT_RPATH], path2[DQT_RPATH];
+		char		 startpath[DQT_RPATH];	/* "" without
+						   DQ_RF_STARTPATH_VALID */
 		char		 startpath2[DQT_RPATH];
 	}		 rs[DQT_MAX_RESOLVES] DQT_GUARDED;
 	int		 nrs DQT_GUARDED;

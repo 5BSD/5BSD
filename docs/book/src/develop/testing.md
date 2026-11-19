@@ -318,10 +318,15 @@ they are counted as `DEFERRED_TO_SOURCE_TIER=N`.  With python, the source and
 the ports images, a long bsd-build run fills the default 8 GB guest root:
 give it `ROOT_SIZE=16g`.
 A `tests/sys/dq` case that needs a fault knob of `options DQ_FAULT_INJECTION`
-(`debug.dq.delay_swap_take`, `debug.dq.delay_postop_apply`) calls
+(`debug.dq.delay_swap_take`, `debug.dq.delay_postop_apply`,
+`debug.dq.refuse_postop_reply`) calls
 `dqt_require_fault_knob` and skips on a kernel without the option with
 `DEFERRED_KNOB_TIER`, counted as `DEFERRED_TO_KNOB_TIER=N`: it runs in the
-knob tier, `KERNEL_TIER=test` with a GENERIC-TEST stage.
+knob tier, `KERNEL_TIER=test` with a GENERIC-TEST stage.  Cases that need a guest setup no tier provides yet
+(`storage_test:disk_import_and_binding`'s scratch disk, `devctl_device_test`
+with devd and auditd stopped, `bsd_build_test:generation_reconciliation`'s
+ACL subtest without root and md(4)) skip with `DEFERRED_GUEST_SETUP` and are
+counted as `DEFERRED_GUEST_SETUP=N`, not as passes.
 Cases that drive their private SwitchBoard with `switchboardctl` call
 `use_private_control` (`usr.sbin/switchboard/tests/test_helpers.sh`): it runs
 `switchboardctl` through `capd_lookup_exec`, which installs the private

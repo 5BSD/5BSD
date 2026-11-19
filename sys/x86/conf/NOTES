@@ -129,13 +129,6 @@ options 	MAXMEM=(128*1024)
 #options 	BROKEN_KEYBOARD_RESET
 
 #
-# AGP GART support
-device		agp
-
-# AGP debugging.
-options 	AGP_DEBUG
-
-#
 # ACPI support using the Intel ACPI Component Architecture reference
 # implementation.
 #
@@ -326,32 +319,6 @@ device		pmspcv
 
 device		ocs_fc			# Emulex FC adapters
 device		tws			# LSI 3ware 9750 SATA+SAS 6Gb/s RAID controller
-
-#
-# Standard floppy disk controllers and floppy tapes, supports
-# the Y-E DATA External FDD (PC Card)
-#
-device		fdc
-envvar		hint.fdc.0.at="isa"
-envvar		hint.fdc.0.port="0x3F0"
-envvar		hint.fdc.0.irq="6"
-envvar		hint.fdc.0.drq="2"
-#
-# FDC_DEBUG enables floppy debugging.  Since the debug output is huge, you
-# gotta turn it actually on by setting the variable fd_debug with DDB,
-# however.
-options 	FDC_DEBUG
-#
-# Activate this line if you happen to have an Insight floppy tape.
-# Probing them proved to be dangerous for people with floppy disks only,
-# so it's "hidden" behind a flag:
-#hint.fdc.0.flags="1"
-
-# Specify floppy devices
-envvar		hint.fd.0.at="fdc0"
-envvar		hint.fd.0.drive="0"
-envvar		hint.fd.1.at="fdc0"
-envvar		hint.fd.1.drive="1"
 
 # The cpufreq(4) driver provides support for non-ACPI CPU frequency control
 device		cpufreq

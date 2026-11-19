@@ -44,6 +44,29 @@ static volatile int usr2_blocked_in_handler = -1;
 static int target_tid;
 static int worker_ready, worker_go;
 static long worker_wait_result;
+/*
+ * Where each SIGUSR1 found the thread, from the saved register frame (the
+ * x86_64 ucontext: uc_mcontext starts at byte 40; rax and rip are its 14th
+ * and 17th words).  A wait the signal interrupted shows either the syscall
+ * just returned with -EINTR or, under SA_RESTART, rewound to the syscall
+ * instruction with rax back at the syscall number, as Linux's
+ * handle_signal() leaves it for the restart.  Anything else means the
+ * signal arrived in user code, before the wait began.
+ */
+#define	USR1_NONE	0
+#define	USR1_EINTR	1	/* the futex wait returned -EINTR */
+#define	USR1_RESTART	2	/* the futex wait was set up for a restart */
+#define	USR1_EARLY	3	/* not in the wait */
+static volatile int usr1_where;
+/* SIGUSR1 bumps it, so a wait on it that begins after the handler ran
+ * fails with EAGAIN rather than sleeping for a signal already taken. */
+static int usr1_word;
+/* 0 while a round runs, so an SA_RESTART-restarted wait on it keeps
+ * sleeping; set only to release a worker the signal missed. */
+static int still_word;
+/* Each round is repeated only when the signal provably missed the wait. */
+#define	ROUNDS		20
+#define	EVENT_MS	30000	/* bound on waiting for an event: a hang */
 
 __asm__(".globl restorer\nrestorer:\n mov $15, %eax\n syscall\n hlt\n");
 void restorer(void);
@@ -53,9 +76,21 @@ handler(int sig, struct siginfo *si, void *ctx)
 {
 	unsigned long sp;
 
-	(void)ctx;
 	__asm__ volatile("mov %%rsp, %0" : "=r"(sp));
 	handler_sp = sp;
+	if (sig == SIGUSR1) {
+		unsigned long rax = *(unsigned long *)((char *)ctx + 40 + 13 * 8);
+		unsigned char *rip = *(unsigned char **)((char *)ctx + 40 + 16 * 8);
+
+		if (rip[0] == 0x0f && rip[1] == 0x05 && rax == SYS_futex)
+			usr1_where = USR1_RESTART;
+		else if (rip[-2] == 0x0f && rip[-1] == 0x05 &&
+		    (long)rax == -EINTR)
+			usr1_where = USR1_EINTR;
+		else
+			usr1_where = USR1_EARLY;
+		__atomic_add_fetch(&usr1_word, 1, __ATOMIC_RELEASE);
+	}
 	hits[sig]++;
 	last_val = si->val;
 	last_code = si->code;
@@ -82,24 +117,77 @@ set_handler(int sig, unsigned long flags)
 	return ((int)sys4(SYS_rt_sigaction, sig, &sa, 0, 8));
 }
 
-/* Worker: unblock SIGUSR1 only here, wait on a futex, report the result. */
+/*
+ * Worker: unblock SIGUSR1 only here, wait on the futex word arg while it
+ * is 0, report the result.
+ */
 static int
 worker(void *arg)
 {
 	unsigned long mask;
-	int zero = 0;
 	long r;
 
-	(void)arg;
 	target_tid = (int)sys0(SYS_gettid);
 	mask = 1UL << (SIGUSR1 - 1);
 	(void)sys4(SYS_rt_sigprocmask, SIG_UNBLOCK, &mask, 0, 8);
 	__atomic_store_n(&worker_ready, 1, __ATOMIC_RELEASE);
-	r = futex_wait(&zero, 0, 0);	/* until a signal arrives */
-	worker_wait_result = r;
+	r = futex_wait(arg, 0, 0);	/* until a signal arrives */
+	__atomic_store_n(&worker_wait_result, r, __ATOMIC_RELEASE);
 	while (!__atomic_load_n(&worker_go, __ATOMIC_ACQUIRE))
 		sleep_ms(1);
 	return (0);
+}
+
+/* Start the worker on word, with no SIGUSR1 seen yet. */
+static int
+worker_start(struct thread *th, int *word)
+{
+	worker_ready = 0; worker_go = 0; worker_wait_result = 1;
+	usr1_where = USR1_NONE; usr1_word = 0; hits[SIGUSR1] = 0;
+	*word = 0;
+	if (thread_create(th, worker, word) != 0)
+		return (-1);
+	while (!__atomic_load_n(&worker_ready, __ATOMIC_ACQUIRE))
+		sleep_ms(1);
+	/* Most often the worker is asleep by now; usr1_where tells. */
+	sleep_ms(20);
+	return (0);
+}
+
+/* Wait for the worker's futex_wait to return; 0 if it did not. */
+static int
+worker_returned(void)
+{
+	int i;
+
+	for (i = 0; i < EVENT_MS; i++) {
+		if (__atomic_load_n(&worker_wait_result, __ATOMIC_ACQUIRE) != 1)
+			return (1);
+		sleep_ms(1);
+	}
+	return (0);
+}
+
+/* Wait for the n-th SIGUSR1 handler; 0 if it did not run. */
+static int
+usr1_seen(int n)
+{
+	int i;
+
+	for (i = 0; i < EVENT_MS; i++) {
+		if (hits[SIGUSR1] >= n)
+			return (1);
+		sleep_ms(1);
+	}
+	return (0);
+}
+
+/* Let the worker go and wait for it to exit. */
+static int
+worker_finish(struct thread *th)
+{
+	__atomic_store_n(&worker_go, 1, __ATOMIC_RELEASE);
+	return (thread_join(th));
 }
 
 static int
@@ -121,42 +209,60 @@ test(int argc, char **argv, char **envp)
 	mask = 1UL << (SIGUSR1 - 1);
 	if (sys4(SYS_rt_sigprocmask, SIG_BLOCK, &mask, 0, 8) != 0) return (1);
 	if (set_handler(SIGUSR1, 0) != 0) return (1);
-	worker_ready = 0; worker_go = 0; worker_wait_result = 1;
-	if (thread_create(&th, worker, 0) != 0) return (1);
-	while (!__atomic_load_n(&worker_ready, __ATOMIC_ACQUIRE))
-		sleep_ms(1);
-	sleep_ms(20);
-	if (sys3(SYS_tgkill, pid, target_tid, SIGUSR1) != 0) return (2);
-	sleep_ms(50);
+	for (i = 0; ; i++) {
+		if (i == ROUNDS) { msg("worker: the signal never reached the wait\n"); return (2); }
+		if (worker_start(&th, &usr1_word) != 0) return (1);
+		if (sys3(SYS_tgkill, pid, target_tid, SIGUSR1) != 0) return (2);
+		if (!worker_returned()) { msg("worker wait: no return\n"); return (2); }
+		if (worker_wait_result != -EAGAIN)
+			break;
+		/* The handler ran before the wait began: nothing tested. */
+		if (usr1_where != USR1_EARLY) { msgnum("worker wait EAGAIN, frame ", usr1_where); return (2); }
+		msg("bsig: 1-3 signal arrived before the wait, again\n");
+		if (worker_finish(&th) != 0) return (2);
+	}
 	if (worker_wait_result != -EINTR) { msgnum("worker wait ", worker_wait_result); return (2); }
+	if (usr1_where != USR1_EINTR) { msgnum("worker wait frame ", usr1_where); return (2); }
 	if (hits[SIGUSR1] != 1) return (3);
-	__atomic_store_n(&worker_go, 1, __ATOMIC_RELEASE);
-	if (thread_join(&th) != 0) return (3);
+	if (worker_finish(&th) != 0) return (3);
 	/* the main thread never saw it (still blocked, none pending) */
 	pend = 0;
 	if (sys2(SYS_rt_sigpending, &pend, 8) != 0) return (3);
 	if ((pend & mask) != 0) return (3);
 	msg("bsig: 4\n");
 	/* 4: SA_RESTART: the wait is restarted instead of EINTR. */
-	if (set_handler(SIGUSR1, SA_RESTART) != 0) return (4);
-	worker_ready = 0; worker_go = 0; worker_wait_result = 1;
-	if (thread_create(&th, worker, 0) != 0) return (4);
-	while (!__atomic_load_n(&worker_ready, __ATOMIC_ACQUIRE))
-		sleep_ms(1);
-	sleep_ms(20);
-	if (sys3(SYS_tgkill, pid, target_tid, SIGUSR1) != 0) return (4);
-	sleep_ms(50);
+	for (i = 0; ; i++) {
+		if (i == ROUNDS) { msg("worker (SA_RESTART): the signal never reached the wait\n"); return (4); }
+		if (set_handler(SIGUSR1, SA_RESTART) != 0) return (4);
+		if (worker_start(&th, &still_word) != 0) return (4);
+		if (sys3(SYS_tgkill, pid, target_tid, SIGUSR1) != 0) return (4);
+		if (!usr1_seen(1)) { msg("worker (SA_RESTART): no handler\n"); return (4); }
+		if (usr1_where != USR1_EARLY)
+			break;
+		/*
+		 * The handler ran before the wait began.  Release the worker
+		 * whether or not it has reached the wait yet: a changed word
+		 * fails a wait not yet begun (EAGAIN) and the wake ends one
+		 * in progress.  Then again.
+		 */
+		msg("bsig: 4 signal arrived before the wait, again\n");
+		__atomic_store_n(&still_word, 1, __ATOMIC_RELEASE);
+		(void)futex_wake(&still_word, 1);
+		if (!worker_returned() || worker_finish(&th) != 0) return (4);
+	}
 	/*
 	 * Linux: futex_wait is restarted after a handler with SA_RESTART
-	 * (no timeout case), so the worker is still waiting.  Wake it.
+	 * (no timeout case): the frame the handler saw was set up for the
+	 * restart, and the worker has not returned.
 	 */
+	if (usr1_where != USR1_RESTART) { msgnum("worker (SA_RESTART) frame ", usr1_where); return (4); }
 	if (worker_wait_result != 1) { msgnum("worker (SA_RESTART) ", worker_wait_result); return (4); }
-	__atomic_store_n(&worker_go, 1, __ATOMIC_RELEASE);
 	/* wake it by a second signal without SA_RESTART */
 	if (set_handler(SIGUSR1, 0) != 0) return (4);
 	if (sys3(SYS_tgkill, pid, target_tid, SIGUSR1) != 0) return (4);
-	if (thread_join(&th) != 0) return (4);
-	if (worker_wait_result != -EINTR) return (4);
+	if (!worker_returned()) { msg("worker (SA_RESTART): no return\n"); return (4); }
+	if (worker_wait_result != -EINTR || hits[SIGUSR1] != 2) return (4);
+	if (worker_finish(&th) != 0) return (4);
 	/* tgkill with a wrong tgid or a dead tid is ESRCH; sig 0 probes */
 	if (sys3(SYS_tgkill, pid + 1, target_tid, 0) != -ESRCH &&
 	    sys3(SYS_tgkill, pid + 1, target_tid, 0) != -EINVAL) return (4);

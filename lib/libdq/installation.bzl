@@ -79,7 +79,10 @@ MANUAL_ALIASES = [
     "dq_reply_resolve_real",
     "dq_event_readdir",
     "dq_dirent_add",
-    "dq_reply_readdir"
+    "dq_reply_readdir",
+    "dq_standing_add",
+    "dq_standing_del",
+    "dq_standing_flush"
 ]
 
 def library_installation(name):

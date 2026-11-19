@@ -32,6 +32,8 @@
 #include <atf-c.h>
 #include <errno.h>
 #include <signal.h>
+#include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 static void
@@ -133,10 +135,31 @@ ATF_TC_BODY(reaper_wait_grandchild_first, tc)
 	ATF_CHECK_EQ(2, r);
 }
 
+/*
+ * In the two SIGCHLD cases a lost signal would leave the case waiting for
+ * ever.  It was caught by a 2 s case timeout, which two forks and exits
+ * overran on a loaded emulated guest; each wait for the signal now has its
+ * own bound, which says what was missing, and the case timeout only backs
+ * it up.
+ */
+#define	REAPER_SIGCHLD_WAIT	60
+
+static int
+reaper_sigchld_wait(sigset_t *mask, siginfo_t *info, const char *what)
+{
+	struct timespec wait = { REAPER_SIGCHLD_WAIT, 0 };
+	int r;
+
+	r = sigtimedwait(mask, info, &wait);
+	ATF_REQUIRE_MSG(r == SIGCHLD, "no SIGCHLD for the %s within %d s: %d (%s)",
+	    what, REAPER_SIGCHLD_WAIT, r, r == -1 ? strerror(errno) : "");
+	return (r);
+}
+
 ATF_TC(reaper_sigchld_child_first);
 ATF_TC_HEAD(reaper_sigchld_child_first, tc)
 {
-	atf_tc_set_md_var(tc, "timeout", "2");
+	atf_tc_set_md_var(tc, "timeout", "120");
 }
 ATF_TC_BODY(reaper_sigchld_child_first, tc)
 {
@@ -190,8 +213,7 @@ ATF_TC_BODY(reaper_sigchld_child_first, tc)
 			_exit(3);
 	}
 
-	r = sigwaitinfo(&mask, &info);
-	ATF_REQUIRE_EQ(SIGCHLD, r);
+	r = reaper_sigchld_wait(&mask, &info, "child");
 	ATF_CHECK_EQ(SIGCHLD, info.si_signo);
 	ATF_CHECK_EQ(CLD_EXITED, info.si_code);
 	ATF_CHECK_EQ(3, info.si_status);
@@ -203,8 +225,7 @@ ATF_TC_BODY(reaper_sigchld_child_first, tc)
 	r = close(pip[1]);
 	ATF_REQUIRE_EQ(0, r);
 
-	r = sigwaitinfo(&mask, &info);
-	ATF_REQUIRE_EQ(SIGCHLD, r);
+	r = reaper_sigchld_wait(&mask, &info, "reparented grandchild");
 	ATF_CHECK_EQ(SIGCHLD, info.si_signo);
 	ATF_CHECK_EQ(CLD_EXITED, info.si_code);
 	ATF_CHECK_EQ(2, info.si_status);
@@ -223,7 +244,7 @@ ATF_TC_BODY(reaper_sigchld_child_first, tc)
 ATF_TC(reaper_sigchld_grandchild_first);
 ATF_TC_HEAD(reaper_sigchld_grandchild_first, tc)
 {
-	atf_tc_set_md_var(tc, "timeout", "2");
+	atf_tc_set_md_var(tc, "timeout", "120");
 }
 ATF_TC_BODY(reaper_sigchld_grandchild_first, tc)
 {
@@ -274,8 +295,7 @@ ATF_TC_BODY(reaper_sigchld_grandchild_first, tc)
 	pid = waitpid(child, NULL, 0);
 	ATF_REQUIRE_EQ(child, pid);
 
-	r = sigwaitinfo(&mask, &info);
-	ATF_REQUIRE_EQ(SIGCHLD, r);
+	r = reaper_sigchld_wait(&mask, &info, "reparented grandchild");
 	ATF_CHECK_EQ(SIGCHLD, info.si_signo);
 	ATF_CHECK_EQ(CLD_EXITED, info.si_code);
 	ATF_CHECK_EQ(2, info.si_status);

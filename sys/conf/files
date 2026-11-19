@@ -1558,6 +1558,7 @@ dev/dq/dq_pager.c		optional dq
 dev/dq/dq_async.c		optional dq
 dev/dq/dq_resolve.c		optional dq
 dev/dq/dq_dir.c			optional dq
+dev/dq/dq_standing.c		optional dq
 dev/dq/dq_testopen.c		optional dq dq_test_open
 dev/dq/dq_faultinj.c		optional dq dq_fault_injection
 dq_resolve_ledger.chk		standard				   \

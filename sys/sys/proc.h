@@ -517,7 +517,7 @@ enum {
 /* Userland debug flags */
 #define	TDB_SUSPEND	0x00000001 /* Thread is suspended by debugger */
 #define	TDB_XSIG	0x00000002 /* Thread is exchanging signal under trace */
-#define	TDB_USERWR	0x00000004 /* Debugger modified memory or registers */
+#define	TDB_USERWR	0x00000004 /* Debugger modified registers or pc */
 #define	TDB_SCE		0x00000008 /* Thread performs syscall enter */
 #define	TDB_SCX		0x00000010 /* Thread performs syscall exit */
 #define	TDB_EXEC	0x00000020 /* TDB_SCX from exec(2) family */
@@ -536,6 +536,8 @@ enum {
 #define	TDB_COREDUMPREQ	0x00010000 /* Coredump request */
 #define	TDB_SCREMOTEREQ	0x00020000 /* Remote syscall request */
 #define	TDB_SET_SC_RET	0x00040000 /* PT_SET_SC_RET applied */
+/* 5BSD private bits are allocated downward from 0x80000000. */
+#define	TDB_MEMWR	0x80000000 /* Debugger modified memory */
 
 /*
  * "Private" flags kept in td_pflags:
