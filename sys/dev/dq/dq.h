@@ -696,7 +696,11 @@ struct dq_stats2 {
 	uint64_t	ds2_resolve_exdev;	/* refused EXDEV with no event
 						   (1c-iii-b/c) */
 	uint64_t	ds2_readdirs;		/* READDIR events (1c-iii-b) */
-	uint64_t	ds2_reserved[3];
+	uint64_t	ds2_standing_pass;	/* lookups a standing rule passed,
+						   no event posted */
+	uint64_t	ds2_standing_deny;	/* lookups a standing rule answered
+						   an errno, no event posted */
+	uint64_t	ds2_reserved[1];
 };
 
 /*
@@ -726,7 +730,8 @@ struct dq_push_args {
 
 /*
  * Ioctls on the queue, group 'j' (the only unused letter near 'q'/'Q').
- * 10 is ATTACH (stage 1c); 11 is reserved for REGISTER_NAME.
+ * 10 is ATTACH (stage 1c); 11 is reserved for REGISTER_NAME; 40-42 are
+ * the standing rules.
  */
 #define	DQ_IOC_MINT		_IOWR('j', 1, struct dq_mint_args)
 #define	DQ_IOC_MINT_OBSERVER	_IOWR('j', 2, struct dq_observer_args)
@@ -1003,6 +1008,40 @@ struct dq_attach_args {
 };
 #define	DQ_IOC_ATTACH		_IOW('j', 10, struct dq_attach_args)
 
+/*
+ * Standing rules (dq-standing-decisions, stage 1): answers the queue gives
+ * without posting RESOLVE.  A rule names a root (a directory; the lookup's
+ * process root must be it), a normalized absolute path under that root,
+ * exact or with everything beneath it, the operations it covers and the
+ * answer.  A rule is a function of (root, op, open class, class, path text)
+ * only.  Among the rules that fit an event the longest path wins.
+ */
+struct dq_standing_rule {
+	uint32_t	dqs_version;		/* DQ_API_VERSION */
+	uint32_t	dqs_flags;		/* DQ_STANDING_F_* */
+	uint32_t	dqs_ops;		/* DQ_STANDING_OP(DQ_ROP_*) only */
+	uint32_t	dqs_action;		/* DQ_STANDING_PASS, _ERRNO, _ASK */
+	int32_t		dqs_errno;		/* _ERRNO: the answer; else 0 */
+	int32_t		dqs_rootfd;		/* a directory, or -1 for the
+						   caller's own root */
+	uint32_t	dqs_pathlen;		/* NUL excluded */
+	uint32_t	dqs_pad0;		/* 0 */
+	uint64_t	dqs_id;			/* out */
+	char		dqs_path[DQ_PATH_MAX];	/* NUL-terminated */
+};
+#define	DQ_STANDING_F_SUBTREE		0x00000001
+#define	DQ_STANDING_F_OPEN_WRITE	0x00000002	/* write-class opens */
+#define	DQ_STANDING_F_VALID		0x00000003
+#define	DQ_STANDING_OP(rop)		(1u << (rop))
+#define	DQ_STANDING_PASS		1
+#define	DQ_STANDING_ERRNO		2
+#define	DQ_STANDING_ASK			3
+#define	DQ_STANDING_MAX			128	/* rules per queue */
+
+#define	DQ_IOC_STANDING_ADD	_IOWR('j', 40, struct dq_standing_rule)
+#define	DQ_IOC_STANDING_DEL	_IOW('j', 41, uint64_t)
+#define	DQ_IOC_STANDING_FLUSH	_IO('j', 42)
+
 #ifdef _KERNEL
 /* The stage 1b-i PUSH layout, before the INVALIDATE range (24 bytes). */
 struct dq_push_args_v1 {
@@ -1066,6 +1105,13 @@ _Static_assert(sizeof(struct dq_resolve_reply) + sizeof(struct dq_resolve_attr) 
 _Static_assert(sizeof(struct dq_resolve_reply) == 8, "dq_resolve_reply");
 _Static_assert(sizeof(struct dq_resolve_mint) == 3968, "dq_resolve_mint");
 _Static_assert(sizeof(struct dq_attach_args) == 24, "dq_attach_args");
+_Static_assert(sizeof(struct dq_standing_rule) == 1064, "dq_standing_rule");
+_Static_assert(__offsetof(struct dq_standing_rule, dqs_id) == 32 &&
+    __offsetof(struct dq_standing_rule, dqs_path) == 40,
+    "dq_standing_rule: no padding");
+_Static_assert(__offsetof(struct dq_stats2, ds2_standing_pass) == 296 &&
+    __offsetof(struct dq_stats2, ds2_reserved) == 312,
+    "dq_stats2: the standing counters take two reserved slots");
 _Static_assert(sizeof(struct dq_readdir_body) == 16, "dq_readdir_body");
 _Static_assert(sizeof(struct dq_readdir_reply) == 16, "dq_readdir_reply");
 _Static_assert(sizeof(struct dq_resolve_reply) + sizeof(struct dq_resolve_mint) +
