@@ -596,8 +596,8 @@ void	dq_data_rele(struct dq_data *dd);
 /*
  * DQ_POST_FAULT (B4): the wait of a page fault.  The deadline is always
  * set (dq_page_deadline); no signal abandons the wait (DQ_WAIT_FAULT):
- * the waiter sleeps in non-catching 100 ms slices, re-testing SIGKILL,
- * the process's exit and the event on every wake, so a fault during
+ * the waiter sleeps with every signal but SIGKILL blocked, woken by the
+ * answer, SIGKILL or the process being taken down, so a fault during
  * SIGCHLD or SIGALRM is not SIGBUS (I12).  Abandonment posts INTERRUPT.
  */
 #define	DQ_POST_FAULT		0x4

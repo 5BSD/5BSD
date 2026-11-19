@@ -842,9 +842,18 @@ is delivered), end it, the last four with the operation abandoned; the
 thread that writes the core still waits for its own answers.
 Another thread's
 .Xr execve 2
-waits for the answer, as for a disk read in progress.
-The wait sleeps in slices of 100 ms, whatever is pending, so a storm of
-signals costs it nothing.
+ends it too, with the operation abandoned: exec single-threads the
+process to the user boundary, and the wait gives up rather than hold the
+exec for an answer (a disk read in progress would hold it; a listed
+difference).
+The wait is event-driven, with no polling: it sleeps with every signal
+but
+.Dv SIGKILL
+blocked and stops deferred, as a
+.Xr fusefs 4
+wait does, so a storm of signals costs it nothing, and each of the ends
+above wakes it.
+Its only timeout is the deadline.
 A deadline of 0 is then a hard mount: only the answer,
 .Dv SIGKILL
 or an exit ends the wait.

@@ -41,6 +41,7 @@
 #include <sys/sdt.h>
 #include <sys/selinfo.h>
 #include <sys/signalvar.h>
+#include <sys/syscallsubr.h>
 #include <sys/sx.h>
 #include <sys/sysctl.h>
 #include <sys/time.h>
@@ -247,8 +248,13 @@ dq_queue_die(struct dq_queue *q)
 	}
 	wakeup(&q->q_pending);
 	wakeup(&q->q_requesters);
+	/*
+	 * Every post waiting for a slot ends here: the failures above freed
+	 * no slots one by one (dq_queue_slots_freed on a closing queue).
+	 */
 	if (DQ_WAKE(DQ_WAKE_DIE_SPACE))
 		wakeup(&q->q_space);
+	dq_queue_room_locked(q);	/* msync's room wait, parked tasks */
 	selwakeup(&q->q_sel);
 	KNOTE_LOCKED(&q->q_sel.si_note, 0);
 	dq_observer_unlink_all(q);
@@ -598,8 +604,7 @@ dq_object_revoke_locked(struct dq_queue *q, struct dq_object *o, int why,
 	}
 	/*
 	 * A post of this object waiting for a slot of a full queue fails
-	 * now: one that catches signals with no deadline sleeps without a
-	 * slice, and no slot need come.  The others look again and sleep on.
+	 * now: no slot need come.  The others look again and sleep on.
 	 */
 	if (DQ_WAKE(DQ_WAKE_REVOKE_SPACE))
 		wakeup(&q->q_space);
@@ -1036,16 +1041,63 @@ dq_deadline(const struct dq_policy *pol)
 }
 
 /*
- * The abandon predicate of a wait that catches no signal (D192): the
- * process is being killed, is exiting, or another of its threads is
- * taking it down.  weed_inhib aborts only sleeps that catch, so the wait
- * looks for itself: exit1 starts thread_single(SINGLE_EXIT) before it
- * sets P_WEXIT, and sigexit sets P2_WEXIT and, for a signal that dumps
- * core (even with RLIMIT_CORE 0), single-threads with SINGLE_NO_EXIT,
- * which sets no P_SINGLE_EXIT; after P2_WEXIT no SIGKILL is delivered
- * either.  The thread taking the process down (p_singlethread) keeps
- * waiting, so a core it writes to a served file is still answered.
- * Called with no dq lock held.
+ * Event-driven waits (owner, 2026-11-19: no polling;
+ * dq-served-wait-model.md).  A data or attribute wait that catches no
+ * signal (DQ_WAIT_UNINTR, DQ_WAIT_FAULT) sleeps with PCATCH and every
+ * signal but SIGKILL blocked, stops deferred, as fusefs's
+ * fticket_wait_answer does: a caught signal neither wakes nor ends it and
+ * is delivered once the operation returns, as after a disk wait (D192),
+ * while SIGKILL wakes it and thread_single() aborts it (weed_inhib aborts
+ * only catching sleeps).  Its only timeout is the caller's deadline; every
+ * other end is a wakeup from the state change itself (section 3 of the
+ * design).  The mask is set around the whole post, with no dq lock held,
+ * because the process lock may not be taken under q_mtx.
+ */
+struct dq_wait_mask {
+	sigset_t	wm_old;
+	int		wm_stops;
+	bool		wm_on;
+};
+
+static void
+dq_wait_mask_enter(struct thread *td, int mode, struct dq_wait_mask *wm)
+{
+	sigset_t all;
+
+	wm->wm_on = mode != DQ_WAIT_CATCH;
+	if (!wm->wm_on)
+		return;
+	wm->wm_stops = sigdeferstop(SIGDEFERSTOP_SILENT);
+	SIGFILLSET(all);	/* SIGKILL and SIGSTOP cannot be blocked */
+	(void)kern_sigprocmask(td, SIG_BLOCK, &all, &wm->wm_old, 0);
+}
+
+static void
+dq_wait_mask_leave(struct thread *td, struct dq_wait_mask *wm)
+{
+
+	if (!wm->wm_on)
+		return;
+	(void)kern_sigprocmask(td, SIG_SETMASK, &wm->wm_old, NULL, 0);
+	sigallowstop(wm->wm_stops);
+}
+
+/*
+ * Whether a wait that catches no signal ends because its process is
+ * being taken down (D192), checked after every wake, never on a timer:
+ * - SIGKILL (it wakes the PCATCH sleep);
+ * - exit1, its own or a sibling's _exit: P_WEXIT, or SINGLE_EXIT, which
+ *   exit1 starts before it sets P_WEXIT;
+ * - sigexit, a fatal signal, one that dumps core included: P2_WEXIT; the
+ *   dump single-threads with SINGLE_NO_EXIT (even with RLIMIT_CORE 0),
+ *   which sets no P_SINGLE_EXIT, and after P2_WEXIT no SIGKILL comes;
+ * - a sibling's execve (SINGLE_BOUNDARY): exec waits for every thread to
+ *   reach the user boundary and aborts a catching sleep each time it
+ *   looks, so the wait gives up its operation (INTERRUPT to the
+ *   controller) instead of holding the exec (design 2.4 (a)).
+ * The thread taking the process down (p_singlethread) keeps waiting, so a
+ * core it writes to a served file is still answered.  Called with no dq
+ * lock held.
  */
 static bool
 dq_wait_abandon(struct thread *td)
@@ -1058,59 +1110,21 @@ dq_wait_abandon(struct thread *td)
 	p = td->td_proc;
 	PROC_LOCK(p);
 	dying = (p->p_flag & P_WEXIT) != 0 ||
-	    (((p->p_flag & P_SINGLE_EXIT) != 0 ||
+	    (((p->p_flag & (P_SINGLE_EXIT | P_SINGLE_BOUNDARY)) != 0 ||
 	    (p->p_flag2 & P2_WEXIT) != 0) && p->p_singlethread != td);
 	PROC_UNLOCK(p);
 	return (dying);
 }
 
 /*
- * How long a non-catching wait sleeps before it looks at its process
- * again.  A sleep that catches nothing sleeps its whole slice whatever is
- * pending, so a signal storm or another thread's exec cannot make it
- * spin (rev 8 section 3.1).
- */
-#define	DQ_WAIT_SLICE	(100 * SBT_1MS)
-
-static sbintime_t
-dq_wait_slice_end(sbintime_t now, sbintime_t deadline)
-{
-
-	if (deadline != 0 && deadline < now + DQ_WAIT_SLICE)
-		return (deadline);
-	return (now + DQ_WAIT_SLICE);
-}
-
-/*
- * A sleep for room before a waited post: a quota (the object's in-flight
- * bound, the requester's) or the queue's depth.  q_mtx is held and kept.
- * Returns 0 to look again; EIO when the deadline passed (the event was
- * never posted: the controller sees nothing of it); a caught signal's
- * EINTR or ERESTART (DQ_WAIT_CATCH); EINTR in the other modes when the
- * process is dying (dq:::wait-abandon).
+ * After a wake of a wait that catches no signal: EINTR (dq:::wait-abandon)
+ * when the process is being taken down, else 0.  q_mtx is held and kept.
  */
 static int
-dq_wait_room(struct dq_queue *q, struct dq_event_k *ev, void *chan,
-    const char *wmesg, struct thread *td, int mode, sbintime_t deadline)
+dq_wait_woken(struct dq_queue *q, struct dq_event_k *ev, struct thread *td)
 {
-	sbintime_t now;
-	int error;
 	bool dying;
 
-	DQ_LOCK_ASSERT(q);
-	if (mode == DQ_WAIT_CATCH) {
-		if (deadline == 0)
-			error = msleep(chan, &q->q_mtx, PCATCH, wmesg, 0);
-		else
-			error = msleep_sbt(chan, &q->q_mtx, PCATCH, wmesg,
-			    deadline, 0, C_ABSOLUTE);
-		return (error == EWOULDBLOCK ? EIO : error);
-	}
-	now = sbinuptime();
-	if (deadline != 0 && now >= deadline)
-		return (EIO);
-	(void)msleep_sbt(chan, &q->q_mtx, 0, wmesg,
-	    dq_wait_slice_end(now, deadline), 0, C_ABSOLUTE);
 	DQ_UNLOCK(q);
 	dying = dq_wait_abandon(td);
 	DQ_LOCK(q);
@@ -1119,6 +1133,35 @@ dq_wait_room(struct dq_queue *q, struct dq_event_k *ev, void *chan,
 		return (EINTR);
 	}
 	return (0);
+}
+
+/*
+ * A sleep for room before a waited post: a quota (the object's in-flight
+ * bound, the requester's) or the queue's depth.  q_mtx is held and kept.
+ * Returns 0 to look again; EIO when the deadline passed (the event was
+ * never posted: the controller sees nothing of it); a caught signal's
+ * EINTR or ERESTART (DQ_WAIT_CATCH); EINTR in the other modes when the
+ * process is being taken down (dq:::wait-abandon).
+ */
+static int
+dq_wait_room(struct dq_queue *q, struct dq_event_k *ev, void *chan,
+    const char *wmesg, struct thread *td, int mode, sbintime_t deadline)
+{
+	int error;
+
+	DQ_LOCK_ASSERT(q);
+	if (deadline != 0 && sbinuptime() >= deadline)
+		return (EIO);
+	if (deadline == 0)
+		error = msleep(chan, &q->q_mtx, PCATCH, wmesg, 0);
+	else
+		error = msleep_sbt(chan, &q->q_mtx, PCATCH, wmesg, deadline,
+		    0, C_ABSOLUTE);
+	if (error == EWOULDBLOCK)
+		return (EIO);
+	if (mode == DQ_WAIT_CATCH)
+		return (error);
+	return (dq_wait_woken(q, ev, td));
 }
 
 /*
@@ -1182,8 +1225,9 @@ dq_post_quota_sleep(struct dq_queue *q, struct dq_event_k *ev, void *chan,
  * ds2_full_waits.  dq_queue_slots_freed wakes one waiter per slot read off
  * the queue (or withdrawn).  A waiter that finds room on waking may hold
  * that slot's wakeup; if it goes on to sleep on a quota or fails, the
- * wakeup is passed on (pw_pass).  A waiter that woke at a slice's end with
- * the queue still full holds none.
+ * wakeup is passed on (pw_pass).  A waiter woken with the queue still full
+ * (a spurious wake, a broadcast) holds none.  On a dying queue no slot is
+ * passed on: the death wakes every waiter once.
  */
 static int
 dq_post_space_sleep(struct dq_queue *q, struct dq_event_k *ev,
@@ -1209,6 +1253,10 @@ dq_queue_slots_freed(struct dq_queue *q, u_int n)
 {
 
 	DQ_LOCK_ASSERT(q);
+	/* A dying queue wakes every slot waiter once (dq_queue_die). */
+	if ((q->q_flags & DQ_Q_CLOSING) != 0 || n == 0)
+		return;
+	dq_queue_room_locked(q);	/* an async post may go too */
 	if (!DQ_WAKE(DQ_WAKE_SLOT))
 		return;
 	while (n-- > 0)
@@ -1219,51 +1267,43 @@ dq_queue_slots_freed(struct dq_queue *q, u_int n)
  * Wait for ev's answer, q_mtx held and kept (D192).  DQ_WAIT_CATCH: a
  * signal ends the wait (EINTR or ERESTART), as an NFS intr mount's does.
  * DQ_WAIT_UNINTR and DQ_WAIT_FAULT: no signal does, as a local file
- * system's disk wait: the wait sleeps in non-catching slices and ends
- * with the answer, the deadline (EWOULDBLOCK) or the process dying
- * (EINTR, dq_wait_abandon).  The caller reads the event's state first.
+ * system's disk wait: with the signals blocked (dq_wait_mask_enter) the
+ * wait ends with the answer, the deadline (EWOULDBLOCK) or the process
+ * being taken down (EINTR, dq_wait_abandon), each seen when it wakes the
+ * sleep.  The caller reads the event's state first.
  */
 static int
 dq_wait_event(struct dq_queue *q, struct dq_event_k *ev, struct thread *td,
     int mode, sbintime_t deadline)
 {
-	sbintime_t now;
 	int error;
-	bool dying;
 
 	DQ_LOCK_ASSERT(q);
 	KASSERT(td == curthread, ("dq: waiting for another thread"));
 	error = 0;
 	while (ev->ev_state == DQ_EV_PENDING ||
 	    ev->ev_state == DQ_EV_DELIVERED) {
+		if (deadline == 0)
+			error = cv_wait_sig(&ev->ev_cv, &q->q_mtx);
+		else
+			error = cv_timedwait_sig_sbt(&ev->ev_cv, &q->q_mtx,
+			    deadline, 0, C_ABSOLUTE);
+		if (ev->ev_state != DQ_EV_PENDING &&
+		    ev->ev_state != DQ_EV_DELIVERED) {
+			error = 0;
+			break;
+		}
+		if (error == EWOULDBLOCK)
+			break;
 		if (mode == DQ_WAIT_CATCH) {
-			if (deadline == 0)
-				error = cv_wait_sig(&ev->ev_cv, &q->q_mtx);
-			else
-				error = cv_timedwait_sig_sbt(&ev->ev_cv,
-				    &q->q_mtx, deadline, 0, C_ABSOLUTE);
 			if (error != 0)
 				break;
 			continue;
 		}
-		now = sbinuptime();
-		if (deadline != 0 && now >= deadline) {
-			error = EWOULDBLOCK;
+		/* A wake (or an abort) with no answer: dying, or sleep on. */
+		error = dq_wait_woken(q, ev, td);
+		if (error != 0)
 			break;
-		}
-		(void)cv_timedwait_sbt(&ev->ev_cv, &q->q_mtx,
-		    dq_wait_slice_end(now, deadline), 0, C_ABSOLUTE);
-		if (ev->ev_state != DQ_EV_PENDING &&
-		    ev->ev_state != DQ_EV_DELIVERED)
-			break;
-		DQ_UNLOCK(q);
-		dying = dq_wait_abandon(td);
-		DQ_LOCK(q);
-		if (dying) {
-			SDT_PROBE2(dq, , , wait__abandon, q, ev);
-			error = EINTR;
-			break;
-		}
 	}
 	return (error);
 }
@@ -1292,6 +1332,7 @@ dq_event_post_wait_agen(struct dq_object *o, uint32_t op, const void *body,
 	struct dq_event_k *ev;
 	struct dq_requester *rq, *newrq;
 	struct dq_interrupt_body ib;
+	struct dq_wait_mask wm;
 	sbintime_t deadline;
 	int error, mode;
 	struct dq_post_waits pw;
@@ -1346,6 +1387,7 @@ dq_event_post_wait_agen(struct dq_object *o, uint32_t op, const void *body,
 	ev->ev_deadline = deadline;
 	rq = NULL;
 
+	dq_wait_mask_enter(td, mode, &wm);
 	DQ_LOCK(q);
 	for (;;) {
 		if ((q->q_flags & DQ_Q_CLOSING) != 0) {
@@ -1497,6 +1539,7 @@ dq_event_post_wait_agen(struct dq_object *o, uint32_t op, const void *body,
 out_locked:
 	dq_post_waits_done(q, ev, &pw, error);
 	DQ_UNLOCK(q);
+	dq_wait_mask_leave(td, &wm);
 	if (newrq != NULL)
 		free(newrq, M_DQ);
 	if (interrupt) {
@@ -1547,6 +1590,7 @@ dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
 	struct dq_event_k *ev;
 	struct dq_requester *rq, *newrq;
 	struct dq_interrupt_body ib;
+	struct dq_wait_mask wm;
 	int error, mode;
 	struct dq_post_waits pw;
 	bool interrupt, drop_list_ref;
@@ -1567,6 +1611,7 @@ dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
 	newrq = malloc(sizeof(*newrq), M_DQ, M_WAITOK | M_ZERO);
 	rq = NULL;
 
+	dq_wait_mask_enter(td, mode, &wm);
 	DQ_LOCK(q);
 	for (;;) {
 		if ((q->q_flags & DQ_Q_CLOSING) != 0) {
@@ -1660,6 +1705,7 @@ dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
 out_locked:
 	dq_post_waits_done(q, ev, &pw, error);
 	DQ_UNLOCK(q);
+	dq_wait_mask_leave(td, &wm);
 	if (newrq != NULL)
 		free(newrq, M_DQ);
 	if (interrupt) {
