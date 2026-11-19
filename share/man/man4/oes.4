@@ -263,6 +263,55 @@ by a
 .Xr dq 4
 controller rather than read from a vnode
 .Pq Dv OES_FILE_META_PRESENTED .
+.Ss A client's own processes
+A client never receives events caused by the processes that act as it,
+its
+.Em readers .
+A process becomes a reader of a client when it opens
+.Pa /dev/oes
+(the opener), reads, answers
+.Pq Xr write 2 ,
+polls or registers a kevent for the client, or calls
+.Dv OES_IOC_JOIN .
+Configuration ioctls do not make a reader.
+A process stops being a reader when it exits or executes a new image;
+the new image becomes a reader again by the same operations.
+Readers are identified by process ID, start time and execution, so a
+reused process ID never inherits membership.
+.Pp
+The rule holds for every scope, mode and mute setting, process-mute
+inversion included, and cannot be turned off.
+An AUTH event caused by a reader is allowed without being delivered to
+that client.
+Other clients still receive the reader's events, unless the reader is
+excluded by the kernel
+.Pq Sx Excluded processes .
+.Pp
+A process that receives a client descriptor from another process
+.Po
+.Dv SCM_RIGHTS ,
+.Xr oes_client_create_brokered 3 ,
+or inheritance across
+.Xr fork 2
+.Pc
+is not a reader until it joins, and until then the events it causes reach
+the client.
+For an AUTH client those can be waits on itself, bounded like any
+unanswered AUTH event by the client's deadline and deadline-miss mode.
+Call
+.Dv OES_IOC_JOIN
+before anything else on a received descriptor;
+.Xr liboes 3
+does this in every constructor.
+.Pp
+.Dv OES_MUTE_SELF
+in a mute request is accepted and has no further effect; in an unmute
+request it fails with
+.Er EINVAL .
+Mute queries never list the client's own processes.
+The former
+.Va security.oes.default_self_mute
+sysctl no longer exists.
 .Ss Excluded processes
 OES produces no event for an operation whose acting process is excluded by
 the kernel: process 1
@@ -433,11 +482,6 @@ client is subscribed to authorize them.
 Default client-wide AUTH deadline in milliseconds.
 .It Va security.oes.default_deadline_miss_mode
 Default deadline-miss behavior: zero is fail open and one is fail closed.
-.It Va security.oes.default_self_mute
-When non-zero, a new client is automatically muted against its own process.
-This default is mutable client state and may be removed.
-It is not applied to descendants-scoped clients; it is applied to jail-scoped
-clients.
 .It Va security.oes.jail_filtered
 Number of events discarded before any memory was allocated for them because
 every open client is jail-scoped and none covers the subject.
