@@ -49,7 +49,6 @@ extern char **environ;
 
 #define	HELPER		"dq_execpin_helper"
 #define	PIN_USER	1001
-#define	PIN_DIRFILE	"pindir"	/* the shared directory's name */
 #define	RTLD		"/libexec/ld-elf.so.1"
 
 /* What one exec did: its errno (0: the image ran), status and output. */
@@ -61,9 +60,12 @@ struct pin_run {
 
 typedef void (*pin_pre_fn)(void *arg);
 
+/* The image pin_image opened, for an exec with no path. */
+static int pin_fd = -1;
+
 /*
  * Fork; in the child run pre (if any), then execve path (execvp when
- * usepath).  The child's stdout is captured; a failed exec reports its
+ * usepath; fexecve of pin_fd when path is NULL).  The child's stdout is captured; a failed exec reports its
  * errno over a close-on-exec pipe, which stays empty when the image ran.
  */
 static void
@@ -86,7 +88,9 @@ pin_exec(const char *path, char *const argv[], bool usepath, pin_pre_fn pre,
 			_exit(125);
 		if (pre != NULL)
 			pre(arg);
-		if (usepath)
+		if (path == NULL)
+			fexecve(pin_fd, argv, environ);
+		else if (usepath)
 			execvp(path, argv);
 		else
 			execve(path, argv, environ);
@@ -119,55 +123,28 @@ pin_check_ran(const struct pin_run *r, const char *line)
 }
 
 /*
- * A directory others may search, on a file system that honours set-uid
- * (the work directory is private to root, /tmp may be nosuid), holding a
- * copy of the helper.  Its name is kept in the work directory for the
- * cleanup.
+ * The helper copied into the work directory with mode, opened O_EXEC as
+ * pin_fd: a child that changed its credential or prison execs it with
+ * fexecve(2), so no directory on the way needs to be searchable by it.
+ * A set-uid pin needs a file system that honours set-uid: the work
+ * directory's must, or the pin fails rather than look elsewhere.
  */
 static void
-pin_dir(const atf_tc_t *tc, char *dir, size_t len)
+pin_image(const atf_tc_t *tc, mode_t mode)
 {
-	static const char *const bases[] = { "/tmp", "/var/tmp", "/root" };
 	struct statfs sf;
-	char path[PATH_MAX];
-	FILE *f;
-	u_int i;
 
-	for (i = 0; i < nitems(bases); i++)
-		if (statfs(bases[i], &sf) == 0 &&
-		    (sf.f_flags & MNT_NOSUID) == 0)
-			break;
-	ATF_REQUIRE_MSG(i < nitems(bases), "no file system without nosuid");
-	ATF_REQUIRE((size_t)snprintf(dir, len, "%s/dqpin.XXXXXX", bases[i]) <
-	    len);
-	ATF_REQUIRE(mkdtemp(dir) != NULL);
-	ATF_REQUIRE_EQ(0, chmod(dir, 0755));
-	f = fopen(PIN_DIRFILE, "w");
-	ATF_REQUIRE(f != NULL);
-	fprintf(f, "%s\n", dir);
-	ATF_REQUIRE_EQ(0, fclose(f));
-	ATF_REQUIRE((size_t)snprintf(path, sizeof(path), "%s/%s", dir,
-	    HELPER) < sizeof(path));
-	dqt_copy_helper(tc, HELPER, path);
-}
-
-static void
-pin_dir_cleanup(void)
-{
-	char dir[PATH_MAX], cmd[PATH_MAX + 16];
-	FILE *f;
-
-	f = fopen(PIN_DIRFILE, "r");
-	if (f == NULL)
-		return;
-	if (fgets(dir, sizeof(dir), f) != NULL) {
-		dir[strcspn(dir, "\n")] = '\0';
-		if (strncmp(dir, "/", 1) == 0 && strstr(dir, "/dqpin.") != NULL) {
-			(void)snprintf(cmd, sizeof(cmd), "rm -rf %s", dir);
-			(void)system(cmd);
-		}
+	if ((mode & S_ISUID) != 0) {
+		ATF_REQUIRE_EQ(0, statfs(".", &sf));
+		ATF_REQUIRE_MSG((sf.f_flags & MNT_NOSUID) == 0,
+		    "the work directory's file system (%s) is mounted nosuid",
+		    sf.f_mntonname);
 	}
-	(void)fclose(f);
+	dqt_copy_helper(tc, HELPER, "image");
+	ATF_REQUIRE_EQ(0, chown("image", 0, 0));
+	ATF_REQUIRE_EQ(0, chmod("image", mode));
+	pin_fd = open("image", O_EXEC | O_CLOEXEC);
+	ATF_REQUIRE_MSG(pin_fd != -1, "open image: %s", strerror(errno));
 }
 
 static void
@@ -196,17 +173,15 @@ ATF_TC_HEAD(p1_jail_unattached, tc)
 }
 ATF_TC_BODY(p1_jail_unattached, tc)
 {
-	char dir[PATH_MAX], path[PATH_MAX];
 	char *argv[] = { __DECONST(char *, HELPER), NULL };
 	struct pin_run r;
 	int jid;
 
-	pin_dir(tc, dir, sizeof(dir));
-	snprintf(path, sizeof(path), "%s/%s", dir, HELPER);
+	pin_image(tc, 0755);
 	jid = jail_setv(JAIL_CREATE, "name", "dqpin_t1", "path", "/",
 	    "persist", NULL, NULL);
 	ATF_REQUIRE_MSG(jid > 0, "jail_setv: %s", jail_errmsg);
-	pin_exec(path, argv, false, pre_jail, &jid, &r);
+	pin_exec(NULL, argv, false, pre_jail, &jid, &r);
 	(void)jail_remove(jid);
 	pin_check_ran(&r, "uid=0 euid=0 nnp=0");
 }
@@ -217,10 +192,9 @@ ATF_TC_CLEANUP(p1_jail_unattached, tc)
 	jid = jail_getid("dqpin_t1");
 	if (jid > 0)
 		(void)jail_remove(jid);
-	pin_dir_cleanup();
 }
 
-ATF_TC_WITH_CLEANUP(p2_user_unattached);
+ATF_TC(p2_user_unattached);
 ATF_TC_HEAD(p2_user_unattached, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "P2: an exec by uid 1001 runs "
@@ -229,19 +203,12 @@ ATF_TC_HEAD(p2_user_unattached, tc)
 }
 ATF_TC_BODY(p2_user_unattached, tc)
 {
-	char dir[PATH_MAX], path[PATH_MAX];
 	char *argv[] = { __DECONST(char *, HELPER), NULL };
 	struct pin_run r;
 
-	pin_dir(tc, dir, sizeof(dir));
-	snprintf(path, sizeof(path), "%s/%s", dir, HELPER);
-	pin_exec(path, argv, false, pre_user, NULL, &r);
+	pin_image(tc, 0755);
+	pin_exec(NULL, argv, false, pre_user, NULL, &r);
 	pin_check_ran(&r, "uid=1001 euid=1001 nnp=0");
-}
-ATF_TC_CLEANUP(p2_user_unattached, tc)
-{
-
-	pin_dir_cleanup();
 }
 
 /* Write a file of len bytes of b (or text when text != NULL), mode. */
@@ -380,7 +347,7 @@ ATF_TC_BODY(p4_attached_exec, tc)
 	dqt_fini(&c);
 }
 
-ATF_TC_WITH_CLEANUP(p5_setuid_root);
+ATF_TC(p5_setuid_root);
 ATF_TC_HEAD(p5_setuid_root, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "P5: a set-uid-root image run by uid "
@@ -389,21 +356,12 @@ ATF_TC_HEAD(p5_setuid_root, tc)
 }
 ATF_TC_BODY(p5_setuid_root, tc)
 {
-	char dir[PATH_MAX], path[PATH_MAX];
 	char *argv[] = { __DECONST(char *, HELPER), NULL };
 	struct pin_run r;
 
-	pin_dir(tc, dir, sizeof(dir));
-	snprintf(path, sizeof(path), "%s/%s", dir, HELPER);
-	ATF_REQUIRE_EQ(0, chown(path, 0, 0));
-	ATF_REQUIRE_EQ(0, chmod(path, 04755));
-	pin_exec(path, argv, false, pre_user, NULL, &r);
+	pin_image(tc, 04755);
+	pin_exec(NULL, argv, false, pre_user, NULL, &r);
 	pin_check_ran(&r, "uid=1001 euid=0 nnp=0");
-}
-ATF_TC_CLEANUP(p5_setuid_root, tc)
-{
-
-	pin_dir_cleanup();
 }
 
 ATF_TC(p6_execvp_text);
