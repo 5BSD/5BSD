@@ -40,6 +40,10 @@ TOP = frozenset("""bin cddl contrib crypto gnu include kerberos5 krb5 lib
     libexec rescue sbin secure share stand sys tests tools usr.bin
     usr.sbin""".split())
 SRC_NAME = re.compile(rb"\x00(/[A-Za-z0-9_.+/-]+\.(?:c|cc|cpp|cxx))\x00")
+# Concurrent reads of the stage's programs.  The scan waits on the disk
+# (about two thousand files, a few CPU-seconds in all): one read in flight
+# per CPU keeps the device queue full without oversubscribing the host.
+READERS = os.cpu_count() or 1
 OBJ_MACHINE = re.compile(r"^(.*)/(?:amd64|arm64|i386|riscv|powerpc|arm)\.\w+$")
 
 
@@ -95,8 +99,7 @@ def main(argv):
             if not os.path.islink(fp) and os.path.isfile(fp):
                 paths.append(fp)
     progs = {}          # program -> set of raw roots
-    # The reads wait on the disk, not the CPU: overlap them.
-    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=READERS) as pool:
         for fp, roots in pool.map(scan, paths):
             if roots:
                 progs[os.path.relpath(fp, stage)] = roots
