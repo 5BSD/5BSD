@@ -367,6 +367,156 @@ oes_client_validate_token(struct oes_client *ec,
 	return (0);
 }
 
+/*
+ * The readers of each client (struct oes_readers, oes_internal.h).
+ * oes_client_is_reader() is the dispatch side: no lock, no allocation.
+ * oes_client_join() is the reader side: it may sleep and is called only
+ * from oes_open, oes_read, oes_write, oes_poll, oes_kqfilter and
+ * OES_IOC_JOIN, never from event generation or delivery.
+ *
+ * Lock order: ec_readers_lock (sx) -> the pid hash lock and PROC_LOCK that
+ * pfind() takes.  ec_readers_lock is taken nowhere else, in particular
+ * never from fork, exit, exec or a MAC hook, so no path holds a process
+ * lock and then waits for it.
+ */
+static epoch_t oes_readers_epoch;
+
+void
+oes_readers_init(void)
+{
+
+	oes_readers_epoch = epoch_alloc("oes_readers", EPOCH_PREEMPT);
+}
+
+void
+oes_readers_fini(void)
+{
+
+	epoch_drain_callbacks(oes_readers_epoch);
+	epoch_free(oes_readers_epoch);
+}
+
+static void
+oes_readers_free_cb(epoch_context_t ctx)
+{
+
+	free(__containerof(ctx, struct oes_readers, ors_ctx), M_OES);
+}
+
+static bool
+oes_readers_match(const struct oes_readers *r, pid_t pid, uint64_t genid,
+    uint64_t exec_id)
+{
+
+	for (u_int i = 0; r != NULL && i < r->ors_count; i++)
+		if (r->ors_r[i].or_pid == pid &&
+		    r->ors_r[i].or_genid == genid &&
+		    r->ors_r[i].or_exec_id == exec_id)
+			return (true);
+	return (false);
+}
+
+/* Is the subject of this record one of ec's readers? */
+bool
+oes_client_is_reader(struct oes_client *ec, const oes_process_t *ep)
+{
+	struct epoch_tracker et;
+	struct oes_readers *r;
+	bool found;
+
+	epoch_enter_preempt(oes_readers_epoch, &et);
+	r = (struct oes_readers *)atomic_load_acq_ptr(
+	    (volatile uintptr_t *)&ec->ec_readers);
+	found = oes_readers_match(r, ep->ep_pid, ep->ep_token.ept_genid,
+	    ep->ep_exec_id);
+	epoch_exit_preempt(oes_readers_epoch, &et);
+	return (found);
+}
+
+/* Is the subject of this record a reader of any client (is_es_client)? */
+bool
+oes_process_is_reader(const oes_process_t *ep)
+{
+	struct oes_client *ec;
+
+	OES_LOCK_ASSERT();
+	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link)
+		if (oes_client_is_reader(ec, ep))
+			return (true);
+	return (false);
+}
+
+/* Is p, in the image it runs, still the process the entry recorded? */
+static bool
+oes_reader_live(const struct oes_reader *r)
+{
+	struct proc *p;
+	bool live;
+
+	p = pfind(r->or_pid);
+	if (p == NULL)
+		return (false);
+	live = oes_proc_genid(p) == r->or_genid &&
+	    oes_proc_get_exec_id(p) == r->or_exec_id;
+	PROC_UNLOCK(p);
+	return (live);
+}
+
+/*
+ * Make td's process a reader of ec.  Compacts away the entries of processes
+ * that exited or exec'd and replaces the array; may sleep.
+ */
+void
+oes_client_join(struct oes_client *ec, struct thread *td)
+{
+	struct oes_readers *old, *new;
+	struct proc *p = td->td_proc;
+	struct oes_reader self;
+	u_int size;
+
+	WITNESS_WARN(WARN_GIANTOK | WARN_SLEEPOK, NULL, "oes_client_join");
+	memset(&self, 0, sizeof(self));
+	PROC_LOCK(p);
+	self.or_pid = p->p_pid;
+	self.or_genid = oes_proc_genid(p);
+	self.or_exec_id = oes_proc_get_exec_id(p);
+	PROC_UNLOCK(p);
+
+	{
+		oes_process_t key;
+
+		key.ep_pid = self.or_pid;
+		key.ep_token.ept_genid = self.or_genid;
+		key.ep_exec_id = self.or_exec_id;
+		if (oes_client_is_reader(ec, &key))
+			return;		/* every read after the first */
+	}
+
+	sx_xlock(&ec->ec_readers_lock);
+	/* Joins are serialised here: the array cannot change under us. */
+	old = ec->ec_readers;
+	if (oes_readers_match(old, self.or_pid, self.or_genid,
+	    self.or_exec_id)) {
+		sx_xunlock(&ec->ec_readers_lock);
+		return;
+	}
+	/* Room for every old entry and the caller; dead ones are dropped. */
+	size = (old != NULL ? old->ors_count : 0) + 1;
+	new = malloc(sizeof(*new) + size * sizeof(new->ors_r[0]), M_OES,
+	    M_WAITOK | M_ZERO);
+	new->ors_size = size;
+	for (u_int i = 0; old != NULL && i < old->ors_count; i++)
+		if (oes_reader_live(&old->ors_r[i]))
+			new->ors_r[new->ors_count++] = old->ors_r[i];
+	new->ors_r[new->ors_count++] = self;
+	atomic_store_rel_ptr((volatile uintptr_t *)&ec->ec_readers,
+	    (uintptr_t)new);
+	sx_xunlock(&ec->ec_readers_lock);
+	if (old != NULL)
+		epoch_call(oes_readers_epoch, oes_readers_free_cb,
+		    &old->ors_ctx);
+}
+
 struct oes_client *
 oes_client_alloc(void)
 {
@@ -377,6 +527,7 @@ oes_client_alloc(void)
 	ec = malloc(sizeof(*ec), M_OES, M_WAITOK | M_ZERO);
 
 	mtx_init(&ec->ec_mtx, "oes_client", NULL, MTX_DEF);
+	sx_init(&ec->ec_readers_lock, "oes_readers");
 	ec->ec_owner_pid = -1;
 	ec->ec_scope = OES_SCOPE_GLOBAL;
 	ec->ec_mode = OES_MODE_NOTIFY;
@@ -529,6 +680,9 @@ oes_client_free(struct oes_client *ec)
 	/* Destroy knlist (must be done without lock) */
 	knlist_destroy(&ec->ec_selinfo.si_note);
 
+	/* Unpublished: no dispatch can reach a client being freed. */
+	free(ec->ec_readers, M_OES);
+	sx_destroy(&ec->ec_readers_lock);
 	mtx_destroy(&ec->ec_mtx);
 	free(ec, M_OES);
 }
@@ -746,28 +900,6 @@ oes_client_apply_default_mutes(struct oes_client *ec)
 	char pathbuf[MAXPATHLEN];
 	const char *start, *end;
 	size_t len;
-
-	/* Apply default self-mute (add entry to list for query consistency) */
-	if (oes_default_self_mute && ec->ec_scope != OES_SCOPE_DESCENDANTS &&
-	    !(ec->ec_flags & EC_FLAG_MUTED_SELF)) {
-		struct oes_mute_entry *em;
-
-		em = malloc(sizeof(*em), M_OES, M_NOWAIT | M_ZERO);
-
-		EC_LOCK(ec);
-		ec->ec_flags |= EC_FLAG_MUTED_SELF;
-		if (em != NULL) {
-			em->em_pid = ec->ec_owner_pid;
-			em->em_genid = ec->ec_owner_genid;
-			/* em_events stays 0 = mute all */
-			LIST_INSERT_HEAD(
-			    &ec->ec_muted[oes_mute_proc_bucket(ec->ec_owner_pid)],
-			    em, em_link);
-			ec->ec_muted_proc_count++;
-		}
-		EC_UNLOCK(ec);
-		OES_DEBUG("client %p: applied default self-mute", ec);
-	}
 
 	/* Apply default prefix path mutes */
 	if (oes_default_muted_paths[0] != '\0') {
@@ -1015,32 +1147,6 @@ oes_mute_entry_matches_event(const struct oes_mute_entry *em,
 	return (oes_event_in_bitmap(event, em->em_events));
 }
 
-static bool
-oes_client_self_entry_muted(struct oes_client *ec, pid_t pid, uint64_t genid,
-    oes_event_type_t event, bool *found)
-{
-	struct oes_mute_entry *em;
-
-	if (found != NULL)
-		*found = false;
-
-	if (pid != ec->ec_owner_pid ||
-	    (ec->ec_owner_genid != 0 && ec->ec_owner_genid != genid))
-		return (false);
-
-	LIST_FOREACH(em, &ec->ec_muted[oes_mute_proc_bucket(pid)], em_link) {
-		if (em->em_pid != pid)
-			continue;
-		if (em->em_genid != 0 && em->em_genid != genid)
-			continue;
-		if (found != NULL)
-			*found = true;
-		return (oes_mute_entry_matches_event(em, event));
-	}
-
-	return (false);
-}
-
 /*
  * Check if a process is muted for this client for a specific event
  *
@@ -1052,7 +1158,6 @@ oes_client_is_muted(struct oes_client *ec, struct proc *p, oes_event_type_t even
 {
 	struct oes_mute_entry *em;
 	bool in_list = false;
-	bool self_entry_found = false;
 	uint64_t genid;
 	bool inverted;
 
@@ -1088,19 +1193,6 @@ oes_client_is_muted(struct oes_client *ec, struct proc *p, oes_event_type_t even
 			PROC_UNLOCK(p);
 	}
 
-	in_list = oes_client_self_entry_muted(ec, p->p_pid, genid, event,
-	    &self_entry_found);
-	if (self_entry_found)
-		goto apply_inversion;
-
-	/* If the self-mute list entry could not be allocated, the flag still
-	 * represents a mute-all self entry. */
-	if ((ec->ec_flags & EC_FLAG_MUTED_SELF) &&
-	    p->p_pid == ec->ec_owner_pid &&
-	    (ec->ec_owner_genid == 0 || ec->ec_owner_genid == genid)) {
-		in_list = true;
-		goto apply_inversion;
-	}
 
 	/* Check mute list - use hash bucket for O(1) average lookup */
 	LIST_FOREACH(em, &ec->ec_muted[oes_mute_proc_bucket(p->p_pid)], em_link) {
@@ -1118,7 +1210,6 @@ oes_client_is_muted(struct oes_client *ec, struct proc *p, oes_event_type_t even
 		break;
 	}
 
-apply_inversion:
 	inverted = (ec->ec_mute_invert & EC_MUTE_INVERT_PROCESS) != 0;
 	return (inverted ? !in_list : in_list);
 }
@@ -1135,7 +1226,6 @@ oes_client_is_muted_by_token(struct oes_client *ec, const oes_proc_token_t *toke
 {
 	struct oes_mute_entry *em;
 	bool in_list = false;
-	bool self_entry_found = false;
 	pid_t pid;
 	uint64_t genid;
 	bool inverted;
@@ -1148,17 +1238,6 @@ oes_client_is_muted_by_token(struct oes_client *ec, const oes_proc_token_t *toke
 	pid = (pid_t)token->ept_id;
 	genid = token->ept_genid;
 
-	in_list = oes_client_self_entry_muted(ec, pid, genid, event,
-	    &self_entry_found);
-	if (self_entry_found)
-		goto apply_inversion;
-
-	if ((ec->ec_flags & EC_FLAG_MUTED_SELF) &&
-	    pid == ec->ec_owner_pid &&
-	    (ec->ec_owner_genid == 0 || ec->ec_owner_genid == genid)) {
-		in_list = true;
-		goto apply_inversion;
-	}
 
 	/* Check mute list - use hash bucket for O(1) average lookup */
 	LIST_FOREACH(em, &ec->ec_muted[oes_mute_proc_bucket(pid)], em_link) {
@@ -1176,7 +1255,6 @@ oes_client_is_muted_by_token(struct oes_client *ec, const oes_proc_token_t *toke
 		break;
 	}
 
-apply_inversion:
 	inverted = (ec->ec_mute_invert & EC_MUTE_INVERT_PROCESS) != 0;
 	return (inverted ? !in_list : in_list);
 }
@@ -1309,56 +1387,12 @@ oes_client_mute(struct oes_client *ec, oes_proc_token_t *token, uint32_t flags)
 	struct oes_mute_entry *em;
 	int error;
 
-	/* Self-mute: set flag AND add entry to list for query consistency */
-	if (flags & OES_MUTE_SELF) {
-		EC_LOCK(ec);
-
-		/* Check if already in list (use owner_pid to match enforcement) */
-		LIST_FOREACH(em,
-		    &ec->ec_muted[oes_mute_proc_bucket(ec->ec_owner_pid)],
-		    em_link) {
-			if (em->em_pid == ec->ec_owner_pid) {
-				/*
-				 * Already in list. Upgrade per-event mute
-				 * to mute-all by clearing the event bitmap.
-				 */
-				memset(em->em_events, 0, sizeof(em->em_events));
-				ec->ec_flags |= EC_FLAG_MUTED_SELF;
-				EC_UNLOCK(ec);
-				return (0);
-			}
-		}
-
-		/* Check limit */
-		if (ec->ec_muted_proc_count >= OES_MUTE_PROC_MAX) {
-			/* Still set flag even if can't add to list */
-			ec->ec_flags |= EC_FLAG_MUTED_SELF;
-			EC_UNLOCK(ec);
-			return (0);
-		}
-
-		/* Add entry for self so GET_MUTED_PROCESSES returns it */
-		em = malloc(sizeof(*em), M_OES, M_NOWAIT | M_ZERO);
-		if (em == NULL) {
-			/* Still set flag even if can't add to list */
-			ec->ec_flags |= EC_FLAG_MUTED_SELF;
-			EC_UNLOCK(ec);
-			return (0);
-		}
-
-		em->em_pid = ec->ec_owner_pid;
-		em->em_genid = ec->ec_owner_genid;
-		/* em_events[] stays zeroed = mute all events */
-		LIST_INSERT_HEAD(
-		    &ec->ec_muted[oes_mute_proc_bucket(ec->ec_owner_pid)],
-		    em, em_link);
-		ec->ec_muted_proc_count++;
-		ec->ec_flags |= EC_FLAG_MUTED_SELF;
-
-		EC_UNLOCK(ec);
-		OES_DEBUG("client %p self-muted", ec);
+	/*
+	 * The caller's own events never reach a client it reads
+	 * (oes_client_is_reader()): muting itself has nothing left to do.
+	 */
+	if (flags & OES_MUTE_SELF)
 		return (0);
-	}
 
 	error = oes_client_validate_token(ec, token);
 	if (error != 0)
@@ -1805,57 +1839,9 @@ oes_client_mute_events(struct oes_client *ec, oes_proc_token_t *token,
 	if (!oes_events_to_bitmap(events, count, bitmap))
 		return (EINVAL);  /* Invalid event type in list */
 
-	/* Self-mute with specific events */
-	if (flags & OES_MUTE_SELF) {
-		EC_LOCK(ec);
-
-		/* Find existing entry for self (use owner_pid to match enforcement) */
-		LIST_FOREACH(em,
-		    &ec->ec_muted[oes_mute_proc_bucket(ec->ec_owner_pid)],
-		    em_link) {
-			if (em->em_pid == ec->ec_owner_pid) {
-				/*
-				 * If already mute-all (all zeros), adding
-				 * specific events is a no-op.
-				 */
-				if (em->em_events[0] != 0 ||
-				    em->em_events[1] != 0 ||
-				    em->em_events[2] != 0 ||
-				    em->em_events[3] != 0) {
-					/* Add events to existing entry */
-					em->em_events[0] |= bitmap[0];
-					em->em_events[1] |= bitmap[1];
-					em->em_events[2] |= bitmap[2];
-					em->em_events[3] |= bitmap[3];
-				}
-				EC_UNLOCK(ec);
-				return (0);
-			}
-		}
-
-		/* Create new entry for self - check limit first */
-		if (ec->ec_muted_proc_count >= OES_MUTE_PROC_MAX) {
-			EC_UNLOCK(ec);
-			return (ENOSPC);
-		}
-
-		em = malloc(sizeof(*em), M_OES, M_NOWAIT | M_ZERO);
-		if (em == NULL) {
-			EC_UNLOCK(ec);
-			return (ENOMEM);
-		}
-
-		em->em_pid = ec->ec_owner_pid;
-		em->em_genid = ec->ec_owner_genid;
-		memcpy(em->em_events, bitmap, sizeof(em->em_events));
-		LIST_INSERT_HEAD(
-		    &ec->ec_muted[oes_mute_proc_bucket(ec->ec_owner_pid)],
-		    em, em_link);
-		ec->ec_muted_proc_count++;
-
-		EC_UNLOCK(ec);
+	/* Self-mute: nothing to do, see oes_client_mute(). */
+	if (flags & OES_MUTE_SELF)
 		return (0);
-	}
 
 	error = oes_client_validate_token(ec, token);
 	if (error != 0)
@@ -1932,53 +1918,12 @@ oes_client_unmute_events(struct oes_client *ec, oes_proc_token_t *token,
 	if (!oes_events_to_bitmap(events, count, bitmap))
 		return (EINVAL);  /* Invalid event type in list */
 
-	/* Self-unmute: clear events from list entry */
-	if (flags & OES_MUTE_SELF) {
-		struct oes_mute_entry *em_tmp;
-
-		EC_LOCK(ec);
-
-		/* Use owner_pid to match enforcement check */
-		LIST_FOREACH_SAFE(em,
-		    &ec->ec_muted[oes_mute_proc_bucket(ec->ec_owner_pid)],
-		    em_link, em_tmp) {
-			if (em->em_pid == ec->ec_owner_pid) {
-				/*
-				 * If this is a "mute all" entry (all zeros),
-				 * convert to explicit all-events first.
-				 */
-				if (em->em_events[0] == 0 &&
-				    em->em_events[1] == 0 &&
-				    em->em_events[2] == 0 &&
-				    em->em_events[3] == 0) {
-					em->em_events[0] = OES_VALID_AUTH_LO;
-					em->em_events[1] = OES_VALID_AUTH_HI;
-					em->em_events[2] = OES_VALID_NOTIFY_LO;
-					em->em_events[3] = OES_VALID_NOTIFY_HI;
-				}
-
-				/* Remove events from entry */
-				em->em_events[0] &= ~bitmap[0];
-				em->em_events[1] &= ~bitmap[1];
-				em->em_events[2] &= ~bitmap[2];
-				em->em_events[3] &= ~bitmap[3];
-
-				/* If no events left, remove entry and clear flag */
-				if (em->em_events[0] == 0 && em->em_events[1] == 0 &&
-				    em->em_events[2] == 0 && em->em_events[3] == 0) {
-					LIST_REMOVE(em, em_link);
-					free(em, M_OES);
-					ec->ec_muted_proc_count--;
-					ec->ec_flags &= ~EC_FLAG_MUTED_SELF;
-				}
-				EC_UNLOCK(ec);
-				return (0);
-			}
-		}
-
-		EC_UNLOCK(ec);
-		return (ESRCH);  /* No self entry found */
-	}
+	/*
+	 * A client never receives its own processes' events; there is no
+	 * self-mute to lift (oes(4)).
+	 */
+	if (flags & OES_MUTE_SELF)
+		return (EINVAL);
 
 	if (token == NULL)
 		return (EINVAL);
@@ -2292,9 +2237,6 @@ oes_client_unmute_all_processes(struct oes_client *ec)
 	int i;
 
 	EC_LOCK(ec);
-
-	/* Clear self-mute flag */
-	ec->ec_flags &= ~EC_FLAG_MUTED_SELF;
 
 	/* Free all muted process entries from all hash buckets */
 	for (i = 0; i < OES_MUTE_PROC_BUCKETS; i++) {

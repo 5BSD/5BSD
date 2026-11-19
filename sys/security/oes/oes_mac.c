@@ -671,6 +671,9 @@ oes_dispatch_auth_notification(const struct oes_pending *ep, struct proc *p,
 	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
 		if (!oes_pending_visible_to_client(ep, ec))
 			continue;
+		/* Never to a client its subject acts as (lock-free). */
+		if (oes_client_is_reader(ec, &ep->ep_msg.em_process))
+			continue;
 		EC_LOCK(ec);
 		if (ec->ec_flags & EC_FLAG_CLOSING) {
 			EC_UNLOCK(ec);
@@ -728,7 +731,7 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 	bool auth_delivery_fail_closed = false;
 	bool is_auth;
 	bool cached_denied = false;
-	bool fail_open;
+	bool fail_open, reader;
 	int error = 0;
 	oes_event_type_t event;
 
@@ -833,13 +836,11 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 		OES_LOCK();
 	}
 
-	/* Snapshot the portable equivalent of es_process_t.is_es_client. */
-	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
-		if (ec->ec_owner_pid != ep->ep_msg.em_process.ep_pid ||
-		    (ec->ec_owner_genid != 0 &&
-		    ec->ec_owner_genid !=
-		    ep->ep_msg.em_process.ep_token.ept_genid))
-			continue;
+	/*
+	 * Snapshot the portable equivalent of es_process_t.is_es_client: the
+	 * subject acts as some client (one of its readers).
+	 */
+	if (oes_process_is_reader(&ep->ep_msg.em_process)) {
 		ep->ep_msg.em_process.ep_flags |= EP_FLAG_OES_CLIENT;
 		if (auth_clones != NULL) {
 			for (size_t i = 0; i < auth_max; i++) {
@@ -848,7 +849,6 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 					    EP_FLAG_OES_CLIENT;
 			}
 		}
-		break;
 	}
 
 	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
@@ -856,21 +856,22 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 
 		if (!oes_pending_visible_to_client(ep, ec))
 			continue;
+		/*
+		 * A client never receives events caused by the processes that
+		 * act as it (its readers); lock-free.  For AUTH that is an
+		 * implicit allow, as part of the policy.
+		 */
+		reader = oes_client_is_reader(ec, &ep->ep_msg.em_process);
 		EC_LOCK(ec);
 
 		if (ec->ec_flags & EC_FLAG_CLOSING) {
 			EC_UNLOCK(ec);
 			continue;
 		}
-
-		/* AUTH clients never authorize their own operations. */
-		if (is_auth && ec->ec_mode == OES_MODE_AUTH &&
-		    oes_client_subscribed(ec, event) &&
-		    ep->ep_msg.em_process.ep_pid == ec->ec_owner_pid &&
-		    (ec->ec_owner_genid == 0 ||
-		    ep->ep_msg.em_process.ep_token.ept_genid ==
-		    ec->ec_owner_genid)) {
-			auth_consulted = true; /* Implicit allow, as part of the policy. */
+		if (reader) {
+			if (is_auth && ec->ec_mode == OES_MODE_AUTH &&
+			    oes_client_subscribed(ec, event))
+				auth_consulted = true;
 			EC_UNLOCK(ec);
 			continue;
 		}
@@ -1844,6 +1845,9 @@ oes_deliver_notify_locked(struct oes_pending *ep)
 	OES_LOCK();
 	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
 		if (!oes_pending_visible_to_client(ep, ec))
+			continue;
+		/* Never to a client its subject acts as (lock-free). */
+		if (oes_client_is_reader(ec, &ep->ep_msg.em_process))
 			continue;
 		EC_LOCK(ec);
 		if (ec->ec_flags & EC_FLAG_CLOSING) {

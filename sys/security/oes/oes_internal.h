@@ -15,6 +15,7 @@
 #include <sys/param.h>
 #include <sys/kernel.h>
 #include <sys/counter.h>
+#include <sys/epoch.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
 #include <sys/rmlock.h>
@@ -155,10 +156,46 @@ TAILQ_HEAD(oes_cache_lru, oes_cache_entry);
  * Each open() creates a new client with independent subscriptions,
  * event queue, and configuration.
  */
+/*
+ * The processes that act as a client: its readers (oes(4), "A client's own
+ * processes"; oes-no-self-events.md).  An event whose subject is a reader
+ * is never delivered to that client.  A process joins at open (the opener),
+ * at read, write (an AUTH response), poll, kevent registration and
+ * OES_IOC_JOIN; it is keyed by (pid, genid, exec_id), so pid reuse cannot
+ * alias and membership ends at exec.
+ *
+ * Bound: every entry is a live process that did a consuming operation on
+ * this client's open file through a descriptor of it, in the image it
+ * still runs; each join drops the entries whose process exited or exec'd.
+ * So after a join ors_count is at most the number of distinct live
+ * processes that consumed the file since their last exec, at most
+ * kern.maxproc.  There is no fixed capacity: each join replaces the array
+ * by one sized for the old entries plus the caller (M_WAITOK on the reader
+ * path, never in dispatch); a join happens once per process and image.
+ *
+ * Published with atomic_store_rel_ptr() under ec_readers_lock and read with
+ * atomic_load_acq_ptr() inside oes_readers_epoch; a replaced array is freed
+ * by epoch_call().
+ */
+struct oes_reader {
+	pid_t			or_pid;
+	uint32_t		or_pad;
+	uint64_t		or_genid;
+	uint64_t		or_exec_id;
+};
+struct oes_readers {
+	struct epoch_context	ors_ctx;
+	u_int			ors_count;	/* entries used */
+	u_int			ors_size;	/* entries allocated */
+	struct oes_reader	ors_r[];
+};
+
 struct oes_client {
 	LIST_ENTRY(oes_client)	ec_link;	/* Link in global list */
 	struct mtx		ec_mtx;		/* Protects this client */
 	uint64_t		ec_id;		/* Unique client ID */
+	struct oes_readers	*ec_readers;	/* Epoch-published; see above */
+	struct sx		ec_readers_lock; /* Joins only; a leaf */
 	pid_t			ec_owner_pid;	/* Owner pid (open()) */
 	uint64_t		ec_owner_genid;	/* Owner generation */
 	uint64_t		ec_scope_marker;	/* Inherited descendants marker */
@@ -649,6 +686,11 @@ void	oes_set_auth_deadline(struct oes_pending *ep, uint32_t deadline_ms);
  */
 int	oes_mac_init(void);
 uint64_t oes_proc_get_exec_id(struct proc *p);
+void	oes_readers_init(void);
+void	oes_readers_fini(void);
+bool	oes_client_is_reader(struct oes_client *, const oes_process_t *);
+void	oes_client_join(struct oes_client *, struct thread *);
+bool	oes_process_is_reader(const oes_process_t *);
 const char *oes_proc_get_exec_path(struct proc *p, uint32_t *meta_flags);
 
 /*
@@ -698,7 +740,6 @@ extern int oes_max_clients;
 extern int oes_cache_max_entries;
 extern char oes_default_muted_paths[];
 extern char oes_default_muted_paths_literal[];
-extern int oes_default_self_mute;
 
 /*
  * Debug macros

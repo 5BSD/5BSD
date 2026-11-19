@@ -1071,6 +1071,14 @@ struct oes_jail_scope_args {
 #define OES_IOC_SET_JAIL_SCOPE	_IOW('E', 43, struct oes_jail_scope_args)
 #define OES_IOC_GET_JAIL_SCOPE	_IOR('E', 44, struct oes_jail_scope_args)
 
+/*
+ * Make the caller one of the client's readers (oes(4), "A client's own
+ * processes"): events the caller causes are never delivered to this client.
+ * Reading, answering, polling and kevent registration do the same; call it
+ * first on a descriptor received from another process.
+ */
+#define OES_IOC_JOIN		_IO('E', 45)
+
 /* Set client mode and parameters */
 struct oes_mode_args {
 	uint32_t	ema_mode;	/* OES_MODE_* */
@@ -1341,7 +1349,7 @@ struct oes_stats {
 #ifndef _KERNEL
 #define OES_IOCTLS_THIRD_PARTY_INIT \
 	{ OES_IOC_SUBSCRIBE, OES_IOC_SUBSCRIBE_BITMAP, \
-	  OES_IOC_GET_SUBSCRIPTIONS, \
+	  OES_IOC_GET_SUBSCRIPTIONS, OES_IOC_JOIN, \
 	  OES_IOC_GET_SCOPE, OES_IOC_GET_JAIL_SCOPE, \
 	  OES_IOC_GET_MODE, \
 	  OES_IOC_SET_DEADLINE_MAX, OES_IOC_GET_DEADLINE_MAX, \
@@ -1360,7 +1368,7 @@ struct oes_stats {
 
 #define OES_IOCTLS_ALL_INIT \
 	{ OES_IOC_SUBSCRIBE, OES_IOC_SUBSCRIBE_BITMAP, \
-	  OES_IOC_GET_SUBSCRIPTIONS, \
+	  OES_IOC_GET_SUBSCRIPTIONS, OES_IOC_JOIN, \
 	  OES_IOC_SET_SCOPE, OES_IOC_GET_SCOPE, \
 	  OES_IOC_SET_JAIL_SCOPE, OES_IOC_GET_JAIL_SCOPE, \
 	  OES_IOC_SET_MODE, OES_IOC_GET_MODE, \

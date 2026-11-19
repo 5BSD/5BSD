@@ -144,9 +144,6 @@ SYSCTL_STRING(_security_oes, OID_AUTO, default_muted_paths_literal, CTLFLAG_RW,
     oes_default_muted_paths_literal, sizeof(oes_default_muted_paths_literal),
     "Colon-separated paths to mute by default (literal match)");
 
-int oes_default_self_mute = 1;
-SYSCTL_INT(_security_oes, OID_AUTO, default_self_mute, CTLFLAG_RW,
-    &oes_default_self_mute, 0, "Automatically self-mute new clients (1=yes)");
 
 /*
  * Device operations
@@ -332,6 +329,12 @@ oes_open(struct cdev *dev __unused, int oflags __unused, int devtype __unused,
 		return (error);
 	}
 
+	/*
+	 * The opener acts as the client: it is its first reader, before the
+	 * client can receive anything (oes(4), "A client's own processes").
+	 */
+	oes_client_join(ec, td);
+
 	/* Add to global client list */
 	OES_LOCK();
 	LIST_INSERT_HEAD(&oes_softc.sc_clients, ec, ec_link);
@@ -433,6 +436,7 @@ oes_read(struct cdev *dev __unused, struct uio *uio, int ioflag)
 
 	if (uio->uio_resid < sizeof(oes_message_t))
 		return (EINVAL);
+	oes_client_join(ec, curthread);
 
 	EC_LOCK(ec);
 
@@ -592,6 +596,7 @@ oes_write(struct cdev *dev, struct uio *uio, int ioflag)
 	error = devfs_get_cdevpriv((void **)&ec);
 	if (error)
 		return (error);
+	oes_client_join(ec, curthread);
 
 	if (uio->uio_resid == sizeof(oes_response_t)) {
 		/* Basic response */
@@ -800,37 +805,15 @@ oes_ioctl_mute_process(struct oes_client *ec, struct oes_mute_args *args)
 static int
 oes_ioctl_unmute_process(struct oes_client *ec, struct oes_mute_args *args)
 {
-	struct oes_mute_entry *em, *em_tmp;
-	pid_t mypid;
-
 	if (args == NULL || (args->emu_flags & ~OES_MUTE_SELF) != 0)
 		return (EINVAL);
 
-	/* Self-unmute: clear the self-mute flag AND remove list entry */
-	if (args->emu_flags & OES_MUTE_SELF) {
-		/*
-		 * Use ec_owner_pid, not curproc->p_pid, because the fd may
-		 * have been passed to another process.  Self-mute is about
-		 * the original opener, not the current caller.
-		 */
-		EC_LOCK(ec);
-		mypid = ec->ec_owner_pid;
-		ec->ec_flags &= ~EC_FLAG_MUTED_SELF;
-
-		/* Also remove the list entry for self */
-		LIST_FOREACH_SAFE(em, &ec->ec_muted[oes_mute_proc_bucket(mypid)],
-		    em_link, em_tmp) {
-			if (em->em_pid == mypid) {
-				LIST_REMOVE(em, em_link);
-				free(em, M_OES);
-				ec->ec_muted_proc_count--;
-				break;
-			}
-		}
-
-		EC_UNLOCK(ec);
-		return (0);
-	}
+	/*
+	 * A client never receives its own processes' events; there is no
+	 * self-mute to lift (oes(4)).
+	 */
+	if (args->emu_flags & OES_MUTE_SELF)
+		return (EINVAL);
 
 	return (oes_client_unmute(ec, &args->emu_token));
 }
@@ -1184,6 +1167,10 @@ oes_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 		    (struct oes_mute_path_args *)data));
 	}
 
+	case OES_IOC_JOIN:
+		oes_client_join(ec, td);
+		return (0);
+
 	case OES_IOC_SET_MUTE_INVERT: {
 		return (oes_ioctl_set_mute_invert(ec,
 		    (struct oes_mute_invert_args *)data));
@@ -1324,6 +1311,7 @@ oes_poll(struct cdev *dev, int events, struct thread *td)
 	error = devfs_get_cdevpriv((void **)&ec);
 	if (error)
 		return (POLLNVAL);
+	oes_client_join(ec, td);
 
 	EC_LOCK(ec);
 
@@ -1363,6 +1351,7 @@ oes_kqfilter(struct cdev *dev, struct knote *kn)
 	error = devfs_get_cdevpriv((void **)&ec);
 	if (error)
 		return (error);
+	oes_client_join(ec, curthread);
 
 	switch (kn->kn_filter) {
 	case EVFILT_READ:
@@ -1477,9 +1466,12 @@ oes_dev_init(void)
 	taskqueue_start_threads(&oes_softc.sc_defer_tq, 1, PI_SOFT,
 	    "oes_deferq");
 
+	oes_readers_init();
+
 	oes_softc.sc_cdev = make_dev(&oes_cdevsw, 0, UID_ROOT, GID_WHEEL,
 	    0600, "oes");
 	if (oes_softc.sc_cdev == NULL) {
+		oes_readers_fini();
 		taskqueue_free(oes_softc.sc_defer_tq);
 		mtx_destroy(&oes_softc.sc_defer_mtx);
 		oes_jail_counters_free();
@@ -1564,6 +1556,7 @@ oes_dev_uninit(void)
 	}
 	mtx_destroy(&oes_softc.sc_defer_mtx);
 
+	oes_readers_fini();
 	oes_jail_counters_free();
 	rm_destroy(&oes_softc.sc_jail_lock);
 	mtx_destroy(&oes_softc.sc_mtx);
