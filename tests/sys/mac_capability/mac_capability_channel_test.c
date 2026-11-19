@@ -2448,36 +2448,70 @@ ATF_TC_BODY(handler_revoke_frees_endpoint_carrying_itself, tc)
 {
 	static unsigned char payload[HELD_LEN];
 	static const char note[] = "carrier";
-	int carried[2], P[2], sv[2];
-	pid_t hold;
+	int carried[2], go[2], P[2], saved, status, sv[2], tries;
+	pid_t child, hold;
+	char c;
 
 	ATF_REQUIRE(chan_create_required(P) == 0);
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	/*
-	 * P[1] is revoked but not closed, so the channel still names it as
-	 * P[0]'s peer: P[0]'s handler fails to forward to it and revokes
-	 * P[0] from the dispatch task.
-	 */
-	ATF_REQUIRE_MSG(ioctl(P[1], MAC_CAPABILITY_TERMINATE, NULL) == 0,
-	    "terminate: %s", strerror(errno));
 	hold = hold_forward_start();
-	/* The handler is held in its forward of this message... */
+	/*
+	 * Through P[0]'s handler, not straight to P[1]'s queue: the handler
+	 * holds a reference to P[1] while dtrace holds it in its forward of
+	 * this message.
+	 */
+	saved = set_direct(0);
+	ATF_REQUIRE_MSG(saved >= 0, "kern.mac_capability.direct_delivery: %s",
+	    strerror(errno));
 	ATF_REQUIRE_MSG(chan_send(P[0], payload, sizeof(payload)) == 0,
 	    "send: %s", strerror(errno));
 	/*
-	 * ...while the message holding the last references to P[0] and to
-	 * sv[0] is queued behind it.  The handler's revoke frees it on the
-	 * service taskqueue, where P[0]'s close would drain P[0]'s own task.
+	 * Behind it, a message holding the last references to P[0] and to
+	 * sv[0], in that order.
 	 */
 	carried[0] = P[0];
 	carried[1] = sv[0];
 	send_carrier(P[0], note, sizeof(note), carried, 2);
+	(void)set_direct(saved);
 	ATF_REQUIRE_EQ(0, close(P[0]));
 	ATF_REQUIRE_EQ(0, close(sv[0]));
+	/*
+	 * Close P[1] meanwhile.  Its close marks it closed and then waits for
+	 * the handler's reference before the channel revokes P[0]; the
+	 * handler's forward to the closed P[1] fails, so the handler revokes
+	 * P[0] itself, from the dispatch task.  That revoke frees the queued
+	 * message: P[0]'s close would drain P[0]'s own task, on the taskqueue
+	 * it runs on.  The close of P[1] then waits for that handler; it runs
+	 * in a child that may never return.  The handler is in its held
+	 * forward by now (it was scheduled by the first send).
+	 */
+	usleep(100000);
+	ATF_REQUIRE(pipe(go) == 0);
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		(void)setsid();
+		close(sv[1]);
+		close(go[1]);
+		(void)read(go[0], &c, 1);
+		close(P[1]);
+		_exit(0);
+	}
+	close(go[0]);
+	ATF_REQUIRE_EQ(0, close(P[1]));
+	ATF_REQUIRE_EQ(1, write(go[1], "g", 1));
+	close(go[1]);
 	ATF_CHECK_MSG(socket_closed_within(sv[1], 30),
 	    "the queued message was never freed: the dispatch task is stuck");
 	hold_forward_stop(hold);
-	close(P[1]);
+	for (tries = 0; tries < 300; tries++) {
+		if (waitpid(child, &status, WNOHANG) == child)
+			break;
+		usleep(100000);
+	}
+	ATF_REQUIRE_MSG(tries < 300,
+	    "the child's close of P[1] has not returned after 30 s");
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
 	close(sv[1]);
 }
 
