@@ -510,7 +510,11 @@ ATF_TC_BODY(exec_held_at_interp, tc)
 	errno = 0;
 	ATF_CHECK_EQ(-1, dq_attach(s.q, pd));
 	ATF_CHECK_EQ(EBUSY, errno);
-	/* kern.proc.rlimit waits in execve_block_wait ("inexec"). */
+	/*
+	 * kern.proc.rlimit waits in execve_block_wait ("inexec").  That a
+	 * sleep began has no event to wait on; dqt_wait_wmesg samples the
+	 * wait channel (the harness's poll, being replaced on audit/dq).
+	 */
 	mib[0] = CTL_KERN;
 	mib[1] = KERN_PROC;
 	mib[2] = KERN_PROC_RLIMIT;
@@ -542,9 +546,11 @@ ATF_TC_BODY(exec_held_at_interp, tc)
 	pid = held_child(&s, held_vfork, &a, &pd);
 	held = hold_wait(&h);
 	ATF_CHECK(held != pid);
-	ATF_CHECK_MSG(dqt_wait_wmesg(pid, "ppwait", DQT_WAIT_MS),
-	    "the vfork parent does not wait");
-	ATF_CHECK(pipe_empty(resp[0]));
+	/*
+	 * The parent writes only once vfork returns, which needs the
+	 * child's exec to finish: nothing on the pipe while it is held.
+	 */
+	ATF_CHECK_MSG(pipe_empty(resp[0]), "the vfork parent did not wait");
 	hold_release(&s, &h);
 	ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
 	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
