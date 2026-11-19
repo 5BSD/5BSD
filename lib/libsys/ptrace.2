@@ -514,6 +514,20 @@ Registers written with
 .Dv PT_SETREGSET
 do not end the sleep.
 Reading or writing the process's memory does not end the sleep.
+A thread that the attach finds on its way into an interruptible sleep,
+not yet asleep, cannot stop there: it leaves the system call to stop at
+the user boundary, and the call is restarted when the process is resumed
+or detached.
+Its registers, while it is stopped, are those of the restarted call.
+System calls that are not restarted after a signal, such as
+.Xr nanosleep 2 ,
+.Xr poll 2 ,
+.Xr select 2
+and
+.Xr kevent 2 ,
+fail with
+.Er EINTR
+in that case.
 When the sysctl is not set, the attach stops the process with
 .Dv SIGSTOP ,
 which ends interruptible sleeps as a stop signal does; most interrupted

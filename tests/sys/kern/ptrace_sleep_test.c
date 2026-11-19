@@ -23,6 +23,8 @@
  * target's lookup of a FIFO; the debugger attaches while the lookup waits
  * for its answer (a wait that defers stops), then answers it, and the
  * target goes on into the FIFO open's sleep with the stop already pending.
+ * A transparent attach makes it back out of the call to stop, and the
+ * call is restarted; a non-transparent one keeps FreeBSD's behaviour.
  *
  * The sce cases check what a memory write still does: written at a
  * system call entry stop, it is what the call reads as its arguments.
@@ -921,19 +923,24 @@ ATF_TC_CLEANUP(name, tc)						\
 	cleanup();							\
 }
 
-/* Transparent attach before the sleep: today the open fails. */
+/*
+ * Transparent attach before the sleep: the thread backs out of the call
+ * with ERESTART to stop, and the open is restarted when it is resumed.
+ * It stops at the user boundary, so registers written there are the
+ * restarted call's, as after a non-transparent attach of a sleeper.
+ */
 PRESLEEP_CASE(transparent__presleep_fifo_open__continue,
     "Transparent attach just before the FIFO open sleeps, PT_CONTINUE: "
-    "the open fails with EINTR",
-    1, false, false, RES_EINTR)
+    "the open is restarted and completes",
+    1, false, false, RES_DONE)
 PRESLEEP_CASE(transparent__presleep_fifo_open__detach,
     "Transparent attach just before the FIFO open sleeps, PT_DETACH: "
-    "the open fails with EINTR",
-    1, true, false, RES_EINTR)
+    "the open is restarted and completes",
+    1, true, false, RES_DONE)
 PRESLEEP_CASE(transparent__presleep_fifo_open__setregs,
     "Transparent attach just before the FIFO open sleeps, PT_SETREGS of "
-    "the same values: the open fails with EINTR",
-    1, false, true, RES_EINTR)
+    "the same values: the open is restarted and completes",
+    1, false, true, RES_DONE)
 
 /* Non-transparent attach before the sleep: FreeBSD behaviour. */
 PRESLEEP_CASE(legacy__presleep_fifo_open__continue,

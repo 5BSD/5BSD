@@ -48,6 +48,7 @@
 #include <sys/sched.h>
 #include <sys/sleepqueue.h>
 #include <sys/selinfo.h>
+#include <sys/signalvar.h>
 #include <sys/syscallsubr.h>
 #include <sys/dtrace_bsd.h>
 #include <sys/sysent.h>
@@ -1453,9 +1454,23 @@ thread_suspend_check(int return_instead)
 		 * We might get here with return_instead == 1 if
 		 * other checks missed it.  Then we must not suspend
 		 * regardless of P_SHOULDSTOP() or debugger request.
+		 *
+		 * A transparent PT_ATTACH stops the process from
+		 * outside, with no thread reporting the stop (p_xthread
+		 * is NULL).  It leaves a thread that is already asleep
+		 * on its sleep queue; a thread caught on its way into a
+		 * sleep cannot stop there and backs out to the user
+		 * boundary instead.  Back out with ERESTART, so that the
+		 * system call is restarted when the debugger resumes the
+		 * process, as if the thread had been asleep already.
 		 */
-		if (return_instead)
+		if (return_instead) {
+			if (pt_attach_transparent &&
+			    (p->p_flag & P_STOPPED_TRACE) != 0 &&
+			    p->p_xthread == NULL)
+				return (ERESTART);
 			return (EINTR);
+		}
 
 		/*
 		 * If the process is waiting for us to exit,
