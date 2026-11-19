@@ -743,8 +743,8 @@ fasttrap_exec_exit(proc_t *p)
 	 */
 	fasttrap_provider_retire(p->p_pid, FASTTRAP_PID_NAME, 0);
 #ifndef illumos
-	/* 5BSD: dtrace_helpers_destroy() checks for helpers under its lock. */
-	dtrace_helpers_destroy(p);
+	if (p->p_dtrace_helpers)
+		dtrace_helpers_destroy(p);
 	PROC_LOCK(p);
 	_PRELE(p);
 #endif

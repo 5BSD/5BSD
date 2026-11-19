@@ -54,14 +54,15 @@ SYSCTL_INT(_debug_dtrace, OID_AUTO, verbose_ioctl, CTLFLAG_RW,
  *   another object, the stack or the heap.
  *
  * The target is held, with exec blocked, from the check to the
- * registration; exit waits for the hold ("exithold") before the fasttrap
- * exit hook, and the registration refuses a process that has begun to exit
- * (checked under dtrace_lock, which that hook takes), so no provider
- * outlives its process.
+ * registration.  pget(PGET_NOTWEXIT) takes the hold under the process lock,
+ * so a process that had begun to exit is refused, and one that begins to
+ * exit afterwards waits for the hold ("exithold" in exit1()) before the
+ * fasttrap exit hook destroys its helpers: no provider outlives its
+ * process.  Exec, which also runs that hook, is blocked.
  *
  * Errors: EPERM (no PRIV_DTRACE_PROC, or the Unix debug rules), ECAPMODE
- * (the caller is in capability mode), ESRCH (no such process, or it is
- * exiting), EINVAL (a system process, a dofhp_addr that is not the load
+ * (the caller is in capability mode), ESRCH (no such process, or it has
+ * begun to exit), EINVAL (a system process, a dofhp_addr that is not the load
  * base, not an ELF object, or a DOF the parser refuses), EACCES (a MAC
  * policy), EBUSY (exec in progress), EFAULT (the address is not in such a
  * mapping, the DOF extends past it, or a probe site lies outside the
@@ -255,7 +256,6 @@ dtrace_adddof_other(struct thread *td, dof_helper_t *dhp)
 	struct proc *p;
 	dof_hdr_t *dof;
 	uint64_t base;
-	bool exiting;
 	int error, rval;
 
 	dof = NULL;
@@ -300,13 +300,7 @@ dtrace_adddof_other(struct thread *td, dof_helper_t *dhp)
 		vrele(dao.dao_vp);
 	if (dof != NULL) {
 		mutex_enter(&dtrace_lock);
-		PROC_LOCK(p);
-		exiting = (p->p_flag & P_WEXIT) != 0;
-		PROC_UNLOCK(p);
-		if (exiting) {
-			dtrace_dof_destroy(dof);
-			error = ESRCH;
-		} else if ((rval = dtrace_helper_slurp(dof, dhp, p,
+		if ((rval = dtrace_helper_slurp(dof, dhp, p,
 		    &dao.dao_pcs)) != -1) {
 			dhp->dofhp_gen = rval;
 			error = 0;

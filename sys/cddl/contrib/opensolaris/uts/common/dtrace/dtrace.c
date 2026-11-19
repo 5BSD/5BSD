@@ -21121,18 +21121,6 @@ dtrace_helpers_destroy(proc_t *p)
 
 	mutex_enter(&dtrace_lock);
 
-#ifdef __FreeBSD__
-	/*
-	 * 5BSD: fasttrap_exec_exit() calls this for every exit and exec, and
-	 * decides here, under dtrace_lock, whether there is anything to
-	 * destroy: DTRACEHIOC_ADDDOF for another process adds helpers under
-	 * that lock, after checking that the process is not exiting.
-	 */
-	if (p->p_dtrace_helpers == NULL) {
-		mutex_exit(&dtrace_lock);
-		return;
-	}
-#endif
 	ASSERT(p->p_dtrace_helpers != NULL);
 	ASSERT(dtrace_helpers > 0);
 
