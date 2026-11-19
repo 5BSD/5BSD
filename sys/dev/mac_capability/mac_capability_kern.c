@@ -100,15 +100,15 @@ mac_capability_resolve_proc(struct file **fds, int nfds, struct proc **pp)
 }
 
 /*
- * Detach the RX queue of an instance onto q.  The caller frees q with
- * mac_capability_free_msgq() after dropping ci_mtx.
+ * Detach the RX queue of an instance onto q.  The caller frees q after
+ * dropping ci_mtx, through the reaper (mac_capability_free_msgq_deferred()).
  */
 void
 mac_capability_instance_drain_rxq(struct mac_capability_instance *s,
     struct mac_capability_msgq *q)
 {
 	struct mac_capability_service *svc;
-	const char *name;
+	const char *name __sdt_used;
 
 	mtx_assert(&s->ci_mtx, MA_OWNED);
 	if (STAILQ_EMPTY(&s->ci_rxq))
