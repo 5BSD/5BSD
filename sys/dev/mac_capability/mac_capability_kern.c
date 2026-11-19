@@ -155,26 +155,27 @@ mac_capability_free_msgq(struct mac_capability_msgq *q)
  * taskqueue of its own that holds no lock and no instance reference.
  * Messages without descriptors are freed at once.
  */
-static struct mtx mac_capability_reap_mtx;
-static struct mac_capability_msgq mac_capability_reapq =
-    STAILQ_HEAD_INITIALIZER(mac_capability_reapq);	/* (reap_mtx) */
+static struct mac_capability_msg *mac_capability_reap_head; /* (atomic) */
 static struct task mac_capability_reap_task;
 static struct taskqueue *mac_capability_reap_tq;
 
+/*
+ * The hand-over list is a LIFO linked through cm_link: producers push with
+ * a release compare-and-set, the reaper takes the whole list with a swap
+ * and an acquire fence.  The order of the frees does not matter.  A push
+ * while the task runs pends it again, so nothing is left behind.
+ */
 static void
 mac_capability_reap(void *arg __unused, int pending __unused)
 {
-	struct mac_capability_msgq q;
+	struct mac_capability_msg *msg, *next;
 
-	/* A close run here may hand over more; take them in this pass. */
-	for (;;) {
-		STAILQ_INIT(&q);
-		mtx_lock(&mac_capability_reap_mtx);
-		STAILQ_CONCAT(&q, &mac_capability_reapq);
-		mtx_unlock(&mac_capability_reap_mtx);
-		if (STAILQ_EMPTY(&q))
-			break;
-		mac_capability_free_msgq(&q);
+	msg = (struct mac_capability_msg *)atomic_swap_ptr(
+	    (volatile uintptr_t *)&mac_capability_reap_head, (uintptr_t)NULL);
+	atomic_thread_fence_acq();
+	for (; msg != NULL; msg = next) {
+		next = STAILQ_NEXT(msg, cm_link);
+		mac_capability_msg_free(msg);
 	}
 }
 
@@ -182,8 +183,6 @@ void
 mac_capability_reap_init(void)
 {
 
-	mtx_init(&mac_capability_reap_mtx, "mac_capability reap", NULL,
-	    MTX_DEF);
 	TASK_INIT(&mac_capability_reap_task, 0, mac_capability_reap, NULL);
 	mac_capability_reap_tq = taskqueue_create("mac_capability reap",
 	    M_WAITOK, taskqueue_thread_enqueue, &mac_capability_reap_tq);
@@ -196,10 +195,9 @@ mac_capability_reap_uninit(void)
 {
 
 	taskqueue_drain(mac_capability_reap_tq, &mac_capability_reap_task);
-	KASSERT(STAILQ_EMPTY(&mac_capability_reapq),
+	KASSERT(atomic_load_ptr(&mac_capability_reap_head) == NULL,
 	    ("%s: messages left to reap", __func__));
 	taskqueue_free(mac_capability_reap_tq);
-	mtx_destroy(&mac_capability_reap_mtx);
 }
 
 /*
@@ -209,11 +207,10 @@ mac_capability_reap_uninit(void)
 static void
 mac_capability_free_msgq_deferred(struct mac_capability_msgq *q)
 {
-	struct mac_capability_msgq carrying;
-	struct mac_capability_msg *msg;
+	struct mac_capability_msg *first, *last, *msg, *head;
 	int n;
 
-	STAILQ_INIT(&carrying);
+	first = last = NULL;
 	n = 0;
 	while ((msg = STAILQ_FIRST(q)) != NULL) {
 		STAILQ_REMOVE_HEAD(q, cm_link);
@@ -221,15 +218,21 @@ mac_capability_free_msgq_deferred(struct mac_capability_msgq *q)
 			mac_capability_msg_free(msg);
 			continue;
 		}
-		STAILQ_INSERT_TAIL(&carrying, msg, cm_link);
+		STAILQ_NEXT(msg, cm_link) = first;
+		if (first == NULL)
+			last = msg;
+		first = msg;
 		n++;
 	}
 	if (n == 0)
 		return;
 	SDT_PROBE1(mac_capability, , , reap__defer, n);
-	mtx_lock(&mac_capability_reap_mtx);
-	STAILQ_CONCAT(&mac_capability_reapq, &carrying);
-	mtx_unlock(&mac_capability_reap_mtx);
+	head = atomic_load_ptr(&mac_capability_reap_head);
+	do {
+		STAILQ_NEXT(last, cm_link) = head;
+	} while (!atomic_fcmpset_rel_ptr(
+	    (volatile uintptr_t *)&mac_capability_reap_head,
+	    (uintptr_t *)&head, (uintptr_t)first));
 	taskqueue_enqueue(mac_capability_reap_tq, &mac_capability_reap_task);
 }
 
