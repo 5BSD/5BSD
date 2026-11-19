@@ -132,7 +132,7 @@ auth_round(void)
 			    strerror(errno));
 			errors++;
 		}
-		while (test_wait_event(fd, &buf.msg, 1) == 0)
+		while (test_wait_event(fd, &buf.msg, 0) == 0)
 			if (buf.msg.em_action == OES_ACTION_AUTH)
 				(void)idle_respond(fd, buf.msg.em_id,
 				    OES_AUTH_ALLOW);
@@ -194,7 +194,7 @@ oes_toggler(int id)
 				    strerror(errno));
 				errors++;
 			}
-			while (test_wait_event(fd, &buf.msg, 1) == 0)
+			while (test_wait_event(fd, &buf.msg, 0) == 0)
 				if (buf.msg.em_action == OES_ACTION_AUTH)
 					(void)idle_respond(fd, buf.msg.em_id,
 					    OES_AUTH_ALLOW);

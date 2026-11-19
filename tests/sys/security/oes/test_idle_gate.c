@@ -324,8 +324,8 @@ g3_g4_subscribe_unsubscribe_close(void)
 	gate_expect("G-3", open_hook);
 	fp_expect_oes("G-3");
 	(void)idle_worker_send(&w, IW_OPEN);
-	ASSERT_MSG(idle_worker_result(&w, 5000) == 0, "worker open");
-	ASSERT_MSG(idle_wait_event(fd, w.iw_pid, ev, work_ino, 5000, NULL) ==
+	ASSERT_MSG(idle_worker_result(&w, INFTIM) == 0, "worker open");
+	ASSERT_MSG(idle_wait_event(fd, w.iw_pid, ev, work_ino, INFTIM, NULL) ==
 	    0, "open record not delivered");
 
 	TEST_BEGIN("G-4 unsubscribe, then close: nothing live");
@@ -420,12 +420,12 @@ g11_cache_use(void)
 		return;
 	}
 	(void)idle_worker_send(&w, IW_OPEN);
-	if (idle_wait_event(fd, w.iw_pid, ev, work_ino, 5000, &buf.msg) != 0) {
+	if (idle_wait_event(fd, w.iw_pid, ev, work_ino, INFTIM, &buf.msg) != 0) {
 		TEST_FAIL("AUTH_OPEN not delivered");
 		goto out;
 	}
 	(void)idle_respond(fd, buf.msg.em_id, OES_AUTH_ALLOW);
-	(void)idle_worker_result(&w, 5000);
+	(void)idle_worker_result(&w, INFTIM);
 	ASSERT_MSG(test_subscribe(fd, &ev, 1, OES_SUB_REMOVE) == 0,
 	    "unsubscribe: %s", strerror(errno));
 	gate_expect("G-11 before the cache", none);
@@ -532,9 +532,9 @@ g15_passive(void)
 	    strerror(errno));
 	gate_expect("G-15", open_hook);
 	(void)idle_worker_send(&w, IW_OPEN);
-	ASSERT_MSG(idle_worker_result(&w, 5000) == 0, "worker open");
+	ASSERT_MSG(idle_worker_result(&w, INFTIM) == 0, "worker open");
 	/* A PASSIVE client receives the AUTH event as its NOTIFY counterpart. */
-	ASSERT_MSG(idle_wait_event(fd, w.iw_pid, OES_EVENT_NOTIFY_OPEN, work_ino, 5000, NULL) ==
+	ASSERT_MSG(idle_wait_event(fd, w.iw_pid, OES_EVENT_NOTIFY_OPEN, work_ino, INFTIM, NULL) ==
 	    0, "passive open record not delivered");
 	if (fd >= 0)
 		(void)close(fd);
@@ -551,7 +551,6 @@ g16_oes_only_flags(void)
 {
 	oes_event_type_t ev[] = { OES_EVENT_NOTIFY_CLOSE,
 	    OES_EVENT_NOTIFY_PIPE_WRITE };
-	struct timespec start;
 	test_msg_buf buf;
 	pid_t pid;
 	int fd, p[2], status;
@@ -578,10 +577,13 @@ g16_oes_only_flags(void)
 	ASSERT_MSG(pid > 0 && waitpid(pid, &status, 0) == pid &&
 	    WIFEXITED(status) && WEXITSTATUS(status) == 0, "child");
 	got_close = got_pipe = false;
-	clock_gettime(CLOCK_MONOTONIC, &start);
-	while ((!got_close || !got_pipe) && idle_elapsed_ms(&start) < 5000) {
-		if (test_wait_event(fd, &buf.msg, 100) != 0 ||
-		    buf.msg.em_process.ep_pid != pid)
+	/* Both records must come; the test's timeout ends the wait otherwise. */
+	while (!got_close || !got_pipe) {
+		if (test_wait_event(fd, &buf.msg, INFTIM) != 0) {
+			TEST_FAIL("reading records: %s", strerror(errno));
+			break;
+		}
+		if (buf.msg.em_process.ep_pid != pid)
 			continue;
 		if (buf.msg.em_event == OES_EVENT_NOTIFY_CLOSE)
 			got_close = true;
@@ -598,12 +600,13 @@ g16_oes_only_flags(void)
  * the deferred queue kept full (test_jail_common.h's load: writers and
  * unread clients of pipe events), a client's SUBSCRIBE and close must stay
  * fast: the gate must never wait behind the global OES lock, which the
- * delivery task holds for each event.  The bound is generous (1 s against
- * a few milliseconds expected); the defect it pins took seconds to minutes
- * per call in a 2-vCPU guest.
+ * delivery task holds for each event.  The bound is the time the delivery
+ * thread takes for one round of OES_DEFER_MAX deliveries at the rate the
+ * load measured: a call that waited behind the delivery task waits for
+ * rounds, not for single events (the defect it pins took seconds to
+ * minutes per call in a 2-vCPU guest).
  */
 #define	G17_ROUNDS	20
-#define	G17_BOUND_MS	1000
 
 static void
 g17_gate_under_load(void)
@@ -611,7 +614,7 @@ g17_gate_under_load(void)
 	oes_event_type_t ev = OES_EVENT_NOTIFY_FORK;
 	struct timespec t;
 	struct jt_load load;
-	long sub_ms, close_ms, worst_sub, worst_close;
+	long sub_ms, close_ms, worst_sub, worst_close, bound_ms;
 	int fd, statfd, i;
 
 	TEST_BEGIN("G-17 SUBSCRIBE and close stay fast while delivery is busy");
@@ -645,14 +648,79 @@ g17_gate_under_load(void)
 		if (close_ms > worst_close)
 			worst_close = close_ms;
 	}
+	bound_ms = (JT_LOAD_BOUND_EVENTS / 2) * 1000L / load.rate;
 	printf("    %d rounds with %d unread clients: SUBSCRIBE worst %ld ms, "
 	    "close worst %ld ms\n", i, load.nclients, worst_sub, worst_close);
 	jt_load_stop(&load);
 	(void)close(statfd);
-	ASSERT_MSG(worst_sub < G17_BOUND_MS, "SUBSCRIBE took %ld ms under "
-	    "load", worst_sub);
-	ASSERT_MSG(worst_close < G17_BOUND_MS, "close took %ld ms under load",
-	    worst_close);
+	ASSERT_MSG(worst_sub < bound_ms, "SUBSCRIBE took %ld ms under "
+	    "load (one delivery round %ld ms)", worst_sub, bound_ms);
+	ASSERT_MSG(worst_close < bound_ms, "close took %ld ms under load "
+	    "(one delivery round %ld ms)", worst_close, bound_ms);
+}
+
+/*
+ * Start gate for worker processes: each blocks reading the gate until the
+ * parent closes its write end, and reports on the ready pipe once it has
+ * done its first operation, so the parent can wait for all of them to be
+ * running without a timed sleep.
+ */
+struct g6_gate {
+	int	gate[2];
+	int	ready[2];
+};
+
+static int
+g6_gate_init(struct g6_gate *g)
+{
+
+	if (pipe(g->gate) != 0)
+		return (-1);
+	if (pipe(g->ready) != 0) {
+		(void)close(g->gate[0]);
+		(void)close(g->gate[1]);
+		return (-1);
+	}
+	return (0);
+}
+
+/* In a worker: wait for the parent to open the gate. */
+static void
+g6_gate_wait(struct g6_gate *g)
+{
+	char c;
+
+	(void)close(g->gate[1]);
+	(void)close(g->ready[0]);
+	while (read(g->gate[0], &c, 1) > 0)
+		;
+	(void)close(g->gate[0]);
+}
+
+/* In a worker: report the first operation done. */
+static void
+g6_gate_ready(struct g6_gate *g)
+{
+
+	(void)write(g->ready[1], "r", 1);
+	(void)close(g->ready[1]);
+}
+
+/* In the parent: release n workers and wait until each has reported. */
+static int
+g6_gate_open(struct g6_gate *g, int n)
+{
+	char c;
+	int got;
+
+	(void)close(g->gate[0]);
+	(void)close(g->ready[1]);
+	(void)close(g->gate[1]);
+	for (got = 0; got < n; got++)
+		if (read(g->ready[0], &c, 1) != 1)
+			break;
+	(void)close(g->ready[0]);
+	return (got == n ? 0 : -1);
 }
 
 #if OES_IDLE_LEVEL >= 3
@@ -667,7 +735,6 @@ g17_gate_under_load(void)
 
 struct g6_shared {
 	volatile int	gen;		/* 1 once SUBSCRIBE has returned */
-	volatile int	go;
 	int		seen[G6_WORKERS][G6_OPENS];
 	ino_t		ino[G6_WORKERS][G6_OPENS];
 };
@@ -678,10 +745,11 @@ g6_no_record_lost(void)
 	oes_event_type_t ev = OES_EVENT_NOTIFY_OPEN;
 	char path[PATH_MAX + 32];
 	struct g6_shared *sh;
-	struct timespec start;
+	struct g6_gate gate;
 	test_msg_buf buf;
-	pid_t pids[G6_WORKERS];
+	pid_t pids[G6_WORKERS], mark;
 	struct stat sb;
+	ino_t mark_ino;
 	bool *got;
 	int fd, i, k, f, status, need, have, missing;
 
@@ -721,12 +789,20 @@ g6_no_record_lost(void)
 		ASSERT_MSG(ioctl(fd, OES_IOC_SET_MODE, &ma) == 0, "mode: %s",
 		    strerror(errno));
 	}
+	/* The marker: opened once the workers are done (see below). */
+	snprintf(path, sizeof(path), "%s.g6.mark", work_file);
+	f = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	if (f < 0 || fstat(f, &sb) != 0 || g6_gate_init(&gate) != 0) {
+		TEST_FAIL("marker or gate: %s", strerror(errno));
+		return;
+	}
+	mark_ino = sb.st_ino;
+	(void)close(f);
 	for (i = 0; i < G6_WORKERS; i++) {
 		pids[i] = fork();
 		if (pids[i] == 0) {
 			(void)close(fd);
-			while (!sh->go)
-				;
+			g6_gate_wait(&gate);
 			for (k = 0; k < G6_OPENS; k++) {
 				sh->seen[i][k] = __atomic_load_n(&sh->gen,
 				    __ATOMIC_ACQUIRE);
@@ -735,21 +811,45 @@ g6_no_record_lost(void)
 				f = open(path, O_RDONLY);
 				if (f >= 0)
 					(void)close(f);
+				if (k == 0)
+					g6_gate_ready(&gate);
 			}
 			_exit(0);
 		}
 	}
-	sh->go = 1;
-	idle_sleep_ms(5);
+	/* Subscribe while every worker is opening. */
+	ASSERT_MSG(g6_gate_open(&gate, G6_WORKERS) == 0,
+	    "a worker did not start");
 	ASSERT_MSG(test_subscribe(fd, &ev, 1, OES_SUB_REPLACE) == 0,
 	    "subscribe: %s", strerror(errno));
 	__atomic_store_n(&sh->gen, 1, __ATOMIC_RELEASE);
-	clock_gettime(CLOCK_MONOTONIC, &start);
 	for (i = 0; i < G6_WORKERS; i++)
 		(void)waitpid(pids[i], &status, 0);
-	while (test_wait_event(fd, &buf.msg, 300) == 0) {
+	/*
+	 * One more descendant opens the marker after every worker has exited;
+	 * the client's queue is in order, so once the marker's record is read
+	 * every earlier record has been.  Waiting for it has no time limit of
+	 * its own: a record that never comes is the failure, and the test's
+	 * timeout ends the wait.
+	 */
+	mark = fork();
+	if (mark == 0) {
+		(void)close(fd);
+		snprintf(path, sizeof(path), "%s.g6.mark", work_file);
+		f = open(path, O_RDONLY);
+		_exit(f >= 0 ? 0 : 1);
+	}
+	(void)waitpid(mark, &status, 0);
+	for (;;) {
+		if (test_wait_event(fd, &buf.msg, INFTIM) != 0) {
+			TEST_FAIL("reading records: %s", strerror(errno));
+			break;
+		}
 		if (buf.msg.em_event != ev)
 			continue;
+		if (buf.msg.em_event_data.open.file.ef_token.eft_id ==
+		    mark_ino)
+			break;
 		for (i = 0; i < G6_WORKERS; i++)
 			for (k = 0; k < G6_OPENS; k++)
 				if (sh->ino[i][k] ==
@@ -778,6 +878,8 @@ g6_no_record_lost(void)
 			    i, k);
 			(void)unlink(path);
 		}
+	snprintf(path, sizeof(path), "%s.g6.mark", work_file);
+	(void)unlink(path);
 	free(got);
 	(void)munmap(sh, sizeof(*sh));
 }
@@ -794,7 +896,6 @@ g6_no_record_lost(void)
 
 struct g6b_shared {
 	volatile int	gen;
-	volatile int	go;
 	volatile int	stop;
 	int		after[G6_WORKERS];	/* writes started after gen */
 };
@@ -804,8 +905,9 @@ g6b_pipe_write_flag(void)
 {
 	oes_event_type_t ev = OES_EVENT_NOTIFY_PIPE_WRITE;
 	struct g6b_shared *sh;
+	struct g6_gate gate;
 	test_msg_buf buf;
-	pid_t pids[G6_WORKERS];
+	pid_t pids[G6_WORKERS], mark;
 	int fd, i, p[2], status, need, have[G6_WORKERS], total;
 	char c;
 
@@ -836,14 +938,20 @@ g6b_pipe_write_flag(void)
 		ASSERT_MSG(ioctl(fd, OES_IOC_SET_MODE, &ma) == 0, "mode: %s",
 		    strerror(errno));
 	}
+	if (g6_gate_init(&gate) != 0) {
+		TEST_FAIL("gate: %s", strerror(errno));
+		return;
+	}
 	for (i = 0; i < G6_WORKERS; i++) {
 		pids[i] = fork();
 		if (pids[i] == 0) {
 			(void)close(fd);
 			if (pipe(p) != 0)
 				_exit(1);
-			while (!sh->go)
-				;
+			g6_gate_wait(&gate);
+			if (write(p[1], "x", 1) != 1 || read(p[0], &c, 1) != 1)
+				_exit(1);
+			g6_gate_ready(&gate);
 			/*
 			 * Until told to stop, and at least G6B_WRITES after
 			 * the generation is seen: a fast SUBSCRIBE must not
@@ -860,8 +968,9 @@ g6b_pipe_write_flag(void)
 			_exit(0);
 		}
 	}
-	sh->go = 1;
-	idle_sleep_ms(5);
+	/* Subscribe while every worker is writing. */
+	ASSERT_MSG(g6_gate_open(&gate, G6_WORKERS) == 0,
+	    "a worker did not start");
 	ASSERT_MSG(test_subscribe(fd, &ev, 1, OES_SUB_REPLACE) == 0,
 	    "subscribe: %s", strerror(errno));
 	__atomic_store_n(&sh->gen, 1, __ATOMIC_RELEASE);
@@ -872,9 +981,30 @@ g6b_pipe_write_flag(void)
 		    "worker %d", i);
 		have[i] = 0;
 	}
-	while (test_wait_event(fd, &buf.msg, 300) == 0) {
+	/*
+	 * Pipe writes are delivered from the deferred queue, in order.  One
+	 * more descendant writes once after every worker has exited; once its
+	 * record is read, every earlier record has been.  The wait has no limit
+	 * of its own: a record that never comes is the failure, and the test's
+	 * timeout ends the wait.
+	 */
+	mark = fork();
+	if (mark == 0) {
+		(void)close(fd);
+		if (pipe(p) != 0 || write(p[1], "x", 1) != 1)
+			_exit(1);
+		_exit(0);
+	}
+	(void)waitpid(mark, &status, 0);
+	for (;;) {
+		if (test_wait_event(fd, &buf.msg, INFTIM) != 0) {
+			TEST_FAIL("reading records: %s", strerror(errno));
+			break;
+		}
 		if (buf.msg.em_event != OES_EVENT_NOTIFY_PIPE_WRITE)
 			continue;
+		if (buf.msg.em_process.ep_pid == mark)
+			break;
 		for (i = 0; i < G6_WORKERS; i++)
 			if (buf.msg.em_process.ep_pid == pids[i])
 				have[i]++;
@@ -906,7 +1036,7 @@ g7_auth_toggle(void)
 	long ms, worst;
 
 	TEST_BEGIN("G-7 200 rounds: subscribe AUTH_OPEN deny, unsubscribe allow");
-	fd = idle_scoped_client(OES_MODE_AUTH, 10000, NULL, 0);
+	fd = idle_scoped_client(OES_MODE_AUTH, IDLE_AUTH_DEADLINE_MS, NULL, 0);
 	if (fd < 0 || idle_worker_start(&w, work_file) != 0) {
 		TEST_FAIL("client or worker: %s", strerror(errno));
 		if (fd >= 0)
@@ -920,10 +1050,10 @@ g7_auth_toggle(void)
 		    "subscribe: %s", strerror(errno));
 		clock_gettime(CLOCK_MONOTONIC, &start);
 		(void)idle_worker_send(&w, IW_OPEN);
-		if (idle_wait_event(fd, w.iw_pid, ev, work_ino, 5000,
+		if (idle_wait_event(fd, w.iw_pid, ev, work_ino, INFTIM,
 		    &buf.msg) == 0)
 			(void)idle_respond(fd, buf.msg.em_id, OES_AUTH_DENY);
-		err = idle_worker_result(&w, 5000);
+		err = idle_worker_result(&w, INFTIM);
 		ms = idle_elapsed_ms(&start);
 		worst = MAX(worst, ms);
 		if (err != EACCES) {
@@ -935,7 +1065,7 @@ g7_auth_toggle(void)
 		    "unsubscribe: %s", strerror(errno));
 		clock_gettime(CLOCK_MONOTONIC, &start);
 		(void)idle_worker_send(&w, IW_OPEN);
-		err = idle_worker_result(&w, 5000);
+		err = idle_worker_result(&w, INFTIM);
 		ms = idle_elapsed_ms(&start);
 		worst = MAX(worst, ms);
 		if (err != 0) {
@@ -946,7 +1076,9 @@ g7_auth_toggle(void)
 	}
 	printf("    slowest open %ld ms\n", worst);
 	ASSERT_MSG(bad == 0, "%d rounds went wrong", bad);
-	ASSERT_MSG(worst <= 2000, "an open took %ld ms", worst);
+	/* No open waited for the AUTH deadline. */
+	ASSERT_MSG(worst < IDLE_AUTH_DEADLINE_MS, "an open took %ld ms",
+	    worst);
 	idle_worker_stop(&w);
 	(void)close(fd);
 }
@@ -970,7 +1102,7 @@ g8_close_then_nothing_runs(void)
 
 	TEST_BEGIN("G-8 close a silent AUTH client: waiters return, then no "
 	    "hook body runs");
-	fd = idle_scoped_client(OES_MODE_AUTH, 30000, &ev, 1);
+	fd = idle_scoped_client(OES_MODE_AUTH, IDLE_AUTH_DEADLINE_MS, &ev, 1);
 	if (fd < 0) {
 		TEST_FAIL("client: %s", strerror(errno));
 		return;
@@ -981,10 +1113,8 @@ g8_close_then_nothing_runs(void)
 			(void)idle_worker_send(&w[i], IW_OPEN);
 	}
 	got = 0;
-	clock_gettime(CLOCK_MONOTONIC, &start);
-	while (got < 8 && idle_elapsed_ms(&start) < 10000)
-		if (test_wait_event(fd, &buf.msg, 100) == 0 &&
-		    buf.msg.em_event == ev)
+	while (got < 8 && test_wait_event(fd, &buf.msg, INFTIM) == 0)
+		if (buf.msg.em_event == ev)
 			got++;
 	ASSERT_MSG(got == 8, "%d of 8 opens reached the client", got);
 	clock_gettime(CLOCK_MONOTONIC, &start);
@@ -992,9 +1122,10 @@ g8_close_then_nothing_runs(void)
 	for (i = 0; i < 8; i++) {
 		if (w[i].iw_pid <= 0)
 			continue;
-		err = idle_worker_result(&w[i], 5000);
+		err = idle_worker_result(&w[i], INFTIM);
 		ms = idle_elapsed_ms(&start);
-		ASSERT_MSG(err != -1 && ms <= 2000, "worker %d: %d after %ld ms",
+		ASSERT_MSG(err != -1 && ms < IDLE_AUTH_DEADLINE_MS,
+		    "worker %d: %d after %ld ms",
 		    i, err, ms);
 		idle_worker_stop(&w[i]);
 	}
@@ -1058,10 +1189,10 @@ g14_idle_paths(void)
 
 /*
  * G-18: the delivery thread's CPU share under an event storm.  Unprivileged
- * processes write to and read from their own pipes; global clients that
- * subscribe to pipe events and never read are added until the kernel
- * discards events at the deferred queue's limit, so the delivery thread has
- * more work than it can do.  Over a window the CPU time of the delivery
+ * processes write to and read from their own pipes, and global clients that
+ * subscribe to pipe events and never read give the delivery thread more
+ * work than it can do; that the queue discarded events during the window
+ * is checked, not assumed.  Over a window the CPU time of the delivery
  * thread (thread "oes_deferq" of process 0) is compared with each
  * producer's.
  *
@@ -1135,7 +1266,7 @@ g18_delivery_share(void)
 	long period_ms;
 	size_t len;
 	pid_t parent;
-	int ncpu, nprod = 0, nclients = 0, interval, stathz, statfd, i, j, n, p[2];
+	int ncpu, nprod = 0, nclients = 0, interval, stathz, statfd, i, n, p[2];
 	struct clockinfo ci;
 	char c;
 
@@ -1198,28 +1329,22 @@ g18_delivery_share(void)
 		}
 	}
 
-	/* Clients until the queue discards: the delivery thread is saturated. */
-	drops = jt_nosleep_drops(statfd);
-	while (nclients < JT_LOAD_MAXCLIENTS) {
-		for (j = 0; j < JT_LOAD_STEP; j++) {
-			clients[nclients] = test_open_oes();
-			if (clients[nclients] < 0 ||
-			    jt_notify_setup(clients[nclients], evs, 2) != 0) {
-				TEST_FAIL("client: %s", strerror(errno));
-				goto out;
-			}
-			nclients++;
+	/*
+	 * As many unread clients as the jail load uses to keep the queue full
+	 * (JT_LOAD_MAXCLIENTS): each event is offered to every one of them.
+	 * Whether the delivery thread was saturated is observed, not assumed:
+	 * the queue must have discarded events during the window.
+	 */
+	for (nclients = 0; nclients < JT_LOAD_MAXCLIENTS; nclients++) {
+		clients[nclients] = test_open_oes();
+		if (clients[nclients] < 0 ||
+		    jt_notify_setup(clients[nclients], evs, 2) != 0) {
+			TEST_FAIL("client: %s", strerror(errno));
+			goto out;
 		}
-		usleep(period_ms * 1000);
-		if (jt_nosleep_drops(statfd) > drops)
-			break;
-	}
-	if (jt_nosleep_drops(statfd) == drops) {
-		printf("    note: %d clients never filled the queue; not "
-		    "measured\n", nclients);
-		goto out;
 	}
 
+	drops = jt_nosleep_drops(statfd);
 	dq0 = g18_runtime(0, "oes_deferq");
 	for (i = 0; i < nprod; i++)
 		p0[i] = g18_runtime(prod[i], NULL);
@@ -1233,6 +1358,12 @@ g18_delivery_share(void)
 	}
 	if (dq0 < 0 || dq1 < 0) {
 		TEST_FAIL("no thread oes_deferq in process 0");
+		goto out;
+	}
+	if (jt_nosleep_drops(statfd) == drops) {
+		printf("    note: the queue discarded nothing with %d unread "
+		    "clients; the delivery thread kept up and was not measured\n",
+		    nclients);
 		goto out;
 	}
 	printf("    %d CPUs, %d unprivileged producers, %d unread clients, "

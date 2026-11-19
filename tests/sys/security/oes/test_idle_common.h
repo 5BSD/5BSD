@@ -52,16 +52,6 @@ idle_elapsed_ms(const struct timespec *start)
 	    (now.tv_nsec - start->tv_nsec) / 1000000L);
 }
 
-static inline void
-idle_sleep_ms(int ms)
-{
-	struct timespec ts;
-
-	ts.tv_sec = ms / 1000;
-	ts.tv_nsec = (ms % 1000) * 1000000L;
-	(void)nanosleep(&ts, NULL);
-}
-
 static void
 idle_worker_loop(int cmd, int res, const char *path)
 {
@@ -206,21 +196,29 @@ idle_scoped_client(uint32_t mode, uint32_t deadline_ms,
 }
 
 /*
+ * AUTH deadline given to clients whose waiters a test expects to be
+ * released by something else (a response, an unsubscribe, a close): a
+ * waiter that returns before it was released by that, not by the deadline,
+ * which the test tells apart by checking the time taken against it.
+ */
+#define	IDLE_AUTH_DEADLINE_MS	30000
+
+/*
  * Wait for event ev from pid about the file with inode ino (0: any file).
  * AUTH events of other kinds or processes are allowed so they never stall.
+ * timeout_ms is INFTIM for an event that must come (the test's timeout
+ * ends the wait), or 0 to look only at what is already queued.
  */
 static inline int
 idle_wait_event(int fd, pid_t pid, oes_event_type_t ev, ino_t ino,
     int timeout_ms, oes_message_t *out)
 {
-	struct timespec start;
 	test_msg_buf buf;
 	const oes_file_t *f;
 
-	clock_gettime(CLOCK_MONOTONIC, &start);
-	while (idle_elapsed_ms(&start) < timeout_ms) {
-		if (test_wait_event(fd, &buf.msg, 50) != 0)
-			continue;
+	for (;;) {
+		if (test_wait_event(fd, &buf.msg, timeout_ms) != 0)
+			return (ETIMEDOUT);
 		f = NULL;
 		switch (buf.msg.em_event) {
 		case OES_EVENT_AUTH_OPEN:
@@ -240,7 +238,6 @@ idle_wait_event(int fd, pid_t pid, oes_event_type_t ev, ino_t ino,
 		if (buf.msg.em_action == OES_ACTION_AUTH)
 			(void)idle_respond(fd, buf.msg.em_id, OES_AUTH_ALLOW);
 	}
-	return (ETIMEDOUT);
 }
 
 /* Number of malloc(9) calls of type "oes" so far. */

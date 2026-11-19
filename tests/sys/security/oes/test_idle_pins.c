@@ -95,8 +95,8 @@ pin_subscribe_delivers_at_once(void)
 		    test_subscribe(fd, &ev, 1, OES_SUB_REPLACE) == 0,
 		    "subscribe: %s", strerror(errno));
 		(void)idle_worker_send(&w, IW_OPEN);
-		ASSERT_MSG(idle_worker_result(&w, 5000) == 0, "worker open");
-		ASSERT_MSG(idle_wait_event(fd, w.iw_pid, ev, work_ino, 5000,
+		ASSERT_MSG(idle_worker_result(&w, INFTIM) == 0, "worker open");
+		ASSERT_MSG(idle_wait_event(fd, w.iw_pid, ev, work_ino, INFTIM,
 		    NULL) == 0, "open record not delivered");
 		(void)close(fd);
 	}
@@ -117,10 +117,10 @@ pin_rename_subscribe_mid_loop(void)
 {
 	oes_event_type_t ev = OES_EVENT_NOTIFY_RENAME;
 	char a[PATH_MAX + 8], b[PATH_MAX + 8];
-	struct timespec start;
 	test_msg_buf buf;
 	pid_t pid;
-	int fd, n, status;
+	int fd, n, status, ready[2];
+	char c;
 
 	TEST_BEGIN("P-O3 subscribing to RENAME during a rename loop");
 	snprintf(a, sizeof(a), "%s.ra", work_file);
@@ -131,10 +131,16 @@ pin_rename_subscribe_mid_loop(void)
 		return;
 	}
 	(void)close(fd);
+	if (pipe(ready) != 0) {
+		TEST_FAIL("pipe: %s", strerror(errno));
+		return;
+	}
 	pid = fork();
 	if (pid == 0) {
 		int errors = 0;
+		bool first = true;
 
+		(void)close(ready[0]);
 		(void)signal(SIGUSR1, rename_stop_handler);
 		while (!rename_stop) {
 			if (rename(a, b) != 0 || rename(b, a) != 0) {
@@ -143,25 +149,31 @@ pin_rename_subscribe_mid_loop(void)
 				if (errors > 10)
 					break;
 			}
+			if (first) {
+				/* The loop is running: subscribe now. */
+				first = false;
+				(void)write(ready[1], "r", 1);
+				(void)close(ready[1]);
+			}
 		}
 		_exit(errors == 0 ? 0 : 1);
 	}
-	idle_sleep_ms(300);
+	(void)close(ready[1]);
+	(void)read(ready[0], &c, 1);
+	(void)close(ready[0]);
 	fd = test_open_oes();
 	ASSERT_MSG(fd >= 0 && test_set_mode(fd, OES_MODE_NOTIFY) == 0 &&
 	    test_subscribe(fd, &ev, 1, OES_SUB_REPLACE) == 0,
 	    "subscribe RENAME: %s", strerror(errno));
 	n = 0;
-	clock_gettime(CLOCK_MONOTONIC, &start);
-	while (fd >= 0 && n < 20 && idle_elapsed_ms(&start) < 10000) {
-		if (test_wait_event(fd, &buf.msg, 100) == 0 &&
-		    buf.msg.em_event == ev && buf.msg.em_process.ep_pid == pid)
+	while (fd >= 0 && n < 20 &&
+	    test_wait_event(fd, &buf.msg, INFTIM) == 0) {
+		if (buf.msg.em_event == ev && buf.msg.em_process.ep_pid == pid)
 			n++;
 	}
 	ASSERT_MSG(n >= 20, "only %d rename records", n);
 	if (fd >= 0)
 		(void)close(fd);
-	idle_sleep_ms(100);
 	(void)kill(pid, SIGUSR1);
 	ASSERT_MSG(waitpid(pid, &status, 0) == pid && WIFEXITED(status) &&
 	    WEXITSTATUS(status) == 0, "rename loop saw errors (status %#x)",
@@ -190,16 +202,16 @@ pin_deny_then_unsubscribe(void)
 		return;
 	}
 	(void)idle_worker_send(&w, IW_OPEN);
-	if (idle_wait_event(fd, w.iw_pid, ev, work_ino, 5000, &buf.msg) == 0)
+	if (idle_wait_event(fd, w.iw_pid, ev, work_ino, INFTIM, &buf.msg) == 0)
 		(void)idle_respond(fd, buf.msg.em_id, OES_AUTH_DENY);
 	else
 		TEST_FAIL("AUTH_OPEN not delivered");
-	err = idle_worker_result(&w, 5000);
+	err = idle_worker_result(&w, INFTIM);
 	ASSERT_MSG(err == EACCES, "denied open returned %d", err);
 	ASSERT_MSG(test_subscribe(fd, &ev, 1, OES_SUB_REMOVE) == 0,
 	    "unsubscribe: %s", strerror(errno));
 	(void)idle_worker_send(&w, IW_OPEN);
-	err = idle_worker_result(&w, 5000);
+	err = idle_worker_result(&w, INFTIM);
 	ASSERT_MSG(err == 0, "open after unsubscribe returned %d", err);
 	idle_worker_stop(&w);
 	(void)close(fd);
@@ -282,7 +294,7 @@ pin_outside_write_drops_cache(void)
 		return;
 	}
 	(void)idle_worker_send(&child, IW_OPEN);
-	if (idle_wait_event(fd, child.iw_pid, ev, work_ino, 5000, &buf.msg) !=
+	if (idle_wait_event(fd, child.iw_pid, ev, work_ino, INFTIM, &buf.msg) !=
 	    0) {
 		TEST_FAIL("first AUTH_OPEN not delivered");
 		goto out;
@@ -299,18 +311,23 @@ pin_outside_write_drops_cache(void)
 	ASSERT_MSG(ioctl(fd, OES_IOC_CACHE_ADD, &entry) == 0, "cache add: %s",
 	    strerror(errno));
 	(void)idle_respond(fd, buf.msg.em_id, OES_AUTH_ALLOW);
-	err = idle_worker_result(&child, 5000);
+	err = idle_worker_result(&child, INFTIM);
 	ASSERT_MSG(err == 0, "first open returned %d", err);
 
 	/* Cached: answered without an event. */
 	(void)idle_worker_send(&child, IW_OPEN);
-	err = idle_worker_result(&child, 5000);
+	err = idle_worker_result(&child, INFTIM);
 	ASSERT_MSG(err == 0, "cached open returned %d", err);
-	ASSERT_MSG(idle_wait_event(fd, child.iw_pid, ev, work_ino, 300,
+	/*
+	 * An AUTH record is queued before its open waits for the answer, and
+	 * the open has returned: had the cache missed, the record would be in
+	 * the queue now.
+	 */
+	ASSERT_MSG(idle_wait_event(fd, child.iw_pid, ev, work_ino, 0,
 	    NULL) != 0, "cached open still delivered");
 
 	(void)idle_worker_send(&outside, IW_WRITE);
-	err = idle_worker_result(&outside, 5000);
+	err = idle_worker_result(&outside, INFTIM);
 	ASSERT_MSG(err == 0, "outside write returned %d", err);
 	memset(&st, 0, sizeof(st));
 	ASSERT_MSG(ioctl(fd, OES_IOC_GET_STATS, &st) == 0 &&
@@ -318,12 +335,12 @@ pin_outside_write_drops_cache(void)
 	    st.es_cache_entries);
 
 	(void)idle_worker_send(&child, IW_OPEN);
-	if (idle_wait_event(fd, child.iw_pid, ev, work_ino, 5000, &buf.msg) ==
+	if (idle_wait_event(fd, child.iw_pid, ev, work_ino, INFTIM, &buf.msg) ==
 	    0)
 		(void)idle_respond(fd, buf.msg.em_id, OES_AUTH_ALLOW);
 	else
 		TEST_FAIL("reopen after the outside write not delivered");
-	err = idle_worker_result(&child, 5000);
+	err = idle_worker_result(&child, INFTIM);
 	ASSERT_MSG(err == 0, "reopen returned %d", err);
 out:
 	idle_worker_stop(&child);
@@ -388,7 +405,7 @@ pin_close_releases_waiters(void)
 	long ms;
 
 	TEST_BEGIN("P-O10 closing a silent AUTH client releases 8 blocked opens");
-	fd = idle_scoped_client(OES_MODE_AUTH, 30000, &ev, 1);
+	fd = idle_scoped_client(OES_MODE_AUTH, IDLE_AUTH_DEADLINE_MS, &ev, 1);
 	if (fd < 0) {
 		TEST_FAIL("client: %s", strerror(errno));
 		return;
@@ -402,21 +419,18 @@ pin_close_releases_waiters(void)
 		(void)idle_worker_send(&w[i], IW_OPEN);
 	}
 	got = 0;
-	clock_gettime(CLOCK_MONOTONIC, &start);
-	while (got < 8 && idle_elapsed_ms(&start) < 10000) {
-		if (test_wait_event(fd, &buf.msg, 100) == 0 &&
-		    buf.msg.em_event == ev)
+	while (got < 8 && test_wait_event(fd, &buf.msg, INFTIM) == 0)
+		if (buf.msg.em_event == ev)
 			got++;
-	}
 	ASSERT_MSG(got == 8, "%d of 8 opens reached the client", got);
 	clock_gettime(CLOCK_MONOTONIC, &start);
 	(void)close(fd);
 	for (i = 0; i < 8; i++) {
 		if (w[i].iw_pid <= 0)
 			continue;
-		err = idle_worker_result(&w[i], 5000);
+		err = idle_worker_result(&w[i], INFTIM);
 		ms = idle_elapsed_ms(&start);
-		ASSERT_MSG(err != -1 && ms <= 2000,
+		ASSERT_MSG(err != -1 && ms < IDLE_AUTH_DEADLINE_MS,
 		    "worker %d: open returned %d after %ld ms", i, err, ms);
 		idle_worker_stop(&w[i]);
 	}

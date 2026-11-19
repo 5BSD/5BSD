@@ -18,23 +18,22 @@
 
 /*
  * Collect up to n events of type ev, and up to n2 of type ev2 into out2,
- * from pid; returns how many of ev.
+ * from pid; returns how many of ev.  timeout_ms is INFTIM for records that
+ * must come: the test's timeout ends the wait otherwise.
  */
 static int
 collect2(int fd, pid_t pid, oes_event_type_t ev, oes_message_t **out, int n,
     oes_event_type_t ev2, oes_message_t **out2, int n2, int *got2,
     int timeout_ms)
 {
-	struct timespec start;
 	test_msg_buf buf;
 	int got;
 
 	got = 0;
 	*got2 = 0;
-	clock_gettime(CLOCK_MONOTONIC, &start);
-	while ((got < n || *got2 < n2) && idle_elapsed_ms(&start) < timeout_ms) {
-		if (test_wait_event(fd, &buf.msg, 50) != 0)
-			continue;
+	while (got < n || *got2 < n2) {
+		if (test_wait_event(fd, &buf.msg, timeout_ms) != 0)
+			break;
 		if (buf.msg.em_process.ep_pid != pid)
 			continue;
 		if (buf.msg.em_event == ev && got < n) {
@@ -100,7 +99,7 @@ i1_pipe_ids(void)
 	ASSERT_MSG(waitpid(pid, &status, 0) == pid && WIFEXITED(status) &&
 	    WEXITSTATUS(status) == 0, "child status %#x", status);
 	nw = collect2(fd, pid, OES_EVENT_NOTIFY_PIPE_WRITE, w, 4,
-	    OES_EVENT_NOTIFY_PIPE_READ, r, 4, &nr, 5000);
+	    OES_EVENT_NOTIFY_PIPE_READ, r, 4, &nr, INFTIM);
 	ASSERT_MSG(nw == 4 && nr == 4, "%d write and %d read records", nw, nr);
 	if (nw == 4 && nr == 4) {
 		uint64_t a = w[0]->em_event_data.pipe.pipe_id;
@@ -174,7 +173,7 @@ i2_exec_ids(const char *file)
 	(void)write(go[1], "g", 1);
 	(void)waitpid(pid, &status, 0);
 	/* cat opens libraries and the file: keep the last three of pid. */
-	n = collect(fd, pid, ev, m, 4, 5000);
+	n = collect(fd, pid, ev, m, 4, INFTIM);
 	ASSERT_MSG(n >= 3, "%d open records from the child", n);
 	if (n >= 3) {
 		uint64_t e0 = m[0]->em_process.ep_exec_id;
