@@ -1040,6 +1040,40 @@ cap_exclusion_debug_check(struct thread *td, struct proc *p)
 	return (EPERM);
 }
 
+static COUNTER_U64_DEFINE_EARLY(cap_exclusion_refused_attach);
+SYSCTL_COUNTER_U64(_security_cap_exclusion, OID_AUTO, refused_attach,
+    CTLFLAG_RD, &cap_exclusion_refused_attach,
+    "Capability Broker attaches refused by base exclusion");
+
+/*
+ * May DQ_IOC_ATTACH attach the excluded p?  PROC_LOCK(p) held.  An
+ * attachable process has not exec'd (P_EXEC; dqres_attach's EBUSY test),
+ * so an excluded target is a fork child of an excluded process still
+ * running that process's code.  Only that process may hand it to a
+ * Capability Broker: by attaching it itself, or (LA-1k) through an attach
+ * token it minted from the child's shield.  An exec'd excluded target (a
+ * running Core daemon) is EPERM even to an excluded actor.  The attach
+ * clears the target's exclusion (dqres_attach()).
+ */
+int
+cap_exclusion_attach_check(struct thread *td, struct proc *p)
+{
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	if (__predict_true(!P_CAP_EXCLUDED(p)))
+		return (0);
+	if (p != initproc && (p->p_flag & P_EXEC) == 0) {
+		/* p_pptr may be read with either the proctree or p's lock. */
+		if ((atomic_load_int(&td->td_proc->p_flag2) &
+		    P2_CAP_EXCLUDED) != 0 && p->p_pptr == td->td_proc)
+			return (0);
+		/* LA-1k adds the attach-token clause here (oes-core-exemption.md 3.9.1). */
+	}
+	counter_u64_add(cap_exclusion_refused_attach, 1);
+	SDT_PROBE3(cap_exclusion, , , refuse, p->p_pid, CAPX_R_ATTACH, EPERM);
+	return (EPERM);
+}
+
 /*
  * Clear exclusion for a reason other than an exec (CAPX_CLEAR_*): tracing,
  * a prison change, a Capability Broker attach.  PROC_LOCK held.

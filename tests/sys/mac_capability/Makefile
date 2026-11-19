@@ -27,7 +27,8 @@ ATF_TESTS_C+=	authority_test_issuer_test
 # run on every tier.
 ATF_TESTS_C+=	cap_exclusion_test
 TEST_METADATA.cap_exclusion_test+=	is_exclusive="true"
-LIBADD.cap_exclusion_test+=	util
+LIBADD.cap_exclusion_test+=	util dq
+CFLAGS.cap_exclusion_test+=	-I${SRCTOP}/lib/libdq
 PROGS+=		cap_exclusion_helper
 NO_SHARED.cap_exclusion_helper=	yes
 ATF_TESTS_C+=	authority_test_issuer_anchor_test

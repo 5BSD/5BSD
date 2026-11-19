@@ -212,7 +212,7 @@ and cleared when the process is traced with
 .Xr ptrace 2
 or
 .Xr ktrace 2 ,
-or enters another jail.
+enters another jail, or is attached to a Capability Broker queue.
 A process that is not excluded, root included, cannot debug, trace or pull
 from an excluded process: every check made by
 .Xr p_candebug 9
@@ -251,6 +251,14 @@ never published, has the loader tunable
 .Va security.cap_exclusion.debug_allowed
 that lifts the refusal; attaching then clears the target's exclusion.
 .Va security.cap_exclusion.refused_debug
+counts refusals.
+Only its excluded parent may attach a fork child of an excluded process
+that has not executed another image to a Capability Broker queue
+.Pq Dv DQ_IOC_ATTACH , Xr dq 4 ;
+other attaches of an excluded process fail with
+.Er EPERM .
+The attach clears the child's exclusion.
+.Va security.cap_exclusion.refused_attach
 counts refusals.
 Exclusion grants no privilege.
 .Xr ps 1

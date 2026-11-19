@@ -36,7 +36,10 @@
 #include <sys/user.h>
 #include <sys/wait.h>
 
+#include <dev/dq/dq.h>
+
 #include <atf-c.h>
+#include <libdq.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <libutil.h>
@@ -1652,6 +1655,222 @@ ATF_TC_BODY(d11_d12_core_daemon_debug, tc)
 	close(x.image);
 }
 
+/* ------------------------------------------------------------------ */
+/* Capability Broker attach of excluded processes (commit 5). */
+
+static int
+open_queue(void)
+{
+	int q;
+
+	q = dq_open();
+	if (q < 0)
+		atf_tc_skip("cannot open /dev/dq: %s", strerror(errno));
+	return (q);
+}
+
+ATF_TC(d4_attach_excluded_refused);
+ATF_TC_HEAD(d4_attach_excluded_refused, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "D4/P14: a process that is not excluded cannot attach an excluded pre-exec child to its queue, its own child included (EPERM; refused_attach counts)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(d4_attach_excluded_refused, tc)
+{
+	struct parked k;
+	struct xcase x;
+	uint64_t refused;
+	int q;
+
+	xcase_init(tc, &x);
+	q = open_queue();
+	park_excluded(&k);
+	refused = counter("security.cap_exclusion.refused_attach");
+	ATF_CHECK_ERRNO(EPERM, dq_attach(q, k.pd) == -1);
+	ATF_CHECK_EQ(counter("security.cap_exclusion.refused_attach"),
+	    refused + 1);
+	ATF_CHECK(proc_excluded(k.pid));
+	unpark(&k);
+	close(q);
+	xcase_fini(&x);
+}
+
+/*
+ * In an excluded process E (a child of the test): open a queue and run
+ * one attach scenario; the result goes back as E's exit status.
+ *   own	E attaches its own pre-exec child K: 0, K no longer excluded.
+ *   grandchild	E attaches a pre-exec child of its child: EPERM.
+ *   execd	E attaches a child that exec'd a Core image: EPERM (not
+ *		EBUSY), K still excluded.
+ */
+enum d5_mode { D5_OWN, D5_GRANDCHILD, D5_EXECD };
+
+static int
+d5_in_excluded(enum d5_mode mode, const char *helper, int token)
+{
+	char *argv[] = { __DECONST(char *, HELPER),
+	    __DECONST(char *, "wait"), NULL };
+	int q, pd, go[2], ready[2], error, status;
+	unsigned flag2;
+	pid_t k, k2;
+	char c = 0;
+
+	if (exclude_self(NULL) != 0)
+		return (100);
+	q = dq_open();
+	if (q < 0)
+		return (101);
+	if (pipe(go) != 0 || pipe(ready) != 0)
+		return (102);
+	k = pdfork(&pd, 0);
+	if (k < 0)
+		return (103);
+	if (k == 0) {
+		close(go[1]);
+		close(ready[0]);
+		if (mode == D5_EXECD) {
+			dup2(go[0], STDIN_FILENO);
+			dup2(ready[1], STDOUT_FILENO);
+			if (op(CAP_AUTH_INSTALL, token, NULL) != 0)
+				_exit(110);
+			close(token);
+			execv(helper, argv);
+			_exit(111);
+		}
+		if (mode == D5_GRANDCHILD) {
+			k2 = fork();
+			if (k2 < 0)
+				_exit(112);
+			if (k2 == 0) {
+				(void)read(go[0], &c, 1);
+				_exit(0);
+			}
+			(void)write(ready[1], &k2, sizeof(k2));
+			(void)read(go[0], &c, 1);
+			(void)waitpid(k2, &status, 0);
+			_exit(0);
+		}
+		(void)write(ready[1], &c, 1);
+		(void)read(go[0], &c, 1);
+		_exit(0);
+	}
+	close(go[0]);
+	close(ready[1]);
+	switch (mode) {
+	case D5_OWN:
+		if (read(ready[0], &c, 1) != 1)
+			return (104);
+		error = dq_attach(q, pd) == 0 ? 0 : errno;
+		if (error != 0)
+			return (error);
+		if (proc_flag2(k, &flag2) != 0)
+			return (105);
+		if ((flag2 & P2_CAP_EXCLUDED_BIT) != 0)
+			return (106);
+		break;
+	case D5_GRANDCHILD: {
+		int pd2;
+
+		if (read(ready[0], &k2, sizeof(k2)) != sizeof(k2))
+			return (104);
+		pd2 = pdopenpid(k2, 0);
+		if (pd2 < 0)
+			return (107);
+		error = dq_attach(q, pd2) == 0 ? 0 : errno;
+		close(pd2);
+		if (error != EPERM)
+			return (error == 0 ? 108 : error);
+		break;
+	}
+	case D5_EXECD: {
+		char buf[128];
+		ssize_t n;
+
+		n = read(ready[0], buf, sizeof(buf) - 1);
+		if (n <= 0)
+			return (104);
+		buf[n] = '\0';
+		if (sscanf(buf, "flag2=%x", &flag2) != 1 ||
+		    (flag2 & P2_CAP_EXCLUDED_BIT) == 0)
+			return (109);
+		error = dq_attach(q, pd) == 0 ? 0 : errno;
+		if (error != EPERM)
+			return (error == 0 ? 108 : error);
+		break;
+	}
+	}
+	close(go[1]);
+	(void)waitpid(k, &status, 0);
+	close(pd);
+	close(q);
+	return (0);
+}
+
+static void
+d5_case(const atf_tc_t *tc, enum d5_mode mode)
+{
+	struct xcase x;
+	int status, token = -1;
+	pid_t e;
+
+	xcase_init(tc, &x);
+	if (mode == D5_EXECD)
+		token = core_token(&x, CAP_AUTH_ROLE_CORE);
+	e = fork();
+	ATF_REQUIRE(e >= 0);
+	if (e == 0)
+		_exit(d5_in_excluded(mode, x.helper, token));
+	ATF_REQUIRE(waitpid(e, &status, 0) == e);
+	ATF_REQUIRE(WIFEXITED(status));
+	if (WEXITSTATUS(status) == 101)
+		atf_tc_skip("cannot open /dev/dq");
+	ATF_CHECK_EQ_MSG(WEXITSTATUS(status), 0, "scenario %d: %d", mode,
+	    WEXITSTATUS(status));
+	if (token >= 0)
+		close(token);
+	xcase_fini(&x);
+}
+
+ATF_TC(d5_attach_own_child);
+ATF_TC_HEAD(d5_attach_own_child, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "D5/P9: an excluded process attaches its own pre-exec child to its queue; the child is then not excluded");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(d5_attach_own_child, tc)
+{
+
+	d5_case(tc, D5_OWN);
+}
+
+ATF_TC(d5b_attach_grandchild_refused);
+ATF_TC_HEAD(d5b_attach_grandchild_refused, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "D5b: an excluded process cannot attach an excluded pre-exec process that is not its child (EPERM)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(d5b_attach_grandchild_refused, tc)
+{
+
+	d5_case(tc, D5_GRANDCHILD);
+}
+
+ATF_TC(d13_attach_execd_core_refused);
+ATF_TC_HEAD(d13_attach_execd_core_refused, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "D13: an excluded child that executed its Core image is EPERM to attach, also for its excluded parent (was EBUSY)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(d13_attach_execd_core_refused, tc)
+{
+
+	d5_case(tc, D5_EXECD);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, test_process_not_excluded);
@@ -1679,5 +1898,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, x21_interpreter_pass_not_excluded);
 	ATF_TP_ADD_TC(tp, d1_d3_debug_excluded_refused);
 	ATF_TP_ADD_TC(tp, d11_d12_core_daemon_debug);
+	ATF_TP_ADD_TC(tp, d4_attach_excluded_refused);
+	ATF_TP_ADD_TC(tp, d5_attach_own_child);
+	ATF_TP_ADD_TC(tp, d5b_attach_grandchild_refused);
+	ATF_TP_ADD_TC(tp, d13_attach_execd_core_refused);
 	return (atf_no_error());
 }
