@@ -890,7 +890,7 @@ atf_test_case pid_provider_raw_makeprobe cleanup
 pid_provider_raw_makeprobe_head()
 {
 	atf_set "descr" "FASTTRAPIOC_MAKEPROBE without a grab, on a plain and" \
-	    "on a ptrace-shielded process (today: made on both)"
+	    "on a ptrace-shielded process: refused for the shielded one"
 	common_head
 }
 pid_provider_raw_makeprobe_body()
@@ -900,8 +900,8 @@ pid_provider_raw_makeprobe_body()
 	atf_check_equal 0 "$(makeprobe $FXPID)"
 	fixture_stop
 	fixture_start self
-	# Today: no check at all.
-	atf_check_equal 0 "$(makeprobe $FXPID)"
+	# p_candebug(9): the shield refuses it (it was made, unchecked, before).
+	atf_check_equal $EACCES "$(makeprobe $FXPID)"
 	fixture_stop
 }
 pid_provider_raw_makeprobe_cleanup()
@@ -913,7 +913,7 @@ atf_test_case pid_provider_preshield_enable cleanup
 pid_provider_preshield_enable_head()
 {
 	atf_set "descr" "A pid probe made on a plain process, enabled after the" \
-	    "process shields itself (today: it fires)"
+	    "process shields itself, is not enabled"
 	common_head
 }
 pid_provider_preshield_enable_body()
@@ -927,8 +927,11 @@ pid_provider_preshield_enable_body()
 	dtrace_bg "pid*:$FIXTURE:fixture_func:entry /pid == $FXPID/ { printf(\"FIRED\n\"); exit(0); }"
 	kill -USR1 "$FXPID"
 	dtrace_wait
-	# Today: the probe made before the shield fires.
-	grep -q FIRED dt.out || atf_fail "did not fire: $(cat dt.err | tr "\n" " ")"
+	# p_candebug(9) at enabling: the probe made before the shield is not
+	# enabled (it fired before).
+	if grep -q FIRED dt.out; then
+		atf_fail "the pid probe fired in the shielded process"
+	fi
 	fixture_stop
 }
 pid_provider_preshield_enable_cleanup()

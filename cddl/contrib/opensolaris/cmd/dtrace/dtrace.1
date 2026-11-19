@@ -1956,11 +1956,22 @@ reports that it cannot register the process's USDT probes, unless
 allows the description to match nothing.
 .Pp
 The pid provider places breakpoints at addresses the consumer chooses.
-It attaches to the process, which needs permission to debug it
-.Pq Xr p_candebug 9 ;
-a process protected from debuggers, such as one with a
+It needs permission to debug the process
+.Pq Xr p_candebug 9 :
+.Nm
+attaches to the process to find its functions, and the kernel checks the
+permission again when the probe is made
+.Pq Dv FASTTRAPIOC_MAKEPROBE ,
+which fails with
+.Er EACCES
+or
+.Er EPERM ,
+and when it is enabled, which leaves a probe the consumer may no longer
+debug the process for disabled.
+A process protected from debuggers, such as one with a
 .Xr mac_capability_capprotect 4
-ptrace shield, refuses it.
+ptrace shield, therefore refuses the pid provider, including probes made
+before it was shielded.
 .Fl p
 and
 .Fl c

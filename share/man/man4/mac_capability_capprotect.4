@@ -87,7 +87,10 @@ attach from foreign processes, and every other debugging access
 .Pq Xr p_candebug 9 :
 reading or writing the process's memory, its environment, descriptors and
 working directory, and the pid provider of
-.Xr dtrace 1 .
+.Xr dtrace 1 ,
+whose probes the kernel neither makes nor enables for the process
+.Pq Dv FASTTRAPIOC_MAKEPROBE ,
+including probes made before it was shielded.
 Inspection is not blocked: the process's memory map, auxiliary vector,
 ps_strings and signal trampoline locations, umask and kernel stacks
 .Pq Xr p_caninspect 9 ,
