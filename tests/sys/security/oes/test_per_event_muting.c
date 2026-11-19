@@ -67,102 +67,10 @@ main(void)
 	}
 
 	/*
-	 * Clear the default self-mute first (security.oes.default_self_mute=1
-	 * would otherwise block ALL events from ourselves, not just per-event).
+	 * The events come from a child driven over a pipe: the test opened the
+	 * client, so its own events never reach it (oes(4), "A client's own
+	 * processes").  The child never touches the client.
 	 */
-	if (ioctl(fd, OES_IOC_UNMUTE_ALL_PROCESSES, NULL) < 0) {
-		perror("OES_IOC_UNMUTE_ALL_PROCESSES");
-		close(fd);
-		return (1);
-	}
-
-	/* Self-mute only OPEN events, not ACCESS */
-	memset(&mute_proc, 0, sizeof(mute_proc));
-	mute_proc.empe_flags = OES_MUTE_SELF;
-	mute_proc.empe_count = 1;
-	mute_proc.empe_events[0] = OES_EVENT_NOTIFY_OPEN;
-	if (ioctl(fd, OES_IOC_MUTE_PROCESS_EVENTS, &mute_proc) < 0) {
-		perror("OES_IOC_MUTE_PROCESS_EVENTS (self)");
-		close(fd);
-		return (1);
-	}
-
-	/* Verify mute was applied */
-	{
-		struct oes_get_muted_processes_args get_procs;
-		struct oes_muted_process_entry proc_entries[4];
-		size_t i;
-
-		memset(&get_procs, 0, sizeof(get_procs));
-		get_procs.egmp_entries = proc_entries;
-		get_procs.egmp_count = 4;
-		if (ioctl(fd, OES_IOC_GET_MUTED_PROCESSES, &get_procs) == 0) {
-			fprintf(stderr, "  DEBUG: muted_count=%zu, my_pid=%d\n",
-			    get_procs.egmp_actual, getpid());
-			for (i = 0; i < get_procs.egmp_actual && i < 4; i++) {
-				fprintf(stderr, "    entry[%zu]: pid=%llu event_count=%u\n",
-				    i, (unsigned long long)proc_entries[i].emp_token.ept_id,
-				    proc_entries[i].emp_event_count);
-			}
-		}
-	}
-
-	/* Trigger an OPEN event - should be muted */
-	(void)open("/etc/passwd", O_RDONLY);
-
-	ret = test_wait_event_pid(fd, getpid(), OES_EVENT_NOTIFY_OPEN, 500,
-	    NULL);
-	if (ret == 0) {
-		fprintf(stderr, "FAIL: self-muted OPEN event still delivered\n");
-		close(fd);
-		return (1);
-	}
-	printf("  PASS: self per-event mute suppressed OPEN\n");
-
-	/* Trigger an ACCESS event - should NOT be muted */
-	(void)access("/etc/passwd", R_OK);
-
-	ret = test_wait_event_pid(fd, getpid(), OES_EVENT_NOTIFY_ACCESS, 1000,
-	    NULL);
-	if (ret != 0) {
-		fprintf(stderr, "FAIL: ACCESS event not delivered (should not be muted)\n");
-		close(fd);
-		return (1);
-	}
-	printf("  PASS: ACCESS event delivered (not muted)\n");
-
-	/* Unmute OPEN events */
-	if (ioctl(fd, OES_IOC_UNMUTE_PROCESS_EVENTS, &mute_proc) < 0) {
-		perror("OES_IOC_UNMUTE_PROCESS_EVENTS (self)");
-		close(fd);
-		return (1);
-	}
-
-	/* Trigger OPEN again - should now be delivered */
-	(void)open("/etc/hosts", O_RDONLY);
-
-	ret = test_wait_event_pid(fd, getpid(), OES_EVENT_NOTIFY_OPEN, 1000,
-	    NULL);
-	if (ret != 0) {
-		fprintf(stderr, "FAIL: OPEN event not delivered after unmute\n");
-		close(fd);
-		return (1);
-	}
-	printf("  PASS: OPEN event delivered after unmute\n");
-
-	/* Now test per-event path muting */
-	memset(&mute_path, 0, sizeof(mute_path));
-	strlcpy(mute_path.empae_path, "/etc/passwd", sizeof(mute_path.empae_path));
-	mute_path.empae_type = OES_MUTE_PATH_LITERAL;
-	mute_path.empae_count = 1;
-	mute_path.empae_events[0] = OES_EVENT_NOTIFY_OPEN;
-	if (ioctl(fd, OES_IOC_MUTE_PATH_EVENTS, &mute_path) < 0) {
-		perror("OES_IOC_MUTE_PATH_EVENTS");
-		close(fd);
-		return (1);
-	}
-
-	/* Test with child process */
 	if (pipe(pipefd) != 0) {
 		perror("pipe");
 		close(fd);
@@ -188,12 +96,92 @@ main(void)
 				(void)open("/etc/passwd", O_RDONLY);
 			if (cmd == 'h')
 				(void)open("/etc/hosts", O_RDONLY);
+			if (cmd == 'a')
+				(void)access("/etc/passwd", R_OK);
 		}
 		close(pipefd[0]);
 		_exit(0);
 	}
 
 	close(pipefd[0]);
+
+	/* Mute only the child's OPEN events, not ACCESS */
+	memset(&mute_proc, 0, sizeof(mute_proc));
+	mute_proc.empe_token.ept_id = (uint64_t)child;
+	mute_proc.empe_count = 1;
+	mute_proc.empe_events[0] = OES_EVENT_NOTIFY_OPEN;
+	if (ioctl(fd, OES_IOC_MUTE_PROCESS_EVENTS, &mute_proc) < 0) {
+		perror("OES_IOC_MUTE_PROCESS_EVENTS");
+		goto fail;
+	}
+
+	/*
+	 * The child opens (muted), then checks access (not muted).  Events of
+	 * one process arrive in order, so the ACCESS event is the fence: no
+	 * OPEN of the child may come before it.
+	 */
+	cmd = 'p';
+	(void)write(pipefd[1], &cmd, 1);
+	cmd = 'a';
+	(void)write(pipefd[1], &cmd, 1);
+	{
+		test_msg_buf buf;
+		int opens = 0;
+
+		ret = -1;
+		for (;;) {
+			if (test_wait_event(fd, &buf.msg, 1000) != 0)
+				break;
+			if (buf.msg.em_process.ep_pid != child)
+				continue;
+			if (buf.msg.em_event == OES_EVENT_NOTIFY_OPEN)
+				opens++;
+			if (buf.msg.em_event == OES_EVENT_NOTIFY_ACCESS) {
+				ret = 0;
+				break;
+			}
+		}
+		if (ret != 0) {
+			fprintf(stderr, "FAIL: ACCESS event not delivered (should not be muted)\n");
+			goto fail;
+		}
+		if (opens != 0) {
+			fprintf(stderr, "FAIL: per-event-muted OPEN event still delivered\n");
+			goto fail;
+		}
+	}
+	printf("  PASS: process per-event mute suppressed OPEN\n");
+	printf("  PASS: ACCESS event delivered (not muted)\n");
+
+	/* Unmute OPEN events */
+	if (ioctl(fd, OES_IOC_UNMUTE_PROCESS_EVENTS, &mute_proc) < 0) {
+		perror("OES_IOC_UNMUTE_PROCESS_EVENTS");
+		goto fail;
+	}
+
+	/* Trigger OPEN again - should now be delivered */
+	cmd = 'h';
+	(void)write(pipefd[1], &cmd, 1);
+
+	ret = test_wait_event_pid(fd, child, OES_EVENT_NOTIFY_OPEN, 1000,
+	    NULL);
+	if (ret != 0) {
+		fprintf(stderr, "FAIL: OPEN event not delivered after unmute\n");
+		goto fail;
+	}
+	printf("  PASS: OPEN event delivered after unmute\n");
+
+	/* Now test per-event path muting */
+	memset(&mute_path, 0, sizeof(mute_path));
+	strlcpy(mute_path.empae_path, "/etc/passwd", sizeof(mute_path.empae_path));
+	mute_path.empae_type = OES_MUTE_PATH_LITERAL;
+	mute_path.empae_count = 1;
+	mute_path.empae_events[0] = OES_EVENT_NOTIFY_OPEN;
+	if (ioctl(fd, OES_IOC_MUTE_PATH_EVENTS, &mute_path) < 0) {
+		perror("OES_IOC_MUTE_PATH_EVENTS");
+		close(fd);
+		return (1);
+	}
 
 	/* Child opens /etc/passwd - path-muted for OPEN */
 	cmd = 'p';
@@ -235,11 +223,6 @@ main(void)
 	}
 	printf("  PASS: OPEN for /etc/passwd delivered after unmute\n");
 
-	cmd = 'q';
-	(void)write(pipefd[1], &cmd, 1);
-	(void)waitpid(child, &status, 0);
-	close(pipefd[1]);
-
 	/*
 	 * Test mute-all upgrade: per-event mute followed by full mute
 	 * should upgrade to mute-all (em_events cleared to zeros).
@@ -249,19 +232,17 @@ main(void)
 	/* Clear all mutes first */
 	if (ioctl(fd, OES_IOC_UNMUTE_ALL_PROCESSES, NULL) < 0) {
 		perror("OES_IOC_UNMUTE_ALL_PROCESSES");
-		close(fd);
-		return (1);
+		goto fail;
 	}
 
-	/* Step 1: Per-event mute self for OPEN only */
+	/* Step 1: Per-event mute of the child for OPEN only */
 	memset(&mute_proc, 0, sizeof(mute_proc));
-	mute_proc.empe_flags = OES_MUTE_SELF;
+	mute_proc.empe_token.ept_id = (uint64_t)child;
 	mute_proc.empe_count = 1;
 	mute_proc.empe_events[0] = OES_EVENT_NOTIFY_OPEN;
 	if (ioctl(fd, OES_IOC_MUTE_PROCESS_EVENTS, &mute_proc) < 0) {
 		perror("OES_IOC_MUTE_PROCESS_EVENTS (per-event)");
-		close(fd);
-		return (1);
+		goto fail;
 	}
 
 	/* Verify per-event mute: event_count should be 1 */
@@ -276,40 +257,36 @@ main(void)
 		get_procs.egmp_count = 4;
 		if (ioctl(fd, OES_IOC_GET_MUTED_PROCESSES, &get_procs) < 0) {
 			perror("OES_IOC_GET_MUTED_PROCESSES");
-			close(fd);
-			return (1);
+			goto fail;
 		}
 		for (i = 0; i < get_procs.egmp_actual && i < 4; i++) {
-			if (proc_entries[i].emp_token.ept_id == (uint64_t)getpid()) {
+			if (proc_entries[i].emp_token.ept_id == (uint64_t)child) {
 				if (proc_entries[i].emp_event_count != 1) {
 					fprintf(stderr,
 					    "FAIL: expected 1 muted event, got %u\n",
 					    proc_entries[i].emp_event_count);
-					close(fd);
-					return (1);
+					goto fail;
 				}
 				found = 1;
 				break;
 			}
 		}
 		if (!found) {
-			fprintf(stderr, "FAIL: self not in muted list after per-event mute\n");
-			close(fd);
-			return (1);
+			fprintf(stderr, "FAIL: child not in muted list after per-event mute\n");
+			goto fail;
 		}
 	}
 	printf("    PASS: per-event mute shows 1 event\n");
 
-	/* Step 2: Full mute-all self (should upgrade) */
+	/* Step 2: Full mute-all of the child (should upgrade) */
 	{
 		struct oes_mute_args mute_all;
 
 		memset(&mute_all, 0, sizeof(mute_all));
-		mute_all.emu_flags = OES_MUTE_SELF;
+		mute_all.emu_token.ept_id = (uint64_t)child;
 		if (ioctl(fd, OES_IOC_MUTE_PROCESS, &mute_all) < 0) {
 			perror("OES_IOC_MUTE_PROCESS (mute-all)");
-			close(fd);
-			return (1);
+			goto fail;
 		}
 	}
 
@@ -325,30 +302,31 @@ main(void)
 		get_procs.egmp_count = 4;
 		if (ioctl(fd, OES_IOC_GET_MUTED_PROCESSES, &get_procs) < 0) {
 			perror("OES_IOC_GET_MUTED_PROCESSES");
-			close(fd);
-			return (1);
+			goto fail;
 		}
 		for (i = 0; i < get_procs.egmp_actual && i < 4; i++) {
-			if (proc_entries[i].emp_token.ept_id == (uint64_t)getpid()) {
+			if (proc_entries[i].emp_token.ept_id == (uint64_t)child) {
 				if (proc_entries[i].emp_event_count != 0) {
 					fprintf(stderr,
 					    "FAIL: mute-all should upgrade to event_count=0, got %u\n",
 					    proc_entries[i].emp_event_count);
-					close(fd);
-					return (1);
+					goto fail;
 				}
 				found = 1;
 				break;
 			}
 		}
 		if (!found) {
-			fprintf(stderr, "FAIL: self not in muted list after mute-all\n");
-			close(fd);
-			return (1);
+			fprintf(stderr, "FAIL: child not in muted list after mute-all\n");
+			goto fail;
 		}
 	}
 	printf("    PASS: mute-all upgraded per-event mute (event_count=0)\n");
 
+	cmd = 'q';
+	(void)write(pipefd[1], &cmd, 1);
+	(void)waitpid(child, &status, 0);
+	close(pipefd[1]);
 	close(fd);
 
 	printf("per-event muting: ok\n");

@@ -37,7 +37,8 @@ main(void)
 	oes_event_type_t events[] = {
 		OES_EVENT_NOTIFY_OPEN,
 	};
-	int ret;
+	int ret, pipefd[2] = { -1, -1 };
+	pid_t child = -1;
 
 	printf("Testing unmute-all...\n");
 
@@ -67,30 +68,52 @@ main(void)
 
 	/* ========== Test OES_IOC_UNMUTE_ALL_PROCESSES ========== */
 
-	/* Mute self */
+	/*
+	 * A child driven over a pipe makes the events: the test opened the
+	 * client, so its own events never reach it (oes(4), "A client's own
+	 * processes").  The child never touches the client.
+	 */
+	if (pipe(pipefd) != 0) {
+		perror("pipe");
+		close(fd);
+		return (1);
+	}
+	child = fork();
+	if (child < 0) {
+		perror("fork");
+		close(fd);
+		return (1);
+	}
+	if (child == 0) {
+		char c;
+
+		close(fd);
+		close(pipefd[1]);
+		while (read(pipefd[0], &c, 1) == 1 && c != 'q') {
+			if (c == 'p')
+				(void)open("/etc/passwd", O_RDONLY);
+			if (c == 'h')
+				(void)open("/etc/hosts", O_RDONLY);
+		}
+		_exit(0);
+	}
+	close(pipefd[0]);
+
+	/* Mute the child */
 	memset(&mute_proc, 0, sizeof(mute_proc));
-	mute_proc.emu_flags = OES_MUTE_SELF;
+	mute_proc.emu_token.ept_id = (uint64_t)child;
 	if (ioctl(fd, OES_IOC_MUTE_PROCESS, &mute_proc) < 0) {
 		perror("OES_IOC_MUTE_PROCESS");
-		close(fd);
-		return (1);
+		goto fail;
 	}
 
-	/* Verify self is muted */
-	ret = test_wait_event_pid(fd, getpid(), OES_EVENT_NOTIFY_OPEN, 500,
-	    NULL);
-	(void)open("/etc/passwd", O_RDONLY);
-	if (ret == 0) {
-		fprintf(stderr, "FAIL: self not muted\n");
-		close(fd);
-		return (1);
-	}
+	/* A muted open, before the unmute */
+	(void)write(pipefd[1], "p", 1);
 
 	/* Unmute all processes */
 	if (ioctl(fd, OES_IOC_UNMUTE_ALL_PROCESSES, NULL) < 0) {
 		perror("OES_IOC_UNMUTE_ALL_PROCESSES");
-		close(fd);
-		return (1);
+		goto fail;
 	}
 
 	/* Verify muted processes list is empty */
@@ -99,28 +122,48 @@ main(void)
 	get_procs.egmp_count = 16;
 	if (ioctl(fd, OES_IOC_GET_MUTED_PROCESSES, &get_procs) < 0) {
 		perror("OES_IOC_GET_MUTED_PROCESSES");
-		close(fd);
-		return (1);
+		goto fail;
 	}
 
 	if (get_procs.egmp_actual != 0) {
 		fprintf(stderr, "FAIL: muted processes not cleared (count=%zu)\n",
 		    get_procs.egmp_actual);
-		close(fd);
-		return (1);
+		goto fail;
 	}
 	printf("  PASS: OES_IOC_UNMUTE_ALL_PROCESSES cleared all muted processes\n");
 
-	/* Verify events now delivered */
-	(void)open("/etc/hosts", O_RDONLY);
-	ret = test_wait_event_pid(fd, getpid(), OES_EVENT_NOTIFY_OPEN, 1000,
-	    NULL);
+	/*
+	 * Verify events now delivered.  The child's events arrive in order;
+	 * the open of /etc/passwd may race the unmute, so the open of
+	 * /etc/hosts, made after it, is the one that must arrive.
+	 */
+	(void)write(pipefd[1], "h", 1);
+	{
+		test_msg_buf buf;
+
+		ret = -1;
+		while (test_wait_event(fd, &buf.msg, 1000) == 0) {
+			if (buf.msg.em_event != OES_EVENT_NOTIFY_OPEN ||
+			    buf.msg.em_process.ep_pid != child)
+				continue;
+			if (strcmp(oes_msg_string(&buf.msg,
+			    buf.msg.em_event_data.open.file.ef_path_off),
+			    "/etc/hosts") == 0) {
+				ret = 0;
+				break;
+			}
+		}
+	}
 	if (ret != 0) {
 		fprintf(stderr, "FAIL: OPEN not delivered after unmute-all\n");
-		close(fd);
-		return (1);
+		goto fail;
 	}
 	printf("  PASS: events delivered after unmute-all processes\n");
+	(void)write(pipefd[1], "q", 1);
+	close(pipefd[1]);
+	pipefd[1] = -1;
+	(void)waitpid(child, NULL, 0);
+	child = -1;
 
 	/* ========== Test OES_IOC_UNMUTE_ALL_PATHS ========== */
 
@@ -294,4 +337,14 @@ main(void)
 
 	printf("unmute-all: ok\n");
 	return (0);
+
+fail:
+	if (child > 0) {
+		(void)write(pipefd[1], "q", 1);
+		(void)waitpid(child, NULL, 0);
+	}
+	if (pipefd[1] >= 0)
+		close(pipefd[1]);
+	close(fd);
+	return (1);
 }
