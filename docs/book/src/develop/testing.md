@@ -351,8 +351,53 @@ and the loaded MAC policy modules (`kldstat -v`) are written to `tier.txt`
 in the results, next to the Kyua database, and the knobs are appended again
 after the suites.
 
+A stage's ELF test programs must all come from one checkout. Before it
+builds the image the runner reads the source file names recorded in every
+ELF program under the stage's `usr/tests`
+(`tools/build/fuchsia/check-stage-tests.py`, one `TESTS_SRC_ROOT=` line per
+checkout) and stops with `STALE_TESTS` when there is more than one, naming
+programs of each minority checkout. A stage copied forward from another
+branch's stage with only some test directories reinstalled fails this way:
+the oracles that run whole suites (`dq_tree_suites_test`,
+`dq_oracle_test`) would otherwise compare another branch's tests. Make the
+stage fresh from the branch's world, or reinstall all of `usr/tests` from
+the branch; a deliberate overlay lists every checkout its programs come
+from, the main one included, in `TESTS_SRC_ROOTS`. The check proves which
+checkout built each program, not which commit, and scripts and data under
+`usr/tests` (Kyuafiles, atf-sh programs, `dq_suites.subr`, `*.expected`)
+record no source path and are not checked.
+
+The runner watches the guest without polling: `tools/build/fuchsia/vm-monitor.py`
+waits on one kqueue for QEMU's exit, writes to the serial log and the
+deadline. A fatal console line (panic, fatal trap, a mountroot or shell
+prompt, init dying) or, with `FATAL_LOR=yes` (the default), a complete
+WITNESS lock order reversal report that matches no entry of
+`tools/build/fuchsia/known-lor.txt` stops the run: the monitor prints
+`KERNEL/INIT PROBLEM in serial log`, lets the guest finish printing for at
+most `FATAL_GRACE_S` (5 s, ending at once if QEMU exits) and then stops
+QEMU, or reports that it had already exited; the deadline prints `TIMEOUT`.
+Either way the results disk is extracted and the verdict printed.
+`known-lor.txt` holds Python regular expressions matched against the first
+40 lines of a report, each entry naming the analysis that classes its
+family; matched reports are counted as `KNOWN_LOR=N`. An entry hides more
+than its report: WITNESS reports a pair of lock classes once per boot, so
+every later reversal between the same two classes goes unreported for the
+rest of the boot. Entries should therefore match only at shutdown, where
+nothing follows; the tmpfs-unmount family entry does. After the guest exits
+the runner classifies the whole log again, so a reversal printed just
+before power-off still makes the run `VM_NOT_CLEAN` (`UNKNOWN_LOR`).
+
+The dq oracles' expected-differences files (`tests/sys/dq/dqpass.expected`,
+`dqtree.expected`) fail on an entry that matches no case. An entry whose
+difference exists only with the capability plane on carries `[plane-on]` in
+its owner tag. On a guest whose PID 1 is known and not `capsule`
+(`PLANE_OFF=1`) such an entry is reported `not exercised` instead, provided
+its cases ran (they were then compared like any other case); a PID 1 that
+cannot be read counts as the plane on.
+
 The runner's own checks (the tier selection and gate above, the stage root
-metadata preflight, the extra-script status) are shell scripts under
+metadata preflight, the stage's test checkout, the monitor, the
+known-lor classes, the extra-script status) are shell scripts under
 `tools/build/fuchsia/tests/`; `make -C tools/build/fuchsia check-runner`
 runs them on the build host without booting a guest, and `check` includes it.
 
