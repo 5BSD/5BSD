@@ -172,7 +172,7 @@ mac_capability_test_issuer_fail_count_sysctl(SYSCTL_HANDLER_ARGS)
 	error = sysctl_handle_int(oidp, &value, 0, req);
 	if (error != 0 || req->newptr == NULL)
 		return (error);
-	if (value < 1 || value > MAC_CAPABILITY_TEST_ISSUER_FAIL_MAX)
+	if (value < 0)
 		return (EINVAL);
 	atomic_store_int(&mac_capability_test_issuer_fail_count, value);
 	return (0);
@@ -181,7 +181,7 @@ SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuer_fail_init_count,
     CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
     mac_capability_test_issuer_fail_count_sysctl, "I",
     "Test kernel only: how many of PID 1's issuer creations in a row "
-    "test_issuer_fail_init fails (1-1000, default 1)");
+    "test_issuer_fail_init fails (default 1; 0: until it is cleared)");
 
 /*
  * How many of PID 1's creates succeed before fail_init applies: 1 fails the
@@ -198,7 +198,7 @@ mac_capability_test_issuer_fail_skip_sysctl(SYSCTL_HANDLER_ARGS)
 	error = sysctl_handle_int(oidp, &value, 0, req);
 	if (error != 0 || req->newptr == NULL)
 		return (error);
-	if (value < 0 || value > MAC_CAPABILITY_TEST_ISSUER_FAIL_MAX)
+	if (value < 0)
 		return (EINVAL);
 	atomic_store_int(&mac_capability_test_issuer_fail_skip, value);
 	return (0);
@@ -207,7 +207,43 @@ SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuer_fail_init_skip,
     CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
     mac_capability_test_issuer_fail_skip_sysctl, "I",
     "Test kernel only: how many of PID 1's issuer creations succeed before "
-    "test_issuer_fail_init applies (0-1000, default 0)");
+    "test_issuer_fail_init applies (default 0)");
+
+/*
+ * The errno PID 1's issuer create fails with now, or 0: let
+ * test_issuer_fail_init_skip creates succeed, then fail
+ * test_issuer_fail_init_count in a row (0: until fail_init is cleared), then
+ * clear the fault.  Each counter is consumed with a compare-and-set, so
+ * concurrent creates (and sysctl writes) each take one step.
+ */
+int
+mac_capability_test_issuer_fail_take(void)
+{
+	u_int count, error, skip;
+
+	error = atomic_load_int(&mac_capability_test_issuer_fail_init);
+	if (error == 0)
+		return (0);
+	skip = atomic_load_int(&mac_capability_test_issuer_fail_skip);
+	while (skip > 0) {
+		if (atomic_fcmpset_int(&mac_capability_test_issuer_fail_skip,
+		    &skip, skip - 1))
+			return (0);
+	}
+	count = atomic_load_int(&mac_capability_test_issuer_fail_count);
+	while (count > 0) {
+		if (!atomic_fcmpset_int(&mac_capability_test_issuer_fail_count,
+		    &count, count - 1))
+			continue;
+		/* The last failure clears the fault, back to the defaults. */
+		if (count == 1 && atomic_cmpset_int(
+		    &mac_capability_test_issuer_fail_init, error, 0))
+			atomic_store_int(&mac_capability_test_issuer_fail_count,
+			    1);
+		break;
+	}
+	return ((int)error);
+}
 
 static void
 mac_capability_test_issuer_init(void *arg __unused)

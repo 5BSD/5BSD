@@ -274,7 +274,7 @@ extern int mac_capability_test_issuer_enabled;	/* the tunable, 0 or 1 */
 extern volatile u_int mac_capability_test_issuer_fail_init;
 extern volatile u_int mac_capability_test_issuer_fail_count;
 extern volatile u_int mac_capability_test_issuer_fail_skip;
-#define	MAC_CAPABILITY_TEST_ISSUER_FAIL_MAX	1000
+int	mac_capability_test_issuer_fail_take(void);
 extern volatile u_long mac_capability_test_issuer_created;
 extern volatile u_int mac_capability_test_issuer_live;
 u_int	mac_capability_test_issuer_state(void);
