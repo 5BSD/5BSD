@@ -10,8 +10,9 @@
  * Capability channels are kqueue-only: poll(2) answers POLLNVAL
  * (b08ea010c98).  A client that waits for a reply with poll(2) never
  * sleeps; on SwitchBoard's non-blocking Capsule channel it spins on EAGAIN
- * until the reply arrives.  These cases pin that a reply wait sleeps (it
- * costs a small part of its wall time in CPU), that Capsule's death ends the
+ * until the reply arrives.  These cases pin that a reply wait is one
+ * blocking receive and no poll(2) (counted exactly by interposing the
+ * client's ioctl(2) and poll(2) calls, below), that Capsule's death ends the
  * wait with ECONNRESET, that stale replies (with descriptors too) are dropped
  * rather than wedging the channel or answering the wrong request, and the
  * existing behaviour around it: a prompt reply, the release burst, and the
@@ -22,16 +23,18 @@
 #include <sys/event.h>
 #include <sys/ioctl.h>
 #include <sys/module.h>
-#include <sys/resource.h>
 #include <sys/syscall.h>
-#include <sys/time.h>
 #include <sys/wait.h>
 
 #include <dev/mac_capability/mac_capability_ioctl.h>
 
 #include <atf-c.h>
+#include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
+#include <stdarg.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
@@ -44,11 +47,77 @@
 struct switchboard_state sd;
 
 /*
- * How long the stand-in Capsule holds a reply in the slow cases.  It only
- * has to be long enough for the client to be waiting; nothing is asserted
- * against it.
+ * How long the stand-in Capsule takes before it replies or dies in the slow
+ * cases.  This is the scenario (a slow or dying Capsule), not a wait for a
+ * condition: no assertion depends on its length, only on the client having
+ * to wait for something that is not there yet.
  */
-#define	SLOW_REPLY_MS	1000
+#define	SLOW_PEER_MS	1000
+
+/*
+ * Exact counts of the client's waits.  This program defines ioctl(2) and
+ * poll(2), so the code under test, linked into it, calls these; they count
+ * and forward to the C library's.  While counting is on, every
+ * MAC_CAPABILITY_RECVMSG and every poll(2) by this process is counted,
+ * whatever the descriptor; the stand-in Capsule is a separate process.
+ */
+static bool counting;
+static unsigned recv_calls, poll_calls;
+
+int
+ioctl(int fd, unsigned long request, ...)
+{
+	static int (*real_ioctl)(int, unsigned long, ...);
+	va_list ap;
+	void *arg;
+
+	va_start(ap, request);
+	arg = va_arg(ap, void *);
+	va_end(ap);
+	if (real_ioctl == NULL)
+		real_ioctl = (int (*)(int, unsigned long, ...))dlsym(RTLD_NEXT,
+		    "ioctl");
+	if (counting && request == MAC_CAPABILITY_RECVMSG)
+		recv_calls++;
+	return (real_ioctl(fd, request, arg));
+}
+
+int
+poll(struct pollfd fds[], nfds_t nfds, int timeout)
+{
+	static int (*real_poll)(struct pollfd *, nfds_t, int);
+
+	if (real_poll == NULL)
+		real_poll = (int (*)(struct pollfd *, nfds_t, int))dlsym(
+		    RTLD_NEXT, "poll");
+	if (counting)
+		poll_calls++;
+	return (real_poll(fds, nfds, timeout));
+}
+
+static void
+count_start(void)
+{
+
+	recv_calls = poll_calls = 0;
+	counting = true;
+}
+
+/*
+ * The reply wait was a single receive, which the kernel blocked until the
+ * reply or the peer's death, and no readiness poll: a spinning client
+ * receives (and polls) again and again.
+ */
+static void
+count_check_one_wait(void)
+{
+
+	counting = false;
+	ATF_CHECK_EQ_MSG(1, recv_calls,
+	    "%u receives for one reply (a spinning wait)", recv_calls);
+	ATF_CHECK_EQ_MSG(0, poll_calls,
+	    "%u poll(2) calls on a kqueue-only channel", poll_calls);
+}
 
 static int
 chan_create(int fds[2])
@@ -131,11 +200,11 @@ pipe_read_end(void)
 
 enum peer_mode {
 	PEER_PROMPT,		/* reply at once */
-	PEER_SLOW,		/* reply after SLOW_REPLY_MS */
+	PEER_SLOW,		/* reply after SLOW_PEER_MS */
 	PEER_STALE_FIRST,	/* a reply with another token, then the reply */
 	PEER_STALE_FD_FIRST,	/* the same, the stale one carrying a pipe */
 	PEER_CLOSE,		/* read the request, close without replying */
-	PEER_SLOW_DIE,		/* read the request, exit after SLOW_REPLY_MS */
+	PEER_SLOW_DIE,		/* read the request, exit after SLOW_PEER_MS */
 };
 
 /*
@@ -158,8 +227,8 @@ peer_start(int P[2], enum peer_mode mode, uint32_t want_op)
 		return (pid);
 	}
 	close(P[0]);
-	slow.tv_sec = SLOW_REPLY_MS / 1000;
-	slow.tv_nsec = (SLOW_REPLY_MS % 1000) * 1000000L;
+	slow.tv_sec = SLOW_PEER_MS / 1000;
+	slow.tv_nsec = (SLOW_PEER_MS % 1000) * 1000000L;
 	if (peer_request(P[1], &op, &token) != 0 || op != want_op)
 		_exit(10);
 	switch (mode) {
@@ -202,43 +271,6 @@ peer_finish(int P[2], pid_t pid)
 	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
 	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
 	    "peer status %#x", status);
-}
-
-struct cost {
-	struct timespec	wall;
-	struct rusage	ru;
-};
-
-static void
-cost_start(struct cost *c)
-{
-
-	ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &c->wall) == 0);
-	ATF_REQUIRE(getrusage(RUSAGE_SELF, &c->ru) == 0);
-}
-
-/*
- * A wait for a reply sleeps: a blocked receive costs a few system calls, a
- * spinning one its whole wait.  Half the wall time separates the two.
- */
-static void
-cost_check_slept(const struct cost *c)
-{
-	struct timespec now;
-	struct rusage ru;
-	struct timeval u, s;
-	double wall_ms, cpu_ms;
-
-	ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &now) == 0);
-	ATF_REQUIRE(getrusage(RUSAGE_SELF, &ru) == 0);
-	wall_ms = (now.tv_sec - c->wall.tv_sec) * 1e3 +
-	    (now.tv_nsec - c->wall.tv_nsec) / 1e6;
-	timersub(&ru.ru_utime, &c->ru.ru_utime, &u);
-	timersub(&ru.ru_stime, &c->ru.ru_stime, &s);
-	cpu_ms = (u.tv_sec + s.tv_sec) * 1e3 + (u.tv_usec + s.tv_usec) / 1e3;
-	ATF_CHECK_MSG(cpu_ms < wall_ms / 2,
-	    "waiting for the reply used %.1f ms CPU in %.1f ms", cpu_ms,
-	    wall_ms);
 }
 
 /*
@@ -308,18 +340,17 @@ ATF_TC_BODY(rpc_prompt_reply, tc)
 }
 
 CHANNEL_TC_HEAD(rpc_slow_reply_waited,
-    "an RPC whose reply is slow waits for it, asleep")
+    "an RPC whose reply is slow waits for it in one blocking receive")
 ATF_TC_BODY(rpc_slow_reply_waited, tc)
 {
-	struct cost c;
 	int P[2];
 	pid_t pid;
 
 	pair(P);
 	pid = peer_start(P, PEER_SLOW, CAPSULE_OP_READY);
-	cost_start(&c);
+	count_start();
 	ATF_CHECK_EQ_MSG(0, capsule_send_ready(P[0]), "%s", strerror(errno));
-	cost_check_slept(&c);
+	count_check_one_wait();
 	peer_finish(P, pid);
 }
 
@@ -376,19 +407,18 @@ ATF_TC_BODY(rpc_peer_closed, tc)
 
 CHANNEL_TC_HEAD(rpc_peer_dies_while_waiting,
     "Capsule's death while an RPC waits ends the wait with ECONNRESET; "
-    "the wait sleeps")
+    "the wait is one blocking receive")
 ATF_TC_BODY(rpc_peer_dies_while_waiting, tc)
 {
-	struct cost c;
 	int P[2], r, saved;
 	pid_t pid;
 
 	pair(P);
 	pid = peer_start(P, PEER_SLOW_DIE, CAPSULE_OP_READY);
-	cost_start(&c);
+	count_start();
 	r = capsule_send_ready(P[0]);
 	saved = errno;
-	cost_check_slept(&c);
+	count_check_one_wait();
 	ATF_CHECK_EQ(-1, r);
 	if (r == -1)
 		ATF_CHECK_EQ_MSG(ECONNRESET, saved, "%s", strerror(saved));
@@ -414,20 +444,19 @@ ATF_TC_BODY(release_prompt_replies, tc)
 }
 
 CHANNEL_TC_HEAD(release_slow_reply_waited,
-    "a manifest release waits for a slow reply, asleep")
+    "a manifest release waits for a slow reply in one blocking receive")
 ATF_TC_BODY(release_slow_reply_waited, tc)
 {
 	struct svc_manifest *m;
-	struct cost c;
 	int P[2];
 	pid_t pid;
 
 	m = system_manifest();
 	pair(P);
 	pid = peer_start(P, PEER_SLOW, CAPSULE_OP_RELEASE_SYSTEM);
-	cost_start(&c);
+	count_start();
 	ATF_CHECK_EQ(1, capsule_release_manifest(P[0], m));
-	cost_check_slept(&c);
+	count_check_one_wait();
 	ATF_CHECK_EQ(0, readable_now(P[0]));
 	peer_finish(P, pid);
 	free(m);
@@ -481,8 +510,10 @@ ATF_TC_BODY(create_channel_direct, tc)
 	sd.capsule_channel_fd = -1;
 	sd.channel_svc_fd = ca.fd;
 	a = b = -1;
+	count_start();
 	ATF_REQUIRE_EQ_MSG(0, mac_cap_create_channel(&a, &b), "%s",
 	    strerror(errno));
+	count_check_one_wait();
 	ATF_REQUIRE(a >= 0 && b >= 0);
 	memset(&sa, 0, sizeof(sa));
 	sa.payload = "ping";
