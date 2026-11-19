@@ -339,8 +339,8 @@ oes_cache_remove_entry_locked(struct oes_client *ec,
 	EC_LOCK_ASSERT(ec);
 	LIST_REMOVE(entry, ece_link);
 	TAILQ_REMOVE(&ec->ec_cache_lru, entry, ece_lru);
-	if (ec->ec_cache_entries > 0)
-		ec->ec_cache_entries--;
+	if (ec->ec_cache_entries > 0 && --ec->ec_cache_entries == 0)
+		atomic_subtract_int(&oes_softc.sc_cache_clients, 1);
 	if (expired)
 		ec->ec_cache_expired++;
 	else if (eviction)
@@ -456,7 +456,9 @@ oes_client_cache_add(struct oes_client *ec, const oes_cache_entry_t *entry)
 
 	LIST_INSERT_HEAD(&ec->ec_cache[idx], new_entry, ece_link);
 	TAILQ_INSERT_HEAD(&ec->ec_cache_lru, new_entry, ece_lru);
-	ec->ec_cache_entries++;
+	/* Excluded writers still invalidate while any client caches. */
+	if (ec->ec_cache_entries++ == 0)
+		atomic_add_int(&oes_softc.sc_cache_clients, 1);
 
 	while (ec->ec_cache_entries > ec->ec_cache_max) {
 		victim = TAILQ_LAST(&ec->ec_cache_lru, oes_cache_lru);

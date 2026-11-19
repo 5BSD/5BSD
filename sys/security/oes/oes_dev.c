@@ -112,6 +112,20 @@ SYSCTL_PROC(_security_oes, OID_AUTO, jail_filtered_auth,
     CTLTYPE_U64 | CTLFLAG_RD | CTLFLAG_MPSAFE,
     &oes_softc.sc_jail_filtered_auth, 0, oes_sysctl_jail_counter, "QU",
     "AUTH events among security.oes.jail_filtered");
+SYSCTL_PROC(_security_oes, OID_AUTO, excluded_skipped,
+    CTLTYPE_U64 | CTLFLAG_RD | CTLFLAG_MPSAFE,
+    &oes_softc.sc_excluded_skipped, 0, oes_sysctl_jail_counter, "QU",
+    "Events not produced because the acting process is excluded "
+    "(cap_process(2) BASE EXCLUSION)");
+SYSCTL_PROC(_security_oes, OID_AUTO, excluded_invalidations,
+    CTLTYPE_U64 | CTLFLAG_RD | CTLFLAG_MPSAFE,
+    &oes_softc.sc_excluded_invalidations, 0, oes_sysctl_jail_counter, "QU",
+    "Decision-cache invalidations by excluded processes, without an event");
+SYSCTL_PROC(_security_oes, OID_AUTO, exec_fail_open,
+    CTLTYPE_U64 | CTLFLAG_RD | CTLFLAG_MPSAFE,
+    &oes_softc.sc_exec_fail_open, 0, oes_sysctl_jail_counter, "QU",
+    "Exec events of programs started by excluded processes, delivered "
+    "without strict denial");
 
 /*
  * Default muting configuration
@@ -1408,6 +1422,18 @@ oes_jail_counters_free(void)
 	oes_softc.sc_jail_filtered_auth = NULL;
 	if (c != NULL)
 		counter_u64_free(c);
+	c = oes_softc.sc_excluded_skipped;
+	oes_softc.sc_excluded_skipped = NULL;
+	if (c != NULL)
+		counter_u64_free(c);
+	c = oes_softc.sc_excluded_invalidations;
+	oes_softc.sc_excluded_invalidations = NULL;
+	if (c != NULL)
+		counter_u64_free(c);
+	c = oes_softc.sc_exec_fail_open;
+	oes_softc.sc_exec_fail_open = NULL;
+	if (c != NULL)
+		counter_u64_free(c);
 }
 
 /*
@@ -1428,6 +1454,9 @@ oes_dev_init(void)
 	LIST_INIT(&oes_softc.sc_jail_clients);
 	oes_softc.sc_jail_filtered = counter_u64_alloc(M_WAITOK);
 	oes_softc.sc_jail_filtered_auth = counter_u64_alloc(M_WAITOK);
+	oes_softc.sc_excluded_skipped = counter_u64_alloc(M_WAITOK);
+	oes_softc.sc_excluded_invalidations = counter_u64_alloc(M_WAITOK);
+	oes_softc.sc_exec_fail_open = counter_u64_alloc(M_WAITOK);
 
 	/* Deferred NOSLEEP notify delivery. */
 	mtx_init(&oes_softc.sc_defer_mtx, "oes_defer", NULL, MTX_SPIN);

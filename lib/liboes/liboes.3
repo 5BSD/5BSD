@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 13, 2026
+.Dd November 19, 2026
 .Dt LIBOES 3
 .Os
 .Sh NAME
@@ -122,6 +122,11 @@ They can be cleared with
 .Fn oes_unmute_all_paths ,
 and
 .Fn oes_unmute_all_target_paths .
+.Pp
+Processes excluded by the kernel
+.Pq see Xr oes 4
+never appear as the source of a message, except as the launcher in an exec
+event; mute calls naming them succeed and have no effect.
 .Pp
 The message pointer returned by
 .Fn oes_read_event

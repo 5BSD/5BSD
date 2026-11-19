@@ -435,7 +435,10 @@ oes_client_free(struct oes_client *ec)
 			if (!ep->ep_responded) {
 				oes_auth_result_t close_action;
 
-				close_action = (oes_auth_fail_closed ||
+				/* An excluded launcher's exec: fail open. */
+				close_action = (ep->ep_flags &
+				    EP_FLAG_FAIL_OPEN) == 0 &&
+				    (oes_auth_fail_closed ||
 				    oes_require_auth_clients || ec->ec_deadline_miss_mode ==
 				    OES_DEADLINE_MISS_FAIL_CLOSED) ? OES_AUTH_DENY :
 				    OES_AUTH_ALLOW;
@@ -460,7 +463,10 @@ oes_client_free(struct oes_client *ec)
 			if (!ep->ep_responded) {
 				oes_auth_result_t close_action;
 
-				close_action = (oes_auth_fail_closed ||
+				/* An excluded launcher's exec: fail open. */
+				close_action = (ep->ep_flags &
+				    EP_FLAG_FAIL_OPEN) == 0 &&
+				    (oes_auth_fail_closed ||
 				    oes_require_auth_clients || ec->ec_deadline_miss_mode ==
 				    OES_DEADLINE_MISS_FAIL_CLOSED) ? OES_AUTH_DENY :
 				    OES_AUTH_ALLOW;

@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 17, 2026
+.Dd November 19, 2026
 .Dt OES 4
 .Os
 .Sh NAME
@@ -263,6 +263,40 @@ by a
 .Xr dq 4
 controller rather than read from a vnode
 .Pq Dv OES_FILE_META_PRESENTED .
+.Ss Excluded processes
+OES produces no event for an operation whose acting process is excluded by
+the kernel: process 1
+.Pq Xr capsule 8 ,
+.Xr switchboard 8 ,
+and the units SwitchBoard launches with management class
+.Dq core
+.Pq see BASE EXCLUSION in Xr cap_process 2 .
+For an excluded process AUTH checks allow at once and are never sent to a
+client, also when
+.Va security.oes.require_auth_clients ,
+.Va security.oes.auth_fail_closed
+or a fail-closed deadline-miss mode is set.
+No NOTIFY event is produced either, including fork, exit, mount, kld
+unload, signal, set-id and ptrace notifications whose actor is excluded.
+An excluded process's writes and namespace changes still drop cached
+decisions while any client holds some.
+.Pp
+Executions are judged by the program that results.
+Executing a Core image produces no event.
+When an excluded process starts a program that is not excluded, subscribed
+clients receive
+.Dv OES_EVENT_AUTH_EXEC
+and
+.Dv OES_EVENT_NOTIFY_EXEC
+as usual; for these events the strict settings above, fail-closed deadlines,
+a client that closes without answering and an allocation failure do not
+deny: a missing or slow client allows the execution, while a client's
+explicit denial still refuses it.
+The program started is not excluded, and everything it does is reported.
+.Pp
+An operation by a process that is not excluded is reported as usual, also
+when it acts on an excluded process.
+Clients cannot unmute an excluded process.
 .Ss MAC hooks
 Events are generated from MAC policy hooks, including process execution and
 credential changes, the file lifecycle
@@ -382,6 +416,15 @@ Number of events discarded before any memory was allocated for them because
 every open client is jail-scoped and none covers the subject.
 .It Va security.oes.jail_filtered_auth
 The AUTH events among them.
+.It Va security.oes.excluded_skipped
+Number of events not produced because the acting process is excluded,
+counted while a client is open.
+.It Va security.oes.excluded_invalidations
+Number of decision-cache invalidations made for excluded processes without
+an event.
+.It Va security.oes.exec_fail_open
+Number of exec events of programs started by excluded processes, delivered
+without strict denial.
 .El
 .Sh FILES
 .Bl -tag -width ".Pa /dev/oes" -compact
@@ -390,6 +433,7 @@ client device
 .El
 .Sh SEE ALSO
 .Xr dtrace 1 ,
+.Xr cap_process 2 ,
 .Xr jail_attach 2 ,
 .Xr liboes 3 ,
 .Xr mac 4 ,
@@ -402,6 +446,29 @@ framework first appeared in
 .Sh AUTHORS
 .An Kory Heard .
 .Sh SECURITY CONSIDERATIONS
+Excluded processes
+.Pq Sx Excluded processes
+are invisible to OES clients by design.
+A compromise of one of them cannot be seen or blocked through OES.
+Core daemons act for their clients:
+BSDExtension loads kernel modules, BSDFilesystem mounts file systems and
+BSDSysctl writes sysctl variables on request.
+Those module loads, mounts and sysctl writes produce no OES event and
+cannot be denied by an OES client; each daemon's own admission policy is the
+only control.
+.Xr audit 4
+still records excluded processes.
+No setting, mute or client request makes a process excluded or not: the
+set is decided by the kernel from the boot chain.
+With
+.Va security.oes.require_auth_clients
+set and no AUTH client, operations of processes that are not excluded are
+denied, including
+.Pa /etc/rc
+and the name-service helper of
+.Xr switchboard 8 ;
+run an AUTH client before setting it.
+.Pp
 A client that subscribes to AUTH events can block or deny the corresponding
 system operations; with
 .Va security.oes.require_auth_clients

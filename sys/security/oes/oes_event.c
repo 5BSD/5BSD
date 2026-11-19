@@ -595,7 +595,7 @@ oes_pending_clone(const struct oes_pending *src, int mflags)
 		return (NULL);
 
 	ep->ep_refcount = 1;
-	ep->ep_flags = src->ep_flags & EP_FLAG_AUTH;
+	ep->ep_flags = src->ep_flags & (EP_FLAG_AUTH | EP_FLAG_FAIL_OPEN);
 	bcopy(&src->ep_msg, &ep->ep_msg, msg_size);
 	ep->ep_msg.em_deadline = (oes_timespec_t){ 0 };
 	ep->ep_deadline = (struct timespec){ 0 };

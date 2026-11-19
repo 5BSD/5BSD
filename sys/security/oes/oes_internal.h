@@ -81,12 +81,34 @@ struct oes_softc {
 	u_int			sc_jail_setters; /* Clients with ec_jail_setter_pr */
 	counter_u64_t		sc_jail_filtered; /* Dropped before allocation */
 	counter_u64_t		sc_jail_filtered_auth; /* AUTH events of those */
+
+	/* Base exclusion (cap_process(2) BASE EXCLUSION). */
+	counter_u64_t		sc_excluded_skipped;	/* No event: excluded subject */
+	counter_u64_t		sc_excluded_invalidations; /* Cache drop, no event */
+	counter_u64_t		sc_exec_fail_open;	/* Launcher exec events */
+	u_int			sc_cache_clients;	/* Clients with cache entries */
 };
 
 /* Bound on the deferred queue so a burst cannot exhaust memory. */
 #define	OES_DEFER_MAX		16384
 
 extern struct oes_softc oes_softc;
+
+/*
+ * Base exclusion: is p excluded from OES (P2_CAP_EXCLUDED; Capsule,
+ * SwitchBoard, Core units)?  One load; p_flag2 of the acting process
+ * changes only at its own exec, a trace start or an attach of a pre-exec
+ * child, so a stale read costs at most one event more or fewer at the
+ * moment of the change.
+ */
+static __inline bool
+oes_proc_excluded(struct proc *p)
+{
+
+	return (__predict_false(p != NULL &&
+	    (atomic_load_int(&p->p_flag2) & P2_CAP_EXCLUDED) != 0));
+}
+#define	oes_subject_excluded()	oes_proc_excluded(curthread->td_proc)
 
 #define OES_LOCK()		mtx_lock(&oes_softc.sc_mtx)
 #define OES_UNLOCK()		mtx_unlock(&oes_softc.sc_mtx)
@@ -286,6 +308,9 @@ struct oes_pending {
 #define EP_FLAG_DELIVERED	0x0002	/* Delivered to userspace */
 #define EP_FLAG_EXPIRED		0x0004	/* Deadline expired */
 #define EP_FLAG_SIGNAL_RESERVE	0x0008	/* Allocated from signal capture zone */
+#define EP_FLAG_FAIL_OPEN	0x0010	/* Strict knobs and fail-closed deadlines
+					   do not deny this event (an exec by
+					   an excluded launcher) */
 
 /*
  * Muted process entry
