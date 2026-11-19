@@ -519,6 +519,10 @@ not yet asleep, cannot stop there: it leaves the system call to stop at
 the user boundary, and the call is restarted when the process is resumed
 or detached.
 Its registers, while it is stopped, are those of the restarted call.
+Registers the debugger changes there are the ones the restarted call
+uses, and a new pc resumes the thread there instead of restarting the
+call; in neither case does the call fail with
+.Er EINTR .
 System calls that are not restarted after a signal, such as
 .Xr nanosleep 2 ,
 .Xr poll 2 ,
