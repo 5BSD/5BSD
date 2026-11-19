@@ -1482,10 +1482,19 @@ oes_dev_init(void)
 	 * dedicated thread rather than contending with unrelated work on the
 	 * shared taskqueue_thread, which was observed to stall deferred delivery
 	 * long enough for observers to miss events under load.
+	 *
+	 * User threads produce the events and set their volume, so the thread
+	 * is a timeshare thread starting at PUSER, the priority every user
+	 * thread starts from, not above its producers.  Woken, it does not
+	 * preempt a producer on that producer's CPU, and oes_defer_task_fn()
+	 * moves it to the timeshare priority the scheduler computes for it
+	 * whenever it has run for the hog limit.  Under a storm the queue
+	 * then fills and events beyond its limit (OES_DEFER_MAX) are
+	 * discarded and counted in es_nosleep_drops (oes(4)).
 	 */
 	oes_softc.sc_defer_tq = taskqueue_create("oes_deferq", M_WAITOK,
 	    taskqueue_thread_enqueue, &oes_softc.sc_defer_tq);
-	taskqueue_start_threads(&oes_softc.sc_defer_tq, 1, PI_SOFT,
+	taskqueue_start_threads(&oes_softc.sc_defer_tq, 1, PUSER,
 	    "oes_deferq");
 
 	oes_softc.sc_cdev = make_dev(&oes_cdevsw, 0, UID_ROOT, GID_WHEEL,

@@ -1082,7 +1082,7 @@ g14_idle_paths(void)
  * once it runs as a timeshare thread.
  */
 #ifndef G18_DELIVERY_FAIR
-#define	G18_DELIVERY_FAIR	0
+#define	G18_DELIVERY_FAIR	1
 #endif
 #define	G18_PERIODS		10
 #define	G18_UNPRIV_ID		65534	/* nobody */

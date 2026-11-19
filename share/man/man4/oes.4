@@ -378,6 +378,21 @@ for threads inside them.
 .Pp
 .Nm
 is compiled into the kernel and cannot be unloaded.
+.Ss Deferred delivery
+NOTIFY events produced where the kernel cannot sleep, such as pipe reads and
+writes, are queued and delivered by the kernel thread
+.Dq oes_deferq .
+That thread is a timeshare thread: it starts at the priority of a user
+thread and, after running for the scheduler's hog limit, takes the
+priority the scheduler computes for it, so it competes for CPU time with
+the processes producing the events rather than preempting them.
+When the producers generate events faster than it can deliver them, the
+queue fills; an event beyond its limit of 16384 is discarded and counted in
+.Va es_nosleep_drops
+of the statistics returned by
+.Dv OES_IOC_GET_STATS .
+A client that must not miss such events reads them promptly and watches
+that counter.
 .Ss DTrace
 The framework defines an
 .Nm

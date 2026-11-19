@@ -2493,6 +2493,16 @@ oes_jail_scopes_finish(void)
  * deliveries.  The task returns when a round finds nothing queued and
  * nothing to end; whatever is queued or marked after that round's look
  * enqueues the task again.
+ *
+ * The thread is a timeshare thread (oes_dev.c), but a kernel thread never
+ * takes the scheduler's end-of-slice switch, which is delivered on the
+ * way back to user mode.  maybe_yield() is that switch: once the thread
+ * has run for the scheduler's hog limit without a voluntary switch
+ * (hogticks, two slices under ULE) it takes the timeshare priority the
+ * scheduler has computed for it (kern_yield(PRI_USER)) and lets the CPU go
+ * to whichever runnable thread that priority puts first.  It does not
+ * sleep or wait for time to pass; with nothing else runnable the thread
+ * continues at once.
  */
 void
 oes_defer_task_fn(void *arg __unused, int pending __unused)
@@ -2523,6 +2533,7 @@ oes_defer_task_fn(void *arg __unused, int pending __unused)
 
 			oes_deliver_notify_locked(ep);
 			oes_pending_rele(ep);
+			maybe_yield();
 		}
 
 		if (ending)
