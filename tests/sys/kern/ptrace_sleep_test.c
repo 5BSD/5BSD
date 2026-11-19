@@ -915,8 +915,9 @@ fsrv_stop(struct fsrv *s)
  * the stop on their way into the sleep, and the stop is reported once
  * both have stopped.
  *
- * With sig, the target catches it with a handler without SA_RESTART, and
- * the debugger resumes it with PT_CONTINUE and that signal.
+ * With sig, the target catches it with a handler installed with saflags
+ * (SA_RESTART or not), and the debugger resumes it with PT_CONTINUE and
+ * that signal.
  */
 static volatile sig_atomic_t presleep_caught;
 
@@ -947,7 +948,7 @@ presleep_thread(void *arg)
 
 static void
 run_presleep(int transparent, bool detach, bool setregs, int nthr, int sig,
-    enum res expect, int lookups)
+    int saflags, enum res expect, int lookups)
 {
 	const char *paths[FSRV_HOLD_MAX] = { MNT_FIFO, MNT_FIFO2 };
 	struct report r[FSRV_HOLD_MAX];
@@ -972,7 +973,7 @@ run_presleep(int transparent, bool detach, bool setregs, int nthr, int sig,
 		if (sig != 0) {
 			memset(&sa, 0, sizeof(sa));
 			sa.sa_handler = presleep_handler;
-			sa.sa_flags = 0;	/* no SA_RESTART */
+			sa.sa_flags = saflags;
 			sigemptyset(&sa.sa_mask);
 			if (sigaction(sig, &sa, NULL) != 0)
 				_exit(2);
@@ -1073,48 +1074,56 @@ ATF_TC_CLEANUP(name, tc)						\
 }
 
 /*
- * Transparent attach before the sleep, as the branch's ERESTART change has
- * it: the thread backs out of the call to stop, and the open is restarted
- * (a second lookup) when it is resumed.  The thread stops at the user
- * boundary, so registers written there are the restarted call's.
+ * Transparent attach before the sleep: the thread is stopped where it
+ * would have slept, asleep and suspended, as a thread the attach found
+ * asleep is (the transparent__fifo_open__* cases).  Resumed, it keeps
+ * sleeping and the open completes with one lookup; a register change ends
+ * the sleep with EINTR (fa7ed546561).
  */
 PRESLEEP_CASE(transparent__presleep_fifo_open__continue,
     "Transparent attach just before the FIFO open sleeps, PT_CONTINUE: "
-    "the open is restarted and completes",
-    1, false, false, 1, 0, RES_DONE, 2)
+    "the open completes, not restarted",
+    1, false, false, 1, 0, 0, RES_DONE, 1)
 PRESLEEP_CASE(transparent__presleep_fifo_open__detach,
     "Transparent attach just before the FIFO open sleeps, PT_DETACH: "
-    "the open is restarted and completes",
-    1, true, false, 1, 0, RES_DONE, 2)
+    "the open completes, not restarted",
+    1, true, false, 1, 0, 0, RES_DONE, 1)
 PRESLEEP_CASE(transparent__presleep_fifo_open__setregs,
     "Transparent attach just before the FIFO open sleeps, PT_SETREGS of "
-    "the same values: the open is restarted and completes",
-    1, false, true, 1, 0, RES_DONE, 2)
+    "the same values: the open fails with EINTR, as for a thread stopped "
+    "asleep",
+    1, false, true, 1, 0, 0, RES_EINTR, 1)
 PRESLEEP_CASE(transparent__presleep_fifo_open__two_threads,
     "Transparent attach just before two threads' FIFO opens sleep, "
-    "PT_CONTINUE: both opens are restarted and complete",
-    1, false, false, 2, 0, RES_DONE, 4)
+    "PT_CONTINUE: both opens complete, not restarted",
+    1, false, false, 2, 0, 0, RES_DONE, 2)
 
 /*
- * A signal the program catches without SA_RESTART, delivered on resume,
- * must end the call with EINTR, as it does for a thread stopped asleep:
- * the handler runs and the open is not restarted.
+ * A signal the program catches, delivered on resume, ends the sleep as it
+ * ends a thread stopped asleep: without SA_RESTART the handler runs and
+ * the open fails with EINTR; with SA_RESTART the handler runs and the open
+ * is restarted (a second lookup) and completes.
  */
 PRESLEEP_CASE(transparent__presleep_fifo_open__continue_sigint,
     "Transparent attach just before the FIFO open sleeps, PT_CONTINUE "
     "with SIGINT caught without SA_RESTART: the handler runs and the open "
     "fails with EINTR",
-    1, false, false, 1, SIGINT, RES_EINTR, 1)
+    1, false, false, 1, SIGINT, 0, RES_EINTR, 1)
+PRESLEEP_CASE(transparent__presleep_fifo_open__continue_sigint_restart,
+    "Transparent attach just before the FIFO open sleeps, PT_CONTINUE "
+    "with SIGINT caught with SA_RESTART: the handler runs and the open is "
+    "restarted and completes",
+    1, false, false, 1, SIGINT, SA_RESTART, RES_DONE, 2)
 
 /* Non-transparent attach before the sleep: FreeBSD behaviour. */
 PRESLEEP_CASE(legacy__presleep_fifo_open__continue,
     "Non-transparent attach just before the FIFO open sleeps, "
     "PT_CONTINUE: the open fails with EINTR (the attach leader rule)",
-    0, false, false, 1, 0, RES_EINTR, 1)
+    0, false, false, 1, 0, 0, RES_EINTR, 1)
 PRESLEEP_CASE(legacy__presleep_fifo_open__detach,
     "Non-transparent attach just before the FIFO open sleeps, PT_DETACH: "
     "the open completes",
-    0, true, false, 1, 0, RES_DONE, 1)
+    0, true, false, 1, 0, 0, RES_DONE, 1)
 
 /*
  * A memory write at a system call entry stop still makes the kernel fetch
@@ -1250,6 +1259,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, transparent__presleep_fifo_open__setregs);
 	ATF_TP_ADD_TC(tp, transparent__presleep_fifo_open__two_threads);
 	ATF_TP_ADD_TC(tp, transparent__presleep_fifo_open__continue_sigint);
+	ATF_TP_ADD_TC(tp, transparent__presleep_fifo_open__continue_sigint_restart);
 	ATF_TP_ADD_TC(tp, legacy__presleep_fifo_open__continue);
 	ATF_TP_ADD_TC(tp, legacy__presleep_fifo_open__detach);
 	ATF_TP_ADD_TC(tp, sce__memory_write__args_refetched);
