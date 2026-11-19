@@ -13,6 +13,9 @@
  */
 
 #include <sys/param.h>
+#include <sys/ptrace.h>
+#include <sys/resource.h>
+#include <sys/sysctl.h>
 #include <sys/user.h>
 
 #include <libutil.h>
@@ -316,6 +319,241 @@ ATF_TC_BODY(interp_errno_kills, tc)
 	dqt_tree_stop(&s);
 }
 
+/*
+ * An exec held inside its commit (exec guard BX-0): the ELF interpreter
+ * is consulted after exec_new_vmspace, with P_INEXEC set, so withholding
+ * its answer holds the exec there.  The hook keeps a copy of the event
+ * and wakes the test; the release answers it as the tree would.
+ */
+struct hold {
+	pthread_mutex_t	 mtx;
+	pthread_cond_t	 cv;
+	bool		 held;
+	pid_t		 pid;		/* the exec'ing process */
+	struct dq_event	*ev;		/* a copy, de_size bytes */
+};
+
+static int
+hold_interp(struct dqt_tree *s, const struct dq_event *ev,
+    const struct dq_resolve_body *rb, const char *path __unused)
+{
+	struct hold *h = s->hookarg;
+
+	if (rb->drs_op != DQ_ROP_EXEC_INTERP)
+		return (0);
+	pthread_mutex_lock(&h->mtx);
+	if (h->held) {
+		pthread_mutex_unlock(&h->mtx);
+		return (0);
+	}
+	h->ev = malloc(ev->de_size);
+	if (h->ev == NULL) {
+		pthread_mutex_unlock(&h->mtx);
+		return (0);
+	}
+	memcpy(h->ev, ev, ev->de_size);
+	h->pid = ev->de_caller.dc_pid;
+	h->held = true;
+	pthread_cond_broadcast(&h->cv);
+	pthread_mutex_unlock(&h->mtx);
+	return (1);
+}
+
+/* Wait (no deadline: the test case's timeout bounds it) for the hold. */
+static pid_t
+hold_wait(struct hold *h)
+{
+	pid_t pid;
+
+	pthread_mutex_lock(&h->mtx);
+	while (!h->held)
+		pthread_cond_wait(&h->cv, &h->mtx);
+	pid = h->pid;
+	pthread_mutex_unlock(&h->mtx);
+	return (pid);
+}
+
+/* Answer the held event as the tree would; the next one may be held. */
+static void
+hold_release(struct dqt_tree *s, struct hold *h)
+{
+	struct dq_event *ev;
+
+	pthread_mutex_lock(&h->mtx);
+	ATF_REQUIRE(h->held);
+	ev = h->ev;
+	ATF_REQUIRE_EQ(0, dq_serve_tree(s->tree, ev, ev + 1,
+	    ev->de_size - sizeof(*ev)));
+	free(ev);
+	h->ev = NULL;
+	h->held = false;
+	pthread_mutex_unlock(&h->mtx);
+}
+
+/* Nothing to read yet on a pipe (O_NONBLOCK read: EAGAIN). */
+static bool
+pipe_empty(int fd)
+{
+	char c;
+	int fl;
+	bool empty;
+
+	fl = fcntl(fd, F_GETFL);
+	(void)fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+	empty = read(fd, &c, 1) == -1 && errno == EAGAIN;
+	(void)fcntl(fd, F_SETFL, fl);
+	return (empty);
+}
+
+/*
+ * A pdfork'ed child attached with the served root: it waits for go, then
+ * runs fn.  Returns its pid; *pdp is its process descriptor.
+ */
+static pid_t
+held_child(struct dqt_tree *s, void (*fn)(void *), void *arg, int *pdp)
+{
+	int ready[2], go[2];
+	pid_t pid;
+	char c;
+
+	ATF_REQUIRE(pipe(ready) == 0 && pipe(go) == 0);
+	pid = pdfork(pdp, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		close(s->q);
+		close(s->bfd);
+		(void)write(ready[1], "r", 1);
+		if (read(go[0], &c, 1) != 1)
+			_exit(1);
+		fn(arg);
+		_exit(127);
+	}
+	ATF_REQUIRE(read(ready[0], &c, 1) == 1);
+	ATF_REQUIRE(dq_attach_starts(s->q, *pdp, s->sroot, s->sroot) == 0);
+	ATF_REQUIRE(write(go[1], "g", 1) == 1);
+	close(ready[0]); close(ready[1]);
+	close(go[0]); close(go[1]);
+	return (pid);
+}
+
+struct held_arg {
+	int	out;		/* the image's standard output */
+	int	resumed;	/* the vfork parent writes here once back */
+};
+
+static void
+held_exec(void *argp)
+{
+	struct held_arg *a = argp;
+	char *argv[] = { __DECONST(char *, "/bin/helper"), NULL };
+
+	dup2(a->out, STDOUT_FILENO);
+	execve("/bin/helper", argv, NULL);
+}
+
+static void
+held_vfork(void *argp)
+{
+	struct held_arg *a = argp;
+	char *argv[] = { __DECONST(char *, "/bin/helper"), NULL };
+	int status;
+	pid_t pid;
+
+	pid = vfork();
+	if (pid == -1)
+		_exit(125);
+	if (pid == 0) {
+		dup2(a->out, STDOUT_FILENO);
+		execve("/bin/helper", argv, NULL);
+		_exit(127);
+	}
+	(void)write(a->resumed, "r", 1);
+	if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status))
+		_exit(126);
+	_exit(WEXITSTATUS(status));
+}
+
+DQT_TREE_TC(exec_held_at_interp);
+ATF_TC_BODY(exec_held_at_interp, tc)
+{
+	struct dqt_tree s;
+	struct hold h;
+	struct held_arg a;
+	struct rlimit rl;
+	int mib[5], outp[2], resp[2], rlp[2], pd, status;
+	size_t len;
+	pid_t pid, held, k;
+
+	make_exec_tree(tc, "t");
+	dqt_tree_start(&s, "t", DQ_TREE_F_ROOT | DQ_TREE_F_EXEC_REAL);
+	memset(&h, 0, sizeof(h));
+	ATF_REQUIRE_EQ(0, pthread_mutex_init(&h.mtx, NULL));
+	ATF_REQUIRE_EQ(0, pthread_cond_init(&h.cv, NULL));
+	s.hookarg = &h;
+	s.hook = hold_interp;
+	ATF_REQUIRE(pipe(outp) == 0 && pipe(resp) == 0 && pipe(rlp) == 0);
+	a.out = outp[1];
+	a.resumed = resp[1];
+
+	/* An attached child's exec, held at its interpreter. */
+	pid = held_child(&s, held_exec, &a, &pd);
+	held = hold_wait(&h);
+	ATF_CHECK_EQ(pid, held);
+	/* p_candebug: a process in exec cannot be traced. */
+	errno = 0;
+	ATF_CHECK_EQ(-1, ptrace(PT_ATTACH, held, NULL, 0));
+	ATF_CHECK_EQ(EBUSY, errno);
+	/*
+	 * DQ_IOC_ATTACH refuses a process in exec (P_INEXEC); this one is
+	 * also attached already, which the same test refuses.
+	 */
+	errno = 0;
+	ATF_CHECK_EQ(-1, dq_attach(s.q, pd));
+	ATF_CHECK_EQ(EBUSY, errno);
+	/* kern.proc.rlimit waits in execve_block_wait ("inexec"). */
+	mib[0] = CTL_KERN;
+	mib[1] = KERN_PROC;
+	mib[2] = KERN_PROC_RLIMIT;
+	mib[3] = held;
+	mib[4] = RLIMIT_NOFILE;
+	k = fork();
+	ATF_REQUIRE(k >= 0);
+	if (k == 0) {
+		len = sizeof(rl);
+		if (sysctl(mib, nitems(mib), &rl, &len, NULL, 0) != 0)
+			_exit(1);
+		(void)write(rlp[1], &rl, sizeof(rl));
+		_exit(0);
+	}
+	ATF_CHECK_MSG(dqt_wait_wmesg(k, "inexec", DQT_WAIT_MS),
+	    "kern.proc.rlimit does not wait for the exec");
+	ATF_CHECK(pipe_empty(rlp[0]));
+	hold_release(&s, &h);
+	ATF_REQUIRE_EQ((ssize_t)sizeof(rl), read(rlp[0], &rl, sizeof(rl)));
+	ATF_CHECK(rl.rlim_cur > 0);
+	ATF_REQUIRE_EQ(k, waitpid(k, &status, 0));
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "held exec: status %#x", status);
+	close(pd);
+
+	/* A vfork parent waits through the held exec of its child. */
+	pid = held_child(&s, held_vfork, &a, &pd);
+	held = hold_wait(&h);
+	ATF_CHECK(held != pid);
+	ATF_CHECK_MSG(dqt_wait_wmesg(pid, "ppwait", DQT_WAIT_MS),
+	    "the vfork parent does not wait");
+	ATF_CHECK(pipe_empty(resp[0]));
+	hold_release(&s, &h);
+	ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "vfork parent: status %#x", status);
+	ATF_CHECK(!pipe_empty(resp[0]));
+	close(pd);
+	dqt_tree_stop(&s);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -324,5 +562,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, interp_from_tree);
 	ATF_TP_ADD_TC(tp, shell_interp);
 	ATF_TP_ADD_TC(tp, interp_errno_kills);
+	ATF_TP_ADD_TC(tp, exec_held_at_interp);
 	return (atf_no_error());
 }
