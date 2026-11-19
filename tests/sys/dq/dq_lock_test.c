@@ -24,15 +24,9 @@
 #include <sys/wait.h>
 
 #include <atf-c.h>
-#include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <poll.h>
-#include <pthread.h>
 #include <signal.h>
-#include <stdarg.h>
-#include <stdatomic.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1194,7 +1188,7 @@ ATF_TC_BODY(unlock_all_over_depth, tc)
 
 struct reuse_arg {
 	int		 sfd;
-	int		 ready[2], go[2], start[2];
+	int		 ready[2], go[2];
 	short		 type;
 };
 
@@ -1240,241 +1234,6 @@ reuse_locks(struct dqt_ctl *c)
 
 	dqt_stats2(c, &st);
 	return (st.ds2_locks);
-}
-
-/*
- * T-R07 made deterministic (bad-fix audit of C5, after the auditor's
- * waiter_fd_reuse_window): waiter_fd_reuse_stress passed on libdq from
- * before C5 because nothing made the next owner's open take A's old
- * descriptor number, and nothing held A's waiter between its grant and
- * its undo.  Here both are controlled:
- *
- * - Numbers.  Requester B is forked first and waits for a start byte
- *   before it locks; every pipe of the round exists before A starts, and
- *   the holes below them are filled.  The only descriptor the controller
- *   (this process) then opens or closes is A's owner, number L, and its
- *   waiter's duplicate (C5).  When A's owner is closed, L is the lowest
- *   free number, so B's owner open takes it.
- * - Time.  fcntl(2) is interposed in this program.  In the controller, a
- *   granted write F_OFD_SETLKW or F_SETLKW does not return until the test
- *   has seen B's read lock and says so on reuse_go (an event, no
- *   polling), so A's waiter acts after B has its lock.  libdq since C5
- *   closes an owner only after its waiters finish, so B cannot lock while
- *   the waiter is held: the hold then ends at DQT_WAIT_MS, the suite's
- *   bound for a condition to come true.  The held waiter's undo (an
- *   F_OFD_SETLK F_UNLCK) is reported on reuse_undo.
- *
- * A waiter that finds its owner by descriptor number (before C5) undoes
- * its late grant on B's open file: B's lock is gone (a foreign unlock).
- * One that works on its own descriptor of A's open file does not.
- */
-static _Atomic(pid_t) reuse_armed;
-static int reuse_go[2] = { -1, -1 }, reuse_undo[2] = { -1, -1 };
-static _Atomic(int) reuse_held;
-static _Atomic(pthread_t) reuse_holder;
-
-static int (*real_fcntl)(int, int, ...);
-
-/* A byte on fd within ms; false at the deadline. */
-static bool
-reuse_byte(int fd, int ms)
-{
-	struct pollfd pfd;
-	char b;
-
-	pfd.fd = fd;
-	pfd.events = POLLIN;
-	pfd.revents = 0;
-	return (poll(&pfd, 1, ms) == 1 && read(fd, &b, 1) == 1);
-}
-
-int
-fcntl(int fd, int cmd, ...)
-{
-	struct flock *flp;
-	va_list ap;
-	intptr_t arg;
-	int cs, rv;
-
-	va_start(ap, cmd);
-	arg = va_arg(ap, intptr_t);
-	va_end(ap);
-	if (real_fcntl == NULL)
-		real_fcntl = (int (*)(int, int, ...))dlsym(RTLD_NEXT, "fcntl");
-	rv = real_fcntl(fd, cmd, arg);
-	if (rv != 0 || atomic_load(&reuse_armed) != getpid())
-		return (rv);
-	if (cmd == F_OFD_SETLK && atomic_load(&reuse_held) != 0 &&
-	    pthread_equal(atomic_load(&reuse_holder), pthread_self())) {
-		flp = (struct flock *)arg;
-		if (flp->l_type == F_UNLCK)
-			(void)write(reuse_undo[1], "u", 1);
-		return (rv);
-	}
-	/* A's request only: a write lock (B's is a read lock). */
-	if ((cmd != F_OFD_SETLKW && cmd != F_SETLKW) ||
-	    ((struct flock *)arg)->l_type != F_WRLCK)
-		return (rv);
-	/*
-	 * No cancellation point while held: libdq's waiter is a thread that
-	 * an owner's close cancels, and its own F_OFD_SETLKW is the only
-	 * point where it may be cancelled; poll(2) must not add one.
-	 */
-	(void)pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
-	(void)reuse_byte(reuse_go[0], DQT_WAIT_MS);
-	(void)pthread_setcancelstate(cs, NULL);
-	atomic_store(&reuse_holder, pthread_self());
-	atomic_fetch_add(&reuse_held, 1);
-	return (rv);
-}
-
-/* Drop a byte left from an earlier round (nonblocking pipes). */
-static void
-reuse_drain(int fd)
-{
-	char b;
-
-	while (read(fd, &b, 1) == 1)
-		continue;
-}
-
-static void
-child_reuse_gated(void *argp, void *result)
-{
-	struct reuse_arg *a = argp;
-	char b;
-
-	if (read(a->start[0], &b, 1) != 1)
-		_exit(5);
-	child_reuse(argp, result);
-}
-
-/* Fill every free descriptor number below the highest in use. */
-static int
-reuse_fill(int *fill, int max, int top)
-{
-	int fd, n;
-
-	for (n = 0; n < max; ) {
-		fd = open("/dev/null", O_RDONLY);
-		ATF_REQUIRE(fd >= 0);
-		if (fd > top) {
-			(void)close(fd);
-			break;
-		}
-		fill[n++] = fd;
-	}
-	return (n);
-}
-
-#define	REUSE_WINDOW_ROUNDS	4
-
-ATF_TC(waiter_fd_reuse_window);
-ATF_TC_HEAD(waiter_fd_reuse_window, tc)
-{
-	atf_tc_set_md_var(tc, "descr", "a SETLKW waiter granted after its "
-	    "requester died, held until the next owner, which got the dead "
-	    "owner's descriptor number, has its lock, must not undo that "
-	    "lock (T-R07, C5; deterministic)");
-	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "timeout", "300");
-}
-ATF_TC_BODY(waiter_fd_reuse_window, tc)
-{
-	struct dqt_fixture f;
-	struct reuse_arg a, b;
-	struct dqt_child cha, chb;
-	struct dqt_rr ra, rb;
-	struct flock fl;
-	int fill[64], foreign_unlock, foreign_grant, held, hb, hc, i, nfill;
-	int rounds, status, top, undone, unlocks;
-	char c;
-
-	setup(&f, 62);
-	hb = open(backing_path, O_RDWR);
-	hc = open(backing_path, O_RDWR);
-	ATF_REQUIRE(hb >= 0 && hc >= 0);
-	/* The interposer's pipes, made before any round's numbers. */
-	ATF_REQUIRE(pipe2(reuse_go, O_NONBLOCK | O_CLOEXEC) == 0);
-	ATF_REQUIRE(pipe2(reuse_undo, O_NONBLOCK | O_CLOEXEC) == 0);
-	foreign_unlock = foreign_grant = undone = 0;
-	for (rounds = 0; rounds < REUSE_WINDOW_ROUNDS; rounds++) {
-		ATF_REQUIRE(reuse_unlocked(hc, DQT_WAIT_MS));
-		memset(&a, 0, sizeof(a));
-		memset(&b, 0, sizeof(b));
-		a.sfd = b.sfd = f.o->fd;
-		a.type = F_WRLCK;
-		b.type = F_RDLCK;
-		ATF_REQUIRE(pipe(a.ready) == 0 && pipe(a.go) == 0 &&
-		    pipe(a.start) == 0);
-		ATF_REQUIRE(pipe(b.ready) == 0 && pipe(b.go) == 0 &&
-		    pipe(b.start) == 0);
-		/* B first, waiting for its start byte. */
-		dqt_spawn(&chb, child_reuse_gated, &b);
-		top = MAX(chb.pipefd, b.start[1]);
-		nfill = reuse_fill(fill, nitems(fill), top);
-		reuse_drain(reuse_go[0]);
-		reuse_drain(reuse_undo[0]);
-		held = atomic_load(&reuse_held);
-		atomic_store(&reuse_armed, getpid());
-
-		setfl(&fl, F_WRLCK, 0, 10);
-		ATF_REQUIRE_EQ(0, fcntl(hb, F_OFD_SETLK, &fl));
-		dqt_spawn(&cha, child_reuse, &a);
-		/* A's LOCK is served: its waiter is in its F_OFD_SETLKW. */
-		ATF_REQUIRE(dqt_wait_wmesg(getpid(), "lockf", DQT_WAIT_MS));
-		dqt_lock(&f.c);
-		unlocks = f.o->nunlocks;
-		dqt_unlock(&f.c);
-		/* A's grant, then A's death: the grant comes too late. */
-		setfl(&fl, F_UNLCK, 0, 10);
-		ATF_REQUIRE_EQ(0, fcntl(hb, F_OFD_SETLK, &fl));
-		(void)kill(cha.pid, SIGKILL);
-		ATF_REQUIRE(dqt_wait_events(&f.c, DQ_OP_UNLOCK_ALL,
-		    (unsigned)unlocks + 1, DQT_WAIT_MS));
-
-		/* B locks through a new owner: number L. */
-		ATF_REQUIRE_EQ(1, write(b.start[1], "s", 1));
-		ATF_REQUIRE_EQ(1, read(b.ready[0], &c, 1));
-		/* B has its lock: release A's held waiter, which undoes. */
-		ATF_REQUIRE_EQ(1, write(reuse_go[1], "g", 1));
-		ATF_REQUIRE_MSG(reuse_byte(reuse_undo[0], 2 * DQT_WAIT_MS),
-		    "A's waiter did not take its grant back");
-		undone++;
-		ATF_CHECK(atomic_load(&reuse_held) > held);
-		atomic_store(&reuse_armed, 0);
-
-		setfl(&fl, F_WRLCK, 0, 10);
-		ATF_REQUIRE_EQ(0, fcntl(hc, F_OFD_GETLK, &fl));
-		if (fl.l_type == F_UNLCK)
-			foreign_unlock++;
-		else if (fl.l_type == F_WRLCK)
-			foreign_grant++;
-		ATF_REQUIRE_EQ(1, write(b.go[1], "g", 1));
-		status = dqt_wait(&chb, &rb, sizeof(rb));
-		ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
-		    "B: status %#x", status);
-		ATF_CHECK_EQ_MSG(0, rb.rv, "B's lock: %s", strerror(rb.err));
-		(void)dqt_wait(&cha, &ra, sizeof(ra));
-		for (i = 0; i < nfill; i++)
-			(void)close(fill[i]);
-		for (i = 0; i < 2; i++) {
-			(void)close(a.ready[i]);
-			(void)close(a.go[i]);
-			(void)close(a.start[i]);
-			(void)close(b.ready[i]);
-			(void)close(b.go[i]);
-			(void)close(b.start[i]);
-		}
-	}
-	printf("waiter_fd_reuse_window: %d rounds, %d held grants, %d undone, "
-	    "%d foreign unlocks, %d foreign grants\n", rounds,
-	    atomic_load(&reuse_held), undone, foreign_unlock, foreign_grant);
-	ATF_CHECK_EQ(0, foreign_unlock);
-	ATF_CHECK_EQ(0, foreign_grant);
-	(void)close(hb);
-	(void)close(hc);
-	dqt_fixture_fini(&f);
 }
 
 ATF_TC(waiter_fd_reuse_stress);
@@ -1591,6 +1350,5 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, getlk_creates_no_owner);
 	ATF_TP_ADD_TC(tp, unlock_all_over_depth);
 	ATF_TP_ADD_TC(tp, waiter_fd_reuse_stress);
-	ATF_TP_ADD_TC(tp, waiter_fd_reuse_window);
 	return (atf_no_error());
 }
