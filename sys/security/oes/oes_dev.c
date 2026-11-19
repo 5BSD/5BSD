@@ -1488,7 +1488,7 @@ oes_dev_init(void)
 	 * thread starts from, not above its producers.  Woken, it does not
 	 * preempt a producer on that producer's CPU, and oes_defer_task_fn()
 	 * moves it to the timeshare priority the scheduler computes for it
-	 * whenever it has run for the hog limit.  Under a storm the queue
+	 * whenever the scheduler ends its slice.  Under a storm the queue
 	 * then fills and events beyond its limit (OES_DEFER_MAX) are
 	 * discarded and counted in es_nosleep_drops (oes(4)).
 	 */

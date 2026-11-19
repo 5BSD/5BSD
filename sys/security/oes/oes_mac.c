@@ -2496,13 +2496,13 @@ oes_jail_scopes_finish(void)
  *
  * The thread is a timeshare thread (oes_dev.c), but a kernel thread never
  * takes the scheduler's end-of-slice switch, which is delivered on the
- * way back to user mode.  maybe_yield() is that switch: once the thread
- * has run for the scheduler's hog limit without a voluntary switch
- * (hogticks, two slices under ULE) it takes the timeshare priority the
- * scheduler has computed for it (kern_yield(PRI_USER)) and lets the CPU go
- * to whichever runnable thread that priority puts first.  It does not
- * sleep or wait for time to pass; with nothing else runnable the thread
- * continues at once.
+ * way back to user mode (TDA_SCHED, set when its slice is used up or a
+ * better thread is waiting).  The task takes that request after each
+ * delivery as ast_scheduler() would: it moves to the timeshare priority
+ * the scheduler has computed for it (kern_yield(PRI_USER)) and lets the
+ * CPU go to whichever runnable thread that priority puts first, so it
+ * competes slice for slice.  It does not sleep or wait for time to pass;
+ * with nothing better runnable the thread continues at once.
  */
 void
 oes_defer_task_fn(void *arg __unused, int pending __unused)
@@ -2533,7 +2533,8 @@ oes_defer_task_fn(void *arg __unused, int pending __unused)
 
 			oes_deliver_notify_locked(ep);
 			oes_pending_rele(ep);
-			maybe_yield();
+			if (td_ast_pending(curthread, TDA_SCHED))
+				kern_yield(PRI_USER);
 		}
 
 		if (ending)
