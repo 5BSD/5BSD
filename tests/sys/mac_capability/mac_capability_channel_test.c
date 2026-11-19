@@ -2212,6 +2212,11 @@ hold_forward_start(void)
 	pid = fork();
 	ATF_REQUIRE(pid >= 0);
 	if (pid == 0) {
+		/*
+		 * dtrace must not hold the test's descriptors: a reference
+		 * left there would keep an endpoint or a socket open.
+		 */
+		closefrom(3);
 		execl("/usr/sbin/dtrace", "dtrace", "-q", "-w", "-o", out,
 		    "-n", "BEGIN { printf(\"READY\\n\"); }", "-n", program,
 		    (char *)NULL);
