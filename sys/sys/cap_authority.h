@@ -351,5 +351,6 @@ int	cap_exclusion_refused_interp(struct proc *);
 void	cap_exclusion_clear_locked(struct proc *, int);
 int	cap_exclusion_debug_check(struct thread *, struct proc *);
 int	cap_exclusion_attach_check(struct thread *, struct proc *);
+uint32_t cap_authority_roles_locked(struct proc *, bool *);
 #endif
 #endif

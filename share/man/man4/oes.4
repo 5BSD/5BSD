@@ -297,6 +297,33 @@ The program started is not excluded, and everything it does is reported.
 An operation by a process that is not excluded is reported as usual, also
 when it acts on an excluded process.
 Clients cannot unmute an excluded process.
+.Pp
+In every process record,
+.Dv EP_FLAG_CAP_EXCLUDED
+in
+.Va ep_flags
+marks an excluded process, for example the launcher of an exec event or
+the target of a signal;
+.Dv EP_FLAG_CAP_MANAGED
+reports that the process runs the image pinned by a valid managed software
+authority, and
+.Va ep_cap_roles
+the
+.Dv CAP_AUTH_ROLE_*
+bits of that authority.
+After the issuer is revoked, for example when
+.Xr switchboard 8
+restarts, running Core processes keep
+.Dv EP_FLAG_CAP_EXCLUDED
+while
+.Dv EP_FLAG_CAP_MANAGED
+is clear and
+.Va ep_cap_roles
+is 0.
+.Xr switchboard 8
+itself has
+.Dv EP_FLAG_CAP_EXCLUDED
+and neither of the other two.
 .Ss MAC hooks
 Events are generated from MAC policy hooks, including process execution and
 credential changes, the file lifecycle
@@ -457,7 +484,10 @@ Those module loads, mounts and sysctl writes produce no OES event and
 cannot be denied by an OES client; each daemon's own admission policy is the
 only control.
 .Xr audit 4
-still records excluded processes.
+still records excluded processes, and
+.Xr oeslogger 8
+.Fl X
+lists them.
 No setting, mute or client request makes a process excluded or not: the
 set is decided by the kernel from the boot chain.
 With

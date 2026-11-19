@@ -241,7 +241,8 @@ typedef struct {
 	uint64_t	ep_coalition;		/* coalition id, 0 = none */
 	uint64_t	ep_responsible_coalition; /* responsible id, 0 = unset */
 	pid_t		ep_responsible_pid;	/* responsible coalition's leader */
-	uint32_t	ep_pad3;
+	uint32_t	ep_cap_roles;	/* CAP_AUTH_ROLE_* of a valid managed
+					   authority (EP_FLAG_CAP_MANAGED) */
 } oes_process_t;
 
 /* Process flags */
@@ -256,6 +257,10 @@ typedef struct {
 #define EP_FLAG_EXEC		0x0080	/* Process did exec */
 #define EP_FLAG_CONTROLT	0x0100	/* Has controlling terminal */
 #define EP_FLAG_OES_CLIENT	0x0400	/* Owns an active OES client */
+#define EP_FLAG_CAP_EXCLUDED	0x0800	/* Excluded by the kernel (base
+					   exclusion, cap_process(2)) */
+#define EP_FLAG_CAP_MANAGED	0x1000	/* Runs the image pinned by a valid
+					   managed software authority */
 
 #define OES_PROC_STATE_NEW	1
 #define OES_PROC_STATE_NORMAL	2

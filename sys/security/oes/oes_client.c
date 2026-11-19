@@ -10,6 +10,7 @@
 #include "opt_dq.h"
 
 #include <sys/param.h>
+#include <sys/cap_authority.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/malloc.h>
@@ -2593,6 +2594,17 @@ oes_fill_process(oes_process_t *ep, struct proc *p, struct ucred *cred_override,
 			ep->ep_responsible_coalition = mc.responsible_id;
 			ep->ep_responsible_pid = mc.responsible_leader_pid;
 		}
+	}
+
+	/* Base exclusion and the managed authority (cap_process(2)). */
+	{
+		bool managed;
+
+		if (P_CAP_EXCLUDED(p))
+			ep->ep_flags |= EP_FLAG_CAP_EXCLUDED;
+		ep->ep_cap_roles = cap_authority_roles_locked(p, &managed);
+		if (managed)
+			ep->ep_flags |= EP_FLAG_CAP_MANAGED;
 	}
 
 	/* Credential information */

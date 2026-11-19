@@ -542,6 +542,30 @@ cap_authority_runs_pinned_image(struct proc *p)
 	return (pinned);
 }
 /*
+ * The CAP_AUTH_ROLE_* bits of p's valid managed authority when p runs one
+ * of its pinned images, with *managed set; 0 and false otherwise (OES
+ * records).  PROC_LOCK(p) held.
+ */
+uint32_t
+cap_authority_roles_locked(struct proc *p, bool *managed)
+{
+	struct cap_authority *a = p->p_cap_authority;
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	*managed = false;
+	if (!authority_valid(p) || a->kind != CAP_AUTH_MANAGED ||
+	    p->p_textvp == NULL)
+		return (0);
+	for (unsigned i = 0; i < a->nexec; i++) {
+		if (a->executable[i] == p->p_textvp) {
+			*managed = true;
+			return (a->roles);
+		}
+	}
+	return (0);
+}
+
+/*
  * Traditional debugging cannot manufacture the target's protected authority.
  * The caller holds target's PROC lock and stabilizes actor (curproc, or the
  * parent under proctree_lock for PT_TRACE_ME). Never wait for a second PROC

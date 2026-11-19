@@ -287,6 +287,7 @@ ATF_TC_BODY(o5_launcher_exec_fail_open, tc)
 	struct exec_spec e;
 	char helper[PATH_MAX];
 	uint64_t fail_open;
+	uint32_t flags;
 	pid_t pid;
 	int fd;
 
@@ -297,14 +298,17 @@ ATF_TC_BODY(o5_launcher_exec_fail_open, tc)
 	fail_open = counter("security.oes.exec_fail_open");
 	e = (struct exec_spec){ .path = helper, .excluded = true, .token = -1 };
 	pid = spawn(exec_child, &e);
-	ATF_CHECK_MSG(wait_auth_exec(fd, pid, 0, NULL),
+	ATF_CHECK_MSG(wait_auth_exec(fd, pid, 0, &flags),
 	    "no AUTH_EXEC for the excluded launcher's exec");
+	/* Commit 7: the launcher's record says it is excluded. */
+	ATF_CHECK((flags & EP_FLAG_CAP_EXCLUDED) != 0);
 	ATF_CHECK_EQ_MSG(reap(pid), 0, "excluded launcher's exec refused");
 	ATF_CHECK_EQ(counter("security.oes.exec_fail_open"), fail_open + 1);
 
 	e = (struct exec_spec){ .path = helper, .excluded = false, .token = -1 };
 	pid = spawn(exec_child, &e);
-	ATF_CHECK(wait_auth_exec(fd, pid, 0, NULL));
+	ATF_CHECK(wait_auth_exec(fd, pid, 0, &flags));
+	ATF_CHECK((flags & (EP_FLAG_CAP_EXCLUDED | EP_FLAG_CAP_MANAGED)) == 0);
 	ATF_CHECK_EQ_MSG(reap(pid), EACCES,
 	    "a process that is not excluded runs fail-closed");
 	close(fd);
