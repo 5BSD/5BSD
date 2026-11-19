@@ -1670,9 +1670,10 @@ ATF_TC_BODY(stress_flush_while_lookups, tc)
 
 /*
  * The controller closes its queue while eight threads stat a covered name
- * (review L1): each lookup returns 0 or EIO, a thread never succeeds after
- * its first EIO, nothing failed closed before the close, and every thread
- * meets the close.
+ * (review L1), once each thread has reported its first successful stat:
+ * each lookup returns 0 or EIO, a thread never succeeds after its first
+ * EIO, nothing failed closed before the close, and every thread meets the
+ * close.  STRESS_DEADLINE only stops a thread that never sees the close.
  */
 #define	STRESS_EIO	20
 #define	STRESS_DEADLINE	120	/* s */
@@ -1693,13 +1694,20 @@ stress_close_thread(void *arg)
 	struct stress_close *s = arg;
 	struct timespec now, end;
 	struct stat st;
+	bool posted;
 	int eio;
 
 	(void)clock_gettime(CLOCK_MONOTONIC, &end);
 	end.tv_sec += STRESS_DEADLINE;
+	posted = false;
 	for (eio = 0; eio < STRESS_EIO;) {
 		if (stat(s->path, &st) == 0) {
 			__atomic_add_fetch(&s->ok, 1, __ATOMIC_RELAXED);
+			/* The parent closes once every thread got one. */
+			if (!posted) {
+				dqt_sync_post(s->sy.toparent[1]);
+				posted = true;
+			}
 			if (eio > 0)
 				__atomic_add_fetch(&s->ok_after_eio, 1,
 				    __ATOMIC_RELAXED);
@@ -1728,7 +1736,6 @@ c_stress_close(void *arg, void *out)
 	for (i = 0; i < STRESS_THREADS; i++)
 		if (pthread_create(&thr[i], NULL, stress_close_thread, s) != 0)
 			_exit(7);
-	dqt_sync_post(s->sy.toparent[1]);
 	for (i = 0; i < STRESS_THREADS; i++)
 		(void)pthread_join(thr[i], NULL);
 	r->ok = s->ok;
@@ -1751,6 +1758,7 @@ ATF_TC_BODY(stress_close_while_lookups, tc)
 	struct stress_close s;
 	struct stress_close_res r;
 	struct dq_stats2 st;
+	int i;
 
 	wd_init();
 	mkfile(at("sc"));
@@ -1760,12 +1768,14 @@ ATF_TC_BODY(stress_close_while_lookups, tc)
 	dqt_init(&c);
 	(void)rule_ok(c.q, -1, s.path, 0, OP(STAT), DQ_STANDING_PASS, 0);
 	dqt_attach_spawn(&c, &ch, c_stress_close, &s);
-	ATF_REQUIRE(dqt_sync_wait(s.sy.toparent[0], 30000));
-	/* Let the threads run under the rule for a while. */
-	(void)usleep(200000);
+	/* Every thread has had a covered stat succeed. */
+	for (i = 0; i < STRESS_THREADS; i++)
+		ATF_REQUIRE_MSG(dqt_sync_wait(s.sy.toparent[0], 30000),
+		    "%d of %d threads reported a covered stat", i,
+		    STRESS_THREADS);
 	dqt_stats2(&c, &st);
 	ATF_CHECK_EQ(0, st.ds2_resolve_failclosed);
-	ATF_CHECK(st.ds2_standing_pass > 0);
+	ATF_CHECK(st.ds2_standing_pass >= STRESS_THREADS);
 	dqt_close_queue(&c);
 	memset(&r, 0, sizeof(r));
 	dqt_attach_collect(&ch, &r, sizeof(r));
