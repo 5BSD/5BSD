@@ -36,7 +36,6 @@
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
-#include <sys/user.h>
 #include <sys/wait.h>
 
 #include <ufs/ffs/fs.h>
@@ -46,6 +45,7 @@
 #include <fcntl.h>
 #include <paths.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -279,30 +279,91 @@ holder_finish(struct holder *h)
 	close(h->ack);
 }
 
-/* Whether process pid sleeps on the wait message wmesg. */
-static bool
-sleeps_on(pid_t pid, const char *wmesg)
-{
-	struct kinfo_proc kp;
-	size_t len;
-	int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, 0 };
+/*
+ * Watch for threads going to sleep on the suspension ("suspfs", in
+ * vn_start_write()) with dtrace(1)'s sched:::sleep probe: the kernel tells
+ * a waiting process no other way that another process is asleep there.
+ * dtrace prints each sleeper's pid on a pipe the test reads.  The
+ * providers are preloaded (dtraceall_load): a late kldload is refused with
+ * the plane on.
+ */
+struct sleepers {
+	pid_t	pid;
+	FILE	*out;
+};
 
-	mib[3] = pid;
-	len = sizeof(kp);
-	if (sysctl(mib, nitems(mib), &kp, &len, NULL, 0) != 0 || len == 0)
-		return (false);
-	return (strcmp(kp.ki_wmesg, wmesg) == 0);
+static void
+sleepers_start(struct sleepers *w)
+{
+	char line[64];
+	int p[2];
+
+	ATF_REQUIRE_EQ(0, pipe(p));
+	w->pid = fork();
+	ATF_REQUIRE(w->pid >= 0);
+	if (w->pid == 0) {
+		if (dup2(p[1], STDOUT_FILENO) < 0)
+			_exit(126);
+		closefrom(3);
+		execl("/usr/sbin/dtrace", "dtrace", "-q", "-x",
+		    "switchrate=100hz", "-n", "BEGIN { printf(\"READY\\n\"); }",
+		    "-n", "sched:::sleep /stringof(curthread->td_wmesg) == "
+		    "\"suspfs\"/ { printf(\"%d\\n\", pid); }", (char *)NULL);
+		_exit(127);
+	}
+	close(p[1]);
+	w->out = fdopen(p[0], "r");
+	ATF_REQUIRE(w->out != NULL);
+	while (fgets(line, sizeof(line), w->out) != NULL)
+		if (strcmp(line, "READY\n") == 0)
+			return;
+	atf_tc_fail("dtrace exited before tracing sched:::sleep");
+}
+
+/* Block until each of pids[0..n-1] has gone to sleep on the suspension. */
+static void
+sleepers_wait(struct sleepers *w, const pid_t *pids, int n)
+{
+	char line[64];
+	bool *seen;
+	long pid;
+	int i, left;
+
+	seen = calloc(n, sizeof(*seen));
+	ATF_REQUIRE(seen != NULL);
+	left = n;
+	while (left > 0) {
+		ATF_REQUIRE_MSG(fgets(line, sizeof(line), w->out) != NULL,
+		    "dtrace exited with %d reader(s) not asleep", left);
+		pid = strtol(line, NULL, 10);
+		for (i = 0; i < n; i++)
+			if (pids[i] == pid && !seen[i]) {
+				seen[i] = true;
+				left--;
+			}
+	}
+	free(seen);
+}
+
+static void
+sleepers_stop(struct sleepers *w)
+{
+	int status;
+
+	ATF_REQUIRE_EQ(0, kill(w->pid, SIGINT));
+	fclose(w->out);
+	ATF_REQUIRE_EQ(w->pid, waitpid(w->pid, &status, 0));
 }
 
 /*
  * Start a child per read file that opens, reads and fstats it and closes
- * it, and wait until every child's close waits for the resume.
+ * it, and wait until every child's close sleeps waiting for the resume.
  */
 static void
-start_readers(pid_t *pids)
+start_readers(struct sleepers *w, pid_t *pids)
 {
 	char path[64];
-	int fd, i, tries;
+	int fd, i;
 
 	for (i = 0; i < NREAD; i++) {
 		path_of(path, sizeof(path), "f", i);
@@ -315,15 +376,7 @@ start_readers(pid_t *pids)
 			_exit(close(fd) == 0 ? 0 : 2);
 		}
 	}
-	for (i = 0; i < NREAD; i++) {
-		for (tries = 0; tries < 2000; tries++) {
-			if (sleeps_on(pids[i], "suspfs"))
-				break;
-			usleep(5000);
-		}
-		ATF_REQUIRE_MSG(tries < 2000,
-		    "reader %d never waited for the resume in close", i);
-	}
+	sleepers_wait(w, pids, NREAD);
 }
 
 static void
@@ -389,23 +442,27 @@ ATF_TC_HEAD(closed_at_resume, tc)
 	    "files read during a suspension and closed as it ends can be "
 	    "used after the resume");
 	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "require.progs", "mdconfig newfs fsck_ffs");
+	atf_tc_set_md_var(tc, "require.progs",
+	    "mdconfig newfs fsck_ffs /usr/sbin/dtrace");
 	atf_tc_set_md_var(tc, "timeout", "300");
 }
 ATF_TC_BODY(closed_at_resume, tc)
 {
+	struct sleepers w;
 	struct holder h;
 	pid_t pids[NREAD];
 	int sfd;
 
 	require_invariants();
 	fixture();
+	sleepers_start(&w);
 	holder_start(&h);
 	sfd = suspend();
 	holder_access(&h);
-	start_readers(pids);
+	start_readers(&w, pids);
 	resume(sfd);
 	reap_readers(pids);
+	sleepers_stop(&w);
 	use_files();
 	holder_finish(&h);
 	remount_and_check();
@@ -457,27 +514,31 @@ ATF_TC_HEAD(repeated_suspensions, tc)
 	    "files read and closed across repeated suspensions can be used "
 	    "after each resume");
 	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "require.progs", "mdconfig newfs fsck_ffs");
+	atf_tc_set_md_var(tc, "require.progs",
+	    "mdconfig newfs fsck_ffs /usr/sbin/dtrace");
 	atf_tc_set_md_var(tc, "timeout", "900");
 }
 ATF_TC_BODY(repeated_suspensions, tc)
 {
+	struct sleepers w;
 	struct holder h;
 	pid_t pids[NREAD];
 	int i, sfd;
 
 	require_invariants();
 	fixture();
+	sleepers_start(&w);
 	for (i = 0; i < 10; i++) {
 		holder_start(&h);
 		sfd = suspend();
 		holder_access(&h);
-		start_readers(pids);
+		start_readers(&w, pids);
 		resume(sfd);
 		reap_readers(pids);
 		use_files();
 		holder_finish(&h);
 	}
+	sleepers_stop(&w);
 	remount_and_check();
 }
 ATF_TC_CLEANUP(repeated_suspensions, tc)

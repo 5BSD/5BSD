@@ -34,7 +34,9 @@
 #   can occupy, so ENOMEM there is expected), PARALLELISM (kyua, default 1),
 #   with sys/dq (or a program under it) in the suites, imgact_binmisc and
 #   dtraceall are preloaded for them; with sys/mac_capability or its
-#   issuer-decision probe programs, dtraceall; with usr.sbin/bsd-build,
+#   issuer-decision probe programs, or sys/vfs or its ufs_suspend_atime
+#   (sched:::sleep tells it when its readers sleep), dtraceall; with
+#   usr.sbin/bsd-build,
 #   zfs (an md-backed pool gives one case ACLs), and with a kernel that
 #   does not compile them in (MINIMAL), ufs and cryptodev from the stage,
 #   ROOT_FS (ufs, the default, or zfs: a ZFS root pool for the suites that
@@ -209,7 +211,8 @@ esac
 # refuses a late kldload, and those suites fail (never skip) without
 # them.  imgact_binmisc for dq_resolve_test's binmisc row, dtraceall for
 # dq_dtrace_test and dq_socket_test's probes, and for the issuer-decision
-# probe in authority_issuer_probe_test and authority_test_issuer_anchor_test.
+# probe in authority_issuer_probe_test and authority_test_issuer_anchor_test,
+# and for ufs_suspend_atime's sched:::sleep wait for its readers (sys/vfs).
 # LOADER_EXTRA still carries
 # the Linux modules, mac_test_hooks and the rest of the recipe (DQ chapter
 # of the book, section 17); a module named twice is loaded once.
@@ -220,6 +223,8 @@ case " $suites " in
 dtraceall_load="YES"' ;;
 *" sys/mac_capability "*|*" sys/mac_capability/authority_issuer_probe_test"*|\
 *" sys/mac_capability/authority_test_issuer_anchor_test"*)
+	dq_loader='dtraceall_load="YES"' ;;
+*" sys/vfs "*|*" sys/vfs/ufs_suspend_atime"*)
 	dq_loader='dtraceall_load="YES"' ;;
 esac
 # bsd_build_test:generation_reconciliation runs its ACL subtest on an
