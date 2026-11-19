@@ -28,6 +28,8 @@ TEST_METADATA+=	is_exclusive="true"
 # is still a plain test; module-dependent tests fail fast if /dev/oes is absent.
 # Base exclusion (cap_process(2) BASE EXCLUSION); the stack tier runs it.
 ATF_TESTS_C+=	cap_exclusion_oes_test
+# A client and its own processes' events (oes-no-self-events.md).
+ATF_TESTS_C+=	self_events_test
 
 PLAIN_TESTS_C=	\
 	test_close_event \
