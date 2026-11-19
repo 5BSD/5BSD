@@ -11,12 +11,14 @@
  * with exponential backoff.
  */
 
+#include <sys/param.h>
 #include <sys/capsicum.h>
 #include <sys/cap_authority.h>
 #include <sys/syscall.h>
 #include <sys/event.h>
 #include <sys/procdesc.h>
 #include <sys/procctl.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 
 #include <errno.h>
@@ -76,6 +78,12 @@ struct bootstrap_delegate_fds {
 	int	identity_fd;
 	int	authority_fd;
 	/*
+	 * The managed authority, constrained to service_manager with
+	 * CAP_AUTH_ROLE_CORE, that carries base exclusion across switchboard's
+	 * exec (cap_process(2) BASE EXCLUSION).  -1 when none was made.
+	 */
+	int	core_token;
+	/*
 	 * Bundle-directory overrides forwarded to switchboard.  Captured from
 	 * capsule's environment in the parent (getenv is not async-signal-safe,
 	 * so it must not run in the post-fork child).  NULL when unset, which
@@ -112,6 +120,20 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 	int nullfd, fd, safe_base;
 	int src_fds[6], dst_fds[6];
 	unsigned envc, i, nfds;
+
+	/*
+	 * First: install the Core authority while its descriptor is still
+	 * here (the remapping below closes everything outside the reserved
+	 * slots).  It stays pending until the execve() at the end, and
+	 * nothing in between installs another.  This child of PID 1 is
+	 * excluded, so switchboard's exec of the pinned image keeps it.
+	 */
+	if (d->core_token >= 0) {
+		if (syscall(SYS_cap_process, CAP_AUTH_INSTALL, d->core_token, 0,
+		    NULL) == -1)
+			_exit(126);
+		(void)close(d->core_token);
+	}
 
 	/*
 	 * Redirect stdio to /dev/null.  In foreground mode, preserve
@@ -313,6 +335,71 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 }
 
 /*
+ * Issue and constrain the managed authority that carries the Core role
+ * into switchboard's exec (cap_process(2) BASE EXCLUSION).  The image is
+ * opened O_VERIFY; library directories are the system ones, checked as
+ * switchboard checks its units' (authority.c set_loader_directories()).
+ * The token cannot be passed on (CAP_XFER_NONE).
+ */
+static int
+bootstrap_core_authority(int issuer, const char *image_path, int *tokenp)
+{
+	static const char *const libdirs[] = { "/lib", "/usr/lib" };
+	struct cap_authority_spec spec = { .version = CAP_AUTH_VERSION,
+	    .kind = CAP_AUTH_MANAGED };
+	struct cap_authority_constraint c = { .flags = CAP_AUTH_ROLE_CORE,
+	    .nexec = 1 };
+	struct cap_authority_libdirs dirs = { .count = 0 };
+	struct stat st;
+	int image = -1, token = -1, saved, result = -1;
+	unsigned i;
+
+	token = syscall(SYS_cap_process, CAP_AUTH_ISSUE, issuer, 0, &spec);
+	if (token == -1)
+		goto out;
+	image = open(image_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_VERIFY);
+	if (image == -1)
+		goto out;
+	c.token_fd = token;
+	c.executable_fds[0] = image;
+	if (syscall(SYS_cap_process, CAP_AUTH_CONSTRAIN, issuer, 0, &c) == -1)
+		goto out;
+	dirs.token_fd = token;
+	for (i = 0; i < nitems(libdirs); i++) {
+		int fd = open(libdirs[i], O_RDONLY | O_DIRECTORY | O_CLOEXEC |
+		    O_NOFOLLOW);
+
+		if (fd == -1)
+			goto out;
+		dirs.directory_fds[dirs.count++] = fd;
+		if (fstat(fd, &st) == -1)
+			goto out;
+		if (st.st_uid != 0 || (st.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+			errno = EPERM;
+			goto out;
+		}
+	}
+	if (syscall(SYS_cap_process, CAP_AUTH_SET_LIBDIRS, issuer, 0,
+	    &dirs) == -1)
+		goto out;
+	if (cap_xfer_limit(token, CAP_XFER_NONE) == -1)
+		goto out;
+	*tokenp = token;
+	token = -1;
+	result = 0;
+out:
+	saved = errno;
+	for (i = 0; i < dirs.count; i++)
+		close(dirs.directory_fds[i]);
+	if (image != -1)
+		close(image);
+	if (token != -1)
+		close(token);
+	errno = saved;
+	return (result);
+}
+
+/*
  * Start switchboard.  Creates a channel, pdforks, and registers the
  * process descriptor and channel fd on the kqueue.
  * Returns 0 on success, -1 on failure.
@@ -390,11 +477,32 @@ bootstrap_start(int kq)
 	 * test issuer until PID 1 anchors the boot; that is said loudly. */
 	dfds.authority_fd = syscall(SYS_cap_process, CAP_AUTH_ISSUER_CREATE,
 	    -1, 0, NULL);
+	dfds.core_token = -1;
 	if (dfds.authority_fd < 0)
-		syslog(LOG_ERR, "bootstrap: protected authority issuer unavailable: %m");
+		syslog(LOG_ERR, "bootstrap: protected authority issuer "
+		    "unavailable: %m; switchboard cannot be excluded");
 	else if (getpid() != 1)
 		syslog(LOG_WARNING,
 		    "bootstrap: TEST MODE: authority issuer created off PID 1");
+	else if (bootstrap_core_authority(dfds.authority_fd,
+	    od.cfg.service_manager, &dfds.core_token) == -1) {
+		/*
+		 * Holding an issuer, Capsule never starts switchboard without
+		 * the Core role: the start fails, like the descriptor
+		 * confinement below.  (Only PID 1's fork chain can be excluded,
+		 * so a test-local Capsule makes no Core token.)
+		 */
+		syslog(LOG_ERR, "bootstrap: core authority for switchboard: %m");
+		close(capsule_end);
+		close(child_end);
+		close(dfds.channel_svc_fd);
+		close(dfds.coalition_svc_fd);
+		close(dfds.capprotect_fd);
+		if (dfds.identity_fd >= 0)
+			close(dfds.identity_fd);
+		close(dfds.authority_fd);
+		return (-1);
+	}
 
 	/* Capture bundle-dir overrides here — getenv is not safe post-fork. */
 	dfds.bundle_dir_system = getenv("SWITCHBOARD_BUNDLE_DIR_SYSTEM");
@@ -429,6 +537,8 @@ bootstrap_start(int kq)
 			close(dfds.identity_fd);
 		if (dfds.authority_fd >= 0)
 			close(dfds.authority_fd);
+		if (dfds.core_token >= 0)
+			close(dfds.core_token);
 		return (-1);
 	}
 
@@ -443,6 +553,7 @@ bootstrap_start(int kq)
 		if (dfds.capprotect_fd >= 0) close(dfds.capprotect_fd);
 		if (dfds.identity_fd >= 0) close(dfds.identity_fd);
 		if (dfds.authority_fd >= 0) close(dfds.authority_fd);
+		if (dfds.core_token >= 0) close(dfds.core_token);
 		return (-1);
 	}
 
@@ -464,6 +575,8 @@ bootstrap_start(int kq)
 		close(dfds.identity_fd);
 	if (dfds.authority_fd >= 0)
 		close(dfds.authority_fd);
+	if (dfds.core_token >= 0)
+		close(dfds.core_token);
 
 	/*
 	 * The process descriptor is capsule's explicit and exclusive authority

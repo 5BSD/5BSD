@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 2, 2026
+.Dd November 19, 2026
 .Dt SWITCHBOARD 8
 .Os
 .Sh NAME
@@ -196,6 +196,49 @@ After exec, all manager-owned descriptors are irreversibly restricted against
 transfer, fork inheritance, and exec inheritance.
 Descriptors intentionally delegated to a service cross only that service's
 fork/exec boundary and are non-transferable.
+.Sh BASE EXCLUSION
+.Nm
+itself, and every unit of class
+.Cm core
+.Pq Va control = Qq core
+in a root-owned System bundle under
+.Pa /Capabilities/System ,
+are excluded by the kernel from
+.Xr oes 4
+and from Capability Brokers
+.Pq Xr dq 4 ;
+see BASE EXCLUSION in
+.Xr cap_process 2 .
+.Nm
+launches such a unit with an authority that carries
+.Dv CAP_AUTH_ROLE_CORE .
+A Core unit in
+.Pa /Capabilities/Apps
+or in a per-user bundle is never excluded.
+A Core unit's program must be an ELF image; a script fails to launch with
+.Er ENOEXEC
+and the message
+.Dq control = "core" requires an ELF program .
+When
+.Xr mac_veriexec 4
+is not enforcing, each Core launch logs, at
+.Dv LOG_WARNING ,
+that the role was granted without Veriexec enforcement: the image was not
+verified against the base manifest, so a root-installed System bundle is
+indistinguishable from the release's.
+With enforcement, the program and manifest are opened
+.Dv O_VERIFY
+and anything outside the loaded manifest cannot launch.
+.Pp
+At start-up
+.Nm
+drops the authority
+.Xr capsule 8
+gave it (it only carried the Core role across its exec); exclusion lasts
+until its next exec.
+Programs a Core unit or
+.Nm
+starts are not excluded.
 .Sh OOM PROTECTION
 A unit may request
 .Va oom_protect = true

@@ -11,6 +11,9 @@
 #include <sys/syscall.h>
 #include <sys/stat.h>
 #include <sys/ioctl.h>
+#include <sys/sysctl.h>
+#include <sys/elf_common.h>
+#include <sys/cap_authority.h>
 #include <sys/event.h>
 #include <sys/procdesc.h>
 #include <channel.h>
@@ -107,6 +110,61 @@ out:
 	return (result);
 }
 
+/*
+ * Is svc a Core unit: control = "core" in a root-owned System bundle?  The
+ * same test as boot_storage_recipient() makes for Core storage.  A bundle
+ * under /Capabilities/Apps has owner_uid (uid_t)-1 too, but is not System.
+ */
+bool
+svc_authority_core(const struct svc_runtime *svc)
+{
+
+	return (svc->owner_uid == (uid_t)-1 &&
+	    bundle_registry_is_system(svc->bundle_idx) &&
+	    svc->manifest.management == SVC_MGMT_CORE);
+}
+
+/*
+ * A Core unit's program must be an ELF image: the kernel refuses an exec
+ * predicted excluded that turns out to be a script (EACCES); say why first.
+ * Then record, truthfully, whether the image was verified against the
+ * base: with mac_veriexec enforcing, the O_VERIFY open of the program (and
+ * libcapbundle's of the manifest) already refused anything outside the
+ * signed base manifest; without enforcement nothing distinguishes a
+ * root-installed bundle from the release's, and the launch says so.
+ */
+static int
+svc_authority_core_image(const struct svc_runtime *svc, int image)
+{
+	unsigned char magic[SELFMAG];
+	char state[64], *word, *rest;
+	size_t len;
+	bool enforcing = false;
+
+	if (pread(image, magic, sizeof(magic), 0) != (ssize_t)sizeof(magic) ||
+	    memcmp(magic, ELFMAG, SELFMAG) != 0) {
+		syslog(LOG_ERR, "unit %s: control = \"core\" requires an ELF "
+		    "program", svc->manifest.label);
+		errno = ENOEXEC;
+		return (-1);
+	}
+	/* "loaded active enforce locked"; absent without mac_veriexec. */
+	len = sizeof(state) - 1;
+	if (sysctlbyname("security.mac.veriexec.state", state, &len, NULL,
+	    0) == 0) {
+		state[len] = '\0';
+		rest = state;
+		while ((word = strsep(&rest, " ")) != NULL)
+			if (strcmp(word, "enforce") == 0)
+				enforcing = true;
+	}
+	if (!enforcing)
+		syslog(LOG_WARNING, "unit %s: Core role granted without "
+		    "Veriexec enforcement: image not verified against the base "
+		    "manifest", svc->manifest.label);
+	return (0);
+}
+
 /* Image policy names executable objects; no authentication program is special. */
 int
 svc_authority_constrain_application(const struct svc_runtime *svc, int token)
@@ -129,6 +187,14 @@ svc_authority_constrain_application(const struct svc_runtime *svc, int token)
 		return (errno = EPERM, -1);
 
 	constraint.nexec = 1;
+	/*
+	 * Core units are excluded from OES and Capability Brokers by the
+	 * kernel (cap_process(2) BASE EXCLUSION).  Only units of a root-owned
+	 * System bundle (/Capabilities/System) may be Core: never Apps, never
+	 * per-user bundles (rev 3 delta 3.4, Q15).
+	 */
+	if (svc_authority_core(svc))
+		constraint.flags |= CAP_AUTH_ROLE_CORE;
 	for (i = 0; i < constraint.nexec; i++) {
 		const char *path = m->program;
 		constraint.executable_fds[i] = open(path,
@@ -145,6 +211,9 @@ svc_authority_constrain_application(const struct svc_runtime *svc, int token)
 			goto out;
 		}
 	}
+	if ((constraint.flags & CAP_AUTH_ROLE_CORE) != 0 &&
+	    svc_authority_core_image(svc, constraint.executable_fds[0]) == -1)
+		goto out;
 #ifdef CAPIMAGE_EXPERIMENTAL_CONSUMER
 	{
 		struct capbundle *bundle = bundle_registry_get(svc->bundle_idx);

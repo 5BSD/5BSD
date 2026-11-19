@@ -21,15 +21,18 @@
  *   7. Enter event loop
  */
 
+#include <sys/cap_authority.h>
 #include <sys/capsicum.h>
 #include <sys/event.h>
 #include <sys/mount.h>
 #include <sys/sysctl.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 
 #include <dev/mac_capability/mac_capability_capprotect_proto.h>
 #include <dev/mac_capability/mac_capability_isolation_proto.h>
 
+#include <err.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
@@ -305,6 +308,18 @@ main(int argc, char *argv[])
 	struct kevent kev;
 	const char *channel_fd_str, *s;
 	int ch;
+
+	/*
+	 * Capsule's Core authority only carried the Core role across this
+	 * exec (P2_CAP_EXCLUDED is set now and stays until our next exec;
+	 * cap_process(2) BASE EXCLUSION).  Drop it, so the children we fork
+	 * carry no authority until they install their unit's: a Capability
+	 * Broker attaching a parked launch child is refused by the authority
+	 * debug check while the child holds ours.  rtld has already taken its
+	 * library directories as descriptors.
+	 */
+	if (syscall(SYS_cap_process, CAP_AUTH_CLEAR, -1, 0, NULL) == -1)
+		err(1, "drop launch authority");
 
 	/* Present as "SwitchBoard" in ps/top, distinct from lowercase base daemons. */
 	setproctitle("-SwitchBoard");

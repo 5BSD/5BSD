@@ -852,16 +852,43 @@ ATF_TC(switchboard_exclusion_bit);
 ATF_TC_HEAD(switchboard_exclusion_bit, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "P6: P2_CAP_EXCLUDED of switchboard (clear today; set from commit 3)");
+	    "P6: switchboard is excluded (flipped in commit 3); the Core spine units are, BSDNotify (class system) and this test are not");
 }
 ATF_TC_BODY(switchboard_exclusion_bit, tc)
 {
+	static const char *const core[] = { "BSDAudit", "BSDCrypto",
+	    "BSDExtension", "BSDFilesystem", "BSDLog", "BSDPower", "BSDSysctl",
+	    "BSDTime" };
+	struct kinfo_proc *kp;
+	int cnt, seen = 0;
 	pid_t pid;
 
 	pid = switchboard_pid();
 	if (pid < 0)
 		atf_tc_skip("no switchboard (plane-on tier only)");
-	ATF_CHECK(!proc_excluded(pid));
+	ATF_CHECK(proc_excluded(pid));
+	kp = kinfo_getallproc(&cnt);
+	ATF_REQUIRE(kp != NULL);
+	for (int i = 0; i < cnt; i++) {
+		bool is_core = false;
+
+		if (kp[i].ki_ppid != pid)
+			continue;
+		for (size_t j = 0; j < nitems(core); j++)
+			if (strcmp(kp[i].ki_comm, core[j]) == 0)
+				is_core = true;
+		if (is_core) {
+			seen++;
+			ATF_CHECK_MSG((kp[i].ki_flag2 & P2_CAP_EXCLUDED_BIT) != 0,
+			    "Core unit %s (pid %d) not excluded", kp[i].ki_comm,
+			    kp[i].ki_pid);
+		} else if (strcmp(kp[i].ki_comm, "BSDNotify") == 0)
+			ATF_CHECK_MSG((kp[i].ki_flag2 & P2_CAP_EXCLUDED_BIT) == 0,
+			    "BSDNotify (pid %d) excluded", kp[i].ki_pid);
+	}
+	free(kp);
+	printf("%d Core units running\n", seen);
+	ATF_CHECK(seen > 0);
 }
 
 ATF_TC(switchboard_debug_interfaces);
