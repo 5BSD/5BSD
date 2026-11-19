@@ -196,12 +196,14 @@ idle_scoped_client(uint32_t mode, uint32_t deadline_ms,
 }
 
 /*
- * AUTH deadline given to clients whose waiters a test expects to be
- * released by something else (a response, an unsubscribe, a close): a
- * waiter that returns before it was released by that, not by the deadline,
- * which the test tells apart by checking the time taken against it.
+ * AUTH deadline for clients whose waiters a test expects to be released by
+ * something else (a response, an unsubscribe, a close): the longest OES
+ * allows, which is no shorter than kyua's test timeout.  A waiter released
+ * while the test runs was therefore released by that, never by its
+ * deadline; the deadline is only a guard that ends a wait the test's
+ * timeout has not already ended.
  */
-#define	IDLE_AUTH_DEADLINE_MS	30000
+#define	IDLE_AUTH_DEADLINE_MS	OES_MAX_DEADLINE_MS
 
 /*
  * Wait for event ev from pid about the file with inode ino (0: any file).

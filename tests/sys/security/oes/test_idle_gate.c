@@ -1029,6 +1029,7 @@ static void
 g7_auth_toggle(void)
 {
 	oes_event_type_t ev = OES_EVENT_AUTH_OPEN;
+	struct oes_stats st;
 	struct idle_worker w;
 	struct timespec start;
 	test_msg_buf buf;
@@ -1076,9 +1077,11 @@ g7_auth_toggle(void)
 	}
 	printf("    slowest open %ld ms\n", worst);
 	ASSERT_MSG(bad == 0, "%d rounds went wrong", bad);
-	/* No open waited for the AUTH deadline. */
-	ASSERT_MSG(worst < IDLE_AUTH_DEADLINE_MS, "an open took %ld ms",
-	    worst);
+	/* No open was released by its deadline (IDLE_AUTH_DEADLINE_MS). */
+	memset(&st, 0, sizeof(st));
+	ASSERT_MSG(ioctl(fd, OES_IOC_GET_STATS, &st) == 0 &&
+	    st.es_auth_timeouts == 0, "%ju AUTH deadlines expired",
+	    (uintmax_t)st.es_auth_timeouts);
 	idle_worker_stop(&w);
 	(void)close(fd);
 }
@@ -1124,9 +1127,8 @@ g8_close_then_nothing_runs(void)
 			continue;
 		err = idle_worker_result(&w[i], INFTIM);
 		ms = idle_elapsed_ms(&start);
-		ASSERT_MSG(err != -1 && ms < IDLE_AUTH_DEADLINE_MS,
-		    "worker %d: %d after %ld ms",
-		    i, err, ms);
+		/* Released while the test runs: by the close. */
+		ASSERT_MSG(err != -1, "worker %d: no answer (%ld ms)", i, ms);
 		idle_worker_stop(&w[i]);
 	}
 	p0 = gate_passes();
