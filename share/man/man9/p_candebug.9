@@ -26,17 +26,20 @@
 .\" (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 .\" THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd August 18, 2023
+.Dd November 17, 2026
 .Dt P_CANDEBUG 9
 .Os
 .Sh NAME
-.Nm p_candebug
-.Nd determine debuggability of a process
+.Nm p_candebug ,
+.Nm p_caninspect
+.Nd determine debuggability and inspectability of a process
 .Sh SYNOPSIS
 .In sys/param.h
 .In sys/proc.h
 .Ft int
 .Fn p_candebug "struct thread *td" "struct proc *p"
+.Ft int
+.Fn p_caninspect "struct thread *td" "struct proc *p"
 .Sh DESCRIPTION
 This function determines if a given process
 .Fa p
@@ -59,18 +62,79 @@ or greater.
 .Pp
 Other such variables indirectly influence it; see
 .Xr cr_bsd_visible 9 .
+.Pp
+The
+.Fn p_caninspect
+function determines if thread
+.Fa td
+may inspect process
+.Fa p :
+see its memory map, auxiliary vector, ps_strings and signal trampoline
+locations, signal fast block, umask and kernel stack
+.Po
+the
+.Dv KERN_PROC_VMMAP ,
+.Dv KERN_PROC_VM_LAYOUT ,
+.Dv KERN_PROC_AUXV ,
+.Dv KERN_PROC_PS_STRINGS ,
+.Dv KERN_PROC_SIGTRAMP ,
+.Dv KERN_PROC_SIGFASTBLK ,
+.Dv KERN_PROC_UMASK
+and
+.Dv KERN_PROC_KSTACK
+.Xr sysctl 3
+nodes, and the linprocfs
+.Pa maps
+and
+.Pa auxv
+files
+.Pc .
+That is metadata about the process, never the contents of its memory, which
+stay under
+.Fn p_candebug .
+The auxiliary vector is located through pointers in the process's own
+memory, so the process controls what an inspector reads as its auxiliary
+vector.
+.Pp
+.Fn p_caninspect
+performs the checks of
+.Fn p_candebug ,
+in the same order and with the same errors, with three differences:
+it does not apply a process's software-authority or no-ambient debug
+protection (see
+.Xr mac_capability_capprotect 4 ) ,
+which protects its memory and control, not its layout;
+it asks the MAC policies
+.Fn mac_proc_check_inspect
+instead of
+.Fn mac_proc_check_debug ,
+and a policy that does not implement the inspect question answers its
+debug question
+.Pq see Xr mac 9 ;
+and it allows the initial process at any
+.Va kern.securelevel .
+.Pp
+Whoever may debug a process may inspect it:
+.Fn p_candebug
+returning 0 implies
+.Fn p_caninspect
+returning 0.
+A MAC policy that implements both questions must preserve this.
 .Sh RETURN VALUES
 The
 .Fn p_candebug
-function
-returns
+and
+.Fn p_caninspect
+functions
+return
 .Li 0
 if the process denoted by
 .Fa p
-is debuggable by thread
+is debuggable or inspectable, respectively, by thread
 .Fa td ,
 or a non-zero error return value otherwise.
 .Sh ERRORS
+Both functions return the following errors, except where noted.
 .Bl -tag -width Er
 .It Bq Er EPERM
 An unprivileged process attempted to debug another process but the system is
@@ -114,13 +178,28 @@ is executing a set-user-ID or set-group-ID executable.
 .It Bq Er EPERM
 Process
 .Fa p
+holds a software authority or has no ambient process control
+.Pq Dv PD_PROTECTED ,
+and thread
+.Fa td
+may not debug it
+.Pq Fn p_candebug No only .
+.It Bq Er EACCES
+A MAC policy refused the request, for example a
+.Xr mac_capability_capprotect 4
+ptrace shield
+.Pq Fn p_candebug No only : No the shield does not refuse inspection .
+.It Bq Er EPERM
+Process
+.Fa p
 denotes the initial process
 .Fn initproc
 and the
 .Xr sysctl 8
 variable
 .Va kern.securelevel
-is greater than zero.
+is greater than zero
+.Pq Fn p_candebug No only .
 .It Bq Er EBUSY
 Process
 .Fa p
@@ -139,6 +218,8 @@ command
 .El
 .Sh SEE ALSO
 .Xr procctl 2 ,
+.Xr sysctl 3 ,
+.Xr mac_capability_capprotect 4 ,
 .Xr cr_bsd_visible 9 ,
 .Xr mac 9 ,
 .Xr p_cansee 9 ,

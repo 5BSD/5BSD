@@ -329,6 +329,8 @@ proc_vmspace_check_access(struct thread *td, struct proc *p, int flags)
 	PROC_ASSERT_HELD(p);
 	if ((flags & PRVM_CHECK_DEBUG) != 0)
 		return (p_candebug(td, p));
+	if ((flags & PRVM_CHECK_INSPECT) != 0)
+		return (p_caninspect(td, p));
 	if ((flags & PRVM_CHECK_VISIBILITY) != 0)
 		return (p_cansee(td, p));
 	return (0);
@@ -342,9 +344,9 @@ proc_vmspace_ref(struct thread *td, struct proc *p, int flags,
 	int error;
 
 	MPASS((flags & ~(PRVM_BLOCK_EXEC | PRVM_CHECK_VISIBILITY |
-	    PRVM_CHECK_DEBUG)) == 0);
-	MPASS((flags & (PRVM_CHECK_VISIBILITY | PRVM_CHECK_DEBUG)) !=
-	    (PRVM_CHECK_VISIBILITY | PRVM_CHECK_DEBUG));
+	    PRVM_CHECK_DEBUG | PRVM_CHECK_INSPECT)) == 0);
+	MPASS(powerof2(flags & (PRVM_CHECK_VISIBILITY | PRVM_CHECK_DEBUG |
+	    PRVM_CHECK_INSPECT)));
 
 	PROC_LOCK(p);
 	if (p != td->td_proc) {
