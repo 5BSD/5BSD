@@ -432,6 +432,15 @@ void	 audit_ret_svipc_id(int id);
 	if (AUDITING_TD(curthread))					\
 		audit_ret_mbufid((mbufidp));				\
 } while (0)
+#else /* !KDTRACE_HOOKS */
+/*
+ * The returned identifiers are recorded only with KDTRACE_HOOKS
+ * (audit_ret.c); without it the call sites compile to nothing.
+ */
+#define	AUDIT_RET_FD1(fd)
+#define	AUDIT_RET_FD2(fd)
+#define	AUDIT_RET_MSGID(msgidp)
+#define	AUDIT_RET_MBUFID(mbufidp)
 #endif /* !KDTRACE_HOOKS */
 
 #define	AUDIT_SYSCALL_ENTER(code, td)	({				\
@@ -513,12 +522,10 @@ void	 audit_ret_svipc_id(int id);
 #define	AUDIT_ARG_VNODE1(vp)
 #define	AUDIT_ARG_VNODE2(vp)
 
-#ifdef KDTRACE_HOOKS
 #define	AUDIT_RET_FD1(fd)
 #define	AUDIT_RET_FD2(fd)
 #define	AUDIT_RET_MSGID(msgidp)
 #define	AUDIT_RET_MBUFID(mbufidp)
-#endif /* KDTRACE_HOOKS */
 #define	AUDIT_RET_SVIPC_ID(id)
 
 #define	AUDIT_SYSCALL_ENABLED()	0

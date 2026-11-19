@@ -85,6 +85,12 @@ SDT_PROBE_DEFINE3(dq, , , resolve__real, "struct dq_queue *", "uint32_t",
     "char *");
 SDT_PROBE_DEFINE3(dq, , , resolve__symlink, "struct dq_queue *", "uint32_t",
     "uint32_t");
+SDT_PROBE_DEFINE4(dq, , , standing__match, "struct dq_queue *", "uint32_t",
+    "uint64_t", "int32_t");
+SDT_PROBE_DEFINE3(dq, , , standing__miss, "struct dq_queue *", "uint32_t",
+    "uint32_t");
+SDT_PROBE_DEFINE4(dq, , , standing__change, "struct dq_queue *", "uint32_t",
+    "uint64_t", "uint32_t");
 
 /*
  * Tunables (design 8.6).  Bounded setters: a controller can lower its own
@@ -348,6 +354,14 @@ dq_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data, int fflag __unused
 		pa.dp_pad0 = v1->dp_pad0;
 		return (dq_queue_push(q, &pa));
 	}
+	case DQ_IOC_STANDING_ADD:
+		return (dq_standing_add(q, (struct dq_standing_rule *)data,
+		    td));
+	case DQ_IOC_STANDING_DEL:
+		return (dq_standing_del(q, *(uint64_t *)data));
+	case DQ_IOC_STANDING_FLUSH:
+		dq_standing_flush(q, DQ_STANDING_CHANGE_FLUSH);
+		return (0);
 	case FIONBIO:
 	case FIOASYNC:
 		return (0);

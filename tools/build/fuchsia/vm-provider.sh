@@ -34,7 +34,8 @@
 #   can occupy, so ENOMEM there is expected), PARALLELISM (kyua, default 1),
 #   with sys/dq (or a program under it) in the suites, imgact_binmisc and
 #   dtraceall are preloaded for them; with sys/mac_capability or its
-#   issuer-decision probe programs, dtraceall,
+#   issuer-decision probe programs, dtraceall; with usr.sbin/bsd-build,
+#   zfs (an md-backed pool gives one case ACLs),
 #   ROOT_FS (ufs, the default, or zfs: a ZFS root pool for the suites that
 #   require one, such as the Linux ptrace ones),
 #   GATE_TIMEOUT (guest seconds to wait for provider convergence, 600),
@@ -61,6 +62,13 @@
 #   the guest kern.mac_capability.test_issuer=1 with the boot not anchored.
 #   A run that asks for it and does not get it fails (STACK_TIER_FAIL) rather
 #   than counting every stack case as deferred.
+#   TESTS_SRC_ROOTS (space-separated checkout paths; default none): every
+#   ELF test program of the stage must come from one checkout; a deliberate
+#   overlay lists every checkout its programs come from, the main one
+#   included.  Otherwise the run stops with STALE_TESTS before the image is
+#   built (check-stage-tests.py prints each TESTS_SRC_ROOT).  Scripts and
+#   data under usr/tests (Kyuafiles, atf-sh programs, dq_suites.subr,
+#   *.expected) record no source path and are not checked.
 #   KERNEL_TIER (main or test; default main): the kernel tier of the run.
 #   main is GENERIC, or any kernel without a test-kernel option; test is
 #   GENERIC-TEST, and must be asked for: a stage whose kernel carries a
@@ -162,6 +170,10 @@ case $reroot in 0|1) ;; *) die "REROOT must be 0 or 1";; esac
 # archive), attached read-only as a third disk and mounted read-only at
 # /usr/src, for suites that read the tree (usr.sbin/bsd-build).  The image
 # is test data and is never written; without it the guest has no source tree.
+# With it the guest is a build host, so the image also gets the empty standard
+# object root build-bsd(8) writes to, /usr/obj/usr/src and its repo
+# directory (the bsd_build_test cases that run build-bsd there skip without
+# them).
 src_image=${SRC_IMAGE:-}
 if [ -n "$src_image" ]; then
 	# die is defined further down.
@@ -211,10 +223,19 @@ dtraceall_load="YES"' ;;
 *" sys/mac_capability/authority_test_issuer_anchor_test"*)
 	dq_loader='dtraceall_load="YES"' ;;
 esac
+# bsd_build_test:generation_reconciliation runs its ACL subtest on an
+# md-backed ZFS pool (GENERIC has no UFS_ACL); the plane refuses a late
+# kldload of zfs.
+case " $suites " in
+*" usr.sbin/bsd-build "*|*" usr.sbin/bsd-build/bsd_build_test"*)
+	dq_loader="${dq_loader:+$dq_loader
+}zfs_load=\"YES\"" ;;
+esac
 cpus=${CPUS:-4} mem=${MEM_MB:-$mem_default} par=${PARALLELISM:-1} gate=${GATE_TIMEOUT:-600}
 root_fs=${ROOT_FS:-ufs}
 # ROOT_SIZE: the guest root filesystem (makefs -s; default 8g).  Long
-# bsd-build runs with python and the source and ports images fill 8g.
+# bsd-build runs with python and the source and ports images fill 8g.  The
+# guest reports ROOT_DF before and after the suites.
 root_size=${ROOT_SIZE:-8g}
 case $root_size in [1-9]g|[1-9][0-9]g) ;; *) echo "ROOT_SIZE must be 1g to 99g" >&2; exit 64;; esac
 case "$root_fs" in ufs|zfs) ;; *) echo "ROOT_FS must be ufs or zfs" >&2; exit 64;; esac
@@ -227,6 +248,8 @@ case $units in *[!A-Za-z0-9_./\ -]*) die "REQUIRE_UNITS has unexpected character
 case $kyua_vars in *[!A-Za-z0-9_.=\ -]*) die "KYUA_VARS has unexpected characters";; esac
 sysctl_write=${SYSCTL_WRITE:-}
 case $sysctl_write in *[!A-Za-z0-9_.\ ]*) die "SYSCTL_WRITE has unexpected characters";; esac
+tests_src_roots=${TESTS_SRC_ROOTS:-}
+case $tests_src_roots in *[!A-Za-z0-9_./+\ -]*) die "TESTS_SRC_ROOTS has unexpected characters";; esac
 sysctl_conf=Capabilities/System/Sysctl.cap/Units/bsdsysctl.unit/Config/sysctl.conf
 
 stage=$(cd "$stage" 2>/dev/null && pwd) || die "no stage dir"
@@ -266,6 +289,20 @@ for s in $suites; do
 		;;
 	esac
 done
+# Every ELF test program of the stage must come from one checkout (or from
+# the checkouts TESTS_SRC_ROOTS names): a stage copied forward with only
+# some test directories reinstalled runs another branch's tests under the
+# oracles (check-stage-tests.py; 5bsd-issues
+# 2026-11-18-guest-stage-stale-tests-sys-file-binaries.md).  Scripts and
+# data files are not checked.
+set --
+for r in $tests_src_roots; do set -- "$@" --allow "$r"; done
+st=0; python3.12 -I "$(dirname "$0")/check-stage-tests.py" "$stage" "$@" || st=$?
+case $st in
+0)	;;
+3)	die "STALE_TESTS: the stage's ELF test programs are not from one checkout (see above)" ;;
+*)	die "check-stage-tests.py could not check the stage (exit $st)" ;;
+esac
 [ -n "$qemu" ] || die "no runnable QEMU (set QEMU=)"
 echo "qemu: $qemu ($("$qemu" --version | head -n 1))"
 [ -d "$qemu_data" ] || die "no QEMU firmware dir $qemu_data"
@@ -671,6 +708,7 @@ if [ "$REROOT" = 1 ] && [ "$rerooted" = no ]; then
 	fi
 fi
 # --- end of the reroot
+echo "ROOT_DF_BEFORE: $(df -k / | awk 'NR == 2 { print $2 "K total, " $4 "K free" }')"
 cd /usr/tests
 suites=$(cat /root/kyua-planeon.suites)
 vars=; for v in $KYUA_VARS; do vars="$vars -v $v"; done
@@ -699,6 +737,7 @@ kyua report -r "$R/results.db" --verbose --results-filter broken,failed 2>&1 | h
 cp /var/log/capability.log /var/log/messages "$R/" 2>/dev/null || true
 dmesg -a > "$R/dmesg.txt" 2>&1 || true
 echo "KYUA_SUMMARY: $(tail -n 1 "$R/kyua-test.out")"
+echo "ROOT_DF_AFTER: $(df -k / | awk 'NR == 2 { print $2 "K total, " $4 "K free" }')"
 # The ledger's knobs again, after the suites, in tier.txt.
 {
 	echo "after-suites:"
@@ -757,6 +796,11 @@ re=$(for p in $over; do printf '%s|' "$p"; done | sed -e 's/|$//' -e 's/\./\\./g
 	[ -z "$sysctl_write" ] || m "$sysctl_conf" 0644 sysctl.conf
 	# A stage has /usr/src and /usr/obj but no ports mount point.
 	[ -z "$ports_image" ] || echo "./usr/obj/5BSD-ports type=dir uname=root gname=wheel mode=0755"
+	if [ -n "$src_image" ]; then
+		for d in usr/obj/usr usr/obj/usr/src usr/obj/usr/src/repo; do
+			echo "./$d type=dir uname=root gname=wheel mode=0755"
+		done
+	fi
 	if [ -n "$extra_dir" ]; then
 		echo "./root/vm-extra.d type=dir uname=root gname=wheel mode=0755"
 		for f in "$extra_dir"/*; do
@@ -858,6 +902,9 @@ set -- "$qemu" -L "$qemu_data" -accel tcg,thread=multi -machine q35 -cpu max \
     -drive "file=$ports_image,format=raw,if=none,id=ports,readonly=on" \
     -device virtio-blk-pci,drive=ports,serial=usr-ports
 printf '%s\n' "$@" > "$work/command.txt"
+# The monitor watches this file for writes: it exists before QEMU starts
+# (QEMU opens it without replacing it).
+: > "$log"
 "$@" > "$work/qemu.log" 2>&1 &
 qpid=$!
 echo "$qpid" > "$work/qemu.pid"
@@ -869,36 +916,51 @@ fatal='panic:|Fatal trap|entering recovery|Enter full pathname of shell|mountroo
 # recorded false positive, reported as KNOWN_LOR) or FATAL_LOR=no, which a
 # comparison sweep sets and then reads the reversals from the serial log.
 known_lor=$(dirname "$0")/known-lor.txt
+monitor=$(dirname "$0")/vm-monitor.py
 unknown_lor() {
 	[ "${FATAL_LOR:-yes}" = no ] && return 1
 	grep -aq 'lock order reversal' "$log" 2>/dev/null || return 1
-	python3.12 -I - "$log" "$known_lor" <<'PYEOF'
-import re, sys
-log = open(sys.argv[1], errors="replace").read()
-try:
-    pats = [re.compile(l.strip()) for l in open(sys.argv[2])
-            if l.strip() and not l.lstrip().startswith("#")]
-except OSError:
-    pats = []
-blocks = log.split("lock order reversal:")[1:]
-for b in blocks:
-    b = "\n".join(b.splitlines()[:40])
-    if not any(p.search(b) for p in pats):
-        sys.exit(0)
-sys.exit(1)
-PYEOF
+	ul=0; python3.12 -I "$monitor" --has-unknown-lor "$log" "$known_lor" || ul=$?
+	case $ul in
+	0)	return 0 ;;
+	1)	return 1 ;;
+	*)	echo "vm-monitor could not classify the reversals (exit $ul): counted as unknown"
+		return 0 ;;
+	esac
 }
-while kill -0 "$qpid" 2>/dev/null; do
-	if grep -aqE "$fatal" "$log" 2>/dev/null || unknown_lor; then
-		echo "KERNEL/INIT PROBLEM in serial log"; sleep 5; forced=1; kill "$qpid"; break
-	fi
-	if [ "$(date +%s)" -ge "$end" ]; then echo TIMEOUT; forced=1; kill "$qpid"; break; fi
-	sleep 10
-done
+# --- monitor (tests/vm-provider-kill-after-exit.sh runs this block)
+# vm-monitor.py waits on QEMU's exit, the serial log's writes and the
+# deadline (one kqueue, no polling), stops QEMU on a fatal console line or
+# an unknown reversal (after a short grace, unless the guest exits first)
+# or at the deadline, and returns once QEMU has exited: 0 by itself, 3
+# stopped for a problem, 4 at the deadline, 5 gone before it could be
+# watched (not clean: nothing was checked live).  Anything else is the monitor
+# failing; QEMU is then stopped here so the run still ends with its
+# results and verdict.
+python3.12 -I "$monitor" --pid "$qpid" --log "$log" --deadline "$end" \
+    --fatal "$fatal" --known "$known_lor" --fatal-lor "${FATAL_LOR:-yes}" &
+wpid=$!
+mrc=0; wait "$wpid" || mrc=$?
+case $mrc in
+0)	;;
+3|4|5)	forced=1 ;;
+*)	echo "vm-monitor failed (exit $mrc): stopping qemu"; forced=1
+	kill "$qpid" 2>/dev/null || echo "qemu had already exited" ;;
+esac
 rc=0; wait "$qpid" 2>/dev/null || rc=$?
+# --- end of the monitor
 n=$(grep -ac 'lock order reversal' "$log" 2>/dev/null || true)
-[ "${n:-0}" -gt 0 ] && ! unknown_lor && [ "${FATAL_LOR:-yes}" != no ] &&
-    echo "KNOWN_LOR=$n (matched known-lor.txt; see the serial log)"
+# --- LOR verdict (tests/vm-provider-known-lor.sh runs this block)
+# The monitor classifies only complete reports while QEMU runs: one printed
+# just before the guest powered off is decided here, on the whole log.
+lor_unknown=0
+if unknown_lor; then
+	lor_unknown=1
+	echo "UNKNOWN_LOR (a reversal matches no known-lor.txt entry; see the serial log)"
+elif [ "${n:-0}" -gt 0 ] && [ "${FATAL_LOR:-yes}" != no ]; then
+	echo "KNOWN_LOR=$n (matched known-lor.txt; see the serial log)"
+fi
+# --- end of the LOR verdict
 wait "$mpid" 2>/dev/null || true
 mkdir -p "$work/results"
 bsdtar -xf "$work/results.img" -C "$work/results" 2>/dev/null || echo "results disk: no archive"
@@ -921,7 +983,7 @@ stack_tier_met() {
 }
 # --- end of the stack-tier verdict
 verdict=VM_NOT_CLEAN
-if [ $forced = 0 ] && [ $rc = 0 ] && [ $guest_off = 1 ] && stack_tier_met &&
+if [ $forced = 0 ] && [ $lor_unknown = 0 ] && [ $rc = 0 ] && [ $guest_off = 1 ] && stack_tier_met &&
     [ "$(cat "$work/results/kyua-results/kyua-test.status" 2>/dev/null)" = 0 ] &&
     tr -d '\r' < "$log" | grep -aqx 'KYUA_VM_DONE' &&
     ! tr -d '\r' < "$log" | grep -aq '^STACK_TIER_FAIL' &&
@@ -945,7 +1007,7 @@ echo "skipped=$nskip (a skip in a plane-on suite is not a pass; see KYUA_SKIPPED
 # a run of the same stage and suites in that tier.
 for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER \
     DEFERRED_STACK_TIER DEFERRED_PID1_ONLY DEFERRED_SOURCE_TIER \
-    "configuration property 'authority_anchor'"; do
+    DEFERRED_GUEST_SETUP "configuration property 'authority_anchor'"; do
 	ndefer=$(tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c "$token" || true)
 	[ "$ndefer" -eq 0 ] || case $token in
 	DEFERRED_ENFORCED_TIER)
@@ -958,6 +1020,8 @@ for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER 
 		echo "DEFERRED_PID1_ONLY=$ndefer (they need the PID 1 Capsule; no tier runs them; not a pass)";;
 	DEFERRED_SOURCE_TIER)
 		echo "DEFERRED_TO_SOURCE_TIER=$ndefer (they read /usr/src: run with SRC_IMAGE; not a pass)";;
+	DEFERRED_GUEST_SETUP)
+		echo "DEFERRED_GUEST_SETUP=$ndefer (they need a guest setup no tier provides yet, such as a scratch disk or a stopped devd; not a pass)";;
 	"configuration property 'authority_anchor'")
 		echo "DEFERRED_TO_ANCHOR_RUN=$ndefer (they anchor the boot: run alone with KYUA_VARS=test_suites.FreeBSD.authority_anchor=1; not a pass)";;
 	*)

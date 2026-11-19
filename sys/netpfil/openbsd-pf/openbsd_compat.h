@@ -1515,4 +1515,18 @@ pf_mtag_setprio(struct pkthdr_pf *p, uint8_t prio)
 #define	PF_PDTAG_R(pd)	((const struct pkthdr_pf *)obsd_pf_pdtag((pd), 0))
 #define	PF_PDTAG_W(pd)	obsd_pf_pdtag((pd), 1)
 
+/*
+ * prison_owns_vnet() exists only with VIMAGE; without it no jail has a
+ * vnet of its own, and every jail shares the host's stack.
+ */
+static __inline bool
+pf_prison_owns_vnet(struct prison *pr __unused)
+{
+#ifdef VIMAGE
+	return (prison_owns_vnet(pr));
+#else
+	return (false);
+#endif
+}
+
 #endif /* _OPENBSD_PF_COMPAT_H_ */

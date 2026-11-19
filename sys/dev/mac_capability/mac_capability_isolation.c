@@ -760,7 +760,7 @@ fi_check_fh(struct ucred *cred __unused, struct vnode *vp,
     struct label *label __unused)
 {
 	struct fi_claim *claim;
-	uint64_t owner_nonce;
+	uint64_t owner_nonce __unused;	/* SDT only: unused without KDTRACE_HOOKS */
 
 	if (atomic_load_acq_int(&fi_claim_count) == 0)
 		return (0);

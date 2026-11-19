@@ -590,6 +590,26 @@ dq_fullpath(struct vnode *vp, char **retbuf, char **freebuf)
 }
 
 /*
+ * The process root a standing rule may match this event under
+ * (dq-standing-decisions §4.5), or NULL: a native process's own lookup of
+ * an absolute name or absolute symbolic link target (start REAL_ROOT;
+ * relative starts always post, Q16), with neither a served root nor a
+ * served descriptor, not RINROOT or ABSTRACT.  Set after dq_req_root, so rq_root is known.  Every other request
+ * builder leaves it NULL; dq_standing_decide tests the conditions again.
+ */
+static struct vnode *
+dq_standing_root(const struct dqres_req *rq, const struct dqres_snap *snap)
+{
+
+	if (!snap->dsn_native || snap->dsn_rdir == NULL || rq->rq_root != 0 ||
+	    rq->rq_object != 0 ||
+	    (rq->rq_rflags & (DQ_RF_RINROOT | DQ_RF_ABSTRACT)) != 0)
+		return (NULL);
+	return (rq->rq_start_kind == DQ_START_REAL_ROOT ? snap->dsn_rdir :
+	    NULL);
+}
+
+/*
  * The process's served root in an event (D184): its object and di_path,
  * so the controller resolves "/", absolute link targets and ".." at it.
  * rootfp is a snapshot's served root (NULL: real) and dead its
@@ -1356,8 +1376,10 @@ dqres_namei(struct nameidata *ndp, struct vnode *dp, bool abs,
 	}
 	error = dq_req_root(&rq, snap->dsn_root,
 	    (snap->dsn_flags & DR_ROOT_DEAD) != 0, &rootid);
-	if (error == 0)
+	if (error == 0) {
+		rq.rq_st_root = dq_standing_root(&rq, snap);
 		error = dqres_ops->dro_consult(td, dr->dr_binding, &rq, &ans);
+	}
 	free(freepath, M_TEMP);
 	free(freehint2, M_TEMP);
 	if (error != 0) {
@@ -2050,6 +2072,7 @@ dqres_namei_symlink(struct nameidata *ndp, struct vnode *dp,
 		rq.rq_startpathlen = strlen(fullpath);
 		rq.rq_rflags |= DQ_RF_STARTPATH_VALID;
 	}
+	rq.rq_st_root = dq_standing_root(&rq, snap);
 	error = dqres_ops->dro_consult(td, dr->dr_binding, &rq, &ans);
 	free(freepath, M_TEMP);
 	MPASS(error != ERESTART);

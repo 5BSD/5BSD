@@ -1717,7 +1717,8 @@ issuer_create(struct thread *td)
 	struct file *fresh;
 	uint64_t identity = 0;
 	bool test = false;
-	int error, reason;
+	int error;
+	int reason __unused;	/* SDT only: unused without KDTRACE_HOOKS */
 
 	if (jailed(td->td_ucred)) {
 		reason = CAP_AUTH_ISSUER_R_JAILED;

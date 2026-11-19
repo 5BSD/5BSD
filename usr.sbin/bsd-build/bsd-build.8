@@ -393,12 +393,12 @@ The assembler uses the freshly rebuilt libservice for its new session API;
 other dependencies come from the matching world stage.
 These checks do not establish human authentication, protected login input,
 full user-service authorization or production authenticator enrollment.
-A kernel built with MAC_SYSTEM_INTEGRITY, such as the experimental
-GENERIC-INTEGRITY profile, additionally requires BIP bootstrap root-attack
-checks, rejects a mutable preload or disabled Secure Boot, and ignores alternate
-root selection. The runner checks the embedded kernel configuration, not just
-the configuration name. Plans report bootstrap_integrity_verification as
-kernel-dependent; the result records which policy actually ran.
+The BIP bootstrap root-attack checks applied only to a kernel built with the
+archived MAC_SYSTEM_INTEGRITY policy; the active tree has no such option or
+profile, so no kernel built from it selects them.
+Plans still report bootstrap_integrity_verification as kernel-dependent; the
+runner checks the embedded kernel configuration, not just the configuration
+name, and the result records which policy actually ran.
 The protected-profile fixture also checks protection at process creation,
 before initialization and across exec/fork, explicit process-descriptor lifecycle
 control, and core-dump suppression with an ordinary core-dump control.

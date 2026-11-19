@@ -1466,46 +1466,28 @@ oes_dev_init(void)
 	return (0);
 }
 
+/*
+ * Undo oes_dev_init().  The only caller is the MOD_LOAD failure path, which
+ * runs while the kernel is still cold: OES is compiled in or preloaded, a
+ * load after boot is refused and MOD_UNLOAD always fails with EBUSY.  No
+ * process has run yet, so no client can have opened the device and there is
+ * nothing to drain; destroy_dev() waits for any thread still in a cdevsw
+ * method.
+ */
 void
 oes_dev_uninit(void)
 {
-	struct oes_client *ec, *ec_tmp;
-	int wait_count = 0;
 
+	KASSERT(cold, ("oes_dev_uninit: OES never unloads after boot"));
 	if (!oes_softc.sc_active && oes_softc.sc_cdev == NULL)
 		return;
 
 	oes_softc.sc_active = false;
 
-	/* Wake all clients and mark them as closing */
-	OES_LOCK();
-	LIST_FOREACH_SAFE(ec, &oes_softc.sc_clients, ec_link, ec_tmp) {
-		EC_LOCK(ec);
-		ec->ec_flags |= EC_FLAG_CLOSING;
-		/* Wake all waiters: msleep, poll/select, and kqueue */
-		wakeup(&ec->ec_pending);
-		selwakeup(&ec->ec_selinfo);
-		KNOTE_LOCKED(&ec->ec_selinfo.si_note, 0);
-		EC_UNLOCK(ec);
-	}
-
-	/*
-	 * Wait for clients to drain. Clients are removed from the list
-	 * in oes_client_dtor when their fd is closed. We must wait before
-	 * destroying the cdev or mutex to avoid use-after-free.
-	 */
-	while (oes_softc.sc_nclients > 0 && wait_count < 50) {
-		OES_UNLOCK();
-		pause("oesdrn", hz / 10);  /* 100ms */
-		wait_count++;
-		OES_LOCK();
-	}
-
-	if (oes_softc.sc_nclients > 0) {
-		printf("oes: warning: %u clients still open after 5s\n",
-		    oes_softc.sc_nclients);
-	}
-	OES_UNLOCK();
+	/* Cold: no process has run, so nothing else touches the client list. */
+	KASSERT(oes_softc.sc_nclients == 0 &&
+	    LIST_EMPTY(&oes_softc.sc_clients),
+	    ("oes_dev_uninit: %u clients open", oes_softc.sc_nclients));
 
 	if (oes_softc.sc_cdev != NULL) {
 		destroy_dev(oes_softc.sc_cdev);
