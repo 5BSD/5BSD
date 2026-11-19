@@ -915,18 +915,36 @@ ATF_TC_BODY(atime_after_read, tc)
  * ffs_read and zfs_read stamp it: a read at the end of the file (0 bytes)
  * stamps it too, and a presented MNT_RDONLY file system never does.
  */
+/*
+ * The presented access time starts at 1 s past the epoch, so a stamp is
+ * later than it without waiting for the clock to tick.
+ */
 static void
-child_read_atime_eof(void *arg, void *result)
+child_read_atime_at(void *arg, void *result, bool eof)
 {
 	struct atime_res *r = result;
 	int fd = *(int *)arg;
 	char buf[16];
 
-	(void)lseek(fd, 0, SEEK_END);
+	if (eof)
+		(void)lseek(fd, 0, SEEK_END);
 	(void)fstat(fd, &r->before);
-	dqt_msleep(20);
 	r->rv = read(fd, buf, sizeof(buf));
 	(void)fstat(fd, &r->after);
+}
+
+static void
+child_read_atime_eof(void *arg, void *result)
+{
+
+	child_read_atime_at(arg, result, true);
+}
+
+static void
+child_read_atime_start(void *arg, void *result)
+{
+
+	child_read_atime_at(arg, result, false);
 }
 
 ATF_TC(atime_eof_and_rdonly);
@@ -955,6 +973,8 @@ ATF_TC_BODY(atime_eof_and_rdonly, tc)
 	ATF_REQUIRE(ident != NULL);
 	dqt_ident_of(oracle, oracle_path, ident, &st, &sfs);
 	ident->di_statfs.ds_flags &= ~(uint64_t)(MNT_NOATIME | MNT_RDONLY);
+	ident->di_atime.tv_sec = 1;
+	ident->di_atime.tv_nsec = 0;
 	dq_policy_default(&pol);
 	dqt_init(&c);
 
@@ -972,7 +992,7 @@ ATF_TC_BODY(atime_eof_and_rdonly, tc)
 	o = dqt_mint_ident(&c, ident, &pol, data, sizeof(data));
 	fd = o->fd;
 	memset(&r, 0, sizeof(r));
-	dqt_run_child(child_read_atime, &fd, &r, sizeof(r));
+	dqt_run_child(child_read_atime_start, &fd, &r, sizeof(r));
 	ATF_REQUIRE_EQ(16, r.rv);
 	ATF_CHECK_MSG(timespeccmp(&r.after.st_atim, &r.before.st_atim, ==),
 	    "a read on a read-only file system moved st_atime");
@@ -1277,18 +1297,21 @@ ATF_TC_BODY(read_deadline0_abort_sibling, tc)
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
 	start = dqt_now_ms();
 	ATF_REQUIRE_EQ(1, write(go[1], "g", 1));
-	reaped = reaped_within(pid, &status, 10000);
+	/*
+	 * The controller never answers and the deadline is 0: only the
+	 * dying process's own abandon can end the read.
+	 */
+	reaped = reaped_within(pid, &status, DQT_WAIT_MS);
 	ms = dqt_now_ms() - start;
 	if (!reaped) {
 		/* Release the read, so the process can finish dying. */
 		(void)dq_reply(c.q, dqt_held_id(&c, 0), 0, data, 16);
 		ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
 	}
-	ATF_CHECK_MSG(reaped, "the process was still dying 10 s after the "
-	    "abort, its read waiting for the controller");
+	ATF_CHECK_MSG(reaped, "the process was still dying %jd ms after the "
+	    "abort, its read waiting for the controller", (intmax_t)ms);
 	ATF_CHECK_MSG(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT,
 	    "status %#x", status);
-	ATF_CHECK_MSG(ms < 1500, "the abort took %jd ms", (intmax_t)ms);
 	ATF_CHECK(dqt_wait_interrupts(&c, 1, DQT_WAIT_MS));
 	(void)close(go[0]);
 	(void)close(go[1]);

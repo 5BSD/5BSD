@@ -592,7 +592,13 @@ ATF_TC_BODY(full_close_wakes, tc)
 	 * DQ_PF_INTR with no deadline: the slot wait catches signals and so
 	 * sleeps without 100 ms slices (a non-catching wait re-checks the
 	 * queue every slice, and would end even if the close woke nobody).
-	 * Only the close's wakeup can end it here.
+	 * Only the close can end it.  Two of its wakeups reach the waiter:
+	 * the slot the close frees when it fails the pending read
+	 * (dq_queue_slots_freed) and the die's wakeup(&q->q_space).  A full
+	 * queue always has a pending event whose failure frees a slot, so
+	 * dropping the die's own wakeup alone is not caught here (bad-fix
+	 * audit, r-eg1); the event-driven wait design
+	 * (dq-served-wait-model.md, section 5) drops both.
 	 */
 	policy_intr(&pol);
 	pol.dp_deadline_ms = 0;
@@ -608,8 +614,9 @@ ATF_TC_BODY(full_close_wakes, tc)
 	ATF_REQUIRE(full_waits_reach(&c, 1, DQT_WAIT_MS));
 	ATF_REQUIRE(dqt_wait_wmesg(ch[1].pid, "dqfull", DQT_WAIT_MS));
 	dqt_fini(&c);		/* the queue's last descriptor */
-	ATF_CHECK_MSG(child_done_within(&ch[1], 30000), "the post waiting "
-	    "for a slot still sleeps 30 s after the queue died");
+	ATF_CHECK_MSG(child_done_within(&ch[1], DQT_WAIT_MS), "the post "
+	    "waiting for a slot still sleeps %d ms after the queue died",
+	    DQT_WAIT_MS);
 	for (i = 0; i < 2; i++) {
 		if (i == 1 && !child_done_within(&ch[1], 0))
 			(void)kill(ch[1].pid, SIGKILL);
@@ -664,9 +671,9 @@ ATF_TC_BODY(full_revoke_wakes, tc)
 	ATF_REQUIRE(full_waits_reach(&c, 1, DQT_WAIT_MS));
 	ATF_REQUIRE(dqt_wait_wmesg(ch1.pid, "dqfull", DQT_WAIT_MS));
 	ATF_REQUIRE_EQ(0, dq_revoke(c.q, o1->id));
-	done = child_done_within(&ch1, 5000);
+	done = child_done_within(&ch1, DQT_WAIT_MS);
 	ATF_CHECK_MSG(done, "the revoked object's post still waits for a "
-	    "slot 5 s after the revoke");
+	    "slot %d ms after the revoke", DQT_WAIT_MS);
 	/* A slot frees o1's waiter either way. */
 	dqt_resume(&c);
 	dqt_collect(&ch1, &r1, sizeof(r1));

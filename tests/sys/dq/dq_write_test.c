@@ -1642,7 +1642,7 @@ ATF_TC_BODY(postop_refused_reported, tc)
 	int fd, failures, last;
 
 	dqt_require_fault_knob(REFUSE_POSTOP);
-	dq_policy_default(&pol);
+	dqt_policy_write(&pol);
 	pol.dp_flags = DQ_PF_NO_STAMP;
 	dqt_fill(data, sizeof(data), 22);
 	dqt_fixture_init(&f, data, sizeof(data), backing_path, oracle_path,
