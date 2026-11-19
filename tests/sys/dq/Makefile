@@ -167,6 +167,11 @@ ${PACKAGE}FILES+=	dqpass.expected
 # the hang capture of the served-root runs (T-R11, T-R12).
 ${PACKAGE}FILES+=	dq_suites.subr
 ${PACKAGE}FILES+=	dq_hang.subr
+# The hang capture's event-driven watch (kqueue, no polling).
+PROGS+=		dq_hangwatch
+SRCS.dq_hangwatch=	dq_hangwatch.c
+MAN.dq_hangwatch=
+BINDIR.dq_hangwatch=	${TESTSDIR}
 
 # dqswap (share/examples/dq): the example supervisor that gives up root
 # after the attach; dq_dqswap_test runs it.

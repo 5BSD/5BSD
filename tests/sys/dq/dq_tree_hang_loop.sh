@@ -35,8 +35,8 @@ loop_head()
 }
 loop_body()
 {
-	local root kase prog name rounds maxhangs i hangs sampler rc res start
-	local secs
+	local root kase prog name rounds maxhangs i hangs rc res start
+	local secs deadline top watcher
 
 	[ -c /dev/dq ] || atf_fail "/dev/dq is absent"
 	[ -x "$(atf_get_srcdir)/dqtree" ] || atf_fail "dqtree is not installed"
@@ -49,6 +49,9 @@ loop_body()
 	dq_assemble_root "${root}" || atf_fail "cannot assemble ${root}"
 	[ -x "${root}/usr/tests/${prog}" ] ||
 	    atf_fail "${prog} is not in ${root}"
+	deadline=$(hang_deadline "${root}" \
+	    "/usr/tests/$(dirname "${prog}")/Kyuafile" \
+	    "$(basename "${prog}"):${name}")
 	# Two burners: the hung runs shared their CPUs.
 	for i in 1 2; do
 		sh -c 'while :; do :; done' &
@@ -59,18 +62,19 @@ loop_body()
 	while [ "${i}" -lt "${rounds}" ]; do
 		i=$((i + 1))
 		rm -rf hang "${root}/tmp/hang.db"
-		hang_sampler hang "${root}" "dqtree -o hang.report ${root}" &
-		sampler=$!
 		start=$(date +%s)
 		rc=0
 		env -i HOME=/tmp PATH=/bin:/sbin:/usr/bin:/usr/sbin TMPDIR=/tmp \
 		    "$(atf_get_srcdir)/dqtree" -o hang.report "${root}" \
 		    kyua test --results-file=/tmp/hang.db \
 		    -k "/usr/tests/$(dirname "${prog}")/Kyuafile" \
-		    "$(basename "${prog}"):${name}" > round.out 2>&1 || rc=$?
+		    "$(basename "${prog}"):${name}" > round.out 2>&1 &
+		top=$!
+		hang_watch hang "${root}" "${top}" "${deadline}" &
+		watcher=$!
+		wait "${top}" || rc=$?
+		wait "${watcher}"
 		secs=$(($(date +%s) - start))
-		kill "${sampler}" 2>/dev/null
-		wait "${sampler}" 2>/dev/null
 		res=$(kyua report --results-file="${root}/tmp/hang.db" \
 		    --results-filter=passed,skipped,xfail,broken,failed 2>&1 |
 		    grep -E -- " -> " | head -n 1)
@@ -98,6 +102,11 @@ loop_cleanup()
 
 	if [ -f burners ]; then
 		xargs kill < burners 2>/dev/null
+	fi
+	if [ -d hang ]; then
+		hang_cleanup hang
+		echo "=== hang capture at the timeout" >&2
+		hang_report hang
 	fi
 	dq_teardown_root
 }

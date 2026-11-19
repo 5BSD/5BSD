@@ -100,8 +100,8 @@ suites_head()
 }
 suites_body()
 {
-	local root suite kf expected env failed sampler stalled nsuites rc
-	local defaults
+	local root suite kf expected env failed stalled nsuites rc
+	local defaults deadline top watcher
 
 	[ -c /dev/dq ] || atf_fail "/dev/dq is absent"
 	[ -x "$(atf_get_srcdir)/dqtree" ] || atf_fail "dqtree is not installed"
@@ -140,17 +140,23 @@ suites_body()
 		    true
 		rm -rf hang
 		stalled=
-		hang_sampler hang "${root}" "dqtree -o tree.report ${root}" &
-		sampler=$!
+		# The served run in the background, so the hang watch
+		# (dq_hang.subr) has its pid.
+		deadline=$(hang_deadline "${root}" "${kf}")
+		${env} "$(atf_get_srcdir)/dqtree" -o tree.report "${root}" \
+		    kyua test --results-file=/tmp/tree.db -k "${kf}" \
+		    > tree.db.out 2>&1 &
+		top=$!
+		hang_watch hang "${root}" "${top}" "${deadline}" &
+		watcher=$!
 		rc=0
-		dq_kyua_test /tmp/tree.db "${kf}" ${env} \
-		    "$(atf_get_srcdir)/dqtree" -o tree.report "${root}" || rc=$?
+		wait "${top}" || rc=$?
+		wait "${watcher}"
+		dq_kyua_rc /tmp/tree.db "${kf}" "${rc}" dqtree || rc=$?
 		if [ "${rc}" -eq 125 ]; then
 			fail_later "${suite}: dqtree saw a dropped, failed-closed" \
 			    "or unmarked consultation or a malformed reply"
 		fi
-		kill "${sampler}" 2>/dev/null
-		wait "${sampler}" 2>/dev/null
 		[ -s tree.report ] || atf_fail "${suite}: dqtree wrote no report"
 		dq_kyua_test plain.db "${kf}" || true
 		dq_results "${root}/tmp/chroot.db" chroot.all
@@ -213,8 +219,10 @@ suites_cleanup()
 {
 
 	# A body killed at its timeout never printed its capture: the
-	# cleanup copies what the sampler saw to the results disk.
+	# cleanup takes it if the deadline did not, and copies it to the
+	# results disk.
 	if [ -d hang ]; then
+		hang_cleanup hang
 		echo "=== hang capture at the timeout" >&2
 		hang_report hang
 	fi
