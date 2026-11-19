@@ -1905,9 +1905,11 @@ option or on the command line.
 A program's USDT probes are described by the DOF in the
 .Li .SUNW_dof
 section of each of its objects.
-A program run by root registers its own DOF at start-up through
-.Pa /dev/dtrace/helper ;
-other programs cannot open that device.
+A program registers its own DOF at start-up through
+.Pa /dev/dtrace/helper ,
+which is owned by root and group wheel, mode 0660:
+programs run by root or by a member of group wheel can open it, other
+programs cannot.
 .Pp
 The kernel also accepts the DOF of another process, without stopping it,
 from a caller that has the DTrace process privilege

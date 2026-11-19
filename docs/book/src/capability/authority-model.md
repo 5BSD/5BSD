@@ -134,8 +134,11 @@ debugging: stopping the process, reading or writing its memory, its
 environment and descriptors. It does not refuse inspection, the process's
 memory map, auxv, ps_strings and signal trampoline locations, umask and
 kernel stacks (`p_caninspect(9)`), which `procstat -v -k -x` and DTrace's
-symbolisation and USDT registration need. Inspection never reads the
-process's memory contents.
+symbolisation and USDT registration need. Inspection reads the process's
+memory only for its auxiliary vector, which the kernel wrote on the
+process's stack at exec and reads back through `ps_strings`; it reads no
+other memory contents. USDT registration reads the DOF from the object's
+file, not from the process's memory.
 
 These rules were not decided by the project owner. The form of the strip
 (D362), the debug protection lasting until exec (D363), and the refusal of
