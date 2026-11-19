@@ -115,6 +115,14 @@ ATF_TESTS_C+=	management_enforce_test
 ATF_TESTS_C+=	responsibility_test
 ATF_TESTS_C+=	bundle_selection_test
 ATF_TESTS_C+=	rc_ingest_test
+# capsule_client_test drives the channel RPC client (capsule_client.c,
+# mac_capability_direct.c) over real capability channels with a forked
+# stand-in Capsule.
+ATF_TESTS_C+=	capsule_client_test
+SRCS.capsule_client_test=	capsule_client_test.c capsule_client.c \
+				mac_capability_direct.c
+CFLAGS.capsule_client_test+=	-I${SRCTOP}/lib/libcapability
+LIBADD.capsule_client_test+=	capability
 # registry_watch_test drives the install-root watch through a real kqueue with
 # the supervisor stubbed (container model: pkg install/remove loads/unloads).
 ATF_TESTS_C+=	registry_watch_test
