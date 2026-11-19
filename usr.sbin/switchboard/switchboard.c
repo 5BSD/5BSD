@@ -138,6 +138,13 @@ switchboard_dispatch_event(struct kevent *kev)
 			sd.shutting_down = true;
 			sd.running = false;
 			supervisor_stop(switchboard_kq);
+		} else {
+			/*
+			 * Level-triggered: an unexpected message (a reply
+			 * Capsule sent twice, or unasked) stays queued and
+			 * fires this again until it is taken.
+			 */
+			(void)capsule_drop_unexpected(sd.capsule_channel_fd);
 		}
 		return;
 	}
@@ -354,7 +361,11 @@ main(int argc, char *argv[])
 		return (1);
 	}
 
-	/* Non-blocking so capsule_rpc can timeout instead of hanging. */
+	/*
+	 * Non-blocking so that a send to a full Capsule queue fails instead of
+	 * blocking the event loop.  Replies are waited for on the channel
+	 * (mac_cap_recv_wait()), which does not depend on the descriptor mode.
+	 */
 	(void)fcntl(sd.capsule_channel_fd, F_SETFL, O_NONBLOCK);
 
 	/* Inherit delegated service instance fds (optional). */
@@ -509,7 +520,10 @@ main(int argc, char *argv[])
 		return (1);
 	}
 
-	/* Register Capsule channel for read (detect EOF = Capsule exited). */
+	/*
+	 * Register Capsule channel for read: EV_EOF means Capsule exited, and a
+	 * queued message outside an RPC is unexpected and dropped.
+	 */
 	EV_SET(&kev, sd.capsule_channel_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
 	if (kevent(switchboard_kq, &kev, 1, NULL, 0, NULL) == -1) {
 		syslog(LOG_ERR, "kevent channel: %m");
