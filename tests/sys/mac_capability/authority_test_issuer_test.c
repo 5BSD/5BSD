@@ -450,6 +450,133 @@ ATF_TC_BODY(held_issuer_independent, tc)
 	(void)close(b_token);
 }
 
+/* Register a private copy of /usr/bin/true at path through issuer. */
+static int
+register_image(int issuer, const char *path)
+{
+	struct cap_authority_spec spec = {
+		.version = CAP_AUTH_VERSION, .kind = CAP_AUTH_MANAGED,
+	};
+	struct cap_authority_constraint constraint = { .nexec = 1 };
+	struct cap_authority_application app = { 0 };
+	int error, image, token, rv;
+
+	token = op(CAP_AUTH_ISSUE, issuer, &spec);
+	ATF_REQUIRE_MSG(token >= 0, "issue: %s", strerror(errno));
+	image = open(path, O_RDONLY);
+	ATF_REQUIRE_MSG(image >= 0, "%s: %s", path, strerror(errno));
+	constraint.token_fd = token;
+	constraint.executable_fds[0] = image;
+	ATF_REQUIRE_MSG(op(CAP_AUTH_CONSTRAIN, issuer, &constraint) == 0,
+	    "constrain: %s", strerror(errno));
+	app.token_fd = token;
+	rv = op(CAP_AUTH_REGISTER_APP, issuer, &app);
+	error = errno;
+	(void)close(image);
+	(void)close(token);
+	errno = error;
+	return (rv);
+}
+
+/* Fork a child that holds every inherited descriptor until released. */
+static pid_t
+stalled_child(int *release, int probe_fd, int *probe_result)
+{
+	int ctl[2], res[2], v;
+	pid_t pid;
+	char c;
+
+	ATF_REQUIRE(pipe(ctl) == 0 && pipe(res) == 0);
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		/* Like a Capsule child stalled between fork and exec. */
+		(void)close(ctl[1]);
+		(void)close(res[0]);
+		v = fcntl(probe_fd, F_GETFD) == -1 ? errno : 0;
+		(void)write(res[1], &v, sizeof(v));
+		(void)read(ctl[0], &c, 1);
+		_exit(0);
+	}
+	(void)close(ctl[0]);
+	(void)close(res[1]);
+	ATF_REQUIRE(read(res[0], probe_result, sizeof(*probe_result)) ==
+	    sizeof(*probe_result));
+	(void)close(res[0]);
+	*release = ctl[1];
+	return (pid);
+}
+
+static void
+release_child(int release, pid_t pid)
+{
+	int status;
+
+	(void)close(release);
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+}
+
+/*
+ * Capsule creates the held issuer close-on-fork (usr.sbin/capsule
+ * bootstrap.c): a child that stalls between fork and exec must not keep an
+ * issuer alive past its owner's close, or its catalogue outlives the
+ * SwitchBoard it belonged to and the next SwitchBoard's registration of the
+ * same image fails with EEXIST.  Pin both halves on the kernel's semantics.
+ */
+ATF_TC(held_issuer_fork);
+ATF_TC_HEAD(held_issuer_fork, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "An issuer inherited by a stalled fork outlives its owner's close (EEXIST for the next issuer); FD_CLOFORK prevents it");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(held_issuer_fork, tc)
+{
+	int a, b, c, release, probe;
+	pid_t pid;
+
+	if (!relaxed())
+		atf_tc_skip("DEFERRED_STACK_TIER: needs a relaxed test kernel "
+		    "(kern.mac_capability.test_issuer=1, boot not anchored) to "
+		    "create issuers off PID 1");
+	ATF_REQUIRE(system("cp /usr/bin/true ./image1 && "
+	    "cp /usr/bin/true ./image2") == 0);
+
+	/* Without close-on-fork the stalled child keeps A's catalogue. */
+	a = op(CAP_AUTH_ISSUER_CREATE, -1, NULL);
+	ATF_REQUIRE_MSG(a >= 0, "create a: %s", strerror(errno));
+	b = op(CAP_AUTH_ISSUER_CREATE, -1, NULL);
+	ATF_REQUIRE_MSG(b >= 0, "create b: %s", strerror(errno));
+	ATF_REQUIRE(fcntl(b, F_SETFD, FD_CLOEXEC | FD_CLOFORK) == 0);
+	ATF_REQUIRE_MSG(register_image(a, "./image1") == 0, "register a: %s",
+	    strerror(errno));
+	pid = stalled_child(&release, a, &probe);
+	ATF_CHECK_EQ_MSG(probe, 0, "the child should have inherited A");
+	ATF_REQUIRE(close(a) == 0);
+	ATF_CHECK_ERRNO(EEXIST, register_image(b, "./image1") == -1);
+	release_child(release, pid);
+	ATF_CHECK_MSG(register_image(b, "./image1") == 0,
+	    "after the child's close: %s", strerror(errno));
+	ATF_REQUIRE(close(b) == 0);
+
+	/* Close-on-fork: the stalled child holds nothing; the close revokes. */
+	c = op(CAP_AUTH_ISSUER_CREATE, -1, NULL);
+	ATF_REQUIRE_MSG(c >= 0, "create c: %s", strerror(errno));
+	ATF_REQUIRE(fcntl(c, F_SETFD, FD_CLOEXEC | FD_CLOFORK) == 0);
+	b = op(CAP_AUTH_ISSUER_CREATE, -1, NULL);
+	ATF_REQUIRE_MSG(b >= 0, "create b again: %s", strerror(errno));
+	ATF_REQUIRE(fcntl(b, F_SETFD, FD_CLOEXEC | FD_CLOFORK) == 0);
+	ATF_REQUIRE_MSG(register_image(c, "./image2") == 0, "register c: %s",
+	    strerror(errno));
+	pid = stalled_child(&release, c, &probe);
+	ATF_CHECK_EQ_MSG(probe, EBADF, "a close-on-fork issuer reached the child");
+	ATF_REQUIRE(close(c) == 0);
+	ATF_CHECK_MSG(register_image(b, "./image2") == 0,
+	    "with the child stalled: %s", strerror(errno));
+	release_child(release, pid);
+	ATF_REQUIRE(close(b) == 0);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, create_refused);
@@ -459,5 +586,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, create_refused_capmode_unprivileged);
 	ATF_TP_ADD_TC(tp, relaxed_issuer);
 	ATF_TP_ADD_TC(tp, held_issuer_independent);
+	ATF_TP_ADD_TC(tp, held_issuer_fork);
 	return (atf_no_error());
 }

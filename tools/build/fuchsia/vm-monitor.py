@@ -9,6 +9,7 @@
 # usage: vm-monitor.py --pid PID --log SERIAL_LOG --deadline EPOCH
 #            --fatal REGEX --known KNOWN_LOR [--fatal-lor yes|no]
 #            [--grace SECONDS]
+#            [--answer REGEX --answer-text TEXT --console SOCKET]
 #        vm-monitor.py --has-unknown-lor SERIAL_LOG KNOWN_LOR
 #
 # The first form waits, without polling, on three events through one
@@ -28,6 +29,12 @@
 # monitor could watch it (the run is not clean); 2, usage or setup failure
 # (the caller must then stop QEMU itself).
 #
+# With --answer, the first console line (or unterminated prompt) matching
+# REGEX is answered once: TEXT and a newline are written to the guest console
+# through SOCKET (QEMU's socket chardev for the serial port), and
+# "CONSOLE_ANSWERED" is printed.  A second match is a problem.  vm-provider.sh
+# uses it to answer the single-user shell prompt (SINGLE_USER_SHELL).
+#
 # The second form reads a whole serial log after the run: exit 0 when some
 # reversal report matches no known-lor.txt entry, 1 when none does, 2 when
 # the log or the list cannot be read (the caller must count that as an
@@ -40,6 +47,7 @@ import os
 import re
 import select
 import signal
+import socket
 import sys
 import time
 
@@ -82,13 +90,27 @@ def has_unknown_lor(log, known):
 
 
 class Watch:
-    def __init__(self, fatal, pats, check_lor):
+    def __init__(self, fatal, pats, check_lor, answer=None):
         self.fatal = re.compile(fatal)
         self.pats = pats
         self.check_lor = check_lor
         self.lines = []
         self.partial = b""
         self.open_reports = []      # indexes of header lines not yet classified
+        self.answer = re.compile(answer) if answer else None
+        self.prompt_scan = 0
+        self.prompts = 0            # matches of answer seen in complete lines
+        self.answered = 0
+        self.want_answer = False
+
+    def prompt_count(self, tail):
+        """Matches of the answer pattern so far; an unterminated prompt (the
+        tail) counts once, and again only after it is a complete line."""
+        for l in self.lines[self.prompt_scan:]:
+            if self.answer.search(l):
+                self.prompts += 1
+        self.prompt_scan = len(self.lines)
+        return self.prompts + (1 if self.answer.search(tail) else 0)
 
     def feed(self, data):
         """Add log bytes; return a problem description or None."""
@@ -103,6 +125,12 @@ class Watch:
         for l in new + [tail]:
             if self.fatal.search(l):
                 return "fatal console line: " + l.strip()
+        if self.answer is not None:
+            n = self.prompt_count(tail)
+            if n > self.answered:
+                if self.answered >= 1:
+                    return "console prompt again after it was answered"
+                self.want_answer = True
         if not self.check_lor:
             return None
         for i in range(first, len(self.lines)):
@@ -183,7 +211,7 @@ def monitor(args):
     pid, log, deadline = int(args["--pid"]), args["--log"], float(args["--deadline"])
     grace = float(args.get("--grace", FATAL_GRACE_S))
     w = Watch(args["--fatal"], load_known(args["--known"]),
-              args.get("--fatal-lor", "yes") != "no")
+              args.get("--fatal-lor", "yes") != "no", args.get("--answer"))
     kq = select.kqueue()
     fd = os.open(log, os.O_RDONLY)
     kq.control([select.kevent(fd, select.KQ_FILTER_VNODE,
@@ -218,7 +246,21 @@ def monitor(args):
             if p:
                 return p
 
+    def answer():
+        """Type the answer once on the guest console."""
+        w.want_answer = False
+        w.answered += 1
+        c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            c.connect(args["--console"])
+            c.sendall(args["--answer-text"].encode() + b"\n")
+        finally:
+            c.close()
+        print("CONSOLE_ANSWERED", flush=True)
+
     problem = drain()
+    if problem is None and w.want_answer:
+        answer()
     while problem is None:
         left = deadline - time.time()
         if left <= 0:
@@ -228,6 +270,8 @@ def monitor(args):
         evs = kq.control(None, 4, left)
         exited = any(e.filter == select.KQ_FILTER_PROC for e in evs)
         problem = drain()
+        if problem is None and w.want_answer and not exited:
+            answer()
         if exited and problem is None:
             return 0
         if exited:
@@ -252,10 +296,13 @@ def main(argv):
     for a in it:
         args[a] = next(it, None)
     need = ("--pid", "--log", "--deadline", "--fatal", "--known")
+    if args.get("--answer") is not None:
+        need += ("--answer-text", "--console")
     if any(args.get(k) is None for k in need):
         print("usage: vm-monitor.py --pid PID --log LOG --deadline EPOCH "
               "--fatal REGEX --known FILE [--fatal-lor yes|no] "
-              "[--grace S]", file=sys.stderr)
+              "[--grace S] [--answer REGEX --answer-text TEXT "
+              "--console SOCKET]", file=sys.stderr)
         return 2
     try:
         return monitor(args)

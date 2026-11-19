@@ -218,19 +218,53 @@ bootstrap_starts_switchboard_cleanup()
 atf_test_case lookup_without_route cleanup
 lookup_without_route_head()
 {
-	atf_set "descr" "CTL_OP_LOOKUP hands out Capsule's own boot route although SwitchBoard never sent one"
+	atf_set "descr" "CTL_OP_LOOKUP answers ENOENT, with no descriptor, while no route is held"
 	atf_set "require.user" "root"
 	require_capsule_stack_kmods
 }
 lookup_without_route_body()
+{
+	capd_find_lookup_exec
+	prepare_paths
+	mkdir -p "$(pwd)/switchboard.d"
+	# No service manager: no SwitchBoard start, so Capsule creates no boot
+	# discovery channel, and no SwitchBoard hands one over.
+	cat > "$conffile" <<EOF
+pidfile = "$pidfile";
+control_socket = "$sockpath";
+control_socket_mode = "0700";
+lookup_route_export = true;
+service_manager = "";
+EOF
+	capd_find_guardian
+	capd_launch_capsule
+	daemon_pid=$("$capd_guardian_bin" ctl -s "$CAPD_GUARDIAN_SOCKET" status |
+	    sed -n 's/^running pid=//p')
+	# A refusal that carried a descriptor would exit 76 (EX_PROTOCOL).
+	atf_check -s exit:69 -e match:"No such file or directory" \
+	    "$capd_lookup_exec_bin" -s "$sockpath" /usr/bin/true
+	atf_check -s exit:0 -o ignore grep "control: lookup: no route held" "$logfile"
+}
+lookup_without_route_cleanup()
+{
+	cleanup_common
+}
+
+atf_test_case lookup_capsule_route cleanup
+lookup_capsule_route_head()
+{
+	atf_set "descr" "CTL_OP_LOOKUP hands out Capsule's own boot route although SwitchBoard never sent one"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+}
+lookup_capsule_route_body()
 {
 	build_mock_switchboard
 	capd_find_lookup_exec
 	start_capsule
 	# This service-manager double never sends CAPSULE_OP_SET_AMBIENT_LOOKUP.
 	# Capsule creates the boot discovery channel itself before it starts
-	# SwitchBoard, so a route is held anyway (the "no route held" refusal
-	# is left for a Capsule that could not create the channel).
+	# SwitchBoard, so a route is held anyway.
 	if ! wait_for_file switchboard-started.out; then
 		cat "$logfile" 2>/dev/null
 		atf_fail "bootstrap fixture did not start"
@@ -240,7 +274,7 @@ lookup_without_route_body()
 	    "$capd_lookup_exec_bin" -s "$sockpath" /usr/bin/true
 	atf_check -s exit:1 grep "control: lookup: no route held" "$logfile"
 }
-lookup_without_route_cleanup()
+lookup_capsule_route_cleanup()
 {
 	cleanup_common
 }
@@ -543,6 +577,7 @@ atf_init_test_cases()
 	atf_add_test_case bootstrap_starts_switchboard
 	atf_add_test_case bootstrap_channel_ping
 	atf_add_test_case lookup_without_route
+	atf_add_test_case lookup_capsule_route
 	atf_add_test_case control_reload_reaches_switchboard
 	atf_add_test_case bootstrap_channel_loss_kills_switchboard
 	atf_add_test_case bootstrap_ready_logged
