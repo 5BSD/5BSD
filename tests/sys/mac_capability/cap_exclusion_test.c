@@ -266,19 +266,19 @@ ATF_TC(pid1_exclusion_bit);
 ATF_TC_HEAD(pid1_exclusion_bit, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "P2_CAP_EXCLUDED of PID 1 (clear today; set from commit 2, X1)");
+	    "X1: PID 1 is excluded, whatever image it runs (set from commit 2)");
 }
 ATF_TC_BODY(pid1_exclusion_bit, tc)
 {
 
-	ATF_CHECK(!proc_excluded(1));
+	ATF_CHECK(proc_excluded(1));
 }
 
 ATF_TC(core_role_refused);
 ATF_TC_HEAD(core_role_refused, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "P1: CAP_AUTH_CONSTRAIN with flags 0x40 is EINVAL (flips in commit 2)");
+	    "P1: CAP_AUTH_CONSTRAIN with flags 0x40 (CAP_AUTH_ROLE_CORE) is accepted, as 0x2 is (flipped in commit 2)");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(core_role_refused, tc)
@@ -291,7 +291,7 @@ ATF_TC_BODY(core_role_refused, tc)
 	image = open(path, O_RDONLY | O_CLOEXEC);
 	ATF_REQUIRE(image >= 0);
 	token = constrained_token(issuer, image, 0x40, &error);
-	ATF_CHECK_EQ_MSG(error, EINVAL, "constrain 0x40: %s", strerror(error));
+	ATF_CHECK_EQ_MSG(error, 0, "constrain 0x40: %s", strerror(error));
 	close(token);
 	close(image);
 	close(issuer);
@@ -882,6 +882,586 @@ ATF_TC_BODY(switchboard_debug_interfaces, tc)
 	check_interfaces(pid, pins_switchboard, nitems(pins_switchboard));
 }
 
+/* ------------------------------------------------------------------ */
+/*
+ * Exclusion mechanics (X rows).  A test process cannot be a child of PID
+ * 1, so each case's child first marks itself excluded with the test
+ * kernel's debug.mac_capability.test_issuer_exclude_self, standing in for
+ * PID 1's fork chain; the knob exists only where test issuers do.
+ */
+
+static int
+exclude_self(void *arg)
+{
+	int one = 1;
+
+	(void)arg;
+	if (sysctlbyname("debug.mac_capability.test_issuer_exclude_self", NULL,
+	    NULL, &one, sizeof(one)) != 0)
+		return (errno);
+	return (0);
+}
+
+static uint64_t
+counter(const char *name)
+{
+	uint64_t v;
+	size_t len = sizeof(v);
+
+	ATF_REQUIRE_MSG(sysctlbyname(name, &v, &len, NULL, 0) == 0, "%s: %s",
+	    name, strerror(errno));
+	return (v);
+}
+
+/* The helper's report line number n (0-based) of r. */
+static bool
+report_n(const struct run *r, int n, unsigned *flag2, unsigned *valid)
+{
+	const char *line = r->out;
+
+	for (; n > 0 && line != NULL; n--) {
+		line = strchr(line, '\n');
+		if (line != NULL)
+			line++;
+	}
+	return (line != NULL &&
+	    sscanf(line, "flag2=%x valid=%u", flag2, valid) == 2);
+}
+
+struct xcase {
+	int	issuer;
+	int	image;		/* the helper, opened */
+	char	helper[PATH_MAX];
+};
+
+static void
+xcase_init(const atf_tc_t *tc, struct xcase *x)
+{
+
+	x->issuer = require_issuer();
+	helper_path(tc, x->helper, sizeof(x->helper));
+	x->image = open(x->helper, O_RDONLY | O_CLOEXEC);
+	ATF_REQUIRE(x->image >= 0);
+}
+
+static void
+xcase_fini(struct xcase *x)
+{
+
+	close(x->image);
+	close(x->issuer);
+}
+
+static int
+core_token(struct xcase *x, uint32_t flags)
+{
+	int token, error;
+
+	token = constrained_token(x->issuer, x->image, flags, &error);
+	ATF_REQUIRE_EQ_MSG(error, 0, "constrain %#x: %s", flags,
+	    strerror(error));
+	return (token);
+}
+
+static void
+expect_report(const struct run *r, int line, bool excluded, unsigned valid)
+{
+	unsigned flag2, v;
+
+	ATF_REQUIRE_EQ_MSG(r->exec_errno, 0, "exec: %s",
+	    strerror(r->exec_errno));
+	ATF_REQUIRE_MSG(report_n(r, line, &flag2, &v), "no report %d: %s",
+	    line, r->out);
+	ATF_CHECK_EQ_MSG((flag2 & P2_CAP_EXCLUDED_BIT) != 0, excluded,
+	    "report %d: flag2 %#x", line, flag2);
+	ATF_CHECK_EQ_MSG(v, valid, "report %d: valid %u", line, v);
+}
+
+ATF_TC(x3_exec_without_authority_clears);
+ATF_TC_HEAD(x3_exec_without_authority_clears, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "X3: an excluded process that executes an image without a Core authority is not excluded");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(x3_exec_without_authority_clears, tc)
+{
+	struct xcase x;
+	struct run r;
+	char *argv[] = { __DECONST(char *, HELPER),
+	    __DECONST(char *, "report"), NULL };
+
+	xcase_init(tc, &x);
+	run_child(-1, exclude_self, NULL, x.helper, -1, argv, &r);
+	expect_report(&r, 0, false, 0);
+	xcase_fini(&x);
+}
+
+ATF_TC(x4_core_exec_sets);
+ATF_TC_HEAD(x4_core_exec_sets, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "X4/X12: an excluded process that executes the image its installed Core authority pins stays excluded (flags 0x40 and 0x42); granted counts it");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(x4_core_exec_sets, tc)
+{
+	static const uint32_t flags[] = { 0x40, 0x42 };
+	struct xcase x;
+	struct run r;
+	char *argv[] = { __DECONST(char *, HELPER),
+	    __DECONST(char *, "report"), NULL };
+	uint64_t granted;
+	int token;
+
+	xcase_init(tc, &x);
+	for (size_t i = 0; i < nitems(flags); i++) {
+		token = core_token(&x, flags[i]);
+		granted = counter("security.cap_exclusion.granted");
+		run_child(token, exclude_self, NULL, x.helper, -1, argv, &r);
+		expect_report(&r, 0, true, 1);
+		ATF_CHECK_EQ(counter("security.cap_exclusion.granted"),
+		    granted + 1);
+		close(token);
+	}
+	xcase_fini(&x);
+}
+
+ATF_TC(x5_x7_other_image_clears);
+ATF_TC_HEAD(x5_x7_other_image_clears, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "X5: a Core image that executes another image is not excluded there; X7: a copy of the pinned image at another path is another vnode, not excluded and without authority");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(x5_x7_other_image_clears, tc)
+{
+	struct xcase x;
+	struct run r;
+	char copy[PATH_MAX];
+	int token;
+
+	xcase_init(tc, &x);
+	ATF_REQUIRE(getcwd(copy, sizeof(copy)) != NULL);
+	strlcat(copy, "/copy", sizeof(copy));
+	copy_helper(tc, copy);
+	{
+		char *argv[] = { __DECONST(char *, HELPER),
+		    __DECONST(char *, "exec"), copy,
+		    __DECONST(char *, "report"), NULL };
+
+		token = core_token(&x, 0x40);
+		run_child(token, exclude_self, NULL, x.helper, -1, argv, &r);
+		expect_report(&r, 0, true, 1);
+		expect_report(&r, 1, false, 0);
+		close(token);
+	}
+	{
+		char *argv[] = { __DECONST(char *, HELPER),
+		    __DECONST(char *, "report"), NULL };
+
+		token = core_token(&x, 0x40);
+		run_child(token, exclude_self, NULL, copy, -1, argv, &r);
+		expect_report(&r, 0, false, 0);
+		close(token);
+	}
+	xcase_fini(&x);
+}
+
+ATF_TC(x6_not_excluded_never_acquires);
+ATF_TC_HEAD(x6_not_excluded_never_acquires, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "X6: a process that is not excluded installs a Core token and executes the pinned image: it gets the authority, not exclusion");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(x6_not_excluded_never_acquires, tc)
+{
+	struct xcase x;
+	struct run r;
+	char *argv[] = { __DECONST(char *, HELPER),
+	    __DECONST(char *, "report"), NULL };
+	uint64_t granted;
+	int token;
+
+	xcase_init(tc, &x);
+	token = core_token(&x, 0x40);
+	granted = counter("security.cap_exclusion.granted");
+	run_child(token, NULL, NULL, x.helper, -1, argv, &r);
+	expect_report(&r, 0, false, 1);
+	ATF_CHECK_EQ(counter("security.cap_exclusion.granted"), granted);
+	close(token);
+	xcase_fini(&x);
+}
+
+ATF_TC(x8_pinned_image_text_busy);
+ATF_TC_HEAD(x8_pinned_image_text_busy, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "X8: the image a Core authority pins cannot be opened for writing (ETXTBSY)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(x8_pinned_image_text_busy, tc)
+{
+	char copy[PATH_MAX];
+	struct xcase x;
+	int image, token, error;
+
+	xcase_init(tc, &x);
+	ATF_REQUIRE(getcwd(copy, sizeof(copy)) != NULL);
+	strlcat(copy, "/pinned", sizeof(copy));
+	copy_helper(tc, copy);
+	image = open(copy, O_RDONLY | O_CLOEXEC);
+	ATF_REQUIRE(image >= 0);
+	token = constrained_token(x.issuer, image, 0x40, &error);
+	ATF_REQUIRE_EQ(error, 0);
+	ATF_CHECK_ERRNO(ETXTBSY, open(copy, O_WRONLY) == -1);
+	close(token);
+	close(image);
+	xcase_fini(&x);
+}
+
+/* X2, X9: fork inherits; an excluded parent's ptrace attach clears. */
+static int
+x2_x9_pre(void *arg)
+{
+	unsigned flag2;
+	int status, sync[2];
+	pid_t gc;
+	char c;
+
+	(void)arg;
+	if (exclude_self(NULL) != 0)
+		return (errno);
+	if (pipe(sync) != 0)
+		return (errno);
+	gc = fork();
+	if (gc < 0)
+		return (errno);
+	if (gc == 0) {
+		close(sync[1]);
+		(void)read(sync[0], &c, 1);
+		_exit(0);
+	}
+	close(sync[0]);
+	if (proc_flag2(gc, &flag2) != 0)
+		return (210);
+	printf("fork flag2=%#x\n", flag2);
+	if (ptrace(PT_ATTACH, gc, NULL, 0) != 0)
+		return (errno);
+	if (waitpid(gc, &status, 0) != gc)
+		return (211);
+	if (proc_flag2(gc, &flag2) != 0)
+		return (212);
+	printf("attached flag2=%#x\n", flag2);
+	if (ptrace(PT_DETACH, gc, (caddr_t)1, 0) != 0)
+		return (errno);
+	if (proc_flag2(gc, &flag2) != 0)
+		return (213);
+	printf("detached flag2=%#x\n", flag2);
+	fflush(stdout);
+	close(sync[1]);
+	(void)waitpid(gc, &status, 0);
+	return (0);
+}
+
+ATF_TC(x2_x9_fork_and_trace);
+ATF_TC_HEAD(x2_x9_fork_and_trace, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "X2: a fork child of an excluded process is excluded; X9: when its excluded parent ptrace-attaches it, it is no longer excluded, also after the detach");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(x2_x9_fork_and_trace, tc)
+{
+	struct xcase x;
+	struct run r;
+	unsigned f1, f2, f3;
+	char *argv[] = { __DECONST(char *, HELPER),
+	    __DECONST(char *, "report"), NULL };
+
+	xcase_init(tc, &x);
+	run_child(-1, x2_x9_pre, NULL, x.helper, -1, argv, &r);
+	ATF_REQUIRE_EQ_MSG(r.exec_errno, 0, "pre: %d", r.exec_errno);
+	ATF_REQUIRE(sscanf(r.out, "fork flag2=%x\nattached flag2=%x\n"
+	    "detached flag2=%x", &f1, &f2, &f3) == 3);
+	ATF_CHECK((f1 & P2_CAP_EXCLUDED_BIT) != 0);
+	ATF_CHECK((f2 & P2_CAP_EXCLUDED_BIT) == 0);
+	ATF_CHECK((f3 & P2_CAP_EXCLUDED_BIT) == 0);
+	xcase_fini(&x);
+}
+
+static int
+ktrace_self(void *arg)
+{
+	char path[PATH_MAX];
+
+	if (exclude_self(NULL) != 0)
+		return (errno);
+	snprintf(path, sizeof(path), "%s", (const char *)arg);
+	if (ktrace(path, KTROP_SET, KTRFAC_SYSCALL, getpid()) != 0)
+		return (errno);
+	return (0);
+}
+
+static int
+nnp_self(void *arg)
+{
+	int v = PROC_NO_NEW_PRIVS_ENABLE;
+
+	(void)arg;
+	if (exclude_self(NULL) != 0)
+		return (errno);
+	return (procctl(P_PID, getpid(), PROC_NO_NEW_PRIVS_CTL, &v) == 0 ?
+	    0 : errno);
+}
+
+ATF_TC(x10_x16_traced_or_nnp_clears);
+ATF_TC_HEAD(x10_x16_traced_or_nnp_clears, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "X10: a ktraced process executing its Core image is not excluded; X16: nor is one with no_new_privs");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(x10_x16_traced_or_nnp_clears, tc)
+{
+	struct xcase x;
+	struct run r;
+	char trace[PATH_MAX];
+	char *argv[] = { __DECONST(char *, HELPER),
+	    __DECONST(char *, "report"), NULL };
+	int token;
+
+	xcase_init(tc, &x);
+	ATF_REQUIRE(getcwd(trace, sizeof(trace)) != NULL);
+	strlcat(trace, "/ktrace.out", sizeof(trace));
+	ATF_REQUIRE(close(open(trace, O_WRONLY | O_CREAT, 0600)) == 0);
+	token = core_token(&x, 0x40);
+	run_child(token, ktrace_self, trace, x.helper, -1, argv, &r);
+	expect_report(&r, 0, false, 0);
+	close(token);
+	token = core_token(&x, 0x40);
+	run_child(token, nnp_self, NULL, x.helper, -1, argv, &r);
+	expect_report(&r, 0, false, 0);
+	close(token);
+	xcase_fini(&x);
+}
+
+ATF_TC(x11_jail_clears);
+ATF_TC_HEAD(x11_jail_clears, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "X11: a Core image that enters a jail is no longer excluded");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(x11_jail_clears, tc)
+{
+	struct xcase x;
+	struct run r;
+	char *argv[] = { __DECONST(char *, HELPER),
+	    __DECONST(char *, "jail"), NULL };
+	int token;
+
+	xcase_init(tc, &x);
+	token = core_token(&x, 0x40);
+	run_child(token, exclude_self, NULL, x.helper, -1, argv, &r);
+	expect_report(&r, 0, false, 0);
+	close(token);
+	xcase_fini(&x);
+}
+
+ATF_TC(x13_x14_role_shapes);
+ATF_TC_HEAD(x13_x14_role_shapes, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "X13: the Core role with two images is EINVAL; X14: a Core authority cannot be registered as an application (EINVAL)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(x13_x14_role_shapes, tc)
+{
+	struct cap_authority_spec spec = {
+		.version = CAP_AUTH_VERSION, .kind = CAP_AUTH_MANAGED,
+	};
+	struct cap_authority_constraint c;
+	struct cap_authority_application app;
+	struct xcase x;
+	int token, image2;
+
+	xcase_init(tc, &x);
+	image2 = open("/bin/sh", O_RDONLY | O_CLOEXEC);
+	ATF_REQUIRE(image2 >= 0);
+	token = op(CAP_AUTH_ISSUE, x.issuer, &spec);
+	ATF_REQUIRE(token >= 0);
+	memset(&c, 0, sizeof(c));
+	c.token_fd = token;
+	c.flags = CAP_AUTH_ROLE_CORE;
+	c.nexec = 2;
+	c.executable_fds[0] = x.image;
+	c.executable_fds[1] = image2;
+	ATF_CHECK_ERRNO(EINVAL, op(CAP_AUTH_CONSTRAIN, x.issuer, &c) == -1);
+	close(token);
+	token = core_token(&x, CAP_AUTH_ROLE_CORE);
+	app.token_fd = token;
+	app.reserved = 0;
+	ATF_CHECK_ERRNO(EINVAL, op(CAP_AUTH_REGISTER_APP, x.issuer, &app) == -1);
+	close(token);
+	close(image2);
+	xcase_fini(&x);
+}
+
+ATF_TC(x17_core_script_refused);
+ATF_TC_HEAD(x17_core_script_refused, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "X17: an exec predicted excluded whose image is a #! script fails with EACCES and refused_interp counts it; P17's flags-0 script still runs");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(x17_core_script_refused, tc)
+{
+	char *const argv[] = { __DECONST(char *, "script"), NULL };
+	struct xcase x;
+	struct run r;
+	char path[PATH_MAX];
+	uint64_t refused;
+	int image, token, error, fd;
+
+	xcase_init(tc, &x);
+	ATF_REQUIRE(getcwd(path, sizeof(path)) != NULL);
+	strlcat(path, "/script", sizeof(path));
+	fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0755);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(dprintf(fd, "#!/bin/sh\necho ran\n") > 0);
+	close(fd);
+	image = open(path, O_RDONLY | O_CLOEXEC);
+	ATF_REQUIRE(image >= 0);
+	token = constrained_token(x.issuer, image, CAP_AUTH_ROLE_CORE, &error);
+	ATF_REQUIRE_EQ(error, 0);
+	refused = counter("security.cap_exclusion.refused_interp");
+	run_child(token, exclude_self, NULL, path, -1, argv, &r);
+	ATF_CHECK_EQ_MSG(r.exec_errno, EACCES, "exec: %d", r.exec_errno);
+	ATF_CHECK_EQ(counter("security.cap_exclusion.refused_interp"),
+	    refused + 1);
+	close(token);
+	close(image);
+	xcase_fini(&x);
+}
+
+/* X19: the issuer is revoked between install and exec. */
+struct x19 {
+	int	ready[2];
+	int	go[2];
+	int	issuer;
+	int	token;
+};
+
+static int
+x19_pre(void *arg)
+{
+	struct x19 *s = arg;
+	char c = 0;
+
+	if (exclude_self(NULL) != 0)
+		return (errno);
+	/* Drop this process's copies: only then can the parent revoke. */
+	close(s->issuer);
+	close(s->token);
+	if (write(s->ready[1], &c, 1) != 1 || read(s->go[0], &c, 1) != 1)
+		return (214);
+	return (0);
+}
+
+ATF_TC(x19_revoked_issuer_not_excluded);
+ATF_TC_HEAD(x19_revoked_issuer_not_excluded, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "X19: a Core token whose issuer is closed before the exec selects nothing: the new image is not excluded");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(x19_revoked_issuer_not_excluded, tc)
+{
+	char *argv[] = { __DECONST(char *, HELPER),
+	    __DECONST(char *, "report"), NULL };
+	char helper[PATH_MAX], c;
+	struct x19 s;
+	unsigned flag2, valid;
+	int out[2], status, image, error;
+	pid_t pid;
+
+	helper_path(tc, helper, sizeof(helper));
+	s.issuer = require_issuer();
+	image = open(helper, O_RDONLY | O_CLOEXEC);
+	ATF_REQUIRE(image >= 0);
+	s.token = constrained_token(s.issuer, image, CAP_AUTH_ROLE_CORE,
+	    &error);
+	ATF_REQUIRE_EQ(error, 0);
+	close(image);
+	ATF_REQUIRE(pipe(s.ready) == 0 && pipe(s.go) == 0 && pipe(out) == 0);
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		dup2(out[1], STDOUT_FILENO);
+		if (op(CAP_AUTH_INSTALL, s.token, NULL) != 0 ||
+		    x19_pre(&s) != 0)
+			_exit(120);
+		execv(helper, argv);
+		_exit(121);
+	}
+	close(out[1]);
+	ATF_REQUIRE(read(s.ready[0], &c, 1) == 1);
+	close(s.issuer);
+	close(s.token);
+	ATF_REQUIRE(write(s.go[1], &c, 1) == 1);
+	memset(&flag2, 0, sizeof(flag2));
+	{
+		char buf[256];
+		ssize_t n;
+		size_t off = 0;
+
+		while ((n = read(out[0], buf + off, sizeof(buf) - 1 - off)) > 0)
+			off += n;
+		buf[off] = '\0';
+		printf("child: %s", buf);
+		ATF_REQUIRE(sscanf(buf, "flag2=%x valid=%u", &flag2,
+		    &valid) == 2);
+	}
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	ATF_CHECK((flag2 & P2_CAP_EXCLUDED_BIT) == 0);
+	ATF_CHECK_EQ(valid, 0);
+}
+
+ATF_TC(x21_interpreter_pass_not_excluded);
+ATF_TC_HEAD(x21_interpreter_pass_not_excluded, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "X21: a Core authority pinning an ELF used as a #! interpreter never excludes the script's run (rule 4); granted unchanged");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(x21_interpreter_pass_not_excluded, tc)
+{
+	char *const argv[] = { __DECONST(char *, "script"), NULL };
+	struct xcase x;
+	struct run r;
+	char path[PATH_MAX];
+	uint64_t granted;
+	int token, fd;
+
+	xcase_init(tc, &x);
+	ATF_REQUIRE(getcwd(path, sizeof(path)) != NULL);
+	strlcat(path, "/interp-script", sizeof(path));
+	fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0755);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(dprintf(fd, "#!%s report\n", x.helper) > 0);
+	close(fd);
+	token = core_token(&x, CAP_AUTH_ROLE_CORE);
+	granted = counter("security.cap_exclusion.granted");
+	run_child(token, exclude_self, NULL, path, -1, argv, &r);
+	expect_report(&r, 0, false, 1);
+	ATF_CHECK_EQ(counter("security.cap_exclusion.granted"), granted);
+	close(token);
+	xcase_fini(&x);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, test_process_not_excluded);
@@ -895,5 +1475,17 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, pid1_debug_interfaces);
 	ATF_TP_ADD_TC(tp, switchboard_exclusion_bit);
 	ATF_TP_ADD_TC(tp, switchboard_debug_interfaces);
+	ATF_TP_ADD_TC(tp, x2_x9_fork_and_trace);
+	ATF_TP_ADD_TC(tp, x3_exec_without_authority_clears);
+	ATF_TP_ADD_TC(tp, x4_core_exec_sets);
+	ATF_TP_ADD_TC(tp, x5_x7_other_image_clears);
+	ATF_TP_ADD_TC(tp, x6_not_excluded_never_acquires);
+	ATF_TP_ADD_TC(tp, x8_pinned_image_text_busy);
+	ATF_TP_ADD_TC(tp, x10_x16_traced_or_nnp_clears);
+	ATF_TP_ADD_TC(tp, x11_jail_clears);
+	ATF_TP_ADD_TC(tp, x13_x14_role_shapes);
+	ATF_TP_ADD_TC(tp, x17_core_script_refused);
+	ATF_TP_ADD_TC(tp, x19_revoked_issuer_not_excluded);
+	ATF_TP_ADD_TC(tp, x21_interpreter_pass_not_excluded);
 	return (atf_no_error());
 }

@@ -70,9 +70,34 @@ struct cap_authority_stamp {
  * 0x1 was a fixed-UID flag in development; no committed kernel accepted
  * it, it has been refused since the header was added, and it is never
  * reassigned.
+ *
+ * Role bit allocation.  One table for every 5BSD design; a bit marked
+ * "planned" is refused with EINVAL until the design that owns it lands.
+ *
+ *   0x00000001  retired fixed-UID flag            always EINVAL
+ *   0x00000002  CAP_AUTH_ROLE_DQ_SUPERVISOR        lg-1 (landed)
+ *   0x00000004  CAP_AUTH_ROLE_DQ_OBSERVER          planned (legitimacy)
+ *   0x00000008  CAP_AUTH_ROLE_DQ_SWAP_NOCRED       planned (legitimacy)
+ *   0x00000010  CAP_AUTH_ROLE_DQ_DEVELOPMENT       planned (legitimacy)
+ *   0x00000020  CAP_AUTH_ROLE_DQ_EXECATTACH        planned (exec guard: may
+ *                                                 mint exec attach tokens)
+ *   0x00000040  CAP_AUTH_ROLE_CORE                 base exclusion
+ *   0x00000080  CAP_AUTH_ROLE_EXECPOLICY           planned (exec guard: may
+ *                                                 write /dev/execpolicy)
+ *   0x00000100  CAP_AUTH_ROLE_EXECGUARD            planned (exec guard: may
+ *                                                 bind the exec guard queue)
+ *
+ * Bits 0x200 and up are unallocated.
+ *
+ * CAP_AUTH_ROLE_CORE: when a process that is already excluded from OES and
+ * Capability Brokers (P2_CAP_EXCLUDED; cap_process(2) BASE EXCLUSION)
+ * executes the one image the role's authority pins, with the authority
+ * installed, the new image is excluded too.  The role grants nothing to a
+ * process that is not already excluded.
  */
 #define CAP_AUTH_FLAG_RETIRED_FIXED_UID	0x00000001 /* Always EINVAL. */
 #define CAP_AUTH_ROLE_DQ_SUPERVISOR	0x00000002
+#define CAP_AUTH_ROLE_CORE		0x00000040
 #define CAP_AUTH_EXEC_MAX 8
 struct cap_authority_constraint {
 	int32_t token_fd;
@@ -298,5 +323,31 @@ void cap_authority_record_clear(struct cap_authority_record *);
 void cap_authority_record_stamp(const struct cap_authority_record *,
     const struct prison *, struct cap_authority_stamp *);
 void cap_authority_cred_stamp(struct proc *, struct ucred *);
+
+/*
+ * Base exclusion (cap_process(2) BASE EXCLUSION).  The decision is made
+ * once per IS_CHECK pass by do_execve(), before any MAC policy sees the
+ * image, stored in imgp->cap_will_exclude and applied at commit.
+ */
+struct image_params;
+struct sysentvec;
+bool	cap_exclusion_exec_will_exclude(struct proc *, struct cap_authority *,
+	    bool, bool);
+int	cap_exclusion_exec_check_abi(struct image_params *, struct sysentvec *);
+void	cap_exclusion_exec(struct proc *, struct image_params *);
+int	cap_exclusion_refused_interp(struct proc *);
+/* Why exclusion was cleared (cap_exclusion:::clear). */
+#define	CAPX_CLEAR_EXEC		1
+#define	CAPX_CLEAR_PTRACE	2
+#define	CAPX_CLEAR_KTRACE	3
+#define	CAPX_CLEAR_PRISON	4
+#define	CAPX_CLEAR_DQ_ATTACH	5
+#define	CAPX_CLEAR_EXEC_ATTACH	6
+/* Why an excluded exec or a request was refused (cap_exclusion:::refuse). */
+#define	CAPX_R_INTERP		1
+#define	CAPX_R_ABI		2
+#define	CAPX_R_DEBUG		3
+#define	CAPX_R_ATTACH		4
+void	cap_exclusion_clear_locked(struct proc *, int);
 #endif
 #endif

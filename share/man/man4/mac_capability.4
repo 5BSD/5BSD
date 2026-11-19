@@ -619,7 +619,7 @@ refuses to plan packages or media for a configuration that carries it.
 The option is not in NOTES, and is not available to a module.
 .Pp
 On such a kernel only:
-.Bl -tag -width debug.mac_capability.test_issuer_fail_init
+.Bl -tag -width debug.mac_capability.test_issuer_exclude_self
 .It Va kern.mac_capability.test_issuer
 The tunable, read once at boot; only 1 enables test issuers.
 It cannot be changed afterwards.
@@ -640,10 +640,21 @@ An errno
 .Pq Er ENOSPC , ENFILE No or Er EMFILE ,
 or 0 to clear, that PID 1's next issuer creation fails with, once, after it
 has anchored.
+.It Va debug.mac_capability.test_issuer_exclude_self
+Writing 1, while test issuers are on, marks the calling root process
+excluded from
+.Xr oes 4
+and Capability Brokers, as process 1 is
+.Pq see Sx BASE EXCLUSION No in Xr cap_process 2 ,
+so that a test can exercise the exclusion chain with a test issuer.
+Refused
+.Pq Er EPERM
+for a traced, ktraced, jailed or attached caller or in capability mode.
 .El
 .Pp
-Neither debug control is a tunable, and neither can be written from a
-jail; both only restrict.
+No debug control is a tunable, and none can be written from a jail.
+The first two only restrict; the third stands in for process 1 and exists
+only on these test kernels.
 .Sh DTRACE PROBES
 The
 .Nm

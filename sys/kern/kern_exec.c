@@ -640,6 +640,21 @@ interpret:
 		exec_image_vnode_from_vnode(imgp, newtextvp, IS_FORM_FD);
 	}
 
+	/* Software authority requires loader hardening, without changing a UID.
+	 * Recompute for every interpreter rather than trusting the script path.
+	 * Capability-mode services may use it; tracing and no_new_privs may not.
+	 * Selected before IS_CHECK so that base exclusion is known to every
+	 * MAC policy that sees the image (OES decides AUTH_EXEC by it).
+	 */
+	cap_authority_drop(exec_authority);
+	exec_authority = NULL;
+	/* I5: no software authority for an attached process (D137). */
+	exec_authority = dq_attached ? NULL : IS_AUTHORITY_PREPARE(imgp, p);
+	imgp->authority_setid = exec_authority != NULL;
+	imgp->cap_will_exclude = cap_exclusion_exec_will_exclude(p,
+	    exec_authority, dq_attached,
+	    (imgp->interpreted & ~IMGACT_INTERP_ELF) != 0);
+
 	/*
 	 * Check file permissions.  Also 'opens' file and sets its vnode to
 	 * text mode.
@@ -779,16 +794,6 @@ interpret:
 	}
 #endif
 
-	/* Software authority requires loader hardening, without changing a UID.
-	 * Recompute for every interpreter rather than trusting the script path.
-	 * Capability-mode services may use it; tracing and no_new_privs may not.
-	 */
-	cap_authority_drop(exec_authority);
-	exec_authority = NULL;
-	/* I5: no software authority for an attached process (D137). */
-	exec_authority = dq_attached ? NULL : IS_AUTHORITY_PREPARE(imgp, p);
-	imgp->authority_setid = exec_authority != NULL;
-
 	/* The new credentials are installed into the process later. */
 
 	/*
@@ -814,6 +819,16 @@ interpret:
 	 * activate the interpreter.
 	 */
 	if ((imgp->interpreted & ~IMGACT_INTERP_ELF) != 0) {
+		/*
+		 * A Core authority pins the program, not an interpreter: an
+		 * exec predicted to be excluded must be completed by that
+		 * image's own activation, or the decision OES already acted
+		 * on would not hold.
+		 */
+		if (imgp->cap_will_exclude && p != initproc) {
+			error = cap_exclusion_refused_interp(p);
+			goto exec_fail_dealloc;
+		}
 		exec_unmap_first_page(imgp);
 		/*
 		 * The text reference needs to be removed for scripts.
@@ -1037,6 +1052,8 @@ interpret:
 	 */
 	IS_AUTHORITY_EXEC(imgp, p,
 	    imgp->authority_setid ? exec_authority : NULL);
+	/* Base exclusion, decided before IS_CHECK (cap_process(2)). */
+	cap_exclusion_exec(p, imgp);
 	/*
 	 * The credential installed above is this exec's own and not yet
 	 * shared: record in it the authority the new image runs with.

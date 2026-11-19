@@ -30,12 +30,16 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/capsicum.h>
+#include <sys/dqres.h>
 #include <sys/errno.h>
 #include <sys/event.h>
 #include <sys/fcntl.h>
 #include <sys/file.h>
 #include <sys/filedesc.h>
+#include <sys/jail.h>
 #include <sys/kernel.h>
+#include <sys/ktrace.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/mutex.h>
@@ -148,6 +152,49 @@ SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuer_fail_init,
     mac_capability_test_issuer_fail_init_sysctl, "I",
     "Test kernel only: the errno (ENOSPC, ENFILE, EMFILE, or 0) PID 1's next "
     "issuer creation fails with, once, after it anchors");
+
+/*
+ * Base exclusion (cap_process(2) BASE EXCLUSION) is anchored at PID 1: only
+ * PID 1's fork chain can become excluded.  A Kyua test cannot run there, so
+ * on a test kernel with test issuers on, a root process may mark itself
+ * excluded, standing in for PID 1, and then exercise the chain rule with a
+ * test issuer's Core token (tests/sys/mac_capability/cap_exclusion_test).
+ * Refused when the caller is traced, ktraced, attached to a Capability
+ * Broker, jailed or in capability mode, as an exec would refuse them.
+ */
+static int
+mac_capability_test_issuer_exclude_self_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	struct thread *td = curthread;
+	struct proc *p = td->td_proc;
+	int error, value;
+
+	PROC_LOCK(p);
+	value = P_CAP_EXCLUDED(p) ? 1 : 0;
+	PROC_UNLOCK(p);
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	if (value != 1)
+		return (EINVAL);
+	if (mac_capability_test_issuer_enabled != 1 || jailed(td->td_ucred) ||
+	    IN_CAPABILITY_MODE(td))
+		return (EPERM);
+	PROC_LOCK(p);
+	if ((p->p_flag & P_TRACED) != 0 ||
+	    (p->p_traceflag & KTRFAC_MASK) != 0 ||
+	    dqres_cred_change_refused(p))
+		error = EPERM;
+	else
+		p->p_flag2 |= P2_CAP_EXCLUDED;
+	PROC_UNLOCK(p);
+	return (error);
+}
+SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuer_exclude_self,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+    mac_capability_test_issuer_exclude_self_sysctl, "I",
+    "Test kernel only: write 1 to mark the calling process excluded from "
+    "OES and Capability Brokers, as PID 1 is (needs test issuers on)");
 
 static void
 mac_capability_test_issuer_init(void *arg __unused)
