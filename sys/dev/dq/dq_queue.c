@@ -604,9 +604,11 @@ dq_object_revoke_locked(struct dq_queue *q, struct dq_object *o, int why,
 	}
 	/*
 	 * A post of this object waiting for a slot of a full queue fails
-	 * now: no slot need come.  The others look again and sleep on.
+	 * now: no slot need come.  The others look again and sleep on.  A
+	 * dying queue's revokes (why 1) leave it to the death, which wakes
+	 * every slot waiter once (dq_queue_die).
 	 */
-	if (DQ_WAKE(DQ_WAKE_REVOKE_SPACE))
+	if (why == 0 && DQ_WAKE(DQ_WAKE_REVOKE_SPACE))
 		wakeup(&q->q_space);
 	q->q_stats.ds2_objects_revoked++;
 	SDT_PROBE3(dq, , , revoke, q, o, why);
