@@ -665,6 +665,7 @@ exit1(struct thread *td, int rval, int signo)
 			}
 			if (kern_kill_on_dbg_exit) {
 				q->p_flag &= ~P_STOPPED_TRACE;
+				q->p_flag2 &= ~P2_PTRACE_OUTSTOP;
 				kern_psignal(q, SIGKILL);
 			} else if ((q->p_flag & (P_STOPPED_TRACE |
 			    P_STOPPED_SIG)) != 0) {

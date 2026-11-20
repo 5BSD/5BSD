@@ -93,6 +93,9 @@ and
 Create a
 .Xr kqueue 2
 and register the Capsule channel fd for EOF detection (Capsule exit).
+A request to Capsule waits for its reply on that channel without a
+deadline; Capsule's exit ends the wait with
+.Er ECONNRESET .
 .It
 Self-serve the
 .Ql system.switchboard

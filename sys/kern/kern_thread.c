@@ -48,6 +48,7 @@
 #include <sys/sched.h>
 #include <sys/sleepqueue.h>
 #include <sys/selinfo.h>
+#include <sys/signalvar.h>
 #include <sys/syscallsubr.h>
 #include <sys/dtrace_bsd.h>
 #include <sys/sysent.h>
@@ -1398,7 +1399,9 @@ thread_suspend_check_needed(void)
  *       1       | thread exits       |   returns 1
  *               |                    |  immediately
  * 0 = thread_exit() or suspension ok,
- * other = return error instead of stopping the thread.
+ * other = return error instead of stopping the thread, or, with
+ * return_instead, TDSC_INPLACE: the caller is to stop the thread where it
+ * is about to sleep (only sig_ast_checksusp() callers see it).
  *
  * While a full suspension is under effect, even a single threading
  * thread would be suspended if it made this call (but it shouldn't).
@@ -1453,9 +1456,25 @@ thread_suspend_check(int return_instead)
 		 * We might get here with return_instead == 1 if
 		 * other checks missed it.  Then we must not suspend
 		 * regardless of P_SHOULDSTOP() or debugger request.
+		 *
+		 * A stop made from outside by a transparent PT_ATTACH
+		 * or by PT_KERN_INTERRUPT (P2_PTRACE_OUTSTOP) leaves a
+		 * thread that is asleep where it sleeps.  A thread on
+		 * its way into an interruptible sleep is to be stopped
+		 * the same way, asleep: TDSC_INPLACE tells the sleep
+		 * queue code (sleepq_check_ast_sc_locked()) to do that.
+		 * Only the sleep queue may act on it; sig_intr() turns
+		 * it back into EINTR.
 		 */
-		if (return_instead)
+		if (return_instead) {
+			KASSERT((p->p_flag2 & P2_PTRACE_OUTSTOP) == 0 ||
+			    (p->p_flag & P_STOPPED_TRACE) != 0,
+			    ("P2_PTRACE_OUTSTOP without P_STOPPED_TRACE"));
+			if ((p->p_flag2 & P2_PTRACE_OUTSTOP) != 0 &&
+			    (p->p_flag & P_STOPPED_SINGLE) == 0)
+				return (TDSC_INPLACE);
 			return (EINTR);
+		}
 
 		/*
 		 * If the process is waiting for us to exit,
