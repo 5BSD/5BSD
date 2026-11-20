@@ -30,7 +30,6 @@
 #define	MAC_CAPABILITY_DEF_INSTANCE_LIMIT	1024	/* default instances per service */
 #define	MAC_CAPABILITY_MAX_INSTANCES	(1024 * 1024) /* max instances per service */
 #define	MAC_CAPABILITY_MAX_SVC_THREADS	4	/* max taskqueue threads per service */
-#define	MAC_CAPABILITY_POLL_TICKS		(hz / 20) /* 50ms refcount poll interval */
 
 /*
  * Fixed-size message — 16384 bytes (4 pages).
@@ -219,6 +218,12 @@ extern counter_u64_t mac_capability_stat_instances;
 struct mac_capability_callback_state *mac_capability_callback_state_get(
 	    struct mac_capability_instance *s);
 bool	mac_capability_callback_state_done(struct mac_capability_callback_state *cs);
+/* Sleep until the callback returned (event driven); caller holds a reference. */
+void	mac_capability_callback_state_wait(struct mac_capability_callback_state *cs,
+	    const char *wmesg);
+/* Sleep until at most max (1 or 2) references remain; caller holds one. */
+void	mac_capability_instance_wait_refs(struct mac_capability_instance *s,
+	    u_int max, const char *wmesg);
 void	mac_capability_callback_state_rele(struct mac_capability_callback_state *cs);
 /* Caller holds ci_mtx and owns FINALIZED; publish completed rollback/callback. */
 void	mac_capability_revoke_done_locked(struct mac_capability_instance *s);

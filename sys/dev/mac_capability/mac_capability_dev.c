@@ -2090,7 +2090,7 @@ mac_capability_instance_close(struct file *fp, struct thread *td __unused)
 	 */
 	/* Atomically exclude registry/peer tryhold before claiming final close. */
 	while (!refcount_release_if_last(&s->ci_refcnt))
-		tsleep(s, 0, "mac_capabilityfr", MAC_CAPABILITY_POLL_TICKS);
+		mac_capability_instance_wait_refs(s, 1, "mac_capabilityfr");
 
 	/* Fire co_revoke exactly once, after all work is done. */
 	mtx_lock(&s->ci_mtx);

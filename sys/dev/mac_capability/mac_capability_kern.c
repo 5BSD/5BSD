@@ -22,6 +22,7 @@
 #include <sys/proc.h>
 #include <sys/refcount.h>
 #include <sys/rmlock.h>
+#include <sys/sleepqueue.h>
 #include <sys/smp.h>
 #include <sys/sx.h>
 #include <sys/taskqueue.h>
@@ -384,6 +385,31 @@ mac_capability_callback_state_done(struct mac_capability_callback_state *cs)
 	return (atomic_load_acq_int(&cs->cs_done) != 0);
 }
 
+/*
+ * Sleep until the callback the state belongs to has returned.  The caller
+ * holds a reference on cs.  cs_done is checked again with the sleep queue
+ * locked, and the completion sets it before its wakeup(cs), so the wakeup
+ * cannot fall between the check and the sleep.
+ */
+void
+mac_capability_callback_state_wait(struct mac_capability_callback_state *cs,
+    const char *wmesg)
+{
+
+	/* Unload calls this with Giant held; sleepq_wait() must not hold it. */
+	DROP_GIANT();
+	for (;;) {
+		sleepq_lock(cs);
+		if (mac_capability_callback_state_done(cs)) {
+			sleepq_release(cs);
+			break;
+		}
+		sleepq_add(cs, NULL, wmesg, SLEEPQ_SLEEP, 0);
+		sleepq_wait(cs, 0);
+	}
+	PICKUP_GIANT();
+}
+
 void
 mac_capability_callback_state_rele(struct mac_capability_callback_state *cs)
 {
@@ -401,8 +427,11 @@ mac_capability_revoke_done_locked(struct mac_capability_instance *s)
 	    (s->ci_flags & MAC_CAPABILITY_SF_REVOKE_DONE) == 0,
 	    ("invalid capability cleanup completion"));
 	s->ci_flags |= MAC_CAPABILITY_SF_REVOKE_DONE;
-	if (s->ci_callback_state != NULL)
+	if (s->ci_callback_state != NULL) {
+		/* The instance holds a reference on cs: it outlives this call. */
 		atomic_store_rel_int(&s->ci_callback_state->cs_done, 1);
+		wakeup(s->ci_callback_state);
+	}
 	wakeup(&s->ci_flags);
 }
 
@@ -533,7 +562,8 @@ mac_capability_dispatch_task(void *context, int pending __unused)
 				while (refcount_load(&s->ci_refcnt) > 2 &&
 				    !(s->ci_flags & MAC_CAPABILITY_SF_FINALIZED)) {
 					mtx_unlock(&s->ci_mtx);
-					tsleep(s, 0, "mac_capabilitysr", MAC_CAPABILITY_POLL_TICKS);
+					mac_capability_instance_wait_refs(s, 2,
+					    "mac_capabilitysr");
 					mtx_lock(&s->ci_mtx);
 				}
 				/* Another finalizer may have won while we slept. */
@@ -782,28 +812,38 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 		taskqueue_drain_all(svc->csvc_taskq);
 
 	/*
-	 * Wait for in-flight sync calls to complete.  co_call runs in
-	 * the caller's thread, not the taskqueue.  ci_inflight tracks
-	 * both handlers and calls.  After taskqueue drain, any remaining
-	 * inflight count is from concurrent co_call invocations.
+	 * Wait for in-flight work run in user threads to complete: co_call,
+	 * and the op-bracketed callbacks (co_fdclose, co_txdrain,
+	 * co_direct_peer).  After taskqueue drain, any remaining inflight
+	 * count is theirs.  Sleep on the busy instance's own count, under
+	 * ci_mtx: every path that brings ci_inflight to 0 on a revoked
+	 * instance wakes &ci_inflight with ci_mtx held.  A held reference
+	 * keeps the instance while the registry lock is dropped; one that
+	 * is in flight always has a reference (CALL holds one, the others
+	 * run under a file reference before close drops the last).
 	 */
-	{
-		bool busy;
-		do {
-			busy = false;
-			sx_slock(&mac_capability_registry_lock);
-			LIST_FOREACH(s, &svc->csvc_instances, ci_svc_link) {
-				mtx_lock(&s->ci_mtx);
-				if (s->ci_inflight > 0)
-					busy = true;
-				mtx_unlock(&s->ci_mtx);
-				if (busy)
-					break;
-			}
-			sx_sunlock(&mac_capability_registry_lock);
-			if (busy)
-				tsleep(svc, 0, "mac_capabilitysyn", MAC_CAPABILITY_POLL_TICKS);
-		} while (busy);
+	for (;;) {
+		struct mac_capability_instance *busy = NULL;
+
+		sx_slock(&mac_capability_registry_lock);
+		LIST_FOREACH(s, &svc->csvc_instances, ci_svc_link) {
+			mtx_lock(&s->ci_mtx);
+			if (s->ci_inflight > 0 &&
+			    mac_capability_instance_tryhold(s))
+				busy = s;
+			mtx_unlock(&s->ci_mtx);
+			if (busy != NULL)
+				break;
+		}
+		sx_sunlock(&mac_capability_registry_lock);
+		if (busy == NULL)
+			break;
+		mtx_lock(&busy->ci_mtx);
+		while (busy->ci_inflight > 0)
+			msleep(&busy->ci_inflight, &busy->ci_mtx, 0,
+			    "mac_capabilitysyn", 0);
+		mtx_unlock(&busy->ci_mtx);
+		mac_capability_instance_rele(busy);
 	}
 
 	/* Remove from registry. */
@@ -858,8 +898,8 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 		sx_xunlock(&mac_capability_registry_lock);
 
 		if (waiting != NULL) {
-			while (!mac_capability_callback_state_done(waiting))
-				pause("caprevokewait", MAC_CAPABILITY_POLL_TICKS);
+			mac_capability_callback_state_wait(waiting,
+			    "caprevokewait");
 			mac_capability_callback_state_rele(waiting);
 			continue;
 		}
@@ -867,8 +907,7 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 			break;
 
 		/* Our hold plus the file reference are the only permitted refs. */
-		while (refcount_load(&s->ci_refcnt) > 2)
-			tsleep(s, 0, "caprevokerefs", MAC_CAPABILITY_POLL_TICKS);
+		mac_capability_instance_wait_refs(s, 2, "caprevokerefs");
 		SDT_PROBE6(mac_capability, , , instance__finalize,
 		    svc->csvc_name, s->ci_badge, MAC_CAPABILITY_REVOKE_UNLOAD,
 		    curthread->td_proc->p_pid, curthread->td_ucred,
@@ -1063,9 +1102,38 @@ mac_capability_instance_rele(struct mac_capability_instance *s)
 	bool last;
 
 	last = refcount_release(&s->ci_refcnt);
-	/* Wake close/revoke only when refcnt might have reached their threshold. */
+	/*
+	 * Wake close/revoke only when refcnt might have reached their
+	 * threshold (mac_capability_instance_wait_refs(), max 1 or 2).
+	 */
 	if (!last && refcount_load(&s->ci_refcnt) <= 2)
 		wakeup(s);
+}
+
+/*
+ * Sleep until at most max references remain on s.  The caller holds one of
+ * them, and not ci_mtx.  The count is read again with the sleep queue
+ * locked; mac_capability_instance_rele() drops its reference before its
+ * wakeup(s), so a release cannot fall between the check and the sleep.
+ */
+void
+mac_capability_instance_wait_refs(struct mac_capability_instance *s,
+    u_int max, const char *wmesg)
+{
+
+	KASSERT(max >= 1 && max <= 2, ("unsupported reference threshold"));
+	/* Unload calls this with Giant held; sleepq_wait() must not hold it. */
+	DROP_GIANT();
+	for (;;) {
+		sleepq_lock(s);
+		if (refcount_load(&s->ci_refcnt) <= max) {
+			sleepq_release(s);
+			break;
+		}
+		sleepq_add(s, NULL, wmesg, SLEEPQ_SLEEP, 0);
+		sleepq_wait(s, 0);
+	}
+	PICKUP_GIANT();
 }
 
 void
