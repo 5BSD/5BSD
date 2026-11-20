@@ -323,10 +323,11 @@ ACL subtest without root and md(4)) skip with `DEFERRED_GUEST_SETUP` and are
 counted as `DEFERRED_GUEST_SETUP=N`, not as passes.  Destructive cases
 that need an opt-in and a guest of their own (`disposable_vm=yes`,
 `live_securelevel=yes`) skip with `DEFERRED_DISPOSABLE_GUEST`.
-A case skipped because the stage lacks a program, file or device it
-requires (kyua's "Required program/file ... not found", a missing
-`/dev/kcov`) makes the run `VM_NOT_CLEAN` (`STAGE_PREREQ_SKIPPED=N`), as a
-missing kernel module does (`KMOD_SKIPPED=N`).  Every other skip without a
+A case skipped because the stage lacks a program or file it requires
+(kyua's "Required program/file ... not found", atf-sh's required program)
+makes the run `VM_NOT_CLEAN` (`STAGE_PREREQ_SKIPPED=N`), as a missing
+kernel module does (`KMOD_SKIPPED=N`).  A device only a kernel option
+provides (`/dev/kcov`) is not a stage input and stays a plain skip.  Every other skip without a
 `DEFERRED_*` token is listed, all of them, as `PLAIN_SKIPS=N` with one
 `PLAIN_SKIP:` line each, and expected failures, which kyua counts as passed,
 as `EXPECTED_FAILURES=N`; neither changes the verdict, so read `VM_CLEAN`

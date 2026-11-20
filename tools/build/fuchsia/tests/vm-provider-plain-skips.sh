@@ -5,8 +5,9 @@
 # Copyright (c) 2026 Kory Heard
 #
 # vm-provider.sh skip accounting: a skip without a DEFERRED_* token is listed
-# as a PLAIN_SKIP, every one of them; a skip for a program, file or device
-# the stage lacks makes the run not clean (STAGE_PREREQ_SKIPPED); expected
+# as a PLAIN_SKIP, every one of them; a skip for a program or file the stage
+# lacks makes the run not clean (STAGE_PREREQ_SKIPPED), a kernel-option
+# device such as /dev/kcov stays a plain skip; expected
 # failures, which kyua counts as passed, are listed.  Runs the actual block
 # of vm-provider.sh; no guest.
 set -eu
@@ -40,17 +41,19 @@ log=$work/serial.log
 	echo KYUA_XFAIL_LIST_END
 } > "$log"
 run "$log" > "$work/out"
-grep -qx 'PLAIN_SKIPS=60 (skips without a DEFERRED_\* token; these cases did not run; not a pass):' "$work/out" ||
+grep -qx 'PLAIN_SKIPS=61 (skips without a DEFERRED_\* token; these cases did not run; not a pass):' "$work/out" ||
     fail "plain skip count: $(grep PLAIN_SKIPS "$work/out")"
-[ "$(grep -c '^PLAIN_SKIP: ' "$work/out")" = 60 ] || fail 'not every plain skip listed'
+[ "$(grep -c '^PLAIN_SKIP: ' "$work/out")" = 61 ] || fail 'not every plain skip listed'
 grep -qx 'PLAIN_SKIP: sys/p:case59  ->  skipped: failed to allocate 1073741824-byte superpage' "$work/out" ||
     fail 'the last plain skip is missing'
-grep -E '^PLAIN_SKIP: .*(DEFERRED_|authority_anchor|kmods|Required|required program|/dev/kcov)' "$work/out" &&
+grep -E '^PLAIN_SKIP: .*(DEFERRED_|authority_anchor|kmods|Required|required program)' "$work/out" &&
     fail 'a tokened, kmod or prerequisite skip listed as plain'
-grep -qx 'STAGE_PREREQ_SKIPPED=4 (the stage lacks a program, file or device these cases require; not a pass):' "$work/out" ||
+grep -qx 'STAGE_PREREQ_SKIPPED=3 (the stage lacks a program or file these cases require; not a pass):' "$work/out" ||
     fail "prerequisite count: $(grep STAGE_PREREQ "$work/out")"
 grep -qx 'EXPECTED_FAILURES=1 (cases marked as expected to fail; kyua counts them as passed; not a pass):' "$work/out" ||
     fail 'expected failure not counted'
+grep -qx 'PLAIN_SKIP: sys/kern/kcov:kcov_basic  ->  skipped: Failed to open /dev/kcov' "$work/out" ||
+    fail 'the kcov device skip is not a plain skip'
 grep -qx 'verdict=VM_NOT_CLEAN' "$work/out" || fail 'a missing stage prerequisite left the run clean'
 # Plain skips and expected failures alone leave the verdict to the rest.
 printf 'KYUA_SKIPPED_LIST_BEGIN\nsys/p:a  ->  skipped: root required  [0.1s]\nKYUA_SKIPPED_LIST_END\nKYUA_XFAIL_LIST_BEGIN\nKYUA_XFAIL_LIST_END\n' > "$log"

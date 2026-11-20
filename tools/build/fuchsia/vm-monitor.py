@@ -58,7 +58,10 @@ FATAL_GRACE_S = 5.0
 HEADER = "lock order reversal:"
 # Lines that belong to a WITNESS reversal report (after the header).
 # The frame that ends a kernel stack in a report: syscall or thread entry.
-STACK_END = re.compile(r"^#\d+ \S+ at (fast_syscall_common|Xfast_syscall|fork_trampoline|fork_exit)\+")
+# amd64: the 64-bit syscall entry, the ia32 int 0x80 entry (IDTVEC: X
+# prefix; int0x80_syscall_common), kernel threads; arm64: the EL0 exception
+# vectors (handle_el0_sync and the rest) and fork_trampoline.
+STACK_END = re.compile(r"^#\d+ \S+ at (fast_syscall_common|Xfast_syscall|X?int0x80_syscall\w*|handle_el0_\w+|fork_trampoline|fork_exit)\+")
 REPORT_LINE = re.compile(r'^(\s*$| 1st | 2nd | 3rd |lock order |All lock orders|"|#\d+ )')
 
 

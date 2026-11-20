@@ -1049,14 +1049,16 @@ skiplist() {
 	tr -d '\r' < "$log" | sed -n "/^KYUA_$1_LIST_BEGIN\$/,/^KYUA_$1_LIST_END\$/p" |
 	    grep ' -> ' | sed -e 's/ *\[[0-9.]*s\]$//' || true
 }
-# A case skipped because the stage lacks a program, file or device it
-# requires did not run: the stage is incomplete, as with a missing kernel
-# module (below), and the run is not clean.
-prereq_re="Required (program|file) '[^']+' not found|required program [^ ]+ could not be found|Failed to open /dev/[a-z]+"
+# A case skipped because the stage lacks a program or file it requires
+# (kyua's require.progs and require.files, atf-sh's atf_require_prog) did
+# not run: the stage is incomplete, as with a missing kernel module (below),
+# and the run is not clean.  A device a kernel option provides (kcov's
+# "Failed to open /dev/kcov") is not a stage input: it stays a plain skip.
+prereq_re="Required (program|file) '[^']+' not found|required program [^ ]+ could not be found"
 prereq=$(skiplist SKIPPED | grep -E "$prereq_re" || true)
 nprereq=$(printf '%s' "$prereq" | grep -c ' -> ' || true)
 if [ "$nprereq" -ne 0 ]; then
-	echo "STAGE_PREREQ_SKIPPED=$nprereq (the stage lacks a program, file or device these cases require; not a pass):"
+	echo "STAGE_PREREQ_SKIPPED=$nprereq (the stage lacks a program or file these cases require; not a pass):"
 	printf '%s\n' "$prereq" | sed -e 's/^/STAGE_PREREQ_SKIP: /'
 	verdict=VM_NOT_CLEAN
 fi
