@@ -670,6 +670,15 @@ ATF_TC_BODY(p11_mmap_read, tc)
  * -a, in the background: it waits out an exec held in its commit) to
  * standard error, which kyua keeps with the result, once per stalled
  * spawn.  Unset, there is no watchdog.
+ *
+ * Neither setting decides the verdict: the case passes when every spawn
+ * exits 0, whatever its time.  The capture exists because a stall is the
+ * absence of an event (a spawn that does not complete), so only a
+ * deadline can notice it; the test has none of its own, and the caller
+ * names it for a diagnosis run and records it with the run.
+ * dq_p12_rounds (default 1, the P12 row) repeats the 1000 spawns for
+ * such a run; the caller keeps rounds times the measured time per 1000
+ * within the case's kyua timeout.
  */
 struct p12_watch {
 	pthread_mutex_t	 mtx;
