@@ -24,6 +24,7 @@
 #include <sys/param.h>
 #include <sys/cap_authority.h>
 #include <sys/event.h>
+#include <sys/ioctl.h>
 #include <sys/ktrace.h>
 #include <sys/mount.h>
 #include <sys/procctl.h>
@@ -1871,6 +1872,269 @@ ATF_TC_BODY(d13_attach_execd_core_refused, tc)
 	d5_case(tc, D5_EXECD);
 }
 
+/* ------------------------------------------------------------------ */
+/* C1-C7 review (2026-11-20): pins for the fixes. */
+
+/* A plain fork child that blocks on its pipe: the control target. */
+static void
+park_plain(struct parked *k)
+{
+	int go[2];
+	char c;
+
+	ATF_REQUIRE(pipe(go) == 0);
+	k->pid = pdfork(&k->pd, 0);
+	ATF_REQUIRE(k->pid >= 0);
+	if (k->pid == 0) {
+		close(go[1]);
+		(void)read(go[0], &c, 1);
+		_exit(0);
+	}
+	close(go[0]);
+	k->release = go[1];
+}
+
+static int
+nobody_pdopenpid(void *arg)
+{
+	pid_t pid = *(pid_t *)arg;
+	int fd;
+
+	if (setgid(65534) != 0 || setuid(65534) != 0)
+		return (200);
+	fd = pdopenpid(pid, 0);
+	if (fd >= 0) {
+		close(fd);
+		return (0);
+	}
+	return (errno);
+}
+
+ATF_TC(d1_invisible_target_esrch);
+ATF_TC_HEAD(d1_invisible_target_esrch, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Review D1: with security.bsd.see_other_uids=0 an unprivileged process that cannot see an excluded root process gets ESRCH from a p_candebug() interface, as for any process; the refusal must not reveal the target (was EPERM)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "is.exclusive", "true");
+}
+ATF_TC_BODY(d1_invisible_target_esrch, tc)
+{
+	struct parked k, q;
+	struct xcase x;
+	struct run r;
+	size_t len;
+	int old, zero = 0;
+
+	xcase_init(tc, &x);
+	park_excluded(&k);
+	park_plain(&q);
+	len = sizeof(old);
+	ATF_REQUIRE(sysctlbyname("security.bsd.see_other_uids", &old, &len,
+	    &zero, sizeof(zero)) == 0);
+	run_child(-1, nobody_pdopenpid, &k.pid, NULL, -1, NULL, &r);
+	ATF_CHECK_EQ_MSG(r.exec_errno, ESRCH, "excluded: %s",
+	    strerror(r.exec_errno));
+	run_child(-1, nobody_pdopenpid, &q.pid, NULL, -1, NULL, &r);
+	ATF_CHECK_EQ_MSG(r.exec_errno, ESRCH, "control: %s",
+	    strerror(r.exec_errno));
+	ATF_REQUIRE(sysctlbyname("security.bsd.see_other_uids", NULL, NULL,
+	    &old, sizeof(old)) == 0);
+	unpark(&k);
+	unpark(&q);
+	xcase_fini(&x);
+}
+
+/*
+ * In an excluded process A: debug its own pre-exec child (allowed), its
+ * child that executed a Core image (refused) and, from one pre-exec child,
+ * a sibling (refused).  Returns 0 or a step number.
+ */
+static int
+s3_in_excluded(const char *helper, int token)
+{
+	char *argv[] = { __DECONST(char *, HELPER),
+	    __DECONST(char *, "wait"), NULL };
+	int in[2], out[2], go[2], status, r;
+	pid_t pre, core, s1, s2;
+	char c, buf[64];
+
+	if (exclude_self(NULL) != 0)
+		return (100);
+	/* A Core child that has executed: refused. */
+	if (pipe(in) != 0 || pipe(out) != 0)
+		return (101);
+	core = fork();
+	if (core < 0)
+		return (102);
+	if (core == 0) {
+		dup2(in[0], STDIN_FILENO);
+		dup2(out[1], STDOUT_FILENO);
+		close(in[1]);
+		if (syscall(SYS_cap_process, CAP_AUTH_INSTALL, token, 0,
+		    NULL) != 0)
+			_exit(120);
+		execv(helper, argv);
+		_exit(121);
+	}
+	close(in[0]);
+	close(out[1]);
+	if (read(out[0], buf, sizeof(buf)) <= 0)
+		return (103);
+	r = ptrace(PT_ATTACH, core, NULL, 0) == 0 ? 0 : errno;
+	close(in[1]);
+	(void)waitpid(core, &status, 0);
+	if (r != EPERM)
+		return (r == 0 ? 104 : 105);
+	/* Siblings: s1 may not debug s2. */
+	if (pipe(go) != 0)
+		return (106);
+	s2 = fork();
+	if (s2 < 0)
+		return (107);
+	if (s2 == 0) {
+		close(go[1]);
+		(void)read(go[0], &c, 1);
+		_exit(0);
+	}
+	s1 = fork();
+	if (s1 < 0)
+		return (108);
+	if (s1 == 0)
+		_exit(ptrace(PT_ATTACH, s2, NULL, 0) == 0 ? 0 :
+		    (errno == EPERM ? 1 : 2));
+	(void)waitpid(s1, &status, 0);
+	close(go[1]);
+	(void)waitpid(s2, NULL, 0);
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 1)
+		return (109);
+	/* Its own pre-exec child: allowed (X9). */
+	if (pipe(go) != 0)
+		return (110);
+	pre = fork();
+	if (pre == 0) {
+		close(go[1]);
+		(void)read(go[0], &c, 1);
+		_exit(0);
+	}
+	if (ptrace(PT_ATTACH, pre, NULL, 0) != 0)
+		return (111);
+	(void)waitpid(pre, &status, 0);
+	(void)ptrace(PT_DETACH, pre, (caddr_t)1, 0);
+	close(go[1]);
+	(void)waitpid(pre, &status, 0);
+	return (0);
+}
+
+ATF_TC(s3_core_cannot_debug_core);
+ATF_TC_HEAD(s3_core_cannot_debug_core, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Owner S3: among excluded processes only a parent may debug its own pre-exec child; its exec'd Core child and a sibling are EPERM");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(s3_core_cannot_debug_core, tc)
+{
+	struct xcase x;
+	int token, status;
+	pid_t a;
+
+	xcase_init(tc, &x);
+	token = core_token(&x, CAP_AUTH_ROLE_CORE);
+	a = fork();
+	ATF_REQUIRE(a >= 0);
+	if (a == 0)
+		_exit(s3_in_excluded(x.helper, token));
+	ATF_REQUIRE(waitpid(a, &status, 0) == a);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "step %d", WEXITSTATUS(status));
+	close(token);
+	xcase_fini(&x);
+}
+
+/* FASTTRAPIOC_MAKEPROBE on pid through the capprotect fixture's helper. */
+static int
+iface_fasttrap(const atf_tc_t *tc, pid_t pid)
+{
+	char helper[PATH_MAX], cmd[2 * PATH_MAX], line[64];
+	FILE *f;
+	int e = -1;
+
+	snprintf(helper, sizeof(helper), "%s/capprotect_fasttrap_helper",
+	    atf_tc_get_config_var(tc, "srcdir"));
+	snprintf(cmd, sizeof(cmd), "%s %d cap_exclusion_test main %lx",
+	    helper, (int)pid, (unsigned long)(uintptr_t)&iface_kcmp);
+	f = popen(cmd, "r");
+	ATF_REQUIRE(f != NULL);
+	while (fgets(line, sizeof(line), f) != NULL)
+		(void)sscanf(line, "MAKEPROBE %d", &e);
+	(void)pclose(f);
+	return (e);
+}
+
+static int
+iface_filemon(pid_t pid)
+{
+	int fd, e;
+
+	fd = open("/dev/filemon", O_RDWR | O_CLOEXEC);
+	if (fd < 0)
+		return (-1);
+	e = ioctl(fd, _IOWR('S', 2, pid_t), &pid) == 0 ? 0 : errno;
+	close(fd);
+	return (e);
+}
+
+ATF_TC(t1_debug_interfaces_excluded_child);
+ATF_TC_HEAD(t1_debug_interfaces_excluded_child, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Review T1: against an excluded pre-exec child, with a plain child as control, root is refused by linprocfs mem and fd (hidden: ENOENT), fasttrap MAKEPROBE and filemon (EPERM), where the control answers otherwise");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "is.exclusive", "true");
+}
+ATF_TC_BODY(t1_debug_interfaces_excluded_child, tc)
+{
+	struct parked k, q;
+	struct xcase x;
+	char dir[PATH_MAX], cmd[PATH_MAX + 64];
+	int e, ec;
+
+	xcase_init(tc, &x);
+	park_excluded(&k);
+	park_plain(&q);
+	ATF_REQUIRE(getcwd(dir, sizeof(dir)) != NULL);
+	strlcat(dir, "/linproc", sizeof(dir));
+	ATF_REQUIRE(mkdir(dir, 0755) == 0 || errno == EEXIST);
+	snprintf(cmd, sizeof(cmd), "mount -t linprocfs linprocfs %s", dir);
+	ATF_REQUIRE_EQ_MSG(system(cmd), 0, "%s", cmd);
+	ATF_CHECK_EQ(iface_linprocfs(dir, q.pid, "mem"), 0);
+	ATF_CHECK_EQ(iface_linprocfs(dir, k.pid, "mem"), ENOENT);
+	ATF_CHECK_EQ(iface_linprocfs(dir, q.pid, "fd"), 0);
+	ATF_CHECK_EQ(iface_linprocfs(dir, k.pid, "fd"), ENOENT);
+	snprintf(cmd, sizeof(cmd), "umount %s", dir);
+	ATF_CHECK_EQ(system(cmd), 0);
+	if (access("/dev/fasttrap", F_OK) == 0) {
+		ec = iface_fasttrap(tc, q.pid);
+		e = iface_fasttrap(tc, k.pid);
+		printf("fasttrap: control %d, excluded %d\n", ec, e);
+		ATF_CHECK(ec != EPERM);
+		ATF_CHECK_EQ(e, EPERM);
+	} else
+		printf("NOT COVERED fasttrap: no /dev/fasttrap (dtraceall not "
+		    "preloaded)\n");
+	if (access("/dev/filemon", F_OK) == 0) {
+		ATF_CHECK_EQ(iface_filemon(q.pid), 0);
+		ATF_CHECK_EQ(iface_filemon(k.pid), EPERM);
+	} else
+		printf("NOT COVERED filemon: no /dev/filemon\n");
+	printf("NOT COVERED hwpmc, Linux pidfd_getfd: no fixture in this "
+	    "program\n");
+	unpark(&k);
+	unpark(&q);
+	xcase_fini(&x);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, test_process_not_excluded);
@@ -1902,5 +2166,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, d5_attach_own_child);
 	ATF_TP_ADD_TC(tp, d5b_attach_grandchild_refused);
 	ATF_TP_ADD_TC(tp, d13_attach_execd_core_refused);
+	ATF_TP_ADD_TC(tp, d1_invisible_target_esrch);
+	ATF_TP_ADD_TC(tp, s3_core_cannot_debug_core);
+	ATF_TP_ADD_TC(tp, t1_debug_interfaces_excluded_child);
 	return (atf_no_error());
 }

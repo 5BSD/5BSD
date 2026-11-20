@@ -303,7 +303,8 @@ ATF_TC_BODY(o5_launcher_exec_fail_open, tc)
 	/* Commit 7: the launcher's record says it is excluded. */
 	ATF_CHECK((flags & EP_FLAG_CAP_EXCLUDED) != 0);
 	ATF_CHECK_EQ_MSG(reap(pid), 0, "excluded launcher's exec refused");
-	ATF_CHECK_EQ(counter("security.oes.exec_fail_open"), fail_open + 1);
+	/* A global counter: other launches may add to it too. */
+	ATF_CHECK(counter("security.oes.exec_fail_open") >= fail_open + 1);
 
 	e = (struct exec_spec){ .path = helper, .excluded = false, .token = -1 };
 	pid = spawn(exec_child, &e);
@@ -399,11 +400,140 @@ ATF_TC_BODY(core_exec_no_event, tc)
 	close(issuer);
 }
 
+/*
+ * O16, owner decision S1 (2026-11-20): with require_auth_clients=1 and no
+ * client, an excluded launcher's start of a System-bundle unit
+ * (CAP_AUTH_ROLE_SYSTEM) fails open, and any other start is denied.  Runs
+ * in an excluded child E, so its own sysctl writes and waits are never
+ * denied; E restores the knob before it exits.  The window during which
+ * the rest of the guest runs with the knob set is E's two launches.
+ */
+static int
+o16_launch(const char *helper, int issuer, uint32_t role)
+{
+	char *argv[] = { __DECONST(char *, "cap_exclusion_helper"),
+	    __DECONST(char *, "report"), NULL };
+	struct cap_authority_spec spec = {
+		.version = CAP_AUTH_VERSION, .kind = CAP_AUTH_MANAGED,
+	};
+	struct cap_authority_constraint c;
+	int token = -1, image, status, devnull;
+	pid_t pid;
+
+	if (role != 0) {
+		token = syscall(SYS_cap_process, CAP_AUTH_ISSUE, issuer, 0,
+		    &spec);
+		image = open(helper, O_RDONLY | O_CLOEXEC);
+		if (token < 0 || image < 0)
+			return (-1);
+		memset(&c, 0, sizeof(c));
+		c.token_fd = token;
+		c.flags = role;
+		c.nexec = 1;
+		c.executable_fds[0] = image;
+		if (syscall(SYS_cap_process, CAP_AUTH_CONSTRAIN, issuer, 0,
+		    &c) != 0)
+			return (-1);
+		close(image);
+	}
+	pid = fork();
+	if (pid < 0)
+		return (-1);
+	if (pid == 0) {
+		if (token >= 0 && syscall(SYS_cap_process, CAP_AUTH_INSTALL,
+		    token, 0, NULL) != 0)
+			_exit(200);
+		devnull = open("/dev/null", O_WRONLY);
+		if (devnull >= 0)
+			dup2(devnull, STDOUT_FILENO);
+		execv(helper, argv);
+		_exit(errno);
+	}
+	if (token >= 0)
+		close(token);
+	if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status))
+		return (-1);
+	return (WEXITSTATUS(status));
+}
+
+static int
+o16_in_excluded(void *arg)
+{
+	const char *helper = arg;
+	int issuer, one = 1, zero = 0, system_rc, plain_rc;
+
+	if (exclude_self() != 0)
+		return (100);
+	issuer = syscall(SYS_cap_process, CAP_AUTH_ISSUER_CREATE, -1, 0, NULL);
+	if (issuer < 0)
+		return (101);
+	if (sysctlbyname("security.oes.require_auth_clients", NULL, NULL, &one,
+	    sizeof(one)) != 0)
+		return (102);
+	system_rc = o16_launch(helper, issuer, CAP_AUTH_ROLE_SYSTEM);
+	plain_rc = o16_launch(helper, issuer, 0);
+	if (sysctlbyname("security.oes.require_auth_clients", NULL, NULL,
+	    &zero, sizeof(zero)) != 0)
+		return (103);
+	close(issuer);
+	if (system_rc != 0)
+		return (110);
+	if (plain_rc != EACCES)
+		return (111);
+	return (0);
+}
+
+ATF_TC(o16_failopen_system_only);
+ATF_TC_HEAD(o16_failopen_system_only, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Owner S1: require_auth_clients=1 and no client: an excluded launcher's start of a System-bundle unit fails open; a start without CAP_AUTH_ROLE_SYSTEM is denied (EACCES)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "is.exclusive", "true");
+}
+ATF_TC_BODY(o16_failopen_system_only, tc)
+{
+	char helper[PATH_MAX];
+	int status;
+	pid_t e;
+
+	require_knob();
+	helper_path(tc, helper, sizeof(helper));
+	e = spawn(o16_in_excluded, helper);
+	status = reap(e);
+	ATF_CHECK_EQ_MSG(status, 0, "step %d", status);
+}
+
+ATF_TC(o14_idle_no_count);
+ATF_TC_HEAD(o14_idle_no_count, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "O14: with no client open, an excluded process's activity leaves security.oes.excluded_skipped unchanged");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "is.exclusive", "true");
+}
+ATF_TC_BODY(o14_idle_no_count, tc)
+{
+	char probe[PATH_MAX];
+	uint64_t before;
+
+	/* Exclusive: no other test has a client open. */
+	require_knob();
+	ATF_REQUIRE(getcwd(probe, sizeof(probe)) != NULL);
+	strlcat(probe, "/probe", sizeof(probe));
+	ATF_REQUIRE(close(open(probe, O_WRONLY | O_CREAT, 0644)) == 0);
+	before = counter("security.oes.excluded_skipped");
+	ATF_CHECK_EQ(reap(spawn(excluded_open_probe, probe)), 0);
+	ATF_CHECK_EQ(counter("security.oes.excluded_skipped"), before);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, o2_excluded_subject_no_events);
 	ATF_TP_ADD_TC(tp, o5_launcher_exec_fail_open);
 	ATF_TP_ADD_TC(tp, o5b_launcher_exec_client_deny);
 	ATF_TP_ADD_TC(tp, core_exec_no_event);
+	ATF_TP_ADD_TC(tp, o14_idle_no_count);
+	ATF_TP_ADD_TC(tp, o16_failopen_system_only);
 	return (atf_no_error());
 }
