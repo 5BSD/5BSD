@@ -81,6 +81,8 @@ CFLAGS.dq_bootstrap_test+=	-I${SRCTOP}/lib/libservice \
 				-I${SRCTOP}/lib/libsysctlcmp
 LIBADD.dq_bootstrap_test+=	notify logcmp sysctlcmp service
 
+# jail_setv(3) for the boundary rows (review 3).
+LIBADD.dq_read_test+=	jail
 # jail_setv(3) for the I5 jail_attach row.
 LIBADD.dq_resolve_test+=	jail
 # jail_setv(3) for the address-family row.

@@ -11,6 +11,7 @@
 
 #include <sys/param.h>
 #include <sys/event.h>
+#include <sys/jail.h>
 #include <sys/module.h>
 #include <sys/resource.h>
 #include <sys/sysctl.h>
@@ -21,6 +22,7 @@
 #include <atf-c.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <jail.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
@@ -1161,7 +1163,7 @@ ATF_TC_BODY(eintr_reply_refused, tc)
  * D192 (B1): thread A of a process waits in a read of an object with no
  * deadline, which the controller never answers; thread B calls _exit.
  * The exit single-threads the process, and A's non-catching wait must see
- * it within a slice.
+ * it when the exit aborts its sleep (D402: no slices).
  */
 static void *
 read_forever(void *arg)
@@ -1176,7 +1178,7 @@ ATF_TC(read_deadline0_exit_sibling);
 ATF_TC_HEAD(read_deadline0_exit_sibling, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "a sibling's _exit ends a read that "
-	    "waits with no deadline, within a slice; the controller gets the "
+	    "waits with no deadline, at once; the controller gets the "
 	    "INTERRUPT (D192)");
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "timeout", "60");
@@ -1231,7 +1233,8 @@ ATF_TC_BODY(read_deadline0_exit_sibling, tc)
  * a signal that dumps core (RLIMIT_CORE 0 still single-threads for the
  * dump).  sigexit marks the process exiting (P2_WEXIT) and single-threads
  * with SINGLE_NO_EXIT, which sets no P_SINGLE_EXIT, and no SIGKILL is
- * delivered after P2_WEXIT; A's wait must still see it within a slice.
+ * delivered after P2_WEXIT; A's wait must see it when the dump aborts
+ * its sleep.
  */
 /*
  * Reap pid if it exits within ms: a kqueue EVFILT_PROC NOTE_EXIT wait, no
@@ -1263,8 +1266,8 @@ ATF_TC(read_deadline0_abort_sibling);
 ATF_TC_HEAD(read_deadline0_abort_sibling, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "a sibling's abort(3), a signal that "
-	    "dumps core, ends a read that waits with no deadline within a "
-	    "slice; the controller gets the INTERRUPT (review 2)");
+	    "dumps core, ends a read that waits with no deadline; the "
+	    "controller gets the INTERRUPT (review 2)");
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "timeout", "60");
 }
@@ -1401,8 +1404,169 @@ ATF_TC_BODY(read_deadline0_exec_sibling, tc)
 }
 
 /*
+ * Review 3 #1: a sibling single-threading the process to the user
+ * boundary without taking it down (an execve that fails, jail_attach)
+ * must not fail a read that catches no signal.  Thread A reads an object
+ * with no deadline, held by the controller; thread B single-threads.  The
+ * read gives up its operation (INTERRUPT), lets B through, and is
+ * restarted once the single-threading ends, as a fusefs wait is: A gets
+ * its data, never EINTR.  A kernel that holds B until the read is
+ * answered (before the waits were event-driven) also passes: the test
+ * answers once it has seen the INTERRUPT, or after DQT_WAIT_MS without
+ * one.
+ */
+#define	BOUNDARY_EXEC	1
+#define	BOUNDARY_JAIL	2
+#define	BOUNDARY_JAIL_NAME	"dq_read_boundary"
+
+struct boundary_arg {
+	int	fd;
+	int	go[2];
+	int	mode;
+	int	jid;
+};
+
+struct boundary_res {
+	struct dqt_rr	 a;		/* A's read */
+	struct dqt_rr	 b;		/* B's execve or jail_attach */
+	unsigned char	 buf[16];
+};
+
+static struct boundary_res *boundary_r;
+
+static void *
+boundary_reader(void *arg)
+{
+	struct boundary_arg *a = arg;
+
+	DQT_RR(boundary_r->a, pread(a->fd, boundary_r->buf,
+	    sizeof(boundary_r->buf), 0));
+	return (NULL);
+}
+
+static void
+child_boundary(void *arg, void *result)
+{
+	struct boundary_arg *a = arg;
+	pthread_t thr;
+	char ch;
+
+	boundary_r = result;
+	if (pthread_create(&thr, NULL, boundary_reader, a) != 0)
+		_exit(3);
+	if (read(a->go[0], &ch, 1) != 1)
+		_exit(4);
+	if (a->mode == BOUNDARY_EXEC) {
+		/* Fails after exec has single-threaded the process. */
+		DQT_RR(boundary_r->b, execl("/nonexistent/dq_read_test",
+		    "x", (char *)NULL));
+	} else
+		DQT_RR(boundary_r->b, jail_attach(a->jid));
+	(void)pthread_join(thr, NULL);
+}
+
+static void
+boundary_sibling(int mode, unsigned seed)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct dq_policy pol;
+	struct boundary_arg a;
+	struct boundary_res r;
+	struct dqt_child ch;
+	struct dqt_held h[DQT_MAX_HELD];
+	int i, n, oracle, status;
+
+	dqt_fill(data, sizeof(data), seed);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	dq_policy_default(&pol);
+	pol.dp_deadline_ms = 0;
+	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
+	memset(&a, 0, sizeof(a));
+	a.fd = o->fd;
+	a.mode = mode;
+	if (mode == BOUNDARY_JAIL) {
+		a.jid = jail_setv(JAIL_CREATE, "path", "/", "name",
+		    BOUNDARY_JAIL_NAME, "persist", NULL, NULL);
+		ATF_REQUIRE_MSG(a.jid > 0, "jail: %s", jail_errmsg);
+	}
+	ATF_REQUIRE_EQ(0, pipe(a.go));
+	dqt_hold(&c, true);
+	dqt_spawn(&ch, child_boundary, &a);
+	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	ATF_REQUIRE_EQ(1, write(a.go[1], "g", 1));
+	(void)dqt_wait_interrupts(&c, 1, DQT_WAIT_MS);
+	/* Answer the reads held so far; later ones are answered at once. */
+	dqt_hold(&c, false);
+	dqt_lock(&c);
+	n = c.nheld;
+	memcpy(h, c.held, (size_t)n * sizeof(h[0]));
+	dqt_unlock(&c);
+	for (i = 0; i < n; i++)
+		(void)dq_reply(c.q, h[i].id, 0, data, 16);
+	status = dqt_wait(&ch, &r, sizeof(r));
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "status %#x", status);
+	ATF_CHECK_EQ_MSG(16, r.a.rv, "A's read: %s (the single-threading "
+	    "failed a wait that catches no signal)", strerror(r.a.err));
+	ATF_CHECK(memcmp(r.buf, data, 16) == 0);
+	if (mode == BOUNDARY_EXEC) {
+		ATF_CHECK_EQ(-1, r.b.rv);
+		ATF_CHECK_EQ(ENOENT, r.b.err);
+	} else {
+		ATF_CHECK_EQ_MSG(0, r.b.rv, "jail_attach: %s",
+		    strerror(r.b.err));
+		ATF_CHECK_EQ(0, jail_remove(a.jid));
+	}
+	(void)close(a.go[0]);
+	(void)close(a.go[1]);
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
+ATF_TC(read_deadline0_failed_exec_sibling);
+ATF_TC_HEAD(read_deadline0_failed_exec_sibling, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a sibling's execve that fails does "
+	    "not fail a read that waits with no deadline: the read is "
+	    "restarted and gets its data (review 3)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(read_deadline0_failed_exec_sibling, tc)
+{
+
+	boundary_sibling(BOUNDARY_EXEC, 31);
+}
+
+ATF_TC_WITH_CLEANUP(read_deadline0_jail_attach_sibling);
+ATF_TC_HEAD(read_deadline0_jail_attach_sibling, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a sibling's jail_attach does not fail "
+	    "a read that waits with no deadline: the read is restarted and "
+	    "gets its data (review 3)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(read_deadline0_jail_attach_sibling, tc)
+{
+
+	boundary_sibling(BOUNDARY_JAIL, 32);
+}
+ATF_TC_CLEANUP(read_deadline0_jail_attach_sibling, tc)
+{
+	int jid;
+
+	jid = jail_getid(BOUNDARY_JAIL_NAME);
+	if (jid > 0)
+		(void)jail_remove(jid);
+}
+
+/*
  * D192 (B1): a signal storm during an uninterruptible wait does not make
- * it spin: the waiter sleeps its slices whatever is pending.
+ * it spin: the signals are blocked while it waits (D402), so none wakes it.
  */
 struct storm_res {
 	struct dqt_rr	 rr;
@@ -1578,6 +1742,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, read_deadline0_exit_sibling);
 	ATF_TP_ADD_TC(tp, read_deadline0_abort_sibling);
 	ATF_TP_ADD_TC(tp, read_deadline0_exec_sibling);
+	ATF_TP_ADD_TC(tp, read_deadline0_failed_exec_sibling);
+	ATF_TP_ADD_TC(tp, read_deadline0_jail_attach_sibling);
 	ATF_TP_ADD_TC(tp, signal_storm_no_spin);
 	ATF_TP_ADD_TC(tp, deadline_unintr);
 	return (atf_no_error());
