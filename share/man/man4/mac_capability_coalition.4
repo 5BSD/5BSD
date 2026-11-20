@@ -399,11 +399,37 @@ struct coalition_set_watchdog_req {
 Returns
 .Vt struct coalition_reply .
 .It Dv COALITION_OP_HEARTBEAT
-Reset the watchdog timer.
+Reset the watchdog timer: re-arm it for
+.Fa timeout_ms
+from now.
 Request is a plain
 .Vt struct coalition_req_hdr .
 Returns
 .Vt struct coalition_reply .
+.It Dv COALITION_OP_WATCHDOG_STAT
+Report the watchdog state.
+Each arm (a
+.Dv COALITION_OP_SET_WATCHDOG
+with a timeout, or a heartbeat) counts in
+.Fa seq ;
+.Fa armed_sbt
+is the uptime of the last arm,
+.Fa deadline_sbt
+that plus the timeout, and
+.Fa callout_sbt
+the absolute time the expiry is scheduled for.
+.Fa fired_seq
+and
+.Fa fired_sbt
+describe the last arm that expired (0 if none).
+Times are
+.Vt sbintime_t
+values of
+.Xr sbinuptime 9 .
+Request is a plain
+.Vt struct coalition_req_hdr ;
+returns
+.Vt struct coalition_watchdog_stat_reply .
 .It Dv COALITION_OP_SET_LEADER
 Designate a leader process.
 The leader's process descriptor is passed as an attached fd.

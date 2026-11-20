@@ -562,6 +562,9 @@ Number of registered services.
 Number of active capability instances.
 .It Va kern.mac_capability.service_names
 Newline-separated list of registered service names.
+.It Va kern.mac_capability.dead_service_names
+Newline-separated list of destroyed services that open instances still keep
+allocated; a service leaves it when its last instance is freed.
 .It Va kern.mac_capability.service_details
 Newline-separated list of registered services with flags, queue depth,
 TX limit, instance limit, active instance count, and destroying state.
