@@ -668,6 +668,46 @@ dq_object_gen_newer(struct dq_object *o, int field, uint64_t agen)
  * by the generation rule.  Returns whether the pager's size must follow
  * (dq_object_sync_vmsize, with no dq lock).
  */
+/*
+ * A reply's post-operation block, copied to *pa (unaligned after a READ's
+ * data): whether it is well formed for op, its size no smaller than
+ * minsize.  dq_object_postop ignores a block that is not.
+ */
+static bool
+dq_postop_block(const struct dq_data *reply, uint32_t op, uint64_t minsize,
+    struct dq_postop_attr *pa)
+{
+	uint32_t allowed;
+
+	memcpy(pa, reply->dd_bytes + reply->dd_plen, sizeof(*pa));
+	allowed = op == DQ_OP_READ ? DQ_PA_ATIME : DQ_PA_VALID;
+	return ((pa->dpa_valid & ~allowed) == 0 && pa->dpa_pad == 0 &&
+	    ((pa->dpa_valid & DQ_PA_SIZE) == 0 ||
+	    (pa->dpa_size <= OFF_MAX && pa->dpa_size >= minsize)) &&
+	    ((pa->dpa_valid & DQ_PA_MTIME) == 0 ||
+	    dq_time_valid(&pa->dpa_mtime)) &&
+	    ((pa->dpa_valid & DQ_PA_CTIME) == 0 ||
+	    dq_time_valid(&pa->dpa_ctime)) &&
+	    ((pa->dpa_valid & DQ_PA_ATIME) == 0 ||
+	    dq_time_valid(&pa->dpa_atime)));
+}
+
+/*
+ * Whether a write's or an allocation's reply carries a size of its own,
+ * applied by dq_object_postop with the same generation, no smaller than
+ * the end it proves: that size then stands for the proof (an older
+ * reply's size is refused by the generation rule), so none is kept.
+ */
+static bool
+dq_reply_sizes_end(const struct dq_data *reply, uint32_t op, uint64_t end)
+{
+	struct dq_postop_attr pa;
+
+	return (reply != NULL && reply->dd_postop &&
+	    dq_postop_block(reply, op, end, &pa) &&
+	    (pa.dpa_valid & DQ_PA_SIZE) != 0);
+}
+
 bool
 dq_object_postop_size(struct dq_object *o, uint64_t size, uint64_t agen)
 {
@@ -722,7 +762,9 @@ dq_object_proofs_prune(struct dq_object *o, uint64_t gen)
  * another is dropped.  It does not set the size's generation: the proof
  * is only a lower bound, and an older reply may report a larger size.
  * *spare is the caller's entry, allocated with no lock held; it is taken
- * (set to NULL) when kept.  Returns whether the size grew.
+ * (set to NULL) when kept.  NULL: no proof is kept (the reply carries a
+ * size that stands for it, dq_reply_sizes_end).  Returns whether the size
+ * grew.
  */
 bool
 dq_object_size_proven(struct dq_object *o, uint64_t end, uint64_t agen,
@@ -731,7 +773,7 @@ dq_object_size_proven(struct dq_object *o, uint64_t end, uint64_t agen,
 	struct dq_sizeproof *sp, *sptmp, *after;
 
 	DQO_LOCK_ASSERT(o);
-	if (agen != 0 && agen > o->o_gen[DQ_GEN_SIZE]) {
+	if (*spare != NULL && agen != 0 && agen > o->o_gen[DQ_GEN_SIZE]) {
 		after = NULL;
 		TAILQ_FOREACH_SAFE(sp, &o->o_proofs, sp_link, sptmp) {
 			if (sp->sp_gen >= agen && sp->sp_end >= end)
@@ -744,7 +786,6 @@ dq_object_size_proven(struct dq_object *o, uint64_t end, uint64_t agen,
 		}
 		sp = *spare;
 		*spare = NULL;
-		KASSERT(sp != NULL, ("dq: no spare size proof"));
 		sp->sp_gen = agen;
 		sp->sp_end = end;
 		if (after != NULL)
@@ -795,7 +836,6 @@ dq_object_postop(struct dq_object *o, uint32_t op, const struct dq_data *reply,
 	struct dq_postop_attr pa;
 	struct dq_timespec ts;
 	struct timespec now;
-	uint32_t allowed;
 	bool block, resize, stamp;
 
 	block = reply != NULL && reply->dd_postop;
@@ -803,24 +843,10 @@ dq_object_postop(struct dq_object *o, uint32_t op, const struct dq_data *reply,
 	if (block)
 		dq_faultinj_postop_apply_pause();
 #endif
-	if (block) {
-		/* Unaligned after a READ's data. */
-		memcpy(&pa, reply->dd_bytes + reply->dd_plen, sizeof(pa));
-		allowed = op == DQ_OP_READ ? DQ_PA_ATIME : DQ_PA_VALID;
-		if ((pa.dpa_valid & ~allowed) != 0 || pa.dpa_pad != 0 ||
-		    ((pa.dpa_valid & DQ_PA_SIZE) != 0 &&
-		    (pa.dpa_size > OFF_MAX || pa.dpa_size < minsize)) ||
-		    ((pa.dpa_valid & DQ_PA_MTIME) != 0 &&
-		    !dq_time_valid(&pa.dpa_mtime)) ||
-		    ((pa.dpa_valid & DQ_PA_CTIME) != 0 &&
-		    !dq_time_valid(&pa.dpa_ctime)) ||
-		    ((pa.dpa_valid & DQ_PA_ATIME) != 0 &&
-		    !dq_time_valid(&pa.dpa_atime))) {
-			SDT_PROBE4(dq, , , postop__attr, o, op, pa.dpa_valid,
-			    EINVAL);
-			counter_u64_add(dq_postop_ignored, 1);
-			block = false;
-		}
+	if (block && !dq_postop_block(reply, op, minsize, &pa)) {
+		SDT_PROBE4(dq, , , postop__attr, o, op, pa.dpa_valid, EINVAL);
+		counter_u64_add(dq_postop_ignored, 1);
+		block = false;
 	}
 	resize = false;
 	DQO_LOCK(o);
@@ -1324,7 +1350,9 @@ dq_write(struct file *fp, struct uio *uio, struct ucred *active_cred __unused,
 			uio->uio_offset += written;
 		done += written;
 		newend = woff + written;
-		spare = malloc(sizeof(*spare), M_DQ, M_WAITOK);
+		spare = dq_reply_sizes_end(reply, DQ_OP_WRITE,
+		    (uint64_t)newend) ? NULL :
+		    malloc(sizeof(*spare), M_DQ, M_WAITOK);
 		DQO_LOCK(o);
 		hint = NOTE_WRITE;
 		/*
@@ -1670,7 +1698,6 @@ dq_setattr_post(struct dq_object *o, struct dq_setattr_body *sb,
 	uint64_t agen;
 	uint32_t mask;
 	int error, rerror;
-	bool attrnew;
 
 	error = dq_object_usable(o);
 	if (error != 0)
@@ -1724,23 +1751,25 @@ dq_setattr_post(struct dq_object *o, struct dq_setattr_body *sb,
 	mask = sb->dsa_mask;
 	DQO_LOCK(o);
 	/*
-	 * The attributes by the same rule (DQ_GEN_ATTR): an older reply,
-	 * applied after a newer GETATTR answer or chmod, does not undo it.
+	 * The attributes by the same rule, each by its own generation: an
+	 * older reply, applied after a newer GETATTR answer or chmod, does
+	 * not undo it, and an older chown is not lost to a newer chmod.
 	 */
-	attrnew = (mask & (DQ_SETATTR_MODE | DQ_SETATTR_UID | DQ_SETATTR_GID |
-	    DQ_SETATTR_FLAGS | DQ_SETATTR_BIRTHTIME)) != 0 &&
-	    dq_object_gen_newer(o, DQ_GEN_ATTR, agen);
-	if ((mask & DQ_SETATTR_MODE) != 0 && attrnew)
+	if ((mask & DQ_SETATTR_MODE) != 0 &&
+	    dq_object_gen_newer(o, DQ_GEN_MODE, agen))
 		o->o_ident.di_mode = (o->o_ident.di_mode & S_IFMT) |
 		    sb->dsa_mode;
-	if ((mask & DQ_SETATTR_UID) != 0 && attrnew)
+	if ((mask & DQ_SETATTR_UID) != 0 &&
+	    dq_object_gen_newer(o, DQ_GEN_UID, agen))
 		o->o_ident.di_uid = sb->dsa_uid;
-	if ((mask & DQ_SETATTR_GID) != 0 && attrnew)
+	if ((mask & DQ_SETATTR_GID) != 0 &&
+	    dq_object_gen_newer(o, DQ_GEN_GID, agen))
 		o->o_ident.di_gid = sb->dsa_gid;
 	if ((mask & DQ_SETATTR_SIZE) != 0 &&
 	    dq_object_gen_newer(o, DQ_GEN_SIZE, agen))
 		o->o_ident.di_size = sb->dsa_size;
-	if ((mask & DQ_SETATTR_FLAGS) != 0 && attrnew)
+	if ((mask & DQ_SETATTR_FLAGS) != 0 &&
+	    dq_object_gen_newer(o, DQ_GEN_FLAGS, agen))
 		o->o_ident.di_flags = sb->dsa_flags;
 	if ((mask & DQ_SETATTR_ATIME) != 0)
 		dq_object_postop_time(o, &o->o_ident.di_atime, &sb->dsa_atime,
@@ -1748,7 +1777,8 @@ dq_setattr_post(struct dq_object *o, struct dq_setattr_body *sb,
 	if ((mask & DQ_SETATTR_MTIME) != 0)
 		dq_object_postop_time(o, &o->o_ident.di_mtime, &sb->dsa_mtime,
 		    DQ_GEN_MTIME, agen);
-	if ((mask & DQ_SETATTR_BIRTHTIME) != 0 && attrnew)
+	if ((mask & DQ_SETATTR_BIRTHTIME) != 0 &&
+	    dq_object_gen_newer(o, DQ_GEN_BIRTHTIME, agen))
 		o->o_ident.di_birthtime = sb->dsa_birthtime;
 	/*
 	 * The change time, and for a truncation the data's (ffs_truncate),
@@ -1935,7 +1965,8 @@ dq_fallocate(struct file *fp, off_t offset, off_t len, struct thread *td)
 		error = rerror;
 	} else if (error == 0) {
 		end = (uint64_t)offset + (uint64_t)len;
-		spare = malloc(sizeof(*spare), M_DQ, M_WAITOK);
+		spare = dq_reply_sizes_end(reply, DQ_OP_FALLOCATE, end) ? NULL :
+		    malloc(sizeof(*spare), M_DQ, M_WAITOK);
 		DQO_LOCK(o);
 		hint = NOTE_WRITE;
 		if (dq_object_size_proven(o, end, agen, &spare))

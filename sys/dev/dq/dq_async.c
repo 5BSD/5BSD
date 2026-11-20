@@ -1046,27 +1046,41 @@ dq_object_destroy_park(struct dq_object *o, uint64_t roomgen)
 }
 
 /*
- * A valid page the flush skipped because it was busy (a page-in, the page
- * daemon starting a write-back, a moment's use): sleep until it is
- * released, which needs nothing of dq_taskq, then pass again.  dq's own
- * write-backs are not among them: the task runs this only with o_async 0.
- * The object is write-locked; true when this slept, with the object
- * unlocked; false, the lock kept, when no page is busy any more.
+ * What became of the valid pages the flush skipped because they were busy
+ * (the object write-locked).  DQ_DBUSY_SLEPT: one was exclusive busy (a
+ * page-in, a moment's use), and this slept until it was released, which
+ * needs nothing of dq_taskq; the object is unlocked.  DQ_DBUSY_SHARED:
+ * only shared-busy ones are left, a write-back being posted (dq_async_post
+ * copies the data with the object unlocked before it counts itself in
+ * o_async): its completion, on dq_taskq, is a room event, so the task
+ * parks for it; sleeping on such a page could block both dq_taskq threads
+ * on write-backs whose completions need them (review 3 re-review #4).
+ * DQ_DBUSY_NONE: none is busy any more (released meanwhile): pass again.
  */
-static bool
+#define	DQ_DBUSY_NONE		0
+#define	DQ_DBUSY_SLEPT		1
+#define	DQ_DBUSY_SHARED		2
+
+static int
 dq_object_destroy_wait_busy(vm_object_t obj)
 {
 	struct pctrie_iter pages;
 	vm_page_t p;
+	bool shared;
 
 	VM_OBJECT_ASSERT_WLOCKED(obj);
+	shared = false;
 	vm_page_iter_init(&pages, obj);
 	for (p = vm_radix_iter_lookup_ge(&pages, 0); p != NULL;
 	    p = vm_radix_iter_step(&pages)) {
-		if (vm_page_all_valid(p) && vm_page_busied(p))
-			return (vm_page_busy_sleep(p, "dqdflb", 0));
+		if (!vm_page_all_valid(p) || !vm_page_busied(p))
+			continue;
+		if (vm_page_xbusied(p) && vm_page_busy_sleep(p, "dqdflb",
+		    VM_ALLOC_IGN_SBUSY))
+			return (DQ_DBUSY_SLEPT);
+		shared = true;
 	}
-	return (false);
+	return (shared ? DQ_DBUSY_SHARED : DQ_DBUSY_NONE);
 }
 
 static void
@@ -1120,13 +1134,21 @@ dq_object_destroy_task(void *arg, int pending __unused)
 		if (!again && skipped) {
 			/*
 			 * Only skipped pages, no AGAIN: they were busy.  Sleep
-			 * on one still busy, or, when its release came between
+			 * on one exclusive busy; park for the completion of a
+			 * shared-busy one; or, when the release came between
 			 * the flush and this look (none is busy now), pass
 			 * again at once: a release is no room event, so
 			 * parking would drop the page at the deadline.
 			 */
-			if (!dq_object_destroy_wait_busy(obj))
+			switch (dq_object_destroy_wait_busy(obj)) {
+			case DQ_DBUSY_SHARED:
 				VM_OBJECT_WUNLOCK(obj);
+				dq_object_destroy_park(o, roomgen);
+				return;
+			case DQ_DBUSY_NONE:
+				VM_OBJECT_WUNLOCK(obj);
+				break;
+			}
 			DQO_LOCK(o);
 			o->o_destroy_state = DQ_DESTROY_AGAIN;
 			DQO_UNLOCK(o);

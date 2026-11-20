@@ -383,9 +383,13 @@ struct dq_object {
 #define	DQ_GEN_MTIME		2
 #define	DQ_GEN_CTIME		3
 #define	DQ_GEN_ATIME		4
-#define	DQ_GEN_ATTR		5	/* mode, uid, gid, flags, nlink,
-					   birthtime */
-#define	DQ_GEN_N		6
+#define	DQ_GEN_MODE		5
+#define	DQ_GEN_UID		6
+#define	DQ_GEN_GID		7
+#define	DQ_GEN_FLAGS		8
+#define	DQ_GEN_NLINK		9
+#define	DQ_GEN_BIRTHTIME	10
+#define	DQ_GEN_N		11
 	uint64_t		 o_gen[DQ_GEN_N];
 	/*
 	 * o_mtx: the sizes writes and allocations proved (dq_object_size_

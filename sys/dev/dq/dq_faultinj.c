@@ -206,6 +206,12 @@ dq_faultinj_sleeps_sysctl(SYSCTL_HANDLER_ARGS)
 	p = pfind(name[0]);
 	if (p == NULL)
 		return (ESRCH);
+	/* What kern.proc shows: p_cansee, with the MAC policies' say. */
+	error = p_cansee(curthread, p);
+	if (error != 0) {
+		PROC_UNLOCK(p);
+		return (error);
+	}
 	now = sbinuptime();
 	error = 0;
 	FOREACH_THREAD_IN_PROC(p, td) {

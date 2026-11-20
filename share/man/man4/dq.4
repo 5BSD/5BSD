@@ -860,7 +860,7 @@ is posted, and an operation that only reads
 .Dv DQ_OP_READDIR ,
 .Dv DQ_OP_FSYNC ,
 .Dv DQ_OP_LOCK ,
-and a lookup that creates nothing
+and a lookup that creates, removes or changes nothing
 .Pc
 are given up (INTERRUPT to the controller for one it read) and the system
 call is restarted once the single-threading is over, as a
@@ -879,6 +879,15 @@ deadline, or the process starting to die
 an exit, a core dump
 .Pc ,
 and the single-threading thread waits for it as for a disk.
+The lookups of extended attributes and ACLs count as changes, reads
+included: the lookup does not say which it is.
+A
+.Xr connect 2
+lookup counts as a read: restarted after the controller answered it with
+a descriptor of its own, it is answered again, and the controller may
+connect twice (a listed difference).
+.Dv DQ_OP_LOCK
+waits catch signals, so a lock wait is always given up and restarted.
 A page fault is never restarted (the VM system has no retry for a page a
 pager could not read): it waits the same way, bounded by the page
 deadline.

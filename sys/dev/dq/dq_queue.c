@@ -517,14 +517,19 @@ dq_object_set_ident_agen(struct dq_object *o, const struct dq_ident_file *di,
 		o->o_ident.di_ctime = ctime;
 	if (!dq_object_gen_newer(o, DQ_GEN_ATIME, agen))
 		o->o_ident.di_atime = atime;
-	if (!dq_object_gen_newer(o, DQ_GEN_ATTR, agen)) {
+	/* Each by its own generation: an older chown and a newer chmod. */
+	if (!dq_object_gen_newer(o, DQ_GEN_MODE, agen))
 		o->o_ident.di_mode = mode;
+	if (!dq_object_gen_newer(o, DQ_GEN_UID, agen))
 		o->o_ident.di_uid = uid;
+	if (!dq_object_gen_newer(o, DQ_GEN_GID, agen))
 		o->o_ident.di_gid = gid;
+	if (!dq_object_gen_newer(o, DQ_GEN_FLAGS, agen))
 		o->o_ident.di_flags = flags;
+	if (!dq_object_gen_newer(o, DQ_GEN_NLINK, agen))
 		o->o_ident.di_nlink = nlink;
+	if (!dq_object_gen_newer(o, DQ_GEN_BIRTHTIME, agen))
 		o->o_ident.di_birthtime = btime;
-	}
 	(void)dq_object_postop_size(o, di->di_size, agen);
 	DQO_UNLOCK(o);
 	if (o->o_hashed && (o->o_hdev != di->di_dev || o->o_hino != di->di_ino))
@@ -1163,6 +1168,26 @@ dq_wait_mask_leave(struct thread *td, struct dq_wait_mask *wm)
  * core it writes to a served file is still answered.  Returns 0, EINTR
  * (dying) or ERESTART (boundary).  Called with no dq lock held.
  */
+/*
+ * A SIGKILL sent and not yet acted on (process lock held): queued on the
+ * process, or on whichever thread tdsendsignal chose, which may be the
+ * single-threading thread that cannot act on it before this one returns.
+ */
+static bool
+dq_proc_sigkill_pending(struct proc *p)
+{
+	struct thread *td;
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	if (SIGISMEMBER(p->p_sigqueue.sq_signals, SIGKILL))
+		return (true);
+	FOREACH_THREAD_IN_PROC(p, td) {
+		if (SIGISMEMBER(td->td_sigqueue.sq_signals, SIGKILL))
+			return (true);
+	}
+	return (false);
+}
+
 static int
 dq_wait_abandon(struct thread *td)
 {
@@ -1175,6 +1200,7 @@ dq_wait_abandon(struct thread *td)
 	error = 0;
 	PROC_LOCK(p);
 	if ((p->p_flag & (P_WEXIT | P_WKILLED)) != 0 ||
+	    dq_proc_sigkill_pending(p) ||
 	    (((p->p_flag & P_SINGLE_EXIT) != 0 ||
 	    (p->p_flag2 & P2_WEXIT) != 0) && p->p_singlethread != td))
 		error = EINTR;
@@ -1249,6 +1275,15 @@ struct dq_mutwait {
 static struct mtx dq_mutwait_mtx;
 static LIST_HEAD(, dq_mutwait) dq_mutwaits =
     LIST_HEAD_INITIALIZER(dq_mutwaits);
+/*
+ * The waiters on dq_mutwaits, read without the lock by the hook, so that
+ * a process dying with none (every exit) takes no global lock.  A waiter
+ * counts itself (a locked add, a full barrier) before it looks at the
+ * process's state; the hook runs after that state changed and looks at
+ * the count after a full barrier: either the waiter sees the death, or
+ * the hook sees the waiter.
+ */
+static u_int dq_mutwait_count;
 
 static void
 dq_mutwait_wake(struct dq_mutwait *mw)
@@ -1266,6 +1301,9 @@ dq_proc_dying(struct proc *p)
 	struct dq_mutwait *mw;
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
+	atomic_thread_fence_seq_cst();
+	if (atomic_load_int(&dq_mutwait_count) == 0)
+		return;
 	mtx_lock(&dq_mutwait_mtx);
 	LIST_FOREACH(mw, &dq_mutwaits, mw_link) {
 		if (mw->mw_proc == p)
@@ -1279,6 +1317,7 @@ dq_mutwait_init(void)
 {
 
 	mtx_init(&dq_mutwait_mtx, "dq mutwait", NULL, MTX_DEF);
+	KASSERT(proc_dying_hook == NULL, ("dq: proc_dying_hook has an owner"));
 	atomic_store_ptr(&proc_dying_hook, dq_proc_dying);
 }
 
@@ -1312,6 +1351,8 @@ dq_wait_delivered(struct dq_queue *q, struct dq_event_k *ev,
 	mtx_lock(&dq_mutwait_mtx);
 	LIST_INSERT_HEAD(&dq_mutwaits, &mw, mw_link);
 	mtx_unlock(&dq_mutwait_mtx);
+	atomic_add_int(&dq_mutwait_count, 1);
+	atomic_thread_fence_seq_cst();
 	ev->ev_mutwait = &mw;
 	error = 0;
 	while (ev->ev_state == DQ_EV_PENDING ||
@@ -1345,6 +1386,7 @@ dq_wait_delivered(struct dq_queue *q, struct dq_event_k *ev,
 	mtx_lock(&dq_mutwait_mtx);
 	LIST_REMOVE(&mw, mw_link);
 	mtx_unlock(&dq_mutwait_mtx);
+	atomic_subtract_int(&dq_mutwait_count, 1);
 	return (error);
 }
 
