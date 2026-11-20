@@ -1551,11 +1551,17 @@ park_excluded(struct parked *k)
 	k->release = go[1];
 }
 
+/*
+ * Release with a byte, not by closing: a child forked while k was parked
+ * (another parked process, say) holds a copy of the write end, and the
+ * read would then never see EOF.
+ */
 static void
 unpark(struct parked *k)
 {
 	int status;
 
+	ATF_REQUIRE(write(k->release, "g", 1) == 1);
 	close(k->release);
 	ATF_REQUIRE(waitpid(k->pid, &status, 0) == k->pid);
 	close(k->pd);
@@ -1775,9 +1781,17 @@ d5_in_excluded(enum d5_mode mode, const char *helper, int token)
 
 		if (read(ready[0], &k2, sizeof(k2)) != sizeof(k2))
 			return (104);
+		/*
+		 * Owner S3: an excluded process may debug only its own
+		 * pre-exec child, so pdopenpid(2) (PGET_CANDEBUG) already
+		 * refuses the grandchild; that is the refusal pinned.
+		 */
 		pd2 = pdopenpid(k2, 0);
-		if (pd2 < 0)
-			return (107);
+		if (pd2 < 0) {
+			if (errno != EPERM)
+				return (107);
+			break;
+		}
 		error = dq_attach(q, pd2) == 0 ? 0 : errno;
 		close(pd2);
 		if (error != EPERM)

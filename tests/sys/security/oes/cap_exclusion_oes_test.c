@@ -275,11 +275,40 @@ wait_auth_exec(int fd, pid_t pid, uint32_t result, uint32_t *flags)
 	}
 }
 
+/* A managed token for helper with roles, from a new issuer; -1 on error. */
+static int
+role_token(const char *helper, uint32_t roles, int *issuerp)
+{
+	struct cap_authority_spec spec = {
+		.version = CAP_AUTH_VERSION, .kind = CAP_AUTH_MANAGED,
+	};
+	struct cap_authority_constraint c;
+	int issuer, token, image;
+
+	issuer = syscall(SYS_cap_process, CAP_AUTH_ISSUER_CREATE, -1, 0, NULL);
+	if (issuer < 0)
+		return (-1);
+	token = syscall(SYS_cap_process, CAP_AUTH_ISSUE, issuer, 0, &spec);
+	image = open(helper, O_RDONLY | O_CLOEXEC);
+	if (token < 0 || image < 0)
+		return (-1);
+	memset(&c, 0, sizeof(c));
+	c.token_fd = token;
+	c.flags = roles;
+	c.nexec = 1;
+	c.executable_fds[0] = image;
+	if (syscall(SYS_cap_process, CAP_AUTH_CONSTRAIN, issuer, 0, &c) != 0)
+		return (-1);
+	close(image);
+	*issuerp = issuer;
+	return (token);
+}
+
 ATF_TC(o5_launcher_exec_fail_open);
 ATF_TC_HEAD(o5_launcher_exec_fail_open, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "O5/O5c: an excluded launcher's exec of an image that is not Core is reported (AUTH_EXEC) and, unanswered under a fail-closed deadline, runs; exec_fail_open counts it.  A process that is not excluded is denied the same way (EACCES)");
+	    "O5/O5c, owner S1: an excluded launcher's start of a System-bundle unit (CAP_AUTH_ROLE_SYSTEM, image not Core) is reported (AUTH_EXEC) and, unanswered under a fail-closed deadline, runs; exec_fail_open counts it.  The same excluded launcher's exec without a System authority, and a process that is not excluded, are denied (EACCES)");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(o5_launcher_exec_fail_open, tc)
@@ -289,22 +318,35 @@ ATF_TC_BODY(o5_launcher_exec_fail_open, tc)
 	uint64_t fail_open;
 	uint32_t flags;
 	pid_t pid;
-	int fd;
+	int fd, token, issuer;
 
 	require_knob();
 	helper_path(tc, helper, sizeof(helper));
+	token = role_token(helper, CAP_AUTH_ROLE_SYSTEM, &issuer);
+	ATF_REQUIRE_MSG(token >= 0, "System token: %s", strerror(errno));
 	fd = exec_client(OES_DEADLINE_MISS_FAIL_CLOSED);
 
 	fail_open = counter("security.oes.exec_fail_open");
-	e = (struct exec_spec){ .path = helper, .excluded = true, .token = -1 };
+	e = (struct exec_spec){ .path = helper, .excluded = true,
+	    .token = token };
 	pid = spawn(exec_child, &e);
 	ATF_CHECK_MSG(wait_auth_exec(fd, pid, 0, &flags),
 	    "no AUTH_EXEC for the excluded launcher's exec");
 	/* Commit 7: the launcher's record says it is excluded. */
 	ATF_CHECK((flags & EP_FLAG_CAP_EXCLUDED) != 0);
-	ATF_CHECK_EQ_MSG(reap(pid), 0, "excluded launcher's exec refused");
+	ATF_CHECK_EQ_MSG(reap(pid), 0, "excluded launcher's System exec refused");
 	/* A global counter: other launches may add to it too. */
 	ATF_CHECK(counter("security.oes.exec_fail_open") >= fail_open + 1);
+	close(token);
+	close(issuer);
+
+	/* S1: without a System authority the excluded launcher is denied. */
+	e = (struct exec_spec){ .path = helper, .excluded = true, .token = -1 };
+	pid = spawn(exec_child, &e);
+	ATF_CHECK(wait_auth_exec(fd, pid, 0, &flags));
+	ATF_CHECK((flags & EP_FLAG_CAP_EXCLUDED) != 0);
+	ATF_CHECK_EQ_MSG(reap(pid), EACCES,
+	    "an excluded launcher's plain exec runs fail-closed");
 
 	e = (struct exec_spec){ .path = helper, .excluded = false, .token = -1 };
 	pid = spawn(exec_child, &e);

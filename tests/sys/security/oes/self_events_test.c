@@ -668,9 +668,10 @@ open_client_events(bool descendants, const oes_event_type_t *events, int n)
 }
 
 /*
- * A signal fence: a child that signals itself with SIGCONT (ignored by
- * default) when released; its NOTIFY_SIGNAL is deferred like the events
- * counted before it.
+ * A signal fence: a child that sends SIGCONT (ignored by default) to the
+ * test process when released; its NOTIFY_SIGNAL is deferred like the
+ * events counted before it.  Not to itself: p_cansignal(9) answers a
+ * process signalling itself before the MAC check, so no event is made.
  */
 static pid_t
 signal_fence(int *gate)
@@ -686,7 +687,7 @@ signal_fence(int *gate)
 		close(p[1]);
 		if (read(p[0], &c, 1) != 1)
 			_exit(1);
-		_exit(kill(getpid(), SIGCONT) == 0 ? 0 : 1);
+		_exit(kill(getppid(), SIGCONT) == 0 ? 0 : 1);
 	}
 	close(p[0]);
 	*gate = p[1];
@@ -948,14 +949,21 @@ auth_case(enum auth_actor how, int want_delivered)
 
 	paths_init(&p);
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	/*
+	 * The client first: a descendants scope covers the processes forked
+	 * after it was set (the scope marker is inherited at fork), so the
+	 * actor must be forked afterwards.  It drops its inherited copy and
+	 * uses only the descriptor it is sent.
+	 */
+	y = open_auth_client();
 	c = fork();
 	ATF_REQUIRE(c >= 0);
 	if (c == 0) {
 		close(sv[0]);
+		close(y);
 		_exit(auth_actor(sv[1], p.probe, how));
 	}
 	close(sv[1]);
-	y = open_auth_client();
 	send_fd(sv[0], y);
 	if (want_delivered) {
 		for (;;) {
