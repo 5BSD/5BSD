@@ -121,8 +121,9 @@ require_issuer(void)
 
 	issuer = test_issuer();
 	if (issuer < 0)
-		atf_tc_skip("no test issuer: needs GENERIC-TEST with "
-		    "kern.mac_capability.test_issuer=1, boot not anchored "
+		atf_tc_skip("DEFERRED_STACK_TIER: no test issuer: needs "
+		    "GENERIC-TEST with kern.mac_capability.test_issuer=1, boot "
+		    "not anchored "
 		    "(vm-provider.sh STACK_TIER=1)");
 	return (issuer);
 }

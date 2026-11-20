@@ -850,7 +850,8 @@ ATF_TC_BODY(n15_exec_rejoin_deferred, tc)
 	size_t len = sizeof(v);
 
 	if (sysctlbyname(DEFER_HOLD, &v, &len, NULL, 0) != 0)
-		atf_tc_skip("needs a MAC_CAPABILITY_TEST_PERMISSIVE kernel (%s)",
+		atf_tc_skip("DEFERRED_STACK_TIER: needs a "
+		    "MAC_CAPABILITY_TEST_PERMISSIVE kernel (%s)",
 		    DEFER_HOLD);
 	ATF_REQUIRE_EQ_MSG(v, 0, "%s already armed", DEFER_HOLD);
 	deferred_case(tc, true);
@@ -1065,7 +1066,8 @@ ATF_TC_BODY(n17_trylock_fallback, tc)
 	len = sizeof(v);
 	if (sysctlbyname("debug.mac_capability.test_issuer_oes_trylock_fail",
 	    &v, &len, NULL, 0) != 0)
-		atf_tc_skip("no debug.mac_capability.test_issuer_oes_trylock_fail: "
+		atf_tc_skip("DEFERRED_STACK_TIER: no "
+		    "debug.mac_capability.test_issuer_oes_trylock_fail: "
 		    "needs GENERIC-TEST (vm-provider.sh KERNEL_TIER=test)");
 	paths_init(&p);
 	fd = open_client(false);

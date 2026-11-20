@@ -65,12 +65,14 @@ require_knob(void)
 
 	if (sysctlbyname("debug.mac_capability.test_issuer_exclude_self", &v,
 	    &len, NULL, 0) != 0)
-		atf_tc_skip("no debug.mac_capability.test_issuer_exclude_self: "
+		atf_tc_skip("DEFERRED_STACK_TIER: no "
+		    "debug.mac_capability.test_issuer_exclude_self: "
 		    "needs GENERIC-TEST (vm-provider.sh STACK_TIER=1)");
 	len = sizeof(v);
 	if (sysctlbyname("kern.mac_capability.test_issuer", &v, &len, NULL,
 	    0) != 0 || v != 1)
-		atf_tc_skip("test issuers off (kern.mac_capability.test_issuer)");
+		atf_tc_skip("DEFERRED_STACK_TIER: test issuers off "
+		    "(kern.mac_capability.test_issuer)");
 }
 
 static uint64_t
