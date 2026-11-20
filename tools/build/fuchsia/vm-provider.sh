@@ -27,8 +27,10 @@
 #              usr.sbin/switchboard".  Each must have a Kyuafile in the stage.
 #   TIMEOUT_S  host-side deadline for the whole VM (default 10800).
 #
-# Environment: FATAL_LOR (yes; no logs a lock order reversal without
-# stopping the run), CPUS (default 8), MEM_MB (8192; 12288 when the suites
+# Environment: FATAL_LOR (yes; no lets the guest run on after a lock order
+# reversal that matches no known-lor.txt entry, for a sweep that reads them
+# all from the serial log, but the run still ends UNKNOWN_LOR and
+# VM_NOT_CLEAN), CPUS (default 8), MEM_MB (8192; 12288 when the suites
 #   include sys/posixshm: its largepage_* cases need a free aligned 1 GB
 #   range, and an 8 GB guest has only four, which incidental cached pages
 #   can occupy, so ENOMEM there is expected), PARALLELISM (kyua, default 1),
@@ -733,9 +735,12 @@ vars=; for v in $KYUA_VARS; do vars="$vars -v $v"; done
 echo "KYUA_TEST_STATUS=$(cat "$R/kyua-test.status")"
 kyua report -r "$R/results.db" --verbose > "$R/report-verbose.txt" 2>&1 || true
 kyua report-junit -r "$R/results.db" --output="$R/results.junit.xml" 2>/dev/null || true
-for kind in failed broken skipped; do
+# kyua counts an expected failure as a success: list those too (filter
+# xfail, result expected_failure).
+for kind in failed broken skipped xfail; do
+	result=$kind; [ "$kind" != xfail ] || result=expected_failure
 	echo "KYUA_${kind}_LIST_BEGIN" | tr a-z A-Z
-	kyua report -r "$R/results.db" --results-filter "$kind" 2>&1 | grep -E " -> +$kind" || true
+	kyua report -r "$R/results.db" --results-filter "$kind" 2>&1 | grep -E " -> +$result" || true
 	echo "KYUA_${kind}_LIST_END" | tr a-z A-Z
 done
 echo KYUA_SKIP_REASONS_BEGIN
@@ -921,12 +926,12 @@ mpid=$!
 end=$(( $(date +%s) + timeout )) forced=0
 fatal='panic:|Fatal trap|entering recovery|Enter full pathname of shell|mountroot>|Going nowhere without my init|could not quiesce init|init died'
 # A lock order reversal stops the run unless it matches known-lor.txt (a
-# recorded false positive, reported as KNOWN_LOR) or FATAL_LOR=no, which a
-# comparison sweep sets and then reads the reversals from the serial log.
+# recorded false positive, reported as KNOWN_LOR).  FATAL_LOR=no only keeps
+# the guest running (a comparison sweep reads the reversals from the serial
+# log); an unknown reversal still makes the run VM_NOT_CLEAN.
 known_lor=$(dirname "$0")/known-lor.txt
 monitor=$(dirname "$0")/vm-monitor.py
 unknown_lor() {
-	[ "${FATAL_LOR:-yes}" = no ] && return 1
 	grep -aq 'lock order reversal' "$log" 2>/dev/null || return 1
 	ul=0; python3.12 -I "$monitor" --has-unknown-lor "$log" "$known_lor" || ul=$?
 	case $ul in
@@ -965,7 +970,7 @@ lor_unknown=0
 if unknown_lor; then
 	lor_unknown=1
 	echo "UNKNOWN_LOR (a reversal matches no known-lor.txt entry; see the serial log)"
-elif [ "${n:-0}" -gt 0 ] && [ "${FATAL_LOR:-yes}" != no ]; then
+elif [ "${n:-0}" -gt 0 ]; then
 	echo "KNOWN_LOR=$n (matched known-lor.txt; see the serial log)"
 fi
 # --- end of the LOR verdict
@@ -1015,7 +1020,8 @@ echo "skipped=$nskip (a skip in a plane-on suite is not a pass; see KYUA_SKIPPED
 # a run of the same stage and suites in that tier.
 for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER \
     DEFERRED_STACK_TIER DEFERRED_PID1_ONLY DEFERRED_SOURCE_TIER \
-    DEFERRED_GUEST_SETUP "configuration property 'authority_anchor'"; do
+    DEFERRED_GUEST_SETUP DEFERRED_DISPOSABLE_GUEST \
+    "configuration property 'authority_anchor'"; do
 	ndefer=$(tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c "$token" || true)
 	[ "$ndefer" -eq 0 ] || case $token in
 	DEFERRED_ENFORCED_TIER)
@@ -1030,12 +1036,48 @@ for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER 
 		echo "DEFERRED_TO_SOURCE_TIER=$ndefer (they read /usr/src: run with SRC_IMAGE; not a pass)";;
 	DEFERRED_GUEST_SETUP)
 		echo "DEFERRED_GUEST_SETUP=$ndefer (they need a guest setup no tier provides yet, such as a scratch disk or a stopped devd; not a pass)";;
+	DEFERRED_DISPOSABLE_GUEST)
+		echo "DEFERRED_DISPOSABLE_GUEST=$ndefer (destructive cases: run them in a guest of their own with their opt-in, disposable_vm=yes or live_securelevel=yes in KYUA_VARS; not a pass)";;
 	"configuration property 'authority_anchor'")
 		echo "DEFERRED_TO_ANCHOR_RUN=$ndefer (they anchor the boot: run alone with KYUA_VARS=test_suites.FreeBSD.authority_anchor=1; not a pass)";;
 	*)
 		echo "DEFERRED_TO_DEVICE_TIER=$ndefer (run without ISOLATION_ENFORCE=1 with the same stage and suites; not a pass)";;
 	esac
 done
+# --- skip accounting (tests/vm-provider-plain-skips.sh runs this block)
+skiplist() {
+	tr -d '\r' < "$log" | sed -n "/^KYUA_$1_LIST_BEGIN\$/,/^KYUA_$1_LIST_END\$/p" |
+	    grep ' -> ' | sed -e 's/ *\[[0-9.]*s\]$//' || true
+}
+# A case skipped because the stage lacks a program, file or device it
+# requires did not run: the stage is incomplete, as with a missing kernel
+# module (below), and the run is not clean.
+prereq_re="Required (program|file) '[^']+' not found|required program [^ ]+ could not be found|Failed to open /dev/[a-z]+"
+prereq=$(skiplist SKIPPED | grep -E "$prereq_re" || true)
+nprereq=$(printf '%s' "$prereq" | grep -c ' -> ' || true)
+if [ "$nprereq" -ne 0 ]; then
+	echo "STAGE_PREREQ_SKIPPED=$nprereq (the stage lacks a program, file or device these cases require; not a pass):"
+	printf '%s\n' "$prereq" | sed -e 's/^/STAGE_PREREQ_SKIP: /'
+	verdict=VM_NOT_CLEAN
+fi
+# A skip without a DEFERRED_* token, a missing kernel module or a stage
+# prerequisite is still a case that did not run, and kyua and the verdict
+# count it as a success.  Each is listed so that a VM_CLEAN run is never read
+# as a pass of those cases.
+plain=$(skiplist SKIPPED | grep -vE "DEFERRED_[A-Z0-9_]+|configuration property 'authority_anchor'|Required kmods are not loaded|$prereq_re" || true)
+nplain=$(printf '%s' "$plain" | grep -c ' -> ' || true)
+if [ "$nplain" -ne 0 ]; then
+	echo "PLAIN_SKIPS=$nplain (skips without a DEFERRED_* token; these cases did not run; not a pass):"
+	printf '%s\n' "$plain" | sed -e 's/^/PLAIN_SKIP: /'
+fi
+# kyua counts an expected failure (atf_tc_expect_*) as a success.
+xfail=$(skiplist XFAIL)
+nxfail=$(printf '%s' "$xfail" | grep -c ' -> ' || true)
+if [ "$nxfail" -ne 0 ]; then
+	echo "EXPECTED_FAILURES=$nxfail (cases marked as expected to fail; kyua counts them as passed; not a pass):"
+	printf '%s\n' "$xfail" | sed -e 's/^/EXPECTED_FAILURE: /'
+fi
+# --- end of the skip accounting
 # A case kyua skipped for a module that is not loaded did not run: the stage
 # or the loader configuration is incomplete, and the run is not clean.
 nkmod=$(tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c 'Required kmods are not loaded' || true)

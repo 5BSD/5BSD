@@ -253,7 +253,7 @@ ATF_TC_BODY(object_context_operations, tc)
 	int value;
 
 	if (strcmp(atf_tc_get_config_var_wd(tc, "disposable_vm", "no"), "yes") != 0)
-		atf_tc_skip("requires disposable_vm=yes; modifies isolated guest policy");
+		atf_tc_skip("DEFERRED_DISPOSABLE_GUEST: requires disposable_vm=yes; modifies isolated guest policy");
 	length = sizeof(value);
 	ATF_REQUIRE(sysctlbyname("security.mac.mac_abac.mode", &value,
 	    &length, NULL, 0) == 0);
