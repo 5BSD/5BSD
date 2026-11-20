@@ -219,17 +219,24 @@ pre_user(void *arg __unused)
 /* P1: an exec in a jail is not attached (flips at BX-4: a t1 scope). */
 struct jail_arg {
 	int	jid;
-	int	dirfd;		/* the work directory, opened outside */
+	bool	opendir;	/* hold a directory open across jail_attach */
 };
 
+/*
+ * jail_attach moves the cwd to the jail's root, and refuses a process
+ * holding a directory open (pwd_chroot_chdir: chroot_refuse_vdir_fds), so
+ * the path variant names the image by its absolute path.  A refusal
+ * exits 100 + errno.
+ */
 static void
 pre_jail(void *arg)
 {
 	struct jail_arg *a = arg;
 
-	/* jail_attach moves the cwd to the jail's root: come back. */
-	if (jail_attach(a->jid) != 0 || fchdir(a->dirfd) != 0)
+	if (a->opendir && open(".", O_DIRECTORY) == -1)
 		_exit(124);
+	if (jail_attach(a->jid) != 0)
+		_exit(100 + errno);
 }
 
 ATF_TC_WITH_CLEANUP(p1_jail_unattached);
@@ -237,26 +244,34 @@ ATF_TC_HEAD(p1_jail_unattached, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "P1: an exec inside a jail runs "
 	    "unattached, by path and by fexecve (flips at BX-4 with the "
-	    "jail's scope and ATTACH)");
+	    "jail's scope and ATTACH); jail_attach with a directory open is "
+	    "EPERM (what the JAIL verdict, which keeps descriptors, must not "
+	    "inherit)");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(p1_jail_unattached, tc)
 {
 	char *argv[] = { __DECONST(char *, HELPER), NULL };
-	struct pin_run r, rf;
+	char path[PATH_MAX], buf[32];
+	struct pin_run r, rf, rd;
 	struct jail_arg a;
 
 	pin_image(tc, 0755);
-	a.dirfd = open(".", O_DIRECTORY | O_CLOEXEC);
-	ATF_REQUIRE(a.dirfd != -1);
+	ATF_REQUIRE(realpath("image", path) != NULL);
 	a.jid = jail_setv(JAIL_CREATE, "name", "dqpin_t1", "path", "/",
 	    "persist", NULL, NULL);
 	ATF_REQUIRE_MSG(a.jid > 0, "jail_setv: %s", jail_errmsg);
-	pin_exec("./image", argv, false, pre_jail, &a, &r);
+	a.opendir = false;
+	pin_exec(path, argv, false, pre_jail, &a, &r);
 	pin_exec(NULL, argv, false, pre_jail, &a, &rf);
+	a.opendir = true;
+	pin_exec(path, argv, false, pre_jail, &a, &rd);
 	(void)jail_remove(a.jid);
 	pin_check_ran(&r, "uid=0 euid=0 nnp=0");
 	pin_check_ran(&rf, "uid=0 euid=0 nnp=0");
+	ATF_CHECK_MSG(WIFEXITED(rd.status) &&
+	    WEXITSTATUS(rd.status) == 100 + EPERM, "open directory: %s",
+	    dqt_status_str(rd.status, buf, sizeof(buf)));
 }
 ATF_TC_CLEANUP(p1_jail_unattached, tc)
 {
@@ -376,8 +391,8 @@ ATF_TC_HEAD(p3_exec_errnos, tc)
 	    "order: missing file ENOENT, mode 0644 EACCES (before the magic), "
 	    "bad magic ENOEXEC, an ELF header with a bad program header size "
 	    "ENOEXEC, open for writing ETXTBSY (before the magic), arguments "
-	    "past ARG_MAX E2BIG (before the lookup, the image and capability "
-	    "mode), a missing #! interpreter ENOENT, capability mode ECAPMODE; "
+	    "past ARG_MAX E2BIG (before the lookup and the image; capability "
+	    "mode's ECAPMODE comes first), a missing #! interpreter ENOENT; "
 	    "a missing ELF interpreter is found only after the old image is "
 	    "gone: SIGABRT (never flips)");
 	atf_tc_set_md_var(tc, "require.user", "root");
@@ -424,12 +439,17 @@ ATF_TC_BODY(p3_exec_errnos, tc)
 	big[2] = NULL;
 	ATF_CHECK_EQ(E2BIG, pin_errno("./helper", big, NULL, NULL));
 	/*
-	 * The arguments are copied in before the name is looked up, the image
-	 * is read and capability mode is checked (sys_execve).
+	 * The arguments are copied in before the name is looked up and the
+	 * image is read (sys_execve).
 	 */
 	ATF_CHECK_EQ(E2BIG, pin_errno("./badmagic", big, NULL, NULL));
 	ATF_CHECK_EQ(E2BIG, pin_errno("./missing", big, NULL, NULL));
-	ATF_CHECK_EQ(E2BIG, pin_errno("./helper", big, pre_capmode, NULL));
+	/*
+	 * execve(2) is not a capability-mode system call: the syscall entry
+	 * refuses it before sys_execve copies the arguments.
+	 */
+	ATF_CHECK_EQ(ECAPMODE, pin_errno("./helper", big, pre_capmode,
+	    NULL));
 	free(big[1]);
 }
 
@@ -593,7 +613,8 @@ pre_revoked_pty(void *arg)
 	name = ptsname(m);
 	if (name == NULL)
 		_exit(124);
-	s = open(name, O_RDWR | O_NOCTTY);
+	/* fexecve refuses a descriptor open for writing (EBADF). */
+	s = open(name, O_RDONLY | O_NOCTTY);
 	if (s == -1 || (arg != NULL && revoke(name) != 0))
 		_exit(124);
 	(void)fexecve(s, argv, environ);
