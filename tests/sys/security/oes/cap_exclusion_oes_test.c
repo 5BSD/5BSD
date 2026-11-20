@@ -408,6 +408,8 @@ ATF_TC_BODY(core_exec_no_event, tc)
  * denied; E restores the knob before it exits.  The window during which
  * the rest of the guest runs with the knob set is E's two launches.
  */
+#define	REQUIRE_AUTH	"security.oes.require_auth_clients"
+
 static int
 o16_launch(const char *helper, int issuer, uint32_t role)
 {
@@ -467,13 +469,11 @@ o16_in_excluded(void *arg)
 	issuer = syscall(SYS_cap_process, CAP_AUTH_ISSUER_CREATE, -1, 0, NULL);
 	if (issuer < 0)
 		return (101);
-	if (sysctlbyname("security.oes.require_auth_clients", NULL, NULL, &one,
-	    sizeof(one)) != 0)
+	if (sysctlbyname(REQUIRE_AUTH, NULL, NULL, &one, sizeof(one)) != 0)
 		return (102);
 	system_rc = o16_launch(helper, issuer, CAP_AUTH_ROLE_SYSTEM);
 	plain_rc = o16_launch(helper, issuer, 0);
-	if (sysctlbyname("security.oes.require_auth_clients", NULL, NULL,
-	    &zero, sizeof(zero)) != 0)
+	if (sysctlbyname(REQUIRE_AUTH, NULL, NULL, &zero, sizeof(zero)) != 0)
 		return (103);
 	close(issuer);
 	if (system_rc != 0)
@@ -483,25 +483,51 @@ o16_in_excluded(void *arg)
 	return (0);
 }
 
-ATF_TC(o16_failopen_system_only);
+/* Put require_auth_clients back to 0; a write needs no exec. */
+static int
+o16_restore(void)
+{
+	int zero = 0;
+
+	return (sysctlbyname(REQUIRE_AUTH, NULL, NULL, &zero, sizeof(zero)));
+}
+
+ATF_TC_WITH_CLEANUP(o16_failopen_system_only);
 ATF_TC_HEAD(o16_failopen_system_only, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Owner S1: require_auth_clients=1 and no client: an excluded launcher's start of a System-bundle unit fails open; a start without CAP_AUTH_ROLE_SYSTEM is denied (EACCES)");
 	atf_tc_set_md_var(tc, "require.user", "root");
+	/* The knob is global: no other test may run while it is set. */
 	atf_tc_set_md_var(tc, "is.exclusive", "true");
 }
 ATF_TC_BODY(o16_failopen_system_only, tc)
 {
 	char helper[PATH_MAX];
-	int status;
+	int status, old;
+	size_t len = sizeof(old);
 	pid_t e;
 
 	require_knob();
+	ATF_REQUIRE(sysctlbyname(REQUIRE_AUTH, &old, &len, NULL, 0) == 0);
+	ATF_REQUIRE_EQ_MSG(old, 0, "%s is already set", REQUIRE_AUTH);
 	helper_path(tc, helper, sizeof(helper));
 	e = spawn(o16_in_excluded, helper);
 	status = reap(e);
+	/*
+	 * E restores the knob on every path it returns by; this process
+	 * restores it too, before any check can end the body, since while it
+	 * is set no unexcluded exec (the cleanup's included) is allowed.
+	 */
+	ATF_REQUIRE_MSG(o16_restore() == 0, "%s: %s", REQUIRE_AUTH,
+	    strerror(errno));
 	ATF_CHECK_EQ_MSG(status, 0, "step %d", status);
+}
+ATF_TC_CLEANUP(o16_failopen_system_only, tc)
+{
+
+	/* Last resort, if the body was killed while the knob was set. */
+	(void)o16_restore();
 }
 
 ATF_TC(o14_idle_no_count);
@@ -517,8 +543,20 @@ ATF_TC_BODY(o14_idle_no_count, tc)
 	char probe[PATH_MAX];
 	uint64_t before;
 
-	/* Exclusive: no other test has a client open. */
+	/*
+	 * Exclusive: no other test has a client open.  A client from outside
+	 * the test run would make this case meaningless, so check.
+	 */
 	require_knob();
+	{
+		u_int n;
+		size_t nlen = sizeof(n);
+
+		ATF_REQUIRE(sysctlbyname("security.oes.clients", &n, &nlen,
+		    NULL, 0) == 0);
+		ATF_REQUIRE_EQ_MSG(n, 0,
+		    "%u OES clients are open; this case needs none", n);
+	}
 	ATF_REQUIRE(getcwd(probe, sizeof(probe)) != NULL);
 	strlcat(probe, "/probe", sizeof(probe));
 	ATF_REQUIRE(close(open(probe, O_WRONLY | O_CREAT, 0644)) == 0);

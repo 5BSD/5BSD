@@ -84,6 +84,9 @@ int oes_max_clients = 64;
 SYSCTL_INT(_security_oes, OID_AUTO, max_clients, CTLFLAG_RW,
     &oes_max_clients, 0, "Maximum number of concurrent clients");
 
+SYSCTL_UINT(_security_oes, OID_AUTO, clients, CTLFLAG_RD,
+    &oes_softc.sc_nclients, 0, "Clients open now");
+
 int oes_cache_max_entries = 1024;
 SYSCTL_INT(_security_oes, OID_AUTO, cache_max_entries, CTLFLAG_RW,
     &oes_cache_max_entries, 0, "Maximum decision cache entries per client");

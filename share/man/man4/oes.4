@@ -507,6 +507,8 @@ event enqueue and drop, and decision-cache hit and miss.
 .Bl -tag -width indent
 .It Va security.oes.max_clients
 Maximum number of concurrent clients.
+.It Va security.oes.clients
+Read-only: the number of clients open now.
 .It Va security.oes.require_auth_clients
 When non-zero, operations that would generate an AUTH event are denied if no
 client is subscribed to authorize them.
