@@ -663,6 +663,24 @@ cp_mac_check_ptrace(struct ucred *cred, struct proc *p)
 	return (cp_check_shield(cred, p, CP_SF_PTRACE, "ptrace"));
 }
 
+/*
+ * Inspect (p_caninspect(9)): the process's memory map, auxv and kernel
+ * stack, not its memory contents.  No shield refuses it, CP_SF_PTRACE
+ * included: a shield protects the process's memory and control, and
+ * DTrace's symbolisation and USDT registration need its layout.  Without
+ * this hook the framework would ask cp_mac_check_ptrace() instead.  It
+ * never calls cp_check_shield(), so a no-ambient process is not refused
+ * either (Q3).
+ */
+static int
+cp_mac_check_inspect(struct ucred *cred __unused, struct proc *p)
+{
+
+	SDT_PROBE3(mac_capability_capprotect, , , allow, "inspect",
+	    (uint64_t)p->p_pid, (uint64_t)curthread->td_proc->p_pid);
+	return (0);
+}
+
 static int
 cp_mac_check_signal(struct ucred *cred __unused, struct proc *p, int signum)
 {
@@ -958,6 +976,7 @@ CP_IPC_CHECK(cp_mac_posixsem_check_open,
 static struct mac_policy_ops cp_mac_ops = {
 	/* Existing shield hooks (protect target from foreign nonces) */
 	.mpo_proc_check_debug = cp_mac_check_ptrace,
+	.mpo_proc_check_inspect = cp_mac_check_inspect,
 	.mpo_proc_check_signal = cp_mac_check_signal,
 	.mpo_cred_check_visible = cp_mac_cred_check_visible,
 	.mpo_proc_check_wait = cp_mac_proc_check_wait,

@@ -540,6 +540,11 @@ pget(pid_t pid, int flags, struct proc **pp)
 		if (error != 0)
 			goto errout;
 	}
+	if ((flags & PGET_CANINSPECT) != 0) {
+		error = p_caninspect(curthread, p);
+		if (error != 0)
+			goto errout;
+	}
 	if ((flags & PGET_ISCURRENT) != 0 && curproc != p) {
 		error = EPERM;
 		goto errout;
@@ -1900,12 +1905,13 @@ proc_getauxv(struct thread *td, struct proc *p, struct sbuf *sb)
 	char **auxv;
 	int error;
 
-	error = proc_vmspace_ref(td, p, PRVM_BLOCK_EXEC | PRVM_CHECK_DEBUG,
+	/* 5BSD: inspect-class (p_caninspect(9)); see the auxv caveat there. */
+	error = proc_vmspace_ref(td, p, PRVM_BLOCK_EXEC | PRVM_CHECK_INSPECT,
 	    &vm);
 	if (error != 0)
 		return (error);
 	error = get_proc_vector(td, p, vm, &auxv, &vsize, PROC_AUX);
-	proc_vmspace_unref(td, p, PRVM_BLOCK_EXEC | PRVM_CHECK_DEBUG, vm);
+	proc_vmspace_unref(td, p, PRVM_BLOCK_EXEC | PRVM_CHECK_INSPECT, vm);
 	if (error == 0) {
 			size = vsize * sizeof(Elf_Auxinfo);
 		if (sbuf_bcat(sb, auxv, size) != 0)
@@ -2052,7 +2058,7 @@ sysctl_kern_proc_auxv(SYSCTL_HANDLER_ARGS)
 	if (namelen != 1)
 		return (EINVAL);
 
-	error = pget((pid_t)name[0], PGET_WANTREAD, &p);
+	error = pget((pid_t)name[0], PGET_WANTINSPECT, &p);
 	if (error != 0)
 		return (error);
 	if ((p->p_flag & P_SYSTEM) != 0) {
@@ -2314,7 +2320,7 @@ kern_proc_vmmap_out(struct proc *p, struct sbuf *sb, ssize_t maxlen, int flags)
 	_PHOLD(p);
 	PROC_UNLOCK(p);
 	td = curthread;
-	error = proc_vmspace_ref(td, p, PRVM_CHECK_DEBUG, &vm);
+	error = proc_vmspace_ref(td, p, PRVM_CHECK_INSPECT, &vm);
 	if (error != 0) {
 		PRELE(p);
 		return (error);
@@ -2489,7 +2495,7 @@ sysctl_kern_proc_vmmap(SYSCTL_HANDLER_ARGS)
 	name = (int *)arg1;
 	sbuf_new_for_sysctl(&sb, NULL, sizeof(struct kinfo_vmentry), req);
 	sbuf_clear_flags(&sb, SBUF_INCLUDENUL);
-	error = pget((pid_t)name[0], PGET_CANDEBUG | PGET_NOTWEXIT, &p);
+	error = pget((pid_t)name[0], PGET_CANINSPECT | PGET_NOTWEXIT, &p);
 	if (error != 0) {
 		sbuf_delete(&sb);
 		return (error);
@@ -2519,7 +2525,7 @@ sysctl_kern_proc_kstack(SYSCTL_HANDLER_ARGS)
 
 	name = (int *)arg1;
 	ctd = curthread;
-	error = pget((pid_t)name[0], PGET_WANTREAD, &p);
+	error = pget((pid_t)name[0], PGET_WANTINSPECT, &p);
 	if (error != 0)
 		return (error);
 
@@ -2529,7 +2535,7 @@ sysctl_kern_proc_kstack(SYSCTL_HANDLER_ARGS)
 	lwpidarray = NULL;
 	PROC_LOCK(p);
 	execve_block_wait(ctd, p);
-	error = p_candebug(ctd, p);
+	error = p_caninspect(ctd, p);
 	if (error != 0) {
 		execve_unblock(ctd, p);
 		_PRELE(p);
@@ -2711,7 +2717,7 @@ sysctl_kern_proc_ps_strings(SYSCTL_HANDLER_ARGS)
 	if (namelen != 1)
 		return (EINVAL);
 
-	error = pget((pid_t)name[0], PGET_CANDEBUG, &p);
+	error = pget((pid_t)name[0], PGET_CANINSPECT, &p);
 	if (error != 0)
 		return (error);
 	ps_strings = PROC_PS_STRINGS(p);
@@ -2743,7 +2749,7 @@ sysctl_kern_proc_umask(SYSCTL_HANDLER_ARGS)
 		goto out;
 	}
 
-	error = pget(pid, PGET_WANTREAD, &p);
+	error = pget(pid, PGET_WANTINSPECT, &p);
 	if (error != 0)
 		return (error);
 
@@ -2812,7 +2818,7 @@ sysctl_kern_proc_sigtramp(SYSCTL_HANDLER_ARGS)
 	if (namelen != 1)
 		return (EINVAL);
 
-	error = pget((pid_t)name[0], PGET_CANDEBUG, &p);
+	error = pget((pid_t)name[0], PGET_CANINSPECT, &p);
 	if (error != 0)
 		return (error);
 	sv = p->p_sysent;
@@ -2847,7 +2853,7 @@ sysctl_kern_proc_sigfastblk(SYSCTL_HANDLER_ARGS)
 		return (EINVAL);
 
 	pid = (pid_t)name[0];
-	error = pget(pid, PGET_HOLD | PGET_NOTWEXIT | PGET_CANDEBUG, &p);
+	error = pget(pid, PGET_HOLD | PGET_NOTWEXIT | PGET_CANINSPECT, &p);
 	if (error != 0)
 		return (error);
 
@@ -2900,12 +2906,12 @@ sysctl_kern_proc_vm_layout(SYSCTL_HANDLER_ARGS)
 		return (EINVAL);
 
 	td = curthread;
-	error = pget((pid_t)name[0], PGET_CANDEBUG, &p);
+	error = pget((pid_t)name[0], PGET_CANINSPECT, &p);
 	if (error != 0)
 		return (error);
 	_PHOLD(p);
 	PROC_UNLOCK(p);
-	error = proc_vmspace_ref(td, p, PRVM_CHECK_DEBUG, &vmspace);
+	error = proc_vmspace_ref(td, p, PRVM_CHECK_INSPECT, &vmspace);
 	if (error != 0) {
 		PRELE(p);
 		return (error);

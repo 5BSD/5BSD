@@ -907,6 +907,56 @@ dq_attach_starts_flags(int q, int procfd, int rootfd, int cwdfd,
 }
 
 /*
+ * Standing rules.  The path is copied with its length; the kernel checks
+ * the rest (dq(4)).
+ */
+int
+dq_standing_add(int q, int rootfd, const char *path, uint32_t flags,
+    uint32_t ops, uint32_t action, int error, uint64_t *idp)
+{
+	struct dq_standing_rule r;
+	size_t len;
+
+	if (path == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	len = strlen(path);
+	if (len >= DQ_PATH_MAX) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	memset(&r, 0, sizeof(r));
+	r.dqs_version = DQ_API_VERSION;
+	r.dqs_flags = flags;
+	r.dqs_ops = ops;
+	r.dqs_action = action;
+	r.dqs_errno = error;
+	r.dqs_rootfd = rootfd;
+	r.dqs_pathlen = (uint32_t)len;
+	memcpy(r.dqs_path, path, len);
+	if (ioctl(q, DQ_IOC_STANDING_ADD, &r) == -1)
+		return (-1);
+	if (idp != NULL)
+		*idp = r.dqs_id;
+	return (0);
+}
+
+int
+dq_standing_del(int q, uint64_t id)
+{
+
+	return (ioctl(q, DQ_IOC_STANDING_DEL, &id));
+}
+
+int
+dq_standing_flush(int q)
+{
+
+	return (ioctl(q, DQ_IOC_STANDING_FLUSH));
+}
+
+/*
  * A RESOLVE body is the fixed part, then four NUL-terminated strings
  * whose lengths (without the NUL) the fixed part gives; the record is
  * padded to 8.  Every string must end inside the record at its stated

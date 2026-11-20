@@ -104,10 +104,10 @@ syscallenter(struct thread *td)
 		thread_cow_update(td);
 	traced = (p->p_flag & P_TRACED) != 0;
 	if (__predict_false(traced || (td->td_dbgflags & (TDB_USERWR |
-	    TDB_SET_SC_RET)) != 0)) {
+	    TDB_MEMWR | TDB_SET_SC_RET)) != 0)) {
 		PROC_LOCK(p);
 		MPASS((td->td_dbgflags & TDB_BOUNDARY) == 0);
-		td->td_dbgflags &= ~(TDB_USERWR | TDB_SET_SC_RET);
+		td->td_dbgflags &= ~(TDB_USERWR | TDB_MEMWR | TDB_SET_SC_RET);
 		if (traced)
 			td->td_dbgflags |= TDB_SCE;
 		PROC_UNLOCK(p);
@@ -138,7 +138,7 @@ syscallenter(struct thread *td)
 		if ((td->td_dbgflags & TDB_SET_SC_RET) != 0) {
 			error = td->td_errno;
 			goto retval;
-		} else if ((td->td_dbgflags & TDB_USERWR) != 0) {
+		} else if ((td->td_dbgflags & (TDB_USERWR | TDB_MEMWR)) != 0) {
 			/*
 			 * Reread syscall number and arguments if debugger
 			 * modified registers or memory.

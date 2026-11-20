@@ -809,6 +809,11 @@
 	    (policy)->mpc_name, 2, \
 	    ((const uint64_t[]){ (uint64_t)(uintptr_t)(struct ucred *)(a0), (uint64_t)(uintptr_t)(struct proc *)(a1) }))
 
+#define MAC_HOOK_ARGS_proc_check_inspect(policy, a0, a1) \
+	SDT_PROBE4(mac_framework, , , hook__args, "proc_check_inspect", \
+	    (policy)->mpc_name, 2, \
+	    ((const uint64_t[]){ (uint64_t)(uintptr_t)(struct ucred *)(a0), (uint64_t)(uintptr_t)(struct proc *)(a1) }))
+
 #define MAC_HOOK_ARGS_proc_check_fork(policy, a0, a1) \
 	SDT_PROBE4(mac_framework, , , hook__args, "proc_check_fork", \
 	    (policy)->mpc_name, 2, \
