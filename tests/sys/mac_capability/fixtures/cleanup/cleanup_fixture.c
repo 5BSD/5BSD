@@ -9,9 +9,12 @@
  * sleeps on its release variable and the sysctl that sets it wakes it; a test
  * waits for a callback to be entered by reading a wait_* sysctl, which sleeps
  * (interruptibly) until the callback wakes it.  A test that fails releases
- * everything from its cleanup.  Writing a release sysctl returns whether
- * service destroy had already returned, so a test can tell, without timing,
- * that unload waited for the callback it released.
+ * everything from its cleanup.  co_destroy_wait tells the fixture that
+ * service destroy is held up (wait_destroy_waiting); writing a release
+ * sysctl then returns whether destroy had already returned.  Together they
+ * show, without timing, that unload was waiting when the callback was
+ * released.  The wait_* oids block, so they are CTLFLAG_SKIP (sysctl -a
+ * does not read them).
  */
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -25,6 +28,7 @@
 
 static struct mac_capability_service *cleanup_svc;
 static u_int entered, release_callback, destroy_entered, destroy_returned;
+static u_int destroy_waiting;
 static u_int fail_init;
 static u_int block_stage, stage_entered, release_stage, fail_stage;
 
@@ -97,14 +101,17 @@ cleanup_wait_sysctl(SYSCTL_HANDLER_ARGS)
 	return (sysctl_handle_int(oidp, &value, 0, req));
 }
 SYSCTL_PROC(_debug_capability_cleanup_test, OID_AUTO, wait_entered,
-    CTLTYPE_UINT | CTLFLAG_RD | CTLFLAG_MPSAFE, &entered, 0,
+    CTLTYPE_UINT | CTLFLAG_RD | CTLFLAG_MPSAFE | CTLFLAG_SKIP, &entered, 0,
     cleanup_wait_sysctl, "IU", "Wait for the blocked callback");
 SYSCTL_PROC(_debug_capability_cleanup_test, OID_AUTO, wait_stage_entered,
-    CTLTYPE_UINT | CTLFLAG_RD | CTLFLAG_MPSAFE, &stage_entered, 0,
-    cleanup_wait_sysctl, "IU", "Wait for the blocked stage");
+    CTLTYPE_UINT | CTLFLAG_RD | CTLFLAG_MPSAFE | CTLFLAG_SKIP, &stage_entered,
+    0, cleanup_wait_sysctl, "IU", "Wait for the blocked stage");
 SYSCTL_PROC(_debug_capability_cleanup_test, OID_AUTO, wait_destroy_entered,
-    CTLTYPE_UINT | CTLFLAG_RD | CTLFLAG_MPSAFE, &destroy_entered, 0,
-    cleanup_wait_sysctl, "IU", "Wait for service destroy");
+    CTLTYPE_UINT | CTLFLAG_RD | CTLFLAG_MPSAFE | CTLFLAG_SKIP, &destroy_entered,
+    0, cleanup_wait_sysctl, "IU", "Wait for service destroy");
+SYSCTL_PROC(_debug_capability_cleanup_test, OID_AUTO, wait_destroy_waiting,
+    CTLTYPE_UINT | CTLFLAG_RD | CTLFLAG_MPSAFE | CTLFLAG_SKIP, &destroy_waiting,
+    0, cleanup_wait_sysctl, "IU", "Wait for service destroy to be held up");
 
 static void
 cleanup_set(u_int *var, u_int value)
@@ -176,6 +183,13 @@ cleanup_fdclose(struct mac_capability_instance *s __unused, int fd __unused,
 	(void)cleanup_stage(3);
 }
 
+/* Service destroy is held up (no sleeping here: see co_destroy_wait). */
+static void
+cleanup_destroy_wait(void *arg __unused)
+{
+	cleanup_set(&destroy_waiting, 1);
+}
+
 static void
 cleanup_revoke(struct mac_capability_instance *s __unused,
     uint64_t badge __unused, enum mac_capability_revoke_reason reason __unused,
@@ -191,6 +205,7 @@ static const struct mac_capability_ops cleanup_ops = {
 	.co_call = cleanup_call,
 	.co_fdclose = cleanup_fdclose,
 	.co_revoke = cleanup_revoke,
+	.co_destroy_wait = cleanup_destroy_wait,
 };
 
 static int

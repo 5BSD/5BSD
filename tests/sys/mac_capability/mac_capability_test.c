@@ -7835,6 +7835,30 @@ cleanup_fixture_release(const char *what)
 	return (returned);
 }
 
+/* Is a destroyed service of this name still allocated (pinned by instances)? */
+static bool
+dead_service_listed(const char *name)
+{
+	char *list, *line, *next;
+	size_t len = 0;
+	bool found = false;
+
+	ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.dead_service_names",
+	    NULL, &len, NULL, 0));
+	list = calloc(1, len + 1);
+	ATF_REQUIRE(list != NULL);
+	ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.dead_service_names",
+	    list, &len, NULL, 0));
+	for (line = list; line != NULL && !found; line = next) {
+		next = strchr(line, '\n');
+		if (next != NULL)
+			*next++ = '\0';
+		found = strcmp(line, name) == 0;
+	}
+	free(list);
+	return (found);
+}
+
 /* A failed case must not leave a fixture callback, or an unload, blocked. */
 static void
 cleanup_fixture_release_all(void)
@@ -7892,7 +7916,7 @@ check_unload_waits_for_cleanup(bool last_close)
 	ATF_REQUIRE(unloader >= 0);
 	if (unloader == 0)
 		_exit(kldunload(module) == 0 ? 0 : 1);
-	ATF_REQUIRE_EQ(1, cleanup_fixture_wait("destroy_entered"));
+	ATF_REQUIRE_EQ(1, cleanup_fixture_wait("destroy_waiting"));
 	ATF_CHECK_EQ_MSG(0, cleanup_fixture_release("release"),
 	    "unload returned before callback release (last_close=%d)",
 	    last_close);
@@ -7955,7 +7979,7 @@ ATF_TC_BODY(unload_waits_for_fdclose, tc)
 	ATF_REQUIRE(unloader >= 0);
 	if (unloader == 0)
 		_exit(kldunload(module) == 0 ? 0 : 1);
-	ATF_REQUIRE_EQ(1, cleanup_fixture_wait("destroy_entered"));
+	ATF_REQUIRE_EQ(1, cleanup_fixture_wait("destroy_waiting"));
 	ATF_CHECK_EQ_MSG(0, cleanup_fixture_release("release_stage"),
 	    "unload returned while co_fdclose was running");
 	reap_ok(closer, "closer");
@@ -7971,13 +7995,11 @@ ATF_TC_CLEANUP(unload_waits_for_fdclose, tc)
 static void
 check_unload_waits_for_admission(unsigned stage, bool fail, bool mint)
 {
-	uint64_t before, after;
-	size_t len = sizeof(before);
 	int module, fd = -1, status;
 	pid_t creator, unloader;
 
-	ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",
-	    &before, &len, NULL, 0));
+	ATF_REQUIRE_MSG(!dead_service_listed("test_cleanup"),
+	    "a test_cleanup service from an earlier load is still allocated");
 	module = kldload(CLEANUP_FIXTURE);
 	ATF_REQUIRE(module >= 0);
 	cleanup_fixture_set("debug.capability_cleanup_test.release", 1);
@@ -8000,7 +8022,7 @@ check_unload_waits_for_admission(unsigned stage, bool fail, bool mint)
 	ATF_REQUIRE(unloader >= 0);
 	if (unloader == 0)
 		_exit(kldunload(module) == 0 ? 0 : 1);
-	ATF_REQUIRE_EQ(1, cleanup_fixture_wait("destroy_entered"));
+	ATF_REQUIRE_EQ(1, cleanup_fixture_wait("destroy_waiting"));
 	ATF_CHECK_EQ_MSG(0, cleanup_fixture_release("release_stage"),
 	    "unload returned during stage %u (fail=%d mint=%d)", stage, fail,
 	    mint);
@@ -8009,22 +8031,24 @@ check_unload_waits_for_admission(unsigned stage, bool fail, bool mint)
 	    "constructor result stage=%u fail=%d mint=%d status=%d",
 	    stage, fail, mint, status);
 	reap_ok(unloader, "unloader");
+	/*
+	 * Every instance of the service is gone once the unload and the last
+	 * close have returned: the close path frees the instance before
+	 * close(2) returns, and the processes that shared fd have been reaped.
+	 * The destroyed service stays allocated exactly as long as one of its
+	 * instances does (kern.mac_capability.dead_service_names), so this
+	 * counts this service's instances only, not the system's.  An open
+	 * minted-from descriptor keeps it listed: that is the positive control.
+	 */
 	if (fd >= 0) {
+		ATF_CHECK_MSG(dead_service_listed("test_cleanup"),
+		    "an open instance does not keep its service listed");
 		ATF_CHECK_ERRNO(ECONNABORTED, channel_mint_instance(fd) == -1);
 		ATF_REQUIRE_EQ(0, close(fd));
 	}
-	/*
-	 * Every instance this sequence made is gone once the unload and the
-	 * last close have returned: the close path frees the instance before
-	 * close(2) returns, and the processes that shared fd have been reaped.
-	 * The count must match at once.
-	 */
-	len = sizeof(after);
-	ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",
-	    &after, &len, NULL, 0));
-	ATF_CHECK_EQ_MSG(before, after, "instances before %ju, after the unload "
-	    "and the last close %ju (stage %u fail=%d mint=%d)",
-	    (uintmax_t)before, (uintmax_t)after, stage, fail, mint);
+	ATF_CHECK_MSG(!dead_service_listed("test_cleanup"),
+	    "an instance outlived the unload and the last close "
+	    "(stage %u fail=%d mint=%d)", stage, fail, mint);
 }
 
 ATF_TC_WITH_CLEANUP(unload_waits_for_admission);
@@ -8056,26 +8080,17 @@ ATF_TC_HEAD(failed_init_completes_cleanup, tc)
 }
 ATF_TC_BODY(failed_init_completes_cleanup, tc)
 {
-	uint64_t before, after;
-	size_t len;
 	unsigned fail = 1, release = 1;
 	int module, fd;
 
 	require_cleanup_fixture();
+	ATF_REQUIRE(!dead_service_listed("test_cleanup"));
 	module = kldload(CLEANUP_FIXTURE);
 	ATF_REQUIRE(module >= 0);
-	len = sizeof(before);
-	ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",
-	    &before, &len, NULL, 0));
 	ATF_REQUIRE_EQ(0, sysctlbyname("debug.capability_cleanup_test.fail_init",
 	    NULL, NULL, &fail, sizeof(fail)));
-	for (unsigned i = 0; i < 16; i++) {
+	for (unsigned i = 0; i < 16; i++)
 		ATF_CHECK_ERRNO(EIO, mac_capability_connect("test_cleanup") == -1);
-		len = sizeof(after);
-		ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",
-		    &after, &len, NULL, 0));
-		ATF_CHECK_EQ(before, after);
-	}
 	ATF_CHECK_EQ(0, cleanup_fixture_value("debug.capability_cleanup_test.entered"));
 	fail = 0;
 	ATF_REQUIRE_EQ(0, sysctlbyname("debug.capability_cleanup_test.fail_init",
@@ -8087,10 +8102,9 @@ ATF_TC_BODY(failed_init_completes_cleanup, tc)
 	ATF_REQUIRE_EQ(0, close(fd));
 	ATF_CHECK_EQ(1, cleanup_fixture_value("debug.capability_cleanup_test.entered"));
 	ATF_REQUIRE_EQ(0, kldunload(module));
-	len = sizeof(after);
-	ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",
-	    &after, &len, NULL, 0));
-	ATF_CHECK_EQ(before, after);
+	/* An instance left by a failed initialization would keep it listed. */
+	ATF_CHECK_MSG(!dead_service_listed("test_cleanup"),
+	    "an instance outlived its failed initialization or the unload");
 }
 
 /* ================================================================ */
