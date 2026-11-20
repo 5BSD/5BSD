@@ -512,8 +512,12 @@ event enqueue and drop, and decision-cache hit and miss.
 Maximum number of concurrent clients.
 .It Va security.oes.clients
 Read-only: the number of clients open now.
-Readable by root on the host only; inside a jail the node does not exist
-.Pq Er ENOENT .
+Reading it needs the privilege that opening
+.Pa /dev/oes
+needs
+.Pq Dv PRIV_DRIVER ;
+other callers, a jailed root included, get
+.Er EPERM .
 .It Va security.oes.require_auth_clients
 When non-zero, operations that would generate an AUTH event are denied if no
 client is subscribed to authorize them.
@@ -535,6 +539,11 @@ an event.
 .It Va security.oes.exec_fail_open
 Number of exec events of programs started by excluded processes, delivered
 without strict denial.
+The three counters above, like
+.Va security.oes.clients ,
+need
+.Dv PRIV_DRIVER
+to read.
 .El
 .Sh FILES
 .Bl -tag -width ".Pa /dev/oes" -compact

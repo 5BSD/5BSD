@@ -85,19 +85,25 @@ SYSCTL_INT(_security_oes, OID_AUTO, max_clients, CTLFLAG_RW,
     &oes_max_clients, 0, "Maximum number of concurrent clients");
 
 /*
- * The number of clients open now.  For the test suites: as private as the
- * device, so root on the host only (PRIV_DRIVER, as oes_open()); a jail
- * sees no such node.
+ * Values that tell whether, and how, OES is being watched: as private as
+ * the device (PRIV_DRIVER, as oes_open()).  priv_check() refuses a jailed
+ * caller as well.
  */
+static int
+oes_sysctl_private(struct sysctl_req *req)
+{
+
+	return (priv_check(req->td, PRIV_DRIVER));
+}
+
+/* The number of clients open now. */
 static int
 oes_sysctl_clients(SYSCTL_HANDLER_ARGS)
 {
 	u_int n;
 	int error;
 
-	if (jailed(req->td->td_ucred))
-		return (ENOENT);
-	error = priv_check(req->td, PRIV_DRIVER);
+	error = oes_sysctl_private(req);
 	if (error != 0)
 		return (error);
 	n = atomic_load_int(&oes_softc.sc_nclients);
@@ -105,7 +111,7 @@ oes_sysctl_clients(SYSCTL_HANDLER_ARGS)
 }
 SYSCTL_PROC(_security_oes, OID_AUTO, clients,
     CTLTYPE_UINT | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0, oes_sysctl_clients,
-    "IU", "Clients open now (root on the host only)");
+    "IU", "Clients open now (PRIV_DRIVER)");
 
 int oes_cache_max_entries = 1024;
 SYSCTL_INT(_security_oes, OID_AUTO, cache_max_entries, CTLFLAG_RW,
@@ -135,18 +141,33 @@ SYSCTL_PROC(_security_oes, OID_AUTO, jail_filtered_auth,
     CTLTYPE_U64 | CTLFLAG_RD | CTLFLAG_MPSAFE,
     &oes_softc.sc_jail_filtered_auth, 0, oes_sysctl_jail_counter, "QU",
     "AUTH events among security.oes.jail_filtered");
+/*
+ * Base-exclusion counters: they move only while a client is open, so they
+ * are as private as the client count (oes_sysctl_private()).
+ */
+static int
+oes_sysctl_private_counter(SYSCTL_HANDLER_ARGS)
+{
+	int error;
+
+	error = oes_sysctl_private(req);
+	if (error != 0)
+		return (error);
+	return (oes_sysctl_jail_counter(oidp, arg1, arg2, req));
+}
+
 SYSCTL_PROC(_security_oes, OID_AUTO, excluded_skipped,
     CTLTYPE_U64 | CTLFLAG_RD | CTLFLAG_MPSAFE,
-    &oes_softc.sc_excluded_skipped, 0, oes_sysctl_jail_counter, "QU",
+    &oes_softc.sc_excluded_skipped, 0, oes_sysctl_private_counter, "QU",
     "Events not produced because the acting process is excluded "
     "(cap_process(2) BASE EXCLUSION)");
 SYSCTL_PROC(_security_oes, OID_AUTO, excluded_invalidations,
     CTLTYPE_U64 | CTLFLAG_RD | CTLFLAG_MPSAFE,
-    &oes_softc.sc_excluded_invalidations, 0, oes_sysctl_jail_counter, "QU",
+    &oes_softc.sc_excluded_invalidations, 0, oes_sysctl_private_counter, "QU",
     "Decision-cache invalidations by excluded processes, without an event");
 SYSCTL_PROC(_security_oes, OID_AUTO, exec_fail_open,
     CTLTYPE_U64 | CTLFLAG_RD | CTLFLAG_MPSAFE,
-    &oes_softc.sc_exec_fail_open, 0, oes_sysctl_jail_counter, "QU",
+    &oes_softc.sc_exec_fail_open, 0, oes_sysctl_private_counter, "QU",
     "Exec events of programs started by excluded processes, delivered "
     "without strict denial");
 
