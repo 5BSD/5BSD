@@ -1204,16 +1204,20 @@ g14_idle_paths(void)
  * processes write to and read from their own pipes, and global clients that
  * subscribe to pipe events and never read give the delivery thread more
  * work than it can do; that the queue discarded events during the window
- * is checked, not assumed.  Over a window the CPU time of the delivery
- * thread (thread "oes_deferq" of process 0) is compared with each
- * producer's.
+ * is checked, not assumed.  Over a window, with twice as many producers as
+ * CPUs, the delivery thread (thread "oes_deferq" of process 0) is sampled
+ * with the producers.
  *
- * The producers are twice as many as the CPUs.  A delivery thread that
- * preempts its producers keeps one CPU, nearly the whole window, while each
- * producer shares the others: (ncpu - 1) / (2 * ncpu) of it, under half.
- * A delivery thread scheduled as a timeshare thread gets about the share of
- * any other CPU-bound thread, ncpu / (2 * ncpu + 1) of the window, and so
- * no more than the busiest producer.
+ * What is asserted is how the scheduler treats the delivery thread, not a
+ * share of CPU time: at PI_SOFT it is above every user thread and never
+ * gives its CPU up of its own accord (no voluntary switch in the window),
+ * so it keeps nearly the whole of one CPU.  As a timeshare thread its
+ * priority is in the timeshare range (PRI_MIN_TIMESHARE or worse), where
+ * the producers' are, and it gives the CPU up when the scheduler ends its
+ * slice (voluntary switches).  CPU times are printed, not compared: ULE
+ * shares time per CPU, so a timeshare delivery thread on a CPU with one
+ * producer gets about half of it while producers on busier CPUs get less,
+ * and no fixed relation to the busiest producer follows.
  *
  * The window is G18_PERIODS of ULE's balance interval
  * (kern.sched.ule.balance_interval, in stathz ticks): the balancer places
@@ -1221,8 +1225,7 @@ g14_idle_paths(void)
  * favours one thread for one interval moves its share by a tenth at most.
  *
  * G18_DELIVERY_FAIR is 0 while the delivery thread runs at PI_SOFT and
- * preempts the producers (it is then expected ahead of every producer), 1
- * once it runs as a timeshare thread.
+ * preempts the producers, 1 once it runs as a timeshare thread.
  */
 #ifndef G18_DELIVERY_FAIR
 #define	G18_DELIVERY_FAIR	1
@@ -1230,14 +1233,20 @@ g14_idle_paths(void)
 #define	G18_PERIODS		10
 #define	G18_UNPRIV_ID		65534	/* nobody */
 
-/* CPU time in microseconds of process pid, or of its thread named tdname. */
-static int64_t
-g18_runtime(pid_t pid, const char *tdname)
+struct g18_sample {
+	int64_t	gs_runtime;	/* CPU time, microseconds */
+	int	gs_pri;		/* Current scheduling priority */
+	long	gs_nvcsw;	/* Voluntary context switches */
+	long	gs_nivcsw;	/* Involuntary context switches */
+};
+
+/* Sample process pid, or its thread named tdname; 0, or -1 if not found. */
+static int
+g18_sample(pid_t pid, const char *tdname, struct g18_sample *s)
 {
 	struct kinfo_proc *kp;
 	size_t len;
-	int64_t rt;
-	int mib[4], i, n;
+	int mib[4], i, n, rv;
 
 	mib[0] = CTL_KERN;
 	mib[1] = KERN_PROC;
@@ -1255,15 +1264,19 @@ g18_runtime(pid_t pid, const char *tdname)
 		return (-1);
 	}
 	n = (int)(len / sizeof(*kp));
-	rt = -1;
+	rv = -1;
 	for (i = 0; i < n; i++) {
 		if (tdname == NULL || strcmp(kp[i].ki_tdname, tdname) == 0) {
-			rt = (int64_t)kp[i].ki_runtime;
+			s->gs_runtime = (int64_t)kp[i].ki_runtime;
+			s->gs_pri = kp[i].ki_pri.pri_level;
+			s->gs_nvcsw = kp[i].ki_rusage.ru_nvcsw;
+			s->gs_nivcsw = kp[i].ki_rusage.ru_nivcsw;
+			rv = 0;
 			break;
 		}
 	}
 	free(kp);
-	return (rt);
+	return (rv);
 }
 
 static void
@@ -1273,7 +1286,10 @@ g18_delivery_share(void)
 	    OES_EVENT_NOTIFY_PIPE_READ };
 	int clients[JT_LOAD_MAXCLIENTS];
 	pid_t *prod = NULL;
-	int64_t *p0 = NULL, dq0, dq1, pmax, v;
+	struct g18_sample *p0 = NULL, dq0, dq1, s;
+	int64_t pmax, v;
+	long pvol, pinv;
+	int pmin;
 	uint64_t drops;
 	long period_ms;
 	size_t len;
@@ -1357,18 +1373,30 @@ g18_delivery_share(void)
 	}
 
 	drops = jt_nosleep_drops(statfd);
-	dq0 = g18_runtime(0, "oes_deferq");
+	if (g18_sample(0, "oes_deferq", &dq0) != 0) {
+		TEST_FAIL("no thread oes_deferq in process 0");
+		goto out;
+	}
 	for (i = 0; i < nprod; i++)
-		p0[i] = g18_runtime(prod[i], NULL);
+		if (g18_sample(prod[i], NULL, &p0[i]) != 0) {
+			TEST_FAIL("producer %d: %s", i, strerror(errno));
+			goto out;
+		}
 	usleep(G18_PERIODS * period_ms * 1000);
-	dq1 = g18_runtime(0, "oes_deferq");
-	pmax = 0;
+	pmax = pvol = pinv = 0;
+	pmin = PRI_MAX;
 	for (i = 0; i < nprod; i++) {
-		v = g18_runtime(prod[i], NULL) - p0[i];
+		if (g18_sample(prod[i], NULL, &s) != 0)
+			continue;
+		v = s.gs_runtime - p0[i].gs_runtime;
 		if (v > pmax)
 			pmax = v;
+		if (s.gs_pri < pmin)
+			pmin = s.gs_pri;
+		pvol += s.gs_nvcsw - p0[i].gs_nvcsw;
+		pinv += s.gs_nivcsw - p0[i].gs_nivcsw;
 	}
-	if (dq0 < 0 || dq1 < 0) {
+	if (g18_sample(0, "oes_deferq", &dq1) != 0) {
 		TEST_FAIL("no thread oes_deferq in process 0");
 		goto out;
 	}
@@ -1381,15 +1409,25 @@ g18_delivery_share(void)
 	printf("    %d CPUs, %d unprivileged producers, %d unread clients, "
 	    "%ld ms: delivery thread %jd ms, busiest producer %jd ms\n",
 	    ncpu, nprod, nclients, G18_PERIODS * period_ms,
-	    (intmax_t)((dq1 - dq0) / 1000), (intmax_t)(pmax / 1000));
+	    (intmax_t)((dq1.gs_runtime - dq0.gs_runtime) / 1000),
+	    (intmax_t)(pmax / 1000));
+	printf("    priority: delivery thread %d, best producer %d; switches: "
+	    "delivery thread %ld voluntary %ld involuntary, producers %ld "
+	    "voluntary %ld involuntary\n", dq1.gs_pri, pmin,
+	    dq1.gs_nvcsw - dq0.gs_nvcsw, dq1.gs_nivcsw - dq0.gs_nivcsw,
+	    pvol, pinv);
+	dq1.gs_runtime -= dq0.gs_runtime;
 #if G18_DELIVERY_FAIR
-	ASSERT_MSG(dq1 - dq0 <= pmax, "the delivery thread ran %jd ms, more "
-	    "than the busiest producer's %jd ms",
-	    (intmax_t)((dq1 - dq0) / 1000), (intmax_t)(pmax / 1000));
+	ASSERT_MSG(dq1.gs_pri >= PRI_MIN_TIMESHARE, "the delivery thread "
+	    "runs at priority %d, above the timeshare range", dq1.gs_pri);
+	ASSERT_MSG(dq1.gs_nvcsw > dq0.gs_nvcsw, "the delivery thread never "
+	    "gave its CPU up during the storm");
 #else
-	ASSERT_MSG(dq1 - dq0 > pmax, "the delivery thread ran %jd ms, no more "
-	    "than the busiest producer's %jd ms",
-	    (intmax_t)((dq1 - dq0) / 1000), (intmax_t)(pmax / 1000));
+	ASSERT_MSG(dq1.gs_pri < PRI_MIN_TIMESHARE, "the delivery thread "
+	    "runs at priority %d, in the timeshare range", dq1.gs_pri);
+	ASSERT_MSG(dq1.gs_nvcsw == dq0.gs_nvcsw, "the delivery thread gave "
+	    "its CPU up %ld times during the storm",
+	    dq1.gs_nvcsw - dq0.gs_nvcsw);
 #endif
 out:
 	for (i = 0; prod != NULL && i < nprod; i++) {
