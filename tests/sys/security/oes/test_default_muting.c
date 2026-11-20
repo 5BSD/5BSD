@@ -303,7 +303,8 @@ test_own_events_not_a_mute(void)
 		_exit(tfd >= 0 ? 0 : 1);
 	}
 	(void)waitpid(child, &status, 0);
-	while (!fence && test_wait_event(fd, &buf.msg, 30000) == 0) {
+	while (!fence && test_wait_event(fd, &buf.msg,
+	    OES_TEST_DEADLINE_MS) == 0) {
 		if (buf.msg.em_event != OES_EVENT_NOTIFY_OPEN)
 			continue;
 		if (buf.msg.em_process.ep_pid == mypid)

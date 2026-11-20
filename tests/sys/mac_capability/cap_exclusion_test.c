@@ -29,6 +29,8 @@
 #include <sys/mount.h>
 #include <sys/procctl.h>
 #include <sys/procdesc.h>
+#include <sys/socket.h>
+#include <sys/uio.h>
 #include <sys/ptrace.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
@@ -52,7 +54,6 @@
 #include <string.h>
 #include <unistd.h>
 
-#define	P2_CAP_EXCLUDED_BIT	0x20000000	/* sys/proc.h P2_CAP_EXCLUDED */
 #define	HELPER			"cap_exclusion_helper"
 
 extern char **environ;
@@ -96,7 +97,7 @@ proc_excluded(pid_t pid)
 
 	ATF_REQUIRE_EQ_MSG(proc_flag2(pid, &flag2), 0, "kern.proc.pid %d",
 	    (int)pid);
-	return ((flag2 & P2_CAP_EXCLUDED_BIT) != 0);
+	return ((flag2 & P2_CAP_EXCLUDED) != 0);
 }
 
 /* The issuer a test may use, or -1 (the caller skips). */
@@ -905,11 +906,11 @@ ATF_TC_BODY(switchboard_exclusion_bit, tc)
 				is_core = true;
 		if (is_core) {
 			seen++;
-			ATF_CHECK_MSG((kp[i].ki_flag2 & P2_CAP_EXCLUDED_BIT) != 0,
+			ATF_CHECK_MSG((kp[i].ki_flag2 & P2_CAP_EXCLUDED) != 0,
 			    "Core unit %s (pid %d) not excluded", kp[i].ki_comm,
 			    kp[i].ki_pid);
 		} else if (strcmp(kp[i].ki_comm, "BSDNotify") == 0)
-			ATF_CHECK_MSG((kp[i].ki_flag2 & P2_CAP_EXCLUDED_BIT) == 0,
+			ATF_CHECK_MSG((kp[i].ki_flag2 & P2_CAP_EXCLUDED) == 0,
 			    "BSDNotify (pid %d) excluded", kp[i].ki_pid);
 	}
 	free(kp);
@@ -1025,7 +1026,7 @@ expect_report(const struct run *r, int line, bool excluded, unsigned valid)
 	    strerror(r->exec_errno));
 	ATF_REQUIRE_MSG(report_n(r, line, &flag2, &v), "no report %d: %s",
 	    line, r->out);
-	ATF_CHECK_EQ_MSG((flag2 & P2_CAP_EXCLUDED_BIT) != 0, excluded,
+	ATF_CHECK_EQ_MSG((flag2 & P2_CAP_EXCLUDED) != 0, excluded,
 	    "report %d: flag2 %#x", line, flag2);
 	ATF_CHECK_EQ_MSG(v, valid, "report %d: valid %u", line, v);
 }
@@ -1238,9 +1239,9 @@ ATF_TC_BODY(x2_x9_fork_and_trace, tc)
 	ATF_REQUIRE_EQ_MSG(r.exec_errno, 0, "pre: %d", r.exec_errno);
 	ATF_REQUIRE(sscanf(r.out, "fork flag2=%x\nattached flag2=%x\n"
 	    "detached flag2=%x", &f1, &f2, &f3) == 3);
-	ATF_CHECK((f1 & P2_CAP_EXCLUDED_BIT) != 0);
-	ATF_CHECK((f2 & P2_CAP_EXCLUDED_BIT) == 0);
-	ATF_CHECK((f3 & P2_CAP_EXCLUDED_BIT) == 0);
+	ATF_CHECK((f1 & P2_CAP_EXCLUDED) != 0);
+	ATF_CHECK((f2 & P2_CAP_EXCLUDED) == 0);
+	ATF_CHECK((f3 & P2_CAP_EXCLUDED) == 0);
 	xcase_fini(&x);
 }
 
@@ -1479,7 +1480,7 @@ ATF_TC_BODY(x19_revoked_issuer_not_excluded, tc)
 	}
 	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
 	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
-	ATF_CHECK((flag2 & P2_CAP_EXCLUDED_BIT) == 0);
+	ATF_CHECK((flag2 & P2_CAP_EXCLUDED) == 0);
 	ATF_CHECK_EQ(valid, 0);
 }
 
@@ -1643,7 +1644,7 @@ ATF_TC_BODY(d11_d12_core_daemon_debug, tc)
 	ATF_REQUIRE(n > 0);
 	buf[n] = '\0';
 	ATF_REQUIRE(sscanf(buf, "flag2=%x valid=%u", &flag2, &valid) == 2);
-	ATF_REQUIRE((flag2 & P2_CAP_EXCLUDED_BIT) != 0 && valid == 1);
+	ATF_REQUIRE((flag2 & P2_CAP_EXCLUDED) != 0 && valid == 1);
 
 	refused = counter("security.cap_exclusion.refused_debug");
 	ATF_CHECK_ERRNO(EPERM, ptrace(PT_ATTACH, pid, NULL, 0) == -1);
@@ -1713,12 +1714,52 @@ ATF_TC_BODY(d4_attach_excluded_refused, tc)
  */
 enum d5_mode { D5_OWN, D5_GRANDCHILD, D5_EXECD };
 
+/* Pass fd over sock (SCM_RIGHTS); 0 or -1. */
+static int
+d5_send_fd(int sock, int fd)
+{
+	char cbuf[CMSG_SPACE(sizeof(int))], c = 'f';
+	struct iovec iov = { .iov_base = &c, .iov_len = 1 };
+	struct msghdr m = { .msg_iov = &iov, .msg_iovlen = 1,
+	    .msg_control = cbuf, .msg_controllen = sizeof(cbuf) };
+	struct cmsghdr *cm;
+
+	memset(cbuf, 0, sizeof(cbuf));
+	cm = CMSG_FIRSTHDR(&m);
+	cm->cmsg_level = SOL_SOCKET;
+	cm->cmsg_type = SCM_RIGHTS;
+	cm->cmsg_len = CMSG_LEN(sizeof(int));
+	memcpy(CMSG_DATA(cm), &fd, sizeof(int));
+	return (sendmsg(sock, &m, 0) == 1 ? 0 : -1);
+}
+
+/* Receive one descriptor from sock; -1 on failure. */
+static int
+d5_recv_fd(int sock)
+{
+	char cbuf[CMSG_SPACE(sizeof(int))], c;
+	struct iovec iov = { .iov_base = &c, .iov_len = 1 };
+	struct msghdr m = { .msg_iov = &iov, .msg_iovlen = 1,
+	    .msg_control = cbuf, .msg_controllen = sizeof(cbuf) };
+	struct cmsghdr *cm;
+	int fd;
+
+	if (recvmsg(sock, &m, 0) != 1)
+		return (-1);
+	cm = CMSG_FIRSTHDR(&m);
+	if (cm == NULL || cm->cmsg_level != SOL_SOCKET ||
+	    cm->cmsg_type != SCM_RIGHTS)
+		return (-1);
+	memcpy(&fd, CMSG_DATA(cm), sizeof(int));
+	return (fd);
+}
+
 static int
 d5_in_excluded(enum d5_mode mode, const char *helper, int token)
 {
 	char *argv[] = { __DECONST(char *, HELPER),
 	    __DECONST(char *, "wait"), NULL };
-	int q, pd, go[2], ready[2], error, status;
+	int q, pd, go[2], ready[2], sp[2], error, status;
 	unsigned flag2;
 	pid_t k, k2;
 	char c = 0;
@@ -1728,7 +1769,8 @@ d5_in_excluded(enum d5_mode mode, const char *helper, int token)
 	q = dq_open();
 	if (q < 0)
 		return (101);
-	if (pipe(go) != 0 || pipe(ready) != 0)
+	if (pipe(go) != 0 || pipe(ready) != 0 ||
+	    socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sp) != 0)
 		return (102);
 	k = pdfork(&pd, 0);
 	if (k < 0)
@@ -1746,16 +1788,24 @@ d5_in_excluded(enum d5_mode mode, const char *helper, int token)
 			_exit(111);
 		}
 		if (mode == D5_GRANDCHILD) {
-			k2 = fork();
+			int pd2;
+
+			/*
+			 * K's own pre-exec child, by process descriptor; the
+			 * descriptor goes to E, which may not debug it.
+			 */
+			close(sp[0]);
+			k2 = pdfork(&pd2, 0);
 			if (k2 < 0)
 				_exit(112);
 			if (k2 == 0) {
 				(void)read(go[0], &c, 1);
 				_exit(0);
 			}
-			(void)write(ready[1], &k2, sizeof(k2));
+			if (d5_send_fd(sp[1], pd2) != 0)
+				_exit(113);
 			(void)read(go[0], &c, 1);
-			(void)waitpid(k2, &status, 0);
+			close(pd2);
 			_exit(0);
 		}
 		(void)write(ready[1], &c, 1);
@@ -1773,25 +1823,21 @@ d5_in_excluded(enum d5_mode mode, const char *helper, int token)
 			return (error);
 		if (proc_flag2(k, &flag2) != 0)
 			return (105);
-		if ((flag2 & P2_CAP_EXCLUDED_BIT) != 0)
+		if ((flag2 & P2_CAP_EXCLUDED) != 0)
 			return (106);
 		break;
 	case D5_GRANDCHILD: {
 		int pd2;
 
-		if (read(ready[0], &k2, sizeof(k2)) != sizeof(k2))
-			return (104);
 		/*
-		 * Owner S3: an excluded process may debug only its own
-		 * pre-exec child, so pdopenpid(2) (PGET_CANDEBUG) already
-		 * refuses the grandchild; that is the refusal pinned.
+		 * The grandchild's descriptor comes from K (SCM_RIGHTS), not
+		 * pdopenpid(2): that would already refuse it (owner S3,
+		 * PGET_CANDEBUG) before the dq(4) attach rule is reached.
 		 */
-		pd2 = pdopenpid(k2, 0);
-		if (pd2 < 0) {
-			if (errno != EPERM)
-				return (107);
-			break;
-		}
+		close(sp[1]);
+		pd2 = d5_recv_fd(sp[0]);
+		if (pd2 < 0)
+			return (107);
 		error = dq_attach(q, pd2) == 0 ? 0 : errno;
 		close(pd2);
 		if (error != EPERM)
@@ -1807,7 +1853,7 @@ d5_in_excluded(enum d5_mode mode, const char *helper, int token)
 			return (104);
 		buf[n] = '\0';
 		if (sscanf(buf, "flag2=%x", &flag2) != 1 ||
-		    (flag2 & P2_CAP_EXCLUDED_BIT) == 0)
+		    (flag2 & P2_CAP_EXCLUDED) == 0)
 			return (109);
 		error = dq_attach(q, pd) == 0 ? 0 : errno;
 		if (error != EPERM)
@@ -1817,6 +1863,8 @@ d5_in_excluded(enum d5_mode mode, const char *helper, int token)
 	}
 	close(go[1]);
 	(void)waitpid(k, &status, 0);
+	close(sp[0]);
+	close(sp[1]);
 	close(pd);
 	close(q);
 	return (0);
@@ -1924,7 +1972,9 @@ nobody_pdopenpid(void *arg)
 	return (errno);
 }
 
-ATF_TC(d1_invisible_target_esrch);
+#define	D1_SAVED	"see_other_uids.saved"
+
+ATF_TC_WITH_CLEANUP(d1_invisible_target_esrch);
 ATF_TC_HEAD(d1_invisible_target_esrch, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
@@ -1945,6 +1995,15 @@ ATF_TC_BODY(d1_invisible_target_esrch, tc)
 	park_plain(&q);
 	len = sizeof(old);
 	ATF_REQUIRE(sysctlbyname("security.bsd.see_other_uids", &old, &len,
+	    NULL, 0) == 0);
+	/* The cleanup restores it from here if the body does not. */
+	{
+		FILE *f = fopen(D1_SAVED, "w");
+
+		ATF_REQUIRE(f != NULL && fprintf(f, "%d\n", old) > 0 &&
+		    fclose(f) == 0);
+	}
+	ATF_REQUIRE(sysctlbyname("security.bsd.see_other_uids", NULL, NULL,
 	    &zero, sizeof(zero)) == 0);
 	run_child(-1, nobody_pdopenpid, &k.pid, NULL, -1, NULL, &r);
 	ATF_CHECK_EQ_MSG(r.exec_errno, ESRCH, "excluded: %s",
@@ -1954,9 +2013,23 @@ ATF_TC_BODY(d1_invisible_target_esrch, tc)
 	    strerror(r.exec_errno));
 	ATF_REQUIRE(sysctlbyname("security.bsd.see_other_uids", NULL, NULL,
 	    &old, sizeof(old)) == 0);
+	(void)unlink(D1_SAVED);
 	unpark(&k);
 	unpark(&q);
 	xcase_fini(&x);
+}
+ATF_TC_CLEANUP(d1_invisible_target_esrch, tc)
+{
+	FILE *f;
+	int old;
+
+	f = fopen(D1_SAVED, "r");
+	if (f == NULL)
+		return;
+	if (fscanf(f, "%d", &old) == 1)
+		(void)sysctlbyname("security.bsd.see_other_uids", NULL, NULL,
+		    &old, sizeof(old));
+	fclose(f);
 }
 
 /*
@@ -2103,7 +2176,7 @@ ATF_TC(t1_debug_interfaces_excluded_child);
 ATF_TC_HEAD(t1_debug_interfaces_excluded_child, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Review T1: against an excluded pre-exec child, with a plain child as control, root is refused by linprocfs mem and fd (hidden: ENOENT), fasttrap MAKEPROBE and filemon (EPERM), where the control answers otherwise");
+	    "Review T1: against an excluded pre-exec child, with a plain child as control, root is refused by linprocfs mem and fd (hidden: ENOENT), where the control opens them");
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "is.exclusive", "true");
 }
@@ -2112,7 +2185,6 @@ ATF_TC_BODY(t1_debug_interfaces_excluded_child, tc)
 	struct parked k, q;
 	struct xcase x;
 	char dir[PATH_MAX], cmd[PATH_MAX + 64];
-	int e, ec;
 
 	xcase_init(tc, &x);
 	park_excluded(&k);
@@ -2128,25 +2200,76 @@ ATF_TC_BODY(t1_debug_interfaces_excluded_child, tc)
 	ATF_CHECK_EQ(iface_linprocfs(dir, k.pid, "fd"), ENOENT);
 	snprintf(cmd, sizeof(cmd), "umount %s", dir);
 	ATF_CHECK_EQ(system(cmd), 0);
-	if (access("/dev/fasttrap", F_OK) == 0) {
-		ec = iface_fasttrap(tc, q.pid);
-		e = iface_fasttrap(tc, k.pid);
-		printf("fasttrap: control %d, excluded %d\n", ec, e);
-		ATF_CHECK(ec != EPERM);
-		ATF_CHECK_EQ(e, EPERM);
-	} else
-		printf("NOT COVERED fasttrap: no /dev/fasttrap (dtraceall not "
-		    "preloaded)\n");
-	if (access("/dev/filemon", F_OK) == 0) {
-		ATF_CHECK_EQ(iface_filemon(q.pid), 0);
-		ATF_CHECK_EQ(iface_filemon(k.pid), EPERM);
-	} else
-		printf("NOT COVERED filemon: no /dev/filemon\n");
-	printf("NOT COVERED hwpmc, Linux pidfd_getfd: no fixture in this "
-	    "program\n");
 	unpark(&k);
 	unpark(&q);
 	xcase_fini(&x);
+}
+
+ATF_TC(t1b_fasttrap_excluded_child);
+ATF_TC_HEAD(t1b_fasttrap_excluded_child, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Review T1: FASTTRAPIOC_MAKEPROBE on an excluded pre-exec child is EPERM; on a plain child (control) it succeeds");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "is.exclusive", "true");
+}
+ATF_TC_BODY(t1b_fasttrap_excluded_child, tc)
+{
+	struct parked k, q;
+	struct xcase x;
+	int e, ec;
+
+	if (access("/dev/fasttrap", F_OK) != 0)
+		atf_tc_skip("NOT COVERED: no /dev/fasttrap (dtraceall not "
+		    "preloaded in this guest)");
+	xcase_init(tc, &x);
+	park_excluded(&k);
+	park_plain(&q);
+	ec = iface_fasttrap(tc, q.pid);
+	e = iface_fasttrap(tc, k.pid);
+	ATF_CHECK_EQ_MSG(ec, 0, "control: %d", ec);
+	ATF_CHECK_EQ_MSG(e, EPERM, "excluded: %d", e);
+	unpark(&k);
+	unpark(&q);
+	xcase_fini(&x);
+}
+
+ATF_TC(t1c_filemon_excluded_child);
+ATF_TC_HEAD(t1c_filemon_excluded_child, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Review T1: FILEMON_SET_PID on an excluded pre-exec child is EPERM; on a plain child (control) it succeeds");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "is.exclusive", "true");
+}
+ATF_TC_BODY(t1c_filemon_excluded_child, tc)
+{
+	struct parked k, q;
+	struct xcase x;
+
+	if (access("/dev/filemon", F_OK) != 0)
+		atf_tc_skip("NOT COVERED: no /dev/filemon in this guest");
+	xcase_init(tc, &x);
+	park_excluded(&k);
+	park_plain(&q);
+	ATF_CHECK_EQ(iface_filemon(q.pid), 0);
+	ATF_CHECK_EQ(iface_filemon(k.pid), EPERM);
+	unpark(&k);
+	unpark(&q);
+	xcase_fini(&x);
+}
+
+ATF_TC(t1d_hwpmc_pidfd_not_covered);
+ATF_TC_HEAD(t1d_hwpmc_pidfd_not_covered, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Review T1: hwpmc process attach and Linux pidfd_getfd against an excluded process (p_candebug consumers without a fixture here)");
+}
+ATF_TC_BODY(t1d_hwpmc_pidfd_not_covered, tc)
+{
+
+	atf_tc_skip("NOT COVERED: no hwpmc or Linux pidfd_getfd fixture in "
+	    "this program");
 }
 
 ATF_TP_ADD_TCS(tp)
@@ -2183,5 +2306,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, d1_invisible_target_esrch);
 	ATF_TP_ADD_TC(tp, s3_core_cannot_debug_core);
 	ATF_TP_ADD_TC(tp, t1_debug_interfaces_excluded_child);
+	ATF_TP_ADD_TC(tp, t1b_fasttrap_excluded_child);
+	ATF_TP_ADD_TC(tp, t1c_filemon_excluded_child);
+	ATF_TP_ADD_TC(tp, t1d_hwpmc_pidfd_not_covered);
 	return (atf_no_error());
 }

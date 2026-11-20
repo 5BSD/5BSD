@@ -36,7 +36,6 @@
 #include "self_events_expect.h"
 
 /* The longest an event the kernel has generated may take to arrive. */
-#define	EVENT_DEADLINE_MS	30000
 
 struct paths {
 	char	probe[PATH_MAX];
@@ -127,8 +126,8 @@ count_until_fence(int fd, pid_t subject, pid_t fence, uint32_t *flags)
 	int n = 0;
 
 	for (;;) {
-		ATF_REQUIRE_MSG(test_wait_event(fd, msg, EVENT_DEADLINE_MS) == 0,
-		    "no fence event within %d ms", EVENT_DEADLINE_MS);
+		ATF_REQUIRE_MSG(test_wait_event(fd, msg, OES_TEST_DEADLINE_MS) == 0,
+		    "no fence event within %d ms", OES_TEST_DEADLINE_MS);
 		if (msg->em_event != OES_EVENT_NOTIFY_OPEN)
 			continue;
 		if (msg->em_process.ep_pid == fence)
@@ -158,8 +157,8 @@ count_path_until_fence(int fd, const pid_t *subjects, int n, const char *path,
 
 	ATF_REQUIRE(stat(path, &sb) == 0);
 	for (;;) {
-		ATF_REQUIRE_MSG(test_wait_event(fd, msg, EVENT_DEADLINE_MS) == 0,
-		    "no fence event within %d ms", EVENT_DEADLINE_MS);
+		ATF_REQUIRE_MSG(test_wait_event(fd, msg, OES_TEST_DEADLINE_MS) == 0,
+		    "no fence event within %d ms", OES_TEST_DEADLINE_MS);
 		if (msg->em_event != OES_EVENT_NOTIFY_OPEN)
 			continue;
 		if (msg->em_process.ep_pid == fence)
@@ -694,23 +693,30 @@ signal_fence(int *gate)
 	return (pid);
 }
 
-/* Count events of type ev whose subject is pid until fence's NOTIFY_SIGNAL. */
-static int
-count_type_until_signal_fence(int fd, pid_t pid, oes_event_type_t ev,
-    pid_t fence)
+/*
+ * Count the NOTIFY_FORK and NOTIFY_SIGNAL events whose subject is pid until
+ * fence's NOTIFY_SIGNAL.
+ */
+static void
+count_fork_signal_until_fence(int fd, pid_t pid, pid_t fence, int *forks,
+    int *signals)
 {
 	test_msg_buf buf;
 	oes_message_t *msg = &buf.msg;
-	int n = 0;
 
+	*forks = *signals = 0;
 	for (;;) {
-		ATF_REQUIRE_MSG(test_wait_event(fd, msg, EVENT_DEADLINE_MS) == 0,
-		    "no fence event within %d ms", EVENT_DEADLINE_MS);
-		if (msg->em_event == OES_EVENT_NOTIFY_SIGNAL &&
-		    msg->em_process.ep_pid == fence)
-			return (n);
-		if (msg->em_event == ev && msg->em_process.ep_pid == pid)
-			n++;
+		ATF_REQUIRE_MSG(test_wait_event(fd, msg, OES_TEST_DEADLINE_MS) ==
+		    0, "no fence event within %d ms", OES_TEST_DEADLINE_MS);
+		if (msg->em_process.ep_pid == fence &&
+		    msg->em_event == OES_EVENT_NOTIFY_SIGNAL)
+			return;
+		if (msg->em_process.ep_pid != pid)
+			continue;
+		if (msg->em_event == OES_EVENT_NOTIFY_FORK)
+			(*forks)++;
+		else if (msg->em_event == OES_EVENT_NOTIFY_SIGNAL)
+			(*signals)++;
 	}
 }
 
@@ -775,7 +781,7 @@ deferred_case(const atf_tc_t *tc, bool exec_rejoin)
 	    OES_EVENT_NOTIFY_SIGNAL };
 	char helper[PATH_MAX];
 	pid_t c, fence;
-	int sv[2], x, d, gate, status;
+	int sv[2], x, d, gate, status, forks, signals;
 
 	snprintf(helper, sizeof(helper), "%s/oes_join_helper",
 	    atf_tc_get_config_var(tc, "srcdir"));
@@ -801,11 +807,17 @@ deferred_case(const atf_tc_t *tc, bool exec_rejoin)
 	    "actor status %#x", status);
 	fence = signal_fence(&gate);
 	release(gate, fence);
-	/* The receiver's own fork and signal never reach its client... */
-	ATF_CHECK_EQ(count_type_until_signal_fence(x, c, OES_EVENT_NOTIFY_FORK,
-	    fence), 0);
-	ATF_CHECK_EQ(count_type_until_signal_fence(d, c, OES_EVENT_NOTIFY_FORK,
-	    fence), 1);
+	/*
+	 * The receiver's own fork and signal (its SIGTERM to its child) never
+	 * reach its client; the other client sees one of each.
+	 */
+	count_fork_signal_until_fence(x, c, fence, &forks, &signals);
+	ATF_CHECK_EQ_MSG(forks, 0, "own forks delivered: %d", forks);
+	ATF_CHECK_EQ_MSG(signals, 0, "own signals delivered: %d", signals);
+	count_fork_signal_until_fence(d, c, fence, &forks, &signals);
+	ATF_CHECK_EQ_MSG(forks, 1, "forks seen by the other client: %d", forks);
+	ATF_CHECK_EQ_MSG(signals, 1, "signals seen by the other client: %d",
+	    signals);
 	close(x);
 	close(d);
 }
@@ -863,7 +875,7 @@ open_auth_client(void)
 	ATF_REQUIRE(test_set_descendants_scope(fd) == 0);
 	memset(&mode, 0, sizeof(mode));
 	mode.ema_mode = OES_MODE_AUTH;
-	mode.ema_default_deadline_ms = EVENT_DEADLINE_MS;
+	mode.ema_default_deadline_ms = OES_TEST_DEADLINE_MS;
 	ATF_REQUIRE(ioctl(fd, OES_IOC_SET_MODE, &mode) == 0);
 	memset(&miss, 0, sizeof(miss));
 	miss.edma_mode = OES_DEADLINE_MISS_FAIL_CLOSED;
@@ -914,8 +926,8 @@ answer_until_fence(int y, pid_t subject, pid_t fence)
 	int n = 0;
 
 	for (;;) {
-		ATF_REQUIRE_MSG(test_wait_event(y, msg, EVENT_DEADLINE_MS) == 0,
-		    "no fence event within %d ms", EVENT_DEADLINE_MS);
+		ATF_REQUIRE_MSG(test_wait_event(y, msg, OES_TEST_DEADLINE_MS) == 0,
+		    "no fence event within %d ms", OES_TEST_DEADLINE_MS);
 		if (msg->em_event != OES_EVENT_AUTH_OPEN)
 			continue;
 		from = msg->em_process.ep_pid;
@@ -968,9 +980,9 @@ auth_case(enum auth_actor how, int want_delivered)
 	if (want_delivered) {
 		for (;;) {
 			ATF_REQUIRE_MSG(test_wait_event(y, msg,
-			    EVENT_DEADLINE_MS) == 0,
+			    OES_TEST_DEADLINE_MS) == 0,
 			    "no AUTH_OPEN from the actor within %d ms",
-			    EVENT_DEADLINE_MS);
+			    OES_TEST_DEADLINE_MS);
 			if (msg->em_event != OES_EVENT_AUTH_OPEN)
 				continue;
 			memset(&resp, 0, sizeof(resp));

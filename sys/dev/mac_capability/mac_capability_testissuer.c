@@ -257,6 +257,7 @@ mac_capability_test_issuer_oes_defer_park(void)
 	mtx_unlock(&mac_capability_test_issuer_oes_defer_mtx);
 }
 
+/* Re-arming while a join waits on the task parks it under that join again: arm once per case. */
 void
 mac_capability_test_issuer_oes_defer_unpark(void)
 {

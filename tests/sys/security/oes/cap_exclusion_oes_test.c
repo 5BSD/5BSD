@@ -35,7 +35,6 @@
 
 #define	HELPER_REL	"../../mac_capability/cap_exclusion_helper"
 /* The longest an event the kernel has generated may take to arrive. */
-#define	EVENT_DEADLINE_MS	30000
 /* The AUTH deadline of the never-answering client. */
 #define	AUTH_DEADLINE_MS	200
 
@@ -178,8 +177,8 @@ ATF_TC_BODY(o2_excluded_subject_no_events, tc)
 	ATF_REQUIRE_EQ(reap(mk), 0);
 
 	while (!marker_seen) {
-		ATF_REQUIRE_MSG(test_wait_event(fd, msg, EVENT_DEADLINE_MS) == 0,
-		    "no marker event within %d ms", EVENT_DEADLINE_MS);
+		ATF_REQUIRE_MSG(test_wait_event(fd, msg, OES_TEST_DEADLINE_MS) == 0,
+		    "no marker event within %d ms", OES_TEST_DEADLINE_MS);
 		if (msg->em_event != OES_EVENT_NOTIFY_OPEN)
 			continue;
 		if (msg->em_process.ep_pid == ex)
@@ -257,7 +256,7 @@ wait_auth_exec(int fd, pid_t pid, uint32_t result, uint32_t *flags)
 	oes_response_t resp;
 
 	for (;;) {
-		if (test_wait_event(fd, msg, EVENT_DEADLINE_MS) != 0)
+		if (test_wait_event(fd, msg, OES_TEST_DEADLINE_MS) != 0)
 			return (false);
 		if (msg->em_event != OES_EVENT_AUTH_EXEC ||
 		    msg->em_process.ep_pid != pid)
@@ -427,7 +426,7 @@ ATF_TC_BODY(core_exec_no_event, tc)
 	e = (struct exec_spec){ .path = helper, .excluded = false, .token = -1 };
 	ctl = spawn(exec_child, &e);
 	for (;;) {
-		ATF_REQUIRE(test_wait_event(fd, msg, EVENT_DEADLINE_MS) == 0);
+		ATF_REQUIRE(test_wait_event(fd, msg, OES_TEST_DEADLINE_MS) == 0);
 		if (msg->em_event != OES_EVENT_AUTH_EXEC)
 			continue;
 		ATF_CHECK_MSG(msg->em_process.ep_pid != core,
