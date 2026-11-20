@@ -1209,16 +1209,23 @@ ATF_TC_CLEANUP(wake_revoke_quota, tc)
 
 /*
  * The hand-off of a slot's wakeup (pw_pass, DQ_WAKE_PASS): a slot waiter
- * woken for a slot it cannot take, because its requester's quota filled
- * while it slept, passes the wakeup to the next slot waiter.  Process P
- * has two threads waiting in "dqfull" (a requester quota of 1); W waits
- * there too, at the lowest timesharing priority (nice 20, which needs no
- * privilege; the first run asked rtprio(2) for the idle class and W never
- * reached its wait), so each wakeup_one picks P's threads first.
- * The first slot freed goes to one P thread; the second wakes the other,
- * which finds room but sleeps on the quota and must pass the wakeup on, or
- * W sleeps on with a slot free.
+ * woken for a slot it cannot take, because a quota filled while it slept,
+ * passes the wakeup to the next slot waiter.  The quota is the object's
+ * in-flight bound (1): the requester bound cannot tell the test's children
+ * apart, since every process of one capability identity is one requester
+ * (dc_nonce; the first version of these cases used it, and W waited in
+ * "dqreq" behind the filler).  F's read of Z holds the one slot, unread;
+ * A and B read X; W reads Y, at the lowest timesharing priority (nice 20,
+ * no privilege needed), so each wakeup_one picks A or B first.  The first
+ * slot freed goes to one of them; the second wakes the other, which finds
+ * room but sleeps on X's bound and must pass the wakeup on, or W sleeps on
+ * with a slot free.
  */
+struct pass_ctx {
+	struct one_read_arg	 af, ax, aw;
+	struct dqt_child	 chf, cha, chb, chw;
+};
+
 static void
 child_low_pread(void *arg, void *result)
 {
@@ -1229,43 +1236,52 @@ child_low_pread(void *arg, void *result)
 }
 
 static void
-pass_setup(struct dqt_ctl *c, int oracle, struct dqt_child *chf,
-    struct dqt_child *chp, struct dqt_child *chw, struct one_read_arg *a,
-    struct wake_req_arg *ra)
+pass_wait_full(struct dqt_child *ch, const char *who)
 {
-	struct dqt_object *o;
+	int st;
 
-	dqt_sysctl_save_set_uint(requester_sysctl, 1);
-	o = wake_object(c, oracle);
+	if (dqt_wait_wmesg(ch->pid, "dqfull", DQT_WAIT_MS))
+		return;
+	if (waitpid(ch->pid, &st, WNOHANG) == ch->pid)
+		atf_tc_fail("%s exited (status %#x) before its wait", who, st);
+	atf_tc_fail("%s is not waiting in \"dqfull\"", who);
+}
+
+static void
+pass_setup(struct dqt_ctl *c, int oracle, struct pass_ctx *x)
+{
+	struct dqt_object *ox, *oy, *oz;
+
+	dqt_sysctl_save_set_uint(inflight_sysctl, 1);
+	ox = wake_object(c, oracle);
+	oy = wake_object(c, oracle);
+	oz = wake_object(c, oracle);
 	ATF_REQUIRE_EQ(0, dq_set_queue_depth(c->q, 1));
 	dqt_pause(c);
-	memset(a, 0, sizeof(*a));
-	a->fd = o->fd;
-	a->len = 16;
-	dqt_spawn(chf, child_one_pread, a);	/* the slot, unread */
+	memset(x, 0, sizeof(*x));
+	x->af.fd = oz->fd;
+	x->af.len = 16;
+	x->ax = x->aw = x->af;
+	x->ax.fd = ox->fd;
+	x->aw.fd = oy->fd;
+	dqt_spawn(&x->chf, child_one_pread, &x->af);	/* the slot, unread */
 	ATF_REQUIRE(dqt_wait_stats(c, posted_or_dropped_is, 1, DQT_WAIT_MS));
-	dqt_spawn(chw, child_low_pread, a);
-	if (!dqt_wait_wmesg(chw->pid, "dqfull", DQT_WAIT_MS)) {
-		int st;
-
-		if (waitpid(chw->pid, &st, WNOHANG) == chw->pid)
-			atf_tc_fail("W exited (status %#x) before its wait", st);
-		atf_tc_fail("W is not waiting in \"dqfull\"");
-	}
-	ra->fd[0] = ra->fd[1] = o->fd;
-	dqt_spawn(chp, child_two_reads, ra);
-	ATF_REQUIRE(full_waits_reach(c, 3, DQT_WAIT_MS));
+	dqt_spawn(&x->chw, child_low_pread, &x->aw);
+	pass_wait_full(&x->chw, "W");
+	dqt_spawn(&x->cha, child_one_pread, &x->ax);
+	pass_wait_full(&x->cha, "A");
+	dqt_spawn(&x->chb, child_one_pread, &x->ax);
+	pass_wait_full(&x->chb, "B");
 	dqt_hold(c, true);
 }
 
 static void
-pass_cleanup(struct dqt_ctl *c, struct dqt_child *chf, struct dqt_child *chp,
-    struct dqt_child *chw)
+pass_cleanup(struct dqt_ctl *c, struct pass_ctx *x)
 {
-	struct dqt_child *ch[3] = { chf, chp, chw };
+	struct dqt_child *ch[4] = { &x->chf, &x->cha, &x->chb, &x->chw };
 	int i, status;
 
-	for (i = 0; i < 3; i++) {
+	for (i = 0; i < 4; i++) {
 		if (ch[i]->pid == -1)
 			continue;
 		(void)kill(ch[i]->pid, SIGKILL);
@@ -1280,36 +1296,35 @@ ATF_TC_WITH_CLEANUP(full_pass_wakes);
 ATF_TC_HEAD(full_pass_wakes, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "a slot waiter woken for a slot its "
-	    "requester's quota keeps it from taking passes the wakeup on: the "
-	    "next slot waiter posts");
+	    "object's in-flight bound keeps it from taking passes the wakeup "
+	    "on: the next slot waiter posts");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(full_pass_wakes, tc)
 {
 	struct dqt_ctl c;
-	struct one_read_arg a;
-	struct wake_req_arg ra;
-	struct dqt_child chf, chp, chw;
+	struct pass_ctx x;
 	int oracle;
 
 	oracle = wake_setup(&c, 79);
-	pass_setup(&c, oracle, &chf, &chp, &chw, &a, &ra);
+	pass_setup(&c, oracle, &x);
 	dqt_resume(&c);
 	/*
-	 * The filler, one of P's reads, and W's: held.  The case's timeout
+	 * F's, one of A's and B's, and W's reads: held.  The case's timeout
 	 * is the hang detector.
 	 */
 	ATF_REQUIRE(dqt_wait_held(&c, 3, INT_MAX));
-	ATF_CHECK(dqt_wait_wmesg(chp.pid, "dqreq", 0));
-	pass_cleanup(&c, &chf, &chp, &chw);
+	ATF_CHECK(dqt_wait_wmesg(x.cha.pid, DQT_WMESG_INFLIGHT, 0) ||
+	    dqt_wait_wmesg(x.chb.pid, DQT_WMESG_INFLIGHT, 0));
+	pass_cleanup(&c, &x);
 	(void)close(oracle);
-	ATF_REQUIRE(dqt_sysctl_restore(requester_sysctl));
+	ATF_REQUIRE(dqt_sysctl_restore(inflight_sysctl));
 }
 ATF_TC_CLEANUP(full_pass_wakes, tc)
 {
 
 	(void)dqt_sysctl_restore(DROP_WAKEUP);
-	(void)dqt_sysctl_restore(requester_sysctl);
+	(void)dqt_sysctl_restore(inflight_sysctl);
 }
 
 ATF_TC_WITH_CLEANUP(wake_pass);
@@ -1323,31 +1338,29 @@ ATF_TC_HEAD(wake_pass, tc)
 ATF_TC_BODY(wake_pass, tc)
 {
 	struct dqt_ctl c;
-	struct one_read_arg a;
-	struct wake_req_arg ra;
-	struct dqt_child chf, chp, chw;
+	struct pass_ctx x;
 	uint64_t before;
 	int oracle;
 
 	oracle = wake_setup(&c, 80);
-	pass_setup(&c, oracle, &chf, &chp, &chw, &a, &ra);
+	pass_setup(&c, oracle, &x);
 	before = wake_drop(WAKE_PASS, WAKE_PASS);
 	dqt_resume(&c);
 	dqt_drop_wait(WAKE_PASS, before + 1);
 	ATF_CHECK_MSG(!dqt_wait_held(&c, 3, 0), "W posted with the passed-on "
 	    "wakeup dropped");
-	wake_dropped_holds(&chw, "dqfull", WAKE_PASS, before, 1,
+	wake_dropped_holds(&x.chw, "dqfull", WAKE_PASS, before, 1,
 	    "the passed-on wakeup");
-	chw.pid = -1;
-	pass_cleanup(&c, &chf, &chp, &chw);
+	x.chw.pid = -1;
+	pass_cleanup(&c, &x);
 	(void)close(oracle);
-	ATF_REQUIRE(dqt_sysctl_restore(requester_sysctl));
+	ATF_REQUIRE(dqt_sysctl_restore(inflight_sysctl));
 }
 ATF_TC_CLEANUP(wake_pass, tc)
 {
 
 	(void)dqt_sysctl_restore(DROP_WAKEUP);
-	(void)dqt_sysctl_restore(requester_sysctl);
+	(void)dqt_sysctl_restore(inflight_sysctl);
 }
 
 /* Read exactly one record (a READ) off a manual queue. */
