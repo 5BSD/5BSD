@@ -88,12 +88,14 @@ kernel-test-option-check: .PHONY
 	@${KERNEL_TEST_OPTION_CHECK} -o ${OBJTOP:Q}/sys/${_kernconf}
 .endfor
 
-# Read-only: every kernel in the object tree carries the mandatory options.
+# Read-only: the source tree's kern_mandatory.c and DEFAULTS agree with the
+# ledger, and every kernel in the object tree carries the mandatory options.
 kernel-mandatory-option-check: .PHONY
 .if empty(KERNCONF)
 	@echo "ERROR: kernel-mandatory-option-check: KERNCONF names no kernel" >&2; \
 	    false
 .endif
+	@${KERNEL_MANDATORY_OPTION_CHECK} -S ${.CURDIR:Q}
 .for _kernconf in ${KERNCONF}
 	@${KERNEL_MANDATORY_OPTION_CHECK} -o ${OBJTOP:Q}/sys/${_kernconf}
 .endfor
