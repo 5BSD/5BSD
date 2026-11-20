@@ -1217,10 +1217,14 @@ ATF_TC_CLEANUP(wake_revoke_quota, tc)
  * "dqreq" behind the filler).  F's read of Z holds the one slot, unread;
  * A and B read X; W reads Y in the idle scheduling class (rtprio(2)), so
  * each wakeup_one picks A or B first: sleepq_signal wakes the best
- * td_priority, and every idle-class priority is below every timesharing
- * one.  nice 20 was not enough (r-r8t): a sleeping timesharing thread's
- * priority comes from its interactivity score, so W could be picked for
- * the first freed slot and post without the hand-off.  The first
+ * td_priority, the oldest sleeper on a tie.  A timesharing thread that
+ * sleeps in the kernel is lifted to PRI_MIN_BATCH by ULE's static_boost
+ * (sched_ule_sleep), whatever its nice or interactivity score, so a
+ * nice-20 W tied with A and B and, having slept first, won (r-r8t: W
+ * posted on the first freed slot, without the hand-off).
+ * sched_ule_sleep returns early for a thread outside the timesharing
+ * class, so an idle-class W keeps its idle priority while it sleeps,
+ * below every boosted timesharing thread.  The first
  * slot freed goes to one of them; the second wakes the other, which finds
  * room but sleeps on X's bound and must pass the wakeup on, or W sleeps on
  * with a slot free.
