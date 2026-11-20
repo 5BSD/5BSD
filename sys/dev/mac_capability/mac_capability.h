@@ -162,6 +162,13 @@ struct mac_capability_ops {
 		    void *reply, size_t *replylenp,
 		    struct file **reply_fds, int *reply_nfdsp,
 		    void *arg);
+	/*
+	 * Optional: service destroy is about to wait for something outside it
+	 * (admission, in-flight work, another thread's co_revoke, references).
+	 * Called from the destroying thread, possibly with the registry lock
+	 * held: it must not sleep or enter the capability KPI.  Lets a test know destroy is held up without timing.
+	 */
+	void	(*co_destroy_wait)(void *arg);
 };
 
 /*

@@ -176,6 +176,8 @@ struct mac_capability_instance {
 };
 
 #define	MAC_CAPABILITY_SVCF_DESTROYING	0x0001
+/* Destroyed and still pinned by instances: on mac_capability_dead_services. */
+#define	MAC_CAPABILITY_SVCF_DEAD_LISTED	0x0002
 
 /*
  * Registered service — internal layout.
@@ -206,6 +208,7 @@ struct mac_capability_service {
 extern struct sx mac_capability_registry_lock;
 LIST_HEAD(mac_capability_service_list, mac_capability_service);
 extern struct mac_capability_service_list mac_capability_services;
+extern struct mac_capability_service_list mac_capability_dead_services;
 extern uma_zone_t mac_capability_instance_zone;
 extern uma_zone_t mac_capability_msg_zone;
 extern uma_zone_t mac_capability_msg_small_zone;
