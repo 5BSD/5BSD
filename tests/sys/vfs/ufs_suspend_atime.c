@@ -26,8 +26,17 @@
  * walk is given work ahead of the read files: a holder process keeps many
  * files made before them open and reads them during the suspension, and
  * the walk locks and converts each of those (they stay in use) before it
- * reaches the read files, whose closes have finished by then.  Each case
- * makes its own md(4)-backed UFS file system.
+ * reaches the read files, whose closes have usually finished by then.
+ * Each case makes its own md(4)-backed UFS file system.
+ *
+ * That is a race, not an ordering: nothing holds the walk until the
+ * closes finish.  NFILLER is a margin, not a bound, and a close that
+ * finishes after the walk passed its file leaves the defect unexercised,
+ * so on a kernel without the fix a case can pass.  repeated_suspensions
+ * runs ten rounds to make that less likely; it does not make it
+ * impossible.  A deterministic case needs a test-kernel hook that holds
+ * the walk until the readers have exited
+ * (5bsd-issues 2026-11-20-ufs-suspend-atime-pins-race-the-walk.md).
  */
 
 #include <sys/param.h>
