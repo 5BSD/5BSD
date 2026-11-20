@@ -24,7 +24,9 @@
 #include <sys/vnode.h>
 #include <sys/namei.h>
 #include <sys/fcntl.h>
+#include <sys/capsicum.h>
 #include <sys/file.h>
+#include <sys/filedesc.h>
 #include <sys/mount.h>
 #include <sys/tty.h>
 #include <sys/resourcevar.h>
@@ -520,7 +522,8 @@ oes_caller_can_answer(struct thread *td, struct file *fp)
 	can = false;
 	fdp = td->td_proc->p_fd;
 	FILEDESC_SLOCK(fdp);
-	FILEDESC_FOREACH_FDE(fdp, i, fde) {
+	for (int i = 0; i < fdp->fd_nfiles; i++) {
+		fde = &fdp->fd_ofiles[i];
 		if (fde->fde_file == fp &&
 		    cap_rights_contains(cap_rights_fde_inline(fde), &rights)) {
 			can = true;
