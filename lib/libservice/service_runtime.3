@@ -154,6 +154,10 @@ Switchboard bounds an on-demand activation by
 and then answers
 .Er ETIMEDOUT
 itself.
+Activations nest: a provider whose own start waits for another provider's
+activation can take longer than that bound to start, and a client activating
+it then receives
+.Er ETIMEDOUT .
 The lookup fails with
 .Er ECONNRESET
 if the switchboard serving it exits before answering.
@@ -165,7 +169,7 @@ on a pipe: if its handler was installed with
 .Dv SA_RESTART
 the wait for the answer restarts, otherwise the lookup fails with
 .Er EINTR .
-The two short waits for room in a full channel queue (while switchboard is
+The two waits for room in a full channel queue (while switchboard is
 restarting or under a burst of registrations) fail with
 .Er EINTR
 on any signal, as
