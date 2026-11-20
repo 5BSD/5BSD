@@ -1092,6 +1092,187 @@ private_control_route_cleanup()
 }
 
 # ===================================================================
+# Ambient lookups wait for switchboard's answer (2026-11-20 decision)
+# ===================================================================
+#
+# A program run from a shell resolves a name over its private lookup channel
+# (service_probe through the private Capsule's route).  The lookup has no
+# time limit of its own: it ends with switchboard's answer, which comes
+# within switchboard's activation bound, or with ECONNRESET when the
+# switchboard serving it exits.  Each case keeps the activation pending for
+# longer than the former 2 s client bound, which made all three end in
+# ETIMEDOUT before.
+
+# Start service_probe for <name> in the background, output in <file>.
+ambient_probe_start()
+{
+	local name="$1" out="$2"
+
+	"$capd_lookup_exec_bin" -s "$CAPD_CAPSULE_SOCKET" \
+	    "$(atf_get_srcdir)/service_probe" "$name" >"$out" 2>&1 &
+	ambient_probe_pid=$!
+}
+
+# Wait for the background probe and check its one line against <pattern>.
+ambient_probe_expect()
+{
+	local pattern="$1" out="$2"
+
+	wait "$ambient_probe_pid" || true
+	ambient_probe_pid=
+	if ! grep -Eq "$pattern" "$out"; then
+		cat "$out"
+		cat "$logfile" 2>/dev/null
+		atf_fail "lookup answered $(cat "$out"), want $pattern"
+	fi
+}
+
+# A boot-started provider that claims <name> and fails its activation with
+# ECANCELED once the test creates cancel-provider.trigger.
+install_cancel_provider()
+{
+	make_svc_bin system org.test.cancel.svc \
+	    "activation { boot = true; ipc = [\"org.test.cancel.svc\"]; }
+arguments = [\"cancel-activation\", \"org.test.cancel.svc\",
+    \"$(pwd)/cancel-provider.ready\", \"$(pwd)/cancel-provider.trigger\",
+    \"$(pwd)/cancel-provider.result\"];" \
+	    "$capd_service_fixture" >/dev/null
+}
+
+atf_test_case ambient_lookup_waits_for_slow_activation cleanup
+ambient_lookup_waits_for_slow_activation_head()
+{
+	atf_set "descr" \
+	    "an ambient lookup waits out an on-demand activation longer than 2 s"
+	atf_set "require.user" "root"
+	atf_set "timeout" "60"
+	require_capsule_stack_kmods
+}
+ambient_lookup_waits_for_slow_activation_body()
+{
+	capd_require_unit_issuer
+	find_capd_service_fixture
+	prepare_paths
+	capd_find_lookup_exec
+	# Launched by the lookup; ready 4 s later, inside switchboard's bound.
+	make_svc_bin system org.test.slow.svc \
+	    "activation { ipc = [\"org.test.slow.svc\"]; }
+arguments = [\"delayed-provider\", \"org.test.slow.svc\", \"4000\",
+    \"$(pwd)/slow-provider.started\", \"$(pwd)/slow-provider.result\"];" \
+	    "$capd_service_fixture" >/dev/null
+	write_config
+	start_stack
+	ambient_probe_start org.test.slow.svc probe.out
+	ambient_probe_expect '^OK org\.test\.slow\.svc fd=' probe.out
+	wait_for_file slow-provider.result ||
+	    atf_fail "provider did not accept the session"
+	assert_stack_alive
+}
+ambient_lookup_waits_for_slow_activation_cleanup()
+{
+	cleanup_common
+	rm -f probe.out slow-provider.started slow-provider.result
+}
+
+atf_test_case ambient_lookup_returns_activation_refusal cleanup
+ambient_lookup_returns_activation_refusal_head()
+{
+	atf_set "descr" \
+	    "an activation that fails after more than 2 s is answered with its own error"
+	atf_set "require.user" "root"
+	atf_set "timeout" "60"
+	require_capsule_stack_kmods
+}
+ambient_lookup_returns_activation_refusal_body()
+{
+	capd_require_unit_issuer
+	find_capd_service_fixture
+	prepare_paths
+	capd_find_lookup_exec
+	install_cancel_provider
+	write_config
+	start_stack
+	wait_for_file cancel-provider.ready ||
+	    atf_fail "provider did not complete check-in"
+	ambient_probe_start org.test.cancel.svc probe.out
+	wait_for_log "activation of endpoint 'org.test.cancel.svc' requested" ||
+	    atf_fail "lookup did not trigger endpoint activation"
+	# Past the former client bound: the lookup is still waiting.
+	sleep 3
+	touch cancel-provider.trigger
+	# 85: ECANCELED, the provider's own refusal.
+	ambient_probe_expect \
+	    "^FAIL org\.test\.cancel\.svc errno=85 " \
+	    probe.out
+	assert_stack_alive
+}
+ambient_lookup_returns_activation_refusal_cleanup()
+{
+	cleanup_common
+	rm -f probe.out cancel-provider.ready cancel-provider.trigger \
+	    cancel-provider.result
+}
+
+atf_test_case ambient_lookup_switchboard_death_resets cleanup
+ambient_lookup_switchboard_death_resets_head()
+{
+	atf_set "descr" \
+	    "a lookup whose switchboard exits fails with ECONNRESET; the route still works"
+	atf_set "require.user" "root"
+	atf_set "timeout" "90"
+	require_capsule_stack_kmods
+}
+ambient_lookup_switchboard_death_resets_body()
+{
+	local i switchboard_pid
+
+	capd_require_unit_issuer
+	find_capd_service_fixture
+	prepare_paths
+	capd_find_lookup_exec
+	install_cancel_provider
+	# Only this case kills switchboard: lift the shield's ambient SIGKILL
+	# denial for it, as supervisor_death_is_observable does.
+	export SWITCHBOARD_TEST_SHIELD_NO_SIGKILL=1
+	write_config
+	start_stack
+	wait_for_file cancel-provider.ready ||
+	    atf_fail "provider did not complete check-in"
+	switchboard_pid=$(sed -n \
+	    's/.*bootstrap: started switchboard pid \([0-9][0-9]*\).*/\1/p' \
+	    "$logfile" | tail -n 1)
+	case "$switchboard_pid" in
+	''|*[!0-9]*) atf_fail "could not identify the switchboard PID" ;;
+	esac
+	ambient_probe_start org.test.cancel.svc probe.out
+	wait_for_log "activation of endpoint 'org.test.cancel.svc' requested" ||
+	    atf_fail "lookup did not trigger endpoint activation"
+	sleep 3
+	kill -KILL "$switchboard_pid" || atf_fail "could not kill switchboard"
+	# 54: ECONNRESET.
+	ambient_probe_expect \
+	    "^FAIL org\.test\.cancel\.svc errno=54 " \
+	    probe.out
+	# The Capsule-held route survives: once Capsule has started the next
+	# switchboard, it answers a new lookup.
+	i=0
+	while [ "$(grep -c 'bootstrap: started switchboard pid' "$logfile")" \
+	    -lt 2 ] && [ "$i" -lt 150 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	[ "$i" -lt 150 ] || atf_fail "Capsule did not restart switchboard"
+	ambient_probe_start org.test.route.absent probe2.out
+	ambient_probe_expect '^FAIL org\.test\.route\.absent errno=2 ' probe2.out
+}
+ambient_lookup_switchboard_death_resets_cleanup()
+{
+	cleanup_common
+	rm -f probe.out probe2.out cancel-provider.ready \
+	    cancel-provider.trigger cancel-provider.result
+}
+
+# ===================================================================
 # Liveness watchdog: a heartbeating unit is left running
 # ===================================================================
 
@@ -1264,6 +1445,9 @@ atf_init_test_cases()
 	atf_add_test_case svc_withdraw_cancels_activation
 	atf_add_test_case sctl_rejects_malformed_requests
 	atf_add_test_case private_control_route
+	atf_add_test_case ambient_lookup_waits_for_slow_activation
+	atf_add_test_case ambient_lookup_returns_activation_refusal
+	atf_add_test_case ambient_lookup_switchboard_death_resets
 	atf_add_test_case capmode_is_authoritative_readiness
 
 	# Provider-driven idle shutdown
