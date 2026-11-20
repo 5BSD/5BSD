@@ -3655,8 +3655,10 @@ proc_wkilled(struct proc *p)
 {
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
-	if ((p->p_flag & P_WKILLED) == 0)
+	if ((p->p_flag & P_WKILLED) == 0) {
 		p->p_flag |= P_WKILLED;
+		proc_dying_notify(p);
+	}
 }
 
 /*

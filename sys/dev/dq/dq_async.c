@@ -41,6 +41,7 @@
 #include <sys/sdt.h>
 #include <sys/taskqueue.h>
 #include <sys/tree.h>
+#include <sys/vmmeter.h>
 
 #include <vm/vm.h>
 #include <vm/vm_param.h>
@@ -581,8 +582,17 @@ dq_async_wait(struct dq_object *o, sbintime_t deadline, bool all)
 	if (!all) {
 		q = o->o_queue;
 		DQ_LOCK(q);
-		if (o->o_noroom_mem) {
-			/* Memory: the page daemon's wakeup (design W5). */
+		/*
+		 * Memory (design W5).  In a page shortage the page daemon's
+		 * wakeup announces it: vm_wait, which has no timeout (the
+		 * deadline is looked at when it returns; the page daemon
+		 * always makes progress).  Out of page shortage vm_wait
+		 * would return at once and the flush would spin: the
+		 * allocation failed for kernel address space or an arena,
+		 * which a completion or a freed slot gives back, so wait
+		 * for a room event, as for the bounds.
+		 */
+		if (o->o_noroom_mem && vm_page_count_min()) {
 			DQ_UNLOCK(q);
 			vm_wait(NULL);
 			return (sbinuptime() < deadline);
@@ -1036,12 +1046,12 @@ dq_object_destroy_park(struct dq_object *o, uint64_t roomgen)
 }
 
 /*
- * A dirty page the flush skipped because someone else holds it exclusive
- * busy (a page-in, the page daemon for a moment): sleep until it is
- * released, which needs nothing of dq_taskq, then pass again.  A shared-
- * busy page is a write-back in progress, whose completion kicks the task
- * (o_async).  The object is write-locked; true when this slept, with the
- * object unlocked.
+ * A valid page the flush skipped because it was busy (a page-in, the page
+ * daemon starting a write-back, a moment's use): sleep until it is
+ * released, which needs nothing of dq_taskq, then pass again.  dq's own
+ * write-backs are not among them: the task runs this only with o_async 0.
+ * The object is write-locked; true when this slept, with the object
+ * unlocked; false, the lock kept, when no page is busy any more.
  */
 static bool
 dq_object_destroy_wait_busy(vm_object_t obj)
@@ -1053,9 +1063,8 @@ dq_object_destroy_wait_busy(vm_object_t obj)
 	vm_page_iter_init(&pages, obj);
 	for (p = vm_radix_iter_lookup_ge(&pages, 0); p != NULL;
 	    p = vm_radix_iter_step(&pages)) {
-		if (vm_page_xbusied(p) && p->dirty != 0)
-			return (vm_page_busy_sleep(p, "dqdflb",
-			    VM_ALLOC_IGN_SBUSY));
+		if (vm_page_all_valid(p) && vm_page_busied(p))
+			return (vm_page_busy_sleep(p, "dqdflb", 0));
 	}
 	return (false);
 }
@@ -1108,8 +1117,16 @@ dq_object_destroy_task(void *arg, int pending __unused)
 	}
 	if (flush && (again || skipped)) {
 		DQO_UNLOCK(o);
-		if (!again && skipped && dq_object_destroy_wait_busy(obj)) {
-			/* Slept on a released page: look again at once. */
+		if (!again && skipped) {
+			/*
+			 * Only skipped pages, no AGAIN: they were busy.  Sleep
+			 * on one still busy, or, when its release came between
+			 * the flush and this look (none is busy now), pass
+			 * again at once: a release is no room event, so
+			 * parking would drop the page at the deadline.
+			 */
+			if (!dq_object_destroy_wait_busy(obj))
+				VM_OBJECT_WUNLOCK(obj);
 			DQO_LOCK(o);
 			o->o_destroy_state = DQ_DESTROY_AGAIN;
 			DQO_UNLOCK(o);

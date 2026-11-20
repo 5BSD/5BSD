@@ -620,7 +620,7 @@ dq_serve_ident_sync(int q, const struct dq_event *ev,
  */
 
 /* libdq.c: whether the kernel takes post-operation blocks. */
-int	_dq_postop_probe(void);
+int	_dq_postop_probe(void) __hidden;
 
 
 /*

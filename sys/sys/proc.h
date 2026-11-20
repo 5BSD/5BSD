@@ -1267,6 +1267,8 @@ struct proc *proc_realparent(struct proc *child);
 void	proc_reap(struct thread *td, struct proc *p, int *status, int options,
 	    int zombieref);
 void	proc_reparent(struct proc *child, struct proc *newparent, bool set_oppid);
+extern void (*proc_dying_hook)(struct proc *p);
+void	proc_dying_notify(struct proc *p);
 void	proc_set_p2_wexit(struct proc *p);
 void	proc_set_traced(struct proc *p, bool stop);
 void	proc_wkilled(struct proc *p);

@@ -846,16 +846,46 @@ also one that then fails, an
 .Xr rfork 2
 without
 .Dv RFPROC ,
+a
+.Xr fork 2
+while the process group is being killed,
 .Xr jail_attach 2 )
-ends a data or attribute wait with the operation abandoned (INTERRUPT to
-the controller) and the system call restarted once the single-threading
-is over, as a
+does not take the process down, and what the wait does depends on how far
+the operation got.
+An operation the controller has not read yet, a wait for room before it
+is posted, and an operation that only reads
+.Po
+.Dv DQ_OP_READ ,
+.Dv DQ_OP_GETATTR ,
+.Dv DQ_OP_READDIR ,
+.Dv DQ_OP_FSYNC ,
+.Dv DQ_OP_LOCK ,
+and a lookup that creates nothing
+.Pc
+are given up (INTERRUPT to the controller for one it read) and the system
+call is restarted once the single-threading is over, as a
 .Xr fusefs 4
-wait does: the program sees no error, but the controller may have done
-the operation once already (a disk read in progress would hold the exec;
-a listed difference).
-A page fault cannot be restarted: it waits, without catching, for its
-answer or the page deadline.
+wait does; the program sees no error.
+An operation that changes something
+.Po
+a write, an attribute change, an allocation, a hole punch, an ioctl, a
+lookup that creates, removes or renames
+.Pc
+that the controller has read is not restarted, since it would be applied
+twice: the wait goes on, without catching signals, until the answer, the
+deadline, or the process starting to die
+.Po
+.Dv SIGKILL ,
+an exit, a core dump
+.Pc ,
+and the single-threading thread waits for it as for a disk.
+A page fault is never restarted (the VM system has no retry for a page a
+pager could not read): it waits the same way, bounded by the page
+deadline.
+Both waits stay in this form when the single-threading ends first (the
+.Xr execve 2
+failed): the call returns only with the answer, the deadline or the
+process's death.
 The wait is event-driven, with no polling: it sleeps with every signal
 but
 .Dv SIGKILL

@@ -446,7 +446,6 @@ ATF_TC_BODY(shrink_fails_pending, tc)
  */
 #define	LONG_DEADLINE_MS	600000	/* past every case timeout here */
 #define	DROP_WAKEUP		"debug.dq.drop_wakeup"
-#define	WAKEUPS_DROPPED		"debug.dq.wakeups_dropped"
 #define	WAKE_ASYNC_ROOM		0x0100	/* DQ_WAKE_* of dq_var.h */
 #define	WAKE_DESTROY		0x0200
 
@@ -608,18 +607,6 @@ ATF_TC_BODY(msync_revoke_room, tc)
 	dqt_fixture_fini(&f);
 }
 
-static u_long
-wakeups_dropped(void)
-{
-	u_long n;
-	size_t len;
-
-	len = sizeof(n);
-	ATF_REQUIRE_MSG(sysctlbyname(WAKEUPS_DROPPED, &n, &len, NULL, 0) == 0,
-	    "%s: %s", WAKEUPS_DROPPED, strerror(errno));
-	return (n);
-}
-
 ATF_TC_WITH_CLEANUP(wake_async_room);
 ATF_TC_HEAD(wake_async_room, tc)
 {
@@ -635,21 +622,30 @@ ATF_TC_BODY(wake_async_room, tc)
 	struct dqt_fixture f;
 	struct dqt_child ch, chf;
 	struct fill_res fr;
-	u_long before;
+	uint64_t before, left;
 	int fillfd;
 
 	dqt_require_fault_knob(DROP_WAKEUP);
 	room_setup(&f, 14, &a, &ch, &chf, &fillfd);
-	before = wakeups_dropped();
+	before = dqt_drop_count(WAKE_ASYNC_ROOM);
 	dqt_sysctl_save_set_uint(DROP_WAKEUP, WAKE_ASYNC_ROOM);
 	dqt_resume(&f.c);
-	/* The slot was read off (the dropped room event) before the answer. */
 	dqt_collect(&chf, &fr, sizeof(fr));
 	ATF_CHECK_EQ(16, fr.rv);
-	ATF_CHECK(wakeups_dropped() > before);
-	ATF_CHECK_MSG(dqt_wait_wmesg(ch.pid, "dqroom", 0), "msync left "
-	    "\"dqroom\" with the room event's wakeup dropped: something polls "
-	    "or another wakeup reached it");
+	/* The slot read off: its room event, dropped. */
+	dqt_drop_wait(WAKE_ASYNC_ROOM, before + 1);
+	/*
+	 * One look: msync still waits for room, and its only timeout is the
+	 * page deadline (LONG_DEADLINE_MS, far past this case), not a
+	 * re-check timer.
+	 */
+	left = 0;
+	ATF_CHECK_MSG(dqt_sleep_left(ch.pid, "dqroom", &left), "msync left "
+	    "\"dqroom\" with the room event's wakeup dropped: another wakeup "
+	    "reached it");
+	ATF_CHECK_MSG(left > LONG_DEADLINE_MS / 2, "msync's sleep times out "
+	    "in %ju ms, not at the page deadline: a timer could end it",
+	    (uintmax_t)left);
 	ATF_REQUIRE(dqt_sysctl_restore(DROP_WAKEUP));
 	/* The release: a depth raise is a room event too. */
 	ATF_REQUIRE_EQ(0, dq_set_queue_depth(f.c.q, 2));
@@ -737,7 +733,7 @@ ATF_TC_BODY(wake_destroy, tc)
 	struct dirty_res r;
 	struct dq_stats st;
 	struct dqt_held h;
-	u_long before;
+	uint64_t before;
 	int status;
 
 	dqt_require_fault_knob(DROP_WAKEUP);
@@ -757,16 +753,14 @@ ATF_TC_BODY(wake_destroy, tc)
 	h = f.c.held[0];
 	dqt_unlock(&f.c);
 	ATF_REQUIRE_EQ(DQ_OP_WRITE_ASYNC, h.op);
-	before = wakeups_dropped();
+	before = dqt_drop_count(WAKE_DESTROY);
 	dqt_sysctl_save_set_uint(DROP_WAKEUP, WAKE_DESTROY);
 	ATF_REQUIRE_EQ(0, dq_reply_write(f.c.q, h.id, h.len, h.offset));
 	/*
-	 * The completion runs on a task: until it dropped its kick, then
-	 * one look that the object is still there (live, no CLOSE).  The
-	 * case's timeout is the hang detector.
+	 * The completion runs on a task: wait for its kick to be dropped,
+	 * then one look that the object is still there (live, no CLOSE).
 	 */
-	while (wakeups_dropped() <= before)
-		dqt_msleep(1);
+	dqt_drop_wait(WAKE_DESTROY, before + 1);
 	dqt_stats(&f.c, &st);
 	ATF_CHECK_EQ_MSG(1, st.ds_objects_live, "the object went with the "
 	    "completion's kick dropped: something polls or another kick "

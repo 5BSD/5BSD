@@ -488,6 +488,7 @@ dq_init(void)
 		dq_pager_unregister();
 		return (error);
 	}
+	dq_mutwait_init();	/* the dying-process wakeup (owner 11-20) */
 	dq_resolve_init();	/* the resolution vector (D125), last */
 	dq_active = true;
 	return (0);

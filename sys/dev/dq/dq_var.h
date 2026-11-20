@@ -217,6 +217,15 @@ enum dq_event_state {
 	DQ_EV_FAILED,		/* revoke, close, deadline or drop */
 };
 
+/* A size a write's or an allocation's reply proved (o_proofs). */
+struct dq_sizeproof {
+	TAILQ_ENTRY(dq_sizeproof) sp_link;
+	uint64_t		 sp_gen;	/* the reply's generation */
+	uint64_t		 sp_end;	/* the end it proved */
+};
+
+struct dq_mutwait;
+
 struct dq_event_k {
 	TAILQ_ENTRY(dq_event_k)	 ev_link;	/* q_pending */
 	RB_ENTRY(dq_event_k)	 ev_tree;	/* q_inflight */
@@ -230,6 +239,14 @@ struct dq_event_k {
 						   the reference */
 	bool			 ev_lock;	/* a LOCK: counted in o_locks */
 	struct dq_async		*ev_async;	/* READ_ASYNC/WRITE_ASYNC */
+	bool			 ev_mutates;	/* the controller changes state
+						   applying it (dq_op_mutates):
+						   once delivered, not given up
+						   at a user-boundary
+						   single-threading */
+	struct dq_mutwait	*ev_mutwait;	/* q_mtx: its waiter's wait for
+						   the answer while the process
+						   single-threads */
 	bool			 ev_pagein;	/* a pager READ (DQ_POST_FAULT):
 						   a shrink may fail it */
 	sbintime_t		 ev_deadline;	/* 0 = none */
@@ -366,15 +383,17 @@ struct dq_object {
 #define	DQ_GEN_MTIME		2
 #define	DQ_GEN_CTIME		3
 #define	DQ_GEN_ATIME		4
-#define	DQ_GEN_N		5
+#define	DQ_GEN_ATTR		5	/* mode, uid, gid, flags, nlink,
+					   birthtime */
+#define	DQ_GEN_N		6
 	uint64_t		 o_gen[DQ_GEN_N];
 	/*
-	 * o_mtx: the largest size a write or an allocation proved, and its
-	 * reply's generation (dq_object_size_proven): an older reply's size
-	 * cannot go below it.
+	 * o_mtx: the sizes writes and allocations proved (dq_object_size_
+	 * proven) that an older reply's size cannot go below: the proofs no
+	 * other proof dominates, generation rising and end falling, none at
+	 * or below o_gen[DQ_GEN_SIZE] (no reply that old is applied).
 	 */
-	uint64_t		 o_floor;
-	uint64_t		 o_floor_gen;
+	TAILQ_HEAD(, dq_sizeproof) o_proofs;
 	struct dq_policy	 o_policy;
 	struct rangelock	 o_rl;
 	struct selinfo		 o_sel;		/* EVFILT_* knotes, on o_mtx */
@@ -651,6 +670,7 @@ int	dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
 /* n slots of the queue were freed: wake that many waiters for one. */
 void	dq_queue_slots_freed(struct dq_queue *q, u_int n);
 void	dq_queue_slot_passed(struct dq_queue *q);
+void	dq_mutwait_init(void);
 
 /*
  * Objects created apart from their linking (MINT, and the RESOLVE FD reply
@@ -770,6 +790,7 @@ bool	dq_faultinj_wake(u_int site);
 #define	DQ_WAKE_ASYNC_ROOM	0x0100	/* room for an async post */
 #define	DQ_WAKE_DESTROY		0x0200	/* a closing object's settle */
 #define	DQ_WAKE_PASS		0x0400	/* a slot waiter's unused wakeup */
+#define	DQ_WAKE_NSITES		11	/* the bits above */
 #ifdef DQ_FAULT_INJECTION
 #define	DQ_WAKE(site)		dq_faultinj_wake(site)
 #else
@@ -821,7 +842,8 @@ bool	dq_object_gen_newer(struct dq_object *o, int field, uint64_t agen);
 bool	dq_object_postop_size(struct dq_object *o, uint64_t size,
 	    uint64_t agen);
 bool	dq_object_size_proven(struct dq_object *o, uint64_t end,
-	    uint64_t agen);
+	    uint64_t agen, struct dq_sizeproof **spare);
+void	dq_object_proofs_prune(struct dq_object *o, uint64_t gen);
 void	dq_object_set_ident_agen(struct dq_object *o,
 	    const struct dq_ident_file *di, uint64_t agen);
 int	dq_file_bind(struct thread *td, struct dq_object *o, int fflags,

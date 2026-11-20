@@ -14,7 +14,10 @@
 
 #include <atf-c.h>
 #include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 
 #include "dqt.h"
@@ -99,4 +102,78 @@ dqt_open_queue(void)
 	if (q == -1)
 		atf_tc_fail("%s: %s", DQ_DEVICE, strerror(errno));
 	return (q);
+}
+
+/* DQ_WAKE_NSITES and struct dq_faultinj_* of sys/dev/dq (test kernel). */
+#define	DQT_WAKE_NSITES	11
+
+uint64_t
+dqt_drop_count(u_int site)
+{
+	uint64_t counts[DQT_WAKE_NSITES];
+	size_t len;
+	int idx;
+
+	idx = ffs((int)site) - 1;
+	ATF_REQUIRE(site != 0 && powerof2(site) && idx < DQT_WAKE_NSITES);
+	len = sizeof(counts);
+	ATF_REQUIRE_MSG(sysctlbyname("debug.dq.wakeups_dropped", counts, &len,
+	    NULL, 0) == 0 && len == sizeof(counts),
+	    "debug.dq.wakeups_dropped: %s", strerror(errno));
+	return (counts[idx]);
+}
+
+void
+dqt_drop_wait(u_int site, uint64_t count)
+{
+	struct {
+		uint32_t	site;
+		uint32_t	pad;
+		uint64_t	count;
+	} dw;
+
+	dw.site = site;
+	dw.pad = 0;
+	dw.count = count;
+	ATF_REQUIRE_MSG(sysctlbyname("debug.dq.wakeup_drop_wait", NULL, NULL,
+	    &dw, sizeof(dw)) == 0, "debug.dq.wakeup_drop_wait: %s",
+	    strerror(errno));
+}
+
+bool
+dqt_sleep_left(pid_t pid, const char *wmesg, uint64_t *left_ms)
+{
+	struct {
+		int32_t		tid;
+		uint32_t	pad;
+		uint64_t	left_ms;
+		char		wmesg[WMESGLEN + 1];
+	} *ds;
+	int mib[CTL_MAXNAME];
+	size_t len, miblen;
+	size_t i, n;
+	bool found;
+
+	miblen = nitems(mib) - 1;
+	ATF_REQUIRE_MSG(sysctlnametomib("debug.dq.thread_sleeps", mib,
+	    &miblen) == 0, "debug.dq.thread_sleeps: %s", strerror(errno));
+	mib[miblen++] = (int)pid;
+	len = 0;
+	ATF_REQUIRE_MSG(sysctl(mib, (u_int)miblen, NULL, &len, NULL, 0) == 0,
+	    "debug.dq.thread_sleeps.%d: %s", (int)pid, strerror(errno));
+	len += 4 * sizeof(*ds);		/* threads that fall asleep meanwhile */
+	ds = malloc(len);
+	ATF_REQUIRE(ds != NULL);
+	ATF_REQUIRE_MSG(sysctl(mib, (u_int)miblen, ds, &len, NULL, 0) == 0,
+	    "debug.dq.thread_sleeps.%d: %s", (int)pid, strerror(errno));
+	n = len / sizeof(*ds);
+	found = false;
+	for (i = 0; i < n && !found; i++) {
+		if (strcmp(ds[i].wmesg, wmesg) == 0) {
+			found = true;
+			*left_ms = ds[i].left_ms;
+		}
+	}
+	free(ds);
+	return (found);
 }

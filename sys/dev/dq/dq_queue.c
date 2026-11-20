@@ -82,6 +82,7 @@ static void	dq_event_fail_locked(struct dq_queue *q, struct dq_event_k *ev,
 		    int error, struct dq_event_list *freed);
 static void	dq_object_revoke_locked(struct dq_queue *q, struct dq_object *o,
 		    int why, struct dq_event_list *freed);
+static void	dq_mutwait_wake_locked(struct dq_event_k *ev);
 
 /*
  * Queues
@@ -466,6 +467,7 @@ dq_object_set_ident_locked(struct dq_queue *q, struct dq_object *o,
 	/* Every attribute is now as of the newest reply so far. */
 	for (i = 0; i < DQ_GEN_N; i++)
 		o->o_gen[i] = o->o_agen;
+	dq_object_proofs_prune(o, o->o_agen);
 	if (hint != 0)
 		dq_file_knote(o, hint);
 	DQO_UNLOCK(o);
@@ -474,38 +476,56 @@ dq_object_set_ident_locked(struct dq_queue *q, struct dq_object *o,
 }
 
 /*
- * A GETATTR answer (agen: its reply's generation): every field but the
- * size, block count and times is the answer's; those follow the
- * generation rule, so an answer older than a newer reply already applied
- * does not take them back (review 2 #6).  SETIDENT, the controller's own
+ * A GETATTR answer (agen: its reply's generation).  Its size, block count,
+ * times and attributes (mode, owner, flags, link count, birth time)
+ * follow the generation rule, so an answer older than a newer reply
+ * already applied does not take them back (review 2 #6, review 3: an old
+ * answer must not revert a chmod or chown).  The rest (identity, path,
+ * statfs, pathconf) is the answer's.  SETIDENT, the controller's own
  * statement, sets everything (dq_object_set_ident_locked).
  */
 void
 dq_object_set_ident_agen(struct dq_object *o, const struct dq_ident_file *di,
     uint64_t agen)
 {
-	struct dq_ident_file cur;
+	struct dq_timespec atime, ctime, mtime, btime;
 	struct dq_queue *q;
+	uint64_t blocks, size;
+	uint32_t flags, gid, mode, nlink, uid;
 
 	q = o->o_queue;
 	DQ_LOCK(q);
 	DQO_LOCK(o);
-	cur = o->o_ident;
+	size = o->o_ident.di_size;
+	blocks = o->o_ident.di_blocks;
+	atime = o->o_ident.di_atime;
+	mtime = o->o_ident.di_mtime;
+	ctime = o->o_ident.di_ctime;
+	btime = o->o_ident.di_birthtime;
+	mode = o->o_ident.di_mode;
+	uid = o->o_ident.di_uid;
+	gid = o->o_ident.di_gid;
+	flags = o->o_ident.di_flags;
+	nlink = o->o_ident.di_nlink;
 	o->o_ident = *di;
-	o->o_ident.di_size = cur.di_size;
-	o->o_ident.di_blocks = cur.di_blocks;
-	o->o_ident.di_mtime = cur.di_mtime;
-	o->o_ident.di_ctime = cur.di_ctime;
-	o->o_ident.di_atime = cur.di_atime;
+	o->o_ident.di_size = size;
+	if (!dq_object_gen_newer(o, DQ_GEN_BLOCKS, agen))
+		o->o_ident.di_blocks = blocks;
+	if (!dq_object_gen_newer(o, DQ_GEN_MTIME, agen))
+		o->o_ident.di_mtime = mtime;
+	if (!dq_object_gen_newer(o, DQ_GEN_CTIME, agen))
+		o->o_ident.di_ctime = ctime;
+	if (!dq_object_gen_newer(o, DQ_GEN_ATIME, agen))
+		o->o_ident.di_atime = atime;
+	if (!dq_object_gen_newer(o, DQ_GEN_ATTR, agen)) {
+		o->o_ident.di_mode = mode;
+		o->o_ident.di_uid = uid;
+		o->o_ident.di_gid = gid;
+		o->o_ident.di_flags = flags;
+		o->o_ident.di_nlink = nlink;
+		o->o_ident.di_birthtime = btime;
+	}
 	(void)dq_object_postop_size(o, di->di_size, agen);
-	if (dq_object_gen_newer(o, DQ_GEN_BLOCKS, agen))
-		o->o_ident.di_blocks = di->di_blocks;
-	if (dq_object_gen_newer(o, DQ_GEN_MTIME, agen))
-		o->o_ident.di_mtime = di->di_mtime;
-	if (dq_object_gen_newer(o, DQ_GEN_CTIME, agen))
-		o->o_ident.di_ctime = di->di_ctime;
-	if (dq_object_gen_newer(o, DQ_GEN_ATIME, agen))
-		o->o_ident.di_atime = di->di_atime;
 	DQO_UNLOCK(o);
 	if (o->o_hashed && (o->o_hdev != di->di_dev || o->o_hino != di->di_ino))
 		dq_object_hash_locked(q, o, di->di_dev, di->di_ino);
@@ -564,6 +584,7 @@ dq_object_rele(struct dq_object *o)
 	KASSERT(o->o_notify == 0,
 	    ("dq: freeing an object a reply is telling the policies about"));
 	q = o->o_queue;
+	dq_object_proofs_prune(o, UINT64_MAX);
 	cv_destroy(&o->o_async_cv);
 	mtx_destroy(&o->o_mtx);
 	free(o->o_target, M_DQ);
@@ -597,8 +618,10 @@ dq_event_fail_locked(struct dq_queue *q, struct dq_event_k *ev, int error,
 	ev->ev_linked = false;
 	ev->ev_state = DQ_EV_FAILED;
 	ev->ev_errno = error;
-	if (DQ_WAKE(DQ_WAKE_FAIL))
+	if (DQ_WAKE(DQ_WAKE_FAIL)) {
 		cv_broadcast(&ev->ev_cv);
+		dq_mutwait_wake_locked(ev);
+	}
 	TAILQ_INSERT_TAIL(freed, ev, ev_link);
 }
 
@@ -1151,7 +1174,7 @@ dq_wait_abandon(struct thread *td)
 	p = td->td_proc;
 	error = 0;
 	PROC_LOCK(p);
-	if ((p->p_flag & P_WEXIT) != 0 ||
+	if ((p->p_flag & (P_WEXIT | P_WKILLED)) != 0 ||
 	    (((p->p_flag & P_SINGLE_EXIT) != 0 ||
 	    (p->p_flag2 & P2_WEXIT) != 0) && p->p_singlethread != td))
 		error = EINTR;
@@ -1159,6 +1182,169 @@ dq_wait_abandon(struct thread *td)
 	    p->p_singlethread != td)
 		error = ERESTART;
 	PROC_UNLOCK(p);
+	return (error);
+}
+
+/*
+ * Whether the controller changes state applying an operation, so that
+ * one given up after it was delivered and then restarted would be
+ * applied twice (owner, 2026-11-20).  An explicit table: an operation not
+ * listed here as reading or idempotent counts as a mutation.
+ */
+static bool
+dq_op_mutates(uint32_t op, const void *body, size_t bodylen)
+{
+	const struct dq_resolve_body *rb;
+
+	switch (op) {
+	case DQ_OP_READ:
+	case DQ_OP_GETATTR:
+	case DQ_OP_READDIR:
+	case DQ_OP_FSYNC:	/* writing back twice is writing back */
+	case DQ_OP_LOCK:	/* the same owner's same range again */
+		return (false);
+	case DQ_OP_RESOLVE:
+		if (body == NULL || bodylen < sizeof(*rb))
+			return (true);
+		rb = body;
+		switch (rb->drs_op) {
+		case DQ_ROP_OPEN:
+			return ((rb->drs_mode & (O_CREAT | O_TRUNC)) != 0);
+		case DQ_ROP_STAT:
+		case DQ_ROP_ACCESS:
+		case DQ_ROP_READLINK:
+		case DQ_ROP_REALPATH:
+		case DQ_ROP_GETFH:
+		case DQ_ROP_EXEC:
+		case DQ_ROP_EXEC_INTERP:
+		case DQ_ROP_CONNECT:
+		case DQ_ROP_CHDIR:
+		case DQ_ROP_CHROOT:
+		case DQ_ROP_INOTIFY:
+			return (false);
+		default:	/* unlink, rename, mkdir, bind, setattr, ... */
+			return (true);
+		}
+	default:	/* WRITE, SETATTR, FALLOCATE, FSPACECTL, IOCTL, ... */
+		return (true);
+	}
+}
+
+/*
+ * The wait of a delivered mutation or a fault while the process is
+ * single-threaded to the user boundary (dq_wait_event): it catches no
+ * signal, so thread_single cannot abort it, and ends with the answer
+ * (or the event's failure), the deadline, or the process starting to
+ * die.  The last has no wakeup of its own for a sleep that catches no
+ * signal: the thread is on dq_mutwaits, and proc_dying_hook
+ * (dq_proc_dying) wakes it.  Lock order: q_mtx, then dq_mutwait_mtx;
+ * the process lock, then dq_mutwait_mtx.
+ */
+struct dq_mutwait {
+	LIST_ENTRY(dq_mutwait)	 mw_link;
+	struct proc		*mw_proc;
+	bool			 mw_wake;	/* dq_mutwait_mtx */
+};
+
+static struct mtx dq_mutwait_mtx;
+static LIST_HEAD(, dq_mutwait) dq_mutwaits =
+    LIST_HEAD_INITIALIZER(dq_mutwaits);
+
+static void
+dq_mutwait_wake(struct dq_mutwait *mw)
+{
+
+	mtx_assert(&dq_mutwait_mtx, MA_OWNED);
+	mw->mw_wake = true;
+	wakeup(mw);
+}
+
+/* The process lock is held. */
+static void
+dq_proc_dying(struct proc *p)
+{
+	struct dq_mutwait *mw;
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	mtx_lock(&dq_mutwait_mtx);
+	LIST_FOREACH(mw, &dq_mutwaits, mw_link) {
+		if (mw->mw_proc == p)
+			dq_mutwait_wake(mw);
+	}
+	mtx_unlock(&dq_mutwait_mtx);
+}
+
+void
+dq_mutwait_init(void)
+{
+
+	mtx_init(&dq_mutwait_mtx, "dq mutwait", NULL, MTX_DEF);
+	atomic_store_ptr(&proc_dying_hook, dq_proc_dying);
+}
+
+/* An answer or a failure of ev (q_mtx held): wake its boundary wait. */
+static void
+dq_mutwait_wake_locked(struct dq_event_k *ev)
+{
+
+	if (ev->ev_mutwait == NULL)
+		return;
+	mtx_lock(&dq_mutwait_mtx);
+	dq_mutwait_wake(ev->ev_mutwait);
+	mtx_unlock(&dq_mutwait_mtx);
+}
+
+/*
+ * q_mtx is held and kept.  Returns 0 (answered or failed: the caller
+ * reads the state), EWOULDBLOCK (the deadline), or EINTR (the process is
+ * dying; dq:::wait-abandon).
+ */
+static int
+dq_wait_delivered(struct dq_queue *q, struct dq_event_k *ev,
+    struct thread *td, sbintime_t deadline)
+{
+	struct dq_mutwait mw;
+	int error;
+
+	DQ_LOCK_ASSERT(q);
+	mw.mw_proc = td->td_proc;
+	mw.mw_wake = false;
+	mtx_lock(&dq_mutwait_mtx);
+	LIST_INSERT_HEAD(&dq_mutwaits, &mw, mw_link);
+	mtx_unlock(&dq_mutwait_mtx);
+	ev->ev_mutwait = &mw;
+	error = 0;
+	while (ev->ev_state == DQ_EV_PENDING ||
+	    ev->ev_state == DQ_EV_DELIVERED) {
+		/*
+		 * Registered first, so a death that begins after this look
+		 * finds the thread on the list and wakes it.
+		 */
+		DQ_UNLOCK(q);
+		if (dq_wait_abandon(td) == EINTR) {
+			DQ_LOCK(q);
+			SDT_PROBE2(dq, , , wait__abandon, q, ev);
+			error = EINTR;
+			break;
+		}
+		mtx_lock(&dq_mutwait_mtx);
+		if (!mw.mw_wake)
+			error = msleep_sbt(&mw, &dq_mutwait_mtx, PVFS,
+			    "dqbndy", deadline, 0, C_ABSOLUTE);
+		mw.mw_wake = false;
+		mtx_unlock(&dq_mutwait_mtx);
+		DQ_LOCK(q);
+		if (error == EWOULDBLOCK) {
+			if (ev->ev_state == DQ_EV_PENDING ||
+			    ev->ev_state == DQ_EV_DELIVERED)
+				break;
+			error = 0;
+		}
+	}
+	ev->ev_mutwait = NULL;
+	mtx_lock(&dq_mutwait_mtx);
+	LIST_REMOVE(&mw, mw_link);
+	mtx_unlock(&dq_mutwait_mtx);
 	return (error);
 }
 
@@ -1375,24 +1561,20 @@ dq_wait_event(struct dq_queue *q, struct dq_event_k *ev, struct thread *td,
 		}
 		/* A wake (or an abort) with no answer: dying, or sleep on. */
 		error = dq_wait_woken(q, ev, td);
-		if (error == ERESTART && mode == DQ_WAIT_FAULT) {
+		if (error == ERESTART && (mode == DQ_WAIT_FAULT ||
+		    (ev->ev_mutates && ev->ev_state == DQ_EV_DELIVERED))) {
 			/*
-			 * A fault cannot be restarted: vm_fault has no retry
-			 * answer from a pager (VM_PAGER_FAIL would zero-fill
-			 * the page), and VM_PAGER_ERROR is SIGBUS.  Wait for
-			 * the answer without catching, bounded by the page
-			 * deadline (always set for a fault); the single-
-			 * threading waits that long at most, and so does an
-			 * exit that begins meanwhile.
+			 * Not given up at the boundary (owner, 2026-11-20):
+			 * a fault cannot be restarted (vm_fault has no retry
+			 * answer from a pager: VM_PAGER_FAIL would zero-fill
+			 * the page, VM_PAGER_ERROR is SIGBUS), and a
+			 * delivered mutation restarted would be applied
+			 * twice (an O_APPEND write lands twice, an O_EXCL
+			 * create fails EEXIST).  Wait for the answer, the
+			 * deadline or the process dying; the single-
+			 * threading waits as it waits for a disk.
 			 */
-			while (ev->ev_state == DQ_EV_PENDING ||
-			    ev->ev_state == DQ_EV_DELIVERED) {
-				if (cv_timedwait_sbt(&ev->ev_cv, &q->q_mtx,
-				    deadline, 0, C_ABSOLUTE) == EWOULDBLOCK)
-					break;
-			}
-			error = ev->ev_state == DQ_EV_PENDING ||
-			    ev->ev_state == DQ_EV_DELIVERED ? EWOULDBLOCK : 0;
+			error = dq_wait_delivered(q, ev, td, deadline);
 			break;
 		}
 		if (error != 0)
@@ -1457,6 +1639,7 @@ dq_event_post_wait_agen(struct dq_object *o, uint32_t op, const void *body,
 	ev->ev_waited = true;
 	ev->ev_lock = lock;
 	ev->ev_pagein = fault && op == DQ_OP_READ;
+	ev->ev_mutates = dq_op_mutates(op, body, bodylen);
 	newrq = lock ? NULL : malloc(sizeof(*newrq), M_DQ, M_WAITOK | M_ZERO);
 
 	/*
@@ -1699,6 +1882,7 @@ dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
 	mode = catching ? DQ_WAIT_CATCH : DQ_WAIT_UNINTR;
 	ev = dq_event_alloc(NULL, op, body, bodylen, td);
 	ev->ev_waited = true;
+	ev->ev_mutates = dq_op_mutates(op, body, bodylen);
 	ev->ev_deadline = deadline;
 	ev->ev_hdr.de_caller.dc_flags |= DQ_CALLER_F_ATTACHED;
 	newrq = malloc(sizeof(*newrq), M_DQ, M_WAITOK | M_ZERO);
@@ -2089,6 +2273,7 @@ dq_object_create(struct dq_queue *q, u_int kind,
 	rangelock_init(&o->o_rl);
 	knlist_init_mtx(&o->o_sel.si_note, &o->o_mtx);
 	cv_init(&o->o_async_cv, "dqasync");
+	TAILQ_INIT(&o->o_proofs);
 	error = dq_fault_inject(&dq_fail_vm_create) ? ENOMEM : dq_object_vm_create(o);
 	if (error != 0) {
 		o->o_retired = true;
@@ -2642,8 +2827,10 @@ dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 		 */
 		dq_async_replied_locked(q, ev->ev_async);
 	} else
-		if (DQ_WAKE(DQ_WAKE_ANSWER))
+		if (DQ_WAKE(DQ_WAKE_ANSWER)) {
 			cv_signal(&ev->ev_cv);
+			dq_mutwait_wake_locked(ev);
+		}
 	SDT_PROBE4(dq, , , event__reply, q, ev, r->dr_errno, len);
 	/* Observers and the policies see what the controller said. */
 	dq_observer_fanout_reply(q, r->dr_id, r->dr_errno, dd);

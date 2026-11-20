@@ -1265,6 +1265,8 @@ thread_single(struct proc *p, int mode)
 	if (mode == SINGLE_EXIT) {
 		p->p_flag |= P_SINGLE_EXIT;
 		p->p_flag &= ~P_SINGLE_BOUNDARY;
+		/* Sleepers that catch no signal but end on death. */
+		proc_dying_notify(p);
 	} else {
 		p->p_flag &= ~P_SINGLE_EXIT;
 		if (mode == SINGLE_BOUNDARY)

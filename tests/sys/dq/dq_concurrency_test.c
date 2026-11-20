@@ -672,16 +672,15 @@ ATF_TC_BODY(full_revoke_wakes, tc)
  * DQ_FAULT_INJECTION) the waiter stays asleep; the normal cases
  * (full_close_wakes, full_revoke_wakes, inflight_bound, ...) prove the
  * wakeup ends the wait.  No proof waits a while to see the waiter stay
- * asleep: the kernel counts each wakeup it drops
- * (debug.dq.wakeups_dropped), so the test takes the moment the waiter's
- * only way out was taken, then looks once that the waiter is still in its
- * sleep (its wmesg), and releases it with SIGKILL, which ends any dq wait
- * but a page one.  Before the waits were event-driven a non-catching wait
- * re-checked its state every 100 ms, which these cases do not try to
- * catch; that is what the dropped wakeup itself proves on this kernel.
+ * asleep: the kernel counts each wakeup it drops, per site, and wakes the
+ * test at the drop (debug.dq.wakeup_drop_wait), so the test takes the
+ * moment the waiter's only way out was taken.  It then looks once that
+ * the waiter is still in its sleep (its wmesg) and that the sleep has no
+ * timeout (debug.dq.thread_sleeps): a wait re-checking its state on a
+ * timer, as the 100 ms slices before D402 did, has one.  SIGKILL then
+ * releases the waiter.
  */
 #define	DROP_WAKEUP	"debug.dq.drop_wakeup"
-#define	WAKEUPS_DROPPED	"debug.dq.wakeups_dropped"
 /* DQ_WAKE_* of sys/dev/dq/dq_var.h. */
 #define	WAKE_ANSWER		0x0001
 #define	WAKE_FAIL		0x0002
@@ -693,59 +692,42 @@ ATF_TC_BODY(full_revoke_wakes, tc)
 #define	WAKE_REVOKE_QUOTA	0x0080
 #define	WAKE_PASS		0x0400
 
-static u_long
-wakeups_dropped(void)
+/*
+ * Drop the wakeups of mask; returns how many wakeups of site (a bit of
+ * mask: the one the proof waits for) were dropped before.
+ */
+static uint64_t
+wake_drop(u_int mask, u_int site)
 {
-	u_long n;
-	size_t len;
+	uint64_t before;
 
-	len = sizeof(n);
-	ATF_REQUIRE_MSG(sysctlbyname(WAKEUPS_DROPPED, &n, &len, NULL, 0) == 0,
-	    "%s: %s", WAKEUPS_DROPPED, strerror(errno));
-	return (n);
-}
-
-/* Drop the wakeups of mask; returns the dropped count before. */
-static u_long
-wake_drop(u_int mask)
-{
-	u_long before;
-
-	before = wakeups_dropped();
+	before = dqt_drop_count(site);
 	dqt_sysctl_save_set_uint(DROP_WAKEUP, mask);
 	return (before);
 }
 
 /*
- * Until n more wakeups were dropped than before.  Where the wakeup is
- * issued in the test's own call (a reply, a revoke) or before an answer
- * the test collected, the count is already there; otherwise this looks
- * every millisecond, with the case's timeout as the hang detector
- * (polling-inventory-2026-11-19.md).
+ * The waiter's only way out, site, was dropped n times since before (the
+ * kernel wakes the test at the drop: dqt_drop_wait).  Then, looked at
+ * once: the waiter is still in its sleep, and that sleep has no timeout
+ * (a wait re-checking on a timer would have one).  Then the wakeups go
+ * and it is killed.
  */
 static void
-wake_dropped_wait(u_long before, u_long n)
+wake_dropped_holds(struct dqt_child *ch, const char *wmesg, u_int site,
+    uint64_t before, uint64_t n, const char *what)
 {
-
-	while (wakeups_dropped() < before + n)
-		dqt_msleep(1);
-}
-
-/*
- * The waiter's only way out was dropped (n wakeups since before): it must
- * still be in its sleep, looked at once.  Then the wakeups go and it is
- * killed.
- */
-static void
-wake_dropped_holds(struct dqt_child *ch, const char *wmesg, u_long before,
-    u_long n, const char *what)
-{
+	uint64_t left;
 	int status;
 
-	wake_dropped_wait(before, n);
-	ATF_CHECK_MSG(dqt_wait_wmesg(ch->pid, wmesg, 0), "%s: the waiter left "
-	    "%s with its wakeup dropped: something polls or another wakeup "
-	    "reached it", what, wmesg);
+	dqt_drop_wait(site, before + n);
+	left = 0;
+	ATF_CHECK_MSG(dqt_sleep_left(ch->pid, wmesg, &left), "%s: the waiter "
+	    "left %s with its wakeup dropped: another wakeup reached it", what,
+	    wmesg);
+	ATF_CHECK_EQ_MSG(0, left, "%s: the sleep in %s has a timeout (%ju ms "
+	    "left): a timer, not the event, could end it", what, wmesg,
+	    (uintmax_t)left);
 	ATF_REQUIRE(dqt_sysctl_restore(DROP_WAKEUP));
 	(void)kill(ch->pid, SIGKILL);
 	ATF_REQUIRE_EQ(ch->pid, waitpid(ch->pid, &status, 0));
@@ -759,13 +741,14 @@ wake_dropped_holds(struct dqt_child *ch, const char *wmesg, u_long before,
  */
 static void
 wake_dropped_unposted(struct dqt_ctl *c, int n, struct dqt_child *ch,
-    const char *wmesg, u_long before, u_long ndrop, const char *what)
+    const char *wmesg, u_int site, uint64_t before, uint64_t ndrop,
+    const char *what)
 {
 
-	wake_dropped_wait(before, ndrop);
+	dqt_drop_wait(site, before + ndrop);
 	ATF_CHECK_MSG(!dqt_wait_held(c, n + 1, 0), "%s: the post went on with "
 	    "its wakeup dropped", what);
-	wake_dropped_holds(ch, wmesg, before, ndrop, what);
+	wake_dropped_holds(ch, wmesg, site, before, ndrop, what);
 }
 
 static struct dqt_object *
@@ -804,7 +787,7 @@ ATF_TC_BODY(wake_answer, tc)
 	struct dqt_object *o;
 	struct one_read_arg a;
 	struct dqt_child ch;
-	u_long before;
+	uint64_t before;
 	int oracle;
 
 	oracle = wake_setup(&c, 70);
@@ -815,9 +798,10 @@ ATF_TC_BODY(wake_answer, tc)
 	a.len = 100;
 	dqt_spawn(&ch, child_one_pread, &a);
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
-	before = wake_drop(WAKE_ANSWER);
+	before = wake_drop(WAKE_ANSWER, WAKE_ANSWER);
 	ATF_REQUIRE_EQ(0, dq_reply(c.q, dqt_held_id(&c, 0), 0, data, 100));
-	wake_dropped_holds(&ch, DQT_WMESG_REPLY, before, 1, "answer");
+	wake_dropped_holds(&ch, DQT_WMESG_REPLY, WAKE_ANSWER, before, 1,
+	    "answer");
 	dqt_hold(&c, false);
 	dqt_fini(&c);
 	(void)close(oracle);
@@ -841,7 +825,7 @@ ATF_TC_BODY(wake_fail, tc)
 	struct dqt_object *o;
 	struct one_read_arg a;
 	struct dqt_child ch;
-	u_long before;
+	uint64_t before;
 	int oracle;
 
 	oracle = wake_setup(&c, 71);
@@ -852,9 +836,10 @@ ATF_TC_BODY(wake_fail, tc)
 	a.len = 100;
 	dqt_spawn(&ch, child_one_pread, &a);
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
-	before = wake_drop(WAKE_FAIL);
+	before = wake_drop(WAKE_FAIL, WAKE_FAIL);
 	ATF_REQUIRE_EQ(0, dq_revoke(c.q, o->id));
-	wake_dropped_holds(&ch, DQT_WMESG_REPLY, before, 1, "failure");
+	wake_dropped_holds(&ch, DQT_WMESG_REPLY, WAKE_FAIL, before, 1,
+	    "failure");
 	dqt_hold(&c, false);
 	dqt_fini(&c);
 	(void)close(oracle);
@@ -904,17 +889,18 @@ ATF_TC_BODY(wake_die_space, tc)
 	struct one_read_arg a0, a1;
 	struct one_read_res r0;
 	struct dqt_child ch0, ch1;
-	u_long before;
+	uint64_t before;
 	int oracle;
 
 	oracle = wake_setup(&c, 72);
 	o = wake_object(&c, oracle);
 	wake_full(&c, o, o, &ch0, &ch1, &a0, &a1);
-	before = wake_drop(WAKE_DIE_SPACE);
+	before = wake_drop(WAKE_DIE_SPACE, WAKE_DIE_SPACE);
 	dqt_fini(&c);		/* the queue's last descriptor */
 	dqt_collect(&ch0, &r0, sizeof(r0));
 	ATF_CHECK_EQ(EIO, r0.rr.err);
-	wake_dropped_holds(&ch1, "dqfull", before, 1, "the queue's death");
+	wake_dropped_holds(&ch1, "dqfull", WAKE_DIE_SPACE, before, 1,
+	    "the queue's death");
 	(void)close(oracle);
 }
 ATF_TC_CLEANUP(wake_die_space, tc)
@@ -938,16 +924,17 @@ ATF_TC_BODY(wake_revoke_space, tc)
 	struct one_read_arg a0, a1;
 	struct one_read_res r0;
 	struct dqt_child ch0, ch1;
-	u_long before;
+	uint64_t before;
 	int oracle;
 
 	oracle = wake_setup(&c, 73);
 	o0 = wake_object(&c, oracle);
 	o1 = wake_object(&c, oracle);
 	wake_full(&c, o0, o1, &ch0, &ch1, &a0, &a1);
-	before = wake_drop(WAKE_REVOKE_SPACE);
+	before = wake_drop(WAKE_REVOKE_SPACE, WAKE_REVOKE_SPACE);
 	ATF_REQUIRE_EQ(0, dq_revoke(c.q, o1->id));
-	wake_dropped_holds(&ch1, "dqfull", before, 1, "the revoke");
+	wake_dropped_holds(&ch1, "dqfull", WAKE_REVOKE_SPACE, before, 1,
+	    "the revoke");
 	dqt_resume(&c);
 	dqt_collect(&ch0, &r0, sizeof(r0));
 	ATF_CHECK_EQ(100, r0.rr.rv);
@@ -975,17 +962,18 @@ ATF_TC_BODY(wake_slot, tc)
 	struct one_read_arg a0, a1;
 	struct one_read_res r0;
 	struct dqt_child ch0, ch1;
-	u_long before;
+	uint64_t before;
 	int oracle;
 
 	oracle = wake_setup(&c, 74);
 	o = wake_object(&c, oracle);
 	wake_full(&c, o, o, &ch0, &ch1, &a0, &a1);
-	before = wake_drop(WAKE_SLOT);
+	before = wake_drop(WAKE_SLOT, WAKE_SLOT);
 	dqt_resume(&c);		/* the slot is read off and answered */
 	dqt_collect(&ch0, &r0, sizeof(r0));
 	ATF_CHECK_EQ(100, r0.rr.rv);
-	wake_dropped_holds(&ch1, "dqfull", before, 1, "the freed slot");
+	wake_dropped_holds(&ch1, "dqfull", WAKE_SLOT, before, 1,
+	    "the freed slot");
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -1009,7 +997,7 @@ ATF_TC_BODY(wake_inflight, tc)
 	struct one_read_arg a;
 	struct one_read_res r0;
 	struct dqt_child ch0, ch1;
-	u_long before;
+	uint64_t before;
 	int oracle;
 
 	oracle = wake_setup(&c, 75);
@@ -1023,12 +1011,12 @@ ATF_TC_BODY(wake_inflight, tc)
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
 	dqt_spawn(&ch1, child_one_pread, &a);
 	ATF_REQUIRE(dqt_wait_wmesg(ch1.pid, DQT_WMESG_INFLIGHT, DQT_WAIT_MS));
-	before = wake_drop(WAKE_INFLIGHT);
+	before = wake_drop(WAKE_INFLIGHT, WAKE_INFLIGHT);
 	ATF_REQUIRE_EQ(0, dq_reply(c.q, dqt_held_id(&c, 0), 0, data, 100));
 	dqt_collect(&ch0, &r0, sizeof(r0));
 	ATF_CHECK_EQ(100, r0.rr.rv);
-	wake_dropped_unposted(&c, 1, &ch1, DQT_WMESG_INFLIGHT, before, 1,
-	    "the object's in-flight slot");
+	wake_dropped_unposted(&c, 1, &ch1, DQT_WMESG_INFLIGHT, WAKE_INFLIGHT,
+	    before, 1, "the object's in-flight slot");
 	dqt_hold(&c, false);
 	dqt_fini(&c);
 	(void)close(oracle);
@@ -1083,7 +1071,7 @@ ATF_TC_BODY(wake_requester, tc)
 	struct dqt_object *o0, *o1;
 	struct wake_req_arg a;
 	struct dqt_child ch;
-	u_long before;
+	uint64_t before;
 	int oracle;
 
 	oracle = wake_setup(&c, 76);
@@ -1096,10 +1084,10 @@ ATF_TC_BODY(wake_requester, tc)
 	dqt_spawn(&ch, child_two_reads, &a);
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
 	ATF_REQUIRE(dqt_wait_wmesg(ch.pid, "dqreq", DQT_WAIT_MS));
-	before = wake_drop(WAKE_REQUESTER);
+	before = wake_drop(WAKE_REQUESTER, WAKE_REQUESTER);
 	ATF_REQUIRE_EQ(0, dq_reply(c.q, dqt_held_id(&c, 0), 0, data, 16));
 	/* The answered thread drops the wakeup as it returns. */
-	wake_dropped_unposted(&c, 1, &ch, "dqreq", before, 1,
+	wake_dropped_unposted(&c, 1, &ch, "dqreq", WAKE_REQUESTER, before, 1,
 	    "the requester's in-flight slot");
 	dqt_hold(&c, false);
 	dqt_fini(&c);
@@ -1157,7 +1145,7 @@ ATF_TC_BODY(revoke_quota_wakes, tc)
 
 	oracle = wake_setup(&c, 77);
 	revoke_quota_setup(&c, oracle, &o, &ch0, &ch1, &a);
-	(void)wake_drop(WAKE_INFLIGHT);
+	(void)wake_drop(WAKE_INFLIGHT, WAKE_INFLIGHT);
 	ATF_REQUIRE_EQ(0, dq_revoke(c.q, o->id));
 	/* The case's timeout is the hang detector. */
 	dqt_collect(&ch1, &r1, sizeof(r1));
@@ -1193,17 +1181,19 @@ ATF_TC_BODY(wake_revoke_quota, tc)
 	struct one_read_arg a;
 	struct one_read_res r0;
 	struct dqt_child ch0, ch1;
-	u_long before;
+	uint64_t before;
 	int oracle;
 
 	oracle = wake_setup(&c, 78);
 	revoke_quota_setup(&c, oracle, &o, &ch0, &ch1, &a);
-	before = wake_drop(WAKE_INFLIGHT | WAKE_REVOKE_QUOTA);
+	before = wake_drop(WAKE_INFLIGHT | WAKE_REVOKE_QUOTA,
+	    WAKE_REVOKE_QUOTA);
 	ATF_REQUIRE_EQ(0, dq_revoke(c.q, o->id));
 	dqt_collect(&ch0, &r0, sizeof(r0));
 	ATF_CHECK_EQ(EIO, r0.rr.err);
 	/* The revoke's wakeup, and the slot ch0's failed read freed. */
-	wake_dropped_holds(&ch1, DQT_WMESG_INFLIGHT, before, 2,
+	wake_dropped_holds(&ch1, DQT_WMESG_INFLIGHT, WAKE_REVOKE_QUOTA, before,
+	    1,
 	    "the revoke's quota wakeup");
 	dqt_hold(&c, false);
 	dqt_fini(&c);
@@ -1331,17 +1321,18 @@ ATF_TC_BODY(wake_pass, tc)
 	struct one_read_arg a;
 	struct wake_req_arg ra;
 	struct dqt_child chf, chp, chw;
-	u_long before;
+	uint64_t before;
 	int oracle;
 
 	oracle = wake_setup(&c, 80);
 	pass_setup(&c, oracle, &chf, &chp, &chw, &a, &ra);
-	before = wake_drop(WAKE_PASS);
+	before = wake_drop(WAKE_PASS, WAKE_PASS);
 	dqt_resume(&c);
-	wake_dropped_wait(before, 1);
+	dqt_drop_wait(WAKE_PASS, before + 1);
 	ATF_CHECK_MSG(!dqt_wait_held(&c, 3, 0), "W posted with the passed-on "
 	    "wakeup dropped");
-	wake_dropped_holds(&chw, "dqfull", before, 1, "the passed-on wakeup");
+	wake_dropped_holds(&chw, "dqfull", WAKE_PASS, before, 1,
+	    "the passed-on wakeup");
 	chw.pid = -1;
 	pass_cleanup(&c, &chf, &chp, &chw);
 	(void)close(oracle);

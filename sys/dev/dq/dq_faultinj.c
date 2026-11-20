@@ -34,8 +34,12 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
+#include <sys/lock.h>
 #include <sys/malloc.h>
+#include <sys/mutex.h>
+#include <sys/proc.h>
 #include <sys/sysctl.h>
+#include <sys/user.h>
 
 #include <machine/atomic.h>
 
@@ -95,14 +99,67 @@ SYSCTL_UINT(_debug_dq, OID_AUTO, drop_wakeup, CTLFLAG_RW,
     "Test kernel only: a mask of DQ_WAKE_* wakeups not issued");
 
 /*
- * Each wakeup dropped counts here, so a test knows the moment its
- * waiter's only way out was taken and need not wait to see it stay
- * asleep.
+ * Each wakeup dropped counts here, per site (the bit's index), so a test
+ * knows the moment its waiter's only way out was taken, and an unrelated
+ * drop cannot stand in for it.  debug.dq.wakeups_dropped reads the
+ * counts; a write of struct dq_faultinj_dropwait to
+ * debug.dq.wakeup_drop_wait sleeps (catching signals) until the site's
+ * count reaches dw_count: the test waits on the event, not on a timer.
  */
-static u_long dq_faultinj_wakeups_dropped;
-SYSCTL_ULONG(_debug_dq, OID_AUTO, wakeups_dropped, CTLFLAG_RD,
-    &dq_faultinj_wakeups_dropped, 0,
-    "Test kernel only: wakeups drop_wakeup has dropped");
+static struct mtx dq_faultinj_drop_mtx;
+MTX_SYSINIT(dq_faultinj_drop, &dq_faultinj_drop_mtx, "dq faultinj drop",
+    MTX_DEF);
+static uint64_t dq_faultinj_dropped[DQ_WAKE_NSITES];
+
+static int
+dq_faultinj_dropped_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	uint64_t counts[DQ_WAKE_NSITES];
+
+	mtx_lock(&dq_faultinj_drop_mtx);
+	memcpy(counts, dq_faultinj_dropped, sizeof(counts));
+	mtx_unlock(&dq_faultinj_drop_mtx);
+	return (SYSCTL_OUT(req, counts, sizeof(counts)));
+}
+SYSCTL_PROC(_debug_dq, OID_AUTO, wakeups_dropped,
+    CTLTYPE_OPAQUE | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
+    dq_faultinj_dropped_sysctl, "S",
+    "Test kernel only: wakeups drop_wakeup has dropped, per DQ_WAKE_* bit");
+
+struct dq_faultinj_dropwait {
+	uint32_t	dw_site;	/* a DQ_WAKE_* bit */
+	uint32_t	dw_pad;
+	uint64_t	dw_count;	/* until the site's count reaches it */
+};
+
+static int
+dq_faultinj_dropwait_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	struct dq_faultinj_dropwait dw;
+	int error, idx;
+
+	if (req->newptr == NULL)
+		return (SYSCTL_OUT(req, NULL, 0));
+	error = SYSCTL_IN(req, &dw, sizeof(dw));
+	if (error != 0)
+		return (error);
+	if (dw.dw_site == 0 || !powerof2(dw.dw_site) ||
+	    (idx = ffs(dw.dw_site) - 1) >= DQ_WAKE_NSITES)
+		return (EINVAL);
+	mtx_lock(&dq_faultinj_drop_mtx);
+	while (dq_faultinj_dropped[idx] < dw.dw_count) {
+		error = msleep(&dq_faultinj_dropped, &dq_faultinj_drop_mtx,
+		    PCATCH, "dqdrpw", 0);
+		if (error != 0)
+			break;
+	}
+	mtx_unlock(&dq_faultinj_drop_mtx);
+	return (error);
+}
+SYSCTL_PROC(_debug_dq, OID_AUTO, wakeup_drop_wait,
+    CTLTYPE_OPAQUE | CTLFLAG_WR | CTLFLAG_MPSAFE, NULL, 0,
+    dq_faultinj_dropwait_sysctl, "S",
+    "Test kernel only: sleep until a DQ_WAKE_* site has dropped N wakeups");
 
 bool
 dq_faultinj_wake(u_int site)
@@ -110,9 +167,71 @@ dq_faultinj_wake(u_int site)
 
 	if ((atomic_load_int(&dq_faultinj_drop_wakeups) & site) == 0)
 		return (true);
-	atomic_add_long(&dq_faultinj_wakeups_dropped, 1);
+	mtx_lock(&dq_faultinj_drop_mtx);
+	dq_faultinj_dropped[ffs(site) - 1]++;
+	wakeup(&dq_faultinj_dropped);
+	mtx_unlock(&dq_faultinj_drop_mtx);
 	return (false);
 }
+
+/*
+ * debug.dq.thread_sleeps.<pid>: each thread of the process asleep, with
+ * its wmesg and the time left before its sleep's timeout (0: none).  A
+ * test that drops a wakeup proves with it that the waiter is still in its
+ * sleep and that the sleep has no timer that could end it, so a wait
+ * re-checking on a timer cannot pass for one that waits on the event.
+ */
+struct dq_faultinj_sleep {
+	int32_t		ds_tid;
+	uint32_t	ds_pad;
+	uint64_t	ds_left_ms;	/* 0: no timeout */
+	char		ds_wmesg[WMESGLEN + 1];
+};
+
+static int
+dq_faultinj_sleeps_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	struct dq_faultinj_sleep ds;
+	struct thread *td;
+	struct proc *p;
+	sbintime_t now, timo;
+	int *name, error;
+
+	name = (int *)arg1;
+	if (arg2 != 1)
+		return (EINVAL);
+	error = sysctl_wire_old_buffer(req, 0);
+	if (error != 0)
+		return (error);
+	p = pfind(name[0]);
+	if (p == NULL)
+		return (ESRCH);
+	now = sbinuptime();
+	error = 0;
+	FOREACH_THREAD_IN_PROC(p, td) {
+		memset(&ds, 0, sizeof(ds));
+		thread_lock(td);
+		if (TD_ON_SLEEPQ(td) && td->td_wmesg != NULL) {
+			ds.ds_tid = td->td_tid;
+			strlcpy(ds.ds_wmesg, td->td_wmesg,
+			    sizeof(ds.ds_wmesg));
+			timo = td->td_sleeptimo;
+			ds.ds_left_ms = timo == 0 ? 0 : timo > now ?
+			    (uint64_t)((timo - now) / SBT_1MS) + 1 : 1;
+		}
+		thread_unlock(td);
+		if (ds.ds_tid == 0)
+			continue;
+		error = SYSCTL_OUT(req, &ds, sizeof(ds));
+		if (error != 0)
+			break;
+	}
+	PROC_UNLOCK(p);
+	return (error);
+}
+static SYSCTL_NODE(_debug_dq, OID_AUTO, thread_sleeps,
+    CTLFLAG_RD | CTLFLAG_MPSAFE, dq_faultinj_sleeps_sysctl,
+    "Test kernel only: a process's sleeping threads, wmesg and timeout");
 
 static bool
 dq_faultinj_take(u_int *counter)

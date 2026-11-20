@@ -30,8 +30,7 @@
 
 static size_t	dq_dispatch_bufsize(void);
 
-int	_dq_postop_probe(void);
-extern atomic_int _dq_postop_kernel;
+int	_dq_postop_probe(void) __hidden;
 
 int
 dq_open(void)
@@ -74,7 +73,7 @@ dq_get_stats(int fd, struct dq_stats *st)
  * an answer; any other failure to read it is an error (-1, errno), never
  * a silent fallback to no blocks.
  */
-atomic_int _dq_postop_kernel;
+static atomic_int _dq_postop_kernel;
 
 int
 _dq_postop_probe(void)
