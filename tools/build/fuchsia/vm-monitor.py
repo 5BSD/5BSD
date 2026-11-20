@@ -237,23 +237,34 @@ def monitor(args):
         print("qemu had exited before the monitor started", flush=True)
         return 5
 
-    grew = [False]
+    since = bytearray()     # console output since the last byte was typed
 
     def drain():
         while True:
             d = os.read(fd, 1 << 16)
             if not d:
                 return None
-            grew[0] = True
+            since.extend(d)
             p = w.feed(d)
             if p:
                 return p
 
     # The answer is typed one byte at a time, each sent once the console
-    # has echoed the one before (the log grew): a serial port without flow
-    # control drops what the guest has not yet taken.
+    # has echoed the one before: a serial port without flow control drops
+    # what the guest has not yet taken.  Other output may arrive meanwhile
+    # (a kernel message, a prompt written in two parts), so the echo is
+    # recognised by position: the line still being written must end with
+    # what was typed on it.  Output that ended a line since the last byte
+    # was typed means the echo starts a new line.  (The newline is the last
+    # byte typed: nothing waits for its echo.)
     typing = []
     console = [None]
+    sent = [None]
+    typed = [b""]           # bytes typed and echoed on the current line
+
+    def echoed():
+        want = sent[0] if b"\n" in since else typed[0] + sent[0]
+        return w.partial.rstrip(b"\r").endswith(want)
 
     def answer():
         """Start typing the answer, once."""
@@ -265,8 +276,11 @@ def monitor(args):
         type_next()
 
     def type_next():
-        grew[0] = False
-        console[0].sendall(typing.pop(0))
+        if sent[0] is not None:
+            typed[0] = sent[0] if b"\n" in since else typed[0] + sent[0]
+        del since[:]
+        sent[0] = typing.pop(0)
+        console[0].sendall(sent[0])
         if not typing:
             console[0].close()
             console[0] = None
@@ -286,7 +300,7 @@ def monitor(args):
         problem = drain()
         if problem is None and w.want_answer and not exited:
             answer()
-        elif problem is None and typing and grew[0] and not exited:
+        elif problem is None and typing and echoed() and not exited:
             type_next()
         if exited and problem is None:
             return 0

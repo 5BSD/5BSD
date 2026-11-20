@@ -28,9 +28,15 @@
 #              the boot runs /etc/rc and reaches multi-user.
 #
 # The single-user and post-single-user passes are told apart by a state file,
-# /var/db/sb-no-issuer.state.  Whether /etc/rc ran is read from an rc.d script
-# this test installs, ordered before fsck, that appends a line to
-# /var/db/sb-no-issuer.rc for every /etc/rc run once root is writable.
+# /var/db/sb-no-issuer.state, which also carries the single-user pass's
+# failure count to the pass after it: the harness judges the run on that last
+# pass (and on SINGLE_USER_SHELL_PASS, which the single-user pass prints only
+# when it found nothing wrong).  Whether /etc/rc ran is read from an rc.d
+# script this test installs, ordered before fsck, that appends a line to
+# /var/db/sb-no-issuer.rc for every /etc/rc run once root is writable.  A run
+# with a read-only root (the first rc of a boot, before rc mounts it
+# read-write) leaves no line: the marker counts only the runs this test
+# compares, those on a running system and after single-user.
 #
 # Waits are on events, never timed re-checks: pwait(1) for a process exit and
 # tail -f (kqueue, no timeout) for a log line.  None has its own deadline:
@@ -134,9 +140,9 @@ if [ -z "${VM_REROOT:-}" ]; then
 	# Clear the fault so the boot that follows has its issuer.
 	sysctl debug.mac_capability.test_issuer_fail_init=0 >/dev/null ||
 	    fail 'cannot clear fail_init'
-	echo "single $(rcruns)" > $STATE
+	echo "single $(rcruns) $failures" > $STATE
 	note "single-user: failures=$failures; leaving single-user"
-	[ "$failures" = 0 ] && echo SB_NO_ISSUER_SINGLE_PASS
+	[ "$failures" = 0 ] && echo SINGLE_USER_SHELL_PASS
 	exit 0
 fi
 
@@ -183,7 +189,10 @@ esac
 state=$(cat $STATE 2>/dev/null || true)
 case $state in
 single\ *)
-	after_single_user "$case-returned" "${state#single }"
+	set -- $state
+	[ "${3:-x}" = 0 ] ||
+	    fail "$case: the single-user pass failed ${3:-?} check(s) (see its SB_NO_ISSUER_FAIL lines)"
+	after_single_user "$case-returned" "$2"
 	rm -f $STATE /etc/rc.d/sbnoissuer
 	note "fail_init_now=$(knob debug.mac_capability.test_issuer_fail_init)"
 	[ "$failures" = 0 ] && echo SB_NO_ISSUER_AFTER_PASS

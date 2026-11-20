@@ -144,7 +144,8 @@ kyua_vars=${KYUA_VARS:-}
 #   recovery" and the single-user shell prompt are no longer fatal, and the
 #   monitor answers that prompt once with this path, which runs as the
 #   single-user shell; its exit returns the guest to multi-user.  A second
-#   prompt stops the run.
+#   prompt stops the run.  The run is clean only if the prompt was answered
+#   and that shell printed a line SINGLE_USER_SHELL_PASS (its own checks).
 plane_off=${PLANE_OFF:-0}
 case "$plane_off" in 0|1) ;; *) echo "PLANE_OFF must be 0 or 1" >&2; exit 64;; esac
 # No Capsule claims the device with the plane off, so that tier enforces the
@@ -957,7 +958,8 @@ if [ -n "${SINGLE_USER_SHELL:-}" ]; then
 	python3.12 -I "$monitor" --pid "$qpid" --log "$log" --deadline "$end" \
 	    --fatal "$fatal" --known "$known_lor" --fatal-lor "${FATAL_LOR:-yes}" \
 	    --answer 'Enter full pathname of shell' \
-	    --answer-text "$SINGLE_USER_SHELL" --console "$console_sock" &
+	    --answer-text "$SINGLE_USER_SHELL" --console "$console_sock" \
+	    > "$work/monitor.out" &
 else
 	python3.12 -I "$monitor" --pid "$qpid" --log "$log" --deadline "$end" \
 	    --fatal "$fatal" --known "$known_lor" --fatal-lor "${FATAL_LOR:-yes}" &
@@ -971,6 +973,7 @@ case $mrc in
 	kill "$qpid" 2>/dev/null || echo "qemu had already exited" ;;
 esac
 rc=0; wait "$qpid" 2>/dev/null || rc=$?
+[ -z "${SINGLE_USER_SHELL:-}" ] || cat "$work/monitor.out"
 # --- end of the monitor
 n=$(grep -ac 'lock order reversal' "$log" 2>/dev/null || true)
 # --- LOR verdict (tests/vm-provider-known-lor.sh runs this block)
@@ -1005,6 +1008,12 @@ stack_tier_met() {
 	    } END { exit !ok }' "$t"
 }
 # --- end of the stack-tier verdict
+# SINGLE_USER_SHELL: the prompt was answered (once: a second prompt stops the
+# run) and the single-user shell reported its own checks passed.
+single_user_passed() {
+	grep -qx CONSOLE_ANSWERED "$work/monitor.out" 2>/dev/null &&
+	    tr -d '\r' < "$log" | grep -aqx 'SINGLE_USER_SHELL_PASS'
+}
 verdict=VM_NOT_CLEAN
 if [ $forced = 0 ] && [ $lor_unknown = 0 ] && [ $rc = 0 ] && [ $guest_off = 1 ] && stack_tier_met &&
     [ "$(cat "$work/results/kyua-results/kyua-test.status" 2>/dev/null)" = 0 ] &&
@@ -1019,6 +1028,7 @@ if [ $forced = 0 ] && [ $lor_unknown = 0 ] && [ $rc = 0 ] && [ $guest_off = 1 ] 
       [ "$(cat "$work/results/kyua-results/extra.exit" 2>/dev/null)" = 0 ]; } &&
     { [ "$reroot" = 0 ] || { tr -d '\r' < "$log" | grep -aq '^REROOT_AFTER: pid1=capsule ' &&
       ! tr -d '\r' < "$log" | grep -aq '^REROOT_FAIL'; }; } &&
+    { [ -z "${SINGLE_USER_SHELL:-}" ] || single_user_passed; } &&
     grep -aq 'Powering system off' "$log" && ! grep -aqE "$fatal" "$log"; then
 	verdict=VM_CLEAN
 fi
