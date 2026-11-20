@@ -9,7 +9,8 @@
 # single-user prompt (no newline) to the serial log and copies what it is
 # sent to the log.  No guest.
 # - The prompt is answered once, through the socket, with the text and a
-#   newline; the monitor prints CONSOLE_ANSWERED and the run ends cleanly.
+#   newline, one byte per echo; the monitor prints CONSOLE_ANSWERED and the
+#   run ends cleanly.
 # - A second prompt after the answer stops the run as a problem.
 set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
@@ -35,6 +36,7 @@ for i in range(prompts):
         if not d:
             break
         got += d
+        out(d.decode())     # a tty echoes what it reads
     c.close()
     out("\ngot: " + got.decode().strip() + "\n")
 out("Powering system off\n")

@@ -237,26 +237,40 @@ def monitor(args):
         print("qemu had exited before the monitor started", flush=True)
         return 5
 
+    grew = [False]
+
     def drain():
         while True:
             d = os.read(fd, 1 << 16)
             if not d:
                 return None
+            grew[0] = True
             p = w.feed(d)
             if p:
                 return p
 
+    # The answer is typed one byte at a time, each sent once the console
+    # has echoed the one before (the log grew): a serial port without flow
+    # control drops what the guest has not yet taken.
+    typing = []
+    console = [None]
+
     def answer():
-        """Type the answer once on the guest console."""
+        """Start typing the answer, once."""
         w.want_answer = False
         w.answered += 1
-        c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        try:
-            c.connect(args["--console"])
-            c.sendall(args["--answer-text"].encode() + b"\n")
-        finally:
-            c.close()
-        print("CONSOLE_ANSWERED", flush=True)
+        typing[:] = [bytes([b]) for b in args["--answer-text"].encode() + b"\n"]
+        console[0] = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        console[0].connect(args["--console"])
+        type_next()
+
+    def type_next():
+        grew[0] = False
+        console[0].sendall(typing.pop(0))
+        if not typing:
+            console[0].close()
+            console[0] = None
+            print("CONSOLE_ANSWERED", flush=True)
 
     problem = drain()
     if problem is None and w.want_answer:
@@ -272,6 +286,8 @@ def monitor(args):
         problem = drain()
         if problem is None and w.want_answer and not exited:
             answer()
+        elif problem is None and typing and grew[0] and not exited:
+            type_next()
         if exited and problem is None:
             return 0
         if exited:
