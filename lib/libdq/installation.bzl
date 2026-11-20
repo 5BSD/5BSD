@@ -26,6 +26,7 @@ MANUAL_ALIASES = [
     "dq_observe_list_objects",
     "dq_observe_subscribe",
     "dq_get_stats2",
+    "dq_get_stats2_sized",
     "dq_mint_file_flags",
     "dq_push_vnode_note",
     "dq_push_invalidate",

@@ -94,11 +94,24 @@ SYSCTL_UINT(_debug_dq, OID_AUTO, drop_wakeup, CTLFLAG_RW,
     &dq_faultinj_drop_wakeups, 0,
     "Test kernel only: a mask of DQ_WAKE_* wakeups not issued");
 
+/*
+ * Each wakeup dropped counts here, so a test knows the moment its
+ * waiter's only way out was taken and need not wait to see it stay
+ * asleep.
+ */
+static u_long dq_faultinj_wakeups_dropped;
+SYSCTL_ULONG(_debug_dq, OID_AUTO, wakeups_dropped, CTLFLAG_RD,
+    &dq_faultinj_wakeups_dropped, 0,
+    "Test kernel only: wakeups drop_wakeup has dropped");
+
 bool
 dq_faultinj_wake(u_int site)
 {
 
-	return ((atomic_load_int(&dq_faultinj_drop_wakeups) & site) == 0);
+	if ((atomic_load_int(&dq_faultinj_drop_wakeups) & site) == 0)
+		return (true);
+	atomic_add_long(&dq_faultinj_wakeups_dropped, 1);
+	return (false);
 }
 
 static bool

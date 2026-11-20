@@ -135,13 +135,17 @@ dq_object_destroy_pass_end(struct dq_object *o)
 	DQO_UNLOCK(o);
 }
 
-/* Record that o's async post found no room (q_mtx held). */
+/*
+ * Record that o's async post found no room (q_mtx held): mem when what
+ * it lacked was memory, which no dq event frees for sure.
+ */
 static void
-dq_async_noroom_locked(struct dq_queue *q, struct dq_object *o)
+dq_async_noroom_locked(struct dq_queue *q, struct dq_object *o, bool mem)
 {
 
 	DQ_LOCK_ASSERT(q);
 	o->o_roomgen = q->q_roomgen;
+	o->o_noroom_mem = mem;
 }
 
 /*
@@ -310,7 +314,7 @@ dq_async_post(struct dq_object *o, vm_object_t obj, vm_page_t *ma, int count,
 		if (ev != NULL)
 			dq_event_rele(ev);
 		DQ_LOCK(q);
-		dq_async_noroom_locked(q, o);
+		dq_async_noroom_locked(q, o, true);
 		DQ_UNLOCK(q);
 		return (VM_PAGER_AGAIN);
 	}
@@ -368,7 +372,7 @@ dq_async_post(struct dq_object *o, vm_object_t obj, vm_page_t *ma, int count,
 	    q->q_async_bytes + len > dq_max_inflight_bytes ||
 	    o->o_async >= dq_max_inflight_per_object) {
 		rv = VM_PAGER_AGAIN;
-		dq_async_noroom_locked(q, o);
+		dq_async_noroom_locked(q, o, false);
 	}
 	else {
 		o->o_async++;
@@ -577,6 +581,12 @@ dq_async_wait(struct dq_object *o, sbintime_t deadline, bool all)
 	if (!all) {
 		q = o->o_queue;
 		DQ_LOCK(q);
+		if (o->o_noroom_mem) {
+			/* Memory: the page daemon's wakeup (design W5). */
+			DQ_UNLOCK(q);
+			vm_wait(NULL);
+			return (sbinuptime() < deadline);
+		}
 		while (q->q_roomgen == o->o_roomgen &&
 		    (q->q_flags & DQ_Q_CLOSING) == 0) {
 			error = msleep_sbt(&q->q_roomgen, &q->q_mtx, PVM,
@@ -1025,6 +1035,31 @@ dq_object_destroy_park(struct dq_object *o, uint64_t roomgen)
 	dq_object_destroy_pass_end(o);
 }
 
+/*
+ * A dirty page the flush skipped because someone else holds it exclusive
+ * busy (a page-in, the page daemon for a moment): sleep until it is
+ * released, which needs nothing of dq_taskq, then pass again.  A shared-
+ * busy page is a write-back in progress, whose completion kicks the task
+ * (o_async).  The object is write-locked; true when this slept, with the
+ * object unlocked.
+ */
+static bool
+dq_object_destroy_wait_busy(vm_object_t obj)
+{
+	struct pctrie_iter pages;
+	vm_page_t p;
+
+	VM_OBJECT_ASSERT_WLOCKED(obj);
+	vm_page_iter_init(&pages, obj);
+	for (p = vm_radix_iter_lookup_ge(&pages, 0); p != NULL;
+	    p = vm_radix_iter_step(&pages)) {
+		if (vm_page_xbusied(p) && p->dirty != 0)
+			return (vm_page_busy_sleep(p, "dqdflb",
+			    VM_ALLOC_IGN_SBUSY));
+	}
+	return (false);
+}
+
 static void
 dq_object_destroy_task(void *arg, int pending __unused)
 {
@@ -1073,6 +1108,14 @@ dq_object_destroy_task(void *arg, int pending __unused)
 	}
 	if (flush && (again || skipped)) {
 		DQO_UNLOCK(o);
+		if (!again && skipped && dq_object_destroy_wait_busy(obj)) {
+			/* Slept on a released page: look again at once. */
+			DQO_LOCK(o);
+			o->o_destroy_state = DQ_DESTROY_AGAIN;
+			DQO_UNLOCK(o);
+			dq_object_destroy_pass_end(o);
+			return;
+		}
 		VM_OBJECT_WUNLOCK(obj);
 		dq_object_destroy_park(o, roomgen);
 		return;
@@ -1088,16 +1131,25 @@ dq_object_destroy_task(void *arg, int pending __unused)
 	DQO_UNLOCK(o);
 	/*
 	 * The CLOSE record is allocated first, M_NOWAIT (a task never sleeps
-	 * for memory): without it nothing irreversible is done yet, and the
-	 * task comes back.
+	 * for memory: the page daemon's write-backs complete on this task
+	 * queue).  Without it nothing irreversible is done yet: the task
+	 * waits for a room event (a completion or a slot frees memory too)
+	 * until the page deadline; past it the record is dropped and counted
+	 * (ds2_task_drops), as a task's INTERRUPT is, and the object goes.
 	 */
 	if (wantclose && o->o_closeev == NULL) {
 		o->o_closeev = dq_event_alloc_flags(o, DQ_OP_CLOSE, NULL, 0,
 		    NULL, true, M_NOWAIT);
-		if (o->o_closeev == NULL) {
+		if (o->o_closeev == NULL &&
+		    sbinuptime() < o->o_destroy_deadline) {
 			VM_OBJECT_WUNLOCK(obj);
 			dq_object_destroy_park(o, roomgen);
 			return;
+		}
+		if (o->o_closeev == NULL) {
+			DQ_LOCK(q);
+			q->q_stats.ds2_task_drops++;
+			DQ_UNLOCK(q);
 		}
 	}
 	/*
@@ -1137,13 +1189,18 @@ restart:
 	VM_OBJECT_WUNLOCK(obj);
 	/*
 	 * This pass is the last: no kick may queue the task again (the state
-	 * is DONE), and the page deadline an earlier park armed is stopped
-	 * under its lock, so it cannot fire after the object is gone.
+	 * is DONE), and the page deadline an earlier park armed is drained,
+	 * so it cannot run after the object is gone.
 	 */
 	DQO_LOCK(o);
 	o->o_destroy_state = DQ_DESTROY_DONE;
-	callout_stop(&o->o_destroy_co);	/* o_mtx: it cannot run after */
 	DQO_UNLOCK(o);
+	/*
+	 * A softclock thread may already be past the callout and blocked on
+	 * o_mtx; drain it before the object can go (it finds DONE and does
+	 * nothing).
+	 */
+	callout_drain(&o->o_destroy_co);
 	/*
 	 * The bounded sleeps left (dq_var.h): the terminate's pip wait when
 	 * this was the last VM reference, knlist_clear in the retire.

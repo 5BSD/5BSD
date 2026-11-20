@@ -694,14 +694,19 @@ struct dq_stats {
  * GET_STATS2 (B8): dq_stats is frozen (its size is in the command word);
  * everything new goes here.  ds2_size is written by the kernel.
  *
- * The struct ends in DQ_STATS2_RESERVED words that read 0: one 64-byte
- * cache line, the unit it grows by.  A new counter takes a reserved word,
- * so the size, and with it DQ_IOC_GET_STATS2's command word, stays the
- * same until the line is used up; then the struct grows by another line
- * and the command word changes once (owner, 2026-11-19: grow, keep spare
- * room; nothing to stay compatible with before 1.0).
+ * The struct is DQ_STATS2_WORDS 64-bit words; the words no counter uses
+ * yet (DQ_STATS2_RESERVED, what is left of them) read 0.  A new counter
+ * adds one to DQ_STATS2_USED, and the reserved tail shrinks by one, so
+ * the size, and with it DQ_IOC_GET_STATS2's command word, stays the same
+ * until the tail is used up; then DQ_STATS2_WORDS grows by a 64-byte
+ * cache line (8 words) and the command word changes once (owner,
+ * 2026-11-19: grow, keep spare room; nothing to stay compatible with
+ * before 1.0).  libdq passes the caller's size (dq_get_stats2), so a
+ * program built against another size fails cleanly.
  */
-#define	DQ_STATS2_RESERVED	(64 / sizeof(uint64_t))
+#define	DQ_STATS2_WORDS		50	/* the size in words: 400 bytes */
+#define	DQ_STATS2_USED		42	/* the words before ds2_reserved */
+#define	DQ_STATS2_RESERVED	(DQ_STATS2_WORDS - DQ_STATS2_USED)
 struct dq_stats2 {
 	uint32_t	ds2_size;		/* sizeof(struct dq_stats2) */
 	uint32_t	ds2_pad0;
@@ -737,9 +742,12 @@ struct dq_stats2 {
 	uint64_t	ds2_close_dropped;	/* dirty pages dropped after the
 						   last close because their
 						   write-back failed or expired */
-	uint64_t	ds2_task_drops;		/* INTERRUPT records the completion
-						   task could not allocate (the
-						   late reply gets ESRCH) */
+	uint64_t	ds2_task_drops;		/* records a task could not
+						   allocate: a completion's
+						   INTERRUPT (the late reply
+						   gets ESRCH), a closed
+						   object's CLOSE past the page
+						   deadline */
 	uint64_t	ds2_resolves;		/* RESOLVE events posted (1c) */
 	uint64_t	ds2_resolve_pass;	/* answered PASS */
 	uint64_t	ds2_resolve_kernel;	/* class 2/3 consultations */
@@ -1165,6 +1173,9 @@ _Static_assert(sizeof(struct dq_lock_body) == 48, "dq_lock_body");
 _Static_assert(sizeof(struct dq_lock_reply) == 32, "dq_lock_reply");
 _Static_assert(sizeof(struct dq_unlock_all_body) == 16, "dq_unlock_all_body");
 _Static_assert(sizeof(struct dq_ioctl_body) == 16, "dq_ioctl_body");
+_Static_assert(sizeof(struct dq_stats2) == DQ_STATS2_WORDS * 8 &&
+    __offsetof(struct dq_stats2, ds2_reserved) == DQ_STATS2_USED * 8,
+    "dq_stats2: DQ_STATS2_USED counts the words before ds2_reserved");
 _Static_assert(sizeof(struct dq_stats2) == 400, "dq_stats2");
 _Static_assert(sizeof(struct dq_queue_flags) == 16, "dq_queue_flags");
 _Static_assert(sizeof(struct dq_push_args) == 40, "dq_push_args");

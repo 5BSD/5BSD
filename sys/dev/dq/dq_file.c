@@ -666,15 +666,48 @@ dq_object_gen_newer(struct dq_object *o, int field, uint64_t agen)
  * by the generation rule.  Returns whether the pager's size must follow
  * (dq_object_sync_vmsize, with no dq lock).
  */
-static bool
+bool
 dq_object_postop_size(struct dq_object *o, uint64_t size, uint64_t agen)
 {
 
 	DQO_LOCK_ASSERT(o);
-	if (!dq_object_gen_newer(o, DQ_GEN_SIZE, agen) ||
-	    size == o->o_ident.di_size)
+	if (!dq_object_gen_newer(o, DQ_GEN_SIZE, agen))
+		return (false);
+	/*
+	 * A reply older than a write or allocation whose own reply proved a
+	 * larger size cannot bring the size below that proof: the proof was
+	 * answered later, so the file was at least that large then (review
+	 * 2 #7).  A newer reply can (another party truncated the file).
+	 */
+	if (agen != 0 && agen < o->o_floor_gen && size < o->o_floor)
+		size = o->o_floor;
+	if (size == o->o_ident.di_size)
 		return (false);
 	o->o_ident.di_size = size;
+	return (true);
+}
+
+/*
+ * The size a write or an allocation proves (its end), with its reply's
+ * generation (o_mtx held): it grows the size unless a newer reply set
+ * it, and is kept as the floor that older replies' sizes cannot go below.
+ * It does not set the size's generation: the proof is only a lower bound,
+ * and an older reply may have reported a larger size.  Returns whether
+ * the size grew.
+ */
+bool
+dq_object_size_proven(struct dq_object *o, uint64_t end, uint64_t agen)
+{
+
+	DQO_LOCK_ASSERT(o);
+	if (agen != 0 && (agen > o->o_floor_gen ||
+	    (agen == o->o_floor_gen && end > o->o_floor))) {
+		o->o_floor = end;
+		o->o_floor_gen = agen;
+	}
+	if (end <= o->o_ident.di_size || agen <= o->o_gen[DQ_GEN_SIZE])
+		return (false);
+	o->o_ident.di_size = end;
 	return (true);
 }
 
@@ -1248,9 +1281,7 @@ dq_write(struct file *fp, struct uio *uio, struct ucred *active_cred __unused,
 		 * The size the write proves, unless a newer reply set the
 		 * size (another party may have truncated the file since).
 		 */
-		if ((uint64_t)newend > o->o_ident.di_size &&
-		    agen > o->o_gen[DQ_GEN_SIZE]) {
-			o->o_ident.di_size = newend;
+		if (dq_object_size_proven(o, (uint64_t)newend, agen)) {
 			hint |= NOTE_EXTEND;
 			extended = true;
 		}
@@ -1299,6 +1330,7 @@ dq_stat(struct file *fp, struct stat *sb, struct ucred *active_cred)
 	struct dq_ident_file *di;
 	struct dq_data *reply;
 	bool event;
+	uint64_t agen;
 	int error, rerror;
 
 	o = dq_fp_object(fp);
@@ -1308,8 +1340,8 @@ dq_stat(struct file *fp, struct stat *sb, struct ucred *active_cred)
 	    (o->o_queue->q_flags & DQ_Q_CLOSING) == 0;
 	DQO_UNLOCK(o);
 	if (event) {
-		error = dq_event_post_wait(o, DQ_OP_GETATTR, NULL, 0, curthread,
-		    0, &reply, &rerror);
+		error = dq_event_post_wait_agen(o, DQ_OP_GETATTR, NULL, 0,
+		    curthread, 0, &reply, &rerror, &agen);
 		if (error != 0)
 			return (error);
 		if (rerror != 0) {
@@ -1318,10 +1350,13 @@ dq_stat(struct file *fp, struct stat *sb, struct ucred *active_cred)
 		}
 		/*
 		 * The reply path validated it against the kind; the identity
-		 * index follows a changed (di_dev, di_ino).
+		 * index follows a changed (di_dev, di_ino).  Its size, block
+		 * count and times are applied by the generation rule with its
+		 * own reply's generation: an answer older than a write's block
+		 * does not undo it (review 2 #6).
 		 */
-		dq_object_set_ident(o,
-		    (const struct dq_ident_file *)reply->dd_bytes, 0);
+		dq_object_set_ident_agen(o,
+		    (const struct dq_ident_file *)reply->dd_bytes, agen);
 		dq_reply_free(reply);
 	}
 	/* After a revoke the frozen identity keeps answering (design 9). */
@@ -1841,11 +1876,8 @@ dq_fallocate(struct file *fp, off_t offset, off_t len, struct thread *td)
 		end = (uint64_t)offset + (uint64_t)len;
 		DQO_LOCK(o);
 		hint = NOTE_WRITE;
-		if (end > o->o_ident.di_size &&
-		    agen > o->o_gen[DQ_GEN_SIZE]) {
-			o->o_ident.di_size = end;
+		if (dq_object_size_proven(o, end, agen))
 			hint |= NOTE_EXTEND;
-		}
 		dq_file_knote(o, hint);
 		DQO_UNLOCK(o);
 		if ((hint & NOTE_EXTEND) != 0)

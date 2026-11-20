@@ -619,26 +619,9 @@ dq_serve_ident_sync(int q, const struct dq_event *ev,
  * Operations
  */
 
-/*
- * Whether the kernel takes post-operation blocks: FEATURE(dq_postop),
- * looked up once (0 not yet, 1 yes, 2 no).
- */
-static atomic_int dq_serve_postop_kernel;
+/* libdq.c: whether the kernel takes post-operation blocks. */
+int	_dq_postop_probe(void);
 
-static bool
-dq_serve_postop_supported(void)
-{
-	int k;
-
-	k = atomic_load_explicit(&dq_serve_postop_kernel,
-	    memory_order_relaxed);
-	if (k == 0) {
-		k = feature_present("dq_postop") ? 1 : 2;
-		atomic_store_explicit(&dq_serve_postop_kernel, k,
-		    memory_order_relaxed);
-	}
-	return (k == 1);
-}
 
 /*
  * A successful reply with the backing file's attributes after the
@@ -657,7 +640,13 @@ dq_serve_reply_postop(int q, uint64_t id, int backing, const void *data,
 	struct dq_postop_attr pa;
 	struct stat sb;
 
-	if (!dq_serve_postop_supported() || fstat(backing, &sb) == -1)
+	switch (_dq_postop_probe()) {
+	case -1:
+		return (-1);	/* reported; dq_serve_failclosed answers EIO */
+	case 2:
+		return (dq_reply(q, id, 0, data, len));
+	}
+	if (fstat(backing, &sb) == -1)
 		return (dq_reply(q, id, 0, data, len));
 	dq_postop_from_stat(&pa, &sb, valid);
 	return (dq_reply_postop(q, id, data, len, &pa));

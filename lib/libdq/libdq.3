@@ -29,6 +29,7 @@
 .Nm dq_observe_list_objects ,
 .Nm dq_observe_subscribe ,
 .Nm dq_get_stats2 ,
+.Nm dq_get_stats2_sized ,
 .Nm dq_mint_file_flags ,
 .Nm dq_push_vnode_note ,
 .Nm dq_push_invalidate ,
@@ -157,6 +158,8 @@ DescriptorQueue controller library
 .Fn dq_observe_subscribe "int svc" "uint64_t queue"
 .Ft int
 .Fn dq_get_stats2 "int fd" "struct dq_stats2 *st"
+.Ft int
+.Fn dq_get_stats2_sized "int fd" "struct dq_stats2 *st" "size_t size"
 .Ft int
 .Fo dq_mint_file_flags
 .Fa "int q" "const struct dq_ident_file *ident" "const struct dq_policy *pol"
@@ -402,6 +405,12 @@ without the
 privilege, and
 .Er EOPNOTSUPP
 from a 32-bit process.
+It also reads whether the kernel takes post-operation attributes
+.Pq Va kern.features.dq_postop ,
+before the controller restricts itself; a failure to read it other than
+its absence fails
+.Fn dq_open
+with that error.
 .Pp
 .Fn dq_get_stats
 fills
@@ -411,7 +420,9 @@ with the
 of the queue, or of the queue an observer descriptor
 .Fa fd
 watches.
-.Fn dq_get_stats2
+.Fn dq_get_stats2 ,
+a macro that passes the size of the caller's struct to
+.Fn dq_get_stats2_sized ,
 fills the extended
 .Vt struct dq_stats2
 .Pq Dv DQ_IOC_GET_STATS2 :

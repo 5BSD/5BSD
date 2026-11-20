@@ -368,6 +368,13 @@ struct dq_object {
 #define	DQ_GEN_ATIME		4
 #define	DQ_GEN_N		5
 	uint64_t		 o_gen[DQ_GEN_N];
+	/*
+	 * o_mtx: the largest size a write or an allocation proved, and its
+	 * reply's generation (dq_object_size_proven): an older reply's size
+	 * cannot go below it.
+	 */
+	uint64_t		 o_floor;
+	uint64_t		 o_floor_gen;
 	struct dq_policy	 o_policy;
 	struct rangelock	 o_rl;
 	struct selinfo		 o_sel;		/* EVFILT_* knotes, on o_mtx */
@@ -454,6 +461,8 @@ struct dq_object {
 	 * destroy task parked on q_roomq.
 	 */
 	uint64_t		 o_roomgen;
+	bool			 o_noroom_mem;	/* q_mtx: that AGAIN was an
+						   allocation failure */
 	TAILQ_ENTRY(dq_object)	 o_roomlink;
 	bool			 o_onroomq;
 };
@@ -580,8 +589,6 @@ void	dq_object_retire_ev(struct dq_object *o, struct thread *td,
 void	dq_object_knote_siblings(struct dq_object *o, long hint);
 void	dq_object_mark_locked(struct dq_object *o, u_int bit);
 void	dq_object_cut(struct dq_object *o, off_t newsize, off_t pagecut);
-void	dq_object_set_ident(struct dq_object *o,
-	    const struct dq_ident_file *di, long hint);
 
 void	dq_event_hold(struct dq_event_k *ev);
 void	dq_event_rele(struct dq_event_k *ev);
@@ -643,6 +650,7 @@ int	dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
 	    struct dq_object **robjp, struct fdswap *rswapp);
 /* n slots of the queue were freed: wake that many waiters for one. */
 void	dq_queue_slots_freed(struct dq_queue *q, u_int n);
+void	dq_queue_slot_passed(struct dq_queue *q);
 
 /*
  * Objects created apart from their linking (MINT, and the RESOLVE FD reply
@@ -761,6 +769,7 @@ bool	dq_faultinj_wake(u_int site);
 #define	DQ_WAKE_REVOKE_QUOTA	0x0080	/* a revoke, quota waiters */
 #define	DQ_WAKE_ASYNC_ROOM	0x0100	/* room for an async post */
 #define	DQ_WAKE_DESTROY		0x0200	/* a closing object's settle */
+#define	DQ_WAKE_PASS		0x0400	/* a slot waiter's unused wakeup */
 #ifdef DQ_FAULT_INJECTION
 #define	DQ_WAKE(site)		dq_faultinj_wake(site)
 #else
@@ -809,6 +818,12 @@ void	dq_object_postop(struct dq_object *o, uint32_t op,
 	    const struct dq_data *reply, uint64_t minsize, size_t done,
 	    uint64_t agen);
 bool	dq_object_gen_newer(struct dq_object *o, int field, uint64_t agen);
+bool	dq_object_postop_size(struct dq_object *o, uint64_t size,
+	    uint64_t agen);
+bool	dq_object_size_proven(struct dq_object *o, uint64_t end,
+	    uint64_t agen);
+void	dq_object_set_ident_agen(struct dq_object *o,
+	    const struct dq_ident_file *di, uint64_t agen);
 int	dq_file_bind(struct thread *td, struct dq_object *o, int fflags,
 	    struct file **fpp);
 

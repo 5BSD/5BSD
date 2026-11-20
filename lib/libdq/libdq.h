@@ -57,8 +57,14 @@ int	dq_open(void);
 
 /* Statistics of a queue or of an observer descriptor. */
 int	dq_get_stats(int fd, struct dq_stats *st);
-/* The extended counters (DQ_IOC_GET_STATS2); ds2_size is the kernel's. */
-int	dq_get_stats2(int fd, struct dq_stats2 *st);
+/*
+ * The extended counters (DQ_IOC_GET_STATS2); ds2_size is the kernel's.
+ * The macro passes the size of the caller's struct, so a program built
+ * against another struct dq_stats2 gets EINVAL, never an overrun.
+ */
+int	dq_get_stats2_sized(int fd, struct dq_stats2 *st, size_t size);
+int	(dq_get_stats2)(int fd, struct dq_stats2 *st);
+#define	dq_get_stats2(fd, st)	dq_get_stats2_sized((fd), (st), sizeof(*(st)))
 
 /* Lower the queue's depth; 1..kern.dq.queue_depth, never above it. */
 int	dq_set_queue_depth(int q, uint32_t depth);

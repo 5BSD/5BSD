@@ -450,7 +450,7 @@ dq_object_hash_locked(struct dq_queue *q, struct dq_object *o, uint64_t dev,
 		if ((s)->o_hdev == (o)->o_hdev && (s)->o_hino == (o)->o_hino)
 
 /*
- * Replace an object's identity (SETIDENT, a GETATTR reply) and keep the
+ * Replace an object's identity (SETIDENT) and keep the
  * index in step when the key changed.  hint, when non-zero, is raised on
  * the object's knotes.
  */
@@ -473,15 +473,42 @@ dq_object_set_ident_locked(struct dq_queue *q, struct dq_object *o,
 		dq_object_hash_locked(q, o, di->di_dev, di->di_ino);
 }
 
+/*
+ * A GETATTR answer (agen: its reply's generation): every field but the
+ * size, block count and times is the answer's; those follow the
+ * generation rule, so an answer older than a newer reply already applied
+ * does not take them back (review 2 #6).  SETIDENT, the controller's own
+ * statement, sets everything (dq_object_set_ident_locked).
+ */
 void
-dq_object_set_ident(struct dq_object *o, const struct dq_ident_file *di,
-    long hint)
+dq_object_set_ident_agen(struct dq_object *o, const struct dq_ident_file *di,
+    uint64_t agen)
 {
+	struct dq_ident_file cur;
 	struct dq_queue *q;
 
 	q = o->o_queue;
 	DQ_LOCK(q);
-	dq_object_set_ident_locked(q, o, di, hint);
+	DQO_LOCK(o);
+	cur = o->o_ident;
+	o->o_ident = *di;
+	o->o_ident.di_size = cur.di_size;
+	o->o_ident.di_blocks = cur.di_blocks;
+	o->o_ident.di_mtime = cur.di_mtime;
+	o->o_ident.di_ctime = cur.di_ctime;
+	o->o_ident.di_atime = cur.di_atime;
+	(void)dq_object_postop_size(o, di->di_size, agen);
+	if (dq_object_gen_newer(o, DQ_GEN_BLOCKS, agen))
+		o->o_ident.di_blocks = di->di_blocks;
+	if (dq_object_gen_newer(o, DQ_GEN_MTIME, agen))
+		o->o_ident.di_mtime = di->di_mtime;
+	if (dq_object_gen_newer(o, DQ_GEN_CTIME, agen))
+		o->o_ident.di_ctime = di->di_ctime;
+	if (dq_object_gen_newer(o, DQ_GEN_ATIME, agen))
+		o->o_ident.di_atime = di->di_atime;
+	DQO_UNLOCK(o);
+	if (o->o_hashed && (o->o_hdev != di->di_dev || o->o_hino != di->di_ino))
+		dq_object_hash_locked(q, o, di->di_dev, di->di_ino);
 	DQ_UNLOCK(q);
 	dq_object_sync_vmsize(o);	/* B10 */
 }
@@ -610,6 +637,12 @@ dq_object_revoke_locked(struct dq_queue *q, struct dq_object *o, int why,
 	 */
 	if (why == 0 && DQ_WAKE(DQ_WAKE_REVOKE_SPACE))
 		wakeup(&q->q_space);
+	/*
+	 * The object's msync waiting for room and its parked destroy task
+	 * end now too (a dying queue does this once itself).
+	 */
+	if (why == 0)
+		dq_queue_room_locked(q);
 	q->q_stats.ds2_objects_revoked++;
 	SDT_PROBE3(dq, , , revoke, q, o, why);
 }
@@ -1093,48 +1126,58 @@ dq_wait_mask_leave(struct thread *td, struct dq_wait_mask *wm)
  * - sigexit, a fatal signal, one that dumps core included: P2_WEXIT; the
  *   dump single-threads with SINGLE_NO_EXIT (even with RLIMIT_CORE 0),
  *   which sets no P_SINGLE_EXIT, and after P2_WEXIT no SIGKILL comes;
- * - a sibling's execve (SINGLE_BOUNDARY): exec waits for every thread to
- *   reach the user boundary and aborts a catching sleep each time it
- *   looks, so the wait gives up its operation (INTERRUPT to the
- *   controller) instead of holding the exec (design 2.4 (a)).
+ * - another thread single-threading the process to the user boundary
+ *   (SINGLE_BOUNDARY): an execve, also one that then fails, an rfork
+ *   without RFPROC, a fork under pg_killsx, jail_attach.  The process is
+ *   not dying: thread_single aborts a catching sleep each time it looks,
+ *   and the thread must reach the boundary.  A data or attribute wait
+ *   gives up its operation (INTERRUPT to the controller) and returns
+ *   ERESTART, so the system call is restarted once the single-threading
+ *   is over, as fusefs's wait does (design 2.4); a page fault cannot be
+ *   restarted that way and waits instead, without catching, for its
+ *   answer or the page deadline (dq_wait_event, dq_wait_room).
  * The thread taking the process down (p_singlethread) keeps waiting, so a
- * core it writes to a served file is still answered.  Called with no dq
- * lock held.
+ * core it writes to a served file is still answered.  Returns 0, EINTR
+ * (dying) or ERESTART (boundary).  Called with no dq lock held.
  */
-static bool
+static int
 dq_wait_abandon(struct thread *td)
 {
 	struct proc *p;
-	bool dying;
+	int error;
 
 	if (curproc_sigkilled())
-		return (true);
+		return (EINTR);
 	p = td->td_proc;
+	error = 0;
 	PROC_LOCK(p);
-	dying = (p->p_flag & P_WEXIT) != 0 ||
-	    (((p->p_flag & (P_SINGLE_EXIT | P_SINGLE_BOUNDARY)) != 0 ||
-	    (p->p_flag2 & P2_WEXIT) != 0) && p->p_singlethread != td);
+	if ((p->p_flag & P_WEXIT) != 0 ||
+	    (((p->p_flag & P_SINGLE_EXIT) != 0 ||
+	    (p->p_flag2 & P2_WEXIT) != 0) && p->p_singlethread != td))
+		error = EINTR;
+	else if ((p->p_flag & P_SINGLE_BOUNDARY) != 0 &&
+	    p->p_singlethread != td)
+		error = ERESTART;
 	PROC_UNLOCK(p);
-	return (dying);
+	return (error);
 }
 
 /*
  * After a wake of a wait that catches no signal: EINTR (dq:::wait-abandon)
- * when the process is being taken down, else 0.  q_mtx is held and kept.
+ * when the process is being taken down, ERESTART when it is single-
+ * threaded to the user boundary, else 0.  q_mtx is held and kept.
  */
 static int
 dq_wait_woken(struct dq_queue *q, struct dq_event_k *ev, struct thread *td)
 {
-	bool dying;
+	int error;
 
 	DQ_UNLOCK(q);
-	dying = dq_wait_abandon(td);
+	error = dq_wait_abandon(td);
 	DQ_LOCK(q);
-	if (dying) {
+	if (error != 0)
 		SDT_PROBE2(dq, , , wait__abandon, q, ev);
-		return (EINTR);
-	}
-	return (0);
+	return (error);
 }
 
 /*
@@ -1163,7 +1206,17 @@ dq_wait_room(struct dq_queue *q, struct dq_event_k *ev, void *chan,
 		return (EIO);
 	if (mode == DQ_WAIT_CATCH)
 		return (error);
-	return (dq_wait_woken(q, ev, td));
+	error = dq_wait_woken(q, ev, td);
+	if (error == ERESTART && mode == DQ_WAIT_FAULT) {
+		/*
+		 * A fault cannot be restarted: wait for a wakeup without
+		 * catching, bounded by the page deadline (always set).
+		 */
+		error = msleep_sbt(chan, &q->q_mtx, 0, wmesg, deadline, 0,
+		    C_ABSOLUTE);
+		return (error == EWOULDBLOCK ? EIO : 0);
+	}
+	return (error);
 }
 
 /*
@@ -1191,7 +1244,7 @@ dq_post_waits_done(struct dq_queue *q, struct dq_event_k *ev,
 		SDT_PROBE3(dq, , , wait__full, q, ev, error);
 	/* A slot this waiter was woken for and did not take goes on. */
 	if (pw->pw_pass)
-		dq_queue_slots_freed(q, 1);
+		dq_queue_slot_passed(q);
 	pw->pw_quota = 0;
 	pw->pw_full = pw->pw_pass = false;
 }
@@ -1210,7 +1263,7 @@ dq_post_quota_sleep(struct dq_queue *q, struct dq_event_k *ev, void *chan,
 
 	/* A slot this waiter was woken for goes on before it sleeps here. */
 	if (pw->pw_pass) {
-		dq_queue_slots_freed(q, 1);
+		dq_queue_slot_passed(q);
 		pw->pw_pass = false;
 	}
 	pw->pw_quota = chan == (void *)&q->q_requesters ? DQ_QUOTA_REQUESTER :
@@ -1266,6 +1319,24 @@ dq_queue_slots_freed(struct dq_queue *q, u_int n)
 }
 
 /*
+ * A slot waiter woken for a slot it does not take (it sleeps on a quota
+ * or fails) passes the wakeup on to the next (dq_post_space_sleep), its
+ * own drop point (DQ_WAKE_PASS) so a test can prove the next waiter
+ * depends on it.
+ */
+void
+dq_queue_slot_passed(struct dq_queue *q)
+{
+
+	DQ_LOCK_ASSERT(q);
+	if ((q->q_flags & DQ_Q_CLOSING) != 0)
+		return;
+	dq_queue_room_locked(q);
+	if (DQ_WAKE(DQ_WAKE_PASS))
+		wakeup_one(&q->q_space);
+}
+
+/*
  * Wait for ev's answer, q_mtx held and kept (D192).  DQ_WAIT_CATCH: a
  * signal ends the wait (EINTR or ERESTART), as an NFS intr mount's does.
  * DQ_WAIT_UNINTR and DQ_WAIT_FAULT: no signal does, as a local file
@@ -1304,6 +1375,26 @@ dq_wait_event(struct dq_queue *q, struct dq_event_k *ev, struct thread *td,
 		}
 		/* A wake (or an abort) with no answer: dying, or sleep on. */
 		error = dq_wait_woken(q, ev, td);
+		if (error == ERESTART && mode == DQ_WAIT_FAULT) {
+			/*
+			 * A fault cannot be restarted: vm_fault has no retry
+			 * answer from a pager (VM_PAGER_FAIL would zero-fill
+			 * the page), and VM_PAGER_ERROR is SIGBUS.  Wait for
+			 * the answer without catching, bounded by the page
+			 * deadline (always set for a fault); the single-
+			 * threading waits that long at most, and so does an
+			 * exit that begins meanwhile.
+			 */
+			while (ev->ev_state == DQ_EV_PENDING ||
+			    ev->ev_state == DQ_EV_DELIVERED) {
+				if (cv_timedwait_sbt(&ev->ev_cv, &q->q_mtx,
+				    deadline, 0, C_ABSOLUTE) == EWOULDBLOCK)
+					break;
+			}
+			error = ev->ev_state == DQ_EV_PENDING ||
+			    ev->ev_state == DQ_EV_DELIVERED ? EWOULDBLOCK : 0;
+			break;
+		}
 		if (error != 0)
 			break;
 	}
@@ -1322,8 +1413,8 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 
 /*
  * dq_event_post_wait, and the reply's generation in *agenp (0 when no
- * reply came): the order the controller answered in, for
- * dq_object_gen_newer.
+ * reply came): the order the replies reached the kernel (DQ_IOC_REPLY),
+ * for dq_object_gen_newer.
  */
 int
 dq_event_post_wait_agen(struct dq_object *o, uint32_t op, const void *body,
@@ -2805,10 +2896,16 @@ dq_queue_set_depth(struct dq_queue *q, uint32_t depth)
 	if (depth == 0 || depth > dq_queue_depth)
 		return (EINVAL);
 	DQ_LOCK(q);
-	/* Posts waiting for a slot look again at the new depth. */
-	if (depth > q->q_depth)
+	/*
+	 * Posts waiting for a slot look again at the new depth, and an
+	 * async post refused for the depth may go (msync, a parked destroy).
+	 */
+	if (depth > q->q_depth) {
+		q->q_depth = depth;
 		wakeup(&q->q_space);
-	q->q_depth = depth;
+		dq_queue_room_locked(q);
+	} else
+		q->q_depth = depth;
 	DQ_UNLOCK(q);
 	return (0);
 }

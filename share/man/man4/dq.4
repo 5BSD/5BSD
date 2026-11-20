@@ -840,12 +840,22 @@ dump single-threads the process first, and after it no
 .Dv SIGKILL
 is delivered), end it, the last four with the operation abandoned; the
 thread that writes the core still waits for its own answers.
-Another thread's
-.Xr execve 2
-ends it too, with the operation abandoned: exec single-threads the
-process to the user boundary, and the wait gives up rather than hold the
-exec for an answer (a disk read in progress would hold it; a listed
-difference).
+Another thread single-threading the process to the user boundary (an
+.Xr execve 2 ,
+also one that then fails, an
+.Xr rfork 2
+without
+.Dv RFPROC ,
+.Xr jail_attach 2 )
+ends a data or attribute wait with the operation abandoned (INTERRUPT to
+the controller) and the system call restarted once the single-threading
+is over, as a
+.Xr fusefs 4
+wait does: the program sees no error, but the controller may have done
+the operation once already (a disk read in progress would hold the exec;
+a listed difference).
+A page fault cannot be restarted: it waits, without catching, for its
+answer or the page deadline.
 The wait is event-driven, with no polling: it sleeps with every signal
 but
 .Dv SIGKILL
@@ -853,6 +863,16 @@ blocked and stops deferred, as a
 .Xr fusefs 4
 wait does, so a storm of signals costs it nothing, and each of the ends
 above wakes it.
+While it waits, the thread's signal mask shows every signal but
+.Dv SIGKILL
+blocked
+.Po
+.Xr procstat 1
+.Fl i ,
+.Dv PT_LWPINFO Ns 's
+.Va pl_sigmask
+.Pc ;
+the program's own mask is back when the call returns.
 Its only timeout is the deadline.
 A deadline of 0 is then a hard mount: only the answer,
 .Dv SIGKILL
@@ -1765,7 +1785,9 @@ Requesters apply their replies' blocks in the order they wake, not the
 order the controller answered, so a block can be older than what another
 writer's reply has already presented.
 The kernel numbers the replies to an object's events in the order the
-controller answered them, and each presented attribute (the size, the
+replies reach the kernel (the order of the controller's
+.Dv DQ_IOC_REPLY
+calls), and each presented attribute (the size, the
 block count, and each time) remembers the number of the reply it was last
 set from: a block's value is applied only when its reply is newer.
 An older block never takes the size or a time back, and a newer one
@@ -1778,9 +1800,12 @@ The size a write or an allocation proves, the kernel's stamps and a
 .Dv DQ_OP_SETATTR
 the kernel applies follow the same rule with their own reply's number;
 .Dv DQ_IOC_SETIDENT
-and a
+sets every attribute as of the newest reply so far; a
 .Dv DQ_OP_GETATTR
-answer set every attribute as of the newest reply so far.
+answer applies its size, block count and times by its own reply's
+number, like a block.
+The end a write or an allocation proves is a floor that the size of an
+older reply cannot go below.
 A
 .Dv DQ_OP_FSPACECTL
 block sets no size, whatever it names: a deallocation changes none.
