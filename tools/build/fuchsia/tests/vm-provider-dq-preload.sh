@@ -13,7 +13,7 @@ grep -q imgact_binmisc_load "$work/dq.sh"
 loader() {
 	env -i PATH="$PATH" suites="$1" sh -c ". '$work/dq.sh'; printf '%s\n' \"\$dq_loader\""
 }
-for s in "sys/dq" "sys/dq lib/libdq" "lib/libdq sys/dq" \
+for s in "sys" "sys/dq" "sys/dq lib/libdq" "lib/libdq sys/dq" \
     "sys/dq/dq_resolve_test" "sys/dq/dq_resolve_test:attached_kernel_paths"; do
 	loader "$s" | grep -qx 'imgact_binmisc_load="YES"' ||
 	    { echo "FAIL: no imgact_binmisc for \"$s\""; exit 1; }
@@ -26,7 +26,8 @@ for s in "sys/mac_capability" "sys/mac_capability/authority_issuer_probe_test" \
 	    { echo "FAIL: no dtraceall alone for \"$s\""; exit 1; }
 done
 for s in "sys/vfs" "sys/vfs/ufs_suspend_atime" \
-    "sys/vfs/ufs_suspend_atime:closed_at_resume"; do
+    "sys/vfs/ufs_suspend_atime:closed_at_resume" \
+    "sys/mac_capability/mac_capability_channel_test"; do
 	[ "$(loader "$s")" = 'dtraceall_load="YES"' ] ||
 	    { echo "FAIL: no dtraceall alone for \"$s\""; exit 1; }
 done

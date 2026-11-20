@@ -48,6 +48,9 @@
 #   DRYRUN=1 (build and check the image, do not boot), LOADER_EXTRA (extra
 #   loader.conf lines), SRC_IMAGE and PORTS_IMAGE (UFS images mounted
 #   read-only at /usr/src and /usr/obj/5BSD-ports).
+#   RACCT_TUNABLE_ZERO=1 boots with kern.racct.enable="0", the tunable 5BSD
+#   ignores: the tier of mac_capability_accounting_racct_test, whose cases
+#   skip with DEFERRED_RACCT_ZERO_TIER otherwise.
 #   ISOLATION_ENFORCE=1 retains production device isolation for deployment
 #   checks; the default 0 permits raw-device provider test fixtures.
 #   With PLANE_OFF=1 the default is 1 (the enforced tier, below), and the
@@ -218,11 +221,12 @@ esac
 # of the book, section 17); a module named twice is loaded once.
 dq_loader=
 case " $suites " in
-*" sys/dq "*|*" sys/dq/"*)
+*" sys "*|*" sys/dq "*|*" sys/dq/"*)
 	dq_loader='imgact_binmisc_load="YES"
 dtraceall_load="YES"' ;;
 *" sys/mac_capability "*|*" sys/mac_capability/authority_issuer_probe_test"*|\
-*" sys/mac_capability/authority_test_issuer_anchor_test"*)
+*" sys/mac_capability/authority_test_issuer_anchor_test"*|\
+*" sys/mac_capability/mac_capability_channel_test"*)
 	dq_loader='dtraceall_load="YES"' ;;
 *" sys/vfs "*|*" sys/vfs/ufs_suspend_atime"*)
 	dq_loader='dtraceall_load="YES"' ;;
@@ -422,6 +426,11 @@ if [ "$root_fs" = zfs ]; then
 fi
 [ -z "$base_loader" ] || printf '%s' "$base_loader" >> "$x/loader.conf"
 [ -z "$dq_loader" ] || printf '%s\n' "$dq_loader" >> "$x/loader.conf"
+case ${RACCT_TUNABLE_ZERO:-0} in
+0) ;;
+1) printf 'kern.racct.enable="0"\n' >> "$x/loader.conf" ;;
+*) die "RACCT_TUNABLE_ZERO must be 0 or 1" ;;
+esac
 [ -z "${LOADER_EXTRA:-}" ] || printf '%s\n' "$LOADER_EXTRA" >> "$x/loader.conf"
 if [ -n "$extra_script" ]; then cp "$extra_script" "$x/extra.sh"; else : > "$x/extra.sh"; fi
 cat > "$x/fstab" <<'EOF'
@@ -1012,7 +1021,8 @@ echo "skipped=$nskip (a skip in a plane-on suite is not a pass; see KYUA_SKIPPED
 # a run of the same stage and suites in that tier.
 for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER \
     DEFERRED_STACK_TIER DEFERRED_PID1_ONLY DEFERRED_SOURCE_TIER \
-    DEFERRED_GUEST_SETUP "configuration property 'authority_anchor'"; do
+    DEFERRED_GUEST_SETUP DEFERRED_TEST_KERNEL_TIER DEFERRED_RACCT_ZERO_TIER \
+    "configuration property 'authority_anchor'"; do
 	ndefer=$(tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c "$token" || true)
 	[ "$ndefer" -eq 0 ] || case $token in
 	DEFERRED_ENFORCED_TIER)
@@ -1027,6 +1037,10 @@ for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER 
 		echo "DEFERRED_TO_SOURCE_TIER=$ndefer (they read /usr/src: run with SRC_IMAGE; not a pass)";;
 	DEFERRED_GUEST_SETUP)
 		echo "DEFERRED_GUEST_SETUP=$ndefer (they need a guest setup no tier provides yet, such as a scratch disk or a stopped devd; not a pass)";;
+	DEFERRED_TEST_KERNEL_TIER)
+		echo "DEFERRED_TO_TEST_KERNEL_TIER=$ndefer (run on GENERIC-TEST with KERNEL_TIER=test; not a pass)";;
+	DEFERRED_RACCT_ZERO_TIER)
+		echo "DEFERRED_TO_RACCT_ZERO_TIER=$ndefer (run with RACCT_TUNABLE_ZERO=1; not a pass)";;
 	"configuration property 'authority_anchor'")
 		echo "DEFERRED_TO_ANCHOR_RUN=$ndefer (they anchor the boot: run alone with KYUA_VARS=test_suites.FreeBSD.authority_anchor=1; not a pass)";;
 	*)
