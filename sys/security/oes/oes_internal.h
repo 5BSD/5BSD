@@ -500,7 +500,6 @@ oes_vtype_to_eftype(int vt)
 /*
  * Function prototypes - oes_dev.c
  */
-void	oes_dev_state_init(void);
 int	oes_dev_attach(void);
 
 /*

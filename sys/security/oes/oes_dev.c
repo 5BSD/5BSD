@@ -108,8 +108,9 @@ SYSCTL_INT(_security_oes, OID_AUTO, max_clients, CTLFLAG_RW,
     &oes_max_clients, 0, "Maximum number of concurrent clients");
 
 SYSCTL_UINT(_security_oes, OID_AUTO, defer_max, CTLFLAG_RD,
-    SYSCTL_NULL_UINT_PTR, OES_DEFER_MAX, "Events the deferred-delivery queue holds before it "
-    "discards (es_nosleep_drops)");
+    SYSCTL_NULL_UINT_PTR, OES_DEFER_MAX,
+    "Events the deferred-delivery queue holds before it discards "
+    "(es_nosleep_drops)");
 
 int oes_cache_max_entries = 1024;
 SYSCTL_INT(_security_oes, OID_AUTO, cache_max_entries, CTLFLAG_RW,
@@ -1437,7 +1438,7 @@ oes_kqread(struct knote *kn, long hint)
 static bool oes_policy_registered;
 
 /* The state the hooks reach: everything but the thread and the device. */
-void
+static void
 oes_dev_state_init(void)
 {
 	bzero(&oes_softc, sizeof(oes_softc));

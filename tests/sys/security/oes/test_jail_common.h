@@ -432,8 +432,12 @@ full:
 	    (uint64_t)jt_elapsed_ms(&start));
 	if (l->rate < 1)
 		l->rate = 1;
-	if (jt_defer_max() <= 0) {
+	if (jt_defer_max() < 0) {
 		printf("    security.oes.defer_max: %s\n", strerror(errno));
+		goto fail;
+	}
+	if (jt_defer_max() == 0) {
+		printf("    security.oes.defer_max is 0\n");
 		goto fail;
 	}
 	l->limit_ms = 4L * 2 * jt_defer_max() * 1000 / l->rate;
