@@ -1,7 +1,7 @@
 #!/bin/sh
 # The scratch disk: vm-provider.sh attaches a blank disk with the serial
-# kyua-scratch (and preloads zfs) exactly when a suite selects
-# usr.sbin/capsule/storage_test:disk_import_and_binding, or when
+# kyua-scratch (and preloads zfs) exactly when a suite is usr.sbin/capsule or
+# narrower and selects usr.sbin/capsule/storage_test:disk_import_and_binding, or when
 # SCRATCH_DISK=1 asks for it; the guest names it in the case's input.  Runs
 # the actual blocks of vm-provider.sh.
 set -eu
@@ -15,13 +15,13 @@ pick() {
 	env -i PATH="$PATH" suites="$1" dq_loader= ${2:+SCRATCH_DISK=$2} \
 	    sh -c ". '$work/sd.sh'; printf '%s %s\n' \"\$scratch_disk\" \"\$dq_loader\""
 }
-for s in "usr.sbin" "usr.sbin/" "usr.sbin/capsule" "sys/kern usr.sbin/capsule" \
+for s in "usr.sbin/capsule" "usr.sbin/capsule/" "sys/kern usr.sbin/capsule" \
     "usr.sbin/capsule/storage_test" \
     "usr.sbin/capsule/storage_test:disk_import_and_binding"; do
 	[ "$(pick "$s")" = '1 zfs_load="YES"' ] ||
 	    { echo "FAIL: no scratch disk for \"$s\": $(pick "$s")"; exit 1; }
 done
-for s in "sys/kern" "usr.sbin/capsule/capsule_init_test" \
+for s in "sys/kern" "usr.sbin" "usr.sbin/" "usr.sbin/capsule/capsule_init_test" \
     "usr.sbin/capsule/storage_test:no_ambient_anchor" "usr.sbin/capsulectl" \
     "usr.sbin/cap"; do
 	[ "$(pick "$s")" = '0 ' ] ||

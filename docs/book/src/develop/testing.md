@@ -317,8 +317,8 @@ source tree need `SRC_IMAGE` (and `PORTS_IMAGE` for package plans); without it
 they are counted as `DEFERRED_TO_SOURCE_TIER=N`.  With python, the source and
 the ports images, a long bsd-build run fills the default 8 GB guest root:
 give it `ROOT_SIZE=16g`.  `usr.sbin/capsule/storage_test:disk_import_and_binding`
-destroys a disk: when the suites select it (`usr.sbin`, `usr.sbin/capsule`,
-the program or the case; or `SCRATCH_DISK=1`) the runner attaches a blank
+destroys a disk: when a suite is `usr.sbin/capsule`, the program or the case
+(or with `SCRATCH_DISK=1`; a wider selection such as `usr.sbin` gets no disk) the runner attaches a blank
 1 GB disk with the serial `kyua-scratch`, preloads zfs, and names the disk
 in the case's `scratch-device` input; the case refuses any disk with
 another ident.  Cases that need a guest setup no tier provides yet

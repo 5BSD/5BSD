@@ -51,7 +51,7 @@
 #   guest gate checks the booted value either way.
 #   SCRATCH_DISK (auto, 1 or 0; default auto): a blank 1 GB disk with the
 #   serial kyua-scratch for storage_test:disk_import_and_binding, attached
-#   when a suite selects that case (see the block below).
+#   when a suite is usr.sbin/capsule or narrower (see the block below).
 #   SYSCTL_WRITE (space-separated sysctl names; default none): the image's
 #   system.Sysctl policy lets every client write these names through the
 #   provider (the policy matches prefixes: each name also covers the
@@ -231,16 +231,21 @@ esac
 # with the serial kyua-scratch, for the one case that destroys a disk,
 # usr.sbin/capsule/storage_test:disk_import_and_binding.  The guest writes its
 # device name to that case's scratch-device input, and the case refuses a disk
-# whose ident is not kyua-scratch.  auto attaches it when a suite selects that
-# case (usr.sbin, usr.sbin/capsule, the program or the case); zfs is then
-# preloaded too (the plane refuses a late kldload).
+# whose ident is not kyua-scratch.  auto attaches it when a suite is
+# usr.sbin/capsule, the program or the case (a wider selection such as
+# usr.sbin gets no disk and the case skips as DEFERRED_GUEST_SETUP unless
+# SCRATCH_DISK=1); zfs is then preloaded too (the plane refuses a late
+# kldload).
 scratch_disk=${SCRATCH_DISK:-auto}
 case "$scratch_disk" in
 auto)
 	scratch_disk=0
 	for s in $suites; do
 		case "usr.sbin/capsule/storage_test:disk_import_and_binding" in
-		"${s%/}"|"${s%/}"/*|"${s%/}":*) scratch_disk=1 ;;
+		"${s%/}"|"${s%/}"/*|"${s%/}":*)
+			case "${s%/}" in
+			usr.sbin/capsule*) scratch_disk=1 ;;
+			esac ;;
 		esac
 	done ;;
 0|1) ;;
