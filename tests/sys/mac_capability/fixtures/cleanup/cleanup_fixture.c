@@ -9,8 +9,9 @@
  * sleeps on its release variable and the sysctl that sets it wakes it; a test
  * waits for a callback to be entered by reading a wait_* sysctl, which sleeps
  * (interruptibly) until the callback wakes it.  A test that fails releases
- * everything from its cleanup.  co_destroy_wait tells the fixture that
- * service destroy is held up (wait_destroy_waiting); writing a release
+ * everything from its cleanup.  The mac_capability_destroy_wait event tells
+ * the fixture that service destroy is held up, and by what
+ * (wait_destroy_waiting returns the reason); writing a release
  * sysctl then returns whether destroy had already returned.  Together they
  * show, without timing, that unload was waiting when the callback was
  * released.  The wait_* oids block, so they are CTLFLAG_SKIP (sysctl -a
@@ -113,6 +114,38 @@ SYSCTL_PROC(_debug_capability_cleanup_test, OID_AUTO, wait_destroy_waiting,
     CTLTYPE_UINT | CTLFLAG_RD | CTLFLAG_MPSAFE | CTLFLAG_SKIP, &destroy_waiting,
     0, cleanup_wait_sysctl, "IU", "Wait for service destroy to be held up");
 
+static int
+cleanup_destroy_wait_reason_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	const char *name;
+
+	switch (atomic_load_acq_int(&destroy_waiting)) {
+	case 0:
+		name = "none";
+		break;
+	case MAC_CAPABILITY_DESTROY_WAIT_ADMISSION:
+		name = "admission";
+		break;
+	case MAC_CAPABILITY_DESTROY_WAIT_INFLIGHT:
+		name = "inflight";
+		break;
+	case MAC_CAPABILITY_DESTROY_WAIT_CALLBACK:
+		name = "callback";
+		break;
+	case MAC_CAPABILITY_DESTROY_WAIT_REFS:
+		name = "refs";
+		break;
+	default:
+		name = "unknown";
+		break;
+	}
+	return (sysctl_handle_string(oidp, __DECONST(char *, name), 0, req));
+}
+SYSCTL_PROC(_debug_capability_cleanup_test, OID_AUTO, destroy_wait_reason,
+    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
+    cleanup_destroy_wait_reason_sysctl, "A",
+    "What service destroy first waited for");
+
 static void
 cleanup_set(u_int *var, u_int value)
 {
@@ -183,11 +216,19 @@ cleanup_fdclose(struct mac_capability_instance *s __unused, int fd __unused,
 	(void)cleanup_stage(3);
 }
 
-/* Service destroy is held up (no sleeping here: see co_destroy_wait). */
+/*
+ * Service destroy is held up.  Runs with a mutex held (mac_capability.h): it
+ * only stores and wakes.  The first reason is kept.
+ */
+static eventhandler_tag cleanup_destroy_wait_tag;
 static void
-cleanup_destroy_wait(void *arg __unused)
+cleanup_destroy_wait(void *arg __unused, const char *service,
+    enum mac_capability_destroy_wait_reason reason)
 {
-	cleanup_set(&destroy_waiting, 1);
+	if (strcmp(service, "test_cleanup") != 0)
+		return;
+	if (atomic_cmpset_int(&destroy_waiting, 0, reason))
+		wakeup(&destroy_waiting);
 }
 
 static void
@@ -205,12 +246,12 @@ static const struct mac_capability_ops cleanup_ops = {
 	.co_call = cleanup_call,
 	.co_fdclose = cleanup_fdclose,
 	.co_revoke = cleanup_revoke,
-	.co_destroy_wait = cleanup_destroy_wait,
 };
 
 static int
 cleanup_modevent(module_t mod __unused, int type, void *arg __unused)
 {
+	int error;
 	struct mac_capability_service_params p = {
 		.name = "test_cleanup", .ops = &cleanup_ops, .instance_limit = 4,
 		.flags = MAC_CAPABILITY_SVC_MINTABLE,
@@ -218,10 +259,19 @@ cleanup_modevent(module_t mod __unused, int type, void *arg __unused)
 
 	switch (type) {
 	case MOD_LOAD:
-		return (mac_capability_service_create(&p, &cleanup_svc));
+		cleanup_destroy_wait_tag = EVENTHANDLER_REGISTER(
+		    mac_capability_destroy_wait, cleanup_destroy_wait, NULL,
+		    EVENTHANDLER_PRI_ANY);
+		error = mac_capability_service_create(&p, &cleanup_svc);
+		if (error != 0)
+			EVENTHANDLER_DEREGISTER(mac_capability_destroy_wait,
+			    cleanup_destroy_wait_tag);
+		return (error);
 	case MOD_UNLOAD:
 		cleanup_set(&destroy_entered, 1);
 		mac_capability_service_destroy(cleanup_svc);
+		EVENTHANDLER_DEREGISTER(mac_capability_destroy_wait,
+		    cleanup_destroy_wait_tag);
 		atomic_store_rel_int(&destroy_returned, 1);
 		return (0);
 	default:

@@ -27,7 +27,9 @@
  *   COALITION_OP_GRACEFUL    — signal → grace → SIGKILL
  *   COALITION_OP_SET_DEADLINE — auto-terminate after timeout
  *   COALITION_OP_SET_WATCHDOG — dead-man switch
- *   COALITION_OP_HEARTBEAT   — reset watchdog
+ *   COALITION_OP_HEARTBEAT   — re-arm watchdog (absolute deadline)
+ *   COALITION_OP_WATCHDOG_STAT — watchdog arm count, arm time, deadline,
+ *                              scheduled callout time, last expiry
  *   COALITION_OP_SET_LEADER  — designate leader (death triggers term)
  *   COALITION_OP_RUSAGE      — aggregate resource usage
  *   COALITION_OP_SET_RESPONSIBLE — record the responsible parent (set once)

@@ -770,14 +770,16 @@ mac_capability_service_free(struct mac_capability_service *svc)
 	free(svc, M_MAC_CAPABILITY);
 }
 
-/* Service destroy is about to wait for something outside it (co_destroy_wait). */
+/* Service destroy is about to wait for something outside it (see mac_capability.h). */
 static void
-mac_capability_service_destroy_waiting(struct mac_capability_service *svc)
+mac_capability_service_destroy_waiting(struct mac_capability_service *svc,
+    enum mac_capability_destroy_wait_reason reason)
 {
 
-	SDT_PROBE1(mac_capability, , , service__destroy__wait, svc->csvc_name);
-	if (svc->csvc_ops->co_destroy_wait != NULL)
-		svc->csvc_ops->co_destroy_wait(svc->csvc_arg);
+	SDT_PROBE2(mac_capability, , , service__destroy__wait, svc->csvc_name,
+	    reason);
+	EVENTHANDLER_DIRECT_INVOKE(mac_capability_destroy_wait, svc->csvc_name,
+	    reason);
 }
 
 void
@@ -807,7 +809,8 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 	svc->csvc_flags |= MAC_CAPABILITY_SVCF_DESTROYING;
 	/* Include unlinked constructors, authorization, and failed rollback. */
 	if (svc->csvc_admissions != 0)
-		mac_capability_service_destroy_waiting(svc);
+		mac_capability_service_destroy_waiting(svc,
+		    MAC_CAPABILITY_DESTROY_WAIT_ADMISSION);
 	while (svc->csvc_admissions != 0)
 		sx_sleep(&svc->csvc_admissions, &mac_capability_registry_lock,
 		    0, "capadmit", 0);
@@ -869,7 +872,8 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 			break;
 		mtx_lock(&busy->ci_mtx);
 		if (busy->ci_inflight > 0)
-			mac_capability_service_destroy_waiting(svc);
+			mac_capability_service_destroy_waiting(svc,
+			    MAC_CAPABILITY_DESTROY_WAIT_INFLIGHT);
 		while (busy->ci_inflight > 0)
 			msleep(&busy->ci_inflight, &busy->ci_mtx, 0,
 			    "mac_capabilitysyn", 0);
@@ -932,7 +936,8 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 
 		if (waiting != NULL) {
 			if (!mac_capability_callback_state_done(waiting))
-				mac_capability_service_destroy_waiting(svc);
+				mac_capability_service_destroy_waiting(svc,
+				    MAC_CAPABILITY_DESTROY_WAIT_CALLBACK);
 			mac_capability_callback_state_wait(waiting,
 			    "caprevokewait");
 			mac_capability_callback_state_rele(waiting);
@@ -943,7 +948,8 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 
 		/* Our hold plus the file reference are the only permitted refs. */
 		if (refcount_load(&s->ci_refcnt) > 2)
-			mac_capability_service_destroy_waiting(svc);
+			mac_capability_service_destroy_waiting(svc,
+			    MAC_CAPABILITY_DESTROY_WAIT_REFS);
 		mac_capability_instance_wait_refs(s, 2, "caprevokerefs");
 		SDT_PROBE6(mac_capability, , , instance__finalize,
 		    svc->csvc_name, s->ci_badge, MAC_CAPABILITY_REVOKE_UNLOAD,

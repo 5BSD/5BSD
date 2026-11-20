@@ -116,8 +116,8 @@ SDT_PROBE_DEFINE5(mac_capability, , , service__create,
     "const char *", "uint32_t", "uint32_t", "uint32_t", "uint32_t");
 SDT_PROBE_DEFINE2(mac_capability, , , service__destroy,
     "const char *", "uint32_t");
-SDT_PROBE_DEFINE1(mac_capability, , , service__destroy__wait,
-    "const char *");
+SDT_PROBE_DEFINE2(mac_capability, , , service__destroy__wait,
+    "const char *", "int");
 SDT_PROBE_DEFINE5(mac_capability, , , queue__pressure,
     "const char *", "uint64_t", "const char *", "int", "int");
 
@@ -127,6 +127,7 @@ struct mac_capability_service_list mac_capability_services =
 /* Destroyed services that open instances still keep allocated (csvc_link). */
 struct mac_capability_service_list mac_capability_dead_services =
     LIST_HEAD_INITIALIZER(mac_capability_dead_services);
+EVENTHANDLER_LIST_DEFINE(mac_capability_destroy_wait);
 uma_zone_t mac_capability_instance_zone;
 uma_zone_t mac_capability_msg_zone;
 uma_zone_t mac_capability_msg_small_zone;

@@ -7859,6 +7859,23 @@ dead_service_listed(const char *name)
 	return (found);
 }
 
+/*
+ * Wait until service destroy is held up (the fixture records the
+ * mac_capability_destroy_wait event), and require what it waits for.
+ */
+static void
+require_destroy_waiting(const char *reason)
+{
+	char got[32];
+	size_t len = sizeof(got);
+
+	ATF_REQUIRE(cleanup_fixture_wait("destroy_waiting") != 0);
+	ATF_REQUIRE_EQ(0, sysctlbyname(
+	    "debug.capability_cleanup_test.destroy_wait_reason", got, &len,
+	    NULL, 0));
+	ATF_REQUIRE_STREQ_MSG(reason, got, "service destroy waited for %s", got);
+}
+
 /* A failed case must not leave a fixture callback, or an unload, blocked. */
 static void
 cleanup_fixture_release_all(void)
@@ -7916,7 +7933,7 @@ check_unload_waits_for_cleanup(bool last_close)
 	ATF_REQUIRE(unloader >= 0);
 	if (unloader == 0)
 		_exit(kldunload(module) == 0 ? 0 : 1);
-	ATF_REQUIRE_EQ(1, cleanup_fixture_wait("destroy_waiting"));
+	require_destroy_waiting("callback");
 	ATF_CHECK_EQ_MSG(0, cleanup_fixture_release("release"),
 	    "unload returned before callback release (last_close=%d)",
 	    last_close);
@@ -7979,7 +7996,7 @@ ATF_TC_BODY(unload_waits_for_fdclose, tc)
 	ATF_REQUIRE(unloader >= 0);
 	if (unloader == 0)
 		_exit(kldunload(module) == 0 ? 0 : 1);
-	ATF_REQUIRE_EQ(1, cleanup_fixture_wait("destroy_waiting"));
+	require_destroy_waiting("inflight");
 	ATF_CHECK_EQ_MSG(0, cleanup_fixture_release("release_stage"),
 	    "unload returned while co_fdclose was running");
 	reap_ok(closer, "closer");
@@ -8022,7 +8039,7 @@ check_unload_waits_for_admission(unsigned stage, bool fail, bool mint)
 	ATF_REQUIRE(unloader >= 0);
 	if (unloader == 0)
 		_exit(kldunload(module) == 0 ? 0 : 1);
-	ATF_REQUIRE_EQ(1, cleanup_fixture_wait("destroy_waiting"));
+	require_destroy_waiting("admission");
 	ATF_CHECK_EQ_MSG(0, cleanup_fixture_release("release_stage"),
 	    "unload returned during stage %u (fail=%d mint=%d)", stage, fail,
 	    mint);

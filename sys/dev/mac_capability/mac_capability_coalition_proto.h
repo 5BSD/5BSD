@@ -186,6 +186,8 @@ struct coalition_set_watchdog_req {
  * for exactly that absolute time (callout_sbt, read from the callout).
  * fired_seq is the arm that fired last (0 = never) and fired_sbt when its
  * expiry ran.  The times are in sbintime_t units.
+ * callout_sbt equals deadline_sbt by construction; it is read from the
+ * callout itself so that a caller can see the re-arm actually moved it.
  */
 struct coalition_watchdog_stat_reply {
 	int32_t		status;
