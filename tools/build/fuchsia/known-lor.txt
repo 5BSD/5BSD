@@ -64,3 +64,20 @@
 # 2026-11-20-known-lor-misses-shutdown-devfs-on-tmpfs-variant.md, analysis).
 # Shutdown only: both stacks must be vfs_unmountall's.
 (?s)\A\s*1st \S+ (devfs|ufs) \(\1, lockmgr\) @ \S*/kern/vfs_mount\.c:\d+\s+2nd \S+ tmpfs \(tmpfs, lockmgr\) @ \S*/kern/vfs_subr\.c:\d+\s+lock order tmpfs -> \1 established at:\s+(?:#\d+ [^\n]*\n)*?(?:#\d+ \S+ at devfs_root\+[^\n]*\n(?:#\d+ \S+ at vfs_cache_root_fallback\+[^\n]*\n)?#\d+ \S+ at vflush\+[^\n]*\n#\d+ \S+ at devfs_unmount\+|#\d+ \S+ at null_lock\+[^\n]*\n(?:#\d+ [^\n]*\n){0,2}?#\d+ \S+ at vflush\+[^\n]*\n#\d+ \S+ at nullfs_unmount\+)[^\n]*\n#\d+ \S+ at dounmount\+[^\n]*\n#\d+ \S+ at vfs_unmountall\+[^\n]*\n(?:#\d+ [^\n]*\n)*lock order \1 -> tmpfs attempted at:\s+(?:#\d+ [^\n]*\n)*?#\d+ \S+ at vflush\+[^\n]*\n#\d+ \S+ at tmpfs_unmount\+[^\n]*\n#\d+ \S+ at dounmount\+[^\n]*\n#\d+ \S+ at vfs_unmountall\+
+
+# A test's unmount of a UFS (md(4)) mounted on a tmpfs directory, after a
+# test unmounted a tmpfs mounted on a UFS directory, both through
+# unmount(2) mid-run (sys/security/oes test_unmount_event; perf/mac-idle
+# faB, faW).  Established: kern_unmount -> dounmount holds the covered UFS
+# directory and tmpfs_unmount -> vflush locks the tmpfs vnodes.  Attempted:
+# kern_unmount -> dounmount holds the covered tmpfs directory and
+# ffs_unmount (softdep_flushfiles -> ffs_flushfiles) -> vflush locks the
+# vnodes of the UFS being unmounted.  Covered-vnode-first on different
+# mounts: an instance cycle needs a tmpfs and a UFS each mounted on the
+# other (5bsd-issues
+# 2026-11-18-known-lor-lacks-shutdown-tmpfs-unmount-family.md, 2026-11-20
+# addendum).  It matches mid-run, so ufs/tmpfs reversals later in that boot
+# are not reported: WITNESS reports the pair only once anyway, so the
+# entry hides no report the run would otherwise print; it only lets the run
+# go on and end clean.
+(?s)\A\s*1st \S+ tmpfs \(tmpfs, lockmgr\) @ \S*/kern/vfs_mount\.c:\d+\s+2nd \S+ ufs \(ufs, lockmgr\) @ \S*/kern/vfs_subr\.c:\d+\s+lock order ufs -> tmpfs established at:\s+(?:#\d+ [^\n]*\n)*?#\d+ \S+ at vflush\+[^\n]*\n#\d+ \S+ at tmpfs_unmount\+[^\n]*\n#\d+ \S+ at dounmount\+[^\n]*\n#\d+ \S+ at kern_unmount\+[^\n]*\n(?:#\d+ [^\n]*\n)*lock order tmpfs -> ufs attempted at:\s+(?:#\d+ [^\n]*\n)*?#\d+ \S+ at ffs_lock\+[^\n]*\n(?:#\d+ [^\n]*\n){0,3}?#\d+ \S+ at vflush\+[^\n]*\n(?:#\d+ \S+ at ffs_flushfiles\+[^\n]*\n#\d+ \S+ at softdep_flushfiles\+[^\n]*\n|#\d+ \S+ at ffs_flushfiles\+[^\n]*\n)?#\d+ \S+ at ffs_unmount\+[^\n]*\n#\d+ \S+ at dounmount\+[^\n]*\n#\d+ \S+ at kern_unmount\+
