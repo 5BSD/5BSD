@@ -86,6 +86,12 @@ struct bootstrap_delegate_fds {
 	 */
 	int	core_token;
 	/*
+	 * The service manager's image, opened O_VERIFY: the vnode the Core
+	 * authority pins.  The child executes this descriptor (fexecve), so
+	 * a binary replaced on disk after the pin is never what runs.
+	 */
+	int	core_image;
+	/*
 	 * Bundle-directory overrides forwarded to switchboard.  Captured from
 	 * capsule's environment in the parent (getenv is not async-signal-safe,
 	 * so it must not run in the post-fork child).  NULL when unset, which
@@ -120,7 +126,7 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 	char *env[16];
 	char *argv[2];
 	int nullfd, fd, safe_base;
-	int src_fds[6], dst_fds[6];
+	int src_fds[7], dst_fds[7], image_dst = -1;
 	unsigned envc, i, nfds;
 
 	/*
@@ -188,9 +194,14 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 		src_fds[nfds] = d->authority_fd;
 		dst_fds[nfds++] = SWITCHBOARD_AUTHORITY_FD;
 	}
+	/* The pinned image, just above the reserved range, for fexecve(). */
+	if (d->core_image >= 0) {
+		image_dst = SWITCHBOARD_LAST_FD + 1;
+		src_fds[nfds] = d->core_image;
+		dst_fds[nfds++] = image_dst;
+	}
 
-
-	safe_base = SWITCHBOARD_LAST_FD + 1;
+	safe_base = (image_dst >= 0 ? image_dst : SWITCHBOARD_LAST_FD) + 1;
 	for (i = 0; i < nfds; i++) {
 		if (src_fds[i] < safe_base) {
 			fd = fcntl(src_fds[i], F_DUPFD, safe_base);
@@ -227,11 +238,19 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 			(void)close(fd);
 	}
 
-	/* Close everything above the reserved range. */
-	closefrom(SWITCHBOARD_LAST_FD + 1);
+	/* Close everything above the reserved range (and the image). */
+	closefrom(safe_base);
 
-	/* Permit this exec only; prevent propagation before manager startup. */
+	/*
+	 * Permit this exec only; prevent propagation before manager startup.
+	 * The image descriptor is close-on-exec: executing it consumes it.
+	 */
 	for (i = 0; i < nfds; i++) {
+		if (dst_fds[i] == image_dst) {
+			if (fcntl(image_dst, F_SETFD, FD_CLOEXEC) == -1)
+				_exit(126);
+			continue;
+		}
 		if (bootstrap_confine_manager_fd(dst_fds[i]) == -1)
 			_exit(126);
 	}
@@ -332,7 +351,10 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 		if (procctl(P_PID, getpid(), PROC_SPROTECT, &flags) == -1)
 			_exit(126);
 	}
-	execve(od.cfg.service_manager, argv, env);
+	if (image_dst >= 0)
+		fexecve(image_dst, argv, env);
+	else
+		execve(od.cfg.service_manager, argv, env);
 	_exit(127);
 }
 
@@ -371,7 +393,8 @@ bootstrap_core_verified_warning(const char *image_path)
  * The token cannot be passed on (CAP_XFER_NONE).
  */
 static int
-bootstrap_core_authority(int issuer, const char *image_path, int *tokenp)
+bootstrap_core_authority(int issuer, const char *image_path, int *tokenp,
+    int *imagep)
 {
 	static const char *const libdirs[] = { "/lib", "/usr/lib" };
 	struct cap_authority_spec spec = { .version = CAP_AUTH_VERSION,
@@ -416,6 +439,8 @@ bootstrap_core_authority(int issuer, const char *image_path, int *tokenp)
 		goto out;
 	*tokenp = token;
 	token = -1;
+	*imagep = image;
+	image = -1;
 	result = 0;
 out:
 	saved = errno;
@@ -508,6 +533,7 @@ bootstrap_start(int kq)
 	dfds.authority_fd = syscall(SYS_cap_process, CAP_AUTH_ISSUER_CREATE,
 	    -1, 0, NULL);
 	dfds.core_token = -1;
+	dfds.core_image = -1;
 	if (dfds.authority_fd < 0)
 		syslog(LOG_ERR, "bootstrap: protected authority issuer "
 		    "unavailable: %m; switchboard cannot be excluded");
@@ -515,7 +541,7 @@ bootstrap_start(int kq)
 		syslog(LOG_WARNING,
 		    "bootstrap: TEST MODE: authority issuer created off PID 1");
 	else if (bootstrap_core_authority(dfds.authority_fd,
-	    od.cfg.service_manager, &dfds.core_token) == -1) {
+	    od.cfg.service_manager, &dfds.core_token, &dfds.core_image) == -1) {
 		/*
 		 * Holding an issuer, Capsule never starts switchboard without
 		 * the Core role: the start fails, like the descriptor
@@ -569,6 +595,8 @@ bootstrap_start(int kq)
 			close(dfds.authority_fd);
 		if (dfds.core_token >= 0)
 			close(dfds.core_token);
+		if (dfds.core_image >= 0)
+			close(dfds.core_image);
 		return (-1);
 	}
 
@@ -584,6 +612,7 @@ bootstrap_start(int kq)
 		if (dfds.identity_fd >= 0) close(dfds.identity_fd);
 		if (dfds.authority_fd >= 0) close(dfds.authority_fd);
 		if (dfds.core_token >= 0) close(dfds.core_token);
+		if (dfds.core_image >= 0) close(dfds.core_image);
 		return (-1);
 	}
 
@@ -607,6 +636,8 @@ bootstrap_start(int kq)
 		close(dfds.authority_fd);
 	if (dfds.core_token >= 0)
 		close(dfds.core_token);
+	if (dfds.core_image >= 0)
+		close(dfds.core_image);
 
 	/*
 	 * The process descriptor is capsule's explicit and exclusive authority
