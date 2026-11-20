@@ -14,6 +14,7 @@
  */
 
 #include <sys/param.h>
+#include <sys/capsicum.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
@@ -22,6 +23,7 @@
 
 #include <atf-c.h>
 #include <errno.h>
+#include <signal.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <stdbool.h>
@@ -646,6 +648,381 @@ ATF_TC_BODY(n9_two_readers, tc)
 	close(d);
 }
 
+/* ------------------------------------------------------------------ */
+/* Deferred delivery, the answer requirement, the trylock fallback. */
+
+/* A client of the given scope subscribed to events[0..n). */
+static int
+open_client_events(bool descendants, const oes_event_type_t *events, int n)
+{
+	int fd;
+
+	fd = test_open_oes();
+	ATF_REQUIRE_MSG(fd >= 0, "open /dev/oes: %s", strerror(errno));
+	if (descendants)
+		ATF_REQUIRE(test_set_descendants_scope(fd) == 0);
+	ATF_REQUIRE(test_set_mode(fd, OES_MODE_NOTIFY) == 0);
+	ATF_REQUIRE(test_subscribe(fd, __DECONST(oes_event_type_t *, events),
+	    n, OES_SUB_REPLACE) == 0);
+	return (fd);
+}
+
+/*
+ * A signal fence: a child that signals itself with SIGCONT (ignored by
+ * default) when released; its NOTIFY_SIGNAL is deferred like the events
+ * counted before it.
+ */
+static pid_t
+signal_fence(int *gate)
+{
+	int p[2];
+	pid_t pid;
+	char c;
+
+	ATF_REQUIRE(pipe(p) == 0);
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		close(p[1]);
+		if (read(p[0], &c, 1) != 1)
+			_exit(1);
+		_exit(kill(getpid(), SIGCONT) == 0 ? 0 : 1);
+	}
+	close(p[0]);
+	*gate = p[1];
+	return (pid);
+}
+
+/* Count events of type ev whose subject is pid until fence's NOTIFY_SIGNAL. */
+static int
+count_type_until_signal_fence(int fd, pid_t pid, oes_event_type_t ev,
+    pid_t fence)
+{
+	test_msg_buf buf;
+	oes_message_t *msg = &buf.msg;
+	int n = 0;
+
+	for (;;) {
+		ATF_REQUIRE_MSG(test_wait_event(fd, msg, EVENT_DEADLINE_MS) == 0,
+		    "no fence event within %d ms", EVENT_DEADLINE_MS);
+		if (msg->em_event == OES_EVENT_NOTIFY_SIGNAL &&
+		    msg->em_process.ep_pid == fence)
+			return (n);
+		if (msg->em_event == ev && msg->em_process.ep_pid == pid)
+			n++;
+	}
+}
+
+/*
+ * The receiver of a passed client: join, fork a child and signal it (two
+ * deferred events with the receiver as subject), reap it; then, if exec_path
+ * is set, execute it with the client's descriptor as argv[1] (the new image
+ * joins at once: oes_join_helper).
+ */
+static int
+deferred_actor(int sock, const char *exec_path)
+{
+	char fdstr[16];
+	int fd, status;
+	pid_t g;
+
+	fd = recv_fd(sock);
+	if (fd < 0)
+		return (101);
+	if (ioctl(fd, OES_IOC_JOIN) != 0)
+		return (102);
+	g = fork();
+	if (g < 0)
+		return (103);
+	if (g == 0) {
+		pause();
+		_exit(0);
+	}
+	if (kill(g, SIGTERM) != 0 || waitpid(g, &status, 0) != g)
+		return (104);
+	if (exec_path == NULL)
+		return (0);
+	snprintf(fdstr, sizeof(fdstr), "%d", fd);
+	execl(exec_path, "oes_join_helper", fdstr, (char *)NULL);
+	return (105);
+}
+
+static void
+deferred_case(const atf_tc_t *tc, bool exec_rejoin)
+{
+	static const oes_event_type_t events[] = { OES_EVENT_NOTIFY_FORK,
+	    OES_EVENT_NOTIFY_SIGNAL };
+	char helper[PATH_MAX];
+	pid_t c, fence;
+	int sv[2], x, d, gate, status;
+
+	snprintf(helper, sizeof(helper), "%s/oes_join_helper",
+	    atf_tc_get_config_var(tc, "srcdir"));
+	d = open_client_events(true, events, nitems(events));
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	c = fork();
+	ATF_REQUIRE(c >= 0);
+	if (c == 0) {
+		close(sv[0]);
+		close(d);
+		_exit(deferred_actor(sv[1], exec_rejoin ? helper : NULL));
+	}
+	close(sv[1]);
+	x = open_client_events(false, events, nitems(events));
+	send_fd(sv[0], x);
+	ATF_REQUIRE(waitpid(c, &status, 0) == c);
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "actor status %#x", status);
+	fence = signal_fence(&gate);
+	release(gate, fence);
+	/* The receiver's own fork and signal never reach its client... */
+	ATF_CHECK_EQ(count_type_until_signal_fence(x, c, OES_EVENT_NOTIFY_FORK,
+	    fence), 0);
+	ATF_CHECK_EQ(count_type_until_signal_fence(d, c, OES_EVENT_NOTIFY_FORK,
+	    fence), 1);
+	close(x);
+	close(d);
+}
+
+ATF_TC(n14_deferred_fork_signal);
+ATF_TC_HEAD(n14_deferred_fork_signal, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Deferred delivery: a joined receiver's own fork is not delivered to its client, and another client sees it");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(n14_deferred_fork_signal, tc)
+{
+
+	deferred_case(tc, false);
+}
+
+ATF_TC(n15_exec_rejoin_deferred);
+ATF_TC_HEAD(n15_exec_rejoin_deferred, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Review D1: a reader whose deferred fork event is still queued execs and its new image joins at once (compacting the old entry); the queued event still does not reach its client");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(n15_exec_rejoin_deferred, tc)
+{
+
+	deferred_case(tc, true);
+}
+
+/* An AUTH_OPEN client of the test's descendants, fail-closed. */
+static int
+open_auth_client(void)
+{
+	oes_event_type_t events[] = { OES_EVENT_AUTH_OPEN };
+	struct oes_mode_args mode;
+	struct oes_deadline_miss_mode_args miss;
+	int fd;
+
+	fd = test_open_oes();
+	ATF_REQUIRE_MSG(fd >= 0, "open /dev/oes: %s", strerror(errno));
+	ATF_REQUIRE(test_set_descendants_scope(fd) == 0);
+	memset(&mode, 0, sizeof(mode));
+	mode.ema_mode = OES_MODE_AUTH;
+	mode.ema_default_deadline_ms = EVENT_DEADLINE_MS;
+	ATF_REQUIRE(ioctl(fd, OES_IOC_SET_MODE, &mode) == 0);
+	memset(&miss, 0, sizeof(miss));
+	miss.edma_mode = OES_DEADLINE_MISS_FAIL_CLOSED;
+	ATF_REQUIRE(ioctl(fd, OES_IOC_SET_DEADLINE_MISS_MODE, &miss) == 0);
+	ATF_REQUIRE(test_subscribe(fd, events, nitems(events),
+	    OES_SUB_REPLACE) == 0);
+	return (fd);
+}
+
+enum auth_actor { AUTH_JOIN_FULL, AUTH_JOIN_READONLY, AUTH_NO_JOIN };
+
+/* Receive the AUTH client, set it up as told, open probe; exit errno. */
+static int
+auth_actor(int sock, const char *probe, enum auth_actor how)
+{
+	cap_rights_t rights;
+	const cap_ioctl_t cmds[] = { OES_IOC_JOIN };
+	int fd, pfd;
+
+	fd = recv_fd(sock);
+	if (fd < 0)
+		return (101);
+	if (how == AUTH_JOIN_READONLY &&
+	    (cap_rights_limit(fd, cap_rights_init(&rights, CAP_READ,
+	    CAP_EVENT, CAP_IOCTL)) != 0 ||
+	    cap_ioctls_limit(fd, cmds, nitems(cmds)) != 0))
+		return (102);
+	if (how != AUTH_NO_JOIN && ioctl(fd, OES_IOC_JOIN) != 0)
+		return (103);
+	pfd = open(probe, O_RDONLY);
+	if (pfd < 0)
+		return (errno);
+	close(pfd);
+	return (0);
+}
+
+/*
+ * Answer every AUTH event on y with ALLOW until fence's; return how many
+ * came from subject.
+ */
+static int
+answer_until_fence(int y, pid_t subject, pid_t fence)
+{
+	test_msg_buf buf;
+	oes_message_t *msg = &buf.msg;
+	oes_response_t resp;
+	pid_t from;
+	int n = 0;
+
+	for (;;) {
+		ATF_REQUIRE_MSG(test_wait_event(y, msg, EVENT_DEADLINE_MS) == 0,
+		    "no fence event within %d ms", EVENT_DEADLINE_MS);
+		if (msg->em_event != OES_EVENT_AUTH_OPEN)
+			continue;
+		from = msg->em_process.ep_pid;
+		memset(&resp, 0, sizeof(resp));
+		resp.er_id = msg->em_id;
+		resp.er_result = OES_AUTH_ALLOW;
+		ATF_REQUIRE(write(y, &resp, sizeof(resp)) == sizeof(resp));
+		if (from == fence)
+			return (n);
+		if (from == subject)
+			n++;
+	}
+}
+
+/*
+ * want_delivered 1: the actor's AUTH_OPEN must reach the client; it is
+ * answered when it arrives, and the actor's exit follows.  0: the actor's
+ * open must complete without the client (were it delivered, nobody would
+ * answer it and the fail-closed deadline would refuse it), and a fence
+ * afterwards shows nothing of the actor's was queued.
+ */
+static void
+auth_case(enum auth_actor how, int want_delivered)
+{
+	test_msg_buf buf;
+	oes_message_t *msg = &buf.msg;
+	oes_response_t resp;
+	struct paths p;
+	pid_t c, fence;
+	int sv[2], y, gate, status, n;
+
+	paths_init(&p);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	c = fork();
+	ATF_REQUIRE(c >= 0);
+	if (c == 0) {
+		close(sv[0]);
+		_exit(auth_actor(sv[1], p.probe, how));
+	}
+	close(sv[1]);
+	y = open_auth_client();
+	send_fd(sv[0], y);
+	if (want_delivered) {
+		for (;;) {
+			ATF_REQUIRE_MSG(test_wait_event(y, msg,
+			    EVENT_DEADLINE_MS) == 0,
+			    "no AUTH_OPEN from the actor within %d ms",
+			    EVENT_DEADLINE_MS);
+			if (msg->em_event != OES_EVENT_AUTH_OPEN)
+				continue;
+			memset(&resp, 0, sizeof(resp));
+			resp.er_id = msg->em_id;
+			resp.er_result = OES_AUTH_ALLOW;
+			ATF_REQUIRE(write(y, &resp, sizeof(resp)) ==
+			    sizeof(resp));
+			if (msg->em_process.ep_pid == c)
+				break;
+		}
+	}
+	ATF_REQUIRE(waitpid(c, &status, 0) == c);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "actor status %#x", status);
+	if (!want_delivered) {
+		fence = fence_child(p.marker, &gate);
+		ATF_REQUIRE(write(gate, "g", 1) == 1);
+		close(gate);
+		n = answer_until_fence(y, c, fence);
+		ATF_REQUIRE(waitpid(fence, &status, 0) == fence);
+		ATF_CHECK_EQ_MSG(n, 0, "%d of the actor's AUTH_OPENs delivered",
+		    n);
+	}
+	close(y);
+}
+
+ATF_TC(n16_auth_reader_can_answer);
+ATF_TC_HEAD(n16_auth_reader_can_answer, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Owner D4: a joined receiver whose descriptor can answer (open for writing, CAP_WRITE) gets an implicit allow for its own AUTH_OPEN; nothing is delivered");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(n16_auth_reader_can_answer, tc)
+{
+
+	auth_case(AUTH_JOIN_FULL, 0);
+}
+
+ATF_TC(n16b_auth_readonly_reader);
+ATF_TC_HEAD(n16b_auth_readonly_reader, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Owner D4: a joined receiver whose descriptor lacks CAP_WRITE cannot exempt itself: its own AUTH_OPEN is delivered and answered");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(n16b_auth_readonly_reader, tc)
+{
+
+	auth_case(AUTH_JOIN_READONLY, 1);
+}
+
+ATF_TC(n10_auth_before_join);
+ATF_TC_HEAD(n10_auth_before_join, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "N10, the owner-accepted window: a receiver that has not joined is not a reader, so its AUTH_OPEN reaches the client (answered here)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(n10_auth_before_join, tc)
+{
+
+	auth_case(AUTH_NO_JOIN, 1);
+}
+
+ATF_TC(n17_trylock_fallback);
+ATF_TC_HEAD(n17_trylock_fallback, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Review H1: with the test kernel's fail point forcing the unlocked record fill for the opener, its own opens still do not reach its client");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(n17_trylock_fallback, tc)
+{
+	struct paths p;
+	size_t len;
+	pid_t fence;
+	int fd, gate, me, off = 0, v;
+
+	len = sizeof(v);
+	if (sysctlbyname("debug.mac_capability.test_issuer_oes_trylock_fail",
+	    &v, &len, NULL, 0) != 0)
+		atf_tc_skip("no debug.mac_capability.test_issuer_oes_trylock_fail: "
+		    "needs GENERIC-TEST (vm-provider.sh KERNEL_TIER=test)");
+	paths_init(&p);
+	fd = open_client(false);
+	me = getpid();
+	ATF_REQUIRE(sysctlbyname("debug.mac_capability.test_issuer_oes_trylock_fail",
+	    NULL, NULL, &me, sizeof(me)) == 0);
+	open_close(p.probe);
+	ATF_REQUIRE(sysctlbyname("debug.mac_capability.test_issuer_oes_trylock_fail",
+	    NULL, NULL, &off, sizeof(off)) == 0);
+	fence = fence_child(p.marker, &gate);
+	release(gate, fence);
+	ATF_CHECK_EQ(count_until_fence(fd, me, fence, NULL), 0);
+	close(fd);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, n1_opener_global);
@@ -659,5 +1036,11 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, n7b_join_before_first_read);
 	ATF_TP_ADD_TC(tp, n8_exec_ends_membership);
 	ATF_TP_ADD_TC(tp, n9_two_readers);
+	ATF_TP_ADD_TC(tp, n10_auth_before_join);
+	ATF_TP_ADD_TC(tp, n14_deferred_fork_signal);
+	ATF_TP_ADD_TC(tp, n15_exec_rejoin_deferred);
+	ATF_TP_ADD_TC(tp, n16_auth_reader_can_answer);
+	ATF_TP_ADD_TC(tp, n16b_auth_readonly_reader);
+	ATF_TP_ADD_TC(tp, n17_trylock_fallback);
 	return (atf_no_error());
 }

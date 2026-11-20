@@ -100,14 +100,11 @@ test_chdir_event(void)
 	}
 
 	/* Check for chdir event */
-	for (int i = 0; i < 3; i++) {
-		if (test_wait_event(fd, msg, 500) == 0) {
-			if (msg->em_event == OES_EVENT_NOTIFY_CHDIR &&
-			    msg->em_process.ep_pid == actor) {
-				got_chdir = 1;
-				printf("    INFO: chdir event received\n");
-			}
-		}
+	/* The actor's event, with a deadline; others are skipped. */
+	if (test_wait_event_pid(fd, actor, OES_EVENT_NOTIFY_CHDIR, OES_TEST_DEADLINE_MS,
+	    msg) == 0) {
+		got_chdir = 1;
+		printf("    INFO: chdir event received\n");
 	}
 
 	if (!got_chdir)
@@ -152,14 +149,11 @@ test_fchdir_event(void)
 	}
 
 	/* Check for chdir event */
-	for (int i = 0; i < 3; i++) {
-		if (test_wait_event(fd, msg, 500) == 0) {
-			if (msg->em_event == OES_EVENT_NOTIFY_CHDIR &&
-			    msg->em_process.ep_pid == actor) {
-				got_chdir = 1;
-				printf("    INFO: fchdir event received\n");
-			}
-		}
+	/* The actor's event, with a deadline; others are skipped. */
+	if (test_wait_event_pid(fd, actor, OES_EVENT_NOTIFY_CHDIR, OES_TEST_DEADLINE_MS,
+	    msg) == 0) {
+		got_chdir = 1;
+		printf("    INFO: fchdir event received\n");
 	}
 
 	if (!got_chdir)
@@ -248,14 +242,11 @@ test_chroot_event(void)
 	close(pipefd[0]);
 
 	/* Check for chroot event */
-	for (int i = 0; i < 3; i++) {
-		if (test_wait_event(fd, msg, 500) == 0) {
-			if (msg->em_event == OES_EVENT_NOTIFY_CHROOT &&
-			    msg->em_process.ep_pid == child) {
-				got_chroot = 1;
-				printf("    INFO: chroot event received\n");
-			}
-		}
+	/* The child's event, with a deadline; others are skipped. */
+	if (test_wait_event_pid(fd, child, OES_EVENT_NOTIFY_CHROOT, OES_TEST_DEADLINE_MS,
+	    msg) == 0) {
+		got_chroot = 1;
+		printf("    INFO: chroot event received\n");
 	}
 
 	if (!got_chroot)
@@ -302,14 +293,11 @@ test_sysctl_event(void)
 	}
 
 	/* Check for sysctl event */
-	for (int i = 0; i < 3; i++) {
-		if (test_wait_event(fd, msg, 500) == 0) {
-			if (msg->em_event == OES_EVENT_NOTIFY_SYSCTL &&
-			    msg->em_process.ep_pid == actor) {
-				got_sysctl = 1;
-				printf("    INFO: sysctl event received\n");
-			}
-		}
+	/* The actor's event, with a deadline; others are skipped. */
+	if (test_wait_event_pid(fd, actor, OES_EVENT_NOTIFY_SYSCTL, OES_TEST_DEADLINE_MS,
+	    msg) == 0) {
+		got_sysctl = 1;
+		printf("    INFO: sysctl event received\n");
 	}
 
 	if (!got_sysctl)
@@ -369,7 +357,7 @@ test_kenv_event(void)
 		int seen = 0;
 
 		while (seen < 2 && test_wait_event_type(fd, msg,
-		    OES_EVENT_NOTIFY_KENV, 2000) == 0) {
+		    OES_EVENT_NOTIFY_KENV, OES_TEST_DEADLINE_MS) == 0) {
 			const char *kn = oes_msg_string(msg,
 			    msg->em_event_data.kenv.name_off);
 
@@ -492,7 +480,8 @@ test_auth_chdir(void)
 	close(pipefd[1]);
 
 	/* Wait for AUTH_CHDIR event */
-	if (test_wait_event_pid(fd, child, OES_EVENT_AUTH_CHDIR, 3000, msg) == 0) {
+	if (test_wait_event_pid(fd, child, OES_EVENT_AUTH_CHDIR,
+	    OES_TEST_DEADLINE_MS, msg) == 0) {
 		printf("    INFO: got AUTH_CHDIR event, denying\n");
 		memset(&resp, 0, sizeof(resp));
 		resp.er_id = msg->em_id;

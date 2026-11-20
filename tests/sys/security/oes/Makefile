@@ -30,6 +30,8 @@ TEST_METADATA+=	is_exclusive="true"
 ATF_TESTS_C+=	cap_exclusion_oes_test
 # A client and its own processes' events (oes-no-self-events.md).
 ATF_TESTS_C+=	self_events_test
+PROGS+=		oes_join_helper
+BINDIR=		${TESTSDIR}
 
 PLAIN_TESTS_C=	\
 	test_close_event \

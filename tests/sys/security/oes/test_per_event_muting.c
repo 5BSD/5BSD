@@ -11,6 +11,7 @@
  * OES_IOC_MUTE_PATH_EVENTS, and OES_IOC_UNMUTE_PATH_EVENTS.
  */
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 
 #include <fcntl.h>
@@ -130,7 +131,8 @@ main(void)
 
 		ret = -1;
 		for (;;) {
-			if (test_wait_event(fd, &buf.msg, 1000) != 0)
+			if (test_wait_event(fd, &buf.msg,
+			    OES_TEST_DEADLINE_MS) != 0)
 				break;
 			if (buf.msg.em_process.ep_pid != child)
 				continue;
@@ -163,8 +165,8 @@ main(void)
 	cmd = 'h';
 	(void)write(pipefd[1], &cmd, 1);
 
-	ret = test_wait_event_pid(fd, child, OES_EVENT_NOTIFY_OPEN, 1000,
-	    NULL);
+	ret = test_wait_event_pid(fd, child, OES_EVENT_NOTIFY_OPEN,
+	    OES_TEST_DEADLINE_MS, NULL);
 	if (ret != 0) {
 		fprintf(stderr, "FAIL: OPEN event not delivered after unmute\n");
 		goto fail;
@@ -183,27 +185,38 @@ main(void)
 		return (1);
 	}
 
-	/* Child opens /etc/passwd - path-muted for OPEN */
+	/*
+	 * Child opens /etc/passwd (path-muted for OPEN), then /etc/hosts (not
+	 * muted).  One process's events arrive in order, so the /etc/hosts
+	 * OPEN is the fence: it must be the first OPEN of the child seen.
+	 */
 	cmd = 'p';
 	(void)write(pipefd[1], &cmd, 1);
-	usleep(100000);
-
-	ret = test_wait_event_pid(fd, child, OES_EVENT_NOTIFY_OPEN, 500, NULL);
-	if (ret == 0) {
-		fprintf(stderr, "FAIL: path-muted OPEN still delivered\n");
-		goto fail;
-	}
-	printf("  PASS: path per-event mute suppressed OPEN for /etc/passwd\n");
-
-	/* Child opens /etc/hosts - NOT path-muted */
 	cmd = 'h';
 	(void)write(pipefd[1], &cmd, 1);
+	{
+		test_msg_buf buf;
+		struct stat hosts_sb;
 
-	ret = test_wait_event_pid(fd, child, OES_EVENT_NOTIFY_OPEN, 1000, NULL);
-	if (ret != 0) {
-		fprintf(stderr, "FAIL: non-muted path OPEN not delivered\n");
-		goto fail;
+		if (stat("/etc/hosts", &hosts_sb) != 0) {
+			perror("stat /etc/hosts");
+			goto fail;
+		}
+		ret = test_wait_event_pid(fd, child, OES_EVENT_NOTIFY_OPEN,
+		    OES_TEST_DEADLINE_MS, &buf.msg);
+		if (ret != 0) {
+			fprintf(stderr, "FAIL: non-muted path OPEN not delivered\n");
+			goto fail;
+		}
+		if (buf.msg.em_event_data.open.file.ef_ino !=
+		    (uint64_t)hosts_sb.st_ino ||
+		    buf.msg.em_event_data.open.file.ef_dev !=
+		    (uint64_t)hosts_sb.st_dev) {
+			fprintf(stderr, "FAIL: path-muted OPEN still delivered\n");
+			goto fail;
+		}
 	}
+	printf("  PASS: path per-event mute suppressed OPEN for /etc/passwd\n");
 	printf("  PASS: OPEN for /etc/hosts delivered (different path)\n");
 
 	/* Unmute the path */
@@ -216,7 +229,8 @@ main(void)
 	cmd = 'p';
 	(void)write(pipefd[1], &cmd, 1);
 
-	ret = test_wait_event_pid(fd, child, OES_EVENT_NOTIFY_OPEN, 1000, NULL);
+	ret = test_wait_event_pid(fd, child, OES_EVENT_NOTIFY_OPEN,
+	    OES_TEST_DEADLINE_MS, NULL);
 	if (ret != 0) {
 		fprintf(stderr, "FAIL: OPEN for /etc/passwd not delivered after unmute\n");
 		goto fail;

@@ -163,7 +163,7 @@ main(void)
 		}
 
 		ret = -1;
-		while (test_wait_event(fd, &buf.msg, 1000) == 0) {
+		while (test_wait_event(fd, &buf.msg, OES_TEST_DEADLINE_MS) == 0) {
 			if (buf.msg.em_event != OES_EVENT_NOTIFY_OPEN ||
 			    buf.msg.em_process.ep_pid != child)
 				continue;
