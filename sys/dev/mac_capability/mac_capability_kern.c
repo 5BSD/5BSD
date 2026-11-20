@@ -1095,18 +1095,19 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 	}
 
 	/*
+	 * The messages of the service's instances that went to the reaper,
+	 * and what their closes handed on, are freed before destroy returns:
+	 * a descriptor the reaper still held would keep the service on the
+	 * dead list.
+	 */
+	mac_capability_reap_drain();
+	/*
 	 * Release our initial refcount (from service_create).
 	 * Each instance still holds a reservation ref, and close
 	 * acquires an additional ref — so the service struct
 	 * stays alive until the last close frees it.  If all
 	 * instances already closed, we are the last ref.
 	 */
-	/*
-	 * The messages of the service's instances that went to the reaper,
-	 * and what their closes handed on, are freed before the service is
-	 * gone.
-	 */
-	mac_capability_reap_drain();
 	if (refcount_release(&svc->csvc_refcnt))
 		mac_capability_service_free(svc);
 }
