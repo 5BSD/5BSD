@@ -919,6 +919,46 @@ ATF_TC_BODY(switchboard_exclusion_bit, tc)
 	ATF_CHECK(seen > 0);
 }
 
+ATF_TC(oeslogger_lists_excluded);
+ATF_TC_HEAD(oeslogger_lists_excluded, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "oeslogger -X lists PID 1 and switchboard, and only processes whose ki_flag2 carries P2_CAP_EXCLUDED (review: the example hard-coded the bit dev gave to P2_PTRACE_OUTSTOP)");
+	atf_tc_set_md_var(tc, "require.progs", "/usr/sbin/oeslogger");
+}
+ATF_TC_BODY(oeslogger_lists_excluded, tc)
+{
+	char line[PATH_MAX + 128];
+	FILE *f;
+	pid_t sb, pid, ppid;
+	unsigned flag2;
+	bool saw_init = false, saw_sb = false;
+	int n = 0;
+
+	sb = switchboard_pid();
+	if (sb < 0)
+		atf_tc_skip("no switchboard (plane-on tier only)");
+	f = popen("/usr/sbin/oeslogger -X", "r");
+	ATF_REQUIRE(f != NULL);
+	while (fgets(line, sizeof(line), f) != NULL) {
+		if (sscanf(line, "%d %d", &pid, &ppid) != 2)
+			continue;
+		n++;
+		if (pid == 1)
+			saw_init = true;
+		if (pid == sb)
+			saw_sb = true;
+		/* A process listed must carry the bit (if it still exists). */
+		if (proc_flag2(pid, &flag2) == 0)
+			ATF_CHECK_MSG((flag2 & P2_CAP_EXCLUDED) != 0,
+			    "listed but not excluded: %s", line);
+	}
+	ATF_CHECK_EQ(pclose(f), 0);
+	printf("oeslogger -X listed %d processes\n", n);
+	ATF_CHECK_MSG(saw_init, "PID 1 not listed");
+	ATF_CHECK_MSG(saw_sb, "switchboard (pid %d) not listed", (int)sb);
+}
+
 ATF_TC(switchboard_debug_interfaces);
 ATF_TC_HEAD(switchboard_debug_interfaces, tc)
 {
@@ -2286,6 +2326,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, pid1_debug_interfaces);
 	ATF_TP_ADD_TC(tp, switchboard_exclusion_bit);
 	ATF_TP_ADD_TC(tp, switchboard_debug_interfaces);
+	ATF_TP_ADD_TC(tp, oeslogger_lists_excluded);
 	ATF_TP_ADD_TC(tp, x2_x9_fork_and_trace);
 	ATF_TP_ADD_TC(tp, x3_exec_without_authority_clears);
 	ATF_TP_ADD_TC(tp, x4_core_exec_sets);

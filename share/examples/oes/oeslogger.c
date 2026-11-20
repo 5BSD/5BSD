@@ -1321,7 +1321,6 @@ list_events(void)
 #undef OES_EVENT_NAME_CASE
 }
 
-#define	OESLOGGER_P2_CAP_EXCLUDED	0x20000000	/* sys/proc.h */
 
 /*
  * The processes the kernel excludes from OES (cap_process(2) BASE
@@ -1351,7 +1350,7 @@ excluded_processes(bool list)
 		return (-1);
 	}
 	for (size_t i = 0; i < len / sizeof(*kp); i++) {
-		if ((kp[i].ki_flag2 & OESLOGGER_P2_CAP_EXCLUDED) == 0)
+		if ((kp[i].ki_flag2 & P2_CAP_EXCLUDED) == 0)
 			continue;
 		n++;
 		if (!list)
