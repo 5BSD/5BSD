@@ -454,13 +454,22 @@ struct fill_res {
 	int	err;
 };
 
+/*
+ * The filler: fd[0] is the second object's descriptor, read; fd[1], when
+ * not -1, a descriptor of the first object the child inherited and closes
+ * first, so that it does not keep that object open (its last close is
+ * what close_destroy_deadline waits for).
+ */
 static void
 child_fill_read(void *arg, void *result)
 {
 	struct fill_res *r = result;
+	int *fd = arg;
 	char buf[16];
 
-	r->rv = pread(*(int *)arg, buf, sizeof(buf), 0);
+	if (fd[1] != -1)
+		(void)close(fd[1]);
+	r->rv = pread(fd[0], buf, sizeof(buf), 0);
 	r->err = r->rv == -1 ? errno : 0;
 }
 
@@ -473,7 +482,7 @@ posted_reach(const struct dq_stats *st, uintptr_t n)
 
 /*
  * The writer's msync asleep in "dqroom" behind the filler's read; the
- * controller paused.  fillfd is the second object's descriptor.
+ * controller paused.  fillfd[0] is the second object's descriptor.
  */
 static void
 room_setup(struct dqt_fixture *f, unsigned seed, struct dirty_arg *a,
@@ -487,7 +496,8 @@ room_setup(struct dqt_fixture *f, unsigned seed, struct dirty_arg *a,
 	dq_policy_default(&pol);
 	pol.dp_deadline_ms = 0;
 	fo = dqt_mint_backing(&f->c, f->backing, path, &pol, 0);
-	*fillfd = fo->fd;
+	fillfd[0] = fo->fd;
+	fillfd[1] = -1;
 	memset(a, 0, sizeof(*a));
 	a->fd = f->o->fd;
 	a->npages = 1;
@@ -535,9 +545,9 @@ ATF_TC_BODY(msync_again_full, tc)
 	struct dqt_fixture f;
 	struct dqt_child ch, chf;
 	struct fill_res fr;
-	int fillfd;
+	int fillfd[2];
 
-	room_setup(&f, 11, &a, &ch, &chf, &fillfd);
+	room_setup(&f, 11, &a, &ch, &chf, fillfd);
 	dqt_resume(&f.c);
 	dqt_collect(&chf, &fr, sizeof(fr));
 	ATF_CHECK_EQ(16, fr.rv);
@@ -560,9 +570,9 @@ ATF_TC_BODY(msync_depth_rise, tc)
 	struct dqt_child ch, chf;
 	struct dq_stats2 st;
 	struct fill_res fr;
-	int fillfd;
+	int fillfd[2];
 
-	room_setup(&f, 12, &a, &ch, &chf, &fillfd);
+	room_setup(&f, 12, &a, &ch, &chf, fillfd);
 	ATF_REQUIRE_EQ(0, dq_set_queue_depth(f.c.q, 2));
 	/*
 	 * Still paused: the write-back is posted beside the filler.  The
@@ -591,9 +601,9 @@ ATF_TC_BODY(msync_revoke_room, tc)
 	struct dqt_child ch, chf;
 	struct dirty_res r;
 	struct fill_res fr;
-	int fillfd, status;
+	int fillfd[2], status;
 
-	room_setup(&f, 13, &a, &ch, &chf, &fillfd);
+	room_setup(&f, 13, &a, &ch, &chf, fillfd);
 	ATF_REQUIRE_EQ(0, dq_revoke(f.c.q, f.o->id));
 	/* Still paused; the case's timeout is the hang detector. */
 	status = dqt_wait(&ch, &r, sizeof(r));
@@ -623,10 +633,10 @@ ATF_TC_BODY(wake_async_room, tc)
 	struct dqt_child ch, chf;
 	struct fill_res fr;
 	uint64_t before, left;
-	int fillfd;
+	int fillfd[2];
 
 	dqt_require_fault_knob(DROP_WAKEUP);
-	room_setup(&f, 14, &a, &ch, &chf, &fillfd);
+	room_setup(&f, 14, &a, &ch, &chf, fillfd);
 	before = dqt_drop_count(WAKE_ASYNC_ROOM);
 	dqt_sysctl_save_set_uint(DROP_WAKEUP, WAKE_ASYNC_ROOM);
 	dqt_resume(&f.c);
@@ -677,13 +687,14 @@ ATF_TC_BODY(close_destroy_deadline, tc)
 	struct dq_stats2 st;
 	struct dq_stats st1;
 	struct fill_res fr;
-	int fillfd, status;
+	int fillfd[2], status;
 
 	setup(&f, 15, 300, 0);
 	dq_policy_default(&pol);
 	pol.dp_deadline_ms = 0;
 	fo = dqt_mint_backing(&f.c, f.backing, path, &pol, 0);
-	fillfd = fo->fd;
+	fillfd[0] = fo->fd;
+	fillfd[1] = f.o->fd;	/* the child must not keep it open */
 	memset(&a, 0, sizeof(a));
 	a.fd = f.o->fd;
 	a.npages = 1;
@@ -695,7 +706,7 @@ ATF_TC_BODY(close_destroy_deadline, tc)
 	ATF_REQUIRE_EQ(0, dq_set_queue_depth(f.c.q, 1));
 	dqt_pause(&f.c);
 	dqt_stats(&f.c, &st1);
-	dqt_spawn(&chf, child_fill_read, &fillfd);
+	dqt_spawn(&chf, child_fill_read, fillfd);
 	ATF_REQUIRE(dqt_wait_stats(&f.c, posted_reach,
 	    st1.ds_events_posted + 1, DQT_WAIT_MS));
 	(void)close(f.o->fd);

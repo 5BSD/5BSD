@@ -12,7 +12,7 @@
 #include <sys/param.h>
 #include <sys/mman.h>
 #include <sys/procdesc.h>
-#include <sys/rtprio.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/time.h>
@@ -1211,20 +1211,19 @@ ATF_TC_CLEANUP(wake_revoke_quota, tc)
  * The hand-off of a slot's wakeup (pw_pass, DQ_WAKE_PASS): a slot waiter
  * woken for a slot it cannot take, because its requester's quota filled
  * while it slept, passes the wakeup to the next slot waiter.  Process P
- * has two threads waiting in "dqfull" (a requester quota of 1); W, at idle
- * priority so each wakeup_one picks P's threads first, waits there too.
+ * has two threads waiting in "dqfull" (a requester quota of 1); W waits
+ * there too, at the lowest timesharing priority (nice 20, which needs no
+ * privilege; the first run asked rtprio(2) for the idle class and W never
+ * reached its wait), so each wakeup_one picks P's threads first.
  * The first slot freed goes to one P thread; the second wakes the other,
  * which finds room but sleeps on the quota and must pass the wakeup on, or
  * W sleeps on with a slot free.
  */
 static void
-child_idle_pread(void *arg, void *result)
+child_low_pread(void *arg, void *result)
 {
-	struct rtprio rtp;
 
-	rtp.type = RTP_PRIO_IDLE;
-	rtp.prio = RTP_PRIO_MAX;
-	if (rtprio(RTP_SET, 0, &rtp) != 0)
+	if (setpriority(PRIO_PROCESS, 0, PRIO_MAX) != 0)
 		_exit(4);
 	child_one_pread(arg, result);
 }
@@ -1245,8 +1244,14 @@ pass_setup(struct dqt_ctl *c, int oracle, struct dqt_child *chf,
 	a->len = 16;
 	dqt_spawn(chf, child_one_pread, a);	/* the slot, unread */
 	ATF_REQUIRE(dqt_wait_stats(c, posted_or_dropped_is, 1, DQT_WAIT_MS));
-	dqt_spawn(chw, child_idle_pread, a);
-	ATF_REQUIRE(dqt_wait_wmesg(chw->pid, "dqfull", DQT_WAIT_MS));
+	dqt_spawn(chw, child_low_pread, a);
+	if (!dqt_wait_wmesg(chw->pid, "dqfull", DQT_WAIT_MS)) {
+		int st;
+
+		if (waitpid(chw->pid, &st, WNOHANG) == chw->pid)
+			atf_tc_fail("W exited (status %#x) before its wait", st);
+		atf_tc_fail("W is not waiting in \"dqfull\"");
+	}
 	ra->fd[0] = ra->fd[1] = o->fd;
 	dqt_spawn(chp, child_two_reads, ra);
 	ATF_REQUIRE(full_waits_reach(c, 3, DQT_WAIT_MS));
