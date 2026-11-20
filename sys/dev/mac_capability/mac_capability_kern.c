@@ -56,6 +56,7 @@ SDT_PROBE_DECLARE(mac_capability, , , service__destroy);
 SDT_PROBE_DECLARE(mac_capability, , , queue__pressure);
 SDT_PROBE_DECLARE(mac_capability, , , rxq__discard);
 SDT_PROBE_DECLARE(mac_capability, , , reap__defer);
+SDT_PROBE_DECLARE(mac_capability, , , reap__done);
 
 /*
  * Resolve target process: attached procdesc or self.
@@ -124,25 +125,6 @@ mac_capability_instance_drain_rxq(struct mac_capability_instance *s,
 }
 
 /*
- * Free a list of messages previously detached from an instance queue.
- *
- * Must run WITHOUT ci_mtx held: a queued message can carry an attached
- * capability descriptor whose final fdrop re-enters
- * mac_capability_instance_close(), which drains a taskqueue — a sleepable
- * operation that must never occur under the non-sleepable ci_mtx.
- */
-void
-mac_capability_free_msgq(struct mac_capability_msgq *q)
-{
-	struct mac_capability_msg *msg;
-
-	while ((msg = STAILQ_FIRST(q)) != NULL) {
-		STAILQ_REMOVE_HEAD(q, cm_link);
-		mac_capability_msg_free(msg);
-	}
-}
-
-/*
  * Deferred frees.  Dropping the last reference to a descriptor a message
  * carries runs the descriptor's close, and a channel endpoint's close
  * drains its service taskqueue and then waits until it holds the only
@@ -152,9 +134,14 @@ mac_capability_free_msgq(struct mac_capability_msgq *q)
  * a handler may revoke its own instance).  A message can hold the last
  * reference to such an instance: an endpoint sent on itself and then
  * closed by its holder.  Freed from those contexts, its close would wait
- * for its own caller.  So the revoke and the dispatch task hand the
- * messages they free that carry descriptors to the reaper, a task on a
- * taskqueue of its own that holds no lock and no instance reference.
+ * for its own caller, and a close that frees a queue holding the last
+ * reference to another endpoint nests one close per such link on its
+ * stack.  So the revoke, the dispatch task and the close drop each
+ * reference that is not the last themselves, and hand a message holding a
+ * last reference to the reaper, a task on a taskqueue of its own that
+ * holds no lock and no instance reference; a close the reaper runs hands
+ * its own messages back, so a chain iterates.  Such a last close completes
+ * after the call that freed the message returns (mac_capability(4)).
  * Messages without descriptors are freed at once.
  */
 static struct mac_capability_msg *mac_capability_reap_head; /* (atomic) */
@@ -171,14 +158,27 @@ static void
 mac_capability_reap(void *arg __unused, int pending __unused)
 {
 	struct mac_capability_msg *msg, *next;
+	int n;
 
 	msg = (struct mac_capability_msg *)atomic_swap_ptr(
 	    (volatile uintptr_t *)&mac_capability_reap_head, (uintptr_t)NULL);
 	atomic_thread_fence_acq();
-	for (; msg != NULL; msg = next) {
+	for (n = 0; msg != NULL; msg = next, n++) {
 		next = STAILQ_NEXT(msg, cm_link);
 		mac_capability_msg_free(msg);
 	}
+	SDT_PROBE1(mac_capability, , , reap__done, n);
+}
+
+/*
+ * Wait until the reaper has freed every message handed to it so far, and
+ * those their closes handed over in turn.
+ */
+void
+mac_capability_reap_drain(void)
+{
+
+	taskqueue_drain(mac_capability_reap_tq, &mac_capability_reap_task);
 }
 
 void
@@ -203,20 +203,34 @@ mac_capability_reap_uninit(void)
 }
 
 /*
- * Free the messages of q, handing those that carry descriptors to the
- * reaper.  Called without ci_mtx, from the revoke and the dispatch task.
+ * Free the messages of q.  Each descriptor reference that is not the last
+ * is dropped here; a message still holding a last reference goes to the
+ * reaper.  Called without ci_mtx, from the revoke, the dispatch task and
+ * the close.
  */
-static void
+void
 mac_capability_free_msgq_deferred(struct mac_capability_msgq *q)
 {
 	struct mac_capability_msg *first, *last, *msg, *head;
-	int n;
+	struct file *fp;
+	bool keep;
+	int i, n;
 
 	first = last = NULL;
 	n = 0;
 	while ((msg = STAILQ_FIRST(q)) != NULL) {
 		STAILQ_REMOVE_HEAD(q, cm_link);
-		if (msg->cm_nfds == 0) {
+		keep = false;
+		for (i = 0; i < msg->cm_nfds; i++) {
+			fp = msg->cm_fdset->fds[i];
+			if (fp == NULL)
+				continue;
+			if (refcount_release_if_not_last(&fp->f_count))
+				msg->cm_fdset->fds[i] = NULL;
+			else
+				keep = true;
+		}
+		if (!keep) {
 			mac_capability_msg_free(msg);
 			continue;
 		}
@@ -893,7 +907,7 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 		mtx_unlock(&s->ci_mtx);
 	}
 	sx_xunlock(&mac_capability_registry_lock);
-	mac_capability_free_msgq(&deadq);
+	mac_capability_free_msgq_deferred(&deadq);
 
 	/* Wait for all in-flight async handlers to complete. */
 	if (svc->csvc_taskq != NULL)
@@ -1005,6 +1019,12 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 	 * stays alive until the last close frees it.  If all
 	 * instances already closed, we are the last ref.
 	 */
+	/*
+	 * The messages of the service's instances that went to the reaper,
+	 * and what their closes handed on, are freed before the service is
+	 * gone.
+	 */
+	mac_capability_reap_drain();
 	if (refcount_release(&svc->csvc_refcnt))
 		mac_capability_service_free(svc);
 }

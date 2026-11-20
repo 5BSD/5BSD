@@ -2075,8 +2075,13 @@ mac_capability_instance_close(struct file *fp, struct thread *td __unused)
 
 	mtx_unlock(&s->ci_mtx);
 
-	mac_capability_free_msgq(&deadrx);
-	mac_capability_free_msgq(&deadtx);
+	/*
+	 * Through the reaper: a message holding the last reference to another
+	 * endpoint would otherwise nest that endpoint's close here, and a
+	 * chain of them one close per link.
+	 */
+	mac_capability_free_msgq_deferred(&deadrx);
+	mac_capability_free_msgq_deferred(&deadtx);
 
 	/* Post-drain: catch any task re-scheduled between the
 	 * pre-drain and the CLOSED flag.  Harmless if nothing ran. */

@@ -554,6 +554,17 @@ Queued messages are allocated by size: payloads up to 1024 bytes use a small
 zone, larger ones the maximum-size zone, and descriptor bookkeeping is
 allocated only for messages that carry descriptors.
 Sync-only services do not allocate message queues.
+.Pp
+A message freed undelivered (by a revoke, a close, or a service that
+refused or consumed it) drops its references to the descriptors it carries.
+A reference that is not the last is dropped at once.
+The last reference to a descriptor is dropped by a kernel thread of its own,
+because that close may sleep or wait for the caller that freed the message:
+the descriptor is closed after the call that freed the message returns.
+Its peer reads end of file, its
+.Xr flock 2
+locks are released, and its file system can be unmounted, only once that
+close has run.
 .Sh SYSCTL VARIABLES
 .Bl -tag -width kern.mac_capability.service_details
 .It Va kern.mac_capability.services
@@ -640,10 +651,19 @@ An errno
 .Pq Er ENOSPC , ENFILE No or Er EMFILE ,
 or 0 to clear, that PID 1's next issuer creation fails with, once, after it
 has anchored.
+.It Va debug.mac_capability.test_park_len
+A payload length, or 0 (the default) for none: the next forward of a
+message with that payload length stops in the forwarding handler, with its
+references held, until released.
+The forward that stops consumes the setting.
+.It Va debug.mac_capability.test_park_wait
+Reads 1 while a forward is stopped; a write sleeps until one is.
+.It Va debug.mac_capability.test_park_release
+Writing 1 lets the stopped forward go on.
 .El
 .Pp
-Neither debug control is a tunable, and neither can be written from a
-jail; both only restrict.
+None of the debug controls is a tunable, and none can be written from a
+jail; the issuer controls only restrict.
 .Sh DTRACE PROBES
 The
 .Nm
@@ -663,10 +683,13 @@ service-create, service-destroy.
 .Ss Queue
 queue-pressure, rxq-discard (a revoked or dead instance discards
 the messages still queued for its service; arguments: service name,
-badge, number of messages), reap-defer (a revoke or a dispatch task hands
-messages that carry descriptors to the reaper thread, which frees them
-holding no lock and no instance reference, since dropping a carried
-descriptor may run its close; argument: number of messages).
+badge, number of messages), reap-defer (a revoke, a dispatch task or a
+close hands messages that hold the last reference to a carried descriptor
+to the reaper thread, which frees them holding no lock and no instance
+reference, since that close may sleep or wait for its caller; argument:
+number of messages), reap-done (the reaper finished a pass; argument:
+number of messages freed).
+The reaper runs again after a pass when more were handed to it meanwhile.
 .Ss Authority issuers
 issuer-decision: every
 .Dv CAP_AUTH_ISSUER_CREATE ,

@@ -82,6 +82,7 @@ SDT_PROBE_DEFINE4(mac_capability, , , revoke__done,
 SDT_PROBE_DEFINE3(mac_capability, , , rxq__discard,
     "const char *", "uint64_t", "int");
 SDT_PROBE_DEFINE1(mac_capability, , , reap__defer, "int");
+SDT_PROBE_DEFINE1(mac_capability, , , reap__done, "int");
 SDT_PROBE_DEFINE2(mac_capability, , , close,
     "const char *", "uint64_t");
 SDT_PROBE_DEFINE6(mac_capability, , , fd__install,
