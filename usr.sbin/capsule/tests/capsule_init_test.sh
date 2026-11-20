@@ -1309,7 +1309,7 @@ control_socket_services_any_user_cleanup()
 atf_test_case control_socket_lookup_route cleanup
 control_socket_lookup_route_head()
 {
-	atf_set "descr" "CTL_OP_LOOKUP hands root the route the daemon's SwitchBoard minted"
+	atf_set "descr" "CTL_OP_LOOKUP hands root the route the daemon's SwitchBoard serves"
 	atf_set "require.user" "root"
 	capd_require_stack_kmods
 }
@@ -1317,10 +1317,12 @@ control_socket_lookup_route_body()
 {
 	require_pidfile
 	capd_find_lookup_exec
-	# SwitchBoard mints its route even though a fixture skips /etc/rc, and
-	# hands it to this Capsule before reporting ready.
+	# Capsule keeps the boot discovery route and SwitchBoard serves it, even
+	# though a fixture skips /etc/rc.
 	atf_check -s exit:0 -o ignore \
-	    grep "capsule_proto: ambient lookup channel installed" "$CAPD_LOG"
+	    grep "bootstrap: boot discovery channel created" "$CAPD_LOG"
+	atf_check -s exit:0 -o ignore \
+	    grep "domain: serving Capsule's system-domain lookup channel" "$CAPD_LOG"
 	# The reply carries one descriptor that the kernel accepts as a
 	# discovery route (a non-channel is refused with EINVAL).
 	atf_check -s exit:0 -o empty -e empty \

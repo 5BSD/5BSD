@@ -310,9 +310,20 @@ then reroots into Capsule as PID 1 with the plane on (`kenv -u
 capability_plane; kenv init_path=/sbin/capsule; reboot -r`), and runs it
 again with `VM_REROOT=after` before the suites.  The run is clean only when
 both runs exit 0 and Capsule is PID 1 after the reroot.  By default the
-script also sets `debug.mac_capability.test_issuer_fail_init`, so PID 1's
-create fails after it anchors; `LOADER_EXTRA` with
-`vm_reroot_variant="plain"` selects the plain reroot.  The `usr.sbin/bsd-build` cases that read the
+script also sets `debug.mac_capability.test_issuer_fail_init` (with
+`test_issuer_fail_init_skip=1`), so the issuer PID 1 creates in advance for the
+next SwitchBoard start fails after it anchors; `LOADER_EXTRA` with
+`vm_reroot_variant="plain"` selects the plain reroot.
+`tests/sys/mac_capability/switchboard_no_issuer_reroot.sh` is the same kind of
+extra script for SwitchBoard starts and restarts under Capsule: the loader
+variable `sb_case` is `plain`, `crash` (SwitchBoard killed after boot; no
+/etc/rc replay, existing shells keep their route), `next` (the issuer Capsule
+creates in advance for the next start fails once), `refused` (it keeps failing:
+the restart is refused and PID 1 enters single-user) or `firstboot` (the first
+create fails: recovery).  The killing cases need `switchboard_test_no_sigkill="1"`,
+which a test kernel's Capsule turns into the test-only
+`SWITCHBOARD_TEST_SHIELD_NO_SIGKILL`; `refused` and `firstboot` end in
+single-user, so the host reads their result from the serial log.  The `usr.sbin/bsd-build` cases that read the
 source tree need `SRC_IMAGE` (and `PORTS_IMAGE` for package plans); without it
 they are counted as `DEFERRED_TO_SOURCE_TIER=N`.  With python, the source and
 the ports images, a long bsd-build run fills the default 8 GB guest root:

@@ -102,6 +102,12 @@ process_lookup_fd(void)
 }
 
 int
+service_get_ambient_lookup(void)
+{
+	return (process_lookup_fd());
+}
+
+int
 service_clear_ambient_lookup(void)
 {
 	return (process_context(MAC_CAP_PROCESS_CLEAR, -1, 0, NULL));

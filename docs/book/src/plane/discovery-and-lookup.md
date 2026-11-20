@@ -146,7 +146,13 @@ every relay is the same: send it onward, then close your copy. Fork
 inheritance is a separate axis (`CAP_CLOFORK`), which is how a session's shell
 descendants share the session channel without any transfer.
 
-Closing or crashing either peer revokes the other endpoint. A successful send
+Closing or crashing either peer revokes the other endpoint. The system
+discovery route is the exception: Capsule holds its server end for the whole
+boot and hands it to each SwitchBoard (`SWITCHBOARD_DISCOVERY_FD`), so a
+SwitchBoard exit does not break it. A lookup sent while no SwitchBoard is
+running waits in the channel and is answered by the next one; if none answers
+within `SERVICE_LOOKUP_TIMEOUT_MS` the client gets `ETIMEDOUT`, where a
+SwitchBoard-owned route used to fail at once with `ECONNRESET`. A successful send
 means the kernel accepted the message, not that the provider processed it;
 typed protocols use non-zero reply tokens for acknowledgement, and only
 operations a protocol defines as idempotent may be retried across a provider
@@ -163,7 +169,7 @@ A consumer sees one of a small set of errors and must treat all of them as
 | no ambient channel in this process at all | `ENOENT` |
 | reserved name whose provider never published within 10 s | `ETIMEDOUT` |
 | provider died between claim and publish | its exit fails the waiters immediately |
-| switchboard itself unreachable | `ETIMEDOUT` from the bounded call |
+| switchboard itself unreachable (down, or restarting) | `ETIMEDOUT` from the bounded call |
 | more than 64 lookups pending at once | `EAGAIN` |
 | requester tried to look itself up | `ELOOP` |
 

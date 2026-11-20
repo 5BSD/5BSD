@@ -827,6 +827,25 @@ domain_mint_system_channel(int *out_fd, int kq)
 	    kq));
 }
 
+/*
+ * The SYSTEM route Capsule keeps for the whole boot: its server end outlives
+ * any one SwitchBoard, so every process slot naming it reaches whichever
+ * instance runs.  Takes ownership of server_fd.
+ */
+int
+domain_adopt_system_channel(int server_fd, int kq)
+{
+	struct svc_anoint_set all;
+
+	memset(&all, 0, sizeof(all));
+	/* The boot route grants no authority, including to UID zero. */
+	if (lookup_channel_adopt(server_fd, SVC_DOMAIN_SYSTEM, 0, &all,
+	    kq) == NULL)
+		return (-1);
+	syslog(LOG_INFO, "domain: serving Capsule's system-domain lookup channel");
+	return (0);
+}
+
 /* Internal scoped route constructor; service requests cannot mint sessions. */
 int
 domain_mint_session_channel(enum svc_domain_kind kind, uid_t uid,
