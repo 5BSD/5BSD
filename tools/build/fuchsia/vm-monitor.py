@@ -29,10 +29,13 @@
 # monitor could watch it (the run is not clean); 2, usage or setup failure
 # (the caller must then stop QEMU itself).
 #
-# With --answer, the first console line (or unterminated prompt) matching
-# REGEX is answered once: TEXT and a newline are written to the guest console
-# through SOCKET (QEMU's socket chardev for the serial port), and
-# "CONSOLE_ANSWERED" is printed.  A second match is a problem.  vm-provider.sh
+# With --answer, the line being written (no newline yet) that matches REGEX
+# is a prompt; anchor REGEX to the prompt's end (": $") so that a prompt
+# written in two parts is answered only once it is whole.  The first prompt
+# is answered once: TEXT, which must be printable ASCII, and a newline are
+# typed on the guest console through SOCKET (QEMU's socket chardev for the
+# serial port), one byte per echo (class Typist), and "CONSOLE_ANSWERED" is
+# printed.  A second prompt is a problem.  vm-provider.sh
 # uses it to answer the single-user shell prompt (SINGLE_USER_SHELL).
 #
 # The second form reads a whole serial log after the run: exit 0 when some
@@ -98,19 +101,18 @@ class Watch:
         self.partial = b""
         self.open_reports = []      # indexes of header lines not yet classified
         self.answer = re.compile(answer) if answer else None
-        self.prompt_scan = 0
-        self.prompts = 0            # matches of answer seen in complete lines
+        self.prompt_lines = set()   # line numbers that held a whole prompt
         self.answered = 0
         self.want_answer = False
 
     def prompt_count(self, tail):
-        """Matches of the answer pattern so far; an unterminated prompt (the
-        tail) counts once, and again only after it is a complete line."""
-        for l in self.lines[self.prompt_scan:]:
-            if self.answer.search(l):
-                self.prompts += 1
-        self.prompt_scan = len(self.lines)
-        return self.prompts + (1 if self.answer.search(tail) else 0)
+        """Prompts seen so far.  A prompt is the line still being written
+        (no newline yet) when it matches the answer pattern, which the
+        caller anchors to the prompt's end (": $"), so a prompt written in
+        two parts counts only once it is whole.  Each line counts once."""
+        if self.answer.search(tail):
+            self.prompt_lines.add(len(self.lines))
+        return len(self.prompt_lines)
 
     def feed(self, data):
         """Add log bytes; return a problem description or None."""
@@ -172,6 +174,53 @@ class Watch:
                 problem = "lock order reversal matching no known-lor.txt entry"
         self.open_reports = still
         return problem
+
+
+class Typist:
+    """Types an answer on a serial console one byte at a time.
+
+    The port has no flow control, so a byte the guest has not taken yet is
+    dropped: each byte is typed only once the console has echoed the one
+    before.  Other output may arrive around the echo (kernel messages,
+    printf without a newline), so the echo of the pending byte is found in
+    what arrived since it was typed, by where it can be: anywhere on the
+    line the cursor was on (it may be split by a partial printf), or at the
+    start of a line begun since (a message ended the cursor's line first).
+    Whole lines in between that do not start with it are other output.
+    The newline that ends the answer is the last byte: nothing waits for
+    its echo.  The answer must be printable ASCII: a control character
+    echoes as two characters (^X) under ECHOCTL.
+    """
+
+    def __init__(self, text):
+        if not text or any(b < 0x20 or b > 0x7e for b in text):
+            raise ValueError("the answer must be non-empty printable ASCII")
+        self.queue = [bytes([b]) for b in text] + [b"\n"]
+        self.pending = None
+        self.since = bytearray()
+
+    def next(self):
+        """The byte to type now."""
+        self.pending = self.queue.pop(0)
+        del self.since[:]
+        return self.pending
+
+    def done(self):
+        return not self.queue
+
+    def output(self, data):
+        """Console output that arrived since the last byte was typed."""
+        if self.pending is not None:
+            self.since.extend(data)
+
+    def ready(self):
+        """True when the next byte may be typed."""
+        if self.pending is None:
+            return True
+        segs = bytes(self.since).replace(b"\r", b"").split(b"\n")
+        if self.pending in segs[0]:
+            return True
+        return any(seg.startswith(self.pending) for seg in segs[1:])
 
 
 def stop(pid, kq, grace):
@@ -237,51 +286,33 @@ def monitor(args):
         print("qemu had exited before the monitor started", flush=True)
         return 5
 
-    since = bytearray()     # console output since the last byte was typed
+    typist = [None]
 
     def drain():
         while True:
             d = os.read(fd, 1 << 16)
             if not d:
                 return None
-            since.extend(d)
+            if typist[0] is not None:
+                typist[0].output(d)
             p = w.feed(d)
             if p:
                 return p
-
-    # The answer is typed one byte at a time, each sent once the console
-    # has echoed the one before: a serial port without flow control drops
-    # what the guest has not yet taken.  Other output may arrive meanwhile
-    # (a kernel message, a prompt written in two parts), so the echo is
-    # recognised by position: the line still being written must end with
-    # what was typed on it.  Output that ended a line since the last byte
-    # was typed means the echo starts a new line.  (The newline is the last
-    # byte typed: nothing waits for its echo.)
-    typing = []
-    console = [None]
-    sent = [None]
-    typed = [b""]           # bytes typed and echoed on the current line
-
-    def echoed():
-        want = sent[0] if b"\n" in since else typed[0] + sent[0]
-        return w.partial.rstrip(b"\r").endswith(want)
 
     def answer():
         """Start typing the answer, once."""
         w.want_answer = False
         w.answered += 1
-        typing[:] = [bytes([b]) for b in args["--answer-text"].encode() + b"\n"]
+        typist[0] = Typist(args["--answer-text"].encode())
         console[0] = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         console[0].connect(args["--console"])
         type_next()
 
+    console = [None]
+
     def type_next():
-        if sent[0] is not None:
-            typed[0] = sent[0] if b"\n" in since else typed[0] + sent[0]
-        del since[:]
-        sent[0] = typing.pop(0)
-        console[0].sendall(sent[0])
-        if not typing:
+        console[0].sendall(typist[0].next())
+        if typist[0].done():
             console[0].close()
             console[0] = None
             print("CONSOLE_ANSWERED", flush=True)
@@ -300,7 +331,8 @@ def monitor(args):
         problem = drain()
         if problem is None and w.want_answer and not exited:
             answer()
-        elif problem is None and typing and echoed() and not exited:
+        elif (problem is None and not exited and typist[0] is not None and
+              not typist[0].done() and typist[0].ready()):
             type_next()
         if exited and problem is None:
             return 0
@@ -328,6 +360,11 @@ def main(argv):
     need = ("--pid", "--log", "--deadline", "--fatal", "--known")
     if args.get("--answer") is not None:
         need += ("--answer-text", "--console")
+        try:
+            Typist((args.get("--answer-text") or "").encode())
+        except ValueError as e:
+            print("vm-monitor: --answer-text: %s" % e, file=sys.stderr)
+            return 2
     if any(args.get(k) is None for k in need):
         print("usage: vm-monitor.py --pid PID --log LOG --deadline EPOCH "
               "--fatal REGEX --known FILE [--fatal-lor yes|no] "

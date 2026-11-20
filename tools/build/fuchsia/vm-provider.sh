@@ -142,7 +142,8 @@ kyua_vars=${KYUA_VARS:-}
 #   once (for example the extra script refusing a restart).  The serial port
 #   becomes a QEMU socket chardev that still logs to serial.log, "entering
 #   recovery" and the single-user shell prompt are no longer fatal, and the
-#   monitor answers that prompt once with this path, which runs as the
+#   monitor answers that prompt once with this path (printable ASCII only),
+#   typed one byte per echo, which runs as the
 #   single-user shell; its exit returns the guest to multi-user.  A second
 #   prompt stops the run.  The run is clean only if the prompt was answered
 #   and that shell printed a line SINGLE_USER_SHELL_PASS (its own checks).
@@ -957,7 +958,7 @@ unknown_lor() {
 if [ -n "${SINGLE_USER_SHELL:-}" ]; then
 	python3.12 -I "$monitor" --pid "$qpid" --log "$log" --deadline "$end" \
 	    --fatal "$fatal" --known "$known_lor" --fatal-lor "${FATAL_LOR:-yes}" \
-	    --answer 'Enter full pathname of shell' \
+	    --answer 'Enter full pathname of shell.*: $' \
 	    --answer-text "$SINGLE_USER_SHELL" --console "$console_sock" \
 	    > "$work/monitor.out" &
 else
@@ -1012,7 +1013,7 @@ stack_tier_met() {
 # run) and the single-user shell reported its own checks passed.
 single_user_passed() {
 	grep -qx CONSOLE_ANSWERED "$work/monitor.out" 2>/dev/null &&
-	    tr -d '\r' < "$log" | grep -aqx 'SINGLE_USER_SHELL_PASS'
+	    LC_ALL=C tr -d '\r' < "$log" | grep -aqx 'SINGLE_USER_SHELL_PASS'
 }
 verdict=VM_NOT_CLEAN
 if [ $forced = 0 ] && [ $lor_unknown = 0 ] && [ $rc = 0 ] && [ $guest_off = 1 ] && stack_tier_met &&
