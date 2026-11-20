@@ -7,6 +7,8 @@
  * Open Endpoint Security (OES) - Event Generation and Dispatch
  */
 
+#include "opt_mac_capability.h"
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -25,6 +27,21 @@
 
 #include <security/oes/oes.h>
 #include <security/oes/oes_internal.h>
+
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+/* Test kernels only: mac_capability_testissuer.c. */
+extern volatile u_int mac_capability_test_issuer_oes_trylock_fail;
+
+/* Is p the subject a test asked to fill without its lock? */
+static bool
+oes_test_trylock_fail(struct proc *p)
+{
+	u_int pid;
+
+	pid = atomic_load_int(&mac_capability_test_issuer_oes_trylock_fail);
+	return (pid != 0 && (pid_t)pid == p->p_pid);
+}
+#endif
 
 MALLOC_DECLARE(M_OES);
 
@@ -532,6 +549,12 @@ oes_pending_init(struct oes_pending *ep, oes_event_type_t event, struct proc *p)
 
 		if (!owned)
 			locked = mtx_trylock(&p->p_mtx);
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+		if (locked && !owned && oes_test_trylock_fail(p)) {
+			PROC_UNLOCK(p);
+			locked = false;
+		}
+#endif
 		if (locked) {
 			oes_fill_process(&ep->ep_msg.em_process, p, NULL,
 			    &st, &ep->ep_msg);

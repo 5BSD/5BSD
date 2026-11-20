@@ -196,6 +196,35 @@ SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuer_exclude_self,
     "Test kernel only: write 1 to mark the calling process excluded from "
     "OES and Capability Brokers, as PID 1 is (needs test issuers on)");
 
+/*
+ * OES test fail point: while set to a pid, every event OES records with
+ * that process as its subject is filled as if the subject's process lock
+ * were contended (oes_pending_init()'s unlocked fallback).  0 turns it off.
+ * Lets a test prove that the reader rule (oes(4), "A client's own
+ * processes") does not depend on that lock.
+ */
+volatile u_int mac_capability_test_issuer_oes_trylock_fail;
+
+static int
+mac_capability_test_issuer_oes_trylock_fail_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	int error, value;
+
+	value = atomic_load_int(&mac_capability_test_issuer_oes_trylock_fail);
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	if (value < 0)
+		return (EINVAL);
+	atomic_store_int(&mac_capability_test_issuer_oes_trylock_fail, value);
+	return (0);
+}
+SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuer_oes_trylock_fail,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+    mac_capability_test_issuer_oes_trylock_fail_sysctl, "I",
+    "Test kernel only: a pid whose OES event records are filled as if its "
+    "process lock were contended (0: off)");
+
 static void
 mac_capability_test_issuer_init(void *arg __unused)
 {

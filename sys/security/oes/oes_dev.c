@@ -257,7 +257,7 @@ static struct filterops oes_rfiltops = {
  * event queue, and configuration.
  */
 static int
-oes_open(struct cdev *dev __unused, int oflags __unused, int devtype __unused,
+oes_open(struct cdev *dev __unused, int oflags, int devtype __unused,
     struct thread *td)
 {
 	struct oes_client *ec;
@@ -307,15 +307,8 @@ oes_open(struct cdev *dev __unused, int oflags __unused, int devtype __unused,
 	OES_UNLOCK();
 
 	/* The opener's identity anchors OES_SCOPE_DESCENDANTS. */
-	PROC_LOCK(td->td_proc);
 	ec->ec_owner_pid = td->td_proc->p_pid;
-	if (td->td_proc->p_stats != NULL) {
-		/* Must match oes_proc_genid() formula: sec*1000000 + usec */
-		ec->ec_owner_genid =
-		    (uint64_t)td->td_proc->p_stats->p_start.tv_sec * 1000000ULL +
-		    (uint64_t)td->td_proc->p_stats->p_start.tv_usec;
-	}
-	PROC_UNLOCK(td->td_proc);
+	ec->ec_owner_genid = oes_proc_genid_unlocked(td->td_proc);
 
 	/* Store client in cdevpriv for later retrieval */
 	error = devfs_set_cdevpriv(ec, oes_client_dtor);
@@ -332,7 +325,12 @@ oes_open(struct cdev *dev __unused, int oflags __unused, int devtype __unused,
 	 * The opener acts as the client: it is its first reader, before the
 	 * client can receive anything (oes(4), "A client's own processes").
 	 */
-	oes_client_join(ec, td);
+	/*
+	 * The descriptor is not installed yet, so its rights cannot be read;
+	 * a fresh open carries every right, and FWRITE decides.
+	 */
+	oes_client_join(ec, td, NULL, (oflags & FWRITE) != 0 ?
+	    OES_JOIN_ANSWER : OES_JOIN_READ);
 
 	/* Add to global client list */
 	OES_LOCK();
@@ -435,7 +433,7 @@ oes_read(struct cdev *dev __unused, struct uio *uio, int ioflag)
 
 	if (uio->uio_resid < sizeof(oes_message_t))
 		return (EINVAL);
-	oes_client_join(ec, curthread);
+	oes_client_join(ec, curthread, curthread->td_fpop, OES_JOIN_READ);
 
 	EC_LOCK(ec);
 
@@ -595,7 +593,7 @@ oes_write(struct cdev *dev, struct uio *uio, int ioflag)
 	error = devfs_get_cdevpriv((void **)&ec);
 	if (error)
 		return (error);
-	oes_client_join(ec, curthread);
+	oes_client_join(ec, curthread, curthread->td_fpop, OES_JOIN_ANSWER);
 
 	if (uio->uio_resid == sizeof(oes_response_t)) {
 		/* Basic response */
@@ -1167,7 +1165,7 @@ oes_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 	}
 
 	case OES_IOC_JOIN:
-		oes_client_join(ec, td);
+		oes_client_join(ec, td, td->td_fpop, OES_JOIN_CHECK);
 		return (0);
 
 	case OES_IOC_SET_MUTE_INVERT: {
@@ -1310,7 +1308,7 @@ oes_poll(struct cdev *dev, int events, struct thread *td)
 	error = devfs_get_cdevpriv((void **)&ec);
 	if (error)
 		return (POLLNVAL);
-	oes_client_join(ec, td);
+	oes_client_join(ec, td, td->td_fpop, OES_JOIN_READ);
 
 	EC_LOCK(ec);
 
@@ -1354,7 +1352,8 @@ oes_kqfilter(struct cdev *dev, struct knote *kn)
 	switch (kn->kn_filter) {
 	case EVFILT_READ:
 		/* Registering for events makes a reader, as reading does. */
-		oes_client_join(ec, curthread);
+		oes_client_join(ec, curthread, curthread->td_fpop,
+		    OES_JOIN_READ);
 		kn->kn_fop = &oes_rfiltops;
 		kn->kn_hook = ec;
 		EC_LOCK(ec);
@@ -1465,15 +1464,6 @@ oes_dev_init(void)
 	    taskqueue_thread_enqueue, &oes_softc.sc_defer_tq);
 	taskqueue_start_threads(&oes_softc.sc_defer_tq, 1, PI_SOFT,
 	    "oes_deferq");
-
-	if (oes_readers_init() != 0) {
-		taskqueue_free(oes_softc.sc_defer_tq);
-		mtx_destroy(&oes_softc.sc_defer_mtx);
-		oes_jail_counters_free();
-		rm_destroy(&oes_softc.sc_jail_lock);
-		mtx_destroy(&oes_softc.sc_mtx);
-		return (ENOMEM);
-	}
 
 	oes_softc.sc_cdev = make_dev(&oes_cdevsw, 0, UID_ROOT, GID_WHEEL,
 	    0600, "oes");

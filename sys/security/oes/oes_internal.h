@@ -168,12 +168,13 @@ TAILQ_HEAD(oes_cache_lru, oes_cache_entry);
  * path, never in dispatch); a join happens once per process and image.
  *
  * Published with atomic_store_rel_ptr() under ec_readers_lock and read with
- * atomic_load_acq_ptr() inside oes_readers_epoch; a replaced array is freed
+ * atomic_load_acq_ptr() inside global_epoch_preempt; a replaced array is freed
  * by epoch_call().
  */
 struct oes_reader {
 	pid_t			or_pid;
-	uint32_t		or_pad;
+	bool			or_answer;	/* can answer AUTH: FWRITE and
+						   CAP_WRITE on its descriptor */
 	uint64_t		or_genid;
 	uint64_t		or_exec_id;
 };
@@ -686,14 +687,20 @@ void	oes_set_auth_deadline(struct oes_pending *ep, uint32_t deadline_ms);
  */
 int	oes_mac_init(void);
 uint64_t oes_proc_get_exec_id(struct proc *p);
-int	oes_readers_init(void);
 void	oes_readers_fini(void);
 void	oes_readers_enter(struct epoch_tracker *);
 void	oes_readers_exit(struct epoch_tracker *);
-bool	oes_client_is_reader(struct oes_client *, const oes_process_t *);
+#define	OES_READER_NONE		0
+#define	OES_READER_READ		1	/* a reader that cannot answer */
+#define	OES_READER_ANSWER	2	/* a reader that can answer AUTH */
+int	oes_client_is_reader(struct oes_client *, const oes_process_t *);
+#define	OES_JOIN_READ		0	/* read, poll, kevent */
+#define	OES_JOIN_ANSWER		1	/* write(2) of a response */
+#define	OES_JOIN_CHECK		2	/* open, OES_IOC_JOIN */
 uint64_t oes_proc_genid_unlocked(struct proc *);
 uint64_t oes_cred_get_exec_id(struct ucred *);
-void	oes_client_join(struct oes_client *, struct thread *);
+void	oes_client_join(struct oes_client *, struct thread *, struct file *,
+	    int);
 bool	oes_process_is_reader(const oes_process_t *);
 const char *oes_proc_get_exec_path(struct proc *p, uint32_t *meta_flags);
 

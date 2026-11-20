@@ -272,6 +272,7 @@ extern const struct fileops mac_capability_instance_ops;
 #define	MAC_CAPABILITY_TEST_ISSUER_ANCHORED	2
 extern int mac_capability_test_issuer_enabled;	/* the tunable, 0 or 1 */
 extern volatile u_int mac_capability_test_issuer_fail_init;
+extern volatile u_int mac_capability_test_issuer_oes_trylock_fail;
 extern volatile u_long mac_capability_test_issuer_created;
 extern volatile u_int mac_capability_test_issuer_live;
 u_int	mac_capability_test_issuer_state(void);

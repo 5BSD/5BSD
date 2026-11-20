@@ -691,7 +691,8 @@ oes_dispatch_auth_notification(const struct oes_pending *ep, struct proc *p,
 		if (!oes_pending_visible_to_client(ep, ec))
 			continue;
 		/* Never to a client its subject acts as (lock-free). */
-		if (oes_client_is_reader(ec, &ep->ep_msg.em_process))
+		if (oes_client_is_reader(ec, &ep->ep_msg.em_process) !=
+		    OES_READER_NONE)
 			continue;
 		EC_LOCK(ec);
 		if (ec->ec_flags & EC_FLAG_CLOSING) {
@@ -752,7 +753,8 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 	bool auth_delivery_fail_closed = false;
 	bool is_auth;
 	bool cached_denied = false;
-	bool fail_open, reader;
+	bool fail_open;
+	int reader;
 	int error = 0;
 	oes_event_type_t event;
 
@@ -857,6 +859,8 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 		OES_LOCK();
 	}
 
+	/* One epoch section for the snapshot and the delivery loop. */
+	oes_readers_enter(&et);
 	/*
 	 * Snapshot the portable equivalent of es_process_t.is_es_client: the
 	 * subject acts as some client (one of its readers).
@@ -872,7 +876,6 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 		}
 	}
 
-	oes_readers_enter(&et);
 	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
 		oes_event_type_t mute_event;
 
@@ -890,7 +893,13 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 			EC_UNLOCK(ec);
 			continue;
 		}
-		if (reader) {
+		/*
+		 * NOTIFY: never.  AUTH: an implicit allow from this client,
+		 * but only for a reader that can answer (owner, 2026-11-19);
+		 * a read-only reader's AUTH events are delivered as usual.
+		 */
+		if (reader == OES_READER_ANSWER ||
+		    (reader == OES_READER_READ && !is_auth)) {
 			if (is_auth && ec->ec_mode == OES_MODE_AUTH &&
 			    oes_client_subscribed(ec, event))
 				auth_consulted = true;
@@ -1872,7 +1881,8 @@ oes_deliver_notify_locked(struct oes_pending *ep)
 		if (!oes_pending_visible_to_client(ep, ec))
 			continue;
 		/* Never to a client its subject acts as (lock-free). */
-		if (oes_client_is_reader(ec, &ep->ep_msg.em_process))
+		if (oes_client_is_reader(ec, &ep->ep_msg.em_process) !=
+		    OES_READER_NONE)
 			continue;
 		EC_LOCK(ec);
 		if (ec->ec_flags & EC_FLAG_CLOSING) {
