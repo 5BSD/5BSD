@@ -2490,57 +2490,63 @@ ATF_TC_BODY(revoke_drops_shared_descriptors_inline, tc)
  * reference to b[i + 1], and the last one's to a socket.  Closing b[0]
  * frees its queue, whose message's reference to b[1] is the last, whose
  * close frees b[1]'s queue, and so on.  Freed by recursion that is one
- * nested close per link on the closing thread's kernel stack; the chain is
- * far longer than any kernel stack holds, and the closes must iterate.
+ * nested close per link on the closing thread's kernel stack, several call
+ * frames each.  A link is given a lower bound of 64 bytes of stack (a
+ * single frame's return address and saved registers already take more),
+ * so kern.kstack_pages pages over 64 bytes is more links than any kernel
+ * stack can nest; the closes must iterate.  Each sender a[i] is closed once
+ * its message is queued, so only the chain's endpoints stay open.
  */
-#define	CHAIN_LINKS	1000
+#define	CHAIN_LINK_STACK_BYTES	64
 
 ATF_TC(close_frees_chained_endpoints);
 ATF_TC_HEAD(close_frees_chained_endpoints, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "closing an endpoint frees a long chain of endpoints each queued "
-	    "on the one before without recursing");
+	    "closing an endpoint frees a chain of endpoints each queued on "
+	    "the one before, deeper than a kernel stack, without recursing");
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_channel");
 	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "timeout", "600");
 }
 ATF_TC_BODY(close_frees_chained_endpoints, tc)
 {
 	static const char note[] = "link";
 	struct rlimit rl;
-	int *a, *b, i, pair[2], sv[2];
+	size_t len;
+	int *b, i, links, kstack_pages, next[2], pair[2], sv[2];
 
-	rl.rlim_cur = rl.rlim_max = 2 * CHAIN_LINKS + 64;
+	len = sizeof(kstack_pages);
+	ATF_REQUIRE_MSG(sysctlbyname("kern.kstack_pages", &kstack_pages, &len,
+	    NULL, 0) == 0, "kern.kstack_pages: %s", strerror(errno));
+	links = kstack_pages * getpagesize() / CHAIN_LINK_STACK_BYTES;
+	rl.rlim_cur = rl.rlim_max = links + 64;
 	ATF_REQUIRE_MSG(setrlimit(RLIMIT_NOFILE, &rl) == 0, "setrlimit: %s",
 	    strerror(errno));
-	a = calloc(CHAIN_LINKS, sizeof(*a));
-	b = calloc(CHAIN_LINKS, sizeof(*b));
-	ATF_REQUIRE(a != NULL && b != NULL);
-	for (i = 0; i < CHAIN_LINKS; i++) {
-		ATF_REQUIRE_MSG(chan_create_required(pair) == 0,
-		    "pair %d: %s", i, strerror(errno));
-		a[i] = pair[0];
-		b[i] = pair[1];
-	}
+	b = calloc(links, sizeof(*b));
+	ATF_REQUIRE(b != NULL);
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	/* a[i] sends b[i + 1] (the last a sv[0]): it waits on b[i]'s queue. */
-	for (i = CHAIN_LINKS - 1; i >= 0; i--) {
-		if (i == CHAIN_LINKS - 1) {
-			send_carrier(a[i], note, sizeof(note), &sv[0], 1);
-			ATF_REQUIRE_EQ(0, close(sv[0]));
-		} else {
-			send_carrier(a[i], note, sizeof(note), &b[i + 1], 1);
-			ATF_REQUIRE_EQ(0, close(b[i + 1]));
-		}
+	/*
+	 * Built from the end: pair i's a sends b[i + 1] (the last pair's a
+	 * sends sv[0]), which waits in b[i]'s TX queue; then a is closed.
+	 */
+	ATF_REQUIRE_MSG(chan_create_required(pair) == 0, "pair %d: %s",
+	    links - 1, strerror(errno));
+	b[links - 1] = pair[1];
+	send_carrier(pair[0], note, sizeof(note), &sv[0], 1);
+	ATF_REQUIRE_EQ(0, close(sv[0]));
+	ATF_REQUIRE_EQ(0, close(pair[0]));
+	for (i = links - 2; i >= 0; i--) {
+		ATF_REQUIRE_MSG(chan_create_required(next) == 0,
+		    "pair %d: %s", i, strerror(errno));
+		b[i] = next[1];
+		send_carrier(next[0], note, sizeof(note), &b[i + 1], 1);
+		ATF_REQUIRE_EQ(0, close(b[i + 1]));
+		ATF_REQUIRE_EQ(0, close(next[0]));
 	}
 	ATF_REQUIRE_EQ(0, close(b[0]));
 	ATF_CHECK_MSG(socket_closed(sv[1]), "sv[0] was written");
-	for (i = 0; i < CHAIN_LINKS; i++)
-		close(a[i]);
 	close(sv[1]);
-	free(a);
 	free(b);
 }
 
