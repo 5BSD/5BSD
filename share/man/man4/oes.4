@@ -368,6 +368,9 @@ the strict settings above, fail-closed deadlines, a client that closes
 without answering and an allocation failure do not deny it: a missing or
 slow client allows the execution, while a client's explicit denial still
 refuses it.
+This applies to the execution of the unit's own ELF image only;
+.Xr switchboard 8
+refuses to launch a System bundle unit whose program is a script.
 Every other start by an excluded process (per-user and
 .Pa /Capabilities/Apps
 units, the rc scripts, programs started by

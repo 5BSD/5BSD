@@ -125,29 +125,46 @@ svc_authority_core(const struct svc_runtime *svc)
 }
 
 /*
- * A Core unit's program must be an ELF image: the kernel refuses an exec
- * predicted excluded that turns out to be a script (EACCES); say why first.
- * Then record, truthfully, whether the image was verified against the
- * base: with mac_veriexec enforcing, the O_VERIFY open of the program (and
- * libcapbundle's of the manifest) already refused anything outside the
+ * The program of a Core unit, and of any unit of a System bundle, must be
+ * an ELF image.  Core: the kernel refuses an exec predicted excluded that
+ * turns out to be a script (EACCES).  System: the role makes the launch
+ * fail-open for OES only on the image's own pass; a #! script's
+ * interpreter pass would be an ordinary exec, so a script would hold the
+ * role without the meaning (oes(4), cap_process(2)).  Refuse either here,
+ * and say why.
+ */
+static int
+svc_authority_elf_image(const struct svc_runtime *svc, int image,
+    const char *what)
+{
+	unsigned char magic[SELFMAG];
+
+	if (pread(image, magic, sizeof(magic), 0) != (ssize_t)sizeof(magic) ||
+	    memcmp(magic, ELFMAG, SELFMAG) != 0) {
+		syslog(LOG_ERR, "unit %s: %s requires an ELF program",
+		    svc->manifest.label, what);
+		errno = ENOEXEC;
+		return (-1);
+	}
+	return (0);
+}
+
+/*
+ * A Core unit: record, truthfully, whether the image was verified against
+ * the base: with mac_veriexec enforcing, the O_VERIFY open of the program
+ * (and libcapbundle's of the manifest) already refused anything outside the
  * signed base manifest; without enforcement nothing distinguishes a
  * root-installed bundle from the release's, and the launch says so.
  */
 static int
 svc_authority_core_image(const struct svc_runtime *svc, int image)
 {
-	unsigned char magic[SELFMAG];
 	char state[64], *word, *rest;
 	size_t len;
 	bool enforcing = false;
 
-	if (pread(image, magic, sizeof(magic), 0) != (ssize_t)sizeof(magic) ||
-	    memcmp(magic, ELFMAG, SELFMAG) != 0) {
-		syslog(LOG_ERR, "unit %s: control = \"core\" requires an ELF "
-		    "program", svc->manifest.label);
-		errno = ENOEXEC;
+	if (svc_authority_elf_image(svc, image, "control = \"core\"") == -1)
 		return (-1);
-	}
 	/* "loaded active enforce locked"; absent without mac_veriexec. */
 	len = sizeof(state) - 1;
 	if (sysctlbyname("security.mac.veriexec.state", state, &len, NULL,
@@ -221,6 +238,10 @@ svc_authority_constrain_application(const struct svc_runtime *svc, int token)
 	}
 	if ((constraint.flags & CAP_AUTH_ROLE_CORE) != 0 &&
 	    svc_authority_core_image(svc, constraint.executable_fds[0]) == -1)
+		goto out;
+	if ((constraint.flags & CAP_AUTH_ROLE_SYSTEM) != 0 &&
+	    svc_authority_elf_image(svc, constraint.executable_fds[0],
+	    "a System bundle unit") == -1)
 		goto out;
 #ifdef CAPIMAGE_EXPERIMENTAL_CONSUMER
 	{

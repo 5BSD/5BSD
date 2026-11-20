@@ -109,6 +109,10 @@ The same rules apply as for the supervisor role.
 When an excluded process executes the image with this authority installed,
 .Xr oes 4
 delivers the exec events fail-open; it grants nothing else.
+Fail-open covers the execution of the pinned image itself: for a script,
+only the script's own pass, not its interpreter's.
+.Xr switchboard 8
+therefore launches System bundle units only from ELF programs.
 .It Dv CAP_AUTH_ROLE_CORE
 Mark the authority as a Core launch.
 The same rules apply as for the supervisor role: exactly one image, written

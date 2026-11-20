@@ -219,6 +219,15 @@ A Core unit's program must be an ELF image; a script fails to launch with
 .Er ENOEXEC
 and the message
 .Dq control = "core" requires an ELF program .
+The same holds for every unit of a System bundle, whose authority carries
+.Dv CAP_AUTH_ROLE_SYSTEM :
+its launch is fail-open for
+.Xr oes 4
+only on the image's own execution, which a script's interpreter pass is
+not, so a script unit of a System bundle fails to launch with
+.Er ENOEXEC
+and the message
+.Dq a System bundle unit requires an ELF program .
 When
 .Xr mac_veriexec 4
 is not enforcing, each Core launch logs, at
