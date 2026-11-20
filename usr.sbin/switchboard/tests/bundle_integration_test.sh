@@ -567,10 +567,13 @@ reload_changed_core_refused_cleanup() {
 # runtime", ...)) comes before the unit's state is looked at, so a core unit
 # that was never launched exercises it without the boot storage grant only a
 # PID 1 Capsule can derive (reload_changed_core_refused needs that grant and
-# skips on a test-local stack).  A timer-activated unit gets its stopped slot
-# at start (activation_register_all()) and does not launch before its
-# interval.  Without the refusal, reload would replace the stopped unit's
-# manifest ("updating stopped service", "1 changed").
+# skips on a test-local stack).  A path-activated unit gets its stopped slot
+# at start (activation_register_all()) and launches only on a change to its
+# path, which nothing makes.  Without the refusal, reload would replace the
+# stopped unit's manifest ("updating stopped service", restart=always).  The
+# install-folder watcher may reload the edited unit before the explicit
+# reload does; the checks hold either way, and the refusal is logged by
+# whichever reload sees the change first.
 atf_test_case reload_changed_stopped_core_refused cleanup
 reload_changed_stopped_core_refused_head() {
 	atf_set "descr" "Reload leaves a core unit's manifest unchanged when it is not running"
@@ -579,16 +582,15 @@ reload_changed_stopped_core_refused_head() {
 }
 reload_changed_stopped_core_refused_body() {
 	use_private_control
-	local bundle unit
+	local bundle unit trigger
 
 	prepare_paths
-	# The install-folder watcher would otherwise reload the edited unit
-	# itself, before the explicit reload under test.
-	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=60
+	trigger="${WORK}/coreidle.trigger"
+	: > "$trigger"
 	bundle=$(create_system_bundle "CoreIdle" "org.test.core-idle" \
 	    "coreidled" "org.test.core-idle.svc" \
-	    'activation { timer { interval = 3600; } }
-control = "core"; restart = "never";')
+	    "activation { path { path = \"${trigger}\"; } }
+control = \"core\"; restart = \"never\";")
 	unit="${bundle}/Units/coreidled.unit/Unit.ucl"
 	sed -i '' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
 	    "$unit"
@@ -599,7 +601,7 @@ control = "core"; restart = "never";')
 
 	cat >"$unit" <<UCL
 directories = ["${WORK}"];
-activation { timer { interval = 3600; } }
+activation { path { path = "${trigger}"; } }
 control = "core";
 restart = "always";
 arguments = ["compat-ready"];
