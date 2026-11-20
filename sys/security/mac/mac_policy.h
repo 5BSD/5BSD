@@ -1358,12 +1358,6 @@ struct mac_policy_conf {
  * loadtime flags take values from 0x40000000 down, clear of upstream.
  */
 #define	MPC_LOADTIME_FLAG_FP_INACTIVE	0x40000000
-/*
- * A policy that registers after the boot-time boundary but never unloads
- * joins the static list, whose walks take no lock, instead of the dynamic
- * list.  It must not also be UNLOADOK.
- */
-#define	MPC_LOADTIME_FLAG_LATE_STATIC	0x20000000
 
 /* Flags for the mpc_runtime_flags field. */
 #define	MPC_RUNTIME_FLAG_REGISTERED	0x00000001

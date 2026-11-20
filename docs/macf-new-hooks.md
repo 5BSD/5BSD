@@ -66,18 +66,6 @@ the counts and each policy's counted and implemented hooks;
 `vfs.cache.param.fast_lookup_active` exports whether lockless lookup is in
 effect.
 
-### Late policies that never unload
-
-A policy that registers after the boot-time boundary (`SI_SUB_MAC_LATE`)
-normally joins the dynamic list, whose walks take `mac_policy_rm` (a read
-lock that pins the walking thread to its CPU) or `mac_policy_rms`.  A late
-policy that can never unload may set `MPC_LOADTIME_FLAG_LATE_STATIC`
-(0x20000000, 5BSD) to join the static list instead: the framework calls
-its `mpo_init`, counts its fast-path hooks and then appends it with a
-release store, so lockless walks see either the old list or the
-initialised policy.  `LATE_STATIC` with `UNLOADOK` is refused (`EINVAL`).
-OES uses it.
-
 Fast-path flags for close, pipe write and socket I/O (5BSD, with
 `mac_policy_fastpath_set()`): `file_notify_close`, `vnode_check_close`,
 `pipe_check_write`, `socket_check_send`, `socket_check_receive`,

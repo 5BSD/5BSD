@@ -233,10 +233,6 @@ MALLOC_DEFINE(M_MACTEMP, "mactemp", "MAC temporary label storage");
  * mac_policy_list, which holds policies either loaded later in the boot
  * cycle or that may be unloaded.  The static policy list does not require
  * locks to iterate over, but the dynamic list requires synchronization.
- * A policy that registers late but can never unload
- * (MPC_LOADTIME_FLAG_LATE_STATIC) joins the static list: it is initialised
- * first and then published at the tail with a release store, so a walk sees
- * either the old list or the initialised policy.
  * Support for dynamic policy loading can be compiled out using the
  * MAC_STATIC kernel option.
  *
@@ -774,32 +770,6 @@ SYSCTL_PROC(_security_mac, OID_AUTO, fastpath,
 #undef FPE
 #undef FPO
 
-/*
- * Append mpc to the static list, which is walked without a lock.  Walkers
- * load each link plainly and then load through it, which the address
- * dependency orders after this release store on every supported
- * architecture; a walk that misses mpc behaves as one that started before
- * the registration.  Called with the policy list locked exclusively.
- */
-static void
-mac_static_list_publish(struct mac_policy_conf *last,
-    struct mac_policy_conf *mpc)
-{
-
-	LIST_NEXT(mpc, mpc_list) = NULL;
-	if (last == NULL) {
-		mpc->mpc_list.le_prev = &LIST_FIRST(&mac_static_policy_list);
-		atomic_store_rel_ptr(
-		    (volatile uintptr_t *)&LIST_FIRST(&mac_static_policy_list),
-		    (uintptr_t)mpc);
-	} else {
-		mpc->mpc_list.le_prev = &LIST_NEXT(last, mpc_list);
-		atomic_store_rel_ptr(
-		    (volatile uintptr_t *)&LIST_NEXT(last, mpc_list),
-		    (uintptr_t)mpc);
-	}
-}
-
 static int
 mac_policy_register(struct mac_policy_conf *mpc)
 {
@@ -820,17 +790,10 @@ mac_policy_register(struct mac_policy_conf *mpc)
 	 * If the module can potentially be unloaded, or we're loading late,
 	 * we have to stick it in the non-static list and pay an extra
 	 * performance overhead.  Otherwise, we can pay a light locking cost
-	 * and stick it in the static list.  A late policy that can never
-	 * unload may ask for the static list (MPC_LOADTIME_FLAG_LATE_STATIC).
+	 * and stick it in the static list.
 	 */
 	static_entry = (!mac_late &&
-	    !(mpc->mpc_loadtime_flags & MPC_LOADTIME_FLAG_UNLOADOK)) ||
-	    (mpc->mpc_loadtime_flags & MPC_LOADTIME_FLAG_LATE_STATIC) != 0;
-	if ((mpc->mpc_loadtime_flags & MPC_LOADTIME_FLAG_LATE_STATIC) != 0 &&
-	    (mpc->mpc_loadtime_flags & MPC_LOADTIME_FLAG_UNLOADOK) != 0) {
-		error = EINVAL;
-		goto out;
-	}
+	    !(mpc->mpc_loadtime_flags & MPC_LOADTIME_FLAG_UNLOADOK));
 
 	mpc_list = (static_entry) ? &mac_static_policy_list :
 	    &mac_policy_list;
@@ -854,38 +817,26 @@ mac_policy_register(struct mac_policy_conf *mpc)
 	}
 	mpc->mpc_runtime_flags |= MPC_RUNTIME_FLAG_REGISTERED;
 
-	if (mac_late && static_entry) {
-		/*
-		 * Static-list walks take no lock: initialise the policy, then
-		 * publish it at the tail with a release store.
-		 */
-		if (MAC_POLICY_PRESENT(init, mpc))
-			MAC_POLICY_CALL_VOID(init, mpc, mpc);
-		mac_policy_fastpath_register(mpc);
-		mac_static_list_publish(last_mpc, mpc);
-	} else {
-		/*
-		 * Some modules may depend on the operations of its
-		 * dependencies.  Inserting modules in order of registration
-		 * ensures operations that work on the module list retain
-		 * dependency order.
-		 */
-		if (last_mpc == NULL)
-			LIST_INSERT_HEAD(mpc_list, mpc, mpc_list);
-		else
-			LIST_INSERT_AFTER(last_mpc, mpc, mpc_list);
-		/*
-		 * Per-policy initialization.  Currently, this takes place
-		 * under the exclusive lock, so policies must not sleep in
-		 * their init method.  In the future, we may want to separate
-		 * "init" from "start", with "init" occurring without the lock
-		 * held.  Likewise, on tear-down, breaking out "stop" from
-		 * "destroy".
-		 */
-		if (MAC_POLICY_PRESENT(init, mpc))
-			MAC_POLICY_CALL_VOID(init, mpc, mpc);
-		mac_policy_fastpath_register(mpc);
-	}
+	/*
+	 * Some modules may depend on the operations of its dependencies.
+	 * Inserting modules in order of registration ensures operations
+	 * that work on the module list retain dependency order.
+	 */
+	if (last_mpc == NULL)
+		LIST_INSERT_HEAD(mpc_list, mpc, mpc_list);
+	else
+		LIST_INSERT_AFTER(last_mpc, mpc, mpc_list);
+	/*
+	 * Per-policy initialization.  Currently, this takes place under the
+	 * exclusive lock, so policies must not sleep in their init method.
+	 * In the future, we may want to separate "init" from "start", with
+	 * "init" occurring without the lock held.  Likewise, on tear-down,
+	 * breaking out "stop" from "destroy".
+	 */
+	if (MAC_POLICY_PRESENT(init, mpc))
+		MAC_POLICY_CALL_VOID(init, mpc, mpc);
+
+	mac_policy_fastpath_register(mpc);
 
 	mac_policy_update();
 
