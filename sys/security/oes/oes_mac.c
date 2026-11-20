@@ -6015,7 +6015,6 @@ oes_mac_policy_init(void)
 
 	/* Everything a hook can reach exists before the hooks do. */
 	oes_rename_cache_init();
-	oes_gate_check_coverage();
 	error = mac_policy_modevent(NULL, MOD_LOAD, &oes_mac_policy_conf);
 	if (error != 0) {
 		OES_ERR("failed to register MAC policy: %d", error);
@@ -6023,6 +6022,11 @@ oes_mac_policy_init(void)
 	}
 	oes_mac_registered = true;
 	OES_DEBUG("MAC policy registered");
+	/*
+	 * After registration: an uncovered hook is counted for good, which
+	 * mac_policy_fastpath_set() refuses (ENOENT) before it.
+	 */
+	oes_gate_check_coverage();
 	/* Nothing listens yet: every hook starts idle. */
 	oes_gate_reconcile();
 	return (0);
