@@ -321,6 +321,12 @@ give it `ROOT_SIZE=16g`.  Cases that need a guest setup no tier provides yet
 with devd and auditd stopped, `bsd_build_test:generation_reconciliation`'s
 ACL subtest without root and md(4)) skip with `DEFERRED_GUEST_SETUP` and are
 counted as `DEFERRED_GUEST_SETUP=N`, not as passes.
+`mac_capability_accounting_racct_test` needs a boot with the ignored
+`kern.racct.enable=0` tunable: run it with `RACCT_TUNABLE_ZERO=1`; elsewhere
+its cases skip with `DEFERRED_RACCT_ZERO_TIER`.  Cases that need the test
+kernel's handler park (`debug.mac_capability.test_park_*`, GENERIC-TEST)
+skip elsewhere with `DEFERRED_TEST_KERNEL_TIER`; run them with
+`KERNEL_TIER=test`.  Both are counted on their own lines, not as passes.
 Cases that drive their private SwitchBoard with `switchboardctl` call
 `use_private_control` (`usr.sbin/switchboard/tests/test_helpers.sh`): it runs
 `switchboardctl` through `capd_lookup_exec`, which installs the private
