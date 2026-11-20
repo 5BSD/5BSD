@@ -12,6 +12,7 @@
 #include <sys/param.h>
 #include <sys/event.h>
 #include <sys/jail.h>
+#include <sys/mman.h>
 #include <sys/module.h>
 #include <sys/resource.h>
 #include <sys/sysctl.h>
@@ -1526,6 +1527,89 @@ boundary_sibling(int mode, unsigned seed)
 	(void)close(oracle);
 }
 
+/*
+ * Re-review of D404 (1a): a page fault waits for its answer at the user
+ * boundary without catching signals, and an ordinary kill(2) SIGKILL must
+ * end it (tdsendsignal calls the dying-process hook).  The object's page
+ * deadline is far past the case timeout, so a fault only the deadline
+ * ends shows as the case timing out.
+ */
+#define	FAULT_LONG_DEADLINE_MS	600000
+
+static void *
+boundary_toucher(void *arg)
+{
+	volatile const unsigned char *p = arg;
+
+	(void)p[0];
+	return (NULL);
+}
+
+static void
+child_fault_boundary(void *arg, void *result __unused)
+{
+	struct boundary_arg *a = arg;
+	pthread_t thr;
+	void *p;
+	char ch;
+
+	p = mmap(NULL, 4096, PROT_READ, MAP_SHARED, a->fd, 0);
+	if (p == MAP_FAILED)
+		_exit(6);
+	if (pthread_create(&thr, NULL, boundary_toucher, p) != 0)
+		_exit(3);
+	if (read(a->go[0], &ch, 1) != 1)
+		_exit(4);
+	(void)execl("/nonexistent/dq_read_test", "x", (char *)NULL);
+	(void)pthread_join(thr, NULL);
+}
+
+ATF_TC(fault_boundary_sigkill);
+ATF_TC_HEAD(fault_boundary_sigkill, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a page fault waiting for its answer "
+	    "while a sibling's execve single-threads the process ends at an "
+	    "ordinary SIGKILL, not at the page deadline (D404 re-review)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(fault_boundary_sigkill, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct dq_policy pol;
+	struct boundary_arg a;
+	struct dqt_child ch;
+	int oracle, status;
+
+	dqt_fill(data, sizeof(data), 33);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	dq_policy_default(&pol);
+	pol.dp_deadline_ms = FAULT_LONG_DEADLINE_MS;
+	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
+	memset(&a, 0, sizeof(a));
+	a.fd = o->fd;
+	ATF_REQUIRE_EQ(0, pipe(a.go));
+	dqt_hold(&c, true);
+	dqt_spawn(&ch, child_fault_boundary, &a);
+	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	ATF_REQUIRE_EQ(1, write(a.go[1], "g", 1));
+	ATF_REQUIRE_MSG(dqt_wait_wmesg(ch.pid, "dqbndy", DQT_WAIT_MS),
+	    "the fault did not wait for its answer at the boundary");
+	ATF_REQUIRE_EQ(0, kill(ch.pid, SIGKILL));
+	/* The case's timeout is the hang detector. */
+	ATF_REQUIRE_EQ(ch.pid, waitpid(ch.pid, &status, 0));
+	ATF_CHECK(WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL);
+	(void)close(ch.pipefd);
+	(void)close(a.go[0]);
+	(void)close(a.go[1]);
+	dqt_hold(&c, false);
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
 ATF_TC(read_deadline0_failed_exec_sibling);
 ATF_TC_HEAD(read_deadline0_failed_exec_sibling, tc)
 {
@@ -1744,6 +1828,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, read_deadline0_exec_sibling);
 	ATF_TP_ADD_TC(tp, read_deadline0_failed_exec_sibling);
 	ATF_TP_ADD_TC(tp, read_deadline0_jail_attach_sibling);
+	ATF_TP_ADD_TC(tp, fault_boundary_sigkill);
 	ATF_TP_ADD_TC(tp, signal_storm_no_spin);
 	ATF_TP_ADD_TC(tp, deadline_unintr);
 	return (atf_no_error());
