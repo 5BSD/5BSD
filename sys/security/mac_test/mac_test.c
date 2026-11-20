@@ -1858,6 +1858,18 @@ test_proc_check_debug(struct ucred *cred, struct proc *p)
 	return (0);
 }
 
+COUNTER_DECL(proc_check_inspect);
+static int
+test_proc_check_inspect(struct ucred *cred, struct proc *p)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	LABEL_CHECK(p->p_ucred->cr_label, MAGIC_CRED);
+	COUNTER_INC(proc_check_inspect);
+
+	return (0);
+}
+
 COUNTER_DECL(proc_check_sched);
 static int
 test_proc_check_sched(struct ucred *cred, struct proc *p)
@@ -4082,6 +4094,7 @@ static struct mac_policy_ops test_ops =
 	.mpo_proc_check_core = test_proc_check_core,
 	.mpo_proc_check_debug = test_proc_check_debug,
 	.mpo_proc_check_fork = test_proc_check_fork,
+	.mpo_proc_check_inspect = test_proc_check_inspect,
 	.mpo_proc_check_ktrace = test_proc_check_ktrace,
 	.mpo_proc_check_mmap_anon = test_proc_check_mmap_anon,
 	.mpo_proc_check_mprotect = test_proc_check_mprotect,

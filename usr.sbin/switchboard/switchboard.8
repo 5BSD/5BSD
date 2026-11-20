@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 2, 2026
+.Dd November 19, 2026
 .Dt SWITCHBOARD 8
 .Os
 .Sh NAME
@@ -93,6 +93,9 @@ and
 Create a
 .Xr kqueue 2
 and register the Capsule channel fd for EOF detection (Capsule exit).
+A request to Capsule waits for its reply on that channel without a
+deadline; Capsule's exit ends the wait with
+.Er ECONNRESET .
 .It
 Self-serve the
 .Ql system.switchboard
@@ -190,7 +193,73 @@ Delegated capprotect service instance.
 uses this to apply an integrity shield at startup and retains it because
 closing the descriptor would revoke the shield.
 Required.
+.It identity (fd 7)
+Delegated identity service instance, for on-demand attribution.
+Optional.
+.It authority (fd 8)
+PID 1's authority issuer, named by
+.Ev SWITCHBOARD_AUTHORITY_FD .
+.Nm
+issues every application and unit grant from it and never delegates it;
+its grants are revoked when
+.Nm
+exits.
+.Xr capsule 8
+does not start
+.Nm
+without one.
+Started without it (only possible outside
+.Xr capsule 8 ) ,
+.Nm
+exits, logging
+.Dq no authority issuer ,
+when its application catalogue has entries to register; with an empty
+catalogue it runs, and every grant it would issue fails.
+.It discovery (fd 9)
+The server end of the system discovery channel, named by
+.Ev SWITCHBOARD_DISCOVERY_FD .
+.Xr capsule 8
+keeps the channel for the whole boot and installs its client end in this
+process's kernel discovery slot.
+.Nm
+serves it and passes the route to
+.Pa /etc/rc
+and the rc.d services it starts.
+Without it
+.Nm
+creates its own route and hands the client end to
+.Xr capsule 8 .
 .El
+.Pp
+.Ev SWITCHBOARD_BOOT_COMPLETE=1
+tells
+.Nm
+that this boot has already converged under an earlier instance: it does not
+run
+.Pa /etc/rc
+again, and logs
+.Dq restart after boot: /etc/rc not replayed .
+.Pp
+.Ev SWITCHBOARD_RC_FASTBOOT=1
+runs
+.Pa /etc/rc
+without
+.Dq autoboot ,
+as
+.Xr init 8
+does after single-user.
+.Pp
+.Ev SWITCHBOARD_NEXT_ISSUER_ERROR
+carries the errno with which
+.Xr capsule 8
+failed to create the issuer for the next start;
+.Xr capsulectl 8
+.Cm status
+reports it.
+.Pp
+The
+.Dq inherited service fds
+log line names each descriptor, or \-1 when it is absent.
 .Pp
 After exec, all manager-owned descriptors are irreversibly restricted against
 transfer, fork inheritance, and exec inheritance.

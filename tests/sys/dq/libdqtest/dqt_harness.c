@@ -188,14 +188,14 @@ dqt_handle_resolve(struct dqt_ctl *c, const struct dq_event *ev,
     __requires_exclusive(c->mtx)
 {
 	const struct dq_resolve_body *rb;
-	const char *path, *path2, *sp2;
+	const char *path, *path2, *sp, *sp2;
 	struct dqt_resolve_seen *s;
 	int error;
 
 	pr->id = ev->de_id;
 	pr->data = NULL;
 	pr->len = 0;
-	if (dq_event_resolve(ev, &rb, &path, &path2, NULL, &sp2) != 0) {
+	if (dq_event_resolve(ev, &rb, &path, &path2, &sp, &sp2) != 0) {
 		pr->error = EIO;
 		return (true);
 	}
@@ -217,6 +217,7 @@ dqt_handle_resolve(struct dqt_ctl *c, const struct dq_event *ev,
 		s->type = rb->drs_type;
 		s->protocol = rb->drs_protocol;
 		s->pathlen = rb->drs_pathlen;
+		(void)strlcpy(s->startpath, sp, sizeof(s->startpath));
 		(void)strlcpy(s->startpath2, sp2, sizeof(s->startpath2));
 		(void)strlcpy(s->path, path, sizeof(s->path));
 		(void)strlcpy(s->path2, path2, sizeof(s->path2));

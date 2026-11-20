@@ -24,6 +24,7 @@
 #include <sys/proc.h>
 #include <sys/refcount.h>
 #include <sys/rmlock.h>
+#include <sys/sleepqueue.h>
 #include <sys/smp.h>
 #include <sys/sx.h>
 #include <sys/taskqueue.h>
@@ -53,6 +54,7 @@ SDT_PROBE_DECLARE(mac_capability, , , instance__finalize);
 SDT_PROBE_DECLARE(mac_capability, , , state);
 SDT_PROBE_DECLARE(mac_capability, , , service__create);
 SDT_PROBE_DECLARE(mac_capability, , , service__destroy);
+SDT_PROBE_DECLARE(mac_capability, , , service__destroy__wait);
 SDT_PROBE_DECLARE(mac_capability, , , queue__pressure);
 SDT_PROBE_DECLARE(mac_capability, , , rxq__discard);
 SDT_PROBE_DECLARE(mac_capability, , , reap__defer);
@@ -502,6 +504,33 @@ mac_capability_callback_state_done(struct mac_capability_callback_state *cs)
 	return (atomic_load_acq_int(&cs->cs_done) != 0);
 }
 
+/*
+ * Sleep until the callback the state belongs to has returned.  The caller
+ * holds a reference on cs.  cs_done is checked again with the sleep queue
+ * locked, and the completion sets it before its wakeup(cs), so the wakeup
+ * cannot fall between the check and the sleep.
+ */
+void
+mac_capability_callback_state_wait(struct mac_capability_callback_state *cs,
+    const char *wmesg)
+{
+
+	WITNESS_WARN(WARN_GIANTOK | WARN_SLEEPOK, NULL,
+	    "mac_capability_callback_state_wait");
+	/* Unload calls this with Giant held; sleepq_wait() must not hold it. */
+	DROP_GIANT();
+	for (;;) {
+		sleepq_lock(cs);
+		if (mac_capability_callback_state_done(cs)) {
+			sleepq_release(cs);
+			break;
+		}
+		sleepq_add(cs, NULL, wmesg, SLEEPQ_SLEEP, 0);
+		sleepq_wait(cs, 0);
+	}
+	PICKUP_GIANT();
+}
+
 void
 mac_capability_callback_state_rele(struct mac_capability_callback_state *cs)
 {
@@ -519,8 +548,11 @@ mac_capability_revoke_done_locked(struct mac_capability_instance *s)
 	    (s->ci_flags & MAC_CAPABILITY_SF_REVOKE_DONE) == 0,
 	    ("invalid capability cleanup completion"));
 	s->ci_flags |= MAC_CAPABILITY_SF_REVOKE_DONE;
-	if (s->ci_callback_state != NULL)
+	if (s->ci_callback_state != NULL) {
+		/* The instance holds a reference on cs: it outlives this call. */
 		atomic_store_rel_int(&s->ci_callback_state->cs_done, 1);
+		wakeup(s->ci_callback_state);
+	}
 	wakeup(&s->ci_flags);
 }
 
@@ -640,8 +672,6 @@ mac_capability_dispatch_task(void *context, int pending __unused)
 		}
 		if (s->ci_inflight == 0 && (s->ci_flags & MAC_CAPABILITY_SF_DEAD)) {
 			wakeup(&s->ci_inflight);
-			/* Wake service destroy loop waiting on svc. */
-			wakeup(svc);
 			/*
 			 * If self-revoke set REVOKED during this handler,
 			 * fire co_revoke now that the handler is done.
@@ -651,11 +681,18 @@ mac_capability_dispatch_task(void *context, int pending __unused)
 				/*
 				 * Wait for deferred work first.  Our own
 				 * hold adds 1, so wait for refcnt <= 2.
+				 * The FINALIZED test cannot end this wait: while
+				 * this task holds its reference, close cannot
+				 * take the last one, revoke finalizes only at
+				 * refcnt <= 1, and service destroy finalizes only
+				 * after taskqueue_drain_all() has waited for this
+				 * task.  It is kept as the claim check.
 				 */
 				while (refcount_load(&s->ci_refcnt) > 2 &&
 				    !(s->ci_flags & MAC_CAPABILITY_SF_FINALIZED)) {
 					mtx_unlock(&s->ci_mtx);
-					tsleep(s, 0, "mac_capabilitysr", MAC_CAPABILITY_POLL_TICKS);
+					mac_capability_instance_wait_refs(s, 2,
+					    "mac_capabilitysr");
 					mtx_lock(&s->ci_mtx);
 				}
 				/* Another finalizer may have won while we slept. */
@@ -855,9 +892,26 @@ void
 mac_capability_service_free(struct mac_capability_service *svc)
 {
 
+	if ((svc->csvc_flags & MAC_CAPABILITY_SVCF_DEAD_LISTED) != 0) {
+		sx_xlock(&mac_capability_registry_lock);
+		LIST_REMOVE(svc, csvc_link);
+		sx_xunlock(&mac_capability_registry_lock);
+	}
 	if (svc->csvc_taskq != NULL)
 		taskqueue_free(svc->csvc_taskq);
 	free(svc, M_MAC_CAPABILITY);
+}
+
+/* Service destroy is about to wait for something outside it (see mac_capability.h). */
+static void
+mac_capability_service_destroy_waiting(struct mac_capability_service *svc,
+    enum mac_capability_destroy_wait_reason reason)
+{
+
+	SDT_PROBE2(mac_capability, , , service__destroy__wait, svc->csvc_name,
+	    reason);
+	EVENTHANDLER_DIRECT_INVOKE(mac_capability_destroy_wait, svc->csvc_name,
+	    reason);
 }
 
 void
@@ -886,6 +940,9 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 	sx_xlock(&mac_capability_registry_lock);
 	svc->csvc_flags |= MAC_CAPABILITY_SVCF_DESTROYING;
 	/* Include unlinked constructors, authorization, and failed rollback. */
+	if (svc->csvc_admissions != 0)
+		mac_capability_service_destroy_waiting(svc,
+		    MAC_CAPABILITY_DESTROY_WAIT_ADMISSION);
 	while (svc->csvc_admissions != 0)
 		sx_sleep(&svc->csvc_admissions, &mac_capability_registry_lock,
 		    0, "capadmit", 0);
@@ -914,33 +971,53 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 		taskqueue_drain_all(svc->csvc_taskq);
 
 	/*
-	 * Wait for in-flight sync calls to complete.  co_call runs in
-	 * the caller's thread, not the taskqueue.  ci_inflight tracks
-	 * both handlers and calls.  After taskqueue drain, any remaining
-	 * inflight count is from concurrent co_call invocations.
+	 * Wait for in-flight work run in user threads to complete: co_call,
+	 * and the op-bracketed callbacks (co_fdclose, co_txdrain,
+	 * co_direct_peer).  After taskqueue drain, any remaining inflight
+	 * count is theirs.  Sleep on the busy instance's own count, under
+	 * ci_mtx: every path that brings ci_inflight to 0 on a revoked
+	 * instance wakes &ci_inflight with ci_mtx held.  A held reference
+	 * keeps the instance while the registry lock is dropped; one that
+	 * is in flight always has a reference (CALL holds one, the others
+	 * run under a file reference before close drops the last).
 	 */
-	{
-		bool busy;
-		do {
-			busy = false;
-			sx_slock(&mac_capability_registry_lock);
-			LIST_FOREACH(s, &svc->csvc_instances, ci_svc_link) {
-				mtx_lock(&s->ci_mtx);
-				if (s->ci_inflight > 0)
-					busy = true;
-				mtx_unlock(&s->ci_mtx);
-				if (busy)
-					break;
+	for (;;) {
+		struct mac_capability_instance *busy = NULL;
+
+		sx_slock(&mac_capability_registry_lock);
+		LIST_FOREACH(s, &svc->csvc_instances, ci_svc_link) {
+			mtx_lock(&s->ci_mtx);
+			if (s->ci_inflight > 0) {
+				/* In-flight work holds a reference (above). */
+				KASSERT(refcount_load(&s->ci_refcnt) > 0,
+				    ("in-flight instance %p without a reference",
+				    s));
+				if (mac_capability_instance_tryhold(s))
+					busy = s;
 			}
-			sx_sunlock(&mac_capability_registry_lock);
-			if (busy)
-				tsleep(svc, 0, "mac_capabilitysyn", MAC_CAPABILITY_POLL_TICKS);
-		} while (busy);
+			mtx_unlock(&s->ci_mtx);
+			if (busy != NULL)
+				break;
+		}
+		sx_sunlock(&mac_capability_registry_lock);
+		if (busy == NULL)
+			break;
+		mtx_lock(&busy->ci_mtx);
+		if (busy->ci_inflight > 0)
+			mac_capability_service_destroy_waiting(svc,
+			    MAC_CAPABILITY_DESTROY_WAIT_INFLIGHT);
+		while (busy->ci_inflight > 0)
+			msleep(&busy->ci_inflight, &busy->ci_mtx, 0,
+			    "mac_capabilitysyn", 0);
+		mtx_unlock(&busy->ci_mtx);
+		mac_capability_instance_rele(busy);
 	}
 
 	/* Remove from registry. */
 	sx_xlock(&mac_capability_registry_lock);
 	LIST_REMOVE(svc, csvc_link);
+	LIST_INSERT_HEAD(&mac_capability_dead_services, svc, csvc_link);
+	svc->csvc_flags |= MAC_CAPABILITY_SVCF_DEAD_LISTED;
 	counter_u64_add(mac_capability_stat_services, -1);
 	sx_xunlock(&mac_capability_registry_lock);
 
@@ -990,8 +1067,11 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 		sx_xunlock(&mac_capability_registry_lock);
 
 		if (waiting != NULL) {
-			while (!mac_capability_callback_state_done(waiting))
-				pause("caprevokewait", MAC_CAPABILITY_POLL_TICKS);
+			if (!mac_capability_callback_state_done(waiting))
+				mac_capability_service_destroy_waiting(svc,
+				    MAC_CAPABILITY_DESTROY_WAIT_CALLBACK);
+			mac_capability_callback_state_wait(waiting,
+			    "caprevokewait");
 			mac_capability_callback_state_rele(waiting);
 			continue;
 		}
@@ -999,8 +1079,10 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 			break;
 
 		/* Our hold plus the file reference are the only permitted refs. */
-		while (refcount_load(&s->ci_refcnt) > 2)
-			tsleep(s, 0, "caprevokerefs", MAC_CAPABILITY_POLL_TICKS);
+		if (refcount_load(&s->ci_refcnt) > 2)
+			mac_capability_service_destroy_waiting(svc,
+			    MAC_CAPABILITY_DESTROY_WAIT_REFS);
+		mac_capability_instance_wait_refs(s, 2, "caprevokerefs");
 		SDT_PROBE6(mac_capability, , , instance__finalize,
 		    svc->csvc_name, s->ci_badge, MAC_CAPABILITY_REVOKE_UNLOAD,
 		    curthread->td_proc->p_pid, curthread->td_ucred,
@@ -1204,9 +1286,41 @@ mac_capability_instance_rele(struct mac_capability_instance *s)
 	bool last;
 
 	last = refcount_release(&s->ci_refcnt);
-	/* Wake close/revoke only when refcnt might have reached their threshold. */
+	/*
+	 * Wake close/revoke only when refcnt might have reached their
+	 * threshold (mac_capability_instance_wait_refs(), max 1 or 2).
+	 */
 	if (!last && refcount_load(&s->ci_refcnt) <= 2)
 		wakeup(s);
+}
+
+/*
+ * Sleep until at most max references remain on s.  The caller holds one of
+ * them, and not ci_mtx.  The count is read again with the sleep queue
+ * locked; mac_capability_instance_rele() drops its reference before its
+ * wakeup(s), so a release cannot fall between the check and the sleep.
+ */
+void
+mac_capability_instance_wait_refs(struct mac_capability_instance *s,
+    u_int max, const char *wmesg)
+{
+
+	KASSERT(max >= 1 && max <= 2, ("unsupported reference threshold"));
+	mtx_assert(&s->ci_mtx, MA_NOTOWNED);
+	WITNESS_WARN(WARN_GIANTOK | WARN_SLEEPOK, NULL,
+	    "mac_capability_instance_wait_refs");
+	/* Unload calls this with Giant held; sleepq_wait() must not hold it. */
+	DROP_GIANT();
+	for (;;) {
+		sleepq_lock(s);
+		if (refcount_load(&s->ci_refcnt) <= max) {
+			sleepq_release(s);
+			break;
+		}
+		sleepq_add(s, NULL, wmesg, SLEEPQ_SLEEP, 0);
+		sleepq_wait(s, 0);
+	}
+	PICKUP_GIANT();
 }
 
 void

@@ -46,6 +46,7 @@ The operations, from `sys/dev/mac_capability/mac_capability_coalition_proto.h`:
 | `SET_SIGNAL` | choose the termination signal |
 | `SET_DEADLINE` | time-bounded lifetime: signal at `timeout_ms`, optional grace, then `SIGKILL` |
 | `SET_WATCHDOG`, `HEARTBEAT` | dead-man switch: terminate unless a heartbeat arrives within `timeout_ms` |
+| `WATCHDOG_STAT` | the watchdog's arm count, last arm time, deadline and the absolute time its callout is set for (each arm is exact, precision 0); op 1000, in the 5BSD high block |
 | `SET_LEADER` | name a process whose exit terminates the whole coalition |
 | `SET_RESPONSIBLE` | record, once, the coalition this one exists on behalf of (see below) |
 | `STAT` | member counts by type, flags (`COF_*`), signal, nesting depth, the permanent id, the responsible id, both leader pids |

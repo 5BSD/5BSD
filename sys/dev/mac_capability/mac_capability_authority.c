@@ -1730,7 +1730,7 @@ issuer_create(struct thread *td)
 #ifdef MAC_CAPABILITY_TEST_PERMISSIVE
 		/* The attempt anchors, whether or not it succeeds. */
 		mac_capability_test_issuer_anchor();
-		error = atomic_swap_int(&mac_capability_test_issuer_fail_init, 0);
+		error = mac_capability_test_issuer_fail_take();
 		if (error != 0) {
 			reason = error == ENOSPC ? CAP_AUTH_ISSUER_R_NOSPC :
 			    CAP_AUTH_ISSUER_R_RESOURCE;

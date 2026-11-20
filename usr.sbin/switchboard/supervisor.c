@@ -92,8 +92,8 @@ svc_close_fds(struct svc_runtime *svc)
 
 /*
  * Release claims for this service's capabilities.  Sends all
- * release messages in a burst, then drains replies in a single
- * blocking window (~100ms worst case regardless of count).
+ * release messages in a burst, then waits on the Capsule channel for
+ * their replies (Capsule's death ends the wait).
  * Capsule returns EPERM for manifest claims (harmless) and
  * decrements the refcount for dynamic ones.
  */

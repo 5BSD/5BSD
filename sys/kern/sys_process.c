@@ -329,6 +329,8 @@ proc_vmspace_check_access(struct thread *td, struct proc *p, int flags)
 	PROC_ASSERT_HELD(p);
 	if ((flags & PRVM_CHECK_DEBUG) != 0)
 		return (p_candebug(td, p));
+	if ((flags & PRVM_CHECK_INSPECT) != 0)
+		return (p_caninspect(td, p));
 	if ((flags & PRVM_CHECK_VISIBILITY) != 0)
 		return (p_cansee(td, p));
 	return (0);
@@ -342,9 +344,9 @@ proc_vmspace_ref(struct thread *td, struct proc *p, int flags,
 	int error;
 
 	MPASS((flags & ~(PRVM_BLOCK_EXEC | PRVM_CHECK_VISIBILITY |
-	    PRVM_CHECK_DEBUG)) == 0);
-	MPASS((flags & (PRVM_CHECK_VISIBILITY | PRVM_CHECK_DEBUG)) !=
-	    (PRVM_CHECK_VISIBILITY | PRVM_CHECK_DEBUG));
+	    PRVM_CHECK_DEBUG | PRVM_CHECK_INSPECT)) == 0);
+	MPASS(powerof2(flags & (PRVM_CHECK_VISIBILITY | PRVM_CHECK_DEBUG |
+	    PRVM_CHECK_INSPECT)));
 
 	PROC_LOCK(p);
 	if (p != td->td_proc) {
@@ -881,7 +883,8 @@ proc_set_traced(struct proc *p, bool stop)
 	if (stop)
 		p->p_flag2 |= P2_PTRACE_FSTP;
 	p->p_ptevents = PTRACE_DEFAULT;
-	p->p_flag2 &= ~(P2_PTRACE_LISTEN | P2_PTRACE_LCONT);
+	p->p_flag2 &= ~(P2_PTRACE_LISTEN | P2_PTRACE_LCONT |
+	    P2_PTRACE_OUTSTOP);
 	EVENTHANDLER_INVOKE(process_ptrace, p);
 }
 
@@ -892,7 +895,8 @@ ptrace_unsuspend(struct proc *p)
 
 	PROC_SLOCK(p);
 	p->p_flag &= ~(P_STOPPED_TRACE | P_STOPPED_SIG | P_WAITED);
-	p->p_flag2 &= ~(P2_PTRACE_LISTEN | P2_PTRACE_LCONT);
+	p->p_flag2 &= ~(P2_PTRACE_LISTEN | P2_PTRACE_LCONT |
+	    P2_PTRACE_OUTSTOP);
 	thread_unsuspend(p);
 	PROC_SUNLOCK(p);
 	itimer_proc_continue(p);
@@ -1694,12 +1698,15 @@ ptrace_action_impl(struct thread *td, int req, bool pd_mode, pid_t pid, int pfd,
 			proc_wkilled(p);
 
 		/*
-		 * If the PT_CONTINUE-like operation is attempted on
-		 * the thread on sleepq, this is possible only after
-		 * the transparent PT_ATTACH.  In this case, if the
-		 * caller modified the thread state, e.g. by writing
-		 * register file or specifying the pc, make the thread
-		 * xstopped by waking it up.
+		 * A transparent PT_ATTACH stops a thread where it
+		 * sleeps, still on its sleep queue.  If the debugger
+		 * changed its registers or pc there, abort an
+		 * interruptible sleep with EINTR, so that the system
+		 * call returns and the change takes effect when the
+		 * thread resumes.  A memory write (TDB_MEMWR) does
+		 * not change what the sleeping thread does next and
+		 * leaves the sleep alone: the EINTR would be seen by a
+		 * program that caught no signal.
 		 */
 		if ((td2->td_dbgflags & TDB_USERWR) != 0 &&
 		    pt_attach_transparent) {
@@ -1737,7 +1744,7 @@ ptrace_action_impl(struct thread *td, int req, bool pd_mode, pid_t pid, int pfd,
 
 	case PT_WRITE_I:
 	case PT_WRITE_D:
-		td2->td_dbgflags |= TDB_USERWR;
+		td2->td_dbgflags |= TDB_MEMWR;
 		PROC_UNLOCK(p);
 		error = 0;
 		if (proc_writemem(td, p, (off_t)(uintptr_t)addr, &data,
@@ -1788,7 +1795,7 @@ ptrace_action_impl(struct thread *td, int req, bool pd_mode, pid_t pid, int pfd,
 		case PIOD_WRITE_I:
 			CTR3(KTR_PTRACE, "PT_IO: pid %d: WRITE (%p, %#x)",
 			    p->p_pid, (uintptr_t)uio.uio_offset, uio.uio_resid);
-			td2->td_dbgflags |= TDB_USERWR;
+			td2->td_dbgflags |= TDB_MEMWR;
 			uio.uio_rw = UIO_WRITE;
 			break;
 		default:

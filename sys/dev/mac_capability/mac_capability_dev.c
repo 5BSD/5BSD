@@ -1728,11 +1728,8 @@ call_out:
 
 		mtx_lock(&s->ci_mtx);
 		s->ci_inflight--;
-		if (s->ci_inflight == 0 && (s->ci_flags & MAC_CAPABILITY_SF_DEAD)) {
+		if (s->ci_inflight == 0 && (s->ci_flags & MAC_CAPABILITY_SF_DEAD))
 			wakeup(&s->ci_inflight);
-			/* Wake service destroy loop waiting on svc. */
-			wakeup(s->ci_service);
-		}
 		mtx_unlock(&s->ci_mtx);
 
 		if (held)
@@ -2095,7 +2092,7 @@ mac_capability_instance_close(struct file *fp, struct thread *td __unused)
 	 */
 	/* Atomically exclude registry/peer tryhold before claiming final close. */
 	while (!refcount_release_if_last(&s->ci_refcnt))
-		tsleep(s, 0, "mac_capabilityfr", MAC_CAPABILITY_POLL_TICKS);
+		mac_capability_instance_wait_refs(s, 1, "mac_capabilityfr");
 
 	/* Fire co_revoke exactly once, after all work is done. */
 	mtx_lock(&s->ci_mtx);

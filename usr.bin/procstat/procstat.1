@@ -23,7 +23,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd August 16, 2026
+.Dd November 17, 2026
 .Dt PROCSTAT 1
 .Os
 .Sh NAME
@@ -129,6 +129,23 @@ respectively of the process specified by
 .Ar pid
 argument.
 They mimic the behavior of Solaris utilities of the same names.
+.Pp
+Most information about another process requires permission to debug it
+.Pq Xr p_candebug 9 .
+The memory map
+.Pq Fl v ,
+kernel stacks
+.Pq Fl k ,
+auxiliary vector
+.Pq Fl x ,
+signal trampoline and other address-space layout require only permission to
+inspect it
+.Pq Xr p_caninspect 9 ,
+which policies that protect a process from debuggers, such as a
+.Xr mac_capability_capprotect 4
+ptrace shield, do not refuse.
+The auxiliary vector is located through pointers in the process's own
+memory, so the process controls what is shown for it.
 .Pp
 If the
 .Fl -libxo

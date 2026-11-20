@@ -1,0 +1,31 @@
+lock order reversal:
+ 1st 0xff0100000c6cde70 ufs (ufs, lockmgr) @ /usr/obj/5BSD-fix-recorded-kernel-3/sys/kern/vfs_mount.c:2580
+ 2nd 0xff0100000c6cd230 tmpfs (tmpfs, lockmgr) @ /usr/obj/5BSD-fix-recorded-kernel-3/sys/kern/vfs_subr.c:4238
+lock order tmpfs -> ufs established at:
+#0 0xffffffff80e7b2ea at witness_checkorder+0x36a
+#1 0xffffffff80dca1ea at lockmgr_lock_flags+0x16a
+#2 0xffffffff8135c09d at ffs_lock+0x8d
+#3 0xffffffff81676042 at VOP_LOCK1_APV+0x32
+#4 0xffffffff80f4d682 at _vn_lock+0x62
+#5 0xffffffff80f308a9 at vflush+0xf9
+#6 0xffffffff813574dc at ffs_flushfiles+0x6c
+#7 0xffffffff81333a99 at softdep_flushfiles+0x79
+#8 0xffffffff81358fe6 at ffs_unmount+0x66
+#9 0xffffffff80f23921 at dounmount+0x791
+#10 0xffffffff80f24289 at kern_unmount+0x409
+#11 0xffffffff815215fc at amd64_syscall+0xaec
+#12 0xffffffff814ec79b at fast_syscall_common+0xf8
+lock order ufs -> tmpfs attempted at:
+#0 0xffffffff80e7bcbb at witness_checkorder+0xd3b
+#1 0xffffffff80dca1ea at lockmgr_lock_flags+0x16a
+#2 0xffffffff81676042 at VOP_LOCK1_APV+0x32
+#3 0xffffffff80f4d682 at _vn_lock+0x62
+#4 0xffffffff80f308a9 at vflush+0xf9
+#5 0xffffffff80d37810 at tmpfs_unmount+0x70
+#6 0xffffffff80f23921 at dounmount+0x791
+#7 0xffffffff80f32177 at vfs_unmountall+0xd7
+#8 0xffffffff80ef7819 at bufshutdown+0x319
+#9 0xffffffff80e016d3 at kern_reboot+0x723
+#10 0xffffffff80e00f7f at sys_reboot+0x48f
+#11 0xffffffff81520d25 at amd64_syscall+0x215
+#12 0xffffffff814ec79b at fast_syscall_common+0xf8

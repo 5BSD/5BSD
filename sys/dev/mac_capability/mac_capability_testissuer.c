@@ -138,6 +138,13 @@ mac_capability_test_issuer_fail_init_sysctl(SYSCTL_HANDLER_ARGS)
 	case ENFILE:
 	case EMFILE:
 		atomic_store_int(&mac_capability_test_issuer_fail_init, value);
+		/* Clearing also restores the one-shot, no-skip default. */
+		if (value == 0) {
+			atomic_store_int(&mac_capability_test_issuer_fail_count,
+			    1);
+			atomic_store_int(&mac_capability_test_issuer_fail_skip,
+			    0);
+		}
 		return (0);
 	default:
 		return (EINVAL);
@@ -147,7 +154,104 @@ SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuer_fail_init,
     CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
     mac_capability_test_issuer_fail_init_sysctl, "I",
     "Test kernel only: the errno (ENOSPC, ENFILE, EMFILE, or 0) PID 1's next "
-    "issuer creation fails with, once, after it anchors");
+    "issuer creations fail with, test_issuer_fail_init_count times, after it "
+    "anchors");
+
+/*
+ * How many consecutive PID 1 creates fail_init fails: 1 (the default) is one
+ * transient failure, a larger count an outage that outlasts Capsule's wait.
+ */
+volatile u_int mac_capability_test_issuer_fail_count = 1;
+
+static int
+mac_capability_test_issuer_fail_count_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	int error, value;
+
+	value = atomic_load_int(&mac_capability_test_issuer_fail_count);
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	if (value < 0)
+		return (EINVAL);
+	atomic_store_int(&mac_capability_test_issuer_fail_count, value);
+	return (0);
+}
+SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuer_fail_init_count,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+    mac_capability_test_issuer_fail_count_sysctl, "I",
+    "Test kernel only: how many of PID 1's issuer creations in a row "
+    "test_issuer_fail_init fails (default 1; 0: until it is cleared)");
+
+/*
+ * How many of PID 1's creates succeed before fail_init applies: 1 fails the
+ * issuer Capsule creates in advance for the next start, not the first one.
+ */
+volatile u_int mac_capability_test_issuer_fail_skip;
+
+static int
+mac_capability_test_issuer_fail_skip_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	int error, value;
+
+	value = atomic_load_int(&mac_capability_test_issuer_fail_skip);
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	if (value < 0)
+		return (EINVAL);
+	atomic_store_int(&mac_capability_test_issuer_fail_skip, value);
+	return (0);
+}
+SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuer_fail_init_skip,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+    mac_capability_test_issuer_fail_skip_sysctl, "I",
+    "Test kernel only: how many of PID 1's issuer creations succeed before "
+    "test_issuer_fail_init applies (default 0)");
+
+/*
+ * The errno PID 1's issuer create fails with now, or 0: let
+ * test_issuer_fail_init_skip creates succeed, then fail
+ * test_issuer_fail_init_count in a row (0: until fail_init is cleared), then
+ * clear the fault.  Each counter is consumed with a compare-and-set, so
+ * concurrent creates (and sysctl writes) each take one step.
+ */
+int
+mac_capability_test_issuer_fail_take(void)
+{
+	u_int count, error, skip;
+
+	error = atomic_load_int(&mac_capability_test_issuer_fail_init);
+	if (error == 0)
+		return (0);
+	skip = atomic_load_int(&mac_capability_test_issuer_fail_skip);
+	while (skip > 0) {
+		if (atomic_fcmpset_int(&mac_capability_test_issuer_fail_skip,
+		    &skip, skip - 1))
+			return (0);
+	}
+	count = atomic_load_int(&mac_capability_test_issuer_fail_count);
+	while (count > 0) {
+		if (!atomic_fcmpset_int(&mac_capability_test_issuer_fail_count,
+		    &count, count - 1))
+			continue;
+		/*
+		 * The last failure clears the fault and restores the one-shot
+		 * default.  The count is restored even when the clear loses to
+		 * a concurrent write of fail_init, so a fault armed in that
+		 * window is one-shot rather than "until cleared"; a count
+		 * written in the same window is overwritten.  Test kernels only.
+		 */
+		if (count == 1) {
+			(void)atomic_cmpset_int(
+			    &mac_capability_test_issuer_fail_init, error, 0);
+			atomic_store_int(&mac_capability_test_issuer_fail_count,
+			    1);
+		}
+		break;
+	}
+	return ((int)error);
+}
 
 /*
  * Handler park.  A forward whose payload length equals
