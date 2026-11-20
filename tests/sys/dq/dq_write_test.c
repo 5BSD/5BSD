@@ -23,6 +23,7 @@
 #include <atf-c.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <setjmp.h>
 #include <signal.h>
 #include <stdio.h>
@@ -333,6 +334,166 @@ child_appender(void *arg, void *result)
 			return;
 		}
 	}
+}
+
+/*
+ * Owner decision 2026-11-20 (review 3 re-review): a mutation the
+ * controller has received is not given up when a sibling single-threads
+ * the process to the user boundary without taking it down (here an
+ * execve that fails): restarted, it would be applied twice.  Thread A
+ * appends one byte to an object with no deadline; the controller holds
+ * the WRITE; thread B execs a path that does not exist.  The controller
+ * applies each WRITE it holds to the backing file, as a real one would
+ * before answering, then answers.  Exactly one byte must land.
+ */
+struct bwrite_arg {
+	int	fd;
+	int	go[2];
+};
+
+struct bwrite_res {
+	struct dqt_rr	 a;		/* A's write */
+	struct dqt_rr	 b;		/* B's execve */
+};
+
+static struct bwrite_res *bwrite_r;
+
+static void *
+bwrite_writer(void *arg)
+{
+	struct bwrite_arg *a = arg;
+
+	DQT_RR(bwrite_r->a, write(a->fd, "A", 1));
+	return (NULL);
+}
+
+static void
+child_bwrite(void *arg, void *result)
+{
+	struct bwrite_arg *a = arg;
+	pthread_t thr;
+	char ch;
+
+	bwrite_r = result;
+	if (fcntl(a->fd, F_SETFL, O_APPEND) != 0)
+		_exit(6);
+	if (pthread_create(&thr, NULL, bwrite_writer, a) != 0)
+		_exit(3);
+	if (read(a->go[0], &ch, 1) != 1)
+		_exit(4);
+	DQT_RR(bwrite_r->b, execl("/nonexistent/dq_write_test", "x",
+	    (char *)NULL));
+	(void)pthread_join(thr, NULL);
+}
+
+static void
+bwrite_setup(struct dqt_fixture *f, unsigned seed, struct bwrite_arg *a,
+    struct dqt_child *ch)
+{
+	struct dq_policy pol;
+
+	dqt_fill(data, sizeof(data), seed);
+	dqt_policy_write(&pol);
+	pol.dp_deadline_ms = 0;		/* no deadline ends the wait */
+	dqt_fixture_init(f, data, sizeof(data), backing_path, oracle_path,
+	    &pol, DQ_MINT_F_WRITE);
+	memset(a, 0, sizeof(*a));
+	a->fd = f->o->fd;
+	ATF_REQUIRE_EQ(0, pipe(a->go));
+	dqt_hold(&f->c, true);
+	dqt_spawn(ch, child_bwrite, a);
+	ATF_REQUIRE(dqt_wait_held(&f->c, 1, DQT_WAIT_MS));
+	ATF_REQUIRE_EQ(1, write(a->go[1], "g", 1));
+}
+
+ATF_TC(append_boundary_once);
+ATF_TC_HEAD(append_boundary_once, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "an O_APPEND write the controller "
+	    "received is not restarted when a sibling's execve fails: it "
+	    "appends exactly once (owner, 2026-11-20)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(append_boundary_once, tc)
+{
+	struct dqt_fixture f;
+	struct dqt_child ch;
+	struct dqt_held h[DQT_MAX_HELD];
+	struct bwrite_arg a;
+	struct bwrite_res r;
+	struct stat st;
+	off_t end;
+	int i, n, status;
+
+	bwrite_setup(&f, 41, &a, &ch);
+	/*
+	 * A kernel that gives the write up posts an INTERRUPT and then the
+	 * restarted WRITE; one that keeps it posts nothing more.  Either
+	 * way, wait no longer than the suite's bound for that.
+	 */
+	(void)dqt_wait_interrupts(&f.c, 1, DQT_WAIT_MS);
+	(void)dqt_wait_held(&f.c, 2, DQT_WAIT_MS);
+	dqt_hold(&f.c, false);
+	dqt_lock(&f.c);
+	n = f.c.nheld;
+	memcpy(h, f.c.held, (size_t)n * sizeof(h[0]));
+	dqt_unlock(&f.c);
+	for (i = 0; i < n; i++) {
+		if (h[i].op != DQ_OP_WRITE)
+			continue;
+		/* Applied first, as a controller does, then answered. */
+		ATF_REQUIRE_EQ(0, fstat(f.backing, &st));
+		end = st.st_size;
+		ATF_REQUIRE_EQ(1, pwrite(f.backing, "A", 1, end));
+		(void)dq_reply_write(f.c.q, h[i].id, 1, (uint64_t)end);
+	}
+	status = dqt_wait(&ch, &r, sizeof(r));
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "status %#x", status);
+	ATF_CHECK_EQ_MSG(1, r.a.rv, "A's write: %s", strerror(r.a.err));
+	ATF_CHECK_EQ(-1, r.b.rv);
+	ATF_CHECK_EQ(ENOENT, r.b.err);
+	ATF_REQUIRE_EQ(0, fstat(f.backing, &st));
+	ATF_CHECK_EQ_MSG(DATA_LEN + 1, st.st_size, "%jd bytes appended for "
+	    "one write: the received write was restarted",
+	    (intmax_t)(st.st_size - DATA_LEN));
+	(void)close(a.go[0]);
+	(void)close(a.go[1]);
+	dqt_fixture_fini(&f);
+}
+
+ATF_TC(append_boundary_sigkill);
+ATF_TC_HEAD(append_boundary_sigkill, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a received write with no deadline "
+	    "that waits for its answer while a sibling's execve single-"
+	    "threads the process ends at SIGKILL (the dying-process wakeup)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(append_boundary_sigkill, tc)
+{
+	struct dqt_fixture f;
+	struct dqt_child ch;
+	struct bwrite_arg a;
+	int status;
+
+	bwrite_setup(&f, 42, &a, &ch);
+	/* The write keeps waiting, now without catching signals. */
+	ATF_REQUIRE_MSG(dqt_wait_wmesg(ch.pid, "dqbndy", DQT_WAIT_MS),
+	    "the received write did not wait for its answer at the "
+	    "boundary");
+	ATF_REQUIRE_EQ(0, kill(ch.pid, SIGKILL));
+	/* The case's timeout is the hang detector. */
+	ATF_REQUIRE_EQ(ch.pid, waitpid(ch.pid, &status, 0));
+	ATF_CHECK(WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL);
+	(void)close(ch.pipefd);
+	ATF_CHECK(dqt_wait_interrupts(&f.c, 1, DQT_WAIT_MS));
+	dqt_hold(&f.c, false);
+	(void)close(a.go[0]);
+	(void)close(a.go[1]);
+	dqt_fixture_fini(&f);
 }
 
 ATF_TC(append_two_writers);
@@ -1688,6 +1849,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, aio_write);
 	ATF_TP_ADD_TC(tp, append);
 	ATF_TP_ADD_TC(tp, append_two_writers);
+	ATF_TP_ADD_TC(tp, append_boundary_once);
+	ATF_TP_ADD_TC(tp, append_boundary_sigkill);
 	ATF_TP_ADD_TC(tp, sync_flags);
 	ATF_TP_ADD_TC(tp, short_write);
 	ATF_TP_ADD_TC(tp, eintr_mid_chunk_intr);
