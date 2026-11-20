@@ -8,6 +8,8 @@
  * Taskqueue dispatch, service lifecycle, reply/notify/revoke.
  */
 
+#include "opt_mac_capability.h"
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/sdt.h>
@@ -1107,6 +1109,9 @@ mac_capability_forward(struct mac_capability_instance *s, const struct mac_capab
 	if (s->ci_service != NULL)
 		SDT_PROBE3(mac_capability, , , forward,
 		    s->ci_service->csvc_name, s->ci_badge, src->cm_datalen);
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+	mac_capability_test_issuer_park(src->cm_datalen);
+#endif
 
 	msg = mac_capability_msg_alloc_full(src->cm_data, src->cm_datalen,
 	    src->cm_nfds > 0 ? src->cm_fdset->fds : NULL,

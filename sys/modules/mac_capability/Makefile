@@ -5,6 +5,7 @@ KMOD=	mac_capability
 # Process context and its syscall/event handlers are permanently built into
 # the kernel; a module must not register a second set of process callbacks.
 SRCS=	mac_capability_core.c mac_capability_dev.c mac_capability_kern.c mac_capability_label.c
+SRCS+=	opt_mac_capability.h
 
 EXPORT_SYMS=	mac_capability_service_create	\
 		mac_capability_service_destroy	\

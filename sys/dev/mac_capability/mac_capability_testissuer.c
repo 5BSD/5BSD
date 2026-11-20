@@ -149,6 +149,111 @@ SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuer_fail_init,
     "Test kernel only: the errno (ENOSPC, ENFILE, EMFILE, or 0) PID 1's next "
     "issuer creation fails with, once, after it anchors");
 
+/*
+ * Handler park.  A forward whose payload length equals
+ * debug.mac_capability.test_park_len stops in mac_capability_forward(),
+ * before it copies the message, with the forwarding handler's references
+ * held (the channel handler holds the peer), until
+ * debug.mac_capability.test_park_release is written.  Arming is consumed by
+ * the forward that parks.  Writing debug.mac_capability.test_park_wait
+ * sleeps until a forward is parked, so a test can act while a handler is
+ * provably in flight.  The sleeps are msleep()/wakeup() on one mutex: the
+ * sleep needs it, and only these controls and an armed forward take it.
+ */
+static struct mtx mac_capability_test_issuer_park_mtx;
+MTX_SYSINIT(mac_capability_test_issuer_park,
+    &mac_capability_test_issuer_park_mtx, "mac_capability test park", MTX_DEF);
+static u_int mac_capability_test_issuer_park_len;	/* (park_mtx), 0: off */
+static bool mac_capability_test_issuer_parked;		/* (park_mtx) */
+
+void
+mac_capability_test_issuer_park(size_t len)
+{
+
+	if (atomic_load_int(&mac_capability_test_issuer_park_len) == 0)
+		return;
+	mtx_lock(&mac_capability_test_issuer_park_mtx);
+	if (mac_capability_test_issuer_park_len != len) {
+		mtx_unlock(&mac_capability_test_issuer_park_mtx);
+		return;
+	}
+	mac_capability_test_issuer_park_len = 0;
+	mac_capability_test_issuer_parked = true;
+	wakeup(&mac_capability_test_issuer_parked);
+	while (mac_capability_test_issuer_parked)
+		mtx_sleep(&mac_capability_test_issuer_parked,
+		    &mac_capability_test_issuer_park_mtx, 0, "mcpark", 0);
+	mtx_unlock(&mac_capability_test_issuer_park_mtx);
+}
+
+static int
+mac_capability_test_issuer_park_len_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	int error, value;
+
+	value = atomic_load_int(&mac_capability_test_issuer_park_len);
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	if (value < 0 || value > MAC_CAPABILITY_MSG_PAYLOAD_SIZE)
+		return (EINVAL);
+	mtx_lock(&mac_capability_test_issuer_park_mtx);
+	mac_capability_test_issuer_park_len = value;
+	mtx_unlock(&mac_capability_test_issuer_park_mtx);
+	return (0);
+}
+SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_park_len,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+    mac_capability_test_issuer_park_len_sysctl, "I",
+    "Test kernel only: park the next forward of a message with this payload "
+    "length (0: off)");
+
+static int
+mac_capability_test_issuer_park_wait_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	int error, value;
+
+	value = mac_capability_test_issuer_parked;
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	mtx_lock(&mac_capability_test_issuer_park_mtx);
+	while (!mac_capability_test_issuer_parked && error == 0)
+		error = mtx_sleep(&mac_capability_test_issuer_parked,
+		    &mac_capability_test_issuer_park_mtx, PCATCH, "mcparkw", 0);
+	mtx_unlock(&mac_capability_test_issuer_park_mtx);
+	return (error);
+}
+SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_park_wait,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+    mac_capability_test_issuer_park_wait_sysctl, "I",
+    "Test kernel only: reads 1 while a forward is parked; a write sleeps "
+    "until one is");
+
+static int
+mac_capability_test_issuer_park_release_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	int error, value;
+
+	value = 0;
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	if (value != 1)
+		return (EINVAL);
+	mtx_lock(&mac_capability_test_issuer_park_mtx);
+	if (!mac_capability_test_issuer_parked)
+		error = ENOENT;
+	mac_capability_test_issuer_parked = false;
+	wakeup(&mac_capability_test_issuer_parked);
+	mtx_unlock(&mac_capability_test_issuer_park_mtx);
+	return (error);
+}
+SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_park_release,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+    mac_capability_test_issuer_park_release_sysctl, "I",
+    "Test kernel only: write 1 to let the parked forward go on");
+
 static void
 mac_capability_test_issuer_init(void *arg __unused)
 {
