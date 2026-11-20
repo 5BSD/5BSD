@@ -481,9 +481,25 @@ sleepq_check_ast_sc_locked(struct thread *td, struct sleepqueue_chain *sc)
 		 * ptrace_unsuspend() out, and suspend it in
 		 * sleepq_switch() under the same PROC_SLOCK, which is
 		 * returned held.
+		 *
+		 * cursig() may have reported a pending signal to the
+		 * debugger through ptracestop(), which drops PROC_LOCK:
+		 * meanwhile the reporting thread took the stop over and
+		 * the debugger may have resumed the process, discarding
+		 * the signal or passing one that is ignored.  So the
+		 * stop is decided again on what holds now, and PROC_LOCK
+		 * is not dropped again before the thread is counted
+		 * stopped: no stop gives 0 and an ordinary sleep, a new
+		 * stop from outside TDSC_INPLACE, any other stop EINTR
+		 * as before.
 		 */
 		ret = sig_ast_needsigchk(td);
-		if (ret == 0) {
+		if (ret == 0)
+			ret = sig_ast_checksusp(td);
+		if (ret == TDSC_INPLACE) {
+			KASSERT((p->p_flag2 & P2_PTRACE_OUTSTOP) != 0 &&
+			    (p->p_flag & P_STOPPED_SINGLE) == 0,
+			    ("TDSC_INPLACE without an outside stop"));
 			PROC_SLOCK(p);
 			thread_stopped(p);
 			mtx_lock_spin(&sc->sc_lock);

@@ -525,11 +525,13 @@ is restarted if the handler was installed with
 or returns the count it had transferred already.
 A thread that the attach finds running in the kernel outside a sleep,
 in a system call that checks for stops between its steps (such as
-.Xr copy_file_range 2 ) ,
-stops at the user boundary instead, and the call ends early as it does
-when a signal arrives:
 .Xr copy_file_range 2
-returns the count it has copied.
+or
+.Xr rename 2 ) ,
+stops at the user boundary instead, and the call ends early as it does
+when a signal arrives: it fails with
+.Er EINTR
+or returns a short count.
 .Dv PT_KERN_INTERRUPT ,
 used by the Linux ABI's
 .Dv PTRACE_INTERRUPT ,
@@ -539,14 +541,17 @@ When the sysctl is not set, the attach stops the process with
 which ends interruptible sleeps as a stop signal does; most interrupted
 system calls are restarted when the process is resumed.
 Some are not, and fail with
-.Er EINTR :
+.Er EINTR ,
+for example
 .Xr nanosleep 2 ,
 .Xr poll 2 ,
 .Xr select 2 ,
 .Xr kevent 2 ,
-.Xr sigtimedwait 2
-and
-.Xr connect 2 .
+.Xr sigtimedwait 2 ,
+.Xr connect 2 ,
+and timed
+.Xr _umtx_op 2
+and semaphore waits.
 A thread that a non-transparent attach finds on its way into a sleep
 fails its system call with
 .Er EINTR
