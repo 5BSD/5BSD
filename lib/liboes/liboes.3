@@ -225,9 +225,14 @@ Destroying a borrowed wrapper does not resolve pending AUTH requests.
 Do not use or close an adopted descriptor independently of its wrapper;
 serialize operations and destruction on each wrapper.
 .Pp
-A transferred descriptor retains the kernel identity of its original opener.
-Adoption does not rebind descendant scope or self-AUTH handling to its
-recipient.
+A transferred descriptor keeps its original opener for descendant scope.
+Adoption makes the recipient one of the client's readers
+.Pq Dv OES_IOC_JOIN ,
+so its own events are not delivered to the client; its own AUTH events are
+allowed without the client only if its descriptor can answer: open for
+writing and holding
+.Dv CAP_WRITE
+.Pq see Xr oes 4 .
 .Sh SEE ALSO
 .Xr oes 4
 .Sh AUTHORS

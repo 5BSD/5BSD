@@ -230,7 +230,9 @@ state, thread count, nice value, OS release, and routing FIB.
 The
 .Dv EP_FLAG_OES_CLIENT
 bit reports whether the source process acts as an OES client, that is, is a
-reader of one
+reader of one, when the event was dispatched; events delivered later from
+non-sleepable hooks (fork, exit, signal and similar notifications) do not
+carry it
 .Pq Sx A client's own processes ,
 analogous to
 Apple's
@@ -288,8 +290,22 @@ operations above itself.
 .Pp
 The rule holds for every scope, mode and mute setting, process-mute
 inversion included, and cannot be turned off.
-An AUTH event caused by a reader is not delivered to that client and counts
-as an allow from it; other AUTH clients still decide.
+A reader's own NOTIFY events are never delivered to that client.
+A reader's own AUTH event counts as an allow from that client without being
+delivered, but only if the reader's descriptor can answer: the client was
+opened for writing and the descriptor holds
+.Dv CAP_WRITE .
+The AUTH events of a read-only reader are delivered to the client as usual,
+so a read-only holder cannot exempt itself.
+A reader that answers
+.Pq Xr write 2
+or calls
+.Dv OES_IOC_JOIN
+with such a descriptor gains the exemption; it is not lost while the
+process runs the same image.
+Other AUTH clients still decide.
+A process stays a reader after it closes or hands on its descriptor, until
+it exits or executes a new image.
 Other clients still receive the reader's events, unless the reader is
 excluded by the kernel
 .Pq Sx Excluded processes .
