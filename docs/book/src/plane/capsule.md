@@ -260,7 +260,7 @@ single source of truth for lifecycle (`usr.sbin/capsule/bootstrap.c`,
 | died within 5 s | delay `1 << (count - 1)` s, capped at 30 s (`BOOTSTRAP_MAX_DELAY`) |
 | 10 consecutive fast failures (`BOOTSTRAP_MAX_FAILURES`) | circuit breaker trips; `bootstrap: switchboard failed 10 times, giving up` |
 | Capsule is shutting down | no restart |
-| no authority issuer for the start (`CAP_AUTH_ISSUER_CREATE` failed) | no restart, not counted; `no authority issuer: <reason>`; PID 1 enters single-user (at first boot: recovery) |
+| no authority issuer for the start (`CAP_AUTH_ISSUER_CREATE` failed) | no restart, not counted; `no authority issuer: <reason>`; PID 1 enters single-user (at first boot: recovery; no `/etc/rc`, so no fsck, has run in that boot, and the rc after the single-user shell runs without `autoboot`: run fsck(8) from that shell) |
 | the boot had converged (a SwitchBoard reported READY) | the restart gets `SWITCHBOARD_BOOT_COMPLETE=1` and does not run `/etc/rc` again (`startup: restart after boot: /etc/rc not replayed`) |
 | the world was stopped (shutdown, single-user) since | the next start runs `/etc/rc` again, without `autoboot` after single-user (`SWITCHBOARD_RC_FASTBOOT=1`), as init does |
 

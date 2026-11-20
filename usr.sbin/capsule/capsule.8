@@ -653,6 +653,13 @@ logs
 and, as PID 1, enters single-user (recovery at first boot); off PID 1 it
 does not restart
 .Xr switchboard 8 .
+After recovery at first boot no
+.Pa /etc/rc
+has run, so no file system has been checked in this boot, and the
+.Pa /etc/rc
+that follows the single-user shell does not check them either: run
+.Xr fsck 8
+from that shell before leaving it.
 .Nm
 keeps two descriptors in reserve and releases them for the creates of one
 start, so its own descriptor limit

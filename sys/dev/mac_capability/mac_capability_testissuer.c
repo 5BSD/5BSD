@@ -235,11 +235,19 @@ mac_capability_test_issuer_fail_take(void)
 		if (!atomic_fcmpset_int(&mac_capability_test_issuer_fail_count,
 		    &count, count - 1))
 			continue;
-		/* The last failure clears the fault, back to the defaults. */
-		if (count == 1 && atomic_cmpset_int(
-		    &mac_capability_test_issuer_fail_init, error, 0))
+		/*
+		 * The last failure clears the fault and restores the one-shot
+		 * default.  The count is restored even when the clear loses to
+		 * a concurrent write of fail_init, so a fault armed in that
+		 * window is one-shot rather than "until cleared"; a count
+		 * written in the same window is overwritten.  Test kernels only.
+		 */
+		if (count == 1) {
+			(void)atomic_cmpset_int(
+			    &mac_capability_test_issuer_fail_init, error, 0);
 			atomic_store_int(&mac_capability_test_issuer_fail_count,
 			    1);
+		}
 		break;
 	}
 	return ((int)error);
