@@ -641,12 +641,31 @@ For tests that need revocation while test issuers are alive.
 .It Va debug.mac_capability.test_issuer_fail_init
 An errno
 .Pq Er ENOSPC , ENFILE No or Er EMFILE ,
-or 0 to clear, that PID 1's next issuer creation fails with, once, after it
-has anchored.
+or 0 to clear, that PID 1's next issuer creations fail with after it has
+anchored.
+It clears itself after
+.Va debug.mac_capability.test_issuer_fail_init_count
+failures.
+.It Va debug.mac_capability.test_issuer_fail_init_count
+How many of those creations in a row fail: 1 (the default) is one failure,
+0 fails every creation until
+.Va debug.mac_capability.test_issuer_fail_init
+is cleared.
+Clearing
+.Va debug.mac_capability.test_issuer_fail_init
+resets it to 1.
+.It Va debug.mac_capability.test_issuer_fail_init_skip
+How many of PID 1's creations succeed before those failures begin (default
+0); 1 fails the issuer
+.Xr capsule 8
+creates in advance for the next start rather than the first.
+Clearing
+.Va debug.mac_capability.test_issuer_fail_init
+resets it to 0.
 .El
 .Pp
-Neither debug control is a tunable, and neither can be written from a
-jail; both only restrict.
+No debug control is a tunable, and none can be written from a
+jail; all only restrict.
 .Sh DTRACE PROBES
 The
 .Nm

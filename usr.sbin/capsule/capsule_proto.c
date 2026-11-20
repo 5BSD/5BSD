@@ -321,6 +321,7 @@ handle_ready(uint64_t reply_token)
 		switchboard_ready = true;
 		syslog(LOG_INFO, "capsule_proto: switchboard ready");
 	}
+	bootstrap_note_ready();
 	proto_reply(0, reply_token, NULL, 0);
 }
 
@@ -397,6 +398,17 @@ handle_set_ambient_lookup(uint32_t len, int fd, uint64_t reply_token)
 		if (fd >= 0)
 			(void)close(fd);
 		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
+	/*
+	 * Capsule's own boot-long channel is the route every process holds; a
+	 * SwitchBoard's own route must not replace it for later logins.
+	 */
+	if (bootstrap_owns_discovery()) {
+		(void)close(fd);
+		syslog(LOG_NOTICE, "capsule_proto: ambient lookup refused: "
+		    "Capsule serves the boot discovery channel");
+		proto_reply(EEXIST, reply_token, NULL, 0);
 		return;
 	}
 	if (capsule_set_ambient_lookup(fd) == -1) {

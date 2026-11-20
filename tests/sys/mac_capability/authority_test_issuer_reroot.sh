@@ -9,11 +9,15 @@
 # KERNEL_TIER=test and LOADER_EXTRA='kern.mac_capability.test_issuer="1"'.
 #
 #   VM_REROOT=before  (plane off, stock init) a test issuer is created and,
-#                     in the fail_init variant, PID 1's next create is made to
-#                     fail with ENOSPC (debug.mac_capability.test_issuer_fail_init);
+#                     in the fail_init variant, PID 1's second create (the
+#                     issuer Capsule holds for the next SwitchBoard start) is
+#                     made to fail with ENOSPC (test_issuer_fail_init_skip=1,
+#                     test_issuer_fail_init);
 #   VM_REROOT=after   (Capsule as PID 1, plane on) the boot is anchored, a
-#                     relaxed create is refused, and Capsule either has its
-#                     boot issuer or, in the variant, logged that it has none.
+#                     relaxed create is refused, SwitchBoard runs with its
+#                     issuer, and in the variant Capsule logged that the next
+#                     start has none.  A first create that fails sends PID 1 to
+#                     single-user; switchboard_no_issuer_reroot.sh covers that.
 #
 # The variant is the default; the loader variable vm_reroot_variant="plain"
 # selects the plain reroot.  kenv survives the reroot.
@@ -44,6 +48,8 @@ before)
 	[ "$(knob kern.mac_capability.test_issuers)" -gt "$created" ] ||
 	    fail 'the test issuer count did not grow'
 	if [ "$variant" = fail_init ]; then
+		sysctl debug.mac_capability.test_issuer_fail_init_skip=1 ||
+		    fail 'fail_init_skip not set'
 		sysctl debug.mac_capability.test_issuer_fail_init=$ENOSPC
 		[ "$(knob debug.mac_capability.test_issuer_fail_init)" = $ENOSPC ] ||
 		    fail 'fail_init not set'
@@ -67,22 +73,17 @@ after)
 	[ "$out" = "refused errno=1" ] || fail "relaxed create after the anchor: $out"
 	[ "$(knob debug.mac_capability.test_issuer_fail_init)" = 0 ] ||
 	    fail 'fail_init was not consumed'
+	# This runs after the boot converged, so both creates are long done.
 	# Capsule's bootstrap logs through syslog(3) before syslogd runs: to
 	# the console, which the message buffer keeps.
-	line= i=0
-	while [ "$i" -lt 60 ]; do
-		line=$({ dmesg -a; cat /var/log/messages /var/log/capability.log; } 2>/dev/null |
-		    grep 'protected authority issuer unavailable' | tail -n 1 || true)
-		[ -n "$line" ] && break
-		[ "$variant" = plain ] && [ "$i" -ge 20 ] && break
-		i=$((i + 1)); sleep 1
-	done
+	line=$({ dmesg -a; cat /var/log/messages /var/log/capability.log; } 2>/dev/null |
+	    grep 'no authority issuer' | tail -n 1 || true)
 	dmesg -a | grep 'mac_capability: TEST MODE' || true
 	if [ "$variant" = fail_init ]; then
-		echo "$line" | grep -q 'issuer unavailable: No space left on device' ||
+		echo "$line" | grep -q 'no authority issuer for the next switchboard start: No space left on device' ||
 		    fail "Capsule did not log the failed create: [$line]"
 	else
-		[ -z "$line" ] || fail "Capsule has no boot issuer: $line"
+		[ -z "$line" ] || fail "Capsule has no issuer: $line"
 		# The boot issuer was created by PID 1, not as a test issuer.
 		dmesg -a | grep -q 'TEST MODE: pid 1 ' && fail 'PID 1 made a test issuer'
 	fi

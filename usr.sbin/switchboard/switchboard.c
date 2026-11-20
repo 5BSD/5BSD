@@ -323,6 +323,7 @@ main(int argc, char *argv[])
 	sd.capprotect_fd = -1;
 	sd.identity_fd = -1;
 	sd.authority_issuer_fd = -1;
+	sd.discovery_fd = -1;
 
 	/*
 	 * LOG_CONS: during early boot switchboard runs before syslogd exists, so
@@ -413,6 +414,28 @@ main(int argc, char *argv[])
 			else
 				sd.identity_fd = (int)val;
 		}
+		s = getenv("SWITCHBOARD_DISCOVERY_FD");
+		if (s != NULL) {
+			errno = 0;
+			val = strtol(s, &endp, 10);
+			if (errno != 0 || *endp != '\0' ||
+			    val < 0 || val > INT_MAX)
+				sd.discovery_fd = -1;
+			else
+				sd.discovery_fd = (int)val;
+		}
+		s = getenv("SWITCHBOARD_BOOT_COMPLETE");
+		sd.boot_complete = s != NULL && strcmp(s, "1") == 0;
+		s = getenv("SWITCHBOARD_RC_FASTBOOT");
+		sd.rc_fastboot = s != NULL && strcmp(s, "1") == 0;
+		s = getenv("SWITCHBOARD_NEXT_ISSUER_ERROR");
+		if (s != NULL) {
+			errno = 0;
+			val = strtol(s, &endp, 10);
+			if (errno == 0 && *endp == '\0' && val > 0 &&
+			    val <= ELAST)
+				sd.next_issuer_error = (int)val;
+		}
 		s = getenv("SWITCHBOARD_AUTHORITY_FD");
 		if (s != NULL) {
 			errno = 0;
@@ -427,9 +450,11 @@ main(int argc, char *argv[])
 	if (sd.channel_svc_fd >= 0) {
 		(void)fcntl(sd.channel_svc_fd, F_SETFL, O_NONBLOCK);
 		syslog(LOG_INFO, "inherited service fds: channel=%d "
-		    "coalition=%d capprotect=%d identity=%d",
+		    "coalition=%d capprotect=%d identity=%d authority=%d "
+		    "discovery=%d%s",
 		    sd.channel_svc_fd, sd.coalition_svc_fd,
-		    sd.capprotect_fd, sd.identity_fd);
+		    sd.capprotect_fd, sd.identity_fd, sd.authority_issuer_fd,
+		    sd.discovery_fd, sd.boot_complete ? " boot-complete" : "");
 	}
 	if (sd.coalition_svc_fd >= 0)
 		(void)fcntl(sd.coalition_svc_fd, F_SETFL, O_NONBLOCK);
@@ -468,6 +493,7 @@ main(int argc, char *argv[])
 			sd.capprotect_fd,
 			sd.identity_fd,
 			sd.authority_issuer_fd,
+			sd.discovery_fd,
 		};
 		for (int i = 0; i < (int)(sizeof(lockfds)/sizeof(lockfds[0])); i++) {
 			if (lockfds[i] < 0)
@@ -607,6 +633,9 @@ main(int argc, char *argv[])
 		    svc_boot_id(bid, sizeof(bid)),
 		    (uintmax_t)sd.root_coalition_id);
 	}
+
+	if (startup_adopt_discovery() == -1)
+		return (1);
 
 	/* Launch system services (tier-based parallel). */
 	if (startup_launch_system(switchboard_kq) != 0) {

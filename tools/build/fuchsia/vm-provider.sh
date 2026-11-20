@@ -142,6 +142,15 @@ kyua_vars=${KYUA_VARS:-}
 #   the plane on (kenv -u capability_plane; kenv init_path=/sbin/capsule;
 #   reboot -r) and runs it again with VM_REROOT=after, then the suites.  Both
 #   runs must exit 0.  Otherwise VM_REROOT=none.
+# SINGLE_USER_SHELL (a guest path): the run expects PID 1 to enter single-user
+#   once (for example the extra script refusing a restart).  The serial port
+#   becomes a QEMU socket chardev that still logs to serial.log, "entering
+#   recovery" and the single-user shell prompt are no longer fatal, and the
+#   monitor answers that prompt once with this path (printable ASCII only),
+#   typed one byte per echo, which runs as the
+#   single-user shell; its exit returns the guest to multi-user.  A second
+#   prompt stops the run.  The run is clean only if the prompt was answered
+#   and that shell printed a line SINGLE_USER_SHELL_PASS (its own checks).
 plane_off=${PLANE_OFF:-0}
 case "$plane_off" in 0|1) ;; *) echo "PLANE_OFF must be 0 or 1" >&2; exit 64;; esac
 # No Capsule claims the device with the plane off, so that tier enforces the
@@ -943,6 +952,11 @@ with open(out, 'w') as f:
             f.write(json.dumps(msg) + '\n'); f.flush()
             if 'QMP' in msg: s.sendall(b'{"execute":"qmp_capabilities"}\r\n')
 EOF
+# SINGLE_USER_SHELL needs console input: a socket chardev that still logs
+# everything the guest prints to the serial log.
+serial_args="-serial file:$log"
+console_sock=$work/console.sock
+[ -z "${SINGLE_USER_SHELL:-}" ] || serial_args="-chardev socket,id=con0,path=$console_sock,server=on,wait=off,logfile=$log,logappend=on -serial chardev:con0"
 set -- "$qemu" -L "$qemu_data" -accel tcg,thread=multi -machine q35 -cpu max \
     -m "$mem" -smp "$cpus" \
     -drive "file=$work/guest.img,format=raw,if=none,id=root,snapshot=on" \
@@ -950,7 +964,7 @@ set -- "$qemu" -L "$qemu_data" -accel tcg,thread=multi -machine q35 -cpu max \
     -drive "file=$work/results.img,format=raw,if=none,id=results" \
     -device virtio-blk-pci,drive=results,serial=kyua-results \
     -netdev hubport,id=n0,hubid=0 -device virtio-net-pci,netdev=n0 \
-    -display none -monitor none -serial "file:$log" \
+    -display none -monitor none $serial_args \
     -qmp "unix:$qmp,server=on,wait=off"
 [ -z "$src_image" ] || set -- "$@" \
     -drive "file=$src_image,format=raw,if=none,id=src,readonly=on" \
@@ -972,6 +986,10 @@ python3.12 "$work/qmp-events.py" "$qmp" "$work/qmp-events.jsonl" 2>"$work/qmp.er
 mpid=$!
 end=$(( $(date +%s) + timeout )) forced=0
 fatal='panic:|Fatal trap|entering recovery|Enter full pathname of shell|mountroot>|Going nowhere without my init|could not quiesce init|init died'
+# SINGLE_USER_SHELL: the run expects PID 1 to enter single-user once; the
+# monitor answers the shell prompt with this guest path instead of stopping.
+[ -z "${SINGLE_USER_SHELL:-}" ] ||
+	fatal='panic:|Fatal trap|mountroot>|Going nowhere without my init|could not quiesce init|init died'
 # A lock order reversal stops the run unless it matches known-lor.txt (a
 # recorded false positive, reported as KNOWN_LOR) or FATAL_LOR=no, which a
 # comparison sweep sets and then reads the reversals from the serial log.
@@ -997,8 +1015,16 @@ unknown_lor() {
 # watched (not clean: nothing was checked live).  Anything else is the monitor
 # failing; QEMU is then stopped here so the run still ends with its
 # results and verdict.
-python3.12 -I "$monitor" --pid "$qpid" --log "$log" --deadline "$end" \
-    --fatal "$fatal" --known "$known_lor" --fatal-lor "${FATAL_LOR:-yes}" &
+if [ -n "${SINGLE_USER_SHELL:-}" ]; then
+	python3.12 -I "$monitor" --pid "$qpid" --log "$log" --deadline "$end" \
+	    --fatal "$fatal" --known "$known_lor" --fatal-lor "${FATAL_LOR:-yes}" \
+	    --answer 'Enter full pathname of shell.*: $' \
+	    --answer-text "$SINGLE_USER_SHELL" --console "$console_sock" \
+	    > "$work/monitor.out" &
+else
+	python3.12 -I "$monitor" --pid "$qpid" --log "$log" --deadline "$end" \
+	    --fatal "$fatal" --known "$known_lor" --fatal-lor "${FATAL_LOR:-yes}" &
+fi
 wpid=$!
 mrc=0; wait "$wpid" || mrc=$?
 case $mrc in
@@ -1008,6 +1034,7 @@ case $mrc in
 	kill "$qpid" 2>/dev/null || echo "qemu had already exited" ;;
 esac
 rc=0; wait "$qpid" 2>/dev/null || rc=$?
+[ -z "${SINGLE_USER_SHELL:-}" ] || cat "$work/monitor.out"
 # --- end of the monitor
 n=$(grep -ac 'lock order reversal' "$log" 2>/dev/null || true)
 # --- LOR verdict (tests/vm-provider-known-lor.sh runs this block)
@@ -1042,6 +1069,12 @@ stack_tier_met() {
 	    } END { exit !ok }' "$t"
 }
 # --- end of the stack-tier verdict
+# SINGLE_USER_SHELL: the prompt was answered (once: a second prompt stops the
+# run) and the single-user shell reported its own checks passed.
+single_user_passed() {
+	grep -qx CONSOLE_ANSWERED "$work/monitor.out" 2>/dev/null &&
+	    LC_ALL=C tr -d '\r' < "$log" | grep -aqx 'SINGLE_USER_SHELL_PASS'
+}
 verdict=VM_NOT_CLEAN
 if [ $forced = 0 ] && [ $lor_unknown = 0 ] && [ $rc = 0 ] && [ $guest_off = 1 ] && stack_tier_met &&
     [ "$(cat "$work/results/kyua-results/kyua-test.status" 2>/dev/null)" = 0 ] &&
@@ -1056,6 +1089,7 @@ if [ $forced = 0 ] && [ $lor_unknown = 0 ] && [ $rc = 0 ] && [ $guest_off = 1 ] 
       [ "$(cat "$work/results/kyua-results/extra.exit" 2>/dev/null)" = 0 ]; } &&
     { [ "$reroot" = 0 ] || { LC_ALL=C tr -d '\r' < "$log" | grep -aq '^REROOT_AFTER: pid1=capsule ' &&
       ! LC_ALL=C tr -d '\r' < "$log" | grep -aq '^REROOT_FAIL'; }; } &&
+    { [ -z "${SINGLE_USER_SHELL:-}" ] || single_user_passed; } &&
     grep -aq 'Powering system off' "$log" && ! grep -aqE "$fatal" "$log"; then
 	verdict=VM_CLEAN
 fi
