@@ -509,6 +509,8 @@ event enqueue and drop, and decision-cache hit and miss.
 Maximum number of concurrent clients.
 .It Va security.oes.clients
 Read-only: the number of clients open now.
+Readable by root on the host only; inside a jail the node does not exist
+.Pq Er ENOENT .
 .It Va security.oes.require_auth_clients
 When non-zero, operations that would generate an AUTH event are denied if no
 client is subscribed to authorize them.

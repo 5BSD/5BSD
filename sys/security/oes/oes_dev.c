@@ -84,8 +84,28 @@ int oes_max_clients = 64;
 SYSCTL_INT(_security_oes, OID_AUTO, max_clients, CTLFLAG_RW,
     &oes_max_clients, 0, "Maximum number of concurrent clients");
 
-SYSCTL_UINT(_security_oes, OID_AUTO, clients, CTLFLAG_RD,
-    &oes_softc.sc_nclients, 0, "Clients open now");
+/*
+ * The number of clients open now.  For the test suites: as private as the
+ * device, so root on the host only (PRIV_DRIVER, as oes_open()); a jail
+ * sees no such node.
+ */
+static int
+oes_sysctl_clients(SYSCTL_HANDLER_ARGS)
+{
+	u_int n;
+	int error;
+
+	if (jailed(req->td->td_ucred))
+		return (ENOENT);
+	error = priv_check(req->td, PRIV_DRIVER);
+	if (error != 0)
+		return (error);
+	n = atomic_load_int(&oes_softc.sc_nclients);
+	return (sysctl_handle_int(oidp, &n, 0, req));
+}
+SYSCTL_PROC(_security_oes, OID_AUTO, clients,
+    CTLTYPE_UINT | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0, oes_sysctl_clients,
+    "IU", "Clients open now (root on the host only)");
 
 int oes_cache_max_entries = 1024;
 SYSCTL_INT(_security_oes, OID_AUTO, cache_max_entries, CTLFLAG_RW,
