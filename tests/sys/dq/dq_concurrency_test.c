@@ -12,7 +12,7 @@
 #include <sys/param.h>
 #include <sys/mman.h>
 #include <sys/procdesc.h>
-#include <sys/resource.h>
+#include <sys/rtprio.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/time.h>
@@ -1215,8 +1215,12 @@ ATF_TC_CLEANUP(wake_revoke_quota, tc)
  * apart, since every process of one capability identity is one requester
  * (dc_nonce; the first version of these cases used it, and W waited in
  * "dqreq" behind the filler).  F's read of Z holds the one slot, unread;
- * A and B read X; W reads Y, at the lowest timesharing priority (nice 20,
- * no privilege needed), so each wakeup_one picks A or B first.  The first
+ * A and B read X; W reads Y in the idle scheduling class (rtprio(2)), so
+ * each wakeup_one picks A or B first: sleepq_signal wakes the best
+ * td_priority, and every idle-class priority is below every timesharing
+ * one.  nice 20 was not enough (r-r8t): a sleeping timesharing thread's
+ * priority comes from its interactivity score, so W could be picked for
+ * the first freed slot and post without the hand-off.  The first
  * slot freed goes to one of them; the second wakes the other, which finds
  * room but sleeps on X's bound and must pass the wakeup on, or W sleeps on
  * with a slot free.
@@ -1229,8 +1233,11 @@ struct pass_ctx {
 static void
 child_low_pread(void *arg, void *result)
 {
+	struct rtprio rtp;
 
-	if (setpriority(PRIO_PROCESS, 0, PRIO_MAX) != 0)
+	rtp.type = RTP_PRIO_IDLE;
+	rtp.prio = RTP_PRIO_MAX;
+	if (rtprio(RTP_SET, 0, &rtp) != 0)
 		_exit(4);
 	child_one_pread(arg, result);
 }
