@@ -322,9 +322,10 @@ main(int argc, char *argv[])
 	if (syscall(SYS_cap_process, CAP_AUTH_CLEAR, -1, 0, NULL) == -1)
 		err(1, "drop launch authority");
 	/*
-	 * Started by PID 1, we must be excluded.  Capsule pins the image it
-	 * opened and then executes by path; a binary replaced in between
-	 * runs without the Core role.  Say so loudly (review D3).
+	 * Started by PID 1, we must be excluded.  Capsule executes the image
+	 * descriptor its Core authority pins (fexecve), so this fails only
+	 * when the Core role was refused, or when capsule had no issuer and
+	 * fell back to the path.  Say so loudly (review D3).
 	 */
 	if (getppid() == 1) {
 		struct kinfo_proc kp;
@@ -333,11 +334,11 @@ main(int argc, char *argv[])
 
 		mib[3] = getpid();
 		if (sysctl(mib, 4, &kp, &kplen, NULL, 0) == 0 &&
-		    (kp.ki_flag2 & 0x20000000 /* P2_CAP_EXCLUDED */) == 0)
+		    (kp.ki_flag2 & P2_CAP_EXCLUDED) == 0)
 			syslog(LOG_CRIT, "switchboard is not excluded from OES "
 			    "and Capability Brokers (cap_process(2) BASE "
-			    "EXCLUSION): its image is not the one capsule "
-			    "pinned, or the Core role was refused");
+			    "EXCLUSION): the Core role was refused or "
+			    "capsule had no authority issuer");
 	}
 
 	/* Present as "SwitchBoard" in ps/top, distinct from lowercase base daemons. */
