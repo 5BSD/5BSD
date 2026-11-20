@@ -1117,19 +1117,31 @@ PRESLEEP_CASE(transparent__presleep_fifo_open__continue_sigint_restart,
 
 /*
  * A signal already pending when the thread meets the outside stop on its
- * way into the sleep.  SIGWINCH (default action: ignore) is sent after the
- * attach while the target waits in its lookup, where fusefs blocks signals,
- * so it is still pending when the lookup is answered.  The sleep queue's
- * check then reports it to the debugger (ptracestop()), and the debugger
- * resumes with contsig: SIGWINCH, ignored by default, or 0, discarding it.
- * Nothing interrupts the open: it must sleep, unstopped, and complete when
- * the FIFO gets a writer.  Every later stop is continued; a stop for
- * SIGWINCH with contsig.  A thread left suspended in a running process
- * never reports again and the case ends on its timeout.
+ * way into the sleep.  The target catches SIGWINCH (a handler, so the
+ * signal is queued, not discarded as an ignored one is when it is sent).
+ * The test sends it after the attach while the target waits in its
+ * lookup, where fusefs blocks signals, so it is still pending when the
+ * lookup is answered.  The sleep queue's check then reports it to the
+ * debugger (ptracestop(), the first stop), and the debugger resumes with
+ * contsig: 0 discards the signal, SIGURG replaces it with one whose
+ * default action is to ignore it.  Nothing is delivered and nothing
+ * interrupts the open: it must sleep, unstopped, and complete when the
+ * FIFO gets a writer.  Every later stop is continued with 0.  A thread
+ * left suspended in a running process never reports again and the case
+ * ends on the test program's timeout.
  */
+static volatile sig_atomic_t pending_caught;
+
+static void
+pending_handler(int sig __unused)
+{
+	pending_caught = 1;
+}
+
 static void
 run_presleep_pending(int contsig, enum res expect, int lookups)
 {
+	struct sigaction sa;
 	struct report r;
 	struct fsrv s;
 	pid_t tgt;
@@ -1144,7 +1156,13 @@ run_presleep_pending(int contsig, enum res expect, int lookups)
 	ATF_REQUIRE(tgt != -1);
 	if (tgt == 0) {
 		(void)close(rep[0]);
+		memset(&sa, 0, sizeof(sa));
+		sa.sa_handler = pending_handler;
+		sigemptyset(&sa.sa_mask);
+		if (sigaction(SIGWINCH, &sa, NULL) != 0)
+			_exit(2);
 		presleep_open(MNT_FIFO, &r);
+		r.poke = pending_caught;
 		_exit(write(rep[1], &r, sizeof(r)) == sizeof(r) ? 0 : 3);
 	}
 	note_pid(tgt);
@@ -1182,8 +1200,9 @@ run_presleep_pending(int contsig, enum res expect, int lookups)
 	(void)close(rep[0]);
 	fsrv_stop(&s);
 
-	fprintf(stderr, "target FIFO lookups %d; result rv %d error %d (%s)\n",
-	    s.lookups, r.rv, r.error, strerror(r.error));
+	fprintf(stderr, "target FIFO lookups %d; result rv %d error %d (%s); "
+	    "handler ran %d\n", s.lookups, r.rv, r.error, strerror(r.error),
+	    r.poke);
 	if (expect == RES_EINTR)
 		ATF_CHECK_MSG(r.rv == -1 && r.error == EINTR,
 		    "expected EINTR, got rv %d error %d", r.rv, r.error);
@@ -1191,6 +1210,7 @@ run_presleep_pending(int contsig, enum res expect, int lookups)
 		ATF_CHECK_MSG(r.rv == 0 && r.error == 0,
 		    "expected the open to complete, got rv %d error %d",
 		    r.rv, r.error);
+	ATF_CHECK_MSG(r.poke == 0, "the SIGWINCH handler ran");
 	ATF_CHECK_EQ_MSG(lookups, s.lookups, "expected %d FIFO lookups, got %d",
 	    lookups, s.lookups);
 	sysctl_restore(TRANSPARENT);
@@ -1214,14 +1234,15 @@ ATF_TC_CLEANUP(name, tc)						\
 	cleanup();							\
 }
 
-PRESLEEP_PENDING_CASE(transparent__presleep_fifo_open__pending_sigwinch,
-    "Transparent attach just before the FIFO open sleeps, SIGWINCH "
-    "pending and passed on by PT_CONTINUE: the open completes",
-    SIGWINCH, RES_DONE, 1)
 PRESLEEP_PENDING_CASE(transparent__presleep_fifo_open__pending_discarded,
-    "Transparent attach just before the FIFO open sleeps, SIGWINCH "
-    "pending and discarded by PT_CONTINUE: the open completes",
+    "Transparent attach just before the FIFO open sleeps, a caught SIGWINCH "
+    "pending, reported and discarded by PT_CONTINUE: the open completes",
     0, RES_DONE, 1)
+PRESLEEP_PENDING_CASE(transparent__presleep_fifo_open__pending_replaced,
+    "Transparent attach just before the FIFO open sleeps, a caught SIGWINCH "
+    "pending, reported and replaced by SIGURG (ignored) by PT_CONTINUE: "
+    "the open completes",
+    SIGURG, RES_DONE, 1)
 
 /* Non-transparent attach before the sleep: FreeBSD behaviour. */
 PRESLEEP_CASE(legacy__presleep_fifo_open__continue,
@@ -1368,7 +1389,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, transparent__presleep_fifo_open__two_threads);
 	ATF_TP_ADD_TC(tp, transparent__presleep_fifo_open__continue_sigint);
 	ATF_TP_ADD_TC(tp, transparent__presleep_fifo_open__continue_sigint_restart);
-	ATF_TP_ADD_TC(tp, transparent__presleep_fifo_open__pending_sigwinch);
+	ATF_TP_ADD_TC(tp, transparent__presleep_fifo_open__pending_replaced);
 	ATF_TP_ADD_TC(tp, transparent__presleep_fifo_open__pending_discarded);
 	ATF_TP_ADD_TC(tp, legacy__presleep_fifo_open__continue);
 	ATF_TP_ADD_TC(tp, legacy__presleep_fifo_open__detach);
