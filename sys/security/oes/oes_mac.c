@@ -5917,19 +5917,17 @@ static struct mac_policy_ops oes_mac_ops = {
 };
 
 /*
- * MAC policy configuration - registered manually, not via MAC_POLICY_SET
- * because we're part of the oes module, not a standalone MAC policy module.
- * The outer module handler enforces boot-only loading because OES initializes
- * in SI_SUB_DRIVERS, after the MAC framework's late-load boundary.  Omitting
- * UNLOADOK makes the policy non-unloadable as an additional safeguard: OES
- * never unloads, and the idle gates rely on its hooks, tables and locks
- * staying.  Its hooks count toward the framework's fast-path flags only
- * while live (oes_gate_reconcile()).  Because it never unloads it joins the
- * static list (MPC_LOADTIME_FLAG_LATE_STATIC): its hooks run outside the
- * dynamic list's read lock, which pins the calling thread to its CPU.
+ * MAC policy configuration - registered by oes_mac_policy_init(), not via
+ * MAC_POLICY_SET, because the policy is part of the oes module.  It registers
+ * at SI_SUB_MAC_POLICY (oes_dev.c), before the MAC framework's late-load
+ * boundary, so without UNLOADOK it joins the static list: its hooks run with
+ * no list lock (the dynamic list's read lock pins the calling thread to its
+ * CPU).  Omitting UNLOADOK also makes it non-unloadable: OES never unloads,
+ * and the idle gates rely on its hooks, tables and locks staying.  Its hooks
+ * count toward the framework's fast-path flags only while live
+ * (oes_gate_reconcile()).
  */
-#define	OES_MPC_FLAGS	(MPC_LOADTIME_FLAG_FP_INACTIVE | \
-	    MPC_LOADTIME_FLAG_LATE_STATIC)
+#define	OES_MPC_FLAGS	MPC_LOADTIME_FLAG_FP_INACTIVE
 _Static_assert((OES_MPC_FLAGS & MPC_LOADTIME_FLAG_UNLOADOK) == 0,
     "OES must never be unloadable");
 static struct mac_policy_conf oes_mac_policy_conf = {
@@ -6006,25 +6004,39 @@ static const osd_method_t oes_prison_methods[PR_MAXMETHOD] = {
 };
 
 /*
- * Initialize MAC policy
- *
- * Called from oes module load. Registers with MAC framework.
+ * Register the MAC policy, at SI_SUB_MAC_POLICY like any policy that is
+ * present at boot: it goes on the framework's static list, whose walks take
+ * no lock (OES never unloads).  Called after oes_dev_state_init().
  */
 int
-oes_mac_init(void)
+oes_mac_policy_init(void)
 {
 	int error;
 
+	/* Everything a hook can reach exists before the hooks do. */
+	oes_rename_cache_init();
+	oes_gate_check_coverage();
 	error = mac_policy_modevent(NULL, MOD_LOAD, &oes_mac_policy_conf);
 	if (error != 0) {
 		OES_ERR("failed to register MAC policy: %d", error);
 		return (error);
 	}
-
 	oes_mac_registered = true;
 	OES_DEBUG("MAC policy registered");
+	/* Nothing listens yet: every hook starts idle. */
+	oes_gate_reconcile();
+	return (0);
+}
 
-	oes_rename_cache_init();
+/*
+ * The parts that need the system further up (kernel threads, devices,
+ * jails): called at SI_SUB_DRIVERS once oes_dev_attach() has made OES
+ * active.  The hooks have been registered, idle and inert (sc_active),
+ * since SI_SUB_MAC_POLICY.
+ */
+int
+oes_mac_attach(void)
+{
 
 	/* Jail scopes end when their jail is removed.  Never deregistered. */
 	(void)osd_jail_register(NULL, oes_prison_methods);
@@ -6040,8 +6052,7 @@ oes_mac_init(void)
 	EVENTHANDLER_REGISTER(kld_unload,
 	    oes_kld_event_unload, NULL, EVENTHANDLER_PRI_LAST);
 
-	oes_gate_check_coverage();
-	/* Nothing listens yet: every hook starts idle. */
+	/* OES is active now: the strict settings take effect. */
 	oes_gate_reconcile();
 
 	return (0);

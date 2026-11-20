@@ -500,8 +500,8 @@ oes_vtype_to_eftype(int vt)
 /*
  * Function prototypes - oes_dev.c
  */
-int	oes_dev_init(void);
-void	oes_dev_uninit(void);
+void	oes_dev_state_init(void);
+int	oes_dev_attach(void);
 
 /*
  * Function prototypes - oes_client.c
@@ -641,7 +641,8 @@ void	oes_set_auth_deadline(struct oes_pending *ep, uint32_t deadline_ms);
 /*
  * Function prototypes - oes_mac.c (MAC policy integration)
  */
-int	oes_mac_init(void);
+int	oes_mac_policy_init(void);
+int	oes_mac_attach(void);
 void	oes_gate_reconcile(void);
 void	oes_gate_client_update(struct oes_client *ec, bool gone);
 void	oes_gate_set_strict(int *knob, int value);
