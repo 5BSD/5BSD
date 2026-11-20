@@ -35,7 +35,8 @@
 #   with sys/dq (or a program under it) in the suites, imgact_binmisc and
 #   dtraceall are preloaded for them; with sys/mac_capability or its
 #   issuer-decision probe programs, dtraceall; with usr.sbin/bsd-build,
-#   zfs (an md-backed pool gives one case ACLs),
+#   zfs (an md-backed pool gives one case ACLs); with sys/kern or
+#   sys/kern/ptrace_sleep_test, fusefs (its presleep cases serve one),
 #   ROOT_FS (ufs, the default, or zfs: a ZFS root pool for the suites that
 #   require one, such as the Linux ptrace ones),
 #   GATE_TIMEOUT (guest seconds to wait for provider convergence, 600),
@@ -230,6 +231,13 @@ case " $suites " in
 *" usr.sbin/bsd-build "*|*" usr.sbin/bsd-build/bsd_build_test"*)
 	dq_loader="${dq_loader:+$dq_loader
 }zfs_load=\"YES\"" ;;
+esac
+# ptrace_sleep_test's presleep cases hold a lookup in a fusefs file system
+# they serve; the plane refuses a late kldload of fusefs.
+case " $suites " in
+*" sys/kern "*|*" sys/kern/ptrace_sleep_test"*)
+	dq_loader="${dq_loader:+$dq_loader
+}fusefs_load=\"YES\"" ;;
 esac
 cpus=${CPUS:-4} mem=${MEM_MB:-$mem_default} par=${PARALLELISM:-1} gate=${GATE_TIMEOUT:-600}
 root_fs=${ROOT_FS:-ufs}

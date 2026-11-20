@@ -25,9 +25,7 @@
 struct channel;
 struct channel_message;
 struct channel_sender;
-
-/* Timeout for mac_capability channel RPC calls (Capsule and direct). */
-#define	SWITCHBOARD_RPC_TIMEOUT_MS		100
+struct mac_capability_recvmsg_args;
 
 /*
  * Unit kind.  switchboard manages a heterogeneous graph of units; the kind
@@ -392,6 +390,8 @@ const char *svc_boot_id(char *buf, size_t len);
 /* Session attribution is owned by issued authority, not discovery routes. */
 
 /* capsule_client.c — channel protocol client to capsule */
+int	mac_cap_recv_wait(int fd, struct mac_capability_recvmsg_args *ra);
+int	capsule_drop_unexpected(int channel_fd);
 int	capsule_mint_system(int channel_fd, uint32_t gates);
 int	capsule_mint_system_scoped(int channel_fd, uint32_t gates,
 	    const void *oid_payload, size_t payload_len);

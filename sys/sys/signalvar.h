@@ -387,6 +387,12 @@ void	sigacts_copy(struct sigacts *dest, struct sigacts *src);
 void	sigacts_free(struct sigacts *ps);
 struct sigacts *sigacts_hold(struct sigacts *ps);
 int	sigacts_shared(struct sigacts *ps);
+/*
+ * sig_ast_checksusp(): stop the thread where it is about to sleep (see
+ * thread_suspend_check()).  Not an errno; only the sleep queue code acts on
+ * it, and sig_intr() turns it into EINTR.
+ */
+#define	TDSC_INPLACE	INT_MIN
 int	sig_ast_checksusp(struct thread *td);
 int	sig_ast_needsigchk(struct thread *td);
 void	sig_drop_caught(struct proc *p);
