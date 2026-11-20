@@ -1178,6 +1178,9 @@ run_presleep_pending(int contsig, enum res expect, int lookups)
 	ATF_REQUIRE_EQ(tgt, waitpid(tgt, &st, 0));
 	ATF_REQUIRE(WIFSTOPPED(st));
 	fprintf(stderr, "first stop: signal %d\n", WSTOPSIG(st));
+	/* The pending signal is reported at the sleep queue's check. */
+	ATF_REQUIRE_EQ_MSG(SIGWINCH, WSTOPSIG(st),
+	    "the first stop is not the pending SIGWINCH: not the window");
 	show("stopped", tgt);
 
 	/* The target is stopped in its open: satisfy it for the resume. */

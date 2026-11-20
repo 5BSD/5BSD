@@ -313,6 +313,18 @@ struct switchboard_state {
 	int		authority_issuer_fd; /* Kernel issuer; never delegated to units. */
 	int		identity_fd;		/* mac_capability_identity service instance */
 	/*
+	 * Server end of the system discovery channel Capsule keeps for the
+	 * whole boot (fd 9, SWITCHBOARD_DISCOVERY_FD), or -1: then SwitchBoard
+	 * mints its own route.  Consumed by startup_ambient_lookup().
+	 */
+	int		discovery_fd;
+	/* Capsule says this boot already converged: do not replay /etc/rc. */
+	bool		boot_complete;
+	/* Capsule says /etc/rc runs without autoboot (after single-user). */
+	bool		rc_fastboot;
+	/* Capsule could not create the next start's issuer (errno), or 0. */
+	int		next_issuer_error;
+	/*
 	 * The system's own attribution root: a member-less coalition that
 	 * stands for switchboard itself.  Boot-launched and operator-started
 	 * units are responsible to it, so every chain that does not end in a
@@ -602,6 +614,10 @@ bool	svc_domain_permits(const struct svc_domain *chan,
 int	svc_fd_make_ambient(int fd);
 int	domain_mint_user_channel(uid_t uid, int *out_fd, int kq);
 int	domain_mint_system_channel(int *out_fd, int kq);
+/* startup.c: serve Capsule's boot-long discovery channel, if handed over. */
+int	startup_adopt_discovery(void);
+/* Serve the SYSTEM route on a server end Capsule holds; consumes server_fd. */
+int	domain_adopt_system_channel(int server_fd, int kq);
 int	domain_mint_session_channel(enum svc_domain_kind kind, uid_t uid,
 	    const struct svc_anoint_set *set, int *out_fd, int kq);
 bool	domain_channel_owns_event(uintptr_t ident);

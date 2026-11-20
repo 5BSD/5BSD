@@ -562,6 +562,9 @@ Number of registered services.
 Number of active capability instances.
 .It Va kern.mac_capability.service_names
 Newline-separated list of registered service names.
+.It Va kern.mac_capability.dead_service_names
+Newline-separated list of destroyed services that open instances still keep
+allocated; a service leaves it when its last instance is freed.
 .It Va kern.mac_capability.service_details
 Newline-separated list of registered services with flags, queue depth,
 TX limit, instance limit, active instance count, and destroying state.
@@ -638,8 +641,27 @@ For tests that need revocation while test issuers are alive.
 .It Va debug.mac_capability.test_issuer_fail_init
 An errno
 .Pq Er ENOSPC , ENFILE No or Er EMFILE ,
-or 0 to clear, that PID 1's next issuer creation fails with, once, after it
-has anchored.
+or 0 to clear, that PID 1's next issuer creations fail with after it has
+anchored.
+It clears itself after
+.Va debug.mac_capability.test_issuer_fail_init_count
+failures.
+.It Va debug.mac_capability.test_issuer_fail_init_count
+How many of those creations in a row fail: 1 (the default) is one failure,
+0 fails every creation until
+.Va debug.mac_capability.test_issuer_fail_init
+is cleared.
+Clearing
+.Va debug.mac_capability.test_issuer_fail_init
+resets it to 1.
+.It Va debug.mac_capability.test_issuer_fail_init_skip
+How many of PID 1's creations succeed before those failures begin (default
+0); 1 fails the issuer
+.Xr capsule 8
+creates in advance for the next start rather than the first.
+Clearing
+.Va debug.mac_capability.test_issuer_fail_init
+resets it to 0.
 .It Va debug.mac_capability.test_issuer_exclude_self
 Writing 1, while test issuers are on, marks the calling root process
 excluded from
@@ -653,8 +675,9 @@ for a traced, ktraced, jailed or attached caller or in capability mode.
 .El
 .Pp
 No debug control is a tunable, and none can be written from a jail.
-The first two only restrict; the third stands in for process 1 and exists
-only on these test kernels.
+The issuer controls only restrict;
+.Va debug.mac_capability.test_issuer_exclude_self
+stands in for process 1 and exists only on these test kernels.
 .Pp
 Also only on these kernels, the loader tunable
 .Va security.cap_exclusion.debug_allowed

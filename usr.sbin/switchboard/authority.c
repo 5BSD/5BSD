@@ -633,7 +633,12 @@ out:
 	}
 	free(m);
 	if (saved != 0) {
-		syslog(LOG_ERR, "application catalogue update failed: %s", strerror(saved));
+		if (sd.authority_issuer_fd < 0)
+			syslog(LOG_CRIT, "application catalogue update failed: "
+			    "no authority issuer");
+		else
+			syslog(LOG_ERR, "application catalogue update failed: %s",
+			    strerror(saved));
 		return (errno = saved, -1);
 	}
 	return (0);

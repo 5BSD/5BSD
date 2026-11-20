@@ -31,6 +31,7 @@
 #include <sys/mutex.h>
 #include <sys/file.h>
 #include <sys/refcount.h>
+#include <sys/eventhandler.h>
 
 #include "mac_capability_ioctl.h"
 
@@ -202,6 +203,24 @@ bool mac_capability_channel_is_service(const struct mac_capability_service *);
 int	mac_capability_service_create(const struct mac_capability_service_params *params,
 	    struct mac_capability_service **svcp);
 void	mac_capability_service_destroy(struct mac_capability_service *svc);
+
+/*
+ * mac_capability_destroy_wait: service destroy is about to wait for something
+ * outside it.  Handlers run in the destroying thread, sometimes with a mutex
+ * held (the instance mutex, for MAC_CAPABILITY_DESTROY_WAIT_INFLIGHT, or the
+ * registry lock): they must not sleep or take sleepable locks.  Lets a test
+ * know that destroy is held up, and by what, without timing.
+ */
+enum mac_capability_destroy_wait_reason {
+	MAC_CAPABILITY_DESTROY_WAIT_ADMISSION = 1, /* constructors, authorization */
+	MAC_CAPABILITY_DESTROY_WAIT_INFLIGHT,	  /* co_call and op-bracketed callbacks */
+	MAC_CAPABILITY_DESTROY_WAIT_CALLBACK,	  /* another thread's co_revoke */
+	MAC_CAPABILITY_DESTROY_WAIT_REFS,	  /* references on an instance */
+};
+typedef void (*mac_capability_destroy_wait_fn)(void *arg, const char *service,
+    enum mac_capability_destroy_wait_reason reason);
+EVENTHANDLER_DECLARE(mac_capability_destroy_wait, mac_capability_destroy_wait_fn);
+EVENTHANDLER_LIST_DECLARE(mac_capability_destroy_wait);
 
 /*
  * Messaging — from co_handler or any sleeping context.

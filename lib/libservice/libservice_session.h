@@ -15,6 +15,8 @@ int service_ambient_lookup_fd(void);
 /* Install a held reference; the caller still owns fd. */
 int service_install_ambient_lookup(int fd);
 int service_clear_ambient_lookup(void);
+/* A new descriptor for this process's discovery route (its kernel slot). */
+int service_get_ambient_lookup(void);
 /* Install a genuine, one-use issued grant, independently of discovery. */
 int service_authority_install(int token_fd);
 int service_authority_clear(void);

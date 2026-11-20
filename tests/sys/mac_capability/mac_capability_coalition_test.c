@@ -4980,57 +4980,72 @@ ATF_TC_HEAD(watchdog_reset_extends, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Heartbeat resets watchdog, extending the deadline");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
-	atf_tc_set_md_var(tc, "timeout", "10");
 }
+
+static void
+watchdog_stat(int cfd, struct coalition_watchdog_stat_reply *wsr)
+{
+	struct coalition_req_hdr hdr = { .op = COALITION_OP_WATCHDOG_STAT };
+
+	memset(wsr, 0, sizeof(*wsr));
+	ATF_REQUIRE(coalition_call(cfd, &hdr, sizeof(hdr), NULL, 0, wsr,
+	    sizeof(*wsr)) == 0);
+	ATF_REQUIRE_EQ(0, wsr->status);
+}
+
+/*
+ * The watchdog is armed at an absolute uptime, and WATCHDOG_STAT reports
+ * that time and the one the callout was set for.  So the case needs no
+ * sleep: arm, heartbeat at once, and check that the heartbeat was a new arm
+ * whose deadline is its own arm time plus the timeout, with the callout
+ * moved to it.  The timeout only has to outlast the case; the watchdog is
+ * cancelled at the end.
+ */
+#define	WATCHDOG_TIMEOUT_MS	3600000u
+
 ATF_TC_BODY(watchdog_reset_extends, tc)
 {
 	struct coalition_set_watchdog_req wr;
-	struct coalition_stat_reply sr;
+	struct coalition_watchdog_stat_reply w1, w2;
 	struct coalition_reply rpl;
+	const int64_t timeout = (int64_t)WATCHDOG_TIMEOUT_MS * SBT_1MS;
 	int cfd;
-	struct timespec t0, t1;
-	long elapsed_ms;
 	int32_t status;
 
 	cfd = mac_capability_connect("coalition");
 	ATF_REQUIRE(cfd >= 0);
 
-	/*
-	 * A 2 s watchdog, a heartbeat at 1 s and a check at 2.5 s: wide
-	 * margins, because a loaded guest can oversleep by hundreds of ms.
-	 * The sleeps are periods, not synchronisation: the case asserts that
-	 * the watchdog has NOT fired 2.5 s after arming because the heartbeat
-	 * moved it.
-	 */
-	ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &t0) == 0);
+	memset(&wr, 0, sizeof(wr));
 	wr.op = COALITION_OP_SET_WATCHDOG;
-	wr.timeout_ms = 2000;
+	wr.timeout_ms = WATCHDOG_TIMEOUT_MS;
 	ATF_REQUIRE(coalition_call(cfd, &wr, sizeof(wr), NULL, 0,
 	    &rpl, sizeof(rpl)) == 0);
-	ATF_CHECK_EQ(rpl.status, 0);
+	ATF_REQUIRE_EQ(0, rpl.status);
+	watchdog_stat(cfd, &w1);
 
-	usleep(1000000);
 	ATF_REQUIRE(coalition_op(cfd, COALITION_OP_HEARTBEAT, &status) == 0);
-	ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &t1) == 0);
-	ATF_CHECK_EQ(status, 0);
-	elapsed_ms = (t1.tv_sec - t0.tv_sec) * 1000 +
-	    (t1.tv_nsec - t0.tv_nsec) / 1000000;
-	if (elapsed_ms >= 1800)
-		atf_tc_skip("heartbeat sent %ld ms after arming a 2000 ms "
-		    "watchdog: the window was missed", elapsed_ms);
+	ATF_REQUIRE_EQ(0, status);
+	watchdog_stat(cfd, &w2);
 
-	/* 1.5 s after the heartbeat, inside its fresh 2 s window. */
-	usleep(1500000);
+	ATF_CHECK_EQ(1, w1.seq);
+	ATF_CHECK_EQ(w1.armed_sbt + timeout, w1.deadline_sbt);
+	ATF_CHECK_EQ_MSG(w1.deadline_sbt, w1.callout_sbt,
+	    "SET_WATCHDOG: callout %jd, deadline %jd",
+	    (intmax_t)w1.callout_sbt, (intmax_t)w1.deadline_sbt);
+	ATF_CHECK_EQ_MSG(w1.seq + 1, w2.seq, "the heartbeat did not re-arm");
+	ATF_CHECK(w2.armed_sbt >= w1.armed_sbt);
+	ATF_CHECK_EQ(w2.armed_sbt + timeout, w2.deadline_sbt);
+	ATF_CHECK_EQ_MSG(w2.deadline_sbt, w2.callout_sbt,
+	    "HEARTBEAT: callout %jd, deadline %jd (first deadline %jd)",
+	    (intmax_t)w2.callout_sbt, (intmax_t)w2.deadline_sbt,
+	    (intmax_t)w1.deadline_sbt);
+	ATF_CHECK(w2.flags & COF_WATCHDOG_ACTIVE);
+	ATF_CHECK_EQ(0, w2.flags & COF_TERMINATING);
+	ATF_CHECK_EQ(0, w2.fired_seq);
 
-	ATF_REQUIRE(coalition_stat(cfd, &sr) == 0);
-	ATF_CHECK(sr.flags & COF_WATCHDOG_ACTIVE);
-	ATF_CHECK_EQ(sr.flags & COF_TERMINATING, 0);
-
-	/* Cancel watchdog to clean up */
 	wr.timeout_ms = 0;
 	ATF_REQUIRE(coalition_call(cfd, &wr, sizeof(wr), NULL, 0,
 	    &rpl, sizeof(rpl)) == 0);
-
 	close(cfd);
 }
 
