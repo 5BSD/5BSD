@@ -88,8 +88,19 @@ add_signal_event(int kq, int sig)
  * lookups and on-demand launches while rc runs) instead of blocking on a
  * dedicated kqueue that only sees rc's exit.
  */
+static void switchboard_dispatch_one(struct kevent *kev);
+
 void
 switchboard_dispatch_event(struct kevent *kev)
+{
+
+	switchboard_dispatch_one(kev);
+	/* Lookup channels whose answer could not be sent (domain.c). */
+	domain_reap_failed();
+}
+
+static void
+switchboard_dispatch_one(struct kevent *kev)
 {
 	if (kev->filter == EVFILT_SIGNAL) {
 		switch ((int)kev->ident) {

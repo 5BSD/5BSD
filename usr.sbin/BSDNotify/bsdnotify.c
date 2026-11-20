@@ -50,20 +50,19 @@
 #define	ROUTER_MAX_SESSIONS	65536U
 /*
  * The router opens its own system.Audit session before it confines itself
- * with NOIPC, while switchboard may still be activating BSDAudit; it repeats
- * a lookup that timed out with service_retry_activation(3), which ends
- * within NOTIFY_ROUTER_AUDIT_TIMEOUT_MS.  The provider's wait for the
- * router's ready status covers that, the pause before the last attempt and
- * slack for the channel setup, the confinement and scheduling.
+ * with NOIPC, while switchboard may still be activating BSDAudit; the one
+ * lookup waits for switchboard's answer, which comes within switchboard's own
+ * activation bound (SERVICE_ACTIVATION_TIMEOUT_MS, then ETIMEDOUT).  The
+ * provider's wait for the router's ready status covers that and slack for the
+ * channel setup, the confinement and scheduling.
  */
-#define	NOTIFY_ROUTER_AUDIT_TIMEOUT_MS	\
-	SERVICE_ACTIVATION_WAIT_MS(SERVICE_LOOKUP_TIMEOUT_MS)
+#define	NOTIFY_ROUTER_AUDIT_TIMEOUT_MS	SERVICE_ACTIVATION_TIMEOUT_MS
 #define	NOTIFY_ROUTER_START_SLACK_MS	3000U
 #define	NOTIFY_ROUTER_START_TIMEOUT_MS	(NOTIFY_ROUTER_AUDIT_TIMEOUT_MS + \
-		SERVICE_ACTIVATION_RETRY_PAUSE_MS + NOTIFY_ROUTER_START_SLACK_MS)
+		NOTIFY_ROUTER_START_SLACK_MS)
 _Static_assert(NOTIFY_ROUTER_START_TIMEOUT_MS >=
-    NOTIFY_ROUTER_AUDIT_TIMEOUT_MS + SERVICE_ACTIVATION_RETRY_PAUSE_MS + 1000U,
-    "the router start wait must cover the router's Audit lookups");
+    NOTIFY_ROUTER_AUDIT_TIMEOUT_MS + 1000U,
+    "the router start wait must cover the router's Audit lookup");
 
 union notify_buffer {
 	max_align_t align;
@@ -1290,24 +1289,15 @@ router_event(struct router *router, struct event_source *source,
 		router_remove_session(router, session);
 }
 
-/* One Audit lookup, for service_retry_activation(). */
-static int
-router_audit_attempt(void *arg)
-{
-
-	return (auditcmp_client_open(arg));
-}
-
 /*
- * Open the router's system.Audit session, repeating a lookup that timed out
- * while switchboard may still be activating the provider.
+ * Open the router's system.Audit session: one lookup, which waits for
+ * switchboard's answer (see NOTIFY_ROUTER_AUDIT_TIMEOUT_MS).
  */
 static int
 router_audit_open(struct auditcmp_client **auditp)
 {
 
-	return (service_retry_activation(router_audit_attempt, auditp,
-	    SERVICE_LOOKUP_TIMEOUT_MS));
+	return (auditcmp_client_open(auditp));
 }
 
 static int

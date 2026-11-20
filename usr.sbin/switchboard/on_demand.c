@@ -480,7 +480,11 @@ on_demand_broker(struct pending_lookup *pl, int kq)
 		 */
 		if (!sendable && cap_xfer_limit(client_fd, CAP_XFER_ONCE) == -1)
 			status = errno;
-		if (status == 0) {
+		if (ambient) {
+			/* An ambient client waits with no timeout (domain.c). */
+			lookup_channel_answer(pl->ambient_lc, request, status,
+			    status == 0 ? &client_fd : NULL, status == 0 ? 1 : 0);
+		} else if (status == 0) {
 			if (channel_send_reply(request,
 			    &(struct channel_outgoing){
 				.size = sizeof(struct channel_outgoing),
@@ -509,8 +513,11 @@ on_demand_broker(struct pending_lookup *pl, int kq)
 	}
 	/* Out-of-scope (EACCES) looks like unregistered (ENOENT) on the wire. */
 	status = (error == EACCES) ? ENOENT : error;
-	(void)channel_send_reply(request, &(struct channel_outgoing)
-	    CHANNEL_OUTGOING_INITIALIZER(&status, sizeof(status)));
+	if (ambient)
+		lookup_channel_answer(pl->ambient_lc, request, status, NULL, 0);
+	else
+		(void)channel_send_reply(request, &(struct channel_outgoing)
+		    CHANNEL_OUTGOING_INITIALIZER(&status, sizeof(status)));
 	channel_message_free(request);
 	if (ambient)
 		lookup_channel_sync_events(pl->ambient_lc, kq);
@@ -533,8 +540,8 @@ pending_reply_status(struct pending_lookup *pl, int32_t status, int kq)
 	if (pl->ambient_lc != NULL) {
 		if (!lookup_channel_is_live(pl->ambient_lc))
 			return;
-		(void)channel_send_reply(pl->request, &(struct channel_outgoing)
-		    CHANNEL_OUTGOING_INITIALIZER(&status, sizeof(status)));
+		lookup_channel_answer(pl->ambient_lc, pl->request, status, NULL,
+		    0);
 		lookup_channel_sync_events(pl->ambient_lc, kq);
 	} else {
 		struct svc_runtime *req = pending_requester(pl);

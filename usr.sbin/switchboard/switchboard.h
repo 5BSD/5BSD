@@ -602,6 +602,10 @@ void domain_unit_channels_close(const struct svc_runtime *);
 struct svc_runtime *lookup_channel_requester(const struct svc_lookup_channel *);
 bool	lookup_channel_is_live(const struct svc_lookup_channel *lc);
 void	lookup_channel_sync_events(struct svc_lookup_channel *lc, int kq);
+void	lookup_channel_answer(struct svc_lookup_channel *lc,
+	    struct channel_message *request, int32_t status, int *fds,
+	    size_t nfds);
+void	domain_reap_failed(void);
 bool svc_domain_resolves_scoped(const struct svc_domain *, const char *, uid_t);
 bool svc_domain_permits_scoped(const struct svc_domain *, enum svc_domain_kind,
     const char *, uid_t);

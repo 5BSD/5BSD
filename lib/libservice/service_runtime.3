@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd November 15, 2026
+.Dd November 20, 2026
 .Dt SERVICE_RUNTIME 3
 .Os
 .Sh NAME
@@ -140,33 +140,37 @@ lifecycle and terminate/reap failed children as necessary.
 No authority is granted and no child cleanup or hard scheduling bound is
 provided by this helper.
 .Pp
-.Fn service_retry_activation attempt arg attempt_ms
-is for a process that must open a session before it confines itself and
-so cannot defer the lookup, while switchboard may still be activating the
-provider.
-It calls
-.Fn attempt arg ,
-which returns 0 or -1 with errno, and repeats an attempt that failed with
-ETIMEDOUT after a pause of
-.Dv SERVICE_ACTIVATION_RETRY_PAUSE_MS ,
-but starts none that could end after
-.Fn SERVICE_ACTIVATION_WAIT_MS attempt_ms :
-switchboard's own activation bound,
-.Dv SERVICE_ACTIVATION_TIMEOUT_MS ,
-plus one attempt, whose bound is
-.Fa attempt_ms
-(for a lookup,
-.Dv SERVICE_LOOKUP_TIMEOUT_MS ) .
-The whole call therefore ends within that bound if each attempt keeps to
-.Fa attempt_ms .
-It returns 0, or -1 with the errno of the last attempt: any error other
-than ETIMEDOUT is final.
-A NULL attempt or a zero bound fails with EINVAL.
-Activations nest: a provider whose own start waits out another provider's
-activation this way can take longer than
+An ambient lookup
+.Po
+.Xr libservice 3
+.Fn service_open
+and
+.Fn service_connect_ambient
+from a process that switchboard did not launch
+.Pc
+waits for switchboard's answer with no time limit of its own.
+Switchboard bounds an on-demand activation by
 .Dv SERVICE_ACTIVATION_TIMEOUT_MS
-to start, so a client activating it on demand may see ETIMEDOUT from
-switchboard first and has to retry, for example with this function.
+and then answers
+.Er ETIMEDOUT
+itself.
+The lookup fails with
+.Er ECONNRESET
+if the switchboard serving it exits before answering.
+While no switchboard runs (a restart), the registration of the lookup waits
+in the boot discovery channel for the next one.
+A signal behaves as it does for a slow system call such as
+.Xr read 2
+on a pipe: if its handler was installed with
+.Dv SA_RESTART
+the wait for the answer restarts, otherwise the lookup fails with
+.Er EINTR .
+The two short waits for room in a full channel queue (while switchboard is
+restarting or under a burst of registrations) fail with
+.Er EINTR
+on any signal, as
+.Xr kevent 2
+does.
 .Sh SEE ALSO
 .Xr libservice 3 ,
 .Xr BSDMemory 8 ,

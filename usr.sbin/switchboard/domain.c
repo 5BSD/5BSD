@@ -81,9 +81,20 @@ struct svc_lookup_channel {
 	struct channel			*channel;
 	int				 fd;	/* channel_fd(), registered on kq */
 	struct svc_domain		 domain; /* Legacy metadata, not sender authority. */
+	/*
+	 * A client's private channel (SVC_OP_REGISTER_LOOKUP), as opposed to a
+	 * shared route (Capsule's boot channel, a minted session channel).
+	 * Clients wait on it for the answer with no timeout, so a reply that
+	 * cannot be delivered closes it (`failed`): the client then sees the
+	 * peer close (ECONNRESET) instead of waiting forever.
+	 */
+	bool				 registered;
+	bool				 failed;
 };
 
 static struct svc_lookup_channel *lookup_channels;
+/* Some registered channel is marked failed: domain_reap_failed() closes it. */
+static bool lookup_channels_failed;
 
 static void lookup_channel_request(struct channel *channel,
     struct channel_message *request, void *context);
@@ -314,22 +325,23 @@ lookup_channel_sync_events(struct svc_lookup_channel *lc, int kq)
 		syslog(LOG_WARNING, "domain: update channel write event: %m");
 }
 
-static void
-lookup_channel_reply_ex(struct channel_message *request, int status, int *fds,
-    size_t nfds, bool cap_xfer)
+/*
+ * Answer a lookup on lookup channel `lc`.  The client waits for this answer
+ * with no timeout, so it must not be lost: a reply carrying a descriptor that
+ * cannot be sent is replaced by a status-only reply with the send's errno, and
+ * a status reply that cannot be sent marks a client's private channel failed,
+ * to be closed by domain_reap_failed() once the current event is handled (it
+ * may be dispatching on that very channel), so the client sees ECONNRESET.  A
+ * shared route is never closed for one lost answer; that is logged at LOG_ERR.
+ */
+void
+lookup_channel_answer(struct svc_lookup_channel *lc,
+    struct channel_message *request, int32_t status, int *fds, size_t nfds)
 {
 	struct svc_reply reply;
-	size_t i;
+	int error;
 
 	reply.status = status;
-	for (i = 0; cap_xfer && i < nfds; i++) {
-		if (cap_xfer_limit(fds[i], CAP_XFER_ONCE) == -1) {
-			reply.status = errno;
-			fds = NULL;
-			nfds = 0;
-			break;
-		}
-	}
 	if (channel_send_reply(request,
 	    &(struct channel_outgoing){
 		.size = sizeof(struct channel_outgoing),
@@ -337,16 +349,69 @@ lookup_channel_reply_ex(struct channel_message *request, int status, int *fds,
 		.length = sizeof(reply),
 		.fds = fds,
 		.nfds = nfds
-	    }) == -1)
-		syslog(LOG_WARNING, "domain: channel reply: %m");
+	    }) == 0)
+		return;
+	error = errno;
+	if (nfds != 0) {
+		syslog(LOG_WARNING, "domain: lookup reply with endpoint: %s; "
+		    "answering %s", strerror(error), strerror(error));
+		reply.status = error;
+		if (channel_send_reply(request,
+		    &(struct channel_outgoing)
+		    CHANNEL_OUTGOING_INITIALIZER(&reply, sizeof(reply))) == 0)
+			return;
+		error = errno;
+	}
+	if (lc != NULL && lc->registered) {
+		syslog(LOG_WARNING, "domain: lookup reply: %s; closing the "
+		    "client's lookup channel", strerror(error));
+		lc->failed = true;
+		lookup_channels_failed = true;
+	} else
+		syslog(LOG_ERR, "domain: lookup reply on a shared lookup "
+		    "channel: %s", strerror(error));
+}
+
+/* Close the private lookup channels whose answer could not be sent. */
+void
+domain_reap_failed(void)
+{
+	struct svc_lookup_channel *lc, *next;
+
+	if (!lookup_channels_failed)
+		return;
+	lookup_channels_failed = false;
+	for (lc = lookup_channels; lc != NULL; lc = next) {
+		next = lc->next;
+		if (lc->failed)
+			lookup_channel_close(lc);
+	}
 }
 
 static void
-lookup_channel_reply(struct channel_message *request, int status, int *fds,
-    size_t nfds)
+lookup_channel_reply_ex(struct svc_lookup_channel *lc,
+    struct channel_message *request, int status, int *fds, size_t nfds,
+    bool cap_xfer)
+{
+	size_t i;
+
+	for (i = 0; cap_xfer && i < nfds; i++) {
+		if (cap_xfer_limit(fds[i], CAP_XFER_ONCE) == -1) {
+			status = errno;
+			fds = NULL;
+			nfds = 0;
+			break;
+		}
+	}
+	lookup_channel_answer(lc, request, status, fds, nfds);
+}
+
+static void
+lookup_channel_reply(struct svc_lookup_channel *lc,
+    struct channel_message *request, int status, int *fds, size_t nfds)
 {
 
-	lookup_channel_reply_ex(request, status, fds, nfds, true);
+	lookup_channel_reply_ex(lc, request, status, fds, nfds, true);
 }
 
 /*
@@ -379,8 +444,9 @@ fd_is_mac_capability_channel(int fd)
  * a wider one.  On success switchboard pushes an ACK on the ADOPTED (private)
  * channel; nothing is ever replied on the arriving shared channel, so the
  * client never receives on the shared queue and cannot hit the reply-discard
- * race.  A malformed or non-channel request is rejected silently (the fd is
- * closed, no adoption); the client falls back on its own lookup timeout.
+ * race.  A malformed or non-channel request is rejected by closing the fd
+ * without adoption: the client, which closed its own copy once the request
+ * was sent, sees its private channel's peer close (ECONNRESET).
  *
  * Does NOT free `request` (the caller's out: path does) but consumes every
  * attached descriptor.
@@ -441,6 +507,7 @@ lookup_channel_register(struct svc_lookup_channel *lc,
 	    sizeof(adopted->owner_label));
 	adopted->owner_launch_id = lc->owner_launch_id;
 	adopted->owner_uid = lc->owner_uid;
+	adopted->registered = true;
 	ack.op = SVC_OP_REGISTER_LOOKUP;
 	ack.status = 0;
 	ack.magic = SVC_REGISTER_LOOKUP_MAGIC;
@@ -451,8 +518,13 @@ lookup_channel_register(struct svc_lookup_channel *lc,
 		.length = sizeof(ack),
 		.fds = NULL,
 		.nfds = 0
-	    }) == -1)
-		syslog(LOG_WARNING, "domain: register-lookup ack: %m");
+	    }) == -1) {
+		/* The client waits for the ack: close, so it sees ECONNRESET. */
+		syslog(LOG_WARNING, "domain: register-lookup ack: %m; closing "
+		    "the client's lookup channel");
+		lookup_channel_close(adopted);
+		return;
+	}
 	lookup_channel_sync_events(adopted, switchboard_kq);
 	syslog(LOG_INFO, "domain: adopted private %s lookup channel",
 	    adopt_kind == SVC_DOMAIN_SYSTEM ? "system" :
@@ -488,13 +560,13 @@ lookup_channel_request(struct channel *channel,
 	(void)channel;
 	lc = context;
 	if (!lookup_channel_is_live(lc)) {
-		lookup_channel_reply(request, ECONNRESET, NULL, 0);
+		lookup_channel_reply(lc, request, ECONNRESET, NULL, 0);
 		goto out;
 	}
 	kindstr = lc->domain.kind == SVC_DOMAIN_SYSTEM ? "system" :
 	    lc->domain.kind == SVC_DOMAIN_CONTROL ? "control" : "user";
 	if (channel_message_length(request) < sizeof(op)) {
-		lookup_channel_reply(request, EINVAL, NULL, 0);
+		lookup_channel_reply(lc, request, EINVAL, NULL, 0);
 		goto out;
 	}
 	opp = channel_message_data(request);
@@ -514,16 +586,16 @@ lookup_channel_request(struct channel *channel,
 	/* Lookup may attach one restricted self process descriptor. */
 	if (channel_message_fd_count(request) != 0 &&
 	    !(op == SVC_OP_LOOKUP && channel_message_fd_count(request) == 1)) {
-		lookup_channel_reply(request, EINVAL, NULL, 0);
+		lookup_channel_reply(lc, request, EINVAL, NULL, 0);
 		goto out;
 	}
 	if (op == SVC_OP_MINT_DOMAIN) {
 		/* Retired login-authority operation; software identity controls access. */
-		lookup_channel_reply(request, EPERM, NULL, 0);
+		lookup_channel_reply(lc, request, EPERM, NULL, 0);
 		goto out;
 	}
 	if (svc_authority_resolve(request, &authority, &sender) == -1) {
-		lookup_channel_reply(request, EACCES, NULL, 0);
+		lookup_channel_reply(lc, request, EACCES, NULL, 0);
 		goto out;
 	}
 	if (op == SVC_OP_AMBIENT_HELLO) {
@@ -540,7 +612,7 @@ lookup_channel_request(struct channel *channel,
 
 		if (channel_message_length(request) !=
 		    sizeof(struct svc_ambient_hello_req)) {
-			lookup_channel_reply(request, EINVAL, NULL, 0);
+			lookup_channel_reply(lc, request, EINVAL, NULL, 0);
 			goto out;
 		}
 		hello.status = 0;
@@ -553,25 +625,25 @@ lookup_channel_request(struct channel *channel,
 			.fds = NULL,
 			.nfds = 0
 		    }) == -1)
-			syslog(LOG_WARNING, "domain: hello reply: %m");
+			lookup_channel_answer(lc, request, errno, NULL, 0);
 		goto out;
 	}
 	if (op != SVC_OP_LOOKUP) {
 		/* Any other op on a lookup channel is unsupported. */
-		lookup_channel_reply(request, ENOTSUP, NULL, 0);
+		lookup_channel_reply(lc, request, ENOTSUP, NULL, 0);
 		goto out;
 	}
 	if (channel_message_length(request) != sizeof(*req)) {
-		lookup_channel_reply(request, EINVAL, NULL, 0);
+		lookup_channel_reply(lc, request, EINVAL, NULL, 0);
 		goto out;
 	}
 	req = channel_message_data(request);
 	if (req->flags != 0) {
-		lookup_channel_reply(request, EINVAL, NULL, 0);
+		lookup_channel_reply(lc, request, EINVAL, NULL, 0);
 		goto out;
 	}
 	if (strnlen(req->name, sizeof(req->name)) >= sizeof(req->name)) {
-		lookup_channel_reply(request, ENAMETOOLONG, NULL, 0);
+		lookup_channel_reply(lc, request, ENAMETOOLONG, NULL, 0);
 		goto out;
 	}
 	/*
@@ -582,7 +654,7 @@ lookup_channel_request(struct channel *channel,
 	 * a SYSTEM-domain holder could reach another bundle's private helper.
 	 */
 	if (strncmp(req->name, "helper.", 7) == 0) {
-		lookup_channel_reply(request, EACCES, NULL, 0);
+		lookup_channel_reply(lc, request, EACCES, NULL, 0);
 		goto out;
 	}
 	client_fd = naming_lookup_observed(req->name, sender, &authority,
@@ -609,12 +681,12 @@ lookup_channel_request(struct channel *channel,
 		 * out-of-scope refusal the client is deliberately not told about.
 		 */
 		SWITCHBOARD_PROBE_DOMAIN_LOOKUP_DENY(req->name, kindstr, error);
-		lookup_channel_reply(request, error == EACCES ? ENOENT : error,
+		lookup_channel_reply(lc, request, error == EACCES ? ENOENT : error,
 		    NULL, 0);
 		goto out;
 	}
 	SWITCHBOARD_PROBE_DOMAIN_LOOKUP(req->name, kindstr, authority.uid);
-	lookup_channel_reply_ex(request, 0, &client_fd, 1, !sendable);
+	lookup_channel_reply_ex(lc, request, 0, &client_fd, 1, !sendable);
 	close(client_fd);
 out:
 	channel_message_free(request);
