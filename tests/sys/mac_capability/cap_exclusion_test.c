@@ -1876,6 +1876,7 @@ d5_in_excluded(enum d5_mode mode, const char *helper, int token)
 		 * PGET_CANDEBUG) before the dq(4) attach rule is reached.
 		 */
 		close(sp[1]);
+		sp[1] = -1;
 		pd2 = d5_recv_fd(sp[0]);
 		if (pd2 < 0)
 			return (107);
@@ -1905,7 +1906,8 @@ d5_in_excluded(enum d5_mode mode, const char *helper, int token)
 	close(go[1]);
 	(void)waitpid(k, &status, 0);
 	close(sp[0]);
-	close(sp[1]);
+	if (sp[1] >= 0)
+		close(sp[1]);
 	close(pd);
 	close(q);
 	return (0);
@@ -2252,6 +2254,8 @@ ATF_TC_HEAD(t1b_fasttrap_excluded_child, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Review T1: FASTTRAPIOC_MAKEPROBE on an excluded pre-exec child is EPERM; on a plain child (control) it succeeds");
 	atf_tc_set_md_var(tc, "require.user", "root");
+	/* vm-provider.sh preloads dtraceall; the plane refuses a late load. */
+	atf_tc_set_md_var(tc, "require.kmods", "fasttrap");
 	atf_tc_set_md_var(tc, "is.exclusive", "true");
 }
 ATF_TC_BODY(t1b_fasttrap_excluded_child, tc)
@@ -2260,9 +2264,6 @@ ATF_TC_BODY(t1b_fasttrap_excluded_child, tc)
 	struct xcase x;
 	int e, ec;
 
-	if (access("/dev/fasttrap", F_OK) != 0)
-		atf_tc_skip("NOT COVERED: no /dev/fasttrap (dtraceall not "
-		    "preloaded in this guest)");
 	xcase_init(tc, &x);
 	park_excluded(&k);
 	park_plain(&q);
@@ -2281,6 +2282,8 @@ ATF_TC_HEAD(t1c_filemon_excluded_child, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Review T1: FILEMON_SET_PID on an excluded pre-exec child is EPERM; on a plain child (control) it succeeds");
 	atf_tc_set_md_var(tc, "require.user", "root");
+	/* vm-provider.sh preloads filemon; the plane refuses a late load. */
+	atf_tc_set_md_var(tc, "require.kmods", "filemon");
 	atf_tc_set_md_var(tc, "is.exclusive", "true");
 }
 ATF_TC_BODY(t1c_filemon_excluded_child, tc)
@@ -2288,8 +2291,6 @@ ATF_TC_BODY(t1c_filemon_excluded_child, tc)
 	struct parked k, q;
 	struct xcase x;
 
-	if (access("/dev/filemon", F_OK) != 0)
-		atf_tc_skip("NOT COVERED: no /dev/filemon in this guest");
 	xcase_init(tc, &x);
 	park_excluded(&k);
 	park_plain(&q);
@@ -2298,19 +2299,6 @@ ATF_TC_BODY(t1c_filemon_excluded_child, tc)
 	unpark(&k);
 	unpark(&q);
 	xcase_fini(&x);
-}
-
-ATF_TC(t1d_hwpmc_pidfd_not_covered);
-ATF_TC_HEAD(t1d_hwpmc_pidfd_not_covered, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "Review T1: hwpmc process attach and Linux pidfd_getfd against an excluded process (p_candebug consumers without a fixture here)");
-}
-ATF_TC_BODY(t1d_hwpmc_pidfd_not_covered, tc)
-{
-
-	atf_tc_skip("NOT COVERED: no hwpmc or Linux pidfd_getfd fixture in "
-	    "this program");
 }
 
 ATF_TP_ADD_TCS(tp)
@@ -2350,6 +2338,5 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, t1_debug_interfaces_excluded_child);
 	ATF_TP_ADD_TC(tp, t1b_fasttrap_excluded_child);
 	ATF_TP_ADD_TC(tp, t1c_filemon_excluded_child);
-	ATF_TP_ADD_TC(tp, t1d_hwpmc_pidfd_not_covered);
 	return (atf_no_error());
 }

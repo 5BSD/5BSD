@@ -34,7 +34,6 @@
 #include "test_common.h"
 
 #define	HELPER_REL	"../../mac_capability/cap_exclusion_helper"
-/* The longest an event the kernel has generated may take to arrive. */
 /* The AUTH deadline of the never-answering client. */
 #define	AUTH_DEADLINE_MS	200
 

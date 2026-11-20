@@ -35,8 +35,6 @@
 #include "test_common.h"
 #include "self_events_expect.h"
 
-/* The longest an event the kernel has generated may take to arrive. */
-
 struct paths {
 	char	probe[PATH_MAX];
 	char	marker[PATH_MAX];
