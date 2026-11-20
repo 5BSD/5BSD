@@ -196,6 +196,18 @@ lookup_channel_sync_events(struct svc_lookup_channel *lc, int kq)
 }
 
 void
+lookup_channel_answer(struct svc_lookup_channel *lc,
+    struct channel_message *request, int32_t status, int *fds, size_t nfds)
+{
+
+	(void)lc;
+	(void)request;
+	(void)status;
+	(void)fds;
+	(void)nfds;
+}
+
+void
 naming_remove_owner(struct svc_runtime *owner)
 {
 
