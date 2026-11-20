@@ -648,7 +648,7 @@ g17_gate_under_load(void)
 		if (close_ms > worst_close)
 			worst_close = close_ms;
 	}
-	bound_ms = (JT_LOAD_BOUND_EVENTS / 2) * 1000L / load.rate;
+	bound_ms = jt_defer_max() * 1000L / load.rate;
 	printf("    %d rounds with %d unread clients: SUBSCRIBE worst %ld ms, "
 	    "close worst %ld ms\n", i, load.nclients, worst_sub, worst_close);
 	jt_load_stop(&load);

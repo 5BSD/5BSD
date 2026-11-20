@@ -401,12 +401,19 @@ thread and, at the end of each scheduler slice, takes the priority
 the scheduler computes for it, so it competes for CPU time with
 the processes producing the events rather than preempting them.
 When the producers generate events faster than it can deliver them, the
-queue fills; an event beyond its limit of 16384 is discarded and counted in
+queue fills; an event beyond its limit
+.Pq Va security.oes.defer_max
+is discarded and counted in
 .Va es_nosleep_drops
 of the statistics returned by
 .Dv OES_IOC_GET_STATS .
 A client that must not miss such events reads them promptly and watches
 that counter.
+A realtime
+.Pq Xr rtprio 2
+thread that never sleeps on the delivery thread's CPU can keep it from
+running at all, which delays deferred events and the end of a jail scope
+whose jail was removed.
 .Ss DTrace
 The framework defines an
 .Nm
@@ -415,6 +422,8 @@ SDT provider with probes for authorization outcomes
 event enqueue and drop, and decision-cache hit and miss.
 .Sh SYSCTL VARIABLES
 .Bl -tag -width indent
+.It Va security.oes.defer_max
+The number of events the deferred-delivery queue holds; read-only.
 .It Va security.oes.max_clients
 Maximum number of concurrent clients.
 .It Va security.oes.require_auth_clients
