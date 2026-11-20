@@ -692,22 +692,6 @@ dq_postop_block(const struct dq_data *reply, uint32_t op, uint64_t minsize,
 	    dq_time_valid(&pa->dpa_atime)));
 }
 
-/*
- * Whether a write's or an allocation's reply carries a size of its own,
- * applied by dq_object_postop with the same generation, no smaller than
- * the end it proves: that size then stands for the proof (an older
- * reply's size is refused by the generation rule), so none is kept.
- */
-static bool
-dq_reply_sizes_end(const struct dq_data *reply, uint32_t op, uint64_t end)
-{
-	struct dq_postop_attr pa;
-
-	return (reply != NULL && reply->dd_postop &&
-	    dq_postop_block(reply, op, end, &pa) &&
-	    (pa.dpa_valid & DQ_PA_SIZE) != 0);
-}
-
 bool
 dq_object_postop_size(struct dq_object *o, uint64_t size, uint64_t agen)
 {
@@ -762,9 +746,10 @@ dq_object_proofs_prune(struct dq_object *o, uint64_t gen)
  * another is dropped.  It does not set the size's generation: the proof
  * is only a lower bound, and an older reply may report a larger size.
  * *spare is the caller's entry, allocated with no lock held; it is taken
- * (set to NULL) when kept.  NULL: no proof is kept (the reply carries a
- * size that stands for it, dq_reply_sizes_end).  Returns whether the size
- * grew.
+ * (set to NULL) when kept.  The proof is kept even when the reply carries
+ * a size block of its own: that block is applied later (dq_object_postop),
+ * and until then an older reply's size must not go below the proof; the
+ * block's own generation then prunes it.  Returns whether the size grew.
  */
 bool
 dq_object_size_proven(struct dq_object *o, uint64_t end, uint64_t agen,
@@ -773,7 +758,7 @@ dq_object_size_proven(struct dq_object *o, uint64_t end, uint64_t agen,
 	struct dq_sizeproof *sp, *sptmp, *after;
 
 	DQO_LOCK_ASSERT(o);
-	if (*spare != NULL && agen != 0 && agen > o->o_gen[DQ_GEN_SIZE]) {
+	if (agen != 0 && agen > o->o_gen[DQ_GEN_SIZE]) {
 		after = NULL;
 		TAILQ_FOREACH_SAFE(sp, &o->o_proofs, sp_link, sptmp) {
 			if (sp->sp_gen >= agen && sp->sp_end >= end)
@@ -786,6 +771,7 @@ dq_object_size_proven(struct dq_object *o, uint64_t end, uint64_t agen,
 		}
 		sp = *spare;
 		*spare = NULL;
+		KASSERT(sp != NULL, ("dq: no spare size proof"));
 		sp->sp_gen = agen;
 		sp->sp_end = end;
 		if (after != NULL)
@@ -1350,9 +1336,7 @@ dq_write(struct file *fp, struct uio *uio, struct ucred *active_cred __unused,
 			uio->uio_offset += written;
 		done += written;
 		newend = woff + written;
-		spare = dq_reply_sizes_end(reply, DQ_OP_WRITE,
-		    (uint64_t)newend) ? NULL :
-		    malloc(sizeof(*spare), M_DQ, M_WAITOK);
+		spare = malloc(sizeof(*spare), M_DQ, M_WAITOK);
 		DQO_LOCK(o);
 		hint = NOTE_WRITE;
 		/*
@@ -1965,8 +1949,7 @@ dq_fallocate(struct file *fp, off_t offset, off_t len, struct thread *td)
 		error = rerror;
 	} else if (error == 0) {
 		end = (uint64_t)offset + (uint64_t)len;
-		spare = dq_reply_sizes_end(reply, DQ_OP_FALLOCATE, end) ? NULL :
-		    malloc(sizeof(*spare), M_DQ, M_WAITOK);
+		spare = malloc(sizeof(*spare), M_DQ, M_WAITOK);
 		DQO_LOCK(o);
 		hint = NOTE_WRITE;
 		if (dq_object_size_proven(o, end, agen, &spare))

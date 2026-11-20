@@ -879,6 +879,11 @@ deadline, or the process starting to die
 an exit, a core dump
 .Pc ,
 and the single-threading thread waits for it as for a disk.
+A
+.Dv SIGKILL
+counts from the moment it is sent: if a tracer then discards it, the
+operation has already been abandoned (INTERRUPT to the controller), as it
+was before these waits.
 The lookups of extended attributes and ACLs count as changes, reads
 included: the lookup does not say which it is.
 A

@@ -1078,7 +1078,14 @@ dq_object_destroy_wait_busy(vm_object_t obj)
 		if (vm_page_xbusied(p) && vm_page_busy_sleep(p, "dqdflb",
 		    VM_ALLOC_IGN_SBUSY))
 			return (DQ_DBUSY_SLEPT);
-		shared = true;
+		/*
+		 * Not slept: shared busy, or the exclusive holder released
+		 * it between the look and the sleep.  Only a shared-busy
+		 * page has a completion to park for; a released one is no
+		 * room event (DQ_DBUSY_NONE: pass again).
+		 */
+		if (vm_page_sbusied(p))
+			shared = true;
 	}
 	return (shared ? DQ_DBUSY_SHARED : DQ_DBUSY_NONE);
 }
