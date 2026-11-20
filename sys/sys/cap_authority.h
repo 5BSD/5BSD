@@ -86,8 +86,10 @@ struct cap_authority_stamp {
  *                                                 write /dev/execpolicy)
  *   0x00000100  CAP_AUTH_ROLE_EXECGUARD            planned (exec guard: may
  *                                                 bind the exec guard queue)
+ *   0x00000200  CAP_AUTH_ROLE_SYSTEM               base exclusion: a System
+ *                                                 bundle launch (OES fail-open)
  *
- * Bits 0x200 and up are unallocated.
+ * Bits 0x400 and up are unallocated.
  *
  * CAP_AUTH_ROLE_CORE: when a process that is already excluded from OES and
  * Capability Brokers (P2_CAP_EXCLUDED; cap_process(2) BASE EXCLUSION)
@@ -98,6 +100,13 @@ struct cap_authority_stamp {
 #define CAP_AUTH_FLAG_RETIRED_FIXED_UID	0x00000001 /* Always EINVAL. */
 #define CAP_AUTH_ROLE_DQ_SUPERVISOR	0x00000002
 #define CAP_AUTH_ROLE_CORE		0x00000040
+/*
+ * CAP_AUTH_ROLE_SYSTEM: the issuer launches the pinned image as a unit of a
+ * System bundle (base software).  When an excluded launcher executes it,
+ * OES delivers the exec events fail-open (oes(4)); any other launch by an
+ * excluded process gets normal OES treatment.  Grants nothing else.
+ */
+#define CAP_AUTH_ROLE_SYSTEM		0x00000200
 #define CAP_AUTH_EXEC_MAX 8
 struct cap_authority_constraint {
 	int32_t token_fd;
@@ -333,6 +342,7 @@ struct image_params;
 struct sysentvec;
 bool	cap_exclusion_exec_will_exclude(struct proc *, struct cap_authority *,
 	    bool, bool);
+bool	cap_exclusion_exec_system_launch(struct proc *, struct cap_authority *);
 int	cap_exclusion_exec_check_abi(struct image_params *, struct sysentvec *);
 void	cap_exclusion_exec(struct proc *, struct image_params *);
 int	cap_exclusion_refused_interp(struct proc *);

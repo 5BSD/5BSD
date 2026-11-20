@@ -361,10 +361,18 @@ clients receive
 .Dv OES_EVENT_AUTH_EXEC
 and
 .Dv OES_EVENT_NOTIFY_EXEC
-as usual; for these events the strict settings above, fail-closed deadlines,
-a client that closes without answering and an allocation failure do not
-deny: a missing or slow client allows the execution, while a client's
-explicit denial still refuses it.
+as usual.
+If the program is a unit of a System bundle
+.Pq its authority carries Dv CAP_AUTH_ROLE_SYSTEM , see Xr cap_process 2 ,
+the strict settings above, fail-closed deadlines, a client that closes
+without answering and an allocation failure do not deny it: a missing or
+slow client allows the execution, while a client's explicit denial still
+refuses it.
+Every other start by an excluded process (per-user and
+.Pa /Capabilities/Apps
+units, the rc scripts, programs started by
+.Xr capsule 8 )
+gets normal treatment, fail-closed settings included.
 The program started is not excluded, and everything it does is reported.
 .Pp
 An operation by a process that is not excluded is reported as usual, also
@@ -551,6 +559,14 @@ BSDSysctl writes sysctl variables on request.
 Those module loads, mounts and sysctl writes produce no OES event and
 cannot be denied by an OES client; each daemon's own admission policy is the
 only control.
+.Xr switchboard 8 Ns 's
+launch child, between its fork and the unit's exec, is excluded too: the
+opens it makes from the unit's manifest and its
+.Xr setuid 2
+and
+.Xr setgid 2
+calls produce no events.
+The unit's own exec is reported as described above.
 .Xr audit 4
 still records excluded processes, and
 .Xr oeslogger 8

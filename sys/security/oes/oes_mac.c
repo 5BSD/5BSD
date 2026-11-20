@@ -3583,14 +3583,15 @@ oes_generate_exec_event(struct ucred *cred, struct vnode *vp,
 		return (0);
 	}
 	/*
-	 * An excluded launcher (Capsule, SwitchBoard, a Core unit or a
-	 * pre-exec child of one) starts a program that will not be excluded.
+	 * An excluded launcher (switchboard's pre-exec launch child) starts a
+	 * unit of a System bundle (CAP_AUTH_ROLE_SYSTEM; owner 2026-11-20).
 	 * Its clients see the launch, but no strict knob, fail-closed
 	 * deadline or allocation failure may deny it: a missing or slow
-	 * client must not stop the control plane.  A client's own DENY still
-	 * denies.
+	 * client must not stop the base system.  A client's own DENY still
+	 * denies.  Per-user and Apps units, rc and anything else an excluded
+	 * process starts get normal treatment.
 	 */
-	fail_open = oes_subject_excluded();
+	fail_open = imgp->cap_system_launch;
 	if (oes_no_clients_permit_auth() || (fail_open &&
 	    atomic_load_acq_int(&oes_softc.sc_nclients) == 0))
 		return (0);

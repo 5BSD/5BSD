@@ -2554,10 +2554,14 @@ p_candebug(struct thread *td, struct proc *p)
 	if ((error = mac_proc_check_debug(td->td_ucred, p)))
 		return (error);
 #endif
-	/* Base exclusion: after the MAC hook, so OES still sees the attempt. */
-	if ((error = cap_exclusion_debug_check(td, p)) != 0)
-		return (error);
 	if ((error = cr_bsd_visible(td->td_ucred, p->p_ucred)))
+		return (error);
+	/*
+	 * Base exclusion: after the MAC hook, so OES still sees the attempt,
+	 * and after visibility, so a process that may not see p gets ESRCH,
+	 * not a refusal that tells it p exists.
+	 */
+	if ((error = cap_exclusion_debug_check(td, p)) != 0)
 		return (error);
 
 	/*

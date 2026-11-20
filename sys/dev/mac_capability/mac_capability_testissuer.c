@@ -159,8 +159,9 @@ SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuer_fail_init,
  * on a test kernel with test issuers on, a root process may mark itself
  * excluded, standing in for PID 1, and then exercise the chain rule with a
  * test issuer's Core token (tests/sys/mac_capability/cap_exclusion_test).
- * Refused when the caller is traced, ktraced, attached to a Capability
- * Broker, jailed or in capability mode, as an exec would refuse them.
+ * Refused when the caller is traced, ktraced, has no_new_privs, is attached
+ * to a Capability Broker, jailed or in capability mode, as an exec would
+ * refuse them.
  */
 static int
 mac_capability_test_issuer_exclude_self_sysctl(SYSCTL_HANDLER_ARGS)
@@ -183,6 +184,7 @@ mac_capability_test_issuer_exclude_self_sysctl(SYSCTL_HANDLER_ARGS)
 	PROC_LOCK(p);
 	if ((p->p_flag & P_TRACED) != 0 ||
 	    (p->p_traceflag & KTRFAC_MASK) != 0 ||
+	    (p->p_flag2 & P2_NO_NEW_PRIVS) != 0 ||
 	    dqres_cred_change_refused(p))
 		error = EPERM;
 	else

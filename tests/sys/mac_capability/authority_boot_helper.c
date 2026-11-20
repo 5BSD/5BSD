@@ -1647,9 +1647,9 @@ dq_strip_pins(int issuer)
 /*
  * The constraint's flags word (lg-1 pins).
  *
- * lg-1 and the base-exclusion work made two bits roles:
- * CAP_AUTH_ROLE_DQ_SUPERVISOR and CAP_AUTH_ROLE_CORE.  A request
- * with either bit alone and one image is now treated as one with flags zero,
+ * lg-1 and the base-exclusion work made three bits roles:
+ * CAP_AUTH_ROLE_DQ_SUPERVISOR, CAP_AUTH_ROLE_CORE and CAP_AUTH_ROLE_SYSTEM.
+ * A request with one of them alone and one image is now treated as one with flags zero,
  * so in the loop below it gets the answers of the controls; with two
  * images it is EINVAL.  supervisor_role_tests() covers what it grants.
  *
@@ -1697,7 +1697,7 @@ constraint_flags_pins(int issuer)
 	for (i = 0; i < 32 + nitems(several); i++) {
 		flags = i < 32 ? (uint32_t)1 << i : several[i - 32];
 		role = flags == CAP_AUTH_ROLE_DQ_SUPERVISOR ||
-		    flags == CAP_AUTH_ROLE_CORE;
+		    flags == CAP_AUTH_ROLE_CORE || flags == CAP_AUTH_ROLE_SYSTEM;
 		memset(&c, 0, sizeof(c));
 		c.token_fd = token; c.nexec = 1; c.executable_fds[0] = image;
 		c.flags = flags;

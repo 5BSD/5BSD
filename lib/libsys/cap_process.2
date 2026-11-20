@@ -103,6 +103,12 @@ An authority with a role cannot be registered as an application
 The role is written once with the constraint and cannot be added, removed
 or changed afterwards; a child shares its parent's authority and there is
 no operation that derives another from it.
+.It Dv CAP_AUTH_ROLE_SYSTEM
+Mark the authority as the launch of a unit of a System bundle.
+The same rules apply as for the supervisor role.
+When an excluded process executes the image with this authority installed,
+.Xr oes 4
+delivers the exec events fail-open; it grants nothing else.
 .It Dv CAP_AUTH_ROLE_CORE
 Mark the authority as a Core launch.
 The same rules apply as for the supervisor role: exactly one image, written
@@ -206,6 +212,14 @@ An exec that would be excluded fails with
 .Er EACCES
 if the image is a script or binmisc image or uses a non-native ABI, except
 in process 1.
+The ELF activator is the only one that runs a native image; the shell
+.Pq Li #!
+and binmisc activators interpret, so an exec reaching them is refused by
+the script rule.
+Process 1 is excluded whatever image it executes, also when it is traced;
+tracing it is refused by these rules and
+.Va kern.securelevel ,
+except on a test kernel with the loader tunable below.
 Exclusion is inherited by
 .Xr fork 2
 and cleared when the process is traced with
@@ -244,7 +258,14 @@ is not refused.
 For process 1 these debug interfaces were previously refused only at
 .Va kern.securelevel
 greater than 0 or by a capprotect shield.
-Excluded processes may debug one another.
+Among excluded processes only a parent may debug its own child that has
+not executed an image; excluded processes cannot debug one another otherwise
+.Pq Er EPERM .
+A process that may not see the target
+.Pq Va security.bsd.see_other_uids
+gets
+.Er ESRCH ,
+as for any process.
 Only a test kernel
 .Pq Cd options MAC_CAPABILITY_TEST_PERMISSIVE ,
 never published, has the loader tunable

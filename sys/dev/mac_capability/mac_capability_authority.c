@@ -942,6 +942,10 @@ cap_exclusion_exec_will_exclude(struct proc *p, struct cap_authority *selected,
 {
 	bool excluded;
 
+	/* Most execs: one load, no lock (the bit changes only under it). */
+	if (p != initproc &&
+	    (atomic_load_int(&p->p_flag2) & P2_CAP_EXCLUDED) == 0)
+		return (false);
 	PROC_LOCK(p);
 	if (p == initproc)
 		excluded = true;
@@ -957,6 +961,30 @@ cap_exclusion_exec_will_exclude(struct proc *p, struct cap_authority *selected,
 		    (p->p_flag2 & P2_NO_NEW_PRIVS) == 0;
 	PROC_UNLOCK(p);
 	return (excluded);
+}
+
+/*
+ * Is this exec an excluded launcher's start of a System-bundle unit: the
+ * authority selected for the image is the process's installed managed one
+ * and carries CAP_AUTH_ROLE_SYSTEM?  OES delivers such exec events
+ * fail-open; an excluded process's other launches get normal treatment
+ * (owner, 2026-11-20).  Called beside cap_exclusion_exec_will_exclude();
+ * no side effects.
+ */
+bool
+cap_exclusion_exec_system_launch(struct proc *p, struct cap_authority *selected)
+{
+	bool system;
+
+	if ((atomic_load_int(&p->p_flag2) & P2_CAP_EXCLUDED) == 0 ||
+	    selected == NULL)
+		return (false);
+	PROC_LOCK(p);
+	system = P_CAP_EXCLUDED(p) && selected == p->p_cap_authority &&
+	    selected->kind == CAP_AUTH_MANAGED &&
+	    (selected->roles & CAP_AUTH_ROLE_SYSTEM) != 0;
+	PROC_UNLOCK(p);
+	return (system);
 }
 
 /*
@@ -1050,8 +1078,16 @@ cap_exclusion_debug_check(struct thread *td, struct proc *p)
 {
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
-	if (__predict_true(!P_CAP_EXCLUDED(p)) ||
-	    (atomic_load_int(&td->td_proc->p_flag2) & P2_CAP_EXCLUDED) != 0)
+	if (__predict_true(!P_CAP_EXCLUDED(p)))
+		return (0);
+	/*
+	 * Among excluded processes only a parent may debug its own child that
+	 * has not executed an image (owner, 2026-11-20): Core daemons cannot
+	 * debug each other, PID 1 or switchboard.  p_pptr may be read with
+	 * p's lock.
+	 */
+	if ((atomic_load_int(&td->td_proc->p_flag2) & P2_CAP_EXCLUDED) != 0 &&
+	    p->p_pptr == td->td_proc && (p->p_flag & P_EXEC) == 0)
 		return (0);
 	if ((td->td_pflags2 & TDP2_DQ_ATTACH) != 0)
 		return (0);
@@ -1614,7 +1650,7 @@ get_install_token(struct thread *td, int fd, struct file **fp)
  * The retired value is never accepted again.
  */
 #define	CAP_AUTH_ROLES_ACCEPTED						\
-	(CAP_AUTH_ROLE_DQ_SUPERVISOR | CAP_AUTH_ROLE_CORE)
+	(CAP_AUTH_ROLE_DQ_SUPERVISOR | CAP_AUTH_ROLE_CORE | CAP_AUTH_ROLE_SYSTEM)
 CTASSERT((CAP_AUTH_ROLES_ACCEPTED & CAP_AUTH_FLAG_RETIRED_FIXED_UID) == 0);
 
 static int

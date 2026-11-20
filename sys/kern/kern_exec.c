@@ -654,6 +654,8 @@ interpret:
 	imgp->cap_will_exclude = cap_exclusion_exec_will_exclude(p,
 	    exec_authority, dq_attached,
 	    (imgp->interpreted & ~IMGACT_INTERP_ELF) != 0);
+	imgp->cap_system_launch = cap_exclusion_exec_system_launch(p,
+	    exec_authority);
 
 	/*
 	 * Check file permissions.  Also 'opens' file and sets its vnode to

@@ -19,11 +19,13 @@
 #include <sys/procdesc.h>
 #include <sys/procctl.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <sys/wait.h>
 
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -335,6 +337,33 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 }
 
 /*
+ * Q15 (rev 3 delta 3.4): with mac_veriexec enforcing, the O_VERIFY open of
+ * the service manager already refused an image outside the signed base
+ * manifest; without it, nothing distinguishes a replaced binary, and the
+ * grant says so, as switchboard does for each Core unit.
+ */
+static void
+bootstrap_core_verified_warning(const char *image_path)
+{
+	char state[64], *word, *rest;
+	size_t len = sizeof(state) - 1;
+	bool enforcing = false;
+
+	if (sysctlbyname("security.mac.veriexec.state", state, &len, NULL,
+	    0) == 0) {
+		state[len] = '\0';
+		rest = state;
+		while ((word = strsep(&rest, " ")) != NULL)
+			if (strcmp(word, "enforce") == 0)
+				enforcing = true;
+	}
+	if (!enforcing)
+		syslog(LOG_WARNING, "bootstrap: %s: Core role granted without "
+		    "Veriexec enforcement: image not verified against the base "
+		    "manifest", image_path);
+}
+
+/*
  * Issue and constrain the managed authority that carries the Core role
  * into switchboard's exec (cap_process(2) BASE EXCLUSION).  The image is
  * opened O_VERIFY; library directories are the system ones, checked as
@@ -364,6 +393,7 @@ bootstrap_core_authority(int issuer, const char *image_path, int *tokenp)
 	c.executable_fds[0] = image;
 	if (syscall(SYS_cap_process, CAP_AUTH_CONSTRAIN, issuer, 0, &c) == -1)
 		goto out;
+	bootstrap_core_verified_warning(image_path);
 	dirs.token_fd = token;
 	for (i = 0; i < nitems(libdirs); i++) {
 		int fd = open(libdirs[i], O_RDONLY | O_DIRECTORY | O_CLOEXEC |

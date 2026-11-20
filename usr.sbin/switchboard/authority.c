@@ -195,6 +195,14 @@ svc_authority_constrain_application(const struct svc_runtime *svc, int token)
 	 */
 	if (svc_authority_core(svc))
 		constraint.flags |= CAP_AUTH_ROLE_CORE;
+	/*
+	 * Every unit of a System bundle: its launch by our (excluded)
+	 * pre-exec child is delivered to OES fail-open (oes(4)); Apps,
+	 * per-user and rc launches are not.
+	 */
+	if (svc->owner_uid == (uid_t)-1 &&
+	    bundle_registry_is_system(svc->bundle_idx))
+		constraint.flags |= CAP_AUTH_ROLE_SYSTEM;
 	for (i = 0; i < constraint.nexec; i++) {
 		const char *path = m->program;
 		constraint.executable_fds[i] = open(path,
