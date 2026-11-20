@@ -273,6 +273,9 @@ extern const struct fileops mac_capability_instance_ops;
 extern int mac_capability_test_issuer_enabled;	/* the tunable, 0 or 1 */
 extern volatile u_int mac_capability_test_issuer_fail_init;
 extern volatile u_int mac_capability_test_issuer_oes_trylock_fail;
+/* The OES deferred-delivery hold point; also in oes_internal.h. */
+void	mac_capability_test_issuer_oes_defer_park(void);
+void	mac_capability_test_issuer_oes_defer_unpark(void);
 extern volatile u_long mac_capability_test_issuer_created;
 extern volatile u_int mac_capability_test_issuer_live;
 u_int	mac_capability_test_issuer_state(void);
