@@ -8,6 +8,7 @@
  */
 
 #include "opt_dq.h"
+#include "opt_mac_capability.h"
 
 #include <sys/param.h>
 #include <sys/cap_authority.h>
@@ -607,8 +608,13 @@ oes_client_join(struct oes_client *ec, struct thread *td, struct file *fp,
 	 * Entries are dropped: let the deferred task finish matching what
 	 * their processes queued while they were readers.
 	 */
-	if (live + (e != NULL ? 1 : 0) < n)
+	if (live + (e != NULL ? 1 : 0) < n) {
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+		/* A parked task would never finish; see the test hold point. */
+		mac_capability_test_issuer_oes_defer_unpark();
+#endif
 		taskqueue_drain(oes_softc.sc_defer_tq, &oes_softc.sc_defer_task);
+	}
 	/* Room for the live entries and the caller. */
 	size = live + 1;
 	new = malloc(sizeof(*new) + size * sizeof(new->ors_r[0]), M_OES,

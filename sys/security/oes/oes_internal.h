@@ -741,6 +741,12 @@ void	oes_pending_set_target_prison(struct oes_pending *ep,
  */
 SYSCTL_DECL(_security_oes);
 
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+/* Test kernels only: mac_capability_testissuer.c. */
+void	mac_capability_test_issuer_oes_defer_park(void);
+void	mac_capability_test_issuer_oes_defer_unpark(void);
+#endif
+
 extern int oes_debug;
 extern int oes_default_deadline;
 extern int oes_default_deadline_miss_mode;

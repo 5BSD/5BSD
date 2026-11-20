@@ -747,6 +747,26 @@ deferred_actor(int sock, const char *exec_path)
 	return (105);
 }
 
+#define	DEFER_HOLD	"debug.mac_capability.test_issuer_oes_defer_hold"
+
+/* Arm (1) or release (0) the test kernel's deferred-delivery hold point. */
+static int
+defer_hold(int v)
+{
+
+	return (sysctlbyname(DEFER_HOLD, NULL, NULL, &v, sizeof(v)));
+}
+
+/*
+ * The deferred task does not run from here until hold is released, so the
+ * actor's fork and signal events stay queued while it execs and the new
+ * image joins.  On a kernel that drains the task before dropping the old
+ * entry, that join releases the hold and waits; the events are matched
+ * against the old entry, still published.  On one that does not, the join
+ * returns, the actor exits, and only the release below lets the task
+ * deliver, against a set the old entry has left: the leak is certain, not
+ * a race.
+ */
 static void
 deferred_case(const atf_tc_t *tc, bool exec_rejoin)
 {
@@ -769,8 +789,13 @@ deferred_case(const atf_tc_t *tc, bool exec_rejoin)
 	}
 	close(sv[1]);
 	x = open_client_events(false, events, nitems(events));
+	if (exec_rejoin)
+		ATF_REQUIRE_MSG(defer_hold(1) == 0, "%s: %s", DEFER_HOLD,
+		    strerror(errno));
 	send_fd(sv[0], x);
 	ATF_REQUIRE(waitpid(c, &status, 0) == c);
+	if (exec_rejoin)
+		ATF_REQUIRE(defer_hold(0) == 0);
 	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
 	    "actor status %#x", status);
 	fence = signal_fence(&gate);
@@ -797,17 +822,30 @@ ATF_TC_BODY(n14_deferred_fork_signal, tc)
 	deferred_case(tc, false);
 }
 
-ATF_TC(n15_exec_rejoin_deferred);
+ATF_TC_WITH_CLEANUP(n15_exec_rejoin_deferred);
 ATF_TC_HEAD(n15_exec_rejoin_deferred, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Review D1: a reader whose deferred fork event is still queued execs and its new image joins at once (compacting the old entry); the queued event still does not reach its client");
+	    "Review D1: a reader whose deferred fork event is held queued (test kernel hold point) execs and its new image joins at once (compacting the old entry); the queued event still does not reach its client");
 	atf_tc_set_md_var(tc, "require.user", "root");
+	/* The hold stops every client's deferred delivery. */
+	atf_tc_set_md_var(tc, "is.exclusive", "true");
 }
 ATF_TC_BODY(n15_exec_rejoin_deferred, tc)
 {
+	int v;
+	size_t len = sizeof(v);
 
+	if (sysctlbyname(DEFER_HOLD, &v, &len, NULL, 0) != 0)
+		atf_tc_skip("needs a MAC_CAPABILITY_TEST_PERMISSIVE kernel (%s)",
+		    DEFER_HOLD);
+	ATF_REQUIRE_EQ_MSG(v, 0, "%s already armed", DEFER_HOLD);
 	deferred_case(tc, true);
+}
+ATF_TC_CLEANUP(n15_exec_rejoin_deferred, tc)
+{
+
+	(void)defer_hold(0);
 }
 
 /* An AUTH_OPEN client of the test's descendants, fail-closed. */

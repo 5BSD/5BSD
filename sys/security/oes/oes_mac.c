@@ -10,6 +10,8 @@
  * security events for subscribed clients.
  */
 
+#include "opt_mac_capability.h"
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -2034,6 +2036,10 @@ oes_defer_task_fn(void *arg __unused, int pending __unused)
 	bool ending;
 
 	for (;;) {
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+		/* Test kernels: debug.mac_capability.test_issuer_oes_defer_hold. */
+		mac_capability_test_issuer_oes_defer_park();
+#endif
 		/* Before the snapshot; see oes_jail_scopes_claim(). */
 		ending = oes_jail_scopes_claim();
 		mtx_lock_spin(&oes_softc.sc_defer_mtx);
