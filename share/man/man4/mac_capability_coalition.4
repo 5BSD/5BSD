@@ -402,6 +402,11 @@ Returns
 Reset the watchdog timer: re-arm it for
 .Fa timeout_ms
 from now.
+The watchdog expires at an exact
+.Vt sbintime_t
+with precision 0 (no tick coalescing);
+.Dv COALITION_OP_SET_DEADLINE
+still uses ticks.
 Request is a plain
 .Vt struct coalition_req_hdr .
 Returns
