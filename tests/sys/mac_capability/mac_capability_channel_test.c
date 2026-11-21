@@ -2369,7 +2369,7 @@ handler_park_set(const char *name, int value)
 	    sizeof(value)) == 0, "%s: %s", name, strerror(errno));
 }
 
-ATF_TC(handler_revoke_frees_endpoint_carrying_itself);
+ATF_TC_WITH_CLEANUP(handler_revoke_frees_endpoint_carrying_itself);
 ATF_TC_HEAD(handler_revoke_frees_endpoint_carrying_itself, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
@@ -2428,6 +2428,21 @@ ATF_TC_BODY(handler_revoke_frees_endpoint_carrying_itself, tc)
 	close(P[1]);
 	close(sv[1]);
 }
+ATF_TC_CLEANUP(handler_revoke_frees_endpoint_carrying_itself, tc)
+{
+	int value;
+
+	(void)tc;
+	if (!handler_park_present())
+		return;
+	/* Disarm, and let a forward still parked go on. */
+	value = 0;
+	(void)sysctlbyname("debug.mac_capability.test_park_len", NULL, NULL,
+	    &value, sizeof(value));
+	value = 1;
+	(void)sysctlbyname("debug.mac_capability.test_park_release", NULL,
+	    NULL, &value, sizeof(value));
+}
 
 ATF_TC(revoke_drops_shared_descriptors_inline);
 ATF_TC_HEAD(revoke_drops_shared_descriptors_inline, tc)
@@ -2444,7 +2459,7 @@ ATF_TC_BODY(revoke_drops_shared_descriptors_inline, tc)
 {
 	static const char note[] = "carrier";
 	struct tracer t;
-	char line[128], c;
+	char line[128], program[160], c;
 	uint32_t seq;
 	int P[2], sv[2];
 
@@ -2465,8 +2480,10 @@ ATF_TC_BODY(revoke_drops_shared_descriptors_inline, tc)
 	 * The revoke has decided by the time MAC_CAPABILITY_TERMINATE
 	 * returns; stopping dtrace flushes what it saw.
 	 */
-	tracer_start(&t, "mac_capability:::reap-defer "
-	    "{ printf(\"DEFER %d\\n\", arg0); }");
+	/* The revoke hands messages over in the calling thread: this one. */
+	snprintf(program, sizeof(program), "mac_capability:::reap-defer "
+	    "/pid == %d/ { printf(\"DEFER %%d\\n\", arg0); }", (int)getpid());
+	tracer_start(&t, program);
 	ATF_REQUIRE_MSG(ioctl(P[0], MAC_CAPABILITY_TERMINATE, NULL) == 0,
 	    "terminate: %s", strerror(errno));
 	ATF_REQUIRE(kill(t.pid, SIGINT) == 0);
@@ -2483,6 +2500,41 @@ ATF_TC_BODY(revoke_drops_shared_descriptors_inline, tc)
 	close(sv[1]);
 	close(P[0]);
 	close(P[1]);
+}
+
+/*
+ * How many more instances the channel service admits: its instance_limit
+ * less its instances, from kern.mac_capability.service_details (-1: no
+ * limit).
+ */
+static int
+channel_instances_free(void)
+{
+	char *buf, *line;
+	size_t len;
+	int free_, instances, limit;
+
+	len = 0;
+	ATF_REQUIRE(sysctlbyname("kern.mac_capability.service_details", NULL,
+	    &len, NULL, 0) == 0);
+	len += 4096;
+	buf = malloc(len + 1);
+	ATF_REQUIRE(buf != NULL);
+	ATF_REQUIRE(sysctlbyname("kern.mac_capability.service_details", buf,
+	    &len, NULL, 0) == 0);
+	buf[len] = '\0';
+	free_ = -2;
+	for (line = strtok(buf, "\n"); line != NULL; line = strtok(NULL, "\n")) {
+		if (strncmp(line, "channel ", 8) != 0)
+			continue;
+		ATF_REQUIRE_MSG(sscanf(strstr(line, "instance_limit="),
+		    "instance_limit=%d instances=%d", &limit, &instances) == 2,
+		    "service_details: %s", line);
+		free_ = limit > 0 ? limit - instances : -1;
+	}
+	free(buf);
+	ATF_REQUIRE_MSG(free_ != -2, "no channel service in service_details");
+	return (free_);
 }
 
 /*
@@ -2514,12 +2566,18 @@ ATF_TC_BODY(close_frees_chained_endpoints, tc)
 	static const char note[] = "link";
 	struct rlimit rl;
 	size_t len;
-	int *b, i, links, kstack_pages, next[2], pair[2], sv[2];
+	int *b, avail, i, links, kstack_pages, next[2], pair[2], sv[2];
 
 	len = sizeof(kstack_pages);
 	ATF_REQUIRE_MSG(sysctlbyname("kern.kstack_pages", &kstack_pages, &len,
 	    NULL, 0) == 0, "kern.kstack_pages: %s", strerror(errno));
 	links = kstack_pages * getpagesize() / CHAIN_LINK_STACK_BYTES;
+	/* Building it holds links endpoints and one pair being made. */
+	avail = channel_instances_free();
+	if (avail >= 0 && links + 1 > avail)
+		atf_tc_fail("the chain needs %d channel instances, and the "
+		    "channel service admits %d more "
+		    "(kern.mac_capability.service_details)", links + 1, avail);
 	rl.rlim_cur = rl.rlim_max = links + 64;
 	ATF_REQUIRE_MSG(setrlimit(RLIMIT_NOFILE, &rl) == 0, "setrlimit: %s",
 	    strerror(errno));
