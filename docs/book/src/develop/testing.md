@@ -310,13 +310,48 @@ then reroots into Capsule as PID 1 with the plane on (`kenv -u
 capability_plane; kenv init_path=/sbin/capsule; reboot -r`), and runs it
 again with `VM_REROOT=after` before the suites.  The run is clean only when
 both runs exit 0 and Capsule is PID 1 after the reroot.  By default the
-script also sets `debug.mac_capability.test_issuer_fail_init`, so PID 1's
-create fails after it anchors; `LOADER_EXTRA` with
-`vm_reroot_variant="plain"` selects the plain reroot.  The `usr.sbin/bsd-build` cases that read the
+script also sets `debug.mac_capability.test_issuer_fail_init` (with
+`test_issuer_fail_init_skip=1`), so the issuer PID 1 creates in advance for the
+next SwitchBoard start fails after it anchors; `LOADER_EXTRA` with
+`vm_reroot_variant="plain"` selects the plain reroot.
+`tests/sys/mac_capability/switchboard_no_issuer_reroot.sh` is the same kind of
+extra script for SwitchBoard starts and restarts under Capsule: the loader
+variable `sb_case` is `plain`, `crash` (SwitchBoard killed after boot; no
+/etc/rc replay, existing shells keep their route), `next` (the issuer Capsule
+creates in advance for the next start fails once), `refused` (it keeps failing:
+the restart is refused and PID 1 enters single-user) or `firstboot` (the first
+create fails: recovery).  The killing cases need `switchboard_test_no_sigkill="1"`,
+which a test kernel's Capsule turns into the test-only
+`SWITCHBOARD_TEST_SHIELD_NO_SIGKILL`; `refused` and `firstboot` end in
+single-user, so the host reads their result from the serial log.  The `usr.sbin/bsd-build` cases that read the
 source tree need `SRC_IMAGE` (and `PORTS_IMAGE` for package plans); without it
 they are counted as `DEFERRED_TO_SOURCE_TIER=N`.  With the source and
 the ports images, a long bsd-build run fills the default 8 GB guest root:
-give it `ROOT_SIZE=16g`.
+give it `ROOT_SIZE=16g`.  `usr.sbin/capsule/storage_test:disk_import_and_binding`
+destroys a disk: when a suite is `usr.sbin/capsule`, the program or the case
+(or with `SCRATCH_DISK=1`; a wider selection such as `usr.sbin` gets no disk) the runner attaches a blank
+1 GB disk with the serial `kyua-scratch`, preloads zfs, and names the disk
+in the case's `scratch-device` input; the case refuses any disk with
+another ident.  Cases that need a guest setup no tier provides yet
+(`devctl_device_test` with devd and auditd stopped,
+`bsd_build_test:generation_reconciliation`'s ACL subtest without root and
+md(4)), and `disk_import_and_binding` run without its disk, skip with
+`DEFERRED_GUEST_SETUP` and are counted as `DEFERRED_GUEST_SETUP=N`, not as
+passes.  Destructive cases
+that need an opt-in and a guest of their own (`disposable_vm=yes`,
+`live_securelevel=yes`) skip with `DEFERRED_DISPOSABLE_GUEST`.
+A case skipped because the stage lacks a program or file it requires
+(kyua's "Required program/file ... not found", atf-sh's required program)
+makes the run `VM_NOT_CLEAN` (`STAGE_PREREQ_SKIPPED=N`), as a missing
+kernel module does (`KMOD_SKIPPED=N`).  A device only a kernel option
+provides (`/dev/kcov`) is not a stage input and stays a plain skip.  Every other skip without a
+`DEFERRED_*` token is listed, all of them, as `PLAIN_SKIPS=N` with one
+`PLAIN_SKIP:` line each, and expected failures, which kyua counts as passed,
+as `EXPECTED_FAILURES=N`; neither changes the verdict, so read `VM_CLEAN`
+together with these lines.  The bsd-build cases that wrap a Python unittest
+program (`py_unittest` in `bsd_build_test.sh`) fail on an expected failure
+and skip, naming each subtest, when any subtest skipped: a bare
+`OK (skipped=N)` is not a pass.
 
 Python is part of the guest test stage, never of base or a base package set
 (owner decision, 2026-11-20).  Every image vm-provider.sh builds carries the
@@ -334,25 +369,8 @@ builder guest with `SRC_IMAGE` and `PORTS_IMAGE` that `make install`s
 and `security/nist-kat` offline (distfiles fetched on the host with
 `make fetch-recursive DISTDIR=...`) and `pkg create`s their run-time
 closure; root on the host is not needed.  A suite that still finds one of
-them missing is a stage defect (`STAGE_PREREQ_SKIPPED`).  Cases that need a guest setup no tier provides yet
-(`storage_test:disk_import_and_binding`'s scratch disk, `devctl_device_test`
-with devd and auditd stopped, `bsd_build_test:generation_reconciliation`'s
-ACL subtest without root and md(4)) skip with `DEFERRED_GUEST_SETUP` and are
-counted as `DEFERRED_GUEST_SETUP=N`, not as passes.  Destructive cases
-that need an opt-in and a guest of their own (`disposable_vm=yes`,
-`live_securelevel=yes`) skip with `DEFERRED_DISPOSABLE_GUEST`.
-A case skipped because the stage lacks a program or file it requires
-(kyua's "Required program/file ... not found", atf-sh's required program)
-makes the run `VM_NOT_CLEAN` (`STAGE_PREREQ_SKIPPED=N`), as a missing
-kernel module does (`KMOD_SKIPPED=N`).  A device only a kernel option
-provides (`/dev/kcov`) is not a stage input and stays a plain skip.  Every other skip without a
-`DEFERRED_*` token is listed, all of them, as `PLAIN_SKIPS=N` with one
-`PLAIN_SKIP:` line each, and expected failures, which kyua counts as passed,
-as `EXPECTED_FAILURES=N`; neither changes the verdict, so read `VM_CLEAN`
-together with these lines.  The bsd-build cases that wrap a Python unittest
-program (`py_unittest` in `bsd_build_test.sh`) fail on an expected failure
-and skip, naming each subtest, when any subtest skipped: a bare
-`OK (skipped=N)` is not a pass.
+them missing is a stage defect (`STAGE_PREREQ_SKIPPED`).
+
 Cases that drive their private SwitchBoard with `switchboardctl` call
 `use_private_control` (`usr.sbin/switchboard/tests/test_helpers.sh`): it runs
 `switchboardctl` through `capd_lookup_exec`, which installs the private

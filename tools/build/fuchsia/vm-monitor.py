@@ -9,6 +9,7 @@
 # usage: vm-monitor.py --pid PID --log SERIAL_LOG --deadline EPOCH
 #            --fatal REGEX --known KNOWN_LOR [--fatal-lor yes|no]
 #            [--grace SECONDS]
+#            [--answer REGEX --answer-text TEXT --console SOCKET]
 #        vm-monitor.py --has-unknown-lor SERIAL_LOG KNOWN_LOR
 #
 # The first form waits, without polling, on three events through one
@@ -28,6 +29,15 @@
 # monitor could watch it (the run is not clean); 2, usage or setup failure
 # (the caller must then stop QEMU itself).
 #
+# With --answer, the line being written (no newline yet) that matches REGEX
+# is a prompt; anchor REGEX to the prompt's end (": $") so that a prompt
+# written in two parts is answered only once it is whole.  The first prompt
+# is answered once: TEXT, which must be printable ASCII, and a newline are
+# typed on the guest console through SOCKET (QEMU's socket chardev for the
+# serial port), one byte per echo (class Typist), and "CONSOLE_ANSWERED" is
+# printed.  A second prompt is a problem.  vm-provider.sh
+# uses it to answer the single-user shell prompt (SINGLE_USER_SHELL).
+#
 # The second form reads a whole serial log after the run: exit 0 when some
 # reversal report matches no known-lor.txt entry, 1 when none does, 2 when
 # the log or the list cannot be read (the caller must count that as an
@@ -44,6 +54,7 @@ import os
 import re
 import select
 import signal
+import socket
 import sys
 import time
 
@@ -110,13 +121,26 @@ def has_unknown_lor(log, known):
 
 
 class Watch:
-    def __init__(self, fatal, pats, check_lor):
+    def __init__(self, fatal, pats, check_lor, answer=None):
         self.fatal = re.compile(fatal)
         self.pats = pats
         self.check_lor = check_lor
         self.lines = []
         self.partial = b""
         self.open_reports = []      # indexes of header lines not yet classified
+        self.answer = re.compile(answer) if answer else None
+        self.prompt_lines = set()   # line numbers that held a whole prompt
+        self.answered = 0
+        self.want_answer = False
+
+    def prompt_count(self, tail):
+        """Prompts seen so far.  A prompt is the line still being written
+        (no newline yet) when it matches the answer pattern, which the
+        caller anchors to the prompt's end (": $"), so a prompt written in
+        two parts counts only once it is whole.  Each line counts once."""
+        if self.answer.search(tail):
+            self.prompt_lines.add(len(self.lines))
+        return len(self.prompt_lines)
 
     def feed(self, data):
         """Add log bytes; return a problem description or None."""
@@ -131,6 +155,12 @@ class Watch:
         for l in new + [tail]:
             if self.fatal.search(l):
                 return "fatal console line: " + l.strip()
+        if self.answer is not None:
+            n = self.prompt_count(tail)
+            if n > self.answered:
+                if self.answered >= 1:
+                    return "console prompt again after it was answered"
+                self.want_answer = True
         if not self.check_lor:
             return None
         for i in range(first, len(self.lines)):
@@ -156,6 +186,53 @@ class Watch:
                 problem = "lock order reversal matching no known-lor.txt entry"
         self.open_reports = still
         return problem
+
+
+class Typist:
+    """Types an answer on a serial console one byte at a time.
+
+    The port has no flow control, so a byte the guest has not taken yet is
+    dropped: each byte is typed only once the console has echoed the one
+    before.  Other output may arrive around the echo (kernel messages,
+    printf without a newline), so the echo of the pending byte is found in
+    what arrived since it was typed, by where it can be: anywhere on the
+    line the cursor was on (it may be split by a partial printf), or at the
+    start of a line begun since (a message ended the cursor's line first).
+    Whole lines in between that do not start with it are other output.
+    The newline that ends the answer is the last byte: nothing waits for
+    its echo.  The answer must be printable ASCII: a control character
+    echoes as two characters (^X) under ECHOCTL.
+    """
+
+    def __init__(self, text):
+        if not text or any(b < 0x20 or b > 0x7e for b in text):
+            raise ValueError("the answer must be non-empty printable ASCII")
+        self.queue = [bytes([b]) for b in text] + [b"\n"]
+        self.pending = None
+        self.since = bytearray()
+
+    def next(self):
+        """The byte to type now."""
+        self.pending = self.queue.pop(0)
+        del self.since[:]
+        return self.pending
+
+    def done(self):
+        return not self.queue
+
+    def output(self, data):
+        """Console output that arrived since the last byte was typed."""
+        if self.pending is not None:
+            self.since.extend(data)
+
+    def ready(self):
+        """True when the next byte may be typed."""
+        if self.pending is None:
+            return True
+        segs = bytes(self.since).replace(b"\r", b"").split(b"\n")
+        if self.pending in segs[0]:
+            return True
+        return any(seg.startswith(self.pending) for seg in segs[1:])
 
 
 def stop(pid, kq, grace):
@@ -195,7 +272,7 @@ def monitor(args):
     pid, log, deadline = int(args["--pid"]), args["--log"], float(args["--deadline"])
     grace = float(args.get("--grace", FATAL_GRACE_S))
     w = Watch(args["--fatal"], load_known(args["--known"]),
-              args.get("--fatal-lor", "yes") != "no")
+              args.get("--fatal-lor", "yes") != "no", args.get("--answer"))
     kq = select.kqueue()
     fd = os.open(log, os.O_RDONLY)
     kq.control([select.kevent(fd, select.KQ_FILTER_VNODE,
@@ -221,16 +298,40 @@ def monitor(args):
         print("qemu had exited before the monitor started", flush=True)
         return 5
 
+    typist = [None]
+
     def drain():
         while True:
             d = os.read(fd, 1 << 16)
             if not d:
                 return None
+            if typist[0] is not None:
+                typist[0].output(d)
             p = w.feed(d)
             if p:
                 return p
 
+    def answer():
+        """Start typing the answer, once."""
+        w.want_answer = False
+        w.answered += 1
+        typist[0] = Typist(args["--answer-text"].encode())
+        console[0] = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        console[0].connect(args["--console"])
+        type_next()
+
+    console = [None]
+
+    def type_next():
+        console[0].sendall(typist[0].next())
+        if typist[0].done():
+            console[0].close()
+            console[0] = None
+            print("CONSOLE_ANSWERED", flush=True)
+
     problem = drain()
+    if problem is None and w.want_answer:
+        answer()
     while problem is None:
         left = deadline - time.time()
         if left <= 0:
@@ -240,6 +341,11 @@ def monitor(args):
         evs = kq.control(None, 4, left)
         exited = any(e.filter == select.KQ_FILTER_PROC for e in evs)
         problem = drain()
+        if problem is None and w.want_answer and not exited:
+            answer()
+        elif (problem is None and not exited and typist[0] is not None and
+              not typist[0].done() and typist[0].ready()):
+            type_next()
         if exited and problem is None:
             return 0
         if exited:
@@ -264,10 +370,18 @@ def main(argv):
     for a in it:
         args[a] = next(it, None)
     need = ("--pid", "--log", "--deadline", "--fatal", "--known")
+    if args.get("--answer") is not None:
+        need += ("--answer-text", "--console")
+        try:
+            Typist((args.get("--answer-text") or "").encode())
+        except ValueError as e:
+            print("vm-monitor: --answer-text: %s" % e, file=sys.stderr)
+            return 2
     if any(args.get(k) is None for k in need):
         print("usage: vm-monitor.py --pid PID --log LOG --deadline EPOCH "
               "--fatal REGEX --known FILE [--fatal-lor yes|no] "
-              "[--grace S]", file=sys.stderr)
+              "[--grace S] [--answer REGEX --answer-text TEXT "
+              "--console SOCKET]", file=sys.stderr)
         return 2
     try:
         return monitor(args)

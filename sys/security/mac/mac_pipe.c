@@ -227,7 +227,7 @@ MAC_CHECK_PROBE_DEFINE2(pipe_check_write, "struct ucred *",
     "struct pipepair *");
 
 int
-mac_pipe_check_write(struct ucred *cred, struct pipepair *pp)
+mac_pipe_check_write_impl(struct ucred *cred, struct pipepair *pp)
 {
 	int error;
 

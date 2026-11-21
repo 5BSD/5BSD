@@ -73,7 +73,9 @@ check-runner:
     vm-provider-plane-off-enforce vm-provider-deferred-tiers \
     vm-provider-kmod-skips vm-provider-plain-skips vm-provider-test-packages vm-provider-test-kernel-proof \
     vm-provider-dq-preload vm-provider-reroot vm-provider-stack-tier-verdict \
-    vm-provider-kill-after-exit vm-provider-known-lor vm-provider-stale-tests
+    vm-provider-scratch-disk vm-provider-log-bytes \
+    vm-provider-kill-after-exit vm-provider-known-lor vm-provider-stale-tests \
+    vm-monitor-typist vm-provider-single-user-answer
 	sh ${.CURDIR}/tests/${t}.sh
 .endfor
 check: check-bindings check-runner

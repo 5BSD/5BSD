@@ -61,19 +61,42 @@ int oes_default_deadline = OES_DEFAULT_DEADLINE_MS;
 SYSCTL_INT(_security_oes, OID_AUTO, default_deadline_ms, CTLFLAG_RW,
     &oes_default_deadline, 0, "Default AUTH deadline in milliseconds");
 
+/*
+ * The strict settings decide whether an AUTH operation nobody answers is
+ * denied, so they decide whether AUTH hooks run with nobody listening: a
+ * write goes through oes_gate_set_strict(), which makes the hooks live
+ * before a value that needs them is visible.  Values are not validated, as
+ * before.
+ */
+static int
+oes_sysctl_strict(SYSCTL_HANDLER_ARGS)
+{
+	int error, value;
+
+	value = *(int *)arg1;
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	oes_gate_set_strict(arg1, value);
+	return (0);
+}
+
 int oes_default_deadline_miss_mode = OES_DEADLINE_MISS_FAIL_OPEN;
-SYSCTL_INT(_security_oes, OID_AUTO, default_deadline_miss_mode, CTLFLAG_RW,
-    &oes_default_deadline_miss_mode, 0,
+SYSCTL_PROC(_security_oes, OID_AUTO, default_deadline_miss_mode,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
+    &oes_default_deadline_miss_mode, 0, oes_sysctl_strict, "I",
     "Default AUTH deadline miss mode (0=fail open, 1=fail closed)");
 
 int oes_auth_fail_closed = 0;
-SYSCTL_INT(_security_oes, OID_AUTO, auth_fail_closed, CTLFLAG_RW,
-    &oes_auth_fail_closed, 0,
+SYSCTL_PROC(_security_oes, OID_AUTO, auth_fail_closed,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
+    &oes_auth_fail_closed, 0, oes_sysctl_strict, "I",
     "Deny AUTH operations when OES cannot allocate or deliver required state");
 
 int oes_require_auth_clients = 0;
-SYSCTL_INT(_security_oes, OID_AUTO, require_auth_clients, CTLFLAG_RW,
-    &oes_require_auth_clients, 0,
+SYSCTL_PROC(_security_oes, OID_AUTO, require_auth_clients,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
+    &oes_require_auth_clients, 0, oes_sysctl_strict, "I",
     "Deny AUTH operations when no AUTH client is consulted");
 
 int oes_default_queue_size = OES_DEFAULT_QUEUE_SIZE;
@@ -84,6 +107,11 @@ int oes_max_clients = 64;
 SYSCTL_INT(_security_oes, OID_AUTO, max_clients, CTLFLAG_RW,
     &oes_max_clients, 0, "Maximum number of concurrent clients");
 
+SYSCTL_UINT(_security_oes, OID_AUTO, defer_max, CTLFLAG_RD,
+    SYSCTL_NULL_UINT_PTR, OES_DEFER_MAX,
+    "Events the deferred-delivery queue holds before it discards "
+    "(es_nosleep_drops)");
+
 int oes_cache_max_entries = 1024;
 SYSCTL_INT(_security_oes, OID_AUTO, cache_max_entries, CTLFLAG_RW,
     &oes_cache_max_entries, 0, "Maximum decision cache entries per client");
@@ -91,7 +119,7 @@ SYSCTL_INT(_security_oes, OID_AUTO, cache_max_entries, CTLFLAG_RW,
 /*
  * Events dropped before anything was allocated for them, because every open
  * client is jail-scoped and none covers the subject (oes_event_unobserved()).
- * The counters exist only once oes_dev_init() has run.
+ * The counters exist only once oes_dev_state_init() has run.
  */
 static int
 oes_sysctl_jail_counter(SYSCTL_HANDLER_ARGS)
@@ -368,6 +396,8 @@ oes_client_dtor(void *data)
 	EC_UNLOCK(ec);
 	atomic_subtract_int(&oes_softc.sc_nclients, 1);
 	OES_UNLOCK();
+	/* Hooks only this client needed go idle; nothing waits for them. */
+	oes_gate_client_update(ec, true);
 	if (pr != NULL)
 		prison_free(pr);
 	if (setter_pr != NULL)
@@ -1394,27 +1424,22 @@ oes_kqread(struct knote *kn, long hint)
 	return (!TAILQ_EMPTY(&ec->ec_pending));
 }
 
-/* The sysctl handler reads the pointers: clear each before it is freed. */
-static void
-oes_jail_counters_free(void)
-{
-	counter_u64_t c;
-
-	c = oes_softc.sc_jail_filtered;
-	oes_softc.sc_jail_filtered = NULL;
-	if (c != NULL)
-		counter_u64_free(c);
-	c = oes_softc.sc_jail_filtered_auth;
-	oes_softc.sc_jail_filtered_auth = NULL;
-	if (c != NULL)
-		counter_u64_free(c);
-}
-
 /*
- * Device initialization
+ * OES starts in two steps.  At SI_SUB_MAC_POLICY, before the framework's
+ * late boundary, oes_policy_sysinit() builds every piece of state a hook can
+ * reach and registers the MAC policy, which then sits on the framework's
+ * static list like any policy present at boot: its walks take no lock and
+ * do not pin the calling thread.  The hooks start idle (no client can
+ * exist yet) and inert (sc_active is false).  At SI_SUB_DRIVERS the module
+ * handler starts what needs the system further up: the delivery thread,
+ * the device, the jail methods and the event handlers, and only then makes
+ * OES active.  OES never unloads.
  */
-int
-oes_dev_init(void)
+static bool oes_policy_registered;
+
+/* The state the hooks reach: everything but the thread and the device. */
+static void
+oes_dev_state_init(void)
 {
 	bzero(&oes_softc, sizeof(oes_softc));
 
@@ -1429,11 +1454,35 @@ oes_dev_init(void)
 	oes_softc.sc_jail_filtered = counter_u64_alloc(M_WAITOK);
 	oes_softc.sc_jail_filtered_auth = counter_u64_alloc(M_WAITOK);
 
-	/* Deferred NOSLEEP notify delivery. */
+	/* Idle gating; oes_mac_policy_init() computes the first liveness. */
+	sx_init(&oes_softc.sc_gate_sx, "oes gate");
+	oes_softc.sc_gate_passes = counter_u64_alloc(M_WAITOK);
+
+	/* Deferred NOSLEEP notify delivery; its thread starts in attach. */
 	mtx_init(&oes_softc.sc_defer_mtx, "oes_defer", NULL, MTX_SPIN);
 	TAILQ_INIT(&oes_softc.sc_defer);
 	oes_softc.sc_defer_count = 0;
 	TASK_INIT(&oes_softc.sc_defer_task, 0, oes_defer_task_fn, NULL);
+}
+
+static void
+oes_policy_sysinit(void *arg __unused)
+{
+
+	/* A load after boot is refused by oes_modevent(). */
+	if (!cold)
+		return;
+	oes_dev_state_init();
+	if (oes_mac_policy_init() == 0)
+		oes_policy_registered = true;
+}
+SYSINIT(oes_policy, SI_SUB_MAC_POLICY, SI_ORDER_MIDDLE, oes_policy_sysinit,
+    NULL);
+
+/* The delivery thread and the device; then OES is active. */
+int
+oes_dev_attach(void)
+{
 
 	/*
 	 * Dedicated worker thread for deferred NOSLEEP event delivery.  A
@@ -1442,20 +1491,27 @@ oes_dev_init(void)
 	 * dedicated thread rather than contending with unrelated work on the
 	 * shared taskqueue_thread, which was observed to stall deferred delivery
 	 * long enough for observers to miss events under load.
+	 *
+	 * User threads produce the events and set their volume, so the thread
+	 * is a timeshare thread starting at PUSER, the priority every user
+	 * thread starts from, not above its producers.  Woken, it does not
+	 * preempt a producer on that producer's CPU, and oes_defer_task_fn()
+	 * moves it to the timeshare priority the scheduler computes for it
+	 * whenever the scheduler ends its slice.  Under a storm the queue
+	 * then fills and events beyond its limit (OES_DEFER_MAX) are
+	 * discarded and counted in es_nosleep_drops (oes(4)).
 	 */
 	oes_softc.sc_defer_tq = taskqueue_create("oes_deferq", M_WAITOK,
 	    taskqueue_thread_enqueue, &oes_softc.sc_defer_tq);
-	taskqueue_start_threads(&oes_softc.sc_defer_tq, 1, PI_SOFT,
+	taskqueue_start_threads(&oes_softc.sc_defer_tq, 1, PUSER,
 	    "oes_deferq");
 
 	oes_softc.sc_cdev = make_dev(&oes_cdevsw, 0, UID_ROOT, GID_WHEEL,
 	    0600, "oes");
 	if (oes_softc.sc_cdev == NULL) {
+		/* Cold and inactive: nothing has queued to the thread. */
 		taskqueue_free(oes_softc.sc_defer_tq);
-		mtx_destroy(&oes_softc.sc_defer_mtx);
-		oes_jail_counters_free();
-		rm_destroy(&oes_softc.sc_jail_lock);
-		mtx_destroy(&oes_softc.sc_mtx);
+		oes_softc.sc_defer_tq = NULL;
 		return (ENXIO);
 	}
 
@@ -1464,62 +1520,6 @@ oes_dev_init(void)
 	printf("oes: Endpoint Security Capabilities device created\n");
 
 	return (0);
-}
-
-/*
- * Undo oes_dev_init().  The only caller is the MOD_LOAD failure path, which
- * runs while the kernel is still cold: OES is compiled in or preloaded, a
- * load after boot is refused and MOD_UNLOAD always fails with EBUSY.  No
- * process has run yet, so no client can have opened the device and there is
- * nothing to drain; destroy_dev() waits for any thread still in a cdevsw
- * method.
- */
-void
-oes_dev_uninit(void)
-{
-
-	KASSERT(cold, ("oes_dev_uninit: OES never unloads after boot"));
-	if (!oes_softc.sc_active && oes_softc.sc_cdev == NULL)
-		return;
-
-	oes_softc.sc_active = false;
-
-	/* Cold: no process has run, so nothing else touches the client list. */
-	KASSERT(oes_softc.sc_nclients == 0 &&
-	    LIST_EMPTY(&oes_softc.sc_clients),
-	    ("oes_dev_uninit: %u clients open", oes_softc.sc_nclients));
-
-	if (oes_softc.sc_cdev != NULL) {
-		destroy_dev(oes_softc.sc_cdev);
-		oes_softc.sc_cdev = NULL;
-	}
-
-	printf("oes: device destroyed\n");
-
-	/*
-	 * Deferred delivery: sc_active is false so no new events are queued.
-	 * Drain the task, then release anything still on the deferred list.
-	 */
-	taskqueue_drain(oes_softc.sc_defer_tq, &oes_softc.sc_defer_task);
-	taskqueue_free(oes_softc.sc_defer_tq);
-	{
-		struct oes_pending *ep;
-
-		mtx_lock_spin(&oes_softc.sc_defer_mtx);
-		while ((ep = TAILQ_FIRST(&oes_softc.sc_defer)) != NULL) {
-			TAILQ_REMOVE(&oes_softc.sc_defer, ep, ep_link);
-			oes_softc.sc_defer_count--;
-			mtx_unlock_spin(&oes_softc.sc_defer_mtx);
-			oes_pending_rele(ep);
-			mtx_lock_spin(&oes_softc.sc_defer_mtx);
-		}
-		mtx_unlock_spin(&oes_softc.sc_defer_mtx);
-	}
-	mtx_destroy(&oes_softc.sc_defer_mtx);
-
-	oes_jail_counters_free();
-	rm_destroy(&oes_softc.sc_jail_lock);
-	mtx_destroy(&oes_softc.sc_mtx);
 }
 
 /*
@@ -1537,17 +1537,26 @@ oes_modevent(module_t mod, int type, void *data)
 			error = EBUSY;
 			break;
 		}
-		error = oes_dev_init();
-		if (error != 0)
-			break;
-		error = oes_mac_init();
-		if (error != 0) {
-			oes_dev_uninit();
+		if (!oes_policy_registered) {
+			/* oes_mac_policy_init() said why. */
+			error = ENXIO;
 			break;
 		}
+		/*
+		 * On failure the policy stays registered, idle and inert: a
+		 * static policy is never unregistered, and with sc_active
+		 * false its hooks do nothing.
+		 */
+		error = oes_dev_attach();
+		if (error == 0)
+			error = oes_mac_attach();
 		break;
 
 	case MOD_UNLOAD:
+		/*
+		 * OES never unloads (owner decision 2026-11-15).  Hooks, tables
+		 * and locks are permanent; oes_gate_reconcile() relies on it.
+		 */
 		error = EBUSY;
 		break;
 
