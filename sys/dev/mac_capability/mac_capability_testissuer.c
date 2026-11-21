@@ -473,7 +473,9 @@ mac_capability_test_issuer_oes_gate_park(void)
 			    &mac_capability_test_issuer_oes_gate_state,
 			    &mac_capability_test_issuer_oes_gate_mtx, PCATCH,
 			    "oesghold", 0);
-		if (error != 0)
+		/* Interrupted: release this hold, not one armed since. */
+		if (error != 0 &&
+		    mac_capability_test_issuer_oes_gate_state == 2)
 			mac_capability_test_issuer_oes_gate_off();
 	}
 	mtx_unlock(&mac_capability_test_issuer_oes_gate_mtx);
