@@ -466,6 +466,49 @@ ATF_TC_BODY(ambient_requester_gone_answered, tc)
 	npending = 0;
 }
 
+/*
+ * A pending ambient lookup's channel is always still listed (a closed one
+ * drops its lookups: on_demand_lookup_channel_gone()), so "not live" means
+ * the route's owning unit generation is gone while a process may still wait
+ * on the channel.  Its client waits with no timeout: it must be answered
+ * ECONNRESET, by the broker and by every status reply (timeout, provider
+ * failure, activation result).  The stub's lookup_channel_is_live() says no.
+ */
+ATF_TC(ambient_unlive_channel_answered);
+ATF_TC_HEAD(ambient_unlive_channel_answered, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "a pending ambient lookup whose channel's owner is gone is answered "
+	    "ECONNRESET, never dropped");
+}
+ATF_TC_BODY(ambient_unlive_channel_answered, tc)
+{
+	struct pending_lookup pending;
+	struct svc_runtime provider;
+	struct svc_lookup_channel *lc;
+	int fake_request;
+
+	lc = (struct svc_lookup_channel *)&lc;	/* an opaque, distinct pointer */
+	runtime_init(&provider, "org.test.provider", 401, 30);
+	pending_init(&pending, &provider, "org.test.endpoint");
+	pending.ambient_lc = lc;
+
+	/* A status reply (here a timeout) on such a channel. */
+	pending.request = (struct channel_message *)&fake_request;
+	answered_count = 0;
+	pending_reply_status(&pending, ETIMEDOUT, -1);
+	ATF_CHECK_EQ(1, answered_count);
+	ATF_CHECK(answered_lc == lc);
+	ATF_CHECK_EQ(ECONNRESET, answered_status);
+
+	/* The broker, once the provider is up. */
+	pending.request = NULL;
+	answered_count = 0;
+	(void)on_demand_broker(&pending, -1);
+	ATF_CHECK_EQ(1, answered_count);
+	ATF_CHECK_EQ(ECONNRESET, answered_status);
+}
+
 ATF_TC(timer_identifiers);
 ATF_TC_HEAD(timer_identifiers, tc)
 {
@@ -2002,6 +2045,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, provider_incarnation);
 	ATF_TP_ADD_TC(tp, provider_name_filter);
 	ATF_TP_ADD_TC(tp, ambient_requester_gone_answered);
+	ATF_TP_ADD_TC(tp, ambient_unlive_channel_answered);
 	ATF_TP_ADD_TC(tp, timer_identifiers);
 	ATF_TP_ADD_TC(tp, timer_registration_failure);
 	ATF_TP_ADD_TC(tp, circuit_breaker_blocks_on_demand_relaunch);
