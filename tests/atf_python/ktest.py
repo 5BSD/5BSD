@@ -38,6 +38,13 @@ class KtestItem(pytest.Item):
     def runtest(self):
         self._kcls().runtest()
 
+    def reportinfo(self):
+        # A ktest has no Python source of its own: report it at its class.
+        # pytest builds a skip report (a skipif mark on the module or the
+        # class) from this location and requires a line number.
+        path, line, _ = self.parent.reportinfo()
+        return path, line, self.name
+
 
 class KtestCollector(pytest.Class):
     def collect(self):
