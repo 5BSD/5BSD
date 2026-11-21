@@ -1,0 +1,25 @@
+lock order reversal:
+ 1st 0xff01000231f93230 ufs (ufs, lockmgr) @ /usr/src/sys/kern/vfs_mount.c:1290
+ 2nd 0xff010002314a35b0 tmpfs (tmpfs, lockmgr) @ /usr/src/sys/kern/vfs_subr.c:3437
+lock order tmpfs -> ufs established at:
+#0 0xffffffff80e7c3aa at witness_checkorder+0x36a
+#1 0xffffffff80dcb2aa at lockmgr_lock_flags+0x16a
+#2 0xffffffff8135da1d at ffs_lock+0x8d
+#3 0xffffffff81677042 at VOP_LOCK1_APV+0x32
+#4 0xffffffff80f4e762 at _vn_lock+0x62
+#5 0xffffffff83a1a56f at unionfs_nodeget+0x39f
+#6 0xffffffff83a1f5a9 at unionfs_lookup+0x809
+#7 0xffffffff81673cef at VOP_CACHEDLOOKUP_APV+0x4f
+#8 0xffffffff815225fc at amd64_syscall+0xaec
+#9 0xffffffff814ed79b at fast_syscall_common+0xf8
+lock order ufs -> tmpfs attempted at:
+#0 0xffffffff80e7cd7b at witness_checkorder+0xd3b
+#1 0xffffffff80dcb2aa at lockmgr_lock_flags+0x16a
+#2 0xffffffff81677042 at VOP_LOCK1_APV+0x32
+#3 0xffffffff80f4e762 at _vn_lock+0x62
+#4 0xffffffff80f31989 at vget_finish+0xaf
+#5 0xffffffff80d38750 at tmpfs_mount+0x170
+#6 0xffffffff80f24a01 at vfs_domount_update+0x391
+#7 0xffffffff80f25369 at vfs_domount+0x409
+#8 0xffffffff815225fc at amd64_syscall+0xaec
+#9 0xffffffff814ed79b at fast_syscall_common+0xf8
