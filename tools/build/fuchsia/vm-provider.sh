@@ -34,7 +34,8 @@
 #   can occupy, so ENOMEM there is expected), PARALLELISM (kyua, default 1),
 #   with sys/dq (or a program under it) in the suites, imgact_binmisc and
 #   dtraceall are preloaded for them; with sys/mac_capability or its
-#   issuer-decision probe programs, dtraceall; with usr.sbin/bsd-build,
+#   issuer-decision probe programs, dtraceall; with sys/mac_capability or
+#   its cap_exclusion_test, also filemon; with usr.sbin/bsd-build,
 #   zfs (an md-backed pool gives one case ACLs); with sys/kern or
 #   sys/kern/ptrace_sleep_test, fusefs (its presleep cases serve one),
 #   ROOT_FS (ufs, the default, or zfs: a ZFS root pool for the suites that
@@ -227,15 +228,31 @@ esac
 # LOADER_EXTRA still carries
 # the Linux modules, mac_test_hooks and the rest of the recipe (DQ chapter
 # of the book, section 17); a module named twice is loaded once.
+# cap_exclusion_test's T1 cases need fasttrap (in dtraceall) and filemon;
+# they declare require.kmods, so a guest without them is KMOD_SKIPPED,
+# not clean.  The lists add up: a run of sys/dq and sys/mac_capability
+# programs gets every module either needs.
 dq_loader=
+dq_loader_add() {
+	dq_loader="${dq_loader:+$dq_loader
+}$1"
+}
 case " $suites " in
 *" sys/dq "*|*" sys/dq/"*)
-	dq_loader='imgact_binmisc_load="YES"
-dtraceall_load="YES"' ;;
-*" sys/mac_capability "*|*" sys/mac_capability/authority_issuer_probe_test"*|\
-*" sys/mac_capability/authority_test_issuer_anchor_test"*)
-	dq_loader='dtraceall_load="YES"' ;;
+	dq_loader_add 'imgact_binmisc_load="YES"' ;;
 esac
+case " $suites " in
+*" sys/dq "*|*" sys/dq/"*|*" sys/mac_capability "*|\
+*" sys/mac_capability/authority_issuer_probe_test"*|\
+*" sys/mac_capability/authority_test_issuer_anchor_test"*|\
+*" sys/mac_capability/cap_exclusion_test"*)
+	dq_loader_add 'dtraceall_load="YES"' ;;
+esac
+case " $suites " in
+*" sys/mac_capability "*|*" sys/mac_capability/cap_exclusion_test"*)
+	dq_loader_add 'filemon_load="YES"' ;;
+esac
+# end of dq_loader
 # bsd_build_test:generation_reconciliation runs its ACL subtest on an
 # md-backed ZFS pool (GENERIC has no UFS_ACL); the plane refuses a late
 # kldload of zfs.

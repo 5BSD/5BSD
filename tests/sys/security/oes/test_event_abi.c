@@ -36,6 +36,10 @@ _Static_assert(sizeof(oes_process_t) == 432,
     "process v2 wire size changed");
 _Static_assert(offsetof(oes_process_t, ep_coalition) == 408,
     "coalition identity must follow the v1 process layout unchanged");
+/* Base exclusion: ep_cap_roles took ep_pad3's place, same size and offset. */
+_Static_assert(offsetof(oes_process_t, ep_cap_roles) == 428 &&
+    sizeof(((oes_process_t *)0)->ep_cap_roles) == 4,
+    "ep_cap_roles must keep ep_pad3's offset and size");
 _Static_assert(sizeof(oes_file_t) == 208,
     "file v1 wire size changed");
 /*

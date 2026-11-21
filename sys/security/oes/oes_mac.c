@@ -10,6 +10,8 @@
  * security events for subscribed clients.
  */
 
+#include "opt_mac_capability.h"
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -382,6 +384,19 @@ oes_gate_bit(const uint64_t sub[4], uint16_t event)
 static u_int oes_gate_subcount[4 * 64];
 static u_int oes_gate_cache_clients;
 
+/*
+ * Does any open client use the decision cache?  The count the gate keeps;
+ * read without sc_gate_sx by base exclusion, whose writes and namespace
+ * changes still drop cached decisions while it is non-zero (every such hook
+ * is OES_HD_INVALIDATES, so it is live exactly then).
+ */
+bool
+oes_gate_cache_in_use(void)
+{
+
+	return (atomic_load_int(&oes_gate_cache_clients) != 0);
+}
+
 static void
 oes_gate_reconcile_locked(bool force_strict)
 {
@@ -735,6 +750,23 @@ oes_pipe_id(struct pipepair *pp, struct label *pplabel)
 		SLOT_SET(pplabel, id);
 	}
 	return (id);
+}
+
+/*
+ * The execution identity recorded in a credential's OES label (0 without
+ * one).  A thread's own td_ucred is stable for the thread, so this needs no
+ * process lock; exec gives the new image a credential with a new id, and
+ * credential copies keep it.
+ */
+uint64_t
+oes_cred_get_exec_id(struct ucred *cred)
+{
+	struct oes_cred_label *ecl;
+
+	if (cred == NULL || cred->cr_label == NULL)
+		return (0);
+	ecl = SLOT(cred->cr_label);
+	return (ecl != NULL ? ecl->ecl_exec_id : 0);
 }
 
 uint64_t
@@ -1198,6 +1230,7 @@ oes_dispatch_auth_notification(const struct oes_pending *ep, struct proc *p,
     struct ucred *cred, oes_event_type_t notify_event,
     oes_auth_result_t result)
 {
+	struct epoch_tracker et;
 	struct oes_client *ec;
 	struct oes_pending *ep_notify;
 	oes_event_type_t auth_event;
@@ -1209,8 +1242,13 @@ oes_dispatch_auth_notification(const struct oes_pending *ep, struct proc *p,
 
 	auth_event = ep->ep_msg.em_event;
 	OES_LOCK();
+	oes_readers_enter(&et);
 	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
 		if (!oes_pending_visible_to_client(ep, ec))
+			continue;
+		/* Never to a client its subject acts as (lock-free). */
+		if (oes_client_is_reader(ec, &ep->ep_msg.em_process) !=
+		    OES_READER_NONE)
 			continue;
 		EC_LOCK(ec);
 		if (ec->ec_flags & EC_FLAG_CLOSING) {
@@ -1249,6 +1287,7 @@ oes_dispatch_auth_notification(const struct oes_pending *ep, struct proc *p,
 		}
 		EC_UNLOCK(ec);
 	}
+	oes_readers_exit(&et);
 	OES_UNLOCK();
 }
 
@@ -1256,6 +1295,7 @@ static int
 oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
     oes_event_type_t notify_event)
 {
+	struct epoch_tracker et;
 	struct oes_client *ec;
 	struct oes_pending *ep_client;
 	struct oes_auth_group *ag = NULL;
@@ -1269,11 +1309,15 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 	bool auth_delivery_fail_closed = false;
 	bool is_auth;
 	bool cached_denied = false;
+	bool fail_open;
+	int reader;
 	int error = 0;
 	oes_event_type_t event;
 
 	event = ep->ep_msg.em_event;
 	is_auth = OES_EVENT_IS_AUTH(event);
+	/* An exec by an excluded launcher: only a client's DENY refuses. */
+	fail_open = (ep->ep_flags & EP_FLAG_FAIL_OPEN) != 0;
 
 	if (is_auth) {
 		/*
@@ -1371,13 +1415,13 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 		OES_LOCK();
 	}
 
-	/* Snapshot the portable equivalent of es_process_t.is_es_client. */
-	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
-		if (ec->ec_owner_pid != ep->ep_msg.em_process.ep_pid ||
-		    (ec->ec_owner_genid != 0 &&
-		    ec->ec_owner_genid !=
-		    ep->ep_msg.em_process.ep_token.ept_genid))
-			continue;
+	/* One epoch section for the snapshot and the delivery loop. */
+	oes_readers_enter(&et);
+	/*
+	 * Snapshot the portable equivalent of es_process_t.is_es_client: the
+	 * subject acts as some client (one of its readers).
+	 */
+	if (oes_process_is_reader(&ep->ep_msg.em_process)) {
 		ep->ep_msg.em_process.ep_flags |= EP_FLAG_OES_CLIENT;
 		if (auth_clones != NULL) {
 			for (size_t i = 0; i < auth_max; i++) {
@@ -1386,7 +1430,6 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 					    EP_FLAG_OES_CLIENT;
 			}
 		}
-		break;
 	}
 
 	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
@@ -1394,21 +1437,28 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 
 		if (!oes_pending_visible_to_client(ep, ec))
 			continue;
+		/*
+		 * A client never receives events caused by the processes that
+		 * act as it (its readers); lock-free.  For AUTH that is an
+		 * implicit allow, as part of the policy.
+		 */
+		reader = oes_client_is_reader(ec, &ep->ep_msg.em_process);
 		EC_LOCK(ec);
 
 		if (ec->ec_flags & EC_FLAG_CLOSING) {
 			EC_UNLOCK(ec);
 			continue;
 		}
-
-		/* AUTH clients never authorize their own operations. */
-		if (is_auth && ec->ec_mode == OES_MODE_AUTH &&
-		    oes_client_subscribed(ec, event) &&
-		    ep->ep_msg.em_process.ep_pid == ec->ec_owner_pid &&
-		    (ec->ec_owner_genid == 0 ||
-		    ep->ep_msg.em_process.ep_token.ept_genid ==
-		    ec->ec_owner_genid)) {
-			auth_consulted = true; /* Implicit allow, as part of the policy. */
+		/*
+		 * NOTIFY: never.  AUTH: an implicit allow from this client,
+		 * but only for a reader that can answer (owner, 2026-11-19);
+		 * a read-only reader's AUTH events are delivered as usual.
+		 */
+		if (reader == OES_READER_ANSWER ||
+		    (reader == OES_READER_READ && !is_auth)) {
+			if (is_auth && ec->ec_mode == OES_MODE_AUTH &&
+			    oes_client_subscribed(ec, event))
+				auth_consulted = true;
 			EC_UNLOCK(ec);
 			continue;
 		}
@@ -1438,7 +1488,9 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 		if (is_auth) {
 			if (ec->ec_mode == OES_MODE_AUTH) {
 				uint32_t deadline_ms;
-				uint32_t miss_mode = ec->ec_deadline_miss_mode;
+				uint32_t miss_mode = fail_open ?
+				    OES_DEADLINE_MISS_FAIL_OPEN :
+				    ec->ec_deadline_miss_mode;
 				oes_auth_result_t cache_result;
 
 				if (!oes_client_subscribed(ec, event)) {
@@ -1521,6 +1573,7 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 		}
 		EC_UNLOCK(ec);
 	}
+	oes_readers_exit(&et);
 
 	OES_UNLOCK();
 
@@ -1535,14 +1588,15 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 	if (is_auth && auth_count == 0 && !auth_consulted && !cached_denied) {
 		OES_DEBUG("AUTH event 0x%x: no clients consulted, fail-open",
 		    event);
-		if (oes_require_auth_clients || oes_auth_fail_closed)
+		if (!fail_open &&
+		    (oes_require_auth_clients || oes_auth_fail_closed))
 			error = EACCES;
 	}
 	if (is_auth && auth_count > 0 && ag != NULL)
 		error = oes_auth_group_wait(ag, auth_eps, auth_count);
 	if (is_auth && cached_denied)
 		error = EACCES;
-	if (is_auth && auth_delivery_failed &&
+	if (is_auth && auth_delivery_failed && !fail_open &&
 	    (oes_auth_fail_closed || auth_delivery_fail_closed))
 		error = EACCES;
 
@@ -1666,6 +1720,33 @@ oes_no_clients_permit_auth(void)
 	    oes_default_deadline_miss_mode != OES_DEADLINE_MISS_FAIL_CLOSED);
 }
 
+/*
+ * Count an event an excluded subject did not produce, when some client
+ * could have received it (security.oes.excluded_skipped stays still on an
+ * idle system).
+ */
+static void
+oes_excluded_skip(void)
+{
+
+	if (atomic_load_acq_int(&oes_softc.sc_nclients) != 0)
+		counter_u64_add(oes_softc.sc_excluded_skipped, 1);
+}
+
+/*
+ * An excluded subject's rename needs no source snapshot: it produces no
+ * event, and with no client caching decisions not even an invalidation.
+ * The store and the rename-to hook must agree, or the rename would loop on
+ * ERELOOKUP.
+ */
+static bool
+oes_rename_excluded(void)
+{
+
+	return (oes_subject_excluded() &&
+	    !oes_gate_cache_in_use());
+}
+
 static void
 oes_rename_cache_init(void)
 {
@@ -1692,7 +1773,7 @@ oes_rename_cache_store(struct thread *td,
 	 * policy and requests a complete lookup retry if a snapshot is needed.
 	 * This applies equally to native and emulated callers.
 	 */
-	if (oes_no_clients_permit_auth() ||
+	if (oes_no_clients_permit_auth() || oes_rename_excluded() ||
 	    oes_jail_unobserved(true, true, NULL)) {
 		ctx = oes_rename_cache_take(td);
 		if (ctx != NULL)
@@ -2340,6 +2421,7 @@ oes_accmode_to_access(accmode_t accmode)
 static void
 oes_deliver_notify_locked(struct oes_pending *ep)
 {
+	struct epoch_tracker et;
 	struct oes_client *ec;
 	struct oes_pending *ep_clone;
 	oes_event_type_t notify_event;
@@ -2350,8 +2432,13 @@ oes_deliver_notify_locked(struct oes_pending *ep)
 		notify_event = ep->ep_msg.em_event;
 
 	OES_LOCK();
+	oes_readers_enter(&et);
 	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
 		if (!oes_pending_visible_to_client(ep, ec))
+			continue;
+		/* Never to a client its subject acts as (lock-free). */
+		if (oes_client_is_reader(ec, &ep->ep_msg.em_process) !=
+		    OES_READER_NONE)
 			continue;
 		EC_LOCK(ec);
 		if (ec->ec_flags & EC_FLAG_CLOSING) {
@@ -2395,6 +2482,7 @@ oes_deliver_notify_locked(struct oes_pending *ep)
 			oes_pending_rele(ep_clone);
 		EC_UNLOCK(ec);
 	}
+	oes_readers_exit(&et);
 	OES_UNLOCK();
 }
 
@@ -2512,6 +2600,10 @@ oes_defer_task_fn(void *arg __unused, int pending __unused)
 	bool ending;
 
 	for (;;) {
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+		/* Test kernels: debug.mac_capability.test_issuer_oes_defer_hold. */
+		mac_capability_test_issuer_oes_defer_park();
+#endif
 		/* Before the snapshot; see oes_jail_scopes_claim(). */
 		ending = oes_jail_scopes_claim();
 		mtx_lock_spin(&oes_softc.sc_defer_mtx);
@@ -2579,6 +2671,11 @@ oes_proc_event_fork(void *arg __unused, struct proc *p1,
 
 	if (!oes_softc.sc_active)
 		return;
+	/* Base exclusion: an excluded process's forks are not reported. */
+	if (oes_proc_excluded(p1)) {
+		oes_excluded_skip();
+		return;
+	}
 	if (oes_event_unobserved(false, false, NULL))
 		return;
 
@@ -2621,6 +2718,11 @@ oes_proc_event_exit(void *arg __unused, struct proc *p)
 	if (!oes_softc.sc_active)
 		return;
 
+	if (oes_proc_excluded(p)) {
+		oes_excluded_skip();
+		return;
+	}
+
 	if (oes_event_unobserved(false, false, NULL))
 		return;
 
@@ -2658,6 +2760,10 @@ oes_vfs_event_mounted(void *arg __unused, struct mount *mp,
 		return;
 	if (td == NULL || td->td_proc == NULL)
 		return;
+	if (oes_proc_excluded(td->td_proc)) {
+		oes_excluded_skip();
+		return;
+	}
 	if (oes_event_unobserved(false, false, NULL))
 		return;
 
@@ -2719,6 +2825,10 @@ oes_vfs_event_unmounted(void *arg __unused, struct mount *mp,
 		return;
 	if (td == NULL || td->td_proc == NULL)
 		return;
+	if (oes_proc_excluded(td->td_proc)) {
+		oes_excluded_skip();
+		return;
+	}
 	if (oes_event_unobserved(false, false, NULL))
 		return;
 
@@ -2776,6 +2886,10 @@ oes_kld_event_unload(void *arg __unused, const char *name, caddr_t addr __unused
 
 	if (!oes_softc.sc_active)
 		return;
+	if (oes_subject_excluded()) {
+		oes_excluded_skip();
+		return;
+	}
 	if (oes_event_unobserved(false, false, NULL))
 		return;
 
@@ -3484,6 +3598,7 @@ oes_generate_vnode_event(oes_event_type_t event,
 	int sysctl_op = info->sysctl_op;
 	const char *kenv_name = info->kenv_name;
 	int kenv_op = info->kenv_op;
+	bool excluded, invalidates;
 
 	if (!oes_softc.sc_active || p == NULL)
 		return (0);
@@ -3503,15 +3618,29 @@ oes_generate_vnode_event(oes_event_type_t event,
 	    oes_default_deadline_miss_mode != OES_DEADLINE_MISS_FAIL_CLOSED)))
 		return (0);
 
+	invalidates = oes_event_invalidates_namespace(event) ||
+	    oes_event_invalidates_file(event) ||
+	    ((event == OES_EVENT_AUTH_MMAP ||
+	    event == OES_EVENT_AUTH_MPROTECT) && (prot & PROT_WRITE) != 0);
+
+	/*
+	 * Base exclusion: an excluded subject (Capsule, SwitchBoard, a Core
+	 * unit) produces no event at all and is never denied.  Only its
+	 * writes and namespace changes still drop cached decisions, while a
+	 * client holds any.
+	 */
+	excluded = oes_proc_excluded(p);
+	if (excluded && (!invalidates ||
+	    !oes_gate_cache_in_use())) {
+		oes_excluded_skip();
+		return (0);
+	}
+
 	/*
 	 * With only jail-scoped clients open, drop the event of a subject
 	 * none of them covers before anything is allocated or looked up.
 	 */
-	if (oes_event_unobserved(OES_EVENT_IS_AUTH(event),
-	    oes_event_invalidates_namespace(event) ||
-	    oes_event_invalidates_file(event) ||
-	    ((event == OES_EVENT_AUTH_MMAP ||
-	    event == OES_EVENT_AUTH_MPROTECT) && (prot & PROT_WRITE) != 0),
+	if (oes_event_unobserved(OES_EVENT_IS_AUTH(event), invalidates,
 	    target_proc))
 		return (0);
 
@@ -3521,6 +3650,8 @@ oes_generate_vnode_event(oes_event_type_t event,
 	ep = oes_pending_alloc(event, p);
 	if (ep == NULL) {
 		atomic_add_64(&oes_softc.sc_alloc_failures, 1);
+		if (excluded)
+			return (0);		/* never EACCES */
 		if (OES_EVENT_IS_AUTH(event))
 			return (oes_require_auth_clients || oes_auth_fail_closed ||
 			    oes_default_deadline_miss_mode ==
@@ -3983,6 +4114,13 @@ oes_generate_vnode_event(oes_event_type_t event,
 			oes_cache_invalidate_token(&file->ef_token);
 	}
 
+	/* Excluded: the invalidation was the only work; no event. */
+	if (excluded) {
+		counter_u64_add(oes_softc.sc_excluded_invalidations, 1);
+		oes_pending_rele(ep);
+		return (0);
+	}
+
 	/* Use non-blocking delivery for NOSLEEP hooks */
 	if (info->nosleep) {
 		oes_deliver_notify_nosleep(ep, p);
@@ -4009,6 +4147,7 @@ oes_generate_exec_event(struct ucred *cred, struct vnode *vp,
 	oes_event_type_t event = OES_EVENT_AUTH_EXEC;
 	oes_event_type_t notify_event;
 	int error = 0;
+	bool fail_open;
 
 	if (!oes_softc.sc_active || p == NULL)
 		return (0);
@@ -4021,7 +4160,26 @@ oes_generate_exec_event(struct ucred *cred, struct vnode *vp,
 	 */
 	if (imgp == NULL || imgp->execpath == NULL)
 		return (0);
-	if (oes_no_clients_permit_auth())
+	/*
+	 * Executions are judged by the program that results: a Core image
+	 * (base exclusion, decided before IS_CHECK) produces no event.
+	 */
+	if (imgp->cap_will_exclude) {
+		oes_excluded_skip();
+		return (0);
+	}
+	/*
+	 * An excluded launcher (switchboard's pre-exec launch child) starts a
+	 * unit of a System bundle (CAP_AUTH_ROLE_SYSTEM; owner 2026-11-20).
+	 * Its clients see the launch, but no strict knob, fail-closed
+	 * deadline or allocation failure may deny it: a missing or slow
+	 * client must not stop the base system.  A client's own DENY still
+	 * denies.  Per-user and Apps units, rc and anything else an excluded
+	 * process starts get normal treatment.
+	 */
+	fail_open = imgp->cap_system_launch;
+	if (oes_no_clients_permit_auth() || (fail_open &&
+	    atomic_load_acq_int(&oes_softc.sc_nclients) == 0))
 		return (0);
 	if (oes_event_unobserved(true, false, NULL))
 		return (0);
@@ -4031,12 +4189,18 @@ oes_generate_exec_event(struct ucred *cred, struct vnode *vp,
 	ep = oes_pending_alloc(event, p);
 	if (ep == NULL) {
 		atomic_add_64(&oes_softc.sc_alloc_failures, 1);
+		if (fail_open)
+			return (0);
 		if (OES_EVENT_IS_AUTH(event))
 			return (oes_require_auth_clients ||
 			    oes_auth_fail_closed ||
 			    oes_default_deadline_miss_mode ==
 			    OES_DEADLINE_MISS_FAIL_CLOSED ? EACCES : 0);
 		return (0);
+	}
+	if (fail_open) {
+		ep->ep_flags |= EP_FLAG_FAIL_OPEN;
+		counter_u64_add(oes_softc.sc_exec_fail_open, 1);
 	}
 
 	{
@@ -4495,7 +4659,7 @@ oes_mac_vnode_check_rename_to(struct ucred *cred, struct vnode *dvp,
 	info.rename_ctx = ctx;
 	if (ctx == NULL) {
 		/* New clients or stricter policy require a fresh source snapshot. */
-		return (oes_no_clients_permit_auth() ||
+		return (oes_no_clients_permit_auth() || oes_rename_excluded() ||
 		    oes_event_unobserved(true, true, NULL) ? 0 : ERELOOKUP);
 	}
 
@@ -4870,6 +5034,13 @@ oes_mac_proc_check_mprotect(struct ucred *cred, vm_offset_t addr,
 	if (oes_softc.sc_active &&
 	    oes_event_unobserved(true, (prot & PROT_WRITE) != 0, NULL))
 		return (0);
+	/* The generator's base-exclusion test, made before the map lookup. */
+	if (oes_subject_excluded() && ((prot & PROT_WRITE) == 0 ||
+	    !oes_gate_cache_in_use())) {
+		if (oes_softc.sc_active)
+			oes_excluded_skip();
+		return (0);
+	}
 
 	vp = NULL;
 	if (p != NULL && p->p_vmspace != NULL)
@@ -5073,6 +5244,11 @@ oes_mac_proc_check_signal(struct ucred *cred, struct proc *p, int signum)
 	if (!oes_softc.sc_active ||
 	    atomic_load_acq_int(&oes_softc.sc_nclients) == 0)
 		return (0);
+	/* The acting process decides; the target is not tested. */
+	if (oes_proc_excluded(curp)) {
+		oes_excluded_skip();
+		return (0);
+	}
 	if (oes_event_unobserved(false, false, p))
 		return (0);
 
@@ -5118,6 +5294,11 @@ oes_mac_cred_check_setuid(struct ucred *cred, uid_t uid)
 	if (!oes_softc.sc_active ||
 	    atomic_load_acq_int(&oes_softc.sc_nclients) == 0)
 		return (0);
+	/* The acting process decides; the target is not tested. */
+	if (oes_proc_excluded(curp)) {
+		oes_excluded_skip();
+		return (0);
+	}
 	if (oes_event_unobserved(false, false, NULL))
 		return (0);
 
@@ -5145,6 +5326,11 @@ oes_mac_cred_check_setgid(struct ucred *cred, gid_t gid)
 	if (!oes_softc.sc_active ||
 	    atomic_load_acq_int(&oes_softc.sc_nclients) == 0)
 		return (0);
+	/* The acting process decides; the target is not tested. */
+	if (oes_proc_excluded(curp)) {
+		oes_excluded_skip();
+		return (0);
+	}
 	if (oes_event_unobserved(false, false, NULL))
 		return (0);
 
@@ -5176,6 +5362,11 @@ oes_mac_proc_check_debug(struct ucred *cred, struct proc *p)
 	if (!oes_softc.sc_active ||
 	    atomic_load_acq_int(&oes_softc.sc_nclients) == 0)
 		return (0);
+	/* The acting process decides; the target is not tested. */
+	if (oes_proc_excluded(curp)) {
+		oes_excluded_skip();
+		return (0);
+	}
 	if (oes_event_unobserved(false, false, p))
 		return (0);
 
