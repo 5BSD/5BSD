@@ -541,16 +541,17 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 		goto out;
 	}
 
+	/* A dead instance's service may be gone: look at nothing of it. */
+	if (atomic_load_acq_int(&s->ci_flags) & MAC_CAPABILITY_SF_DEAD) {
+		error = EPIPE;
+		goto out;
+	}
+
 	svc = s->ci_service;
 	if (svc != NULL)
 		svc_name = svc->csvc_name;
 	if (svc == NULL || svc->csvc_ops->co_handler == NULL) {
 		error = EOPNOTSUPP;
-		goto out;
-	}
-
-	if (atomic_load_acq_int(&s->ci_flags) & MAC_CAPABILITY_SF_DEAD) {
-		error = EPIPE;
 		goto out;
 	}
 
@@ -1257,7 +1258,9 @@ out:
  * condition is mac_capability_instance_rx_ready()'s, checked under ci_mtx;
  * every path that frees room or kills the instance wakes &ci_wknotes under
  * the same mutex (next to the EVFILT_WRITE note), so no wakeup is lost.  A
- * dead instance or a revoked lease returns at once and the send reports it.
+ * dead instance ends the wait with EPIPE, as the send would, without a retry
+ * that would look at its service (which a destroy may have unloaded); a
+ * revoked lease ends it with EPERM.
  */
 static int
 mac_capability_instance_wait_room(struct mac_capability_instance *s)
@@ -1266,8 +1269,11 @@ mac_capability_instance_wait_room(struct mac_capability_instance *s)
 
 	error = 0;
 	mtx_lock(&s->ci_mtx);
-	while ((s->ci_flags & MAC_CAPABILITY_SF_DEAD) == 0 &&
-	    s->ci_rxqlen + s->ci_rxheld >= s->ci_rxqlimit) {
+	while (s->ci_rxqlen + s->ci_rxheld >= s->ci_rxqlimit) {
+		if (s->ci_flags & MAC_CAPABILITY_SF_DEAD) {
+			error = EPIPE;
+			break;
+		}
 		if (!cap_authority_lease_valid(s->ci_lease)) {
 			error = EPERM;
 			break;
@@ -1277,6 +1283,9 @@ mac_capability_instance_wait_room(struct mac_capability_instance *s)
 		if (error != 0)
 			break;
 	}
+	/* Woken by a death that also drained the queue. */
+	if (error == 0 && (s->ci_flags & MAC_CAPABILITY_SF_DEAD) != 0)
+		error = EPIPE;
 	mtx_unlock(&s->ci_mtx);
 	return (error);
 }
