@@ -143,7 +143,7 @@ probe_contract_body()
 	    '${src}/svc_proto.c' | grep -F 'ENOTSUP'"
 	atf_check -s exit:0 -o ignore sh -c \
 	    "awk '/if \\(op == SVC_OP_MINT_DOMAIN\\)/,/goto out;/' \
-	    '${src}/domain.c' | grep -F 'lookup_channel_reply(request, EPERM'"
+	    '${src}/domain.c' | grep -F 'lookup_channel_reply(lc, request, EPERM'"
 	for f in anoint.c domain.c execute.c naming.c on_demand.c \
 	    svc_proto.c; do
 		atf_check -s exit:1 -o empty grep -E \
