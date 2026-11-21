@@ -1231,7 +1231,8 @@ mac_capability_forward(struct mac_capability_instance *s, const struct mac_capab
 	if (s->ci_service != NULL)
 		SDT_PROBE3(mac_capability, , , forward,
 		    s->ci_service->csvc_name, s->ci_badge, src->cm_datalen);
-#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+#if defined(MAC_CAPABILITY_TEST_PERMISSIVE) && !defined(KLD_MODULE)
+	/* The park is in the kernel only (mac_capability_testissuer.c). */
 	mac_capability_test_issuer_park(src->cm_process.pid, src->cm_datalen);
 #endif
 
