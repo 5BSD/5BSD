@@ -230,7 +230,7 @@ struct oes_client {
 	 * the subscriptions and cache use last accounted.  sc_gate_sx.
 	 */
 	uint64_t		ec_gate_subs[4];
-	bool			ec_gate_cache;
+	u_int			ec_gate_cache;	/* 1: cache use published (sc_gate_sx) */
 	uint32_t		ec_mute_invert;	/* OES_MUTE_INVERT_* */
 
 	/* Event queue */

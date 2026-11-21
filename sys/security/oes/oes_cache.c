@@ -397,7 +397,6 @@ oes_client_cache_add(struct oes_client *ec, const oes_cache_entry_t *entry)
 	struct oes_cache_entry *new_entry;
 	struct timespec expires;
 	uint32_t idx;
-	bool first_use;
 
 	if (entry == NULL)
 		return (EINVAL);
@@ -434,13 +433,17 @@ oes_client_cache_add(struct oes_client *ec, const oes_cache_entry_t *entry)
 	/*
 	 * A cached decision must be dropped by any later change of its file,
 	 * whoever makes it, so the hooks of the changing events must run from
-	 * before the first entry can be found.  The flag stays set.
+	 * before the first entry can be found.  The flag stays set.  Whether
+	 * those hooks are live is ec_gate_cache, which oes_gate_client_update()
+	 * sets only once it has published them; the flag says only that some
+	 * thread of this client has started to.  Until ec_gate_cache is set,
+	 * every adder makes the update itself: it is idempotent, and sc_gate_sx
+	 * makes a later adder wait for an earlier one.
 	 */
 	EC_LOCK(ec);
-	first_use = (ec->ec_flags & EC_FLAG_CACHE_USED) == 0;
 	ec->ec_flags |= EC_FLAG_CACHE_USED;
 	EC_UNLOCK(ec);
-	if (first_use) {
+	if (atomic_load_acq_int(&ec->ec_gate_cache) == 0) {
 #ifdef MAC_CAPABILITY_TEST_PERMISSIVE
 		/* Test kernels: an adder that waits releases a parked one. */
 		mac_capability_test_issuer_oes_gate_release();
