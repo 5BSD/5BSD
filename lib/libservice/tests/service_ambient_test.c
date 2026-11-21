@@ -288,6 +288,8 @@ struct mock_switchboard {
 	long		client_tid;
 	int		session_peer;	/* provider end of an answered session */
 	int		queued;		/* MOCK_FULL_ROUTE: fillers queued */
+	bool		send_signal;	/* MOCK_FULL_ROUTE: signal the sender */
+	bool		send_restarts;	/* ... and expect it to sleep again */
 	bool		closed_seen;	/* MOCK_CANCEL: the client closed */
 	pthread_t	thread;
 };
@@ -339,15 +341,22 @@ sleep_ms(unsigned ms)
 
 /* The channel receive's sleep (mac_capability_dev.c). */
 #define	RECV_WMESG	"mac_capabilityrv"
+/*
+ * The wait for room in a full queue: the kernel's SEND_F_WAIT sleep, or
+ * kevent's while the client waited on EVFILT_WRITE (before SEND_F_WAIT; kept
+ * so these cases also run there and show its EINTR).
+ */
+#define	SEND_WMESG	"mcapsnd"
+#define	SEND_WMESG_KEVENT "kqread"
 
 /*
- * Wait until the client thread sleeps in `wmesg` (the channel receive, or
- * kevent's "kqread"), so the signal lands in the wait it is meant to
- * interrupt.  Nothing reports that a thread
- * went to sleep, so the test looks at the thread's wait channel.
+ * Wait until the client thread sleeps in `wmesg` (or `alt`, if not NULL), so
+ * the signal lands in the wait it is meant to interrupt.  Nothing reports
+ * that a thread went to sleep, so the test looks at the thread's wait
+ * channel.
  */
 static void
-wait_client_asleep(long tid, const char *wmesg)
+wait_client_asleep2(long tid, const char *wmesg, const char *alt)
 {
 	struct kinfo_proc *kp;
 	size_t len;
@@ -363,12 +372,21 @@ wait_client_asleep(long tid, const char *wmesg)
 		ATF_REQUIRE(sysctl(mib, 4, kp, &len, NULL, 0) == 0);
 		for (size_t i = 0; i < len / sizeof(*kp); i++)
 			if (kp[i].ki_tid == tid &&
-			    strncmp(kp[i].ki_wmesg, wmesg, WMESGLEN) == 0)
+			    (strncmp(kp[i].ki_wmesg, wmesg, WMESGLEN) == 0 ||
+			    (alt != NULL &&
+			    strncmp(kp[i].ki_wmesg, alt, WMESGLEN) == 0)))
 				asleep = true;
 		free(kp);
 		if (!asleep)
 			sleep_ms(1);
 	}
+}
+
+static void
+wait_client_asleep(long tid, const char *wmesg)
+{
+
+	wait_client_asleep2(tid, wmesg, NULL);
 }
 
 static void *
@@ -385,7 +403,15 @@ mock_switchboard_thread(void *arg)
 
 	if (m->mode == MOCK_FULL_ROUTE) {
 		/* The client is waiting for room: make some, one at a time. */
-		wait_client_asleep(m->client_tid, "kqread");
+		wait_client_asleep2(m->client_tid, SEND_WMESG,
+		    SEND_WMESG_KEVENT);
+		if (m->send_signal) {
+			(void)pthread_kill(m->client, SIGUSR1);
+			if (!m->send_restarts)
+				return (NULL);
+			wait_client_asleep2(m->client_tid, SEND_WMESG,
+			    SEND_WMESG_KEVENT);
+		}
 		for (; m->queued > 0; m->queued--)
 			if (mock_recv(m->route, &byte, sizeof(byte), NULL,
 			    NULL) != 1)
@@ -733,6 +759,27 @@ ATF_TC_BODY(lookup_cancellation_closes_channel, tc)
 	ATF_CHECK_MSG(m.closed_seen, "the private channel stayed open");
 }
 
+/* Fill switchboard's side of the route until the kernel says EAGAIN. */
+static void
+fill_route(struct mock_switchboard *m, int client)
+{
+	struct mac_capability_sendmsg_args send;
+	char byte = 0;
+
+	for (;;) {
+		memset(&send, 0, sizeof(send));
+		send.payload = &byte;
+		send.payload_len = sizeof(byte);
+		if (ioctl(client, MAC_CAPABILITY_SENDMSG, &send) == -1)
+			break;
+		m->queued++;
+	}
+	ATF_REQUIRE_EQ_MSG(EAGAIN, errno, "filling the route: %s",
+	    strerror(errno));
+	ATF_REQUIRE(m->queued > 0);
+	(void)close(client);
+}
+
 ATF_TC(full_route_queue_waited_out);
 ATF_TC_HEAD(full_route_queue_waited_out, tc)
 {
@@ -742,31 +789,70 @@ ATF_TC_HEAD(full_route_queue_waited_out, tc)
 }
 ATF_TC_BODY(full_route_queue_waited_out, tc)
 {
-	struct mac_capability_sendmsg_args send;
 	struct mock_switchboard m;
 	int client, fd;
-	char byte = 0;
 
 	mock_prepare(&m, MOCK_FULL_ROUTE, 0, &client);
-	/* Fill switchboard's side of the route until the kernel says EAGAIN. */
-	for (;;) {
-		memset(&send, 0, sizeof(send));
-		send.payload = &byte;
-		send.payload_len = sizeof(byte);
-		if (ioctl(client, MAC_CAPABILITY_SENDMSG, &send) == -1)
-			break;
-		m.queued++;
-	}
-	ATF_REQUIRE_EQ_MSG(EAGAIN, errno, "filling the route: %s",
-	    strerror(errno));
-	ATF_REQUIRE(m.queued > 0);
-	(void)close(client);
+	fill_route(&m, client);
 	mock_run(&m);
 	fd = -1;
 	ATF_CHECK_EQ_MSG(0, service_connect_ambient("org.test.full", &fd),
 	    "lookup failed: %s", strerror(errno));
 	if (fd >= 0)
 		(void)close(fd);
+	mock_finish(&m);
+}
+
+ATF_TC(full_route_signal_sa_restart);
+ATF_TC_HEAD(full_route_signal_sa_restart, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a signal with SA_RESTART while the "
+	    "registration waits for room in a full queue restarts the wait, "
+	    "and the lookup completes");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(full_route_signal_sa_restart, tc)
+{
+	struct mock_switchboard m;
+	int client, fd;
+
+	catch_sigusr1(SA_RESTART);
+	mock_prepare(&m, MOCK_FULL_ROUTE, 0, &client);
+	m.send_signal = true;
+	m.send_restarts = true;
+	fill_route(&m, client);
+	mock_run(&m);
+	fd = -1;
+	ATF_CHECK_EQ_MSG(0, service_connect_ambient("org.test.full", &fd),
+	    "lookup failed: %s", strerror(errno));
+	ATF_CHECK_EQ(1, atomic_load(&signals_taken));
+	if (fd >= 0)
+		(void)close(fd);
+	mock_finish(&m);
+}
+
+ATF_TC(full_route_signal_eintr);
+ATF_TC_HEAD(full_route_signal_eintr, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a signal without SA_RESTART while the "
+	    "registration waits for room fails the lookup with EINTR");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(full_route_signal_eintr, tc)
+{
+	struct mock_switchboard m;
+	int client, fd;
+
+	catch_sigusr1(0);
+	mock_prepare(&m, MOCK_FULL_ROUTE, 0, &client);
+	m.send_signal = true;
+	fill_route(&m, client);
+	mock_run(&m);
+	fd = -1;
+	ATF_CHECK_EQ(-1, service_connect_ambient("org.test.full", &fd));
+	ATF_CHECK_EQ_MSG(EINTR, errno, "errno %d (%s)", errno,
+	    strerror(errno));
+	ATF_CHECK_EQ(1, atomic_load(&signals_taken));
 	mock_finish(&m);
 }
 
@@ -786,5 +872,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, registration_refusal_errno);
 	ATF_TP_ADD_TC(tp, lookup_cancellation_closes_channel);
 	ATF_TP_ADD_TC(tp, full_route_queue_waited_out);
+	ATF_TP_ADD_TC(tp, full_route_signal_sa_restart);
+	ATF_TP_ADD_TC(tp, full_route_signal_eintr);
 	return (atf_no_error());
 }
