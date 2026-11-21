@@ -1080,6 +1080,17 @@ struct oes_jail_scope_args {
  */
 #define OES_IOC_JOIN		_IO('E', 45)
 
+/*
+ * Test kernels only (options MAC_CAPABILITY_TEST_PERMISSIVE; ENOTTY
+ * elsewhere): the number of the client's reader-set entries for a pid.
+ */
+struct oes_test_reader_entries {
+	pid_t		otre_pid;
+	uint32_t	otre_count;
+};
+#define OES_IOC_TEST_READER_ENTRIES \
+	_IOWR('E', 46, struct oes_test_reader_entries)
+
 /* Set client mode and parameters */
 struct oes_mode_args {
 	uint32_t	ema_mode;	/* OES_MODE_* */

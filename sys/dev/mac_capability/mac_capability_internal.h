@@ -286,7 +286,6 @@ int	mac_capability_test_issuer_fail_take(void);
 extern volatile u_int mac_capability_test_issuer_oes_trylock_fail;
 /* The OES deferred-delivery and gate hold points; also in oes_internal.h. */
 void	mac_capability_test_issuer_oes_defer_park(void);
-void	mac_capability_test_issuer_oes_defer_unpark(void);
 void	mac_capability_test_issuer_oes_gate_park(void);
 void	mac_capability_test_issuer_oes_gate_release(void);
 extern volatile u_long mac_capability_test_issuer_created;
