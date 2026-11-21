@@ -385,10 +385,9 @@ oes_client_validate_token(struct oes_client *ec,
  * OES_IOC_JOIN, never from event generation or delivery.
  *
  * Lock order: ec_readers_lock (sx) -> the pid hash lock and PROC_LOCK that
- * pfind() takes, and the deferred-delivery task's completion
- * (taskqueue_drain()).  ec_readers_lock is taken nowhere else, in particular
- * never from fork, exit, exec, a MAC hook or the deferred task, so no path
- * holds one of those and then waits for it.
+ * pfind() takes.  A join never waits for the deferred-delivery task.
+ * ec_readers_lock is taken nowhere else, in particular never from fork,
+ * exit, exec, a MAC hook or the deferred task.
  *
  * The arrays are freed through global_epoch_preempt.
  */
@@ -480,18 +479,38 @@ oes_process_is_reader(const oes_process_t *ep)
 	return (false);
 }
 
-/* Is p, in the image it runs, still the process the entry recorded? */
+/*
+ * Is p, in the image it runs, still the process the entry recorded?
+ *
+ * The execution is taken as the dispatch side and the join take it: from
+ * the acting thread's credential (oes_fill_process(), oes_client_join()).
+ * After an exec p_ucred carries the new execution at once, while the
+ * thread's td_ucred keeps the old one until it next enters the kernel
+ * (thread_cow_update()), and the events it makes until then are keyed on
+ * the old one (review R2).  So the entry is live while either credential
+ * still carries its execution.  A process in exec has one thread, and
+ * td_ucred is replaced only under PROC_LOCK, which is held here.
+ */
 static bool
 oes_reader_live(const struct oes_reader *r)
 {
 	struct proc *p;
+	struct thread *td;
 	bool live;
 
 	p = pfind(r->or_pid);
 	if (p == NULL)
 		return (false);
-	live = oes_proc_genid(p) == r->or_genid &&
-	    oes_proc_get_exec_id(p) == r->or_exec_id;
+	live = false;
+	if (p->p_state == PRS_NORMAL && oes_proc_genid(p) == r->or_genid) {
+		live = oes_proc_get_exec_id(p) == r->or_exec_id;
+		FOREACH_THREAD_IN_PROC(p, td) {
+			if (live)
+				break;
+			live = oes_cred_get_exec_id(td->td_ucred) ==
+			    r->or_exec_id;
+		}
+	}
 	PROC_UNLOCK(p);
 	return (live);
 }
@@ -539,11 +558,15 @@ oes_caller_can_answer(struct thread *td, struct file *fp)
  *
  * The fast path (already a reader, nothing to upgrade) takes no lock:
  * genid from p_start, exec id from the thread's own credential.  Otherwise,
- * under ec_readers_lock, the array is rebuilt sorted by pid without the
- * entries of processes that exited or exec'd, and the old one is freed
- * after an epoch.  Before such an entry is dropped, the deferred-delivery
- * task is drained: events queued while it was a reader must still be
- * matched against it.  May sleep; never called from event delivery.
+ * under ec_readers_lock, the array is rebuilt sorted by pid and the old one
+ * is freed after an epoch.  An entry whose process exited or exec'd is not
+ * dropped while events it may have queued for deferred delivery are still
+ * to be delivered: those must still be matched against it (review D1).
+ * The first join to see it dead records the delivery generation then
+ * (sc_defer_queued, read after the process was seen dead, so it counts
+ * every event the process queued); a later join drops it once the task
+ * has delivered that many (sc_defer_done).  No join waits for the task
+ * (review R1).  May sleep (allocation); never called from event delivery.
  */
 void
 oes_client_join(struct oes_client *ec, struct thread *td, struct file *fp,
@@ -552,9 +575,10 @@ oes_client_join(struct oes_client *ec, struct thread *td, struct file *fp,
 	struct epoch_tracker et;
 	struct oes_readers *old, *new;
 	const struct oes_reader *e;
-	struct oes_reader self;
-	u_int size, i, n, live;
-	bool inserted, *keep, answer, known;
+	struct oes_reader self, *kept;
+	uint64_t queued, done;
+	u_int size, i, n, nkept;
+	bool inserted, answer, known;
 
 	KASSERT(td == curthread, ("%s: not curthread", __func__));
 	WITNESS_WARN(WARN_SLEEPOK, NULL, "oes_client_join");
@@ -589,41 +613,48 @@ oes_client_join(struct oes_client *ec, struct thread *td, struct file *fp,
 		return;
 	}
 	n = old != NULL ? old->ors_count : 0;
-	keep = n != 0 ? malloc(n * sizeof(*keep), M_TEMP, M_WAITOK) : NULL;
-	for (i = live = 0; i < n; i++) {
+	kept = n != 0 ? malloc(n * sizeof(*kept), M_TEMP, M_WAITOK) : NULL;
+	nkept = 0;
+	queued = done = 0;
+	for (i = 0; i < n; i++) {
+		struct oes_reader r = old->ors_r[i];
+
 		/* The caller's own old entry is replaced, not kept. */
-		keep[i] = &old->ors_r[i] != e && oes_reader_live(&old->ors_r[i]);
-		if (keep[i])
-			live++;
+		if (&old->ors_r[i] == e)
+			continue;
+		if (r.or_drop_after == 0 && oes_reader_live(&r)) {
+			kept[nkept++] = r;
+			continue;
+		}
+		/*
+		 * Dead.  Read the generations only now, after the process
+		 * was seen dead: whatever it queued is counted in queued.
+		 */
+		if (queued == 0) {
+			queued = atomic_load_acq_64(&oes_softc.sc_defer_queued);
+			done = atomic_load_acq_64(&oes_softc.sc_defer_done);
+		}
+		if (r.or_drop_after == 0)
+			r.or_drop_after = queued;
+		if (done < r.or_drop_after)
+			kept[nkept++] = r;	/* its events are still queued */
 	}
-	/*
-	 * Entries are dropped: let the deferred task finish matching what
-	 * their processes queued while they were readers.
-	 */
-	if (live + (e != NULL ? 1 : 0) < n) {
-#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
-		/* A parked task would never finish; see the test hold point. */
-		mac_capability_test_issuer_oes_defer_unpark();
-#endif
-		taskqueue_drain(oes_softc.sc_defer_tq, &oes_softc.sc_defer_task);
-	}
-	/* Room for the live entries and the caller. */
-	size = live + 1;
+	/* Room for the kept entries and the caller. */
+	size = nkept + 1;
 	new = malloc(sizeof(*new) + size * sizeof(new->ors_r[0]), M_OES,
 	    M_WAITOK | M_ZERO);
 	inserted = false;
-	for (i = 0; i < n; i++) {
+	for (i = 0; i < nkept; i++) {
 		/* Keep pid order: the caller goes before the first larger pid. */
-		if (!inserted && old->ors_r[i].or_pid > self.or_pid) {
+		if (!inserted && kept[i].or_pid > self.or_pid) {
 			new->ors_r[new->ors_count++] = self;
 			inserted = true;
 		}
-		if (keep[i])
-			new->ors_r[new->ors_count++] = old->ors_r[i];
+		new->ors_r[new->ors_count++] = kept[i];
 	}
 	if (!inserted)
 		new->ors_r[new->ors_count++] = self;
-	free(keep, M_TEMP);
+	free(kept, M_TEMP);
 	atomic_store_rel_ptr((volatile uintptr_t *)&ec->ec_readers,
 	    (uintptr_t)new);
 	sx_xunlock(&ec->ec_readers_lock);

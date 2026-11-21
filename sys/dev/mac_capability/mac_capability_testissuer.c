@@ -336,10 +336,10 @@ SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuer_oes_trylock_fail,
  * Writes:
  *  1  arm a hold: the deferred task's next round parks before it takes an
  *     event off the queue, so every event queued from then on stays queued;
- *     a reader-set join that waits for the task (oes_client.c
- *     oes_client_join()) releases it, since it would otherwise wait forever;
- *  2  arm a stall: the same, but nothing except a write of 0 releases it,
- *     so a test can tell whether a join waits for the task;
+ *  2  arm a stall: the same.  (Before review R1 a reader-set join waited
+ *     for the task and released a hold, never a stall; no join waits now,
+ *     so the two differ only on such a kernel, which the R1 pin is run
+ *     against.)
  *  3  wait (interruptibly) until the task is parked;
  *  0  release.
  * Read: 0 off, 1 armed, 2 parked.
@@ -348,7 +348,6 @@ static struct mtx mac_capability_test_issuer_oes_defer_mtx;
 MTX_SYSINIT(mac_capability_test_issuer_oes_defer,
     &mac_capability_test_issuer_oes_defer_mtx, "oes defer hold", MTX_DEF);
 static int mac_capability_test_issuer_oes_defer_state;
-static bool mac_capability_test_issuer_oes_defer_stall;
 static int mac_capability_test_issuer_oes_defer_parked;	/* wait channel */
 
 void
@@ -373,22 +372,8 @@ mac_capability_test_issuer_oes_defer_release_locked(void)
 
 	mtx_assert(&mac_capability_test_issuer_oes_defer_mtx, MA_OWNED);
 	mac_capability_test_issuer_oes_defer_state = 0;
-	mac_capability_test_issuer_oes_defer_stall = false;
 	wakeup(&mac_capability_test_issuer_oes_defer_state);
 	wakeup(&mac_capability_test_issuer_oes_defer_parked);
-}
-
-/* A join releases a hold, never a stall; re-arm once per case. */
-void
-mac_capability_test_issuer_oes_defer_unpark(void)
-{
-
-	if (atomic_load_int(&mac_capability_test_issuer_oes_defer_state) == 0)
-		return;
-	mtx_lock(&mac_capability_test_issuer_oes_defer_mtx);
-	if (!mac_capability_test_issuer_oes_defer_stall)
-		mac_capability_test_issuer_oes_defer_release_locked();
-	mtx_unlock(&mac_capability_test_issuer_oes_defer_mtx);
 }
 
 static int
@@ -407,10 +392,9 @@ mac_capability_test_issuer_oes_defer_hold_sysctl(SYSCTL_HANDLER_ARGS)
 		break;
 	case 1:
 	case 2:
-		if (mac_capability_test_issuer_oes_defer_state == 0) {
+		if (mac_capability_test_issuer_oes_defer_state == 0)
 			mac_capability_test_issuer_oes_defer_state = 1;
-			mac_capability_test_issuer_oes_defer_stall = value == 2;
-		} else
+		else
 			error = EBUSY;
 		break;
 	case 3:
@@ -433,9 +417,9 @@ mac_capability_test_issuer_oes_defer_hold_sysctl(SYSCTL_HANDLER_ARGS)
 SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuer_oes_defer_hold,
     CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
     mac_capability_test_issuer_oes_defer_hold_sysctl, "I",
-    "Test kernel only: 1 holds OES deferred delivery before its next event "
-    "(a join releases it), 2 stalls it (only 0 releases), 3 waits until "
-    "parked, 0 releases (read: 0 off, 1 armed, 2 parked)");
+    "Test kernel only: 1 holds (2 stalls) OES deferred delivery before its "
+    "next event, 3 waits until parked, 0 releases (read: 0 off, 1 armed, "
+    "2 parked)");
 
 static void
 mac_capability_test_issuer_init(void *arg __unused)
