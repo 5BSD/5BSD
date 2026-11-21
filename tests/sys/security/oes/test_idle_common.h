@@ -198,7 +198,8 @@ idle_wait_worker_records(int fd, oes_event_type_t ev, struct idle_worker *w,
 {
 	struct pollfd pfd[1 + IDLE_MAX_WORKERS];
 	bool seen[IDLE_MAX_WORKERS];
-	int got, open, i, np, err;
+	int idx[1 + IDLE_MAX_WORKERS];	/* pfd[k] watches w[idx[k]] */
+	int got, open, i, k, np, err;
 
 	if (n > IDLE_MAX_WORKERS)
 		return (-1);
@@ -222,6 +223,7 @@ idle_wait_worker_records(int fd, oes_event_type_t ev, struct idle_worker *w,
 				continue;
 			pfd[np].fd = w[i].iw_res;
 			pfd[np].events = POLLIN;
+			idx[np] = i;
 			np++;
 		}
 		if (poll(pfd, np, INFTIM) < 0) {
@@ -232,11 +234,13 @@ idle_wait_worker_records(int fd, oes_event_type_t ev, struct idle_worker *w,
 		/* A record that came with an answer counts: read records first. */
 		idle_drain_worker_records(fd, ev, w, n, sent, res, seen, &got,
 		    &open);
-		np = 1;
-		for (i = 0; i < n; i++) {
-			if (!sent[i] || seen[i] || res[i] != IDLE_NO_RESULT)
-				continue;
-			if ((pfd[np++].revents & (POLLIN | POLLHUP)) == 0)
+		/*
+		 * By the slots polled: the drain above may have counted a
+		 * worker's record since, and that worker is skipped.
+		 */
+		for (k = 1; k < np; k++) {
+			i = idx[k];
+			if (seen[i] || (pfd[k].revents & (POLLIN | POLLHUP)) == 0)
 				continue;
 			if (read(w[i].iw_res, &err, sizeof(err)) != sizeof(err))
 				err = -1;
