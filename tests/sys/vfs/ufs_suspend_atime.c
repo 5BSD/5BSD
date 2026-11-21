@@ -184,9 +184,18 @@ require_resume_hold(void)
 	size_t len;
 
 	len = 0;
-	if (sysctlbyname("debug.ffs.test_hold_mnt", NULL, &len, NULL, 0) != 0)
+	if (sysctlbyname("debug.ffs.test_hold_fsid", NULL, &len, NULL, 0) != 0)
 		atf_tc_skip("DEFERRED_TEST_KERNEL_TIER: needs the resume hold of "
-		    "the test kernel (GENERIC-TEST, debug.ffs.test_hold_mnt)");
+		    "the test kernel (GENERIC-TEST, debug.ffs.test_hold_fsid)");
+}
+
+/* Arm the hold for fsid, or disarm it with an all-zero one. */
+static int
+resume_hold_arm(const fsid_t *fsid)
+{
+
+	return (sysctlbyname("debug.ffs.test_hold_fsid", NULL, NULL, fsid,
+	    sizeof(*fsid)));
 }
 
 static void
@@ -298,23 +307,23 @@ ATF_TC_HEAD(closed_at_resume, tc)
 }
 ATF_TC_BODY(closed_at_resume, tc)
 {
-	char mnt[PATH_MAX];
+	struct statfs sfs;
 	pid_t pids[NREAD], resumer;
 	int sfd, status;
 
 	require_invariants();
 	require_resume_hold();
 	fixture();
-	ATF_REQUIRE(realpath(MNT, mnt) != NULL);
-	ATF_REQUIRE_MSG(sysctlbyname("debug.ffs.test_hold_mnt", NULL, NULL,
-	    mnt, strlen(mnt) + 1) == 0, "debug.ffs.test_hold_mnt: %s",
-	    strerror(errno));
+	ATF_REQUIRE_EQ(0, statfs(MNT, &sfs));
+	ATF_REQUIRE_MSG(resume_hold_arm(&sfs.f_fsid) == 0,
+	    "debug.ffs.test_hold_fsid: %s", strerror(errno));
 	sfd = suspend();
 	start_readers(pids);
 	/*
-	 * Resume in a child: the resume holds its caller in the walk.  The
-	 * resume wakes the readers, whose closes finish while the walk is
-	 * held; only then does the walk reach their files.
+	 * Resume in a helper child: the resume holds its caller at the walk.
+	 * The resume wakes the readers, whose closes finish while the walk is
+	 * held; the hold is released only after every reader has been reaped,
+	 * so the walk always meets their closed files.
 	 */
 	resumer = fork();
 	ATF_REQUIRE(resumer >= 0);
@@ -332,7 +341,15 @@ ATF_TC_BODY(closed_at_resume, tc)
 }
 ATF_TC_CLEANUP(closed_at_resume, tc)
 {
+	static const fsid_t zero;
+	int value;
+
 	(void)tc;
+	/* Disarm, and let a walk still held go on before the unmount. */
+	(void)resume_hold_arm(&zero);
+	value = 1;
+	(void)sysctlbyname("debug.ffs.test_hold_release", NULL, NULL, &value,
+	    sizeof(value));
 	cleanup();
 }
 

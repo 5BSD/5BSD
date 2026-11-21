@@ -13,7 +13,7 @@
 # Each option does nothing until its knob is set (dq(4), at boot:
 # debug.dq.unverified_open="1"; mac_capability(4), at boot:
 # kern.mac_capability.test_issuer="1"; ffs(4), by a test:
-# debug.ffs.test_hold_mnt).
+# debug.ffs.test_hold_fsid).
 #
 
 include GENERIC

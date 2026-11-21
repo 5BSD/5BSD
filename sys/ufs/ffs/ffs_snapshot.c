@@ -2558,14 +2558,15 @@ SDT_PROBE_DEFINE2(ffs, , , deferred__inactive__update, "struct vnode *",
 /*
  * Resume hold (options FFS_TEST_HOOKS, a test kernel only: a row of the
  * test-kernel option ledger, sys/conf/test-options, which names this
- * marker and the ffs_test_hold_ symbol prefix).  Writing a mount point to
- * debug.ffs.test_hold_mnt arms it: the next process_deferred_inactive() of
- * that mount stops before its walk, after the resume has woken the
- * threads the suspension held, until debug.ffs.test_hold_release is
- * written.  The walk that stops consumes the setting.  A write of
- * debug.ffs.test_hold_wait sleeps until a walk is held.  The sleeps are
- * msleep()/wakeup() on one mutex, which they need; an unarmed walk reads
- * one word.
+ * marker and the ffs_test_hold_ symbol prefix).  Writing a file system ID
+ * to debug.ffs.test_hold_fsid arms it: that file system's next
+ * process_deferred_inactive() stops at entry, holding no vnode or mount
+ * lock, after the resume has woken the threads the suspension held, until
+ * debug.ffs.test_hold_release is written.  The walk that stops consumes the
+ * setting; an all-zero ID disarms.  A write of debug.ffs.test_hold_wait
+ * sleeps (interruptibly) until a walk is held.  The sleeps are
+ * msleep()/wakeup() on one mutex, which they need; an unarmed walk reads one
+ * word.
  */
 #ifdef KLD_MODULE
 #error "options FFS_TEST_HOOKS is for the kernel, not for a module"
@@ -2580,7 +2581,7 @@ static const char ffs_test_hold_marker[] __used =
 static struct mtx ffs_test_hold_mtx;
 MTX_SYSINIT(ffs_test_hold, &ffs_test_hold_mtx, "ffs test hold", MTX_DEF);
 static int ffs_test_hold_armed;			/* (atomic) */
-static char ffs_test_hold_mnt[MNAMELEN];	/* (mtx) */
+static fsid_t ffs_test_hold_fsid;		/* (mtx) */
 static bool ffs_test_hold_held;			/* (mtx) */
 
 static void
@@ -2590,11 +2591,12 @@ ffs_test_hold_resume(struct mount *mp)
 	if (atomic_load_int(&ffs_test_hold_armed) == 0)
 		return;
 	mtx_lock(&ffs_test_hold_mtx);
-	if (strcmp(ffs_test_hold_mnt, mp->mnt_stat.f_mntonname) != 0) {
+	if (atomic_load_int(&ffs_test_hold_armed) == 0 ||
+	    fsidcmp(&ffs_test_hold_fsid, &mp->mnt_stat.f_fsid) != 0) {
 		mtx_unlock(&ffs_test_hold_mtx);
 		return;
 	}
-	ffs_test_hold_mnt[0] = '\0';
+	memset(&ffs_test_hold_fsid, 0, sizeof(ffs_test_hold_fsid));
 	atomic_store_int(&ffs_test_hold_armed, 0);
 	ffs_test_hold_held = true;
 	wakeup(&ffs_test_hold_held);
@@ -2608,28 +2610,29 @@ static SYSCTL_NODE(_debug, OID_AUTO, ffs, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
     "Test kernel only: ffs test controls");
 
 static int
-ffs_test_hold_mnt_sysctl(SYSCTL_HANDLER_ARGS)
+ffs_test_hold_fsid_sysctl(SYSCTL_HANDLER_ARGS)
 {
-	char buf[MNAMELEN];
+	static const fsid_t zero;
+	fsid_t fsid;
 	int error;
 
 	mtx_lock(&ffs_test_hold_mtx);
-	strlcpy(buf, ffs_test_hold_mnt, sizeof(buf));
+	fsid = ffs_test_hold_fsid;
 	mtx_unlock(&ffs_test_hold_mtx);
-	error = sysctl_handle_string(oidp, buf, sizeof(buf), req);
+	error = sysctl_handle_opaque(oidp, &fsid, sizeof(fsid), req);
 	if (error != 0 || req->newptr == NULL)
 		return (error);
 	mtx_lock(&ffs_test_hold_mtx);
-	strlcpy(ffs_test_hold_mnt, buf, sizeof(ffs_test_hold_mnt));
-	atomic_store_int(&ffs_test_hold_armed, buf[0] != '\0');
+	ffs_test_hold_fsid = fsid;
+	atomic_store_int(&ffs_test_hold_armed, fsidcmp(&fsid, &zero) != 0);
 	mtx_unlock(&ffs_test_hold_mtx);
 	return (0);
 }
-SYSCTL_PROC(_debug_ffs, OID_AUTO, test_hold_mnt,
-    CTLTYPE_STRING | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
-    ffs_test_hold_mnt_sysctl, "A",
-    "Test kernel only: hold the next resume walk of this mount point "
-    "(empty: off)");
+SYSCTL_PROC(_debug_ffs, OID_AUTO, test_hold_fsid,
+    CTLTYPE_OPAQUE | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+    ffs_test_hold_fsid_sysctl, "S,fsid",
+    "Test kernel only: hold the next resume walk of this file system ID "
+    "(all zero: off)");
 
 static int
 ffs_test_hold_wait_sysctl(SYSCTL_HANDLER_ARGS)
@@ -2691,10 +2694,10 @@ process_deferred_inactive(struct mount *mp)
 	int error;
 	bool update;
 
-	(void) vn_start_secondary_write(NULL, &mp, V_WAIT);
 #ifdef FFS_TEST_HOOKS
 	ffs_test_hold_resume(mp);
 #endif
+	(void) vn_start_secondary_write(NULL, &mp, V_WAIT);
  loop:
 	MNT_VNODE_FOREACH_ALL(vp, mp, mvp) {
 		/*
