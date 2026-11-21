@@ -143,7 +143,7 @@ make_entry(int fd, const char *path, oes_cache_entry_t *e)
 	e->ece_ttl_ms = OES_MAX_CACHE_TTL_MS;
 }
 
-ATF_TC(second_add_waits_for_gate);
+ATF_TC_WITH_CLEANUP(second_add_waits_for_gate);
 ATF_TC_HEAD(second_add_waits_for_gate, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
@@ -195,6 +195,13 @@ ATF_TC_BODY(second_add_waits_for_gate, tc)
 	ATF_CHECK_EQ(a.write_live, 1);
 	close(fd);
 	(void)unlink(path);
+}
+
+ATF_TC_CLEANUP(second_add_waits_for_gate, tc)
+{
+
+	/* The hold also ends with the process that armed it; say so anyway. */
+	(void)gate_hold(0);
 }
 
 ATF_TP_ADD_TCS(tp)
