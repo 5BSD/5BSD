@@ -164,9 +164,9 @@ svc_exec_rc_grant_start(struct svc_runtime *svc, int kq)
 }
 
 /*
- * Ambient lookup channels live in domain.c (not linked here).  These tests use
- * only service-to-service requesters (ambient_lc == NULL), so the ambient
- * branches never run; the stubs exist only to resolve at link time.
+ * Ambient lookup channels live in domain.c (not linked here).  The tests use
+ * service-to-service requesters (ambient_lc == NULL), except the
+ * requester-exit case, which only needs the answer recorded (below).
  */
 void
 domain_unit_channels_close(const struct svc_runtime *svc __unused)
@@ -195,16 +195,22 @@ lookup_channel_sync_events(struct svc_lookup_channel *lc, int kq)
 	(void)kq;
 }
 
+/* Answers sent on ambient lookup channels, for the requester-exit case. */
+static struct svc_lookup_channel *answered_lc;
+static int32_t answered_status;
+static int answered_count;
+
 void
 lookup_channel_answer(struct svc_lookup_channel *lc,
     struct channel_message *request, int32_t status, int *fds, size_t nfds)
 {
 
-	(void)lc;
 	(void)request;
-	(void)status;
 	(void)fds;
 	(void)nfds;
+	answered_lc = lc;
+	answered_status = status;
+	answered_count++;
 }
 
 void
@@ -404,6 +410,58 @@ ATF_TC_BODY(provider_name_filter, tc)
 	ATF_CHECK(!pending_for_provider_name(&new_provider,
 	    "org.test.endpoint"));
 
+	pending_list = NULL;
+	npending = 0;
+}
+
+/*
+ * A unit that exits cancels the lookups made on its behalf.  An ambient one
+ * is answered on its own lookup channel (ECONNRESET): its client waits with
+ * no timeout, and the channel's lifetime is not the unit's.  A
+ * service-to-service one has no one left to answer.
+ */
+ATF_TC(ambient_requester_gone_answered);
+ATF_TC_HEAD(ambient_requester_gone_answered, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "an ambient lookup pending for a unit that exits is answered "
+	    "ECONNRESET; the unit's own lookups are dropped");
+}
+ATF_TC_BODY(ambient_requester_gone_answered, tc)
+{
+	struct pending_lookup *ambient, *own;
+	struct svc_runtime provider, requester;
+	struct svc_lookup_channel *lc;
+
+	lc = (struct svc_lookup_channel *)&lc;	/* an opaque, distinct pointer */
+	runtime_init(&provider, "org.test.provider", 301, 20);
+	runtime_init(&requester, "org.test.requester", 302, 21);
+	ambient = calloc(1, sizeof(*ambient));
+	own = calloc(1, sizeof(*own));
+	ATF_REQUIRE(ambient != NULL && own != NULL);
+	pending_init(ambient, &provider, "org.test.endpoint");
+	pending_init(own, &provider, "org.test.endpoint");
+	ambient->ambient_lc = lc;
+	for (struct pending_lookup *pl = ambient; pl != NULL;
+	    pl = pl == ambient ? own : NULL) {
+		strlcpy(pl->requester_label, requester.manifest.label,
+		    sizeof(pl->requester_label));
+		pl->requester_pid = requester.pid;
+		pl->requester_launch_id = requester.launch_id;
+		pl->requester_owner_uid = requester.owner_uid;
+	}
+	ambient->next = own;
+	pending_list = ambient;
+	npending = 2;
+	answered_count = 0;
+
+	on_demand_requester_gone(&requester, -1);
+
+	ATF_CHECK_EQ(1, answered_count);
+	ATF_CHECK(answered_lc == lc);
+	ATF_CHECK_EQ(ECONNRESET, answered_status);
+	ATF_CHECK(pending_list == NULL);
+	ATF_CHECK_EQ(0, npending);
 	pending_list = NULL;
 	npending = 0;
 }
@@ -1943,6 +2001,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, retired_principal_claim);
 	ATF_TP_ADD_TC(tp, provider_incarnation);
 	ATF_TP_ADD_TC(tp, provider_name_filter);
+	ATF_TP_ADD_TC(tp, ambient_requester_gone_answered);
 	ATF_TP_ADD_TC(tp, timer_identifiers);
 	ATF_TP_ADD_TC(tp, timer_registration_failure);
 	ATF_TP_ADD_TC(tp, circuit_breaker_blocks_on_demand_relaunch);

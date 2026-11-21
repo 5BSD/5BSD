@@ -1282,19 +1282,21 @@ atf_test_case ambient_lookup_requester_exit_answers cleanup
 ambient_lookup_requester_exit_answers_head()
 {
 	atf_set "descr" \
-	    "a lookup pending for a unit that exits is answered (ECONNRESET), even for a surviving child"
+	    "a lookup pending for a unit's child never outlives the unit: answered or gone, and switchboard drops it"
 	atf_set "require.user" "root"
 	atf_set "timeout" "90"
 	require_capsule_stack_kmods
 }
 ambient_lookup_requester_exit_answers_body()
 {
+	local child
+
 	use_private_control
 	capd_require_unit_issuer
 	find_capd_service_fixture
 	prepare_paths
 	install_cancel_provider
-	# The unit's child looks up the held name and survives the stop.
+	# The unit's child looks up the held name and rides out SIGTERM.
 	make_svc_bin system org.test.orphan \
 	    "restart = \"never\";
 arguments = [\"orphan-lookup\", \"org.test.cancel.svc\",
@@ -1305,19 +1307,28 @@ arguments = [\"orphan-lookup\", \"org.test.cancel.svc\",
 	wait_for_file cancel-provider.ready ||
 	    atf_fail "provider did not complete check-in"
 	wait_for_file orphan.started || atf_fail "the unit's child did not start"
+	child=$(sed -n 's/^pid=\([0-9][0-9]*\)$/\1/p' orphan.started)
+	case "$child" in
+	''|*[!0-9]*) atf_fail "invalid child PID" ;;
+	esac
 	wait_for_log "activation of endpoint 'org.test.cancel.svc' requested" ||
 	    atf_fail "the child's lookup did not trigger activation"
 	"$SWITCHBOARDCTL" stop "org.test.orphan/orphan" >/dev/null ||
 	    atf_fail "could not stop the requester's unit"
-	if ! wait_for_file orphan.result 30; then
+	# The child must not be left waiting: it gets an answer (ECONNRESET,
+	# on_demand_requester_gone()) or it ends with its unit (a coalition's
+	# members are killed when its leader exits).  The 10 s activation
+	# bound is not what ends it.
+	# Either way the child exits; wait for that (well inside the 10 s).
+	if ! pwait -t 8 "$child" >/dev/null 2>&1 &&
+	    ps -p "$child" >/dev/null 2>&1; then
 		cat "$logfile" 2>/dev/null
-		atf_fail "the surviving child's lookup was never answered"
+		atf_fail "the surviving child is still waiting on its lookup"
 	fi
-	# 54: ECONNRESET, from the requester's exit (not the 10 s bound).
-	atf_check -s exit:0 -o match:'^rc=-1 errno=54$' cat orphan.result
-	atf_check -s exit:0 -o ignore grep \
-	    "canceled 1 pending lookup.*exited requester 'org.test.orphan/orphan'" \
-	    "$logfile"
+	if [ -s orphan.result ]; then
+		atf_check -s exit:0 -o match:'^rc=-1 errno=54$' cat orphan.result
+	fi
+	atf_check -s exit:0 -o ignore grep "canceled 1 pending lookup" "$logfile"
 	assert_stack_alive
 }
 ambient_lookup_requester_exit_answers_cleanup()
