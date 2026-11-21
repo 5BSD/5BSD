@@ -601,10 +601,10 @@ g16_oes_only_flags(void)
  * unread clients of pipe events), a client's SUBSCRIBE and close must stay
  * fast: the gate must never wait behind the global OES lock, which the
  * delivery task holds for each event.  The bound is the time the delivery
- * thread takes for one round of OES_DEFER_MAX deliveries at the rate the
- * load measured: a call that waited behind the delivery task waits for
- * rounds, not for single events (the defect it pins took seconds to
- * minutes per call in a 2-vCPU guest).
+ * thread takes for one round of deliveries, as many as the queue holds
+ * (jt_load_start()'s capacity), at the rate the load measured: a call that
+ * waited behind the delivery task waits for rounds, not for single events
+ * (the defect it pins took seconds to minutes per call in a 2-vCPU guest).
  */
 #define	G17_ROUNDS	20
 
@@ -648,7 +648,7 @@ g17_gate_under_load(void)
 		if (close_ms > worst_close)
 			worst_close = close_ms;
 	}
-	bound_ms = jt_defer_max() * 1000L / load.rate;
+	bound_ms = load.capacity * 1000L / load.rate;
 	printf("    %d rounds with %d unread clients: SUBSCRIBE worst %ld ms, "
 	    "close worst %ld ms\n", i, load.nclients, worst_sub, worst_close);
 	jt_load_stop(&load);

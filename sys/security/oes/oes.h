@@ -41,6 +41,12 @@ typedef enum {
 	OES_AUTH_EVENT_LIST(OES_ENUM_EVENT)
 	OES_NOTIFY_EVENT_LIST(OES_ENUM_EVENT)
 #undef OES_ENUM_EVENT
+	/*
+	 * Not an event: the events-lost marker (oes_event_lost_t).  Outside
+	 * both lists and the subscription bitmaps, so it cannot be subscribed
+	 * or muted; read(2) returns it to every client that lost events.
+	 */
+	OES_EVENT_NOTIFY_LOST = 0x1FFF,
 } oes_event_type_t;
 
 #define OES_EVENT_IS_AUTH(e)	(((e) & 0x1000) == 0)
@@ -719,6 +725,19 @@ typedef struct {
 } oes_event_file_ioctl_t;
 
 /*
+ * OES_EVENT_NOTIFY_LOST: events this client did not receive since the
+ * previous marker (oes(4) "Lost events").  el_deferred were discarded at
+ * the shared deferred-delivery bound before any client got them, counted
+ * for every client subscribed to their type; el_queue were discarded at
+ * this client's own full queue (or failed to be copied for it).
+ */
+typedef struct {
+	uint64_t	el_count;	/* el_deferred + el_queue */
+	uint64_t	el_deferred;	/* Lost at the deferred bound */
+	uint64_t	el_queue;	/* Lost at this client's queue */
+} oes_event_lost_t;
+
+/*
  * Main message structure
  *
  * Clients read these from the oes fd. Messages are variable-length:
@@ -815,6 +834,7 @@ typedef struct {
 		oes_event_file_t	fsync;		/* FILE_FSYNC */
 		oes_event_file_lock_t	file_lock;
 		oes_event_file_ioctl_t	file_ioctl;
+		oes_event_lost_t	lost;		/* NOTIFY_LOST */
 		uint8_t			_reserved[128]; /* Future expansion */
 	} em_event_data;
 } oes_message_t;

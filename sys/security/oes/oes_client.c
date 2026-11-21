@@ -753,6 +753,11 @@ oes_client_alloc(void)
 
 	knlist_init_mtx(&ec->ec_selinfo.si_note, &ec->ec_mtx);
 
+	/* Deferred losses before the open are not this client's. */
+	EC_LOCK(ec);
+	oes_client_lost_fold(ec);
+	EC_UNLOCK(ec);
+
 	return (ec);
 }
 
@@ -937,6 +942,8 @@ oes_client_subscribe_events(struct oes_client *ec, oes_event_type_t *events,
 	}
 
 	/* All events validated - now apply changes atomically */
+	/* Deferred losses count only while their type is subscribed. */
+	oes_client_lost_fold(ec);
 	if (flags & OES_SUB_REPLACE)
 		oes_client_unsubscribe_all(ec);
 
@@ -1009,6 +1016,9 @@ oes_client_subscribe_bitmap(struct oes_client *ec,
 			}
 		}
 	}
+
+	/* Deferred losses count only while their type is subscribed. */
+	oes_client_lost_fold(ec);
 
 	/* Replace mode: clear existing subscriptions */
 	if (flags & OES_SUB_REPLACE)

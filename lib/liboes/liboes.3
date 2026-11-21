@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 19, 2026
+.Dd November 21, 2026
 .Dt LIBOES 3
 .Os
 .Sh NAME
@@ -139,6 +139,22 @@ Messages contain per-client global and per-event sequence numbers.
 A gap
 indicates that delivery was attempted but at least one intervening event was
 dropped.
+Whenever events were lost,
+.Fn oes_read_event
+first returns an
+.Dv OES_EVENT_NOTIFY_LOST
+message, which every client receives without subscribing:
+.Va em_event_data.lost.el_count
+events were lost since the previous one,
+.Va el_deferred
+of them before any client received them, at the kernel's deferred-delivery
+bound, and
+.Va el_queue
+at this client's own full queue
+.Pq see Xr oes 4 , Sx Lost events .
+.Fn oes_event_name
+names it
+.Dq NOTIFY_LOST .
 AUTH-derived NOTIFY messages set
 .Dv OES_MSG_FLAG_AUTH_RESULT
 and expose the applied decision in

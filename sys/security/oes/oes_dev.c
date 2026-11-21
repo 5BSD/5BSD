@@ -33,9 +33,13 @@
 #include <sys/rmlock.h>
 #include <sys/poll.h>
 #include <sys/selinfo.h>
+#include <sys/smp.h>
 #include <sys/capsicum.h>
 #include <sys/priv.h>
 #include <sys/sysctl.h>
+
+#include <vm/vm.h>
+#include <vm/vm_kern.h>
 
 #include <security/mac/mac_policy.h>	/* MAC_VERSION */
 #include <security/oes/oes.h>
@@ -137,10 +141,116 @@ SYSCTL_PROC(_security_oes, OID_AUTO, clients,
     CTLTYPE_UINT | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0, oes_sysctl_clients,
     "IU", "Clients open now (PRIV_DRIVER)");
 
-SYSCTL_UINT(_security_oes, OID_AUTO, defer_max, CTLFLAG_RD,
-    SYSCTL_NULL_UINT_PTR, OES_DEFER_MAX,
-    "Events the deferred-delivery queue holds before it discards "
-    "(es_nosleep_drops)");
+/*
+ * The deferred-delivery queue's byte bound (oes_mac.c oes_defer_admits()).
+ *
+ * The queue is kernel memory that unprivileged producers fill and one
+ * thread drains, as pipe buffers are; its default follows the kernel's
+ * rule for those (kern.ipc.maxpipekva, subr_param.c): 1/64 of physical
+ * memory.  maxpipekva is capped at 1/64 of the kernel address space it
+ * maps; the queue is malloc(9) memory, so the malloc arena takes that
+ * place: min(physical memory, vm_kmem_size) / 64.  The floor lets a uid
+ * alone (which gets half the bound) queue one maximum-size entry per CPU,
+ * 2 * mp_ncpus * defer_entry_max, where defer_entry_max is what malloc(9)
+ * gives a maximum-size event, measured once here.  A value is raised to
+ * the floor and lowered to vm_kmem_size (no larger bound can be
+ * allocated, and the admission sum then cannot wrap); 0 restores the
+ * default.  Lowering the bound below what is queued only refuses new
+ * entries until the queue drains.
+ */
+static u_long
+oes_defer_bound_clamp(u_long v)
+{
+
+	if (v == 0)
+		v = oes_softc.sc_defer_max_default;
+	if (v < oes_softc.sc_defer_floor)
+		v = oes_softc.sc_defer_floor;
+	if (v > vm_kmem_size)
+		v = vm_kmem_size;
+	return (v);
+}
+
+static void
+oes_defer_bound_init(void)
+{
+	void *probe;
+	u_long def, v;
+
+	probe = malloc(offsetof(struct oes_pending, ep_msg) +
+	    OES_MSG_MAX_SIZE, M_OES, M_WAITOK);
+	oes_softc.sc_defer_entry_max = malloc_usable_size(probe);
+	free(probe, M_OES);
+	oes_softc.sc_defer_floor = 2 * (u_long)mp_ncpus *
+	    oes_softc.sc_defer_entry_max;
+	def = MIN(ptoa((u_long)physmem), vm_kmem_size) / 64;
+	oes_softc.sc_defer_max_default = oes_defer_bound_clamp(def);
+	v = 0;
+	TUNABLE_ULONG_FETCH("security.oes.defer_max_bytes", &v);
+	oes_softc.sc_defer_max_bytes = oes_defer_bound_clamp(v);
+}
+
+static int
+oes_sysctl_defer_max_bytes(SYSCTL_HANDLER_ARGS)
+{
+	u_long v;
+	int error;
+
+	v = atomic_load_long(&oes_softc.sc_defer_max_bytes);
+	error = sysctl_handle_long(oidp, &v, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	atomic_store_long(&oes_softc.sc_defer_max_bytes,
+	    oes_defer_bound_clamp(v));
+	return (0);
+}
+SYSCTL_PROC(_security_oes, OID_AUTO, defer_max_bytes,
+    CTLTYPE_ULONG | CTLFLAG_RWTUN | CTLFLAG_NOFETCH | CTLFLAG_MPSAFE, NULL, 0,
+    oes_sysctl_defer_max_bytes, "LU",
+    "Bytes the deferred-delivery queue holds before it discards "
+    "(es_nosleep_drops); 0 restores the default, "
+    "min(physical memory, vm.kmem_size) / 64");
+
+SYSCTL_ULONG(_security_oes, OID_AUTO, defer_entry_max, CTLFLAG_RD,
+    &oes_softc.sc_defer_entry_max, 0,
+    "Bytes a maximum-size deferred event holds");
+
+/* What is queued now: as private as the device, like clients. */
+static int
+oes_sysctl_defer_bytes(SYSCTL_HANDLER_ARGS)
+{
+	u_long v;
+	int error;
+
+	error = oes_sysctl_private(req);
+	if (error != 0)
+		return (error);
+	v = atomic_load_long(&oes_softc.sc_defer_bytes);
+	return (sysctl_handle_long(oidp, &v, 0, req));
+}
+SYSCTL_PROC(_security_oes, OID_AUTO, defer_bytes,
+    CTLTYPE_ULONG | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
+    oes_sysctl_defer_bytes, "LU",
+    "Bytes the deferred-delivery queue holds now (PRIV_DRIVER)");
+
+static int
+oes_sysctl_defer_depth(SYSCTL_HANDLER_ARGS)
+{
+	u_int n;
+	int error;
+
+	error = oes_sysctl_private(req);
+	if (error != 0)
+		return (error);
+	mtx_lock_spin(&oes_softc.sc_defer_mtx);
+	n = oes_softc.sc_defer_count;
+	mtx_unlock_spin(&oes_softc.sc_defer_mtx);
+	return (sysctl_handle_int(oidp, &n, 0, req));
+}
+SYSCTL_PROC(_security_oes, OID_AUTO, defer_depth,
+    CTLTYPE_UINT | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
+    oes_sysctl_defer_depth, "IU",
+    "Events the deferred-delivery queue holds now (PRIV_DRIVER)");
 
 int oes_cache_max_entries = 1024;
 SYSCTL_INT(_security_oes, OID_AUTO, cache_max_entries, CTLFLAG_RW,
@@ -477,6 +587,54 @@ oes_close(struct cdev *dev, int fflag, int devtype, struct thread *td)
 }
 
 /*
+ * Return ec's OES_EVENT_NOTIFY_LOST marker (oes(4) "Lost events") and
+ * clear the counts it reports.  Called with ec locked and a count
+ * pending; returns with it unlocked.  The marker is built from the counts,
+ * never queued, so no full queue or failed allocation can lose it: if the
+ * copy out fails the counts are restored for the next read.
+ */
+static int
+oes_read_lost(struct oes_client *ec, struct uio *uio)
+{
+	oes_message_t *msg;
+	struct timespec now, wall_now;
+	uint64_t queue, deferred;
+	int error;
+
+	EC_LOCK_ASSERT(ec);
+	queue = ec->ec_lost_queue;
+	deferred = ec->ec_lost_deferred;
+	ec->ec_lost_queue = 0;
+	ec->ec_lost_deferred = 0;
+	EC_UNLOCK(ec);
+
+	msg = malloc(sizeof(*msg), M_OES, M_WAITOK | M_ZERO);
+	msg->em_version = OES_MESSAGE_VERSION;
+	msg->em_size = sizeof(*msg);
+	msg->em_struct_size = sizeof(*msg);
+	msg->em_event = OES_EVENT_NOTIFY_LOST;
+	msg->em_action = OES_ACTION_NOTIFY;
+	nanouptime(&now);
+	nanotime(&wall_now);
+	msg->em_time.tv_sec = now.tv_sec;
+	msg->em_time.tv_nsec = now.tv_nsec;
+	msg->em_wall_time.tv_sec = wall_now.tv_sec;
+	msg->em_wall_time.tv_nsec = wall_now.tv_nsec;
+	msg->em_event_data.lost.el_count = queue + deferred;
+	msg->em_event_data.lost.el_deferred = deferred;
+	msg->em_event_data.lost.el_queue = queue;
+	error = uiomove(msg, msg->em_size, uio);
+	free(msg, M_OES);
+	if (error != 0) {
+		EC_LOCK(ec);
+		ec->ec_lost_queue += queue;
+		ec->ec_lost_deferred += deferred;
+		EC_UNLOCK(ec);
+	}
+	return (error);
+}
+
+/*
  * oes_read - Read events from client queue
  *
  * Returns one or more events per read.  AUTH events are always returned
@@ -490,6 +648,9 @@ oes_close(struct cdev *dev, int fflag, int devtype, struct thread *td)
  *       msg = buf + off;
  *       off += msg->em_size;
  *   }
+ *
+ * A client that lost events since its last read gets an
+ * OES_EVENT_NOTIFY_LOST marker first, alone in its read (oes_read_lost()).
  *
  * Blocks if queue is empty (unless O_NONBLOCK).
  */
@@ -519,7 +680,8 @@ oes_read(struct cdev *dev __unused, struct uio *uio, int ioflag)
 		 * nothing queued, and an expired AUTH event can be unlinked
 		 * between an enqueue's wakeup and this thread running.
 		 */
-		while (TAILQ_EMPTY(&ec->ec_pending)) {
+		while (TAILQ_EMPTY(&ec->ec_pending) &&
+		    !oes_client_lost_pending(ec)) {
 			if (ec->ec_flags & EC_FLAG_CLOSING) {
 				EC_UNLOCK(ec);
 				return (ENXIO);
@@ -543,6 +705,10 @@ oes_read(struct cdev *dev __unused, struct uio *uio, int ioflag)
 				return (error);
 			}
 		}
+
+		/* A loss is reported first, before what is still queued. */
+		if (oes_client_lost_pending(ec))
+			return (oes_read_lost(ec, uio));
 
 		ep = oes_event_dequeue(ec);
 		KASSERT(ep != NULL, ("oes_read: dequeue returned NULL"));
@@ -1394,7 +1560,8 @@ oes_poll(struct cdev *dev, int events, struct thread *td)
 	EC_LOCK(ec);
 
 	if (events & (POLLIN | POLLRDNORM)) {
-		if (!TAILQ_EMPTY(&ec->ec_pending))
+		if (!TAILQ_EMPTY(&ec->ec_pending) ||
+		    oes_client_lost_pending(ec))
 			revents |= events & (POLLIN | POLLRDNORM);
 		else
 			selrecord(td, &ec->ec_selinfo);
@@ -1474,6 +1641,11 @@ oes_kqread(struct knote *kn, long hint)
 		kn->kn_flags |= EV_EOF;
 		return (1);
 	}
+	if (oes_client_lost_pending(ec)) {
+		/* The marker is read first, alone. */
+		kn->kn_data = sizeof(oes_message_t);
+		return (1);
+	}
 	return (!TAILQ_EMPTY(&ec->ec_pending));
 }
 
@@ -1518,6 +1690,7 @@ oes_dev_state_init(void)
 	mtx_init(&oes_softc.sc_defer_mtx, "oes_defer", NULL, MTX_SPIN);
 	TAILQ_INIT(&oes_softc.sc_defer);
 	oes_softc.sc_defer_count = 0;
+	oes_defer_bound_init();
 	TASK_INIT(&oes_softc.sc_defer_task, 0, oes_defer_task_fn, NULL);
 }
 
@@ -1554,7 +1727,7 @@ oes_dev_attach(void)
 	 * preempt a producer on that producer's CPU, and oes_defer_task_fn()
 	 * moves it to the timeshare priority the scheduler computes for it
 	 * whenever the scheduler ends its slice.  Under a storm the queue
-	 * then fills and events beyond its limit (OES_DEFER_MAX) are
+	 * then fills and events beyond its byte bound (defer_max_bytes) are
 	 * discarded and counted in es_nosleep_drops (oes(4)).
 	 */
 	oes_softc.sc_defer_tq = taskqueue_create("oes_deferq", M_WAITOK,

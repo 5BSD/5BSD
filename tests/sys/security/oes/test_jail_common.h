@@ -263,21 +263,44 @@ jt_get_scope(int fd)
 #define JT_LOAD_STEP		8
 #define JT_LOAD_MAXCLIENTS	48
 /*
- * What must end under load is bounded by the kernel in deliveries, two
- * rounds of at most security.oes.defer_max each, not in time.  The load
- * measures how many events the delivery thread gets through in a second
- * and allows four times what that bound then takes, 20 seconds at least.
+ * What must end under load is bounded by the kernel in deliveries: two
+ * rounds, each as long as the deferred queue's depth when it began, which
+ * security.oes.defer_max_bytes bounds.  At the load's own events the queue
+ * holds at most defer_max_bytes / (defer_bytes / defer_depth) of them, read
+ * while the load keeps it full.  The load measures how many events the
+ * delivery thread gets through in a second and allows four times what that
+ * bound then takes, 20 seconds at least.
  */
-static inline long
-jt_defer_max(void)
+static inline int
+jt_sysctl_ulong(const char *name, u_long *vp)
 {
-	u_int v;
+	unsigned int u;
 	size_t len;
 
-	len = sizeof(v);
-	if (sysctlbyname("security.oes.defer_max", &v, &len, NULL, 0) != 0)
+	len = sizeof(*vp);
+	if (sysctlbyname(name, vp, &len, NULL, 0) != 0)
 		return (-1);
-	return ((long)v);
+	if (len == sizeof(u)) {	/* defer_depth is an unsigned int */
+		memcpy(&u, vp, sizeof(u));
+		*vp = u;
+	}
+	return (0);
+}
+
+static inline long
+jt_defer_capacity(void)
+{
+	u_long max, bytes, depth;
+
+	if (jt_sysctl_ulong("security.oes.defer_max_bytes", &max) != 0 ||
+	    jt_sysctl_ulong("security.oes.defer_bytes", &bytes) != 0 ||
+	    jt_sysctl_ulong("security.oes.defer_depth", &depth) != 0)
+		return (-1);
+	if (bytes == 0 || depth == 0) {
+		errno = EAGAIN;	/* Nothing queued: nothing to size by */
+		return (-1);
+	}
+	return ((long)(max / (bytes / depth)));
 }
 #define JT_LOAD_MIN_MS		20000
 
@@ -286,6 +309,7 @@ struct jt_load {
 	int	clients[JT_LOAD_MAXCLIENTS];
 	int	nclients;
 	long	rate;		/* Deliveries per second under the load */
+	long	capacity;	/* Load events the queue's bound holds */
 	long	limit_ms;	/* Time allowed for the kernel's bound */
 };
 
@@ -432,15 +456,16 @@ full:
 	    (uint64_t)jt_elapsed_ms(&start));
 	if (l->rate < 1)
 		l->rate = 1;
-	if (jt_defer_max() < 0) {
-		printf("    security.oes.defer_max: %s\n", strerror(errno));
+	l->capacity = jt_defer_capacity();
+	if (l->capacity < 0) {
+		printf("    deferred queue capacity: %s\n", strerror(errno));
 		goto fail;
 	}
-	if (jt_defer_max() == 0) {
-		printf("    security.oes.defer_max is 0\n");
+	if (l->capacity == 0) {
+		printf("    deferred queue capacity is 0\n");
 		goto fail;
 	}
-	l->limit_ms = 4L * 2 * jt_defer_max() * 1000 / l->rate;
+	l->limit_ms = 4L * 2 * l->capacity * 1000 / l->rate;
 	if (l->limit_ms < JT_LOAD_MIN_MS)
 		l->limit_ms = JT_LOAD_MIN_MS;
 	printf("    deferred queue full with %d unread clients; %ld "

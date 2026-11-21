@@ -1285,6 +1285,18 @@ emit_event_data(FILE *fp, int depth, const oes_message_t *msg)
 		obj_close(fp, depth, false, false);
 		break;
 
+	/* --- Events this client lost (not an event) --- */
+	case OES_EVENT_NOTIFY_LOST:
+		obj_open(fp, depth, "event_data", false);
+		json_kv_uint(fp, depth + 1, "count",
+		    msg->em_event_data.lost.el_count, true);
+		json_kv_uint(fp, depth + 1, "deferred",
+		    msg->em_event_data.lost.el_deferred, true);
+		json_kv_uint(fp, depth + 1, "queue",
+		    msg->em_event_data.lost.el_queue, false);
+		obj_close(fp, depth, false, false);
+		break;
+
 	case OES_EVENT_NOTIFY_PROC_SCHED:
 		obj_open(fp, depth, "event_data", false);
 		emit_process(fp, depth + 1, "target", msg,
