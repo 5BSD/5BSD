@@ -1128,11 +1128,14 @@ ambient_probe_expect()
 }
 
 # A boot-started provider that claims <name> and fails its activation with
-# ECANCELED once the test creates cancel-provider.trigger.
+# ECANCELED once the test creates cancel-provider.trigger.  The route a
+# test-local Capsule exports is a user-domain channel (uid 0): it resolves only
+# names whose provider declares user visibility.
 install_cancel_provider()
 {
 	make_svc_bin system org.test.cancel.svc \
 	    "activation { boot = true; ipc = [\"org.test.cancel.svc\"]; }
+visible = [\"user\"];
 arguments = [\"cancel-activation\", \"org.test.cancel.svc\",
     \"$(pwd)/cancel-provider.ready\", \"$(pwd)/cancel-provider.trigger\",
     \"$(pwd)/cancel-provider.result\"];" \
@@ -1155,8 +1158,10 @@ ambient_lookup_waits_for_slow_activation_body()
 	prepare_paths
 	capd_find_lookup_exec
 	# Launched by the lookup; ready 4 s later, inside switchboard's bound.
+	# Visible to the user-domain route (install_cancel_provider).
 	make_svc_bin system org.test.slow.svc \
 	    "activation { ipc = [\"org.test.slow.svc\"]; }
+visible = [\"user\"];
 arguments = [\"delayed-provider\", \"org.test.slow.svc\", \"4000\",
     \"$(pwd)/slow-provider.started\", \"$(pwd)/slow-provider.result\"];" \
 	    "$capd_service_fixture" >/dev/null
