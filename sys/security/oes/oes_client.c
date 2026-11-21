@@ -413,10 +413,11 @@ oes_readers_free_cb(epoch_context_t ctx)
 }
 
 /*
- * The entry of (pid, genid, exec_id), or NULL.  Entries are sorted by pid
- * and a join leaves at most one live entry per pid (it drops the dead
- * ones); stale entries of an exited process may share a pid with a newer
- * one until the next join, so neighbours with the same pid are checked too.
+ * The entry of (pid, genid, exec_id), or NULL.  Entries are sorted by pid.
+ * Several may share a pid: an exited or exec'd process's entry stays until
+ * its queued events are delivered (oes_client_join()), beside the entry of
+ * its new image or of a newer process with the reused pid, so neighbours
+ * with the same pid are checked too.
  */
 static const struct oes_reader *
 oes_readers_find(const struct oes_readers *r, pid_t pid, uint64_t genid,
@@ -485,11 +486,16 @@ oes_process_is_reader(const oes_process_t *ep)
  * The execution is taken as the dispatch side and the join take it: from
  * the acting thread's credential (oes_fill_process(), oes_client_join()).
  * After an exec p_ucred carries the new execution at once, while the
- * thread's td_ucred keeps the old one until it next enters the kernel
- * (thread_cow_update()), and the events it makes until then are keyed on
- * the old one (review R2).  So the entry is live while either credential
- * still carries its execution.  A process in exec has one thread, and
- * td_ucred is replaced only under PROC_LOCK, which is held here.
+ * thread's credential keeps the old one until it next enters the kernel
+ * (thread_cow_update()), and an event it made until then would be keyed
+ * on the old one (review R2).  So the entry is live while p_ucred or a
+ * thread's credential still carries its execution.
+ *
+ * Another thread's credential is read as td_realucred: it changes only in
+ * crcowsync() under PROC_LOCK, held here, and lags after an exec as
+ * td_ucred does.  td_ucred itself must not be read: a thread swaps it
+ * without the lock for a temporary override (access(2) with a real uid,
+ * NFS and NLM requests) and frees the override afterwards.
  */
 static bool
 oes_reader_live(const struct oes_reader *r)
@@ -498,17 +504,22 @@ oes_reader_live(const struct oes_reader *r)
 	struct thread *td;
 	bool live;
 
+	/* pfind() finds neither a new nor a zombie process. */
 	p = pfind(r->or_pid);
 	if (p == NULL)
 		return (false);
 	live = false;
-	if (p->p_state == PRS_NORMAL && oes_proc_genid(p) == r->or_genid) {
-		live = oes_proc_get_exec_id(p) == r->or_exec_id;
-		FOREACH_THREAD_IN_PROC(p, td) {
-			if (live)
-				break;
-			live = oes_cred_get_exec_id(td->td_ucred) ==
-			    r->or_exec_id;
+	if (oes_proc_genid(p) == r->or_genid) {
+		if (oes_proc_get_exec_id(p) == r->or_exec_id)
+			live = true;
+		else {
+			FOREACH_THREAD_IN_PROC(p, td) {
+				if (oes_cred_get_exec_id(td->td_realucred) ==
+				    r->or_exec_id) {
+					live = true;
+					break;
+				}
+			}
 		}
 	}
 	PROC_UNLOCK(p);
@@ -575,10 +586,10 @@ oes_client_join(struct oes_client *ec, struct thread *td, struct file *fp,
 	struct epoch_tracker et;
 	struct oes_readers *old, *new;
 	const struct oes_reader *e;
-	struct oes_reader self, *kept;
+	struct oes_reader self, *kept, r;
 	uint64_t queued, done;
 	u_int size, i, n, nkept;
-	bool inserted, answer, known;
+	bool inserted, answer, known, loaded;
 
 	KASSERT(td == curthread, ("%s: not curthread", __func__));
 	WITNESS_WARN(WARN_SLEEPOK, NULL, "oes_client_join");
@@ -616,24 +627,33 @@ oes_client_join(struct oes_client *ec, struct thread *td, struct file *fp,
 	kept = n != 0 ? malloc(n * sizeof(*kept), M_TEMP, M_WAITOK) : NULL;
 	nkept = 0;
 	queued = done = 0;
+	loaded = false;
 	for (i = 0; i < n; i++) {
-		struct oes_reader r = old->ors_r[i];
-
 		/* The caller's own old entry is replaced, not kept. */
 		if (&old->ors_r[i] == e)
 			continue;
-		if (r.or_drop_after == 0 && oes_reader_live(&r)) {
-			kept[nkept++] = r;
+		if (old->ors_r[i].or_drop_after == 0 &&
+		    oes_reader_live(&old->ors_r[i])) {
+			kept[nkept++] = old->ors_r[i];
 			continue;
 		}
 		/*
 		 * Dead.  Read the generations only now, after the process
-		 * was seen dead: whatever it queued is counted in queued.
+		 * was seen dead (pfind() above, or a join that marked it).
+		 * What orders every event the process queued before this
+		 * read is that observation: its exit or exec released
+		 * PROC_LOCK, and pfind() took it (or the pid hash lock that
+		 * removal holds), after its last enqueue.  The acquire loads
+		 * only pair with the task's release of sc_defer_done.  So an
+		 * entry's generation is recorded only once it has been seen
+		 * dead through pfind().
 		 */
-		if (queued == 0) {
+		if (!loaded) {
 			queued = atomic_load_acq_64(&oes_softc.sc_defer_queued);
 			done = atomic_load_acq_64(&oes_softc.sc_defer_done);
+			loaded = true;
 		}
+		r = old->ors_r[i];
 		if (r.or_drop_after == 0)
 			r.or_drop_after = queued;
 		if (done < r.or_drop_after)
@@ -662,6 +682,32 @@ oes_client_join(struct oes_client *ec, struct thread *td, struct file *fp,
 		epoch_call(global_epoch_preempt, oes_readers_free_cb,
 		    &old->ors_ctx);
 }
+
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+/*
+ * Test kernels only (OES_IOC_TEST_READER_ENTRIES): how many entries of the
+ * client's reader set have pid, so a test can see a dead entry kept and
+ * later dropped.
+ */
+int
+oes_client_test_reader_entries(struct oes_client *ec,
+    struct oes_test_reader_entries *a)
+{
+	struct epoch_tracker et;
+	const struct oes_readers *r;
+	u_int i;
+
+	a->otre_count = 0;
+	oes_readers_enter(&et);
+	r = (const struct oes_readers *)atomic_load_acq_ptr(
+	    (volatile uintptr_t *)&ec->ec_readers);
+	for (i = 0; r != NULL && i < r->ors_count; i++)
+		if (r->ors_r[i].or_pid == a->otre_pid)
+			a->otre_count++;
+	oes_readers_exit(&et);
+	return (0);
+}
+#endif
 
 struct oes_client *
 oes_client_alloc(void)

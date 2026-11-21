@@ -11,6 +11,7 @@
  */
 
 #include "opt_dq.h"
+#include "opt_mac_capability.h"
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -1241,6 +1242,12 @@ oes_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 	case OES_IOC_JOIN:
 		oes_client_join(ec, td, td->td_fpop, OES_JOIN_CHECK);
 		return (0);
+
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+	case OES_IOC_TEST_READER_ENTRIES:
+		return (oes_client_test_reader_entries(ec,
+		    (struct oes_test_reader_entries *)data));
+#endif
 
 	case OES_IOC_SET_MUTE_INVERT: {
 		return (oes_ioctl_set_mute_invert(ec,

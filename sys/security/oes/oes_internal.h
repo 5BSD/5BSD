@@ -728,6 +728,10 @@ int	oes_mac_policy_init(void);
 int	oes_mac_attach(void);
 void	oes_gate_reconcile(void);
 void	oes_gate_client_update(struct oes_client *ec, bool gone);
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+int	oes_client_test_reader_entries(struct oes_client *ec,
+	    struct oes_test_reader_entries *a);
+#endif
 bool	oes_gate_cache_in_use(void);
 void	oes_gate_set_strict(int *knob, int value);
 uint64_t oes_proc_get_exec_id(struct proc *p);

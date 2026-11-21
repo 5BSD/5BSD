@@ -417,9 +417,9 @@ mac_capability_test_issuer_oes_defer_hold_sysctl(SYSCTL_HANDLER_ARGS)
 SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuer_oes_defer_hold,
     CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
     mac_capability_test_issuer_oes_defer_hold_sysctl, "I",
-    "Test kernel only: 1 holds (2 stalls) OES deferred delivery before its "
-    "next event, 3 waits until parked, 0 releases (read: 0 off, 1 armed, "
-    "2 parked)");
+    "Test kernel only: 1 holds OES deferred delivery before its next event "
+    "(2: the same on this kernel), 3 waits until parked, 0 releases "
+    "(read: 0 off, 1 armed, 2 parked)");
 
 static void
 mac_capability_test_issuer_init(void *arg __unused)

@@ -766,12 +766,11 @@ defer_hold(int v)
 /*
  * The deferred task does not run from here until hold is released, so the
  * actor's fork and signal events stay queued while it execs and the new
- * image joins.  On a kernel that drains the task before dropping the old
- * entry, that join releases the hold and waits; the events are matched
- * against the old entry, still published.  On one that does not, the join
- * returns, the actor exits, and only the release below lets the task
- * deliver, against a set the old entry has left: the leak is certain, not
- * a race.
+ * image joins.  That join must not drop the old entry while those events
+ * are queued (review D1): the kernel keeps it until they are delivered
+ * (before review R1 it waited for the task instead).  A kernel that
+ * dropped it at once would let the release below deliver them against a
+ * set the old entry has left: the leak is certain, not a race.
  */
 static void
 deferred_case(const atf_tc_t *tc, bool exec_rejoin)
@@ -862,14 +861,16 @@ ATF_TC_CLEANUP(n15_exec_rejoin_deferred, tc)
 }
 
 /*
- * Review R1: a join that drops a dead reader's entry must not wait for the
+ * Review R1: a join that meets a dead reader's entry must not wait for the
  * deferred-delivery task.  The task is stalled (DEFER_HOLD 2, which no join
  * releases) with a dead reader's events still queued; a new reader joins.
  * Before the fix the join waited for the whole task (taskqueue_drain()),
- * here for ever; after it, the join returns at once and the dead reader's
- * entry stays until its queued events are delivered, so they still do not
- * reach its client (review D1).
+ * here for ever.  After it the join returns at once and keeps the dead
+ * entry until its queued events are delivered, so they still do not reach
+ * its client (review D1); a join after that delivery drops it
+ * (OES_IOC_TEST_READER_ENTRIES).
  */
+/* Join fd, received over sock, and say so on done. */
 static int
 r1_joiner(int sock, int done)
 {
@@ -883,11 +884,50 @@ r1_joiner(int sock, int done)
 	return (write(done, "j", 1) == 1 ? 0 : 103);
 }
 
+static int
+reader_entries(int fd, pid_t pid)
+{
+	struct oes_test_reader_entries a;
+
+	memset(&a, 0, sizeof(a));
+	a.otre_pid = pid;
+	ATF_REQUIRE_MSG(ioctl(fd, OES_IOC_TEST_READER_ENTRIES, &a) == 0,
+	    "OES_IOC_TEST_READER_ENTRIES: %s", strerror(errno));
+	return ((int)a.otre_count);
+}
+
+/* A process that joins fd (passed over sock) and exits. */
+static pid_t
+join_and_exit(int fd)
+{
+	int sv[2], done[2], status;
+	pid_t k;
+	char c;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	ATF_REQUIRE(pipe(done) == 0);
+	k = fork();
+	ATF_REQUIRE(k >= 0);
+	if (k == 0) {
+		close(sv[0]);
+		close(done[0]);
+		_exit(r1_joiner(sv[1], done[1]));
+	}
+	close(sv[1]);
+	close(done[1]);
+	send_fd(sv[0], fd);
+	ATF_REQUIRE(read(done[0], &c, 1) == 1);
+	ATF_REQUIRE(waitpid(k, &status, 0) == k);
+	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	close(sv[0]);
+	close(done[0]);
+	return (k);
+}
 ATF_TC_WITH_CLEANUP(n18_join_does_not_wait_for_delivery);
 ATF_TC_HEAD(n18_join_does_not_wait_for_delivery, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Review R1: with deferred delivery stalled and a dead reader's events queued, a new reader's join (which drops the dead entry) returns without waiting for the task; the dead reader's events still do not reach its client");
+	    "Review R1: with deferred delivery stalled and a dead reader's events queued, a new reader's join returns without waiting for the task and keeps the dead entry; after delivery its events have not reached its client, and the next join drops the entry");
 	atf_tc_set_md_var(tc, "require.user", "root");
 	/* The stall stops every client's deferred delivery. */
 	atf_tc_set_md_var(tc, "is.exclusive", "true");
@@ -927,7 +967,7 @@ ATF_TC_BODY(n18_join_does_not_wait_for_delivery, tc)
 	ATF_REQUIRE_MSG(defer_hold(3) == 0, "task not parked: %s",
 	    strerror(errno));
 
-	/* J joins: its new entry makes the join drop R's dead one. */
+	/* J joins: its join meets R's dead entry. */
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sj) == 0);
 	ATF_REQUIRE(pipe(done) == 0);
 	j = fork();
@@ -960,6 +1000,15 @@ ATF_TC_BODY(n18_join_does_not_wait_for_delivery, tc)
 	    forks);
 	ATF_CHECK_EQ_MSG(signals, 0, "the dead reader's signals delivered: %d",
 	    signals);
+	/*
+	 * J's join kept R's entry; R's events were queued before the fence's,
+	 * which has been delivered, so the next join drops it.
+	 */
+	ATF_CHECK_EQ_MSG(reader_entries(x, r), 1,
+	    "R's dead entry was not kept by J's join");
+	(void)join_and_exit(x);
+	ATF_CHECK_EQ_MSG(reader_entries(x, r), 0,
+	    "R's dead entry outlived the delivery of its events");
 	close(x);
 }
 ATF_TC_CLEANUP(n18_join_does_not_wait_for_delivery, tc)
