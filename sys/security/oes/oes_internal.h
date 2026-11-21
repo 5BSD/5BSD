@@ -766,6 +766,8 @@ SYSCTL_DECL(_security_oes);
 /* Test kernels only: mac_capability_testissuer.c. */
 void	mac_capability_test_issuer_oes_defer_park(void);
 void	mac_capability_test_issuer_oes_defer_unpark(void);
+void	mac_capability_test_issuer_oes_gate_park(void);
+void	mac_capability_test_issuer_oes_gate_release(void);
 #endif
 
 extern int oes_debug;

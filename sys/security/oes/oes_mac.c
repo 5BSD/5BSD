@@ -513,9 +513,13 @@ oes_gate_client_update(struct oes_client *ec, bool gone)
 		ec->ec_gate_subs[i] = now[i];
 	}
 	if (cache != ec->ec_gate_cache) {
-		if (cache)
+		if (cache) {
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+			/* Test kernels: test_issuer_oes_gate_hold. */
+			mac_capability_test_issuer_oes_gate_park();
+#endif
 			oes_gate_cache_clients++;
-		else
+		} else
 			oes_gate_cache_clients--;
 		ec->ec_gate_cache = cache;
 	}

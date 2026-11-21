@@ -7,6 +7,8 @@
  * Open Endpoint Security (OES) - Decision Cache
  */
 
+#include "opt_mac_capability.h"
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/malloc.h>
@@ -438,8 +440,13 @@ oes_client_cache_add(struct oes_client *ec, const oes_cache_entry_t *entry)
 	first_use = (ec->ec_flags & EC_FLAG_CACHE_USED) == 0;
 	ec->ec_flags |= EC_FLAG_CACHE_USED;
 	EC_UNLOCK(ec);
-	if (first_use)
+	if (first_use) {
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+		/* Test kernels: an adder that waits releases a parked one. */
+		mac_capability_test_issuer_oes_gate_release();
+#endif
 		oes_gate_client_update(ec, false);
+	}
 
 	oes_cache_make_deadline(&expires, entry->ece_ttl_ms);
 	new_entry = malloc(sizeof(*new_entry), M_OES, M_WAITOK | M_ZERO);
