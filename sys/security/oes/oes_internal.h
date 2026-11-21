@@ -252,7 +252,7 @@ struct oes_client {
 	 * the subscriptions and cache use last accounted.  sc_gate_sx.
 	 */
 	uint64_t		ec_gate_subs[4];
-	bool			ec_gate_cache;
+	u_int			ec_gate_cache;	/* 1: cache use published (sc_gate_sx) */
 	uint32_t		ec_mute_invert;	/* OES_MUTE_INVERT_* */
 
 	/* Event queue */
@@ -791,6 +791,8 @@ SYSCTL_DECL(_security_oes);
 #ifdef MAC_CAPABILITY_TEST_PERMISSIVE
 /* Test kernels only: mac_capability_testissuer.c. */
 void	mac_capability_test_issuer_oes_defer_park(void);
+void	mac_capability_test_issuer_oes_gate_park(void);
+void	mac_capability_test_issuer_oes_gate_release(void);
 #endif
 
 extern int oes_debug;
