@@ -10,6 +10,8 @@
  * security events for subscribed clients.
  */
 
+#include "opt_mac_capability.h"
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -28,6 +30,7 @@
 #include <sys/imgact.h>
 #include <sys/sysctl.h>
 #include <sys/random.h>
+#include <sys/sbuf.h>
 #include <sys/fcntl.h>
 #include <sys/file.h>
 #include <sys/eventhandler.h>
@@ -85,15 +88,19 @@ struct oes_scope_meta {
 	uint64_t	esm_markers[OES_SCOPE_MARKERS_MAX];
 };
 
+/*
+ * A credential label is shared by every copy of a credential (crcopy does
+ * not change the identity) and is never modified once shared: exec and a
+ * scope change give the new credential a label of its own.  The fields are
+ * immutable after the label is published.
+ */
 struct oes_cred_label {
+	u_int		ecl_refs;	/* Credentials sharing this label */
 	uint64_t	ecl_exec_id;	/* Execution ID */
 	struct oes_exec_meta *ecl_exec_meta; /* Shared across credential copies */
 	struct oes_scope_meta *ecl_scope_meta; /* Immutable inherited scopes */
 };
 
-struct oes_pipe_label {
-	uint64_t	epl_id;		/* Opaque identifier; never a kernel address */
-};
 
 static int oes_slot;		/* MAC label slot for our data */
 static bool oes_mac_registered;	/* Track if MAC policy is registered */
@@ -134,8 +141,513 @@ static u_int oes_rename_cache_populated;
 
 #define SLOT(l)	((struct oes_cred_label *)mac_label_get((l), oes_slot))
 #define SLOT_SET(l, v) mac_label_set((l), oes_slot, (uintptr_t)(v))
-#define PIPE_SLOT(l) \
-	((struct oes_pipe_label *)mac_label_get((l), oes_slot))
+
+/*
+ * Idle gating.
+ *
+ * OES is compiled in and never unloads, and costs nothing while nothing
+ * listens.  A hook is live while some open client that is not closing is
+ * subscribed to the AUTH or NOTIFY event it produces; while a strict
+ * setting (require_auth_clients, auth_fail_closed, deadline-miss mode fail
+ * closed) is on, for a hook that produces an AUTH event; and, for a hook
+ * whose event drops cached decisions, while some open client has used its
+ * decision cache.  A hook that is not live returns 0 at its first test,
+ * which is what the rest of the hook would have returned: nobody would
+ * receive or be consulted on its event, no strict setting could deny it,
+ * and no cached decision could be dropped by it.
+ *
+ * The identity hooks (credential and pipe labels, exec relabel) are never
+ * gated: a client that starts later needs the identities of processes and
+ * pipes that already exist.
+ *
+ * Every gated hook with a framework fast-path flag counts toward that flag
+ * only while it is live (MPC_LOADTIME_FLAG_FP_INACTIVE), so with nobody
+ * listening OES makes the framework enter no path on its own account.
+ * Liveness is recomputed after anything it depends on changes: a client's
+ * subscriptions, cache use or close (oes_gate_client_update(), which keeps
+ * per-event subscriber counts so that it never walks the clients or takes
+ * the global OES lock) and the strict settings (oes_gate_reconcile()).
+ * Neither waits for threads inside hooks: hooks,
+ * tables and locks are permanent, a hook may run while not live (another
+ * policy holds the flag, or a thread was already past its test), and it
+ * then behaves as if nobody listened.
+ */
+#define	OES_HD_INVALIDATES	0x0001	/* event drops cached decisions */
+
+#define	OA(e)	OES_EVENT_AUTH_ ## e
+#define	ON(e)	OES_EVENT_NOTIFY_ ## e
+#define	OFP(h)	(MAC_FP_HOOK(h), #h)
+#define	ONOFP	(MAC_FP_NONE, "-")
+#define	OES_FP_VALUE(v, n)	v
+#define	OES_FP_NAME(v, n)	n
+#define	OINV	OES_HD_INVALIDATES
+
+/* X(id, auth, notify, notify_alt, flags, (fp, fpname)) */
+#define	OES_HOOK_LIST(X)						\
+	X(CRED_CHECK_SETUID,	0, ON(SETUID), 0, 0, ONOFP)		\
+	X(CRED_CHECK_SETGID,	0, ON(SETGID), 0, 0, ONOFP)		\
+	X(VNODE_CHECK_EXEC,	OA(EXEC), ON(EXEC), 0, 0, ONOFP)	\
+	X(VNODE_CHECK_ACCESS,	OA(ACCESS), ON(ACCESS), 0, 0,		\
+	    OFP(vnode_check_access))					\
+	X(VNODE_CHECK_LOOKUP,	OA(LOOKUP), ON(LOOKUP), 0, 0,		\
+	    OFP(vnode_check_lookup))					\
+	X(VNODE_CHECK_READ,	OA(READ), ON(READ), 0, 0,		\
+	    OFP(vnode_check_read))					\
+	X(VNODE_CHECK_WRITE,	OA(WRITE), ON(WRITE), 0, OINV,		\
+	    OFP(vnode_check_write))					\
+	X(VNODE_CHECK_TRUNCATE,	0, 0, 0, OINV, ONOFP)			\
+	X(VNODE_CHECK_STAT,	OA(STAT), ON(STAT), 0, 0,		\
+	    OFP(vnode_check_stat))					\
+	X(VNODE_CHECK_POLL,	OA(POLL), ON(POLL), 0, 0,		\
+	    OFP(vnode_check_poll))					\
+	X(VNODE_CHECK_READDIR,	OA(READDIR), ON(READDIR), 0, 0, ONOFP)	\
+	X(VNODE_CHECK_READLINK,	OA(READLINK), ON(READLINK), 0, 0,	\
+	    OFP(vnode_check_readlink))					\
+	X(VNODE_CHECK_REVOKE,	OA(REVOKE), ON(REVOKE), 0, 0, ONOFP)	\
+	X(VNODE_CHECK_OPEN,	OA(OPEN), ON(OPEN), 0, 0,		\
+	    OFP(vnode_check_open))					\
+	X(VNODE_CHECK_CLOSE,	0, ON(CLOSE), 0, 0,			\
+	    OFP(vnode_check_close))					\
+	X(FILE_CHECK_READ,	OA(FILE_READ), ON(FILE_READ), 0, 0,	\
+	    OFP(file_check_read))					\
+	X(FILE_CHECK_STAT,	OA(FILE_STAT), ON(FILE_STAT), 0, 0,	\
+	    OFP(file_check_stat))					\
+	X(FILE_NOTIFY_CLOSE,	0, ON(FILE_CLOSE), 0, 0,		\
+	    OFP(file_notify_close))					\
+	X(FILE_NOTIFY_REPLY,	0, ON(DQ_REPLY), 0, 0, ONOFP)		\
+	X(FILE_CHECK_WRITE,	OA(FILE_WRITE), ON(FILE_WRITE), 0, OINV,	\
+	    OFP(file_check_write))					\
+	X(FILE_CHECK_SETATTR,	OA(FILE_SETATTR), ON(FILE_SETATTR), 0,	\
+	    OINV, ONOFP)						\
+	X(FILE_CHECK_FSYNC,	OA(FILE_FSYNC), ON(FILE_FSYNC), 0, 0, ONOFP) \
+	X(FILE_CHECK_LOCK,	OA(FILE_LOCK), ON(FILE_LOCK), 0, 0, ONOFP) \
+	X(FILE_CHECK_IOCTL,	OA(FILE_IOCTL), ON(FILE_IOCTL), 0, 0,	\
+	    OFP(file_check_ioctl))					\
+	X(FILE_CHECK_MMAP,	OA(FILE_MMAP), ON(FILE_MMAP), 0, 0,	\
+	    OFP(file_check_mmap))					\
+	X(VNODE_CHECK_CREATE,	OA(CREATE), ON(CREATE), 0, OINV, ONOFP)	\
+	X(VNODE_CHECK_UNLINK,	OA(UNLINK), ON(UNLINK), 0, OINV, ONOFP)	\
+	X(VNODE_CHECK_RENAME_FROM, OA(RENAME), ON(RENAME), 0, OINV,	\
+	    OFP(vnode_check_rename_from))				\
+	X(VNODE_CHECK_RENAME_TO, OA(RENAME), ON(RENAME), 0, OINV, ONOFP)	\
+	X(VNODE_CHECK_LINK,	OA(LINK), ON(LINK), 0, OINV, ONOFP)	\
+	X(VNODE_CHECK_CHDIR,	OA(CHDIR), ON(CHDIR), 0, 0, ONOFP)	\
+	X(VNODE_CHECK_CHROOT,	OA(CHROOT), ON(CHROOT), 0, 0, ONOFP)	\
+	X(VNODE_CHECK_MMAP,	OA(MMAP), ON(MMAP), 0, OINV,		\
+	    OFP(vnode_check_mmap))					\
+	X(VNODE_CHECK_SETEXTATTR, OA(SETEXTATTR), ON(SETEXTATTR), 0, OINV, \
+	    ONOFP)							\
+	X(VNODE_CHECK_GETEXTATTR, OA(GETEXTATTR), ON(GETEXTATTR), 0, 0,	\
+	    ONOFP)							\
+	X(VNODE_CHECK_DELETEEXTATTR, OA(DELETEEXTATTR), ON(DELETEEXTATTR), \
+	    0, OINV, ONOFP)						\
+	X(VNODE_CHECK_LISTEXTATTR, OA(LISTEXTATTR), ON(LISTEXTATTR), 0, 0, \
+	    ONOFP)							\
+	X(VNODE_CHECK_GETACL,	OA(GETACL), ON(GETACL), 0, 0, ONOFP)	\
+	X(VNODE_CHECK_SETACL,	OA(SETACL), ON(SETACL), 0, OINV, ONOFP)	\
+	X(VNODE_CHECK_DELETEACL, OA(DELETEACL), ON(DELETEACL), 0, OINV,	\
+	    ONOFP)							\
+	X(VNODE_CHECK_RELABEL,	OA(RELABEL), ON(RELABEL), 0, OINV, ONOFP) \
+	X(VNODE_CHECK_SETMODE,	OA(SETMODE), ON(SETMODE), 0, OINV, ONOFP) \
+	X(VNODE_CHECK_SETOWNER,	OA(SETOWNER), ON(SETOWNER), 0, OINV, ONOFP) \
+	X(VNODE_CHECK_SETFLAGS,	OA(SETFLAGS), ON(SETFLAGS), 0, OINV, ONOFP) \
+	X(VNODE_CHECK_SETUTIMES, OA(SETUTIMES), ON(SETUTIMES), 0, OINV,	\
+	    ONOFP)							\
+	X(KLD_CHECK_LOAD,	OA(KLDLOAD), ON(KLDLOAD), 0, 0, ONOFP)	\
+	X(PROC_CHECK_MPROTECT,	OA(MPROTECT), ON(MPROTECT), 0, OINV,	\
+	    OFP(proc_check_mprotect))					\
+	X(PROC_CHECK_DEBUG,	0, ON(PTRACE), OA(PTRACE), 0, ONOFP)	\
+	X(PROC_CHECK_SIGNAL,	0, ON(SIGNAL), 0, 0, ONOFP)		\
+	X(SOCKET_CHECK_CONNECT,	0, ON(SOCKET_CONNECT), 0, 0, ONOFP)	\
+	X(SOCKET_CHECK_BIND,	0, ON(SOCKET_BIND), 0, 0, ONOFP)	\
+	X(SOCKET_CHECK_LISTEN,	0, ON(SOCKET_LISTEN), 0, 0, ONOFP)	\
+	X(SOCKET_CHECK_CREATE,	0, ON(SOCKET_CREATE), 0, 0, ONOFP)	\
+	X(SOCKET_CHECK_ACCEPT,	0, ON(SOCKET_ACCEPT), 0, 0, ONOFP)	\
+	X(SOCKET_CHECK_SEND,	0, ON(SOCKET_SEND), 0, 0,		\
+	    OFP(socket_check_send))					\
+	X(SOCKET_CHECK_RECEIVE,	0, ON(SOCKET_RECEIVE), 0, 0,		\
+	    OFP(socket_check_receive))					\
+	X(SOCKET_CHECK_STAT,	0, ON(SOCKET_STAT), 0, 0,		\
+	    OFP(socket_check_stat))					\
+	X(SOCKET_CHECK_POLL,	0, ON(SOCKET_POLL), 0, 0,		\
+	    OFP(socket_check_poll))					\
+	X(PIPE_CHECK_READ,	0, ON(PIPE_READ), 0, 0,			\
+	    OFP(pipe_check_read))					\
+	X(PIPE_CHECK_WRITE,	0, ON(PIPE_WRITE), 0, 0,		\
+	    OFP(pipe_check_write))					\
+	X(PIPE_CHECK_STAT,	0, ON(PIPE_STAT), 0, 0,			\
+	    OFP(pipe_check_stat))					\
+	X(PIPE_CHECK_POLL,	0, ON(PIPE_POLL), 0, 0,			\
+	    OFP(pipe_check_poll))					\
+	X(PIPE_CHECK_IOCTL,	0, ON(PIPE_IOCTL), 0, 0, ONOFP)		\
+	X(MOUNT_CHECK_STAT,	0, ON(MOUNT_STAT), 0, 0, ONOFP)		\
+	X(PRIV_CHECK,		0, ON(PRIV_CHECK), 0, 0, OFP(priv_check)) \
+	X(PROC_CHECK_SCHED,	0, ON(PROC_SCHED), 0, 0, ONOFP)		\
+	X(SYSTEM_CHECK_REBOOT,	0, ON(REBOOT), 0, 0, ONOFP)		\
+	X(SYSTEM_CHECK_SYSCTL,	0, ON(SYSCTL), 0, 0, ONOFP)		\
+	X(SYSTEM_CHECK_SWAPON,	OA(SWAPON), ON(SWAPON), 0, 0, ONOFP)	\
+	X(SYSTEM_CHECK_SWAPOFF,	OA(SWAPOFF), ON(SWAPOFF), 0, 0, ONOFP)	\
+	X(KENV_CHECK_SET,	0, ON(KENV), 0, 0, ONOFP)		\
+	X(KENV_CHECK_UNSET,	0, ON(KENV), 0, 0, ONOFP)		\
+	X(EV_FORK,		0, ON(FORK), 0, 0, ONOFP)		\
+	X(EV_EXIT,		0, ON(EXIT), 0, 0, ONOFP)		\
+	X(EV_MOUNTED,		0, ON(MOUNT), OA(MOUNT), 0, ONOFP)	\
+	X(EV_UNMOUNTED,		0, ON(UNMOUNT), 0, 0, ONOFP)		\
+	X(EV_KLDUNLOAD,		0, ON(KLDUNLOAD), 0, 0, ONOFP)
+
+enum oes_hook {
+#define	OES_HOOK_ENUM(id, a, n, alt, f, fp)	OES_H_ ## id,
+	OES_HOOK_LIST(OES_HOOK_ENUM)
+#undef OES_HOOK_ENUM
+	OES_H_COUNT
+};
+
+struct oes_hook_desc {
+	const char	*ohd_name;
+	const char	*ohd_fpname;
+	uint16_t	ohd_auth;	/* AUTH event produced, or 0 */
+	uint16_t	ohd_notify;	/* NOTIFY event or counterpart, or 0 */
+	uint16_t	ohd_notify_alt;	/* another number that wants it, or 0 */
+	uint16_t	ohd_flags;	/* OES_HD_* */
+	u_short		ohd_fp;		/* MAC_FP_HOOK() or MAC_FP_NONE */
+};
+
+static const struct oes_hook_desc oes_hook_desc[OES_H_COUNT] = {
+#define	OES_HOOK_DESC(id, a, n, alt, f, fp)			\
+	[OES_H_ ## id] = { .ohd_name = #id, .ohd_auth = (a),		\
+	    .ohd_notify = (n), .ohd_notify_alt = (alt), .ohd_flags = (f),	\
+	    .ohd_fp = OES_FP_VALUE fp, .ohd_fpname = OES_FP_NAME fp },
+	OES_HOOK_LIST(OES_HOOK_DESC)
+#undef OES_HOOK_DESC
+};
+
+#undef OA
+#undef ON
+#undef OFP
+#undef ONOFP
+#undef OES_FP_VALUE
+#undef OES_FP_NAME
+#undef OINV
+
+#define	OES_GATE_WORDS	howmany(OES_H_COUNT, NBBY * sizeof(u_long))
+
+/* Bit h: hook h is live.  Written only by oes_gate_reconcile(). */
+static u_long oes_hooks_live[OES_GATE_WORDS] __read_mostly;
+
+#define	OES_HOOK_LIVE(h)						\
+	((atomic_load_long(&oes_hooks_live[(h) / (NBBY * sizeof(u_long))]) & \
+	    (1UL << ((h) % (NBBY * sizeof(u_long))))) != 0)
+
+/*
+ * The first statement of every gated hook: nothing that does work may run
+ * before it, a declaration's initialiser included.
+ */
+#define	OES_GATE(h) do {						\
+	if (__predict_true(!OES_HOOK_LIVE(h)))				\
+		return (0);						\
+	counter_u64_add(oes_softc.sc_gate_passes, 1);			\
+} while (0)
+#define	OES_GATE_VOID(h) do {						\
+	if (__predict_true(!OES_HOOK_LIVE(h)))				\
+		return;							\
+	counter_u64_add(oes_softc.sc_gate_passes, 1);			\
+} while (0)
+
+/* Defined, with its operations, at the end of this file. */
+static struct mac_policy_conf oes_mac_policy_conf;
+
+
+/* Is event (AUTH: words 0-1, NOTIFY: words 2-3) in the bitmap sub? */
+static bool
+oes_gate_bit(const uint64_t sub[4], uint16_t event)
+{
+	int base, bit;
+
+	if (event == 0)
+		return (false);
+	base = OES_EVENT_IS_NOTIFY(event) ? 2 : 0;
+	bit = event & 0x0fff;
+	if (bit >= 128)
+		return (false);
+	return ((sub[base + bit / 64] & (1ULL << (bit % 64))) != 0);
+}
+
+/*
+ * The union of the subscriptions of all open clients, kept as a count of
+ * subscribers per event bit (AUTH words 0-1, NOTIFY words 2-3), and the
+ * number of clients that have used the decision cache.  Each client's
+ * contribution is recorded in it (ec_gate_subs, ec_gate_cache), so a
+ * change is applied as a difference: reconcile never walks the clients and
+ * never takes the global OES lock, which the delivery task holds for the
+ * whole of each event's delivery.  sc_gate_sx.
+ */
+static u_int oes_gate_subcount[4 * 64];
+static u_int oes_gate_cache_clients;
+
+/*
+ * Does any open client use the decision cache?  The count the gate keeps;
+ * read without sc_gate_sx by base exclusion, whose writes and namespace
+ * changes still drop cached decisions while it is non-zero (every such hook
+ * is OES_HD_INVALIDATES, so it is live exactly then).
+ */
+bool
+oes_gate_cache_in_use(void)
+{
+
+	return (atomic_load_int(&oes_gate_cache_clients) != 0);
+}
+
+static void
+oes_gate_reconcile_locked(bool force_strict)
+{
+	u_long want[OES_GATE_WORDS], old[OES_GATE_WORDS];
+	u_short on[OES_H_COUNT], off[OES_H_COUNT];
+	const struct oes_hook_desc *d;
+	uint64_t sub[4];
+	u_int non, noff, w;
+	bool cache, strict, was, now;
+	int error __diagused;
+	int h, i;
+
+	sx_assert(&oes_softc.sc_gate_sx, SA_XLOCKED);
+	strict = force_strict || oes_require_auth_clients != 0 ||
+	    oes_auth_fail_closed != 0 ||
+	    oes_default_deadline_miss_mode == OES_DEADLINE_MISS_FAIL_CLOSED;
+	memset(sub, 0, sizeof(sub));
+	for (i = 0; i < (int)nitems(oes_gate_subcount); i++)
+		if (oes_gate_subcount[i] != 0)
+			sub[i / 64] |= 1ULL << (i % 64);
+	cache = oes_gate_cache_clients != 0;
+
+	memset(want, 0, sizeof(want));
+	for (h = 0; h < OES_H_COUNT; h++) {
+		d = &oes_hook_desc[h];
+		if (oes_gate_bit(sub, d->ohd_auth) ||
+		    oes_gate_bit(sub, d->ohd_notify) ||
+		    oes_gate_bit(sub, d->ohd_notify_alt) ||
+		    (strict && d->ohd_auth != 0) ||
+		    (cache && (d->ohd_flags & OES_HD_INVALIDATES) != 0))
+			want[h / (NBBY * sizeof(u_long))] |=
+			    1UL << (h % (NBBY * sizeof(u_long)));
+	}
+	non = noff = 0;
+	for (w = 0; w < OES_GATE_WORDS; w++)
+		old[w] = oes_hooks_live[w];
+	for (h = 0; h < OES_H_COUNT; h++) {
+		d = &oes_hook_desc[h];
+		if (d->ohd_fp == MAC_FP_NONE)
+			continue;
+		w = h / (NBBY * sizeof(u_long));
+		was = (old[w] & (1UL << (h % (NBBY * sizeof(u_long))))) != 0;
+		now = (want[w] & (1UL << (h % (NBBY * sizeof(u_long))))) != 0;
+		if (now && !was)
+			on[non++] = d->ohd_fp;
+		else if (!now && was)
+			off[noff++] = d->ohd_fp;
+	}
+
+	/*
+	 * Enable before publishing, disable after: a hook about to be
+	 * counted already passes its gate, and a hook keeps passing its gate
+	 * until it is no longer counted.
+	 */
+	for (w = 0; w < OES_GATE_WORDS; w++)
+		atomic_store_long(&oes_hooks_live[w], old[w] | want[w]);
+	error = mac_policy_fastpath_set(&oes_mac_policy_conf, on, non, true);
+	KASSERT(error == 0, ("oes gate on: %d", error));
+	error = mac_policy_fastpath_set(&oes_mac_policy_conf, off, noff, false);
+	KASSERT(error == 0, ("oes gate off: %d", error));
+	for (w = 0; w < OES_GATE_WORDS; w++)
+		atomic_store_long(&oes_hooks_live[w], want[w]);
+	atomic_thread_fence_seq_cst();
+	oes_softc.sc_gate_reconciles++;
+}
+
+/*
+ * Recompute which hooks are live from the subscriber counts and the strict
+ * settings, with no OES lock held; complete before it returns.  Bounded: one
+ * pass over the counts and the hook table, and one fast-path update.
+ */
+void
+oes_gate_reconcile(void)
+{
+
+	sx_xlock(&oes_softc.sc_gate_sx);
+	oes_gate_reconcile_locked(false);
+	sx_xunlock(&oes_softc.sc_gate_sx);
+}
+
+/*
+ * Account a change of ec's subscriptions or cache use (gone: ec is closing
+ * and contributes nothing from now on), then recompute.  Called with no
+ * OES lock held, after the change and before the call that made it
+ * returns.  Only ec's own lock is taken, briefly, to read its state.
+ */
+void
+oes_gate_client_update(struct oes_client *ec, bool gone)
+{
+	uint64_t now[4], diff;
+	bool cache, changed;
+	int b, i;
+
+	sx_xlock(&oes_softc.sc_gate_sx);
+	EC_LOCK(ec);
+	gone = gone || (ec->ec_flags & EC_FLAG_CLOSING) != 0;
+	for (i = 0; i < 4; i++)
+		now[i] = gone ? 0 : ec->ec_subscriptions[i];
+	cache = !gone && (ec->ec_flags & EC_FLAG_CACHE_USED) != 0;
+	EC_UNLOCK(ec);
+	for (i = 0; i < 4; i++) {
+		diff = now[i] ^ ec->ec_gate_subs[i];
+		while (diff != 0) {
+			b = ffsll(diff) - 1;
+			diff &= diff - 1;
+			if ((now[i] & (1ULL << b)) != 0)
+				oes_gate_subcount[i * 64 + b]++;
+			else {
+				KASSERT(oes_gate_subcount[i * 64 + b] > 0,
+				    ("oes gate: subscriber count underflow"));
+				oes_gate_subcount[i * 64 + b]--;
+			}
+		}
+		ec->ec_gate_subs[i] = now[i];
+	}
+	changed = cache != (ec->ec_gate_cache != 0);
+	if (changed) {
+		if (cache) {
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+			/* Test kernels: test_issuer_oes_gate_hold. */
+			mac_capability_test_issuer_oes_gate_park();
+#endif
+			oes_gate_cache_clients++;
+		} else
+			oes_gate_cache_clients--;
+	}
+	oes_gate_reconcile_locked(false);
+	/*
+	 * Only now, with the hooks published, does the client count as a
+	 * cache user: oes_cache_add() returns without waiting only once it
+	 * reads this, with an acquire load.
+	 */
+	if (changed)
+		atomic_store_rel_int(&ec->ec_gate_cache, cache ? 1 : 0);
+	sx_xunlock(&oes_softc.sc_gate_sx);
+}
+
+/*
+ * Every fast-path hook OES implements must have a table entry: one without
+ * would never be counted, and its events would be lost whenever no other
+ * policy held the flag.  An uncovered hook is counted for good instead,
+ * which costs time and never enforcement; INVARIANTS kernels stop.
+ */
+static void
+oes_gate_check_coverage(void)
+{
+	u_short hooks[64];
+	u_int i, n;
+	int error __diagused;
+	int h;
+
+	n = mac_policy_fastpath_hooks(&oes_mac_policy_conf, hooks,
+	    nitems(hooks));
+	KASSERT(n <= nitems(hooks), ("oes: %u fast-path hooks", n));
+	for (i = 0; i < MIN(n, nitems(hooks)); i++) {
+		for (h = 0; h < OES_H_COUNT; h++)
+			if (oes_hook_desc[h].ohd_fp == hooks[i])
+				break;
+		if (h < OES_H_COUNT)
+			continue;
+		printf("oes: fast-path hook %u has no gate entry; kept active\n",
+		    hooks[i]);
+		error = mac_policy_fastpath_set(&oes_mac_policy_conf, &hooks[i],
+		    1, true);
+		KASSERT(false, ("oes: fast-path hook %u not gated (%d)",
+		    hooks[i], error));
+	}
+}
+
+/*
+ * Store a strict setting.  Turning one on makes every AUTH hook live before
+ * the value is visible, so no operation passes that the new value denies
+ * once anyone can see it; turning one off stores first and then lets the
+ * hooks go.
+ */
+void
+oes_gate_set_strict(int *knob, int value)
+{
+
+	if (!oes_softc.sc_active) {
+		*knob = value;
+		return;
+	}
+	sx_xlock(&oes_softc.sc_gate_sx);
+	if (knob == &oes_default_deadline_miss_mode ?
+	    value == OES_DEADLINE_MISS_FAIL_CLOSED : value != 0)
+		oes_gate_reconcile_locked(true);
+	atomic_store_int(knob, value);
+	oes_gate_reconcile_locked(false);
+	sx_xunlock(&oes_softc.sc_gate_sx);
+}
+
+static int
+oes_sysctl_gate_live(SYSCTL_HANDLER_ARGS)
+{
+	char buf[2 + 2 * sizeof(u_long) * OES_GATE_WORDS + 1];
+	int w, off;
+
+	off = snprintf(buf, sizeof(buf), "0x");
+	for (w = OES_GATE_WORDS - 1; w >= 0; w--)
+		off += snprintf(buf + off, sizeof(buf) - off, "%0*lx",
+		    (int)(2 * sizeof(u_long)), atomic_load_long(&oes_hooks_live[w]));
+	return (sysctl_handle_string(oidp, buf, sizeof(buf), req));
+}
+
+static int
+oes_sysctl_gate_hooks(SYSCTL_HANDLER_ARGS)
+{
+	const struct oes_hook_desc *d;
+	struct sbuf sb;
+	int error, h;
+
+	sbuf_new_for_sysctl(&sb, NULL, 4096, req);
+	for (h = 0; h < OES_H_COUNT; h++) {
+		d = &oes_hook_desc[h];
+		sbuf_printf(&sb, "%d %s auth 0x%04x notify 0x%04x alt 0x%04x "
+		    "invalidates %d fp %s live %d\n", h, d->ohd_name,
+		    d->ohd_auth, d->ohd_notify, d->ohd_notify_alt,
+		    (d->ohd_flags & OES_HD_INVALIDATES) != 0, d->ohd_fpname,
+		    OES_HOOK_LIVE(h));
+	}
+	error = sbuf_finish(&sb);
+	sbuf_delete(&sb);
+	return (error);
+}
+
+static int
+oes_sysctl_gate_passes(SYSCTL_HANDLER_ARGS)
+{
+	uint64_t value;
+
+	value = oes_softc.sc_gate_passes != NULL ?
+	    counter_u64_fetch(oes_softc.sc_gate_passes) : 0;
+	return (sysctl_handle_64(oidp, &value, 0, req));
+}
+
+static SYSCTL_NODE(_security_oes, OID_AUTO, gate,
+    CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
+    "Idle gating: which OES hooks run while nothing listens");
+SYSCTL_PROC(_security_oes_gate, OID_AUTO, live,
+    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
+    oes_sysctl_gate_live, "A", "Live hooks, bit per hook (see hooks)");
+SYSCTL_PROC(_security_oes_gate, OID_AUTO, hooks,
+    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
+    oes_sysctl_gate_hooks, "A",
+    "Gated hooks: index, events, fast-path hook, liveness");
+SYSCTL_PROC(_security_oes_gate, OID_AUTO, passes,
+    CTLTYPE_U64 | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
+    oes_sysctl_gate_passes, "QU", "Hook entries that passed their gate");
+SYSCTL_U64(_security_oes_gate, OID_AUTO, reconciles, CTLFLAG_RD,
+    &oes_softc.sc_gate_reconciles, 0, "Liveness recomputations");
 
 /* Forward declarations for socket helpers */
 static void oes_fill_sockaddr(oes_sockaddr_t *esa, const struct sockaddr *sa);
@@ -191,41 +703,81 @@ oes_exec_meta_rele(struct oes_exec_meta *meta)
 		free(meta, M_OES);
 }
 
+/*
+ * A pipe's id is an opaque random 64-bit value, never a kernel address,
+ * and 0 means none.  It is drawn the first time an event needs it, so a
+ * pipe nobody observes costs nothing; it lives in the label slot
+ * itself.  Every pipe hook and a pipe relabel run with the pipe mutex held
+ * (asserted by the framework), so the first draw and every later read of
+ * the slot are serialized: once observed, the id does not change.
+ */
+static uint64_t
+oes_pipe_new_id(void)
+{
+	uint64_t id;
+
+	do {
+		arc4random_buf(&id, sizeof(id));
+	} while (id == 0);
+	return (id);
+}
+
+/* oes.h requires a 64-bit kernel: the slot holds the id. */
+_Static_assert(sizeof(intptr_t) >= sizeof(uint64_t),
+    "a pipe id must fit in a label slot");
+
 static void
 oes_mac_pipe_init_label(struct label *label)
 {
-	struct oes_pipe_label *epl;
 
-	epl = malloc(sizeof(*epl), M_OES, M_NOWAIT | M_ZERO);
-	if (epl != NULL) {
-		do {
-			arc4random_buf(&epl->epl_id, sizeof(epl->epl_id));
-		} while (epl->epl_id == 0);
-	}
-	SLOT_SET(label, epl);
+	SLOT_SET(label, 0);
 }
 
 static void
 oes_mac_pipe_destroy_label(struct label *label)
 {
-	struct oes_pipe_label *epl;
 
-	epl = PIPE_SLOT(label);
-	if (epl != NULL) {
-		free(epl, M_OES);
-		SLOT_SET(label, NULL);
-	}
+	SLOT_SET(label, 0);
 }
 
 static void
 oes_mac_pipe_copy_label(struct label *src, struct label *dst)
 {
-	struct oes_pipe_label *src_epl, *dst_epl;
 
-	src_epl = PIPE_SLOT(src);
-	dst_epl = PIPE_SLOT(dst);
-	if (src_epl != NULL && dst_epl != NULL)
-		dst_epl->epl_id = src_epl->epl_id;
+	SLOT_SET(dst, mac_label_get(src, oes_slot));
+}
+
+static uint64_t
+oes_pipe_id(struct pipepair *pp, struct label *pplabel)
+{
+	uint64_t id;
+
+	if (pplabel == NULL)
+		return (0);
+	mtx_assert(&pp->pp_mtx, MA_OWNED);
+	id = (uint64_t)mac_label_get(pplabel, oes_slot);
+	if (id == 0) {
+		id = oes_pipe_new_id();
+		SLOT_SET(pplabel, id);
+	}
+	return (id);
+}
+
+/*
+ * The execution identity recorded in a credential's OES label (0 without
+ * one).  A thread's own td_ucred is stable for the thread, so this needs no
+ * process lock; exec gives the new image a credential with a new id, and
+ * credential copies keep it.
+ */
+uint64_t
+oes_cred_get_exec_id(struct ucred *cred)
+{
+	struct oes_cred_label *ecl;
+
+	if (cred == NULL || cred->cr_label == NULL)
+		return (0);
+	ecl = SLOT(cred->cr_label);
+	return (ecl != NULL ? ecl->ecl_exec_id : 0);
 }
 
 uint64_t
@@ -270,45 +822,56 @@ oes_proc_get_exec_path(struct proc *p, uint32_t *meta_flags)
 	return (meta->eem_path);
 }
 
-/* MAC hook: allocate label for new credential */
+/* A new label of one reference with a fresh exec id, or NULL. */
+static struct oes_cred_label *
+oes_cred_label_alloc(int flags)
+{
+	struct oes_cred_label *ecl;
+
+	ecl = malloc(sizeof(*ecl), M_OES, flags | M_ZERO);
+	if (ecl != NULL) {
+		refcount_init(&ecl->ecl_refs, 1);
+		ecl->ecl_exec_id = oes_generate_exec_id();
+	}
+	return (ecl);
+}
+
+static void
+oes_cred_label_rele(struct oes_cred_label *ecl)
+{
+
+	if (ecl == NULL || !refcount_release(&ecl->ecl_refs))
+		return;
+	oes_exec_meta_rele(ecl->ecl_exec_meta);
+	oes_scope_meta_rele(ecl->ecl_scope_meta);
+	free(ecl, M_OES);
+}
+
+/*
+ * A new credential has no label until it is copied from another
+ * (crcopy), which shares that credential's label: copying a credential
+ * does not change its identity, so it costs no allocation.  A credential
+ * copied from one without a label (created before OES registered) gets
+ * one of its own with a fresh exec id, as it always did.
+ */
 static void
 oes_mac_cred_init_label(struct label *label)
 {
-	struct oes_cred_label *ecl;
 
-	if (label == NULL)
-		return;
-
-	if (!oes_mac_registered) {
+	if (label != NULL)
 		SLOT_SET(label, NULL);
-		return;
-	}
-
-	ecl = malloc(sizeof(*ecl), M_OES, M_NOWAIT | M_ZERO);
-	if (ecl != NULL)
-		ecl->ecl_exec_id = oes_generate_exec_id();
-	SLOT_SET(label, ecl);
 }
 
-/* MAC hook: free label from credential */
 static void
 oes_mac_cred_destroy_label(struct label *label)
 {
-	struct oes_cred_label *ecl;
 
 	if (label == NULL)
 		return;
-
-	ecl = SLOT(label);
-	if (ecl != NULL) {
-		oes_exec_meta_rele(ecl->ecl_exec_meta);
-		oes_scope_meta_rele(ecl->ecl_scope_meta);
-		free(ecl, M_OES);
-		SLOT_SET(label, NULL);
-	}
+	oes_cred_label_rele(SLOT(label));
+	SLOT_SET(label, NULL);
 }
 
-/* MAC hook: copy label (preserves exec_id across fork) */
 static void
 oes_mac_cred_copy_label(struct label *src, struct label *dst)
 {
@@ -318,17 +881,13 @@ oes_mac_cred_copy_label(struct label *src, struct label *dst)
 		return;
 
 	src_ecl = SLOT(src);
+	if (src_ecl != NULL)
+		refcount_acquire(&src_ecl->ecl_refs);
+	else if (oes_mac_registered)
+		src_ecl = oes_cred_label_alloc(M_NOWAIT);
 	dst_ecl = SLOT(dst);
-
-	if (src_ecl != NULL && dst_ecl != NULL) {
-		oes_exec_meta_hold(src_ecl->ecl_exec_meta);
-		oes_exec_meta_rele(dst_ecl->ecl_exec_meta);
-		dst_ecl->ecl_exec_id = src_ecl->ecl_exec_id;
-		dst_ecl->ecl_exec_meta = src_ecl->ecl_exec_meta;
-		oes_scope_meta_hold(src_ecl->ecl_scope_meta);
-		oes_scope_meta_rele(dst_ecl->ecl_scope_meta);
-		dst_ecl->ecl_scope_meta = src_ecl->ecl_scope_meta;
-	}
+	SLOT_SET(dst, src_ecl);
+	oes_cred_label_rele(dst_ecl);
 }
 
 /*
@@ -339,7 +898,7 @@ oes_mac_cred_copy_label(struct label *src, struct label *dst)
 int
 oes_scope_mark_current(pid_t owner_pid, uint64_t *markerp)
 {
-	struct oes_cred_label *ecl;
+	struct oes_cred_label *ecl, *newecl;
 	struct oes_scope_meta *meta, *oldmeta;
 	struct ucred *newcred, *oldcred;
 	struct proc *p;
@@ -351,6 +910,9 @@ oes_scope_mark_current(pid_t owner_pid, uint64_t *markerp)
 	newcred = crget();
 	meta = malloc(sizeof(*meta), M_OES, M_WAITOK | M_ZERO);
 	meta->esm_refcount = 1;
+	/* The copied credential shares its label: give it its own. */
+	newecl = malloc(sizeof(*newecl), M_OES, M_WAITOK | M_ZERO);
+	refcount_init(&newecl->ecl_refs, 1);
 	PROC_LOCK(p);
 	oldcred = crcopysafe(p, newcred);
 	ecl = SLOT(newcred->cr_label);
@@ -360,6 +922,7 @@ oes_scope_mark_current(pid_t owner_pid, uint64_t *markerp)
 		PROC_UNLOCK(p);
 		crfree(newcred);
 		oes_scope_meta_rele(meta);
+		free(newecl, M_OES);
 		return (ecl == NULL ? ENOMEM : ENOSPC);
 	}
 	do {
@@ -371,8 +934,13 @@ oes_scope_mark_current(pid_t owner_pid, uint64_t *markerp)
 		    sizeof(meta->esm_markers));
 	}
 	meta->esm_markers[meta->esm_count++] = marker;
-	ecl->ecl_scope_meta = meta;
-	oes_scope_meta_rele(oldmeta);
+	newecl->ecl_exec_id = ecl->ecl_exec_id;
+	oes_exec_meta_hold(ecl->ecl_exec_meta);
+	newecl->ecl_exec_meta = ecl->ecl_exec_meta;
+	newecl->ecl_scope_meta = meta;
+	SLOT_SET(newcred->cr_label, newecl);
+	/* Never the last reference: the old credential still holds it. */
+	oes_cred_label_rele(ecl);
 	proc_set_cred(p, newcred);
 	PROC_UNLOCK(p);
 	crfree(oldcred);
@@ -422,8 +990,7 @@ oes_mac_vnode_execve_relabel(struct ucred *old, struct ucred *new,
     struct vnode *vp, struct label *vplabel, struct label *interpvplabel,
     struct image_params *imgp, struct label *execlabel)
 {
-	struct oes_cred_label *ecl;
-	struct oes_exec_meta *new_meta, *old_meta;
+	struct oes_cred_label *ecl, *old_ecl;
 	struct label *label;
 
 	(void)old;
@@ -435,13 +1002,30 @@ oes_mac_vnode_execve_relabel(struct ucred *old, struct ucred *new,
 	if (label == NULL)
 		return;
 
-	ecl = SLOT(label);
+	/*
+	 * The new credential still shares the old one's label (crcopy).  Give
+	 * it its own, with a fresh exec id and path and the inherited scopes.
+	 * Under the process lock: no sleeping.  If the allocation fails the
+	 * credential keeps sharing the old label: the exec id and path stay
+	 * those of the previous image, but the scope markers stay too, so the
+	 * process does not leave a descendants scope at the moment it execs.
+	 */
+	old_ecl = SLOT(label);
+	ecl = oes_cred_label_alloc(M_NOWAIT);
+	if (ecl == NULL) {
+		atomic_add_64(&oes_softc.sc_alloc_failures, 1);
+		if (old_ecl != NULL)
+			return;
+	}
+	if (ecl != NULL && old_ecl != NULL) {
+		oes_scope_meta_hold(old_ecl->ecl_scope_meta);
+		ecl->ecl_scope_meta = old_ecl->ecl_scope_meta;
+	}
+	SLOT_SET(label, ecl);
+	oes_cred_label_rele(old_ecl);
 	if (ecl != NULL) {
-		new_meta = oes_exec_meta_alloc(imgp != NULL ? imgp->execpath : NULL);
-		old_meta = ecl->ecl_exec_meta;
-		ecl->ecl_exec_meta = new_meta;
-		ecl->ecl_exec_id = oes_generate_exec_id();
-		oes_exec_meta_rele(old_meta);
+		ecl->ecl_exec_meta = oes_exec_meta_alloc(imgp != NULL ?
+		    imgp->execpath : NULL);
 		OES_DEBUG("exec: new exec_id %llu for pid %d",
 		    (unsigned long long)ecl->ecl_exec_id, curproc->p_pid);
 	}
@@ -657,6 +1241,7 @@ oes_dispatch_auth_notification(const struct oes_pending *ep, struct proc *p,
     struct ucred *cred, oes_event_type_t notify_event,
     oes_auth_result_t result)
 {
+	struct epoch_tracker et;
 	struct oes_client *ec;
 	struct oes_pending *ep_notify;
 	oes_event_type_t auth_event;
@@ -668,8 +1253,13 @@ oes_dispatch_auth_notification(const struct oes_pending *ep, struct proc *p,
 
 	auth_event = ep->ep_msg.em_event;
 	OES_LOCK();
+	oes_readers_enter(&et);
 	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
 		if (!oes_pending_visible_to_client(ep, ec))
+			continue;
+		/* Never to a client its subject acts as (lock-free). */
+		if (oes_client_is_reader(ec, &ep->ep_msg.em_process) !=
+		    OES_READER_NONE)
 			continue;
 		EC_LOCK(ec);
 		if (ec->ec_flags & EC_FLAG_CLOSING) {
@@ -708,6 +1298,7 @@ oes_dispatch_auth_notification(const struct oes_pending *ep, struct proc *p,
 		}
 		EC_UNLOCK(ec);
 	}
+	oes_readers_exit(&et);
 	OES_UNLOCK();
 }
 
@@ -715,6 +1306,7 @@ static int
 oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
     oes_event_type_t notify_event)
 {
+	struct epoch_tracker et;
 	struct oes_client *ec;
 	struct oes_pending *ep_client;
 	struct oes_auth_group *ag = NULL;
@@ -728,11 +1320,15 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 	bool auth_delivery_fail_closed = false;
 	bool is_auth;
 	bool cached_denied = false;
+	bool fail_open;
+	int reader;
 	int error = 0;
 	oes_event_type_t event;
 
 	event = ep->ep_msg.em_event;
 	is_auth = OES_EVENT_IS_AUTH(event);
+	/* An exec by an excluded launcher: only a client's DENY refuses. */
+	fail_open = (ep->ep_flags & EP_FLAG_FAIL_OPEN) != 0;
 
 	if (is_auth) {
 		/*
@@ -830,13 +1426,13 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 		OES_LOCK();
 	}
 
-	/* Snapshot the portable equivalent of es_process_t.is_es_client. */
-	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
-		if (ec->ec_owner_pid != ep->ep_msg.em_process.ep_pid ||
-		    (ec->ec_owner_genid != 0 &&
-		    ec->ec_owner_genid !=
-		    ep->ep_msg.em_process.ep_token.ept_genid))
-			continue;
+	/* One epoch section for the snapshot and the delivery loop. */
+	oes_readers_enter(&et);
+	/*
+	 * Snapshot the portable equivalent of es_process_t.is_es_client: the
+	 * subject acts as some client (one of its readers).
+	 */
+	if (oes_process_is_reader(&ep->ep_msg.em_process)) {
 		ep->ep_msg.em_process.ep_flags |= EP_FLAG_OES_CLIENT;
 		if (auth_clones != NULL) {
 			for (size_t i = 0; i < auth_max; i++) {
@@ -845,7 +1441,6 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 					    EP_FLAG_OES_CLIENT;
 			}
 		}
-		break;
 	}
 
 	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
@@ -853,21 +1448,28 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 
 		if (!oes_pending_visible_to_client(ep, ec))
 			continue;
+		/*
+		 * A client never receives events caused by the processes that
+		 * act as it (its readers); lock-free.  For AUTH that is an
+		 * implicit allow, as part of the policy.
+		 */
+		reader = oes_client_is_reader(ec, &ep->ep_msg.em_process);
 		EC_LOCK(ec);
 
 		if (ec->ec_flags & EC_FLAG_CLOSING) {
 			EC_UNLOCK(ec);
 			continue;
 		}
-
-		/* AUTH clients never authorize their own operations. */
-		if (is_auth && ec->ec_mode == OES_MODE_AUTH &&
-		    oes_client_subscribed(ec, event) &&
-		    ep->ep_msg.em_process.ep_pid == ec->ec_owner_pid &&
-		    (ec->ec_owner_genid == 0 ||
-		    ep->ep_msg.em_process.ep_token.ept_genid ==
-		    ec->ec_owner_genid)) {
-			auth_consulted = true; /* Implicit allow, as part of the policy. */
+		/*
+		 * NOTIFY: never.  AUTH: an implicit allow from this client,
+		 * but only for a reader that can answer (owner, 2026-11-19);
+		 * a read-only reader's AUTH events are delivered as usual.
+		 */
+		if (reader == OES_READER_ANSWER ||
+		    (reader == OES_READER_READ && !is_auth)) {
+			if (is_auth && ec->ec_mode == OES_MODE_AUTH &&
+			    oes_client_subscribed(ec, event))
+				auth_consulted = true;
 			EC_UNLOCK(ec);
 			continue;
 		}
@@ -897,7 +1499,9 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 		if (is_auth) {
 			if (ec->ec_mode == OES_MODE_AUTH) {
 				uint32_t deadline_ms;
-				uint32_t miss_mode = ec->ec_deadline_miss_mode;
+				uint32_t miss_mode = fail_open ?
+				    OES_DEADLINE_MISS_FAIL_OPEN :
+				    ec->ec_deadline_miss_mode;
 				oes_auth_result_t cache_result;
 
 				if (!oes_client_subscribed(ec, event)) {
@@ -980,6 +1584,7 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 		}
 		EC_UNLOCK(ec);
 	}
+	oes_readers_exit(&et);
 
 	OES_UNLOCK();
 
@@ -994,14 +1599,15 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 	if (is_auth && auth_count == 0 && !auth_consulted && !cached_denied) {
 		OES_DEBUG("AUTH event 0x%x: no clients consulted, fail-open",
 		    event);
-		if (oes_require_auth_clients || oes_auth_fail_closed)
+		if (!fail_open &&
+		    (oes_require_auth_clients || oes_auth_fail_closed))
 			error = EACCES;
 	}
 	if (is_auth && auth_count > 0 && ag != NULL)
 		error = oes_auth_group_wait(ag, auth_eps, auth_count);
 	if (is_auth && cached_denied)
 		error = EACCES;
-	if (is_auth && auth_delivery_failed &&
+	if (is_auth && auth_delivery_failed && !fail_open &&
 	    (oes_auth_fail_closed || auth_delivery_fail_closed))
 		error = EACCES;
 
@@ -1125,6 +1731,33 @@ oes_no_clients_permit_auth(void)
 	    oes_default_deadline_miss_mode != OES_DEADLINE_MISS_FAIL_CLOSED);
 }
 
+/*
+ * Count an event an excluded subject did not produce, when some client
+ * could have received it (security.oes.excluded_skipped stays still on an
+ * idle system).
+ */
+static void
+oes_excluded_skip(void)
+{
+
+	if (atomic_load_acq_int(&oes_softc.sc_nclients) != 0)
+		counter_u64_add(oes_softc.sc_excluded_skipped, 1);
+}
+
+/*
+ * An excluded subject's rename needs no source snapshot: it produces no
+ * event, and with no client caching decisions not even an invalidation.
+ * The store and the rename-to hook must agree, or the rename would loop on
+ * ERELOOKUP.
+ */
+static bool
+oes_rename_excluded(void)
+{
+
+	return (oes_subject_excluded() &&
+	    !oes_gate_cache_in_use());
+}
+
 static void
 oes_rename_cache_init(void)
 {
@@ -1151,7 +1784,7 @@ oes_rename_cache_store(struct thread *td,
 	 * policy and requests a complete lookup retry if a snapshot is needed.
 	 * This applies equally to native and emulated callers.
 	 */
-	if (oes_no_clients_permit_auth() ||
+	if (oes_no_clients_permit_auth() || oes_rename_excluded() ||
 	    oes_jail_unobserved(true, true, NULL)) {
 		ctx = oes_rename_cache_take(td);
 		if (ctx != NULL)
@@ -1799,6 +2432,7 @@ oes_accmode_to_access(accmode_t accmode)
 static void
 oes_deliver_notify_locked(struct oes_pending *ep)
 {
+	struct epoch_tracker et;
 	struct oes_client *ec;
 	struct oes_pending *ep_clone;
 	oes_event_type_t notify_event;
@@ -1809,8 +2443,13 @@ oes_deliver_notify_locked(struct oes_pending *ep)
 		notify_event = ep->ep_msg.em_event;
 
 	OES_LOCK();
+	oes_readers_enter(&et);
 	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
 		if (!oes_pending_visible_to_client(ep, ec))
+			continue;
+		/* Never to a client its subject acts as (lock-free). */
+		if (oes_client_is_reader(ec, &ep->ep_msg.em_process) !=
+		    OES_READER_NONE)
 			continue;
 		EC_LOCK(ec);
 		if (ec->ec_flags & EC_FLAG_CLOSING) {
@@ -1854,6 +2493,7 @@ oes_deliver_notify_locked(struct oes_pending *ep)
 			oes_pending_rele(ep_clone);
 		EC_UNLOCK(ec);
 	}
+	oes_readers_exit(&et);
 	OES_UNLOCK();
 }
 
@@ -1952,6 +2592,16 @@ oes_jail_scopes_finish(void)
  * deliveries.  The task returns when a round finds nothing queued and
  * nothing to end; whatever is queued or marked after that round's look
  * enqueues the task again.
+ *
+ * The thread is a timeshare thread (oes_dev.c), but a kernel thread never
+ * takes the scheduler's end-of-slice switch, which is delivered on the
+ * way back to user mode (TDA_SCHED, set when its slice is used up or a
+ * better thread is waiting).  The task takes that request after each
+ * delivery as ast_scheduler() would: it moves to the timeshare priority
+ * the scheduler has computed for it (kern_yield(PRI_USER)) and lets the
+ * CPU go to whichever runnable thread that priority puts first, so it
+ * competes slice for slice.  It does not sleep or wait for time to pass;
+ * with nothing better runnable the thread continues at once.
  */
 void
 oes_defer_task_fn(void *arg __unused, int pending __unused)
@@ -1961,6 +2611,10 @@ oes_defer_task_fn(void *arg __unused, int pending __unused)
 	bool ending;
 
 	for (;;) {
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+		/* Test kernels: debug.mac_capability.test_issuer_oes_defer_hold. */
+		mac_capability_test_issuer_oes_defer_park();
+#endif
 		/* Before the snapshot; see oes_jail_scopes_claim(). */
 		ending = oes_jail_scopes_claim();
 		mtx_lock_spin(&oes_softc.sc_defer_mtx);
@@ -1982,6 +2636,10 @@ oes_defer_task_fn(void *arg __unused, int pending __unused)
 
 			oes_deliver_notify_locked(ep);
 			oes_pending_rele(ep);
+			/* Its delivery is complete (oes_client_join()). */
+			atomic_add_rel_64(&oes_softc.sc_defer_done, 1);
+			if (td_ast_pending(curthread, TDA_SCHED))
+				kern_yield(PRI_USER);
 		}
 
 		if (ending)
@@ -2011,6 +2669,8 @@ oes_deliver_notify_nosleep(struct oes_pending *ep, struct proc *p __unused)
 	oes_pending_hold(ep);
 	TAILQ_INSERT_TAIL(&oes_softc.sc_defer, ep, ep_link);
 	oes_softc.sc_defer_count++;
+	/* Numbered in queue order: the increment is under sc_defer_mtx. */
+	atomic_add_rel_64(&oes_softc.sc_defer_queued, 1);
 	mtx_unlock_spin(&oes_softc.sc_defer_mtx);
 
 	taskqueue_enqueue(oes_softc.sc_defer_tq, &oes_softc.sc_defer_task);
@@ -2022,8 +2682,15 @@ oes_proc_event_fork(void *arg __unused, struct proc *p1,
 {
 	struct oes_pending *ep;
 
+	OES_GATE_VOID(OES_H_EV_FORK);
+
 	if (!oes_softc.sc_active)
 		return;
+	/* Base exclusion: an excluded process's forks are not reported. */
+	if (oes_proc_excluded(p1)) {
+		oes_excluded_skip();
+		return;
+	}
 	if (oes_event_unobserved(false, false, NULL))
 		return;
 
@@ -2058,19 +2725,29 @@ oes_proc_event_exit(void *arg __unused, struct proc *p)
 	struct oes_pending *ep;
 	int xexit;
 
+	/* Snapshots of the exiting process go even while nobody listens. */
+	if (atomic_load_acq_int(&oes_rename_cache_populated) != 0)
+		oes_rename_cache_purge_pid(p->p_pid);
+	OES_GATE_VOID(OES_H_EV_EXIT);
+
 	if (!oes_softc.sc_active)
 		return;
 
-	oes_rename_cache_purge_pid(p->p_pid);
+	if (oes_proc_excluded(p)) {
+		oes_excluded_skip();
+		return;
+	}
 
 	if (oes_event_unobserved(false, false, NULL))
 		return;
 
-	PROC_LOCK(p);
-	xexit = p->p_xexit;
-	PROC_UNLOCK(p);
-
-	ep = oes_pending_alloc(OES_EVENT_NOTIFY_EXIT, p);
+	/*
+	 * Filled under the process lock: without it the credential fields
+	 * stay zero (uid 0, jail 0) and a uid or gid mute does not match.
+	 * The parent reaping in wait(2) holds the lock often enough for that
+	 * to be seen.
+	 */
+	ep = oes_pending_alloc_exit(p, &xexit);
 	if (ep == NULL)
 		return;
 
@@ -2092,10 +2769,16 @@ oes_vfs_event_mounted(void *arg __unused, struct mount *mp,
 	struct proc *p;
 	struct statfs *sp;
 
+	OES_GATE_VOID(OES_H_EV_MOUNTED);
+
 	if (!oes_softc.sc_active)
 		return;
 	if (td == NULL || td->td_proc == NULL)
 		return;
+	if (oes_proc_excluded(td->td_proc)) {
+		oes_excluded_skip();
+		return;
+	}
 	if (oes_event_unobserved(false, false, NULL))
 		return;
 
@@ -2151,10 +2834,16 @@ oes_vfs_event_unmounted(void *arg __unused, struct mount *mp,
 	struct proc *p;
 	struct statfs *sp;
 
+	OES_GATE_VOID(OES_H_EV_UNMOUNTED);
+
 	if (!oes_softc.sc_active)
 		return;
 	if (td == NULL || td->td_proc == NULL)
 		return;
+	if (oes_proc_excluded(td->td_proc)) {
+		oes_excluded_skip();
+		return;
+	}
 	if (oes_event_unobserved(false, false, NULL))
 		return;
 
@@ -2208,8 +2897,14 @@ oes_kld_event_unload(void *arg __unused, const char *name, caddr_t addr __unused
 	struct ucred *cred;
 	struct proc *p;
 
+	OES_GATE_VOID(OES_H_EV_KLDUNLOAD);
+
 	if (!oes_softc.sc_active)
 		return;
+	if (oes_subject_excluded()) {
+		oes_excluded_skip();
+		return;
+	}
 	if (oes_event_unobserved(false, false, NULL))
 		return;
 
@@ -2918,6 +3613,7 @@ oes_generate_vnode_event(oes_event_type_t event,
 	int sysctl_op = info->sysctl_op;
 	const char *kenv_name = info->kenv_name;
 	int kenv_op = info->kenv_op;
+	bool excluded, invalidates;
 
 	if (!oes_softc.sc_active || p == NULL)
 		return (0);
@@ -2937,15 +3633,29 @@ oes_generate_vnode_event(oes_event_type_t event,
 	    oes_default_deadline_miss_mode != OES_DEADLINE_MISS_FAIL_CLOSED)))
 		return (0);
 
+	invalidates = oes_event_invalidates_namespace(event) ||
+	    oes_event_invalidates_file(event) ||
+	    ((event == OES_EVENT_AUTH_MMAP ||
+	    event == OES_EVENT_AUTH_MPROTECT) && (prot & PROT_WRITE) != 0);
+
+	/*
+	 * Base exclusion: an excluded subject (Capsule, SwitchBoard, a Core
+	 * unit) produces no event at all and is never denied.  Only its
+	 * writes and namespace changes still drop cached decisions, while a
+	 * client holds any.
+	 */
+	excluded = oes_proc_excluded(p);
+	if (excluded && (!invalidates ||
+	    !oes_gate_cache_in_use())) {
+		oes_excluded_skip();
+		return (0);
+	}
+
 	/*
 	 * With only jail-scoped clients open, drop the event of a subject
 	 * none of them covers before anything is allocated or looked up.
 	 */
-	if (oes_event_unobserved(OES_EVENT_IS_AUTH(event),
-	    oes_event_invalidates_namespace(event) ||
-	    oes_event_invalidates_file(event) ||
-	    ((event == OES_EVENT_AUTH_MMAP ||
-	    event == OES_EVENT_AUTH_MPROTECT) && (prot & PROT_WRITE) != 0),
+	if (oes_event_unobserved(OES_EVENT_IS_AUTH(event), invalidates,
 	    target_proc))
 		return (0);
 
@@ -2955,6 +3665,8 @@ oes_generate_vnode_event(oes_event_type_t event,
 	ep = oes_pending_alloc(event, p);
 	if (ep == NULL) {
 		atomic_add_64(&oes_softc.sc_alloc_failures, 1);
+		if (excluded)
+			return (0);		/* never EACCES */
 		if (OES_EVENT_IS_AUTH(event))
 			return (oes_require_auth_clients || oes_auth_fail_closed ||
 			    oes_default_deadline_miss_mode ==
@@ -3417,6 +4129,13 @@ oes_generate_vnode_event(oes_event_type_t event,
 			oes_cache_invalidate_token(&file->ef_token);
 	}
 
+	/* Excluded: the invalidation was the only work; no event. */
+	if (excluded) {
+		counter_u64_add(oes_softc.sc_excluded_invalidations, 1);
+		oes_pending_rele(ep);
+		return (0);
+	}
+
 	/* Use non-blocking delivery for NOSLEEP hooks */
 	if (info->nosleep) {
 		oes_deliver_notify_nosleep(ep, p);
@@ -3443,6 +4162,7 @@ oes_generate_exec_event(struct ucred *cred, struct vnode *vp,
 	oes_event_type_t event = OES_EVENT_AUTH_EXEC;
 	oes_event_type_t notify_event;
 	int error = 0;
+	bool fail_open;
 
 	if (!oes_softc.sc_active || p == NULL)
 		return (0);
@@ -3455,7 +4175,26 @@ oes_generate_exec_event(struct ucred *cred, struct vnode *vp,
 	 */
 	if (imgp == NULL || imgp->execpath == NULL)
 		return (0);
-	if (oes_no_clients_permit_auth())
+	/*
+	 * Executions are judged by the program that results: a Core image
+	 * (base exclusion, decided before IS_CHECK) produces no event.
+	 */
+	if (imgp->cap_will_exclude) {
+		oes_excluded_skip();
+		return (0);
+	}
+	/*
+	 * An excluded launcher (switchboard's pre-exec launch child) starts a
+	 * unit of a System bundle (CAP_AUTH_ROLE_SYSTEM; owner 2026-11-20).
+	 * Its clients see the launch, but no strict knob, fail-closed
+	 * deadline or allocation failure may deny it: a missing or slow
+	 * client must not stop the base system.  A client's own DENY still
+	 * denies.  Per-user and Apps units, rc and anything else an excluded
+	 * process starts get normal treatment.
+	 */
+	fail_open = imgp->cap_system_launch;
+	if (oes_no_clients_permit_auth() || (fail_open &&
+	    atomic_load_acq_int(&oes_softc.sc_nclients) == 0))
 		return (0);
 	if (oes_event_unobserved(true, false, NULL))
 		return (0);
@@ -3465,12 +4204,18 @@ oes_generate_exec_event(struct ucred *cred, struct vnode *vp,
 	ep = oes_pending_alloc(event, p);
 	if (ep == NULL) {
 		atomic_add_64(&oes_softc.sc_alloc_failures, 1);
+		if (fail_open)
+			return (0);
 		if (OES_EVENT_IS_AUTH(event))
 			return (oes_require_auth_clients ||
 			    oes_auth_fail_closed ||
 			    oes_default_deadline_miss_mode ==
 			    OES_DEADLINE_MISS_FAIL_CLOSED ? EACCES : 0);
 		return (0);
+	}
+	if (fail_open) {
+		ep->ep_flags |= EP_FLAG_FAIL_OPEN;
+		counter_u64_add(oes_softc.sc_exec_fail_open, 1);
 	}
 
 	{
@@ -3596,6 +4341,9 @@ oes_mac_vnode_check_exec(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, struct image_params *imgp,
     struct label *execlabel)
 {
+
+	OES_GATE(OES_H_VNODE_CHECK_EXEC);
+
 	return (oes_generate_exec_event(cred, vp, imgp));
 }
 
@@ -3606,7 +4354,10 @@ static int
 oes_mac_vnode_check_open(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, accmode_t accmode)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_OPEN);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.accmode = accmode;
@@ -3622,7 +4373,10 @@ static int
 oes_mac_vnode_check_close(struct ucred *cred, struct vnode *vp,
     struct label *vplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_CLOSE);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 
@@ -3645,6 +4399,8 @@ oes_mac_file_check_read(struct ucred *active_cred, struct ucred *file_cred,
 {
 	struct oes_vnode_event_info info;
 
+	OES_GATE(OES_H_FILE_CHECK_READ);
+
 	if (fp->f_type != DTYPE_DQ)
 		return (0);
 	info = OES_VNODE_INFO_INIT(active_cred);
@@ -3659,6 +4415,8 @@ oes_mac_file_check_stat(struct ucred *active_cred, struct ucred *file_cred,
 {
 	struct oes_vnode_event_info info;
 
+	OES_GATE(OES_H_FILE_CHECK_STAT);
+
 	if (fp->f_type != DTYPE_DQ)
 		return (0);
 	info = OES_VNODE_INFO_INIT(active_cred);
@@ -3671,6 +4429,8 @@ static void
 oes_mac_file_notify_close(struct ucred *cred, struct file *fp, int fd)
 {
 	struct oes_vnode_event_info info;
+
+	OES_GATE_VOID(OES_H_FILE_NOTIFY_CLOSE);
 
 	if (fp->f_type != DTYPE_DQ)
 		return;
@@ -3690,6 +4450,8 @@ oes_mac_file_notify_reply(struct ucred *controller, struct file *fp, int op,
     int error, size_t count)
 {
 	struct oes_vnode_event_info info;
+
+	OES_GATE_VOID(OES_H_FILE_NOTIFY_REPLY);
 
 	if (fp->f_type != DTYPE_DQ)
 		return;
@@ -3715,6 +4477,8 @@ oes_mac_file_check_write(struct ucred *active_cred, struct ucred *file_cred,
 {
 	struct oes_vnode_event_info info;
 
+	OES_GATE(OES_H_FILE_CHECK_WRITE);
+
 	if (fp->f_type != DTYPE_DQ)
 		return (0);
 	info = OES_VNODE_INFO_INIT(active_cred);
@@ -3728,6 +4492,8 @@ oes_mac_file_check_setattr(struct ucred *cred, struct file *fp, int fd,
     struct vattr *vap)
 {
 	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_FILE_CHECK_SETATTR);
 
 	if (fp->f_type != DTYPE_DQ)
 		return (0);
@@ -3743,6 +4509,8 @@ oes_mac_file_check_fsync(struct ucred *cred, struct file *fp)
 {
 	struct oes_vnode_event_info info;
 
+	OES_GATE(OES_H_FILE_CHECK_FSYNC);
+
 	if (fp->f_type != DTYPE_DQ)
 		return (0);
 	info = OES_VNODE_INFO_INIT(cred);
@@ -3756,6 +4524,8 @@ oes_mac_file_check_lock(struct ucred *cred, struct file *fp, int fd, int op,
     struct flock *fl)
 {
 	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_FILE_CHECK_LOCK);
 
 	if (fp->f_type != DTYPE_DQ)
 		return (0);
@@ -3773,6 +4543,8 @@ oes_mac_file_check_ioctl(struct ucred *cred, struct file *fp, int fd,
 {
 	struct oes_vnode_event_info info;
 
+	OES_GATE(OES_H_FILE_CHECK_IOCTL);
+
 	if (fp->f_type != DTYPE_DQ)
 		return (0);
 	info = OES_VNODE_INFO_INIT(cred);
@@ -3787,6 +4559,8 @@ oes_mac_file_check_mmap(struct ucred *cred, struct file *fp, int fd, int prot,
     int flags, vm_offset_t addr, vm_size_t size)
 {
 	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_FILE_CHECK_MMAP);
 
 	if (fp->f_type != DTYPE_DQ)
 		return (0);
@@ -3807,7 +4581,10 @@ static int
 oes_mac_vnode_check_create(struct ucred *cred, struct vnode *dvp,
     struct label *dvplabel, struct componentname *cnp, struct vattr *vap)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_CREATE);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.dvp = dvp;
 	info.cnp = cnp;
@@ -3824,7 +4601,10 @@ oes_mac_vnode_check_unlink(struct ucred *cred, struct vnode *dvp,
     struct label *dvplabel, struct vnode *vp, struct label *vplabel,
     struct componentname *cnp)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_UNLINK);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.dvp = dvp;
@@ -3841,12 +4621,25 @@ oes_mac_vnode_check_rename_from(struct ucred *cred, struct vnode *dvp,
     struct label *dvplabel, struct vnode *vp, struct label *vplabel,
     struct componentname *cnp)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+	struct oes_rename_ctx *ctx;
 
+	/*
+	 * Idle: as with no client, discard an aborted rename's snapshot so a
+	 * later rename of this thread cannot take it for its own (one load
+	 * when there is none).
+	 */
+	if (__predict_true(!OES_HOOK_LIVE(OES_H_VNODE_CHECK_RENAME_FROM))) {
+		ctx = oes_rename_cache_take(curthread);
+		if (ctx != NULL)
+			free(ctx, M_OES);
+		return (0);
+	}
+	counter_u64_add(oes_softc.sc_gate_passes, 1);
+	info = OES_VNODE_INFO_INIT(cred);
 	info.vp = vp;
 	info.dvp = dvp;
 	info.cnp = cnp;
-
 
 	return (oes_rename_cache_store(curthread, &info));
 }
@@ -3861,19 +4654,27 @@ oes_mac_vnode_check_rename_to(struct ucred *cred, struct vnode *dvp,
 {
 	int error;
 	struct oes_rename_ctx *ctx;
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
 
+	(void)samedir;
+	/* Idle: consume this thread's snapshot, if any, as with no client. */
+	if (__predict_true(!OES_HOOK_LIVE(OES_H_VNODE_CHECK_RENAME_TO))) {
+		ctx = oes_rename_cache_take(curthread);
+		if (ctx != NULL)
+			free(ctx, M_OES);
+		return (0);
+	}
+	counter_u64_add(oes_softc.sc_gate_passes, 1);
+	info = OES_VNODE_INFO_INIT(cred);
 	info.vp = vp;
 	info.dvp = dvp;
 	info.cnp = cnp;
 
-
-	(void)samedir;
 	ctx = oes_rename_cache_take(curthread);
 	info.rename_ctx = ctx;
 	if (ctx == NULL) {
 		/* New clients or stricter policy require a fresh source snapshot. */
-		return (oes_no_clients_permit_auth() ||
+		return (oes_no_clients_permit_auth() || oes_rename_excluded() ||
 		    oes_event_unobserved(true, true, NULL) ? 0 : ERELOOKUP);
 	}
 
@@ -3890,7 +4691,10 @@ oes_mac_vnode_check_link(struct ucred *cred, struct vnode *dvp,
     struct label *dvplabel, struct vnode *vp, struct label *vplabel,
     struct componentname *cnp)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_LINK);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.dvp = dvp;
@@ -3906,7 +4710,10 @@ static int
 oes_mac_vnode_check_access(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, accmode_t accmode)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_ACCESS);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.accmode = accmode;
@@ -3921,7 +4728,10 @@ static int
 oes_mac_vnode_check_read(struct ucred *active_cred, struct ucred *file_cred,
     struct vnode *vp, struct label *vplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(active_cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_READ);
+	info = OES_VNODE_INFO_INIT(active_cred);
 
 	info.vp = vp;
 
@@ -3935,7 +4745,10 @@ static int
 oes_mac_vnode_check_write(struct ucred *active_cred, struct ucred *file_cred,
     struct vnode *vp, struct label *vplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(active_cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_WRITE);
+	info = OES_VNODE_INFO_INIT(active_cred);
 
 	info.vp = vp;
 
@@ -3947,8 +4760,11 @@ static int
 oes_mac_vnode_check_truncate(struct ucred *cred, struct vnode *vp,
     struct label *vplabel)
 {
-	oes_file_token_t token = { 0 };
+	oes_file_token_t token;
 	struct vattr va;
+
+	OES_GATE(OES_H_VNODE_CHECK_TRUNCATE);
+	memset(&token, 0, sizeof(token));
 
 	(void)vplabel;
 	if (!oes_softc.sc_active ||
@@ -3972,7 +4788,10 @@ static int
 oes_mac_vnode_check_stat(struct ucred *active_cred, struct ucred *file_cred,
     struct vnode *vp, struct label *vplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(active_cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_STAT);
+	info = OES_VNODE_INFO_INIT(active_cred);
 
 	info.vp = vp;
 
@@ -3986,7 +4805,10 @@ static int
 oes_mac_vnode_check_poll(struct ucred *active_cred, struct ucred *file_cred,
     struct vnode *vp, struct label *vplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(active_cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_POLL);
+	info = OES_VNODE_INFO_INIT(active_cred);
 
 	info.vp = vp;
 
@@ -4000,7 +4822,10 @@ static int
 oes_mac_vnode_check_readdir(struct ucred *cred, struct vnode *dvp,
     struct label *dvplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_READDIR);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.dvp = dvp;
 
@@ -4014,7 +4839,10 @@ static int
 oes_mac_vnode_check_readlink(struct ucred *cred, struct vnode *vp,
     struct label *vplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_READLINK);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 
@@ -4028,7 +4856,10 @@ static int
 oes_mac_vnode_check_revoke(struct ucred *cred, struct vnode *vp,
     struct label *vplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_REVOKE);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 
@@ -4042,7 +4873,10 @@ static int
 oes_mac_vnode_check_lookup(struct ucred *cred, struct vnode *dvp,
     struct label *dvplabel, struct componentname *cnp)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_LOOKUP);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.dvp = dvp;
 	info.cnp = cnp;
@@ -4057,7 +4891,10 @@ static int
 oes_mac_vnode_check_setmode(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, mode_t mode)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_SETMODE);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.mode = mode;
@@ -4072,7 +4909,10 @@ static int
 oes_mac_vnode_check_setowner(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, uid_t uid, gid_t gid)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_SETOWNER);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.owner_uid = uid;
@@ -4088,7 +4928,10 @@ static int
 oes_mac_vnode_check_setflags(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, u_long flags)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_SETFLAGS);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.fflags = flags;
@@ -4103,7 +4946,10 @@ static int
 oes_mac_vnode_check_setutimes(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, struct timespec atime, struct timespec mtime)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_SETUTIMES);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.atime = atime;
@@ -4119,7 +4965,10 @@ static int
 oes_mac_vnode_check_chdir(struct ucred *cred, struct vnode *dvp,
     struct label *dvplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_CHDIR);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.dvp = dvp;
 
@@ -4133,7 +4982,10 @@ static int
 oes_mac_vnode_check_chroot(struct ucred *cred, struct vnode *dvp,
     struct label *dvplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_CHROOT);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.dvp = dvp;
 
@@ -4147,7 +4999,10 @@ static int
 oes_mac_vnode_check_mmap(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, int prot, int flags, int maxprot __unused)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_MMAP);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.prot = prot;
@@ -4178,10 +5033,13 @@ static int
 oes_mac_proc_check_mprotect(struct ucred *cred, vm_offset_t addr,
     vm_size_t size __unused, int prot)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
 	struct proc *p = curthread->td_proc;
 	struct vnode *vp;
 	int error;
+
+	OES_GATE(OES_H_PROC_CHECK_MPROTECT);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	/*
 	 * Decide that nobody can observe this before the map lookup and the
@@ -4191,6 +5049,13 @@ oes_mac_proc_check_mprotect(struct ucred *cred, vm_offset_t addr,
 	if (oes_softc.sc_active &&
 	    oes_event_unobserved(true, (prot & PROT_WRITE) != 0, NULL))
 		return (0);
+	/* The generator's base-exclusion test, made before the map lookup. */
+	if (oes_subject_excluded() && ((prot & PROT_WRITE) == 0 ||
+	    !oes_gate_cache_in_use())) {
+		if (oes_softc.sc_active)
+			oes_excluded_skip();
+		return (0);
+	}
 
 	vp = NULL;
 	if (p != NULL && p->p_vmspace != NULL)
@@ -4215,7 +5080,10 @@ static int
 oes_mac_vnode_check_setextattr(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, int attrnamespace, const char *name)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_SETEXTATTR);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.attrnamespace = attrnamespace;
@@ -4231,7 +5099,10 @@ static int
 oes_mac_vnode_check_getextattr(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, int attrnamespace, const char *name)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_GETEXTATTR);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.attrnamespace = attrnamespace;
@@ -4247,7 +5118,10 @@ static int
 oes_mac_vnode_check_deleteextattr(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, int attrnamespace, const char *name)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_DELETEEXTATTR);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.attrnamespace = attrnamespace;
@@ -4263,7 +5137,10 @@ static int
 oes_mac_vnode_check_listextattr(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, int attrnamespace)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_LISTEXTATTR);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.attrnamespace = attrnamespace;
@@ -4278,7 +5155,10 @@ static int
 oes_mac_vnode_check_getacl(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, acl_type_t type)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_GETACL);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.acl_type = type;
@@ -4293,7 +5173,10 @@ static int
 oes_mac_vnode_check_setacl(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, acl_type_t type, struct acl *acl)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_SETACL);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.acl_type = type;
@@ -4310,7 +5193,10 @@ static int
 oes_mac_vnode_check_deleteacl(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, acl_type_t type)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_DELETEACL);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 	info.acl_type = type;
@@ -4325,7 +5211,10 @@ static int
 oes_mac_vnode_check_relabel(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, struct label *newlabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_VNODE_CHECK_RELABEL);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 
@@ -4341,7 +5230,10 @@ static int
 oes_mac_kld_check_load(struct ucred *cred, struct vnode *vp,
     struct label *vplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_KLD_CHECK_LOAD);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 
@@ -4357,6 +5249,8 @@ oes_mac_proc_check_signal(struct ucred *cred, struct proc *p, int signum)
 	struct oes_pending *ep;
 	struct proc *curp = curthread->td_proc;
 
+	OES_GATE(OES_H_PROC_CHECK_SIGNAL);
+
 	/*
 	 * The caller can hold the target's PROC_LOCK.  Even M_NOWAIT
 	 * allocation can acquire VM locks, so avoid it without a consumer,
@@ -4365,6 +5259,11 @@ oes_mac_proc_check_signal(struct ucred *cred, struct proc *p, int signum)
 	if (!oes_softc.sc_active ||
 	    atomic_load_acq_int(&oes_softc.sc_nclients) == 0)
 		return (0);
+	/* The acting process decides; the target is not tested. */
+	if (oes_proc_excluded(curp)) {
+		oes_excluded_skip();
+		return (0);
+	}
 	if (oes_event_unobserved(false, false, p))
 		return (0);
 
@@ -4405,9 +5304,16 @@ oes_mac_cred_check_setuid(struct ucred *cred, uid_t uid)
 	struct oes_pending *ep;
 	struct proc *curp = curthread->td_proc;
 
+	OES_GATE(OES_H_CRED_CHECK_SETUID);
+
 	if (!oes_softc.sc_active ||
 	    atomic_load_acq_int(&oes_softc.sc_nclients) == 0)
 		return (0);
+	/* The acting process decides; the target is not tested. */
+	if (oes_proc_excluded(curp)) {
+		oes_excluded_skip();
+		return (0);
+	}
 	if (oes_event_unobserved(false, false, NULL))
 		return (0);
 
@@ -4430,9 +5336,16 @@ oes_mac_cred_check_setgid(struct ucred *cred, gid_t gid)
 	struct oes_pending *ep;
 	struct proc *curp = curthread->td_proc;
 
+	OES_GATE(OES_H_CRED_CHECK_SETGID);
+
 	if (!oes_softc.sc_active ||
 	    atomic_load_acq_int(&oes_softc.sc_nclients) == 0)
 		return (0);
+	/* The acting process decides; the target is not tested. */
+	if (oes_proc_excluded(curp)) {
+		oes_excluded_skip();
+		return (0);
+	}
 	if (oes_event_unobserved(false, false, NULL))
 		return (0);
 
@@ -4459,9 +5372,16 @@ oes_mac_proc_check_debug(struct ucred *cred, struct proc *p)
 	struct oes_pending *ep;
 	struct proc *curp = curthread->td_proc;
 
+	OES_GATE(OES_H_PROC_CHECK_DEBUG);
+
 	if (!oes_softc.sc_active ||
 	    atomic_load_acq_int(&oes_softc.sc_nclients) == 0)
 		return (0);
+	/* The acting process decides; the target is not tested. */
+	if (oes_proc_excluded(curp)) {
+		oes_excluded_skip();
+		return (0);
+	}
 	if (oes_event_unobserved(false, false, p))
 		return (0);
 
@@ -4591,7 +5511,11 @@ static int
 oes_mac_socket_check_connect(struct ucred *cred, struct socket *so,
     struct label *solabel, struct sockaddr *sa)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_SOCKET_CHECK_CONNECT);
+	info = OES_VNODE_INFO_INIT(cred);
+
 	(void)solabel;
 
 	info.socket = so;
@@ -4609,7 +5533,11 @@ static int
 oes_mac_socket_check_bind(struct ucred *cred, struct socket *so,
     struct label *solabel, struct sockaddr *sa)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_SOCKET_CHECK_BIND);
+	info = OES_VNODE_INFO_INIT(cred);
+
 	(void)solabel;
 
 	info.socket = so;
@@ -4627,7 +5555,11 @@ static int
 oes_mac_socket_check_listen(struct ucred *cred, struct socket *so,
     struct label *solabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_SOCKET_CHECK_LISTEN);
+	info = OES_VNODE_INFO_INIT(cred);
+
 	(void)solabel;
 
 	info.socket = so;
@@ -4644,7 +5576,10 @@ static int
 oes_mac_socket_check_create(struct ucred *cred, int domain, int type,
     int protocol)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_SOCKET_CHECK_CREATE);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.socket_domain = domain;
 	info.socket_type = type;
@@ -4662,7 +5597,11 @@ static int
 oes_mac_socket_check_accept(struct ucred *cred, struct socket *so,
     struct label *solabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_SOCKET_CHECK_ACCEPT);
+	info = OES_VNODE_INFO_INIT(cred);
+
 	(void)solabel;
 
 	info.socket = so;
@@ -4679,7 +5618,11 @@ static int
 oes_mac_socket_check_send(struct ucred *cred, struct socket *so,
     struct label *solabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_SOCKET_CHECK_SEND);
+	info = OES_VNODE_INFO_INIT(cred);
+
 	(void)solabel;
 
 	info.socket = so;
@@ -4696,7 +5639,11 @@ static int
 oes_mac_socket_check_receive(struct ucred *cred, struct socket *so,
     struct label *solabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_SOCKET_CHECK_RECEIVE);
+	info = OES_VNODE_INFO_INIT(cred);
+
 	(void)solabel;
 
 	info.socket = so;
@@ -4713,7 +5660,11 @@ static int
 oes_mac_socket_check_stat(struct ucred *cred, struct socket *so,
     struct label *solabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_SOCKET_CHECK_STAT);
+	info = OES_VNODE_INFO_INIT(cred);
+
 	(void)solabel;
 
 	info.socket = so;
@@ -4730,7 +5681,11 @@ static int
 oes_mac_socket_check_poll(struct ucred *cred, struct socket *so,
     struct label *solabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_SOCKET_CHECK_POLL);
+	info = OES_VNODE_INFO_INIT(cred);
+
 	(void)solabel;
 
 	info.socket = so;
@@ -4746,7 +5701,10 @@ oes_mac_socket_check_poll(struct ucred *cred, struct socket *so,
 static int
 oes_mac_system_check_reboot(struct ucred *cred, int howto)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_SYSTEM_CHECK_REBOOT);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.reboot_howto = howto;
 	info.nosleep = true;
@@ -4762,8 +5720,11 @@ static int
 oes_mac_system_check_sysctl(struct ucred *cred, struct sysctl_oid *oidp,
     void *arg1, int arg2, struct sysctl_req *req)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
 	char name[256];
+
+	OES_GATE(OES_H_SYSTEM_CHECK_SYSCTL);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	/* Build the sysctl name from OID path */
 	if (oidp != NULL && oidp->oid_name != NULL) {
@@ -4803,7 +5764,10 @@ oes_mac_system_check_sysctl(struct ucred *cred, struct sysctl_oid *oidp,
 static int
 oes_mac_kenv_check_set(struct ucred *cred, char *name, char *value)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_KENV_CHECK_SET);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	(void)value;
 	info.kenv_name = name;
@@ -4820,7 +5784,10 @@ oes_mac_kenv_check_set(struct ucred *cred, char *name, char *value)
 static int
 oes_mac_kenv_check_unset(struct ucred *cred, char *name)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_KENV_CHECK_UNSET);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.kenv_name = name;
 	info.kenv_op = 2;  /* unset */
@@ -4837,12 +5804,13 @@ static int
 oes_mac_pipe_check_read(struct ucred *cred, struct pipepair *pp,
     struct label *pplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
-	struct oes_pipe_label *epl =
-	    pplabel != NULL ? PIPE_SLOT(pplabel) : NULL;
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_PIPE_CHECK_READ);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.pipepair = pp;
-	info.pipe_id = epl != NULL ? epl->epl_id : 0;
+	info.pipe_id = oes_pipe_id(pp, pplabel);
 	info.nosleep = true;
 
 	(void)oes_generate_vnode_event(OES_EVENT_NOTIFY_PIPE_READ, &info);
@@ -4856,12 +5824,13 @@ static int
 oes_mac_pipe_check_write(struct ucred *cred, struct pipepair *pp,
     struct label *pplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
-	struct oes_pipe_label *epl =
-	    pplabel != NULL ? PIPE_SLOT(pplabel) : NULL;
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_PIPE_CHECK_WRITE);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.pipepair = pp;
-	info.pipe_id = epl != NULL ? epl->epl_id : 0;
+	info.pipe_id = oes_pipe_id(pp, pplabel);
 	info.nosleep = true;
 
 	(void)oes_generate_vnode_event(OES_EVENT_NOTIFY_PIPE_WRITE, &info);
@@ -4875,12 +5844,13 @@ static int
 oes_mac_pipe_check_stat(struct ucred *cred, struct pipepair *pp,
     struct label *pplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
-	struct oes_pipe_label *epl =
-	    pplabel != NULL ? PIPE_SLOT(pplabel) : NULL;
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_PIPE_CHECK_STAT);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.pipepair = pp;
-	info.pipe_id = epl != NULL ? epl->epl_id : 0;
+	info.pipe_id = oes_pipe_id(pp, pplabel);
 	info.nosleep = true;
 
 	(void)oes_generate_vnode_event(OES_EVENT_NOTIFY_PIPE_STAT, &info);
@@ -4894,12 +5864,13 @@ static int
 oes_mac_pipe_check_poll(struct ucred *cred, struct pipepair *pp,
     struct label *pplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
-	struct oes_pipe_label *epl =
-	    pplabel != NULL ? PIPE_SLOT(pplabel) : NULL;
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_PIPE_CHECK_POLL);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.pipepair = pp;
-	info.pipe_id = epl != NULL ? epl->epl_id : 0;
+	info.pipe_id = oes_pipe_id(pp, pplabel);
 	info.nosleep = true;
 
 	(void)oes_generate_vnode_event(OES_EVENT_NOTIFY_PIPE_POLL, &info);
@@ -4913,13 +5884,15 @@ static int
 oes_mac_pipe_check_ioctl(struct ucred *cred, struct pipepair *pp,
     struct label *pplabel, unsigned long cmd, void *data)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
-	struct oes_pipe_label *epl =
-	    pplabel != NULL ? PIPE_SLOT(pplabel) : NULL;
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_PIPE_CHECK_IOCTL);
+	info = OES_VNODE_INFO_INIT(cred);
+
 	(void)data;
 
 	info.pipepair = pp;
-	info.pipe_id = epl != NULL ? epl->epl_id : 0;
+	info.pipe_id = oes_pipe_id(pp, pplabel);
 	info.ioctl_cmd = cmd;
 	info.nosleep = true;
 
@@ -4934,7 +5907,11 @@ static int
 oes_mac_mount_check_stat(struct ucred *cred, struct mount *mp,
     struct label *mplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_MOUNT_CHECK_STAT);
+	info = OES_VNODE_INFO_INIT(cred);
+
 	(void)mplabel;
 
 	info.mp = mp;
@@ -4950,7 +5927,10 @@ oes_mac_mount_check_stat(struct ucred *cred, struct mount *mp,
 static int
 oes_mac_priv_check(struct ucred *cred, int priv)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_PRIV_CHECK);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.priv = priv;
 	info.nosleep = true;
@@ -4965,7 +5945,10 @@ oes_mac_priv_check(struct ucred *cred, int priv)
 static int
 oes_mac_proc_check_sched(struct ucred *cred, struct proc *p)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_PROC_CHECK_SCHED);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.target_proc = p;
 	info.nosleep = true;
@@ -4983,7 +5966,10 @@ static int
 oes_mac_system_check_swapon(struct ucred *cred, struct vnode *vp,
     struct label *vplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_SYSTEM_CHECK_SWAPON);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 
@@ -4999,7 +5985,10 @@ static int
 oes_mac_system_check_swapoff(struct ucred *cred, struct vnode *vp,
     struct label *vplabel)
 {
-	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct oes_vnode_event_info info;
+
+	OES_GATE(OES_H_SYSTEM_CHECK_SWAPOFF);
+	info = OES_VNODE_INFO_INIT(cred);
 
 	info.vp = vp;
 
@@ -5134,17 +6123,24 @@ static struct mac_policy_ops oes_mac_ops = {
 };
 
 /*
- * MAC policy configuration - registered manually, not via MAC_POLICY_SET
- * because we're part of the oes module, not a standalone MAC policy module.
- * The outer module handler enforces boot-only loading because OES initializes
- * in SI_SUB_DRIVERS, after the MAC framework's late-load boundary.  Omitting
- * UNLOADOK makes the policy non-unloadable as an additional safeguard.
+ * MAC policy configuration - registered by oes_mac_policy_init(), not via
+ * MAC_POLICY_SET, because the policy is part of the oes module.  It registers
+ * at SI_SUB_MAC_POLICY (oes_dev.c), before the MAC framework's late-load
+ * boundary, so without UNLOADOK it joins the static list: its hooks run with
+ * no list lock (the dynamic list's read lock pins the calling thread to its
+ * CPU).  Omitting UNLOADOK also makes it non-unloadable: OES never unloads,
+ * and the idle gates rely on its hooks, tables and locks staying.  Its hooks
+ * count toward the framework's fast-path flags only while live
+ * (oes_gate_reconcile()).
  */
+#define	OES_MPC_FLAGS	MPC_LOADTIME_FLAG_FP_INACTIVE
+_Static_assert((OES_MPC_FLAGS & MPC_LOADTIME_FLAG_UNLOADOK) == 0,
+    "OES must never be unloadable");
 static struct mac_policy_conf oes_mac_policy_conf = {
 	.mpc_name = "oes",
 	.mpc_fullname = "Endpoint Security Capabilities",
 	.mpc_ops = &oes_mac_ops,
-	.mpc_loadtime_flags = 0,
+	.mpc_loadtime_flags = OES_MPC_FLAGS,
 	.mpc_field_off = &oes_slot,
 	.mpc_runtime_flags = 0,
 };
@@ -5214,25 +6210,43 @@ static const osd_method_t oes_prison_methods[PR_MAXMETHOD] = {
 };
 
 /*
- * Initialize MAC policy
- *
- * Called from oes module load. Registers with MAC framework.
+ * Register the MAC policy, at SI_SUB_MAC_POLICY like any policy that is
+ * present at boot: it goes on the framework's static list, whose walks take
+ * no lock (OES never unloads).  Called after oes_dev_state_init().
  */
 int
-oes_mac_init(void)
+oes_mac_policy_init(void)
 {
 	int error;
 
+	/* Everything a hook can reach exists before the hooks do. */
+	oes_rename_cache_init();
 	error = mac_policy_modevent(NULL, MOD_LOAD, &oes_mac_policy_conf);
 	if (error != 0) {
 		OES_ERR("failed to register MAC policy: %d", error);
 		return (error);
 	}
-
 	oes_mac_registered = true;
 	OES_DEBUG("MAC policy registered");
+	/*
+	 * After registration: an uncovered hook is counted for good, which
+	 * mac_policy_fastpath_set() refuses (ENOENT) before it.
+	 */
+	oes_gate_check_coverage();
+	/* Nothing listens yet: every hook starts idle. */
+	oes_gate_reconcile();
+	return (0);
+}
 
-	oes_rename_cache_init();
+/*
+ * The parts that need the system further up (kernel threads, devices,
+ * jails): called at SI_SUB_DRIVERS once oes_dev_attach() has made OES
+ * active.  The hooks have been registered, idle and inert (sc_active),
+ * since SI_SUB_MAC_POLICY.
+ */
+int
+oes_mac_attach(void)
+{
 
 	/* Jail scopes end when their jail is removed.  Never deregistered. */
 	(void)osd_jail_register(NULL, oes_prison_methods);
@@ -5247,6 +6261,9 @@ oes_mac_init(void)
 	    oes_vfs_event_unmounted, NULL, EVENTHANDLER_PRI_LAST);
 	EVENTHANDLER_REGISTER(kld_unload,
 	    oes_kld_event_unload, NULL, EVENTHANDLER_PRI_LAST);
+
+	/* OES is active now: the strict settings take effect. */
+	oes_gate_reconcile();
 
 	return (0);
 }

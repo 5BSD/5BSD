@@ -16,6 +16,9 @@ fake_ioctl(int fd, unsigned long request, ...)
 {
 	va_list ap;
 	(void)fd;
+	/* The constructor's join (oes_client_create_from_fd()) has no data. */
+	if (request == OES_IOC_JOIN)
+		return (0);
 	va_start(ap, request);
 	captured = *va_arg(ap, struct oes_mute_path_args *);
 	va_end(ap);

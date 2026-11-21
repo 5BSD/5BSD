@@ -11,8 +11,12 @@
  * counts the mac_framework file_check_write probe for the requester's pid
  * with dtrace(1).  It fails where dtrace or the probe is unavailable (the
  * test guests preload dtraceall: under the capability plane a late kldload
- * is denied) or where no policy implements the hook (the guests preload
- * mac_test_hooks, which does): a skip in a plane-on run is not a pass.
+ * is denied) or where no policy implements the hook: a skip in a plane-on
+ * run is not a pass.  The framework enters a fast-path hook only while some
+ * policy counts it, and OES (which implements file_check_read and
+ * file_check_write) counts them only while a client wants their events
+ * (oes(4), "Idle behaviour"), so the count is taken with a NOTIFY client of
+ * the matching OES event open, scoped to this process's descendants.
  *
  * abac: a served object carries no label of its own; mac_abac evaluates the
  * requester against the label of the controller's credential, captured when
@@ -37,6 +41,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+#include <security/oes/oes.h>
 
 #include "dqt.h"
 
@@ -69,6 +75,46 @@ child_gated(void *arg, void *result)
 }
 
 /*
+ * A NOTIFY client of the OES event a hook produces, scoped to this
+ * process's descendants: while it is open OES counts the hook, so the
+ * framework enters it.  Returns the descriptor, or -1.
+ */
+static int
+oes_keep_live(const char *hook)
+{
+	struct oes_scope_args sa;
+	struct oes_mode_args ma;
+	struct oes_subscribe_args su;
+	oes_event_type_t ev;
+	int fd;
+
+	if (strcmp(hook, "file_check_write") == 0)
+		ev = OES_EVENT_NOTIFY_FILE_WRITE;
+	else if (strcmp(hook, "file_check_read") == 0)
+		ev = OES_EVENT_NOTIFY_FILE_READ;
+	else
+		return (-1);
+	fd = open(OES_DEVICE_PATH, O_RDWR | O_NONBLOCK | O_CLOEXEC);
+	if (fd < 0)
+		return (-1);
+	memset(&sa, 0, sizeof(sa));
+	sa.esa_scope = OES_SCOPE_DESCENDANTS;
+	memset(&ma, 0, sizeof(ma));
+	ma.ema_mode = OES_MODE_NOTIFY;
+	memset(&su, 0, sizeof(su));
+	su.esa_events = &ev;
+	su.esa_count = 1;
+	su.esa_flags = OES_SUB_REPLACE;
+	if (ioctl(fd, OES_IOC_SET_SCOPE, &sa) != 0 ||
+	    ioctl(fd, OES_IOC_SET_MODE, &ma) != 0 ||
+	    ioctl(fd, OES_IOC_SUBSCRIBE, &su) != 0) {
+		(void)close(fd);
+		return (-1);
+	}
+	return (fd);
+}
+
+/*
  * Count the probes of a mac_framework hook (file_check_write, ...) fired
  * by the requester running fn.
  * Returns the count, or -1 (with a reason) when dtrace cannot trace it.
@@ -85,10 +131,17 @@ count_hook(const char *hook, void (*fn)(void *, void *), void *arg,
 	long count;
 	pid_t dpid;
 	int status, pfd[2];
+	int live;
 	char b;
 
 	if (access(DTRACE, X_OK) != 0) {
 		(void)snprintf(why, whylen, "no %s", DTRACE);
+		return (-1);
+	}
+	live = oes_keep_live(hook);
+	if (live < 0) {
+		(void)snprintf(why, whylen, "no OES client for %s: %s", hook,
+		    strerror(errno));
 		return (-1);
 	}
 	ATF_REQUIRE_EQ(0, pipe(g.go));
@@ -147,6 +200,7 @@ count_hook(const char *hook, void (*fn)(void *, void *), void *arg,
 	}
 	(void)fclose(out);
 	(void)waitpid(dpid, &status, 0);
+	(void)close(live);
 	return (count);
 }
 

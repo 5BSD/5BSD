@@ -140,6 +140,25 @@ oes_client_create_jail_name(const char *name, uint32_t flags)
 }
 
 /*
+ * Make this process one of the client's readers (OES_IOC_JOIN, oes(4)) the
+ * moment it has a descriptor it did not open, so the events it causes stop
+ * reaching that client before its first read.  The join is the only ioctl
+ * issued on such a descriptor.  If it is refused (a broker's ioctl limit
+ * without OES_IOC_JOIN: ENOTCAPABLE; a descriptor that is not an OES client:
+ * ENOTTY), the descriptor is still wrapped: the first read, poll or kevent
+ * registration joins it, and until then the process's own events reach the
+ * client, the window oes(4) documents.
+ */
+static void
+oes_client_join_fd(int fd)
+{
+	int saved = errno;
+
+	(void)ioctl(fd, OES_IOC_JOIN);
+	errno = saved;
+}
+
+/*
  * oes_client_create_from_fd - Create client from existing fd
  */
 oes_client_t *
@@ -159,13 +178,15 @@ oes_client_create_from_fd(int fd)
 	client->ec_fd = fd;
 	client->ec_owned = false;
 	client->ec_mode = OES_MODE_NOTIFY;
+	oes_client_join_fd(fd);
 
 	return (client);
 }
 
 /*
- * Take ownership only after all fallible work succeeds.  Do not issue device
- * ioctls here: a broker may deliberately exclude configuration/query ioctls.
+ * Take ownership only after all fallible work succeeds.  Apart from the join
+ * (oes_client_create_from_fd()), issue no device ioctls here: a broker may
+ * deliberately exclude configuration/query ioctls.
  */
 oes_client_t *
 oes_client_adopt_fd(int fd)

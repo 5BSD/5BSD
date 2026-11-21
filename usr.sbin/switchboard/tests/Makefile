@@ -383,6 +383,12 @@ SRCTREE_MANIFESTS!=	cd ${SRCTOP} && find usr.sbin -type f \
 		    -path '*/bluetooth/BSDBluetooth/blued.ucl' \) \
 		    ! -name Bundle.ucl | sort
 SRCTREE_FILES+=	${SRCTREE_MANIFESTS}
+# shipped_manifest_policy_test checks that each Core unit is a compiled
+# program (base exclusion refuses a Core #! script): their Makefiles.
+SRCTREE_FILES+=	usr.sbin/BSDAudit/Makefile usr.sbin/BSDCrypto/Makefile \
+		usr.sbin/BSDExtension/Makefile usr.sbin/BSDFilesystem/Makefile \
+		usr.sbin/BSDLog/Makefile usr.sbin/BSDPower/Makefile \
+		usr.sbin/BSDSysctl/Makefile usr.sbin/BSDTime/Makefile
 .include "${SRCTOP}/tests/srctree.mk"
 
 ATF_TESTS_C+= cleanup_status_test

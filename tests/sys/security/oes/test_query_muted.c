@@ -10,7 +10,9 @@
  * Tests OES_IOC_GET_MUTED_PROCESSES and OES_IOC_GET_MUTED_PATHS.
  */
 #include <sys/ioctl.h>
+#include <sys/wait.h>
 
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,7 +38,8 @@ main(void)
 	oes_event_type_t events[] = {
 		OES_EVENT_NOTIFY_OPEN,
 	};
-	int ret;
+	int ret, found, hold[2];
+	pid_t other;
 	size_t i;
 
 	printf("Testing query muted lists...\n");
@@ -74,7 +77,7 @@ main(void)
 		close(fd);
 		return (1);
 	}
-	/* Note: may have self-mute from previous tests, so just verify ioctl works */
+	/* A new client lists no process; just verify the ioctl works */
 	printf("  Initial muted processes: %zu\n", get_procs.egmp_actual);
 
 	memset(&get_paths, 0, sizeof(get_paths));
@@ -87,7 +90,11 @@ main(void)
 	}
 	printf("  Initial muted paths: %zu\n", get_paths.egmpa_actual);
 
-	/* Self-mute with all events */
+	/*
+	 * A client never receives its own processes' events (oes(4)): muting
+	 * OES_MUTE_SELF succeeds and adds nothing, and unmuting it is EINVAL.
+	 * (Before the reader rule both worked and listed a self entry.)
+	 */
 	memset(&mute_proc, 0, sizeof(mute_proc));
 	mute_proc.emu_flags = OES_MUTE_SELF;
 	if (ioctl(fd, OES_IOC_MUTE_PROCESS, &mute_proc) < 0) {
@@ -95,8 +102,12 @@ main(void)
 		close(fd);
 		return (1);
 	}
-
-	/* Query and verify self is in list */
+	if (ioctl(fd, OES_IOC_UNMUTE_PROCESS, &mute_proc) == 0 ||
+	    errno != EINVAL) {
+		fprintf(stderr, "FAIL: unmuting self did not fail with EINVAL\n");
+		close(fd);
+		return (1);
+	}
 	memset(&get_procs, 0, sizeof(get_procs));
 	get_procs.egmp_entries = proc_entries;
 	get_procs.egmp_count = 16;
@@ -105,50 +116,90 @@ main(void)
 		close(fd);
 		return (1);
 	}
+	for (i = 0; i < get_procs.egmp_actual; i++) {
+		if (proc_entries[i].emp_token.ept_id == (uint64_t)getpid()) {
+			fprintf(stderr, "FAIL: OES_MUTE_SELF listed a self entry\n");
+			close(fd);
+			return (1);
+		}
+	}
+	printf("  PASS: self-mute is a no-op, self-unmute EINVAL\n");
 
-	if (get_procs.egmp_actual < 1) {
-		fprintf(stderr, "FAIL: self-mute not in muted list\n");
+	/* The process queries, on another process: a child that waits. */
+	if (pipe(hold) != 0) {
+		perror("pipe");
 		close(fd);
 		return (1);
 	}
+	other = fork();
+	if (other < 0) {
+		perror("fork");
+		close(fd);
+		return (1);
+	}
+	if (other == 0) {
+		char c;
 
-	/* Find our process in the list */
-	ret = 0;
+		close(hold[1]);
+		(void)read(hold[0], &c, 1);
+		_exit(0);
+	}
+	close(hold[0]);
+
+	/* Mute the other process with all events */
+	memset(&mute_proc, 0, sizeof(mute_proc));
+	mute_proc.emu_token.ept_id = (uint64_t)other;
+	if (ioctl(fd, OES_IOC_MUTE_PROCESS, &mute_proc) < 0) {
+		perror("OES_IOC_MUTE_PROCESS");
+		ret = 1;
+		goto out_other;
+	}
+
+	/* Query and verify it is in the list */
+	memset(&get_procs, 0, sizeof(get_procs));
+	get_procs.egmp_entries = proc_entries;
+	get_procs.egmp_count = 16;
+	if (ioctl(fd, OES_IOC_GET_MUTED_PROCESSES, &get_procs) < 0) {
+		perror("OES_IOC_GET_MUTED_PROCESSES");
+		ret = 1;
+		goto out_other;
+	}
+	found = 0;
 	for (i = 0; i < get_procs.egmp_actual; i++) {
-		if (proc_entries[i].emp_token.ept_id == (uint64_t)getpid()) {
+		if (proc_entries[i].emp_token.ept_id == (uint64_t)other) {
 			if (proc_entries[i].emp_event_count != 0) {
 				fprintf(stderr, "FAIL: full mute should have event_count=0\n");
-				close(fd);
-				return (1);
+				ret = 1;
+				goto out_other;
 			}
-			ret = 1;
+			found = 1;
 			break;
 		}
 	}
-	if (!ret) {
-		fprintf(stderr, "FAIL: self not found in muted processes list\n");
-		close(fd);
-		return (1);
+	if (!found) {
+		fprintf(stderr, "FAIL: process not found in muted processes list\n");
+		ret = 1;
+		goto out_other;
 	}
-	printf("  PASS: self found in muted processes (all events)\n");
+	printf("  PASS: process found in muted processes (all events)\n");
 
-	/* Unmute self */
+	/* Unmute it */
 	if (ioctl(fd, OES_IOC_UNMUTE_PROCESS, &mute_proc) < 0) {
 		perror("OES_IOC_UNMUTE_PROCESS");
-		close(fd);
-		return (1);
+		ret = 1;
+		goto out_other;
 	}
 
-	/* Now self-mute with specific events */
+	/* Now mute it with specific events */
 	memset(&mute_proc_ev, 0, sizeof(mute_proc_ev));
-	mute_proc_ev.empe_flags = OES_MUTE_SELF;
+	mute_proc_ev.empe_token.ept_id = (uint64_t)other;
 	mute_proc_ev.empe_count = 2;
 	mute_proc_ev.empe_events[0] = OES_EVENT_NOTIFY_OPEN;
 	mute_proc_ev.empe_events[1] = OES_EVENT_NOTIFY_ACCESS;
 	if (ioctl(fd, OES_IOC_MUTE_PROCESS_EVENTS, &mute_proc_ev) < 0) {
 		perror("OES_IOC_MUTE_PROCESS_EVENTS");
-		close(fd);
-		return (1);
+		ret = 1;
+		goto out_other;
 	}
 
 	/* Query and verify specific events are listed */
@@ -157,29 +208,36 @@ main(void)
 	get_procs.egmp_count = 16;
 	if (ioctl(fd, OES_IOC_GET_MUTED_PROCESSES, &get_procs) < 0) {
 		perror("OES_IOC_GET_MUTED_PROCESSES");
-		close(fd);
-		return (1);
+		ret = 1;
+		goto out_other;
 	}
-
-	ret = 0;
+	found = 0;
 	for (i = 0; i < get_procs.egmp_actual; i++) {
-		if (proc_entries[i].emp_token.ept_id == (uint64_t)getpid()) {
+		if (proc_entries[i].emp_token.ept_id == (uint64_t)other) {
 			if (proc_entries[i].emp_event_count != 2) {
 				fprintf(stderr, "FAIL: expected 2 events, got %u\n",
 				    proc_entries[i].emp_event_count);
-				close(fd);
-				return (1);
+				ret = 1;
+				goto out_other;
 			}
-			ret = 1;
+			found = 1;
 			break;
 		}
 	}
-	if (!ret) {
-		fprintf(stderr, "FAIL: self not found in per-event muted list\n");
+	if (!found) {
+		fprintf(stderr, "FAIL: process not found in per-event muted list\n");
+		ret = 1;
+		goto out_other;
+	}
+	printf("  PASS: process found in muted processes (2 specific events)\n");
+	ret = 0;
+out_other:
+	close(hold[1]);
+	(void)waitpid(other, NULL, 0);
+	if (ret != 0) {
 		close(fd);
 		return (1);
 	}
-	printf("  PASS: self found in muted processes (2 specific events)\n");
 
 	/* Test path muting queries */
 	memset(&mute_path, 0, sizeof(mute_path));

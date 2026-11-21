@@ -337,10 +337,13 @@ failures_head()
 }
 failures_body()
 {
-	atf_check -s exit:0 -o empty -e match:"OK" \
+	# The program has no skips or expected failures: its unittest summary
+	# must be exactly "OK" ("OK (skipped=N)" would be subtests not run).
+	atf_check -s exit:0 -o empty -e save:failure_test.err \
 	    env CERTCTL_TEST_TOOL="$(command -v certctl)" \
 	    CERTCTL_TEST_OPENSSL="$(command -v openssl)" \
 	    python3.12 -B "$(atf_get_srcdir)/failure_test.py"
+	atf_check -s exit:0 -o inline:"OK\n" tail -n 1 failure_test.err
 }
 
 atf_init_test_cases()

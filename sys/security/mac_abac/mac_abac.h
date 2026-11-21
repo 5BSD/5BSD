@@ -559,7 +559,7 @@ struct abac_label {
 	uint32_t		vl_hash;			/* Quick compare hash */
 	uint32_t		vl_npairs;			/* Number of valid pairs */
 	uint32_t		vl_flags;			/* ABAC_LABEL_* flags */
-	uint32_t		vl_reserved;			/* Padding for alignment */
+	u_int			vl_refs;			/* Holders; see abac_label_hold() */
 	struct abac_pair	vl_pairs[ABAC_MAX_PAIRS];	/* Parsed key=value pairs */
 };
 
@@ -696,12 +696,34 @@ extern int abac_log_level;
 } while (0)
 
 /*
+ * Idle gating (mac_abac.c): the operations whose hooks must evaluate, and
+ * the first statement of every rule-evaluating hook.  An operation outside
+ * abac_live_ops has no rule that could decide it, so the hook returns what
+ * its evaluation would have.
+ */
+extern uint32_t abac_live_ops;
+extern int abac_force_hooks;
+extern struct abac_rule *abac_rules[];
+extern int abac_rule_end;
+extern struct rwlock abac_rules_lock;
+#define	ABAC_OPS_LIVE(ops)	((atomic_load_32(&abac_live_ops) & (ops)) != 0)
+#define	ABAC_CHECK_LIVE(ops)	do {					\
+	if (__predict_true((atomic_load_32(&abac_live_ops) & (ops)) == 0)) \
+		return (0);						\
+} while (0)
+void abac_gate_update_locked(void);
+void abac_gate_store(int *setting, int value);
+
+/*
  * Function prototypes - abac_label.c
  */
 void abac_label_init(void);
 void abac_label_destroy(void);
 struct abac_label *abac_label_alloc(int flags);
 void abac_label_free(struct abac_label *vl);
+void abac_label_hold(struct abac_label *vl);
+void abac_label_clear(struct abac_label *vl);
+void abac_label_share(struct label *dst, int slot, struct abac_label *vl);
 int abac_label_parse(const char *str, size_t len, struct abac_label *out);
 void abac_label_copy(const struct abac_label *src, struct abac_label *dst);
 void abac_label_set_default(struct abac_label *vl, bool is_subject);
@@ -805,23 +827,6 @@ int abac_cred_externalize_label(struct label *label, char *element_name,
 int abac_cred_internalize_label(struct label *label, char *element_name,
     char *element_data, int *claimed);
 int abac_cred_check_relabel(struct ucred *cred, struct label *newlabel);
-int abac_cred_check_setuid(struct ucred *cred, uid_t uid);
-int abac_cred_check_setgid(struct ucred *cred, gid_t gid);
-int abac_cred_check_setgroups(struct ucred *cred, int ngroups, gid_t *gidset);
-int abac_cred_check_seteuid(struct ucred *cred, uid_t euid);
-int abac_cred_check_setegid(struct ucred *cred, gid_t egid);
-int abac_cred_check_setreuid(struct ucred *cred, uid_t ruid, uid_t euid);
-int abac_cred_check_setregid(struct ucred *cred, gid_t rgid, gid_t egid);
-int abac_cred_check_setresuid(struct ucred *cred, uid_t ruid, uid_t euid,
-    uid_t suid);
-int abac_cred_check_setresgid(struct ucred *cred, gid_t rgid, gid_t egid,
-    gid_t sgid);
-int abac_cred_check_setcred(u_int flags, const struct ucred *old_cred,
-    struct ucred *new_cred);
-int abac_cred_check_setaudit(struct ucred *cred, struct auditinfo *ai);
-int abac_cred_check_setaudit_addr(struct ucred *cred,
-    struct auditinfo_addr *aia);
-int abac_cred_check_setauid(struct ucred *cred, uid_t auid);
 
 /*
  * Function prototypes - abac_vnode.c
@@ -831,6 +836,9 @@ void abac_vnode_destroy_label(struct label *label);
 void abac_vnode_copy_label(struct label *src, struct label *dest);
 void abac_vnode_refresh_label(struct vnode *vp, struct label *vplabel);
 void abac_vnode_lazy_load(struct vnode *vp, struct label *vplabel);
+struct abac_label *abac_vnode_obj_label(struct vnode *vp,
+    struct label *vplabel);
+struct abac_label *abac_vnode_obj_label_noload(struct label *vplabel);
 int abac_vnode_associate_extattr(struct mount *mp, struct label *mplabel,
     struct vnode *vp, struct label *vplabel);
 void abac_vnode_associate_singlelabel(struct mount *mp, struct label *mplabel,
@@ -920,8 +928,6 @@ int abac_proc_check_debug(struct ucred *cred, struct proc *p);
 int abac_proc_check_sched(struct ucred *cred, struct proc *p);
 int abac_proc_check_signal(struct ucred *cred, struct proc *p, int signum);
 int abac_proc_check_wait(struct ucred *cred, struct proc *p);
-int abac_priv_check(struct ucred *cred, int priv);
-int abac_priv_grant(struct ucred *cred, int priv);
 
 /*
  * Function prototypes - abac_socket.c
@@ -939,19 +945,11 @@ int abac_socket_check_bind(struct ucred *cred, struct socket *so,
     struct label *solabel, struct sockaddr *sa);
 int abac_socket_check_connect(struct ucred *cred, struct socket *so,
     struct label *solabel, struct sockaddr *sa);
-int abac_socket_check_create(struct ucred *cred, int domain, int type,
-    int protocol);
 int abac_socket_check_listen(struct ucred *cred, struct socket *so,
     struct label *solabel);
 int abac_socket_check_receive(struct ucred *cred, struct socket *so,
     struct label *solabel);
 int abac_socket_check_send(struct ucred *cred, struct socket *so,
-    struct label *solabel);
-int abac_socket_check_stat(struct ucred *cred, struct socket *so,
-    struct label *solabel);
-int abac_socket_check_visible(struct ucred *cred, struct socket *so,
-    struct label *solabel);
-int abac_socket_check_poll(struct ucred *cred, struct socket *so,
     struct label *solabel);
 int abac_socket_check_deliver(struct socket *so, struct label *solabel,
     struct mbuf *m, struct label *mlabel);
@@ -973,10 +971,6 @@ void abac_pipe_destroy_label(struct label *label);
 void abac_pipe_copy_label(struct label *src, struct label *dest);
 void abac_pipe_create(struct ucred *cred, struct pipepair *pp,
     struct label *pplabel);
-int abac_pipe_check_ioctl(struct ucred *cred, struct pipepair *pp,
-    struct label *pplabel, unsigned long cmd, void *data);
-int abac_pipe_check_poll(struct ucred *cred, struct pipepair *pp,
-    struct label *pplabel);
 int abac_pipe_check_read(struct ucred *cred, struct pipepair *pp,
     struct label *pplabel);
 int abac_pipe_check_relabel(struct ucred *cred, struct pipepair *pp,
@@ -993,7 +987,6 @@ void abac_posixshm_init_label(struct label *label);
 void abac_posixshm_destroy_label(struct label *label);
 void abac_posixshm_create(struct ucred *cred, struct shmfd *shmfd,
     struct label *shmlabel);
-int abac_posixshm_check_create(struct ucred *cred, const char *path);
 int abac_posixshm_check_mmap(struct ucred *cred, struct shmfd *shmfd,
     struct label *shmlabel, int prot, int flags);
 int abac_posixshm_check_open(struct ucred *cred, struct shmfd *shmfd,

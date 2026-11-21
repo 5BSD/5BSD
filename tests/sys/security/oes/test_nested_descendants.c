@@ -6,8 +6,9 @@
 
 /*
  * Verify composable descendants scopes.  A nested client inherits the outer
- * scope marker and adds its own: the outer client sees all three generations,
- * while the nested client sees only itself and its child.
+ * scope marker and adds its own: the outer client sees the two generations
+ * below its opener, while the nested client sees only its child.  Neither
+ * sees the process that opened it (oes(4), "A client's own processes").
  */
 #include <sys/poll.h>
 #include <sys/wait.h>
@@ -60,21 +61,24 @@ drain_events(oes_client_t *client)
 		;
 }
 
+/*
+ * Read client until every process of want[] has an OPEN event, each with
+ * EP_FLAG_OES_CLIENT as flags[] says; fail if a process of forbid[] has
+ * one first.  The forbidden opens are made before the wanted ones, so the
+ * wanted events fence them.
+ */
 static int
-observe(oes_client_t *client, pid_t first, pid_t second, pid_t third,
-    pid_t forbidden, bool require_first_client, bool require_second_client,
-    bool require_third_client)
+observe(oes_client_t *client, const pid_t *want, const bool *flags,
+    int nwant, const pid_t *forbid, int nforbid)
 {
 	const oes_message_t *msg;
 	struct pollfd pfd;
-	bool saw_first, saw_second, saw_third, saw_forbidden;
-	int i;
+	bool saw[4] = { false, false, false, false };
+	int i, k, nsaw = 0;
 
-	saw_first = saw_second = saw_forbidden = false;
-	saw_third = third <= 0;
 	pfd.fd = oes_client_fd(client);
 	pfd.events = POLLIN;
-	for (i = 0; i < 300 && (!saw_first || !saw_second || !saw_third); i++) {
+	for (i = 0; i < 300 && nsaw < nwant; i++) {
 		if (poll(&pfd, 1, 10) <= 0)
 			continue;
 		while (oes_read_event(client, &msg, false) == 0) {
@@ -84,35 +88,34 @@ observe(oes_client_t *client, pid_t first, pid_t second, pid_t third,
 				continue;
 			is_client = (msg->em_process.ep_flags &
 			    EP_FLAG_OES_CLIENT) != 0;
-			if (msg->em_process.ep_pid == first) {
-				if (is_client != require_first_client) {
-					fprintf(stderr, "first client flag mismatch\n");
+			for (k = 0; k < nforbid; k++) {
+				if (msg->em_process.ep_pid == forbid[k]) {
+					fprintf(stderr, "forbidden pid %d seen\n",
+					    (int)forbid[k]);
 					return (1);
 				}
-				saw_first = true;
-			} else if (msg->em_process.ep_pid == second) {
-				if (is_client != require_second_client) {
-					fprintf(stderr, "second client flag mismatch\n");
+			}
+			for (k = 0; k < nwant; k++) {
+				if (msg->em_process.ep_pid != want[k])
+					continue;
+				if (is_client != flags[k]) {
+					fprintf(stderr, "pid %d client flag "
+					    "mismatch\n", (int)want[k]);
 					return (1);
 				}
-				saw_second = true;
-			} else if (msg->em_process.ep_pid == third) {
-				if (is_client != require_third_client) {
-					fprintf(stderr, "third client flag mismatch\n");
-					return (1);
+				if (!saw[k]) {
+					saw[k] = true;
+					nsaw++;
 				}
-				saw_third = true;
-			} else if (msg->em_process.ep_pid == forbidden) {
-				saw_forbidden = true;
 			}
 		}
 		if (errno != EAGAIN)
 			return (1);
 	}
-	if (!saw_first || !saw_second || !saw_third || saw_forbidden)
-		fprintf(stderr, "scope result first=%d second=%d third=%d forbidden=%d\n",
-		    saw_first, saw_second, saw_third, saw_forbidden);
-	return (!saw_first || !saw_second || !saw_third || saw_forbidden);
+	if (nsaw < nwant)
+		fprintf(stderr, "scope result: %d of %d processes seen\n",
+		    nsaw, nwant);
+	return (nsaw < nwant);
 }
 
 static int
@@ -141,8 +144,18 @@ nested_process(int ready_fd, int go_fd, int pid_fd, const char *nested_path,
 	if (waitpid(grandchild, &status, 0) != grandchild ||
 	    !WIFEXITED(status) || WEXITSTATUS(status) != 0)
 		return (15);
-	status = observe(client, getpid(), grandchild, 0, getppid(), true,
-	    false, false);
+	{
+		/*
+		 * Its child, not its parent, and not itself: it opened the
+		 * client, and a client never receives the events of the
+		 * processes that act as it (oes(4)).
+		 */
+		pid_t want[] = { grandchild };
+		bool flags[] = { false };
+		pid_t forbid[] = { getppid(), getpid() };
+
+		status = observe(client, want, flags, 1, forbid, 2);
+	}
 	oes_client_destroy(client);
 	return (status == 0 ? 0 : 16);
 }
@@ -203,8 +216,18 @@ main(void)
 		    WIFEXITED(status) ? WEXITSTATUS(status) : -1);
 		goto out;
 	}
-	if (observe(outer, getpid(), nested, grandchild, -1, true, true,
-	    false) != 0) {
+	/*
+	 * The nested client's process (a reader of its own client, so
+	 * flagged) and the grandchild; not this process, which opened outer.
+	 */
+	{
+		pid_t want[] = { nested, grandchild };
+		bool flags[] = { true, false };
+		pid_t forbid[] = { getpid() };
+
+		status = observe(outer, want, flags, 2, forbid, 1);
+	}
+	if (status != 0) {
 		fprintf(stderr, "outer descendants scope missed nested events\n");
 		goto out;
 	}

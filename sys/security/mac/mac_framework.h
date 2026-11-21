@@ -312,7 +312,22 @@ mac_pipe_check_read(struct ucred *cred, struct pipepair *pp)
 	return (0);
 }
 
-int	mac_pipe_check_write(struct ucred *cred, struct pipepair *pp);
+int	mac_pipe_check_write_impl(struct ucred *cred, struct pipepair *pp);
+#ifdef MAC
+extern bool mac_pipe_check_write_fp_flag;
+#else
+#define mac_pipe_check_write_fp_flag false
+#endif
+#define mac_pipe_check_write_enabled() __predict_false(mac_pipe_check_write_fp_flag)
+static inline int
+mac_pipe_check_write(struct ucred *cred, struct pipepair *pp)
+{
+
+	if (mac_pipe_check_write_enabled())
+		return (mac_pipe_check_write_impl(cred, pp));
+	return (0);
+}
+
 void	mac_pipe_create(struct ucred *cred, struct pipepair *pp);
 void	mac_pipe_destroy(struct pipepair *);
 void	mac_pipe_init(struct pipepair *);
@@ -538,7 +553,20 @@ mac_file_check_mmap(struct ucred *cred, struct file *fp, int fd, int prot,
 	return (0);
 }
 int	mac_file_check_receive(struct ucred *cred, struct file *fp);
-void	mac_file_notify_close(struct ucred *cred, struct file *fp, int fd);
+void	mac_file_notify_close_impl(struct ucred *cred, struct file *fp, int fd);
+#ifdef MAC
+extern bool mac_file_notify_close_fp_flag;
+#else
+#define mac_file_notify_close_fp_flag false
+#endif
+#define mac_file_notify_close_enabled() __predict_false(mac_file_notify_close_fp_flag)
+static inline void
+mac_file_notify_close(struct ucred *cred, struct file *fp, int fd)
+{
+
+	if (mac_file_notify_close_enabled())
+		mac_file_notify_close_impl(cred, fp, fd);
+}
 /*
  * Checks at the fileops boundary, on the descriptor itself whatever its
  * type (docs/macf-new-hooks.md 3.4, 3.6, 3.9-3.13).  The hot ones carry a
@@ -644,12 +672,68 @@ int	mac_socket_check_create(struct ucred *cred, int domain, int type,
 	    int proto);
 int	mac_socket_check_deliver(struct socket *so, struct mbuf *m);
 int	mac_socket_check_listen(struct ucred *cred, struct socket *so);
-int	mac_socket_check_poll(struct ucred *cred, struct socket *so);
-int	mac_socket_check_receive(struct ucred *cred, struct socket *so);
-int	mac_socket_check_send(struct ucred *cred, struct socket *so);
+int	mac_socket_check_poll_impl(struct ucred *cred, struct socket *so);
+#ifdef MAC
+extern bool mac_socket_check_poll_fp_flag;
+#else
+#define mac_socket_check_poll_fp_flag false
+#endif
+#define mac_socket_check_poll_enabled() __predict_false(mac_socket_check_poll_fp_flag)
+static inline int
+mac_socket_check_poll(struct ucred *cred, struct socket *so)
+{
+
+	if (mac_socket_check_poll_enabled())
+		return (mac_socket_check_poll_impl(cred, so));
+	return (0);
+}
+int	mac_socket_check_receive_impl(struct ucred *cred, struct socket *so);
+#ifdef MAC
+extern bool mac_socket_check_receive_fp_flag;
+#else
+#define mac_socket_check_receive_fp_flag false
+#endif
+#define mac_socket_check_receive_enabled() __predict_false(mac_socket_check_receive_fp_flag)
+static inline int
+mac_socket_check_receive(struct ucred *cred, struct socket *so)
+{
+
+	if (mac_socket_check_receive_enabled())
+		return (mac_socket_check_receive_impl(cred, so));
+	return (0);
+}
+int	mac_socket_check_send_impl(struct ucred *cred, struct socket *so);
+#ifdef MAC
+extern bool mac_socket_check_send_fp_flag;
+#else
+#define mac_socket_check_send_fp_flag false
+#endif
+#define mac_socket_check_send_enabled() __predict_false(mac_socket_check_send_fp_flag)
+static inline int
+mac_socket_check_send(struct ucred *cred, struct socket *so)
+{
+
+	if (mac_socket_check_send_enabled())
+		return (mac_socket_check_send_impl(cred, so));
+	return (0);
+}
 int	mac_socket_check_setsockopt(struct ucred *cred, struct socket *so,
 	    int level, int optname);
-int	mac_socket_check_stat(struct ucred *cred, struct socket *so);
+int	mac_socket_check_stat_impl(struct ucred *cred, struct socket *so);
+#ifdef MAC
+extern bool mac_socket_check_stat_fp_flag;
+#else
+#define mac_socket_check_stat_fp_flag false
+#endif
+#define mac_socket_check_stat_enabled() __predict_false(mac_socket_check_stat_fp_flag)
+static inline int
+mac_socket_check_stat(struct ucred *cred, struct socket *so)
+{
+
+	if (mac_socket_check_stat_enabled())
+		return (mac_socket_check_stat_impl(cred, so));
+	return (0);
+}
 int	mac_socket_check_visible(struct ucred *cred, struct socket *so);
 struct label *mac_vsock_provider_label_alloc(int flag);
 void	mac_vsock_provider_label_free(struct label *label);
@@ -779,7 +863,23 @@ mac_vnode_check_access(struct ucred *cred, struct vnode *dvp,
 }
 int	mac_vnode_check_chdir(struct ucred *cred, struct vnode *dvp);
 int	mac_vnode_check_chroot(struct ucred *cred, struct vnode *dvp);
-int	mac_vnode_check_close(struct ucred *cred, struct vnode *vp);
+int	mac_vnode_check_close_impl(struct ucred *cred, struct vnode *vp);
+#ifdef MAC
+extern bool mac_vnode_check_close_fp_flag;
+#else
+#define mac_vnode_check_close_fp_flag false
+#endif
+#define mac_vnode_check_close_enabled() __predict_false(mac_vnode_check_close_fp_flag)
+static inline int
+mac_vnode_check_close(struct ucred *cred, struct vnode *vp)
+{
+
+	mac_vnode_assert_locked(vp, "mac_vnode_check_close");
+	if (mac_vnode_check_close_enabled())
+		return (mac_vnode_check_close_impl(cred, vp));
+	return (0);
+}
+
 int	mac_vnode_check_create(struct ucred *cred, struct vnode *dvp,
 	    struct componentname *cnp, struct vattr *vap);
 int	mac_vnode_check_deleteacl(struct ucred *cred, struct vnode *vp,

@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 13, 2026
+.Dd November 19, 2026
 .Dt LIBOES 3
 .Os
 .Sh NAME
@@ -123,6 +123,11 @@ They can be cleared with
 and
 .Fn oes_unmute_all_target_paths .
 .Pp
+Processes excluded by the kernel
+.Pq see Xr oes 4
+never appear as the source of a message, except as the launcher in an exec
+event; mute calls naming them succeed and have no effect.
+.Pp
 The message pointer returned by
 .Fn oes_read_event
 is valid only until the next read on the client.
@@ -189,6 +194,10 @@ An unavailable endpoint returns the discovery error.
 Delivered clients have NOTIFY-only, global event scope and cannot be transferred
 again or changed to AUTH, descendant or jail scope.
 Their original opener identity is the broker worker.
+The constructor makes the calling process one of the client's readers
+.Pq Dv OES_IOC_JOIN ,
+so events the caller causes are not delivered to it
+.Pq see Xr oes 4 .
 Factory-session closure does not revoke the descriptor; ordinary last-close
 semantics apply.
 .Sh DESCRIPTOR OWNERSHIP
@@ -199,8 +208,16 @@ instead takes ownership on success and closes that descriptor on destruction.
 On failure, ownership remains with the caller.
 The caller must supply an OES descriptor and establish close-on-exec behavior
 before adoption.
-Adoption checks descriptor validity but does not verify its device type or issue
-ioctls, duplicate it, change rights, or change client scope.
+Both make the calling process one of the client's readers with
+.Dv OES_IOC_JOIN
+.Pq Xr oes 4 ,
+the one ioctl they issue.
+If the descriptor refuses it, for example because its ioctl limit leaves it
+out, the wrapper is still created and errno is unchanged; the process then
+joins at its first read, poll or kevent registration, and until then the
+events it causes reach the client.
+Adoption checks descriptor validity but does not verify its device type,
+duplicate it, change rights, or change client scope.
 An attenuated descriptor need not permit configuration or query ioctls.
 .Pp
 Closing one duplicate does not destroy the kernel client while another remains.
@@ -208,9 +225,14 @@ Destroying a borrowed wrapper does not resolve pending AUTH requests.
 Do not use or close an adopted descriptor independently of its wrapper;
 serialize operations and destruction on each wrapper.
 .Pp
-A transferred descriptor retains the kernel identity of its original opener.
-Adoption does not rebind descendant scope or self-AUTH handling to its
-recipient.
+A transferred descriptor keeps its original opener for descendant scope.
+Adoption makes the recipient one of the client's readers
+.Pq Dv OES_IOC_JOIN ,
+so its own events are not delivered to the client; its own AUTH events are
+allowed without the client only if its descriptor can answer: open for
+writing and holding
+.Dv CAP_WRITE
+.Pq see Xr oes 4 .
 .Sh SEE ALSO
 .Xr oes 4
 .Sh AUTHORS

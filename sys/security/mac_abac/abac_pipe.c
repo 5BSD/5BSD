@@ -27,39 +27,32 @@
  * Pipe label lifecycle
  */
 
+/*
+ * A pipe holds its creator's label (none for an unlabelled creator: NULL,
+ * type=unlabeled).
+ */
 void
 abac_pipe_init_label(struct label *label)
 {
-	struct abac_label *vl;
 
-	vl = abac_label_alloc(M_WAITOK);
-	SLOT_SET(label, vl);
+	SLOT_SET(label, NULL);
 }
 
 void
 abac_pipe_destroy_label(struct label *label)
 {
-	struct abac_label *vl;
 
-	vl = SLOT(label);
-	if (vl != NULL)
-		abac_label_free(vl);
+	abac_label_free(SLOT(label));
 	SLOT_SET(label, NULL);
 }
 
 void
 abac_pipe_copy_label(struct label *src, struct label *dest)
 {
-	struct abac_label *srcvl, *dstvl;
 
 	if (src == NULL || dest == NULL)
 		return;
-
-	srcvl = SLOT(src);
-	dstvl = SLOT(dest);
-
-	if (srcvl != NULL && dstvl != NULL)
-		abac_label_copy(srcvl, dstvl);
+	abac_label_share(dest, abac_slot, SLOT(src));
 }
 
 /*
@@ -69,16 +62,10 @@ void
 abac_pipe_create(struct ucred *cred, struct pipepair *pp,
     struct label *pplabel)
 {
-	struct abac_label *credlabel, *plabel;
-
 	if (cred == NULL || cred->cr_label == NULL || pplabel == NULL)
 		return;
 
-	credlabel = SLOT(cred->cr_label);
-	plabel = SLOT(pplabel);
-
-	if (credlabel != NULL && plabel != NULL)
-		abac_label_copy(credlabel, plabel);
+	abac_label_share(pplabel, abac_slot, SLOT(cred->cr_label));
 }
 
 /*
@@ -91,32 +78,13 @@ abac_pipe_create(struct ucred *cred, struct pipepair *pp,
  */
 
 int
-abac_pipe_check_ioctl(struct ucred *cred, struct pipepair *pp,
-    struct label *pplabel, unsigned long cmd, void *data)
-{
-
-	/* ioctl on pipes is always allowed - typically FIONREAD etc. */
-	ABAC_CHECK_ENABLED();
-	return (0);
-}
-
-int
-abac_pipe_check_poll(struct ucred *cred, struct pipepair *pp,
-    struct label *pplabel)
-{
-
-	/* poll is always allowed - no security impact */
-	ABAC_CHECK_ENABLED();
-	return (0);
-}
-
-int
 abac_pipe_check_read(struct ucred *cred, struct pipepair *pp,
     struct label *pplabel)
 {
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_READ);
 	ABAC_CHECK_ENABLED();
 
 	/* Get subject label from credential */
@@ -160,6 +128,7 @@ abac_pipe_check_stat(struct ucred *cred, struct pipepair *pp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_STAT);
 	ABAC_CHECK_ENABLED();
 
 	/* Get subject label from credential */
@@ -193,6 +162,7 @@ abac_pipe_check_write(struct ucred *cred, struct pipepair *pp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	/* Get subject label from credential */

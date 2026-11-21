@@ -10,6 +10,7 @@
 #include <libservice.h>
 #include <security/oes/oes.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <string.h>
 #include <unistd.h>
 static int fail_at, step, created_fd;
@@ -67,11 +68,17 @@ static int
 fake_ioctls(int fd, const cap_ioctl_t *commands, size_t count)
 {
 	(void)fd;
-	ATF_CHECK_EQ(6, count);
+	bool join = false;
+
+	/* Six query/subscribe commands and OES_IOC_JOIN (oes(4)). */
+	ATF_CHECK_EQ(7, count);
 	for (size_t i = 0; i < count; i++) {
 		ATF_CHECK(commands[i] != OES_IOC_SET_MODE);
 		ATF_CHECK(commands[i] != OES_IOC_SET_SCOPE);
+		if (commands[i] == OES_IOC_JOIN)
+			join = true;
 	}
+	ATF_CHECK(join);
 	return (failpoint());
 }
 static int

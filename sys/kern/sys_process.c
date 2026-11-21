@@ -880,6 +880,8 @@ proc_set_traced(struct proc *p, bool stop)
 	sx_assert(&proctree_lock, SX_XLOCKED);
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 	p->p_flag |= P_TRACED;
+	/* A traced process is never excluded (cap_process(2)). */
+	cap_exclusion_clear_locked(p, CAPX_CLEAR_PTRACE);
 	if (stop)
 		p->p_flag2 |= P2_PTRACE_FSTP;
 	p->p_ptevents = PTRACE_DEFAULT;

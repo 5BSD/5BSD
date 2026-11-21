@@ -27,18 +27,22 @@
 #              usr.sbin/switchboard".  Each must have a Kyuafile in the stage.
 #   TIMEOUT_S  host-side deadline for the whole VM (default 10800).
 #
-# Environment: FATAL_LOR (yes; no logs a lock order reversal without
-# stopping the run), CPUS (default 8), MEM_MB (8192; 12288 when the suites
+# Environment: FATAL_LOR (yes; no lets the guest run on after a lock order
+# reversal that matches no known-lor.txt entry, for a sweep that reads them
+# all from the serial log, but the run still ends UNKNOWN_LOR and
+# VM_NOT_CLEAN), CPUS (default 8), MEM_MB (8192; 12288 when the suites
 #   include sys/posixshm: its largepage_* cases need a free aligned 1 GB
 #   range, and an 8 GB guest has only four, which incidental cached pages
 #   can occupy, so ENOMEM there is expected), PARALLELISM (kyua, default 1),
 #   with sys/dq (or a program under it) in the suites, imgact_binmisc and
 #   dtraceall are preloaded for them; with sys/mac_capability or its
-#   issuer-decision probe programs or mac_capability_channel_test, dtraceall; with
-#   usr.sbin/bsd-build, zfs (an md-backed pool gives one case ACLs); with
-#   sys/kern or sys/kern/ptrace_sleep_test, fusefs (its presleep cases serve
-#   one); with a kernel that does not compile them in (MINIMAL), ufs and
-#   cryptodev from the stage,
+#   issuer-decision probe programs or mac_capability_channel_test,
+#   dtraceall; with sys/mac_capability or its cap_exclusion_test, also
+#   filemon (all of sys gets all three); with usr.sbin/bsd-build, zfs (an
+#   md-backed pool gives one case ACLs); with sys/kern or
+#   sys/kern/ptrace_sleep_test, fusefs (its presleep cases serve one); with a
+#   kernel that does not compile them in (MINIMAL), ufs and cryptodev from
+#   the stage,
 #   ROOT_FS (ufs, the default, or zfs: a ZFS root pool for the suites that
 #   require one, such as the Linux ptrace ones),
 #   GATE_TIMEOUT (guest seconds to wait for provider convergence, 600),
@@ -51,6 +55,13 @@
 #   RACCT_TUNABLE_ZERO=1 boots with kern.racct.enable="0", the tunable 5BSD
 #   ignores: the tier of mac_capability_accounting_racct_test, whose cases
 #   skip with DEFERRED_RACCT_ZERO_TIER otherwise.
+#   TEST_PKGDIR (default /usr/obj/5BSD-test-packages/All): the directory of
+#   the pinned test-stage packages that every guest image carries under
+#   /usr/local (tools/build/fuchsia/test-stage-packages: Python 3.12, python3
+#   and python, pytest, py-dpkt and nist-kat for the suites that require
+#   them), built from /usr/obj/5BSD-ports.  They are part of the guest test
+#   stage only, never of base or a base package set; a run without every
+#   pinned package refuses to start (TEST_PACKAGES_MISSING).
 #   ISOLATION_ENFORCE=1 retains production device isolation for deployment
 #   checks; the default 0 permits raw-device provider test fixtures.
 #   With PLANE_OFF=1 the default is 1 (the enforced tier, below), and the
@@ -237,16 +248,32 @@ esac
 # LOADER_EXTRA still carries
 # the Linux modules, mac_test_hooks and the rest of the recipe (DQ chapter
 # of the book, section 17); a module named twice is loaded once.
+# cap_exclusion_test's T1 cases need fasttrap (in dtraceall) and filemon;
+# they declare require.kmods, so a guest without them is KMOD_SKIPPED,
+# not clean.  The lists add up: a run of sys/dq and sys/mac_capability
+# programs gets every module either needs.
 dq_loader=
+dq_loader_add() {
+	dq_loader="${dq_loader:+$dq_loader
+}$1"
+}
 case " $suites " in
 *" sys "*|*" sys/dq "*|*" sys/dq/"*)
-	dq_loader='imgact_binmisc_load="YES"
-dtraceall_load="YES"' ;;
-*" sys/mac_capability "*|*" sys/mac_capability/authority_issuer_probe_test"*|\
-*" sys/mac_capability/authority_test_issuer_anchor_test"*|\
-*" sys/mac_capability/mac_capability_channel_test"*)
-	dq_loader='dtraceall_load="YES"' ;;
+	dq_loader_add 'imgact_binmisc_load="YES"' ;;
 esac
+case " $suites " in
+*" sys "*|*" sys/dq "*|*" sys/dq/"*|*" sys/mac_capability "*|\
+*" sys/mac_capability/authority_issuer_probe_test"*|\
+*" sys/mac_capability/authority_test_issuer_anchor_test"*|\
+*" sys/mac_capability/cap_exclusion_test"*|\
+*" sys/mac_capability/mac_capability_channel_test"*)
+	dq_loader_add 'dtraceall_load="YES"' ;;
+esac
+case " $suites " in
+*" sys "*|*" sys/mac_capability "*|*" sys/mac_capability/cap_exclusion_test"*)
+	dq_loader_add 'filemon_load="YES"' ;;
+esac
+# end of dq_loader
 # bsd_build_test:generation_reconciliation runs its ACL subtest on an
 # md-backed ZFS pool (GENERIC has no UFS_ACL); the plane refuses a late
 # kldload of zfs.
@@ -351,6 +378,22 @@ for s in $suites; do
 		;;
 	esac
 done
+# Pinned test-stage packages (above): each NAME-VERSION in
+# test-stage-packages must be TEST_PKGDIR/NAME-VERSION.pkg.
+test_pkgdir=${TEST_PKGDIR:-/usr/obj/5BSD-test-packages/All}
+test_pkglist=$(sed -e 's/#.*//' "$(dirname "$0")/test-stage-packages" | awk 'NF { print $1 ":" $2 }')
+[ -n "$test_pkglist" ] || die "test-stage-packages lists no package"
+test_pkgs=
+for e in $test_pkglist; do
+	p=${e%%:*} sum=${e#*:}
+	case $p in *[!A-Za-z0-9_.,+-]*) die "test-stage-packages: bad name $p";; esac
+	[ -f "$test_pkgdir/$p.pkg" ] ||
+	    die "TEST_PACKAGES_MISSING: $test_pkgdir/$p.pkg (build the pinned test-stage packages: docs/book/src/develop/testing.md)"
+	[ "$(sha256 -q "$test_pkgdir/$p.pkg")" = "$sum" ] ||
+	    die "TEST_PACKAGES_MISMATCH: $test_pkgdir/$p.pkg is not the pinned build (sha256 in test-stage-packages)"
+	test_pkgs="$test_pkgs $p"
+done
+test_pkgdir=$(cd "$test_pkgdir" && pwd)
 # Every ELF test program of the stage must come from one checkout (or from
 # the checkouts TESTS_SRC_ROOTS names): a stage copied forward with only
 # some test directories reinstalled runs another branch's tests under the
@@ -575,7 +618,8 @@ fi
 cat > "$x/kyua-planeon.sh" <<EOF
 #!/bin/sh
 # Generated by vm-provider.sh; runs from the root autologin on ttyu0.
-PATH=/sbin:/bin:/usr/sbin:/usr/bin; export PATH
+# /usr/local holds the pinned test-stage packages (Python, pytest).
+PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin; export PATH
 GATE_TIMEOUT=$gate
 PARALLELISM=$par
 REQUIRE_UNITS="$units"
@@ -841,9 +885,12 @@ vars=; for v in $KYUA_VARS; do vars="$vars -v $v"; done
 echo "KYUA_TEST_STATUS=$(cat "$R/kyua-test.status")"
 kyua report -r "$R/results.db" --verbose > "$R/report-verbose.txt" 2>&1 || true
 kyua report-junit -r "$R/results.db" --output="$R/results.junit.xml" 2>/dev/null || true
-for kind in failed broken skipped; do
+# kyua counts an expected failure as a success: list those too (filter
+# xfail, result expected_failure).
+for kind in failed broken skipped xfail; do
+	result=$kind; [ "$kind" != xfail ] || result=expected_failure
 	echo "KYUA_${kind}_LIST_BEGIN" | tr a-z A-Z
-	kyua report -r "$R/results.db" --results-filter "$kind" 2>&1 | grep -E " -> +$kind" || true
+	kyua report -r "$R/results.db" --results-filter "$kind" 2>&1 | grep -E " -> +$result" || true
 	echo "KYUA_${kind}_LIST_END" | tr a-z A-Z
 done
 echo KYUA_SKIP_REASONS_BEGIN
@@ -889,6 +936,23 @@ fi
 EOF
 sh -n "$x/kyua-planeon.sh" || die "generated guest script has a syntax error"
 
+# ----------------------------------------------------- test-stage packages ---
+rm -rf "$x/testpkgs" "$x/testpkgs-blob"; mkdir -p "$x/testpkgs"
+for p in $test_pkgs; do
+	bsdtar -xf "$test_pkgdir/$p.pkg" -C "$x/testpkgs" --exclude '+*' -s ',^/,,' ||
+	    die "cannot extract $test_pkgdir/$p.pkg"
+done
+bad=$(cd "$x/testpkgs" && find . -mindepth 1 -maxdepth 1 ! -name usr -print)
+[ -z "$bad" ] || die "test-stage packages install outside /usr: $bad"
+bad=$(cd "$x/testpkgs" && find usr -print | grep -v '^usr$' | grep -v '^usr/local\(/\|$\)' || true)
+[ -z "$bad" ] || die "test-stage packages install outside /usr/local: $(echo "$bad" | head -n 3)"
+# A space is allowed (nist-kat's vector directories); the manifest encodes it.
+bad=$(cd "$x/testpkgs" && find usr -print | grep -v '^[A-Za-z0-9_./+@,= -]*$' || true)
+[ -z "$bad" ] || die "test-stage package path with unexpected characters: $(echo "$bad" | head -n 3)"
+# Symlink targets go into the manifest as they are: same characters, no space.
+bad=$(cd "$x/testpkgs" && find usr -type l -print | while IFS= read -r l; do
+	t=$(readlink "$l"); case $t in *[!A-Za-z0-9_./+@,=-]*) echo "$l -> $t";; esac; done)
+[ -z "$bad" ] || die "test-stage package symlink target with unexpected characters: $(echo "$bad" | head -n 3)"
 # --------------------------------------------------------------- manifest ---
 over='boot/loader.conf boot/loader.conf.local etc/fstab etc/rc.conf etc/rc.local etc/ttys etc/gettytab root/.profile root/.zprofile root/kyua-planeon.sh root/kyua-planeon.suites root/vm-extra.sh'
 [ -z "$sysctl_write" ] || over="$over $sysctl_conf"
@@ -926,6 +990,30 @@ re=$(for p in $over; do printf '%s|' "$p"; done | sed -e 's/|$//' -e 's/\./\\./g
 			echo "./root/vm-extra.d/$b type=file uname=root gname=wheel mode=0555 contents=$(cd "$extra_dir" && pwd)/$b"
 		done
 	fi
+	# The pinned test-stage packages, extracted (not registered with pkg:
+	# the guest has no package database to keep), modes kept.  mtree(5)
+	# names are vis-encoded (a space is \040); a file whose path has a space
+	# is read through a hard link with a plain name (contents= is taken
+	# literally).
+	mkdir -p "$x/testpkgs-blob"; nblob=0
+	(cd "$x/testpkgs" && find usr -mindepth 1 -print | env -i LC_ALL=C sort) |
+	while IFS= read -r p; do
+		mode=$(stat -f %Lp "$x/testpkgs/$p")
+		name=$(printf '%s' "$p" | sed 's/ /\\040/g')
+		if [ -L "$x/testpkgs/$p" ]; then
+			target=$(readlink "$x/testpkgs/$p")
+			echo "./$name type=link uname=root gname=wheel mode=0755 link=$target"
+		elif [ -d "$x/testpkgs/$p" ]; then
+			echo "./$name type=dir uname=root gname=wheel mode=$mode"
+		elif [ -f "$x/testpkgs/$p" ]; then
+			src=$x/testpkgs/$p
+			case $p in *" "*)
+				nblob=$((nblob + 1)); ln "$src" "$x/testpkgs-blob/$nblob"
+				src=$x/testpkgs-blob/$nblob ;;
+			esac
+			echo "./$name type=file uname=root gname=wheel mode=$mode contents=$src"
+		fi
+	done
 	if [ -n "$linux_compat_dir" ]; then
 		# Directories, symlinks and files of the overlay, modes kept;
 		# the mount points for linprocfs and linsysfs.
@@ -1042,12 +1130,12 @@ fatal='panic:|Fatal trap|entering recovery|Enter full pathname of shell|mountroo
 [ -z "${SINGLE_USER_SHELL:-}" ] ||
 	fatal='panic:|Fatal trap|mountroot>|Going nowhere without my init|could not quiesce init|init died'
 # A lock order reversal stops the run unless it matches known-lor.txt (a
-# recorded false positive, reported as KNOWN_LOR) or FATAL_LOR=no, which a
-# comparison sweep sets and then reads the reversals from the serial log.
+# recorded false positive, reported as KNOWN_LOR).  FATAL_LOR=no only keeps
+# the guest running (a comparison sweep reads the reversals from the serial
+# log); an unknown reversal still makes the run VM_NOT_CLEAN.
 known_lor=$(dirname "$0")/known-lor.txt
 monitor=$(dirname "$0")/vm-monitor.py
 unknown_lor() {
-	[ "${FATAL_LOR:-yes}" = no ] && return 1
 	grep -aq 'lock order reversal' "$log" 2>/dev/null || return 1
 	ul=0; python3.12 -I "$monitor" --has-unknown-lor "$log" "$known_lor" || ul=$?
 	case $ul in
@@ -1095,7 +1183,7 @@ lor_unknown=0
 if unknown_lor; then
 	lor_unknown=1
 	echo "UNKNOWN_LOR (a reversal matches no known-lor.txt entry; see the serial log)"
-elif [ "${n:-0}" -gt 0 ] && [ "${FATAL_LOR:-yes}" != no ]; then
+elif [ "${n:-0}" -gt 0 ]; then
 	echo "KNOWN_LOR=$n (matched known-lor.txt; see the serial log)"
 fi
 # --- end of the LOR verdict
@@ -1152,7 +1240,8 @@ echo "skipped=$nskip (a skip in a plane-on suite is not a pass; see KYUA_SKIPPED
 # a run of the same stage and suites in that tier.
 for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER \
     DEFERRED_STACK_TIER DEFERRED_PID1_ONLY DEFERRED_SOURCE_TIER \
-    DEFERRED_GUEST_SETUP DEFERRED_TEST_KERNEL_TIER DEFERRED_RACCT_ZERO_TIER \
+    DEFERRED_GUEST_SETUP DEFERRED_DISPOSABLE_GUEST DEFERRED_TEST_KERNEL_TIER \
+    DEFERRED_RACCT_ZERO_TIER \
     "configuration property 'authority_anchor'"; do
 	ndefer=$(LC_ALL=C tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c "$token" || true)
 	[ "$ndefer" -eq 0 ] || case $token in
@@ -1172,12 +1261,50 @@ for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER 
 		echo "DEFERRED_TO_TEST_KERNEL_TIER=$ndefer (run on GENERIC-TEST with KERNEL_TIER=test; not a pass)";;
 	DEFERRED_RACCT_ZERO_TIER)
 		echo "DEFERRED_TO_RACCT_ZERO_TIER=$ndefer (run with RACCT_TUNABLE_ZERO=1; not a pass)";;
+	DEFERRED_DISPOSABLE_GUEST)
+		echo "DEFERRED_DISPOSABLE_GUEST=$ndefer (destructive cases: run them in a guest of their own with their opt-in, disposable_vm=yes or live_securelevel=yes in KYUA_VARS; not a pass)";;
 	"configuration property 'authority_anchor'")
 		echo "DEFERRED_TO_ANCHOR_RUN=$ndefer (they anchor the boot: run alone with KYUA_VARS=test_suites.FreeBSD.authority_anchor=1; not a pass)";;
 	*)
 		echo "DEFERRED_TO_DEVICE_TIER=$ndefer (run without ISOLATION_ENFORCE=1 with the same stage and suites; not a pass)";;
 	esac
 done
+# --- skip accounting (tests/vm-provider-plain-skips.sh runs this block)
+skiplist() {
+	LC_ALL=C tr -d '\r' < "$log" | sed -n "/^KYUA_$1_LIST_BEGIN\$/,/^KYUA_$1_LIST_END\$/p" |
+	    grep ' -> ' | sed -e 's/ *\[[0-9.]*s\]$//' || true
+}
+# A case skipped because the stage lacks a program or file it requires
+# (kyua's require.progs and require.files, atf-sh's atf_require_prog) did
+# not run: the stage is incomplete, as with a missing kernel module (below),
+# and the run is not clean.  A device a kernel option provides (kcov's
+# "Failed to open /dev/kcov") is not a stage input: it stays a plain skip.
+prereq_re="Required (program|file) '[^']+' not found|required program [^ ]+ could not be found"
+prereq=$(skiplist SKIPPED | grep -E "$prereq_re" || true)
+nprereq=$(printf '%s' "$prereq" | grep -c ' -> ' || true)
+if [ "$nprereq" -ne 0 ]; then
+	echo "STAGE_PREREQ_SKIPPED=$nprereq (the stage lacks a program or file these cases require; not a pass):"
+	printf '%s\n' "$prereq" | sed -e 's/^/STAGE_PREREQ_SKIP: /'
+	verdict=VM_NOT_CLEAN
+fi
+# A skip without a DEFERRED_* token, a missing kernel module or a stage
+# prerequisite is still a case that did not run, and kyua and the verdict
+# count it as a success.  Each is listed so that a VM_CLEAN run is never read
+# as a pass of those cases.
+plain=$(skiplist SKIPPED | grep -vE "DEFERRED_[A-Z0-9_]+|configuration property 'authority_anchor'|Required kmods are not loaded|$prereq_re" || true)
+nplain=$(printf '%s' "$plain" | grep -c ' -> ' || true)
+if [ "$nplain" -ne 0 ]; then
+	echo "PLAIN_SKIPS=$nplain (skips without a DEFERRED_* token; these cases did not run; not a pass):"
+	printf '%s\n' "$plain" | sed -e 's/^/PLAIN_SKIP: /'
+fi
+# kyua counts an expected failure (atf_tc_expect_*) as a success.
+xfail=$(skiplist XFAIL)
+nxfail=$(printf '%s' "$xfail" | grep -c ' -> ' || true)
+if [ "$nxfail" -ne 0 ]; then
+	echo "EXPECTED_FAILURES=$nxfail (cases marked as expected to fail; kyua counts them as passed; not a pass):"
+	printf '%s\n' "$xfail" | sed -e 's/^/EXPECTED_FAILURE: /'
+fi
+# --- end of the skip accounting
 # A case kyua skipped for a module that is not loaded did not run: the stage
 # or the loader configuration is incomplete, and the run is not clean.
 nkmod=$(LC_ALL=C tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c 'Required kmods are not loaded' || true)

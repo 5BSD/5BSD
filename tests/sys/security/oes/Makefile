@@ -26,6 +26,15 @@ TEST_METADATA+=	is_exclusive="true"
 
 # Unit-ish coverage that exercises the wire ABI and harness without the module
 # is still a plain test; module-dependent tests fail fast if /dev/oes is absent.
+# Base exclusion (cap_process(2) BASE EXCLUSION); the stack tier runs it.
+ATF_TESTS_C+=	cap_exclusion_oes_test
+# A client and its own processes' events (oes-no-self-events.md).
+ATF_TESTS_C+=	self_events_test
+# A cache add racing the first one waits for the gate (test kernels only).
+ATF_TESTS_C+=	cache_gate_test
+PROGS+=		oes_join_helper
+BINDIR=		${TESTSDIR}
+
 PLAIN_TESTS_C=	\
 	test_close_event \
 	test_multi_process_clients \
@@ -75,9 +84,16 @@ PLAIN_TESTS_C=	\
 	test_edge_cases \
 	test_passive_mode \
 	test_memory_pressure \
+	test_idle_pins \
+	test_idle_gate \
+	test_idle_storm \
+	test_identity_pins \
 	test_stress \
 	rename_concurrent \
 	signal_concurrent
+
+# Mounts and unmounts a tmpfs in its work directory.
+TEST_METADATA.test_unmount_event+=	required_user="root"
 
 ATF_TESTS_C+=	test_contract_matrix
 ATF_TESTS_SH+=	test_unsupported_32bit
@@ -93,6 +109,9 @@ SRCS.test_nested_descendants=	test_nested_descendants.c liboes.c
 # writable object and dq_serve_file() answers it from a backing file.
 CFLAGS.test_hook_coverage+=	-I${SRCTOP}/lib/libdq
 LIBADD.test_hook_coverage+=	dq
+
+# libmemstat(3) counts the allocations an idle OES must not make.
+LIBADD.test_idle_pins+=	memstat
 
 # jail_setv(3) for the jailed subjects.
 LIBADD.test_jail_pins+=	jail
