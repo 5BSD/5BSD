@@ -444,9 +444,11 @@ fd_is_mac_capability_channel(int fd)
  * a wider one.  On success switchboard pushes an ACK on the ADOPTED (private)
  * channel; nothing is ever replied on the arriving shared channel, so the
  * client never receives on the shared queue and cannot hit the reply-discard
- * race.  A malformed or non-channel request is rejected by closing the fd
- * without adoption: the client, which closed its own copy once the request
- * was sent, sees its private channel's peer close (ECONNRESET).
+ * race.  A rejected request (malformed, over the descriptor budget) gets an
+ * ACK carrying the errno when its descriptor is a channel, and the fd is
+ * closed without adoption: the client, which closed its own copy once the
+ * request was sent, sees that errno, or its private channel's peer close
+ * (ECONNRESET).
  *
  * Does NOT free `request` (the caller's out: path does) but consumes every
  * attached descriptor.
@@ -532,6 +534,22 @@ lookup_channel_register(struct svc_lookup_channel *lc,
 	return;
 
 reject:
+	/*
+	 * The client waits for the ACK: tell it why, when the descriptor is a
+	 * channel it can read.  The send never blocks (a full queue is EAGAIN);
+	 * if it fails, closing the endpoint still ends the wait (ECONNRESET).
+	 */
+	if (fd >= 0 && fd_is_mac_capability_channel(fd)) {
+		struct mac_capability_sendmsg_args send;
+
+		ack.op = SVC_OP_REGISTER_LOOKUP;
+		ack.status = error;
+		ack.magic = 0;
+		memset(&send, 0, sizeof(send));
+		send.payload = &ack;
+		send.payload_len = sizeof(ack);
+		(void)ioctl(fd, MAC_CAPABILITY_SENDMSG, &send);
+	}
 	if (fd >= 0)
 		(void)close(fd);
 	syslog(LOG_NOTICE, "domain: reject register-lookup: %s",

@@ -1131,6 +1131,17 @@ on_demand_requester_gone(struct svc_runtime *svc, int kq)
 			pp = &pl->next;
 			continue;
 		}
+		/*
+		 * An ambient lookup's reply goes to its own lookup channel,
+		 * which may outlive the unit it was resolved to (a descendant
+		 * that inherited the route).  Its client waits with no
+		 * timeout, so answer it.
+		 */
+		if (pl->ambient_lc != NULL) {
+			lookup_channel_answer(pl->ambient_lc, pl->request,
+			    ECONNRESET, NULL, 0);
+			lookup_channel_sync_events(pl->ambient_lc, kq);
+		}
 		EV_SET(&kev, pl->timeout_ident, EVFILT_TIMER,
 		    EV_DELETE, 0, 0, NULL);
 		(void)kevent(kq, &kev, 1, NULL, 0, NULL);
