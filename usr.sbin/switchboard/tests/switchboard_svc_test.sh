@@ -1278,6 +1278,55 @@ ambient_lookup_switchboard_death_resets_cleanup()
 	    cancel-provider.trigger cancel-provider.result
 }
 
+atf_test_case ambient_lookup_requester_exit_answers cleanup
+ambient_lookup_requester_exit_answers_head()
+{
+	atf_set "descr" \
+	    "a lookup pending for a unit that exits is answered (ECONNRESET), even for a surviving child"
+	atf_set "require.user" "root"
+	atf_set "timeout" "90"
+	require_capsule_stack_kmods
+}
+ambient_lookup_requester_exit_answers_body()
+{
+	use_private_control
+	capd_require_unit_issuer
+	find_capd_service_fixture
+	prepare_paths
+	install_cancel_provider
+	# The unit's child looks up the held name and survives the stop.
+	make_svc_bin system org.test.orphan \
+	    "restart = \"never\";
+arguments = [\"orphan-lookup\", \"org.test.cancel.svc\",
+    \"$(pwd)/orphan.started\", \"$(pwd)/orphan.result\"];" \
+	    "$capd_service_fixture" >/dev/null
+	write_config
+	start_stack
+	wait_for_file cancel-provider.ready ||
+	    atf_fail "provider did not complete check-in"
+	wait_for_file orphan.started || atf_fail "the unit's child did not start"
+	wait_for_log "activation of endpoint 'org.test.cancel.svc' requested" ||
+	    atf_fail "the child's lookup did not trigger activation"
+	"$SWITCHBOARDCTL" stop "org.test.orphan/orphan" >/dev/null ||
+	    atf_fail "could not stop the requester's unit"
+	if ! wait_for_file orphan.result 30; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "the surviving child's lookup was never answered"
+	fi
+	# 54: ECONNRESET, from the requester's exit (not the 10 s bound).
+	atf_check -s exit:0 -o match:'^rc=-1 errno=54$' cat orphan.result
+	atf_check -s exit:0 -o ignore grep \
+	    "canceled 1 pending lookup.*exited requester 'org.test.orphan/orphan'" \
+	    "$logfile"
+	assert_stack_alive
+}
+ambient_lookup_requester_exit_answers_cleanup()
+{
+	cleanup_common
+	rm -f orphan.started orphan.result cancel-provider.ready \
+	    cancel-provider.trigger cancel-provider.result
+}
+
 # ===================================================================
 # Liveness watchdog: a heartbeating unit is left running
 # ===================================================================
@@ -1454,6 +1503,7 @@ atf_init_test_cases()
 	atf_add_test_case ambient_lookup_waits_for_slow_activation
 	atf_add_test_case ambient_lookup_returns_activation_refusal
 	atf_add_test_case ambient_lookup_switchboard_death_resets
+	atf_add_test_case ambient_lookup_requester_exit_answers
 	atf_add_test_case capmode_is_authoritative_readiness
 
 	# Provider-driven idle shutdown
