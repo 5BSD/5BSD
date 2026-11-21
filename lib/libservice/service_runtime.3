@@ -181,6 +181,9 @@ in
 The wait is a cancellation point, as
 .Xr read 2
 is, and a cancelled lookup closes the descriptors it created.
+A cancellation request that arrives in the instant between the library's
+check and the start of the kernel's sleep is acted on only at the next
+cancellation point.
 .Sh SEE ALSO
 .Xr libservice 3 ,
 .Xr mac_capability 4 ,

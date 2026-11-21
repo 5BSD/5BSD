@@ -178,18 +178,22 @@ close_owned_fd(void *arg)
  * peer's queue (MAC_CAPABILITY_SEND_F_WAIT).  The kernel sleeps
  * interruptibly: a handler installed with SA_RESTART restarts the send, any
  * other gives EINTR, as write(2) on a full pipe does; like write(2) it is a
- * cancellation point.  A raw ioctl: the caller's descriptor flags are left
- * alone.
+ * cancellation point.  A peer that is gone gives ECONNRESET (the kernel says
+ * EPIPE for a send), the error the lookup's receive gives for the same
+ * event.  A raw ioctl: the caller's descriptor flags are left alone.
  */
 __hidden int
 service_channel_send_wait(int fd, struct mac_capability_sendmsg_args *send)
 {
 
 	send->flags = MAC_CAPABILITY_SEND_F_WAIT;
+	pthread_testcancel();
 	if (ioctl(fd, MAC_CAPABILITY_SENDMSG, send) == -1) {
 		/* A cancellation request interrupts the sleep (see below). */
 		if (errno == EINTR)
 			pthread_testcancel();
+		if (errno == EPIPE)
+			errno = ECONNRESET;
 		return (-1);
 	}
 	return (0);
@@ -200,7 +204,12 @@ service_channel_send_wait(int fd, struct mac_capability_sendmsg_args *send)
  * (MAC_CAPABILITY_RECV_F_WAIT).  The kernel sleeps interruptibly: a signal
  * whose handler was installed with SA_RESTART restarts the receive, any
  * other gives EINTR, as read(2) on a pipe does.  Like read(2) it is a
- * cancellation point.  A peer that closed gives ECONNRESET.
+ * cancellation point: a request pending on entry is acted on before the
+ * call, and one that arrives during the sleep interrupts it (SIGCANCEL has
+ * no SA_RESTART).  One window remains, as it would for any wait that is not
+ * a libthr cancellation point: a request that arrives after the check and
+ * before the sleep starts is seen only at the next cancellation point.  A
+ * peer that closed gives ECONNRESET.
  */
 __hidden int
 service_channel_recv_wait(int fd, struct mac_capability_recvmsg_args *recv)
@@ -208,6 +217,7 @@ service_channel_recv_wait(int fd, struct mac_capability_recvmsg_args *recv)
 
 	recv->flags = MAC_CAPABILITY_RECV_F_WAIT;
 	recv->_reserved[0] = MAC_CAPABILITY_RECV_WAIT_FOREVER;
+	pthread_testcancel();
 	if (ioctl(fd, MAC_CAPABILITY_RECVMSG, recv) == -1) {
 		/*
 		 * A cancellation request interrupts the sleep (SIGCANCEL has
