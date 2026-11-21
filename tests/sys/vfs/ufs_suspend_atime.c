@@ -42,6 +42,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <paths.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -296,6 +297,22 @@ remount_and_check(void)
 	use_files();
 }
 
+/* The resume, from a helper thread of the suspending process. */
+struct resumer {
+	pthread_t	thread;
+	int		fd;
+	int		error;
+};
+
+static void *
+resumer_main(void *arg)
+{
+	struct resumer *r = arg;
+
+	r->error = ioctl(r->fd, UFSRESUME) == 0 ? 0 : errno;
+	return (NULL);
+}
+
 ATF_TC_WITH_CLEANUP(closed_at_resume);
 ATF_TC_HEAD(closed_at_resume, tc)
 {
@@ -308,8 +325,9 @@ ATF_TC_HEAD(closed_at_resume, tc)
 ATF_TC_BODY(closed_at_resume, tc)
 {
 	struct statfs sfs;
-	pid_t pids[NREAD], resumer;
-	int sfd, status;
+	struct resumer r;
+	pid_t pids[NREAD];
+	int sfd;
 
 	require_invariants();
 	require_resume_hold();
@@ -320,21 +338,21 @@ ATF_TC_BODY(closed_at_resume, tc)
 	sfd = suspend();
 	start_readers(pids);
 	/*
-	 * Resume in a helper child: the resume holds its caller at the walk.
-	 * The resume wakes the readers, whose closes finish while the walk is
-	 * held; the hold is released only after every reader has been reaped,
-	 * so the walk always meets their closed files.
+	 * Resume from a helper thread (UFSSUSPEND wanted a single-threaded
+	 * process; the resume belongs to the suspending one): the resume
+	 * holds its caller at the walk.  It wakes the readers, whose closes
+	 * finish while the walk is held; the hold is released only after
+	 * every reader has been reaped, so the walk always meets their
+	 * closed files.
 	 */
-	resumer = fork();
-	ATF_REQUIRE(resumer >= 0);
-	if (resumer == 0)
-		_exit(ioctl(sfd, UFSRESUME) == 0 ? 0 : 1);
+	r.fd = sfd;
+	r.error = -1;
+	ATF_REQUIRE_EQ(0, pthread_create(&r.thread, NULL, resumer_main, &r));
 	resume_hold_set("debug.ffs.test_hold_wait", 1);
 	reap_readers(pids);
 	resume_hold_set("debug.ffs.test_hold_release", 1);
-	ATF_REQUIRE_EQ(resumer, waitpid(resumer, &status, 0));
-	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
-	    "UFSRESUME in the child: status %#x", status);
+	ATF_REQUIRE_EQ(0, pthread_join(r.thread, NULL));
+	ATF_REQUIRE_MSG(r.error == 0, "UFSRESUME: %s", strerror(r.error));
 	ATF_REQUIRE_EQ(0, close(sfd));
 	use_files();
 	remount_and_check();
