@@ -1328,7 +1328,10 @@ arguments = [\"orphan-lookup\", \"org.test.cancel.svc\",
 	if [ -s orphan.result ]; then
 		atf_check -s exit:0 -o match:'^rc=-1 errno=54$' cat orphan.result
 	fi
-	atf_check -s exit:0 -o ignore grep "canceled 1 pending lookup" "$logfile"
+	# Switchboard drops the pending lookup when it handles the exit or the
+	# close, which may come after the child is gone.
+	wait_for_log "canceled 1 pending lookup" ||
+	    atf_fail "switchboard kept the lookup pending"
 	assert_stack_alive
 }
 ambient_lookup_requester_exit_answers_cleanup()
