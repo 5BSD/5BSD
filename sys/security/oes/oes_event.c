@@ -464,7 +464,12 @@ oes_pending_alloc(oes_event_type_t event, struct proc *p)
 	alloc_size = offsetof(struct oes_pending, ep_msg) + OES_MSG_MAX_SIZE;
 	ep = malloc(alloc_size, M_OES, M_NOWAIT | M_ZERO);
 	if (ep == NULL) {
-		oes_event_lost_unsent(event);
+		/*
+		 * An excluded subject allocates only to invalidate cached
+		 * decisions and is never reported (base exclusion).
+		 */
+		if (!oes_proc_excluded(p))
+			oes_event_lost_unsent(event);
 		return (NULL);
 	}
 	return (oes_pending_init(ep, event, p));
@@ -823,9 +828,9 @@ oes_event_lost_unsent(oes_event_type_t event)
 		    1 : 0][idx], 1);
 	atomic_add_rel_64(&oes_softc.sc_lost_total, 1);
 	atomic_thread_fence_seq_cst();
-	if (atomic_load_int(&oes_softc.sc_lost_kick) == 0 &&
-	    atomic_cmpset_int(&oes_softc.sc_lost_kick, 0, 1) &&
-	    oes_softc.sc_defer_tq != NULL)
+	if (oes_softc.sc_defer_tq != NULL &&
+	    atomic_load_int(&oes_softc.sc_lost_kick) == 0 &&
+	    atomic_cmpset_int(&oes_softc.sc_lost_kick, 0, 1))
 		taskqueue_enqueue(oes_softc.sc_defer_tq,
 		    &oes_softc.sc_defer_task);
 }

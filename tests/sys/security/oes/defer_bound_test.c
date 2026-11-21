@@ -234,6 +234,8 @@ open_jail_client(int jid, u_long limit)
 	    limit / sysctl_ul("security.oes.defer_entry_min") + 1);
 	ATF_REQUIRE(ioctl(fd, OES_IOC_SET_MODE, &mode) == 0);
 	ATF_REQUIRE(test_subscribe(fd, &ev, 1, OES_SUB_REPLACE) == 0);
+	if (sysctl_ul("security.oes.clients") != 1)
+		atf_tc_skip("another OES client opened with this one");
 	return (fd);
 }
 
