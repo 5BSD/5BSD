@@ -425,9 +425,12 @@ mock_switchboard_thread(void *arg)
 	if (m->mode == MOCK_CANCEL) {
 		wait_client_asleep(m->client_tid, RECV_WMESG);
 		(void)pthread_cancel(m->client);
-		/* The cancelled lookup closes its private channel: EOF. */
+		/*
+		 * The cancelled lookup closes its private channel; closing an
+		 * instance revokes its peer, so this end reads ECONNRESET.
+		 */
 		m->closed_seen = mock_recv(private_fd, &reply, sizeof(reply),
-		    NULL, NULL) == 0;
+		    NULL, NULL) == -1 && errno == ECONNRESET;
 		(void)close(private_fd);
 		return (NULL);
 	}
