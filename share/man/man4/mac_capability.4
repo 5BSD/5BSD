@@ -675,8 +675,8 @@ Clearing
 resets it to 0.
 .It Va debug.mac_capability.test_park_len
 A payload length, or 0 (the default) for none: the next forward of a
-message with that payload length stops in the forwarding handler, with its
-references held, until released.
+message with that payload length sent by the process that set it stops in
+the forwarding handler, with its references held, until released.
 The forward that stops consumes the setting.
 .It Va debug.mac_capability.test_park_wait
 Reads 1 while a forward is stopped; a write sleeps until one is.

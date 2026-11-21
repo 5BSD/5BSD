@@ -147,6 +147,7 @@ mac_capability_instance_drain_rxq(struct mac_capability_instance *s,
  * Messages without descriptors are freed at once.
  */
 static struct mac_capability_msg *mac_capability_reap_head; /* (atomic) */
+static int mac_capability_reap_running;			/* (atomic) */
 static struct task mac_capability_reap_task;
 static struct taskqueue *mac_capability_reap_tq;
 
@@ -162,6 +163,8 @@ mac_capability_reap(void *arg __unused, int pending __unused)
 	struct mac_capability_msg *msg, *next;
 	int n;
 
+	/* Set before the list is taken, so a waiter sees one or the other. */
+	atomic_store_rel_int(&mac_capability_reap_running, 1);
 	msg = (struct mac_capability_msg *)atomic_swap_ptr(
 	    (volatile uintptr_t *)&mac_capability_reap_head, (uintptr_t)NULL);
 	atomic_thread_fence_acq();
@@ -170,16 +173,29 @@ mac_capability_reap(void *arg __unused, int pending __unused)
 		mac_capability_msg_free(msg);
 	}
 	SDT_PROBE1(mac_capability, , , reap__done, n);
+	atomic_store_rel_int(&mac_capability_reap_running, 0);
+}
+
+/* Whether the reaper has work handed to it or is running a pass. */
+static bool
+mac_capability_reap_busy(void)
+{
+
+	return (atomic_load_ptr(&mac_capability_reap_head) != NULL ||
+	    atomic_load_acq_int(&mac_capability_reap_running) != 0);
 }
 
 /*
  * Wait until the reaper has freed every message handed to it so far, and
- * those their closes handed over in turn.
+ * those their closes handed over in turn.  Never from the reaper itself: a
+ * close the reaper runs that waited for the reaper would wait for itself.
  */
 void
 mac_capability_reap_drain(void)
 {
 
+	KASSERT(!taskqueue_member(mac_capability_reap_tq, curthread),
+	    ("%s: the reaper would wait for itself", __func__));
 	taskqueue_drain(mac_capability_reap_tq, &mac_capability_reap_task);
 }
 
@@ -1100,6 +1116,9 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 	 * a descriptor the reaper still held would keep the service on the
 	 * dead list.
 	 */
+	if (mac_capability_reap_busy())
+		mac_capability_service_destroy_waiting(svc,
+		    MAC_CAPABILITY_DESTROY_WAIT_REAP);
 	mac_capability_reap_drain();
 	/*
 	 * Release our initial refcount (from service_create).
@@ -1213,7 +1232,7 @@ mac_capability_forward(struct mac_capability_instance *s, const struct mac_capab
 		SDT_PROBE3(mac_capability, , , forward,
 		    s->ci_service->csvc_name, s->ci_badge, src->cm_datalen);
 #ifdef MAC_CAPABILITY_TEST_PERMISSIVE
-	mac_capability_test_issuer_park(src->cm_datalen);
+	mac_capability_test_issuer_park(src->cm_process.pid, src->cm_datalen);
 #endif
 
 	msg = mac_capability_msg_alloc_full(src->cm_data, src->cm_datalen,

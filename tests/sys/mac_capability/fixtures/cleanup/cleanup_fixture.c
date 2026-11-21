@@ -135,6 +135,9 @@ cleanup_destroy_wait_reason_sysctl(SYSCTL_HANDLER_ARGS)
 	case MAC_CAPABILITY_DESTROY_WAIT_REFS:
 		name = "refs";
 		break;
+	case MAC_CAPABILITY_DESTROY_WAIT_REAP:
+		name = "reap";
+		break;
 	default:
 		name = "unknown";
 		break;

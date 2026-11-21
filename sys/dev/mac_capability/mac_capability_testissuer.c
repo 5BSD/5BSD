@@ -254,8 +254,9 @@ mac_capability_test_issuer_fail_take(void)
 }
 
 /*
- * Handler park.  A forward whose payload length equals
- * debug.mac_capability.test_park_len stops in mac_capability_forward(),
+ * Handler park.  A forward of a message sent by the process that armed the
+ * park, whose payload length equals debug.mac_capability.test_park_len,
+ * stops in mac_capability_forward(),
  * before it copies the message, with the forwarding handler's references
  * held (the channel handler holds the peer), until
  * debug.mac_capability.test_park_release is written.  Arming is consumed by
@@ -268,16 +269,19 @@ static struct mtx mac_capability_test_issuer_park_mtx;
 MTX_SYSINIT(mac_capability_test_issuer_park,
     &mac_capability_test_issuer_park_mtx, "mac_capability test park", MTX_DEF);
 static u_int mac_capability_test_issuer_park_len;	/* (park_mtx), 0: off */
+static pid_t mac_capability_test_issuer_park_pid;	/* (park_mtx) */
 static bool mac_capability_test_issuer_parked;		/* (park_mtx) */
 
+/* pid: the sender of the message being forwarded. */
 void
-mac_capability_test_issuer_park(size_t len)
+mac_capability_test_issuer_park(pid_t pid, size_t len)
 {
 
 	if (atomic_load_int(&mac_capability_test_issuer_park_len) == 0)
 		return;
 	mtx_lock(&mac_capability_test_issuer_park_mtx);
-	if (mac_capability_test_issuer_park_len != len) {
+	if (mac_capability_test_issuer_park_len != len ||
+	    mac_capability_test_issuer_park_pid != pid) {
 		mtx_unlock(&mac_capability_test_issuer_park_mtx);
 		return;
 	}
@@ -303,14 +307,15 @@ mac_capability_test_issuer_park_len_sysctl(SYSCTL_HANDLER_ARGS)
 		return (EINVAL);
 	mtx_lock(&mac_capability_test_issuer_park_mtx);
 	mac_capability_test_issuer_park_len = value;
+	mac_capability_test_issuer_park_pid = req->td->td_proc->p_pid;
 	mtx_unlock(&mac_capability_test_issuer_park_mtx);
 	return (0);
 }
 SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_park_len,
     CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
     mac_capability_test_issuer_park_len_sysctl, "I",
-    "Test kernel only: park the next forward of a message with this payload "
-    "length (0: off)");
+    "Test kernel only: park the next forward of a message the writing "
+    "process sends with this payload length (0: off)");
 
 static int
 mac_capability_test_issuer_park_wait_sysctl(SYSCTL_HANDLER_ARGS)
