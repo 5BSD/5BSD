@@ -1203,7 +1203,9 @@ ambient_lookup_returns_activation_refusal_body()
 	ambient_probe_start org.test.cancel.svc probe.out
 	wait_for_log "activation of endpoint 'org.test.cancel.svc' requested" ||
 	    atf_fail "lookup did not trigger endpoint activation"
-	# Past the former client bound: the lookup is still waiting.
+	# A regression pin derived from the removed 2 s client bound
+	# (SERVICE_LOOKUP_TIMEOUT_MS): the lookup must still be waiting after
+	# it.  Any delay past 2 s is the same case.
 	sleep 3
 	touch cancel-provider.trigger
 	# 85: ECANCELED, the provider's own refusal.
@@ -1230,7 +1232,7 @@ ambient_lookup_switchboard_death_resets_head()
 }
 ambient_lookup_switchboard_death_resets_body()
 {
-	local i switchboard_pid
+	local switchboard_pid
 
 	capd_require_unit_issuer
 	find_capd_service_fixture
@@ -1253,21 +1255,17 @@ ambient_lookup_switchboard_death_resets_body()
 	ambient_probe_start org.test.cancel.svc probe.out
 	wait_for_log "activation of endpoint 'org.test.cancel.svc' requested" ||
 	    atf_fail "lookup did not trigger endpoint activation"
+	# Past the removed 2 s client bound, as above: the lookup is still
+	# waiting when switchboard dies.
 	sleep 3
 	kill -KILL "$switchboard_pid" || atf_fail "could not kill switchboard"
 	# 54: ECONNRESET.
 	ambient_probe_expect \
 	    "^FAIL org\.test\.cancel\.svc errno=54 " \
 	    probe.out
-	# The Capsule-held route survives: once Capsule has started the next
-	# switchboard, it answers a new lookup.
-	i=0
-	while [ "$(grep -c 'bootstrap: started switchboard pid' "$logfile")" \
-	    -lt 2 ] && [ "$i" -lt 150 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
-	[ "$i" -lt 150 ] || atf_fail "Capsule did not restart switchboard"
+	# The Capsule-held route survives: a new lookup's registration waits
+	# in it for the switchboard Capsule starts next, which answers.  If
+	# none came, the case would end at its timeout.
 	ambient_probe_start org.test.route.absent probe2.out
 	ambient_probe_expect '^FAIL org\.test\.route\.absent errno=2 ' probe2.out
 }
@@ -1282,7 +1280,7 @@ atf_test_case ambient_lookup_requester_exit_answers cleanup
 ambient_lookup_requester_exit_answers_head()
 {
 	atf_set "descr" \
-	    "a lookup pending for a unit's child never outlives the unit: answered or gone, and switchboard drops it"
+	    "a unit's child is not left waiting on a pending lookup when its unit stops, and switchboard drops the lookup"
 	atf_set "require.user" "root"
 	atf_set "timeout" "90"
 	require_capsule_stack_kmods
@@ -1315,16 +1313,12 @@ arguments = [\"orphan-lookup\", \"org.test.cancel.svc\",
 	    atf_fail "the child's lookup did not trigger activation"
 	"$SWITCHBOARDCTL" stop "org.test.orphan/orphan" >/dev/null ||
 	    atf_fail "could not stop the requester's unit"
-	# The child must not be left waiting: it gets an answer (ECONNRESET,
-	# on_demand_requester_gone()) or it ends with its unit (a coalition's
-	# members are killed when its leader exits).  The 10 s activation
-	# bound is not what ends it.
-	# Either way the child exits; wait for that (well inside the 10 s).
-	if ! pwait -t 8 "$child" >/dev/null 2>&1 &&
-	    ps -p "$child" >/dev/null 2>&1; then
-		cat "$logfile" 2>/dev/null
-		atf_fail "the surviving child is still waiting on its lookup"
-	fi
+	# The child is not left waiting: today it ends with its unit (a
+	# coalition's members are killed when the leader exits); if it
+	# outlived the unit it would be answered ECONNRESET
+	# (on_demand_requester_gone(), pinned in on_demand_test).  Wait for
+	# it to exit; a child left waiting ends the case at its timeout.
+	pwait "$child" >/dev/null 2>&1 || true
 	if [ -s orphan.result ]; then
 		atf_check -s exit:0 -o match:'^rc=-1 errno=54$' cat orphan.result
 	fi

@@ -22,11 +22,11 @@
 #include <sys/syscall.h>
 #include <sys/sysctl.h>
 #include <sys/thr.h>
-#include <sys/user.h>
 #include <sys/wait.h>
 
 #include <errno.h>
 #include <pthread.h>
+#include <semaphore.h>
 #include <signal.h>
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -45,6 +45,7 @@
 #include "mac_capability_identity_proto.h"
 #include "mac_capability_channel_proto.h"
 #include "mac_capability_coalition_proto.h"
+#include "sleep_watch.h"
 
 /* Descriptor transfer states (mirror of sys/capsicum.h enum). */
 #ifndef CAP_XFER_UNLIMITED
@@ -1171,27 +1172,31 @@ ATF_TC_BODY(recv_wait_wakes, tc)
 /*
  * MAC_CAPABILITY_SEND_F_WAIT: a send that finds the queue full sleeps for
  * room ("mcapsnd") instead of failing with EAGAIN, and a signal ends the
- * sleep as for write(2) on a full pipe.  A helper thread waits until the
- * sender sleeps there, then signals it or makes room.
+ * sleep as for write(2) on a full pipe.  A helper thread waits (sched:::sleep,
+ * sleep_watch.h) until the sender sleeps there, then signals it or makes
+ * room.  For a restart it waits for the handler to have run (a semaphore the
+ * handler posts) and then for the sender's next sleep: only a restarted call
+ * sleeps again.
  */
-#define	SEND_WAIT_WMESG	"mcapsnd"
-
 struct send_wait {
+	struct sleep_watch *watch;
 	int		reader;		/* receiving end */
 	pthread_t	sender;
 	long		sender_tid;
 	bool		signal;		/* send SIGUSR1 first */
-	bool		resleep;	/* then wait for the sleep again */
+	bool		resleep;	/* then wait for the restarted sleep */
 	bool		drain;		/* then receive one message */
 };
 
 static atomic_int send_wait_signals;
+static sem_t send_wait_handled;
 
 static void
 send_wait_handler(int signo __unused)
 {
 
 	atomic_fetch_add(&send_wait_signals, 1);
+	(void)sem_post(&send_wait_handled);	/* async-signal-safe */
 }
 
 static void
@@ -1199,6 +1204,7 @@ send_wait_catch(int flags)
 {
 	struct sigaction sa;
 
+	ATF_REQUIRE(sem_init(&send_wait_handled, 0, 0) == 0);
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_handler = send_wait_handler;
 	sa.sa_flags = flags;
@@ -1207,45 +1213,21 @@ send_wait_catch(int flags)
 	atomic_store(&send_wait_signals, 0);
 }
 
-/* Nothing reports that a thread went to sleep: read its wait channel. */
-static void
-send_wait_asleep(long tid)
-{
-	int mib[4] = { CTL_KERN, KERN_PROC,
-	    KERN_PROC_PID | KERN_PROC_INC_THREAD, getpid() };
-	struct kinfo_proc *kp;
-	struct timespec ms = { 0, 1000000 };
-	size_t len;
-	bool asleep;
-
-	for (asleep = false; !asleep; ) {
-		len = 0;
-		ATF_REQUIRE(sysctl(mib, 4, NULL, &len, NULL, 0) == 0);
-		len += 4 * sizeof(*kp);
-		ATF_REQUIRE((kp = malloc(len)) != NULL);
-		ATF_REQUIRE(sysctl(mib, 4, kp, &len, NULL, 0) == 0);
-		for (size_t i = 0; i < len / sizeof(*kp); i++)
-			if (kp[i].ki_tid == tid &&
-			    strncmp(kp[i].ki_wmesg, SEND_WAIT_WMESG,
-			    WMESGLEN) == 0)
-				asleep = true;
-		free(kp);
-		if (!asleep)
-			nanosleep(&ms, NULL);
-	}
-}
-
 static void *
 send_wait_helper(void *arg)
 {
 	struct send_wait *w = arg;
 	char buf[16];
 
-	send_wait_asleep(w->sender_tid);
+	sleep_watch_wait(w->watch, 'S', w->sender_tid);
 	if (w->signal) {
 		pthread_kill(w->sender, SIGUSR1);
-		if (w->resleep)
-			send_wait_asleep(w->sender_tid);
+		if (w->resleep) {
+			while (sem_wait(&send_wait_handled) == -1 &&
+			    errno == EINTR)
+				;
+			sleep_watch_wait(w->watch, 'S', w->sender_tid);
+		}
 	}
 	if (w->drain)
 		(void)chan_recv(w->reader, buf, sizeof(buf), NULL, NULL);
@@ -1278,9 +1260,11 @@ send_wait_send(int fd, const char *msg)
 }
 
 static void
-send_wait_start(struct send_wait *w, pthread_t *thread, int reader)
+send_wait_start(struct send_wait *w, pthread_t *thread, int reader,
+    struct sleep_watch *watch)
 {
 
+	w->watch = watch;
 	w->reader = reader;
 	w->sender = pthread_self();
 	ATF_REQUIRE(thr_self(&w->sender_tid) == 0);
@@ -1310,20 +1294,25 @@ ATF_TC_HEAD(send_wait_drained, tc)
 	    "until the reader makes room, then sends, in order");
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_channel");
+	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
+	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "timeout", "60");
 }
 ATF_TC_BODY(send_wait_drained, tc)
 {
 	struct send_wait w = { .drain = true };
+	struct sleep_watch watch;
 	pthread_t thread;
 	int P[2], filled;
 
 	ATF_REQUIRE(chan_create_required(P) == 0);
 	filled = send_wait_fill(P[0]);
-	send_wait_start(&w, &thread, P[1]);
+	sleep_watch_start(&watch, 0);
+	send_wait_start(&w, &thread, P[1], &watch);
 	ATF_CHECK_MSG(send_wait_send(P[0], "last") == 0, "send: %s",
 	    strerror(errno));
 	ATF_REQUIRE(pthread_join(thread, NULL) == 0);
+	sleep_watch_stop(&watch);
 	/* One filler went to the helper; the rest, then "last", remain. */
 	send_wait_expect(P[1], filled, "last");
 	close(P[0]);
@@ -1337,21 +1326,26 @@ ATF_TC_HEAD(send_wait_sa_restart, tc)
 	    "SEND_F_WAIT sleep, which then sends once there is room");
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_channel");
+	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
+	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "timeout", "60");
 }
 ATF_TC_BODY(send_wait_sa_restart, tc)
 {
 	struct send_wait w = { .signal = true, .resleep = true, .drain = true };
+	struct sleep_watch watch;
 	pthread_t thread;
 	int P[2];
 
 	ATF_REQUIRE(chan_create_required(P) == 0);
 	send_wait_catch(SA_RESTART);
 	(void)send_wait_fill(P[0]);
-	send_wait_start(&w, &thread, P[1]);
+	sleep_watch_start(&watch, 0);
+	send_wait_start(&w, &thread, P[1], &watch);
 	ATF_CHECK_MSG(send_wait_send(P[0], "last") == 0, "send: %s",
 	    strerror(errno));
 	ATF_REQUIRE(pthread_join(thread, NULL) == 0);
+	sleep_watch_stop(&watch);
 	ATF_CHECK_EQ(1, atomic_load(&send_wait_signals));
 	close(P[0]);
 	close(P[1]);
@@ -1364,22 +1358,27 @@ ATF_TC_HEAD(send_wait_eintr, tc)
 	    "SEND_F_WAIT sleep with EINTR, and nothing is sent");
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_channel");
+	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
+	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "timeout", "60");
 }
 ATF_TC_BODY(send_wait_eintr, tc)
 {
 	struct send_wait w = { .signal = true };
+	struct sleep_watch watch;
 	pthread_t thread;
 	int P[2], filled;
 
 	ATF_REQUIRE(chan_create_required(P) == 0);
 	send_wait_catch(0);
 	filled = send_wait_fill(P[0]);
-	send_wait_start(&w, &thread, P[1]);
+	sleep_watch_start(&watch, 0);
+	send_wait_start(&w, &thread, P[1], &watch);
 	ATF_CHECK_EQ(-1, send_wait_send(P[0], "last"));
 	ATF_CHECK_EQ_MSG(EINTR, errno, "errno %d (%s)", errno,
 	    strerror(errno));
 	ATF_REQUIRE(pthread_join(thread, NULL) == 0);
+	sleep_watch_stop(&watch);
 	ATF_CHECK_EQ(1, atomic_load(&send_wait_signals));
 	/* "last" was never sent: after the fillers comes the next send. */
 	send_wait_expect(P[1], filled, "fill");
