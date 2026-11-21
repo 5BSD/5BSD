@@ -2554,6 +2554,130 @@ SDT_PROVIDER_DECLARE(ffs);
 SDT_PROBE_DEFINE2(ffs, , , deferred__inactive__update, "struct vnode *",
     "int");
 
+#ifdef FFS_TEST_HOOKS
+/*
+ * Resume hold (options FFS_TEST_HOOKS, a test kernel only: a row of the
+ * test-kernel option ledger, sys/conf/test-options, which names this
+ * marker and the ffs_test_hold_ symbol prefix).  Writing a mount point to
+ * debug.ffs.test_hold_mnt arms it: the next process_deferred_inactive() of
+ * that mount stops before its walk, after the resume has woken the
+ * threads the suspension held, until debug.ffs.test_hold_release is
+ * written.  The walk that stops consumes the setting.  A write of
+ * debug.ffs.test_hold_wait sleeps until a walk is held.  The sleeps are
+ * msleep()/wakeup() on one mutex, which they need; an unarmed walk reads
+ * one word.
+ */
+#ifdef KLD_MODULE
+#error "options FFS_TEST_HOOKS is for the kernel, not for a module"
+#endif
+#include <sys/lock.h>
+#include <sys/mutex.h>
+#include <sys/sysctl.h>
+
+static const char ffs_test_hold_marker[] __used =
+    "@(#)5BSD FFS_TEST_HOOKS test kernel: not for publication";
+
+static struct mtx ffs_test_hold_mtx;
+MTX_SYSINIT(ffs_test_hold, &ffs_test_hold_mtx, "ffs test hold", MTX_DEF);
+static int ffs_test_hold_armed;			/* (atomic) */
+static char ffs_test_hold_mnt[MNAMELEN];	/* (mtx) */
+static bool ffs_test_hold_held;			/* (mtx) */
+
+static void
+ffs_test_hold_resume(struct mount *mp)
+{
+
+	if (atomic_load_int(&ffs_test_hold_armed) == 0)
+		return;
+	mtx_lock(&ffs_test_hold_mtx);
+	if (strcmp(ffs_test_hold_mnt, mp->mnt_stat.f_mntonname) != 0) {
+		mtx_unlock(&ffs_test_hold_mtx);
+		return;
+	}
+	ffs_test_hold_mnt[0] = '\0';
+	atomic_store_int(&ffs_test_hold_armed, 0);
+	ffs_test_hold_held = true;
+	wakeup(&ffs_test_hold_held);
+	while (ffs_test_hold_held)
+		mtx_sleep(&ffs_test_hold_held, &ffs_test_hold_mtx, 0,
+		    "ffshold", 0);
+	mtx_unlock(&ffs_test_hold_mtx);
+}
+
+static SYSCTL_NODE(_debug, OID_AUTO, ffs, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
+    "Test kernel only: ffs test controls");
+
+static int
+ffs_test_hold_mnt_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	char buf[MNAMELEN];
+	int error;
+
+	mtx_lock(&ffs_test_hold_mtx);
+	strlcpy(buf, ffs_test_hold_mnt, sizeof(buf));
+	mtx_unlock(&ffs_test_hold_mtx);
+	error = sysctl_handle_string(oidp, buf, sizeof(buf), req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	mtx_lock(&ffs_test_hold_mtx);
+	strlcpy(ffs_test_hold_mnt, buf, sizeof(ffs_test_hold_mnt));
+	atomic_store_int(&ffs_test_hold_armed, buf[0] != '\0');
+	mtx_unlock(&ffs_test_hold_mtx);
+	return (0);
+}
+SYSCTL_PROC(_debug_ffs, OID_AUTO, test_hold_mnt,
+    CTLTYPE_STRING | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+    ffs_test_hold_mnt_sysctl, "A",
+    "Test kernel only: hold the next resume walk of this mount point "
+    "(empty: off)");
+
+static int
+ffs_test_hold_wait_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	int error, value;
+
+	value = ffs_test_hold_held;
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	mtx_lock(&ffs_test_hold_mtx);
+	while (!ffs_test_hold_held && error == 0)
+		error = mtx_sleep(&ffs_test_hold_held, &ffs_test_hold_mtx,
+		    PCATCH, "ffsholdw", 0);
+	mtx_unlock(&ffs_test_hold_mtx);
+	return (error);
+}
+SYSCTL_PROC(_debug_ffs, OID_AUTO, test_hold_wait,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+    ffs_test_hold_wait_sysctl, "I",
+    "Test kernel only: reads 1 while a resume walk is held; a write sleeps "
+    "until one is");
+
+static int
+ffs_test_hold_release_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	int error, value;
+
+	value = 0;
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	if (value != 1)
+		return (EINVAL);
+	mtx_lock(&ffs_test_hold_mtx);
+	if (!ffs_test_hold_held)
+		error = ENOENT;
+	ffs_test_hold_held = false;
+	wakeup(&ffs_test_hold_held);
+	mtx_unlock(&ffs_test_hold_mtx);
+	return (error);
+}
+SYSCTL_PROC(_debug_ffs, OID_AUTO, test_hold_release,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+    ffs_test_hold_release_sysctl, "I",
+    "Test kernel only: write 1 to let the held resume walk go on");
+#endif /* FFS_TEST_HOOKS */
+
 /*
  * Process file deletes that were deferred by ufs_inactive() due to
  * the file system being suspended. Transfer IN_LAZYACCESS into
@@ -2568,6 +2692,9 @@ process_deferred_inactive(struct mount *mp)
 	bool update;
 
 	(void) vn_start_secondary_write(NULL, &mp, V_WAIT);
+#ifdef FFS_TEST_HOOKS
+	ffs_test_hold_resume(mp);
+#endif
  loop:
 	MNT_VNODE_FOREACH_ALL(vp, mp, mvp) {
 		/*

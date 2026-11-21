@@ -265,6 +265,27 @@ the error
 .Fn UFS_UPDATE
 returned.
 .El
+.Ss Test kernels
+A kernel built with
+.Cd "options FFS_TEST_HOOKS"
+(the configuration
+.Pa GENERIC-TEST ,
+a row of the test-kernel option ledger
+.Pa sys/conf/test-options )
+is a test kernel and is never published.
+On such a kernel only, a test can hold the walk with which the resume of a
+suspended file system writes the vnodes accessed during the suspension:
+.Bl -tag -width debug.ffs.test_hold_release
+.It Va debug.ffs.test_hold_mnt
+A mount point, or the empty string (the default) for none: the next resume
+of that file system stops before its walk, after it has woken the threads
+the suspension held, until released.
+The walk that stops consumes the setting.
+.It Va debug.ffs.test_hold_wait
+Reads 1 while a walk is held; a write sleeps until one is.
+.It Va debug.ffs.test_hold_release
+Writing 1 lets the held walk go on.
+.El
 .Sh HISTORY
 The
 .Nm
