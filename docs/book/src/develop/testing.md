@@ -314,9 +314,27 @@ script also sets `debug.mac_capability.test_issuer_fail_init`, so PID 1's
 create fails after it anchors; `LOADER_EXTRA` with
 `vm_reroot_variant="plain"` selects the plain reroot.  The `usr.sbin/bsd-build` cases that read the
 source tree need `SRC_IMAGE` (and `PORTS_IMAGE` for package plans); without it
-they are counted as `DEFERRED_TO_SOURCE_TIER=N`.  With python, the source and
+they are counted as `DEFERRED_TO_SOURCE_TIER=N`.  With the source and
 the ports images, a long bsd-build run fills the default 8 GB guest root:
-give it `ROOT_SIZE=16g`.  Cases that need a guest setup no tier provides yet
+give it `ROOT_SIZE=16g`.
+
+Python is part of the guest test stage, never of base or a base package set
+(owner decision, 2026-11-20).  Every image vm-provider.sh builds carries the
+packages pinned in `tools/build/fuchsia/test-stage-packages`, extracted under
+`/usr/local` (not registered with pkg): Python 3.12 with the `python3` and
+`python` commands, pytest, py-dpkt and the nist-kat vectors, the run-time
+closure that `sys/opencrypto/runtests`, `sys/kern/sonewconn_overflow`, the
+pytest programs (`sys/kern/virtio_iommu_identity_test.py`) and the bsd-build
+Python programs need.  They are built from `/usr/obj/5BSD-ports` at the
+revision the list names and read from `TEST_PKGDIR`
+(`/usr/obj/5BSD-test-packages/All` by default); a run without every pinned
+package refuses to start (`TEST_PACKAGES_MISSING`).  To rebuild them, run a
+builder guest with `SRC_IMAGE` and `PORTS_IMAGE` that `make install`s
+`lang/python3`, `lang/python`, `devel/py-pytest@py312`, `net/py-dpkt@py312`
+and `security/nist-kat` offline (distfiles fetched on the host with
+`make fetch-recursive DISTDIR=...`) and `pkg create`s their run-time
+closure; root on the host is not needed.  A suite that still finds one of
+them missing is a stage defect (`STAGE_PREREQ_SKIPPED`).  Cases that need a guest setup no tier provides yet
 (`storage_test:disk_import_and_binding`'s scratch disk, `devctl_device_test`
 with devd and auditd stopped, `bsd_build_test:generation_reconciliation`'s
 ACL subtest without root and md(4)) skip with `DEFERRED_GUEST_SETUP` and are
