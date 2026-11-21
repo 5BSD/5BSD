@@ -264,43 +264,35 @@ jt_get_scope(int fd)
 #define JT_LOAD_MAXCLIENTS	48
 /*
  * What must end under load is bounded by the kernel in deliveries: two
- * rounds, each as long as the deferred queue's depth when it began, which
- * security.oes.defer_max_bytes bounds.  At the load's own events the queue
- * holds at most defer_max_bytes / (defer_bytes / defer_depth) of them, read
- * while the load keeps it full.  The load measures how many events the
- * delivery thread gets through in a second and allows four times what that
- * bound then takes, 20 seconds at least.
+ * rounds, each as long as the deferred queue's depth when it began.  The
+ * queue holds at most security.oes.defer_max_bytes, and each event in it
+ * at least security.oes.defer_entry_min, so their quotient bounds the
+ * depth.  The load measures how many events the delivery thread gets
+ * through in a second and allows four times what that bound then takes,
+ * 20 seconds at least.
  */
 static inline int
 jt_sysctl_ulong(const char *name, u_long *vp)
 {
-	unsigned int u;
 	size_t len;
 
 	len = sizeof(*vp);
-	if (sysctlbyname(name, vp, &len, NULL, 0) != 0)
-		return (-1);
-	if (len == sizeof(u)) {	/* defer_depth is an unsigned int */
-		memcpy(&u, vp, sizeof(u));
-		*vp = u;
-	}
-	return (0);
+	return (sysctlbyname(name, vp, &len, NULL, 0));
 }
 
 static inline long
 jt_defer_capacity(void)
 {
-	u_long max, bytes, depth;
+	u_long max, min;
 
 	if (jt_sysctl_ulong("security.oes.defer_max_bytes", &max) != 0 ||
-	    jt_sysctl_ulong("security.oes.defer_bytes", &bytes) != 0 ||
-	    jt_sysctl_ulong("security.oes.defer_depth", &depth) != 0)
+	    jt_sysctl_ulong("security.oes.defer_entry_min", &min) != 0)
 		return (-1);
-	if (bytes == 0 || depth == 0) {
-		errno = EAGAIN;	/* Nothing queued: nothing to size by */
+	if (min == 0) {
+		errno = EINVAL;
 		return (-1);
 	}
-	return ((long)(max / (bytes / depth)));
+	return ((long)(max / min));
 }
 #define JT_LOAD_MIN_MS		20000
 
@@ -309,7 +301,7 @@ struct jt_load {
 	int	clients[JT_LOAD_MAXCLIENTS];
 	int	nclients;
 	long	rate;		/* Deliveries per second under the load */
-	long	capacity;	/* Load events the queue's bound holds */
+	long	capacity;	/* Events the queue can hold at most */
 	long	limit_ms;	/* Time allowed for the kernel's bound */
 };
 

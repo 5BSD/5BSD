@@ -726,14 +726,15 @@ typedef struct {
 
 /*
  * OES_EVENT_NOTIFY_LOST: events this client did not receive since the
- * previous marker (oes(4) "Lost events").  el_deferred were discarded at
- * the shared deferred-delivery bound before any client got them, counted
- * for every client subscribed to their type; el_queue were discarded at
- * this client's own full queue (or failed to be copied for it).
+ * previous marker (oes(4) "Lost events").  el_unsent were sent to no
+ * client: refused at the deferred-delivery bound or not allocated,
+ * counted for every client subscribed to their type; el_queue were
+ * discarded at this client's own full queue (or failed to be copied for
+ * it).
  */
 typedef struct {
-	uint64_t	el_count;	/* el_deferred + el_queue */
-	uint64_t	el_deferred;	/* Lost at the deferred bound */
+	uint64_t	el_count;	/* el_unsent + el_queue */
+	uint64_t	el_unsent;	/* Sent to no client */
 	uint64_t	el_queue;	/* Lost at this client's queue */
 } oes_event_lost_t;
 

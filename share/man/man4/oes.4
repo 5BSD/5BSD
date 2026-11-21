@@ -600,8 +600,9 @@ before anything else it would read.
 Its
 .Va em_event_data.lost
 holds the number of events lost since the previous such message:
-.Va el_deferred
-discarded at the deferred-delivery bound,
+.Va el_unsent
+sent to no client: discarded at the deferred-delivery bound, or not
+allocated because no memory was free at once,
 .Va el_queue
 discarded because the client's own queue was full or the copy for it could
 not be allocated, and
@@ -609,8 +610,8 @@ not be allocated, and
 their sum.
 .Pp
 The message is not queued: it is made from the counts when the client
-reads, so it cannot itself be lost, and the counts are reset only once it
-has been copied out.
+reads, so it cannot itself be lost; the counts are cleared as it is made
+and restored if it cannot be copied out.
 .Xr poll 2
 and
 .Xr kqueue 2
@@ -621,18 +622,19 @@ unsubscribed, and every client receives it.
 Its process, thread, message ID and sequence numbers are zero, and its
 timestamps are those of the read.
 .Pp
-A loss at the deferred-delivery bound happens where the kernel cannot match
-the event to clients, so it is counted for every client subscribed to the
-event's type at the time; mutes and scopes are not applied, and a client
-may be told of an event it would not have received.
+An event sent to no client is lost where the kernel cannot match it to
+clients, so it is counted for every client subscribed to the event's type
+at the time, an AUTH event also for those subscribed to its NOTIFY form;
+mutes and scopes are not applied, and a client may be told of an event it
+would not have received.
 Clients that subscribe to a type later are not told of earlier losses.
 The message reports a count, not a position: it precedes what the client
 would otherwise read next, which may include events produced before the
 loss.
 For losses at the client's own queue the sequence numbers
 .Pq Va em_seq_num , em_global_seq_num
-of the events read show where the gap is; an event discarded at the
-deferred-delivery bound was never numbered for any client.
+of the events read show where the gap is; an event sent to no client was
+never numbered for any client.
 .Ss DTrace
 The framework defines an
 .Nm
@@ -646,8 +648,9 @@ Bytes the deferred-delivery queue holds before it discards events
 .Pq see Sx Deferred delivery ;
 also a loader tunable.
 Writing 0 restores the default.
-.It Va security.oes.defer_entry_max
-Read-only: the bytes a maximum-size deferred event holds.
+.It Va security.oes.defer_entry_max , Va security.oes.defer_entry_min
+Read-only: the bytes a maximum-size and the smallest deferred event hold;
+the bound divided by the latter bounds the number of queued events.
 .It Va security.oes.defer_bytes , Va security.oes.defer_depth
 Read-only: the bytes and the number of events the deferred-delivery queue
 holds now.

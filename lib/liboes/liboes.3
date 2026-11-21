@@ -146,9 +146,9 @@ first returns an
 message, which every client receives without subscribing:
 .Va em_event_data.lost.el_count
 events were lost since the previous one,
-.Va el_deferred
-of them before any client received them, at the kernel's deferred-delivery
-bound, and
+.Va el_unsent
+of them sent to no client (discarded at the kernel's deferred-delivery
+bound, or not allocated), and
 .Va el_queue
 at this client's own full queue
 .Pq see Xr oes 4 , Sx Lost events .

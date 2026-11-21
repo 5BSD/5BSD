@@ -152,11 +152,12 @@ SYSCTL_PROC(_security_oes, OID_AUTO, clients,
  * place: min(physical memory, vm_kmem_size) / 64.  The floor lets a uid
  * alone (which gets half the bound) queue one maximum-size entry per CPU,
  * 2 * mp_ncpus * defer_entry_max, where defer_entry_max is what malloc(9)
- * gives a maximum-size event, measured once here.  A value is raised to
- * the floor and lowered to vm_kmem_size (no larger bound can be
- * allocated, and the admission sum then cannot wrap); 0 restores the
- * default.  Lowering the bound below what is queued only refuses new
- * entries until the queue drains.
+ * gives a maximum-size event, measured once here (as is defer_entry_min,
+ * what it gives the smallest event, which bounds the queue's depth).  A
+ * value is raised to the floor and lowered to vm_kmem_size (no larger
+ * bound can be allocated, and the admission sum then cannot wrap); 0
+ * restores the default.  Lowering the bound below what is queued only
+ * refuses new entries until the queue drains.
  */
 static u_long
 oes_defer_bound_clamp(u_long v)
@@ -180,6 +181,10 @@ oes_defer_bound_init(void)
 	probe = malloc(offsetof(struct oes_pending, ep_msg) +
 	    OES_MSG_MAX_SIZE, M_OES, M_WAITOK);
 	oes_softc.sc_defer_entry_max = malloc_usable_size(probe);
+	free(probe, M_OES);
+	probe = malloc(offsetof(struct oes_pending, ep_msg) +
+	    sizeof(oes_message_t), M_OES, M_WAITOK);
+	oes_softc.sc_defer_entry_min = malloc_usable_size(probe);
 	free(probe, M_OES);
 	oes_softc.sc_defer_floor = 2 * (u_long)mp_ncpus *
 	    oes_softc.sc_defer_entry_max;
@@ -215,6 +220,10 @@ SYSCTL_ULONG(_security_oes, OID_AUTO, defer_entry_max, CTLFLAG_RD,
     &oes_softc.sc_defer_entry_max, 0,
     "Bytes a maximum-size deferred event holds");
 
+SYSCTL_ULONG(_security_oes, OID_AUTO, defer_entry_min, CTLFLAG_RD,
+    &oes_softc.sc_defer_entry_min, 0,
+    "Bytes the smallest deferred event holds");
+
 /* What is queued now: as private as the device, like clients. */
 static int
 oes_sysctl_defer_bytes(SYSCTL_HANDLER_ARGS)
@@ -242,9 +251,7 @@ oes_sysctl_defer_depth(SYSCTL_HANDLER_ARGS)
 	error = oes_sysctl_private(req);
 	if (error != 0)
 		return (error);
-	mtx_lock_spin(&oes_softc.sc_defer_mtx);
-	n = oes_softc.sc_defer_count;
-	mtx_unlock_spin(&oes_softc.sc_defer_mtx);
+	n = atomic_load_int(&oes_softc.sc_defer_count);
 	return (sysctl_handle_int(oidp, &n, 0, req));
 }
 SYSCTL_PROC(_security_oes, OID_AUTO, defer_depth,
@@ -598,14 +605,14 @@ oes_read_lost(struct oes_client *ec, struct uio *uio)
 {
 	oes_message_t *msg;
 	struct timespec now, wall_now;
-	uint64_t queue, deferred;
+	uint64_t queue, unsent;
 	int error;
 
 	EC_LOCK_ASSERT(ec);
 	queue = ec->ec_lost_queue;
-	deferred = ec->ec_lost_deferred;
+	unsent = ec->ec_lost_unsent;
 	ec->ec_lost_queue = 0;
-	ec->ec_lost_deferred = 0;
+	ec->ec_lost_unsent = 0;
 	EC_UNLOCK(ec);
 
 	msg = malloc(sizeof(*msg), M_OES, M_WAITOK | M_ZERO);
@@ -620,15 +627,15 @@ oes_read_lost(struct oes_client *ec, struct uio *uio)
 	msg->em_time.tv_nsec = now.tv_nsec;
 	msg->em_wall_time.tv_sec = wall_now.tv_sec;
 	msg->em_wall_time.tv_nsec = wall_now.tv_nsec;
-	msg->em_event_data.lost.el_count = queue + deferred;
-	msg->em_event_data.lost.el_deferred = deferred;
+	msg->em_event_data.lost.el_count = queue + unsent;
+	msg->em_event_data.lost.el_unsent = unsent;
 	msg->em_event_data.lost.el_queue = queue;
 	error = uiomove(msg, msg->em_size, uio);
 	free(msg, M_OES);
 	if (error != 0) {
 		EC_LOCK(ec);
 		ec->ec_lost_queue += queue;
-		ec->ec_lost_deferred += deferred;
+		ec->ec_lost_unsent += unsent;
 		EC_UNLOCK(ec);
 	}
 	return (error);

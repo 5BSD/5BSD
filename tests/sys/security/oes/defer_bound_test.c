@@ -34,6 +34,7 @@
 #include <fcntl.h>
 #include <jail.h>
 #include <poll.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -205,24 +206,34 @@ make_jail(void)
 	return (jid);
 }
 
-/* The only client: NOTIFY_PIPE_WRITE of the jail's processes. */
+/*
+ * The only client: NOTIFY_PIPE_WRITE of the jail's processes, with a queue
+ * that holds whatever a bound of limit bytes can queue (each entry holds
+ * at least security.oes.defer_entry_min), so it loses nothing itself.
+ */
 static int
-open_jail_client(int jid)
+open_jail_client(int jid, u_long limit)
 {
 	struct oes_jail_scope_args args;
+	struct oes_mode_args mode;
 	oes_event_type_t ev = OES_EVENT_NOTIFY_PIPE_WRITE;
 	int fd;
 
+	if (sysctl_ul("security.oes.clients") != 0)
+		atf_tc_skip("another OES client is open: its events would share "
+		    "the deferred queue and the counts would not be exact");
 	fd = test_open_oes();
 	ATF_REQUIRE_MSG(fd >= 0, "open /dev/oes: %s", strerror(errno));
 	memset(&args, 0, sizeof(args));
 	args.ejs_jid = jid;
 	ATF_REQUIRE_MSG(ioctl(fd, OES_IOC_SET_JAIL_SCOPE, &args) == 0,
 	    "OES_IOC_SET_JAIL_SCOPE: %s", strerror(errno));
-	ATF_REQUIRE(test_set_mode(fd, OES_MODE_NOTIFY) == 0);
+	memset(&mode, 0, sizeof(mode));
+	mode.ema_mode = OES_MODE_NOTIFY;
+	mode.ema_queue_size = (uint32_t)MIN(UINT32_MAX,
+	    limit / sysctl_ul("security.oes.defer_entry_min") + 1);
+	ATF_REQUIRE(ioctl(fd, OES_IOC_SET_MODE, &mode) == 0);
 	ATF_REQUIRE(test_subscribe(fd, &ev, 1, OES_SUB_REPLACE) == 0);
-	ATF_REQUIRE_EQ_MSG(sysctl_ul("security.oes.clients"), 1,
-	    "other OES clients are open: their events would share the queue");
 	return (fd);
 }
 
@@ -321,7 +332,7 @@ read_back(int fd, uint64_t lost, u_long n, pid_t b, u_long nb)
 		ATF_REQUIRE_EQ_MSG(msg->em_event, OES_EVENT_NOTIFY_LOST,
 		    "first message %#x, not the events-lost marker",
 		    msg->em_event);
-		ATF_CHECK_EQ(msg->em_event_data.lost.el_deferred, lost);
+		ATF_CHECK_EQ(msg->em_event_data.lost.el_unsent, lost);
 		ATF_CHECK_EQ(msg->em_event_data.lost.el_queue, 0);
 		ATF_CHECK_EQ(msg->em_event_data.lost.el_count, lost);
 	}
@@ -374,7 +385,7 @@ ATF_TC_BODY(fill_to_share, tc)
 	set_max_bytes(1);
 	limit = sysctl_ul(MAX_BYTES);
 	jid = make_jail();
-	fd = open_jail_client(jid);
+	fd = open_jail_client(jid, limit);
 	producer_start(&a, jid, UID_A);
 	drops0 = nosleep_drops(fd);
 
@@ -421,7 +432,7 @@ ATF_TC_BODY(share_two_uids, tc)
 	set_max_bytes(1);
 	limit = sysctl_ul(MAX_BYTES);
 	jid = make_jail();
-	fd = open_jail_client(jid);
+	fd = open_jail_client(jid, limit);
 	producer_start(&a, jid, UID_A);
 	producer_start(&b, jid, UID_B);
 
@@ -473,7 +484,7 @@ ATF_TC_BODY(bound_scales, tc)
 	set_max_bytes(1);
 	limit = sysctl_ul(MAX_BYTES);
 	jid = make_jail();
-	fd = open_jail_client(jid);
+	fd = open_jail_client(jid, limit << 1);
 	producer_start(&a, jid, UID_A);
 
 	for (k = 0; k < 2; k++) {
@@ -549,7 +560,7 @@ ATF_TC_BODY(compaction, tc)
 	require_test_kernel();
 	save_max_bytes();
 	jid = make_jail();
-	fd = open_jail_client(jid);
+	fd = open_jail_client(jid, sysctl_ul(MAX_BYTES));
 	producer_start(&a, jid, UID_A);
 	c = park_with_one(&a);
 	ATF_CHECK_MSG(c < sysctl_ul("security.oes.defer_entry_max"),
@@ -621,7 +632,7 @@ ATF_TC_BODY(queue_full_marker, tc)
 	ATF_REQUIRE_EQ_MSG(msg->em_event, OES_EVENT_NOTIFY_LOST,
 	    "first message %#x, not the events-lost marker", msg->em_event);
 	ATF_CHECK_EQ(msg->em_event_data.lost.el_queue, OPENS - QUEUE_SIZE);
-	ATF_CHECK_EQ(msg->em_event_data.lost.el_deferred, 0);
+	ATF_CHECK_EQ(msg->em_event_data.lost.el_unsent, 0);
 	ATF_CHECK_EQ(msg->em_event_data.lost.el_count, OPENS - QUEUE_SIZE);
 	for (i = 0; i < QUEUE_SIZE; i++) {
 		next_msg(fd, msg);

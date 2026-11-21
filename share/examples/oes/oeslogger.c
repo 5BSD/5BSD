@@ -1290,8 +1290,8 @@ emit_event_data(FILE *fp, int depth, const oes_message_t *msg)
 		obj_open(fp, depth, "event_data", false);
 		json_kv_uint(fp, depth + 1, "count",
 		    msg->em_event_data.lost.el_count, true);
-		json_kv_uint(fp, depth + 1, "deferred",
-		    msg->em_event_data.lost.el_deferred, true);
+		json_kv_uint(fp, depth + 1, "unsent",
+		    msg->em_event_data.lost.el_unsent, true);
 		json_kv_uint(fp, depth + 1, "queue",
 		    msg->em_event_data.lost.el_queue, false);
 		obj_close(fp, depth, false, false);

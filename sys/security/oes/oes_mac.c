@@ -2579,7 +2579,7 @@ oes_jail_scopes_finish(void)
 	}
 }
 
-static void	oes_defer_lost_announce(void);
+static void	oes_lost_announce(void);
 static void	oes_defer_uncharge(struct oes_pending *ep);
 
 /*
@@ -2597,7 +2597,7 @@ static void	oes_defer_uncharge(struct oes_pending *ep);
  * bounds the depth).  The task returns when a round finds nothing queued
  * and nothing to end; whatever is queued or marked after that round's look
  * enqueues the task again.  Each round first wakes the clients that have
- * a loss to report (oes_defer_lost_announce()).
+ * a loss to report (oes_lost_announce()).
  *
  * The thread is a timeshare thread (oes_dev.c), but a kernel thread never
  * takes the scheduler's end-of-slice switch, which is delivered on the
@@ -2621,7 +2621,7 @@ oes_defer_task_fn(void *arg __unused, int pending __unused)
 		/* Test kernels: debug.mac_capability.test_issuer_oes_defer_hold. */
 		mac_capability_test_issuer_oes_defer_park();
 #endif
-		oes_defer_lost_announce();
+		oes_lost_announce();
 		/* Before the snapshot; see oes_jail_scopes_claim(). */
 		ending = oes_jail_scopes_claim();
 		mtx_lock_spin(&oes_softc.sc_defer_mtx);
@@ -2669,15 +2669,19 @@ oes_defer_task_fn(void *arg __unused, int pending __unused)
  * The bound is exact: sc_defer_bytes is reserved by compare-and-set with
  * the rule re-tested on every retry (a retry means another producer's
  * reservation moved the word; nothing waits).  ui_oesdefer is advanced
- * after the reservation, so producers of one uid on several CPUs can
- * each pass on the same old value: the share may be exceeded by at most
- * one entry per CPU.
+ * after the reservation, so another producer of the same uid can pass on
+ * the old value in between.  The two steps run in a critical section, so
+ * at most one such producer per other CPU can: the share may be exceeded
+ * by at most one entry per CPU.
  */
 static bool
 oes_defer_admits(struct uidinfo *uip, u_long charge, bool reserve)
 {
 	u_long limit, total, held;
+	bool admitted;
 
+	admitted = false;
+	critical_enter();
 	limit = atomic_load_long(&oes_softc.sc_defer_max_bytes);
 	total = atomic_load_long(&oes_softc.sc_defer_bytes);
 	for (;;) {
@@ -2685,15 +2689,17 @@ oes_defer_admits(struct uidinfo *uip, u_long charge, bool reserve)
 		/* The rule, without wrapping: limit is at most vm_kmem_size. */
 		if (total > limit || charge > limit - total ||
 		    held + charge > limit - total - charge)
-			return (false);
-		if (!reserve)
-			return (true);
-		if (atomic_fcmpset_long(&oes_softc.sc_defer_bytes, &total,
-		    total + charge))
+			goto out;
+		if (!reserve || atomic_fcmpset_long(&oes_softc.sc_defer_bytes,
+		    &total, total + charge))
 			break;
 	}
-	atomic_add_long((volatile u_long *)&uip->ui_oesdefer, charge);
-	return (true);
+	if (reserve)
+		atomic_add_long((volatile u_long *)&uip->ui_oesdefer, charge);
+	admitted = true;
+out:
+	critical_exit();
+	return (admitted);
 }
 
 /* Return a dequeued entry's charge and its producer's uidinfo. */
@@ -2711,43 +2717,39 @@ oes_defer_uncharge(struct oes_pending *ep)
 }
 
 /*
- * An event refused at the bound: counted in es_nosleep_drops and, by its
- * NOTIFY type, for the clients' OES_EVENT_NOTIFY_LOST markers
- * (oes_client_lost_fold()).  No client lock can be taken here, so the
- * delivery task wakes the clients (oes_defer_lost_announce()).
+ * An event refused at the bound: counted in es_nosleep_drops and, as an
+ * event no client was sent, for the clients' OES_EVENT_NOTIFY_LOST
+ * markers (oes_event_lost_unsent()).
  */
 static void
 oes_defer_lost(const struct oes_pending *ep)
 {
-	oes_event_type_t ev;
-	u_int idx;
 
+	KASSERT(OES_EVENT_IS_NOTIFY(ep->ep_msg.em_event),
+	    ("oes_defer_lost: AUTH event %#x deferred", ep->ep_msg.em_event));
 	atomic_add_64(&oes_softc.sc_nosleep_drops, 1);
-	ev = ep->ep_msg.em_event;
-	if (OES_EVENT_IS_AUTH(ev))
-		ev = oes_auth_to_notify(ev);
-	idx = ev & 0x0fff;
-	if (OES_EVENT_IS_NOTIFY(ev) && idx < OES_EVENT_INDEX_COUNT)
-		atomic_add_64(&oes_softc.sc_defer_lost[idx], 1);
-	atomic_add_rel_64(&oes_softc.sc_defer_lost_total, 1);
-	taskqueue_enqueue(oes_softc.sc_defer_tq, &oes_softc.sc_defer_task);
+	oes_event_lost_unsent(ep->ep_msg.em_event);
 }
 
 /*
  * The delivery task: wake every client with a loss to report once per
- * new sc_defer_lost_total.  A reader that looks without being woken (the
- * task held, or not yet run) finds the count itself.
+ * new sc_lost_total.  The kick is cleared before the total is read, with
+ * a full fence between (oes_event_lost_unsent()), so a loss counted after
+ * this look enqueues the task again.  A reader that looks without being
+ * woken (the task held, or not yet run) finds the count itself.
  */
 static void
-oes_defer_lost_announce(void)
+oes_lost_announce(void)
 {
 	struct oes_client *ec;
 	uint64_t total;
 
-	total = atomic_load_acq_64(&oes_softc.sc_defer_lost_total);
-	if (total == oes_softc.sc_defer_lost_announced)
+	atomic_store_int(&oes_softc.sc_lost_kick, 0);
+	atomic_thread_fence_seq_cst();
+	total = atomic_load_acq_64(&oes_softc.sc_lost_total);
+	if (total == oes_softc.sc_lost_announced)
 		return;
-	oes_softc.sc_defer_lost_announced = total;
+	oes_softc.sc_lost_announced = total;
 	OES_LOCK();
 	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
 		EC_LOCK(ec);
@@ -2789,8 +2791,6 @@ oes_deliver_notify_nosleep(struct oes_pending *ep, struct proc *p __unused)
 	 */
 	charge = offsetof(struct oes_pending, ep_msg) +
 	    MAX(ep->ep_msg.em_size, sizeof(oes_message_t));
-	if ((ep->ep_flags & EP_FLAG_SIGNAL_RESERVE) != 0)
-		charge = oes_pending_charge(ep);
 	if (!oes_defer_admits(uip, charge, false)) {
 		oes_defer_lost(ep);
 		return;

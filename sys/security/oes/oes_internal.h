@@ -80,16 +80,20 @@ struct oes_softc {
 	u_long			sc_defer_max_default;
 	u_long			sc_defer_floor;
 	u_long			sc_defer_entry_max; /* A maximum-size charge */
+	u_long			sc_defer_entry_min; /* A minimum-size charge */
 	/*
-	 * Events refused at the bound, by NOTIFY event index, and their
-	 * total, advanced after the per-index count (release).  Clients
-	 * credit themselves from these (oes_client_lost_fold()); the
-	 * delivery task wakes them once per new total it sees
-	 * (sc_defer_lost_announced, the task's alone).
+	 * Events no client was sent (OES_EVENT_NOTIFY_LOST el_unsent): refused
+	 * at the deferred bound, or not allocated.  By class (0 AUTH,
+	 * 1 NOTIFY) and event index, then their total, advanced after the
+	 * per-type count (release).  Clients credit themselves from these
+	 * (oes_client_lost_fold()).  sc_lost_kick is 1 while the delivery
+	 * task is enqueued to wake them; it wakes them once per new total
+	 * it sees (sc_lost_announced, the task's alone).
 	 */
-	uint64_t		sc_defer_lost[OES_EVENT_INDEX_COUNT];
-	uint64_t		sc_defer_lost_total;
-	uint64_t		sc_defer_lost_announced;
+	uint64_t		sc_lost[2][OES_EVENT_INDEX_COUNT];
+	uint64_t		sc_lost_total;
+	uint64_t		sc_lost_announced;
+	u_int			sc_lost_kick;
 	/*
 	 * Delivery generation (the reader sets' drop rule,
 	 * oes_client_join()): events queued so far, numbered in queue
@@ -315,13 +319,13 @@ struct oes_client {
 	uint64_t		ec_events_dropped;
 	/*
 	 * Events lost and not yet reported (OES_EVENT_NOTIFY_LOST, read
-	 * first): at this client's queue, and at the deferred bound as
-	 * credited from sc_defer_lost against the snapshots below.  ec_mtx.
+	 * first): at this client's queue, and never sent to any client, as
+	 * credited from sc_lost against the snapshots below.  ec_mtx.
 	 */
 	uint64_t		ec_lost_queue;
-	uint64_t		ec_lost_deferred;
+	uint64_t		ec_lost_unsent;
 	uint64_t		ec_lost_seen_total;
-	uint64_t		ec_lost_seen[OES_EVENT_INDEX_COUNT];
+	uint64_t		ec_lost_seen[2][OES_EVENT_INDEX_COUNT];
 	uint64_t		ec_auth_timeouts;
 	uint64_t		ec_auth_allowed;
 	uint64_t		ec_auth_denied;
@@ -743,7 +747,8 @@ void	oes_pending_hold(struct oes_pending *ep);
 void	oes_pending_rele(struct oes_pending *ep);
 int	oes_event_enqueue(struct oes_client *ec, struct oes_pending *ep);
 void	oes_event_note_drop(struct oes_client *ec, oes_event_type_t event);
-void	oes_client_lost_fold(struct oes_client *ec);
+void	oes_client_lost_fold(struct oes_client *ec, bool all);
+void	oes_event_lost_unsent(oes_event_type_t event);
 bool	oes_client_lost_pending(struct oes_client *ec);
 struct oes_pending *oes_event_dequeue(struct oes_client *ec);
 int	oes_event_respond(struct oes_client *ec, uint64_t msg_id,
