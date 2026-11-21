@@ -12,7 +12,11 @@
 # possibly an alternation.  A
 # bare word would leave out every case whose name merely contains it and
 # hide real differences there.  Both tests print each case an entry
-# leaves out with the two runs' results.
+# leaves out with the two runs' results.  "[plane-on]" in the owner tag
+# ("# by-design D### [plane-on]: reason") marks an entry whose difference
+# exists only with the capability plane on: on a PLANE_OFF=1 guest it is
+# reported "not exercised" instead of failing as an entry that matches no
+# case, as long as its cases ran (dq_suites.subr dq_pattern_verdict).
 
 # I5: no set-user-id or set-group-id transition while attached
 # (P2_NO_NEW_PRIVS), no authority installation.
@@ -28,8 +32,11 @@
 # an attached process with EBUSY (dq(4), the Attaching and Inheritance
 # paragraphs; kern_dqres.c, D138), so the cases skip.  Only "passed"
 # (unattached) and "skipped" (attached) are left out: any other result
-# of either run is compared and fails the oracle.
-^procnet/procnet_outside_test:(probe_attached_target|linux_probe_attached_target|plane_services_procdesc|sigio_group_with_attached|unattached_fork_not_consulted)[[:space:]](passed|skipped)$  # by-design D138: an attached process's child is attached already, DQ_IOC_ATTACH is EBUSY (dq(4))
+# of either run is compared, and a difference fails the oracle.  The
+# cases require the plane (require_plane(): they fail, not skip, when
+# PID 1 is not capsule), so on a PLANE_OFF=1 guest both runs fail, agree,
+# and the entry matches nothing: it is a [plane-on] entry.
+^procnet/procnet_outside_test:(probe_attached_target|linux_probe_attached_target|plane_services_procdesc|sigio_group_with_attached|unattached_fork_not_consulted)[[:space:]](passed|skipped)$  # by-design D138 [plane-on]: an attached process's child is attached already, DQ_IOC_ATTACH is EBUSY (dq(4))
 
 # I5: jail_attach(2), jail(2) with JAIL_ATTACH, and setcred(2) are refused.
 ^procnet/procnet_jail_test:(jail_attach_root_escape|jail_attach_threads|jail_set_absolute|jail_set_relative)[[:space:]]  # by-design D137: I5, jail_attach(2) and JAIL_ATTACH refused

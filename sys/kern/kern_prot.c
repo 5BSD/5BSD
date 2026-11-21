@@ -2610,6 +2610,75 @@ p_candebug(struct thread *td, struct proc *p)
 }
 
 /*-
+ * 5BSD: determine whether td may inspect p: see its memory map, auxv,
+ * ps_strings and signal trampoline locations, signal fast block, umask and
+ * kernel stack.  That is metadata about the process, not the contents of
+ * its memory, which stay debug-class (p_candebug()).
+ *
+ * The steps of p_candebug(), in its order and with its errnos, except:
+ *  - the software-authority and no-ambient check is skipped: those protect
+ *    the process's memory and control, not its layout (Q3);
+ *  - the MAC question is mac_proc_check_inspect(9), which a policy without
+ *    that hook answers through its debug hook;
+ *  - the rule that refuses init at securelevel > 0 is omitted (Q11): init
+ *    stays undebuggable and is inspectable.
+ * So p_candebug(td, p) == 0 implies p_caninspect(td, p) == 0; a MAC policy
+ * that implements both hooks must keep it so (mac(9)).
+ *
+ * Returns: 0 for permitted, an errno value otherwise.
+ * Locks: as p_candebug().
+ */
+int
+p_caninspect(struct thread *td, struct proc *p)
+{
+	int error;
+
+	KASSERT(td == curthread, ("%s: td not curthread", __func__));
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	if (td->td_proc == p)
+		return (0);
+	if ((error = priv_check(td, PRIV_DEBUG_UNPRIV)))
+		return (error);
+	if ((error = prison_check(td->td_ucred, p->p_ucred)))
+		return (error);
+#ifdef MAC
+	if ((error = mac_proc_check_inspect(td->td_ucred, p)))
+		return (error);
+#endif
+	if ((error = cr_bsd_visible(td->td_ucred, p->p_ucred)))
+		return (error);
+
+	if (!cr_xids_subset(td->td_ucred, p->p_ucred)) {
+		error = priv_check(td, PRIV_DEBUG_DIFFCRED);
+		if (error)
+			return (error);
+	}
+
+	if ((p->p_flag & P_SUGID) != 0) {
+		error = priv_check(td, PRIV_DEBUG_SUGID);
+		if (error)
+			return (error);
+	}
+
+	error = cr_can_tamper_with_subjail(td->td_ucred, p->p_ucred,
+	    PRIV_DEBUG_DIFFJAIL);
+	if (error)
+		return (error);
+
+	/* As in p_candebug(): the vmspace and credential are not stable. */
+	if ((p->p_flag & P_INEXEC) != 0)
+		return (EBUSY);
+
+	if ((p->p_flag2 & P2_NOTRACE) != 0) {
+		error = priv_check(td, PRIV_DEBUG_DENIED);
+		if (error != 0)
+			return (error);
+	}
+
+	return (0);
+}
+
+/*-
  * Determine whether the subject represented by cred can "see" a socket.
  * Returns: 0 for permitted, ENOENT otherwise.
  */

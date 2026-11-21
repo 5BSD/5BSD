@@ -45,6 +45,13 @@ the system call later succeeded.
 | sockets and pipes | | `SOCKET_CREATE`, `_CONNECT`, `_BIND`, `_LISTEN`, `_ACCEPT`, `_SEND`, `_RECEIVE`, `_STAT`, `_POLL`, `PIPE_READ`, `_WRITE`, `_STAT`, `_POLL`, `_IOCTL` |
 | served descriptors (dq(4)) | `FILE_READ`, `FILE_STAT`, `FILE_WRITE`, `FILE_SETATTR`, `FILE_FSYNC`, `FILE_LOCK`, `FILE_IOCTL`, `FILE_MMAP` | `FILE_CLOSE`, `DQ_REPLY` |
 
+`PTRACE` events report debugging access to another process
+(`p_candebug(9)`). Inspection of another process, its memory map, auxv and
+kernel stacks as `procstat -v -k -x` and DTrace's `ustack()` symbols read
+them (`p_caninspect(9)`), generates no event. Before inspection had its own
+MAC question it was reported as `NOTIFY_PTRACE`; there is no inspection event
+yet.
+
 The served-descriptor events come from the descriptor-level
 `mac_file_check_read`, `_stat`, `_write`, `_setattr`, `_fsync`, `_lock`,
 `_ioctl` and `_mmap`, `mac_file_notify_close` and `mac_file_notify_reply`

@@ -133,7 +133,7 @@ means `CP_SF_ALL`.
 
 | Flag | Manifest word | Hook and effect |
 |---|---|---|
-| `CP_SF_PTRACE` | `ptrace` | `proc_check_debug`: `EACCES` on attach |
+| `CP_SF_PTRACE` | `ptrace` | `proc_check_debug`: `EACCES` on attach and every other debug access (memory, environment, descriptors, new DTrace pid-provider probes; a pid probe made before the shield can still be enabled). The DTrace kernel providers are not covered: root reads the process's memory with `copyin` from `syscall`, `fbt` or `profile` probes that fire in it, and with `-w` writes, signals or stops it (`copyout`, `raise`, `stop`). Inspection (`proc_check_inspect`: memory map, auxv, kernel stacks, USDT registration from read-only file mappings) is allowed |
 | `CP_SF_SIGNAL`, `CP_SF_SIGKILL`, `CP_SF_SIGCONT` | `signal`, `sigkill`, `sigcont` | `proc_check_signal`, `proc_check_suspend`; `SIGKILL` and `SIGCONT` need their own flag |
 | `CP_SF_WAIT` | `wait` | `proc_check_wait`; the real parent may always wait |
 | `CP_SF_SCHED` | `sched` | `proc_check_sched`: priority and cpuset changes |

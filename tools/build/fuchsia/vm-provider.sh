@@ -35,7 +35,8 @@
 #   with sys/dq (or a program under it) in the suites, imgact_binmisc and
 #   dtraceall are preloaded for them; with sys/mac_capability or its
 #   issuer-decision probe programs, dtraceall; with usr.sbin/bsd-build,
-#   zfs (an md-backed pool gives one case ACLs),
+#   zfs (an md-backed pool gives one case ACLs); with sys/kern or
+#   sys/kern/ptrace_sleep_test, fusefs (its presleep cases serve one),
 #   ROOT_FS (ufs, the default, or zfs: a ZFS root pool for the suites that
 #   require one, such as the Linux ptrace ones),
 #   GATE_TIMEOUT (guest seconds to wait for provider convergence, 600),
@@ -49,6 +50,9 @@
 #   checks; the default 0 permits raw-device provider test fixtures.
 #   With PLANE_OFF=1 the default is 1 (the enforced tier, below), and the
 #   guest gate checks the booted value either way.
+#   SCRATCH_DISK (auto, 1 or 0; default auto): a blank 1 GB disk with the
+#   serial kyua-scratch for storage_test:disk_import_and_binding, attached
+#   when a suite is usr.sbin/capsule or narrower (see the block below).
 #   SYSCTL_WRITE (space-separated sysctl names; default none): the image's
 #   system.Sysctl policy lets every client write these names through the
 #   provider (the policy matches prefixes: each name also covers the
@@ -62,6 +66,13 @@
 #   the guest kern.mac_capability.test_issuer=1 with the boot not anchored.
 #   A run that asks for it and does not get it fails (STACK_TIER_FAIL) rather
 #   than counting every stack case as deferred.
+#   TESTS_SRC_ROOTS (space-separated checkout paths; default none): every
+#   ELF test program of the stage must come from one checkout; a deliberate
+#   overlay lists every checkout its programs come from, the main one
+#   included.  Otherwise the run stops with STALE_TESTS before the image is
+#   built (check-stage-tests.py prints each TESTS_SRC_ROOT).  Scripts and
+#   data under usr/tests (Kyuafiles, atf-sh programs, dq_suites.subr,
+#   *.expected) record no source path and are not checked.
 #   KERNEL_TIER (main or test; default main): the kernel tier of the run.
 #   main is GENERIC, or any kernel without a test-kernel option; test is
 #   GENERIC-TEST, and must be asked for: a stage whose kernel carries a
@@ -131,6 +142,15 @@ kyua_vars=${KYUA_VARS:-}
 #   the plane on (kenv -u capability_plane; kenv init_path=/sbin/capsule;
 #   reboot -r) and runs it again with VM_REROOT=after, then the suites.  Both
 #   runs must exit 0.  Otherwise VM_REROOT=none.
+# SINGLE_USER_SHELL (a guest path): the run expects PID 1 to enter single-user
+#   once (for example the extra script refusing a restart).  The serial port
+#   becomes a QEMU socket chardev that still logs to serial.log, "entering
+#   recovery" and the single-user shell prompt are no longer fatal, and the
+#   monitor answers that prompt once with this path (printable ASCII only),
+#   typed one byte per echo, which runs as the
+#   single-user shell; its exit returns the guest to multi-user.  A second
+#   prompt stops the run.  The run is clean only if the prompt was answered
+#   and that shell printed a line SINGLE_USER_SHELL_PASS (its own checks).
 plane_off=${PLANE_OFF:-0}
 case "$plane_off" in 0|1) ;; *) echo "PLANE_OFF must be 0 or 1" >&2; exit 64;; esac
 # No Capsule claims the device with the plane off, so that tier enforces the
@@ -224,6 +244,44 @@ case " $suites " in
 	dq_loader="${dq_loader:+$dq_loader
 }zfs_load=\"YES\"" ;;
 esac
+# ptrace_sleep_test's presleep cases hold a lookup in a fusefs file system
+# they serve; the plane refuses a late kldload of fusefs.
+case " $suites " in
+*" sys/kern "*|*" sys/kern/ptrace_sleep_test"*)
+	dq_loader="${dq_loader:+$dq_loader
+}fusefs_load=\"YES\"" ;;
+esac
+# SCRATCH_DISK (auto, 1 or 0; default auto): a blank 1 GB disk attached last,
+# with the serial kyua-scratch, for the one case that destroys a disk,
+# usr.sbin/capsule/storage_test:disk_import_and_binding.  The guest writes its
+# device name to that case's scratch-device input, and the case refuses a disk
+# whose ident is not kyua-scratch.  auto attaches it when a suite is
+# usr.sbin/capsule, the program or the case (a wider selection such as
+# usr.sbin gets no disk and the case skips as DEFERRED_GUEST_SETUP unless
+# SCRATCH_DISK=1); zfs is then preloaded too (the plane refuses a late
+# kldload).
+scratch_disk=${SCRATCH_DISK:-auto}
+case "$scratch_disk" in
+auto)
+	scratch_disk=0
+	for s in $suites; do
+		case "usr.sbin/capsule/storage_test:disk_import_and_binding" in
+		"${s%/}"|"${s%/}"/*|"${s%/}":*)
+			case "${s%/}" in
+			usr.sbin/capsule*) scratch_disk=1 ;;
+			esac ;;
+		esac
+	done ;;
+0|1) ;;
+*) echo "SCRATCH_DISK must be auto, 0 or 1" >&2; exit 64;;
+esac
+if [ "$scratch_disk" = 1 ]; then
+	case "$dq_loader" in
+	*zfs_load*) ;;
+	*) dq_loader="${dq_loader:+$dq_loader
+}zfs_load=\"YES\"" ;;
+	esac
+fi
 cpus=${CPUS:-4} mem=${MEM_MB:-$mem_default} par=${PARALLELISM:-1} gate=${GATE_TIMEOUT:-600}
 root_fs=${ROOT_FS:-ufs}
 # ROOT_SIZE: the guest root filesystem (makefs -s; default 8g).  Long
@@ -241,6 +299,8 @@ case $units in *[!A-Za-z0-9_./\ -]*) die "REQUIRE_UNITS has unexpected character
 case $kyua_vars in *[!A-Za-z0-9_.=\ -]*) die "KYUA_VARS has unexpected characters";; esac
 sysctl_write=${SYSCTL_WRITE:-}
 case $sysctl_write in *[!A-Za-z0-9_.\ ]*) die "SYSCTL_WRITE has unexpected characters";; esac
+tests_src_roots=${TESTS_SRC_ROOTS:-}
+case $tests_src_roots in *[!A-Za-z0-9_./+\ -]*) die "TESTS_SRC_ROOTS has unexpected characters";; esac
 sysctl_conf=Capabilities/System/Sysctl.cap/Units/bsdsysctl.unit/Config/sysctl.conf
 
 stage=$(cd "$stage" 2>/dev/null && pwd) || die "no stage dir"
@@ -280,6 +340,20 @@ for s in $suites; do
 		;;
 	esac
 done
+# Every ELF test program of the stage must come from one checkout (or from
+# the checkouts TESTS_SRC_ROOTS names): a stage copied forward with only
+# some test directories reinstalled runs another branch's tests under the
+# oracles (check-stage-tests.py; 5bsd-issues
+# 2026-11-18-guest-stage-stale-tests-sys-file-binaries.md).  Scripts and
+# data files are not checked.
+set --
+for r in $tests_src_roots; do set -- "$@" --allow "$r"; done
+st=0; python3.12 -I "$(dirname "$0")/check-stage-tests.py" "$stage" "$@" || st=$?
+case $st in
+0)	;;
+3)	die "STALE_TESTS: the stage's ELF test programs are not from one checkout (see above)" ;;
+*)	die "check-stage-tests.py could not check the stage (exit $st)" ;;
+esac
 [ -n "$qemu" ] || die "no runnable QEMU (set QEMU=)"
 echo "qemu: $qemu ($("$qemu" --version | head -n 1))"
 [ -d "$qemu_data" ] || die "no QEMU firmware dir $qemu_data"
@@ -465,6 +539,7 @@ KERNEL_SHA256=$kernel_sha256
 KERNEL_VERSION="$kernel_version"
 TEST_KNOBS="$test_knobs"
 REROOT=$reroot
+SCRATCH_DISK=$scratch_disk
 EOF
 cat >> "$x/kyua-planeon.sh" <<'EOF'
 R=/tmp/kyua-results
@@ -685,6 +760,19 @@ if [ "$REROOT" = 1 ] && [ "$rerooted" = no ]; then
 	fi
 fi
 # --- end of the reroot
+# The scratch disk (SCRATCH_DISK=1): name it in storage_test's input.
+if [ "$SCRATCH_DISK" = 1 ]; then
+	sd=
+	for d in $(sysctl -n kern.disks); do
+		[ "$(diskinfo -s "/dev/$d" 2>/dev/null)" = kyua-scratch ] && sd=/dev/$d
+	done
+	if [ -n "$sd" ] && [ -d /usr/tests/usr.sbin/capsule ]; then
+		printf '%s\n' "$sd" > /usr/tests/usr.sbin/capsule/scratch-device
+		echo "SCRATCH_DISK=$sd"
+	else
+		echo "SCRATCH_DISK_MISSING: no kyua-scratch disk or no usr.sbin/capsule tests"
+	fi
+fi
 echo "ROOT_DF_BEFORE: $(df -k / | awk 'NR == 2 { print $2 "K total, " $4 "K free" }')"
 cd /usr/tests
 suites=$(cat /root/kyua-planeon.suites)
@@ -833,6 +921,7 @@ mkimg -s gpt -f raw -b "$stage/boot/pmbr" -p "freebsd-boot:=$stage/boot/gptboot"
 fi
 rm -f "$work/root.ufs"
 truncate -s 512m "$work/results.img"
+[ "$scratch_disk" = 0 ] || truncate -s 1g "$work/scratch.img"
 echo "image: $work/guest.img"
 if [ "${DRYRUN:-0}" = 1 ]; then echo DRYRUN_IMAGE_OK; exit 0; fi
 
@@ -863,6 +952,11 @@ with open(out, 'w') as f:
             f.write(json.dumps(msg) + '\n'); f.flush()
             if 'QMP' in msg: s.sendall(b'{"execute":"qmp_capabilities"}\r\n')
 EOF
+# SINGLE_USER_SHELL needs console input: a socket chardev that still logs
+# everything the guest prints to the serial log.
+serial_args="-serial file:$log"
+console_sock=$work/console.sock
+[ -z "${SINGLE_USER_SHELL:-}" ] || serial_args="-chardev socket,id=con0,path=$console_sock,server=on,wait=off,logfile=$log,logappend=on -serial chardev:con0"
 set -- "$qemu" -L "$qemu_data" -accel tcg,thread=multi -machine q35 -cpu max \
     -m "$mem" -smp "$cpus" \
     -drive "file=$work/guest.img,format=raw,if=none,id=root,snapshot=on" \
@@ -870,7 +964,7 @@ set -- "$qemu" -L "$qemu_data" -accel tcg,thread=multi -machine q35 -cpu max \
     -drive "file=$work/results.img,format=raw,if=none,id=results" \
     -device virtio-blk-pci,drive=results,serial=kyua-results \
     -netdev hubport,id=n0,hubid=0 -device virtio-net-pci,netdev=n0 \
-    -display none -monitor none -serial "file:$log" \
+    -display none -monitor none $serial_args \
     -qmp "unix:$qmp,server=on,wait=off"
 [ -z "$src_image" ] || set -- "$@" \
     -drive "file=$src_image,format=raw,if=none,id=src,readonly=on" \
@@ -878,7 +972,13 @@ set -- "$qemu" -L "$qemu_data" -accel tcg,thread=multi -machine q35 -cpu max \
 [ -z "$ports_image" ] || set -- "$@" \
     -drive "file=$ports_image,format=raw,if=none,id=ports,readonly=on" \
     -device virtio-blk-pci,drive=ports,serial=usr-ports
+[ "$scratch_disk" = 0 ] || set -- "$@" \
+    -drive "file=$work/scratch.img,format=raw,if=none,id=scratch" \
+    -device virtio-blk-pci,drive=scratch,serial=kyua-scratch
 printf '%s\n' "$@" > "$work/command.txt"
+# The monitor watches this file for writes: it exists before QEMU starts
+# (QEMU opens it without replacing it).
+: > "$log"
 "$@" > "$work/qemu.log" 2>&1 &
 qpid=$!
 echo "$qpid" > "$work/qemu.pid"
@@ -886,40 +986,68 @@ python3.12 "$work/qmp-events.py" "$qmp" "$work/qmp-events.jsonl" 2>"$work/qmp.er
 mpid=$!
 end=$(( $(date +%s) + timeout )) forced=0
 fatal='panic:|Fatal trap|entering recovery|Enter full pathname of shell|mountroot>|Going nowhere without my init|could not quiesce init|init died'
+# SINGLE_USER_SHELL: the run expects PID 1 to enter single-user once; the
+# monitor answers the shell prompt with this guest path instead of stopping.
+[ -z "${SINGLE_USER_SHELL:-}" ] ||
+	fatal='panic:|Fatal trap|mountroot>|Going nowhere without my init|could not quiesce init|init died'
 # A lock order reversal stops the run unless it matches known-lor.txt (a
 # recorded false positive, reported as KNOWN_LOR) or FATAL_LOR=no, which a
 # comparison sweep sets and then reads the reversals from the serial log.
 known_lor=$(dirname "$0")/known-lor.txt
+monitor=$(dirname "$0")/vm-monitor.py
 unknown_lor() {
 	[ "${FATAL_LOR:-yes}" = no ] && return 1
 	grep -aq 'lock order reversal' "$log" 2>/dev/null || return 1
-	python3.12 -I - "$log" "$known_lor" <<'PYEOF'
-import re, sys
-log = open(sys.argv[1], errors="replace").read()
-try:
-    pats = [re.compile(l.strip()) for l in open(sys.argv[2])
-            if l.strip() and not l.lstrip().startswith("#")]
-except OSError:
-    pats = []
-blocks = log.split("lock order reversal:")[1:]
-for b in blocks:
-    b = "\n".join(b.splitlines()[:40])
-    if not any(p.search(b) for p in pats):
-        sys.exit(0)
-sys.exit(1)
-PYEOF
+	ul=0; python3.12 -I "$monitor" --has-unknown-lor "$log" "$known_lor" || ul=$?
+	case $ul in
+	0)	return 0 ;;
+	1)	return 1 ;;
+	*)	echo "vm-monitor could not classify the reversals (exit $ul): counted as unknown"
+		return 0 ;;
+	esac
 }
-while kill -0 "$qpid" 2>/dev/null; do
-	if grep -aqE "$fatal" "$log" 2>/dev/null || unknown_lor; then
-		echo "KERNEL/INIT PROBLEM in serial log"; sleep 5; forced=1; kill "$qpid"; break
-	fi
-	if [ "$(date +%s)" -ge "$end" ]; then echo TIMEOUT; forced=1; kill "$qpid"; break; fi
-	sleep 10
-done
+# --- monitor (tests/vm-provider-kill-after-exit.sh runs this block)
+# vm-monitor.py waits on QEMU's exit, the serial log's writes and the
+# deadline (one kqueue, no polling), stops QEMU on a fatal console line or
+# an unknown reversal (after a short grace, unless the guest exits first)
+# or at the deadline, and returns once QEMU has exited: 0 by itself, 3
+# stopped for a problem, 4 at the deadline, 5 gone before it could be
+# watched (not clean: nothing was checked live).  Anything else is the monitor
+# failing; QEMU is then stopped here so the run still ends with its
+# results and verdict.
+if [ -n "${SINGLE_USER_SHELL:-}" ]; then
+	python3.12 -I "$monitor" --pid "$qpid" --log "$log" --deadline "$end" \
+	    --fatal "$fatal" --known "$known_lor" --fatal-lor "${FATAL_LOR:-yes}" \
+	    --answer 'Enter full pathname of shell.*: $' \
+	    --answer-text "$SINGLE_USER_SHELL" --console "$console_sock" \
+	    > "$work/monitor.out" &
+else
+	python3.12 -I "$monitor" --pid "$qpid" --log "$log" --deadline "$end" \
+	    --fatal "$fatal" --known "$known_lor" --fatal-lor "${FATAL_LOR:-yes}" &
+fi
+wpid=$!
+mrc=0; wait "$wpid" || mrc=$?
+case $mrc in
+0)	;;
+3|4|5)	forced=1 ;;
+*)	echo "vm-monitor failed (exit $mrc): stopping qemu"; forced=1
+	kill "$qpid" 2>/dev/null || echo "qemu had already exited" ;;
+esac
 rc=0; wait "$qpid" 2>/dev/null || rc=$?
+[ -z "${SINGLE_USER_SHELL:-}" ] || cat "$work/monitor.out"
+# --- end of the monitor
 n=$(grep -ac 'lock order reversal' "$log" 2>/dev/null || true)
-[ "${n:-0}" -gt 0 ] && ! unknown_lor && [ "${FATAL_LOR:-yes}" != no ] &&
-    echo "KNOWN_LOR=$n (matched known-lor.txt; see the serial log)"
+# --- LOR verdict (tests/vm-provider-known-lor.sh runs this block)
+# The monitor classifies only complete reports while QEMU runs: one printed
+# just before the guest powered off is decided here, on the whole log.
+lor_unknown=0
+if unknown_lor; then
+	lor_unknown=1
+	echo "UNKNOWN_LOR (a reversal matches no known-lor.txt entry; see the serial log)"
+elif [ "${n:-0}" -gt 0 ] && [ "${FATAL_LOR:-yes}" != no ]; then
+	echo "KNOWN_LOR=$n (matched known-lor.txt; see the serial log)"
+fi
+# --- end of the LOR verdict
 wait "$mpid" 2>/dev/null || true
 mkdir -p "$work/results"
 bsdtar -xf "$work/results.img" -C "$work/results" 2>/dev/null || echo "results disk: no archive"
@@ -941,33 +1069,40 @@ stack_tier_met() {
 	    } END { exit !ok }' "$t"
 }
 # --- end of the stack-tier verdict
+# SINGLE_USER_SHELL: the prompt was answered (once: a second prompt stops the
+# run) and the single-user shell reported its own checks passed.
+single_user_passed() {
+	grep -qx CONSOLE_ANSWERED "$work/monitor.out" 2>/dev/null &&
+	    LC_ALL=C tr -d '\r' < "$log" | grep -aqx 'SINGLE_USER_SHELL_PASS'
+}
 verdict=VM_NOT_CLEAN
-if [ $forced = 0 ] && [ $rc = 0 ] && [ $guest_off = 1 ] && stack_tier_met &&
+if [ $forced = 0 ] && [ $lor_unknown = 0 ] && [ $rc = 0 ] && [ $guest_off = 1 ] && stack_tier_met &&
     [ "$(cat "$work/results/kyua-results/kyua-test.status" 2>/dev/null)" = 0 ] &&
-    tr -d '\r' < "$log" | grep -aqx 'KYUA_VM_DONE' &&
-    ! tr -d '\r' < "$log" | grep -aq '^STACK_TIER_FAIL' &&
-    [ "$(tr -d '\r' < "$log" | grep -acx 'TEST_KERNEL_PROOF_PASS')" = 1 ] &&
-    ! tr -d '\r' < "$log" | grep -aq '^TEST_KERNEL_PROOF_FAIL' &&
-    { [ "$plane_off" = 1 ] && tr -d '\r' < "$log" | grep -aqx 'PLANEOFF_READY' ||
-      { tr -d '\r' < "$log" | grep -aqx 'PLANEON_GATE_PASS' &&
-        tr -d '\r' < "$log" | grep -aqx 'BSDTIME_LIFECYCLE_PASS'; }; } &&
+    LC_ALL=C tr -d '\r' < "$log" | grep -aqx 'KYUA_VM_DONE' &&
+    ! LC_ALL=C tr -d '\r' < "$log" | grep -aq '^STACK_TIER_FAIL' &&
+    [ "$(LC_ALL=C tr -d '\r' < "$log" | grep -acx 'TEST_KERNEL_PROOF_PASS')" = 1 ] &&
+    ! LC_ALL=C tr -d '\r' < "$log" | grep -aq '^TEST_KERNEL_PROOF_FAIL' &&
+    { [ "$plane_off" = 1 ] && LC_ALL=C tr -d '\r' < "$log" | grep -aqx 'PLANEOFF_READY' ||
+      { LC_ALL=C tr -d '\r' < "$log" | grep -aqx 'PLANEON_GATE_PASS' &&
+        LC_ALL=C tr -d '\r' < "$log" | grep -aqx 'BSDTIME_LIFECYCLE_PASS'; }; } &&
     { [ -z "$extra_script" ] ||
       [ "$(cat "$work/results/kyua-results/extra.exit" 2>/dev/null)" = 0 ]; } &&
-    { [ "$reroot" = 0 ] || { tr -d '\r' < "$log" | grep -aq '^REROOT_AFTER: pid1=capsule ' &&
-      ! tr -d '\r' < "$log" | grep -aq '^REROOT_FAIL'; }; } &&
+    { [ "$reroot" = 0 ] || { LC_ALL=C tr -d '\r' < "$log" | grep -aq '^REROOT_AFTER: pid1=capsule ' &&
+      ! LC_ALL=C tr -d '\r' < "$log" | grep -aq '^REROOT_FAIL'; }; } &&
+    { [ -z "${SINGLE_USER_SHELL:-}" ] || single_user_passed; } &&
     grep -aq 'Powering system off' "$log" && ! grep -aqE "$fatal" "$log"; then
 	verdict=VM_CLEAN
 fi
 echo "qemu_exit=$rc forced=$forced guest_poweroff=$guest_off"
-tr -d '\r' < "$log" | grep -aE '^(TIER_INFO: (KERNEL_TIER|TEST_KERNEL|stack-tier)=|STACK_TIER|REROOT_|TEST_KERNEL_PROOF|PLANEON_GATE|PLANEOFF|KYUA_SUMMARY|PLANEON_PID1|PLANEON_ISOLATION|BSDTIME)' || true
-nskip=$(tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c ' -> ' || true)
+LC_ALL=C tr -d '\r' < "$log" | grep -aE '^(TIER_INFO: (KERNEL_TIER|TEST_KERNEL|stack-tier)=|STACK_TIER|REROOT_|TEST_KERNEL_PROOF|PLANEON_GATE|PLANEOFF|KYUA_SUMMARY|PLANEON_PID1|PLANEON_ISOLATION|BSDTIME)' || true
+nskip=$(LC_ALL=C tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c ' -> ' || true)
 echo "skipped=$nskip (a skip in a plane-on suite is not a pass; see KYUA_SKIPPED_LIST in $log)"
 # Cases that named the tier they belong to: the run is not complete without
 # a run of the same stage and suites in that tier.
 for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER \
     DEFERRED_STACK_TIER DEFERRED_PID1_ONLY DEFERRED_SOURCE_TIER DEFERRED_KNOB_TIER \
     DEFERRED_GUEST_SETUP "configuration property 'authority_anchor'"; do
-	ndefer=$(tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c "$token" || true)
+	ndefer=$(LC_ALL=C tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c "$token" || true)
 	[ "$ndefer" -eq 0 ] || case $token in
 	DEFERRED_ENFORCED_TIER)
 		echo "DEFERRED_TO_ENFORCED_TIER=$ndefer (run PLANE_OFF=1 with the same stage and suites; not a pass)";;
@@ -991,7 +1126,7 @@ for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER 
 done
 # A case kyua skipped for a module that is not loaded did not run: the stage
 # or the loader configuration is incomplete, and the run is not clean.
-nkmod=$(tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c 'Required kmods are not loaded' || true)
+nkmod=$(LC_ALL=C tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c 'Required kmods are not loaded' || true)
 if [ "$nkmod" -ne 0 ]; then
 	echo "KMOD_SKIPPED=$nkmod (required kernel modules not loaded; not a pass)"
 	verdict=VM_NOT_CLEAN

@@ -329,6 +329,8 @@ proc_vmspace_check_access(struct thread *td, struct proc *p, int flags)
 	PROC_ASSERT_HELD(p);
 	if ((flags & PRVM_CHECK_DEBUG) != 0)
 		return (p_candebug(td, p));
+	if ((flags & PRVM_CHECK_INSPECT) != 0)
+		return (p_caninspect(td, p));
 	if ((flags & PRVM_CHECK_VISIBILITY) != 0)
 		return (p_cansee(td, p));
 	return (0);
@@ -342,9 +344,9 @@ proc_vmspace_ref(struct thread *td, struct proc *p, int flags,
 	int error;
 
 	MPASS((flags & ~(PRVM_BLOCK_EXEC | PRVM_CHECK_VISIBILITY |
-	    PRVM_CHECK_DEBUG)) == 0);
-	MPASS((flags & (PRVM_CHECK_VISIBILITY | PRVM_CHECK_DEBUG)) !=
-	    (PRVM_CHECK_VISIBILITY | PRVM_CHECK_DEBUG));
+	    PRVM_CHECK_DEBUG | PRVM_CHECK_INSPECT)) == 0);
+	MPASS(powerof2(flags & (PRVM_CHECK_VISIBILITY | PRVM_CHECK_DEBUG |
+	    PRVM_CHECK_INSPECT)));
 
 	PROC_LOCK(p);
 	if (p != td->td_proc) {
@@ -881,7 +883,8 @@ proc_set_traced(struct proc *p, bool stop)
 	if (stop)
 		p->p_flag2 |= P2_PTRACE_FSTP;
 	p->p_ptevents = PTRACE_DEFAULT;
-	p->p_flag2 &= ~(P2_PTRACE_LISTEN | P2_PTRACE_LCONT);
+	p->p_flag2 &= ~(P2_PTRACE_LISTEN | P2_PTRACE_LCONT |
+	    P2_PTRACE_OUTSTOP);
 	EVENTHANDLER_INVOKE(process_ptrace, p);
 }
 
@@ -892,7 +895,8 @@ ptrace_unsuspend(struct proc *p)
 
 	PROC_SLOCK(p);
 	p->p_flag &= ~(P_STOPPED_TRACE | P_STOPPED_SIG | P_WAITED);
-	p->p_flag2 &= ~(P2_PTRACE_LISTEN | P2_PTRACE_LCONT);
+	p->p_flag2 &= ~(P2_PTRACE_LISTEN | P2_PTRACE_LCONT |
+	    P2_PTRACE_OUTSTOP);
 	thread_unsuspend(p);
 	PROC_SUNLOCK(p);
 	itimer_proc_continue(p);

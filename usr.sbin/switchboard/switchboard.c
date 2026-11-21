@@ -138,6 +138,13 @@ switchboard_dispatch_event(struct kevent *kev)
 			sd.shutting_down = true;
 			sd.running = false;
 			supervisor_stop(switchboard_kq);
+		} else {
+			/*
+			 * Level-triggered: an unexpected message (a reply
+			 * Capsule sent twice, or unasked) stays queued and
+			 * fires this again until it is taken.
+			 */
+			(void)capsule_drop_unexpected(sd.capsule_channel_fd);
 		}
 		return;
 	}
@@ -316,6 +323,7 @@ main(int argc, char *argv[])
 	sd.capprotect_fd = -1;
 	sd.identity_fd = -1;
 	sd.authority_issuer_fd = -1;
+	sd.discovery_fd = -1;
 
 	/*
 	 * LOG_CONS: during early boot switchboard runs before syslogd exists, so
@@ -354,7 +362,11 @@ main(int argc, char *argv[])
 		return (1);
 	}
 
-	/* Non-blocking so capsule_rpc can timeout instead of hanging. */
+	/*
+	 * Non-blocking so that a send to a full Capsule queue fails instead of
+	 * blocking the event loop.  Replies are waited for on the channel
+	 * (mac_cap_recv_wait()), which does not depend on the descriptor mode.
+	 */
 	(void)fcntl(sd.capsule_channel_fd, F_SETFL, O_NONBLOCK);
 
 	/* Inherit delegated service instance fds (optional). */
@@ -402,6 +414,28 @@ main(int argc, char *argv[])
 			else
 				sd.identity_fd = (int)val;
 		}
+		s = getenv("SWITCHBOARD_DISCOVERY_FD");
+		if (s != NULL) {
+			errno = 0;
+			val = strtol(s, &endp, 10);
+			if (errno != 0 || *endp != '\0' ||
+			    val < 0 || val > INT_MAX)
+				sd.discovery_fd = -1;
+			else
+				sd.discovery_fd = (int)val;
+		}
+		s = getenv("SWITCHBOARD_BOOT_COMPLETE");
+		sd.boot_complete = s != NULL && strcmp(s, "1") == 0;
+		s = getenv("SWITCHBOARD_RC_FASTBOOT");
+		sd.rc_fastboot = s != NULL && strcmp(s, "1") == 0;
+		s = getenv("SWITCHBOARD_NEXT_ISSUER_ERROR");
+		if (s != NULL) {
+			errno = 0;
+			val = strtol(s, &endp, 10);
+			if (errno == 0 && *endp == '\0' && val > 0 &&
+			    val <= ELAST)
+				sd.next_issuer_error = (int)val;
+		}
 		s = getenv("SWITCHBOARD_AUTHORITY_FD");
 		if (s != NULL) {
 			errno = 0;
@@ -416,9 +450,11 @@ main(int argc, char *argv[])
 	if (sd.channel_svc_fd >= 0) {
 		(void)fcntl(sd.channel_svc_fd, F_SETFL, O_NONBLOCK);
 		syslog(LOG_INFO, "inherited service fds: channel=%d "
-		    "coalition=%d capprotect=%d identity=%d",
+		    "coalition=%d capprotect=%d identity=%d authority=%d "
+		    "discovery=%d%s",
 		    sd.channel_svc_fd, sd.coalition_svc_fd,
-		    sd.capprotect_fd, sd.identity_fd);
+		    sd.capprotect_fd, sd.identity_fd, sd.authority_issuer_fd,
+		    sd.discovery_fd, sd.boot_complete ? " boot-complete" : "");
 	}
 	if (sd.coalition_svc_fd >= 0)
 		(void)fcntl(sd.coalition_svc_fd, F_SETFL, O_NONBLOCK);
@@ -457,6 +493,7 @@ main(int argc, char *argv[])
 			sd.capprotect_fd,
 			sd.identity_fd,
 			sd.authority_issuer_fd,
+			sd.discovery_fd,
 		};
 		for (int i = 0; i < (int)(sizeof(lockfds)/sizeof(lockfds[0])); i++) {
 			if (lockfds[i] < 0)
@@ -509,7 +546,10 @@ main(int argc, char *argv[])
 		return (1);
 	}
 
-	/* Register Capsule channel for read (detect EOF = Capsule exited). */
+	/*
+	 * Register Capsule channel for read: EV_EOF means Capsule exited, and a
+	 * queued message outside an RPC is unexpected and dropped.
+	 */
 	EV_SET(&kev, sd.capsule_channel_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
 	if (kevent(switchboard_kq, &kev, 1, NULL, 0, NULL) == -1) {
 		syslog(LOG_ERR, "kevent channel: %m");
@@ -593,6 +633,9 @@ main(int argc, char *argv[])
 		    svc_boot_id(bid, sizeof(bid)),
 		    (uintmax_t)sd.root_coalition_id);
 	}
+
+	if (startup_adopt_discovery() == -1)
+		return (1);
 
 	/* Launch system services (tier-based parallel). */
 	if (startup_launch_system(switchboard_kq) != 0) {
