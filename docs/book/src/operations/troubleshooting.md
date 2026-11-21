@@ -137,7 +137,8 @@ provider did not come up within switchboard's activation bound
 failed to launch (previous entry), or, for a provider that runs with ambient
 authority, its manifest forgot `ambient = true` so switchboard launched it
 sandboxed and it never answered.  A lookup that ends with `ECONNRESET` lost
-the switchboard serving it.
+the switchboard serving it, could not be answered (switchboard logs why), or
+was waiting on behalf of a unit that exited.
 
 **Check.**
 

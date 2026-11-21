@@ -1,3 +1,7 @@
+# 20261121: service_retry_activation(3) removed; ambient lookups wait for
+# switchboard's answer.
+OLD_FILES+=usr/share/man/man3/service_retry_activation.3.gz
+
 # 20261116: the test-kernel check became release/scripts/check-test-kernel.sh,
 # which reads the ledger sys/conf/test-options.
 OLD_FILES+= usr/tests/usr.sbin/bsd-build/check-kernel-no-dq-test.sh

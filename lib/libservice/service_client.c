@@ -1132,7 +1132,8 @@ service_lookup_over_channel(int lookup_chan, const char *name, int *session_fdp)
 	recv.nfds = 1;
 	if (service_channel_recv_wait(lookup_chan, &recv) == -1)
 		return (-1);
-	if (recv.payload_len != sizeof(reply) || reply.status < 0 ||
+	if (recv.reply_token != LOOKUP_REQUEST_TOKEN ||
+	    recv.payload_len != sizeof(reply) || reply.status < 0 ||
 	    reply.status > ELAST ||
 	    (reply.status == 0 ? recv.nfds != 1 || reply_fd < 0 :
 	    recv.nfds != 0)) {

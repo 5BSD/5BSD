@@ -160,7 +160,10 @@ it then receives
 .Er ETIMEDOUT .
 The lookup fails with
 .Er ECONNRESET
-if the switchboard serving it exits before answering.
+if the switchboard serving it exits before answering, if switchboard cannot
+deliver its answer, or if the unit the lookup was resolved to exits while
+the activation is pending.
+A registration switchboard refuses fails with the errno switchboard reports.
 While no switchboard runs (a restart), the registration of the lookup waits
 in the boot discovery channel for the next one.
 A signal behaves as it does for a slow system call such as
@@ -169,6 +172,9 @@ on a pipe: if its handler was installed with
 .Dv SA_RESTART
 the wait for the answer restarts, otherwise the lookup fails with
 .Er EINTR .
+The wait is a cancellation point, as
+.Xr read 2
+is, and a cancelled lookup closes the descriptors it created.
 The two waits for room in a full channel queue (while switchboard is
 restarting or under a burst of registrations) fail with
 .Er EINTR

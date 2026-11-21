@@ -226,8 +226,8 @@ service_channel_send_wait(int fd, struct mac_capability_sendmsg_args *send)
  * Receive one message on a channel, waiting for it with no time limit
  * (MAC_CAPABILITY_RECV_F_WAIT).  The kernel sleeps interruptibly: a signal
  * whose handler was installed with SA_RESTART restarts the receive, any
- * other gives EINTR, as read(2) on a pipe does.  A peer that closed gives
- * ECONNRESET.
+ * other gives EINTR, as read(2) on a pipe does.  Like read(2) it is a
+ * cancellation point.  A peer that closed gives ECONNRESET.
  */
 __hidden int
 service_channel_recv_wait(int fd, struct mac_capability_recvmsg_args *recv)
@@ -235,8 +235,16 @@ service_channel_recv_wait(int fd, struct mac_capability_recvmsg_args *recv)
 
 	recv->flags = MAC_CAPABILITY_RECV_F_WAIT;
 	recv->_reserved[0] = MAC_CAPABILITY_RECV_WAIT_FOREVER;
-	if (ioctl(fd, MAC_CAPABILITY_RECVMSG, recv) == -1)
+	if (ioctl(fd, MAC_CAPABILITY_RECVMSG, recv) == -1) {
+		/*
+		 * A cancellation request interrupts the sleep (SIGCANCEL has
+		 * no SA_RESTART): act on it here, as read(2) would, rather
+		 * than report EINTR.
+		 */
+		if (errno == EINTR)
+			pthread_testcancel();
 		return (-1);
+	}
 	if (recv->payload_len == 0 && recv->nfds == 0) {
 		errno = ECONNRESET;
 		return (-1);
@@ -302,11 +310,18 @@ ambient_reg_recv_ack(int private_fd)
 	if (service_channel_recv_wait(private_fd, &recv) == -1)
 		return (false);
 	if (recv.payload_len != sizeof(ack) || recv.nfds != 0 ||
-	    ack.op != SVC_OP_REGISTER_LOOKUP || ack.status != 0 ||
-	    ack.magic != SVC_REGISTER_LOOKUP_MAGIC) {
-		errno = ack.status != 0 && recv.payload_len == sizeof(ack) &&
-		    ack.status > 0 && ack.status <= ELAST ? (int)ack.status :
-		    EBADMSG;
+	    ack.op != SVC_OP_REGISTER_LOOKUP) {
+		errno = EBADMSG;
+		return (false);
+	}
+	/* A refused registration carries switchboard's errno. */
+	if (ack.status != 0) {
+		errno = ack.status > 0 && ack.status <= ELAST ?
+		    (int)ack.status : EBADMSG;
+		return (false);
+	}
+	if (ack.magic != SVC_REGISTER_LOOKUP_MAGIC) {
+		errno = EBADMSG;
 		return (false);
 	}
 	return (true);
@@ -349,9 +364,18 @@ service_ambient_lookup_channel(void)
 		errno = error;
 		return (-1);
 	}
-	/* The wait for room in a full queue is a cancellation point. */
+	/* The waits below are cancellation points. */
 	pthread_cleanup_push(ambient_reg_cleanup, &owned);
-	sent = ambient_reg_send(owned.shared, owned.pair[1]);
+	/*
+	 * Only the queued registration may hold the other end once it is
+	 * sent: a child forked meanwhile must not keep it open, or a refusal
+	 * or a switchboard exit would never close the peer.
+	 */
+	if (fcntl(owned.pair[0], F_SETFD, FD_CLOEXEC) == -1 ||
+	    fcntl(owned.pair[1], F_SETFD, FD_CLOEXEC | FD_CLOFORK) == -1)
+		sent = false;
+	else
+		sent = ambient_reg_send(owned.shared, owned.pair[1]);
 	pthread_cleanup_pop(0);
 	/*
 	 * The queued registration holds its own reference: drop ours now, so a
@@ -359,23 +383,21 @@ service_ambient_lookup_channel(void)
 	 * for the ACK.
 	 */
 	error = errno;
-	(void)close(owned.pair[1]);
-	(void)close(owned.shared);
-	private_fd = owned.pair[0];
-	acknowledged = sent && ambient_reg_recv_ack(private_fd);
-	if (sent)
+	close_owned_fd(&owned.pair[1]);
+	close_owned_fd(&owned.shared);
+	if (sent) {
+		pthread_cleanup_push(close_owned_fd, &owned.pair[0]);
+		acknowledged = ambient_reg_recv_ack(owned.pair[0]);
+		pthread_cleanup_pop(0);
 		error = errno;
+	} else
+		acknowledged = false;
+	private_fd = owned.pair[0];
 	SERVICE_AMBIENT_PROBE_REG_RESULT(acknowledged ? 1 : 0, 0, sent ? 1 : 0,
 	    acknowledged ? 1 : 0);
 	if (!acknowledged) {
 		(void)close(private_fd);
 		errno = error != 0 ? error : EIO;
-		return (-1);
-	}
-	if (fcntl(private_fd, F_SETFD, FD_CLOEXEC) == -1) {
-		error = errno;
-		(void)close(private_fd);
-		errno = error;
 		return (-1);
 	}
 	return (private_fd);
