@@ -2554,7 +2554,7 @@ SDT_PROVIDER_DECLARE(ffs);
 SDT_PROBE_DEFINE2(ffs, , , deferred__inactive__update, "struct vnode *",
     "int");
 
-#ifdef FFS_TEST_HOOKS
+#if defined(FFS_TEST_HOOKS) && !defined(KLD_MODULE)
 /*
  * Resume hold (options FFS_TEST_HOOKS, a test kernel only: a row of the
  * test-kernel option ledger, sys/conf/test-options, which names this
@@ -2568,9 +2568,10 @@ SDT_PROBE_DEFINE2(ffs, , , deferred__inactive__update, "struct vnode *",
  * msleep()/wakeup() on one mutex, which they need; an unarmed walk reads one
  * word.
  */
-#ifdef KLD_MODULE
-#error "options FFS_TEST_HOOKS is for the kernel, not for a module"
-#endif
+/*
+ * Only in the kernel: a ufs.ko built alongside a test kernel has no hold
+ * (the kernel's own FFS is the one a test suspends).
+ */
 #include <sys/lock.h>
 #include <sys/mutex.h>
 #include <sys/sysctl.h>
@@ -2679,7 +2680,7 @@ SYSCTL_PROC(_debug_ffs, OID_AUTO, test_hold_release,
     CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
     ffs_test_hold_release_sysctl, "I",
     "Test kernel only: write 1 to let the held resume walk go on");
-#endif /* FFS_TEST_HOOKS */
+#endif /* FFS_TEST_HOOKS && !KLD_MODULE */
 
 /*
  * Process file deletes that were deferred by ufs_inactive() due to
@@ -2694,7 +2695,7 @@ process_deferred_inactive(struct mount *mp)
 	int error;
 	bool update;
 
-#ifdef FFS_TEST_HOOKS
+#if defined(FFS_TEST_HOOKS) && !defined(KLD_MODULE)
 	ffs_test_hold_resume(mp);
 #endif
 	(void) vn_start_secondary_write(NULL, &mp, V_WAIT);
