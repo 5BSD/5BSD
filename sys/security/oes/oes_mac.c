@@ -2625,6 +2625,8 @@ oes_defer_task_fn(void *arg __unused, int pending __unused)
 
 			oes_deliver_notify_locked(ep);
 			oes_pending_rele(ep);
+			/* Its delivery is complete (oes_client_join()). */
+			atomic_add_rel_64(&oes_softc.sc_defer_done, 1);
 			if (td_ast_pending(curthread, TDA_SCHED))
 				kern_yield(PRI_USER);
 		}
@@ -2656,6 +2658,8 @@ oes_deliver_notify_nosleep(struct oes_pending *ep, struct proc *p __unused)
 	oes_pending_hold(ep);
 	TAILQ_INSERT_TAIL(&oes_softc.sc_defer, ep, ep_link);
 	oes_softc.sc_defer_count++;
+	/* Numbered in queue order: the increment is under sc_defer_mtx. */
+	atomic_add_rel_64(&oes_softc.sc_defer_queued, 1);
 	mtx_unlock_spin(&oes_softc.sc_defer_mtx);
 
 	taskqueue_enqueue(oes_softc.sc_defer_tq, &oes_softc.sc_defer_task);

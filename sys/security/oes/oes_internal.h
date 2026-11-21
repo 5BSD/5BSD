@@ -63,6 +63,17 @@ struct oes_softc {
 	struct mtx		sc_defer_mtx;	/* SPIN: guards sc_defer */
 	TAILQ_HEAD(, oes_pending) sc_defer;	/* Deferred NOSLEEP events */
 	uint32_t		sc_defer_count;	/* Deferred queue depth */
+	/*
+	 * Delivery generation (the reader sets' drop rule,
+	 * oes_client_join()): events queued so far, numbered in queue
+	 * order (advanced under sc_defer_mtx), and events whose delivery
+	 * has completed (advanced by the task alone).  The queue is FIFO
+	 * with one consumer, so sc_defer_done >= n means the first n
+	 * events queued have been delivered.  Atomic 64-bit words: read
+	 * without the lock.
+	 */
+	uint64_t		sc_defer_queued;
+	uint64_t		sc_defer_done;
 	struct task		sc_defer_task;	/* Deferred delivery task */
 	struct taskqueue	*sc_defer_tq;	/* Dedicated delivery thread */
 
@@ -168,14 +179,19 @@ TAILQ_HEAD(oes_cache_lru, oes_cache_entry);
  * OES_IOC_JOIN; it is keyed by (pid, genid, exec_id), so pid reuse cannot
  * alias and membership ends at exec.
  *
- * Bound: every entry is a live process that did a consuming operation on
- * this client's open file through a descriptor of it, in the image it
- * still runs; each join drops the entries whose process exited or exec'd.
- * So after a join ors_count is at most the number of distinct live
- * processes that consumed the file since their last exec, at most
- * kern.maxproc.  There is no fixed capacity: each join replaces the array
- * by one sized for the old entries plus the caller (M_WAITOK on the reader
- * path, never in dispatch); a join happens once per process and image.
+ * Bound: every entry is a process that did a consuming operation on this
+ * client's open file through a descriptor of it, in the image it ran then.
+ * An entry whose process has exited or exec'd (dead) is kept until the
+ * events queued for deferred delivery before it was seen dead have been
+ * delivered, so that they are still matched against it (review D1), and
+ * is dropped by the first join after that (or_drop_after; no join waits
+ * for delivery).  So ors_count is at most the number of distinct processes
+ * that consumed the file since their last exec, plus the dead entries
+ * seen by the last join whose events were still queued then; every join
+ * adds at most one entry.  There is no fixed capacity: each join replaces
+ * the array by one sized for the kept entries plus the caller (M_WAITOK on
+ * the reader path, never in dispatch); a join happens once per process and
+ * image.
  *
  * Published with atomic_store_rel_ptr() under ec_readers_lock and read with
  * atomic_load_acq_ptr() inside global_epoch_preempt; a replaced array is freed
@@ -187,6 +203,12 @@ struct oes_reader {
 						   CAP_WRITE on its descriptor */
 	uint64_t		or_genid;
 	uint64_t		or_exec_id;
+	/*
+	 * 0 while the process is live.  Once a join sees it dead: the
+	 * sc_defer_queued value then.  The entry is dropped when
+	 * sc_defer_done reaches it.
+	 */
+	uint64_t		or_drop_after;
 };
 struct oes_readers {
 	struct epoch_context	ors_ctx;
@@ -706,6 +728,10 @@ int	oes_mac_policy_init(void);
 int	oes_mac_attach(void);
 void	oes_gate_reconcile(void);
 void	oes_gate_client_update(struct oes_client *ec, bool gone);
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+int	oes_client_test_reader_entries(struct oes_client *ec,
+	    struct oes_test_reader_entries *a);
+#endif
 bool	oes_gate_cache_in_use(void);
 void	oes_gate_set_strict(int *knob, int value);
 uint64_t oes_proc_get_exec_id(struct proc *p);
@@ -765,7 +791,6 @@ SYSCTL_DECL(_security_oes);
 #ifdef MAC_CAPABILITY_TEST_PERMISSIVE
 /* Test kernels only: mac_capability_testissuer.c. */
 void	mac_capability_test_issuer_oes_defer_park(void);
-void	mac_capability_test_issuer_oes_defer_unpark(void);
 #endif
 
 extern int oes_debug;
