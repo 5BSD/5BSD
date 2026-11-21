@@ -1169,8 +1169,9 @@ arguments = [\"delayed-provider\", \"org.test.slow.svc\", \"4000\",
 	start_stack
 	ambient_probe_start org.test.slow.svc probe.out
 	ambient_probe_expect '^OK org\.test\.slow\.svc fd=' probe.out
-	wait_for_file slow-provider.result ||
-	    atf_fail "provider did not accept the session"
+	# The lookup launched the provider (service_probe closes the session at
+	# once, so the provider's own accept is not checked).
+	atf_check -s exit:0 -o match:'exposed=1' cat slow-provider.started
 	assert_stack_alive
 }
 ambient_lookup_waits_for_slow_activation_cleanup()
