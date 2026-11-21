@@ -823,6 +823,10 @@ bad=$(cd "$x/testpkgs" && find usr -print | grep -v '^usr$' | grep -v '^usr/loca
 # A space is allowed (nist-kat's vector directories); the manifest encodes it.
 bad=$(cd "$x/testpkgs" && find usr -print | grep -v '^[A-Za-z0-9_./+@,= -]*$' || true)
 [ -z "$bad" ] || die "test-stage package path with unexpected characters: $(echo "$bad" | head -n 3)"
+# Symlink targets go into the manifest as they are: same characters, no space.
+bad=$(cd "$x/testpkgs" && find usr -type l -print | while IFS= read -r l; do
+	t=$(readlink "$l"); case $t in *[!A-Za-z0-9_./+@,=-]*) echo "$l -> $t";; esac; done)
+[ -z "$bad" ] || die "test-stage package symlink target with unexpected characters: $(echo "$bad" | head -n 3)"
 # --------------------------------------------------------------- manifest ---
 over='boot/loader.conf boot/loader.conf.local etc/fstab etc/rc.conf etc/rc.local etc/ttys etc/gettytab root/.profile root/.zprofile root/kyua-planeon.sh root/kyua-planeon.suites root/vm-extra.sh'
 [ -z "$sysctl_write" ] || over="$over $sysctl_conf"
@@ -871,7 +875,8 @@ re=$(for p in $over; do printf '%s|' "$p"; done | sed -e 's/|$//' -e 's/\./\\./g
 		mode=$(stat -f %Lp "$x/testpkgs/$p")
 		name=$(printf '%s' "$p" | sed 's/ /\\040/g')
 		if [ -L "$x/testpkgs/$p" ]; then
-			echo "./$name type=link uname=root gname=wheel mode=0755 link=$(readlink "$x/testpkgs/$p" | sed 's/ /\\040/g')"
+			target=$(readlink "$x/testpkgs/$p")
+			echo "./$name type=link uname=root gname=wheel mode=0755 link=$target"
 		elif [ -d "$x/testpkgs/$p" ]; then
 			echo "./$name type=dir uname=root gname=wheel mode=$mode"
 		elif [ -f "$x/testpkgs/$p" ]; then

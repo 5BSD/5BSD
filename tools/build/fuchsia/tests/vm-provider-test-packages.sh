@@ -40,4 +40,11 @@ run good-1 > "$work/out" 2>&1 || fail "good package refused: $(cat "$work/out")"
 [ ! -e "$work/x/testpkgs/+COMPACT_MANIFEST" ] || fail 'package metadata extracted'
 if run "good-1 bad-1" > "$work/out" 2>&1; then fail 'a package outside /usr/local accepted'; fi
 grep -q 'outside /usr/local' "$work/out" || fail "wrong refusal: $(cat "$work/out")"
+# A symlink whose target has a space (or another unlisted character).
+mkdir -p "$work/src/link-1/usr/local/bin"
+ln -s 'a target' "$work/src/link-1/usr/local/bin/l"
+(cd "$work/src/link-1" && bsdtar -cJf "$work/pkgs/link-1.pkg" usr/local/bin/l)
+rm -rf "$work/x"; mkdir -p "$work/x"
+if run "good-1 link-1" > "$work/out" 2>&1; then fail 'a symlink target with a space accepted'; fi
+grep -q 'symlink target with unexpected characters' "$work/out" || fail "wrong refusal: $(cat "$work/out")"
 echo 'PASS test-stage packages are pinned with sha256 and kept under /usr/local'
