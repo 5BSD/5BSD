@@ -487,7 +487,7 @@ void
 oes_gate_client_update(struct oes_client *ec, bool gone)
 {
 	uint64_t now[4], diff;
-	bool cache;
+	bool cache, changed;
 	int b, i;
 
 	sx_xlock(&oes_softc.sc_gate_sx);
@@ -512,14 +512,25 @@ oes_gate_client_update(struct oes_client *ec, bool gone)
 		}
 		ec->ec_gate_subs[i] = now[i];
 	}
-	if (cache != ec->ec_gate_cache) {
-		if (cache)
+	changed = cache != (ec->ec_gate_cache != 0);
+	if (changed) {
+		if (cache) {
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+			/* Test kernels: test_issuer_oes_gate_hold. */
+			mac_capability_test_issuer_oes_gate_park();
+#endif
 			oes_gate_cache_clients++;
-		else
+		} else
 			oes_gate_cache_clients--;
-		ec->ec_gate_cache = cache;
 	}
 	oes_gate_reconcile_locked(false);
+	/*
+	 * Only now, with the hooks published, does the client count as a
+	 * cache user: oes_cache_add() returns without waiting only once it
+	 * reads this, with an acquire load.
+	 */
+	if (changed)
+		atomic_store_rel_int(&ec->ec_gate_cache, cache ? 1 : 0);
 	sx_xunlock(&oes_softc.sc_gate_sx);
 }
 

@@ -1,7 +1,8 @@
 # WITNESS lock order reversals that are known false positives. vm-provider.sh
-# does not stop a run for a reversal whose report (the two lock lines and both
-# stacks: the first 40 lines) matches one of these Python regular expressions
-# (re.search; a leading (?s) lets . cross lines); it reports it as
+# does not stop a run for a reversal whose report (the lock lines and every
+# stack, through the end of the attempted one: vm-monitor.py, no line cap)
+# matches one of these Python regular expressions (re.search; a leading
+# (?s) lets . cross lines); it reports it as
 # KNOWN_LOR instead. Every entry names its analysis. Keep this list short: an
 # entry hides every reversal it matches, and more: WITNESS reports a pair of
 # lock classes once per boot (subr_witness.c, WITNESS_REVERSAL in
@@ -9,10 +10,26 @@
 # later reversal between the same two classes for the rest of the boot.
 # Prefer entries that can only match at shutdown, where nothing follows.
 
-# unionfs stacked over another filesystem: unmounting or looking up through
-# the stack records both orders between different vnodes of one WITNESS class
-# (5bsd-issues 2026-11-08-unionfs-fdescfs-unmount-witness-fp.md).
-unionfs_(root|lock|nodeget|lookup|unmount)
+# unionfs stacked over another file system.  Two kinds of edge between
+# different vnodes of one WITNESS class (one class per file system type):
+# E1, an unmount (dounmount) holds the covered vnode, then vflush locks the
+# unmounted file system's vnodes; E2, a union lookup holds the upper vnode
+# while unionfs_nodeget locks the lower one, or a union unmount's vflush ->
+# unionfs_root locks the upper directory.  mnt_uppers keeps E1 from reaching
+# a mount a union still uses, so no instance cycle exists (5bsd-issues
+# 2026-11-08-unionfs-fdescfs-unmount-witness-fp.md and the 2026-11-17
+# analysis in 2026-11-16-unionfs-tmpfs-ufs-fdescfs-devfs-unmount-lock-order.md).
+# Only those shapes match: (1) an E1 reversal, held lock at vfs_mount.c,
+# second lock at vflush or unionfs_lock, attempted stack vflush ...
+# *_unmount ... dounmount, in a cycle that includes an E2 edge; (2) an E2
+# reversal (unionfs_lock then unionfs_nodeget) against an established E1
+# edge.  A mount-time order (vfs_domount) or any other reversal through
+# unionfs stops the run.  Both match mid-run (the unmounts are a test's):
+# a match hides every later reversal between the same two classes for the
+# rest of that boot, so a run that unmounts a union over tmpfs and ufs no
+# longer sees ufs/tmpfs (or fdescfs/tmpfs, devfs/tmpfs) reversals after it.
+(?s)\A\s*1st \S+ (\w+) \(\1, lockmgr\) @ \S*/kern/vfs_mount\.c:\d+\s+2nd \S+ (\w+) \(\2, lockmgr\) @ \S*/(?:kern/vfs_subr\.c|fs/unionfs/union_vnops\.c):\d+\s(?=.*?(?:#\d+ \S+ at unionfs_nodeget\+[^\n]*\n#\d+ \S+ at unionfs_lookup\+|#\d+ \S+ at unionfs_root\+[^\n]*\n#\d+ \S+ at vflush\+[^\n]*\n#\d+ \S+ at unionfs_unmount\+)).*lock order \1 -> \2 attempted at:\s+(?:#\d+ [^\n]*\n)*?#\d+ \S+ at vflush\+[^\n]*\n(?:#\d+ [^\n]*\n)*?#\d+ \S+ at \w+_unmount\+[^\n]*\n(?:#\d+ [^\n]*\n)*?#\d+ \S+ at dounmount\+
+(?s)\A\s*1st \S+ (\w+) \(\1, lockmgr\) @ \S*/fs/unionfs/union_vnops\.c:\d+\s+2nd \S+ (\w+) \(\2, lockmgr\) @ \S*/fs/unionfs/union_subr\.c:\d+\s+lock order \2 -> \1 established at:\s+(?:#\d+ [^\n]*\n)*?#\d+ \S+ at vflush\+[^\n]*\n#\d+ \S+ at \w+_unmount\+[^\n]*\n#\d+ \S+ at dounmount\+[^\n]*\n(?:#\d+ [^\n]*\n)*lock order \1 -> \2 attempted at:\s+(?:#\d+ [^\n]*\n)*?#\d+ \S+ at unionfs_nodeget\+[^\n]*\n#\d+ \S+ at unionfs_lookup\+
 
 # Shutdown unmount of a tmpfs mounted on a UFS or devfs directory (/tmp,
 # /Capabilities/Run; /compat/linux/dev/shm from rc.d/linux), after a test
@@ -29,3 +46,21 @@ unionfs_(root|lock|nodeget|lookup|unmount)
 # equally benign, but matching it mid-run would hide every later ufs/devfs
 # <-> tmpfs reversal of the boot, so it stops the run.
 (?s)\A\s*1st \S+ (devfs|ufs) \(\1, lockmgr\) @ \S*/kern/vfs_mount\.c:\d+\s+2nd \S+ tmpfs \(tmpfs, lockmgr\) @ \S*/kern/vfs_subr\.c:\d+\s+lock order tmpfs -> \1 established at:\s+(?:#\d+ [^\n]*\n)*?#\d+ \S+ at (?:vput_final|ffs_unmount)\+[^\n]*\n(?:#\d+ [^\n]*\n)*?#\d+ \S+ at dounmount\+[^\n]*\n#\d+ \S+ at kern_unmount\+[^\n]*\n(?:#\d+ [^\n]*\n)*lock order \1 -> tmpfs attempted at:\s+(?:#\d+ [^\n]*\n)*?#\d+ \S+ at vflush\+[^\n]*\n#\d+ \S+ at tmpfs_unmount\+[^\n]*\n#\d+ \S+ at dounmount\+[^\n]*\n#\d+ \S+ at vfs_unmountall\+
+
+# Shutdown unmount of a tmpfs mounted on a devfs or UFS directory
+# (/compat/linux/dev/shm on the Linux devfs, /tmp on the root UFS) after the
+# same shutdown unmounted a devfs or a nullfs mounted on a tmpfs directory
+# (a jail's /dev or a nullfs a test left mounted under /tmp).  Established:
+# vfs_unmountall -> dounmount holds the covered tmpfs directory and
+# devfs_unmount -> vflush -> devfs_root locks the devfs root, or
+# nullfs_unmount -> vflush -> null_lock locks the lower UFS vnode.
+# Attempted: vfs_unmountall -> dounmount holds the covered devfs or UFS
+# directory and tmpfs_unmount -> vflush locks the tmpfs vnodes.  Both edges
+# run in the one reboot thread, one file system at a time, after every
+# process is gone; and an instance cycle would need a devfs (or the nullfs's
+# lower UFS) mounted inside a tmpfs that is itself mounted inside it.
+# Covered-vnode-before-mounted-file-system order on different mounts, as
+# the entry above (5bsd-issues
+# 2026-11-20-known-lor-misses-shutdown-devfs-on-tmpfs-variant.md, analysis).
+# Shutdown only: both stacks must be vfs_unmountall's.
+(?s)\A\s*1st \S+ (devfs|ufs) \(\1, lockmgr\) @ \S*/kern/vfs_mount\.c:\d+\s+2nd \S+ tmpfs \(tmpfs, lockmgr\) @ \S*/kern/vfs_subr\.c:\d+\s+lock order tmpfs -> \1 established at:\s+(?:#\d+ [^\n]*\n)*?(?:#\d+ \S+ at devfs_root\+[^\n]*\n(?:#\d+ \S+ at vfs_cache_root_fallback\+[^\n]*\n)?#\d+ \S+ at vflush\+[^\n]*\n#\d+ \S+ at devfs_unmount\+|#\d+ \S+ at null_lock\+[^\n]*\n(?:#\d+ [^\n]*\n){0,2}?#\d+ \S+ at vflush\+[^\n]*\n#\d+ \S+ at nullfs_unmount\+)[^\n]*\n#\d+ \S+ at dounmount\+[^\n]*\n#\d+ \S+ at vfs_unmountall\+[^\n]*\n(?:#\d+ [^\n]*\n)*lock order \1 -> tmpfs attempted at:\s+(?:#\d+ [^\n]*\n)*?#\d+ \S+ at vflush\+[^\n]*\n#\d+ \S+ at tmpfs_unmount\+[^\n]*\n#\d+ \S+ at dounmount\+[^\n]*\n#\d+ \S+ at vfs_unmountall\+

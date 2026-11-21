@@ -30,6 +30,8 @@ TEST_METADATA+=	is_exclusive="true"
 ATF_TESTS_C+=	cap_exclusion_oes_test
 # A client and its own processes' events (oes-no-self-events.md).
 ATF_TESTS_C+=	self_events_test
+# A cache add racing the first one waits for the gate (test kernels only).
+ATF_TESTS_C+=	cache_gate_test
 PROGS+=		oes_join_helper
 BINDIR=		${TESTSDIR}
 
@@ -89,6 +91,9 @@ PLAIN_TESTS_C=	\
 	test_stress \
 	rename_concurrent \
 	signal_concurrent
+
+# Mounts and unmounts a tmpfs in its work directory.
+TEST_METADATA.test_unmount_event+=	required_user="root"
 
 ATF_TESTS_C+=	test_contract_matrix
 ATF_TESTS_SH+=	test_unsupported_32bit

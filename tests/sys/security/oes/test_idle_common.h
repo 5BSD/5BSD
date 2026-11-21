@@ -156,6 +156,101 @@ idle_worker_stop(struct idle_worker *w)
 	w->iw_pid = -1;
 }
 
+/*
+ * Wait until every worker w[i] with sent[i] set has produced a record of
+ * event ev on client fd, watching the client and the workers' result pipes
+ * together.  A worker whose command returned before its record arrived
+ * cannot produce one any more: its errno goes to res[i] and the wait stops
+ * expecting it.  res[i] is IDLE_NO_RESULT for a worker that has not
+ * answered.  There is no time limit: the test's timeout ends a wait for a
+ * record that neither comes nor is ruled out.  Returns the records seen.
+ */
+#define	IDLE_NO_RESULT	(-2)
+#define	IDLE_MAX_WORKERS	8
+
+/* Count the buffered and queued records of ev from expected workers. */
+static inline void
+idle_drain_worker_records(int fd, oes_event_type_t ev, struct idle_worker *w,
+    int n, const bool *sent, const int *res, bool *seen, int *got, int *open)
+{
+	test_msg_buf buf;
+	int i;
+
+	/* The reader's buffer as well: poll(2) does not see it. */
+	while (*open > 0 && test_wait_event(fd, &buf.msg, 0) == 0) {
+		if (buf.msg.em_event != ev)
+			continue;
+		for (i = 0; i < n; i++) {
+			if (sent[i] && !seen[i] && res[i] == IDLE_NO_RESULT &&
+			    buf.msg.em_process.ep_pid == w[i].iw_pid) {
+				seen[i] = true;
+				(*got)++;
+				(*open)--;
+				break;
+			}
+		}
+	}
+}
+
+static inline int
+idle_wait_worker_records(int fd, oes_event_type_t ev, struct idle_worker *w,
+    int n, const bool *sent, int *res)
+{
+	struct pollfd pfd[1 + IDLE_MAX_WORKERS];
+	bool seen[IDLE_MAX_WORKERS];
+	int idx[1 + IDLE_MAX_WORKERS];	/* pfd[k] watches w[idx[k]] */
+	int got, open, i, k, np, err;
+
+	if (n > IDLE_MAX_WORKERS)
+		return (-1);
+	got = open = 0;
+	for (i = 0; i < n; i++) {
+		seen[i] = false;
+		res[i] = IDLE_NO_RESULT;
+		if (sent[i])
+			open++;
+	}
+	while (open > 0) {
+		idle_drain_worker_records(fd, ev, w, n, sent, res, seen, &got,
+		    &open);
+		if (open == 0)
+			break;
+		pfd[0].fd = fd;
+		pfd[0].events = POLLIN;
+		np = 1;
+		for (i = 0; i < n; i++) {
+			if (!sent[i] || seen[i] || res[i] != IDLE_NO_RESULT)
+				continue;
+			pfd[np].fd = w[i].iw_res;
+			pfd[np].events = POLLIN;
+			idx[np] = i;
+			np++;
+		}
+		if (poll(pfd, np, INFTIM) < 0) {
+			if (errno == EINTR)
+				continue;
+			return (-1);
+		}
+		/* A record that came with an answer counts: read records first. */
+		idle_drain_worker_records(fd, ev, w, n, sent, res, seen, &got,
+		    &open);
+		/*
+		 * By the slots polled: the drain above may have counted a
+		 * worker's record since, and that worker is skipped.
+		 */
+		for (k = 1; k < np; k++) {
+			i = idx[k];
+			if (seen[i] || (pfd[k].revents & (POLLIN | POLLHUP)) == 0)
+				continue;
+			if (read(w[i].iw_res, &err, sizeof(err)) != sizeof(err))
+				err = -1;
+			res[i] = err;
+			open--;
+		}
+	}
+	return (got);
+}
+
 static inline int
 idle_respond(int fd, uint64_t id, oes_auth_result_t result)
 {

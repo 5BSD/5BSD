@@ -34,6 +34,7 @@
 #include <sys/dqres.h>
 #include <sys/errno.h>
 #include <sys/event.h>
+#include <sys/eventhandler.h>
 #include <sys/fcntl.h>
 #include <sys/file.h>
 #include <sys/filedesc.h>
@@ -419,6 +420,152 @@ SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuer_oes_defer_hold,
     mac_capability_test_issuer_oes_defer_hold_sysctl, "I",
     "Test kernel only: 1 holds OES deferred delivery before its next event "
     "(2: the same on this kernel), 3 waits until parked, 0 releases "
+    "(read: 0 off, 1 armed, 2 parked)");
+
+/*
+ * Hold point for an OES client's first use of the decision cache (oes_mac.c
+ * oes_gate_client_update()).  Write 1 to arm: the next update that makes a
+ * client's cache use count parks after it has taken sc_gate_sx, before it
+ * publishes the hooks that drop cached decisions.  Write 2 to wait until
+ * such an update has parked.  Write 0 to release it.  A cache adder that
+ * waits for the gate (oes_cache.c oes_cache_add()) releases a parked update
+ * itself, so a test can tell an adder that waits from one that returns
+ * while the hooks are not yet live.  Read: 0 off, 1 armed, 2 parked.
+ *
+ * The parked thread holds sc_gate_sx, which every subscribe, cache add and
+ * close of OES needs, so the hold must not outlive the test that set it:
+ * the park sleeps interruptibly and releases the hold if a signal (or the
+ * exit of its process) ends the sleep, and the exit of the process that
+ * armed the hold releases it as well, whether or not anything parked.
+ */
+static struct mtx mac_capability_test_issuer_oes_gate_mtx;
+MTX_SYSINIT(mac_capability_test_issuer_oes_gate,
+    &mac_capability_test_issuer_oes_gate_mtx, "oes gate hold", MTX_DEF);
+static int mac_capability_test_issuer_oes_gate_state;
+static pid_t mac_capability_test_issuer_oes_gate_owner;	/* gate_mtx */
+
+/* gate_mtx held: back to off, and wake the parked update and any waiter. */
+static void
+mac_capability_test_issuer_oes_gate_off(void)
+{
+
+	mtx_assert(&mac_capability_test_issuer_oes_gate_mtx, MA_OWNED);
+	atomic_store_int(&mac_capability_test_issuer_oes_gate_state, 0);
+	mac_capability_test_issuer_oes_gate_owner = 0;
+	wakeup(&mac_capability_test_issuer_oes_gate_state);
+}
+
+void
+mac_capability_test_issuer_oes_gate_park(void)
+{
+	int error;
+
+	if (atomic_load_int(&mac_capability_test_issuer_oes_gate_state) == 0)
+		return;
+	mtx_lock(&mac_capability_test_issuer_oes_gate_mtx);
+	if (mac_capability_test_issuer_oes_gate_state == 1) {
+		atomic_store_int(&mac_capability_test_issuer_oes_gate_state, 2);
+		wakeup(&mac_capability_test_issuer_oes_gate_state);
+		error = 0;
+		while (error == 0 &&
+		    mac_capability_test_issuer_oes_gate_state == 2)
+			error = mtx_sleep(
+			    &mac_capability_test_issuer_oes_gate_state,
+			    &mac_capability_test_issuer_oes_gate_mtx, PCATCH,
+			    "oesghold", 0);
+		/* Interrupted: release this hold, not one armed since. */
+		if (error != 0 &&
+		    mac_capability_test_issuer_oes_gate_state == 2)
+			mac_capability_test_issuer_oes_gate_off();
+	}
+	mtx_unlock(&mac_capability_test_issuer_oes_gate_mtx);
+}
+
+/* Release a parked update; an armed hold nothing has reached stays armed. */
+void
+mac_capability_test_issuer_oes_gate_release(void)
+{
+
+	if (atomic_load_int(&mac_capability_test_issuer_oes_gate_state) != 2)
+		return;
+	mtx_lock(&mac_capability_test_issuer_oes_gate_mtx);
+	if (mac_capability_test_issuer_oes_gate_state == 2)
+		mac_capability_test_issuer_oes_gate_off();
+	mtx_unlock(&mac_capability_test_issuer_oes_gate_mtx);
+}
+
+static void
+mac_capability_test_issuer_oes_gate_exit(void *arg __unused, struct proc *p)
+{
+
+	if (atomic_load_int(&mac_capability_test_issuer_oes_gate_state) == 0)
+		return;
+	mtx_lock(&mac_capability_test_issuer_oes_gate_mtx);
+	if (mac_capability_test_issuer_oes_gate_state != 0 &&
+	    mac_capability_test_issuer_oes_gate_owner == p->p_pid)
+		mac_capability_test_issuer_oes_gate_off();
+	mtx_unlock(&mac_capability_test_issuer_oes_gate_mtx);
+}
+
+static void
+mac_capability_test_issuer_oes_gate_init(void *arg __unused)
+{
+
+	EVENTHANDLER_REGISTER(process_exit,
+	    mac_capability_test_issuer_oes_gate_exit, NULL,
+	    EVENTHANDLER_PRI_ANY);
+}
+SYSINIT(mac_capability_test_issuer_oes_gate, SI_SUB_DRIVERS, SI_ORDER_ANY,
+    mac_capability_test_issuer_oes_gate_init, NULL);
+
+static int
+mac_capability_test_issuer_oes_gate_hold_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	int error, value;
+
+	value = atomic_load_int(&mac_capability_test_issuer_oes_gate_state);
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	error = 0;
+	mtx_lock(&mac_capability_test_issuer_oes_gate_mtx);
+	switch (value) {
+	case 0:
+		mac_capability_test_issuer_oes_gate_off();
+		break;
+	case 1:
+		if (mac_capability_test_issuer_oes_gate_state == 0) {
+			atomic_store_int(
+			    &mac_capability_test_issuer_oes_gate_state, 1);
+			mac_capability_test_issuer_oes_gate_owner =
+			    req->td->td_proc->p_pid;
+		} else
+			error = EBUSY;
+		break;
+	case 2:
+		/* Until an update parks, or the hold is released (0). */
+		while (error == 0 &&
+		    mac_capability_test_issuer_oes_gate_state == 1)
+			error = mtx_sleep(
+			    &mac_capability_test_issuer_oes_gate_state,
+			    &mac_capability_test_issuer_oes_gate_mtx, PCATCH,
+			    "oesgwait", 0);
+		if (error == 0 &&
+		    mac_capability_test_issuer_oes_gate_state != 2)
+			error = ENOENT;
+		break;
+	default:
+		error = EINVAL;
+		break;
+	}
+	mtx_unlock(&mac_capability_test_issuer_oes_gate_mtx);
+	return (error);
+}
+SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuer_oes_gate_hold,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+    mac_capability_test_issuer_oes_gate_hold_sysctl, "I",
+    "Test kernel only: 1 parks the next OES cache first-use gate update "
+    "before it publishes, 2 waits for it to park, 0 releases it "
     "(read: 0 off, 1 armed, 2 parked)");
 
 static void

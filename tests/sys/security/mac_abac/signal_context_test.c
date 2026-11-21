@@ -142,7 +142,7 @@ check_context(const atf_tc_t *tc, uint32_t operation, int target_tty)
 	char ttypath[64];
 
 	if (strcmp(atf_tc_get_config_var_wd(tc, "disposable_vm", "no"), "yes") != 0)
-		atf_tc_skip("requires explicit disposable_vm=yes; affected kernels may panic");
+		atf_tc_skip("DEFERRED_DISPOSABLE_GUEST: requires explicit disposable_vm=yes; affected kernels may panic");
 	if (setting("security.mac.mac_abac.enabled") != 1 ||
 	    setting("security.mac.mac_abac.mode") != ABAC_MODE_PERMISSIVE ||
 	    setting("security.mac.mac_abac.rule_count") != 0 ||
@@ -531,7 +531,7 @@ mutual_signals(const atf_tc_t *tc, bool rule_updates)
 	unsigned done;
 
 	if (strcmp(atf_tc_get_config_var_wd(tc, "disposable_vm", "no"), "yes") != 0)
-		atf_tc_skip("requires explicit disposable_vm=yes; affected kernels deadlock");
+		atf_tc_skip("DEFERRED_DISPOSABLE_GUEST: requires explicit disposable_vm=yes; affected kernels deadlock");
 	if (setting("security.mac.mac_abac.enabled") != 1 ||
 	    setting("security.mac.mac_abac.mode") != ABAC_MODE_PERMISSIVE ||
 	    setting("security.mac.mac_abac.rule_count") != 0 ||
@@ -680,7 +680,7 @@ ATF_TC_BODY(signal_reciprocal_subject_tty, tc)
 	uint64_t before;
 
 	if (strcmp(atf_tc_get_config_var_wd(tc, "disposable_vm", "no"), "yes") != 0)
-		atf_tc_skip("disposable_vm=yes required; kernel lockup may defeat ATF timeout");
+		atf_tc_skip("DEFERRED_DISPOSABLE_GUEST: disposable_vm=yes required; kernel lockup may defeat ATF timeout");
 	if (setting("security.mac.mac_abac.enabled") != 1 ||
 	    setting("security.mac.mac_abac.mode") != ABAC_MODE_ENFORCING ||
 	    setting("security.mac.mac_abac.rule_count") != 0 ||
