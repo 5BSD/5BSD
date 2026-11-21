@@ -30,12 +30,16 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/capsicum.h>
+#include <sys/dqres.h>
 #include <sys/errno.h>
 #include <sys/event.h>
 #include <sys/fcntl.h>
 #include <sys/file.h>
 #include <sys/filedesc.h>
+#include <sys/jail.h>
 #include <sys/kernel.h>
+#include <sys/ktrace.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/mutex.h>
@@ -252,6 +256,150 @@ mac_capability_test_issuer_fail_take(void)
 	}
 	return ((int)error);
 }
+
+/*
+ * Base exclusion (cap_process(2) BASE EXCLUSION) is anchored at PID 1: only
+ * PID 1's fork chain can become excluded.  A Kyua test cannot run there, so
+ * on a test kernel with test issuers on, a root process may mark itself
+ * excluded, standing in for PID 1, and then exercise the chain rule with a
+ * test issuer's Core token (tests/sys/mac_capability/cap_exclusion_test).
+ * Refused when the caller is traced, ktraced, has no_new_privs, is attached
+ * to a Capability Broker, jailed or in capability mode, as an exec would
+ * refuse them.
+ */
+static int
+mac_capability_test_issuer_exclude_self_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	struct thread *td = curthread;
+	struct proc *p = td->td_proc;
+	int error, value;
+
+	PROC_LOCK(p);
+	value = P_CAP_EXCLUDED(p) ? 1 : 0;
+	PROC_UNLOCK(p);
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	if (value != 1)
+		return (EINVAL);
+	if (mac_capability_test_issuer_enabled != 1 || jailed(td->td_ucred) ||
+	    IN_CAPABILITY_MODE(td))
+		return (EPERM);
+	PROC_LOCK(p);
+	if ((p->p_flag & P_TRACED) != 0 ||
+	    (p->p_traceflag & KTRFAC_MASK) != 0 ||
+	    (p->p_flag2 & P2_NO_NEW_PRIVS) != 0 ||
+	    dqres_cred_change_refused(p))
+		error = EPERM;
+	else
+		p->p_flag2 |= P2_CAP_EXCLUDED;
+	PROC_UNLOCK(p);
+	return (error);
+}
+SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuer_exclude_self,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+    mac_capability_test_issuer_exclude_self_sysctl, "I",
+    "Test kernel only: write 1 to mark the calling process excluded from "
+    "OES and Capability Brokers, as PID 1 is (needs test issuers on)");
+
+/*
+ * OES test fail point: while set to a pid, every event OES records with
+ * that process as its subject is filled as if the subject's process lock
+ * were contended (oes_pending_init()'s unlocked fallback).  0 turns it off.
+ * Lets a test prove that the reader rule (oes(4), "A client's own
+ * processes") does not depend on that lock.
+ */
+volatile u_int mac_capability_test_issuer_oes_trylock_fail;
+
+static int
+mac_capability_test_issuer_oes_trylock_fail_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	int error, value;
+
+	value = atomic_load_int(&mac_capability_test_issuer_oes_trylock_fail);
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	if (value < 0)
+		return (EINVAL);
+	atomic_store_int(&mac_capability_test_issuer_oes_trylock_fail, value);
+	return (0);
+}
+SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuer_oes_trylock_fail,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+    mac_capability_test_issuer_oes_trylock_fail_sysctl, "I",
+    "Test kernel only: a pid whose OES event records are filled as if its "
+    "process lock were contended (0: off)");
+
+/*
+ * Hold point for OES deferred delivery (oes_mac.c oes_defer_task_fn()).
+ * Write 1 to arm: the deferred task's next round parks before it takes an
+ * event off the queue, so every event queued from then on stays queued.
+ * Write 0 to release.  A reader-set join that must wait for the task
+ * (oes_client.c oes_client_join()) releases the hold itself, since it
+ * would otherwise wait forever: a test proves with it that events queued
+ * while a process was a reader are matched against that reader even when
+ * the reader's entry is being dropped.  Read: 0 off, 1 armed, 2 parked.
+ */
+static struct mtx mac_capability_test_issuer_oes_defer_mtx;
+MTX_SYSINIT(mac_capability_test_issuer_oes_defer,
+    &mac_capability_test_issuer_oes_defer_mtx, "oes defer hold", MTX_DEF);
+static int mac_capability_test_issuer_oes_defer_state;
+
+void
+mac_capability_test_issuer_oes_defer_park(void)
+{
+
+	if (atomic_load_int(&mac_capability_test_issuer_oes_defer_state) == 0)
+		return;
+	mtx_lock(&mac_capability_test_issuer_oes_defer_mtx);
+	while (mac_capability_test_issuer_oes_defer_state != 0) {
+		mac_capability_test_issuer_oes_defer_state = 2;
+		mtx_sleep(&mac_capability_test_issuer_oes_defer_state,
+		    &mac_capability_test_issuer_oes_defer_mtx, 0, "oesdhold", 0);
+	}
+	mtx_unlock(&mac_capability_test_issuer_oes_defer_mtx);
+}
+
+/* Re-arming while a join waits on the task parks it under that join again: arm once per case. */
+void
+mac_capability_test_issuer_oes_defer_unpark(void)
+{
+
+	if (atomic_load_int(&mac_capability_test_issuer_oes_defer_state) == 0)
+		return;
+	mtx_lock(&mac_capability_test_issuer_oes_defer_mtx);
+	mac_capability_test_issuer_oes_defer_state = 0;
+	wakeup(&mac_capability_test_issuer_oes_defer_state);
+	mtx_unlock(&mac_capability_test_issuer_oes_defer_mtx);
+}
+
+static int
+mac_capability_test_issuer_oes_defer_hold_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	int error, value;
+
+	value = atomic_load_int(&mac_capability_test_issuer_oes_defer_state);
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	if (value == 0) {
+		mac_capability_test_issuer_oes_defer_unpark();
+		return (0);
+	}
+	if (value != 1)
+		return (EINVAL);
+	mtx_lock(&mac_capability_test_issuer_oes_defer_mtx);
+	if (mac_capability_test_issuer_oes_defer_state == 0)
+		mac_capability_test_issuer_oes_defer_state = 1;
+	mtx_unlock(&mac_capability_test_issuer_oes_defer_mtx);
+	return (0);
+}
+SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuer_oes_defer_hold,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+    mac_capability_test_issuer_oes_defer_hold_sysctl, "I",
+    "Test kernel only: 1 parks OES deferred delivery before its next event, "
+    "0 releases it (read: 0 off, 1 armed, 2 parked)");
 
 static void
 mac_capability_test_issuer_init(void *arg __unused)

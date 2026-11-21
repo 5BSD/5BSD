@@ -27,7 +27,9 @@
  *   COALITION_OP_GRACEFUL    — signal → grace → SIGKILL
  *   COALITION_OP_SET_DEADLINE — auto-terminate after timeout
  *   COALITION_OP_SET_WATCHDOG — dead-man switch
- *   COALITION_OP_HEARTBEAT   — reset watchdog
+ *   COALITION_OP_HEARTBEAT   — re-arm watchdog (absolute deadline)
+ *   COALITION_OP_WATCHDOG_STAT — watchdog arm count, arm time, deadline,
+ *                              scheduled callout time, last expiry
  *   COALITION_OP_SET_LEADER  — designate leader (death triggers term)
  *   COALITION_OP_RUSAGE      — aggregate resource usage
  *   COALITION_OP_SET_RESPONSIBLE — record the responsible parent (set once)
@@ -190,6 +192,11 @@ struct coalition {
 	struct callout		co_watchdog_callout;
 	struct task		co_watchdog_task;
 	uint32_t		co_watchdog_timeout_ms;
+	uint64_t		co_watchdog_seq;	/* arms so far */
+	sbintime_t		co_watchdog_armed;	/* uptime of the last arm */
+	sbintime_t		co_watchdog_deadline;	/* armed + timeout */
+	uint64_t		co_watchdog_fired_seq;	/* arm that fired last */
+	sbintime_t		co_watchdog_fired;	/* when its expiry ran */
 	/* Leader */
 	struct coalition_member	*co_leader;
 	pid_t			co_leader_pid;
@@ -2261,6 +2268,8 @@ coalition_watchdog_task_fn(void *context, int pending __unused)
 	}
 
 	co->co_flags &= ~COF_WATCHDOG_ACTIVE;
+	co->co_watchdog_fired_seq = co->co_watchdog_seq;
+	co->co_watchdog_fired = sbinuptime();
 	SDT_PROBE1(mac_capability_coalition, , , watchdog__expire, SIGKILL);
 	coalition_notify_event(co, COALITION_NOTE_WATCHDOG_FIRED);
 	coalition_collect_external_members_locked(co, &jail_fps,
@@ -2278,6 +2287,26 @@ coalition_watchdog_callout_fn(void *arg)
 	struct coalition *co = arg;
 
 	taskqueue_enqueue(taskqueue_thread, &co->co_watchdog_task);
+}
+
+/*
+ * Arm the watchdog for co_watchdog_timeout_ms from now, at an absolute
+ * uptime, so the deadline reported by WATCHDOG_STAT is exactly the time the
+ * callout was set for.  The caller holds co_sx exclusively and has set
+ * COF_WATCHDOG_ACTIVE; the callout takes a coalition reference.
+ */
+static void
+coalition_watchdog_arm_locked(struct coalition *co)
+{
+
+	sx_assert(&co->co_sx, SA_XLOCKED);
+	co->co_watchdog_seq++;
+	co->co_watchdog_armed = sbinuptime();
+	co->co_watchdog_deadline = co->co_watchdog_armed +
+	    co->co_watchdog_timeout_ms * SBT_1MS;
+	coalition_ref(co);
+	callout_reset_sbt(&co->co_watchdog_callout, co->co_watchdog_deadline,
+	    0, coalition_watchdog_callout_fn, co, C_ABSOLUTE);
 }
 
 /* ----------------------------------------------------------------
@@ -3151,6 +3180,35 @@ coalition_call(struct mac_capability_instance *s,
 			*reply_nfdsp = 1;
 		break;
 
+	case COALITION_OP_WATCHDOG_STAT:
+	{
+		struct coalition_watchdog_stat_reply *wsr;
+
+		if (reqlen != sizeof(*hdr) || nfds != 0) {
+			rpl->status = EINVAL;
+			break;
+		}
+		if (reply_avail < sizeof(*wsr)) {
+			*replylenp = sizeof(*wsr);
+			error = EMSGSIZE;
+			goto out;
+		}
+		wsr = reply;
+		memset(wsr, 0, sizeof(*wsr));
+		sx_slock(&co->co_sx);
+		wsr->flags = co->co_flags;
+		wsr->timeout_ms = co->co_watchdog_timeout_ms;
+		wsr->seq = co->co_watchdog_seq;
+		wsr->armed_sbt = co->co_watchdog_armed;
+		wsr->deadline_sbt = co->co_watchdog_deadline;
+		wsr->callout_sbt = co->co_watchdog_callout.c_time;
+		wsr->fired_seq = co->co_watchdog_fired_seq;
+		wsr->fired_sbt = co->co_watchdog_fired;
+		sx_sunlock(&co->co_sx);
+		*replylenp = sizeof(*wsr);
+		break;
+	}
+
 	case COALITION_OP_CLEANUP_STATUS:
 		if (reqlen != sizeof(*hdr) || nfds != 0) {
 			rpl->status = EINVAL;
@@ -3369,10 +3427,7 @@ coalition_call(struct mac_capability_instance *s,
 
 		co->co_watchdog_timeout_ms = wr->timeout_ms;
 		co->co_flags |= COF_WATCHDOG_ACTIVE;
-		coalition_ref(co);
-		callout_reset(&co->co_watchdog_callout,
-		    coalition_timeout_ticks(wr->timeout_ms),
-		    coalition_watchdog_callout_fn, co);
+		coalition_watchdog_arm_locked(co);
 		SDT_PROBE2(mac_capability_coalition, , , watchdog__set,
 		    wr->timeout_ms, 0);
 		sx_xunlock(&co->co_sx);
@@ -3408,10 +3463,7 @@ coalition_call(struct mac_capability_instance *s,
 			}
 		}
 		co->co_flags |= COF_WATCHDOG_ACTIVE;
-		coalition_ref(co);
-		callout_reset(&co->co_watchdog_callout,
-		    coalition_timeout_ticks(co->co_watchdog_timeout_ms),
-		    coalition_watchdog_callout_fn, co);
+		coalition_watchdog_arm_locked(co);
 		SDT_PROBE1(mac_capability_coalition, , , heartbeat,
 		    co->co_watchdog_timeout_ms);
 		sx_xunlock(&co->co_sx);

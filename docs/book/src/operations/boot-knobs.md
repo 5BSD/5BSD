@@ -96,7 +96,6 @@ watch them.
 | `cache_max_entries` | `1024` | Decision-cache entries per client. |
 | `default_muted_paths` | empty | Colon-separated prefixes muted for new clients. |
 | `default_muted_paths_literal` | empty | Same, literal match. |
-| `default_self_mute` | `1` | New clients do not see their own events. |
 
 A hardened deployment sets `default_deadline_miss_mode=1`,
 `auth_fail_closed=1` and `require_auth_clients=1` together, and only once an

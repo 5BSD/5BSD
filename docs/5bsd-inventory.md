@@ -199,7 +199,7 @@ Beside the mandatory mac_capability plane, 5BSD widens the TrustedBSD MAC framew
 - `abac_label_check_relabel` -> credential relabel requires `PRIV_MAC_PARTITION` and may only narrow -> kernel, fixed policy.
 - `security.oes.require_auth_clients` -> deny AUTH-hooked operations when no client is subscribed -> sysctl.
 - `security.oes.auth_fail_closed`, `.default_deadline_ms`, `.default_deadline_miss_mode` -> outcome when an AUTH client misses its deadline or the queue is full -> sysctl defaults, overridable per client via `OES_IOC_SET_DEADLINE_*` ioctls.
-- `security.oes.max_clients`, `.default_queue_size`, `.cache_max_entries`, `.default_self_mute`, `.default_muted_paths[_literal]` -> resource limits and initial noise suppression -> sysctl (`oeslogger -n` clears mutes).
+- `security.oes.max_clients`, `.default_queue_size`, `.cache_max_entries`, `.default_muted_paths[_literal]` (a client's own processes never reach it; no knob) -> resource limits and initial noise suppression -> sysctl (`oeslogger -n` clears mutes).
 - Per-client OES state (subscriptions, mutes, scope, mode, decision cache) -> which events a client sees and may veto -> ioctls / `liboes(3)`; opening `/dev/oes` needs device privilege (devfs).
 - `security.mac.test_hooks.deny.<hook>` -> force-deny a hook for testing -> sysctl (test module only).
 - `MAC_VERIEXEC` state -> verified execution enforcement -> `veriexec(8)` manifest load + enforcement sysctls; not entered by default.

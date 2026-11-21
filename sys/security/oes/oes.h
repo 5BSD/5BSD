@@ -241,7 +241,8 @@ typedef struct {
 	uint64_t	ep_coalition;		/* coalition id, 0 = none */
 	uint64_t	ep_responsible_coalition; /* responsible id, 0 = unset */
 	pid_t		ep_responsible_pid;	/* responsible coalition's leader */
-	uint32_t	ep_pad3;
+	uint32_t	ep_cap_roles;	/* CAP_AUTH_ROLE_* of a valid managed
+					   authority (EP_FLAG_CAP_MANAGED) */
 } oes_process_t;
 
 /* Process flags */
@@ -255,7 +256,12 @@ typedef struct {
 #define EP_FLAG_WEXIT		0x0040	/* Process is exiting */
 #define EP_FLAG_EXEC		0x0080	/* Process did exec */
 #define EP_FLAG_CONTROLT	0x0100	/* Has controlling terminal */
-#define EP_FLAG_OES_CLIENT	0x0400	/* Owns an active OES client */
+#define EP_FLAG_OES_CLIENT	0x0400	/* Acts as an OES client (a reader
+						   of one: oes(4)) */
+#define EP_FLAG_CAP_EXCLUDED	0x0800	/* Excluded by the kernel (base
+					   exclusion, cap_process(2)) */
+#define EP_FLAG_CAP_MANAGED	0x1000	/* Runs the image pinned by a valid
+					   managed software authority */
 
 #define OES_PROC_STATE_NEW	1
 #define OES_PROC_STATE_NORMAL	2
@@ -1066,6 +1072,14 @@ struct oes_jail_scope_args {
 #define OES_IOC_SET_JAIL_SCOPE	_IOW('E', 43, struct oes_jail_scope_args)
 #define OES_IOC_GET_JAIL_SCOPE	_IOR('E', 44, struct oes_jail_scope_args)
 
+/*
+ * Make the caller one of the client's readers (oes(4), "A client's own
+ * processes"): events the caller causes are never delivered to this client.
+ * Reading, answering, polling and kevent registration do the same; call it
+ * first on a descriptor received from another process.
+ */
+#define OES_IOC_JOIN		_IO('E', 45)
+
 /* Set client mode and parameters */
 struct oes_mode_args {
 	uint32_t	ema_mode;	/* OES_MODE_* */
@@ -1336,7 +1350,7 @@ struct oes_stats {
 #ifndef _KERNEL
 #define OES_IOCTLS_THIRD_PARTY_INIT \
 	{ OES_IOC_SUBSCRIBE, OES_IOC_SUBSCRIBE_BITMAP, \
-	  OES_IOC_GET_SUBSCRIPTIONS, \
+	  OES_IOC_GET_SUBSCRIPTIONS, OES_IOC_JOIN, \
 	  OES_IOC_GET_SCOPE, OES_IOC_GET_JAIL_SCOPE, \
 	  OES_IOC_GET_MODE, \
 	  OES_IOC_SET_DEADLINE_MAX, OES_IOC_GET_DEADLINE_MAX, \
@@ -1355,7 +1369,7 @@ struct oes_stats {
 
 #define OES_IOCTLS_ALL_INIT \
 	{ OES_IOC_SUBSCRIBE, OES_IOC_SUBSCRIBE_BITMAP, \
-	  OES_IOC_GET_SUBSCRIPTIONS, \
+	  OES_IOC_GET_SUBSCRIPTIONS, OES_IOC_JOIN, \
 	  OES_IOC_SET_SCOPE, OES_IOC_GET_SCOPE, \
 	  OES_IOC_SET_JAIL_SCOPE, OES_IOC_GET_JAIL_SCOPE, \
 	  OES_IOC_SET_MODE, OES_IOC_GET_MODE, \

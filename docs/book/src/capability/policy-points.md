@@ -182,7 +182,7 @@ must be set in loader.conf(5); the rest can be changed at runtime.
 | `security.oes.auth_fail_closed` | deny when OES cannot allocate or deliver required state | 0 |
 | `security.oes.default_deadline_ms`, `.default_deadline_miss_mode` | AUTH deadline and what happens when it is missed (0 fail open, 1 fail closed) | 30000; 0 |
 | `security.oes.max_clients`, `.default_queue_size`, `.cache_max_entries` | resource limits per system and per client | 64; 1024; 1024 |
-| `security.oes.default_self_mute`, `.default_muted_paths`, `.default_muted_paths_literal` | initial noise suppression for new clients | 1; empty; empty |
+| `security.oes.default_muted_paths`, `.default_muted_paths_literal` | initial noise suppression for new clients (a client never receives its own processes' events; no setting changes that) | empty; empty |
 | `security.mac.veriexec.state`, `.block_unlink` (RDTUN) | verified-execution state (`loaded`, `active`, `enforce`, `locked`); refuse unlink of verified files | inactive; 0 |
 
 ## Which point answers which question

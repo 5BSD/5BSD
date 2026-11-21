@@ -118,8 +118,16 @@ never delays a process outside it.
 Muting is per client and is ordinary mutable state: by process token, by
 uid or gid, by path prefix or literal path on the primary object, by target
 path on the secondary object of a rename or link, per event type, and with
-inversion (deliver only the muted set). New clients self-mute by default so
-a logger does not log itself.
+inversion (deliver only the muted set). A client never receives the events
+its own processes cause, whatever its scope or mutes: its readers are the
+opener and any process that reads, answers, polls, registers a kevent on or
+calls `OES_IOC_JOIN` for it, until that process exits or executes a new
+image. A reader's own AUTH events are an implicit allow from that client
+only if its descriptor can answer (open for writing, with `CAP_WRITE`); a
+read-only reader's AUTH events are delivered as usual. Other clients still
+see a reader's actions. A process that receives a client descriptor should
+call `OES_IOC_JOIN` first; liboes does. See oes(4), "A client's own
+processes".
 
 Deadlines bound how long an AUTH decision may take. The client-wide
 deadline in `oes_mode_args` is the default; `OES_IOC_SET_DEADLINE_MAX` caps
@@ -216,8 +224,6 @@ main(void)
 		err(1, "oes_set_mode");
 	if (oes_subscribe_all(client, true, true) < 0)
 		err(1, "oes_subscribe_all");
-	if (oes_mute_self(client) < 0)
-		err(1, "oes_mute_self");
 
 	kq = kqueue();
 	EV_SET(&kev, fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
@@ -282,7 +288,6 @@ those and the kernel's configured default mutes, `-p` pretty-prints.
 | `security.oes.default_deadline_miss_mode` | 0 fail open, 1 fail closed, for clients that do not set their own | 0 |
 | `security.oes.default_queue_size` | events queued per client | 1024 |
 | `security.oes.cache_max_entries` | decision-cache entries per client | 1024 |
-| `security.oes.default_self_mute` | self-mute new clients; not applied to descendants-scoped clients | 1 |
 | `security.oes.default_muted_paths`, `.default_muted_paths_literal` | colon-separated prefix or literal paths muted for new clients when they set their mode | empty |
 | `security.oes.debug` | kernel debug output | 0 |
 

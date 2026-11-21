@@ -62,22 +62,15 @@ abac_posixshm_create(struct ucred *cred, struct shmfd *shmfd,
 	credlabel = SLOT(cred->cr_label);
 	slabel = SLOT(shmlabel);
 
-	if (credlabel != NULL && slabel != NULL)
-		abac_label_copy(credlabel, slabel);
+	/* An unlabelled creator gives the default label, as it always did. */
+	if (slabel != NULL)
+		abac_label_copy(credlabel != NULL ? credlabel :
+		    &abac_default_subject, slabel);
 }
 
 /*
  * POSIX shm access checks
  */
-
-int
-abac_posixshm_check_create(struct ucred *cred, const char *path)
-{
-
-	/* Creation is always allowed - the shm inherits creator's label */
-	ABAC_CHECK_ENABLED();
-	return (0);
-}
 
 int
 abac_posixshm_check_mmap(struct ucred *cred, struct shmfd *shmfd,
@@ -86,6 +79,7 @@ abac_posixshm_check_mmap(struct ucred *cred, struct shmfd *shmfd,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_MMAP);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -115,6 +109,7 @@ abac_posixshm_check_open(struct ucred *cred, struct shmfd *shmfd,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_OPEN);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -144,6 +139,7 @@ abac_posixshm_check_read(struct ucred *active_cred, struct ucred *file_cred,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_READ);
 	ABAC_CHECK_ENABLED();
 
 	if (active_cred == NULL || active_cred->cr_label == NULL)
@@ -173,6 +169,7 @@ abac_posixshm_check_setmode(struct ucred *cred, struct shmfd *shmfd,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -203,6 +200,7 @@ abac_posixshm_check_setowner(struct ucred *cred, struct shmfd *shmfd,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -233,6 +231,7 @@ abac_posixshm_check_stat(struct ucred *active_cred, struct ucred *file_cred,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_STAT);
 	ABAC_CHECK_ENABLED();
 
 	if (active_cred == NULL || active_cred->cr_label == NULL)
@@ -262,6 +261,7 @@ abac_posixshm_check_truncate(struct ucred *active_cred,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	if (active_cred == NULL || active_cred->cr_label == NULL)
@@ -291,6 +291,7 @@ abac_posixshm_check_unlink(struct ucred *cred, struct shmfd *shmfd,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_UNLINK);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -320,6 +321,7 @@ abac_posixshm_check_write(struct ucred *active_cred, struct ucred *file_cred,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	if (active_cred == NULL || active_cred->cr_label == NULL)

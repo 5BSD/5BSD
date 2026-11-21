@@ -117,6 +117,14 @@ EOF
 		for flag in ptrace signal wait sigkill sigcont sched core ktrace; do
 			atf_check -s exit:0 -o ignore grep -Fw "$flag" "$path"
 		done
+		# A Core unit is excluded by the kernel only through its own ELF
+		# activation; a #! program fails to launch (cap_process(2) BASE
+		# EXCLUSION).  Each is built as a compiled program.
+		dir="${SRCTREE}/$(dirname "$(dirname "$manifest")")"
+		atf_check -s exit:0 -o ignore grep -E \
+		    '^PROG(_CXX)?[[:space:]]*=' "$dir/Makefile"
+		atf_check -s exit:1 grep -E '^SCRIPTS[[:space:]]*\+?=' \
+		    "$dir/Makefile"
 	done
 }
 

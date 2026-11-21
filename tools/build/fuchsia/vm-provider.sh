@@ -34,7 +34,8 @@
 #   can occupy, so ENOMEM there is expected), PARALLELISM (kyua, default 1),
 #   with sys/dq (or a program under it) in the suites, imgact_binmisc and
 #   dtraceall are preloaded for them; with sys/mac_capability or its
-#   issuer-decision probe programs, dtraceall; with usr.sbin/bsd-build,
+#   issuer-decision probe programs, dtraceall; with sys/mac_capability or
+#   its cap_exclusion_test, also filemon; with usr.sbin/bsd-build,
 #   zfs (an md-backed pool gives one case ACLs); with sys/kern or
 #   sys/kern/ptrace_sleep_test, fusefs (its presleep cases serve one),
 #   ROOT_FS (ufs, the default, or zfs: a ZFS root pool for the suites that
@@ -50,6 +51,9 @@
 #   checks; the default 0 permits raw-device provider test fixtures.
 #   With PLANE_OFF=1 the default is 1 (the enforced tier, below), and the
 #   guest gate checks the booted value either way.
+#   SCRATCH_DISK (auto, 1 or 0; default auto): a blank 1 GB disk with the
+#   serial kyua-scratch for storage_test:disk_import_and_binding, attached
+#   when a suite is usr.sbin/capsule or narrower (see the block below).
 #   SYSCTL_WRITE (space-separated sysctl names; default none): the image's
 #   system.Sysctl policy lets every client write these names through the
 #   provider (the policy matches prefixes: each name also covers the
@@ -224,15 +228,31 @@ esac
 # LOADER_EXTRA still carries
 # the Linux modules, mac_test_hooks and the rest of the recipe (DQ chapter
 # of the book, section 17); a module named twice is loaded once.
+# cap_exclusion_test's T1 cases need fasttrap (in dtraceall) and filemon;
+# they declare require.kmods, so a guest without them is KMOD_SKIPPED,
+# not clean.  The lists add up: a run of sys/dq and sys/mac_capability
+# programs gets every module either needs.
 dq_loader=
+dq_loader_add() {
+	dq_loader="${dq_loader:+$dq_loader
+}$1"
+}
 case " $suites " in
 *" sys/dq "*|*" sys/dq/"*)
-	dq_loader='imgact_binmisc_load="YES"
-dtraceall_load="YES"' ;;
-*" sys/mac_capability "*|*" sys/mac_capability/authority_issuer_probe_test"*|\
-*" sys/mac_capability/authority_test_issuer_anchor_test"*)
-	dq_loader='dtraceall_load="YES"' ;;
+	dq_loader_add 'imgact_binmisc_load="YES"' ;;
 esac
+case " $suites " in
+*" sys/dq "*|*" sys/dq/"*|*" sys/mac_capability "*|\
+*" sys/mac_capability/authority_issuer_probe_test"*|\
+*" sys/mac_capability/authority_test_issuer_anchor_test"*|\
+*" sys/mac_capability/cap_exclusion_test"*)
+	dq_loader_add 'dtraceall_load="YES"' ;;
+esac
+case " $suites " in
+*" sys/mac_capability "*|*" sys/mac_capability/cap_exclusion_test"*)
+	dq_loader_add 'filemon_load="YES"' ;;
+esac
+# end of dq_loader
 # bsd_build_test:generation_reconciliation runs its ACL subtest on an
 # md-backed ZFS pool (GENERIC has no UFS_ACL); the plane refuses a late
 # kldload of zfs.
@@ -248,6 +268,37 @@ case " $suites " in
 	dq_loader="${dq_loader:+$dq_loader
 }fusefs_load=\"YES\"" ;;
 esac
+# SCRATCH_DISK (auto, 1 or 0; default auto): a blank 1 GB disk attached last,
+# with the serial kyua-scratch, for the one case that destroys a disk,
+# usr.sbin/capsule/storage_test:disk_import_and_binding.  The guest writes its
+# device name to that case's scratch-device input, and the case refuses a disk
+# whose ident is not kyua-scratch.  auto attaches it when a suite is
+# usr.sbin/capsule, the program or the case (a wider selection such as
+# usr.sbin gets no disk and the case skips as DEFERRED_GUEST_SETUP unless
+# SCRATCH_DISK=1); zfs is then preloaded too (the plane refuses a late
+# kldload).
+scratch_disk=${SCRATCH_DISK:-auto}
+case "$scratch_disk" in
+auto)
+	scratch_disk=0
+	for s in $suites; do
+		case "usr.sbin/capsule/storage_test:disk_import_and_binding" in
+		"${s%/}"|"${s%/}"/*|"${s%/}":*)
+			case "${s%/}" in
+			usr.sbin/capsule*) scratch_disk=1 ;;
+			esac ;;
+		esac
+	done ;;
+0|1) ;;
+*) echo "SCRATCH_DISK must be auto, 0 or 1" >&2; exit 64;;
+esac
+if [ "$scratch_disk" = 1 ]; then
+	case "$dq_loader" in
+	*zfs_load*) ;;
+	*) dq_loader="${dq_loader:+$dq_loader
+}zfs_load=\"YES\"" ;;
+	esac
+fi
 cpus=${CPUS:-4} mem=${MEM_MB:-$mem_default} par=${PARALLELISM:-1} gate=${GATE_TIMEOUT:-600}
 root_fs=${ROOT_FS:-ufs}
 # ROOT_SIZE: the guest root filesystem (makefs -s; default 8g).  Long
@@ -505,6 +556,7 @@ KERNEL_SHA256=$kernel_sha256
 KERNEL_VERSION="$kernel_version"
 TEST_KNOBS="$test_knobs"
 REROOT=$reroot
+SCRATCH_DISK=$scratch_disk
 EOF
 cat >> "$x/kyua-planeon.sh" <<'EOF'
 R=/tmp/kyua-results
@@ -725,6 +777,19 @@ if [ "$REROOT" = 1 ] && [ "$rerooted" = no ]; then
 	fi
 fi
 # --- end of the reroot
+# The scratch disk (SCRATCH_DISK=1): name it in storage_test's input.
+if [ "$SCRATCH_DISK" = 1 ]; then
+	sd=
+	for d in $(sysctl -n kern.disks); do
+		[ "$(diskinfo -s "/dev/$d" 2>/dev/null)" = kyua-scratch ] && sd=/dev/$d
+	done
+	if [ -n "$sd" ] && [ -d /usr/tests/usr.sbin/capsule ]; then
+		printf '%s\n' "$sd" > /usr/tests/usr.sbin/capsule/scratch-device
+		echo "SCRATCH_DISK=$sd"
+	else
+		echo "SCRATCH_DISK_MISSING: no kyua-scratch disk or no usr.sbin/capsule tests"
+	fi
+fi
 echo "ROOT_DF_BEFORE: $(df -k / | awk 'NR == 2 { print $2 "K total, " $4 "K free" }')"
 cd /usr/tests
 suites=$(cat /root/kyua-planeon.suites)
@@ -873,6 +938,7 @@ mkimg -s gpt -f raw -b "$stage/boot/pmbr" -p "freebsd-boot:=$stage/boot/gptboot"
 fi
 rm -f "$work/root.ufs"
 truncate -s 512m "$work/results.img"
+[ "$scratch_disk" = 0 ] || truncate -s 1g "$work/scratch.img"
 echo "image: $work/guest.img"
 if [ "${DRYRUN:-0}" = 1 ]; then echo DRYRUN_IMAGE_OK; exit 0; fi
 
@@ -923,6 +989,9 @@ set -- "$qemu" -L "$qemu_data" -accel tcg,thread=multi -machine q35 -cpu max \
 [ -z "$ports_image" ] || set -- "$@" \
     -drive "file=$ports_image,format=raw,if=none,id=ports,readonly=on" \
     -device virtio-blk-pci,drive=ports,serial=usr-ports
+[ "$scratch_disk" = 0 ] || set -- "$@" \
+    -drive "file=$work/scratch.img,format=raw,if=none,id=scratch" \
+    -device virtio-blk-pci,drive=scratch,serial=kyua-scratch
 printf '%s\n' "$@" > "$work/command.txt"
 # The monitor watches this file for writes: it exists before QEMU starts
 # (QEMU opens it without replacing it).
@@ -1026,31 +1095,31 @@ single_user_passed() {
 verdict=VM_NOT_CLEAN
 if [ $forced = 0 ] && [ $lor_unknown = 0 ] && [ $rc = 0 ] && [ $guest_off = 1 ] && stack_tier_met &&
     [ "$(cat "$work/results/kyua-results/kyua-test.status" 2>/dev/null)" = 0 ] &&
-    tr -d '\r' < "$log" | grep -aqx 'KYUA_VM_DONE' &&
-    ! tr -d '\r' < "$log" | grep -aq '^STACK_TIER_FAIL' &&
-    [ "$(tr -d '\r' < "$log" | grep -acx 'TEST_KERNEL_PROOF_PASS')" = 1 ] &&
-    ! tr -d '\r' < "$log" | grep -aq '^TEST_KERNEL_PROOF_FAIL' &&
-    { [ "$plane_off" = 1 ] && tr -d '\r' < "$log" | grep -aqx 'PLANEOFF_READY' ||
-      { tr -d '\r' < "$log" | grep -aqx 'PLANEON_GATE_PASS' &&
-        tr -d '\r' < "$log" | grep -aqx 'BSDTIME_LIFECYCLE_PASS'; }; } &&
+    LC_ALL=C tr -d '\r' < "$log" | grep -aqx 'KYUA_VM_DONE' &&
+    ! LC_ALL=C tr -d '\r' < "$log" | grep -aq '^STACK_TIER_FAIL' &&
+    [ "$(LC_ALL=C tr -d '\r' < "$log" | grep -acx 'TEST_KERNEL_PROOF_PASS')" = 1 ] &&
+    ! LC_ALL=C tr -d '\r' < "$log" | grep -aq '^TEST_KERNEL_PROOF_FAIL' &&
+    { [ "$plane_off" = 1 ] && LC_ALL=C tr -d '\r' < "$log" | grep -aqx 'PLANEOFF_READY' ||
+      { LC_ALL=C tr -d '\r' < "$log" | grep -aqx 'PLANEON_GATE_PASS' &&
+        LC_ALL=C tr -d '\r' < "$log" | grep -aqx 'BSDTIME_LIFECYCLE_PASS'; }; } &&
     { [ -z "$extra_script" ] ||
       [ "$(cat "$work/results/kyua-results/extra.exit" 2>/dev/null)" = 0 ]; } &&
-    { [ "$reroot" = 0 ] || { tr -d '\r' < "$log" | grep -aq '^REROOT_AFTER: pid1=capsule ' &&
-      ! tr -d '\r' < "$log" | grep -aq '^REROOT_FAIL'; }; } &&
+    { [ "$reroot" = 0 ] || { LC_ALL=C tr -d '\r' < "$log" | grep -aq '^REROOT_AFTER: pid1=capsule ' &&
+      ! LC_ALL=C tr -d '\r' < "$log" | grep -aq '^REROOT_FAIL'; }; } &&
     { [ -z "${SINGLE_USER_SHELL:-}" ] || single_user_passed; } &&
     grep -aq 'Powering system off' "$log" && ! grep -aqE "$fatal" "$log"; then
 	verdict=VM_CLEAN
 fi
 echo "qemu_exit=$rc forced=$forced guest_poweroff=$guest_off"
-tr -d '\r' < "$log" | grep -aE '^(TIER_INFO: (KERNEL_TIER|TEST_KERNEL|stack-tier)=|STACK_TIER|REROOT_|TEST_KERNEL_PROOF|PLANEON_GATE|PLANEOFF|KYUA_SUMMARY|PLANEON_PID1|PLANEON_ISOLATION|BSDTIME)' || true
-nskip=$(tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c ' -> ' || true)
+LC_ALL=C tr -d '\r' < "$log" | grep -aE '^(TIER_INFO: (KERNEL_TIER|TEST_KERNEL|stack-tier)=|STACK_TIER|REROOT_|TEST_KERNEL_PROOF|PLANEON_GATE|PLANEOFF|KYUA_SUMMARY|PLANEON_PID1|PLANEON_ISOLATION|BSDTIME)' || true
+nskip=$(LC_ALL=C tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c ' -> ' || true)
 echo "skipped=$nskip (a skip in a plane-on suite is not a pass; see KYUA_SKIPPED_LIST in $log)"
 # Cases that named the tier they belong to: the run is not complete without
 # a run of the same stage and suites in that tier.
 for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER \
     DEFERRED_STACK_TIER DEFERRED_PID1_ONLY DEFERRED_SOURCE_TIER \
     DEFERRED_GUEST_SETUP "configuration property 'authority_anchor'"; do
-	ndefer=$(tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c "$token" || true)
+	ndefer=$(LC_ALL=C tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c "$token" || true)
 	[ "$ndefer" -eq 0 ] || case $token in
 	DEFERRED_ENFORCED_TIER)
 		echo "DEFERRED_TO_ENFORCED_TIER=$ndefer (run PLANE_OFF=1 with the same stage and suites; not a pass)";;
@@ -1072,7 +1141,7 @@ for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER 
 done
 # A case kyua skipped for a module that is not loaded did not run: the stage
 # or the loader configuration is incomplete, and the run is not clean.
-nkmod=$(tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c 'Required kmods are not loaded' || true)
+nkmod=$(LC_ALL=C tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c 'Required kmods are not loaded' || true)
 if [ "$nkmod" -ne 0 ]; then
 	echo "KMOD_SKIPPED=$nkmod (required kernel modules not loaded; not a pass)"
 	verdict=VM_NOT_CLEAN

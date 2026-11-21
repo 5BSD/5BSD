@@ -86,6 +86,8 @@ image_fixture(void)
 	return fd;
 }
 struct capbundle *bundle_registry_get(unsigned idx) { (void)idx; return (void *)&unit; }
+/* Not a System bundle: the unit under test is never Core (authority.c). */
+bool bundle_registry_is_system(unsigned idx) { (void)idx; return (false); }
 struct capbundle_service *capbundle_service(const struct capbundle *b, unsigned idx)
 { (void)b; (void)idx; return &unit; }
 const char *capbundle_svc_program(const struct capbundle_service *s) { return s->program; }

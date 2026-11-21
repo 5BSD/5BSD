@@ -56,6 +56,14 @@ read_events(int fd, int *unmount_seen, const char *expected_path)
 	}
 }
 
+/* In the actor: the unmount; its errno is the exit status. */
+static int
+unmount_test_fs(void *arg __unused)
+{
+
+	return (unmount(TEST_MOUNTPOINT, 0) == 0 ? 0 : errno);
+}
+
 int
 main(void)
 {
@@ -68,7 +76,7 @@ main(void)
 	int unmount_seen = 0;
 	struct pollfd pfd;
 	struct timespec start;
-	int ret;
+	int ret, status = 0;
 
 	printf("Testing NOTIFY_UNMOUNT event...\n");
 
@@ -97,16 +105,6 @@ main(void)
 	sub.esa_flags = OES_SUB_REPLACE;
 	if (ioctl(fd, OES_IOC_SUBSCRIBE, &sub) < 0) {
 		perror("OES_IOC_SUBSCRIBE");
-		close(fd);
-		return (1);
-	}
-
-	/*
-	 * Clear the default self-mute so we can see our own unmount events.
-	 * (security.oes.default_self_mute=1 would otherwise block them.)
-	 */
-	if (ioctl(fd, OES_IOC_UNMUTE_ALL_PROCESSES, NULL) < 0) {
-		perror("OES_IOC_UNMUTE_ALL_PROCESSES");
 		close(fd);
 		return (1);
 	}
@@ -147,9 +145,15 @@ main(void)
 		fprintf(stderr, "  using mdmfs instead of tmpfs\n");
 	}
 
-	/* Unmount - this should trigger the event */
-	if (unmount(TEST_MOUNTPOINT, 0) < 0) {
-		perror("unmount");
+	/*
+	 * Unmount - this should trigger the event.  An actor child unmounts:
+	 * the test opened the client, so its own events never reach it
+	 * (oes(4), "A client's own processes").
+	 */
+	if (test_in_child(unmount_test_fs, NULL, &status) < 0 ||
+	    !test_child_ok(status)) {
+		fprintf(stderr, "unmount: %s\n", WIFEXITED(status) ?
+		    strerror(WEXITSTATUS(status)) : "actor killed");
 		rmdir(TEST_MOUNTPOINT);
 		close(fd);
 		return (1);
