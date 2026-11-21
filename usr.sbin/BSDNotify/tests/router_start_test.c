@@ -219,11 +219,35 @@ ATF_TC_BODY(audit_activation_bound_reported, tc)
 	    "router took %ju ms, beyond the provider's wait", (uintmax_t)elapsed);
 }
 
+ATF_TC(audit_timeout_not_repeated);
+ATF_TC_HEAD(audit_timeout_not_repeated, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr", "switchboard's ETIMEDOUT is final: "
+	    "a lookup answered at once is not repeated");
+}
+ATF_TC_BODY(audit_timeout_not_repeated, tc)
+{
+	uint64_t elapsed;
+	int32_t status;
+	int rc, exitst;
+
+	audit_error = ETIMEDOUT;
+	audit_failures = 1;
+	audit_delay_ms = 0;
+	status = 0;
+	rc = run_router(&status, &exitst, &elapsed);
+	ATF_REQUIRE_MSG(rc == 0, "no ready status: %s", strerror(errno));
+	ATF_CHECK_EQ_MSG(ETIMEDOUT, status, "ready status %d", (int)status);
+	ATF_CHECK_EQ(1, *audit_calls);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, start_error_reaches_provider);
 	ATF_TP_ADD_TC(tp, audit_slow_activation_one_lookup);
 	ATF_TP_ADD_TC(tp, audit_activation_bound_reported);
+	ATF_TP_ADD_TC(tp, audit_timeout_not_repeated);
 	return (atf_no_error());
 }

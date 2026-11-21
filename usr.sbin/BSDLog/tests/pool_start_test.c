@@ -187,10 +187,32 @@ ATF_TC_BODY(audit_activation_bound_reported, tc)
 	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 1);
 }
 
+/*
+ * switchboard's answer is final: a lookup answered ETIMEDOUT is not
+ * repeated, even when it came at once (the former retry made a second
+ * lookup here, which succeeded).
+ */
+ATF_TC_WITHOUT_HEAD(audit_timeout_not_repeated);
+ATF_TC_BODY(audit_timeout_not_repeated, tc)
+{
+	uint64_t elapsed;
+	int error, status;
+
+	audit_error = ETIMEDOUT;
+	audit_failures = 1;
+	audit_delay_ms = 0;
+	ATF_CHECK_EQ(-1, run_worker(&error, &status, &elapsed));
+	ATF_CHECK_MSG(error == ETIMEDOUT, "bootstrap error %d (%s)", error,
+	    strerror(error));
+	ATF_CHECK_EQ(1, atomic_load(audit_calls));
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 1);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, start_error_reaches_parent);
 	ATF_TP_ADD_TC(tp, audit_slow_activation_one_lookup);
 	ATF_TP_ADD_TC(tp, audit_activation_bound_reported);
+	ATF_TP_ADD_TC(tp, audit_timeout_not_repeated);
 	return (atf_no_error());
 }

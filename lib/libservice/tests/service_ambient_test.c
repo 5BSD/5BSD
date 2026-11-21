@@ -274,6 +274,9 @@ enum mock_mode {
 	MOCK_EXIT,		/* close the private channel after delay_ms */
 	MOCK_REJECT_REGISTRATION, /* close the registered channel, no ACK */
 	MOCK_SIGNAL_THEN_ANSWER, /* signal the sleeping client, then answer */
+	MOCK_REFUSE_REGISTRATION, /* ACK the registration with `status` */
+	MOCK_CANCEL,		/* cancel the sleeping client, see it close */
+	MOCK_FULL_ROUTE,	/* drain `queued` fillers, then serve */
 };
 
 struct mock_switchboard {
@@ -284,6 +287,8 @@ struct mock_switchboard {
 	pthread_t	client;		/* MOCK_SIGNAL_THEN_ANSWER */
 	long		client_tid;
 	int		session_peer;	/* provider end of an answered session */
+	int		queued;		/* MOCK_FULL_ROUTE: fillers queued */
+	bool		closed_seen;	/* MOCK_CANCEL: the client closed */
 	pthread_t	thread;
 };
 
@@ -332,13 +337,17 @@ sleep_ms(unsigned ms)
 		continue;
 }
 
+/* The channel receive's sleep (mac_capability_dev.c). */
+#define	RECV_WMESG	"mac_capabilityrv"
+
 /*
- * Wait until the client thread sleeps in the channel receive, so the signal
- * lands in the wait it is meant to interrupt.  Nothing reports that a thread
+ * Wait until the client thread sleeps in `wmesg` (the channel receive, or
+ * kevent's "kqread"), so the signal lands in the wait it is meant to
+ * interrupt.  Nothing reports that a thread
  * went to sleep, so the test looks at the thread's wait channel.
  */
 static void
-wait_client_asleep(long tid)
+wait_client_asleep(long tid, const char *wmesg)
 {
 	struct kinfo_proc *kp;
 	size_t len;
@@ -348,17 +357,14 @@ wait_client_asleep(long tid)
 
 	for (asleep = false; !asleep; ) {
 		len = 0;
-		if (sysctl(mib, 4, NULL, &len, NULL, 0) == -1)
-			return;
+		ATF_REQUIRE(sysctl(mib, 4, NULL, &len, NULL, 0) == 0);
 		len += 4 * sizeof(*kp);
-		if ((kp = malloc(len)) == NULL)
-			return;
-		if (sysctl(mib, 4, kp, &len, NULL, 0) == 0)
-			for (size_t i = 0; i < len / sizeof(*kp); i++)
-				if (kp[i].ki_tid == tid &&
-				    strncmp(kp[i].ki_wmesg, "mac_capabilityrv",
-				    WMESGLEN) == 0)
-					asleep = true;
+		ATF_REQUIRE((kp = malloc(len)) != NULL);
+		ATF_REQUIRE(sysctl(mib, 4, kp, &len, NULL, 0) == 0);
+		for (size_t i = 0; i < len / sizeof(*kp); i++)
+			if (kp[i].ki_tid == tid &&
+			    strncmp(kp[i].ki_wmesg, wmesg, WMESGLEN) == 0)
+				asleep = true;
 		free(kp);
 		if (!asleep)
 			sleep_ms(1);
@@ -375,11 +381,28 @@ mock_switchboard_thread(void *arg)
 	struct svc_reply reply;
 	uint64_t token;
 	int identity, private_fd, session[2];
+	char byte;
 
+	if (m->mode == MOCK_FULL_ROUTE) {
+		/* The client is waiting for room: make some, one at a time. */
+		wait_client_asleep(m->client_tid, "kqread");
+		for (; m->queued > 0; m->queued--)
+			if (mock_recv(m->route, &byte, sizeof(byte), NULL,
+			    NULL) != 1)
+				return (NULL);
+	}
 	if (mock_recv(m->route, &reg, sizeof(reg), &private_fd, NULL) !=
 	    (int)sizeof(reg) || private_fd < 0)
 		return (NULL);
 	if (m->mode == MOCK_REJECT_REGISTRATION) {
+		(void)close(private_fd);
+		return (NULL);
+	}
+	if (m->mode == MOCK_REFUSE_REGISTRATION) {
+		ack.op = SVC_OP_REGISTER_LOOKUP;
+		ack.status = m->status;
+		ack.magic = 0;
+		(void)mock_send(private_fd, &ack, sizeof(ack), NULL, 0);
 		(void)close(private_fd);
 		return (NULL);
 	}
@@ -395,10 +418,18 @@ mock_switchboard_thread(void *arg)
 	if (identity >= 0)
 		(void)close(identity);
 	if (m->mode == MOCK_SIGNAL_THEN_ANSWER) {
-		wait_client_asleep(m->client_tid);
+		wait_client_asleep(m->client_tid, RECV_WMESG);
+		/* The PCATCH sleep is over before pthread_kill() returns. */
 		(void)pthread_kill(m->client, SIGUSR1);
-		/* Let the client take the signal before the answer arrives. */
-		sleep_ms(100);
+	}
+	if (m->mode == MOCK_CANCEL) {
+		wait_client_asleep(m->client_tid, RECV_WMESG);
+		(void)pthread_cancel(m->client);
+		/* The cancelled lookup closes its private channel: EOF. */
+		m->closed_seen = mock_recv(private_fd, &reply, sizeof(reply),
+		    NULL, NULL) == 0;
+		(void)close(private_fd);
+		return (NULL);
 	}
 	sleep_ms(m->delay_ms);
 	memset(&reply, 0, sizeof(reply));
@@ -423,9 +454,9 @@ mock_switchboard_thread(void *arg)
 }
 
 static void
-mock_start(struct mock_switchboard *m, enum mock_mode mode, unsigned delay_ms)
+mock_prepare(struct mock_switchboard *m, enum mock_mode mode,
+    unsigned delay_ms, int *clientp)
 {
-	int client;
 
 	memset(m, 0, sizeof(*m));
 	m->mode = mode;
@@ -434,11 +465,26 @@ mock_start(struct mock_switchboard *m, enum mock_mode mode, unsigned delay_ms)
 	m->client = pthread_self();
 	ATF_REQUIRE_EQ(0, thr_self(&m->client_tid));
 	isolate_ambient_lookup();
-	ATF_REQUIRE_EQ(0, create_channel_pair(&client, &m->route));
-	ATF_REQUIRE_EQ(0, service_install_ambient_lookup(client));
-	(void)close(client);
+	ATF_REQUIRE_EQ(0, create_channel_pair(clientp, &m->route));
+	ATF_REQUIRE_EQ(0, service_install_ambient_lookup(*clientp));
+}
+
+static void
+mock_run(struct mock_switchboard *m)
+{
+
 	ATF_REQUIRE_EQ(0, pthread_create(&m->thread, NULL,
 	    mock_switchboard_thread, m));
+}
+
+static void
+mock_start(struct mock_switchboard *m, enum mock_mode mode, unsigned delay_ms)
+{
+	int client;
+
+	mock_prepare(m, mode, delay_ms, &client);
+	(void)close(client);
+	mock_run(m);
 }
 
 static void
@@ -616,6 +662,111 @@ ATF_TC_BODY(signal_without_sa_restart_eintr, tc)
 	mock_finish(&m);
 }
 
+
+ATF_TC(registration_refusal_errno);
+ATF_TC_HEAD(registration_refusal_errno, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a registration switchboard refuses "
+	    "with an errno fails with that errno");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(registration_refusal_errno, tc)
+{
+	struct mock_switchboard m;
+	int fd;
+
+	mock_start(&m, MOCK_REFUSE_REGISTRATION, 0);
+	m.status = ENFILE;
+	fd = -1;
+	ATF_CHECK_EQ(-1, service_connect_ambient("org.test.refused", &fd));
+	ATF_CHECK_EQ_MSG(ENFILE, errno, "errno %d (%s)", errno,
+	    strerror(errno));
+	mock_finish(&m);
+}
+
+struct cancel_lookup {
+	struct mock_switchboard	*m;
+	int			 fd;
+};
+
+static void *
+cancel_lookup_thread(void *arg)
+{
+	struct cancel_lookup *c = arg;
+
+	c->m->client = pthread_self();
+	(void)thr_self(&c->m->client_tid);
+	mock_run(c->m);
+	(void)service_connect_ambient("org.test.cancelled", &c->fd);
+	return (NULL);
+}
+
+ATF_TC(lookup_cancellation_closes_channel);
+ATF_TC_HEAD(lookup_cancellation_closes_channel, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a thread cancelled while it waits for "
+	    "the answer is cancelled (no EINTR return) and closes its "
+	    "private channel");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(lookup_cancellation_closes_channel, tc)
+{
+	struct mock_switchboard m;
+	struct cancel_lookup c;
+	pthread_t thread;
+	void *result;
+	int client;
+
+	mock_prepare(&m, MOCK_CANCEL, 0, &client);
+	(void)close(client);
+	c.m = &m;
+	c.fd = -1;
+	ATF_REQUIRE_EQ(0, pthread_create(&thread, NULL, cancel_lookup_thread,
+	    &c));
+	ATF_REQUIRE_EQ(0, pthread_join(thread, &result));
+	ATF_CHECK(result == PTHREAD_CANCELED);
+	ATF_CHECK_EQ(-1, c.fd);
+	mock_finish(&m);
+	ATF_CHECK_MSG(m.closed_seen, "the private channel stayed open");
+}
+
+ATF_TC(full_route_queue_waited_out);
+ATF_TC_HEAD(full_route_queue_waited_out, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a registration that finds the route's "
+	    "queue full waits for room, then completes");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(full_route_queue_waited_out, tc)
+{
+	struct mac_capability_sendmsg_args send;
+	struct mock_switchboard m;
+	int client, fd;
+	char byte = 0;
+
+	mock_prepare(&m, MOCK_FULL_ROUTE, 0, &client);
+	/* Fill switchboard's side of the route until the kernel says EAGAIN. */
+	for (;;) {
+		memset(&send, 0, sizeof(send));
+		send.payload = &byte;
+		send.payload_len = sizeof(byte);
+		if (ioctl(client, MAC_CAPABILITY_SENDMSG, &send) == -1)
+			break;
+		m.queued++;
+	}
+	ATF_REQUIRE_EQ_MSG(EAGAIN, errno, "filling the route: %s",
+	    strerror(errno));
+	ATF_REQUIRE(m.queued > 0);
+	(void)close(client);
+	mock_run(&m);
+	fd = -1;
+	ATF_CHECK_EQ_MSG(0, service_connect_ambient("org.test.full", &fd),
+	    "lookup failed: %s", strerror(errno));
+	if (fd >= 0)
+		(void)close(fd);
+	mock_finish(&m);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -629,5 +780,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, registration_refused_resets);
 	ATF_TP_ADD_TC(tp, signal_sa_restart_restarts);
 	ATF_TP_ADD_TC(tp, signal_without_sa_restart_eintr);
+	ATF_TP_ADD_TC(tp, registration_refusal_errno);
+	ATF_TP_ADD_TC(tp, lookup_cancellation_closes_channel);
+	ATF_TP_ADD_TC(tp, full_route_queue_waited_out);
 	return (atf_no_error());
 }
