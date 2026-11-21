@@ -75,6 +75,10 @@ PLAIN_TESTS_C=	\
 	test_edge_cases \
 	test_passive_mode \
 	test_memory_pressure \
+	test_idle_pins \
+	test_idle_gate \
+	test_idle_storm \
+	test_identity_pins \
 	test_stress \
 	rename_concurrent \
 	signal_concurrent
@@ -93,6 +97,9 @@ SRCS.test_nested_descendants=	test_nested_descendants.c liboes.c
 # writable object and dq_serve_file() answers it from a backing file.
 CFLAGS.test_hook_coverage+=	-I${SRCTOP}/lib/libdq
 LIBADD.test_hook_coverage+=	dq
+
+# libmemstat(3) counts the allocations an idle OES must not make.
+LIBADD.test_idle_pins+=	memstat
 
 # jail_setv(3) for the jailed subjects.
 LIBADD.test_jail_pins+=	jail

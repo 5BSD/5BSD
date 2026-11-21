@@ -12,6 +12,7 @@
  */
 
 #include <sys/param.h>
+#include <sys/refcount.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/malloc.h>
@@ -116,8 +117,10 @@ abac_label_alloc(int flags)
 		return (NULL);
 
 	vl = uma_zalloc(abac_zone, flags | M_ZERO);
-	if (vl != NULL)
+	if (vl != NULL) {
+		refcount_init(&vl->vl_refs, 1);
 		atomic_add_64(&abac_labels_allocated, 1);
+	}
 
 	return (vl);
 }
@@ -127,11 +130,52 @@ abac_label_alloc(int flags)
  *
  * @vl: Label to free (may be NULL)
  */
+/*
+ * Labels of credentials, pipes and sockets are shared: a copy of a
+ * credential and every pipe or socket it creates hold its label, and a
+ * shared label is never modified (a relabel replaces the pointer).  An
+ * object nobody labelled has no label at all (NULL slot), which every
+ * reader takes as the default label, type=unlabeled.  abac_label_free()
+ * drops one hold and frees the label with the last.
+ */
+void
+abac_label_hold(struct abac_label *vl)
+{
+
+	if (vl != NULL && vl != ABAC_LABEL_NEEDS_LOAD)
+		refcount_acquire(&vl->vl_refs);
+}
+
+/* Point slot of dst at vl (held), dropping what it held. */
+void
+abac_label_share(struct label *dst, int slot, struct abac_label *vl)
+{
+	struct abac_label *old;
+
+	old = (struct abac_label *)mac_label_get(dst, slot);
+	abac_label_hold(vl);
+	mac_label_set(dst, slot, (intptr_t)vl);
+	abac_label_free(old);
+}
+
+/* Empty a label in place, keeping its holders. */
+void
+abac_label_clear(struct abac_label *vl)
+{
+	u_int refs;
+
+	refs = vl->vl_refs;
+	memset(vl, 0, sizeof(*vl));
+	vl->vl_refs = refs;
+}
+
 void
 abac_label_free(struct abac_label *vl)
 {
 
-	if (vl == NULL)
+	if (vl == NULL || vl == ABAC_LABEL_NEEDS_LOAD)
+		return;
+	if (!refcount_release(&vl->vl_refs))
 		return;
 
 	/* Zone not initialized - shouldn't happen but be safe */
@@ -284,7 +328,7 @@ abac_label_parse(const char *str, size_t len, struct abac_label *vl)
 	return (0);
 
 fail:
-	memset(vl, 0, sizeof(*vl));
+	abac_label_clear(vl);
 	atomic_add_64(&abac_parse_errors, 1);
 	return (error);
 }
@@ -299,10 +343,14 @@ void
 abac_label_copy(const struct abac_label *src, struct abac_label *dst)
 {
 
+	u_int refs;
+
 	if (src == NULL || dst == NULL)
 		return;
 
+	refs = dst->vl_refs;
 	memcpy(dst, src, sizeof(*dst));
+	dst->vl_refs = refs;
 }
 
 /*
@@ -318,7 +366,7 @@ abac_label_set_default(struct abac_label *vl, bool is_subject)
 	if (vl == NULL)
 		return;
 
-	memset(vl, 0, sizeof(*vl));
+	abac_label_clear(vl);
 
 	/*
 	 * Both subjects (processes) and objects (files) get the same

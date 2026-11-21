@@ -451,6 +451,29 @@ oes_pending_alloc(oes_event_type_t event, struct proc *p)
 	return (oes_pending_init(ep, event, p));
 }
 
+/*
+ * The exit event of p, filled under p's process lock: oes_pending_init()
+ * only tries for the lock and without it leaves the credential fields zero.
+ * The buffer is allocated and zeroed before the lock is taken.  *xexitp
+ * gets p_xexit, read under the same hold.
+ */
+struct oes_pending *
+oes_pending_alloc_exit(struct proc *p, int *xexitp)
+{
+	struct oes_pending *ep;
+	size_t alloc_size;
+
+	alloc_size = offsetof(struct oes_pending, ep_msg) + OES_MSG_MAX_SIZE;
+	ep = malloc(alloc_size, M_OES, M_NOWAIT | M_ZERO);
+	if (ep == NULL)
+		return (NULL);
+	PROC_LOCK(p);
+	*xexitp = p->p_xexit;
+	ep = oes_pending_init(ep, OES_EVENT_NOTIFY_EXIT, p);
+	PROC_UNLOCK(p);
+	return (ep);
+}
+
 struct oes_pending *
 oes_pending_alloc_signal(struct proc *p)
 {

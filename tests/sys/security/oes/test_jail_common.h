@@ -12,6 +12,7 @@
 
 #include <sys/param.h>
 #include <sys/jail.h>
+#include <sys/sysctl.h>
 #include <sys/uio.h>
 
 #include <jail.h>
@@ -263,11 +264,21 @@ jt_get_scope(int fd)
 #define JT_LOAD_MAXCLIENTS	48
 /*
  * What must end under load is bounded by the kernel in deliveries, two
- * rounds of at most OES_DEFER_MAX (16384) each, not in time.  The load
+ * rounds of at most security.oes.defer_max each, not in time.  The load
  * measures how many events the delivery thread gets through in a second
  * and allows four times what that bound then takes, 20 seconds at least.
  */
-#define JT_LOAD_BOUND_EVENTS	(2 * 16384)
+static inline long
+jt_defer_max(void)
+{
+	u_int v;
+	size_t len;
+
+	len = sizeof(v);
+	if (sysctlbyname("security.oes.defer_max", &v, &len, NULL, 0) != 0)
+		return (-1);
+	return ((long)v);
+}
 #define JT_LOAD_MIN_MS		20000
 
 struct jt_load {
@@ -421,7 +432,15 @@ full:
 	    (uint64_t)jt_elapsed_ms(&start));
 	if (l->rate < 1)
 		l->rate = 1;
-	l->limit_ms = 4L * JT_LOAD_BOUND_EVENTS * 1000 / l->rate;
+	if (jt_defer_max() < 0) {
+		printf("    security.oes.defer_max: %s\n", strerror(errno));
+		goto fail;
+	}
+	if (jt_defer_max() == 0) {
+		printf("    security.oes.defer_max is 0\n");
+		goto fail;
+	}
+	l->limit_ms = 4L * 2 * jt_defer_max() * 1000 / l->rate;
 	if (l->limit_ms < JT_LOAD_MIN_MS)
 		l->limit_ms = JT_LOAD_MIN_MS;
 	printf("    deferred queue full with %d unread clients; %ld "
