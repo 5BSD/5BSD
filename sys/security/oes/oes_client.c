@@ -491,9 +491,9 @@ oes_process_is_reader(const oes_process_t *ep)
  * on the old one (review R2).  So the entry is live while p_ucred or a
  * thread's credential still carries its execution.
  *
- * Another thread's credential is read as td_realucred: it changes only in
- * crcowsync() under PROC_LOCK, held here, and lags after an exec as
- * td_ucred does.  td_ucred itself must not be read: a thread swaps it
+ * Another thread's credential is read as td_realucred: while the thread is
+ * on p_threads it changes only in crcowsync() under PROC_LOCK, held here,
+ * and it lags after an exec as td_ucred does.  td_ucred itself must not be read: a thread swaps it
  * without the lock for a temporary override (access(2) with a real uid,
  * NFS and NLM requests) and frees the override afterwards.
  */

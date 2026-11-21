@@ -860,16 +860,6 @@ ATF_TC_CLEANUP(n15_exec_rejoin_deferred, tc)
 	(void)defer_hold(0);
 }
 
-/*
- * Review R1: a join that meets a dead reader's entry must not wait for the
- * deferred-delivery task.  The task is stalled (DEFER_HOLD 2, which no join
- * releases) with a dead reader's events still queued; a new reader joins.
- * Before the fix the join waited for the whole task (taskqueue_drain()),
- * here for ever.  After it the join returns at once and keeps the dead
- * entry until its queued events are delivered, so they still do not reach
- * its client (review D1); a join after that delivery drops it
- * (OES_IOC_TEST_READER_ENTRIES).
- */
 /* Join fd, received over sock, and say so on done. */
 static int
 r1_joiner(int sock, int done)
@@ -896,7 +886,7 @@ reader_entries(int fd, pid_t pid)
 	return ((int)a.otre_count);
 }
 
-/* A process that joins fd (passed over sock) and exits. */
+/* A process that joins fd, passed to it over a socket, and exits. */
 static pid_t
 join_and_exit(int fd)
 {
@@ -923,6 +913,17 @@ join_and_exit(int fd)
 	close(done[0]);
 	return (k);
 }
+
+/*
+ * Review R1: a join that meets a dead reader's entry must not wait for the
+ * deferred-delivery task.  The task is stalled (DEFER_HOLD 2, which no join
+ * releases) with a dead reader's events still queued; a new reader joins.
+ * Before the fix the join waited for the whole task (taskqueue_drain()),
+ * here for ever.  After it the join returns at once and keeps the dead
+ * entry until its queued events are delivered, so they still do not reach
+ * its client (review D1); a join after that delivery drops it
+ * (OES_IOC_TEST_READER_ENTRIES).
+ */
 ATF_TC_WITH_CLEANUP(n18_join_does_not_wait_for_delivery);
 ATF_TC_HEAD(n18_join_does_not_wait_for_delivery, tc)
 {
