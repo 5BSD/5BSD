@@ -51,6 +51,7 @@ ATF_TESTS_C+=	dq_owner_test
 ATF_TESTS_C+=	dq_swap_test
 ATF_TESTS_C+=	dq_restricted_test
 ATF_TESTS_C+=	dq_standing_test
+ATF_TESTS_C+=	dq_ptrace_test
 ATF_TESTS_SH+=	dq_dtrace_test
 ATF_TESTS_SH+=	dq_testopen_test
 ATF_TESTS_SH+=	dq_oracle_test

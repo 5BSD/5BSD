@@ -900,6 +900,26 @@ Both waits stay in this form when the single-threading ends first (the
 .Xr execve 2
 failed): the call returns only with the answer, the deadline or the
 process's death.
+A debugger's stop: a transparent
+.Dv PT_ATTACH
+.Pq Va debug.ptrace_attach_transparent
+stops a thread where it sleeps only in a wait that catches signals (an
+object minted
+.Dv DQ_PF_INTR ,
+a queue with
+.Dv DQ_QF_INTR ,
+a lock wait): the wait keeps its operation, the controller sees no
+INTERRUPT, and the call returns the answer after the detach.
+The other waits defer stops, as a disk wait does, so the stop completes
+when they end; the signal mask plays no part in it.
+A traced process stays stopped with a
+.Dv SIGKILL
+pending until the debugger continues or detaches it; a received
+mutation's wait that the
+.Dv SIGKILL
+wakes ends with
+.Er EINTR ,
+and the thread stops at the user boundary until then.
 The wait is event-driven, with no polling: it sleeps with every signal
 but
 .Dv SIGKILL
