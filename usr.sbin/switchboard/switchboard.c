@@ -21,15 +21,19 @@
  *   7. Enter event loop
  */
 
+#include <sys/cap_authority.h>
 #include <sys/capsicum.h>
 #include <sys/event.h>
 #include <sys/mount.h>
 #include <sys/sysctl.h>
+#include <sys/syscall.h>
+#include <sys/user.h>
 #include <sys/wait.h>
 
 #include <dev/mac_capability/mac_capability_capprotect_proto.h>
 #include <dev/mac_capability/mac_capability_isolation_proto.h>
 
+#include <err.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
@@ -312,6 +316,39 @@ main(int argc, char *argv[])
 	struct kevent kev;
 	const char *channel_fd_str, *s;
 	int ch;
+
+	/*
+	 * Capsule's Core authority only carried the Core role across this
+	 * exec (P2_CAP_EXCLUDED is set now and stays until our next exec;
+	 * cap_process(2) BASE EXCLUSION).  Drop it, so the children we fork
+	 * carry no authority until they install their unit's: a Capability
+	 * Broker attaching a parked launch child is refused by the authority
+	 * debug check while the child holds ours.  rtld has already taken its
+	 * library directories as descriptors.
+	 */
+	if (syscall(SYS_cap_process, CAP_AUTH_CLEAR, -1, 0, NULL) == -1)
+		err(1, "drop launch authority");
+	/*
+	 * Started by PID 1, we must be excluded.  PID 1 never starts us
+	 * without an issuer and a Core authority, and it executes the image
+	 * descriptor that authority pins (fexecve), so this fails only when
+	 * the kernel refused the Core role at exec.  Say so loudly (review
+	 * D3).
+	 */
+	if (getppid() == 1) {
+		struct kinfo_proc kp;
+		int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, 0 };
+		size_t kplen = sizeof(kp);
+
+		mib[3] = getpid();
+		if (sysctl(mib, 4, &kp, &kplen, NULL, 0) == 0 &&
+		    (kp.ki_flag2 & P2_CAP_EXCLUDED) == 0)
+			syslog(LOG_CRIT, "switchboard is not excluded from OES "
+			    "and Capability Brokers (cap_process(2) BASE "
+			    "EXCLUSION): the Core role was refused at exec "
+			    "(traced, ktraced, no_new_privs, or the image was "
+			    "not the pinned one)");
+	}
 
 	/* Present as "SwitchBoard" in ps/top, distinct from lowercase base daemons. */
 	setproctitle("-SwitchBoard");

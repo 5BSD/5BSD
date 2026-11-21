@@ -15,6 +15,7 @@
 #include <sys/param.h>
 #include <sys/kernel.h>
 #include <sys/counter.h>
+#include <sys/epoch.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
 #include <sys/rmlock.h>
@@ -62,6 +63,17 @@ struct oes_softc {
 	struct mtx		sc_defer_mtx;	/* SPIN: guards sc_defer */
 	TAILQ_HEAD(, oes_pending) sc_defer;	/* Deferred NOSLEEP events */
 	uint32_t		sc_defer_count;	/* Deferred queue depth */
+	/*
+	 * Delivery generation (the reader sets' drop rule,
+	 * oes_client_join()): events queued so far, numbered in queue
+	 * order (advanced under sc_defer_mtx), and events whose delivery
+	 * has completed (advanced by the task alone).  The queue is FIFO
+	 * with one consumer, so sc_defer_done >= n means the first n
+	 * events queued have been delivered.  Atomic 64-bit words: read
+	 * without the lock.
+	 */
+	uint64_t		sc_defer_queued;
+	uint64_t		sc_defer_done;
 	struct task		sc_defer_task;	/* Deferred delivery task */
 	struct taskqueue	*sc_defer_tq;	/* Dedicated delivery thread */
 
@@ -82,6 +94,11 @@ struct oes_softc {
 	counter_u64_t		sc_jail_filtered; /* Dropped before allocation */
 	counter_u64_t		sc_jail_filtered_auth; /* AUTH events of those */
 
+	/* Base exclusion (cap_process(2) BASE EXCLUSION). */
+	counter_u64_t		sc_excluded_skipped;	/* No event: excluded subject */
+	counter_u64_t		sc_excluded_invalidations; /* Cache drop, no event */
+	counter_u64_t		sc_exec_fail_open;	/* Launcher exec events */
+
 	/*
 	 * Idle gating (oes_mac.c).  sc_gate_sx serializes the per-event
 	 * subscriber counts and oes_gate_reconcile(), which recomputes from
@@ -98,6 +115,22 @@ struct oes_softc {
 #define	OES_DEFER_MAX		16384
 
 extern struct oes_softc oes_softc;
+
+/*
+ * Base exclusion: is p excluded from OES (P2_CAP_EXCLUDED; Capsule,
+ * SwitchBoard, Core units)?  One load; p_flag2 of the acting process
+ * changes only at its own exec, a trace start or an attach of a pre-exec
+ * child, so a stale read costs at most one event more or fewer at the
+ * moment of the change.
+ */
+static __inline bool
+oes_proc_excluded(struct proc *p)
+{
+
+	return (__predict_false(p != NULL &&
+	    (atomic_load_int(&p->p_flag2) & P2_CAP_EXCLUDED) != 0));
+}
+#define	oes_subject_excluded()	oes_proc_excluded(curthread->td_proc)
 
 #define OES_LOCK()		mtx_lock(&oes_softc.sc_mtx)
 #define OES_UNLOCK()		mtx_unlock(&oes_softc.sc_mtx)
@@ -139,6 +172,51 @@ LIST_HEAD(oes_cache_bucket, oes_cache_entry);
 TAILQ_HEAD(oes_cache_lru, oes_cache_entry);
 
 /*
+ * The processes that act as a client: its readers (oes(4), "A client's own
+ * processes"; oes-no-self-events.md).  An event whose subject is a reader
+ * is never delivered to that client.  A process joins at open (the opener),
+ * at read, write (an AUTH response), poll, kevent registration and
+ * OES_IOC_JOIN; it is keyed by (pid, genid, exec_id), so pid reuse cannot
+ * alias and membership ends at exec.
+ *
+ * Bound: every entry is a process that did a consuming operation on this
+ * client's open file through a descriptor of it, in the image it ran then.
+ * An entry whose process has exited or exec'd (dead) is kept until the
+ * events queued for deferred delivery before it was seen dead have been
+ * delivered, so that they are still matched against it (review D1), and
+ * is dropped by the first join after that (or_drop_after; no join waits
+ * for delivery).  So ors_count is at most the number of distinct processes
+ * that consumed the file since their last exec, plus the dead entries
+ * seen by the last join whose events were still queued then; every join
+ * adds at most one entry.  There is no fixed capacity: each join replaces
+ * the array by one sized for the kept entries plus the caller (M_WAITOK on
+ * the reader path, never in dispatch); a join happens once per process and
+ * image.
+ *
+ * Published with atomic_store_rel_ptr() under ec_readers_lock and read with
+ * atomic_load_acq_ptr() inside global_epoch_preempt; a replaced array is freed
+ * by epoch_call().
+ */
+struct oes_reader {
+	pid_t			or_pid;
+	bool			or_answer;	/* can answer AUTH: FWRITE and
+						   CAP_WRITE on its descriptor */
+	uint64_t		or_genid;
+	uint64_t		or_exec_id;
+	/*
+	 * 0 while the process is live.  Once a join sees it dead: the
+	 * sc_defer_queued value then.  The entry is dropped when
+	 * sc_defer_done reaches it.
+	 */
+	uint64_t		or_drop_after;
+};
+struct oes_readers {
+	struct epoch_context	ors_ctx;
+	u_int			ors_count;	/* entries, sorted by pid */
+	struct oes_reader	ors_r[];
+};
+
+/*
  * Per-client state (one per open())
  *
  * Each open() creates a new client with independent subscriptions,
@@ -148,6 +226,9 @@ struct oes_client {
 	LIST_ENTRY(oes_client)	ec_link;	/* Link in global list */
 	struct mtx		ec_mtx;		/* Protects this client */
 	uint64_t		ec_id;		/* Unique client ID */
+	struct oes_readers	*ec_readers;	/* Epoch-published; see above */
+	struct sx		ec_readers_lock; /* Joins only; before pfind's
+						    pid hash sx and PROC_LOCK */
 	pid_t			ec_owner_pid;	/* Owner pid (open()) */
 	uint64_t		ec_owner_genid;	/* Owner generation */
 	uint64_t		ec_scope_marker;	/* Inherited descendants marker */
@@ -171,7 +252,7 @@ struct oes_client {
 	 * the subscriptions and cache use last accounted.  sc_gate_sx.
 	 */
 	uint64_t		ec_gate_subs[4];
-	bool			ec_gate_cache;
+	u_int			ec_gate_cache;	/* 1: cache use published (sc_gate_sx) */
 	uint32_t		ec_mute_invert;	/* OES_MUTE_INVERT_* */
 
 	/* Event queue */
@@ -219,7 +300,7 @@ struct oes_client {
 
 /* Client flags */
 #define EC_FLAG_CLOSING		0x0001	/* Client is closing */
-#define EC_FLAG_MUTED_SELF	0x0002	/* Self-muted */
+/*	0x0002		   was EC_FLAG_MUTED_SELF (self-mute); free */
 #define EC_FLAG_MODE_SET	0x0004	/* Mode has been explicitly set */
 #define EC_FLAG_SCOPE_SETTING	0x0008	/* Scope credential update in flight */
 #define EC_FLAG_CACHE_USED	0x0010	/* Has added a cache entry; never cleared */
@@ -304,6 +385,9 @@ struct oes_pending {
 #define EP_FLAG_DELIVERED	0x0002	/* Delivered to userspace */
 #define EP_FLAG_EXPIRED		0x0004	/* Deadline expired */
 #define EP_FLAG_SIGNAL_RESERVE	0x0008	/* Allocated from signal capture zone */
+#define EP_FLAG_FAIL_OPEN	0x0010	/* Strict knobs and fail-closed deadlines
+					   do not deny this event (an exec by
+					   an excluded launcher) */
 
 /*
  * Muted process entry
@@ -644,8 +728,27 @@ int	oes_mac_policy_init(void);
 int	oes_mac_attach(void);
 void	oes_gate_reconcile(void);
 void	oes_gate_client_update(struct oes_client *ec, bool gone);
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+int	oes_client_test_reader_entries(struct oes_client *ec,
+	    struct oes_test_reader_entries *a);
+#endif
+bool	oes_gate_cache_in_use(void);
 void	oes_gate_set_strict(int *knob, int value);
 uint64_t oes_proc_get_exec_id(struct proc *p);
+void	oes_readers_enter(struct epoch_tracker *);
+void	oes_readers_exit(struct epoch_tracker *);
+#define	OES_READER_NONE		0
+#define	OES_READER_READ		1	/* a reader that cannot answer */
+#define	OES_READER_ANSWER	2	/* a reader that can answer AUTH */
+int	oes_client_is_reader(struct oes_client *, const oes_process_t *);
+#define	OES_JOIN_READ		0	/* read, poll, kevent */
+#define	OES_JOIN_ANSWER		1	/* write(2) of a response */
+#define	OES_JOIN_CHECK		2	/* open, OES_IOC_JOIN */
+uint64_t oes_proc_genid_unlocked(struct proc *);
+uint64_t oes_cred_get_exec_id(struct ucred *);
+void	oes_client_join(struct oes_client *, struct thread *, struct file *,
+	    int);
+bool	oes_process_is_reader(const oes_process_t *);
 const char *oes_proc_get_exec_path(struct proc *p, uint32_t *meta_flags);
 
 /*
@@ -685,6 +788,13 @@ void	oes_pending_set_target_prison(struct oes_pending *ep,
  */
 SYSCTL_DECL(_security_oes);
 
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+/* Test kernels only: mac_capability_testissuer.c. */
+void	mac_capability_test_issuer_oes_defer_park(void);
+void	mac_capability_test_issuer_oes_gate_park(void);
+void	mac_capability_test_issuer_oes_gate_release(void);
+#endif
+
 extern int oes_debug;
 extern int oes_default_deadline;
 extern int oes_default_deadline_miss_mode;
@@ -695,7 +805,6 @@ extern int oes_max_clients;
 extern int oes_cache_max_entries;
 extern char oes_default_muted_paths[];
 extern char oes_default_muted_paths_literal[];
-extern int oes_default_self_mute;
 
 /*
  * Debug macros

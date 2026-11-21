@@ -84,6 +84,14 @@ read_events(int fd, int *unmount_seen, const char *expected_path)
 	}
 }
 
+/* In the actor: the unmount; its errno is the exit status. */
+static int
+unmount_test_fs(void *arg __unused)
+{
+
+	return (unmount(mountpoint, 0) == 0 ? 0 : errno);
+}
+
 int
 main(void)
 {
@@ -96,6 +104,7 @@ main(void)
 	int unmount_seen = 0;
 	struct pollfd pfd;
 	struct timespec start;
+	int status = 0;
 
 	printf("Testing NOTIFY_UNMOUNT event...\n");
 
@@ -133,16 +142,6 @@ main(void)
 		return (1);
 	}
 
-	/*
-	 * Clear the default self-mute so we can see our own unmount events.
-	 * (security.oes.default_self_mute=1 would otherwise block them.)
-	 */
-	if (ioctl(fd, OES_IOC_UNMUTE_ALL_PROCESSES, NULL) < 0) {
-		perror("OES_IOC_UNMUTE_ALL_PROCESSES");
-		close(fd);
-		return (1);
-	}
-
 	/* Create mountpoint */
 	(void)rmdir(mountpoint);
 	if (mkdir(mountpoint, 0755) < 0 && errno != EEXIST) {
@@ -159,9 +158,15 @@ main(void)
 		return (1);
 	}
 
-	/* Unmount - this should trigger the event */
-	if (unmount(mountpoint, 0) < 0) {
-		perror("unmount");
+	/*
+	 * Unmount - this should trigger the event.  An actor child unmounts:
+	 * the test opened the client, so its own events never reach it
+	 * (oes(4), "A client's own processes").
+	 */
+	if (test_in_child(unmount_test_fs, NULL, &status) < 0 ||
+	    !test_child_ok(status)) {
+		fprintf(stderr, "unmount: %s\n", WIFEXITED(status) ?
+		    strerror(WEXITSTATUS(status)) : "actor killed");
 		rmdir(mountpoint);
 		close(fd);
 		return (1);

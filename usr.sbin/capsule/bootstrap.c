@@ -15,12 +15,14 @@
  * enters single-user, saying "no authority issuer".
  */
 
+#include <sys/param.h>
 #include <sys/capsicum.h>
 #include <sys/cap_authority.h>
 #include <sys/syscall.h>
 #include <sys/event.h>
 #include <sys/procdesc.h>
 #include <sys/procctl.h>
+#include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/wait.h>
 
@@ -28,6 +30,7 @@
 #include <fcntl.h>
 #include <kenv.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -116,6 +119,18 @@ struct bootstrap_delegate_fds {
 	bool	rc_fastboot;	/* /etc/rc without autoboot (after single-user) */
 	int	issuer_next_error;	/* the next start's issuer failed, or 0 */
 	/*
+	 * The managed authority, constrained to service_manager with
+	 * CAP_AUTH_ROLE_CORE, that carries base exclusion across switchboard's
+	 * exec (cap_process(2) BASE EXCLUSION).  -1 when none was made.
+	 */
+	int	core_token;
+	/*
+	 * The service manager's image, opened O_VERIFY: the vnode the Core
+	 * authority pins.  The child executes this descriptor (fexecve), so
+	 * a binary replaced on disk after the pin is never what runs.
+	 */
+	int	core_image;
+	/*
 	 * Bundle-directory overrides forwarded to switchboard.  Captured from
 	 * capsule's environment in the parent (getenv is not async-signal-safe,
 	 * so it must not run in the post-fork child).  NULL when unset, which
@@ -151,8 +166,22 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 	char *env[20];
 	char *argv[2];
 	int nullfd, fd, safe_base;
-	int src_fds[8], dst_fds[8];
+	int src_fds[9], dst_fds[9], image_dst = -1;
 	unsigned envc, i, nfds;
+
+	/*
+	 * First: install the Core authority while its descriptor is still
+	 * here (the remapping below closes everything outside the reserved
+	 * slots).  It stays pending until the execve() at the end, and
+	 * nothing in between installs another.  This child of PID 1 is
+	 * excluded, so switchboard's exec of the pinned image keeps it.
+	 */
+	if (d->core_token >= 0) {
+		if (syscall(SYS_cap_process, CAP_AUTH_INSTALL, d->core_token, 0,
+		    NULL) == -1)
+			_exit(126);
+		(void)close(d->core_token);
+	}
 
 	/*
 	 * Redirect stdio to /dev/null.  In foreground mode, preserve
@@ -216,9 +245,14 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 		src_fds[nfds] = d->discovery_fd;
 		dst_fds[nfds++] = SWITCHBOARD_DISCOVERY_FD;
 	}
+	/* The pinned image, just above the reserved range, for fexecve(). */
+	if (d->core_image >= 0) {
+		image_dst = SWITCHBOARD_LAST_FD + 1;
+		src_fds[nfds] = d->core_image;
+		dst_fds[nfds++] = image_dst;
+	}
 
-
-	safe_base = SWITCHBOARD_LAST_FD + 1;
+	safe_base = (image_dst >= 0 ? image_dst : SWITCHBOARD_LAST_FD) + 1;
 	for (i = 0; i < nfds; i++) {
 		if (src_fds[i] < safe_base) {
 			fd = fcntl(src_fds[i], F_DUPFD, safe_base);
@@ -255,11 +289,19 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 			(void)close(fd);
 	}
 
-	/* Close everything above the reserved range. */
-	closefrom(SWITCHBOARD_LAST_FD + 1);
+	/* Close everything above the reserved range (and the image). */
+	closefrom(safe_base);
 
-	/* Permit this exec only; prevent propagation before manager startup. */
+	/*
+	 * Permit this exec only; prevent propagation before manager startup.
+	 * The image descriptor is close-on-exec: executing it consumes it.
+	 */
 	for (i = 0; i < nfds; i++) {
+		if (dst_fds[i] == image_dst) {
+			if (fcntl(image_dst, F_SETFD, FD_CLOEXEC) == -1)
+				_exit(126);
+			continue;
+		}
 		if (bootstrap_confine_manager_fd(dst_fds[i]) == -1)
 			_exit(126);
 	}
@@ -375,8 +417,107 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 		if (procctl(P_PID, getpid(), PROC_SPROTECT, &flags) == -1)
 			_exit(126);
 	}
-	execve(od.cfg.service_manager, argv, env);
+	if (image_dst >= 0)
+		fexecve(image_dst, argv, env);
+	else
+		execve(od.cfg.service_manager, argv, env);
 	_exit(127);
+}
+
+/*
+ * Q15 (rev 3 delta 3.4): with mac_veriexec enforcing, the O_VERIFY open of
+ * the service manager already refused an image outside the signed base
+ * manifest; without it, nothing distinguishes a replaced binary, and the
+ * grant says so, as switchboard does for each Core unit.
+ */
+static void
+bootstrap_core_verified_warning(const char *image_path)
+{
+	char state[64], *word, *rest;
+	size_t len = sizeof(state) - 1;
+	bool enforcing = false;
+
+	if (sysctlbyname("security.mac.veriexec.state", state, &len, NULL,
+	    0) == 0) {
+		state[len] = '\0';
+		rest = state;
+		while ((word = strsep(&rest, " ")) != NULL)
+			if (strcmp(word, "enforce") == 0)
+				enforcing = true;
+	}
+	if (!enforcing)
+		syslog(LOG_WARNING, "bootstrap: %s: Core role granted without "
+		    "Veriexec enforcement: image not verified against the base "
+		    "manifest", image_path);
+}
+
+/*
+ * Issue and constrain the managed authority that carries the Core role
+ * into switchboard's exec (cap_process(2) BASE EXCLUSION).  The image is
+ * opened O_VERIFY; library directories are the system ones, checked as
+ * switchboard checks its units' (authority.c set_loader_directories()).
+ * The token cannot be passed on (CAP_XFER_NONE).
+ */
+static int
+bootstrap_core_authority(int issuer, const char *image_path, int *tokenp,
+    int *imagep)
+{
+	static const char *const libdirs[] = { "/lib", "/usr/lib" };
+	struct cap_authority_spec spec = { .version = CAP_AUTH_VERSION,
+	    .kind = CAP_AUTH_MANAGED };
+	struct cap_authority_constraint c = { .flags = CAP_AUTH_ROLE_CORE,
+	    .nexec = 1 };
+	struct cap_authority_libdirs dirs = { .count = 0 };
+	struct stat st;
+	int image = -1, token = -1, saved, result = -1;
+	unsigned i;
+
+	token = syscall(SYS_cap_process, CAP_AUTH_ISSUE, issuer, 0, &spec);
+	if (token == -1)
+		goto out;
+	image = open(image_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_VERIFY);
+	if (image == -1)
+		goto out;
+	c.token_fd = token;
+	c.executable_fds[0] = image;
+	if (syscall(SYS_cap_process, CAP_AUTH_CONSTRAIN, issuer, 0, &c) == -1)
+		goto out;
+	bootstrap_core_verified_warning(image_path);
+	dirs.token_fd = token;
+	for (i = 0; i < nitems(libdirs); i++) {
+		int fd = open(libdirs[i], O_RDONLY | O_DIRECTORY | O_CLOEXEC |
+		    O_NOFOLLOW);
+
+		if (fd == -1)
+			goto out;
+		dirs.directory_fds[dirs.count++] = fd;
+		if (fstat(fd, &st) == -1)
+			goto out;
+		if (st.st_uid != 0 || (st.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+			errno = EPERM;
+			goto out;
+		}
+	}
+	if (syscall(SYS_cap_process, CAP_AUTH_SET_LIBDIRS, issuer, 0,
+	    &dirs) == -1)
+		goto out;
+	if (cap_xfer_limit(token, CAP_XFER_NONE) == -1)
+		goto out;
+	*tokenp = token;
+	token = -1;
+	*imagep = image;
+	image = -1;
+	result = 0;
+out:
+	saved = errno;
+	for (i = 0; i < dirs.count; i++)
+		close(dirs.directory_fds[i]);
+	if (image != -1)
+		close(image);
+	if (token != -1)
+		close(token);
+	errno = saved;
+	return (result);
 }
 
 /*
@@ -702,6 +843,8 @@ bootstrap_start(int kq)
 		    "on-demand attribution disabled");
 	}
 
+	dfds.core_token = -1;
+	dfds.core_image = -1;
 	dfds.authority_fd = bootstrap_issuer_take();
 	if (dfds.authority_fd < 0) {
 		close(capsule_end);
@@ -715,6 +858,28 @@ bootstrap_start(int kq)
 	}
 	dfds.issuer_next_error = bs.issuer_next_error;
 
+	/*
+	 * PID 1's start carries base exclusion across switchboard's exec: a
+	 * Core authority from the issuer just taken, pinning the image opened
+	 * now (each start opens it again).  Without it the start is refused,
+	 * as for a missing issuer; switchboard never runs unexcluded under
+	 * PID 1.  Only PID 1's fork chain can be excluded, so a test-local
+	 * Capsule makes no Core authority.
+	 */
+	if (getpid() == 1 && bootstrap_core_authority(dfds.authority_fd,
+	    od.cfg.service_manager, &dfds.core_token, &dfds.core_image) == -1) {
+		syslog(LOG_ERR, "bootstrap: core authority for switchboard: %m");
+		close(capsule_end);
+		close(child_end);
+		close(dfds.channel_svc_fd);
+		close(dfds.coalition_svc_fd);
+		close(dfds.capprotect_fd);
+		if (dfds.identity_fd >= 0)
+			close(dfds.identity_fd);
+		close(dfds.authority_fd);
+		return (-1);
+	}
+
 	/* The boot-long discovery route (see bs.discovery_fd). */
 	if (bootstrap_discovery_dup(&dfds.discovery_fd) == -1) {
 		close(capsule_end);
@@ -725,6 +890,10 @@ bootstrap_start(int kq)
 		if (dfds.identity_fd >= 0)
 			close(dfds.identity_fd);
 		close(dfds.authority_fd);
+		if (dfds.core_token >= 0)
+			close(dfds.core_token);
+		if (dfds.core_image >= 0)
+			close(dfds.core_image);
 		return (-1);
 	}
 	dfds.lookup_fd = dfds.discovery_fd >= 0 ? capsule_ambient_lookup() : -1;
@@ -768,6 +937,10 @@ bootstrap_start(int kq)
 			close(dfds.identity_fd);
 		if (dfds.authority_fd >= 0)
 			close(dfds.authority_fd);
+		if (dfds.core_token >= 0)
+			close(dfds.core_token);
+		if (dfds.core_image >= 0)
+			close(dfds.core_image);
 		if (dfds.discovery_fd >= 0)
 			close(dfds.discovery_fd);
 		return (-1);
@@ -784,6 +957,8 @@ bootstrap_start(int kq)
 		if (dfds.capprotect_fd >= 0) close(dfds.capprotect_fd);
 		if (dfds.identity_fd >= 0) close(dfds.identity_fd);
 		if (dfds.authority_fd >= 0) close(dfds.authority_fd);
+		if (dfds.core_token >= 0) close(dfds.core_token);
+		if (dfds.core_image >= 0) close(dfds.core_image);
 		if (dfds.discovery_fd >= 0) close(dfds.discovery_fd);
 		return (-1);
 	}
@@ -806,6 +981,10 @@ bootstrap_start(int kq)
 		close(dfds.identity_fd);
 	if (dfds.authority_fd >= 0)
 		close(dfds.authority_fd);
+	if (dfds.core_token >= 0)
+		close(dfds.core_token);
+	if (dfds.core_image >= 0)
+		close(dfds.core_image);
 	if (dfds.discovery_fd >= 0)
 		close(dfds.discovery_fd);
 

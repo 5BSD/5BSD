@@ -11,6 +11,7 @@
  */
 
 #include "opt_dq.h"
+#include "opt_mac_capability.h"
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -107,6 +108,35 @@ int oes_max_clients = 64;
 SYSCTL_INT(_security_oes, OID_AUTO, max_clients, CTLFLAG_RW,
     &oes_max_clients, 0, "Maximum number of concurrent clients");
 
+/*
+ * Values that tell whether, and how, OES is being watched: as private as
+ * the device (PRIV_DRIVER, as oes_open()).  priv_check() refuses a jailed
+ * caller as well.
+ */
+static int
+oes_sysctl_private(struct sysctl_req *req)
+{
+
+	return (priv_check(req->td, PRIV_DRIVER));
+}
+
+/* The number of clients open now. */
+static int
+oes_sysctl_clients(SYSCTL_HANDLER_ARGS)
+{
+	u_int n;
+	int error;
+
+	error = oes_sysctl_private(req);
+	if (error != 0)
+		return (error);
+	n = atomic_load_int(&oes_softc.sc_nclients);
+	return (sysctl_handle_int(oidp, &n, 0, req));
+}
+SYSCTL_PROC(_security_oes, OID_AUTO, clients,
+    CTLTYPE_UINT | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0, oes_sysctl_clients,
+    "IU", "Clients open now (PRIV_DRIVER)");
+
 SYSCTL_UINT(_security_oes, OID_AUTO, defer_max, CTLFLAG_RD,
     SYSCTL_NULL_UINT_PTR, OES_DEFER_MAX,
     "Events the deferred-delivery queue holds before it discards "
@@ -140,6 +170,35 @@ SYSCTL_PROC(_security_oes, OID_AUTO, jail_filtered_auth,
     CTLTYPE_U64 | CTLFLAG_RD | CTLFLAG_MPSAFE,
     &oes_softc.sc_jail_filtered_auth, 0, oes_sysctl_jail_counter, "QU",
     "AUTH events among security.oes.jail_filtered");
+/*
+ * Base-exclusion counters: they move only while a client is open, so they
+ * are as private as the client count (oes_sysctl_private()).
+ */
+static int
+oes_sysctl_private_counter(SYSCTL_HANDLER_ARGS)
+{
+	int error;
+
+	error = oes_sysctl_private(req);
+	if (error != 0)
+		return (error);
+	return (oes_sysctl_jail_counter(oidp, arg1, arg2, req));
+}
+
+SYSCTL_PROC(_security_oes, OID_AUTO, excluded_skipped,
+    CTLTYPE_U64 | CTLFLAG_RD | CTLFLAG_MPSAFE,
+    &oes_softc.sc_excluded_skipped, 0, oes_sysctl_private_counter, "QU",
+    "Events not produced because the acting process is excluded "
+    "(cap_process(2) BASE EXCLUSION)");
+SYSCTL_PROC(_security_oes, OID_AUTO, excluded_invalidations,
+    CTLTYPE_U64 | CTLFLAG_RD | CTLFLAG_MPSAFE,
+    &oes_softc.sc_excluded_invalidations, 0, oes_sysctl_private_counter, "QU",
+    "Decision-cache invalidations by excluded processes, without an event");
+SYSCTL_PROC(_security_oes, OID_AUTO, exec_fail_open,
+    CTLTYPE_U64 | CTLFLAG_RD | CTLFLAG_MPSAFE,
+    &oes_softc.sc_exec_fail_open, 0, oes_sysctl_private_counter, "QU",
+    "Exec events of programs started by excluded processes, delivered "
+    "without strict denial");
 
 /*
  * Default muting configuration
@@ -157,10 +216,6 @@ char oes_default_muted_paths_literal[1024] = "";
 SYSCTL_STRING(_security_oes, OID_AUTO, default_muted_paths_literal, CTLFLAG_RW,
     oes_default_muted_paths_literal, sizeof(oes_default_muted_paths_literal),
     "Colon-separated paths to mute by default (literal match)");
-
-int oes_default_self_mute = 1;
-SYSCTL_INT(_security_oes, OID_AUTO, default_self_mute, CTLFLAG_RW,
-    &oes_default_self_mute, 0, "Automatically self-mute new clients (1=yes)");
 
 /*
  * Device operations
@@ -275,7 +330,7 @@ static struct filterops oes_rfiltops = {
  * event queue, and configuration.
  */
 static int
-oes_open(struct cdev *dev __unused, int oflags __unused, int devtype __unused,
+oes_open(struct cdev *dev __unused, int oflags, int devtype __unused,
     struct thread *td)
 {
 	struct oes_client *ec;
@@ -324,16 +379,9 @@ oes_open(struct cdev *dev __unused, int oflags __unused, int devtype __unused,
 	ec->ec_id = oes_softc.sc_next_client_id++;
 	OES_UNLOCK();
 
-	/* Record owner identity for self-mute */
-	PROC_LOCK(td->td_proc);
+	/* The opener's identity anchors OES_SCOPE_DESCENDANTS. */
 	ec->ec_owner_pid = td->td_proc->p_pid;
-	if (td->td_proc->p_stats != NULL) {
-		/* Must match oes_proc_genid() formula: sec*1000000 + usec */
-		ec->ec_owner_genid =
-		    (uint64_t)td->td_proc->p_stats->p_start.tv_sec * 1000000ULL +
-		    (uint64_t)td->td_proc->p_stats->p_start.tv_usec;
-	}
-	PROC_UNLOCK(td->td_proc);
+	ec->ec_owner_genid = oes_proc_genid_unlocked(td->td_proc);
 
 	/* Store client in cdevpriv for later retrieval */
 	error = devfs_set_cdevpriv(ec, oes_client_dtor);
@@ -345,6 +393,17 @@ oes_open(struct cdev *dev __unused, int oflags __unused, int devtype __unused,
 		OES_UNLOCK();
 		return (error);
 	}
+
+	/*
+	 * The opener acts as the client: it is its first reader, before the
+	 * client can receive anything (oes(4), "A client's own processes").
+	 */
+	/*
+	 * The descriptor is not installed yet, so its rights cannot be read;
+	 * a fresh open carries every right, and FWRITE decides.
+	 */
+	oes_client_join(ec, td, NULL, (oflags & FWRITE) != 0 ?
+	    OES_JOIN_ANSWER : OES_JOIN_READ);
 
 	/* Add to global client list */
 	OES_LOCK();
@@ -449,6 +508,7 @@ oes_read(struct cdev *dev __unused, struct uio *uio, int ioflag)
 
 	if (uio->uio_resid < sizeof(oes_message_t))
 		return (EINVAL);
+	oes_client_join(ec, curthread, curthread->td_fpop, OES_JOIN_READ);
 
 	EC_LOCK(ec);
 
@@ -608,6 +668,7 @@ oes_write(struct cdev *dev, struct uio *uio, int ioflag)
 	error = devfs_get_cdevpriv((void **)&ec);
 	if (error)
 		return (error);
+	oes_client_join(ec, curthread, curthread->td_fpop, OES_JOIN_ANSWER);
 
 	if (uio->uio_resid == sizeof(oes_response_t)) {
 		/* Basic response */
@@ -816,37 +877,15 @@ oes_ioctl_mute_process(struct oes_client *ec, struct oes_mute_args *args)
 static int
 oes_ioctl_unmute_process(struct oes_client *ec, struct oes_mute_args *args)
 {
-	struct oes_mute_entry *em, *em_tmp;
-	pid_t mypid;
-
 	if (args == NULL || (args->emu_flags & ~OES_MUTE_SELF) != 0)
 		return (EINVAL);
 
-	/* Self-unmute: clear the self-mute flag AND remove list entry */
-	if (args->emu_flags & OES_MUTE_SELF) {
-		/*
-		 * Use ec_owner_pid, not curproc->p_pid, because the fd may
-		 * have been passed to another process.  Self-mute is about
-		 * the original opener, not the current caller.
-		 */
-		EC_LOCK(ec);
-		mypid = ec->ec_owner_pid;
-		ec->ec_flags &= ~EC_FLAG_MUTED_SELF;
-
-		/* Also remove the list entry for self */
-		LIST_FOREACH_SAFE(em, &ec->ec_muted[oes_mute_proc_bucket(mypid)],
-		    em_link, em_tmp) {
-			if (em->em_pid == mypid) {
-				LIST_REMOVE(em, em_link);
-				free(em, M_OES);
-				ec->ec_muted_proc_count--;
-				break;
-			}
-		}
-
-		EC_UNLOCK(ec);
-		return (0);
-	}
+	/*
+	 * A client never receives its own processes' events; there is no
+	 * self-mute to lift (oes(4)).
+	 */
+	if (args->emu_flags & OES_MUTE_SELF)
+		return (EINVAL);
 
 	return (oes_client_unmute(ec, &args->emu_token));
 }
@@ -1200,6 +1239,16 @@ oes_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 		    (struct oes_mute_path_args *)data));
 	}
 
+	case OES_IOC_JOIN:
+		oes_client_join(ec, td, td->td_fpop, OES_JOIN_CHECK);
+		return (0);
+
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+	case OES_IOC_TEST_READER_ENTRIES:
+		return (oes_client_test_reader_entries(ec,
+		    (struct oes_test_reader_entries *)data));
+#endif
+
 	case OES_IOC_SET_MUTE_INVERT: {
 		return (oes_ioctl_set_mute_invert(ec,
 		    (struct oes_mute_invert_args *)data));
@@ -1340,6 +1389,7 @@ oes_poll(struct cdev *dev, int events, struct thread *td)
 	error = devfs_get_cdevpriv((void **)&ec);
 	if (error)
 		return (POLLNVAL);
+	oes_client_join(ec, td, td->td_fpop, OES_JOIN_READ);
 
 	EC_LOCK(ec);
 
@@ -1382,6 +1432,9 @@ oes_kqfilter(struct cdev *dev, struct knote *kn)
 
 	switch (kn->kn_filter) {
 	case EVFILT_READ:
+		/* Registering for events makes a reader, as reading does. */
+		oes_client_join(ec, curthread, curthread->td_fpop,
+		    OES_JOIN_READ);
 		kn->kn_fop = &oes_rfiltops;
 		kn->kn_hook = ec;
 		EC_LOCK(ec);
@@ -1453,6 +1506,9 @@ oes_dev_state_init(void)
 	LIST_INIT(&oes_softc.sc_jail_clients);
 	oes_softc.sc_jail_filtered = counter_u64_alloc(M_WAITOK);
 	oes_softc.sc_jail_filtered_auth = counter_u64_alloc(M_WAITOK);
+	oes_softc.sc_excluded_skipped = counter_u64_alloc(M_WAITOK);
+	oes_softc.sc_excluded_invalidations = counter_u64_alloc(M_WAITOK);
+	oes_softc.sc_exec_fail_open = counter_u64_alloc(M_WAITOK);
 
 	/* Idle gating; oes_mac_policy_init() computes the first liveness. */
 	sx_init(&oes_softc.sc_gate_sx, "oes gate");

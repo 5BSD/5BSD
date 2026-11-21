@@ -234,7 +234,7 @@ dqres_attach(struct thread *td, struct proc *p, struct dqres_binding *b,
 	struct fdescenttbl *fdt;
 	struct pwddesc *pdp;
 	struct dqres *dr;
-	int error, i;
+	int error, i, save;
 
 	if (dqres_ops == NULL)
 		return (ENXIO);
@@ -259,8 +259,16 @@ dqres_attach(struct thread *td, struct proc *p, struct dqres_binding *b,
 		PROC_UNLOCK(p);
 		goto out;
 	}
-	/* Under PROC_LOCK, before the pwddesc mutex (review, low). */
+	/*
+	 * Under PROC_LOCK, before the pwddesc mutex (review, low).  Base
+	 * exclusion defers to the attach's own, narrower rule here
+	 * (TDP2_DQ_ATTACH; cap_exclusion_attach_check()).
+	 */
+	save = curthread_pflags2_set(TDP2_DQ_ATTACH);
 	error = p_candebug(td, p);
+	curthread_pflags2_restore(save);
+	if (error == 0)
+		error = cap_exclusion_attach_check(td, p);
 	if (error != 0) {
 		PROC_UNLOCK(p);
 		goto out;
@@ -303,6 +311,8 @@ dqres_attach(struct thread *td, struct proc *p, struct dqres_binding *b,
 	pdp->pd_dqres = dr;
 	dr = NULL;
 	p->p_flag2 |= P2_NO_NEW_PRIVS;
+	/* An attached process is never excluded (base exclusion rule 3). */
+	cap_exclusion_clear_locked(p, CAPX_CLEAR_DQ_ATTACH);
 	/* An attached process acts without its software authority (D336). */
 	cap_authority_strip_locked(p);
 unlock:

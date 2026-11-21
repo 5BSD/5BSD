@@ -26,6 +26,15 @@ TEST_METADATA+=	is_exclusive="true"
 
 # Unit-ish coverage that exercises the wire ABI and harness without the module
 # is still a plain test; module-dependent tests fail fast if /dev/oes is absent.
+# Base exclusion (cap_process(2) BASE EXCLUSION); the stack tier runs it.
+ATF_TESTS_C+=	cap_exclusion_oes_test
+# A client and its own processes' events (oes-no-self-events.md).
+ATF_TESTS_C+=	self_events_test
+# A cache add racing the first one waits for the gate (test kernels only).
+ATF_TESTS_C+=	cache_gate_test
+PROGS+=		oes_join_helper
+BINDIR=		${TESTSDIR}
+
 PLAIN_TESTS_C=	\
 	test_close_event \
 	test_multi_process_clients \

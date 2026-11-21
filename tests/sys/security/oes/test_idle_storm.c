@@ -331,6 +331,8 @@ main(void)
 	const char *env;
 	int fd, i, n, secs, status;
 
+	/* A test killed at its timeout still shows which case it was in. */
+	setvbuf(stdout, NULL, _IOLBF, 0);
 	TEST_SUITE_BEGIN("OES and mac_abac idle storm");
 	env = getenv("STORM_SECONDS");
 	secs = env != NULL ? atoi(env) : 30;

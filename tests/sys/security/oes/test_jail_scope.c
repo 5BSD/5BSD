@@ -2911,11 +2911,11 @@ test_self_mute(void)
 	pid_t child;
 	char byte;
 
-	TEST_BEGIN("T-SELF-1 default self-mute inside the watched jail");
-	if (sysctl_int("security.oes.default_self_mute") != 1) {
-		TEST_SKIP("NOT COVERED: security.oes.default_self_mute is off");
-		return;
-	}
+	/*
+	 * No knob since the no-self-events rule (oes(4), "A client's own
+	 * processes"): the case always runs.
+	 */
+	TEST_BEGIN("T-SELF-1 a client inside the watched jail never sees itself");
 	if (pipe(ready) != 0 || pipe(go) != 0)
 		return;
 	fflush(NULL);

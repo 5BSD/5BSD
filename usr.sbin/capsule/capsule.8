@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd October 20, 2026
+.Dd November 19, 2026
 .Dt CAPSULE 8
 .Os
 .Sh NAME
@@ -133,6 +133,20 @@ Start
 .Xr switchboard 8
 as a single child process via
 .Xr pdfork 2 .
+.Nm
+gives the child an authority constrained to the service manager's image
+with
+.Dv CAP_AUTH_ROLE_CORE ,
+so the service manager runs excluded from
+.Xr oes 4
+and Capability Brokers
+.Pq BASE EXCLUSION in Xr cap_process 2 .
+Holding an authority issuer,
+.Nm
+never starts the service manager without it: a failure to make it fails the
+start.
+Without an issuer the service manager cannot be excluded, and the
+issuer-unavailable message says so.
 The resulting process descriptor is restricted to supervision rights and
 irreversibly confined against descriptor transfer, fork inheritance, and exec
 inheritance.

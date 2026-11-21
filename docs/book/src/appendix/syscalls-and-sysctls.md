@@ -137,7 +137,6 @@ the end rather than listed one by one.
 | `security.oes.max_clients` | int RW | 64 | Concurrent clients | same |
 | `security.oes.cache_max_entries` | int RW | 1024 | Decision cache size | same |
 | `security.oes.default_muted_paths`, `.default_muted_paths_literal` | string RW | empty | Path mutes applied to new clients (`oeslogger -n` clears them) | same |
-| `security.oes.default_self_mute` | int RW | 1 | New clients do not see their own events | same |
 
 ### vfs.
 

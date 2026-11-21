@@ -7,6 +7,8 @@
  * Open Endpoint Security (OES) - Event Generation and Dispatch
  */
 
+#include "opt_mac_capability.h"
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -25,6 +27,21 @@
 
 #include <security/oes/oes.h>
 #include <security/oes/oes_internal.h>
+
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+/* Test kernels only: mac_capability_testissuer.c. */
+extern volatile u_int mac_capability_test_issuer_oes_trylock_fail;
+
+/* Is p the subject a test asked to fill without its lock? */
+static bool
+oes_test_trylock_fail(struct proc *p)
+{
+	u_int pid;
+
+	pid = atomic_load_int(&mac_capability_test_issuer_oes_trylock_fail);
+	return (pid != 0 && (pid_t)pid == p->p_pid);
+}
+#endif
 
 MALLOC_DECLARE(M_OES);
 
@@ -555,6 +572,12 @@ oes_pending_init(struct oes_pending *ep, oes_event_type_t event, struct proc *p)
 
 		if (!owned)
 			locked = mtx_trylock(&p->p_mtx);
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+		if (locked && !owned && oes_test_trylock_fail(p)) {
+			PROC_UNLOCK(p);
+			locked = false;
+		}
+#endif
 		if (locked) {
 			oes_fill_process(&ep->ep_msg.em_process, p, NULL,
 			    &st, &ep->ep_msg);
@@ -564,6 +587,17 @@ oes_pending_init(struct oes_pending *ep, oes_event_type_t event, struct proc *p)
 			/* Best-effort: fill what we can without the lock */
 			ep->ep_msg.em_process.ep_pid = p->p_pid;
 			ep->ep_msg.em_process.ep_token.ept_id = p->p_pid;
+			/*
+			 * The identity a client's reader set matches on
+			 * (oes_client_is_reader()) must not depend on the
+			 * trylock: genid needs no lock, and the subject's
+			 * execution is its thread's own credential.
+			 */
+			ep->ep_msg.em_process.ep_token.ept_genid =
+			    oes_proc_genid_unlocked(p);
+			if (curthread->td_proc == p)
+				ep->ep_msg.em_process.ep_exec_id =
+				    oes_cred_get_exec_id(curthread->td_ucred);
 			strlcpy(ep->ep_msg.em_process.ep_comm, p->p_comm,
 			    sizeof(ep->ep_msg.em_process.ep_comm));
 			oes_process_mark_path_unavailable(&ep->ep_msg,
@@ -618,7 +652,7 @@ oes_pending_clone(const struct oes_pending *src, int mflags)
 		return (NULL);
 
 	ep->ep_refcount = 1;
-	ep->ep_flags = src->ep_flags & EP_FLAG_AUTH;
+	ep->ep_flags = src->ep_flags & (EP_FLAG_AUTH | EP_FLAG_FAIL_OPEN);
 	bcopy(&src->ep_msg, &ep->ep_msg, msg_size);
 	ep->ep_msg.em_deadline = (oes_timespec_t){ 0 };
 	ep->ep_deadline = (struct timespec){ 0 };

@@ -203,6 +203,8 @@ main(void)
 	char file[] = "./oes-identity.XXXXXX";
 	int fd;
 
+	/* A test killed at its timeout still shows which case it was in. */
+	setvbuf(stdout, NULL, _IOLBF, 0);
 	TEST_SUITE_BEGIN("OES identity pins");
 	fd = mkstemp(file);
 	if (fd < 0) {

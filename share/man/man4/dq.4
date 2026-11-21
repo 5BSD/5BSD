@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 18, 2026
+.Dd November 19, 2026
 .Dt DQ 4
 .Os
 .Sh NAME
@@ -2096,6 +2096,31 @@ start directories
 The preconditions are checked and the attachment committed in one
 section, so no fork, exec or descriptor transfer can slip between them.
 There is no detach.
+.Pp
+.Sy Base exclusion .
+A target the kernel excludes
+.Pq BASE EXCLUSION in Xr cap_process 2 :
+process 1,
+.Xr switchboard 8 ,
+a Core unit or a fork child of one of them, is
+.Er EPERM
+unless the caller is excluded itself and is the target's parent, and the
+target has not executed an image.
+An excluded target that has executed an image (a running Core daemon) is
+.Er EPERM
+also for its excluded parent, not
+.Er EBUSY .
+This decision replaces the debug check's exclusion refusal for
+.Dv DQ_IOC_ATTACH ;
+the other preconditions and their errnos are unchanged.
+Attaching clears the target's exclusion, so an attached process is never
+excluded.
+An attached process may execute a Core image: it stays attached, runs
+without authority and is not excluded, and its Capability Broker decides
+that exec as any other.
+A Capability Broker is never consulted about an excluded process:
+Capsule, switchboard and Core units are never attached, and their
+executions and descriptor passing are not posted to any queue.
 .Pp
 The attach also takes the target's software authority
 .Pq Xr cap_process 2

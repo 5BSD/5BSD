@@ -400,8 +400,9 @@ pin_close_releases_waiters(void)
 	oes_event_type_t ev = OES_EVENT_AUTH_OPEN;
 	struct idle_worker w[8];
 	struct timespec start;
-	test_msg_buf buf;
-	int fd, i, got, err;
+	bool sent[8];
+	int res[8];
+	int fd, i, got, err, nsent;
 	long ms;
 
 	TEST_BEGIN("P-O10 closing a silent AUTH client releases 8 blocked opens");
@@ -410,24 +411,38 @@ pin_close_releases_waiters(void)
 		TEST_FAIL("client: %s", strerror(errno));
 		return;
 	}
+	nsent = 0;
 	for (i = 0; i < 8; i++) {
 		w[i].iw_pid = -1;
+		sent[i] = false;
 		if (idle_worker_start(&w[i], work_file) != 0) {
 			TEST_FAIL("worker %d: %s", i, strerror(errno));
-			break;
+			continue;
 		}
-		(void)idle_worker_send(&w[i], IW_OPEN);
+		if (idle_worker_send(&w[i], IW_OPEN) != 0) {
+			TEST_FAIL("worker %d send: %s", i, strerror(errno));
+			continue;
+		}
+		sent[i] = true;
+		nsent++;
 	}
-	got = 0;
-	while (got < 8 && test_wait_event(fd, &buf.msg, INFTIM) == 0)
-		if (buf.msg.em_event == ev)
-			got++;
-	ASSERT_MSG(got == 8, "%d of 8 opens reached the client", got);
+	/* Each open sent must reach the client, or its worker must answer. */
+	got = idle_wait_worker_records(fd, ev, w, 8, sent, res);
+	ASSERT_MSG(got == 8, "%d of 8 opens reached the client (%d sent)",
+	    got, nsent);
+	for (i = 0; i < 8; i++)
+		if (sent[i] && res[i] != IDLE_NO_RESULT)
+			TEST_FAIL("worker %d answered %d with no record", i,
+			    res[i]);
 	clock_gettime(CLOCK_MONOTONIC, &start);
 	(void)close(fd);
 	for (i = 0; i < 8; i++) {
 		if (w[i].iw_pid <= 0)
 			continue;
+		if (!sent[i] || res[i] != IDLE_NO_RESULT) {
+			idle_worker_stop(&w[i]);
+			continue;
+		}
 		err = idle_worker_result(&w[i], INFTIM);
 		ms = idle_elapsed_ms(&start);
 		/* Released while the test runs: by the close. */
@@ -488,6 +503,8 @@ main(void)
 	struct stat sb;
 	int fd;
 
+	/* A test killed at its timeout still shows which case it was in. */
+	setvbuf(stdout, NULL, _IOLBF, 0);
 	TEST_SUITE_BEGIN("OES idle pins");
 	snprintf(work_file, sizeof(work_file), "./oes-idle-pin.%d",
 	    (int)getpid());
