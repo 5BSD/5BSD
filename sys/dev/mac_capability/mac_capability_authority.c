@@ -1385,6 +1385,7 @@ lease_notify_locked(struct cap_authority_lease *lease)
 		wakeup(&s->ci_txq);
 		KNOTE_LOCKED(&s->ci_rknotes, 0);
 		KNOTE_LOCKED(&s->ci_wknotes, 0);
+		wakeup(&s->ci_wknotes);	/* SEND_F_WAIT */
 		mtx_unlock(&s->ci_mtx);
 	}
 }

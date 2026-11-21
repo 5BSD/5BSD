@@ -547,6 +547,7 @@ mac_capability_dispatch_task(void *context, int pending __unused)
 				mac_capability_msg_free(msg);
 			/* SENDMSG capacity was genuinely released. */
 			KNOTE_LOCKED(&s->ci_wknotes, 0);
+			wakeup(&s->ci_wknotes);	/* SEND_F_WAIT */
 		}
 		if (s->ci_inflight == 0 && (s->ci_flags & MAC_CAPABILITY_SF_DEAD)) {
 			wakeup(&s->ci_inflight);
@@ -699,6 +700,7 @@ mac_capability_instance_revoke_reason(struct mac_capability_instance *s,
 	wakeup(&s->ci_txq);
 	KNOTE_LOCKED(&s->ci_rknotes, 0);
 	KNOTE_LOCKED(&s->ci_wknotes, 0);
+	wakeup(&s->ci_wknotes);	/* SEND_F_WAIT */
 
 	/*
 	 * If the current thread IS the handler (self-revoke from
@@ -828,6 +830,7 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 			wakeup(&s->ci_txq);
 			KNOTE_LOCKED(&s->ci_rknotes, 0);
 			KNOTE_LOCKED(&s->ci_wknotes, 0);
+			wakeup(&s->ci_wknotes);	/* SEND_F_WAIT */
 		}
 		mtx_unlock(&s->ci_mtx);
 	}

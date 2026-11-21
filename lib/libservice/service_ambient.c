@@ -13,7 +13,6 @@
 #include <sys/cap_process.h>
 #include <sys/cap_authority.h>
 #include <sys/capsicum.h>
-#include <sys/event.h>
 #include <sys/ioctl.h>
 #include <sys/syscall.h>
 #include <sys/sysctl.h>
@@ -175,51 +174,25 @@ close_owned_fd(void *arg)
 }
 
 /*
- * Wait until a channel can take another message (its peer's receive queue has
- * room).  kevent(2) answers a signal with EINTR whatever the handler's
- * SA_RESTART, so this wait does too.  It is a cancellation point.
- */
-__hidden int
-service_channel_wait_writable(int fd)
-{
-	struct kevent event;
-	int error, kq, n;
-
-	kq = kqueue();
-	if (kq == -1)
-		return (-1);
-	EV_SET(&event, fd, EVFILT_WRITE, EV_ADD | EV_ONESHOT, 0, 0, NULL);
-	pthread_cleanup_push(close_owned_fd, &kq);
-	n = kevent(kq, &event, 1, &event, 1, NULL);
-	error = errno;
-	pthread_cleanup_pop(1);
-	if (n == -1) {
-		errno = error;
-		return (-1);
-	}
-	if (n == 1 && (event.flags & EV_ERROR) != 0) {
-		errno = (int)event.data;
-		return (-1);
-	}
-	return (0);
-}
-
-/*
- * Send one message on a channel, waiting for room in its peer's queue.
- * A raw ioctl: the caller's descriptor flags are left alone.
+ * Send one message on a channel, waiting with no time limit for room in its
+ * peer's queue (MAC_CAPABILITY_SEND_F_WAIT).  The kernel sleeps
+ * interruptibly: a handler installed with SA_RESTART restarts the send, any
+ * other gives EINTR, as write(2) on a full pipe does; like write(2) it is a
+ * cancellation point.  A raw ioctl: the caller's descriptor flags are left
+ * alone.
  */
 __hidden int
 service_channel_send_wait(int fd, struct mac_capability_sendmsg_args *send)
 {
 
-	for (;;) {
-		if (ioctl(fd, MAC_CAPABILITY_SENDMSG, send) == 0)
-			return (0);
-		if (errno != EAGAIN && errno != ENOBUFS)
-			return (-1);
-		if (service_channel_wait_writable(fd) == -1)
-			return (-1);
+	send->flags = MAC_CAPABILITY_SEND_F_WAIT;
+	if (ioctl(fd, MAC_CAPABILITY_SENDMSG, send) == -1) {
+		/* A cancellation request interrupts the sleep (see below). */
+		if (errno == EINTR)
+			pthread_testcancel();
+		return (-1);
 	}
+	return (0);
 }
 
 /*

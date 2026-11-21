@@ -1252,6 +1252,59 @@ out:
 	return (error);
 }
 
+/*
+ * MAC_CAPABILITY_SEND_F_WAIT: sleep until the send queue has room.  The
+ * condition is mac_capability_instance_rx_ready()'s, checked under ci_mtx;
+ * every path that frees room or kills the instance wakes &ci_wknotes under
+ * the same mutex (next to the EVFILT_WRITE note), so no wakeup is lost.  A
+ * dead instance or a revoked lease returns at once and the send reports it.
+ */
+static int
+mac_capability_instance_wait_room(struct mac_capability_instance *s)
+{
+	int error;
+
+	error = 0;
+	mtx_lock(&s->ci_mtx);
+	while ((s->ci_flags & MAC_CAPABILITY_SF_DEAD) == 0 &&
+	    s->ci_rxqlen + s->ci_rxheld >= s->ci_rxqlimit) {
+		if (!cap_authority_lease_valid(s->ci_lease)) {
+			error = EPERM;
+			break;
+		}
+		error = msleep(&s->ci_wknotes, &s->ci_mtx, PCATCH,
+		    "mcapsnd", 0);
+		if (error != 0)
+			break;
+	}
+	mtx_unlock(&s->ci_mtx);
+	return (error);
+}
+
+/*
+ * SENDMSG/SENDMSG_V2 with optional SEND_F_WAIT: a send refused for a full
+ * queue (EAGAIN) consumed nothing, so it is repeated once there is room.  A
+ * signal ends the sleep with ERESTART (SA_RESTART: the ioctl is restarted
+ * whole) or EINTR, as for write(2).
+ */
+static int
+mac_capability_instance_sendmsg_wait(struct mac_capability_instance *s,
+    struct mac_capability_sendmsg_args *args, struct thread *td,
+    const struct mac_capability_fd_spec *uspecs, uint32_t flags)
+{
+	int error;
+
+	for (;;) {
+		error = mac_capability_instance_do_sendmsg(s, args, td, uspecs,
+		    flags & ~MAC_CAPABILITY_SEND_F_WAIT);
+		if (error != EAGAIN || (flags & MAC_CAPABILITY_SEND_F_WAIT) == 0)
+			return (error);
+		error = mac_capability_instance_wait_room(s);
+		if (error != 0)
+			return (error);
+	}
+}
+
 static int
 mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
     struct ucred *active_cred __unused, struct thread *td)
@@ -1283,13 +1336,22 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 		 * successful return lets the generic layer update f_flag.
 		 */
 		return (0);
-	case MAC_CAPABILITY_SENDMSG:
+	case MAC_CAPABILITY_SENDMSG: {
+		struct mac_capability_sendmsg_args message;
+		uint32_t flags;
+
 		if (s->ci_restricted & MAC_CAPABILITY_RF_NO_SEND) {
 			mac_capability_probe_error(s, cmd, EACCES, td);
 			return (EACCES);
 		}
-		return (mac_capability_instance_do_sendmsg(s,
-		    (struct mac_capability_sendmsg_args *)data, td, NULL, 0));
+		message = *(struct mac_capability_sendmsg_args *)data;
+		if ((message.flags & ~MAC_CAPABILITY_SEND_F_WAIT) != 0)
+			return (EINVAL);
+		flags = message.flags;
+		message.flags = 0;
+		return (mac_capability_instance_sendmsg_wait(s, &message, td,
+		    NULL, flags));
+	}
 	case MAC_CAPABILITY_SENDMSG_V2: {
 		struct mac_capability_sendmsg_v2_args *args = data;
 		struct mac_capability_sendmsg_args message;
@@ -1301,12 +1363,13 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 		}
 		flags = args->message.flags;
 		if ((flags & ~(MAC_CAPABILITY_SEND_F_MOVE |
-		    MAC_CAPABILITY_SEND_F_LOCK_INHERIT)) != 0 ||
+		    MAC_CAPABILITY_SEND_F_LOCK_INHERIT |
+		    MAC_CAPABILITY_SEND_F_WAIT)) != 0 ||
 		    (args->_reserved2[0] | args->_reserved2[1]) != 0)
 			return (EINVAL);
 		message = args->message;
 		message.flags = 0;
-		return (mac_capability_instance_do_sendmsg(s, &message, td,
+		return (mac_capability_instance_sendmsg_wait(s, &message, td,
 		    args->fd_specs, flags));
 	}
 	case MAC_CAPABILITY_RECVMSG:
@@ -2069,6 +2132,7 @@ mac_capability_instance_close(struct file *fp, struct thread *td __unused)
 	wakeup(&s->ci_txq);
 	KNOTE_LOCKED(&s->ci_rknotes, 0);
 	KNOTE_LOCKED(&s->ci_wknotes, 0);
+	wakeup(&s->ci_wknotes);	/* SEND_F_WAIT */
 
 	mtx_unlock(&s->ci_mtx);
 

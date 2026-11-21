@@ -26,7 +26,6 @@ int	service_private_control_fd(struct service_context *);
  */
 struct mac_capability_sendmsg_args;
 struct mac_capability_recvmsg_args;
-__hidden int	service_channel_wait_writable(int fd);
 __hidden int	service_channel_send_wait(int fd,
 		    struct mac_capability_sendmsg_args *send);
 __hidden int	service_channel_recv_wait(int fd,
