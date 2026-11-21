@@ -41,9 +41,13 @@
 # The second form reads a whole serial log after the run: exit 0 when some
 # reversal report matches no known-lor.txt entry, 1 when none does, 2 when
 # the log or the list cannot be read (the caller must count that as an
-# unknown reversal).  Both forms classify a report the same way: the text after "lock order
-# reversal:" up to the next report, at most 40 lines, against each entry
-# with re.search.
+# unknown reversal).  Both forms classify a report the same way: the text
+# after "lock order reversal:" through the end of its "attempted at" stack
+# (the syscall or kernel-thread entry frame), or up to the next report or the
+# first line that is not part of a report, against each entry with
+# re.search.  There is no line cap: a multi-hop report ("All lock orders
+# from ...") lists every hop's stack before the attempted one, and an entry
+# must be able to require frames of that last stack.
 
 import errno
 import os
@@ -63,10 +67,12 @@ import time
 FATAL_GRACE_S = 5.0
 
 HEADER = "lock order reversal:"
-REPORT_LINES = 40
 # Lines that belong to a WITNESS reversal report (after the header).
 # The frame that ends a kernel stack in a report: syscall or thread entry.
-STACK_END = re.compile(r"^#\d+ \S+ at (fast_syscall_common|Xfast_syscall|fork_trampoline|fork_exit)\+")
+# amd64: the 64-bit syscall entry, the ia32 int 0x80 entry (IDTVEC: X
+# prefix; int0x80_syscall_common), kernel threads; arm64: the EL0 exception
+# vectors (handle_el0_sync and the rest) and fork_trampoline.
+STACK_END = re.compile(r"^#\d+ \S+ at (fast_syscall_common|Xfast_syscall|X?int0x80_syscall\w*|handle_el0_\w+|fork_trampoline|fork_exit)\+")
 REPORT_LINE = re.compile(r'^(\s*$| 1st | 2nd | 3rd |lock order |All lock orders|"|#\d+ )')
 
 
@@ -80,16 +86,38 @@ def load_known(path):
 
 
 def is_known(block, pats):
-    block = "\n".join(block.splitlines()[:REPORT_LINES])
     return any(p.search(block) for p in pats)
 
 
+def report_at(lines, i):
+    """The report whose header is on lines[i], and whether it is complete:
+    followed by another report or a line that is not part of a report, or
+    its "attempted at" stack has reached the syscall or kernel-thread entry
+    frame that ends a WITNESS stack."""
+    out = [lines[i].split(HEADER, 1)[1]]
+    attempted = False
+    for l in lines[i + 1:]:
+        if HEADER in l:
+            out.append(l.split(HEADER, 1)[0])
+            return "\n".join(out), True
+        if not REPORT_LINE.match(l):
+            return "\n".join(out), True
+        out.append(l)
+        if l.startswith("lock order ") and l.rstrip().endswith("attempted at:"):
+            attempted = True
+        elif attempted and STACK_END.search(l):
+            return "\n".join(out), True
+    return "\n".join(out), False
+
+
 def has_unknown_lor(log, known):
-    """True when some reversal report in log matches no entry of known."""
+    """True when some reversal report in log matches no entry of known.  A
+    report the log ends inside is judged on what it holds."""
     pats = load_known(known)
     with open(log, errors="replace") as f:
-        text = f.read()
-    return any(not is_known(b, pats) for b in text.split(HEADER)[1:])
+        lines = [l.rstrip("\r") for l in f.read().split("\n")]
+    return any(not is_known(report_at(lines, i)[0], pats)
+               for i, l in enumerate(lines) if HEADER in l)
 
 
 class Watch:
@@ -141,25 +169,9 @@ class Watch:
         return self.classify()
 
     def report(self, i):
-        """The report starting at header line i, and whether it is complete:
-        followed by a line that is not part of a report (or another report),
-        REPORT_LINES long, or its "attempted at" stack has reached the
-        syscall or kernel-thread entry frame that ends a WITNESS stack."""
-        rest = self.lines[i].split(HEADER, 1)[1]
-        out = [rest]
-        attempted = False
-        for l in self.lines[i + 1:i + REPORT_LINES]:
-            if HEADER in l:
-                out.append(l.split(HEADER, 1)[0])
-                return "\n".join(out), True
-            if not REPORT_LINE.match(l):
-                return "\n".join(out), True
-            out.append(l)
-            if l.startswith("lock order ") and l.rstrip().endswith("attempted at:"):
-                attempted = True
-            elif attempted and STACK_END.search(l):
-                return "\n".join(out), True
-        return "\n".join(out), len(out) >= REPORT_LINES
+        """The report starting at header line i, and whether it is complete
+        (report_at); one the log has not finished yet stays open."""
+        return report_at(self.lines, i)
 
     def classify(self):
         """Judge the open reports that are complete; keep the others open.

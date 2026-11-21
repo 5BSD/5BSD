@@ -325,7 +325,7 @@ which a test kernel's Capsule turns into the test-only
 `SWITCHBOARD_TEST_SHIELD_NO_SIGKILL`; `refused` and `firstboot` end in
 single-user, so the host reads their result from the serial log.  The `usr.sbin/bsd-build` cases that read the
 source tree need `SRC_IMAGE` (and `PORTS_IMAGE` for package plans); without it
-they are counted as `DEFERRED_TO_SOURCE_TIER=N`.  With python, the source and
+they are counted as `DEFERRED_TO_SOURCE_TIER=N`.  With the source and
 the ports images, a long bsd-build run fills the default 8 GB guest root:
 give it `ROOT_SIZE=16g`.  `usr.sbin/capsule/storage_test:disk_import_and_binding`
 destroys a disk: when a suite is `usr.sbin/capsule`, the program or the case
@@ -337,7 +337,40 @@ another ident.  Cases that need a guest setup no tier provides yet
 `bsd_build_test:generation_reconciliation`'s ACL subtest without root and
 md(4)), and `disk_import_and_binding` run without its disk, skip with
 `DEFERRED_GUEST_SETUP` and are counted as `DEFERRED_GUEST_SETUP=N`, not as
-passes.
+passes.  Destructive cases
+that need an opt-in and a guest of their own (`disposable_vm=yes`,
+`live_securelevel=yes`) skip with `DEFERRED_DISPOSABLE_GUEST`.
+A case skipped because the stage lacks a program or file it requires
+(kyua's "Required program/file ... not found", atf-sh's required program)
+makes the run `VM_NOT_CLEAN` (`STAGE_PREREQ_SKIPPED=N`), as a missing
+kernel module does (`KMOD_SKIPPED=N`).  A device only a kernel option
+provides (`/dev/kcov`) is not a stage input and stays a plain skip.  Every other skip without a
+`DEFERRED_*` token is listed, all of them, as `PLAIN_SKIPS=N` with one
+`PLAIN_SKIP:` line each, and expected failures, which kyua counts as passed,
+as `EXPECTED_FAILURES=N`; neither changes the verdict, so read `VM_CLEAN`
+together with these lines.  The bsd-build cases that wrap a Python unittest
+program (`py_unittest` in `bsd_build_test.sh`) fail on an expected failure
+and skip, naming each subtest, when any subtest skipped: a bare
+`OK (skipped=N)` is not a pass.
+
+Python is part of the guest test stage, never of base or a base package set
+(owner decision, 2026-11-20).  Every image vm-provider.sh builds carries the
+packages pinned in `tools/build/fuchsia/test-stage-packages`, extracted under
+`/usr/local` (not registered with pkg): Python 3.12 with the `python3` and
+`python` commands, pytest, py-dpkt and the nist-kat vectors, the run-time
+closure that `sys/opencrypto/runtests`, `sys/kern/sonewconn_overflow`, the
+pytest programs (`sys/kern/virtio_iommu_identity_test.py`) and the bsd-build
+Python programs need.  They are built from `/usr/obj/5BSD-ports` at the
+revision the list names and read from `TEST_PKGDIR`
+(`/usr/obj/5BSD-test-packages/All` by default); a run without every pinned
+package refuses to start (`TEST_PACKAGES_MISSING`).  To rebuild them, run a
+builder guest with `SRC_IMAGE` and `PORTS_IMAGE` that `make install`s
+`lang/python3`, `lang/python`, `devel/py-pytest@py312`, `net/py-dpkt@py312`
+and `security/nist-kat` offline (distfiles fetched on the host with
+`make fetch-recursive DISTDIR=...`) and `pkg create`s their run-time
+closure; root on the host is not needed.  A suite that still finds one of
+them missing is a stage defect (`STAGE_PREREQ_SKIPPED`).
+
 Cases that drive their private SwitchBoard with `switchboardctl` call
 `use_private_control` (`usr.sbin/switchboard/tests/test_helpers.sh`): it runs
 `switchboardctl` through `capd_lookup_exec`, which installs the private
@@ -394,15 +427,22 @@ WITNESS lock order reversal report that matches no entry of
 most `FATAL_GRACE_S` (5 s, ending at once if QEMU exits) and then stops
 QEMU, or reports that it had already exited; the deadline prints `TIMEOUT`.
 Either way the results disk is extracted and the verdict printed.
-`known-lor.txt` holds Python regular expressions matched against the first
-40 lines of a report, each entry naming the analysis that classes its
-family; matched reports are counted as `KNOWN_LOR=N`. An entry hides more
+`known-lor.txt` holds Python regular expressions matched against a whole
+report, through the end of its "attempted at" stack (a multi-hop report
+lists every hop first, so there is no line cap), each entry naming the
+analysis that classes its family; matched reports are counted as
+`KNOWN_LOR=N`. `tools/build/fuchsia/tests/known-lor/` holds recorded
+reports each entry must class (`known-*.txt`) or must not (`unknown-*.txt`). An entry hides more
 than its report: WITNESS reports a pair of lock classes once per boot, so
 every later reversal between the same two classes goes unreported for the
 rest of the boot. Entries should therefore match only at shutdown, where
-nothing follows; the tmpfs-unmount family entry does. After the guest exits
+nothing follows; the tmpfs-unmount family entry does, the unionfs entries
+(test-time unmounts) do not. After the guest exits
 the runner classifies the whole log again, so a reversal printed just
 before power-off still makes the run `VM_NOT_CLEAN` (`UNKNOWN_LOR`).
+`FATAL_LOR=no` only keeps the guest running past an unknown reversal (for a
+sweep that reads them all from the serial log); the run still ends
+`UNKNOWN_LOR` and `VM_NOT_CLEAN`.
 
 The dq oracles' expected-differences files (`tests/sys/dq/dqpass.expected`,
 `dqtree.expected`) fail on an entry that matches no case. An entry whose
