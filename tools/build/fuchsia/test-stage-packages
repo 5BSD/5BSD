@@ -6,15 +6,16 @@
 # python3, python, py312-pytest, py312-dpkt and nist-kat.  Built from
 # /usr/obj/5BSD-ports 9d79606889791c80d931cdde85062a05d2cf825b in a builder
 # guest (docs/book/src/develop/testing.md); python312 is the 5BSD-ports
-# catalogue's package, and the C libraries it was built against come from
-# FreeBSD-ports (5BSD-ports publishes no package for them).  Change a line
+# catalogue's package (a from-source build does not fit the builder guest's
+# bound under TCG); the seven C libraries are 5BSD-ports builds too (libb2
+# bootstrapped with the catalogue python312 for its meson build).  Change a line
 # only together with a rebuild from the revision named here.
-expat-2.9.0 f058ffa41766e5736dc3c19f7c581c4f86a1c1ff313e60b1b0c1d104005364a3 FreeBSD-ports
-gettext-runtime-1.0_1 aee5b5e7de09b4baaf83a3e6c83c438e73ab11bad37c045332dc44db3b60aa9b FreeBSD-ports
-indexinfo-0.3.1_1 2f8c5ad5929c9fec0c92855541dd2102762b75347d460894090029f9009214ff FreeBSD-ports
-libb2-0.98.1_1 ad0bd8c5008ce60032187a83a8c7a38b786f5582dce278b62f9c1d4f8437d293 FreeBSD-ports
-libffi-3.8.0 07567f0d99a8e47df022fe0483f2a1238bc9e59e92a2ddca453db9a345bdac2b FreeBSD-ports
-mpdecimal-4.0.1 ce6d1124e389337bc11a4ed6098c6bdac9716f1c41b47b4d32c3d5516324dc99 FreeBSD-ports
+expat-2.10.0 0fcc5c9541463217af3be81cce88ae5b85b4a32929b7cac99b25ff1c71c627c2 5BSD-ports-build
+gettext-runtime-1.0_1 00c0ff6963008328e129d08d36c353d5827c81b7d5a034777a8d7673c32ca7f2 5BSD-ports-build
+indexinfo-0.3.1_1 6b1256e4df05eaae80cf722cea52abcf27cab58d61c6d7e12d8ced8d73bf14e3 5BSD-ports-build
+libb2-0.98.1_1 f25fdc82836a1e16789a696623056b0956917f90e947a5e6af7ff7092b38d9fc 5BSD-ports-build
+libffi-3.8.0 38e803a03a32b73a83e7cfa35443a10cd0ed755b13f6e9aa158f3a4bf3cf2035 5BSD-ports-build
+mpdecimal-4.0.1 85194ac8ca0a28c9017825464ab8f62a515aaa6d501eabde569dcbf17e097aef 5BSD-ports-build
 nist-kat-0.0.2015.02.23_1 d4dbbc47a96dea901ba8bb2bd5a3cbdda33dbf1cf4ccc5c1e944779fe7890f9f 5BSD-ports-build
 py312-dpkt-1.9.6_1 370d6165866b9cfa96d01306fb5548a6c8664ada21b70f1216a44177491de16b 5BSD-ports-build
 py312-iniconfig-2.3.1 27f7a3b7441fbdcaa10f3fc16be144da13f1bb8d16d59f3840b4131488d712da 5BSD-ports-build
@@ -25,4 +26,4 @@ py312-pytest-9.1.1,1 a8a8cc3d4db8be28c7d2a11696b98cb979d796aff53a3e2f4c851249980
 python-3.12_3,2 5a089c247608465634313df725939b61eb42ad8dde0cc59f577a8469c1818885 5BSD-ports-build
 python3-3_4 c5eb47b213728df2fc80fecb3ade1545202097d24b8b21ccd6897e9134d8b5a7 5BSD-ports-build
 python312-3.12.15_1 56897e296635e7e632c7d674ec2e69af39390e059fe1b84ae7405bf8d8720db1 5BSD-ports-catalogue
-readline-8.3.6 640db953acabc045e650cebf5efb52a76ed9e233430968adf55dc757f7a4364c FreeBSD-ports
+readline-8.3.6 10199ee69731b20d9b472592533f597b7db0327b46efedab7e5b15cc0b9b07cc 5BSD-ports-build
