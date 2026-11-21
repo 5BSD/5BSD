@@ -25,17 +25,16 @@ for s in "sys/mac_capability" "sys/mac_capability/authority_issuer_probe_test" \
 	[ "$(loader "$s")" = 'dtraceall_load="YES"' ] ||
 	    { echo "FAIL: no dtraceall alone for \"$s\""; exit 1; }
 done
-for s in "sys/vfs" "sys/vfs/ufs_suspend_atime" \
-    "sys/vfs/ufs_suspend_atime:closed_at_resume" \
-    "sys/mac_capability/mac_capability_channel_test"; do
+for s in "sys/mac_capability/mac_capability_channel_test"; do
 	[ "$(loader "$s")" = 'dtraceall_load="YES"' ] ||
 	    { echo "FAIL: no dtraceall alone for \"$s\""; exit 1; }
 done
 for s in "sys/file" "lib/libdq" "sys/dq_regress" "usr.sbin/BSDTime" \
-    "sys/mac_capability/mac_capability_test" "sys/vfs/trailing_slash"; do
+    "sys/mac_capability/mac_capability_test" "sys/vfs" \
+    "sys/vfs/ufs_suspend_atime"; do
 	[ -z "$(loader "$s")" ] ||
 	    { echo "FAIL: dq modules for \"$s\""; exit 1; }
 done
 # Written to the image's loader.conf ahead of LOADER_EXTRA.
 grep -q '^\[ -z "\$dq_loader" \] || printf .*"\$x/loader.conf"$' "$root/vm-provider.sh"
-echo 'PASS the dq suites get imgact_binmisc and dtraceall, the issuer-decision probe programs and sys/vfs dtraceall, others nothing'
+echo 'PASS the dq suites get imgact_binmisc and dtraceall, the issuer-decision probe programs and the channel test dtraceall, others nothing'

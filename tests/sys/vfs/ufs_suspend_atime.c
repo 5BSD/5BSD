@@ -22,26 +22,15 @@
  *
  * The readers are child processes: the suspending process must not close a
  * file on the suspended file system itself, or it would wait for its own
- * resume.  The closes race the resume's walk over the mount's vnodes, so the
- * walk is given work ahead of the read files: a holder process keeps many
- * files made before them open and reads them during the suspension, and
- * the walk locks and converts each of those (they stay in use) before it
- * reaches the read files, whose closes have usually finished by then.
- * Each case makes its own md(4)-backed UFS file system.
- *
- * That is a race, not an ordering: nothing holds the walk until the
- * closes finish.  NFILLER is a margin, not a bound, and a close that
- * finishes after the walk passed its file leaves the defect unexercised,
- * so on a kernel without the fix a case can pass.  repeated_suspensions
- * runs ten rounds to make that less likely; it does not make it
- * impossible.  A deterministic case needs a test-kernel hook that holds
- * the walk until the readers have exited
- * (5bsd-issues 2026-11-20-ufs-suspend-atime-pins-race-the-walk.md).
+ * resume.  The defect needs a reader's last close to finish before the
+ * resume's walk reaches the file, so closed_at_resume holds the walk with
+ * the test kernel's resume hold (options FFS_TEST_HOOKS, GENERIC-TEST:
+ * debug.ffs.test_hold_*) until every reader has exited, then lets it go
+ * on.  Each case makes its own md(4)-backed UFS file system.
  */
 
 #include <sys/param.h>
 #include <sys/ioctl.h>
-#include <sys/resource.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
@@ -53,7 +42,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <paths.h>
-#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -62,7 +50,6 @@
 
 #define	MD_FILE		"md.unit"
 #define	MNT		"mnt"
-#define	NFILLER		2000
 #define	NREAD		32
 
 static void
@@ -89,9 +76,9 @@ make_file(const char *path)
 }
 
 /*
- * The defect closed_at_resume and repeated_suspensions pin shows only as
+ * The defect closed_at_resume pins shows only as
  * the INVARIANTS assertion in ffs_unlock_debug(): without INVARIANTS the
- * inode is left modified off the lazy list, which nothing they check sees.
+ * inode is left modified off the lazy list, which nothing it checks sees.
  */
 static void
 require_invariants(void)
@@ -106,10 +93,7 @@ require_invariants(void)
 		    "assertion; the kernel has no kern.features.invariants");
 }
 
-/*
- * A soft updates UFS on a swap-backed md(4) device, with NFILLER files and
- * then NREAD files to read.
- */
+/* A soft updates UFS on a swap-backed md(4) device, with NREAD files. */
 static void
 fixture(void)
 {
@@ -132,10 +116,6 @@ fixture(void)
 	ATF_REQUIRE_EQ(0, mkdir(MNT, 0755));
 	snprintf(cmd, sizeof(cmd), "mount /dev/%s %s", unit, MNT);
 	run(cmd);
-	for (i = 0; i < NFILLER; i++) {
-		path_of(path, sizeof(path), "filler", i);
-		make_file(path);
-	}
 	for (i = 0; i < NREAD; i++) {
 		path_of(path, sizeof(path), "f", i);
 		make_file(path);
@@ -197,195 +177,58 @@ access_file(int fd)
 	return (0);
 }
 
-/*
- * The holder: a child that opens every filler file, reads and fstats each
- * when told (during the suspension), and closes them when told to finish
- * (after the resume).  Commands and acknowledgements are one byte on a
- * pair of pipes.
- */
-struct holder {
-	pid_t	pid;
-	int	cmd;
-	int	ack;
-};
+/* The resume hold of the test kernel. */
+static void
+require_resume_hold(void)
+{
+	size_t len;
+
+	len = 0;
+	if (sysctlbyname("debug.ffs.test_hold_mnt", NULL, &len, NULL, 0) != 0)
+		atf_tc_skip("DEFERRED_TEST_KERNEL_TIER: needs the resume hold of "
+		    "the test kernel (GENERIC-TEST, debug.ffs.test_hold_mnt)");
+}
 
 static void
-holder_body(int cmd, int ack)
+resume_hold_set(const char *name, int value)
 {
-	struct rlimit rl;
+
+	ATF_REQUIRE_MSG(sysctlbyname(name, NULL, NULL, &value,
+	    sizeof(value)) == 0, "%s: %s", name, strerror(errno));
+}
+
+/*
+ * Start a child per read file that opens, reads and fstats it, says so on
+ * the pipe, and closes it (the close waits for the resume).  Returns once
+ * every reader has read during the suspension.
+ */
+static void
+start_readers(pid_t *pids)
+{
 	char c, path[64];
-	int *fds, i;
-
-	rl.rlim_cur = rl.rlim_max = NFILLER + 64;
-	if (setrlimit(RLIMIT_NOFILE, &rl) != 0)
-		_exit(10);
-	fds = calloc(NFILLER, sizeof(*fds));
-	if (fds == NULL)
-		_exit(11);
-	for (i = 0; i < NFILLER; i++) {
-		path_of(path, sizeof(path), "filler", i);
-		if ((fds[i] = open(path, O_RDONLY)) < 0)
-			_exit(12);
-	}
-	c = 'o';
-	if (write(ack, &c, 1) != 1 || read(cmd, &c, 1) != 1)
-		_exit(13);
-	for (i = 0; i < NFILLER; i++)
-		if (access_file(fds[i]) != 0)
-			_exit(14);
-	c = 'a';
-	if (write(ack, &c, 1) != 1 || read(cmd, &c, 1) != 1)
-		_exit(15);
-	for (i = 0; i < NFILLER; i++)
-		(void)close(fds[i]);
-	_exit(0);
-}
-
-static void
-holder_start(struct holder *h)
-{
-	int cmdp[2], ackp[2];
-	char c;
-
-	ATF_REQUIRE_EQ(0, pipe(cmdp));
-	ATF_REQUIRE_EQ(0, pipe(ackp));
-	h->pid = fork();
-	ATF_REQUIRE(h->pid >= 0);
-	if (h->pid == 0) {
-		close(cmdp[1]);
-		close(ackp[0]);
-		holder_body(cmdp[0], ackp[1]);
-	}
-	close(cmdp[0]);
-	close(ackp[1]);
-	h->cmd = cmdp[1];
-	h->ack = ackp[0];
-	ATF_REQUIRE_MSG(read(h->ack, &c, 1) == 1 && c == 'o',
-	    "the holder did not open the filler files");
-}
-
-static void
-holder_access(struct holder *h)
-{
-	char c = 'r';
-
-	ATF_REQUIRE_EQ(1, write(h->cmd, &c, 1));
-	ATF_REQUIRE_MSG(read(h->ack, &c, 1) == 1 && c == 'a',
-	    "the holder did not read the filler files");
-}
-
-static void
-holder_finish(struct holder *h)
-{
-	char c = 'x';
-	int status;
-
-	ATF_REQUIRE_EQ(1, write(h->cmd, &c, 1));
-	ATF_REQUIRE_EQ(h->pid, waitpid(h->pid, &status, 0));
-	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
-	    "holder: status %#x", status);
-	close(h->cmd);
-	close(h->ack);
-}
-
-/*
- * Watch for threads going to sleep on the suspension ("suspfs", in
- * vn_start_write()) with dtrace(1)'s sched:::sleep probe: the kernel tells
- * a waiting process no other way that another process is asleep there.
- * dtrace prints each sleeper's pid on a pipe the test reads.  The
- * providers are preloaded (dtraceall_load): a late kldload is refused with
- * the plane on.
- */
-struct sleepers {
-	pid_t	pid;
-	FILE	*out;
-};
-
-static void
-sleepers_start(struct sleepers *w)
-{
-	char line[64];
-	int p[2];
+	int fd, i, p[2];
 
 	ATF_REQUIRE_EQ(0, pipe(p));
-	w->pid = fork();
-	ATF_REQUIRE(w->pid >= 0);
-	if (w->pid == 0) {
-		if (dup2(p[1], STDOUT_FILENO) < 0)
-			_exit(126);
-		closefrom(3);
-		execl("/usr/sbin/dtrace", "dtrace", "-q", "-x",
-		    "switchrate=100hz", "-n", "BEGIN { printf(\"READY\\n\"); }",
-		    "-n", "sched:::sleep /stringof(curthread->td_wmesg) == "
-		    "\"suspfs\"/ { printf(\"%d\\n\", pid); }", (char *)NULL);
-		_exit(127);
-	}
-	close(p[1]);
-	w->out = fdopen(p[0], "r");
-	ATF_REQUIRE(w->out != NULL);
-	while (fgets(line, sizeof(line), w->out) != NULL)
-		if (strcmp(line, "READY\n") == 0)
-			return;
-	atf_tc_fail("dtrace exited before tracing sched:::sleep");
-}
-
-/* Block until each of pids[0..n-1] has gone to sleep on the suspension. */
-static void
-sleepers_wait(struct sleepers *w, const pid_t *pids, int n)
-{
-	char line[64];
-	bool *seen;
-	long pid;
-	int i, left;
-
-	seen = calloc(n, sizeof(*seen));
-	ATF_REQUIRE(seen != NULL);
-	left = n;
-	while (left > 0) {
-		ATF_REQUIRE_MSG(fgets(line, sizeof(line), w->out) != NULL,
-		    "dtrace exited with %d reader(s) not asleep", left);
-		pid = strtol(line, NULL, 10);
-		for (i = 0; i < n; i++)
-			if (pids[i] == pid && !seen[i]) {
-				seen[i] = true;
-				left--;
-			}
-	}
-	free(seen);
-}
-
-static void
-sleepers_stop(struct sleepers *w)
-{
-	int status;
-
-	ATF_REQUIRE_EQ(0, kill(w->pid, SIGINT));
-	fclose(w->out);
-	ATF_REQUIRE_EQ(w->pid, waitpid(w->pid, &status, 0));
-}
-
-/*
- * Start a child per read file that opens, reads and fstats it and closes
- * it, and wait until every child's close sleeps waiting for the resume.
- */
-static void
-start_readers(struct sleepers *w, pid_t *pids)
-{
-	char path[64];
-	int fd, i;
-
 	for (i = 0; i < NREAD; i++) {
 		path_of(path, sizeof(path), "f", i);
 		pids[i] = fork();
 		ATF_REQUIRE(pids[i] >= 0);
 		if (pids[i] == 0) {
+			close(p[0]);
 			fd = open(path, O_RDONLY);
 			if (fd < 0 || access_file(fd) != 0)
 				_exit(1);
-			_exit(close(fd) == 0 ? 0 : 2);
+			c = 'r';
+			if (write(p[1], &c, 1) != 1)
+				_exit(2);
+			_exit(close(fd) == 0 ? 0 : 3);
 		}
 	}
-	sleepers_wait(w, pids, NREAD);
+	close(p[1]);
+	for (i = 0; i < NREAD; i++)
+		ATF_REQUIRE_MSG(read(p[0], &c, 1) == 1,
+		    "reader %d did not read during the suspension", i);
+	close(p[0]);
 }
 
 static void
@@ -448,32 +291,43 @@ ATF_TC_WITH_CLEANUP(closed_at_resume);
 ATF_TC_HEAD(closed_at_resume, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "files read during a suspension and closed as it ends can be "
-	    "used after the resume");
+	    "files read during a suspension and closed before the resume's "
+	    "walk reaches them can be used after the resume");
 	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "require.progs",
-	    "mdconfig newfs fsck_ffs /usr/sbin/dtrace");
-	atf_tc_set_md_var(tc, "timeout", "300");
+	atf_tc_set_md_var(tc, "require.progs", "mdconfig newfs fsck_ffs");
 }
 ATF_TC_BODY(closed_at_resume, tc)
 {
-	struct sleepers w;
-	struct holder h;
-	pid_t pids[NREAD];
-	int sfd;
+	char mnt[PATH_MAX];
+	pid_t pids[NREAD], resumer;
+	int sfd, status;
 
 	require_invariants();
+	require_resume_hold();
 	fixture();
-	sleepers_start(&w);
-	holder_start(&h);
+	ATF_REQUIRE(realpath(MNT, mnt) != NULL);
+	ATF_REQUIRE_MSG(sysctlbyname("debug.ffs.test_hold_mnt", NULL, NULL,
+	    mnt, strlen(mnt) + 1) == 0, "debug.ffs.test_hold_mnt: %s",
+	    strerror(errno));
 	sfd = suspend();
-	holder_access(&h);
-	start_readers(&w, pids);
-	resume(sfd);
+	start_readers(pids);
+	/*
+	 * Resume in a child: the resume holds its caller in the walk.  The
+	 * resume wakes the readers, whose closes finish while the walk is
+	 * held; only then does the walk reach their files.
+	 */
+	resumer = fork();
+	ATF_REQUIRE(resumer >= 0);
+	if (resumer == 0)
+		_exit(ioctl(sfd, UFSRESUME) == 0 ? 0 : 1);
+	resume_hold_set("debug.ffs.test_hold_wait", 1);
 	reap_readers(pids);
-	sleepers_stop(&w);
+	resume_hold_set("debug.ffs.test_hold_release", 1);
+	ATF_REQUIRE_EQ(resumer, waitpid(resumer, &status, 0));
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "UFSRESUME in the child: status %#x", status);
+	ATF_REQUIRE_EQ(0, close(sfd));
 	use_files();
-	holder_finish(&h);
 	remount_and_check();
 }
 ATF_TC_CLEANUP(closed_at_resume, tc)
@@ -516,50 +370,9 @@ ATF_TC_CLEANUP(open_across_resume, tc)
 	cleanup();
 }
 
-ATF_TC_WITH_CLEANUP(repeated_suspensions);
-ATF_TC_HEAD(repeated_suspensions, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "files read and closed across repeated suspensions can be used "
-	    "after each resume");
-	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "require.progs",
-	    "mdconfig newfs fsck_ffs /usr/sbin/dtrace");
-	atf_tc_set_md_var(tc, "timeout", "900");
-}
-ATF_TC_BODY(repeated_suspensions, tc)
-{
-	struct sleepers w;
-	struct holder h;
-	pid_t pids[NREAD];
-	int i, sfd;
-
-	require_invariants();
-	fixture();
-	sleepers_start(&w);
-	for (i = 0; i < 10; i++) {
-		holder_start(&h);
-		sfd = suspend();
-		holder_access(&h);
-		start_readers(&w, pids);
-		resume(sfd);
-		reap_readers(pids);
-		use_files();
-		holder_finish(&h);
-	}
-	sleepers_stop(&w);
-	remount_and_check();
-}
-ATF_TC_CLEANUP(repeated_suspensions, tc)
-{
-	(void)tc;
-	cleanup();
-}
-
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, closed_at_resume);
 	ATF_TP_ADD_TC(tp, open_across_resume);
-	ATF_TP_ADD_TC(tp, repeated_suspensions);
 	return (atf_no_error());
 }
