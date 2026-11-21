@@ -79,6 +79,9 @@ PLAIN_TESTS_C=	\
 	rename_concurrent \
 	signal_concurrent
 
+# Mounts and unmounts a tmpfs in its work directory.
+TEST_METADATA.test_unmount_event+=	required_user="root"
+
 ATF_TESTS_C+=	test_contract_matrix
 ATF_TESTS_SH+=	test_unsupported_32bit
 
