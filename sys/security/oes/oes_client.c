@@ -406,14 +406,6 @@ oes_readers_exit(struct epoch_tracker *et)
 	epoch_exit_preempt(global_epoch_preempt, et);
 }
 
-void
-oes_readers_fini(void)
-{
-
-	/* Every client is gone; wait for the arrays they freed. */
-	epoch_drain_callbacks(global_epoch_preempt);
-}
-
 static void
 oes_readers_free_cb(epoch_context_t ctx)
 {
@@ -879,6 +871,8 @@ oes_client_subscribe_events(struct oes_client *ec, oes_event_type_t *events,
 	}
 
 	EC_UNLOCK(ec);
+	/* Live, with fast-path flags counted, before the ioctl returns. */
+	oes_gate_client_update(ec, false);
 
 	OES_DEBUG("client %p subscribed to %zu events", ec, count);
 
@@ -956,6 +950,7 @@ oes_client_subscribe_bitmap(struct oes_client *ec,
 	}
 
 	EC_UNLOCK(ec);
+	oes_gate_client_update(ec, false);
 
 	OES_DEBUG("client %p subscribed via ext bitmap", ec);
 

@@ -500,6 +500,65 @@ operation, its errno, the object id, the controller's identity nonce and the
 reply length; it never carries reply data.
 Any other descriptor type returns from these hooks at once and produces no
 event.
+.Ss Idle behaviour
+.Nm
+costs close to nothing while nothing listens: one predicted branch on a
+hook that another policy keeps hot.
+A hook is live while some open client subscribes to the AUTH or NOTIFY
+event it produces; while
+.Va security.oes.require_auth_clients ,
+.Va security.oes.auth_fail_closed
+or a fail-closed
+.Va security.oes.default_deadline_miss_mode
+is set, for every hook that produces an AUTH event; and, for a hook whose
+event drops cached decisions, once some client has added a decision-cache
+entry.
+A client that has
+.Pa /dev/oes
+open and subscribes to nothing makes no hook live.
+A hook that is not live returns at its first test, which is what it would
+otherwise have returned, and counts toward none of the MAC framework's
+fast-path flags, so with nothing listening
+.Nm
+makes the framework enter no system call path on its own account; on paths
+another policy keeps hot its hooks are still called and return at once.
+The credential, exec and pipe identities are kept whether or not anything
+listens, so that a client starting later sees them.
+.Pp
+Liveness is recomputed before a subscribe or cache ioctl returns and before
+a write of a strict setting returns: an operation that starts after the
+call returns is delivered, consulted or denied as the new state requires.
+Turning a strict setting on makes the AUTH hooks live before the new value
+takes effect.
+An operation already past its hook's first test when a client subscribes is
+not reported, like one that started just before the subscription.
+Closing the last client of an event makes its hooks idle without waiting
+for threads inside them.
+.Pp
+.Nm
+is compiled into the kernel and cannot be unloaded.
+.Ss Deferred delivery
+NOTIFY events produced where the kernel cannot sleep, such as pipe reads and
+writes, are queued and delivered by the kernel thread
+.Dq oes_deferq .
+That thread is a timeshare thread: it starts at the priority of a user
+thread and, at the end of each scheduler slice, takes the priority
+the scheduler computes for it, so it competes for CPU time with
+the processes producing the events rather than preempting them.
+When the producers generate events faster than it can deliver them, the
+queue fills; an event beyond its limit
+.Pq Va security.oes.defer_max
+is discarded and counted in
+.Va es_nosleep_drops
+of the statistics returned by
+.Dv OES_IOC_GET_STATS .
+A client that must not miss such events reads them promptly and watches
+that counter.
+A realtime
+.Pq Xr rtprio 2
+thread that never sleeps on the delivery thread's CPU can keep it from
+running at all, which delays deferred events and the end of a jail scope
+whose jail was removed.
 .Ss DTrace
 The framework defines an
 .Nm
@@ -508,6 +567,8 @@ SDT provider with probes for authorization outcomes
 event enqueue and drop, and decision-cache hit and miss.
 .Sh SYSCTL VARIABLES
 .Bl -tag -width indent
+.It Va security.oes.defer_max
+The number of events the deferred-delivery queue holds; read-only.
 .It Va security.oes.max_clients
 Maximum number of concurrent clients.
 .It Va security.oes.clients
@@ -532,7 +593,8 @@ every open client is jail-scoped and none covers the subject.
 The AUTH events among them.
 .It Va security.oes.excluded_skipped
 Number of events not produced because the acting process is excluded,
-counted while a client is open.
+counted while its hook is live
+.Pq see Sx Idle behaviour .
 .It Va security.oes.excluded_invalidations
 Number of decision-cache invalidations made for excluded processes without
 an event.
@@ -544,6 +606,20 @@ The three counters above, like
 need
 .Dv PRIV_DRIVER
 to read.
+.It Va security.oes.gate.hooks
+One line per gated hook: index, name, the AUTH, NOTIFY and alternate event
+numbers that make it live, whether its event drops cached decisions, its
+MAC fast-path hook, and whether it is live
+.Pq see Sx Idle behaviour .
+.It Va security.oes.gate.live
+The live hooks as a hexadecimal bit string, bit
+.Ar n
+for hook index
+.Ar n .
+.It Va security.oes.gate.passes
+Number of hook entries that passed their first test.
+.It Va security.oes.gate.reconciles
+Number of liveness recomputations.
 .El
 .Sh FILES
 .Bl -tag -width ".Pa /dev/oes" -compact

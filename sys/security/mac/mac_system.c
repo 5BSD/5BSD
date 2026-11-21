@@ -262,7 +262,7 @@ MAC_CHECK_PROBE_DEFINE2(file_notify_close, "struct ucred *",
     "struct file *");
 
 void
-mac_file_notify_close(struct ucred *cred, struct file *fp, int fd)
+mac_file_notify_close_impl(struct ucred *cred, struct file *fp, int fd)
 {
 
 	MAC_POLICY_PERFORM(file_notify_close, cred, fp, fd);

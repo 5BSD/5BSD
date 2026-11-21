@@ -4375,12 +4375,25 @@ cache_validate_vop_vector(struct mount *mp, struct vop_vector *vops)
 }
 #endif
 
+/*
+ * Serializes recalculations.  The MAC framework recalculates after every
+ * change of the lookup or readlink fast-path flags, from policy
+ * registration and from policies switching their hooks at run time, and
+ * the sysctl handler after a change of the knob; each recalculation starts
+ * after the change it follows, so the last one to run reads the final
+ * inputs.  Taken after the MAC framework's fast-path mutex.
+ */
+static struct mtx cache_fplookup_recalc_mtx;
+MTX_SYSINIT(cache_fplookup_recalc, &cache_fplookup_recalc_mtx,
+    "fplookup recalc", MTX_DEF);
+
 void
 cache_fast_lookup_enabled_recalc(void)
 {
 	int lookup_flag;
 	int mac_on;
 
+	mtx_lock(&cache_fplookup_recalc_mtx);
 #ifdef MAC
 	mac_on = mac_vnode_check_lookup_enabled();
 	mac_on |= mac_vnode_check_readlink_enabled();
@@ -4394,6 +4407,7 @@ cache_fast_lookup_enabled_recalc(void)
 	} else {
 		atomic_store_char(&cache_fast_lookup_enabled, false);
 	}
+	mtx_unlock(&cache_fplookup_recalc_mtx);
 }
 
 static int
@@ -4409,6 +4423,20 @@ syscal_vfs_cache_fast_lookup(SYSCTL_HANDLER_ARGS)
 }
 SYSCTL_PROC(_vfs_cache_param, OID_AUTO, fast_lookup, CTLTYPE_INT|CTLFLAG_RW|CTLFLAG_MPSAFE,
     &cache_fast_lookup, 0, syscal_vfs_cache_fast_lookup, "IU", "");
+
+static int
+sysctl_vfs_cache_fast_lookup_active(SYSCTL_HANDLER_ARGS)
+{
+	int active;
+
+	active = atomic_load_char(&cache_fast_lookup_enabled) != 0;
+	return (sysctl_handle_int(oidp, &active, 0, req));
+}
+SYSCTL_PROC(_vfs_cache_param, OID_AUTO, fast_lookup_active,
+    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
+    sysctl_vfs_cache_fast_lookup_active, "I",
+    "Lockless lookup in effect: the knob is on and no MAC policy counts a "
+    "lookup or readlink hook");
 
 /*
  * Components of nameidata (or objects it can point to) which may
@@ -4764,6 +4792,16 @@ cache_can_fplookup(struct cache_fpl *fpl)
 		return (false);
 	}
 	if (ndp->ni_startdir != NULL) {
+		cache_fpl_aborted_early(fpl);
+		return (false);
+	}
+	/*
+	 * namei() answers ENOENT for "" without EMPTYPATH before it looks at
+	 * the start directory; the walk below would answer ENOTDIR for a
+	 * descriptor that is not a directory.  Leave it to namei().
+	 */
+	if (__predict_false(cnp->cn_pnbuf[0] == '\0' &&
+	    (cnp->cn_flags & EMPTYPATH) == 0)) {
 		cache_fpl_aborted_early(fpl);
 		return (false);
 	}
@@ -5310,6 +5348,13 @@ cache_fplookup_emptypath(struct cache_fpl *fpl)
 
 	MPASS(*cnp->cn_pnbuf == '\0');
 
+	/*
+	 * cache_can_fplookup() leaves "" without EMPTYPATH to namei(), which
+	 * answers ENOENT before it looks at the start directory.  The test
+	 * below is kept for a non-INVARIANTS kernel and gives the same answer.
+	 */
+	KASSERT((cnp->cn_flags & EMPTYPATH) != 0,
+	    ("%s: \"\" without EMPTYPATH reached the lockless walk", __func__));
 	if (__predict_false((cnp->cn_flags & EMPTYPATH) == 0)) {
 		cache_fpl_smr_exit(fpl);
 		return (cache_fpl_handled_error(fpl, ENOENT));
@@ -6317,6 +6362,15 @@ cache_fplookup_failed_vexec(struct cache_fpl *fpl, int error)
 	if (cnp->cn_pnbuf[0] == '\0') {
 		return (cache_fplookup_emptypath(fpl));
 	}
+
+	/*
+	 * The locked walk does not search the directory a ".." starts from
+	 * before it has stayed at a root or crossed to the covered vnode of
+	 * a mount root (vfs_lookup()).  A failed search here says nothing
+	 * about the answer: leave it to the locked walk.
+	 */
+	if (__predict_false(cache_fpl_isdotdot(cnp)))
+		return (cache_fpl_aborted(fpl));
 
 	/*
 	 * TODO: Due to ignoring trailing slashes lookup will perform a

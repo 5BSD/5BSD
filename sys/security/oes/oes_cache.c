@@ -339,8 +339,8 @@ oes_cache_remove_entry_locked(struct oes_client *ec,
 	EC_LOCK_ASSERT(ec);
 	LIST_REMOVE(entry, ece_link);
 	TAILQ_REMOVE(&ec->ec_cache_lru, entry, ece_lru);
-	if (ec->ec_cache_entries > 0 && --ec->ec_cache_entries == 0)
-		atomic_subtract_int(&oes_softc.sc_cache_clients, 1);
+	if (ec->ec_cache_entries > 0)
+		ec->ec_cache_entries--;
 	if (expired)
 		ec->ec_cache_expired++;
 	else if (eviction)
@@ -395,6 +395,7 @@ oes_client_cache_add(struct oes_client *ec, const oes_cache_entry_t *entry)
 	struct oes_cache_entry *new_entry;
 	struct timespec expires;
 	uint32_t idx;
+	bool first_use;
 
 	if (entry == NULL)
 		return (EINVAL);
@@ -428,6 +429,18 @@ oes_client_cache_add(struct oes_client *ec, const oes_cache_entry_t *entry)
 	    entry->ece_ttl_ms > OES_MAX_CACHE_TTL_MS)
 		return (EINVAL);
 
+	/*
+	 * A cached decision must be dropped by any later change of its file,
+	 * whoever makes it, so the hooks of the changing events must run from
+	 * before the first entry can be found.  The flag stays set.
+	 */
+	EC_LOCK(ec);
+	first_use = (ec->ec_flags & EC_FLAG_CACHE_USED) == 0;
+	ec->ec_flags |= EC_FLAG_CACHE_USED;
+	EC_UNLOCK(ec);
+	if (first_use)
+		oes_gate_client_update(ec, false);
+
 	oes_cache_make_deadline(&expires, entry->ece_ttl_ms);
 	new_entry = malloc(sizeof(*new_entry), M_OES, M_WAITOK | M_ZERO);
 	new_entry->ece_key = entry->ece_key;
@@ -456,9 +469,7 @@ oes_client_cache_add(struct oes_client *ec, const oes_cache_entry_t *entry)
 
 	LIST_INSERT_HEAD(&ec->ec_cache[idx], new_entry, ece_link);
 	TAILQ_INSERT_HEAD(&ec->ec_cache_lru, new_entry, ece_lru);
-	/* Excluded writers still invalidate while any client caches. */
-	if (ec->ec_cache_entries++ == 0)
-		atomic_add_int(&oes_softc.sc_cache_clients, 1);
+	ec->ec_cache_entries++;
 
 	while (ec->ec_cache_entries > ec->ec_cache_max) {
 		victim = TAILQ_LAST(&ec->ec_cache_lru, oes_cache_lru);

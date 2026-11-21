@@ -87,7 +87,17 @@ struct oes_softc {
 	counter_u64_t		sc_excluded_skipped;	/* No event: excluded subject */
 	counter_u64_t		sc_excluded_invalidations; /* Cache drop, no event */
 	counter_u64_t		sc_exec_fail_open;	/* Launcher exec events */
-	u_int			sc_cache_clients;	/* Clients with cache entries */
+
+	/*
+	 * Idle gating (oes_mac.c).  sc_gate_sx serializes the per-event
+	 * subscriber counts and oes_gate_reconcile(), which recomputes from
+	 * those counts and the strict settings which hooks anyone needs; it
+	 * is taken with no other OES lock held, and the gate never takes the
+	 * global OES lock, which the delivery task holds for each event.
+	 */
+	struct sx		sc_gate_sx;
+	counter_u64_t		sc_gate_passes;	/* Hook entries past a gate */
+	uint64_t		sc_gate_reconciles; /* sc_gate_sx */
 };
 
 /* Bound on the deferred queue so a burst cannot exhaust memory. */
@@ -215,6 +225,12 @@ struct oes_client {
 	uint32_t		ec_deadline_max_ms[128]; /* Per-AUTH-event cap; 0=default */
 	uint64_t		ec_subscriptions[4]; /* [0,1]=AUTH (128b), [2,3]=NOTIFY (128b) */
 	uint32_t		ec_flags;	/* EC_FLAG_* */
+	/*
+	 * What this client contributes to the idle gate's counts (oes_mac.c):
+	 * the subscriptions and cache use last accounted.  sc_gate_sx.
+	 */
+	uint64_t		ec_gate_subs[4];
+	bool			ec_gate_cache;
 	uint32_t		ec_mute_invert;	/* OES_MUTE_INVERT_* */
 
 	/* Event queue */
@@ -265,6 +281,7 @@ struct oes_client {
 /*	0x0002		   was EC_FLAG_MUTED_SELF (self-mute); free */
 #define EC_FLAG_MODE_SET	0x0004	/* Mode has been explicitly set */
 #define EC_FLAG_SCOPE_SETTING	0x0008	/* Scope credential update in flight */
+#define EC_FLAG_CACHE_USED	0x0010	/* Has added a cache entry; never cleared */
 
 /*
  * Jail scope teardown (ec_jail_state).  The jail's remove method only marks
@@ -545,8 +562,7 @@ oes_vtype_to_eftype(int vt)
 /*
  * Function prototypes - oes_dev.c
  */
-int	oes_dev_init(void);
-void	oes_dev_uninit(void);
+int	oes_dev_attach(void);
 
 /*
  * Function prototypes - oes_client.c
@@ -657,6 +673,7 @@ bool	oes_client_cache_lookup(struct oes_client *ec,
 struct oes_pending *oes_pending_alloc(oes_event_type_t event, struct proc *p);
 void	oes_signal_reserve_prepare(void);
 struct oes_pending *oes_pending_alloc_signal(struct proc *p);
+struct oes_pending *oes_pending_alloc_exit(struct proc *p, int *xexitp);
 void	oes_pending_free(struct oes_pending *ep);
 void	oes_pending_hold(struct oes_pending *ep);
 void	oes_pending_rele(struct oes_pending *ep);
@@ -685,9 +702,13 @@ void	oes_set_auth_deadline(struct oes_pending *ep, uint32_t deadline_ms);
 /*
  * Function prototypes - oes_mac.c (MAC policy integration)
  */
-int	oes_mac_init(void);
+int	oes_mac_policy_init(void);
+int	oes_mac_attach(void);
+void	oes_gate_reconcile(void);
+void	oes_gate_client_update(struct oes_client *ec, bool gone);
+bool	oes_gate_cache_in_use(void);
+void	oes_gate_set_strict(int *knob, int value);
 uint64_t oes_proc_get_exec_id(struct proc *p);
-void	oes_readers_fini(void);
 void	oes_readers_enter(struct epoch_tracker *);
 void	oes_readers_exit(struct epoch_tracker *);
 #define	OES_READER_NONE		0

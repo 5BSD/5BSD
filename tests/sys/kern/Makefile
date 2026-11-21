@@ -203,6 +203,8 @@ ATF_TESTS_C+=	ssl_sendfile
 .endif
 ATF_TESTS_C+=	ktrace_test
 ATF_TESTS_C+=	listener_wakeup
+ATF_TESTS_C+=	lookup_dotdot_search_test
+ATF_TESTS_C+=	lookup_empty_path_test
 ATF_TESTS_C+=	module_test
 ATF_TESTS_C+=	pdrfork
 ATF_TESTS_C+=	pdwait
