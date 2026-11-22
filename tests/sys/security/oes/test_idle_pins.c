@@ -458,10 +458,11 @@ pin_close_releases_waiters(void)
  * gated, neither allocates.  One of each shows the difference: the defect
  * allocates more than 2 * OES_MSG_MAX_SIZE bytes, the gated kernel nothing.
  * What other processes allocate in OES meanwhile is counted too, so the
- * gated bound holds while their allocations in that window add up to less
- * than one event: no other client is open (asserted, so no event is built
- * for anyone), and the only idle allocations are an exec's credential
- * label and path, each far smaller.
+ * gated bound (at most OES_MSG_MAX_SIZE bytes, less than one event) holds
+ * while their allocations in that window add up to no more: no other
+ * client is open (asserted, so no event is built for anyone), and the only
+ * idle allocations are an exec's credential label and path, each far
+ * smaller.
  */
 static void
 idle_allocations_case(const char *what, int clients)
@@ -470,18 +471,28 @@ idle_allocations_case(const char *what, int clients)
 	u_int open;
 	size_t len;
 
+	open = 0;
 	len = sizeof(open);
-	ASSERT_MSG(sysctlbyname("security.oes.clients", &open, &len, NULL,
-	    0) == 0 && open == (u_int)clients, "%s: %u clients open, want %d",
-	    what, open, clients);
+	if (sysctlbyname("security.oes.clients", &open, &len, NULL, 0) == 0)
+		ASSERT_MSG(open == (u_int)clients,
+		    "%s: %u clients open, want %d", what, open, clients);
+#if OES_IDLE_GATED
+	else
+		TEST_FAIL("%s: security.oes.clients: %s", what,
+		    strerror(errno));
+#else
+	else	/* The pre-gate kernel has no such count. */
+		printf("    note: security.oes.clients: %s; not checked\n",
+		    strerror(errno));
+#endif
 	if (idle_oes_mallocs(&n0, &b0) != 0) {
-		TEST_FAIL("%s: kern.malloc_stats has no \"oes\" type", what);
+		TEST_FAIL("%s: kern.malloc_stats \"oes\" cannot be read", what);
 		return;
 	}
 	ASSERT_MSG(idle_fork_exit() == 0, "%s: fork and exit: %s", what,
 	    strerror(errno));
 	if (idle_oes_mallocs(&n1, &b1) != 0) {
-		TEST_FAIL("%s: kern.malloc_stats has no \"oes\" type", what);
+		TEST_FAIL("%s: kern.malloc_stats \"oes\" cannot be read", what);
 		return;
 	}
 	printf("    one fork+exit: %ju oes allocations, %ju bytes\n",

@@ -2647,36 +2647,101 @@ fn_host_work(void *arg __unused)
 	return (0);
 }
 /*
+ * Run fn(arg) in a host child to completion while watching the
+ * jail-scoped AUTH client fd: an event fd receives meanwhile is outside
+ * work the client must not see.  It fails the case at once, with its pid
+ * and type, and is answered ALLOW so the child goes on.  Returns the
+ * child's status, or -1 with *out left for the caller to kill after it
+ * has closed fd: a child held in fd's AUTH wait cannot be killed until
+ * the close releases it.  Outside work held without any event reaching
+ * fd leaves the child waiting, and the case fails at its timeout.
+ */
+static int
+outside_run(int fd, int (*fn)(void *), void *arg, const char *what,
+    struct kid *out)
+{
+	struct kevent kev[2];
+	test_msg_buf other;
+	oes_response_t resp;
+	int kq, n;
+
+	out->pid = -1;
+	out->go = -1;
+	kq = kqueue();
+	if (kq < 0) {
+		TEST_FAIL("%s: kqueue: %s", what, strerror(errno));
+		return (-1);
+	}
+	if (kid_start(out, -1, fn, arg, true) != 0) {
+		TEST_FAIL("%s: the outside child did not start", what);
+		close(kq);
+		return (-1);
+	}
+	/* Registered before the child runs: its exit cannot be missed. */
+	EV_SET(&kev[0], fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+	EV_SET(&kev[1], out->pid, EVFILT_PROC, EV_ADD, NOTE_EXIT, 0, NULL);
+	if (kevent(kq, kev, 2, NULL, 0, NULL) != 0) {
+		TEST_FAIL("%s: kevent: %s", what, strerror(errno));
+		close(kq);
+		return (-1);
+	}
+	kid_go(out);
+	for (;;) {
+		n = kevent(kq, NULL, 0, kev, 1, NULL);
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n != 1) {
+			TEST_FAIL("%s: kevent: %s", what, strerror(errno));
+			close(kq);
+			return (-1);
+		}
+		if (kev[0].filter == EVFILT_PROC)
+			break;
+		while (test_wait_event(fd, &other.msg, 0) == 0) {
+			TEST_FAIL("%s: event %#x of pid %d reached the client "
+			    "while the outside work ran", what,
+			    other.msg.em_event,
+			    (int)other.msg.em_process.ep_pid);
+			if (other.msg.em_action != OES_ACTION_AUTH)
+				continue;
+			memset(&resp, 0, sizeof(resp));
+			resp.er_id = other.msg.em_id;
+			resp.er_result = OES_AUTH_ALLOW;
+			(void)write(fd, &resp, sizeof(resp));
+		}
+	}
+	close(kq);
+	n = jt_reap(out->pid);
+	out->pid = -1;
+	return (n);
+}
+
+/*
  * Outside work is never held by a jail-scoped AUTH client, shown by order
  * rather than by time.  A jailed open's AUTH_OPEN is read and left
  * unanswered; its deadline is the longest OES allows (OES_MAX_DEADLINE_MS)
  * only so that it cannot run out by itself.  The outside work then runs to
- * completion while the test waits on the client and on the worker's exit
- * together: an event the client receives meanwhile is an outside operation
- * it must not see, reported at once (and answered ALLOW, so the worker goes
- * on).  Only after the worker has exited is the jailed event answered DENY;
+ * completion (outside_run(): an event reaching the client meanwhile fails
+ * the case at once).  Only after that is the jailed event answered DENY;
  * the jailed open failing with EACCES shows it was still waiting, and the
- * client received that one event, dropped none, and timed none out.  An
- * outside operation held without any event reaching this client would
- * leave the worker waiting, and the case fails at its timeout.
+ * client received that one event, dropped none, and timed none out.
  */
 static void
 outside_never_waits(int jid, const char *what)
 {
 	oes_event_type_t evs[] = { OES_EVENT_AUTH_OPEN, OES_EVENT_AUTH_EXEC };
 	struct open_arg oa = { file1, 1, O_RDONLY };
-	struct kevent kev[2];
-	test_msg_buf buf, other;
+	test_msg_buf buf;
 	oes_response_t resp;
 	struct oes_stats st;
 	struct kid in, out;
-	int fd, kq, n, rc;
-	bool exited;
+	int fd, rc;
 
 	fd = auth_client(jid, OES_MAX_DEADLINE_MS, evs, 2);
 	if (fd < 0)
 		return;
-	kq = -1;
+	out.pid = -1;
+	out.go = -1;
 	if (kid_start(&in, jid, fn_open, &oa, false) != 0) {
 		TEST_FAIL("%s: jailed opener", what);
 		close(fd);
@@ -2695,46 +2760,9 @@ outside_never_waits(int jid, const char *what)
 		    (int)buf.msg.em_process.ep_pid);
 		goto release;
 	}
-	kq = kqueue();
-	if (kq < 0 || kid_start(&out, -1, fn_host_work, NULL, true) != 0) {
-		TEST_FAIL("%s: host worker: %s", what, strerror(errno));
+	rc = outside_run(fd, fn_host_work, NULL, what, &out);
+	if (rc == -1)
 		goto release;
-	}
-	EV_SET(&kev[0], fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
-	EV_SET(&kev[1], out.pid, EVFILT_PROC, EV_ADD, NOTE_EXIT, 0, NULL);
-	if (kevent(kq, kev, 2, NULL, 0, NULL) != 0) {
-		TEST_FAIL("%s: kevent: %s", what, strerror(errno));
-		kid_kill(&out);
-		goto release;
-	}
-	kid_go(&out);
-	for (exited = false; !exited;) {
-		n = kevent(kq, NULL, 0, kev, 1, NULL);
-		if (n < 0 && errno == EINTR)
-			continue;
-		if (n != 1) {
-			TEST_FAIL("%s: kevent: %s", what, strerror(errno));
-			kid_kill(&out);
-			goto release;
-		}
-		if (kev[0].filter == EVFILT_PROC) {
-			exited = true;
-			continue;
-		}
-		while (test_wait_event(fd, &other.msg, 0) == 0) {
-			TEST_FAIL("%s: event %#x of pid %d reached the client "
-			    "while the outside work ran", what,
-			    other.msg.em_event,
-			    (int)other.msg.em_process.ep_pid);
-			if (other.msg.em_action != OES_ACTION_AUTH)
-				continue;
-			memset(&resp, 0, sizeof(resp));
-			resp.er_id = other.msg.em_id;
-			resp.er_result = OES_AUTH_ALLOW;
-			(void)write(fd, &resp, sizeof(resp));
-		}
-	}
-	rc = jt_reap(out.pid);
 	ASSERT_MSG(rc == 0, "%s: host worker status %d", what, rc);
 	memset(&resp, 0, sizeof(resp));
 	resp.er_id = buf.msg.em_id;
@@ -2754,14 +2782,12 @@ outside_never_waits(int jid, const char *what)
 	    (uintmax_t)st.es_events_dropped);
 	ASSERT_MSG(st.es_auth_timeouts == 0, "%s: %ju AUTH timeouts", what,
 	    (uintmax_t)st.es_auth_timeouts);
-	close(kq);
 	close(fd);
 	return;
 release:
-	/* Closing the client releases the held open before it is killed. */
-	if (kq >= 0)
-		close(kq);
+	/* Closing the client releases held operations before the kills. */
 	close(fd);
+	kid_kill(&out);
 	kid_kill(&in);
 }
 
@@ -2823,9 +2849,12 @@ test_auth(void)
 	fd = auth_client(j_a, OES_MAX_DEADLINE_MS, evs, 1);
 	if (fd < 0)
 		return;
-	if (kid_start(&k, -1, fn_open, &oa, false) != 0)
+	rc = outside_run(fd, fn_open, &oa, "T-AUTH-3 host open", &k);
+	if (rc == -1) {
+		close(fd);
+		kid_kill(&k);
 		return;
-	rc = kid_finish(&k);
+	}
 	ASSERT_MSG(rc == 0, "host open status %d", rc);
 	if (kid_start(&k, j_a, fn_open, &oa, true) != 0)
 		return;
@@ -3313,7 +3342,7 @@ test_cache_invalidation(void)
 			entry.ece_key.eck_file =
 			    buf.msg.em_event_data.open.file.ef_token;
 			entry.ece_result = OES_AUTH_ALLOW;
-			entry.ece_ttl_ms = 60000;
+			entry.ece_ttl_ms = OES_MAX_CACHE_TTL_MS;
 			EXPECT_OK(ioctl(fd, OES_IOC_CACHE_ADD, &entry),
 			    "CACHE_ADD");
 			added = true;
@@ -3330,16 +3359,24 @@ test_cache_invalidation(void)
 	ASSERT_MSG(st.es_cache_entries == 1, "cache entries %u",
 	    st.es_cache_entries);
 	c0 = sysctl_u64("security.oes.jail_filtered_auth");
-	rc = kid_start(&h, -1, fn_append, file2, false) == 0 ?
-	    kid_finish(&h) : -1;
+	rc = outside_run(fd, fn_append, file2, "T-CACHE-2 outside writer", &h);
+	if (rc == -1) {
+		close(fd);
+		kid_kill(&h);
+		return;
+	}
 	ASSERT_MSG(rc == 0, "outside writer status %d", rc);
 	get_stats(fd, &st);
 	ASSERT_MSG(st.es_cache_entries == 0,
 	    "cache entries after an outside write: %u", st.es_cache_entries);
 	/* With the cache empty again, outside writes are dropped early. */
 	c0 = sysctl_u64("security.oes.jail_filtered_auth");
-	rc = kid_start(&h, -1, fn_append, file2, false) == 0 ?
-	    kid_finish(&h) : -1;
+	rc = outside_run(fd, fn_append, file2, "T-CACHE-2 outside writer", &h);
+	if (rc == -1) {
+		close(fd);
+		kid_kill(&h);
+		return;
+	}
 	ASSERT_MSG(rc == 0 &&
 	    sysctl_u64("security.oes.jail_filtered_auth") > c0,
 	    "outside write not filtered once the cache is empty");
