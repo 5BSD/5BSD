@@ -47,20 +47,3 @@
 # <-> tmpfs reversal of the boot, so it stops the run.
 (?s)\A\s*1st \S+ (devfs|ufs) \(\1, lockmgr\) @ \S*/kern/vfs_mount\.c:\d+\s+2nd \S+ tmpfs \(tmpfs, lockmgr\) @ \S*/kern/vfs_subr\.c:\d+\s+lock order tmpfs -> \1 established at:\s+(?:#\d+ [^\n]*\n)*?#\d+ \S+ at (?:vput_final|ffs_unmount)\+[^\n]*\n(?:#\d+ [^\n]*\n)*?#\d+ \S+ at dounmount\+[^\n]*\n#\d+ \S+ at kern_unmount\+[^\n]*\n(?:#\d+ [^\n]*\n)*lock order \1 -> tmpfs attempted at:\s+(?:#\d+ [^\n]*\n)*?#\d+ \S+ at vflush\+[^\n]*\n#\d+ \S+ at tmpfs_unmount\+[^\n]*\n#\d+ \S+ at dounmount\+[^\n]*\n#\d+ \S+ at vfs_unmountall\+
 
-# Shutdown unmount of a tmpfs mounted on a devfs or UFS directory
-# (/compat/linux/dev/shm on the Linux devfs, /tmp on the root UFS) after the
-# same shutdown unmounted a devfs or a nullfs mounted on a tmpfs directory
-# (a jail's /dev or a nullfs a test left mounted under /tmp).  Established:
-# vfs_unmountall -> dounmount holds the covered tmpfs directory and
-# devfs_unmount -> vflush -> devfs_root locks the devfs root, or
-# nullfs_unmount -> vflush -> null_lock locks the lower UFS vnode.
-# Attempted: vfs_unmountall -> dounmount holds the covered devfs or UFS
-# directory and tmpfs_unmount -> vflush locks the tmpfs vnodes.  Both edges
-# run in the one reboot thread, one file system at a time, after every
-# process is gone; and an instance cycle would need a devfs (or the nullfs's
-# lower UFS) mounted inside a tmpfs that is itself mounted inside it.
-# Covered-vnode-before-mounted-file-system order on different mounts, as
-# the entry above (5bsd-issues
-# 2026-11-20-known-lor-misses-shutdown-devfs-on-tmpfs-variant.md, analysis).
-# Shutdown only: both stacks must be vfs_unmountall's.
-(?s)\A\s*1st \S+ (devfs|ufs) \(\1, lockmgr\) @ \S*/kern/vfs_mount\.c:\d+\s+2nd \S+ tmpfs \(tmpfs, lockmgr\) @ \S*/kern/vfs_subr\.c:\d+\s+lock order tmpfs -> \1 established at:\s+(?:#\d+ [^\n]*\n)*?(?:#\d+ \S+ at devfs_root\+[^\n]*\n(?:#\d+ \S+ at vfs_cache_root_fallback\+[^\n]*\n)?#\d+ \S+ at vflush\+[^\n]*\n#\d+ \S+ at devfs_unmount\+|#\d+ \S+ at null_lock\+[^\n]*\n(?:#\d+ [^\n]*\n){0,2}?#\d+ \S+ at vflush\+[^\n]*\n#\d+ \S+ at nullfs_unmount\+)[^\n]*\n#\d+ \S+ at dounmount\+[^\n]*\n#\d+ \S+ at vfs_unmountall\+[^\n]*\n(?:#\d+ [^\n]*\n)*lock order \1 -> tmpfs attempted at:\s+(?:#\d+ [^\n]*\n)*?#\d+ \S+ at vflush\+[^\n]*\n#\d+ \S+ at tmpfs_unmount\+[^\n]*\n#\d+ \S+ at dounmount\+[^\n]*\n#\d+ \S+ at vfs_unmountall\+
