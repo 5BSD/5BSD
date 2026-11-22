@@ -5788,7 +5788,12 @@ check_jail_tree_cleanup(bool child_first)
 	ATF_REQUIRE_EQ(1, cleanup_fixture_read(
 	    "debug.capability_cleanup_test.wait_entered"));
 
-	/* Parent jail's user: blocks in co_connect. */
+	/*
+	 * Parent jail's user: blocks in co_connect, which then fails (EIO), so
+	 * it holds no instance whose close would block on the release the
+	 * child jail's user is parked on.
+	 */
+	cleanup_fixture_write("debug.capability_cleanup_test.fail_stage", 1);
 	cleanup_fixture_write("debug.capability_cleanup_test.block_stage", 1);
 	ppid = fork();
 	ATF_REQUIRE(ppid >= 0);
