@@ -73,9 +73,13 @@ static int proto_rx_fds[MAC_CAPABILITY_MAX_FDS];
 
 /*
  * SwitchBoard waits for each reply on the channel with no deadline: every
- * request gets an answer, or the channel goes away so that SwitchBoard sees
- * ECONNRESET.  When Capsule can neither answer nor receive, it ends the
- * channel the way a SwitchBoard EOF does (close it and restart SwitchBoard).
+ * request is answered, or the channel ends.  When Capsule can neither answer
+ * nor receive, it ends the channel the way a SwitchBoard EOF does: it closes
+ * its end and kills SwitchBoard, which it then restarts (a fresh channel;
+ * the dynamic claims are swept on the exit).  A receive that fails with
+ * EMFILE or ENFILE (no descriptor slot for an attached descriptor) ends the
+ * channel the same way: Capsule cannot take the message, and restarting
+ * SwitchBoard is the acceptable outcome for a PID 1 out of descriptors.
  */
 static void
 proto_channel_fatal(const char *why, int error)
@@ -88,20 +92,27 @@ proto_channel_fatal(const char *why, int error)
 }
 
 /*
- * Send a reply with optional attached fds.
+ * Send a reply with optional attached fds.  Returns 0 when SwitchBoard was
+ * sent exactly this status with these descriptors, -1 otherwise: the
+ * descriptors could not be confined (an EIO status was sent instead), the
+ * reply could not be sent (a status-only error was sent instead), or not
+ * even that could be sent (the channel ended: SwitchBoard is killed and
+ * restarted).  A caller that granted something for the reply must take it
+ * back on -1, since SwitchBoard does not hold it.
  */
 int
 proto_reply(int status, uint64_t reply_token, int *fds, int nfds)
 {
 	struct mac_capability_sendmsg_args sa;
 	struct capsule_reply rpl;
-	int i;
+	int i, asked;
 
 	/*
 	 * Delegated authority descriptors cross exactly this one message edge.
 	 * CAP_XFER_ONCE is consumed atomically by SENDMSG and the receiving
 	 * descriptor is installed as CAP_XFER_NONE.
 	 */
+	asked = status;
 	if (status == 0 && nfds > 0) {
 		for (i = 0; i < nfds; i++) {
 			if (cap_xfer_limit(fds[i], CAP_XFER_ONCE) == -1) {
@@ -133,7 +144,7 @@ proto_reply(int status, uint64_t reply_token, int *fds, int nfds)
 		/*
 		 * Never leave the request unanswered: once more, status-only,
 		 * carrying why the reply failed; if that fails too, end the
-		 * channel so that SwitchBoard's wait ends with ECONNRESET.
+		 * channel (close it, kill and restart SwitchBoard).
 		 */
 		rpl.status = error;
 		memset(&sa, 0, sizeof(sa));
@@ -152,7 +163,7 @@ proto_reply(int status, uint64_t reply_token, int *fds, int nfds)
 	}
 	dispatch_status = status;
 	CAPSULE_PROBE_IPC_REPLY(dispatch_op, status);
-	return (0);
+	return (status == asked ? 0 : -1);
 }
 
 
@@ -197,14 +208,15 @@ handle_mint_net(const void *payload, uint32_t len, uint64_t reply_token)
 {
 	struct ort_net_claim nc;
 	int err, token_fd;
+	bool claimed;
 
 	if (!validate_net_req(payload, len, &nc, &err)) {
 		proto_reply(err, reply_token, NULL, 0);
 		return;
 	}
 
-	if (auto_claim_net(&nc, &err) != 0 &&
-	    !net_is_claimed(&nc)) {
+	claimed = auto_claim_net(&nc, &err) == 0;
+	if (!claimed && !net_is_claimed(&nc)) {
 		CAPSULE_PROBE_MINT_NET(nc.port_min, nc.port_max,
 		    nc.protocol, err);
 		proto_reply(err, reply_token, NULL, 0);
@@ -213,7 +225,8 @@ handle_mint_net(const void *payload, uint32_t len, uint64_t reply_token)
 
 	token_fd = mac_capability_mint_net_token(&nc);
 	if (token_fd == -1) {
-		release_auto_claim_net(&nc);
+		if (claimed)
+			release_auto_claim_net(&nc);
 		CAPSULE_PROBE_MINT_NET(nc.port_min, nc.port_max, nc.protocol,
 		    EIO);
 		proto_reply(EIO, reply_token, NULL, 0);
@@ -221,7 +234,9 @@ handle_mint_net(const void *payload, uint32_t len, uint64_t reply_token)
 	}
 
 	CAPSULE_PROBE_MINT_NET(nc.port_min, nc.port_max, nc.protocol, 0);
-	proto_reply(0, reply_token, &token_fd, 1);
+	/* SwitchBoard did not get the token: take back this request's claim. */
+	if (proto_reply(0, reply_token, &token_fd, 1) != 0 && claimed)
+		release_auto_claim_net(&nc);
 	close(token_fd);
 }
 
@@ -247,7 +262,9 @@ handle_mint_vsock(const void *payload, uint32_t len, uint64_t reply_token)
 		return;
 	}
 	CAPSULE_PROBE_MINT_VSOCK(vc.cid, vc.port_min, vc.port_max, 0);
-	proto_reply(0, reply_token, &token_fd, 1);
+	/* SwitchBoard did not get the token: take back the claim. */
+	if (proto_reply(0, reply_token, &token_fd, 1) != 0)
+		release_auto_claim_vsock(&vc);
 	close(token_fd);
 }
 
@@ -301,7 +318,9 @@ handle_mint_system(const void *payload, uint32_t len, uint64_t reply_token)
 			return;
 		}
 		CAPSULE_PROBE_MINT_SYSTEM(req->gates, 0);
-		proto_reply(0, reply_token, &token_fd, 1);
+		/* SwitchBoard did not get the token: take back the claim. */
+		if (proto_reply(0, reply_token, &token_fd, 1) != 0)
+			(void)mac_capability_release_system_sysctl();
 		close(token_fd);
 		return;
 	}
@@ -322,7 +341,9 @@ handle_mint_system(const void *payload, uint32_t len, uint64_t reply_token)
 	}
 
 	CAPSULE_PROBE_MINT_SYSTEM(req->gates, 0);
-	proto_reply(0, reply_token, &token_fd, 1);
+	/* SwitchBoard did not get the token: take back the claim. */
+	if (proto_reply(0, reply_token, &token_fd, 1) != 0)
+		release_auto_claim_system(req->gates);
 	close(token_fd);
 }
 
@@ -532,6 +553,12 @@ proto_dispatch_one(void)
 	if (ioctl(proto_channel_fd, MAC_CAPABILITY_RECVMSG, &ra) == -1) {
 		if (errno == EAGAIN)
 			return (0);
+		/*
+		 * Any other failure leaves the request unreceived and so
+		 * unanswerable: end the channel.  That includes EMFILE and
+		 * ENFILE (no slot to install an attached descriptor), where a
+		 * SwitchBoard restart is the acceptable outcome.
+		 */
 		proto_channel_fatal("recvmsg", errno);
 		return (-1);
 	}

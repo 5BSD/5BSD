@@ -108,29 +108,17 @@ start_capsule()
 	    sed -n 's/^running pid=//p')
 }
 
+# Wait, on file events and without a deadline of its own (the case's ATF
+# timeout bounds it), until a file exists and is not empty, or until the
+# Capsule log contains a fixed string.
 wait_for_file()
 {
-	local path i
-	path="$1"
-	i=0
-	while [ ! -s "$path" ] && [ "$i" -lt 100 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
-	test -s "$path"
+	"$(atf_get_srcdir)/capd_wait_file" "$1"
 }
 
 wait_for_log()
 {
-	local pattern i
-	pattern="$1"
-	i=0
-	while ! grep -q "$pattern" "$logfile" 2>/dev/null &&
-	    [ "$i" -lt 100 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
-	grep -q "$pattern" "$logfile" 2>/dev/null
+	"$(atf_get_srcdir)/capd_wait_file" "$logfile" "$1"
 }
 
 wait_for_authenticated_shutdown()
@@ -358,12 +346,8 @@ bootstrap_channel_loss_kills_switchboard_body()
 		atf_fail "bootstrap fixture did not start"
 	fi
 
-	i=0
-	while ! grep -q "switchboard killed by signal" "$logfile" 2>/dev/null &&
-	    [ "$i" -lt 100 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
+	wait_for_log "switchboard killed by signal" ||
+	    atf_fail "Capsule did not kill the switchboard instance"
 	atf_check -s exit:0 -o ignore \
 	    grep "switchboard closed channel" "$logfile"
 	atf_check -s exit:0 -o ignore \
@@ -465,12 +449,8 @@ channel_unsendable_reply_ends_channel_body()
 		cat "$logfile" 2>/dev/null
 		atf_fail "the flood fixture did not start"
 	fi
-	i=0
-	while ! grep -q "switchboard killed by signal" "$logfile" 2>/dev/null &&
-	    [ "$i" -lt 900 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
+	wait_for_log "switchboard killed by signal" ||
+	    atf_fail "waiting for the end of the channel failed"
 	if ! grep -q "status-only reply failed.*ending the SwitchBoard channel" "$logfile" ||
 	    ! grep -q "switchboard killed by signal" "$logfile"; then
 		cat switchboard-answers.out "$logfile" >&2
