@@ -191,6 +191,14 @@ struct mac_capability_service {
 	LIST_ENTRY(mac_capability_service) csvc_link;	/* (L) registry list link */
 	char		csvc_name[MAC_CAPABILITY_MAXNAME]; /* (I) service name */
 	const struct mac_capability_ops *csvc_ops;	/* (I) operation callbacks */
+	/*
+	 * (I) Which callbacks csvc_ops has, copied at registration.  The send
+	 * path tests these, never csvc_ops itself, outside an op_enter
+	 * bracket: a sender asleep across a destroy may run after the
+	 * providing module has unloaded.
+	 */
+	bool		csvc_has_handler;
+	bool		csvc_has_direct_peer;
 	void		*csvc_arg;		/* (I) callback argument */
 	LIST_HEAD(, mac_capability_instance) csvc_instances; /* (L) instance list */
 	u_int		csvc_admissions;	/* (L) constructors/authorization */

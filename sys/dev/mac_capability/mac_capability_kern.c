@@ -633,6 +633,8 @@ mac_capability_service_create(const struct mac_capability_service_params *p,
 	svc = malloc(sizeof(*svc), M_MAC_CAPABILITY, M_WAITOK | M_ZERO);
 	strlcpy(svc->csvc_name, p->name, sizeof(svc->csvc_name));
 	svc->csvc_ops = p->ops;
+	svc->csvc_has_handler = p->ops->co_handler != NULL;
+	svc->csvc_has_direct_peer = p->ops->co_direct_peer != NULL;
 	svc->csvc_arg = p->arg;
 	svc->csvc_instance_limit = instance_limit;
 	svc->csvc_tx_limit = p->tx_limit > 0 ? p->tx_limit :

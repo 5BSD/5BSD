@@ -334,7 +334,7 @@ mac_capability_direct_peer(struct mac_capability_instance *s)
 	bool idle;
 
 	svc = s->ci_service;
-	if (svc == NULL || svc->csvc_ops->co_direct_peer == NULL ||
+	if (svc == NULL || !svc->csvc_has_direct_peer ||
 	    atomic_load_int(&mac_capability_direct_delivery) == 0)
 		return (NULL);
 	mtx_lock(&s->ci_mtx);
@@ -550,7 +550,7 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 	svc = s->ci_service;
 	if (svc != NULL)
 		svc_name = svc->csvc_name;
-	if (svc == NULL || svc->csvc_ops->co_handler == NULL) {
+	if (svc == NULL || !svc->csvc_has_handler) {
 		error = EOPNOTSUPP;
 		goto out;
 	}
@@ -1140,7 +1140,7 @@ mac_capability_instance_do_channel_call(struct mac_capability_instance *s,
 		error = EINVAL;
 		goto out;
 	}
-	if (s->ci_service == NULL || s->ci_service->csvc_ops->co_handler == NULL) {
+	if (s->ci_service == NULL || !s->ci_service->csvc_has_handler) {
 		error = EOPNOTSUPP;
 		goto out;
 	}
