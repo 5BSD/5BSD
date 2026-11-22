@@ -40,7 +40,8 @@
 #
 # With --progress, the monitor appends to FILE a host-load sample (LOAD:
 # epoch, the 1/5/15 minute load averages, logical CPUs, QEMU processes
-# running, whether the heavy-build lock is held) at its start, at every
+# running, fair-slot guest slots held, lockf(1) processes on the
+# heavy-build lock) at its start, at every
 # guest progress line (PHASE_*, BSDTIME_SESSIONS_PROGRESS, KYUA_*START,
 # KYUA_SUMMARY; also written as PROGRESS lines) and at its end.  Samples
 # follow events, never a timer: a long step without output has samples only
@@ -58,7 +59,6 @@
 # must be able to require frames of that last stack.
 
 import errno
-import fcntl
 import os
 import subprocess
 import re
@@ -78,36 +78,37 @@ FATAL_GRACE_S = 5.0
 
 PROGRESS_LINE = re.compile(r"^(PHASE_\w+|BSDTIME_SESSIONS_PROGRESS=|KYUA_\w*START|KYUA_SUMMARY:)")
 HEAVY_BUILD_LOCK = "/usr/obj/5BSD-heavy-build.lock"
+GUEST_SLOTS = "/usr/obj/dq-guest-slots"
 
 
-def heavy_build_held():
-    """Whether another process holds the heavy-build lock (lockf(1) takes
-    it with O_EXLOCK, a flock(2) lock).  The probe is a non-blocking try,
-    released at once."""
+def count(argv):
+    """Lines of a pgrep(1) answer; -1 when it cannot run."""
     try:
-        fd = os.open(HEAVY_BUILD_LOCK, os.O_RDONLY)
+        out = subprocess.run(argv, capture_output=True, text=True,
+                             check=False).stdout
     except OSError:
-        return False
+        return -1
+    return len(out.split())
+
+
+def slots_held():
+    """Guest slots claimed through fair-slot.sh (DIR/slotN)."""
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        return True
-    finally:
-        os.close(fd)
-    return False
+        return sum(1 for n in os.listdir(GUEST_SLOTS)
+                   if n.startswith("slot") and n[4:].isdigit())
+    except OSError:
+        return -1
 
 
 def load_sample():
+    """Read-only: the heavy-build lock is never taken; lockf(1) processes
+    on it (the holder and any waiters) are counted instead."""
     la = os.getloadavg()
-    try:
-        out = subprocess.run(["pgrep", "^qemu-system"], capture_output=True,
-                             text=True, check=False).stdout
-        qemus = len(out.split())
-    except OSError:
-        qemus = -1
-    return "LOAD %d %.2f %.2f %.2f ncpu=%d qemus=%d heavy_build=%s" % (
-        int(time.time()), la[0], la[1], la[2], os.cpu_count() or 0, qemus,
-        "held" if heavy_build_held() else "free")
+    return ("LOAD %d %.2f %.2f %.2f ncpu=%d qemus=%d slots=%d "
+            "heavy_build_lockf=%d" % (
+                int(time.time()), la[0], la[1], la[2], os.cpu_count() or 0,
+                count(["pgrep", "^qemu-system"]), slots_held(),
+                count(["pgrep", "-f", "^lockf .*" + re.escape(HEAVY_BUILD_LOCK)])))
 
 
 class Progress:

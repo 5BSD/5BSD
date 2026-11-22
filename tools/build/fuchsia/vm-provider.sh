@@ -604,100 +604,123 @@ mkdir -p "$R"
 echo KYUA_PLANEON_START
 # --- phase bounds (tests/vm-provider-phase-bounds.sh runs this block)
 # Every step runs bounded by the run's deadline less PHASE_RESERVE, the time
-# measured below for what an expiry still has to do (the dump and the
-# results export), so the guest, not the host, meets the deadline first:
-# it reports what it was waiting on and still exports the results.  No step
-# has a bound of its own here; components keep their declared bounds.
-# PHASE lines go to fd 3, the console, whatever a step's output is.
-exec 3>&1
-PHASE_RESERVE=0 PHASE_EXPIRED=0
+# measured below for what an expiry has to do before the host stops QEMU
+# (the stacks of the blocked processes and the results export), so the
+# guest, not the host, meets the deadline first: it reports what it was
+# waiting on and exports the results.  No step has a bound of its own here;
+# components keep their declared bounds.  PHASE lines go to the console
+# device itself, so no descriptor is added to what steps inherit.
+if [ -z "${PHASE_CONSOLE:-}" ]; then
+	if tty -s; then PHASE_CONSOLE=$(tty); else PHASE_CONSOLE=/dev/console; fi
+fi
+PHASE_RESERVE=0
+# An expiry is recorded in a file: it must survive the subshells of command
+# substitutions and pipelines (the kyua step runs inside one).
+PHASE_EXPIRED_FILE=$R/phase-expired
+rm -f "$PHASE_EXPIRED_FILE"
 PHASE_LOG_LINE=$(wc -l < /var/log/messages 2>/dev/null || echo 0)
 PHASE_LOG_LINE=$((PHASE_LOG_LINE + 0))
+phase_say() { echo "$*" >> "$PHASE_CONSOLE"; }
+phase_expired() { [ -e "$PHASE_EXPIRED_FILE" ]; }
 phase_left() { echo $(( RUN_DEADLINE - PHASE_RESERVE - $(date +%s) )); }
-# A process and its descendants, by parent PID.
+# A process and its descendants, by parent PID.  Each step runs under
+# timeout(1) as its reaper, so descendants that lost their parent are
+# still its children here.
 phase_tree() {
 	local c
 	echo "$1"
 	for c in $(pgrep -P "$1" 2>/dev/null); do phase_tree "$c"; done
 }
-# What a step was waiting on: kernel stacks of the step's processes,
-# SwitchBoard, PID 1 and the phase's providers, and the system log since the
-# script began.  switchboardctl status is left to phase_expire: it may wait
-# (30 s, its own bound) on the SwitchBoard being examined.
-phase_dump() {
+# The kernel stacks of the given processes, SwitchBoard, PID 1 and the
+# phase's provider: what a step was waiting on.  Printed on the console,
+# which the host keeps whatever happens next.
+phase_stacks() {
 	local step=$1 p seen; shift
-	echo "PHASE_DUMP_BEGIN step=$step"
+	phase_say "PHASE_DUMP_BEGIN step=$step"
 	seen=" "
 	for p in "$@" $(pgrep -x switchboard 2>/dev/null) 1 \
 	    $(pgrep -x BSDTime 2>/dev/null); do
 		case $seen in *" $p "*) continue ;; esac
 		seen="$seen$p "
-		echo "--- procstat -kk $p ($(ps -o comm= -p "$p" 2>/dev/null))"
-		procstat -kk "$p" 2>&1
+		{ echo "--- procstat -kk $p ($(ps -o comm= -p "$p" 2>/dev/null))"
+		  procstat -kk "$p" 2>&1; } >> "$PHASE_CONSOLE"
 	done
-	echo "--- /var/log/messages since line $PHASE_LOG_LINE"
-	tail -n "+$((PHASE_LOG_LINE + 1))" /var/log/messages 2>&1
-	echo "PHASE_DUMP_END step=$step"
+}
+# The rest of the dump, after the results are saved: the system log since
+# the script began and SwitchBoard's status (switchboardctl's own 30 s
+# bound; it may wait on the SwitchBoard being examined).
+phase_dump_rest() {
+	local step=$1
+	{ echo "--- /var/log/messages since line $PHASE_LOG_LINE"
+	  tail -n "+$((PHASE_LOG_LINE + 1))" /var/log/messages 2>&1
+	  echo "--- switchboardctl status"
+	  switchboardctl status 2>&1; } >> "$PHASE_CONSOLE"
+	phase_say "PHASE_DUMP_END step=$step"
 }
 # Only the explicitly identified second disk is written.
 results_export() {
 	[ "$(geom disk list vtbd1 2>/dev/null | awk '/ident:/ {print $2}')" = kyua-results ] &&
 	    tar -cf /dev/vtbd1 -C /tmp kyua-results
 }
-# run_step NAME COMMAND...: run COMMAND (a program or a shell function) with
-# the caller's redirections, bounded by phase_left.  Prints PHASE_STEP lines;
-# returns COMMAND's status, or 124 when the bound expired (after the dump;
-# the step's processes are then killed) or had already passed.
+# An expiry of step $1 whose processes are the rest of the arguments (the
+# first, timeout(1), is their reaper): record it, print the stacks, kill
+# the step (timeout's own expiry action on SIGALRM: SIGKILL to every
+# descendant), save the results, then the rest of the dump.
+phase_expire() {
+	local step=$1 reaper=$2
+	: > "$PHASE_EXPIRED_FILE"
+	phase_stacks "$@"
+	[ -z "$reaper" ] || kill -ALRM "$reaper" 2>/dev/null
+	[ -z "$reaper" ] || wait "$reaper" 2>/dev/null
+	results_export && phase_say PHASE_EXPIRY_RESULTS_SAVED
+	phase_dump_rest "$step"
+}
+# run_step NAME COMMAND...: run the program COMMAND with the caller's
+# redirections under timeout(1) as its reaper (no time limit of its own),
+# bounded by phase_left: pwait -t.  Prints PHASE_STEP lines; returns
+# COMMAND's status, or 124 when the step expired or was skipped after an
+# expiry (phase_expired tells which, not the status).
 run_step() {
-	local name=$1 begin left spid rc pids; shift
-	if [ "$PHASE_EXPIRED" = 1 ]; then
-		echo "PHASE_STEP $name skipped: the run deadline was reached" >&3
+	local name=$1 begin left spid rc; shift
+	if phase_expired; then
+		phase_say "PHASE_STEP $name skipped: the run deadline was reached"
 		return 124
 	fi
 	begin=$(date +%s)
-	echo "PHASE_STEP $name begin" >&3
+	phase_say "PHASE_STEP $name begin"
 	left=$(phase_left)
 	if [ "$left" -le 0 ]; then
-		PHASE_EXPIRED=1
-		echo "PHASE_STEP_EXPIRED step=$name elapsed=0 (no time left before the run deadline)" >&3
+		phase_say "PHASE_STEP_EXPIRED step=$name elapsed=0 (no time left before the run deadline)"
+		phase_expire "$name" ""
 		return 124
 	fi
-	# The step does not inherit the console descriptor (fd 3): test
-	# programs see the descriptors they always saw.
-	"$@" 3>&- &
+	timeout -s KILL 0 "$@" &
 	spid=$!
 	rc=0
-	pwait -t "${left}s" "$spid" 2>/dev/null || rc=$?
-	if [ "$rc" = 124 ]; then
-		PHASE_EXPIRED=1
-		echo "PHASE_STEP_EXPIRED step=$name elapsed=$(( $(date +%s) - begin ))" >&3
-		pids=$(phase_tree "$spid")
-		phase_dump "$name" $pids >&3 2>&1
-		kill -KILL $pids 2>/dev/null
-		wait "$spid" 2>/dev/null
-		phase_expire >&3 2>&1
+	pwait -t "${left}s" "$spid" > /dev/null 2>&1 || rc=$?
+	# pwait failing otherwise (rc not 0 or 124) with the step alive: it can
+	# no longer be bounded, so it is treated as expired.
+	if [ "$rc" = 124 ] || { [ "$rc" != 0 ] && kill -0 "$spid" 2>/dev/null; }; then
+		phase_say "PHASE_STEP_EXPIRED step=$name elapsed=$(( $(date +%s) - begin ))"
+		phase_expire "$name" $(phase_tree "$spid")
 		return 124
 	fi
 	rc=0; wait "$spid" || rc=$?
-	echo "PHASE_STEP $name end status=$rc elapsed=$(( $(date +%s) - begin ))" >&3
+	phase_say "PHASE_STEP $name end status=$rc elapsed=$(( $(date +%s) - begin ))"
 	return "$rc"
 }
-# After an expiry: save the evidence first, then ask SwitchBoard (bounded by
-# switchboardctl's own 30 s), so a wedged SwitchBoard costs no evidence.
-phase_expire() {
-	results_export && echo PHASE_EXPIRY_RESULTS_SAVED
-	echo "--- switchboardctl status"
-	switchboardctl status 2>&1
-}
-# The reserve, measured: one dump and one export, now.  Each interval is
-# rounded up to whole seconds (date(1) has 1 s resolution).
+# The reserve, measured now: the stacks part of a dump and one export (an
+# early archive on the results disk).  Each interval is rounded up to whole
+# seconds (date(1) has 1 s resolution), and one more second covers the
+# guest clock, read from the RTC at boot with 1 s resolution.
 t0=$(date +%s)
-phase_dump baseline > "$R/phase-dump-baseline.txt" 2>&1
+phase_stacks baseline
+phase_say "PHASE_DUMP_END step=baseline"
 t1=$(date +%s)
 results_export > /dev/null 2>&1
 t2=$(date +%s)
-PHASE_RESERVE=$(( (t1 - t0 + 1) + (t2 - t1 + 1) ))
-echo "PHASE_RESERVE=$PHASE_RESERVE dump=$((t1 - t0)) export=$((t2 - t1)) deadline_in=$((RUN_DEADLINE - t2))"
+PHASE_RESERVE=$(( (t1 - t0 + 1) + (t2 - t1 + 1) + 1 ))
+echo "PHASE_RESERVE=$PHASE_RESERVE stacks=$((t1 - t0)) export=$((t2 - t1)) deadline_in=$((RUN_DEADLINE - t2))"
 # --- end of the phase bounds
 # --- reroot, after (REROOT=1): the reroot cleared /tmp; restore the results
 # and skip what the plane-off boot already proved.
@@ -805,72 +828,98 @@ fi
 # --- gate wait (tests/vm-provider-phase-bounds.sh runs this block)
 # Provider convergence, waited on events.  SwitchBoard has no status watch
 # (recorded ask: 5bsd-issues/2026-11-22-switchboard-no-status-watch.md), so
-# the status is read again whenever the system log grows (SwitchBoard logs
-# its unit transitions to daemon.log and messages).  The wait ends when every
-# required unit runs, or each that does not was disabled by the circuit
-# breaker ("failed N times, disabling"); it is bounded by the run deadline.
-# A transition that logs nothing is seen at the next log write.
+# the status is read again whenever SwitchBoard logs a unit line ("service
+# ...", "rc unit ...": every transition to running or stopped logs one; or
+# a restarted SwitchBoard's "switchboard started") to messages or
+# daemon.log; its other lines (each status request logs its control
+# connection) do not wake the wait.  A required unit that is not
+# running is waited for while it is starting, stopping, or stopped with a
+# restart scheduled (restart-pending); in any other state it will not run
+# by itself and the wait ends.  Bounded by the run deadline.
 GATE_LOGS="/var/log/messages /var/log/daemon.log"
 gate_check() {
-	local u
+	local u state
 	gate_sizes=$(for f in $GATE_LOGS; do stat -f %z "$f" 2>/dev/null || echo -; done)
-	gate_waiting= missing=
-	if ! switchboardctl status > "$R/switchboard-status.txt" 2>&1; then
+	gate_waiting= missing= gate_status_rc=0
+	switchboardctl status > "$R/switchboard-status.txt" 2>&1 || gate_status_rc=$?
+	if [ "$gate_status_rc" != 0 ]; then
 		gate_waiting=" (switchboardctl status failed)" missing=" (switchboardctl status failed)"
 		return 1
 	fi
 	for u in $REQUIRE_UNITS; do
-		awk -v u="$u" '$1 == u && $2 == "running" { f=1 } END { exit !f }' \
-		    "$R/switchboard-status.txt" && continue
+		state=$(awk -v u="$u" '$1 == u { s = $2; for (i = 3; i <= NF; i++) if ($i == "restart-pending") s = s "+pending" }
+		    END { print (s == "" ? "absent" : s) }' "$R/switchboard-status.txt")
+		[ "$state" = running ] && continue
 		missing="$missing $u"
-		grep -Eq "service $u: (exec )?failed [0-9]+ times, disabling" \
-		    /var/log/messages 2>/dev/null || gate_waiting="$gate_waiting $u"
+		case $state in
+		starting|stopping|*+pending) gate_waiting="$gate_waiting $u" ;;
+		esac
 	done
 	[ -z "$gate_waiting" ]
 }
-# Block until a log named in GATE_LOGS differs in size from what gate_check
-# saw (so a write between the check and this wait is not lost), or for at
-# most $1 seconds: exit 124 then.
+# Block until a SwitchBoard unit line is appended to a log of GATE_LOGS
+# after the sizes gate_check saw (so a line between the check and this wait
+# is not lost), or the log is rotated, or for at most $1 seconds: exit 124
+# then; 2 when no log can be watched.
 gate_log_wait() {
 	python3.12 -I -c '
-import os, select, sys
+import os, re, select, sys, time
 left, files, sizes = float(sys.argv[1]), sys.argv[2].split(), sys.argv[3].split()
-kq = select.kqueue()
-for f in files:
+unit = re.compile(rb"switchboard\[[0-9]+\]: (service |rc unit |switchboard started)")
+kq, watched = select.kqueue(), {}
+for f, z in zip(files, sizes):
     try:
         fd = os.open(f, os.O_RDONLY)
     except OSError:
         continue
     kq.control([select.kevent(fd, select.KQ_FILTER_VNODE,
         select.KQ_EV_ADD | select.KQ_EV_CLEAR,
-        select.KQ_NOTE_WRITE | select.KQ_NOTE_EXTEND)], 0)
-for f, z in zip(files, sizes):
-    try:
-        now = str(os.stat(f).st_size)
-    except OSError:
-        now = "-"
-    if now != z:
-        sys.exit(0)
-sys.exit(0 if kq.control(None, 1, left) else 124)
+        select.KQ_NOTE_WRITE | select.KQ_NOTE_EXTEND |
+        select.KQ_NOTE_RENAME | select.KQ_NOTE_DELETE)], 0)
+    watched[fd] = int(z) if z.isdigit() else 0
+if not watched:
+    sys.exit(2)
+def appended_unit_line():
+    for fd, off in watched.items():
+        if os.fstat(fd).st_size < off:
+            return True
+        os.lseek(fd, off, os.SEEK_SET)
+        data = b""
+        while True:
+            d = os.read(fd, 1 << 16)
+            if not d:
+                break
+            data += d
+        whole = data[:data.rfind(b"\n") + 1]
+        watched[fd] = off + len(whole)
+        if any(unit.search(l) for l in whole.split(b"\n")):
+            return True
+    return False
+end = time.monotonic() + left
+while not appended_unit_line():
+    t = end - time.monotonic()
+    if t <= 0:
+        sys.exit(124)
+    for ev in kq.control(None, 4, t):
+        if ev.fflags & (select.KQ_NOTE_RENAME | select.KQ_NOTE_DELETE):
+            sys.exit(0)
 ' "$1" "$GATE_LOGS" "$gate_sizes"
 }
 gate_begin=$(date +%s)
-echo "PHASE_STEP gate-convergence begin" >&3
+phase_say "PHASE_STEP gate-convergence begin"
 while ! gate_check; do
 	left=$(phase_left) rc=124
 	if [ "$left" -gt 0 ]; then
 		rc=0; gate_log_wait "$left" || rc=$?
 	fi
 	if [ "$rc" = 124 ]; then
-		PHASE_EXPIRED=1
-		echo "PHASE_STEP_EXPIRED step=gate-convergence elapsed=$(( $(date +%s) - gate_begin )) waiting for:$gate_waiting"
-		phase_dump gate-convergence
-		phase_expire
+		phase_say "PHASE_STEP_EXPIRED step=gate-convergence elapsed=$(( $(date +%s) - gate_begin )) waiting for:$gate_waiting"
+		phase_expire gate-convergence ""
 		break
 	fi
 	[ "$rc" = 0 ] || { echo "PLANEON_GATE: log wait failed ($rc)"; break; }
 done
-echo "PHASE_STEP gate-convergence end elapsed=$(( $(date +%s) - gate_begin ))" >&3
+phase_say "PHASE_STEP gate-convergence end elapsed=$(( $(date +%s) - gate_begin ))"
 # --- end of the gate wait
 cat "$R/switchboard-status.txt"
 if [ -n "$missing" ]; then echo "PLANEON_GATE: not running:$missing"; gate=FAIL; fi
@@ -893,42 +942,56 @@ lc=PASS
 # the controls logger, BSDPowerctl and sysctlcmpctl).  A unit not listed is
 # not one: a disabled unit the phase does not use does not end it.
 PHASE_DEPS="system.Time/bsdtime system.Log/bsdlog system.Power/bsdpower system.Sysctl/bsdsysctl"
-# Print PHASE_DEPENDENCY_STOPPED for each dependency the status file shows
-# neither running nor starting; true when there is one.
+# phase_deps_stopped STATUS_FILE STATUS_RC: true, with a line for each, when
+# a dependency will not run by itself (PHASE_DEPENDENCY_STOPPED: stopped
+# without a scheduled restart, done, or absent) or the status could not be
+# read (PHASE_DEPENDENCY_UNKNOWN); either ends the phase after a dump.
+# Starting, stopping and restart-pending are transient: the phase's
+# commands then wait for the unit, bounded like every step.
 phase_deps_stopped() {
-	awk -v deps="$PHASE_DEPS" '
+	if [ "$2" != 0 ]; then
+		echo "PHASE_DEPENDENCY_UNKNOWN reason=status-failed rc=$2: $(head -n 1 "$1" 2>/dev/null)"
+	elif ! awk -v deps="$PHASE_DEPS" '
 	    BEGIN { n = split(deps, d, " "); for (i = 1; i <= n; i++) want[d[i]] = 1 }
-	    ($1 in want) { seen[$1] = 1
-		if ($2 != "running" && $2 != "starting") {
-			r = 0
-			for (i = 3; i <= NF; i++) if ($i ~ /^restarts=/) r = substr($i, 10)
+	    ($1 in want) { seen[$1] = 1; r = 0; pending = 0
+		for (i = 3; i <= NF; i++) {
+			if ($i ~ /^restarts=/) r = substr($i, 10)
+			if ($i == "restart-pending") pending = 1
+		}
+		if ($2 != "running" && $2 != "starting" && $2 != "stopping" && !pending) {
 			print "PHASE_DEPENDENCY_STOPPED unit=" $1 " state=" $2 " restarts=" r
 			found = 1
 		} }
 	    END { for (u in want) if (!(u in seen)) {
 			print "PHASE_DEPENDENCY_STOPPED unit=" u " state=absent restarts=0"
 			found = 1 }
-		exit !found }' "$1"
+		exit found }' "$1"; then
+		:
+	else
+		return 1
+	fi
+	phase_stacks dependency
+	phase_dump_rest dependency
+	return 0
 }
-# The 200 sessions (a run_step step, so its output is the console, and fd 3
-# is closed): progress at sessions 1, 2, 4, 8, ... and the last, so a stall
-# is placed within a factor of two without choosing a line interval.
-bsdtime_sessions() {
-	local i next
-	i=0 next=1
-	while [ $i -lt 200 ]; do
-		if ! BSDTimectl get > "$R/session.out" 2> "$R/session.err"; then
-			echo "BSDTIME_SESSION_FAILED index=$i: $(cat "$R/session.err")"
-			break
-		fi
-		i=$((i + 1))
-		if [ $i = $next ] || [ $i = 200 ]; then
-			echo "BSDTIME_SESSIONS_PROGRESS=$i at=$(date +%s)"
-			next=$((next * 2))
-		fi
-	done
-	echo "$i" > "$R/sessions.count"
-}
+# The 200 sessions, one step (a program for timeout(1), so sh -c):
+# progress at sessions 1, 2, 4, 8, ... and the last, so a stall is placed
+# within a factor of two without choosing a line interval.
+BSDTIME_SESSIONS_SH='
+i=0 next=1
+while [ $i -lt 200 ]; do
+	if ! BSDTimectl get > "$R/session.out" 2> "$R/session.err"; then
+		echo "BSDTIME_SESSION_FAILED index=$i: $(cat "$R/session.err")"
+		break
+	fi
+	i=$((i + 1))
+	if [ $i = $next ] || [ $i = 200 ]; then
+		echo "BSDTIME_SESSIONS_PROGRESS=$i at=$(date +%s)"
+		next=$((next * 2))
+	fi
+done
+echo "$i" > "$R/sessions.count"'
+export R
 bsdtime_lifecycle() {
 	local c r t1 t2 pid1 i rc
 	# Controls: other providers reached through the same ambient lookup path.
@@ -936,9 +999,7 @@ bsdtime_lifecycle() {
 		if run_step "control:${c%% *}" $c > "$R/control.out" 2>&1; then r=ok; else r="fail: $(head -n 1 "$R/control.out")"; fi
 		echo "BSDTIME_CONTROL [$c]: $r"
 	done
-	# run_step in a command substitution: carry an expiry out of the subshell.
 	rc=0; t1=$(run_step get1 BSDTimectl get 2>"$R/get1.err") || rc=$?
-	[ "$rc" != 124 ] || PHASE_EXPIRED=1
 	[ "$rc" = 0 ] || { echo "BSDTIME: get failed: $(cat "$R/get1.err")"; lc=FAIL; }
 	echo "BSDTIME_GET1=$t1"
 	# The root console label is not granted set authority by the shipped policy;
@@ -963,8 +1024,10 @@ bsdtime_lifecycle() {
 	else
 		echo "BSDTIME: restart failed unexpectedly: $(cat "$R/restart.out")"; lc=FAIL
 	fi
-	run_step status-after-restart switchboardctl status > "$R/status-after-restart.txt" 2>&1
-	if phase_deps_stopped "$R/status-after-restart.txt"; then
+	rc=0
+	run_step status-after-restart switchboardctl status > "$R/status-after-restart.txt" 2>&1 || rc=$?
+	phase_expired && return
+	if phase_deps_stopped "$R/status-after-restart.txt" "$rc"; then
 		lc=FAIL; return
 	fi
 	awk '$1 == "system.Time/bsdtime" && $2 == "running" { f=1 } END { exit !f }' \
@@ -974,12 +1037,11 @@ bsdtime_lifecycle() {
 	    { echo "BSDTIME: provider process changed"; lc=FAIL; }
 	# Many short sessions against the live provider.
 	rm -f "$R/sessions.count"
-	run_step sessions bsdtime_sessions
+	run_step sessions sh -c "$BSDTIME_SESSIONS_SH"
 	i=$(cat "$R/sessions.count" 2>/dev/null || echo 0)
 	echo "BSDTIME_SESSIONS=$i"
 	[ "$i" = 200 ] || lc=FAIL
 	rc=0; t2=$(run_step get2 BSDTimectl get 2> "$R/get2.err") || rc=$?
-	[ "$rc" != 124 ] || PHASE_EXPIRED=1
 	if [ "$rc" = 0 ]; then
 		awk -v a="${t1%%.*}" -v b="${t2%%.*}" 'BEGIN { exit !(b >= a && a > 0) }' ||
 		    { echo "BSDTIME: clock reads not monotonic"; lc=FAIL; }
@@ -989,12 +1051,14 @@ bsdtime_lifecycle() {
 }
 # A stopped dependency ends this phase only, with a verdict; the suites
 # still run.
-if phase_deps_stopped "$R/switchboard-status.txt"; then
+if phase_expired; then
+	lc=FAIL
+elif phase_deps_stopped "$R/switchboard-status.txt" "$gate_status_rc"; then
 	lc=FAIL
 else
 	bsdtime_lifecycle
 fi
-[ "$PHASE_EXPIRED" = 0 ] || lc=FAIL
+! phase_expired || lc=FAIL
 echo "BSDTIME_LIFECYCLE_$lc"
 # --- end of the lifecycle phase
 fi
@@ -1054,6 +1118,13 @@ vars=; for v in $KYUA_VARS; do vars="$vars -v $v"; done
     printf '%s\n' "$test_status" > "$R/kyua-test.status"
 } | tee "$R/kyua-test.out" || true
 echo "KYUA_TEST_STATUS=$(cat "$R/kyua-test.status")"
+# After an expiry only the reserve is left, and it was spent on the expiry
+# export: the reports (unbounded, over a results.db kyua did not finish)
+# are skipped, and so is the export below, so that it cannot be cut short
+# over the archive already saved.
+if phase_expired; then
+	echo "KYUA_REPORTS_SKIPPED: the run deadline was reached"
+else
 kyua report -r "$R/results.db" --verbose > "$R/report-verbose.txt" 2>&1 || true
 kyua report-junit -r "$R/results.db" --output="$R/results.junit.xml" 2>/dev/null || true
 # kyua counts an expected failure as a success: list those too (filter
@@ -1068,6 +1139,7 @@ echo KYUA_SKIP_REASONS_BEGIN
 grep -o 'skipped: .*' "$R/kyua-test.out" | sed -e 's/ *\[[0-9.]*s\]$//' | sort | uniq -c | sort -rn
 echo KYUA_SKIP_REASONS_END
 kyua report -r "$R/results.db" --verbose --results-filter broken,failed 2>&1 | head -n 4000
+fi
 cp /var/log/capability.log /var/log/messages "$R/" 2>/dev/null || true
 dmesg -a > "$R/dmesg.txt" 2>&1 || true
 echo "KYUA_SUMMARY: $(tail -n 1 "$R/kyua-test.out")"
@@ -1080,10 +1152,14 @@ echo "ROOT_DF_AFTER: $(df -k / | awk 'NR == 2 { print $2 "K total, " $4 "K free"
 sed -n '/^after-suites:$/,$s/^/TIER_INFO: /p' "$R/tier.txt"
 # The stack tier must have given its stacks test issuers, and freed them.
 if [ "$stack_tier" = yes ]; then
-	i=0
-	while [ "$(sysctl -n kern.mac_capability.test_issuers_live)" -ne 0 ] && [ "$i" -lt 50 ]; do
-		i=$((i + 1)); sleep 0.1
-	done
+	# Freed asynchronously: wait on the test kernel's event (a sleep woken
+	# by each free), bounded like every step.
+	if sysctl -N debug.mac_capability.test_issuers_wait_live > /dev/null 2>&1; then
+		run_step stack-issuers-freed \
+		    sysctl debug.mac_capability.test_issuers_wait_live=0 > /dev/null || true
+	else
+		echo "NOTE: this test kernel has no debug.mac_capability.test_issuers_wait_live; the live count is read once"
+	fi
 	after=$(sysctl -n kern.mac_capability.test_issuers)
 	live=$(sysctl -n kern.mac_capability.test_issuers_live)
 	echo "STACK_TIER: test issuers created=$((after - stack_issuers_before)) live=$live state=$(sysctl -n kern.mac_capability.test_issuer_state)" |
@@ -1095,7 +1171,11 @@ if [ "$stack_tier" = yes ]; then
 	esac
 	[ "$live" -eq 0 ] || echo "NOTE: $live test issuers still alive after the suites"
 fi
-results_export && echo KYUA_RESULTS_DISK_WRITTEN
+if phase_expired; then
+	echo "KYUA_RESULTS_DISK: the expiry export is kept"
+else
+	results_export && echo KYUA_RESULTS_DISK_WRITTEN
+fi
 sync
 echo KYUA_VM_DONE
 if [ "$PLANE_OFF" = 1 ] && [ "$rerooted" = no ]; then shutdown -p now; else
@@ -1404,19 +1484,20 @@ if [ $forced = 0 ] && [ $lor_unknown = 0 ] && [ $rc = 0 ] && [ $guest_off = 1 ] 
 fi
 # --- phase verdict (tests/vm-provider-phase-bounds.sh runs this block)
 # A step that ran out the run deadline, or a lifecycle dependency that was
-# stopped, is never clean, whatever else passed.
-if LC_ALL=C tr -d '\r' < "$log" | grep -aqE '^(PHASE_STEP_EXPIRED|PHASE_DEPENDENCY_STOPPED)'; then
+# stopped or could not be read, is never clean, whatever else passed.
+if LC_ALL=C tr -d '\r' < "$log" | grep -aqE '^(PHASE_STEP_EXPIRED|PHASE_DEPENDENCY_STOPPED|PHASE_DEPENDENCY_UNKNOWN)'; then
 	verdict=VM_NOT_CLEAN
 fi
 # --- end of the phase verdict
 echo "qemu_exit=$rc forced=$forced guest_poweroff=$guest_off"
-LC_ALL=C tr -d '\r' < "$log" | grep -aE '^(TIER_INFO: (KERNEL_TIER|TEST_KERNEL|stack-tier)=|STACK_TIER|REROOT_|TEST_KERNEL_PROOF|PLANEON_GATE|PLANEOFF|KYUA_SUMMARY|PLANEON_PID1|PLANEON_ISOLATION|BSDTIME|PHASE_RESERVE|PHASE_STEP_EXPIRED|PHASE_DEPENDENCY_STOPPED|PHASE_EXPIRY)' || true
+LC_ALL=C tr -d '\r' < "$log" | grep -aE '^(TIER_INFO: (KERNEL_TIER|TEST_KERNEL|stack-tier)=|STACK_TIER|REROOT_|TEST_KERNEL_PROOF|PLANEON_GATE|PLANEOFF|KYUA_SUMMARY|PLANEON_PID1|PLANEON_ISOLATION|BSDTIME|PHASE_RESERVE|PHASE_STEP_EXPIRED|PHASE_DEPENDENCY_STOPPED|PHASE_DEPENDENCY_UNKNOWN|PHASE_EXPIRY|KYUA_REPORTS_SKIPPED|KYUA_RESULTS_DISK)' || true
 # Host load over the run and the guest's last progress line (vm-monitor).
 if [ -s "$work/progress.txt" ]; then
 	awk '$1 == "LOAD" { n++; if (n == 1) first = $3; last = $3; if ($3 + 0 > peak + 0) peak = $3
-		if ($0 ~ /heavy_build=held/) held = "yes" }
-	    END { if (n) printf "HOST_LOAD samples=%d start=%s peak=%s end=%s heavy_build_held=%s\n",
-		n, first, peak, last, held ? held : "no" }' "$work/progress.txt"
+		for (i = 6; i <= NF; i++) { split($i, kv, "=")
+			if (kv[2] + 0 > max[kv[1]] + 0) max[kv[1]] = kv[2] } }
+	    END { if (n) printf "HOST_LOAD samples=%d start=%s peak=%s end=%s max_qemus=%d max_slots=%d max_heavy_build_lockf=%d\n",
+		n, first, peak, last, max["qemus"], max["slots"], max["heavy_build_lockf"] }' "$work/progress.txt"
 	awk '$1 == "PROGRESS" { l = $0 } END { if (l != "") { sub(/^PROGRESS /, "", l); print "LAST_PROGRESS at=" l } }' \
 	    "$work/progress.txt"
 fi
