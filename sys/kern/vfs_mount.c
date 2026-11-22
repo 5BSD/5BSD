@@ -1990,15 +1990,22 @@ sys_unmount(struct thread *td, struct unmount_args *uap)
 
 /*
  * The path argument of kern_unmount(), from user or kernel space, into a
- * MNAMELEN buffer; ENAMETOOLONG when it does not fit, as copyinstr(9).
+ * MNAMELEN buffer; ENAMETOOLONG when it does not fit, as copyinstr(9).  A
+ * kernel path is read no further than MNAMELEN bytes, as copyinstr(9)
+ * reads a user one.
  */
 static int
 unmount_copypath(const char *path, enum uio_seg pathseg, char *buf)
 {
+	size_t len;
 
-	if (pathseg == UIO_SYSSPACE)
-		return (strlcpy(buf, path, MNAMELEN) < MNAMELEN ? 0 :
-		    ENAMETOOLONG);
+	if (pathseg == UIO_SYSSPACE) {
+		len = strnlen(path, MNAMELEN);
+		if (len == MNAMELEN)
+			return (ENAMETOOLONG);
+		memcpy(buf, path, len + 1);
+		return (0);
+	}
 	return (copyinstr(path, buf, MNAMELEN, NULL));
 }
 
