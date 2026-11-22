@@ -259,7 +259,8 @@ case " $suites " in
 *" sys/mac_capability/authority_test_issuer_anchor_test"*|\
 *" sys/mac_capability/cap_exclusion_test"*|\
 *" sys/mac_capability/mac_capability_channel_test"*|\
-*" lib/libservice "*|*" lib/libservice/service_ambient_test"*)
+*" lib/libservice "*|*" lib/libservice/service_ambient_test"*|\
+*" lib/libservice/session_wait_test"*)
 	dq_loader_add 'dtraceall_load="YES"' ;;
 esac
 case " $suites " in
