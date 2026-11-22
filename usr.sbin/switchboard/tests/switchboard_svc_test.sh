@@ -1295,12 +1295,9 @@ ambient_lookup_requester_exit_answers_body()
 	prepare_paths
 	install_cancel_provider
 	# The unit's child leaves the unit's coalition, then looks up the held
-	# name: the unit's stop does not end it, only an answer does.  An
-	# ambient (unsandboxed) System unit: a child in capability mode could
-	# not open /dev/mac_capability for a coalition of its own (ECAPMODE).
+	# name: the unit's stop does not end it, only an answer does.
 	make_svc_bin system org.test.orphan \
 	    "restart = \"never\";
-ambient = true;
 arguments = [\"orphan-lookup\", \"org.test.cancel.svc\",
     \"$(pwd)/orphan.started\", \"$(pwd)/orphan.result\"];" \
 	    "$capd_service_fixture" >/dev/null
