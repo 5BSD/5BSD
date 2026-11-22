@@ -38,6 +38,10 @@ struct oes_client;
 struct oes_pending;
 struct oes_auth_group;
 struct oes_cache_entry;
+struct uidinfo;
+
+/* Event indexes (event & 0x0fff) per class: bits in a subscription bitmap. */
+#define	OES_EVENT_INDEX_COUNT	128
 
 /*
  * Global state
@@ -63,6 +67,33 @@ struct oes_softc {
 	struct mtx		sc_defer_mtx;	/* SPIN: guards sc_defer */
 	TAILQ_HEAD(, oes_pending) sc_defer;	/* Deferred NOSLEEP events */
 	uint32_t		sc_defer_count;	/* Deferred queue depth */
+	/*
+	 * Byte bound (oes_mac.c, oes_defer_admits()).  sc_defer_bytes is the
+	 * memory the queued entries hold (their charges); it is reserved by
+	 * compare-and-set against sc_defer_max_bytes and the producer's
+	 * uidinfo ui_oesdefer share, and returned by the delivery task.
+	 * sc_defer_max_bytes is security.oes.defer_max_bytes; the default and
+	 * floor are derived once (oes_dev.c) and kept for writes of 0.
+	 */
+	u_long			sc_defer_bytes;
+	u_long			sc_defer_max_bytes;
+	u_long			sc_defer_max_default;
+	u_long			sc_defer_floor;
+	u_long			sc_defer_entry_max; /* A maximum-size charge */
+	u_long			sc_defer_entry_min; /* A minimum-size charge */
+	/*
+	 * Events no client was sent (OES_EVENT_NOTIFY_LOST el_unsent): refused
+	 * at the deferred bound, or not allocated.  By class (0 AUTH,
+	 * 1 NOTIFY) and event index, then their total, advanced after the
+	 * per-type count (release).  Clients credit themselves from these
+	 * (oes_client_lost_fold()).  sc_lost_kick is 1 while the delivery
+	 * task is enqueued to wake them; it wakes them once per new total
+	 * it sees (sc_lost_announced, the task's alone).
+	 */
+	uint64_t		sc_lost[2][OES_EVENT_INDEX_COUNT];
+	uint64_t		sc_lost_total;
+	uint64_t		sc_lost_announced;
+	u_int			sc_lost_kick;
 	/*
 	 * Delivery generation (the reader sets' drop rule,
 	 * oes_client_join()): events queued so far, numbered in queue
@@ -110,9 +141,6 @@ struct oes_softc {
 	counter_u64_t		sc_gate_passes;	/* Hook entries past a gate */
 	uint64_t		sc_gate_reconciles; /* sc_gate_sx */
 };
-
-/* Bound on the deferred queue so a burst cannot exhaust memory. */
-#define	OES_DEFER_MAX		16384
 
 extern struct oes_softc oes_softc;
 
@@ -289,6 +317,15 @@ struct oes_client {
 	/* Statistics */
 	uint64_t		ec_events_received;
 	uint64_t		ec_events_dropped;
+	/*
+	 * Events lost and not yet reported (OES_EVENT_NOTIFY_LOST, read
+	 * first): at this client's queue, and never sent to any client, as
+	 * credited from sc_lost against the snapshots below.  ec_mtx.
+	 */
+	uint64_t		ec_lost_queue;
+	uint64_t		ec_lost_unsent;
+	uint64_t		ec_lost_seen_total;
+	uint64_t		ec_lost_seen[2][OES_EVENT_INDEX_COUNT];
 	uint64_t		ec_auth_timeouts;
 	uint64_t		ec_auth_allowed;
 	uint64_t		ec_auth_denied;
@@ -375,6 +412,13 @@ struct oes_pending {
 	 */
 	struct prison		*ep_subject_pr;
 	struct prison		*ep_target_pr;
+
+	/*
+	 * While on sc_defer: the producer's uidinfo (held) and the bytes
+	 * charged to it and to sc_defer_bytes; returned on dequeue.
+	 */
+	struct uidinfo		*ep_defer_uip;
+	u_long			ep_defer_charge;
 
 	/* Variable-length message - MUST be last */
 	oes_message_t		ep_msg;
@@ -697,10 +741,15 @@ void	oes_signal_reserve_prepare(void);
 struct oes_pending *oes_pending_alloc_signal(struct proc *p);
 struct oes_pending *oes_pending_alloc_exit(struct proc *p, int *xexitp);
 void	oes_pending_free(struct oes_pending *ep);
+struct oes_pending *oes_pending_compact(struct oes_pending *ep);
+u_long	oes_pending_charge(const struct oes_pending *ep);
 void	oes_pending_hold(struct oes_pending *ep);
 void	oes_pending_rele(struct oes_pending *ep);
 int	oes_event_enqueue(struct oes_client *ec, struct oes_pending *ep);
 void	oes_event_note_drop(struct oes_client *ec, oes_event_type_t event);
+void	oes_client_lost_fold(struct oes_client *ec, bool all);
+void	oes_event_lost_unsent(oes_event_type_t event);
+bool	oes_client_lost_pending(struct oes_client *ec);
 struct oes_pending *oes_event_dequeue(struct oes_client *ec);
 int	oes_event_respond(struct oes_client *ec, uint64_t msg_id,
 	    oes_auth_result_t result);
