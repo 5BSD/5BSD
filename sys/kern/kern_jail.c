@@ -96,6 +96,8 @@ static MALLOC_DEFINE(M_PRISON_RACCT, "prison_racct", "Prison racct structures");
 #endif
 
 SDT_PROVIDER_DEFINE(jail);
+EVENTHANDLER_LIST_DEFINE(prison_uref_release);
+SDT_PROBE_DEFINE1(jail, kernel, prison, uref_release, "struct prison *");
 /* A new prison was instantiated (JAIL_CREATE): jid, name, path, flags. */
 SDT_PROBE_DEFINE4(jail, kernel, kern_jail_set, create, "int", "const char *",
     "const char *", "int");
@@ -188,6 +190,7 @@ static void prison_cleanup_locked(struct prison *pr);
 static void prison_cleanup_unlocked(struct prison *pr);
 static void prison_free_not_last(struct prison *pr);
 static void prison_proc_free_not_last(struct prison *pr);
+static void prison_uref_released(struct prison *pr);
 static void prison_proc_relink(struct prison *opr, struct prison *npr,
     struct proc *p);
 static void prison_set_allow_locked(struct prison *pr, unsigned flag,
@@ -3596,7 +3599,10 @@ prison_proc_free(struct prison *pr)
 	 * This allows assurance that a locked prison will remain alive
 	 * until it is unlocked.
 	 */
-	if (!refcount_release_if_not_last(&pr->pr_uref)) {
+	if (refcount_release_if_not_last(&pr->pr_uref)) {
+		/* The deferred last release below notifies from prison_deref. */
+		prison_uref_released(pr);
+	} else {
 		/*
 		 * Don't remove the last user reference in this context,
 		 * which is expected to be a process that is not only locked,
@@ -3612,6 +3618,20 @@ prison_proc_free(struct prison *pr)
 		mtx_unlock(&pr->pr_mtx);
 		taskqueue_enqueue(taskqueue_jail_remove, &pr->pr_task);
 	}
+}
+
+/*
+ * A user reference was dropped: tell prison_uref_release handlers, for a
+ * prison that is no longer alive only (see sys/jail.h).
+ */
+static void
+prison_uref_released(struct prison *pr)
+{
+
+	if (prison_isalive(pr))
+		return;
+	SDT_PROBE1(jail, kernel, prison, uref_release, pr);
+	EVENTHANDLER_DIRECT_INVOKE(prison_uref_release, pr);
 }
 
 static void
@@ -3744,9 +3764,11 @@ static void
 prison_deref(struct prison *pr, int flags)
 {
 	struct prisonlist freeprison;
-	struct prison *killpr, *rpr, *ppr, *tpr;
+	struct prison *killpr, *rpr, *ppr, *tpr, *urelpr;
 
 	killpr = NULL;
+	/* A dead prison whose user reference this call dropped (notify). */
+	urelpr = NULL;
 	TAILQ_INIT(&freeprison);
 	/*
 	 * Release this prison as requested, which may cause its parent
@@ -3767,6 +3789,7 @@ prison_deref(struct prison *pr, int flags)
 				}
 				flags = prison_lock_xlock(pr, flags);
 				prison_deref_kill(pr, &freeprison);
+				urelpr = pr;
 			}
 		}
 		if (flags & PD_DEUREF) {
@@ -3774,6 +3797,8 @@ prison_deref(struct prison *pr, int flags)
 			KASSERT(refcount_load(&pr->pr_uref) > 0,
 			    ("prison_deref PD_DEUREF on a dead prison (jid=%d)",
 			     pr->pr_id));
+			if (urelpr == NULL)
+				urelpr = pr;
 			if (!refcount_release_if_not_last(&pr->pr_uref)) {
 				if (!(flags & PD_DEREF)) {
 					prison_hold(pr);
@@ -3876,6 +3901,14 @@ prison_deref(struct prison *pr, int flags)
 		sx_sunlock(&allprison_lock);
 	else if (flags & PD_LIST_XLOCKED)
 		sx_xunlock(&allprison_lock);
+
+	/*
+	 * With no prison lock held: a user reference of urelpr (and maybe of
+	 * its ancestors, released as the loop climbed) was dropped.  urelpr
+	 * stays allocated until the freeprison loop below.
+	 */
+	if (urelpr != NULL)
+		prison_uref_released(urelpr);
 
 	/* Kill any processes attached to a killed prison. */
 	if (killpr != NULL) {

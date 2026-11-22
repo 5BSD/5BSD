@@ -224,6 +224,7 @@ __END_DECLS
 #include <sys/lock.h>
 #include <sys/mutex.h>
 #include <sys/_task.h>
+#include <sys/eventhandler.h>
 
 #define JAIL_MAX	999999
 
@@ -574,6 +575,19 @@ void prison_hold(struct prison *pr);
 void prison_hold_locked(struct prison *pr);
 void prison_proc_hold(struct prison *);
 void prison_proc_free(struct prison *);
+
+/*
+ * prison_uref_release: a user reference of a prison that is no longer alive
+ * was dropped (a process left it, the deferred last release completed, a
+ * child prison was freed, or the prison was killed).  Never invoked for
+ * live prisons.  Handlers may run with a process lock held (exit1 calls
+ * prison_proc_free() with its parent locked) and must not sleep or take
+ * sleepable locks; a mutex is allowed.  No prison mutex or allprison_lock
+ * is held, and pr is valid only for the duration of the call.
+ */
+typedef void (*prison_uref_release_fn)(void *, struct prison *);
+EVENTHANDLER_DECLARE(prison_uref_release, prison_uref_release_fn);
+EVENTHANDLER_LIST_DECLARE(prison_uref_release);
 void prison_proc_link(struct prison *, struct proc *);
 void prison_proc_unlink(struct prison *, struct proc *);
 void prison_proc_iterate(struct prison *, void (*)(struct proc *, void *), void *);
