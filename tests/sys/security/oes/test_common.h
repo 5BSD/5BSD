@@ -104,22 +104,39 @@ oes_test_report_failures(void)
 	}
 }
 
+/*
+ * Seconds since the program started, printed with each case so a slow
+ * or timed-out run shows where its time went.  One clock read per case.
+ */
+static struct timespec oes_test_t0;
+
+static inline double
+oes_test_stamp(void)
+{
+	struct timespec now;
+
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	return ((double)(now.tv_sec - oes_test_t0.tv_sec) +
+	    (now.tv_nsec - oes_test_t0.tv_nsec) / 1e9);
+}
+
 __attribute__((constructor))
 static void
 oes_test_install_reporter(void)
 {
 
+	(void)clock_gettime(CLOCK_MONOTONIC, &oes_test_t0);
 	(void)atexit(oes_test_report_failures);
 }
 
 #define TEST_BEGIN(_name) \
-	printf("  Testing %s...\n", (_name))
+	printf("  Testing %s... [%.3f s]\n", (_name), oes_test_stamp())
 
 #define TEST_SUITE_BEGIN(_name) \
 	printf("Testing %s...\n", (_name))
 
 #define TEST_SUITE_END(_name) \
-	printf("%s: ok\n", (_name))
+	printf("%s: ok [%.3f s]\n", (_name), oes_test_stamp())
 
 #define TEST_PASS() \
 	printf("    PASS\n")
