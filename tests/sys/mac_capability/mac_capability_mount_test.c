@@ -79,6 +79,47 @@ mount_call_raw(int fd, const void *req, size_t reqlen,
 	return (ioctl(fd, MAC_CAPABILITY_CALL, &ca));
 }
 
+/*
+ * A mount point in the case's work directory: kyua's work directories are
+ * under TMPDIR (/var/tmp, the root UFS, in the test guests).  /tmp is a
+ * tmpfs there, and a file system mounted and unmounted on a tmpfs directory
+ * records a tmpfs -> <fs> lock order that WITNESS reports against the
+ * system's <fs> -> tmpfs order (/tmp on the root UFS) as a reversal.
+ */
+static void
+work_mntpath(char *buf, size_t len, const char *name)
+{
+
+	ATF_REQUIRE(getcwd(buf, len) != NULL);
+	ATF_REQUIRE(strlcat(buf, "/", len) < len);
+	ATF_REQUIRE(strlcat(buf, name, len) < len);
+}
+
+/*
+ * Unmount through the service and require that it did: a mount left behind
+ * stays until shutdown.  If the service refused, force it off directly so
+ * that nothing outlives the case.
+ */
+static void
+service_unmount(int fd, const char *path, uint32_t flags)
+{
+	struct unmount_request ureq;
+	struct mount_reply reply;
+	int error;
+
+	memset(&ureq, 0, sizeof(ureq));
+	memset(&reply, 0, sizeof(reply));
+	ureq.op = MOUNT_OP_UNMOUNT;
+	ureq.flags = flags;
+	strlcpy(ureq.fspath, path, sizeof(ureq.fspath));
+	error = mount_call_raw(fd, &ureq, sizeof(ureq), &reply, sizeof(reply));
+	ATF_CHECK_MSG(error == 0 && reply.status == MOUNT_STATUS_OK,
+	    "unmount %s through the service: call %d (%s), status %u", path,
+	    error, error != 0 ? strerror(errno) : "-", reply.status);
+	if (error != 0 || reply.status != MOUNT_STATUS_OK)
+		(void)unmount(path, MNT_FORCE);
+}
+
 /* ----------------------------------------------------------------
  * Validation tests (don't require jail or root for most)
  * ---------------------------------------------------------------- */
@@ -254,14 +295,12 @@ ATF_TC_HEAD(mount_tmpfs, tc)
 ATF_TC_BODY(mount_tmpfs, tc)
 {
 	struct mount_request mreq;
-	struct unmount_request ureq;
 	struct mount_reply reply;
 	char mntpath[MOUNT_MAXPATH];
 	int fd;
 
 	require_fs("tmpfs");
-	snprintf(mntpath, sizeof(mntpath),
-	    "/tmp/mac_capability_mount_test.%d", (int)getpid());
+	work_mntpath(mntpath, sizeof(mntpath), "mac_capability_mount_test");
 	ATF_REQUIRE(mkdir(mntpath, 0755) == 0 || errno == EEXIST);
 
 	fd = mount_connect();
@@ -292,15 +331,11 @@ ATF_TC_BODY(mount_tmpfs, tc)
 	}
 
 	/* Unmount */
-	memset(&ureq, 0, sizeof(ureq));
-	ureq.op = MOUNT_OP_UNMOUNT;
 	/*
 	 * tmpfs may retain transient vnode references from the verification
 	 * access above, so force cleanup to keep the test deterministic.
 	 */
-	ureq.flags = MOUNT_F_FORCE;
-	strlcpy(ureq.fspath, mntpath, sizeof(ureq.fspath));
-	mount_call_raw(fd, &ureq, sizeof(ureq), &reply, sizeof(reply));
+	service_unmount(fd, mntpath, MOUNT_F_FORCE);
 
 	rmdir(mntpath);
 	close(fd);
@@ -368,15 +403,13 @@ ATF_TC_HEAD(mount_devfs, tc)
 ATF_TC_BODY(mount_devfs, tc)
 {
 	struct mount_request mreq;
-	struct unmount_request ureq;
 	struct mount_reply reply;
 	struct stat sb;
 	char mntpath[MOUNT_MAXPATH];
 	char devnull[MOUNT_MAXPATH + 16];
 
 	require_fs("devfs");
-	snprintf(mntpath, sizeof(mntpath),
-	    "/tmp/mac_capability_devfs_test.%d", (int)getpid());
+	work_mntpath(mntpath, sizeof(mntpath), "mac_capability_devfs_test");
 	ATF_REQUIRE(mkdir(mntpath, 0755) == 0 || errno == EEXIST);
 
 	int fd = mount_connect();
@@ -396,16 +429,11 @@ ATF_TC_BODY(mount_devfs, tc)
 	ATF_CHECK_MSG(stat(devnull, &sb) == 0, "stat %s: %s", devnull,
 	    strerror(errno));
 
-	memset(&ureq, 0, sizeof(ureq));
-	ureq.op = MOUNT_OP_UNMOUNT;
 	/*
 	 * devfs can keep active vnode references after probing /null, so
 	 * force cleanup to avoid filesystem-specific EBUSY behavior.
 	 */
-	ureq.flags = MOUNT_F_FORCE;
-	strlcpy(ureq.fspath, mntpath, sizeof(ureq.fspath));
-	(void)mount_call_raw(fd, &ureq, sizeof(ureq),
-	    &reply, sizeof(reply));
+	service_unmount(fd, mntpath, MOUNT_F_FORCE);
 
 	rmdir(mntpath);
 	close(fd);
@@ -422,13 +450,11 @@ ATF_TC_HEAD(mount_tmpfs_with_opts, tc)
 ATF_TC_BODY(mount_tmpfs_with_opts, tc)
 {
 	struct mount_request mreq;
-	struct unmount_request ureq;
 	struct mount_reply reply;
 	char mntpath[MOUNT_MAXPATH];
 
 	require_fs("tmpfs");
-	snprintf(mntpath, sizeof(mntpath),
-	    "/tmp/mac_capability_opts_test.%d", (int)getpid());
+	work_mntpath(mntpath, sizeof(mntpath), "mac_capability_opts_test");
 	ATF_REQUIRE(mkdir(mntpath, 0755) == 0 || errno == EEXIST);
 
 	int fd = mount_connect();
@@ -451,10 +477,7 @@ ATF_TC_BODY(mount_tmpfs_with_opts, tc)
 		ATF_CHECK_EQ(sb.st_mode & 07777, 01777);
 	}
 
-	memset(&ureq, 0, sizeof(ureq));
-	ureq.op = MOUNT_OP_UNMOUNT;
-	strlcpy(ureq.fspath, mntpath, sizeof(ureq.fspath));
-	mount_call_raw(fd, &ureq, sizeof(ureq), &reply, sizeof(reply));
+	service_unmount(fd, mntpath, 0);
 
 	rmdir(mntpath);
 	close(fd);
@@ -474,8 +497,7 @@ ATF_TC_BODY(mount_procfs_retired, tc)
 	char mntpath[MOUNT_MAXPATH];
 	int fd;
 
-	snprintf(mntpath, sizeof(mntpath), "/tmp/mac_capability_procfs_test.%d",
-	    (int)getpid());
+	work_mntpath(mntpath, sizeof(mntpath), "mac_capability_procfs_test");
 	ATF_REQUIRE(mkdir(mntpath, 0755) == 0);
 	fd = mount_connect();
 	memset(&mreq, 0, sizeof(mreq));
@@ -503,15 +525,13 @@ ATF_TC_HEAD(mount_fdescfs, tc)
 ATF_TC_BODY(mount_fdescfs, tc)
 {
 	struct mount_request mreq;
-	struct unmount_request ureq;
 	struct mount_reply reply;
 	struct stat sb;
 	char mntpath[MOUNT_MAXPATH];
 	char fd0path[MOUNT_MAXPATH + 8];
 
 	require_fs("fdescfs");
-	snprintf(mntpath, sizeof(mntpath),
-	    "/tmp/mac_capability_fdescfs_test.%d", (int)getpid());
+	work_mntpath(mntpath, sizeof(mntpath), "mac_capability_fdescfs_test");
 	ATF_REQUIRE(mkdir(mntpath, 0755) == 0 || errno == EEXIST);
 
 	int fd = mount_connect();
@@ -530,10 +550,7 @@ ATF_TC_BODY(mount_fdescfs, tc)
 	snprintf(fd0path, sizeof(fd0path), "%s/0", mntpath);
 	ATF_CHECK(stat(fd0path, &sb) == 0);
 
-	memset(&ureq, 0, sizeof(ureq));
-	ureq.op = MOUNT_OP_UNMOUNT;
-	strlcpy(ureq.fspath, mntpath, sizeof(ureq.fspath));
-	mount_call_raw(fd, &ureq, sizeof(ureq), &reply, sizeof(reply));
+	service_unmount(fd, mntpath, 0);
 
 	rmdir(mntpath);
 	close(fd);
@@ -551,14 +568,12 @@ ATF_TC_HEAD(mount_linprocfs, tc)
 ATF_TC_BODY(mount_linprocfs, tc)
 {
 	struct mount_request mreq;
-	struct unmount_request ureq;
 	struct mount_reply reply;
 	struct stat sb;
 	char mntpath[MOUNT_MAXPATH];
 	char selfpath[MOUNT_MAXPATH + 16];
 
-	snprintf(mntpath, sizeof(mntpath),
-	    "/tmp/mac_capability_linprocfs_test.%d", (int)getpid());
+	work_mntpath(mntpath, sizeof(mntpath), "mac_capability_linprocfs_test");
 	ATF_REQUIRE(mkdir(mntpath, 0755) == 0 || errno == EEXIST);
 
 	int fd = mount_connect();
@@ -575,10 +590,7 @@ ATF_TC_BODY(mount_linprocfs, tc)
 	snprintf(selfpath, sizeof(selfpath), "%s/%d", mntpath, (int)getpid());
 	ATF_CHECK(stat(selfpath, &sb) == 0);
 
-	memset(&ureq, 0, sizeof(ureq));
-	ureq.op = MOUNT_OP_UNMOUNT;
-	strlcpy(ureq.fspath, mntpath, sizeof(ureq.fspath));
-	mount_call_raw(fd, &ureq, sizeof(ureq), &reply, sizeof(reply));
+	service_unmount(fd, mntpath, 0);
 
 	rmdir(mntpath);
 	close(fd);
@@ -596,14 +608,12 @@ ATF_TC_HEAD(mount_linsysfs, tc)
 ATF_TC_BODY(mount_linsysfs, tc)
 {
 	struct mount_request mreq;
-	struct unmount_request ureq;
 	struct mount_reply reply;
 	struct stat sb;
 	char mntpath[MOUNT_MAXPATH];
 	char devpath[MOUNT_MAXPATH + 16];
 
-	snprintf(mntpath, sizeof(mntpath),
-	    "/tmp/mac_capability_linsysfs_test.%d", (int)getpid());
+	work_mntpath(mntpath, sizeof(mntpath), "mac_capability_linsysfs_test");
 	ATF_REQUIRE(mkdir(mntpath, 0755) == 0 || errno == EEXIST);
 
 	int fd = mount_connect();
@@ -620,10 +630,7 @@ ATF_TC_BODY(mount_linsysfs, tc)
 	snprintf(devpath, sizeof(devpath), "%s/devices", mntpath);
 	ATF_CHECK(stat(devpath, &sb) == 0);
 
-	memset(&ureq, 0, sizeof(ureq));
-	ureq.op = MOUNT_OP_UNMOUNT;
-	strlcpy(ureq.fspath, mntpath, sizeof(ureq.fspath));
-	mount_call_raw(fd, &ureq, sizeof(ureq), &reply, sizeof(reply));
+	service_unmount(fd, mntpath, 0);
 
 	rmdir(mntpath);
 	close(fd);
@@ -640,14 +647,12 @@ ATF_TC_HEAD(mount_nullfs, tc)
 ATF_TC_BODY(mount_nullfs, tc)
 {
 	struct mount_request mreq;
-	struct unmount_request ureq;
 	struct mount_reply reply;
 	struct stat sb;
 	char mntpath[MOUNT_MAXPATH];
 	char passwd[MOUNT_MAXPATH + 16];
 
-	snprintf(mntpath, sizeof(mntpath),
-	    "/tmp/mac_capability_nullfs_test.%d", (int)getpid());
+	work_mntpath(mntpath, sizeof(mntpath), "mac_capability_nullfs_test");
 	ATF_REQUIRE(mkdir(mntpath, 0755) == 0 || errno == EEXIST);
 
 	int fd = mount_connect();
@@ -667,10 +672,7 @@ ATF_TC_BODY(mount_nullfs, tc)
 	snprintf(passwd, sizeof(passwd), "%s/passwd", mntpath);
 	ATF_CHECK(stat(passwd, &sb) == 0);
 
-	memset(&ureq, 0, sizeof(ureq));
-	ureq.op = MOUNT_OP_UNMOUNT;
-	strlcpy(ureq.fspath, mntpath, sizeof(ureq.fspath));
-	mount_call_raw(fd, &ureq, sizeof(ureq), &reply, sizeof(reply));
+	service_unmount(fd, mntpath, 0);
 
 	rmdir(mntpath);
 	close(fd);
