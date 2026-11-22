@@ -1072,7 +1072,7 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 	 * A revoked instance may already have lost its bearer state.
 	 */
 	txdrain = s->ci_service != NULL &&
-	    s->ci_service->csvc_ops->co_txdrain != NULL &&
+	    s->ci_service->csvc_has_txdrain &&
 	    mac_capability_op_enter_locked(s);
 	mtx_unlock(&s->ci_mtx);
 
@@ -1457,7 +1457,7 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 			error = EINVAL;
 			goto call_done;
 		}
-		if (svc == NULL || svc->csvc_ops->co_call == NULL) {
+		if (svc == NULL || !svc->csvc_has_call) {
 			error = EOPNOTSUPP;
 			goto call_done;
 		}
@@ -1823,7 +1823,7 @@ call_done:
 			info->msg_limit = MAC_CAPABILITY_MSG_PAYLOAD_SIZE;
 			info->queue_depth = svc->csvc_queue_depth;
 			info->tx_limit = svc->csvc_tx_limit;
-			if (svc->csvc_ops->co_handler != NULL) {
+			if (svc->csvc_has_handler) {
 				info->features |= MAC_CAPABILITY_INFO_F_SENDMSG;
 				info->features |= MAC_CAPABILITY_INFO_F_RECVMSG;
 				info->features |= MAC_CAPABILITY_INFO_F_KQUEUE;
@@ -1834,7 +1834,7 @@ call_done:
 				info->features |= MAC_CAPABILITY_INFO_F_RECVMSG;
 				info->features |= MAC_CAPABILITY_INFO_F_KQUEUE;
 			}
-			if (svc->csvc_ops->co_call != NULL)
+			if (svc->csvc_has_call)
 				info->features |= MAC_CAPABILITY_INFO_F_CALL;
 		}
 		info->max_fds = MAC_CAPABILITY_MAX_FDS;
@@ -2020,7 +2020,7 @@ mac_capability_instance_kqfilter(struct file *fp, struct knote *kn)
 	if (svc == NULL)
 		return (EOPNOTSUPP);
 
-	can_send = svc->csvc_ops->co_handler != NULL;
+	can_send = svc->csvc_has_handler;
 	can_recv = can_send ||
 	    (svc->csvc_svc_flags & MAC_CAPABILITY_SVC_NOTIFY) != 0;
 
