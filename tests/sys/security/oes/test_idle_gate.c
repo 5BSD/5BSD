@@ -1175,32 +1175,38 @@ g8_close_then_nothing_runs(void)
 	    "the last client closed", (uintmax_t)p0, (uintmax_t)p1);
 }
 
-/* G-14: with nobody listening, fork, exit, mprotect and sysctl pass no gate. */
+/*
+ * G-14: with nobody listening, fork, exit, mprotect and sysctl pass no gate.
+ * security.oes.gate.passes counts every hook entry that gets past its gate,
+ * exactly, and with no client open no hook anywhere is live, so a single
+ * operation of each kind shows whether its hook passes: one fork and exit,
+ * one mprotect, one sysctl read.
+ */
 static void
 g14_idle_paths(void)
 {
 	uint64_t p0, p1;
 	size_t l;
 	void *map;
-	int f, i, v;
+	int f, v;
 
-	TEST_BEGIN("G-14 idle: 1000 fork+exit, mprotect and sysctl pass no "
-	    "gate");
+	TEST_BEGIN("G-14 idle: fork+exit, mprotect and sysctl pass no gate");
 	p0 = gate_passes();
-	ASSERT_MSG(idle_fork_exit(1000) == 0, "fork loop");
+	ASSERT_MSG(idle_fork_exit() == 0, "fork and exit: %s", strerror(errno));
 	f = open(work_file, O_RDONLY);
 	map = f >= 0 ? mmap(NULL, 4096, PROT_READ, MAP_SHARED, f, 0) :
 	    MAP_FAILED;
-	for (i = 0; map != MAP_FAILED && i < 1000; i++)
-		(void)mprotect(map, 4096, PROT_READ);
-	if (map != MAP_FAILED)
+	ASSERT_MSG(map != MAP_FAILED, "mmap: %s", strerror(errno));
+	if (map != MAP_FAILED) {
+		ASSERT_MSG(mprotect(map, 4096, PROT_READ) == 0,
+		    "mprotect: %s", strerror(errno));
 		(void)munmap(map, 4096);
+	}
 	if (f >= 0)
 		(void)close(f);
-	for (i = 0; i < 1000; i++) {
-		l = sizeof(v);
-		(void)sysctlbyname("kern.maxproc", &v, &l, NULL, 0);
-	}
+	l = sizeof(v);
+	ASSERT_MSG(sysctlbyname("kern.maxproc", &v, &l, NULL, 0) == 0,
+	    "sysctl: %s", strerror(errno));
 	p1 = gate_passes();
 	ASSERT_MSG(p0 != UINT64_MAX && p1 == p0, "gate passes %ju -> %ju",
 	    (uintmax_t)p0, (uintmax_t)p1);
