@@ -1077,12 +1077,22 @@ scenario_orphan_lookup(const char *name, const char *started,
 		if (sigaction(SIGTERM, &sa, NULL) == -1)
 			err(1, "sigaction");
 		fd = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
-		rc = fd == -1 ? -1 :
-		    capability_service_connect(fd, "coalition");
-		if (fd != -1)
-			(void)close(fd);
-		if (rc == -1 || service_session_join_fd(rc) == -1) {
-			write_result(result, "rehome errno=%d\n", errno);
+		if (fd == -1) {
+			write_result(result, "rehome step=open errno=%d\n",
+			    errno);
+			_exit(1);
+		}
+		rc = capability_service_connect(fd, "coalition");
+		error = errno;
+		(void)close(fd);
+		if (rc == -1) {
+			write_result(result, "rehome step=connect errno=%d\n",
+			    error);
+			_exit(1);
+		}
+		if (service_session_join_fd(rc) == -1) {
+			write_result(result, "rehome step=join errno=%d\n",
+			    errno);
 			_exit(1);
 		}
 		write_result(started, "pid=%jd\n", (intmax_t)getpid());
