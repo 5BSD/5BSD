@@ -12,6 +12,7 @@
 #include <sys/capsicum.h>
 #include <sys/ioctl.h>
 #include <sys/syscall.h>
+#include <sys/thr.h>
 #include <sys/wait.h>
 
 #include <dev/mac_capability/mac_capability_channel_proto.h>
@@ -21,11 +22,15 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <semaphore.h>
+#include <signal.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <channel.h>
@@ -33,6 +38,8 @@
 #include "libservice.h"
 #include "switchboard_svc_proto.h"
 #include "service_bootstrap.h"
+#include "service_private.h"
+#include "sleep_watch.h"
 
 /*
  * Create a connected mac_capability channel pair via the channel device, or -1
@@ -251,6 +258,627 @@ ATF_TC_BODY(wrong_protocol_fails_closed, tc)
 	close(client);
 }
 
+/*
+ * A switchboard that dies between the ACK and the lookup's send makes the
+ * send fail; the kernel says EPIPE, and the lookup reports ECONNRESET, as
+ * its receive does for the same event (service_runtime(3)).  The send
+ * helper is called directly: a mock cannot order its close against the
+ * client's send.
+ */
+ATF_TC_WITHOUT_HEAD(send_to_gone_peer_econnreset);
+ATF_TC_BODY(send_to_gone_peer_econnreset, tc)
+{
+	struct mac_capability_sendmsg_args send;
+	int pair[2];
+	char byte = 0;
+
+	(void)tc;
+	ATF_REQUIRE_EQ(0, create_channel_pair(&pair[0], &pair[1]));
+	ATF_REQUIRE_EQ(0, close(pair[1]));
+	memset(&send, 0, sizeof(send));
+	send.payload = &byte;
+	send.payload_len = sizeof(byte);
+	ATF_CHECK_EQ(-1, service_channel_send_wait(pair[0], &send));
+	ATF_CHECK_EQ_MSG(ECONNRESET, errno, "errno %d (%s)", errno,
+	    strerror(errno));
+	(void)close(pair[0]);
+}
+
+/*
+ * Ambient lookups wait for switchboard's answer (2026-11-20).  A mock
+ * switchboard, driven with raw channel calls from a thread, holds the other
+ * end of this process's discovery route: it adopts the private channel the
+ * client registers, acknowledges it, receives the lookup and then answers,
+ * refuses, exits (closes the private channel) or lets a signal reach the
+ * waiting client.  The former client bound was 2 s; the late answers come
+ * after LATE_MS, past it.
+ */
+/*
+ * A regression pin derived from the removed 2 s client bound
+ * (SERVICE_LOOKUP_TIMEOUT_MS): an answer later than that failed with
+ * ETIMEDOUT before.  Any delay past 2 s is the same case.
+ */
+#define	LATE_MS	3000
+
+enum mock_mode {
+	MOCK_ANSWER,		/* a session channel, after delay_ms */
+	MOCK_REFUSE,		/* status `status`, after delay_ms */
+	MOCK_EXIT,		/* close the private channel after delay_ms */
+	MOCK_REJECT_REGISTRATION, /* close the registered channel, no ACK */
+	MOCK_SIGNAL_THEN_ANSWER, /* signal the sleeping client, then answer */
+	MOCK_REFUSE_REGISTRATION, /* ACK the registration with `status` */
+	MOCK_CANCEL,		/* cancel the sleeping client, see it close */
+	MOCK_FULL_ROUTE,	/* drain `queued` fillers, then serve */
+};
+
+struct mock_switchboard {
+	enum mock_mode	mode;
+	int		route;		/* switchboard end of the route */
+	unsigned	delay_ms;
+	int32_t		status;
+	pthread_t	client;		/* MOCK_SIGNAL_THEN_ANSWER */
+	long		client_tid;
+	int		session_peer;	/* provider end of an answered session */
+	int		queued;		/* MOCK_FULL_ROUTE: fillers queued */
+	bool		send_signal;	/* MOCK_FULL_ROUTE: signal the sender */
+	bool		restarts;	/* the signalled call restarts */
+	struct sleep_watch watch;	/* the client's sleeps */
+	bool		closed_seen;	/* MOCK_CANCEL: the client closed */
+	pthread_t	thread;
+};
+
+static int
+mock_recv(int fd, void *payload, uint32_t len, int *fdp, uint64_t *tokenp)
+{
+	struct mac_capability_recvmsg_args recv;
+
+	memset(&recv, 0, sizeof(recv));
+	recv.payload = payload;
+	recv.payload_len = len;
+	recv.fds = fdp;
+	recv.nfds = fdp != NULL ? 1 : 0;
+	recv.flags = MAC_CAPABILITY_RECV_F_WAIT;
+	recv._reserved[0] = MAC_CAPABILITY_RECV_WAIT_FOREVER;
+	if (ioctl(fd, MAC_CAPABILITY_RECVMSG, &recv) == -1)
+		return (-1);
+	if (fdp != NULL && recv.nfds == 0)
+		*fdp = -1;
+	if (tokenp != NULL)
+		*tokenp = recv.reply_token;
+	return ((int)recv.payload_len);
+}
+
+static int
+mock_send(int fd, const void *payload, uint32_t len, int *fdp,
+    uint64_t token)
+{
+	struct mac_capability_sendmsg_args send;
+
+	memset(&send, 0, sizeof(send));
+	send.payload = __DECONST(void *, payload);
+	send.payload_len = len;
+	send.fds = fdp;
+	send.nfds = fdp != NULL ? 1 : 0;
+	send.reply_token = token;
+	return (ioctl(fd, MAC_CAPABILITY_SENDMSG, &send));
+}
+
+static void
+sleep_ms(unsigned ms)
+{
+	struct timespec ts = { ms / 1000, (long)(ms % 1000) * 1000000 };
+
+	while (nanosleep(&ts, &ts) == -1 && errno == EINTR)
+		continue;
+}
+
+/*
+ * Signals for the restart cases.  The handler posts a semaphore, so the mock
+ * knows the signal was taken before it waits for the client's next sleep:
+ * only a restarted call sleeps again.
+ */
+static atomic_int signals_taken;
+static sem_t signal_handled;
+
+static void
+count_signal(int signo __unused)
+{
+
+	atomic_fetch_add(&signals_taken, 1);
+	(void)sem_post(&signal_handled);	/* async-signal-safe */
+}
+
+static void
+catch_sigusr1(int flags)
+{
+	struct sigaction sa;
+
+	ATF_REQUIRE_EQ(0, sem_init(&signal_handled, 0, 0));
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = count_signal;
+	sa.sa_flags = flags;
+	(void)sigemptyset(&sa.sa_mask);
+	ATF_REQUIRE_EQ(0, sigaction(SIGUSR1, &sa, NULL));
+	atomic_store(&signals_taken, 0);
+}
+
+/*
+ * Signal the client once it sleeps in a wait of `kind` (sleep_watch.h:
+ * 'S' room in a full queue, 'R' the lookup's answer); with `restarts`, wait
+ * until its handler ran and the call slept again.
+ */
+static void
+signal_sleeping_client(struct mock_switchboard *m, char kind, bool restarts)
+{
+
+	sleep_watch_wait(&m->watch, kind, m->client_tid);
+	(void)pthread_kill(m->client, SIGUSR1);
+	if (!restarts)
+		return;
+	while (sem_wait(&signal_handled) == -1 && errno == EINTR)
+		;
+	sleep_watch_wait(&m->watch, kind, m->client_tid);
+}
+
+static void *
+mock_switchboard_thread(void *arg)
+{
+	struct mock_switchboard *m = arg;
+	struct svc_register_lookup_req reg;
+	struct svc_register_lookup_ack ack;
+	struct svc_lookup_req req;
+	struct svc_reply reply;
+	uint64_t token;
+	int identity, private_fd, session[2];
+	char byte;
+
+	if (m->mode == MOCK_FULL_ROUTE) {
+		/* The client is waiting for room: make some, one at a time. */
+		if (m->send_signal) {
+			signal_sleeping_client(m, 'S', m->restarts);
+			if (!m->restarts)
+				return (NULL);
+		} else
+			sleep_watch_wait(&m->watch, 'S', m->client_tid);
+		for (; m->queued > 0; m->queued--)
+			if (mock_recv(m->route, &byte, sizeof(byte), NULL,
+			    NULL) != 1)
+				return (NULL);
+	}
+	if (mock_recv(m->route, &reg, sizeof(reg), &private_fd, NULL) !=
+	    (int)sizeof(reg) || private_fd < 0)
+		return (NULL);
+	if (m->mode == MOCK_REJECT_REGISTRATION) {
+		(void)close(private_fd);
+		return (NULL);
+	}
+	if (m->mode == MOCK_REFUSE_REGISTRATION) {
+		ack.op = SVC_OP_REGISTER_LOOKUP;
+		ack.status = m->status;
+		ack.magic = 0;
+		(void)mock_send(private_fd, &ack, sizeof(ack), NULL, 0);
+		(void)close(private_fd);
+		return (NULL);
+	}
+	ack.op = SVC_OP_REGISTER_LOOKUP;
+	ack.status = 0;
+	ack.magic = SVC_REGISTER_LOOKUP_MAGIC;
+	if (mock_send(private_fd, &ack, sizeof(ack), NULL, 0) == -1 ||
+	    mock_recv(private_fd, &req, sizeof(req), &identity, &token) !=
+	    (int)sizeof(req)) {
+		(void)close(private_fd);
+		return (NULL);
+	}
+	if (identity >= 0)
+		(void)close(identity);
+	if (m->mode == MOCK_SIGNAL_THEN_ANSWER)
+		signal_sleeping_client(m, 'R', m->restarts);
+	if (m->mode == MOCK_CANCEL) {
+		sleep_watch_wait(&m->watch, 'R', m->client_tid);
+		(void)pthread_cancel(m->client);
+		/*
+		 * The cancelled lookup closes its private channel; closing an
+		 * instance revokes its peer, so this end reads ECONNRESET.
+		 */
+		m->closed_seen = mock_recv(private_fd, &reply, sizeof(reply),
+		    NULL, NULL) == -1 && errno == ECONNRESET;
+		(void)close(private_fd);
+		return (NULL);
+	}
+	sleep_ms(m->delay_ms);
+	memset(&reply, 0, sizeof(reply));
+	switch (m->mode) {
+	case MOCK_EXIT:
+		break;
+	case MOCK_REFUSE:
+		reply.status = m->status;
+		(void)mock_send(private_fd, &reply, sizeof(reply), NULL, token);
+		break;
+	default:
+		if (mac_capability_channel_create(session) == -1)
+			break;
+		(void)mock_send(private_fd, &reply, sizeof(reply), &session[0],
+		    token);
+		(void)close(session[0]);
+		m->session_peer = session[1];
+		break;
+	}
+	(void)close(private_fd);
+	return (NULL);
+}
+
+static void
+mock_prepare(struct mock_switchboard *m, enum mock_mode mode,
+    unsigned delay_ms, int *clientp)
+{
+
+	memset(m, 0, sizeof(*m));
+	m->mode = mode;
+	m->delay_ms = delay_ms;
+	m->session_peer = -1;
+	m->client = pthread_self();
+	ATF_REQUIRE_EQ(0, thr_self(&m->client_tid));
+	isolate_ambient_lookup();
+	/* Before any thread: the watch forks dtrace. */
+	if (mode == MOCK_SIGNAL_THEN_ANSWER || mode == MOCK_CANCEL ||
+	    mode == MOCK_FULL_ROUTE)
+		sleep_watch_start(&m->watch, sizeof(struct svc_reply));
+	ATF_REQUIRE_EQ(0, create_channel_pair(clientp, &m->route));
+	ATF_REQUIRE_EQ(0, service_install_ambient_lookup(*clientp));
+}
+
+static void
+mock_run(struct mock_switchboard *m)
+{
+
+	ATF_REQUIRE_EQ(0, pthread_create(&m->thread, NULL,
+	    mock_switchboard_thread, m));
+}
+
+static void
+mock_start(struct mock_switchboard *m, enum mock_mode mode, unsigned delay_ms)
+{
+	int client;
+
+	mock_prepare(m, mode, delay_ms, &client);
+	(void)close(client);
+	mock_run(m);
+}
+
+static void
+mock_finish(struct mock_switchboard *m)
+{
+
+	ATF_REQUIRE_EQ(0, pthread_join(m->thread, NULL));
+	sleep_watch_stop(&m->watch);
+	ATF_REQUIRE_EQ(0, service_clear_ambient_lookup());
+	(void)close(m->route);
+	if (m->session_peer >= 0)
+		(void)close(m->session_peer);
+}
+
+static uint64_t
+now_ms(void)
+{
+	struct timespec ts;
+
+	ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &ts));
+	return ((uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000);
+}
+
+ATF_TC(lookup_waits_for_late_answer);
+ATF_TC_HEAD(lookup_waits_for_late_answer, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "an ambient lookup waits for an "
+	    "answer that comes after the former 2 s bound");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(lookup_waits_for_late_answer, tc)
+{
+	struct mock_switchboard m;
+	uint64_t start;
+	int fd;
+
+	mock_start(&m, MOCK_ANSWER, LATE_MS);
+	start = now_ms();
+	fd = -1;
+	ATF_CHECK_EQ_MSG(0, service_connect_ambient("org.test.late", &fd),
+	    "lookup failed: %s", strerror(errno));
+	ATF_CHECK(now_ms() - start >= LATE_MS);
+	ATF_CHECK(fd >= 0);
+	if (fd >= 0)
+		(void)close(fd);
+	mock_finish(&m);
+}
+
+ATF_TC(lookup_returns_refusal);
+ATF_TC_HEAD(lookup_returns_refusal, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a late refusal is the lookup's error");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(lookup_returns_refusal, tc)
+{
+	struct mock_switchboard m;
+	int fd;
+
+	mock_start(&m, MOCK_REFUSE, LATE_MS);
+	m.status = ECANCELED;
+	fd = -1;
+	ATF_CHECK_EQ(-1, service_connect_ambient("org.test.refused", &fd));
+	ATF_CHECK_EQ_MSG(ECANCELED, errno, "errno %d (%s)", errno,
+	    strerror(errno));
+	ATF_CHECK_EQ(-1, fd);
+	mock_finish(&m);
+}
+
+ATF_TC(lookup_reset_when_switchboard_exits);
+ATF_TC_HEAD(lookup_reset_when_switchboard_exits, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a lookup whose switchboard exits "
+	    "before answering fails with ECONNRESET");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(lookup_reset_when_switchboard_exits, tc)
+{
+	struct mock_switchboard m;
+	int fd;
+
+	mock_start(&m, MOCK_EXIT, LATE_MS);
+	fd = -1;
+	ATF_CHECK_EQ(-1, service_connect_ambient("org.test.orphaned", &fd));
+	ATF_CHECK_EQ_MSG(ECONNRESET, errno, "errno %d (%s)", errno,
+	    strerror(errno));
+	mock_finish(&m);
+}
+
+ATF_TC(registration_refused_resets);
+ATF_TC_HEAD(registration_refused_resets, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a registration switchboard refuses "
+	    "(closes without an ACK) fails with ECONNRESET, not a hang");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(registration_refused_resets, tc)
+{
+	struct mock_switchboard m;
+	int fd;
+
+	mock_start(&m, MOCK_REJECT_REGISTRATION, 0);
+	fd = -1;
+	ATF_CHECK_EQ(-1, service_connect_ambient("org.test.unadopted", &fd));
+	ATF_CHECK_EQ_MSG(ECONNRESET, errno, "errno %d (%s)", errno,
+	    strerror(errno));
+	mock_finish(&m);
+}
+
+ATF_TC(signal_sa_restart_restarts);
+ATF_TC_HEAD(signal_sa_restart_restarts, tc)
+{
+	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr", "a signal whose handler has "
+	    "SA_RESTART restarts the wait for the answer, as read(2) on a "
+	    "pipe does");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(signal_sa_restart_restarts, tc)
+{
+	struct mock_switchboard m;
+	int client, fd;
+
+	catch_sigusr1(SA_RESTART);
+	mock_prepare(&m, MOCK_SIGNAL_THEN_ANSWER, 0, &client);
+	(void)close(client);
+	m.restarts = true;
+	mock_run(&m);
+	fd = -1;
+	ATF_CHECK_EQ_MSG(0, service_connect_ambient("org.test.restart", &fd),
+	    "lookup failed: %s", strerror(errno));
+	ATF_CHECK_EQ(1, atomic_load(&signals_taken));
+	if (fd >= 0)
+		(void)close(fd);
+	mock_finish(&m);
+}
+
+ATF_TC(signal_without_sa_restart_eintr);
+ATF_TC_HEAD(signal_without_sa_restart_eintr, tc)
+{
+	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr", "a signal whose handler lacks "
+	    "SA_RESTART ends the wait with EINTR, as read(2) on a pipe does");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(signal_without_sa_restart_eintr, tc)
+{
+	struct mock_switchboard m;
+	int fd;
+
+	catch_sigusr1(0);
+	mock_start(&m, MOCK_SIGNAL_THEN_ANSWER, 0);
+	fd = -1;
+	ATF_CHECK_EQ(-1, service_connect_ambient("org.test.interrupted", &fd));
+	ATF_CHECK_EQ_MSG(EINTR, errno, "errno %d (%s)", errno,
+	    strerror(errno));
+	ATF_CHECK_EQ(1, atomic_load(&signals_taken));
+	ATF_CHECK_EQ(-1, fd);
+	mock_finish(&m);
+}
+
+
+ATF_TC(registration_refusal_errno);
+ATF_TC_HEAD(registration_refusal_errno, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a registration switchboard refuses "
+	    "with an errno fails with that errno");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(registration_refusal_errno, tc)
+{
+	struct mock_switchboard m;
+	int fd;
+
+	mock_start(&m, MOCK_REFUSE_REGISTRATION, 0);
+	m.status = ENFILE;
+	fd = -1;
+	ATF_CHECK_EQ(-1, service_connect_ambient("org.test.refused", &fd));
+	ATF_CHECK_EQ_MSG(ENFILE, errno, "errno %d (%s)", errno,
+	    strerror(errno));
+	mock_finish(&m);
+}
+
+struct cancel_lookup {
+	struct mock_switchboard	*m;
+	int			 fd;
+};
+
+static void *
+cancel_lookup_thread(void *arg)
+{
+	struct cancel_lookup *c = arg;
+
+	c->m->client = pthread_self();
+	(void)thr_self(&c->m->client_tid);
+	mock_run(c->m);
+	(void)service_connect_ambient("org.test.cancelled", &c->fd);
+	return (NULL);
+}
+
+ATF_TC(lookup_cancellation_closes_channel);
+ATF_TC_HEAD(lookup_cancellation_closes_channel, tc)
+{
+	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr", "a thread cancelled while it waits for "
+	    "the answer is cancelled (no EINTR return) and closes its "
+	    "private channel");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(lookup_cancellation_closes_channel, tc)
+{
+	struct mock_switchboard m;
+	struct cancel_lookup c;
+	pthread_t thread;
+	void *result;
+	int client;
+
+	mock_prepare(&m, MOCK_CANCEL, 0, &client);
+	(void)close(client);
+	c.m = &m;
+	c.fd = -1;
+	ATF_REQUIRE_EQ(0, pthread_create(&thread, NULL, cancel_lookup_thread,
+	    &c));
+	ATF_REQUIRE_EQ(0, pthread_join(thread, &result));
+	ATF_CHECK(result == PTHREAD_CANCELED);
+	ATF_CHECK_EQ(-1, c.fd);
+	mock_finish(&m);
+	ATF_CHECK_MSG(m.closed_seen, "the private channel stayed open");
+}
+
+/* Fill switchboard's side of the route until the kernel says EAGAIN. */
+static void
+fill_route(struct mock_switchboard *m, int client)
+{
+	struct mac_capability_sendmsg_args send;
+	char byte = 0;
+
+	for (;;) {
+		memset(&send, 0, sizeof(send));
+		send.payload = &byte;
+		send.payload_len = sizeof(byte);
+		if (ioctl(client, MAC_CAPABILITY_SENDMSG, &send) == -1)
+			break;
+		m->queued++;
+	}
+	ATF_REQUIRE_EQ_MSG(EAGAIN, errno, "filling the route: %s",
+	    strerror(errno));
+	ATF_REQUIRE(m->queued > 0);
+	(void)close(client);
+}
+
+ATF_TC(full_route_queue_waited_out);
+ATF_TC_HEAD(full_route_queue_waited_out, tc)
+{
+	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr", "a registration that finds the route's "
+	    "queue full waits for room, then completes");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(full_route_queue_waited_out, tc)
+{
+	struct mock_switchboard m;
+	int client, fd;
+
+	mock_prepare(&m, MOCK_FULL_ROUTE, 0, &client);
+	fill_route(&m, client);
+	mock_run(&m);
+	fd = -1;
+	ATF_CHECK_EQ_MSG(0, service_connect_ambient("org.test.full", &fd),
+	    "lookup failed: %s", strerror(errno));
+	if (fd >= 0)
+		(void)close(fd);
+	mock_finish(&m);
+}
+
+ATF_TC(full_route_signal_sa_restart);
+ATF_TC_HEAD(full_route_signal_sa_restart, tc)
+{
+	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr", "a signal with SA_RESTART while the "
+	    "registration waits for room in a full queue restarts the wait, "
+	    "and the lookup completes");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(full_route_signal_sa_restart, tc)
+{
+	struct mock_switchboard m;
+	int client, fd;
+
+	catch_sigusr1(SA_RESTART);
+	mock_prepare(&m, MOCK_FULL_ROUTE, 0, &client);
+	m.send_signal = true;
+	m.restarts = true;
+	fill_route(&m, client);
+	mock_run(&m);
+	fd = -1;
+	ATF_CHECK_EQ_MSG(0, service_connect_ambient("org.test.full", &fd),
+	    "lookup failed: %s", strerror(errno));
+	ATF_CHECK_EQ(1, atomic_load(&signals_taken));
+	if (fd >= 0)
+		(void)close(fd);
+	mock_finish(&m);
+}
+
+ATF_TC(full_route_signal_eintr);
+ATF_TC_HEAD(full_route_signal_eintr, tc)
+{
+	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr", "a signal without SA_RESTART while the "
+	    "registration waits for room fails the lookup with EINTR");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(full_route_signal_eintr, tc)
+{
+	struct mock_switchboard m;
+	int client, fd;
+
+	catch_sigusr1(0);
+	mock_prepare(&m, MOCK_FULL_ROUTE, 0, &client);
+	m.send_signal = true;
+	fill_route(&m, client);
+	mock_run(&m);
+	fd = -1;
+	ATF_CHECK_EQ(-1, service_connect_ambient("org.test.full", &fd));
+	ATF_CHECK_EQ_MSG(EINTR, errno, "errno %d (%s)", errno,
+	    strerror(errno));
+	ATF_CHECK_EQ(1, atomic_load(&signals_taken));
+	mock_finish(&m);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -258,5 +886,17 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, non_channel_install_rejected);
 	ATF_TP_ADD_TC(tp, context_holds_reference);
 	ATF_TP_ADD_TC(tp, wrong_protocol_fails_closed);
+	ATF_TP_ADD_TC(tp, send_to_gone_peer_econnreset);
+	ATF_TP_ADD_TC(tp, lookup_waits_for_late_answer);
+	ATF_TP_ADD_TC(tp, lookup_returns_refusal);
+	ATF_TP_ADD_TC(tp, lookup_reset_when_switchboard_exits);
+	ATF_TP_ADD_TC(tp, registration_refused_resets);
+	ATF_TP_ADD_TC(tp, signal_sa_restart_restarts);
+	ATF_TP_ADD_TC(tp, signal_without_sa_restart_eintr);
+	ATF_TP_ADD_TC(tp, registration_refusal_errno);
+	ATF_TP_ADD_TC(tp, lookup_cancellation_closes_channel);
+	ATF_TP_ADD_TC(tp, full_route_queue_waited_out);
+	ATF_TP_ADD_TC(tp, full_route_signal_sa_restart);
+	ATF_TP_ADD_TC(tp, full_route_signal_eintr);
 	return (atf_no_error());
 }

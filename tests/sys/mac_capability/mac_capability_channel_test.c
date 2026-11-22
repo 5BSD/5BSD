@@ -21,9 +21,14 @@
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/sysctl.h>
+#include <sys/thr.h>
 #include <sys/wait.h>
 
 #include <errno.h>
+#include <pthread.h>
+#include <semaphore.h>
+#include <signal.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <fcntl.h>
 #include <stdint.h>
@@ -40,6 +45,7 @@
 #include "mac_capability_identity_proto.h"
 #include "mac_capability_channel_proto.h"
 #include "mac_capability_coalition_proto.h"
+#include "sleep_watch.h"
 
 /* Descriptor transfer states (mirror of sys/capsicum.h enum). */
 #ifndef CAP_XFER_UNLIMITED
@@ -1163,6 +1169,250 @@ ATF_TC_BODY(recv_wait_wakes, tc)
 	close(P[1]);
 }
 
+/*
+ * MAC_CAPABILITY_SEND_F_WAIT: a send that finds the queue full sleeps for
+ * room ("mcapsnd") instead of failing with EAGAIN, and a signal ends the
+ * sleep as for write(2) on a full pipe.  A helper thread waits (sched:::sleep,
+ * sleep_watch.h) until the sender sleeps there, then signals it or makes
+ * room.  For a restart it waits for the handler to have run (a semaphore the
+ * handler posts) and then for the sender's next sleep: only a restarted call
+ * sleeps again.
+ */
+struct send_wait {
+	struct sleep_watch *watch;
+	int		reader;		/* receiving end */
+	pthread_t	sender;
+	long		sender_tid;
+	bool		signal;		/* send SIGUSR1 first */
+	bool		resleep;	/* then wait for the restarted sleep */
+	bool		drain;		/* then receive one message */
+};
+
+static atomic_int send_wait_signals;
+static sem_t send_wait_handled;
+
+static void
+send_wait_handler(int signo __unused)
+{
+
+	atomic_fetch_add(&send_wait_signals, 1);
+	(void)sem_post(&send_wait_handled);	/* async-signal-safe */
+}
+
+static void
+send_wait_catch(int flags)
+{
+	struct sigaction sa;
+
+	ATF_REQUIRE(sem_init(&send_wait_handled, 0, 0) == 0);
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = send_wait_handler;
+	sa.sa_flags = flags;
+	sigemptyset(&sa.sa_mask);
+	ATF_REQUIRE(sigaction(SIGUSR1, &sa, NULL) == 0);
+	atomic_store(&send_wait_signals, 0);
+}
+
+static void *
+send_wait_helper(void *arg)
+{
+	struct send_wait *w = arg;
+	char buf[16];
+
+	sleep_watch_wait(w->watch, 'S', w->sender_tid);
+	if (w->signal) {
+		pthread_kill(w->sender, SIGUSR1);
+		if (w->resleep) {
+			while (sem_wait(&send_wait_handled) == -1 &&
+			    errno == EINTR)
+				;
+			sleep_watch_wait(w->watch, 'S', w->sender_tid);
+		}
+	}
+	if (w->drain)
+		(void)chan_recv(w->reader, buf, sizeof(buf), NULL, NULL);
+	return (NULL);
+}
+
+/* Fill P[0]'s send queue; returns the number of messages queued. */
+static int
+send_wait_fill(int fd)
+{
+	int n;
+
+	for (n = 0; chan_send(fd, "fill", 4) == 0; n++)
+		;
+	ATF_REQUIRE_EQ_MSG(EAGAIN, errno, "fill: %s", strerror(errno));
+	ATF_REQUIRE(n > 0);
+	return (n);
+}
+
+static int
+send_wait_send(int fd, const char *msg)
+{
+	struct mac_capability_sendmsg_args sa;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.payload = msg;
+	sa.payload_len = strlen(msg);
+	sa.flags = MAC_CAPABILITY_SEND_F_WAIT;
+	return (ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa));
+}
+
+static void
+send_wait_start(struct send_wait *w, pthread_t *thread, int reader,
+    struct sleep_watch *watch)
+{
+
+	w->watch = watch;
+	w->reader = reader;
+	w->sender = pthread_self();
+	ATF_REQUIRE(thr_self(&w->sender_tid) == 0);
+	ATF_REQUIRE(pthread_create(thread, NULL, send_wait_helper, w) == 0);
+}
+
+/* Receive `n` messages, waiting for each; the last must be `last`. */
+static void
+send_wait_expect(int fd, int n, const char *last)
+{
+	char buf[16];
+
+	for (int i = 0; i < n; i++) {
+		memset(buf, 0, sizeof(buf));
+		ATF_REQUIRE_MSG(recv_flags(fd, buf, sizeof(buf) - 1,
+		    MAC_CAPABILITY_RECV_F_WAIT, MAC_CAPABILITY_RECV_WAIT_FOREVER,
+		    NULL) == 0, "receive %d: %s", i, strerror(errno));
+	}
+	ATF_CHECK_MSG(strcmp(buf, last) == 0, "last message %s, want %s", buf,
+	    last);
+}
+
+ATF_TC(send_wait_drained);
+ATF_TC_HEAD(send_wait_drained, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "SEND_F_WAIT on a full queue sleeps "
+	    "until the reader makes room, then sends, in order");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(send_wait_drained, tc)
+{
+	struct send_wait w = { .drain = true };
+	struct sleep_watch watch;
+	pthread_t thread;
+	int P[2], filled;
+
+	ATF_REQUIRE(chan_create_required(P) == 0);
+	filled = send_wait_fill(P[0]);
+	sleep_watch_start(&watch, 0);
+	send_wait_start(&w, &thread, P[1], &watch);
+	ATF_CHECK_MSG(send_wait_send(P[0], "last") == 0, "send: %s",
+	    strerror(errno));
+	ATF_REQUIRE(pthread_join(thread, NULL) == 0);
+	sleep_watch_stop(&watch);
+	/* One filler went to the helper; the rest, then "last", remain. */
+	send_wait_expect(P[1], filled, "last");
+	close(P[0]);
+	close(P[1]);
+}
+
+ATF_TC(send_wait_sa_restart);
+ATF_TC_HEAD(send_wait_sa_restart, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a signal with SA_RESTART restarts a "
+	    "SEND_F_WAIT sleep, which then sends once there is room");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(send_wait_sa_restart, tc)
+{
+	struct send_wait w = { .signal = true, .resleep = true, .drain = true };
+	struct sleep_watch watch;
+	pthread_t thread;
+	int P[2];
+
+	ATF_REQUIRE(chan_create_required(P) == 0);
+	send_wait_catch(SA_RESTART);
+	(void)send_wait_fill(P[0]);
+	sleep_watch_start(&watch, 0);
+	send_wait_start(&w, &thread, P[1], &watch);
+	ATF_CHECK_MSG(send_wait_send(P[0], "last") == 0, "send: %s",
+	    strerror(errno));
+	ATF_REQUIRE(pthread_join(thread, NULL) == 0);
+	sleep_watch_stop(&watch);
+	ATF_CHECK_EQ(1, atomic_load(&send_wait_signals));
+	close(P[0]);
+	close(P[1]);
+}
+
+ATF_TC(send_wait_eintr);
+ATF_TC_HEAD(send_wait_eintr, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a signal without SA_RESTART ends a "
+	    "SEND_F_WAIT sleep with EINTR, and nothing is sent");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(send_wait_eintr, tc)
+{
+	struct send_wait w = { .signal = true };
+	struct sleep_watch watch;
+	pthread_t thread;
+	int P[2], filled;
+
+	ATF_REQUIRE(chan_create_required(P) == 0);
+	send_wait_catch(0);
+	filled = send_wait_fill(P[0]);
+	sleep_watch_start(&watch, 0);
+	send_wait_start(&w, &thread, P[1], &watch);
+	ATF_CHECK_EQ(-1, send_wait_send(P[0], "last"));
+	ATF_CHECK_EQ_MSG(EINTR, errno, "errno %d (%s)", errno,
+	    strerror(errno));
+	ATF_REQUIRE(pthread_join(thread, NULL) == 0);
+	sleep_watch_stop(&watch);
+	ATF_CHECK_EQ(1, atomic_load(&send_wait_signals));
+	/* "last" was never sent: after the fillers comes the next send. */
+	send_wait_expect(P[1], filled, "fill");
+	ATF_CHECK(send_wait_send(P[0], "end") == 0);
+	send_wait_expect(P[1], 1, "end");
+	close(P[0]);
+	close(P[1]);
+}
+
+ATF_TC(send_flags_rejected);
+ATF_TC_HEAD(send_flags_rejected, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "SENDMSG accepts SEND_F_WAIT and "
+	    "rejects any other flag with EINVAL");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+}
+ATF_TC_BODY(send_flags_rejected, tc)
+{
+	struct mac_capability_sendmsg_args sa;
+	int P[2];
+
+	ATF_REQUIRE(chan_create_required(P) == 0);
+	memset(&sa, 0, sizeof(sa));
+	sa.payload = "x";
+	sa.payload_len = 1;
+	sa.flags = MAC_CAPABILITY_SEND_F_MOVE;
+	ATF_CHECK_ERRNO(EINVAL, ioctl(P[0], MAC_CAPABILITY_SENDMSG, &sa) == -1);
+	sa.flags = MAC_CAPABILITY_SEND_F_WAIT;
+	ATF_CHECK_EQ(0, ioctl(P[0], MAC_CAPABILITY_SENDMSG, &sa));
+	close(P[0]);
+	close(P[1]);
+}
+
 ATF_TC(xfer_once_direct);
 ATF_TC_HEAD(xfer_once_direct, tc)
 {
@@ -1879,6 +2129,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, sendmsg_v2_move_lock_paths);
 	ATF_TP_ADD_TC(tp, recvmsg_v4_info);
 	ATF_TP_ADD_TC(tp, peer_close_race);
+	ATF_TP_ADD_TC(tp, send_wait_drained);
+	ATF_TP_ADD_TC(tp, send_wait_sa_restart);
+	ATF_TP_ADD_TC(tp, send_wait_eintr);
+	ATF_TP_ADD_TC(tp, send_flags_rejected);
 
 	return (atf_no_error());
 }
