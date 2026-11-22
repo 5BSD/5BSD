@@ -337,14 +337,18 @@ idle_wait_event(int fd, pid_t pid, oes_event_type_t ev, ino_t ino,
 	}
 }
 
-/* Number of malloc(9) calls of type "oes" so far. */
+/*
+ * Number of malloc(9) calls of type "oes" so far, and in *bytesp the bytes
+ * they were given (the allocator's sizes, kern.malloc_stats).
+ */
 static inline uint64_t
-idle_oes_mallocs(void)
+idle_oes_mallocs(uint64_t *bytesp)
 {
 	struct memory_type_list *mtlp;
 	struct memory_type *mtp;
 	uint64_t n;
 
+	*bytesp = 0;
 	mtlp = memstat_mtl_alloc();
 	if (mtlp == NULL)
 		return (0);
@@ -354,6 +358,8 @@ idle_oes_mallocs(void)
 	}
 	mtp = memstat_mtl_find(mtlp, ALLOCATOR_MALLOC, "oes");
 	n = mtp != NULL ? memstat_get_numallocs(mtp) : 0;
+	if (mtp != NULL)
+		*bytesp = memstat_get_memalloced(mtp);
 	memstat_mtl_free(mtlp);
 	return (n);
 }
@@ -370,23 +376,36 @@ idle_sysctl_int(const char *name)
 	return (v);
 }
 
-/* count fork()+_exit() pairs, each child reaped before the next. */
+/* An unsigned long sysctl, or 0 if it cannot be read. */
+static inline u_long
+idle_sysctl_ulong(const char *name)
+{
+	size_t len;
+	u_long v;
+
+	len = sizeof(v);
+	if (sysctlbyname(name, &v, &len, NULL, 0) != 0 || len != sizeof(v))
+		return (0);
+	return (v);
+}
+
+/*
+ * One fork and one exit, the child reaped.  vfork(2) runs the same fork
+ * and exit hooks as fork(2) without copying the address space, which in a
+ * process that has called mlockall(2) copies every wired page.
+ */
 static inline int
-idle_fork_exit(int count)
+idle_fork_exit(void)
 {
 	pid_t pid;
-	int i, status;
+	int status;
 
-	for (i = 0; i < count; i++) {
-		pid = fork();
-		if (pid < 0)
-			return (-1);
-		if (pid == 0)
-			_exit(0);
-		if (waitpid(pid, &status, 0) != pid)
-			return (-1);
-	}
-	return (0);
+	pid = vfork();
+	if (pid < 0)
+		return (-1);
+	if (pid == 0)
+		_exit(0);
+	return (waitpid(pid, &status, 0) == pid ? 0 : -1);
 }
 
 #endif /* !_OES_TEST_IDLE_COMMON_H_ */
