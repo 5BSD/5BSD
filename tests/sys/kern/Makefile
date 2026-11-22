@@ -191,6 +191,7 @@ ATF_TESTS_C+=	fdgrowtable_test
 ATF_TESTS_C+=	getdirentries_test
 ATF_TESTS_C+=	jail_lookup_root
 ATF_TESTS_C+=	jail_thread
+ATF_TESTS_C+=	jail_remove_sync
 ATF_TESTS_C+=	jaildesc
 ATF_TESTS_C+=	inotify_test
 ATF_TESTS_SH+=	inotify_lifetime_test
@@ -290,7 +291,6 @@ TEST_METADATA.sonewconn_overflow+=	required_user="root"
 TEST_METADATA.sonewconn_overflow+=	is_exclusive="true"
 ATF_TESTS_SH+=	sendfile_test
 ATF_TESTS_SH+=	sysctl_security_jail_children
-ATF_TESTS_SH+=	jail_remove_sync
 
 ${PACKAGE}FILES+=	sonewconn_overflow.py
 ${PACKAGE}FILESMODE_sonewconn_overflow.py=0555
@@ -323,6 +323,7 @@ LIBADD.aslr+=				util
 LIBADD.copy_file_range+=		md
 LIBADD.jail_lookup_root+=		jail util
 LIBADD.jail_thread+=			jail pthread
+LIBADD.jail_remove_sync+=		jail
 LIBADD.pwd_paths_test+=			jail util
 LIBADD.jaildesc+=			kvm pthread
 LIBADD.ssl_sendfile+=			pthread crypto ssl
