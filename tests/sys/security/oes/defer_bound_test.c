@@ -155,7 +155,15 @@ producer_start(struct producer *pr, int jid, uid_t uid)
 	pr->pid = fork();
 	ATF_REQUIRE(pr->pid >= 0);
 	if (pr->pid == 0) {
-		close(sv[0]);
+		/*
+		 * Keep only this socket: an inherited end of another
+		 * producer's socket would keep that producer from seeing
+		 * end of file when the test closes it.
+		 */
+		if (dup2(sv[1], STDERR_FILENO + 1) < 0)
+			_exit(3);
+		closefrom(STDERR_FILENO + 2);
+		sv[1] = STDERR_FILENO + 1;
 		if (jail_attach(jid) != 0 || setgid(uid) != 0 ||
 		    setuid(uid) != 0 || pipe(p) != 0)
 			_exit(1);
