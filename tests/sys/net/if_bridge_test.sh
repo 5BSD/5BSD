@@ -1266,6 +1266,54 @@ vlan_svi_cleanup()
 }
 
 #
+# A vlan(4) on the bridge (an SVI) calls into the bridge with the global vlan
+# lock held, and adding or removing a vlan(4) member calls into the vlan with
+# the bridge lock held.  Both at once used to deadlock.
+#
+atf_test_case "vlan_svi_member_concurrent" "cleanup"
+vlan_svi_member_concurrent_head()
+{
+	atf_set descr 'SVI queries while a vlan member is added and removed'
+	atf_set require.user root
+}
+
+vlan_svi_member_concurrent_body()
+{
+	vnet_init
+	vnet_init_bridge
+	_vnet_check_req vlan
+
+	epair=$(vnet_mkepair)
+	bridge=$(vnet_mkbridge)
+	svi=$(vnet_mkvlan)
+	member=$(vnet_mkvlan)
+
+	atf_check ifconfig ${bridge} up
+	atf_check ifconfig ${epair}a up
+	atf_check ifconfig ${svi} vlan 10 vlandev ${bridge} up
+	atf_check ifconfig ${member} vlan 20 vlandev ${epair}a up
+
+	# The SVI: SIOCGIFMEDIA through to the bridge.  The member:
+	# ifpromisc() on it from bridge_ioctl_add() and bridge_delete_member().
+	n=500
+	(i=0; while [ $i -lt $n ]; do
+		ifconfig ${svi} > /dev/null; i=$((i + 1)); done) &
+	svi_pid=$!
+	i=0
+	while [ $i -lt $n ]; do
+		atf_check ifconfig ${bridge} addm ${member}
+		atf_check ifconfig ${bridge} deletem ${member}
+		i=$((i + 1))
+	done
+	wait ${svi_pid} || atf_fail "SVI query loop failed"
+}
+
+vlan_svi_member_concurrent_cleanup()
+{
+	vnet_cleanup
+}
+
+#
 # Test QinQ (802.1ad).
 #
 atf_test_case "vlan_qinq" "cleanup"
@@ -1485,6 +1533,7 @@ atf_init_test_cases()
 	atf_add_test_case "vlan_filtering"
 	atf_add_test_case "vlan_ifconfig_iftagged"
 	atf_add_test_case "vlan_svi"
+	atf_add_test_case "vlan_svi_member_concurrent"
 	atf_add_test_case "vlan_qinq"
 	atf_add_test_case "vlan_untagged"
 	atf_add_test_case "vlan_defuntagged"
