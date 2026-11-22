@@ -3,7 +3,7 @@
 .\"
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd June 30, 2026
+.Dd November 22, 2026
 .Dt LIBBLE 3
 .Os
 .Sh NAME
@@ -581,7 +581,13 @@ set on failure:
 .Er ENOENT
 when the caller's domain may not reach the name,
 .Er EPROTO
-on a malformed hand-off.
+on a malformed hand-off,
+.Er EINTR
+when a signal whose handler was installed without
+.Dv SA_RESTART
+interrupted the attach (the request was cancelled; calling again is safe,
+see
+.Xr service_runtime 3 ) .
 A reply must contain either a successful status with exactly one descriptor or
 a valid positive errno with no descriptor.
 Negative or out-of-range statuses are protocol errors.

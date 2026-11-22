@@ -124,6 +124,7 @@ struct channel {
 	bool			 rx_drained;	/* kernel reported an empty queue */
 	bool			 rx_wait_unsupported; /* kernel lacks RECV_F_WAIT */
 	struct channel_message	*rx_prefetched;	/* received by channel_wait */
+	bool			 rx_prefetched_unref; /* holds no channel reference */
 	size_t			 rx_hint;	/* last received payload length */
 	int			 call_version;	/* CHANNEL_CALL_* (channel_call.c) */
 };
@@ -168,6 +169,8 @@ struct channel_message {
  * re-reads its own pid (the arc4random(3) technique).  A vfork(2) child shares
  * the page and must only exec or _exit, as for any library.
  */
+static struct channel_message *channel_message_receive_wait_ref(struct channel *,
+    int, bool);
 static struct channel_message *channel_message_receive_wait(struct channel *,
     int);
 
@@ -978,6 +981,10 @@ channel_destroy_now(struct channel *channel)
 		struct channel_message *m = channel->rx_prefetched;
 
 		channel->rx_prefetched = NULL;
+		if (channel->rx_prefetched_unref) {
+			channel->rx_prefetched_unref = false;
+			channel_retain(channel);
+		}
 		channel_message_free(m);
 	}
 	/*
@@ -1534,6 +1541,18 @@ channel_rx_reserve(struct channel *channel, size_t capacity)
 static struct channel_message *
 channel_message_receive_wait(struct channel *channel, int wait_ms)
 {
+
+	return (channel_message_receive_wait_ref(channel, wait_ms, true));
+}
+
+/*
+ * As above; without `retain` the message takes no channel reference (the
+ * caller adds it later, under its lock: channel_receive_wait()).
+ */
+static struct channel_message *
+channel_message_receive_wait_ref(struct channel *channel, int wait_ms,
+    bool retain)
+{
 	struct mac_capability_recvmsg_args receive;
 	struct mac_capability_recvmsg_v4_args described;
 	struct mac_capability_recvmsg_v3_args current;
@@ -1652,7 +1671,8 @@ retry:
 	message->owner = channel_self_pid();
 	message->kind = 0;
 	message->responded = false;
-	channel_retain(channel);
+	if (retain)
+		channel_retain(channel);
 	message->data = data;
 	message->length = receive.payload_len;
 	message->fds = message->inline_fds;
@@ -1666,6 +1686,126 @@ retry:
 	message->sender.nonce = receive.trailer.nonce;
 	message->sender.abi = receive.trailer.abi;
 	return (message);
+}
+
+/*
+ * Private to base (libservice): wait for one message with no lock held by a
+ * caller that otherwise serialises the channel, while other threads send
+ * with channel_request_send_wait().  It touches only the receive side (the
+ * receive block, the prefetch slot, the receive version) and takes no
+ * channel reference, so the caller must let one thread at a time receive,
+ * and run channel_dispatch() (which consumes the prefetched message) under
+ * its lock.  Returns 1 with a message prefetched, 0 when timeout_ms (-1:
+ * none) passed, or -1 with errno: EINTR when a signal whose handler lacks
+ * SA_RESTART interrupted the wait (SA_RESTART restarts it in the kernel), or
+ * the receive's error (ECONNRESET when the peer is gone).
+ */
+int
+channel_receive_wait(struct channel *channel, int timeout_ms)
+{
+	struct channel_message *m;
+
+	if (!channel_owned(channel) || channel->destroy_pending ||
+	    channel->fd < 0) {
+		errno = EBADF;
+		return (-1);
+	}
+	if (channel->rx_prefetched != NULL)
+		return (1);
+	m = channel_message_receive_wait_ref(channel,
+	    timeout_ms < 0 ? -1 : timeout_ms, false);
+	if (m == NULL)
+		return (errno == ETIMEDOUT || errno == EAGAIN ? 0 : -1);
+	channel->rx_prefetched = m;
+	channel->rx_prefetched_unref = true;
+	return (1);
+}
+
+/*
+ * Private to base (libservice): the send of channel_send_request() in two
+ * steps, so the caller can sleep for queue room without its lock.
+ * channel_request_start() (under the caller's lock) registers the request
+ * and its token; channel_request_send_wait() (no lock; senders serialised
+ * by the caller) sends it, sleeping in the kernel for room
+ * (MAC_CAPABILITY_SEND_F_WAIT: SA_RESTART restarts, otherwise EINTR); a
+ * reply that arrives before it returns finds the token registered.  If the
+ * send fails, channel_request_unsend() (under the caller's lock) forgets the
+ * request without calling its handler.
+ */
+int
+channel_request_start(struct channel *channel,
+    const struct channel_outgoing *outgoing, channel_reply_handler handler,
+    void *context, struct channel_request **requestp)
+{
+	const struct channel_fd_spec *specs;
+	uint32_t flags;
+	struct channel_request *request;
+
+	if (channel_outgoing_options(outgoing, &specs, &flags) != 0)
+		return (-1);
+	if (!channel_owned(channel))
+		return (-1);
+	if (outgoing->data == NULL || outgoing->length == 0 ||
+	    outgoing->length > MAC_CAPABILITY_MAX_MSG ||
+	    outgoing->nfds > MAC_CAPABILITY_MAX_FDS ||
+	    (outgoing->nfds != 0 && outgoing->fds == NULL) ||
+	    specs != NULL || flags != 0 || handler == NULL ||
+	    requestp == NULL || channel->destroy_pending ||
+	    channel->role != CHANNEL_ROLE_CLIENT) {
+		errno = EINVAL;
+		return (-1);
+	}
+	request = channel_request_begin(channel, handler, context,
+	    outgoing->length, outgoing->nfds);
+	if (request == NULL)
+		return (-1);
+	*requestp = request;
+	return (0);
+}
+
+int
+channel_request_send_wait(struct channel *channel,
+    struct channel_request *request, const struct channel_outgoing *outgoing)
+{
+	struct mac_capability_sendmsg_args send;
+	uint64_t token;
+	int error;
+
+	if (!channel_owned(channel) || request == NULL ||
+	    request->channel != channel) {
+		errno = EINVAL;
+		return (-1);
+	}
+	/*
+	 * The reply may be dispatched, and the request completed and freed by
+	 * another thread, before the send returns: use only the token after.
+	 */
+	token = request->token;
+	memset(&send, 0, sizeof(send));
+	send.payload = outgoing->data;
+	send.payload_len = (uint32_t)outgoing->length;
+	send.fds = outgoing->fds;
+	send.nfds = (uint32_t)outgoing->nfds;
+	send.reply_token = token;
+	send.flags = MAC_CAPABILITY_SEND_F_WAIT;
+	error = ioctl(channel->fd, MAC_CAPABILITY_SENDMSG, &send) == 0 ? 0 :
+	    errno;
+	LIBCHANNEL_PROBE_SEND(token, outgoing->length, outgoing->nfds, error);
+	if (error != 0) {
+		errno = error;
+		return (-1);
+	}
+	return (0);
+}
+
+void
+channel_request_unsend(struct channel_request *request, int error)
+{
+
+	if (request == NULL || request->channel == NULL ||
+	    !channel_owned(request->channel))
+		return;
+	channel_request_abort(request->channel, request, error);
 }
 
 static struct channel_message *
@@ -1699,6 +1839,10 @@ channel_dispatch(struct channel *channel)
 		if (channel->rx_prefetched != NULL) {
 			message = channel->rx_prefetched;
 			channel->rx_prefetched = NULL;
+			if (channel->rx_prefetched_unref) {
+				channel->rx_prefetched_unref = false;
+				channel_retain(channel);
+			}
 		} else
 			message = channel_message_receive(channel);
 		if (message == NULL) {

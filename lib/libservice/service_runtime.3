@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd November 21, 2026
+.Dd November 22, 2026
 .Dt SERVICE_RUNTIME 3
 .Os
 .Sh NAME
@@ -184,6 +184,37 @@ is, and a cancelled lookup closes the descriptors it created.
 A cancellation request that arrives in the instant between the library's
 check and the start of the kernel's sleep is acted on only at the next
 cancellation point.
+.Pp
+Session calls
+.Po
+.Xr libservice 3
+.Fn service_session_call
+and
+.Fn service_session_receive_event
+.Pc
+wait the same way, with one deadline: the call's timeout, or none.
+Of the threads waiting on one session, one at a time sleeps in the kernel for
+the session's next message and hands it to the thread it is for; the others
+sleep until their reply or event is there, their deadline passes, or they
+take over that role.
+A signal behaves as for a slow system call only in the thread sleeping in the
+kernel, which is the caller itself when one thread uses the session: with
+.Dv SA_RESTART
+the wait restarts, otherwise the call fails with
+.Er EINTR
+and its request is cancelled.
+A signal does not interrupt the other waiting threads, which wait as
+.Xr pthread_cond_wait 3
+does.
+A wait for room in the session's full channel queue is the kernel's
+.Dv MAC_CAPABILITY_SEND_F_WAIT
+sleep and behaves the same way; a request that could not be sent fails with
+.Er EINTR
+and was not sent.
+Session calls are not cancellation points: a thread cancelled during one
+finishes the call first.
+Closing the session wakes every waiter, which fails with
+.Er ECANCELED .
 .Sh SEE ALSO
 .Xr libservice 3 ,
 .Xr mac_capability 4 ,
