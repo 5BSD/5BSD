@@ -32,6 +32,7 @@
 #include <sys/file.h>
 #include <sys/refcount.h>
 #include <sys/eventhandler.h>
+#include <sys/_task.h>
 
 #include "mac_capability_ioctl.h"
 
@@ -243,6 +244,38 @@ void	mac_capability_instance_revoke(struct mac_capability_instance *s);
 void	mac_capability_instance_hold(struct mac_capability_instance *s);
 bool	mac_capability_instance_tryhold(struct mac_capability_instance *s);
 void	mac_capability_instance_rele(struct mac_capability_instance *s);
+
+/*
+ * Death watch: called once when the instance first becomes CLOSED or
+ * REVOKED, with the instance mutex held (it must not sleep or take sleepable
+ * locks; enqueue a task).  The watch is caller-owned and must stay allocated
+ * while armed.  watch returns false, arming nothing, when the instance is
+ * already dead; unwatch returns true if it disarmed the watch before it
+ * fired.
+ */
+struct mac_capability_death_watch {
+	LIST_ENTRY(mac_capability_death_watch) dw_link;
+	void	(*dw_fn)(void *arg);
+	void	*dw_arg;
+	bool	dw_armed;
+};
+bool	mac_capability_instance_watch_death(struct mac_capability_instance *s,
+	    struct mac_capability_death_watch *w);
+bool	mac_capability_instance_unwatch_death(struct mac_capability_instance *s,
+	    struct mac_capability_death_watch *w);
+
+/*
+ * Completion watch on a callback state: the watcher's task is enqueued on
+ * taskqueue_thread once the callback has returned (at once if it already
+ * has).  The watch must stay allocated until its task has run.
+ */
+struct mac_capability_cs_watch {
+	struct mac_capability_cs_watch *cw_next;
+	struct task	*cw_task;
+};
+struct mac_capability_callback_state;
+void	mac_capability_callback_state_watch(struct mac_capability_callback_state *cs,
+	    struct mac_capability_cs_watch *w, struct task *task);
 void	mac_capability_instance_kick(struct mac_capability_instance *s);
 void	mac_capability_instance_set_priv(struct mac_capability_instance *s, void *priv);
 /* Kernel-only operation context. Capture before service/claim locks. It owns

@@ -125,7 +125,10 @@ struct mac_capability_call_waiter {
 struct mac_capability_callback_state {
 	u_int cs_refs;
 	volatile u_int cs_done;
+	/* Watchers to enqueue on completion, or MAC_CAPABILITY_CS_DONE. */
+	struct mac_capability_cs_watch * volatile cs_watch;
 };
+#define	MAC_CAPABILITY_CS_DONE	((struct mac_capability_cs_watch *)1)
 
 /*
  * Instance — one per struct file.  Internal layout.
@@ -140,6 +143,7 @@ struct mac_capability_callback_state {
 struct mac_capability_instance {
 	struct mac_capability_service *ci_service;	/* (I) owning service */
 	struct mac_capability_callback_state *ci_callback_state; /* (M) lazy */
+	LIST_HEAD(, mac_capability_death_watch) ci_death_watches; /* (M) */
 	void		*ci_priv;		/* (I) service-private data */
 	struct cap_authority_lease *ci_lease; /* (M) Immutable lifetime binding. */
 	LIST_ENTRY(mac_capability_instance) ci_lease_link; /* lease mutex */
@@ -241,6 +245,9 @@ void	mac_capability_instance_wait_refs(struct mac_capability_instance *s,
 void	mac_capability_callback_state_rele(struct mac_capability_callback_state *cs);
 /* Caller holds ci_mtx and owns FINALIZED; publish completed rollback/callback. */
 void	mac_capability_revoke_done_locked(struct mac_capability_instance *s);
+/* Set CLOSED or REVOKED under ci_mtx; runs the death hook on the first. */
+void	mac_capability_instance_mark_dead_locked(struct mac_capability_instance *s,
+	    int flag);
 /* Caller owns FINALIZED and keeps the instance/service alive through return. */
 void	mac_capability_revoke_callback(struct mac_capability_instance *s,
 	    enum mac_capability_revoke_reason reason);
