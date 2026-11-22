@@ -92,12 +92,25 @@ def count(argv):
 
 
 def slots_held():
-    """Guest slots claimed through fair-slot.sh (DIR/slotN)."""
+    """Guest slots held through fair-slot.sh: DIR/slotN whose pid file
+    names a live process (a slot left by a dead owner is not held)."""
     try:
-        return sum(1 for n in os.listdir(GUEST_SLOTS)
-                   if n.startswith("slot") and n[4:].isdigit())
+        names = os.listdir(GUEST_SLOTS)
     except OSError:
         return -1
+    held = 0
+    for n in names:
+        if not (n.startswith("slot") and n[4:].isdigit()):
+            continue
+        try:
+            with open(os.path.join(GUEST_SLOTS, n, "pid")) as f:
+                os.kill(int(f.read().strip()), 0)
+        except PermissionError:
+            pass  # alive, another user's
+        except (OSError, ValueError):
+            continue
+        held += 1
+    return held
 
 
 def load_sample():

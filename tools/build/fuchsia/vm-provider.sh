@@ -665,23 +665,42 @@ results_export() {
 # An expiry of step $1 whose processes are the rest of the arguments (the
 # first, timeout(1), is their reaper): record it, print the stacks, kill
 # the step (timeout's own expiry action on SIGALRM: SIGKILL to every
-# descendant), save the results, then the rest of the dump.
+# descendant), save the results, then the rest of the dump.  The kill is
+# not waited for: an expiry is typically a process asleep in the kernel,
+# which may never exit, and nothing may wait behind it.
 phase_expire() {
 	local step=$1 reaper=$2
 	: > "$PHASE_EXPIRED_FILE"
 	phase_stacks "$@"
 	[ -z "$reaper" ] || kill -ALRM "$reaper" 2>/dev/null
-	[ -z "$reaper" ] || wait "$reaper" 2>/dev/null
 	results_export && phase_say PHASE_EXPIRY_RESULTS_SAVED
 	phase_dump_rest "$step"
 }
+# The wrapper a step runs in, as timeout(1)'s child.  timeout, as the reaper
+# of the step's processes, exits only when all of them have, so the
+# command's own exit must end the step: the wrapper records the status,
+# names the processes the command left behind (reparented to the reaper:
+# PHASE_STEP_LEFTOVER, a leak's evidence), and sends the reaper SIGALRM,
+# its expiry action, which kills them.
+PHASE_STEP_WRAPPER='
+"$@"
+rc=$?
+echo "$rc" > "$PHASE_STEP_RC"
+left=$(pgrep -P "$PPID" | grep -vx "$$")
+if [ -n "$left" ]; then
+	for p in $left; do
+		echo "PHASE_STEP_LEFTOVER step=$PHASE_STEP_NAME pid=$p comm=$(ps -o comm= -p "$p")" >> "$PHASE_CONSOLE"
+	done
+	kill -ALRM "$PPID"
+fi
+exit "$rc"'
 # run_step NAME COMMAND...: run the program COMMAND with the caller's
 # redirections under timeout(1) as its reaper (no time limit of its own),
 # bounded by phase_left: pwait -t.  Prints PHASE_STEP lines; returns
 # COMMAND's status, or 124 when the step expired or was skipped after an
 # expiry (phase_expired tells which, not the status).
 run_step() {
-	local name=$1 begin left spid rc; shift
+	local name=$1 begin left spid rc rcf; shift
 	if phase_expired; then
 		phase_say "PHASE_STEP $name skipped: the run deadline was reached"
 		return 124
@@ -694,7 +713,9 @@ run_step() {
 		phase_expire "$name" ""
 		return 124
 	fi
-	timeout -s KILL 0 "$@" &
+	rcf=$(mktemp "$R/.step-rc.XXXXXX")
+	PHASE_STEP_RC=$rcf PHASE_STEP_NAME=$name PHASE_CONSOLE=$PHASE_CONSOLE \
+	    timeout -s KILL 0 sh -c "$PHASE_STEP_WRAPPER" sh "$@" &
 	spid=$!
 	rc=0
 	pwait -t "${left}s" "$spid" > /dev/null 2>&1 || rc=$?
@@ -703,9 +724,14 @@ run_step() {
 	if [ "$rc" = 124 ] || { [ "$rc" != 0 ] && kill -0 "$spid" 2>/dev/null; }; then
 		phase_say "PHASE_STEP_EXPIRED step=$name elapsed=$(( $(date +%s) - begin ))"
 		phase_expire "$name" $(phase_tree "$spid")
+		rm -f "$rcf"
 		return 124
 	fi
 	rc=0; wait "$spid" || rc=$?
+	# The command's own status (timeout answers 124 after the leftovers'
+	# SIGALRM); none when the wrapper itself was killed.
+	[ ! -s "$rcf" ] || rc=$(cat "$rcf")
+	rm -f "$rcf"
 	phase_say "PHASE_STEP $name end status=$rc elapsed=$(( $(date +%s) - begin ))"
 	return "$rc"
 }
@@ -834,8 +860,9 @@ fi
 # daemon.log; its other lines (each status request logs its control
 # connection) do not wake the wait.  A required unit that is not
 # running is waited for while it is starting, stopping, or stopped with a
-# restart scheduled (restart-pending); in any other state it will not run
-# by itself and the wait ends.  Bounded by the run deadline.
+# restart scheduled (restart-pending); in any other state, or with its
+# cleanup blocked (cleanup=blocked: replacement stays refused), it will not
+# run by itself and the wait ends.  Bounded by the run deadline.
 GATE_LOGS="/var/log/messages /var/log/daemon.log"
 gate_check() {
 	local u state
@@ -847,11 +874,14 @@ gate_check() {
 		return 1
 	fi
 	for u in $REQUIRE_UNITS; do
-		state=$(awk -v u="$u" '$1 == u { s = $2; for (i = 3; i <= NF; i++) if ($i == "restart-pending") s = s "+pending" }
+		state=$(awk -v u="$u" '$1 == u { s = $2; for (i = 3; i <= NF; i++) {
+			if ($i == "restart-pending") s = s "+pending"
+			if ($i == "cleanup=blocked") s = s "+blocked" } }
 		    END { print (s == "" ? "absent" : s) }' "$R/switchboard-status.txt")
 		[ "$state" = running ] && continue
 		missing="$missing $u"
 		case $state in
+		*+blocked) ;;
 		starting|stopping|*+pending) gate_waiting="$gate_waiting $u" ;;
 		esac
 	done
@@ -1152,14 +1182,9 @@ echo "ROOT_DF_AFTER: $(df -k / | awk 'NR == 2 { print $2 "K total, " $4 "K free"
 sed -n '/^after-suites:$/,$s/^/TIER_INFO: /p' "$R/tier.txt"
 # The stack tier must have given its stacks test issuers, and freed them.
 if [ "$stack_tier" = yes ]; then
-	# Freed asynchronously: wait on the test kernel's event (a sleep woken
-	# by each free), bounded like every step.
-	if sysctl -N debug.mac_capability.test_issuers_wait_live > /dev/null 2>&1; then
-		run_step stack-issuers-freed \
-		    sysctl debug.mac_capability.test_issuers_wait_live=0 > /dev/null || true
-	else
-		echo "NOTE: this test kernel has no debug.mac_capability.test_issuers_wait_live; the live count is read once"
-	fi
+	# Read once, no wait: each stack's cleanup (capd_cleanup_stack) has
+	# already waited, on the test kernel's event, for its own issuers to be
+	# freed, and reports a stack that leaked one; a count here is a leak.
 	after=$(sysctl -n kern.mac_capability.test_issuers)
 	live=$(sysctl -n kern.mac_capability.test_issuers_live)
 	echo "STACK_TIER: test issuers created=$((after - stack_issuers_before)) live=$live state=$(sysctl -n kern.mac_capability.test_issuer_state)" |

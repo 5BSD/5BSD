@@ -109,6 +109,19 @@ grep -q '^later rc=124' "$work/out" || fail 'skipped step did not return 124'
 ! grep -q 'blocker returned 0' "$work/out" || fail 'expired step returned 0'
 ! pgrep -f '^sleep 3601$' > /dev/null || fail 'a process of the expired step survived'
 [ -e "$work/R/phase-expired" ] || fail 'the expiry was not recorded'
+# A step whose command exits but leaves a process behind ends with the
+# command (its status kept), names the leftover, and kills it: no expiry.
+cat > "$work/leftover.sh" <<'EOF'
+run_step leaves sh -c 'sleep 3602 >/dev/null 2>&1 & exit 7' || echo "leaves rc=$?"
+run_step after true && echo "after ran"
+EOF
+guest_sh 3600 "$work/leftover.sh" > "$work/out" 2>&1 || fail "leftover script failed"
+grep -q '^PHASE_STEP_LEFTOVER step=leaves pid=[0-9]* comm=sleep$' "$work/out" || fail 'no PHASE_STEP_LEFTOVER'
+grep -q '^PHASE_STEP leaves end status=7 ' "$work/out" || fail "the command's status was not kept"
+grep -q '^leaves rc=7$' "$work/out" || fail 'run_step did not return the status'
+! grep -q PHASE_STEP_EXPIRED "$work/out" || fail 'a leftover made the step expire'
+grep -q '^after ran$' "$work/out" || fail 'the next step did not run'
+! pgrep -f '^sleep 3602$' > /dev/null || fail 'the leftover was not killed'
 # In a command substitution and in a pipeline, as the guest runs get1 and
 # kyua: the expiry outlives the subshell.
 for form in 'v=$(run_step sub sleep 3601)' '{ run_step sub sleep 3601; } | cat'; do
@@ -118,7 +131,7 @@ for form in 'v=$(run_step sub sleep 3601)' '{ run_step sub sleep 3601; } | cat';
 	grep -q '^PHASE_STEP_EXPIRED step=sub ' "$work/out" || fail "no expiry in: $form"
 	grep -q '^PHASE_STEP after skipped' "$work/out" || fail "expiry lost in: $form"
 done
-echo 'PASS expiry: stacks, every process killed, results exported, later steps skipped (also from subshells)'
+echo 'PASS expiry: stacks, every process killed, results exported, later steps skipped (also from subshells); leftovers named and killed without an expiry'
 
 # 2. The dependency check.
 log_stopped='  system.Log/bsdlog    stopped  restart=on-failure mgmt=core restarts=10'
