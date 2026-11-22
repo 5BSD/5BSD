@@ -104,6 +104,50 @@ wait_reply(int channel_fd, uint64_t token)
 	}
 }
 
+static void	write_file(const char *, const char *);
+
+/*
+ * Receive one message from the discovery route Capsule handed over
+ * (SWITCHBOARD_DISCOVERY_FD), as SwitchBoard does, and keep what it carries
+ * without answering: for a registration, the client's private endpoint,
+ * whose other end the client waits on for the ACK.  Writes
+ * switchboard-lookup-held.out once held.
+ */
+static int
+hold_lookup(void)
+{
+	struct mac_capability_recvmsg_args ra;
+	const char *fd_string;
+	int discovery_fd;
+
+	fd_string = getenv("SWITCHBOARD_DISCOVERY_FD");
+	if (fd_string == NULL) {
+		syslog(LOG_ERR, "SWITCHBOARD_DISCOVERY_FD not set");
+		return (-1);
+	}
+	discovery_fd = atoi(fd_string);
+	for (;;) {
+		memset(&ra, 0, sizeof(ra));
+		ra.payload = rx_payload;
+		ra.payload_len = sizeof(rx_payload);
+		ra.fds = rx_fds;
+		ra.nfds = nitems(rx_fds);
+		ra.flags = MAC_CAPABILITY_RECV_F_WAIT;
+		ra._reserved[0] = MAC_CAPABILITY_RECV_WAIT_FOREVER;
+		if (ioctl(discovery_fd, MAC_CAPABILITY_RECVMSG, &ra) == 0)
+			break;
+		if (errno != EINTR) {
+			syslog(LOG_ERR, "discovery recvmsg: %m");
+			return (-1);
+		}
+	}
+	/* The received descriptors stay open until this process dies. */
+	syslog(LOG_INFO, "holding a lookup message with %u descriptors",
+	    ra.nfds);
+	write_file("switchboard-lookup-held.out", "held\n");
+	return (0);
+}
+
 static int
 send_raw(int channel_fd, const void *payload, uint32_t len, const int *fds,
     uint32_t nfds, uint64_t token)
@@ -120,15 +164,22 @@ send_raw(int channel_fd, const void *payload, uint32_t len, const int *fds,
 }
 
 static void
-write_result(const char *line)
+write_file(const char *path, const char *line)
 {
 	FILE *fp;
 
-	fp = fopen("switchboard-answers.out", "w");
+	fp = fopen(path, "w");
 	if (fp != NULL) {
 		fputs(line, fp);
 		fclose(fp);
 	}
+}
+
+static void
+write_result(const char *line)
+{
+
+	write_file("switchboard-answers.out", line);
 }
 
 /*
@@ -302,6 +353,12 @@ main(void)
 		strlcpy(shape, mode, sizeof(shape));
 		shape[strcspn(shape, "-")] = '\0';
 		if (malformed_then_ping(channel_fd, shape) != 0)
+			return (1);
+		for (;;)
+			pause();
+	}
+	if (strcmp(mode, "hold-lookup-then-flood") == 0) {
+		if (hold_lookup() != 0 || flood(channel_fd) != 0)
 			return (1);
 		for (;;)
 			pause();

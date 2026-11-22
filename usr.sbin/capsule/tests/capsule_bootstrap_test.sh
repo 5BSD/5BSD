@@ -160,7 +160,6 @@ cleanup_common()
 	# concerned with graceful shutdown assert that behavior in their body.
 	stop_capsule || true
 	capd_cleanup_stack || cleanup_status=1
-	sleep 0.2
 	rm -rf capsule.pid capsule.conf switchboard.d capsule.sock \
 	    capsule.log mock_switchboard mock_switchboard.c mock-mode \
 	    switchboard-started.out switchboard-ping-ok.out
@@ -464,6 +463,80 @@ channel_unsendable_reply_ends_channel_cleanup()
 	cleanup_common
 }
 
+atf_test_case wait_file_follows_replaced_file
+wait_file_follows_replaced_file_head()
+{
+	atf_set "descr" "capd_wait_file follows a path whose file is replaced by a rename and written afterwards"
+	atf_set "timeout" "60"
+}
+wait_file_follows_replaced_file_body()
+{
+	local pid
+
+	echo old > target.out
+	"$(atf_get_srcdir)/capd_wait_file" target.out wanted &
+	pid=$!
+	# Replace the file with an empty one, then write the text into the
+	# replacement: a wait still watching the old file would never end.
+	: > empty.tmp
+	mv empty.tmp target.out
+	echo wanted >> target.out
+	wait "$pid" || atf_fail "capd_wait_file failed"
+}
+
+atf_test_case channel_end_resets_held_lookup cleanup
+channel_end_resets_held_lookup_head()
+{
+	atf_set "descr" "a lookup registration SwitchBoard received but never answered ends with ECONNRESET when Capsule ends the channel and kills SwitchBoard"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+	atf_set "timeout" "180"
+}
+channel_end_resets_held_lookup_body()
+{
+	local probe probe_pid
+
+	probe="$(atf_get_srcdir)/../switchboard/service_probe"
+	[ -x "$probe" ] || atf_fail "service_probe not found: $probe"
+	echo "hold-lookup-then-flood" > mock-mode
+	build_mock_switchboard
+	capd_find_lookup_exec
+	start_capsule
+	wait_for_file switchboard-started.out ||
+	    atf_fail "bootstrap fixture did not start"
+	# The probe registers on Capsule's boot route; the SwitchBoard double
+	# receives the registration (holding the probe's private endpoint)
+	# and never answers it, then fills its Capsule channel until Capsule
+	# cannot reply and kills it.
+	"$capd_lookup_exec_bin" -s "$sockpath" "$probe" org.test.held \
+	    > probe.out 2>&1 &
+	probe_pid=$!
+	wait_for_file switchboard-lookup-held.out ||
+	    atf_fail "the double did not receive the lookup registration"
+	wait_for_log "switchboard killed by signal" ||
+	    atf_fail "waiting for the end of the channel failed"
+	grep -q "status-only reply failed.*ending the SwitchBoard channel" \
+	    "$logfile" || {
+		cat "$logfile" >&2
+		atf_fail "SwitchBoard was not killed by Capsule ending the channel"
+	}
+	# Without a deadline: the probe's wait must end now that the only
+	# holder of its endpoint is dead (the ATF timeout bounds a hang).
+	wait "$probe_pid" || true
+	# 54: ECONNRESET.
+	if ! grep -Eq "^FAIL org\.test\.held errno=54 " probe.out; then
+		cat probe.out >&2
+		atf_fail "the held lookup did not end with ECONNRESET"
+	fi
+	stop_capsule
+}
+channel_end_resets_held_lookup_cleanup()
+{
+	rm -f mock-mode probe.out switchboard-answers.out \
+	    switchboard-lookup-held.out
+	cleanup_common
+}
+
 atf_test_case bootstrap_ready_logged cleanup
 bootstrap_ready_logged_head()
 {
@@ -668,6 +741,8 @@ atf_init_test_cases()
 	atf_add_test_case channel_oversized_message_answered
 	atf_add_test_case channel_extra_descriptors_answered
 	atf_add_test_case channel_unsendable_reply_ends_channel
+	atf_add_test_case channel_end_resets_held_lookup
+	atf_add_test_case wait_file_follows_replaced_file
 	atf_add_test_case lookup_without_route
 	atf_add_test_case lookup_capsule_route
 	atf_add_test_case control_reload_reaches_switchboard

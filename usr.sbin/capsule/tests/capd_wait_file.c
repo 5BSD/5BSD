@@ -6,7 +6,9 @@
  * capd_wait_file PATH [TEXT]: wait, without a deadline and without polling,
  * until PATH exists and is not empty, or (with TEXT) until PATH contains
  * TEXT.  The wait is a kqueue on the file's directory (a new entry) and then
- * on the file (writes and growth); the test case's ATF timeout bounds it.
+ * on the file (writes and growth); when the watched file is removed or
+ * renamed away, the wait goes back to the directory and the path's current
+ * file.  The test case's ATF timeout bounds it.
  * Exits 0 when the condition holds, 1 on an error.
  */
 
@@ -92,8 +94,8 @@ main(int argc, char **argv)
 			ffd = open(path, O_RDONLY | O_CLOEXEC);
 			if (ffd != -1) {
 				EV_SET(&kev[1], ffd, EVFILT_VNODE,
-				    EV_ADD | EV_CLEAR, NOTE_WRITE | NOTE_EXTEND,
-				    0, NULL);
+				    EV_ADD | EV_CLEAR, NOTE_WRITE | NOTE_EXTEND |
+				    NOTE_DELETE | NOTE_RENAME, 0, NULL);
 				if (kevent(kq, &kev[1], 1, NULL, 0, NULL) == -1)
 					err(1, "kevent");
 			} else if (errno != ENOENT)
@@ -104,5 +106,16 @@ main(int argc, char **argv)
 		n = kevent(kq, NULL, 0, &ev, 1, NULL);
 		if (n == -1 && errno != EINTR)
 			err(1, "kevent");
+		/*
+		 * The watched file left the path (removed, or replaced by a
+		 * rename): stop watching it (close drops its event) and look
+		 * the path up again.  The directory event stays armed, so a
+		 * replacement created later is seen.
+		 */
+		if (n == 1 && ffd != -1 && ev.ident == (uintptr_t)ffd &&
+		    (ev.fflags & (NOTE_DELETE | NOTE_RENAME)) != 0) {
+			close(ffd);
+			ffd = -1;
+		}
 	}
 }
