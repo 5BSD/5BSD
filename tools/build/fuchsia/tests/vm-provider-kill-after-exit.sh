@@ -87,7 +87,7 @@ grep -q 'vm-monitor' "$work/block.sh" || fail 'no monitor block'
 cat > "$work/run.sh" <<'EOS'
 set -eu
 log=$1 monitor=$2 known_lor=$3 fatal='panic:' end=$(($(date +%s) + 600))
-forced=0
+work=${4%/*} forced=0
 : > "$log"
 sh -c 'echo "panic: x" >> "$1"; sleep 1' sh "$log" & qpid=$!
 . "$4"

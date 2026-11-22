@@ -8,7 +8,7 @@
 #
 # usage: vm-monitor.py --pid PID --log SERIAL_LOG --deadline EPOCH
 #            --fatal REGEX --known KNOWN_LOR [--fatal-lor yes|no]
-#            [--grace SECONDS]
+#            [--grace SECONDS] [--progress FILE]
 #            [--answer REGEX --answer-text TEXT --console SOCKET]
 #        vm-monitor.py --has-unknown-lor SERIAL_LOG KNOWN_LOR
 #
@@ -38,6 +38,14 @@
 # printed.  A second prompt is a problem.  vm-provider.sh
 # uses it to answer the single-user shell prompt (SINGLE_USER_SHELL).
 #
+# With --progress, the monitor appends to FILE a host-load sample (LOAD:
+# epoch, the 1/5/15 minute load averages, logical CPUs, QEMU processes
+# running, whether the heavy-build lock is held) at its start, at every
+# guest progress line (PHASE_*, BSDTIME_SESSIONS_PROGRESS, KYUA_*START,
+# KYUA_SUMMARY; also written as PROGRESS lines) and at its end.  Samples
+# follow events, never a timer: a long step without output has samples only
+# at its ends.
+#
 # The second form reads a whole serial log after the run: exit 0 when some
 # reversal report matches no known-lor.txt entry, 1 when none does, 2 when
 # the log or the list cannot be read (the caller must count that as an
@@ -50,7 +58,9 @@
 # must be able to require frames of that last stack.
 
 import errno
+import fcntl
 import os
+import subprocess
 import re
 import select
 import signal
@@ -65,6 +75,64 @@ import time
 # shutdown output of the recorded TCG guest runs, which print within one or
 # two seconds of the first fatal line.
 FATAL_GRACE_S = 5.0
+
+PROGRESS_LINE = re.compile(r"^(PHASE_\w+|BSDTIME_SESSIONS_PROGRESS=|KYUA_\w*START|KYUA_SUMMARY:)")
+HEAVY_BUILD_LOCK = "/usr/obj/5BSD-heavy-build.lock"
+
+
+def heavy_build_held():
+    """Whether another process holds the heavy-build lock (lockf(1) takes
+    it with O_EXLOCK, a flock(2) lock).  The probe is a non-blocking try,
+    released at once."""
+    try:
+        fd = os.open(HEAVY_BUILD_LOCK, os.O_RDONLY)
+    except OSError:
+        return False
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    finally:
+        os.close(fd)
+    return False
+
+
+def load_sample():
+    la = os.getloadavg()
+    try:
+        out = subprocess.run(["pgrep", "^qemu-system"], capture_output=True,
+                             text=True, check=False).stdout
+        qemus = len(out.split())
+    except OSError:
+        qemus = -1
+    return "LOAD %d %.2f %.2f %.2f ncpu=%d qemus=%d heavy_build=%s" % (
+        int(time.time()), la[0], la[1], la[2], os.cpu_count() or 0, qemus,
+        "held" if heavy_build_held() else "free")
+
+
+class Progress:
+    """Guest progress lines and host-load samples, appended to a file."""
+
+    def __init__(self, path):
+        self.f = open(path, "a", buffering=1) if path else None
+        self.partial = b""
+        self.sample()
+
+    def sample(self):
+        if self.f:
+            self.f.write(load_sample() + "\n")
+
+    def feed(self, data):
+        if not self.f:
+            return
+        lines = (self.partial + data).split(b"\n")
+        self.partial = lines.pop()
+        for raw in lines:
+            line = raw.decode("utf-8", "replace").replace("\r", "").strip()
+            if PROGRESS_LINE.match(line):
+                self.f.write("PROGRESS %d %s\n" % (int(time.time()), line))
+                self.sample()
+
 
 HEADER = "lock order reversal:"
 # Lines that belong to a WITNESS reversal report (after the header).
@@ -273,6 +341,14 @@ def monitor(args):
     grace = float(args.get("--grace", FATAL_GRACE_S))
     w = Watch(args["--fatal"], load_known(args["--known"]),
               args.get("--fatal-lor", "yes") != "no", args.get("--answer"))
+    progress = Progress(args.get("--progress"))
+    try:
+        return watch(args, pid, log, deadline, grace, w, progress)
+    finally:
+        progress.sample()
+
+
+def watch(args, pid, log, deadline, grace, w, progress):
     kq = select.kqueue()
     fd = os.open(log, os.O_RDONLY)
     kq.control([select.kevent(fd, select.KQ_FILTER_VNODE,
@@ -291,6 +367,7 @@ def monitor(args):
             d = os.read(fd, 1 << 16)
             if not d:
                 break
+            progress.feed(d)
             p = w.feed(d)
             if p:
                 print("KERNEL/INIT PROBLEM in serial log", flush=True)
@@ -307,6 +384,7 @@ def monitor(args):
                 return None
             if typist[0] is not None:
                 typist[0].output(d)
+            progress.feed(d)
             p = w.feed(d)
             if p:
                 return p
@@ -380,7 +458,7 @@ def main(argv):
     if any(args.get(k) is None for k in need):
         print("usage: vm-monitor.py --pid PID --log LOG --deadline EPOCH "
               "--fatal REGEX --known FILE [--fatal-lor yes|no] "
-              "[--grace S] [--answer REGEX --answer-text TEXT "
+              "[--grace S] [--progress FILE] [--answer REGEX --answer-text TEXT "
               "--console SOCKET]", file=sys.stderr)
         return 2
     try:

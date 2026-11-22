@@ -427,6 +427,30 @@ WITNESS lock order reversal report that matches no entry of
 most `FATAL_GRACE_S` (5 s, ending at once if QEMU exits) and then stops
 QEMU, or reports that it had already exited; the deadline prints `TIMEOUT`.
 Either way the results disk is extracted and the verdict printed.
+
+The guest meets that deadline first. The host passes it into the guest
+script (`RUN_DEADLINE`); at its start the guest times one diagnostic dump
+and one results export (`PHASE_RESERVE=`), and every step after that (the
+plane-on gate's convergence wait, each BSDTime lifecycle command, the kyua
+run) is bounded by the deadline less that reserve, with no bound of its own.
+A step still running then prints `PHASE_STEP_EXPIRED step=NAME`, a dump
+(`procstat -kk` of the step's processes, SwitchBoard, PID 1 and BSDTime, and
+the system log since the script began), saves the results to the results
+disk (`PHASE_EXPIRY_RESULTS_SAVED`), asks `switchboardctl status`, and the
+remaining steps are skipped; the run is not clean. Each step prints
+`PHASE_STEP NAME begin` and `... end status=N elapsed=S`; the 200 BSDTime
+sessions print `BSDTIME_SESSIONS_PROGRESS=N` at 1, 2, 4, ... and 200. The
+gate waits on system-log writes, not a timer: SwitchBoard has no status
+watch, so it reads the status again whenever `messages` or `daemon.log`
+grows, and stops waiting for a unit the circuit breaker disabled. A
+lifecycle dependency (Time, Log, Power, Sysctl) that is not running ends
+that phase only, with `PHASE_DEPENDENCY_STOPPED unit=...`; the suites
+still run, and the run is not clean. With `--progress`, `vm-monitor.py`
+records each progress line and a host-load sample (load averages, CPUs,
+QEMU processes, whether the heavy-build lock is held) at the start, at
+every progress line and at the end; the run's output ends with
+`HOST_LOAD samples=... start= peak= end= heavy_build_held=` and
+`LAST_PROGRESS at=EPOCH LINE`.
 `known-lor.txt` holds Python regular expressions matched against a whole
 report, through the end of its "attempted at" stack (a multi-hop report
 lists every hop first, so there is no line cap), each entry naming the
