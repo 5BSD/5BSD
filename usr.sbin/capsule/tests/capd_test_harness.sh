@@ -27,6 +27,8 @@ capd_paths_init()
 	CAPD_LOG="${CAPD_WORK}/capsule.log"
 	CAPD_GUARDIAN_SOCKET="${CAPD_WORK}/guardian.sock"
 	CAPD_LEASE="${CAPD_WORK}/guardian.lease"
+	# The guardian's PID, for an ATF cleanup (a new process) to wait on.
+	CAPD_GUARDIAN_PIDFILE="${CAPD_WORK}/guardian.pid"
 	CAPD_APPS_SYSTEM="${CAPD_WORK}/Capabilities/System"
 	CAPD_APPS_USER="${CAPD_WORK}/Capabilities"
 }
@@ -357,6 +359,7 @@ capd_launch_capsule()
 	    -s "$CAPD_GUARDIAN_SOCKET" -- \
 	    "$capd_capsule_bin" -d -f "$CAPD_CONFIG" >"$CAPD_LOG" 2>&1 9>&- &
 	capd_guardian_pid=$!
+	echo "$capd_guardian_pid" > "$CAPD_GUARDIAN_PIDFILE"
 
 	i=0
 	while ! capd_guardian_is_running && [ "$i" -lt 100 ]; do
@@ -481,7 +484,7 @@ capd_stop_stack()
 
 capd_cleanup_stack()
 {
-	local i
+	local guardian_pid
 
 	capd_paths_init
 	capd_find_guardian
@@ -497,22 +500,30 @@ capd_cleanup_stack()
 		"$capd_guardian_bin" ctl -s "$CAPD_GUARDIAN_SOCKET" kill \
 		    >/dev/null 2>&1 || true
 	fi
-	i=0
-	while capd_guardian_is_running && [ "$i" -lt 50 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
+	# Wait for the guardian process itself to exit (pwait: a kqueue
+	# NOTE_EXIT, no polling; the ATF cleanup timeout bounds it).  The PID
+	# is checked to still name the guardian, so a recycled PID is never
+	# waited on.
+	guardian_pid=$(cat "$CAPD_GUARDIAN_PIDFILE" 2>/dev/null || true)
+	case "$guardian_pid" in
+	''|*[!0-9]*) ;;
+	*)	if [ "$(ps -p "$guardian_pid" -o comm= 2>/dev/null)" = \
+		    "$(basename "$capd_guardian_bin")" ]; then
+			pwait "$guardian_pid" 2>/dev/null || true
+		fi ;;
+	esac
 	if capd_guardian_is_running; then
 		capd_dump_diagnostics
 		return 1
 	fi
-	# The stack is gone, so is its test issuer (freed asynchronously).
-	i=0
-	while [ -n "$(capd_test_issuers_live)" ] &&
-	    [ "$(capd_test_issuers_live)" -ne 0 ] && [ "$i" -lt 50 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
+	# The stack is gone, so is its test issuer, freed asynchronously once
+	# its last reference drops.  The test kernel's wait returns when no test
+	# issuer is live (a sleep woken by the last free; no polling).
+	if [ -n "$(capd_test_issuers_live)" ] &&
+	    ! sysctl debug.mac_capability.test_issuers_wait_live=0 >/dev/null; then
+		echo "waiting for test issuers to be freed failed" >&2
+		return 1
+	fi
 	if [ -n "$(capd_test_issuers_live)" ] && [ "$(capd_test_issuers_live)" -ne 0 ]; then
 		echo "test issuers still alive after the stack stopped:" \
 		    "$(capd_test_issuers_live)" >&2
@@ -521,6 +532,6 @@ capd_cleanup_stack()
 	fi
 	rm -rf "$CAPD_PIDFILE" "$CAPD_CONFIG" "$CAPD_CAPSULE_SOCKET" \
 	    "$CAPD_SWITCHBOARD_SOCKET" "$CAPD_GUARDIAN_SOCKET" "$CAPD_LEASE" \
-	    "$CAPD_LOG" "${CAPD_WORK}/Capabilities"
+	    "$CAPD_GUARDIAN_PIDFILE" "$CAPD_LOG" "${CAPD_WORK}/Capabilities"
 	return 0
 }

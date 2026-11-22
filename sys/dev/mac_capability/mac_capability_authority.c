@@ -339,8 +339,34 @@ mac_capability_test_issuer_unlink(struct authority_issuer *issuer)
 		LIST_REMOVE(issuer, test_link);
 		issuer->test_linked = false;
 	}
-	mtx_unlock(&mac_capability_test_issuer_lock);
+	/* Under the lock, so that a waiter cannot miss the change. */
 	atomic_subtract_int(&mac_capability_test_issuer_live, 1);
+	wakeup(__DEVOLATILE(u_int *, &mac_capability_test_issuer_live));
+	mtx_unlock(&mac_capability_test_issuer_lock);
+}
+
+/*
+ * The test-only wait sysctl: sleep until at most `most` test issuers are
+ * live.  The count only changes under the lock (link and unlink), so
+ * checking it and sleeping under the lock cannot miss the wakeup.  A signal
+ * ends the wait.
+ */
+int
+mac_capability_test_issuer_wait_live(u_int most)
+{
+	int error;
+
+	error = 0;
+	mtx_lock(&mac_capability_test_issuer_lock);
+	while (atomic_load_int(&mac_capability_test_issuer_live) > most) {
+		error = msleep(__DEVOLATILE(u_int *,
+		    &mac_capability_test_issuer_live),
+		    &mac_capability_test_issuer_lock, PCATCH, "tissidle", 0);
+		if (error != 0)
+			break;
+	}
+	mtx_unlock(&mac_capability_test_issuer_lock);
+	return (error);
 }
 #endif /* MAC_CAPABILITY_TEST_PERMISSIVE */
 

@@ -23,7 +23,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd November 21, 2026
+.Dd November 22, 2026
 .Dt MAC_CAPABILITY 4
 .Os
 .Sh NAME
@@ -645,6 +645,13 @@ It cannot be changed afterwards.
 Test issuers created.
 .It Va kern.mac_capability.test_issuers_live
 Test issuers not yet freed.
+.It Va debug.mac_capability.test_issuers_wait_live
+Write-only.
+Writing
+.Ar N
+waits, without a timeout, until at most
+.Ar N
+test issuers are live; a signal ends the wait.
 .It Va kern.mac_capability.test_issuer_state
 .Cm none ,
 .Cm test

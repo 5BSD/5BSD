@@ -126,6 +126,24 @@ SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuer_anchor,
     mac_capability_test_issuer_anchor_sysctl, "I",
     "Test kernel only: write 1 to anchor the boot as PID 1's attempt does");
 
+static int
+mac_capability_test_issuer_wait_live_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	u_int value;
+	int error;
+
+	value = 0;
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	return (mac_capability_test_issuer_wait_live(value));
+}
+SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuers_wait_live,
+    CTLTYPE_UINT | CTLFLAG_WR | CTLFLAG_MPSAFE, NULL, 0,
+    mac_capability_test_issuer_wait_live_sysctl, "IU",
+    "Test kernel only: write N to wait until at most N test issuers are "
+    "live (no timeout; a signal ends the wait)");
+
 volatile u_int mac_capability_test_issuer_fail_init;
 
 static int
