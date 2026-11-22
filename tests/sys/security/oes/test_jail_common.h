@@ -169,15 +169,21 @@ jt_collect(int fd, pid_t pid, oes_event_type_t event, int timeout_ms,
 	long left;
 
 	clock_gettime(CLOCK_MONOTONIC, &start);
-	while ((left = timeout_ms - jt_elapsed_ms(&start)) > 0) {
-		if (test_wait_event(fd, &out->msg, left > 100 ? 100 :
-		    (int)left) != 0)
-			continue;
+	for (;;) {
+		if (timeout_ms == INFTIM) {
+			if (test_wait_event(fd, &out->msg, INFTIM) != 0)
+				return (errno);
+		} else {
+			if ((left = timeout_ms - jt_elapsed_ms(&start)) <= 0)
+				return (ETIMEDOUT);
+			if (test_wait_event(fd, &out->msg, left > 100 ? 100 :
+			    (int)left) != 0)
+				continue;
+		}
 		if (out->msg.em_process.ep_pid == pid &&
 		    out->msg.em_event == event)
 			return (0);
 	}
-	return (ETIMEDOUT);
 }
 
 struct jt_watch {
@@ -201,10 +207,17 @@ jt_scan(int fd, pid_t stop, oes_event_type_t event, int timeout_ms,
 	int i;
 
 	clock_gettime(CLOCK_MONOTONIC, &start);
-	while ((left = timeout_ms - jt_elapsed_ms(&start)) > 0) {
-		if (test_wait_event(fd, &buf.msg, left > 100 ? 100 :
-		    (int)left) != 0)
-			continue;
+	for (;;) {
+		if (timeout_ms == INFTIM) {
+			if (test_wait_event(fd, &buf.msg, INFTIM) != 0)
+				return (errno);
+		} else {
+			if ((left = timeout_ms - jt_elapsed_ms(&start)) <= 0)
+				return (ETIMEDOUT);
+			if (test_wait_event(fd, &buf.msg, left > 100 ? 100 :
+			    (int)left) != 0)
+				continue;
+		}
 		for (i = 0; i < nwatch; i++) {
 			if (buf.msg.em_process.ep_pid == watch[i].pid)
 				watch[i].seen++;
@@ -213,7 +226,6 @@ jt_scan(int fd, pid_t stop, oes_event_type_t event, int timeout_ms,
 		    buf.msg.em_event == event)
 			return (0);
 	}
-	return (ETIMEDOUT);
 }
 
 /* A fresh NOTIFY client subscribed to the given events. */

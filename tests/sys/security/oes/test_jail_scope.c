@@ -330,23 +330,19 @@ rec_note(struct rec *r, const oes_message_t *msg)
 static int
 scan(int fd, pid_t stop, oes_event_type_t event, struct rec *recs, int nrec)
 {
-	struct timespec start;
 	test_msg_buf buf;
-	long left;
 	int i;
 
-	clock_gettime(CLOCK_MONOTONIC, &start);
-	while ((left = WAIT_MS - jt_elapsed_ms(&start)) > 0) {
-		if (test_wait_event(fd, &buf.msg, left > 100 ? 100 :
-		    (int)left) != 0)
-			continue;
+	for (;;) {
+		if (test_wait_event(fd, &buf.msg, INFTIM) != 0)
+			return (errno);
 		for (i = 0; i < nrec; i++)
 			rec_note(&recs[i], &buf.msg);
 		if (buf.msg.em_process.ep_pid == stop &&
 		    buf.msg.em_event == event)
 			return (0);
 	}
-	return (ETIMEDOUT);
+
 }
 
 /*
@@ -388,7 +384,8 @@ membership(int fd, const char *what, const int *jids, const bool *expect,
 
 /*
  * Read a dead or dying client to end of file with plain read(2) calls.
- * Counts the exit events of pid.  0 at end of file, ETIMEDOUT otherwise.
+ * Counts the exit events of pid.  0 at end of file, ETIMEDOUT if limit_ms
+ * passes first; a negative limit_ms waits for end of file however long.
  * The descriptor must not have been read through test_wait_event().
  */
 static int
@@ -403,11 +400,11 @@ read_to_eof_ms(int fd, pid_t pid, int *exits, int *events, long limit_ms)
 
 	*exits = *events = 0;
 	clock_gettime(CLOCK_MONOTONIC, &start);
-	while (jt_elapsed_ms(&start) < limit_ms) {
+	while (limit_ms < 0 || jt_elapsed_ms(&start) < limit_ms) {
 		pfd.fd = fd;
 		pfd.events = POLLIN;
 		pfd.revents = 0;
-		if (poll(&pfd, 1, 100) <= 0)
+		if (poll(&pfd, 1, limit_ms < 0 ? INFTIM : 100) <= 0)
 			continue;
 		n = read(fd, buf, sizeof(buf));
 		if (n == 0)
@@ -435,7 +432,38 @@ static int
 read_to_eof(int fd, pid_t pid, int *exits, int *events)
 {
 
-	return (read_to_eof_ms(fd, pid, exits, events, WAIT_MS));
+	return (read_to_eof_ms(fd, pid, exits, events, -1));
+}
+
+/*
+ * Wait until the jail scope of fd is dead.  Its end wakes the client's
+ * readers (KNOTE), so with EV_CLEAR each kevent() returns once per change and
+ * a change between the check and the wait is not lost.
+ */
+static void
+wait_dead(int fd)
+{
+	struct kevent kev;
+	int kq;
+
+	kq = kqueue();
+	if (kq < 0) {
+		TEST_FAIL("kqueue: %s", strerror(errno));
+		return;
+	}
+	EV_SET(&kev, fd, EVFILT_READ, EV_ADD | EV_CLEAR, 0, 0, NULL);
+	if (kevent(kq, &kev, 1, NULL, 0, NULL) != 0) {
+		TEST_FAIL("EV_ADD: %s", strerror(errno));
+		close(kq);
+		return;
+	}
+	while (!is_dead(fd)) {
+		if (kevent(kq, NULL, 0, &kev, 1, NULL) < 0 && errno != EINTR) {
+			TEST_FAIL("kevent: %s", strerror(errno));
+			break;
+		}
+	}
+	close(kq);
 }
 
 static bool
@@ -645,7 +673,7 @@ test_membership(void)
 		pid_t pid = jt_run_true(j_c);
 
 		/* The exec target is filled with the process locked. */
-		if (jt_collect(fd, pid, OES_EVENT_NOTIFY_EXEC, WAIT_MS, &buf) != 0)
+		if (jt_collect(fd, pid, OES_EVENT_NOTIFY_EXEC, INFTIM, &buf) != 0)
 			TEST_FAIL("exec in the nested jail not delivered");
 		else
 			ASSERT_MSG(tp->ep_jid == j_c && (tp->ep_meta_flags &
@@ -936,7 +964,7 @@ test_linux(void)
 		}
 	}
 	/* Jailed one first: find its exit and look at the ABI. */
-	if (jt_collect(fd, recs[0].pid, OES_EVENT_NOTIFY_EXIT, WAIT_MS,
+	if (jt_collect(fd, recs[0].pid, OES_EVENT_NOTIFY_EXIT, INFTIM,
 	    &buf) != 0)
 		TEST_FAIL("exit of the jailed Linux process not delivered");
 	else {
@@ -1048,10 +1076,8 @@ inbound_proc_case(const char *what, oes_event_type_t event,
     int (*act)(void *), uint32_t flags, int victim_jid, bool expect_seen)
 {
 	struct kid victim, inside, actor, marker;
-	struct timespec start;
 	const oes_process_t *tp;
 	test_msg_buf buf;
-	long left;
 	int fd, seen;
 	bool marked;
 
@@ -1075,10 +1101,10 @@ inbound_proc_case(const char *what, oes_event_type_t event,
 
 	seen = 0;
 	marked = false;
-	clock_gettime(CLOCK_MONOTONIC, &start);
-	while (!marked && (left = WAIT_MS - jt_elapsed_ms(&start)) > 0) {
-		if (test_wait_event(fd, &buf.msg, left > 100 ? 100 :
-		    (int)left) != 0 || buf.msg.em_event != event)
+	while (!marked) {
+		if (test_wait_event(fd, &buf.msg, INFTIM) != 0)
+			break;
+		if (buf.msg.em_event != event)
 			continue;
 		tp = event == OES_EVENT_NOTIFY_PTRACE ?
 		    &buf.msg.em_event_data.ptrace.target :
@@ -1523,9 +1549,7 @@ test_event_kinds(void)
 	    OES_EVENT_NOTIFY_SOCKET_CREATE, OES_EVENT_NOTIFY_PIPE_WRITE,
 	    OES_EVENT_NOTIFY_EXIT };
 	struct kinds seen[2], *k;
-	struct timespec start;
 	test_msg_buf buf;
-	long left;
 	int fd, i, rc;
 
 	TEST_BEGIN("T-KIND fork, socket and pipe events of a jailed subject");
@@ -1549,12 +1573,9 @@ test_event_kinds(void)
 		ASSERT_MSG(rc == 0, "subject %d: status %d", i, rc);
 	}
 	/* All four are queued in order: the jailed exit is the last. */
-	clock_gettime(CLOCK_MONOTONIC, &start);
-	while (seen[1].exits == 0 &&
-	    (left = WAIT_MS - jt_elapsed_ms(&start)) > 0) {
-		if (test_wait_event(fd, &buf.msg, left > 100 ? 100 :
-		    (int)left) != 0)
-			continue;
+	while (seen[1].exits == 0) {
+		if (test_wait_event(fd, &buf.msg, INFTIM) != 0)
+			break;
 		for (i = 0; i < 2; i++) {
 			k = &seen[i];
 			if (buf.msg.em_process.ep_pid != k->pid)
@@ -1729,10 +1750,8 @@ static int
 rooted_run(int fd, int jid, const char *path, const char *marker_path,
     test_msg_buf *out)
 {
-	struct timespec start;
 	struct kid k, m;
 	test_msg_buf buf;
-	long left;
 	int rc, seen;
 
 	rc = kid_start(&k, jid, fn_exec_path, __DECONST(char *, path),
@@ -1748,11 +1767,10 @@ rooted_run(int fd, int jid, const char *path, const char *marker_path,
 		return (-1);
 	}
 	seen = 0;
-	clock_gettime(CLOCK_MONOTONIC, &start);
-	while ((left = WAIT_MS - jt_elapsed_ms(&start)) > 0) {
-		if (test_wait_event(fd, &buf.msg, left > 100 ? 100 :
-		    (int)left) != 0 ||
-		    buf.msg.em_event != OES_EVENT_NOTIFY_EXEC)
+	for (;;) {
+		if (test_wait_event(fd, &buf.msg, INFTIM) != 0)
+			break;
+		if (buf.msg.em_event != OES_EVENT_NOTIFY_EXEC)
 			continue;
 		if (buf.msg.em_process.ep_pid == k.pid) {
 			seen++;
@@ -1904,6 +1922,8 @@ struct reader {
 	ssize_t		n;
 	int		error;
 	volatile int	done;
+	pthread_mutex_t	mtx;	/* Zeroed: PTHREAD_MUTEX_INITIALIZER */
+	pthread_cond_t	cv;	/* Zeroed: PTHREAD_COND_INITIALIZER */
 };
 
 static void *
@@ -1914,19 +1934,25 @@ reader_thread(void *arg)
 
 	r->n = read(r->fd, buf, sizeof(buf));
 	r->error = errno;
+	pthread_mutex_lock(&r->mtx);
 	r->done = 1;
+	pthread_cond_signal(&r->cv);
+	pthread_mutex_unlock(&r->mtx);
 	return (NULL);
 }
 
-static bool
+/*
+ * Wait for the reader to return.  A reader the removal never wakes fails the
+ * case at its timeout.
+ */
+static void
 reader_wait(struct reader *r)
 {
-	struct timespec start;
 
-	clock_gettime(CLOCK_MONOTONIC, &start);
-	while (!r->done && jt_elapsed_ms(&start) < WAIT_MS)
-		usleep(20000);
-	return (r->done != 0);
+	pthread_mutex_lock(&r->mtx);
+	while (!r->done)
+		pthread_cond_wait(&r->cv, &r->mtx);
+	pthread_mutex_unlock(&r->mtx);
 }
 
 static void
@@ -1955,10 +1981,7 @@ test_dead_blocked_reader(void)
 	usleep(300000);
 	ASSERT_MSG(!r.done, "reader returned before the removal: %zd", r.n);
 	remove_jail(jid);
-	if (!reader_wait(&r)) {
-		TEST_FAIL("blocked reader not woken by the removal");
-		return;		/* The thread still owns the descriptor. */
-	}
+	reader_wait(&r);
 	pthread_join(th, NULL);
 	ASSERT_MSG(r.n == 0, "blocked read: %zd errno %d", r.n, r.error);
 
@@ -2023,7 +2046,6 @@ test_dead_poll_select(void)
 	static uint8_t buf[OES_MSG_MAX_SIZE * 4];
 	struct timeval tv = { 0, 0 };
 	const oes_message_t *msg;
-	struct timespec start;
 	struct pollfd pfd;
 	fd_set rfds;
 	char name[64];
@@ -2039,9 +2061,7 @@ test_dead_poll_select(void)
 		return;
 	pid = jt_run_true(jid);
 	remove_jail(jid);
-	clock_gettime(CLOCK_MONOTONIC, &start);
-	while (!is_dead(fd) && jt_elapsed_ms(&start) < WAIT_MS)
-		usleep(20000);
+	wait_dead(fd);
 	ASSERT_MSG(is_dead(fd), "scope not dead after the removal");
 
 	/* The exit is still queued. */
@@ -2299,7 +2319,6 @@ test_dead_last_exit(void)
 static void
 test_dead_kqueue(void)
 {
-	struct timespec to = { .tv_sec = WAIT_MS / 1000 };
 	struct kevent kev;
 	char name[64];
 	int fd, jid, kq, n;
@@ -2314,7 +2333,7 @@ test_dead_kqueue(void)
 	EXPECT_OK(kevent(kq, &kev, 1, NULL, 0, NULL), "EV_ADD");
 	remove_jail(jid);
 	memset(&kev, 0, sizeof(kev));
-	n = kevent(kq, NULL, 0, &kev, 1, &to);
+	n = kevent(kq, NULL, 0, &kev, 1, NULL);
 	ASSERT_MSG(n == 1 && (int)kev.ident == fd &&
 	    (kev.flags & EV_EOF) != 0, "kevent: n %d flags 0x%x", n,
 	    kev.flags);
@@ -2810,10 +2829,7 @@ test_dead_auth_reader(void)
 	ASSERT_MSG(!r.done, "reader returned before the removal: %zd errno %d",
 	    r.n, r.error);
 	remove_jail(jid);
-	if (!reader_wait(&r)) {
-		TEST_FAIL("blocked reader not woken by the removal");
-		return;
-	}
+	reader_wait(&r);
 	pthread_join(th, NULL);
 	ASSERT_MSG(r.n == 0, "blocked read: %zd errno %d", r.n, r.error);
 	close(fd);
@@ -3134,7 +3150,7 @@ test_filter(void)
 	rc = kid_start(&j, j_a, fn_mprotect, NULL, false) == 0 ?
 	    kid_finish(&j) : -1;
 	ASSERT_MSG(rc == 0, "jailed mprotect status %d", rc);
-	ASSERT_MSG(jt_collect(fd, j.pid, OES_EVENT_NOTIFY_MPROTECT, WAIT_MS,
+	ASSERT_MSG(jt_collect(fd, j.pid, OES_EVENT_NOTIFY_MPROTECT, INFTIM,
 	    &buf) == 0, "jailed mprotect not delivered");
 
 	/*
@@ -3220,9 +3236,10 @@ test_cache_invalidation(void)
 	kid_go(&k);
 	added = false;
 	clock_gettime(CLOCK_MONOTONIC, &start);
-	while (!added && jt_elapsed_ms(&start) < WAIT_MS) {
-		if (test_wait_event(fd, &buf.msg, 100) != 0 ||
-		    buf.msg.em_action != OES_ACTION_AUTH)
+	while (!added) {
+		if (test_wait_event(fd, &buf.msg, INFTIM) != 0)
+			break;
+		if (buf.msg.em_action != OES_ACTION_AUTH)
 			continue;
 		if (buf.msg.em_process.ep_pid == k.pid &&
 		    buf.msg.em_event_data.open.file.ef_token.eft_id == ino2) {
