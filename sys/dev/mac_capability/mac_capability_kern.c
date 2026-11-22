@@ -430,13 +430,16 @@ mac_capability_callback_state_watch(struct mac_capability_callback_state *cs,
 
 	w->cw_task = task;
 	for (;;) {
-		head = atomic_load_ptr(&cs->cs_watch);
+		/* Acquire: a DONE we see orders after the callback's completion. */
+		head = (struct mac_capability_cs_watch *)atomic_load_acq_ptr(
+		    (volatile uintptr_t *)&cs->cs_watch);
 		if (head == MAC_CAPABILITY_CS_DONE) {
 			taskqueue_enqueue(taskqueue_thread, task);
 			return;
 		}
 		w->cw_next = head;
-		if (atomic_cmpset_ptr((volatile uintptr_t *)&cs->cs_watch,
+		/* Release: the popper must see w's fields. */
+		if (atomic_cmpset_rel_ptr((volatile uintptr_t *)&cs->cs_watch,
 		    (uintptr_t)head, (uintptr_t)w))
 			return;
 	}
@@ -449,9 +452,13 @@ mac_capability_callback_state_complete_watches(
 {
 	struct mac_capability_cs_watch *w, *next;
 
+	/* cs_done is already set (release); publish DONE after it. */
+	atomic_thread_fence_rel();
 	w = (struct mac_capability_cs_watch *)atomic_swap_ptr(
 	    (volatile uintptr_t *)&cs->cs_watch,
 	    (uintptr_t)MAC_CAPABILITY_CS_DONE);
+	/* Acquire the pushed watches' fields. */
+	atomic_thread_fence_acq();
 	for (; w != NULL && w != MAC_CAPABILITY_CS_DONE; w = next) {
 		/* The task may free w as soon as it is enqueued. */
 		next = w->cw_next;

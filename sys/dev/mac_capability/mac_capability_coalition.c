@@ -213,10 +213,15 @@ struct coalition {
 	/*
 	 * Mac_capability leader monitor: a death watch on the leader instance
 	 * enqueues co_leader_task when it is closed or revoked;
-	 * co_leader_watch_fp holds the leader's file while watched.
+	 * co_leader_watch_ci is the watched instance (a member: see
+	 * coalition_leader_watch_locked()).
 	 */
 	struct mac_capability_death_watch co_leader_watch;	/* co_sx */
-	struct file		*co_leader_watch_fp;	/* co_sx */
+	struct mac_capability_instance *co_leader_watch_ci;	/* co_sx */
+	/* A stopped monitor's task is still running (co_sx). */
+	bool			co_leader_stopping;
+	/* co_leader_task was enqueued and has not yet taken co_sx (atomic). */
+	u_int			co_leader_task_queued;
 	struct task		co_leader_task;
 	/* Back-reference for timer tasks */
 	struct mac_capability_instance	*co_instance;
@@ -353,7 +358,6 @@ static void	coalition_leader_watch_locked(struct coalition *co);
 static void	coalition_leader_task_fn(void *context, int pending);
 static void	coalition_jail_cleanup_task_fn(void *context, int pending);
 
-/* Leader monitor polling interval: 100ms */
 
 /* ----------------------------------------------------------------
  * Coalition lifecycle
@@ -2121,7 +2125,7 @@ coalition_terminate_graceful(struct coalition *co, int sig, u_int timeout_ms)
 	struct mac_capability_instance **mac_capability_cis;
 	bool had_process_members;
 	bool force_kill;
-	int jail_count, mac_capability_count;
+	int serror, jail_count, mac_capability_count;
 
 	sbintime_t deadline;
 
@@ -2158,9 +2162,9 @@ coalition_terminate_graceful(struct coalition *co, int sig, u_int timeout_ms)
 	for (;;) {
 		if (coalition_count_live_procs_locked(co) == 0)
 			break;
-		if (_sleep(&co->co_live, &co->co_sx.lock_object, 0,
-		    "co_grace", deadline, 0, C_ABSOLUTE) == EWOULDBLOCK)
-			break;
+		serror = _sleep(&co->co_live, &co->co_sx.lock_object, 0,
+		    "co_grace", deadline, 0, C_ABSOLUTE);
+		/* Termination that began during the sleep wins over the deadline. */
 		if (co->co_flags & COF_TERMINATING) {
 			if (co->co_manual_grace_count > 0)
 				co->co_manual_grace_count--;
@@ -2168,6 +2172,8 @@ coalition_terminate_graceful(struct coalition *co, int sig, u_int timeout_ms)
 			sx_xunlock(&co->co_sx);
 			return (coalition_termination_error(co));
 		}
+		if (serror == EWOULDBLOCK)
+			break;
 	}
 
 	force_kill = (coalition_count_live_procs_locked(co) != 0);
@@ -2413,52 +2419,52 @@ coalition_leader_died(void *arg)
 {
 	struct coalition *co = arg;
 
+	atomic_store_rel_int(&co->co_leader_task_queued, 1);
 	taskqueue_enqueue(taskqueue_thread, &co->co_leader_task);
 }
 
 /*
  * Arm the death watch on the current mac_capability leader.  If the
- * instance is already dead, or its file cannot be held, enqueue the task,
- * which will see it.  co_leader_watch_fp holds the leader's file (so the
- * instance outlives the watch) until the task or a stop collects it.
+ * instance is already dead, enqueue the task, which will see it.
+ *
+ * The watched instance stays allocated while the watch is armed without a
+ * reference of our own: it is a mac_capability member, whose file the
+ * member entry holds until coalition_close_internal() drops it, and close
+ * disarms the watch first; every other way the leader changes stops the
+ * monitor (disarming) first.
  */
 static void
 coalition_leader_watch_locked(struct coalition *co)
 {
-	struct file *fp;
+	struct mac_capability_instance *ci;
 
 	sx_assert(&co->co_sx, SA_XLOCKED);
-	KASSERT(co->co_leader_watch_fp == NULL, ("leader watch armed twice"));
-	fp = co->co_leader != NULL ? co->co_leader->cm_fp : NULL;
-	if (fp == NULL || !fhold(fp)) {
-		taskqueue_enqueue(taskqueue_thread, &co->co_leader_task);
-		return;
-	}
-	co->co_leader_watch_fp = fp;
+	KASSERT(co->co_leader_watch_ci == NULL, ("leader watch armed twice"));
+	KASSERT(!(co->co_flags & COF_CLOSING), ("leader watch armed in close"));
+	ci = co->co_leader != NULL && co->co_leader->cm_fp != NULL ?
+	    co->co_leader->cm_fp->f_data : NULL;
 	co->co_leader_watch.dw_fn = coalition_leader_died;
 	co->co_leader_watch.dw_arg = co;
-	if (!mac_capability_instance_watch_death(fp->f_data,
-	    &co->co_leader_watch))
-		taskqueue_enqueue(taskqueue_thread, &co->co_leader_task);
+	if (ci != NULL &&
+	    mac_capability_instance_watch_death(ci, &co->co_leader_watch)) {
+		co->co_leader_watch_ci = ci;
+		return;
+	}
+	atomic_store_rel_int(&co->co_leader_task_queued, 1);
+	taskqueue_enqueue(taskqueue_thread, &co->co_leader_task);
 }
 
-/*
- * Disarm the watch.  Returns the held file, for the caller to fdrop after
- * dropping co_sx (its last reference may run the instance's close), and
- * whether the watch was still armed.
- */
-static struct file *
-coalition_leader_unwatch_locked(struct coalition *co, bool *disarmed)
+/* Disarm the watch.  Returns true if it was still armed (had not fired). */
+static bool
+coalition_leader_unwatch_locked(struct coalition *co)
 {
-	struct file *fp;
+	struct mac_capability_instance *ci;
 
 	sx_assert(&co->co_sx, SA_XLOCKED);
-	fp = co->co_leader_watch_fp;
-	co->co_leader_watch_fp = NULL;
-	*disarmed = fp != NULL &&
-	    mac_capability_instance_unwatch_death(fp->f_data,
-	    &co->co_leader_watch);
-	return (fp);
+	ci = co->co_leader_watch_ci;
+	co->co_leader_watch_ci = NULL;
+	return (ci != NULL &&
+	    mac_capability_instance_unwatch_death(ci, &co->co_leader_watch));
 }
 
 /*
@@ -2473,12 +2479,25 @@ coalition_leader_task_fn(void *context, int pending __unused)
 	struct coalition *co = context;
 	struct coalition_member *leader;
 	struct mac_capability_instance *ci;
-	struct file *dropfp;
-	bool dead = false, disarmed;
+	bool dead = false;
+	bool disarmed __diagused;
 
 	sx_xlock(&co->co_sx);
-	/* The watch fired (or was never armed): collect its file. */
-	dropfp = coalition_leader_unwatch_locked(co, &disarmed);
+	atomic_store_rel_int(&co->co_leader_task_queued, 0);
+	/*
+	 * The monitor was stopped while this run was starting: the watch, if
+	 * armed, belongs to a newer monitor.  Release the stopped monitor's
+	 * reference and let a waiting start proceed.
+	 */
+	if (co->co_leader_stopping) {
+		co->co_leader_stopping = false;
+		wakeup(&co->co_leader_stopping);
+		sx_xunlock(&co->co_sx);
+		coalition_rel(co);	/* the stopped monitor's ref */
+		return;
+	}
+	/* The watch fired, or was never armed. */
+	disarmed = coalition_leader_unwatch_locked(co);
 	KASSERT(!disarmed, ("leader task ran with its watch armed"));
 
 	/*
@@ -2489,7 +2508,7 @@ coalition_leader_task_fn(void *context, int pending __unused)
 	if ((co->co_flags & COF_CLOSING) &&
 	    (co->co_flags & COF_LEADER_MONITOR)) {
 		sx_xunlock(&co->co_sx);
-		goto out;
+		return;
 	}
 
 	/* Bail if terminating or monitor was stopped */
@@ -2498,7 +2517,7 @@ coalition_leader_task_fn(void *context, int pending __unused)
 		co->co_flags &= ~COF_LEADER_MONITOR;
 		sx_xunlock(&co->co_sx);
 		coalition_rel(co);	/* monitor's ref */
-		goto out;
+		return;
 	}
 
 	leader = co->co_leader;
@@ -2507,7 +2526,7 @@ coalition_leader_task_fn(void *context, int pending __unused)
 		co->co_flags &= ~COF_LEADER_MONITOR;
 		sx_xunlock(&co->co_sx);
 		coalition_rel(co);
-		goto out;
+		return;
 	}
 
 	ci = leader->cm_fp->f_data;
@@ -2532,9 +2551,6 @@ coalition_leader_task_fn(void *context, int pending __unused)
 		coalition_leader_watch_locked(co);
 		sx_xunlock(&co->co_sx);
 	}
-out:
-	if (dropfp != NULL)
-		fdrop(dropfp, NULL);
 }
 
 /*
@@ -2549,6 +2565,9 @@ coalition_leader_monitor_start_locked(struct coalition *co)
 {
 
 	sx_assert(&co->co_sx, SA_XLOCKED);
+	/* A stopped monitor's running task must finish first (it owns a ref). */
+	while (co->co_leader_stopping)
+		sx_sleep(&co->co_leader_stopping, &co->co_sx, 0, "coleadr", 0);
 	if (!(co->co_flags & COF_LEADER_MONITOR)) {
 		co->co_flags |= COF_LEADER_MONITOR;
 		coalition_ref(co);
@@ -2560,30 +2579,37 @@ coalition_leader_monitor_start_locked(struct coalition *co)
  * Stop the monitor.  Clears the flag; the running task will
  * see the flag clear and release the ref.  If the watch is still armed,
  * or the task merely queued, disarm or cancel it and release the ref here.
- * *dropfp is the watched leader's file, for the caller to fdrop after
- * dropping co_sx.  Caller must hold co_sx.
+ * Returns true when the task is running: the caller must drain it before
+ * it starts a new monitor.  Caller must hold co_sx.
  */
 static bool
-coalition_leader_monitor_stop_locked(struct coalition *co,
-    struct file **dropfp)
+coalition_leader_monitor_stop_locked(struct coalition *co)
 {
 	u_int pending;
 	int error;
-	bool disarmed;
 
 	sx_assert(&co->co_sx, SA_XLOCKED);
-	*dropfp = NULL;
 	if (!(co->co_flags & COF_LEADER_MONITOR))
 		return (false);
 	co->co_flags &= ~COF_LEADER_MONITOR;
-	*dropfp = coalition_leader_unwatch_locked(co, &disarmed);
-	if (disarmed)
+	if (coalition_leader_unwatch_locked(co))
 		coalition_rel(co);
 	pending = 0;
 	error = taskqueue_cancel(taskqueue_thread, &co->co_leader_task,
 	    &pending);
-	if (pending != 0)
+	if (pending != 0) {
+		atomic_store_rel_int(&co->co_leader_task_queued, 0);
 		coalition_rel(co);
+	}
+	/*
+	 * A run that is executing but has not yet taken co_sx owns the
+	 * monitor reference (the watch fired): it must release it and not
+	 * touch a newer monitor's watch.  A run already past co_sx owns
+	 * nothing (it re-armed, and the unwatch above handled that).
+	 */
+	if (error == EBUSY &&
+	    atomic_load_acq_int(&co->co_leader_task_queued) != 0)
+		co->co_leader_stopping = true;
 	return (error == EBUSY);
 }
 
@@ -2807,8 +2833,6 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 	struct coalition_member *cm, *cm_temp;
 	struct coalition_member *cleanup_list, **cleanup_tailp;
 	struct coalition_member *jail_list, **jail_tailp;
-	struct file *leader_fp;
-	bool leader_disarmed;
 
 	if (co == NULL)
 		return;
@@ -2841,8 +2865,7 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 	 * close releases below; a watch that already fired left the task
 	 * queued, which the drain below waits for.
 	 */
-	leader_fp = coalition_leader_unwatch_locked(co, &leader_disarmed);
-	(void)leader_disarmed;
+	(void)coalition_leader_unwatch_locked(co);
 	sx_xunlock(&co->co_sx);
 
 	/*
@@ -2855,8 +2878,6 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 	callout_drain(&co->co_watchdog_callout);
 	taskqueue_drain(taskqueue_thread, &co->co_watchdog_task);
 	taskqueue_drain(taskqueue_thread, &co->co_leader_task);
-	if (leader_fp != NULL)
-		fdrop(leader_fp, td);
 
 	/*
 	 * Take co_sx alone first to release timer refs and
@@ -3637,7 +3658,6 @@ coalition_call(struct mac_capability_instance *s,
 	case COALITION_OP_SET_LEADER:
 	{
 		struct coalition_member *cm;
-		struct file *dropfp = NULL;
 		bool had_mac_capability_leader = false;
 		bool need_drain = false;
 		bool new_mac_capability_leader = false;
@@ -3658,14 +3678,16 @@ coalition_call(struct mac_capability_instance *s,
 		/* Clear leader if no fd passed */
 		if (nfds == 0) {
 			if (had_mac_capability_leader)
-				(void)coalition_leader_monitor_stop_locked(co,
-				    &dropfp);
+				need_drain =
+				    coalition_leader_monitor_stop_locked(co);
 			co->co_leader = NULL;
 			co->co_leader_pid = 0;
 			co->co_flags &= ~COF_HAS_LEADER;
 			sx_xunlock(&co->co_sx);
-			if (dropfp != NULL)
-				fdrop(dropfp, curthread);
+			/* A later SET_LEADER must not race the stopped task. */
+			if (need_drain)
+				taskqueue_drain(taskqueue_thread,
+				    &co->co_leader_task);
 			rpl->status = 0;
 			break;
 		}
@@ -3720,13 +3742,13 @@ coalition_call(struct mac_capability_instance *s,
 
 		/* Validation passed — stop old monitor, set new leader */
 		if (had_mac_capability_leader)
-			need_drain = coalition_leader_monitor_stop_locked(co,
-			    &dropfp);
-		if (need_drain && new_mac_capability_leader) {
+			need_drain = coalition_leader_monitor_stop_locked(co);
+		/*
+		 * Drain a running monitor task whatever the new leader is: a
+		 * later SET_LEADER may start a monitor it would otherwise race.
+		 */
+		if (need_drain) {
 			sx_xunlock(&co->co_sx);
-			if (dropfp != NULL)
-				fdrop(dropfp, curthread);
-			dropfp = NULL;
 			taskqueue_drain(taskqueue_thread,
 			    &co->co_leader_task);
 			sx_xlock(&co->co_sx);
@@ -3753,8 +3775,6 @@ coalition_call(struct mac_capability_instance *s,
 			coalition_leader_monitor_start_locked(co);
 
 		sx_xunlock(&co->co_sx);
-		if (dropfp != NULL)
-			fdrop(dropfp, curthread);
 		rpl->status = 0;
 		break;
 	}
