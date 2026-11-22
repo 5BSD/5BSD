@@ -29,8 +29,10 @@ capd_paths_init()
 	CAPD_LEASE="${CAPD_WORK}/guardian.lease"
 	# The guardian's PID, for an ATF cleanup (a new process) to wait on.
 	CAPD_GUARDIAN_PIDFILE="${CAPD_WORK}/guardian.pid"
-	# Test issuers live before this stack, for the cleanup to wait back to.
+	# Test issuers live and created before the case's first stack, for the
+	# cleanup (a separate process) to wait back to and report against.
 	CAPD_ISSUERS_LIVE_FILE="${CAPD_WORK}/issuers-live.before"
+	CAPD_ISSUERS_CREATED_FILE="${CAPD_WORK}/issuers-created.before"
 	CAPD_APPS_SYSTEM="${CAPD_WORK}/Capabilities/System"
 	CAPD_APPS_USER="${CAPD_WORK}/Capabilities"
 }
@@ -357,7 +359,12 @@ capd_launch_capsule()
 	capd_find_capsule
 	# The test issuers created before this Capsule: its own must be a new one.
 	CAPD_TEST_ISSUERS_BEFORE=$(sysctl -n kern.mac_capability.test_issuers 2>/dev/null || echo 0)
-	capd_test_issuers_live > "$CAPD_ISSUERS_LIVE_FILE" 2>/dev/null || true
+	# Only before the case's first stack: a relaunch must not count an
+	# earlier stack's issuer, not yet freed, as the baseline.
+	if [ ! -e "$CAPD_ISSUERS_LIVE_FILE" ]; then
+		capd_test_issuers_live > "$CAPD_ISSUERS_LIVE_FILE" 2>/dev/null || true
+		echo "$CAPD_TEST_ISSUERS_BEFORE" > "$CAPD_ISSUERS_CREATED_FILE"
+	fi
 	"$capd_guardian_bin" run -l "$CAPD_LEASE" \
 	    -s "$CAPD_GUARDIAN_SOCKET" -- \
 	    "$capd_capsule_bin" -d -f "$CAPD_CONFIG" >"$CAPD_LOG" 2>&1 9>&- &
@@ -538,10 +545,11 @@ capd_cleanup_stack()
 	case "$before:$live" in
 	*[!0-9:]*|:*|*:) ;;
 	*)	if [ "$live" -gt "$before" ]; then
-			echo "waiting for this stack's test issuers to be freed:" \
-			    "live=$live before=$before" \
+			echo "waiting for this case's test issuers to be freed" \
+			    "(normal: they are freed asynchronously; evidence if" \
+			    "the cleanup times out): live=$live before=$before" \
 			    "created=$(sysctl -n kern.mac_capability.test_issuers)" \
-			    "created-before=${CAPD_TEST_ISSUERS_BEFORE:-unknown}" >&2
+			    "created-before=$(cat "$CAPD_ISSUERS_CREATED_FILE" 2>/dev/null || echo unknown)" >&2
 			dmesg -a | grep -a 'mac_capability: TEST MODE' | tail -n 5 >&2
 			if ! sysctl debug.mac_capability.test_issuers_wait_live="$before" \
 			    >/dev/null; then
@@ -552,7 +560,8 @@ capd_cleanup_stack()
 	esac
 	rm -rf "$CAPD_PIDFILE" "$CAPD_CONFIG" "$CAPD_CAPSULE_SOCKET" \
 	    "$CAPD_SWITCHBOARD_SOCKET" "$CAPD_GUARDIAN_SOCKET" "$CAPD_LEASE" \
-	    "$CAPD_GUARDIAN_PIDFILE" "$CAPD_ISSUERS_LIVE_FILE" "$CAPD_LOG" \
+	    "$CAPD_GUARDIAN_PIDFILE" "$CAPD_ISSUERS_LIVE_FILE" \
+	    "$CAPD_ISSUERS_CREATED_FILE" "$CAPD_LOG" \
 	    "${CAPD_WORK}/Capabilities"
 	return 0
 }
