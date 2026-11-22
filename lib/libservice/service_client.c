@@ -9,6 +9,9 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/ioctl.h>
+
+#include <dev/mac_capability/mac_capability_ioctl.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -1072,93 +1075,86 @@ service_session_receive_event(struct service_session *session,
  *
  * On success *session_fdp is a caller-owned session channel to the provider.
  * ENOENT if the process has no ambient lookup channel, or if the name is not
- * resolvable in that channel's domain.  Bounded so a wedged
- * switchboard cannot stall a CLI forever.
+ * resolvable in that channel's domain.  The call waits for switchboard's
+ * answer with no time limit (an on-demand activation is bounded by
+ * switchboard itself); ECONNRESET if the switchboard serving the private
+ * channel exits, EINTR as service_runtime(3) describes.
+ *
+ * The private channel belongs to this call alone, so the exchange is one raw
+ * request and one raw reply rather than a session, whose waits are sliced.
  */
+#define	LOOKUP_REQUEST_TOKEN	1ULL	/* any non-zero token: a request */
+
 static int
 service_lookup_over_channel(int lookup_chan, const char *name, int *session_fdp)
 {
+	struct mac_capability_sendmsg_args send;
+	struct mac_capability_recvmsg_args recv;
+	struct service_lookup_owned owned;
 	struct svc_lookup_req req;
-	struct svc_reply reply_data;
-	struct service_message message = {
-		.size = sizeof(message),
-		.data = &req,
-		.length = sizeof(req),
-		.fds = NULL,
-		.nfds = 0,
-	};
-	int reply_fd;
-	struct service_reply reply = {
-		.size = sizeof(reply),
-		.data = &reply_data,
-		.capacity = sizeof(reply_data),
-		.fds = &reply_fd,
-		.fd_capacity = 1,
-	};
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	struct service_session *session;
-	int dupfd, error, pd = -1;
-	struct service_lookup_owned owned = {.process = &pd, .reply = &reply_fd,
-	    .session = &session};
+	struct svc_reply reply;
+	int error, pd = -1, reply_fd = -1;
 
 	*session_fdp = -1;
-	reply_fd = -1;
 	if (lookup_chan < 0) {
 		errno = ENOENT;
 		return (-1);
 	}
-
-	options.timeout_ms = SERVICE_LOOKUP_TIMEOUT_MS;
-
-	/*
-	 * service_session_create() takes ownership of the descriptor it is
-	 * given, so hand it a private duplicate and leave the borrowed lookup
-	 * channel untouched.
-	 */
-	dupfd = fcntl(lookup_chan, F_DUPFD_CLOEXEC, 0);
-	if (dupfd == -1)
-		return (-1);
-	if (service_session_create(dupfd, &session) == -1) {
-		error = errno;
-		(void)close(dupfd);
-		errno = error;
-		return (-1);
-	}
-
 	memset(&req, 0, sizeof(req));
-	memset(&reply_data, 0, sizeof(reply_data));
 	req.op = SVC_OP_LOOKUP;
 	strlcpy(req.name, name, sizeof(req.name));
-
-	if (service_lookup_identity(&pd) == -1) {
-		error = errno; service_session_close(session); return (errno = error, -1);
-	}
-	message.fds = pd >= 0 ? &pd : NULL;
-	message.nfds = pd >= 0 ? 1 : 0;
+	if (service_lookup_identity(&pd) == -1)
+		return (-1);
+	owned.process = &pd;
+	owned.reply = &reply_fd;
+	owned.session = NULL;
+	/* The wait for room in a full queue is a cancellation point. */
 	pthread_cleanup_push(service_lookup_cleanup, &owned);
-	error = service_session_call(session, &message, &reply, &options) == -1 ? errno : 0;
-	service_session_close(session); session = NULL;
-	if (pd >= 0) close(pd);
-	pd = -1;
-	pthread_cleanup_pop(error != 0);
+
+	memset(&send, 0, sizeof(send));
+	send.payload = &req;
+	send.payload_len = sizeof(req);
+	send.fds = pd >= 0 ? &pd : NULL;
+	send.nfds = pd >= 0 ? 1 : 0;
+	send.reply_token = LOOKUP_REQUEST_TOKEN;
+	error = service_channel_send_wait(lookup_chan, &send) == -1 ? errno : 0;
+	pthread_cleanup_pop(0);
+	if (pd >= 0)
+		(void)close(pd);
 	if (error != 0)
 		return (errno = error, -1);
 
-	if (reply.length != sizeof(reply_data) || reply_data.status < 0 ||
-	    reply_data.status > ELAST ||
-	    (reply_data.status == 0 ? reply.nfds != 1 || reply_fd < 0 :
-	    reply.nfds != 0)) {
-		if (reply_fd >= 0)
+	memset(&recv, 0, sizeof(recv));
+	memset(&reply, 0, sizeof(reply));
+	recv.payload = &reply;
+	recv.payload_len = sizeof(reply);
+	recv.fds = &reply_fd;
+	recv.nfds = 1;
+	if (service_channel_recv_wait(lookup_chan, &recv) == -1)
+		return (-1);
+	if (recv.reply_token != LOOKUP_REQUEST_TOKEN ||
+	    recv.payload_len != sizeof(reply) || reply.status < 0 ||
+	    reply.status > ELAST ||
+	    (reply.status == 0 ? recv.nfds != 1 || reply_fd < 0 :
+	    recv.nfds != 0)) {
+		if (recv.nfds != 0 && reply_fd >= 0)
 			(void)close(reply_fd);
 		errno = EBADMSG;
 		return (-1);
 	}
-	if (reply_data.status != 0) {
-		errno = reply_data.status;
+	if (reply.status != 0) {
+		errno = reply.status;
 		return (-1);
 	}
 	*session_fdp = reply_fd;
 	return (0);
+}
+
+static void
+close_lookup_channel(void *arg)
+{
+
+	(void)close(*(int *)arg);
 }
 
 int
@@ -1181,7 +1177,9 @@ service_connect_ambient(const char *name, int *session_fdp)
 		fd = service_ambient_lookup_channel();
 		if (fd == -1)
 			return (-1);
+		pthread_cleanup_push(close_lookup_channel, &fd);
 		result = service_lookup_over_channel(fd, name, session_fdp);
+		pthread_cleanup_pop(0);
 		error = errno;
 		(void)close(fd);
 		errno = error;

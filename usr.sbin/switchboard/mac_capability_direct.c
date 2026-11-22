@@ -77,7 +77,7 @@ mac_cap_create_channel(int *our_end, int *child_end)
 {
 	struct mac_capability_sendmsg_args sa;
 	struct mac_capability_recvmsg_args ra;
-	uint32_t op;
+	uint32_t op, err32;
 	int channel_fd, peer_fd;
 
 	if (sd.channel_svc_fd == -1)
@@ -103,15 +103,18 @@ mac_cap_create_channel(int *our_end, int *child_end)
 	}
 
 	peer_fd = -1;
+	err32 = 0;
 	memset(&ra, 0, sizeof(ra));
+	ra.payload = &err32;
+	ra.payload_len = sizeof(err32);
 	ra.fds = &peer_fd;
 	ra.nfds = 1;
 
 	/*
 	 * The kernel channel service answers CHANNEL_OP_CREATE from its
-	 * dispatch task, with the peer or with an automatic error reply, so
-	 * the wait on the channel ends without a deadline.  An error reply
-	 * carries a payload the receive has no room for: EMSGSIZE.
+	 * dispatch task, with the peer (no payload) or with an automatic
+	 * error reply (the errno as a uint32_t payload, no descriptor), so
+	 * the wait on the channel ends without a deadline.
 	 */
 	if (mac_cap_recv_wait(channel_fd, &ra) == -1) {
 		int saved = errno;
@@ -124,6 +127,9 @@ mac_cap_create_channel(int *our_end, int *child_end)
 
 	if (peer_fd < 0) {
 		close(channel_fd);
+		/* The service's errno; EIO for a reply that carries neither. */
+		errno = (ra.payload_len == sizeof(err32) && err32 != 0) ?
+		    (int)err32 : EIO;
 		return (-1);
 	}
 

@@ -32,6 +32,8 @@ ATF_TESTS_C+=	cap_exclusion_oes_test
 ATF_TESTS_C+=	self_events_test
 # A cache add racing the first one waits for the gate (test kernels only).
 ATF_TESTS_C+=	cache_gate_test
+# The deferred queue's byte bound, per-uid share and lost marker (hold).
+ATF_TESTS_C+=	defer_bound_test
 PROGS+=		oes_join_helper
 BINDIR=		${TESTSDIR}
 
@@ -117,5 +119,6 @@ LIBADD.test_idle_pins+=	memstat
 LIBADD.test_jail_pins+=	jail
 LIBADD.test_jail_scope+=	jail
 LIBADD.test_oeslogger_jail+=	jail
+LIBADD.defer_bound_test+=	jail
 
 .include <bsd.test.mk>

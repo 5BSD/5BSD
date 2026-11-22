@@ -13,7 +13,6 @@
 #include <sys/cap_process.h>
 #include <sys/cap_authority.h>
 #include <sys/capsicum.h>
-#include <sys/event.h>
 #include <sys/ioctl.h>
 #include <sys/syscall.h>
 #include <sys/sysctl.h>
@@ -39,6 +38,7 @@
 #include "libservice_session.h"
 #include "service_ambient_probes.h"
 #include "service_bootstrap.h"
+#include "service_private.h"
 #include "switchboard_svc_proto.h"
 
 /* Probe the feature before using the new syscall on an older kernel. */
@@ -148,15 +148,13 @@ service_session_join_fd(int fd)
  * Each owned lookup handle has its own reply queue. The kernel-held channel
  * is used only for one-way registration, never to receive lookup replies.
  * Failed registration is retryable and never falls back to a shared queue.
+ *
+ * No step is bounded by a clock: a lookup ends with switchboard's answer,
+ * with ECONNRESET when the switchboard holding the private channel exits, or
+ * with EINTR when a signal whose handler was not installed with SA_RESTART
+ * arrives (service_runtime(3)).
  */
-#define AMBIENT_REG_TIMEOUT_MS 2000U
-/*
- * Backoff between raw SENDMSG/RECVMSG retries while switchboard drains a
- * transient queue-pressure burst (a concurrent boot storm registers many lookup
- * channels at once).  20ms keeps the bounded wait responsive without
- * busy-spinning.
- */
-#define AMBIENT_REG_BACKOFF_US 20000U
+
 /*
  * Reply-token stamped on the one-way REGISTER send.  Must be non-zero so the
  * kernel/libchannel dispatch routes it to switchboard's lookup-channel REQUEST
@@ -164,26 +162,94 @@ service_session_join_fd(int fd)
  */
 #define AMBIENT_REG_TOKEN 1ULL
 
+static void
+close_owned_fd(void *arg)
+{
+	int *fd = arg;
+
+	if (*fd >= 0) {
+		(void)close(*fd);
+		*fd = -1;
+	}
+}
+
+/*
+ * Send one message on a channel, waiting with no time limit for room in its
+ * peer's queue (MAC_CAPABILITY_SEND_F_WAIT).  The kernel sleeps
+ * interruptibly: a handler installed with SA_RESTART restarts the send, any
+ * other gives EINTR, as write(2) on a full pipe does; like write(2) it is a
+ * cancellation point.  A peer that is gone gives ECONNRESET (the kernel says
+ * EPIPE for a send), the error the lookup's receive gives for the same
+ * event.  A raw ioctl: the caller's descriptor flags are left alone.
+ */
+__hidden int
+service_channel_send_wait(int fd, struct mac_capability_sendmsg_args *send)
+{
+
+	send->flags = MAC_CAPABILITY_SEND_F_WAIT;
+	pthread_testcancel();
+	if (ioctl(fd, MAC_CAPABILITY_SENDMSG, send) == -1) {
+		/* A cancellation request interrupts the sleep (see below). */
+		if (errno == EINTR)
+			pthread_testcancel();
+		if (errno == EPIPE)
+			errno = ECONNRESET;
+		return (-1);
+	}
+	return (0);
+}
+
+/*
+ * Receive one message on a channel, waiting for it with no time limit
+ * (MAC_CAPABILITY_RECV_F_WAIT).  The kernel sleeps interruptibly: a signal
+ * whose handler was installed with SA_RESTART restarts the receive, any
+ * other gives EINTR, as read(2) on a pipe does.  Like read(2) it is a
+ * cancellation point: a request pending on entry is acted on before the
+ * call, and one that arrives during the sleep interrupts it (SIGCANCEL has
+ * no SA_RESTART).  One window remains, as it would for any wait that is not
+ * a libthr cancellation point: a request that arrives after the check and
+ * before the sleep starts is seen only at the next cancellation point.  A
+ * peer that closed gives ECONNRESET.
+ */
+__hidden int
+service_channel_recv_wait(int fd, struct mac_capability_recvmsg_args *recv)
+{
+
+	recv->flags = MAC_CAPABILITY_RECV_F_WAIT;
+	recv->_reserved[0] = MAC_CAPABILITY_RECV_WAIT_FOREVER;
+	pthread_testcancel();
+	if (ioctl(fd, MAC_CAPABILITY_RECVMSG, recv) == -1) {
+		/*
+		 * A cancellation request interrupts the sleep (SIGCANCEL has
+		 * no SA_RESTART): act on it here, as read(2) would, rather
+		 * than report EINTR.
+		 */
+		if (errno == EINTR)
+			pthread_testcancel();
+		return (-1);
+	}
+	if (recv->payload_len == 0 && recv->nfds == 0) {
+		errno = ECONNRESET;
+		return (-1);
+	}
+	return (0);
+}
+
 /*
  * Send SVC_OP_REGISTER_LOOKUP carrying `peer_fd` over the inherited shared
  * lookup channel, one-way: only the OUTBOUND side is driven, and the ACK is
  * awaited on the PRIVATE endpoint (ambient_reg_recv_ack), never on the shared
  * channel, so the shared receive-queue race is never touched.
  *
- * A raw ioctl on a temporary duplicate avoids changing status flags on the
- * shared file description. Transient queue pressure receives bounded backoff.
+ * A raw ioctl leaves the status flags of the shared file description alone.
+ * A full queue (switchboard restarting, or a burst of registrations) is
+ * waited out.
  */
 static bool
 ambient_reg_send(int shared_fd, int peer_fd)
 {
 	struct svc_register_lookup_req reqmsg;
 	struct mac_capability_sendmsg_args send;
-	int dupfd, waited;
-	bool ok;
-
-	dupfd = fcntl(shared_fd, F_DUPFD_CLOEXEC, 0);
-	if (dupfd == -1)
-		return (false);
 
 	memset(&reqmsg, 0, sizeof(reqmsg));
 	reqmsg.op = SVC_OP_REGISTER_LOOKUP;
@@ -203,90 +269,45 @@ ambient_reg_send(int shared_fd, int peer_fd)
 	 */
 	send.reply_token = AMBIENT_REG_TOKEN;
 
-	ok = false;
-	waited = 0;
-	for (;;) {
-		if (ioctl(dupfd, MAC_CAPABILITY_SENDMSG, &send) == 0) {
-			ok = true;
-			break;
-		}
-		if ((errno != EAGAIN && errno != ENOBUFS) ||
-		    waited >= (int)AMBIENT_REG_TIMEOUT_MS)
-			break;
-		(void)usleep(AMBIENT_REG_BACKOFF_US);
-		waited += (int)(AMBIENT_REG_BACKOFF_US / 1000U);
-	}
-
-	(void)close(dupfd);
-	return (ok);
+	return (service_channel_send_wait(shared_fd, &send) == 0);
 }
 
 /*
  * Receive and validate switchboard's ACK on the private endpoint.  switchboard
  * pushes it as an unsolicited event on the channel it adopted, so only this
  * process (the sole holder of `private_fd`) can read it — no shared queue, no
- * race.
- *
- * Also a RAW MAC_CAPABILITY_RECVMSG rather than a channel object, for the same
- * fd-hygiene reason as ambient_reg_send.  The endpoint is ours alone, so
- * setting O_NONBLOCK on it is isolated (it shares no file description with the
- * shared channel) and lets us bound the wait with kqueue; a blocking
- * descriptor could otherwise stall on a silent switchboard.  private_fd is
- * borrowed.
+ * race.  A raw MAC_CAPABILITY_RECVMSG, for the same fd-hygiene reason as
+ * ambient_reg_send.  It waits with no limit: a refused registration closes the
+ * other end (ECONNRESET), and so does the exit of the switchboard that adopted
+ * it.  private_fd is borrowed.
  */
 static bool
 ambient_reg_recv_ack(int private_fd)
 {
 	struct svc_register_lookup_ack ack;
 	struct mac_capability_recvmsg_args recv;
-	struct kevent event;
-	struct timespec timeout, start, now;
-	int flags, kq, result;
-	int64_t remaining;
-	bool ok;
 
-	flags = fcntl(private_fd, F_GETFL);
-	if (flags == -1 || fcntl(private_fd, F_SETFL, flags | O_NONBLOCK) == -1)
+	memset(&recv, 0, sizeof(recv));
+	recv.payload = &ack;
+	recv.payload_len = sizeof(ack);
+	if (service_channel_recv_wait(private_fd, &recv) == -1)
 		return (false);
-	kq = kqueue();
-	if (kq == -1)
-		return (false);
-	EV_SET(&event, private_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
-	if (kevent(kq, &event, 1, NULL, 0, NULL) == -1) {
-		(void)close(kq);
+	if (recv.payload_len != sizeof(ack) || recv.nfds != 0 ||
+	    ack.op != SVC_OP_REGISTER_LOOKUP) {
+		errno = EBADMSG;
 		return (false);
 	}
-	ok = false;
-	(void)clock_gettime(CLOCK_MONOTONIC, &start);
-	for (;;) {
-		memset(&recv, 0, sizeof(recv));
-		recv.payload = &ack;
-		recv.payload_len = sizeof(ack);
-		if (ioctl(private_fd, MAC_CAPABILITY_RECVMSG, &recv) == 0) {
-			ok = recv.payload_len == sizeof(ack) &&
-			    ack.op == SVC_OP_REGISTER_LOOKUP &&
-			    ack.status == 0 &&
-			    ack.magic == SVC_REGISTER_LOOKUP_MAGIC;
-			break;
-		}
-		if (errno != EAGAIN)
-			break;
-		(void)clock_gettime(CLOCK_MONOTONIC, &now);
-		remaining = (int64_t)AMBIENT_REG_TIMEOUT_MS * 1000000 -
-		    ((int64_t)(now.tv_sec - start.tv_sec) * 1000000000 +
-			now.tv_nsec - start.tv_nsec);
-		if (remaining <= 0) {
-			errno = ETIMEDOUT;
-			break;
-		}
-		timeout.tv_sec = remaining / 1000000000;
-		timeout.tv_nsec = remaining % 1000000000;
-		result = kevent(kq, NULL, 0, &event, 1, &timeout);
-		if (result < 0 && errno != EINTR)
-			break;
+	/* A refused registration carries switchboard's errno. */
+	if (ack.status != 0) {
+		errno = ack.status > 0 && ack.status <= ELAST ?
+		    (int)ack.status : EBADMSG;
+		return (false);
 	}
-	(void)close(kq);
-	return (ok);
+	if (ack.magic != SVC_REGISTER_LOOKUP_MAGIC) {
+		errno = EBADMSG;
+		return (false);
+	}
+	return (true);
 }
 
 /*
@@ -296,40 +317,73 @@ ambient_reg_recv_ack(int private_fd)
  * The kernel context is the only persistent reference; no hidden descriptors
  * or atfork cache state need to survive closefrom(), exec, or uid changes.
  */
+struct ambient_reg_owned {
+	int	shared, pair[2];
+};
+
+static void
+ambient_reg_cleanup(void *arg)
+{
+	struct ambient_reg_owned *owned = arg;
+
+	close_owned_fd(&owned->shared);
+	close_owned_fd(&owned->pair[0]);
+	close_owned_fd(&owned->pair[1]);
+}
+
 int
 service_ambient_lookup_channel(void)
 {
-	int shared, pair[2], error;
+	struct ambient_reg_owned owned;
+	int error, private_fd;
 	bool sent, acknowledged;
 
-	shared = process_lookup_fd();
-	if (shared == -1)
+	owned.shared = process_lookup_fd();
+	if (owned.shared == -1)
 		return (-1);
-	if (mac_capability_channel_create(pair) == -1) {
+	if (mac_capability_channel_create(owned.pair) == -1) {
 		error = errno;
-		(void)close(shared);
+		(void)close(owned.shared);
 		errno = error;
 		return (-1);
 	}
-	sent = ambient_reg_send(shared, pair[1]);
-	acknowledged = sent && ambient_reg_recv_ack(pair[0]);
+	/* The waits below are cancellation points. */
+	pthread_cleanup_push(ambient_reg_cleanup, &owned);
+	/*
+	 * Only the queued registration may hold the other end once it is
+	 * sent: a child forked meanwhile must not keep it open, or a refusal
+	 * or a switchboard exit would never close the peer.
+	 */
+	if (fcntl(owned.pair[0], F_SETFD, FD_CLOEXEC) == -1 ||
+	    fcntl(owned.pair[1], F_SETFD, FD_CLOEXEC | FD_CLOFORK) == -1)
+		sent = false;
+	else
+		sent = ambient_reg_send(owned.shared, owned.pair[1]);
+	pthread_cleanup_pop(0);
+	/*
+	 * The queued registration holds its own reference: drop ours now, so a
+	 * refusal or a switchboard exit closes the other end and ends the wait
+	 * for the ACK.
+	 */
 	error = errno;
-	(void)close(pair[1]);
-	(void)close(shared);
+	close_owned_fd(&owned.pair[1]);
+	close_owned_fd(&owned.shared);
+	if (sent) {
+		pthread_cleanup_push(close_owned_fd, &owned.pair[0]);
+		acknowledged = ambient_reg_recv_ack(owned.pair[0]);
+		pthread_cleanup_pop(0);
+		error = errno;
+	} else
+		acknowledged = false;
+	private_fd = owned.pair[0];
 	SERVICE_AMBIENT_PROBE_REG_RESULT(acknowledged ? 1 : 0, 0, sent ? 1 : 0,
 	    acknowledged ? 1 : 0);
 	if (!acknowledged) {
-		(void)close(pair[0]);
+		(void)close(private_fd);
 		errno = error != 0 ? error : EIO;
 		return (-1);
 	}
-	if (fcntl(pair[0], F_SETFD, FD_CLOEXEC) == -1) {
-		error = errno;
-		(void)close(pair[0]);
-		errno = error;
-		return (-1);
-	}
-	return (pair[0]);
+	return (private_fd);
 }
 
 int

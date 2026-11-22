@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 19, 2026
+.Dd November 22, 2026
 .Dt CAPSULE 8
 .Os
 .Sh NAME
@@ -91,6 +91,22 @@ It mints capability tokens on request from
 .Xr switchboard 8
 via the Capsule protocol, a message-passing channel over a mac_capability
 channel descriptor.
+Every request on that channel is answered, or the channel ends:
+.Xr switchboard 8
+waits for each reply without a deadline.
+A malformed request gets an error status; a reply that cannot be sent is
+sent again as a status-only error carrying the send error, and anything
+granted for it is released.
+When not even that reply can be sent, or a message cannot be received
+(including
+.Er EMFILE
+or
+.Er ENFILE
+while installing an attached descriptor),
+.Nm
+closes the channel and kills
+.Xr switchboard 8 ,
+then restarts it as after any exit.
 .Pp
 During startup,
 .Nm

@@ -601,6 +601,7 @@ mac_capability_dispatch_task(void *context, int pending __unused)
 				mac_capability_msg_free(msg);
 			/* SENDMSG capacity was genuinely released. */
 			KNOTE_LOCKED(&s->ci_wknotes, 0);
+			wakeup(&s->ci_wknotes);	/* SEND_F_WAIT */
 		}
 		if (s->ci_inflight == 0 && (s->ci_flags & MAC_CAPABILITY_SF_DEAD)) {
 			wakeup(&s->ci_inflight);
@@ -686,6 +687,10 @@ mac_capability_service_create(const struct mac_capability_service_params *p,
 	svc = malloc(sizeof(*svc), M_MAC_CAPABILITY, M_WAITOK | M_ZERO);
 	strlcpy(svc->csvc_name, p->name, sizeof(svc->csvc_name));
 	svc->csvc_ops = p->ops;
+	svc->csvc_has_handler = p->ops->co_handler != NULL;
+	svc->csvc_has_call = p->ops->co_call != NULL;
+	svc->csvc_has_direct_peer = p->ops->co_direct_peer != NULL;
+	svc->csvc_has_txdrain = p->ops->co_txdrain != NULL;
 	svc->csvc_arg = p->arg;
 	svc->csvc_instance_limit = instance_limit;
 	svc->csvc_tx_limit = p->tx_limit > 0 ? p->tx_limit :
@@ -753,6 +758,7 @@ mac_capability_instance_revoke_reason(struct mac_capability_instance *s,
 	wakeup(&s->ci_txq);
 	KNOTE_LOCKED(&s->ci_rknotes, 0);
 	KNOTE_LOCKED(&s->ci_wknotes, 0);
+	wakeup(&s->ci_wknotes);	/* SEND_F_WAIT */
 
 	/*
 	 * If the current thread IS the handler (self-revoke from
@@ -883,6 +889,7 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 			wakeup(&s->ci_txq);
 			KNOTE_LOCKED(&s->ci_rknotes, 0);
 			KNOTE_LOCKED(&s->ci_wknotes, 0);
+			wakeup(&s->ci_wknotes);	/* SEND_F_WAIT */
 		}
 		mtx_unlock(&s->ci_mtx);
 	}

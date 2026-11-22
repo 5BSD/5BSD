@@ -337,25 +337,30 @@ idle_wait_event(int fd, pid_t pid, oes_event_type_t ev, ino_t ino,
 	}
 }
 
-/* Number of malloc(9) calls of type "oes" so far. */
-static inline uint64_t
-idle_oes_mallocs(void)
+/*
+ * The malloc(9) calls of type "oes" so far in *np, and the bytes they were
+ * given (the allocator's sizes, freed ones included) in *bytesp, from
+ * kern.malloc_stats.  0, or -1 if the type cannot be read.
+ */
+static inline int
+idle_oes_mallocs(uint64_t *np, uint64_t *bytesp)
 {
 	struct memory_type_list *mtlp;
 	struct memory_type *mtp;
-	uint64_t n;
+	int rv;
 
 	mtlp = memstat_mtl_alloc();
 	if (mtlp == NULL)
-		return (0);
-	if (memstat_sysctl_malloc(mtlp, 0) < 0) {
-		memstat_mtl_free(mtlp);
-		return (0);
+		return (-1);
+	rv = -1;
+	if (memstat_sysctl_malloc(mtlp, 0) == 0 &&
+	    (mtp = memstat_mtl_find(mtlp, ALLOCATOR_MALLOC, "oes")) != NULL) {
+		*np = memstat_get_numallocs(mtp);
+		*bytesp = memstat_get_memalloced(mtp);
+		rv = 0;
 	}
-	mtp = memstat_mtl_find(mtlp, ALLOCATOR_MALLOC, "oes");
-	n = mtp != NULL ? memstat_get_numallocs(mtp) : 0;
 	memstat_mtl_free(mtlp);
-	return (n);
+	return (rv);
 }
 
 static inline int
@@ -370,23 +375,23 @@ idle_sysctl_int(const char *name)
 	return (v);
 }
 
-/* count fork()+_exit() pairs, each child reaped before the next. */
+/*
+ * One fork and one exit, the child reaped.  vfork(2) runs the same fork
+ * and exit hooks as fork(2) without copying the address space, which in a
+ * process that has called mlockall(2) copies every wired page.
+ */
 static inline int
-idle_fork_exit(int count)
+idle_fork_exit(void)
 {
 	pid_t pid;
-	int i, status;
+	int status;
 
-	for (i = 0; i < count; i++) {
-		pid = fork();
-		if (pid < 0)
-			return (-1);
-		if (pid == 0)
-			_exit(0);
-		if (waitpid(pid, &status, 0) != pid)
-			return (-1);
-	}
-	return (0);
+	pid = vfork();
+	if (pid < 0)
+		return (-1);
+	if (pid == 0)
+		_exit(0);
+	return (waitpid(pid, &status, 0) == pid ? 0 : -1);
 }
 
 #endif /* !_OES_TEST_IDLE_COMMON_H_ */
