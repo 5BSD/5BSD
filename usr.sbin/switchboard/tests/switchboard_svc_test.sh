@@ -1280,7 +1280,7 @@ atf_test_case ambient_lookup_requester_exit_answers cleanup
 ambient_lookup_requester_exit_answers_head()
 {
 	atf_set "descr" \
-	    "a unit's child is not left waiting on a pending lookup when its unit stops, and switchboard drops the lookup"
+	    "a lookup pending for a unit that stops is answered ECONNRESET, also for a child that left the unit's coalition"
 	atf_set "require.user" "root"
 	atf_set "timeout" "90"
 	require_capsule_stack_kmods
@@ -1294,7 +1294,8 @@ ambient_lookup_requester_exit_answers_body()
 	find_capd_service_fixture
 	prepare_paths
 	install_cancel_provider
-	# The unit's child looks up the held name and rides out SIGTERM.
+	# The unit's child leaves the unit's coalition, then looks up the held
+	# name: the unit's stop does not end it, only an answer does.
 	make_svc_bin system org.test.orphan \
 	    "restart = \"never\";
 arguments = [\"orphan-lookup\", \"org.test.cancel.svc\",
@@ -1304,7 +1305,10 @@ arguments = [\"orphan-lookup\", \"org.test.cancel.svc\",
 	start_stack
 	wait_for_file cancel-provider.ready ||
 	    atf_fail "provider did not complete check-in"
-	wait_for_file orphan.started || atf_fail "the unit's child did not start"
+	if ! wait_for_file orphan.started; then
+		cat orphan.result 2>/dev/null
+		atf_fail "the unit's child did not start (see its rehome errno)"
+	fi
 	child=$(sed -n 's/^pid=\([0-9][0-9]*\)$/\1/p' orphan.started)
 	case "$child" in
 	''|*[!0-9]*) atf_fail "invalid child PID" ;;
@@ -1313,15 +1317,11 @@ arguments = [\"orphan-lookup\", \"org.test.cancel.svc\",
 	    atf_fail "the child's lookup did not trigger activation"
 	"$SWITCHBOARDCTL" stop "org.test.orphan/orphan" >/dev/null ||
 	    atf_fail "could not stop the requester's unit"
-	# The child is not left waiting: today it ends with its unit (a
-	# coalition's members are killed when the leader exits); if it
-	# outlived the unit it would be answered ECONNRESET
-	# (on_demand_requester_gone(), pinned in on_demand_test).  Wait for
-	# it to exit; a child left waiting ends the case at its timeout.
+	# The child outlives its unit and is answered ECONNRESET by the unit's
+	# exit (on_demand_requester_gone()); switchboard's 10 s activation
+	# bound would answer ETIMEDOUT (60) instead.
 	pwait "$child" >/dev/null 2>&1 || true
-	if [ -s orphan.result ]; then
-		atf_check -s exit:0 -o match:'^rc=-1 errno=54$' cat orphan.result
-	fi
+	atf_check -s exit:0 -o match:'^rc=-1 errno=54$' cat orphan.result
 	# Switchboard drops the pending lookup when it handles the exit or the
 	# close, which may come after the child is gone.
 	wait_for_log "canceled 1 pending lookup" ||
