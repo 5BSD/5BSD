@@ -3,6 +3,7 @@
 #include <atf-c.h>
 #include <errno.h>
 #include <pthread.h>
+#include <string.h>
 #include <time.h>
 
 static struct timespec fake_now, waited_until;
@@ -59,27 +60,36 @@ ATF_TC_WITHOUT_HEAD(deadline_not_restarted);
 ATF_TC_BODY(deadline_not_restarted, tc)
 {
 	struct timespec deadline = { .tv_sec = 100, .tv_nsec = 5000000 };
+	struct service_client client;
 
 	(void)tc;
-	/* Budget expired while this caller was acquiring the session mutex. */
+	memset(&client, 0, sizeof(client));
+	/*
+	 * A waiter sleeps to the call's own deadline, whenever it starts and
+	 * however often it is woken: one absolute deadline, never a slice.
+	 */
 	fake_now = (struct timespec){ .tv_sec = 100, .tv_nsec = 10000000 };
-	wait_slice(NULL, NULL, &deadline, 10);
+	wait_wake(&client, &deadline, 10);
 	ATF_CHECK_EQ(1, wait_count);
 	ATF_CHECK_EQ(deadline.tv_sec, waited_until.tv_sec);
 	ATF_CHECK_EQ(deadline.tv_nsec, waited_until.tv_nsec);
-	/* Near a second boundary, a finite wait still uses the original end. */
 	fake_now = (struct timespec){ .tv_sec = 99, .tv_nsec = 999000000 };
-	wait_slice(NULL, NULL, &deadline, 10);
+	wait_wake(&client, &deadline, 10);
 	ATF_CHECK_EQ(2, wait_count);
 	ATF_CHECK_EQ(deadline.tv_sec, waited_until.tv_sec);
 	ATF_CHECK_EQ(deadline.tv_nsec, waited_until.tv_nsec);
-	/* Infinite calls use a bounded dispatch slice without reading a deadline. */
-	wait_slice(NULL, NULL, NULL, SERVICE_CLIENT_TIMEOUT_INFINITE);
-	ATF_CHECK_EQ(3, wait_count);
-	ATF_CHECK_EQ(100, waited_until.tv_sec);
-	ATF_CHECK_EQ(24000000, waited_until.tv_nsec);
-	wait_slice(NULL, NULL, NULL, 0);
-	ATF_CHECK_EQ(3, wait_count);
+
+	/* The kernel's sleep gets what is left of the same deadline. */
+	fake_now = (struct timespec){ .tv_sec = 99, .tv_nsec = 999000000 };
+	ATF_CHECK_EQ(6, remaining_ms(&deadline, 10));	/* 6 ms, rounded up */
+	fake_now = (struct timespec){ .tv_sec = 100, .tv_nsec = 4000001 };
+	ATF_CHECK_EQ(1, remaining_ms(&deadline, 10));
+	fake_now = (struct timespec){ .tv_sec = 100, .tv_nsec = 5000000 };
+	ATF_CHECK_EQ(0, remaining_ms(&deadline, 10));
+	fake_now = (struct timespec){ .tv_sec = 101, .tv_nsec = 0 };
+	ATF_CHECK_EQ(0, remaining_ms(&deadline, 10));
+	/* No deadline: the kernel waits without a limit. */
+	ATF_CHECK_EQ(-1, remaining_ms(NULL, SERVICE_CLIENT_TIMEOUT_INFINITE));
 }
 
 ATF_TP_ADD_TCS(tp)
