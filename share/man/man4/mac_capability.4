@@ -645,6 +645,14 @@ It cannot be changed afterwards.
 Test issuers created.
 .It Va kern.mac_capability.test_issuers_live
 Test issuers not yet freed.
+.It Va debug.mac_capability.test_issuers_settle
+Write-only.
+Writing 1 runs every task already queued on
+.Va taskqueue_thread ,
+where test issuers whose last reference dropped are freed, so that a
+following read of
+.Va kern.mac_capability.test_issuers_live
+is not one a queued free was about to lower.
 .It Va debug.mac_capability.test_issuers_wait_live
 Write-only.
 Writing
