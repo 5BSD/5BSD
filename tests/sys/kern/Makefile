@@ -290,6 +290,7 @@ TEST_METADATA.sonewconn_overflow+=	required_user="root"
 TEST_METADATA.sonewconn_overflow+=	is_exclusive="true"
 ATF_TESTS_SH+=	sendfile_test
 ATF_TESTS_SH+=	sysctl_security_jail_children
+ATF_TESTS_SH+=	jail_remove_sync
 
 ${PACKAGE}FILES+=	sonewconn_overflow.py
 ${PACKAGE}FILESMODE_sonewconn_overflow.py=0555

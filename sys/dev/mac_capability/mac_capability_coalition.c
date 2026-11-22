@@ -2565,7 +2565,15 @@ coalition_leader_monitor_start_locked(struct coalition *co)
 {
 
 	sx_assert(&co->co_sx, SA_XLOCKED);
-	/* A stopped monitor's running task must finish first (it owns a ref). */
+	/*
+	 * A stopped monitor's running task must finish first (it owns a ref).
+	 * The sleep drops co_sx.  Termination meanwhile is still handled:
+	 * it clears co_leader, so the watch below finds no leader, queues the
+	 * task and the task bails.  The coalition cannot start closing here:
+	 * the caller is an operation in flight, which keeps the control file
+	 * open, and co_revoke waits for in-flight operations, so it is not
+	 * COF_CLOSING after the sleep either (watch_locked asserts that).
+	 */
 	while (co->co_leader_stopping)
 		sx_sleep(&co->co_leader_stopping, &co->co_sx, 0, "coleadr", 0);
 	if (!(co->co_flags & COF_LEADER_MONITOR)) {

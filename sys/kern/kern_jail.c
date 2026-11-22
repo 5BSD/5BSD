@@ -3807,9 +3807,13 @@ prison_deref(struct prison *pr, int flags)
 			KASSERT(refcount_load(&pr->pr_uref) > 0,
 			    ("prison_deref PD_DEUREF on a dead prison (jid=%d)",
 			     pr->pr_id));
+			/*
+			 * Hold urelpr past this call's releases: whether the
+			 * prison is dead is only known after the release (a
+			 * concurrent release may kill it), so the hold is taken
+			 * on every drop and prison_uref_released() decides.
+			 */
 			if (urelpr == NULL) {
-				/* Our own hold: the reference this call drops may
-				 * be the last, and urelpr is used after the loop. */
 				urelpr = pr;
 				prison_hold(urelpr);
 			}
@@ -3919,12 +3923,15 @@ prison_deref(struct prison *pr, int flags)
 	/*
 	 * With no prison lock held: a user reference of urelpr (and maybe of
 	 * its ancestors, released as the loop climbed) was dropped.  The hold
-	 * taken above keeps urelpr allocated; its release may queue the final
-	 * free (prison_free defers the last reference).
+	 * taken above keeps urelpr allocated.  Release it synchronously, with
+	 * prison_deref() (sleeping is allowed and no lock is held), so a prison
+	 * whose last reference this is is freed in this call as before, not
+	 * from a task: jail_remove(2) of an empty jail still returns with the
+	 * jail gone.  The nesting is bounded by the jail depth.
 	 */
 	if (urelpr != NULL) {
 		prison_uref_released(urelpr);
-		prison_free(urelpr);
+		prison_deref(urelpr, PD_DEREF);
 	}
 
 	/* Kill any processes attached to a killed prison. */
