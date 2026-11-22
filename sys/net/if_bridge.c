@@ -952,13 +952,52 @@ bridge_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 	const struct bridge_control *bc;
 	int error = 0, oldmtu;
 
-	BRIDGE_LOCK(sc);
-
+	/*
+	 * Requests that need no bridge state are answered without the bridge
+	 * lock.  An interface stacked on the bridge, such as a vlan(4) SVI,
+	 * sends them while holding its own lock (vlan_sx), and the bridge
+	 * calls into its members, which may be vlan(4) interfaces too, with
+	 * the bridge lock held: taking the bridge lock here would close that
+	 * cycle.
+	 */
 	switch (cmd) {
 	case SIOCADDMULTI:
 	case SIOCDELMULTI:
+		return (0);
+
+	case SIOCSIFFLAGS:
+		/*
+		 * Only a change of IFF_UP needs the bridge; a propagated
+		 * IFF_PROMISC or IFF_ALLMULTI change does not.  bridge_init()
+		 * checks IFF_DRV_RUNNING the same way before it locks.
+		 */
+		if ((ifp->if_flags & IFF_UP) != 0 &&
+		    (ifp->if_drv_flags & IFF_DRV_RUNNING) == 0) {
+			(*ifp->if_init)(sc);
+		} else if ((ifp->if_flags & IFF_UP) == 0 &&
+		    (ifp->if_drv_flags & IFF_DRV_RUNNING) != 0) {
+			BRIDGE_LOCK(sc);
+			/* If interface is marked down and running, stop it. */
+			if ((ifp->if_flags & IFF_UP) == 0 &&
+			    (ifp->if_drv_flags & IFF_DRV_RUNNING) != 0)
+				bridge_stop(ifp);
+			BRIDGE_UNLOCK(sc);
+		}
+		return (0);
+
+	case SIOCGDRVSPEC:
+	case SIOCSDRVSPEC:
+	case SIOCSIFMTU:
 		break;
 
+	default:
+		/* ether_ioctl() may call bridge_start(), which locks. */
+		return (ether_ioctl(ifp, cmd, data));
+	}
+
+	BRIDGE_LOCK(sc);
+
+	switch (cmd) {
 	case SIOCGDRVSPEC:
 	case SIOCSDRVSPEC:
 		if (ifd->ifd_cmd >= bridge_control_table_size) {
@@ -1022,26 +1061,6 @@ bridge_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 
 		break;
 
-	case SIOCSIFFLAGS:
-		if (!(ifp->if_flags & IFF_UP) &&
-		    (ifp->if_drv_flags & IFF_DRV_RUNNING)) {
-			/*
-			 * If interface is marked down and it is running,
-			 * then stop it.
-			 */
-			bridge_stop(ifp);
-		} else if ((ifp->if_flags & IFF_UP) &&
-		    !(ifp->if_drv_flags & IFF_DRV_RUNNING)) {
-			/*
-			 * If interface is marked up and it is stopped, then
-			 * start it.
-			 */
-			BRIDGE_UNLOCK(sc);
-			(*ifp->if_init)(sc);
-			BRIDGE_LOCK(sc);
-		}
-		break;
-
 	case SIOCSIFMTU:
 		oldmtu = sc->sc_ifp->if_mtu;
 
@@ -1078,15 +1097,6 @@ bridge_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 		} else {
 			sc->sc_ifp->if_mtu = ifr->ifr_mtu;
 		}
-		break;
-	default:
-		/*
-		 * drop the lock as ether_ioctl() will call bridge_start() and
-		 * cause the lock to be recursed.
-		 */
-		BRIDGE_UNLOCK(sc);
-		error = ether_ioctl(ifp, cmd, data);
-		BRIDGE_LOCK(sc);
 		break;
 	}
 
