@@ -342,7 +342,8 @@ mount_op_unmount(const void *req, size_t reqlen,
 	if (ur->flags & MOUNT_F_FORCE)
 		flags |= MNT_FORCE;
 
-	error = kern_unmount(curthread, fspath, flags);
+	/* fspath is a kernel copy of the request. */
+	error = kern_unmount(curthread, fspath, UIO_SYSSPACE, flags);
 
 	memset(rp, 0, sizeof(*rp));
 	rp->status = mount_error_status(error);

@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd October 20, 2026
+.Dd November 22, 2026
 .Dt CAPSULE 8
 .Os
 .Sh NAME
@@ -91,6 +91,22 @@ It mints capability tokens on request from
 .Xr switchboard 8
 via the Capsule protocol, a message-passing channel over a mac_capability
 channel descriptor.
+Every request on that channel is answered, or the channel ends:
+.Xr switchboard 8
+waits for each reply without a deadline.
+A malformed request gets an error status; a reply that cannot be sent is
+sent again as a status-only error carrying the send error, and anything
+granted for it is released.
+When not even that reply can be sent, or a message cannot be received
+(including
+.Er EMFILE
+or
+.Er ENFILE
+while installing an attached descriptor),
+.Nm
+closes the channel and kills
+.Xr switchboard 8 ,
+then restarts it as after any exit.
 .Pp
 During startup,
 .Nm
@@ -133,6 +149,20 @@ Start
 .Xr switchboard 8
 as a single child process via
 .Xr pdfork 2 .
+.Nm
+gives the child an authority constrained to the service manager's image
+with
+.Dv CAP_AUTH_ROLE_CORE ,
+so the service manager runs excluded from
+.Xr oes 4
+and Capability Brokers
+.Pq BASE EXCLUSION in Xr cap_process 2 .
+Holding an authority issuer,
+.Nm
+never starts the service manager without it: a failure to make it fails the
+start.
+Without an issuer the service manager cannot be excluded, and the
+issuer-unavailable message says so.
 The resulting process descriptor is restricted to supervision rights and
 irreversibly confined against descriptor transfer, fork inheritance, and exec
 inheritance.

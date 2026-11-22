@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 17, 2026
+.Dd November 21, 2026
 .Dt OES 4
 .Os
 .Sh NAME
@@ -229,7 +229,12 @@ and terminal data, jail and login-class identity, ABI, start time, process
 state, thread count, nice value, OS release, and routing FIB.
 The
 .Dv EP_FLAG_OES_CLIENT
-bit reports whether the source process owns an active OES client, analogous to
+bit reports whether the source process acts as an OES client, that is, is a
+reader of one, when the event was dispatched; events delivered later from
+non-sleepable hooks (fork, exit, signal and similar notifications) do not
+carry it
+.Pq Sx A client's own processes ,
+analogous to
 Apple's
 .Va es_process_t.is_es_client
 field.
@@ -263,6 +268,146 @@ by a
 .Xr dq 4
 controller rather than read from a vnode
 .Pq Dv OES_FILE_META_PRESENTED .
+.Ss A client's own processes
+A client never receives events caused by the processes that act as it,
+its
+.Em readers .
+A process becomes a reader of a client when it opens
+.Pa /dev/oes
+(the opener), reads, answers
+.Pq Xr write 2 ,
+polls or registers a kevent for the client, or calls
+.Dv OES_IOC_JOIN .
+Configuration ioctls do not make a reader.
+A process stops being a reader when it exits or executes a new image;
+the new image becomes a reader again by the same operations.
+Readers are identified by process ID, start time and execution, so a
+reused process ID never inherits membership.
+A process that already holds a client inherited across
+.Xr fork 2 ,
+or through a copied kqueue, is not a reader until it does one of the
+operations above itself.
+.Pp
+The rule holds for every scope, mode and mute setting, process-mute
+inversion included, and cannot be turned off.
+A reader's own NOTIFY events are never delivered to that client.
+A reader's own AUTH event counts as an allow from that client without being
+delivered, but only if the reader's descriptor can answer: the client was
+opened for writing and the descriptor holds
+.Dv CAP_WRITE .
+The AUTH events of a read-only reader are delivered to the client as usual,
+so a read-only holder cannot exempt itself.
+A reader that answers
+.Pq Xr write 2
+or calls
+.Dv OES_IOC_JOIN
+with such a descriptor gains the exemption; it is not lost while the
+process runs the same image.
+Other AUTH clients still decide.
+A process stays a reader after it closes or hands on its descriptor, until
+it exits or executes a new image.
+Other clients still receive the reader's events, unless the reader is
+excluded by the kernel
+.Pq Sx Excluded processes .
+.Pp
+A process that receives a client descriptor from another process
+.Po
+.Dv SCM_RIGHTS ,
+.Xr oes_client_create_brokered 3 ,
+or inheritance across
+.Xr fork 2
+.Pc
+is not a reader until it joins, and until then the events it causes reach
+the client.
+For an AUTH client those can be waits on itself, bounded like any
+unanswered AUTH event by the client's deadline and deadline-miss mode.
+Call
+.Dv OES_IOC_JOIN
+before anything else on a received descriptor;
+.Xr liboes 3
+does this in every constructor.
+.Pp
+.Dv OES_MUTE_SELF
+in a mute request is accepted and has no further effect; in an unmute
+request it fails with
+.Er EINVAL .
+It adds no mute entry, so mute queries list a client's own process only if
+it was muted by an explicit token.
+The former
+.Va security.oes.default_self_mute
+sysctl no longer exists.
+.Ss Excluded processes
+OES produces no event for an operation whose acting process is excluded by
+the kernel: process 1
+.Pq Xr capsule 8 ,
+.Xr switchboard 8 ,
+and the units SwitchBoard launches with management class
+.Dq core
+.Pq see BASE EXCLUSION in Xr cap_process 2 .
+For an excluded process AUTH checks allow at once and are never sent to a
+client, also when
+.Va security.oes.require_auth_clients ,
+.Va security.oes.auth_fail_closed
+or a fail-closed deadline-miss mode is set.
+No NOTIFY event is produced either, including fork, exit, mount, kld
+unload, signal, set-id and ptrace notifications whose actor is excluded.
+An excluded process's writes and namespace changes still drop cached
+decisions while any client holds some.
+.Pp
+Executions are judged by the program that results.
+Executing a Core image produces no event.
+When an excluded process starts a program that is not excluded, subscribed
+clients receive
+.Dv OES_EVENT_AUTH_EXEC
+and
+.Dv OES_EVENT_NOTIFY_EXEC
+as usual.
+If the program is a unit of a System bundle
+.Pq its authority carries Dv CAP_AUTH_ROLE_SYSTEM , see Xr cap_process 2 ,
+the strict settings above, fail-closed deadlines, a client that closes
+without answering and an allocation failure do not deny it: a missing or
+slow client allows the execution, while a client's explicit denial still
+refuses it.
+This applies to the execution of the unit's own ELF image only;
+.Xr switchboard 8
+refuses to launch a System bundle unit whose program is a script.
+Every other start by an excluded process (per-user and
+.Pa /Capabilities/Apps
+units, the rc scripts, programs started by
+.Xr capsule 8 )
+gets normal treatment, fail-closed settings included.
+The program started is not excluded, and everything it does is reported.
+.Pp
+An operation by a process that is not excluded is reported as usual, also
+when it acts on an excluded process.
+Clients cannot unmute an excluded process.
+.Pp
+In every process record,
+.Dv EP_FLAG_CAP_EXCLUDED
+in
+.Va ep_flags
+marks an excluded process, for example the launcher of an exec event or
+the target of a signal;
+.Dv EP_FLAG_CAP_MANAGED
+reports that the process runs the image pinned by a valid managed software
+authority, and
+.Va ep_cap_roles
+the
+.Dv CAP_AUTH_ROLE_*
+bits of that authority.
+After the issuer is revoked, for example when
+.Xr switchboard 8
+restarts, running Core processes keep
+.Dv EP_FLAG_CAP_EXCLUDED
+while
+.Dv EP_FLAG_CAP_MANAGED
+is clear and
+.Va ep_cap_roles
+is 0.
+.Xr switchboard 8
+itself has
+.Dv EP_FLAG_CAP_EXCLUDED
+and neither of the other two.
 .Ss MAC hooks
 Events are generated from MAC policy hooks, including process execution and
 credential changes, the file lifecycle
@@ -355,6 +500,141 @@ operation, its errno, the object id, the controller's identity nonce and the
 reply length; it never carries reply data.
 Any other descriptor type returns from these hooks at once and produces no
 event.
+.Ss Idle behaviour
+.Nm
+costs close to nothing while nothing listens: one predicted branch on a
+hook that another policy keeps hot.
+A hook is live while some open client subscribes to the AUTH or NOTIFY
+event it produces; while
+.Va security.oes.require_auth_clients ,
+.Va security.oes.auth_fail_closed
+or a fail-closed
+.Va security.oes.default_deadline_miss_mode
+is set, for every hook that produces an AUTH event; and, for a hook whose
+event drops cached decisions, once some client has added a decision-cache
+entry.
+A client that has
+.Pa /dev/oes
+open and subscribes to nothing makes no hook live.
+A hook that is not live returns at its first test, which is what it would
+otherwise have returned, and counts toward none of the MAC framework's
+fast-path flags, so with nothing listening
+.Nm
+makes the framework enter no system call path on its own account; on paths
+another policy keeps hot its hooks are still called and return at once.
+The credential, exec and pipe identities are kept whether or not anything
+listens, so that a client starting later sees them.
+.Pp
+Liveness is recomputed before a subscribe or cache ioctl returns and before
+a write of a strict setting returns: an operation that starts after the
+call returns is delivered, consulted or denied as the new state requires.
+Turning a strict setting on makes the AUTH hooks live before the new value
+takes effect.
+An operation already past its hook's first test when a client subscribes is
+not reported, like one that started just before the subscription.
+Closing the last client of an event makes its hooks idle without waiting
+for threads inside them.
+.Pp
+.Nm
+is compiled into the kernel and cannot be unloaded.
+.Ss Deferred delivery
+NOTIFY events produced where the kernel cannot sleep, such as pipe reads and
+writes, are queued and delivered by the kernel thread
+.Dq oes_deferq .
+That thread is a timeshare thread: it starts at the priority of a user
+thread and, at the end of each scheduler slice, takes the priority
+the scheduler computes for it, so it competes for CPU time with
+the processes producing the events rather than preempting them.
+No AUTH event is queued this way.
+.Pp
+The queue is bounded in bytes,
+.Va security.oes.defer_max_bytes .
+Each queued event is charged the memory it holds, about its message size
+.Pq Va em_size ,
+and is charged both to the queue and to the real user ID of the thread that
+produced it.
+An event is queued only if its user's queued bytes, the event included, fit
+in the space the queue would still have free with the event queued.
+A single user producing events faster than they are delivered therefore
+stops at half the bound, and leaves the other half to other users; two
+such users stop at a third each, and so on.
+Producers of one user on several CPUs at once can exceed that share by at
+most one event per CPU; the bound itself is never exceeded.
+.Pp
+An event that does not fit is discarded before any client receives it.
+It is counted in
+.Va es_nosleep_drops
+of the statistics returned by
+.Dv OES_IOC_GET_STATS ,
+and every client subscribed to its event type is told of the loss
+.Pq see Sx Lost events .
+The operation that produced the event is not affected: a NOTIFY event
+cannot deny, and none of the settings that make AUTH events fail closed
+applies to it.
+.Pp
+The default bound follows the rule the kernel uses for pipe buffers
+.Pq Va kern.ipc.maxpipekva ,
+memory that unprivileged producers fill and a consumer drains: 1/64 of
+physical memory, or of
+.Va vm.kmem_size ,
+the kernel memory the queue is allocated from, if that is smaller.
+The bound is never set below twice the number of CPUs times
+.Va security.oes.defer_entry_max ,
+so that a single user may queue one maximum-size event per CPU,
+nor above
+.Va vm.kmem_size .
+Lowering it below what is queued only refuses new events until the queue
+has drained.
+.Pp
+A realtime
+.Pq Xr rtprio 2
+thread that never sleeps on the delivery thread's CPU can keep it from
+running at all, which delays deferred events and the end of a jail scope
+whose jail was removed.
+.Ss Lost events
+A client that has lost events receives an
+.Dv OES_EVENT_NOTIFY_LOST
+message, alone in its
+.Xr read 2 ,
+before anything else it would read.
+Its
+.Va em_event_data.lost
+holds the number of events lost since the previous such message:
+.Va el_unsent
+sent to no client: discarded at the deferred-delivery bound, or not
+allocated because no memory was free at once,
+.Va el_queue
+discarded because the client's own queue was full or the copy for it could
+not be allocated, and
+.Va el_count ,
+their sum.
+.Pp
+The message is not queued: it is made from the counts when the client
+reads, so it cannot itself be lost; the counts are cleared as it is made
+and restored if it cannot be copied out.
+.Xr poll 2
+and
+.Xr kqueue 2
+report the client readable while a loss is unreported.
+.Dv OES_EVENT_NOTIFY_LOST
+is outside the subscription bitmaps: it cannot be subscribed to, muted or
+unsubscribed, and every client receives it.
+Its process, thread, message ID and sequence numbers are zero, and its
+timestamps are those of the read.
+.Pp
+An event sent to no client is lost where the kernel cannot match it to
+clients, so it is counted for every client subscribed to the event's type
+at the time, an AUTH event also for those subscribed to its NOTIFY form;
+mutes and scopes are not applied, and a client may be told of an event it
+would not have received.
+Clients that subscribe to a type later are not told of earlier losses.
+The message reports a count, not a position: it precedes what the client
+would otherwise read next, which may include events produced before the
+loss.
+For losses at the client's own queue the sequence numbers
+.Pq Va em_seq_num , em_global_seq_num
+of the events read show where the gap is; an event sent to no client was
+never numbered for any client.
 .Ss DTrace
 The framework defines an
 .Nm
@@ -363,8 +643,31 @@ SDT provider with probes for authorization outcomes
 event enqueue and drop, and decision-cache hit and miss.
 .Sh SYSCTL VARIABLES
 .Bl -tag -width indent
+.It Va security.oes.defer_max_bytes
+Bytes the deferred-delivery queue holds before it discards events
+.Pq see Sx Deferred delivery ;
+also a loader tunable.
+Writing 0 restores the default.
+.It Va security.oes.defer_entry_max , Va security.oes.defer_entry_min
+Read-only: the bytes a maximum-size and the smallest deferred event hold;
+the bound divided by the latter bounds the number of queued events.
+.It Va security.oes.defer_bytes , Va security.oes.defer_depth
+Read-only: the bytes and the number of events the deferred-delivery queue
+holds now.
+Reading them needs the privilege that opening
+.Pa /dev/oes
+needs
+.Pq Dv PRIV_DRIVER .
 .It Va security.oes.max_clients
 Maximum number of concurrent clients.
+.It Va security.oes.clients
+Read-only: the number of clients open now.
+Reading it needs the privilege that opening
+.Pa /dev/oes
+needs
+.Pq Dv PRIV_DRIVER ;
+other callers, a jailed root included, get
+.Er EPERM .
 .It Va security.oes.require_auth_clients
 When non-zero, operations that would generate an AUTH event are denied if no
 client is subscribed to authorize them.
@@ -372,16 +675,40 @@ client is subscribed to authorize them.
 Default client-wide AUTH deadline in milliseconds.
 .It Va security.oes.default_deadline_miss_mode
 Default deadline-miss behavior: zero is fail open and one is fail closed.
-.It Va security.oes.default_self_mute
-When non-zero, a new client is automatically muted against its own process.
-This default is mutable client state and may be removed.
-It is not applied to descendants-scoped clients; it is applied to jail-scoped
-clients.
 .It Va security.oes.jail_filtered
 Number of events discarded before any memory was allocated for them because
 every open client is jail-scoped and none covers the subject.
 .It Va security.oes.jail_filtered_auth
 The AUTH events among them.
+.It Va security.oes.excluded_skipped
+Number of events not produced because the acting process is excluded,
+counted while its hook is live
+.Pq see Sx Idle behaviour .
+.It Va security.oes.excluded_invalidations
+Number of decision-cache invalidations made for excluded processes without
+an event.
+.It Va security.oes.exec_fail_open
+Number of exec events of programs started by excluded processes, delivered
+without strict denial.
+The three counters above, like
+.Va security.oes.clients ,
+need
+.Dv PRIV_DRIVER
+to read.
+.It Va security.oes.gate.hooks
+One line per gated hook: index, name, the AUTH, NOTIFY and alternate event
+numbers that make it live, whether its event drops cached decisions, its
+MAC fast-path hook, and whether it is live
+.Pq see Sx Idle behaviour .
+.It Va security.oes.gate.live
+The live hooks as a hexadecimal bit string, bit
+.Ar n
+for hook index
+.Ar n .
+.It Va security.oes.gate.passes
+Number of hook entries that passed their first test.
+.It Va security.oes.gate.reconciles
+Number of liveness recomputations.
 .El
 .Sh FILES
 .Bl -tag -width ".Pa /dev/oes" -compact
@@ -390,6 +717,7 @@ client device
 .El
 .Sh SEE ALSO
 .Xr dtrace 1 ,
+.Xr cap_process 2 ,
 .Xr jail_attach 2 ,
 .Xr liboes 3 ,
 .Xr mac 4 ,
@@ -402,6 +730,40 @@ framework first appeared in
 .Sh AUTHORS
 .An Kory Heard .
 .Sh SECURITY CONSIDERATIONS
+Excluded processes
+.Pq Sx Excluded processes
+are invisible to OES clients by design.
+A compromise of one of them cannot be seen or blocked through OES.
+Core daemons act for their clients:
+BSDExtension loads kernel modules, BSDFilesystem mounts file systems and
+BSDSysctl writes sysctl variables on request.
+Those module loads, mounts and sysctl writes produce no OES event and
+cannot be denied by an OES client; each daemon's own admission policy is the
+only control.
+.Xr switchboard 8 Ns 's
+launch child, between its fork and the unit's exec, is excluded too: the
+opens it makes from the unit's manifest and its
+.Xr setuid 2
+and
+.Xr setgid 2
+calls produce no events.
+The unit's own exec is reported as described above.
+.Xr audit 4
+still records excluded processes, and
+.Xr oeslogger 8
+.Fl X
+lists them.
+No setting, mute or client request makes a process excluded or not: the
+set is decided by the kernel from the boot chain.
+With
+.Va security.oes.require_auth_clients
+set and no AUTH client, operations of processes that are not excluded are
+denied, including
+.Pa /etc/rc
+and the name-service helper of
+.Xr switchboard 8 ;
+run an AUTH client before setting it.
+.Pp
 A client that subscribes to AUTH events can block or deny the corresponding
 system operations; with
 .Va security.oes.require_auth_clients

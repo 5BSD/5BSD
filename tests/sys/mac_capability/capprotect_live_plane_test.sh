@@ -230,7 +230,7 @@ live_capsule_securelevel1_body()
 {
 	require_plane
 	if [ "$(atf_config_get live_securelevel no)" != yes ]; then
-		atf_skip "raises kern.securelevel for good: set live_securelevel=yes" \
+		atf_skip "DEFERRED_DISPOSABLE_GUEST: raises kern.securelevel for good: set live_securelevel=yes" \
 		    "in a guest of its own"
 	fi
 	if [ "$(sysctl -n kern.securelevel)" -lt 1 ]; then

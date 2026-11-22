@@ -7,6 +7,8 @@
  * Open Endpoint Security (OES) - Event Generation and Dispatch
  */
 
+#include "opt_mac_capability.h"
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -25,6 +27,21 @@
 
 #include <security/oes/oes.h>
 #include <security/oes/oes_internal.h>
+
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+/* Test kernels only: mac_capability_testissuer.c. */
+extern volatile u_int mac_capability_test_issuer_oes_trylock_fail;
+
+/* Is p the subject a test asked to fill without its lock? */
+static bool
+oes_test_trylock_fail(struct proc *p)
+{
+	u_int pid;
+
+	pid = atomic_load_int(&mac_capability_test_issuer_oes_trylock_fail);
+	return (pid != 0 && (pid_t)pid == p->p_pid);
+}
+#endif
 
 MALLOC_DECLARE(M_OES);
 
@@ -446,9 +463,41 @@ oes_pending_alloc(oes_event_type_t event, struct proc *p)
 	 */
 	alloc_size = offsetof(struct oes_pending, ep_msg) + OES_MSG_MAX_SIZE;
 	ep = malloc(alloc_size, M_OES, M_NOWAIT | M_ZERO);
-	if (ep == NULL)
+	if (ep == NULL) {
+		/*
+		 * An excluded subject allocates only to invalidate cached
+		 * decisions and is never reported (base exclusion).
+		 */
+		if (!oes_proc_excluded(p))
+			oes_event_lost_unsent(event);
 		return (NULL);
+	}
 	return (oes_pending_init(ep, event, p));
+}
+
+/*
+ * The exit event of p, filled under p's process lock: oes_pending_init()
+ * only tries for the lock and without it leaves the credential fields zero.
+ * The buffer is allocated and zeroed before the lock is taken.  *xexitp
+ * gets p_xexit, read under the same hold.
+ */
+struct oes_pending *
+oes_pending_alloc_exit(struct proc *p, int *xexitp)
+{
+	struct oes_pending *ep;
+	size_t alloc_size;
+
+	alloc_size = offsetof(struct oes_pending, ep_msg) + OES_MSG_MAX_SIZE;
+	ep = malloc(alloc_size, M_OES, M_NOWAIT | M_ZERO);
+	if (ep == NULL) {
+		oes_event_lost_unsent(OES_EVENT_NOTIFY_EXIT);
+		return (NULL);
+	}
+	PROC_LOCK(p);
+	*xexitp = p->p_xexit;
+	ep = oes_pending_init(ep, OES_EVENT_NOTIFY_EXIT, p);
+	PROC_UNLOCK(p);
+	return (ep);
 }
 
 struct oes_pending *
@@ -463,6 +512,7 @@ oes_pending_alloc_signal(struct proc *p)
 	    M_NOWAIT | M_NOVM | M_USE_RESERVE | M_ZERO) : NULL;
 	if (ep == NULL) {
 		atomic_add_64(&oes_softc.sc_alloc_failures, 1);
+		oes_event_lost_unsent(OES_EVENT_NOTIFY_SIGNAL);
 		return (NULL);
 	}
 	ep->ep_flags = EP_FLAG_SIGNAL_RESERVE;
@@ -532,6 +582,12 @@ oes_pending_init(struct oes_pending *ep, oes_event_type_t event, struct proc *p)
 
 		if (!owned)
 			locked = mtx_trylock(&p->p_mtx);
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+		if (locked && !owned && oes_test_trylock_fail(p)) {
+			PROC_UNLOCK(p);
+			locked = false;
+		}
+#endif
 		if (locked) {
 			oes_fill_process(&ep->ep_msg.em_process, p, NULL,
 			    &st, &ep->ep_msg);
@@ -541,6 +597,17 @@ oes_pending_init(struct oes_pending *ep, oes_event_type_t event, struct proc *p)
 			/* Best-effort: fill what we can without the lock */
 			ep->ep_msg.em_process.ep_pid = p->p_pid;
 			ep->ep_msg.em_process.ep_token.ept_id = p->p_pid;
+			/*
+			 * The identity a client's reader set matches on
+			 * (oes_client_is_reader()) must not depend on the
+			 * trylock: genid needs no lock, and the subject's
+			 * execution is its thread's own credential.
+			 */
+			ep->ep_msg.em_process.ep_token.ept_genid =
+			    oes_proc_genid_unlocked(p);
+			if (curthread->td_proc == p)
+				ep->ep_msg.em_process.ep_exec_id =
+				    oes_cred_get_exec_id(curthread->td_ucred);
 			strlcpy(ep->ep_msg.em_process.ep_comm, p->p_comm,
 			    sizeof(ep->ep_msg.em_process.ep_comm));
 			oes_process_mark_path_unavailable(&ep->ep_msg,
@@ -575,6 +642,64 @@ oes_pending_set_target_prison(struct oes_pending *ep, struct proc *target)
 	ep->ep_target_pr = pr;
 }
 
+/*
+ * The event for the deferred queue, in an allocation of its actual size:
+ * built events take OES_MSG_MAX_SIZE of message space whatever they
+ * hold.  The copy takes over ep's prison references, which deferred jail
+ * matching needs (oes_pending_clone() leaves them behind); ep keeps the
+ * rest and is released by its owner as before.  A signal-reserve event
+ * is copied without asking VM for memory (M_NOVM, its hook's rule), so
+ * its reserve item returns to the reserve as soon as the hook is done
+ * rather than staying queued.  NULL, and ep untouched, for a message
+ * that fills OES_MSG_MAX_SIZE or when no memory is free at once.
+ */
+struct oes_pending *
+oes_pending_compact(struct oes_pending *ep)
+{
+	struct oes_pending *cep;
+	size_t msg_size, alloc_size;
+	int mflags;
+
+	KASSERT((ep->ep_flags & EP_FLAG_AUTH) == 0,
+	    ("oes_pending_compact: AUTH event %#x", ep->ep_msg.em_event));
+	KASSERT(ep->ep_refcount == 1,
+	    ("oes_pending_compact: shared event, refcount %d",
+	    ep->ep_refcount));
+	KASSERT(ep->ep_group == NULL,
+	    ("oes_pending_compact: NOTIFY event with an AUTH group"));
+	msg_size = MAX(ep->ep_msg.em_size, sizeof(oes_message_t));
+	if (msg_size >= OES_MSG_MAX_SIZE)
+		return (NULL);
+	alloc_size = offsetof(struct oes_pending, ep_msg) + msg_size;
+	mflags = M_NOWAIT;
+	if ((ep->ep_flags & EP_FLAG_SIGNAL_RESERVE) != 0)
+		mflags |= M_NOVM;
+	cep = malloc(alloc_size, M_OES, mflags);
+	if (cep == NULL)
+		return (NULL);
+	/* A NOTIFY event: no lock, condition variable or group to carry. */
+	memcpy(cep, ep, alloc_size);
+	cep->ep_refcount = 1;
+	cep->ep_flags &= ~EP_FLAG_SIGNAL_RESERVE;
+	ep->ep_subject_pr = NULL;
+	ep->ep_target_pr = NULL;
+	return (cep);
+}
+
+/*
+ * The memory a queued event holds: what the allocator gave it, or the
+ * signal reserve's item.
+ */
+u_long
+oes_pending_charge(const struct oes_pending *ep)
+{
+
+	if ((ep->ep_flags & EP_FLAG_SIGNAL_RESERVE) != 0)
+		return (offsetof(struct oes_pending, ep_msg) +
+		    OES_MSG_MAX_SIZE);
+	return (malloc_usable_size(ep));
+}
+
 struct oes_pending *
 oes_pending_clone(const struct oes_pending *src, int mflags)
 {
@@ -595,7 +720,7 @@ oes_pending_clone(const struct oes_pending *src, int mflags)
 		return (NULL);
 
 	ep->ep_refcount = 1;
-	ep->ep_flags = src->ep_flags & EP_FLAG_AUTH;
+	ep->ep_flags = src->ep_flags & (EP_FLAG_AUTH | EP_FLAG_FAIL_OPEN);
 	bcopy(&src->ep_msg, &ep->ep_msg, msg_size);
 	ep->ep_msg.em_deadline = (oes_timespec_t){ 0 };
 	ep->ep_deadline = (struct timespec){ 0 };
@@ -673,6 +798,105 @@ oes_event_note_drop(struct oes_client *ec, oes_event_type_t event)
 	EC_LOCK_ASSERT(ec);
 	oes_event_advance_sequences(ec, event, &seq_num, &global_seq_num);
 	ec->ec_events_dropped++;
+	/* The queue may be empty: wake readers for the marker. */
+	ec->ec_lost_queue++;
+	selwakeup(&ec->ec_selinfo);
+	KNOTE_LOCKED(&ec->ec_selinfo.si_note, 0);
+	wakeup(&ec->ec_pending);
+}
+
+/*
+ * An event no client was sent: refused at the deferred-delivery bound
+ * (oes_mac.c oes_deliver_notify_nosleep()) or not allocated.  The code
+ * that loses it may not be able to take the locks that matching it to
+ * clients needs (a NOSLEEP hook cannot), so it is counted by its type,
+ * and each client credits itself (oes_client_lost_fold()).  The delivery
+ * task wakes the clients (oes_lost_announce()); sc_lost_kick enqueues it
+ * once per announcement rather than once per loss.  The kick is read
+ * after the total is advanced and the task clears it before it reads
+ * the total, each with a full fence between, so either the task sees
+ * this loss or this loss sees the kick clear and enqueues the task.
+ */
+void
+oes_event_lost_unsent(oes_event_type_t event)
+{
+	u_int idx;
+
+	idx = event & 0x0fff;
+	if (idx < OES_EVENT_INDEX_COUNT)
+		atomic_add_64(&oes_softc.sc_lost[OES_EVENT_IS_NOTIFY(event) ?
+		    1 : 0][idx], 1);
+	atomic_add_rel_64(&oes_softc.sc_lost_total, 1);
+	atomic_thread_fence_seq_cst();
+	if (oes_softc.sc_defer_tq != NULL &&
+	    atomic_load_int(&oes_softc.sc_lost_kick) == 0 &&
+	    atomic_cmpset_int(&oes_softc.sc_lost_kick, 0, 1))
+		taskqueue_enqueue(oes_softc.sc_defer_tq,
+		    &oes_softc.sc_defer_task);
+}
+
+/* Is ec subscribed to an event of class cls and index idx, as delivered? */
+static bool
+oes_client_lost_subscribed(struct oes_client *ec, u_int cls, u_int idx)
+{
+	oes_event_type_t notify;
+
+	if (cls == 1)
+		return (oes_client_subscribed(ec,
+		    (oes_event_type_t)(0x1000 | idx)));
+	/* An AUTH event reaches subscribers of its NOTIFY form as well. */
+	if (oes_client_subscribed(ec, (oes_event_type_t)idx))
+		return (true);
+	notify = oes_auth_to_notify((oes_event_type_t)idx);
+	return (notify != 0 && oes_client_subscribed(ec, notify));
+}
+
+/*
+ * Credit ec with the events no client was sent since its snapshots, for
+ * the types it is subscribed to now, and take new snapshots of every
+ * type.  Called when the client looks for a marker and, with all, before
+ * each subscription change, so a type counts only while subscribed.
+ * Matching is by type alone: mutes and scopes are not applied, so a
+ * client may be told of an event it would not have received.  The loser
+ * advances the per-type count before the total (release), so a total read
+ * here (acquire) covers the per-type counts read after it, and a total
+ * already seen lets a reader skip the scan.  A subscription change must
+ * not skip it: a per-type count advanced before its total would be
+ * credited only after the type might have been unsubscribed.
+ */
+void
+oes_client_lost_fold(struct oes_client *ec, bool all)
+{
+	uint64_t total, n, lost;
+	u_int cls, i;
+
+	EC_LOCK_ASSERT(ec);
+	total = atomic_load_acq_64(&oes_softc.sc_lost_total);
+	if (!all && total == ec->ec_lost_seen_total)
+		return;
+	lost = 0;
+	for (cls = 0; cls < 2; cls++) {
+		for (i = 0; i < OES_EVENT_INDEX_COUNT; i++) {
+			n = atomic_load_64(&oes_softc.sc_lost[cls][i]);
+			if (n == ec->ec_lost_seen[cls][i])
+				continue;
+			if (oes_client_lost_subscribed(ec, cls, i))
+				lost += n - ec->ec_lost_seen[cls][i];
+			ec->ec_lost_seen[cls][i] = n;
+		}
+	}
+	ec->ec_lost_seen_total = total;
+	ec->ec_lost_unsent += lost;
+}
+
+/* Whether a read now returns an OES_EVENT_NOTIFY_LOST marker. */
+bool
+oes_client_lost_pending(struct oes_client *ec)
+{
+
+	EC_LOCK_ASSERT(ec);
+	oes_client_lost_fold(ec, false);
+	return (ec->ec_lost_queue != 0 || ec->ec_lost_unsent != 0);
 }
 
 int
@@ -687,6 +911,8 @@ oes_event_enqueue(struct oes_client *ec, struct oes_pending *ep)
 
 	if (ec->ec_queue_count >= ec->ec_queue_max) {
 		ec->ec_events_dropped++;
+		/* Read with the marker first; the full queue is readable. */
+		ec->ec_lost_queue++;
 		SDT_PROBE3(oes, , , event__drop,
 		    ep->ep_msg.em_event,
 		    ep->ep_msg.em_process.ep_pid,

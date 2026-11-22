@@ -588,6 +588,9 @@ enum {
 /* 5BSD private bits are allocated downward from 0x80000000. */
 #define	TDP2_CAPCHAN_RECV 0x80000000 /* Admitting a descriptor received
 					      over a capability channel */
+#define	TDP2_DQ_ATTACH	0x40000000 /* Inside DQ_IOC_ATTACH's p_candebug():
+					      base exclusion defers to the
+					      attach rule */
 
 /*
  * Reasons that the current thread can not be run yet.
@@ -949,6 +952,11 @@ struct proc {
 #define	P2_HWT			0x02000000	/* Process is using HWT. */
 #define	P2_PTRACE_LISTEN	0x04000000	/* Stopped ptrace listener. */
 #define	P2_PTRACE_LCONT	0x08000000	/* LISTEN woke on SIGCONT. */
+#define	P2_CAP_EXCLUDED		0x10000000	/* Base exclusion: OES and
+						   Capability Brokers leave
+						   this process alone.  Set
+						   only at exec commit;
+						   inherited by fork. */
 #define	P2_PTRACE_OUTSTOP	0x20000000	/* Stopped from outside by a
 						   transparent PT_ATTACH or
 						   PT_KERN_INTERRUPT; implies
@@ -956,6 +964,8 @@ struct proc {
 #define	P2_DQOWNER		0x40000000	/* Has opened a dq(4) queue;
 						   never cleared, not
 						   inherited. */
+
+#define	P_CAP_EXCLUDED(p)	(((p)->p_flag2 & P2_CAP_EXCLUDED) != 0)
 
 /* Flags protected by proctree_lock, kept in p_treeflags. */
 #define	P_TREE_ORPHANED		0x00000001	/* Reparented, on orphan list */

@@ -534,8 +534,13 @@ test_get_muted_bad_buffer(void)
 		close(fd);
 		return (1);
 	}
+	/*
+	 * One entry to copy out.  The parent process, not OES_MUTE_SELF: a
+	 * self-mute adds no entry since a client never receives its own
+	 * processes' events (oes(4)).
+	 */
 	memset(&mute, 0, sizeof(mute));
-	mute.emu_flags = OES_MUTE_SELF;
+	mute.emu_token.ept_id = (uint64_t)getppid();
 	if (ioctl(fd, OES_IOC_MUTE_PROCESS, &mute) < 0) {
 		perror("OES_IOC_MUTE_PROCESS");
 		close(fd);

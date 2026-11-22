@@ -152,8 +152,13 @@ check_process_mute_lifecycle(oes_event_type_t event)
 	ATF_REQUIRE_MSG(ioctl(fd, OES_IOC_UNMUTE_ALL_PROCESSES) == 0,
 	    "clear default process mutes: %s", strerror(errno));
 
+	/*
+	 * A real process token: OES_MUTE_SELF lists nothing, since a client
+	 * never receives its own processes' events (oes(4)).  The parent (the
+	 * test runner) outlives this check.
+	 */
 	memset(&mute, 0, sizeof(mute));
-	mute.empe_flags = OES_MUTE_SELF;
+	mute.empe_token.ept_id = (uint64_t)getppid();
 	mute.empe_count = 1;
 	mute.empe_events[0] = event;
 	ATF_REQUIRE_MSG(ioctl(fd, OES_IOC_MUTE_PROCESS_EVENTS, &mute) == 0,
@@ -167,7 +172,7 @@ check_process_mute_lifecycle(oes_event_type_t event)
 	    "query process mute event %#x: %s", event, strerror(errno));
 	ATF_REQUIRE_EQ_MSG(1, query.egmp_actual,
 	    "event %#x did not produce exactly one process mute", event);
-	ATF_REQUIRE_EQ_MSG((uint64_t)getpid(), entry.emp_token.ept_id,
+	ATF_REQUIRE_EQ_MSG((uint64_t)getppid(), entry.emp_token.ept_id,
 	    "event %#x process mute has the wrong pid", event);
 	ATF_REQUIRE_EQ_MSG(1, entry.emp_event_count,
 	    "event %#x process mute has wrong event count", event);

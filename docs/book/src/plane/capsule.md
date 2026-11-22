@@ -114,6 +114,16 @@ triggered only when switchboard permanently fails before convergence, meaning
 its restart circuit breaker trips (below). A wedged-but-alive switchboard
 hangs boot exactly as a wedged `/etc/rc` hung init before.
 
+switchboard waits for each Capsule reply on that channel with no deadline, so
+Capsule keeps one rule: every request is answered, or the channel ends. A
+malformed request (too short, too large, extra descriptors) gets an error
+status. A reply that cannot be sent is retried once as a status-only error
+carrying the send errno; when not even that can be sent, or Capsule cannot
+receive a message at all (including `EMFILE`/`ENFILE` while installing an
+attached descriptor), Capsule closes its end and kills switchboard, which it
+then restarts with a fresh channel, as after any switchboard exit. Anything a
+request had claimed for a reply that switchboard never received is released.
+
 Two compatibility invariants carry over from init: PID 1 is already the
 real-init reaper (Capsule verifies `PROC_REAP_STATUS` rather than acquiring
 it), and `init_exec` is ignored because it is the hook that led the kernel to

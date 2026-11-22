@@ -22,8 +22,18 @@ LIBADD.mac_capability_jail_lock_order_test+=	jail
 TEST_METADATA.mac_capability_jail_lock_order_test+=	is_exclusive="true"
 ATF_TESTS_C+=	mac_capability_procdesc_test
 ATF_TESTS_C+=	authority_test_issuer_test
+# Base exclusion (oes-core-exemption.md): pins and mechanics.  Its issuer
+# cases need the stack tier (test issuers); its PID 1 and switchboard cases
+# run on every tier.
+ATF_TESTS_C+=	cap_exclusion_test
+TEST_METADATA.cap_exclusion_test+=	is_exclusive="true"
+LIBADD.cap_exclusion_test+=	util dq
+CFLAGS.cap_exclusion_test+=	-I${SRCTOP}/lib/libdq
+PROGS+=		cap_exclusion_helper
+NO_SHARED.cap_exclusion_helper=	yes
 ATF_TESTS_C+=	authority_test_issuer_anchor_test
 LIBADD.authority_test_issuer_anchor_test+=	pthread
+LIBADD.mac_capability_channel_test+=	pthread
 ATF_TESTS_C+=	authority_issuer_probe_test
 PROGS+=		authority_issuer_helper
 ATF_TESTS_C+=	mac_capability_mount_test
@@ -102,7 +112,7 @@ CFLAGS+=	-I${SRCTOP}/sys -I${SRCTOP}/sys/dev/mac_capability
 CFLAGS+=	-I${.CURDIR}/fixtures/include
 LIBADD.mac_capability_test+=	jail
 LIBADD.mac_capability_test+=	util
-LIBADD.mac_capability_coalition_test+=	jail
+LIBADD.mac_capability_coalition_test+=	jail pthread
 LIBADD.mac_capability_isolation_test+=	jail
 LIBADD.mac_capability_isolation_helper+=	jail
 

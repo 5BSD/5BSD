@@ -1342,7 +1342,8 @@ struct mac_policy_conf {
 	int				*mpc_field_off; /* security field */
 	int				 mpc_runtime_flags; /* flags */
 	int				 _mpc_spare1;	/* Spare. */
-	uint64_t			 _mpc_spare2;	/* Spare. */
+	uint64_t			 mpc_fp_active;	/* fast-path hooks counted;
+							   framework */
 	uint64_t			 _mpc_spare3;	/* Spare. */
 	void				*_mpc_spare4;	/* Spare. */
 	LIST_ENTRY(mac_policy_conf)	 mpc_list;	/* global list */
@@ -1351,9 +1352,25 @@ struct mac_policy_conf {
 /* Flags for the mpc_loadtime_flags field. */
 #define	MPC_LOADTIME_FLAG_NOTLATE	0x00000001
 #define	MPC_LOADTIME_FLAG_UNLOADOK	0x00000002
+/*
+ * The policy's hooks do not count toward the framework's fast-path flags
+ * until the policy activates them with mac_policy_fastpath_set().  5BSD
+ * loadtime flags take values from 0x40000000 down, clear of upstream.
+ */
+#define	MPC_LOADTIME_FLAG_FP_INACTIVE	0x40000000
 
 /* Flags for the mpc_runtime_flags field. */
 #define	MPC_RUNTIME_FLAG_REGISTERED	0x00000001
+
+/*
+ * A fast-path hook, named by its struct mac_policy_ops member: the value
+ * is the member's index in the table.  It is meaningful only to
+ * mac_policy_fastpath_set() and mac_policy_fastpath_hooks().
+ */
+#define	MAC_FP_HOOK(f)							\
+	((u_short)(offsetof(struct mac_policy_ops, mpo_ ## f) /	\
+	    sizeof(void *)))
+#define	MAC_FP_NONE	((u_short)0xffff)
 
 /*-
  * The TrustedBSD MAC Framework has a major version number, MAC_VERSION,
@@ -1411,6 +1428,32 @@ struct mac_policy_conf {
 	    SI_ORDER_MIDDLE)
 
 int	mac_policy_modevent(module_t mod, int type, void *data);
+
+/*
+ * Switch the fast-path contribution of a registered policy's hooks.
+ *
+ * mac_policy_fastpath_set() makes each listed hook of mpc count (active) or
+ * not count toward its framework fast-path flag; it is idempotent per hook
+ * and changes nothing unless every hook is valid.  It returns 0; EINVAL
+ * for a NULL mpc, a NULL hooks with nhooks != 0, too many hooks, or a hook
+ * the policy does not implement; ENOENT when the policy is not registered;
+ * EOPNOTSUPP for a hook without a fast-path flag.  It takes one mutex and
+ * never sleeps or waits for threads inside hooks, so it may be called with
+ * a policy's own mutex or rwlock held.  Every flag test made after it
+ * returns sees the new value; a thread that tested a flag before may still
+ * finish one operation on the old one.  A policy that registers with
+ * MPC_LOADTIME_FLAG_FP_INACTIVE must make its hooks behave as if nothing
+ * were configured while they are inactive (they can still be called: other
+ * policies share the flags), and must activate a hook before the state
+ * that needs it becomes visible to its own hooks.
+ *
+ * mac_policy_fastpath_hooks() stores up to maxhooks MAC_FP_HOOK() values of
+ * the fast-path hooks mpc implements and returns how many it implements.
+ */
+int	mac_policy_fastpath_set(struct mac_policy_conf *mpc,
+	    const u_short *hooks, u_int nhooks, bool active);
+u_int	mac_policy_fastpath_hooks(const struct mac_policy_conf *mpc,
+	    u_short *hooks, u_int maxhooks);
 
 /*
  * Policy interface to map a struct label pointer to per-policy data.

@@ -73,8 +73,12 @@ grep -qx 'lor_unknown=1' "$work/out" && grep -q '^UNKNOWN_LOR' "$work/out" ||
 after "$fix"/known-shutdown-tmpfs-ufs-vflush.txt > "$work/out"
 grep -qx 'lor_unknown=0' "$work/out" && grep -q '^KNOWN_LOR=1 ' "$work/out" ||
     fail "a known reversal: $(cat "$work/out")"
+# FATAL_LOR=no keeps the guest running; it does not make the run clean.
 (export FATAL_LOR=no; after "$fix"/unknown-quota.txt) > "$work/out"
-grep -qx 'lor_unknown=0' "$work/out" || fail "FATAL_LOR=no: $(cat "$work/out")"
+grep -qx 'lor_unknown=1' "$work/out" && grep -q '^UNKNOWN_LOR' "$work/out" ||
+    fail "FATAL_LOR=no left an unknown reversal clean: $(cat "$work/out")"
+(export FATAL_LOR=no; after "$fix"/known-shutdown-tmpfs-ufs-vflush.txt) > "$work/out"
+grep -q '^KNOWN_LOR=1 ' "$work/out" || fail "FATAL_LOR=no: known reversal not reported: $(cat "$work/out")"
 after "$work/none" > "$work/out"
 [ "$(cat "$work/out")" = lor_unknown=0 ] || fail "no reversal: $(cat "$work/out")"
 echo "PASS known-lor.txt classes the $n recorded reports as intended; an unseen unknown reversal is not clean"

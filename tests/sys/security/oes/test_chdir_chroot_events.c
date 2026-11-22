@@ -15,6 +15,56 @@
 #include <sys/stat.h>
 #include <kenv.h>
 
+/*
+ * The actor of each case is a child of the test (test_in_child()): the test
+ * opened the client, so its own events never reach that client (oes(4),
+ * "A client's own processes").
+ */
+static int
+chdir_tmp(void *arg __unused)
+{
+
+	return (chdir("/tmp") == 0 ? 0 : 1);
+}
+
+static int
+fchdir_tmp(void *arg __unused)
+{
+	int dirfd;
+
+	dirfd = open("/tmp", O_RDONLY | O_DIRECTORY);
+	if (dirfd < 0)
+		return (1);
+	return (fchdir(dirfd) == 0 ? 0 : 2);
+}
+
+static int
+read_ostype(void *arg __unused)
+{
+	int mib[2] = { CTL_KERN, KERN_OSTYPE };
+	char buf[256];
+	size_t len = sizeof(buf);
+
+	return (sysctl(mib, 2, buf, &len, NULL, 0) == 0 ? 0 : 1);
+}
+
+/* Set a temporary kenv name (it must not exist), then unset it. */
+static int
+kenv_set_unset(void *arg)
+{
+	const char *name = arg;
+	char value[256];
+
+	if (kenv(KENV_GET, name, value, sizeof(value)) >= 0 || errno != ENOENT)
+		return (1);
+	strlcpy(value, "oes-test", sizeof(value));
+	if (kenv(KENV_SET, name, value, strlen(value) + 1) < 0)
+		return (2);
+	if (kenv(KENV_UNSET, name, NULL, 0) < 0)
+		return (3);
+	return (0);
+}
+
 static int
 test_chdir_event(void)
 {
@@ -22,8 +72,8 @@ test_chdir_event(void)
 	oes_event_type_t events[] = { OES_EVENT_NOTIFY_CHDIR };
 	test_msg_buf _msg_buf;
 	oes_message_t *msg = &_msg_buf.msg;
-	char origdir[256];
-	int got_chdir = 0;
+	pid_t actor;
+	int got_chdir = 0, status;
 
 	TEST_BEGIN("chdir event");
 
@@ -36,42 +86,29 @@ test_chdir_event(void)
 		return (1);
 	}
 
-	if (test_unmute_self(fd) < 0 ||
-	    test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
+	if (test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
 		close(fd);
 		return (1);
 	}
 
-	/* Save current directory */
-	if (getcwd(origdir, sizeof(origdir)) == NULL) {
-		TEST_FAIL("getcwd: %s", strerror(errno));
-		close(fd);
-		return (1);
-	}
-
-	/* Change to /tmp */
-	if (chdir("/tmp") < 0) {
-		TEST_FAIL("chdir /tmp: %s", strerror(errno));
+	/* The actor is a child: the test's own events never reach it. */
+	actor = test_in_child(chdir_tmp, NULL, &status);
+	if (actor < 0 || !test_child_ok(status)) {
+		TEST_FAIL("chdir /tmp in the actor failed");
 		close(fd);
 		return (1);
 	}
 
 	/* Check for chdir event */
-	for (int i = 0; i < 3; i++) {
-		if (test_wait_event(fd, msg, 500) == 0) {
-			if (msg->em_event == OES_EVENT_NOTIFY_CHDIR &&
-			    msg->em_process.ep_pid == getpid()) {
-				got_chdir = 1;
-				printf("    INFO: chdir event received\n");
-			}
-		}
+	/* The actor's event, with a deadline; others are skipped. */
+	if (test_wait_event_pid(fd, actor, OES_EVENT_NOTIFY_CHDIR, OES_TEST_DEADLINE_MS,
+	    msg) == 0) {
+		got_chdir = 1;
+		printf("    INFO: chdir event received\n");
 	}
 
 	if (!got_chdir)
 		TEST_FAIL("no chdir event received");
-
-	/* Restore original directory */
-	(void)chdir(origdir);
 
 	close(fd);
 	TEST_PASS();
@@ -81,12 +118,12 @@ test_chdir_event(void)
 static int
 test_fchdir_event(void)
 {
-	int fd, dirfd;
+	int fd;
 	oes_event_type_t events[] = { OES_EVENT_NOTIFY_CHDIR };
 	test_msg_buf _msg_buf;
 	oes_message_t *msg = &_msg_buf.msg;
-	char origdir[256];
-	int got_chdir = 0;
+	pid_t actor;
+	int got_chdir = 0, status;
 
 	TEST_BEGIN("fchdir event");
 
@@ -99,50 +136,29 @@ test_fchdir_event(void)
 		return (1);
 	}
 
-	if (test_unmute_self(fd) < 0 ||
-	    test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
+	if (test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
 		close(fd);
 		return (1);
 	}
 
-	if (getcwd(origdir, sizeof(origdir)) == NULL) {
-		TEST_FAIL("getcwd: %s", strerror(errno));
-		close(fd);
-		return (1);
-	}
-
-	/* Open /tmp directory */
-	dirfd = open("/tmp", O_RDONLY | O_DIRECTORY);
-	if (dirfd < 0) {
-		TEST_FAIL("open /tmp: %s", strerror(errno));
-		close(fd);
-		return (1);
-	}
-
-	/* fchdir */
-	if (fchdir(dirfd) < 0) {
-		TEST_FAIL("fchdir: %s", strerror(errno));
-		close(dirfd);
+	actor = test_in_child(fchdir_tmp, NULL, &status);
+	if (actor < 0 || !test_child_ok(status)) {
+		TEST_FAIL("fchdir /tmp in the actor failed");
 		close(fd);
 		return (1);
 	}
 
 	/* Check for chdir event */
-	for (int i = 0; i < 3; i++) {
-		if (test_wait_event(fd, msg, 500) == 0) {
-			if (msg->em_event == OES_EVENT_NOTIFY_CHDIR &&
-			    msg->em_process.ep_pid == getpid()) {
-				got_chdir = 1;
-				printf("    INFO: fchdir event received\n");
-			}
-		}
+	/* The actor's event, with a deadline; others are skipped. */
+	if (test_wait_event_pid(fd, actor, OES_EVENT_NOTIFY_CHDIR, OES_TEST_DEADLINE_MS,
+	    msg) == 0) {
+		got_chdir = 1;
+		printf("    INFO: fchdir event received\n");
 	}
 
 	if (!got_chdir)
 		TEST_FAIL("no fchdir event received");
 
-	(void)chdir(origdir);
-	close(dirfd);
 	close(fd);
 	TEST_PASS();
 	return (0);
@@ -176,8 +192,7 @@ test_chroot_event(void)
 		return (1);
 	}
 
-	if (test_unmute_self(fd) < 0 ||
-	    test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
+	if (test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
 		close(fd);
 		return (1);
 	}
@@ -227,14 +242,11 @@ test_chroot_event(void)
 	close(pipefd[0]);
 
 	/* Check for chroot event */
-	for (int i = 0; i < 3; i++) {
-		if (test_wait_event(fd, msg, 500) == 0) {
-			if (msg->em_event == OES_EVENT_NOTIFY_CHROOT &&
-			    msg->em_process.ep_pid == child) {
-				got_chroot = 1;
-				printf("    INFO: chroot event received\n");
-			}
-		}
+	/* The child's event, with a deadline; others are skipped. */
+	if (test_wait_event_pid(fd, child, OES_EVENT_NOTIFY_CHROOT, OES_TEST_DEADLINE_MS,
+	    msg) == 0) {
+		got_chroot = 1;
+		printf("    INFO: chroot event received\n");
 	}
 
 	if (!got_chroot)
@@ -253,10 +265,8 @@ test_sysctl_event(void)
 	oes_event_type_t events[] = { OES_EVENT_NOTIFY_SYSCTL };
 	test_msg_buf _msg_buf;
 	oes_message_t *msg = &_msg_buf.msg;
-	int mib[2];
-	char buf[256];
-	size_t len;
-	int got_sysctl = 0;
+	pid_t actor;
+	int got_sysctl = 0, status;
 
 	TEST_BEGIN("sysctl event");
 
@@ -269,31 +279,25 @@ test_sysctl_event(void)
 		return (1);
 	}
 
-	if (test_unmute_self(fd) < 0 ||
-	    test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
+	if (test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
 		close(fd);
 		return (1);
 	}
 
-	/* Read kern.ostype via sysctl */
-	mib[0] = CTL_KERN;
-	mib[1] = KERN_OSTYPE;
-	len = sizeof(buf);
-	if (sysctl(mib, 2, buf, &len, NULL, 0) < 0) {
-		TEST_FAIL("sysctl: %s", strerror(errno));
+	/* Read kern.ostype via sysctl, in the actor. */
+	actor = test_in_child(read_ostype, NULL, &status);
+	if (actor < 0 || !test_child_ok(status)) {
+		TEST_FAIL("sysctl in the actor failed");
 		close(fd);
 		return (1);
 	}
 
 	/* Check for sysctl event */
-	for (int i = 0; i < 3; i++) {
-		if (test_wait_event(fd, msg, 500) == 0) {
-			if (msg->em_event == OES_EVENT_NOTIFY_SYSCTL &&
-			    msg->em_process.ep_pid == getpid()) {
-				got_sysctl = 1;
-				printf("    INFO: sysctl event received\n");
-			}
-		}
+	/* The actor's event, with a deadline; others are skipped. */
+	if (test_wait_event_pid(fd, actor, OES_EVENT_NOTIFY_SYSCTL, OES_TEST_DEADLINE_MS,
+	    msg) == 0) {
+		got_sysctl = 1;
+		printf("    INFO: sysctl event received\n");
 	}
 
 	if (!got_sysctl)
@@ -311,8 +315,9 @@ test_kenv_event(void)
 	oes_event_type_t events[] = { OES_EVENT_NOTIFY_KENV };
 	test_msg_buf _msg_buf;
 	oes_message_t *msg = &_msg_buf.msg;
-	char value[256], name[64];
-	int got_kenv = 0;
+	char name[64];
+	pid_t actor;
+	int got_kenv = 0, status;
 
 	TEST_BEGIN("kenv event");
 
@@ -325,45 +330,53 @@ test_kenv_event(void)
 		return (1);
 	}
 
-	if (test_unmute_self(fd) < 0 ||
-	    test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
+	if (test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
 		close(fd);
 		return (1);
 	}
 
-	/* KENV notifications currently cover mutations, not reads. */
+	/*
+	 * KENV notifications currently cover mutations, not reads.  The actor
+	 * sets a temporary name, then unsets it.
+	 */
 	snprintf(name, sizeof(name), "oes.test.kenv.%d", getpid());
-	if (kenv(KENV_GET, name, value, sizeof(value)) >= 0 || errno != ENOENT) {
-		TEST_FAIL("temporary kenv name is not available");
-		close(fd);
-		return (1);
-	}
-	strlcpy(value, "oes-test", sizeof(value));
-	if (kenv(KENV_SET, name, value, strlen(value) + 1) < 0) {
-		TEST_FAIL("kenv SET: %s", strerror(errno));
+	actor = test_in_child(kenv_set_unset, name, &status);
+	if (actor < 0 || !test_child_ok(status)) {
+		TEST_FAIL("kenv SET/UNSET in the actor failed (status %#x)",
+		    status);
 		close(fd);
 		return (1);
 	}
 
-	/* Check for kenv event */
-	for (int i = 0; i < 3; i++) {
-		if (test_wait_event(fd, msg, 500) == 0) {
-			if (msg->em_event == OES_EVENT_NOTIFY_KENV &&
-			    msg->em_process.ep_pid == getpid()) {
-				got_kenv = msg->em_event_data.kenv.op == 1 &&
-				    strcmp(oes_msg_string(msg,
-				    msg->em_event_data.kenv.name_off), name) == 0;
-			}
+	/*
+	 * The actor's two KENV events, in order: SET (op 1), then UNSET
+	 * (op 2), both naming the temporary variable.  Every KENV event read
+	 * is printed, to tell a missing event from a mismatched one.
+	 */
+	{
+		int seen = 0;
+
+		while (seen < 2 && test_wait_event_type(fd, msg,
+		    OES_EVENT_NOTIFY_KENV, OES_TEST_DEADLINE_MS) == 0) {
+			const char *kn = oes_msg_string(msg,
+			    msg->em_event_data.kenv.name_off);
+
+			printf("    INFO: kenv event pid %d op %d name %s\n",
+			    (int)msg->em_process.ep_pid,
+			    (int)msg->em_event_data.kenv.op, kn);
+			if (msg->em_process.ep_pid != actor ||
+			    strcmp(kn, name) != 0)
+				continue;
+			if (seen == 0 && msg->em_event_data.kenv.op == 1)
+				got_kenv = 1;
+			else if (seen == 1 && msg->em_event_data.kenv.op == 2)
+				got_kenv++;
+			seen++;
 		}
 	}
-
-	if (!got_kenv)
+	if (got_kenv < 1)
 		TEST_FAIL("no kenv event received");
-	if (kenv(KENV_UNSET, name, NULL, 0) < 0)
-		TEST_FAIL("kenv cleanup: %s", strerror(errno));
-	if (test_wait_event_pid(fd, getpid(), OES_EVENT_NOTIFY_KENV, 2000,
-	    msg) != 0 || msg->em_event_data.kenv.op != 2 ||
-	    strcmp(oes_msg_string(msg, msg->em_event_data.kenv.name_off), name) != 0)
+	if (got_kenv < 2)
 		TEST_FAIL("missing or incorrect kenv UNSET event");
 
 	close(fd);
@@ -467,7 +480,8 @@ test_auth_chdir(void)
 	close(pipefd[1]);
 
 	/* Wait for AUTH_CHDIR event */
-	if (test_wait_event_pid(fd, child, OES_EVENT_AUTH_CHDIR, 3000, msg) == 0) {
+	if (test_wait_event_pid(fd, child, OES_EVENT_AUTH_CHDIR,
+	    OES_TEST_DEADLINE_MS, msg) == 0) {
 		printf("    INFO: got AUTH_CHDIR event, denying\n");
 		memset(&resp, 0, sizeof(resp));
 		resp.er_id = msg->em_id;

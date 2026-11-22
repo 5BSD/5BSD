@@ -419,8 +419,19 @@ exec_image_vnode_mac(struct image_params *imgp, int phase,
 static struct cap_authority *
 exec_image_vnode_authority_prepare(struct image_params *imgp, struct proc *p)
 {
+	struct mount *mp;
 
-	if ((imgp->vp->v_mount->mnt_flag & MNT_NOSUID) == 0)
+	/*
+	 * Called before IS_CHECK (base exclusion): the vnode may be doomed
+	 * (revoke(2), a forced unmount) or not a regular file.  Such an exec
+	 * fails in IS_CHECK and never carries authority.  The vnode is locked,
+	 * so it cannot become doomed under the test.
+	 */
+	ASSERT_VOP_LOCKED(imgp->vp, __func__);
+	if (imgp->vp->v_type != VREG || VN_IS_DOOMED(imgp->vp))
+		return (NULL);
+	mp = imgp->vp->v_mount;
+	if (mp != NULL && (mp->mnt_flag & MNT_NOSUID) == 0)
 		return (cap_authority_exec_prepare(p, imgp->vp));
 	return (NULL);
 }

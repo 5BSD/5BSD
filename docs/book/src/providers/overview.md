@@ -62,8 +62,9 @@ Four conventions hold across all of them.
 **Lazy acquire.** A client opens its channel on first use, not at startup.
 A unit that logs, for instance, does not fail to launch because `system.Log`
 has not checked in yet; the first `logcmp_log(3)` call resolves the name and
-the lookup parks until the provider is ready or `SERVICE_LOOKUP_TIMEOUT_MS`
-(2000 ms) elapses.
+the lookup parks until the provider is ready, or until switchboard answers
+`ETIMEDOUT` at the end of its activation bound
+(`SERVICE_ACTIVATION_TIMEOUT_MS`, 10 s).
 
 **Fail soft.** A provider that is down, not yet launched, or refusing the
 caller is reported as an error to the calling function (`-1` with errno, or

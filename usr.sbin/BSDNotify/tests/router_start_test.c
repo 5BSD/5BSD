@@ -3,9 +3,10 @@
  * Start of the BSDNotify router (router_main(), pdforked by main()).  The
  * router opens its own system.Audit session before it confines itself, then
  * sends its ready status over its control channel.  As in bsdlog's pool
- * workers (2026-11-12), that lookup could outlive its 2 s bound while
+ * workers (2026-11-12), that lookup could outlive its former 2 s bound while
  * switchboard was still activating BSDAudit, and the router then exited
  * without a status, leaving the provider only the end of the channel.
+ * Lookups now wait for switchboard's answer.
  * These cases run the real router_main() in a forked child over a real
  * capability channel, with the Audit lookup and the confinement step
  * replaced, and read the ready status the way main() does.  Plane-on tier:
@@ -34,19 +35,22 @@ int bsdnotify_main(void);
 static int audit_error;		/* errno of a failing lookup */
 static int audit_failures;	/* failing lookups before success; -1 never */
 static unsigned audit_delay_ms;	/* time one failing lookup takes */
-static int audit_calls;
+static unsigned audit_lookup_delay_ms;	/* time a succeeding lookup takes */
+static int *audit_calls;	/* lookups made, shared with the parent */
 static uint32_t *confine_flags;	/* shared with the parent */
 
 int
 mock_auditcmp_client_open(struct auditcmp_client **clientp)
 {
 
-	audit_calls++;
-	if (audit_failures < 0 || audit_calls <= audit_failures) {
+	(*audit_calls)++;
+	if (audit_failures < 0 || *audit_calls <= audit_failures) {
 		if (audit_delay_ms != 0)
 			usleep(audit_delay_ms * 1000);
 		return (errno = audit_error, -1);
 	}
+	if (audit_lookup_delay_ms != 0)
+		usleep(audit_lookup_delay_ms * 1000);
 	*clientp = NULL;
 	return (0);
 }
@@ -100,6 +104,10 @@ run_router(int32_t *statusp, int *exitp, uint64_t *elapsedp)
 	    PROT_READ | PROT_WRITE, MAP_ANON | MAP_SHARED, -1, 0);
 	ATF_REQUIRE(confine_flags != MAP_FAILED);
 	*confine_flags = 0;
+	audit_calls = mmap(NULL, sizeof(*audit_calls),
+	    PROT_READ | PROT_WRITE, MAP_ANON | MAP_SHARED, -1, 0);
+	ATF_REQUIRE(audit_calls != MAP_FAILED);
+	*audit_calls = 0;
 	memset(&db, 0, sizeof(db));
 	ATF_REQUIRE_EQ(0, notify_policy_db_parse("{}", &db));
 	ATF_REQUIRE_EQ(0, mac_capability_channel_create(ends));
@@ -156,43 +164,44 @@ ATF_TC_BODY(start_error_reaches_provider, tc)
 	ATF_CHECK_EQ(0, *confine_flags);
 }
 
-ATF_TC(audit_activation_waited_out);
-ATF_TC_HEAD(audit_activation_waited_out, tc)
+ATF_TC(audit_slow_activation_one_lookup);
+ATF_TC_HEAD(audit_slow_activation_one_lookup, tc)
 {
 	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "descr", "Audit lookups that time out while "
-	    "the provider is being activated are repeated; the router starts "
-	    "confined with NOFDRECV and the rest of its restrictions");
+	atf_tc_set_md_var(tc, "timeout", "120");
+	atf_tc_set_md_var(tc, "descr", "A slow Audit activation is waited out "
+	    "by one lookup; the router starts confined with NOFDRECV and the "
+	    "rest of its restrictions");
 }
-ATF_TC_BODY(audit_activation_waited_out, tc)
+ATF_TC_BODY(audit_slow_activation_one_lookup, tc)
 {
 	uint64_t elapsed;
 	int32_t status;
 	int rc, exitst;
 
-	audit_error = ETIMEDOUT;
-	audit_failures = 2;
-	audit_delay_ms = 300;
+	/* Half switchboard's bound: any delay below it is the same case. */
+	audit_lookup_delay_ms = SERVICE_ACTIVATION_TIMEOUT_MS / 2;
+	audit_failures = 0;
 	status = -1;
 	rc = run_router(&status, &exitst, &elapsed);
 	ATF_REQUIRE_MSG(rc == 0, "no ready status: %s", strerror(errno));
 	ATF_CHECK_EQ_MSG(0, status, "ready status %d", (int)status);
+	ATF_CHECK_EQ(1, *audit_calls);
 	ATF_CHECK_EQ((uint32_t)(SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_RESTRICT), *confine_flags);
 	ATF_CHECK(WIFEXITED(exitst) && WEXITSTATUS(exitst) == 0);
 }
 
-ATF_TC(audit_lookup_deadline);
-ATF_TC_HEAD(audit_lookup_deadline, tc)
+ATF_TC(audit_activation_bound_reported);
+ATF_TC_HEAD(audit_activation_bound_reported, tc)
 {
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "timeout", "120");
-	atf_tc_set_md_var(tc, "descr", "An Audit lookup that keeps timing out "
-	    "is given up before an attempt could end after switchboard's "
-	    "activation bound plus one lookup, "
-	    "and the provider is told ETIMEDOUT within its own wait");
+	atf_tc_set_md_var(tc, "descr", "switchboard's ETIMEDOUT at the end of "
+	    "its activation bound is the router's answer after one lookup, "
+	    "within the provider's own wait");
 }
-ATF_TC_BODY(audit_lookup_deadline, tc)
+ATF_TC_BODY(audit_activation_bound_reported, tc)
 {
 	uint64_t elapsed;
 	int32_t status;
@@ -200,25 +209,45 @@ ATF_TC_BODY(audit_lookup_deadline, tc)
 
 	audit_error = ETIMEDOUT;
 	audit_failures = -1;
-	audit_delay_ms = SERVICE_LOOKUP_TIMEOUT_MS - 100;
+	audit_delay_ms = SERVICE_ACTIVATION_TIMEOUT_MS;
 	status = 0;
 	rc = run_router(&status, &exitst, &elapsed);
 	ATF_REQUIRE_MSG(rc == 0, "no ready status: %s", strerror(errno));
 	ATF_CHECK_EQ_MSG(ETIMEDOUT, status, "ready status %d", (int)status);
-	ATF_CHECK_MSG(elapsed >= NOTIFY_ROUTER_AUDIT_TIMEOUT_MS -
-	    SERVICE_LOOKUP_TIMEOUT_MS - SERVICE_ACTIVATION_RETRY_PAUSE_MS,
-	    "router gave up early, after %ju ms", (uintmax_t)elapsed);
-	ATF_CHECK_MSG(elapsed <= NOTIFY_ROUTER_AUDIT_TIMEOUT_MS + 500,
-	    "router gave up after %ju ms", (uintmax_t)elapsed);
+	ATF_CHECK_EQ(1, *audit_calls);
 	ATF_CHECK_MSG(elapsed < NOTIFY_ROUTER_START_TIMEOUT_MS,
 	    "router took %ju ms, beyond the provider's wait", (uintmax_t)elapsed);
+}
+
+ATF_TC(audit_timeout_not_repeated);
+ATF_TC_HEAD(audit_timeout_not_repeated, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr", "switchboard's ETIMEDOUT is final: "
+	    "a lookup answered at once is not repeated");
+}
+ATF_TC_BODY(audit_timeout_not_repeated, tc)
+{
+	uint64_t elapsed;
+	int32_t status;
+	int rc, exitst;
+
+	audit_error = ETIMEDOUT;
+	audit_failures = 1;
+	audit_delay_ms = 0;
+	status = 0;
+	rc = run_router(&status, &exitst, &elapsed);
+	ATF_REQUIRE_MSG(rc == 0, "no ready status: %s", strerror(errno));
+	ATF_CHECK_EQ_MSG(ETIMEDOUT, status, "ready status %d", (int)status);
+	ATF_CHECK_EQ(1, *audit_calls);
 }
 
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, start_error_reaches_provider);
-	ATF_TP_ADD_TC(tp, audit_activation_waited_out);
-	ATF_TP_ADD_TC(tp, audit_lookup_deadline);
+	ATF_TP_ADD_TC(tp, audit_slow_activation_one_lookup);
+	ATF_TP_ADD_TC(tp, audit_activation_bound_reported);
+	ATF_TP_ADD_TC(tp, audit_timeout_not_repeated);
 	return (atf_no_error());
 }

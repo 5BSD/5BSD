@@ -9,9 +9,11 @@
 #include <sys/capsicum.h>
 #include <sys/callout.h>
 #include <sys/event.h>
+#include <sys/counter.h>
 #include <sys/fcntl.h>
 #include <sys/file.h>
 #include <sys/filedesc.h>
+#include <sys/imgact.h>
 #include <sys/jail.h>
 #include <sys/kernel.h>
 #include <sys/ktrace.h>
@@ -56,6 +58,36 @@ SDT_PROVIDER_DECLARE(mac_capability);
 SDT_PROBE_DEFINE5(mac_capability, , , issuer__decision, "uint64_t", "int",
     "int", "uint64_t", "int");
 MALLOC_DEFINE(M_CAP_AUTHORITY, "cap_authority", "issued process authority");
+
+/*
+ * Base exclusion (cap_process(2) BASE EXCLUSION, oes-core-exemption.md):
+ * PID 1, and any image an already excluded process executes under its
+ * installed authority with CAP_AUTH_ROLE_CORE, is left alone by OES and by
+ * Capability Brokers.  P2_CAP_EXCLUDED is set only by cap_exclusion_exec()
+ * at an exec commit (and, on a test kernel only, by the test control
+ * debug.mac_capability.test_issuer_exclude_self); it is inherited by fork
+ * and cleared by tracing, a prison change and a Broker attach.
+ */
+SYSCTL_NODE(_security, OID_AUTO, cap_exclusion, CTLFLAG_RD | CTLFLAG_MPSAFE,
+    0, "Base exclusion");
+static COUNTER_U64_DEFINE_EARLY(cap_exclusion_granted);
+static COUNTER_U64_DEFINE_EARLY(cap_exclusion_cnt_refused_interp);
+static COUNTER_U64_DEFINE_EARLY(cap_exclusion_refused_abi);
+SYSCTL_COUNTER_U64(_security_cap_exclusion, OID_AUTO, granted, CTLFLAG_RD,
+    &cap_exclusion_granted, "Execs that set base exclusion");
+SYSCTL_COUNTER_U64(_security_cap_exclusion, OID_AUTO, refused_interp,
+    CTLFLAG_RD, &cap_exclusion_cnt_refused_interp,
+    "Excluded execs refused because the image was interpreted");
+SYSCTL_COUNTER_U64(_security_cap_exclusion, OID_AUTO, refused_abi,
+    CTLFLAG_RD, &cap_exclusion_refused_abi,
+    "Excluded execs refused for a non-native ABI");
+SDT_PROVIDER_DEFINE(cap_exclusion);
+/* Every exec commit: pid, whether the new image is excluded. */
+SDT_PROBE_DEFINE2(cap_exclusion, , , exec, "pid_t", "bool");
+/* Exclusion cleared other than by an exec: pid, CAPX_CLEAR_*. */
+SDT_PROBE_DEFINE2(cap_exclusion, , , clear, "pid_t", "int");
+/* A refusal made by the exclusion rules: pid, CAPX_R_*, errno. */
+SDT_PROBE_DEFINE3(cap_exclusion, , , refuse, "pid_t", "int", "int");
 
 /*
  * The revocation state of an issuer or an authority, separate from the
@@ -510,6 +542,30 @@ cap_authority_runs_pinned_image(struct proc *p)
 	return (pinned);
 }
 /*
+ * The CAP_AUTH_ROLE_* bits of p's valid managed authority when p runs one
+ * of its pinned images, with *managed set; 0 and false otherwise (OES
+ * records).  PROC_LOCK(p) held.
+ */
+uint32_t
+cap_authority_roles_locked(struct proc *p, bool *managed)
+{
+	struct cap_authority *a = p->p_cap_authority;
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	*managed = false;
+	if (!authority_valid(p) || a->kind != CAP_AUTH_MANAGED ||
+	    p->p_textvp == NULL)
+		return (0);
+	for (unsigned i = 0; i < a->nexec; i++) {
+		if (a->executable[i] == p->p_textvp) {
+			*managed = true;
+			return (a->roles);
+		}
+	}
+	return (0);
+}
+
+/*
  * Traditional debugging cannot manufacture the target's protected authority.
  * The caller holds target's PROC lock and stabilizes actor (curproc, or the
  * parent under proctree_lock for PT_TRACE_ME). Never wait for a second PROC
@@ -730,6 +786,9 @@ cap_authority_cred_changed(struct proc *p, const struct ucred *old,
 	struct cap_authority *a = p->p_cap_authority;
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
+	/* A process that changes prison is never excluded (rule 5). */
+	if (old->cr_prison != new->cr_prison)
+		cap_exclusion_clear_locked(p, CAPX_CLEAR_PRISON);
 	if (a == NULL || p->p_cap_authority_invalid)
 		return;
 	/* UNIX credential changes do not change software authority. A prison
@@ -856,6 +915,238 @@ cap_authority_exec(struct proc *p, struct vnode *image,
 	p->p_cap_authority_invalid = true;
 	p->p_cap_authority_pending_exec = false;
 	p->p_cap_authority_generation++;
+}
+
+/*
+ * Will this exec leave p excluded (P2_CAP_EXCLUDED)?  Called once per
+ * IS_CHECK pass by do_execve, right after the software authority for the
+ * pass was selected, before any MAC policy sees the image.  The answer is
+ * stored in imgp->cap_will_exclude, read by OES at AUTH_EXEC and by
+ * Capability Broker exec decisions, and applied by cap_exclusion_exec() at
+ * commit.  No side effects.
+ *
+ * Exclusion is handed on, never acquired: PID 1, or an already excluded
+ * process that runs the one image its installed Core-role authority pins.
+ * "selected" is what cap_authority_exec_prepare() returned for this image;
+ * the prepare already refused tracing, ktrace and no_new_privs and checked
+ * revocation and the issuer's prison, and an attached process is never
+ * prepared.  A role authority is never a registered application
+ * (register_application()), so a selected Core authority is always the
+ * installed one; the identity test below states it anyway.  "interpreted"
+ * is true on a pass reached through a #! script or binmisc image: such a
+ * pass is never excluded (rule 4).
+ */
+bool
+cap_exclusion_exec_will_exclude(struct proc *p, struct cap_authority *selected,
+    bool attached, bool interpreted)
+{
+	bool excluded;
+
+	/* Most execs: one load, no lock (the bit changes only under it). */
+	if (p != initproc &&
+	    (atomic_load_int(&p->p_flag2) & P2_CAP_EXCLUDED) == 0)
+		return (false);
+	PROC_LOCK(p);
+	if (p == initproc)
+		excluded = true;
+	else
+		excluded = !attached && !interpreted && P_CAP_EXCLUDED(p) &&
+		    selected != NULL &&
+		    selected == p->p_cap_authority &&
+		    selected->kind == CAP_AUTH_MANAGED &&
+		    (selected->roles & CAP_AUTH_ROLE_CORE) != 0 &&
+		    selected->nexec == 1 &&
+		    (p->p_flag & P_TRACED) == 0 &&
+		    (p->p_traceflag & KTRFAC_MASK) == 0 &&
+		    (p->p_flag2 & P2_NO_NEW_PRIVS) == 0;
+	PROC_UNLOCK(p);
+	return (excluded);
+}
+
+/*
+ * Is this exec an excluded launcher's start of a System-bundle unit: the
+ * authority selected for the image is the process's installed managed one
+ * and carries CAP_AUTH_ROLE_SYSTEM?  OES delivers such exec events
+ * fail-open; an excluded process's other launches get normal treatment
+ * (owner, 2026-11-20).  Called beside cap_exclusion_exec_will_exclude();
+ * no side effects.
+ */
+bool
+cap_exclusion_exec_system_launch(struct proc *p, struct cap_authority *selected)
+{
+	bool system;
+
+	if ((atomic_load_int(&p->p_flag2) & P2_CAP_EXCLUDED) == 0 ||
+	    selected == NULL)
+		return (false);
+	PROC_LOCK(p);
+	system = P_CAP_EXCLUDED(p) && selected == p->p_cap_authority &&
+	    selected->kind == CAP_AUTH_MANAGED &&
+	    (selected->roles & CAP_AUTH_ROLE_SYSTEM) != 0;
+	PROC_UNLOCK(p);
+	return (system);
+}
+
+/*
+ * An exec predicted excluded must be completed by that image's own native
+ * activation (rule 4): a script or binmisc image, or another ABI, is
+ * refused with EACCES, never ENOEXEC (execvp(3) and sh(1) would re-run an
+ * ENOEXEC image through /bin/sh).  PID 1 is exempt.
+ */
+int
+cap_exclusion_refused_interp(struct proc *p)
+{
+
+	counter_u64_add(cap_exclusion_cnt_refused_interp, 1);
+	SDT_PROBE3(cap_exclusion, , , refuse, p->p_pid, CAPX_R_INTERP, EACCES);
+	return (EACCES);
+}
+
+int
+cap_exclusion_exec_check_abi(struct image_params *imgp, struct sysentvec *sv)
+{
+
+	if (!imgp->cap_will_exclude || imgp->proc == initproc ||
+	    (sv->sv_flags & SV_ABI_MASK) == SV_ABI_FREEBSD)
+		return (0);
+	counter_u64_add(cap_exclusion_refused_abi, 1);
+	SDT_PROBE3(cap_exclusion, , , refuse, imgp->proc->p_pid, CAPX_R_ABI,
+	    EACCES);
+	return (EACCES);
+}
+
+/*
+ * Apply the base-exclusion decision of this exec.  Called once, right
+ * after cap_authority_exec(), with PROC_LOCK held.  The decision is the
+ * one cap_exclusion_exec_will_exclude() made before IS_CHECK; nothing
+ * that predicate reads can change while P_INEXEC is set: p_candebug()
+ * refuses an exec'ing target, so neither ptrace nor ktrace can start;
+ * PT_TRACE_ME needs this, single-threaded, thread; DQ_IOC_ATTACH refuses
+ * P_INEXEC; and a Capability Broker never attaches an exec predicted
+ * excluded.  Only a revocation can race; the process then runs excluded
+ * with an invalidated authority, the state of a Core daemon whose issuer
+ * was revoked after it started (Q9).
+ */
+void
+cap_exclusion_exec(struct proc *p, struct image_params *imgp)
+{
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	if (imgp->cap_will_exclude) {
+		KASSERT(p == initproc || ((p->p_flag & P_TRACED) == 0 &&
+		    (p->p_traceflag & KTRFAC_MASK) == 0 &&
+		    !dqres_cred_change_refused(p) && imgp->authority_setid),
+		    ("cap_exclusion_exec: excluded exec became traced, "
+		    "attached or lost its authority"));
+		p->p_flag2 |= P2_CAP_EXCLUDED;
+		counter_u64_add(cap_exclusion_granted, 1);
+	} else
+		p->p_flag2 &= ~P2_CAP_EXCLUDED;
+	SDT_PROBE2(cap_exclusion, , , exec, p->p_pid, imgp->cap_will_exclude);
+}
+
+static COUNTER_U64_DEFINE_EARLY(cap_exclusion_refused_debug);
+SYSCTL_COUNTER_U64(_security_cap_exclusion, OID_AUTO, refused_debug,
+    CTLFLAG_RD, &cap_exclusion_refused_debug,
+    "Debug requests refused by base exclusion");
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+/*
+ * Test kernels only (options MAC_CAPABILITY_TEST_PERMISSIVE, a row of the
+ * test-kernel option ledger: never published).  On every other kernel
+ * there is no way, at run time or by a loader tunable, for a process that
+ * is not excluded to debug an excluded one (rev 3 delta 3.3).
+ */
+static bool mac_capability_test_issuer_exclusion_debug;
+SYSCTL_BOOL(_security_cap_exclusion, OID_AUTO, debug_allowed, CTLFLAG_RDTUN,
+    &mac_capability_test_issuer_exclusion_debug, 0,
+    "Test kernel only: processes that are not excluded may debug excluded "
+    "ones (an attach clears the target's exclusion)");
+#endif
+
+/*
+ * May td debug, trace or pull from p (p_candebug(9), after the MAC hook)?
+ * An excluded process is refused to every actor that is not excluded
+ * itself, root included (EPERM).  Inside DQ_IOC_ATTACH the attach decides
+ * for itself, more narrowly (cap_exclusion_attach_check()); ptrace, ktrace
+ * and procfs never reach here with TDP2_DQ_ATTACH set.  Inspection
+ * (p_caninspect(9): memory map, auxv, kernel stack, USDT) is not refused.
+ * PROC_LOCK(p) held; the actor's own p_flag2 is read unlocked: it is the
+ * caller's process.
+ */
+int
+cap_exclusion_debug_check(struct thread *td, struct proc *p)
+{
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	if (__predict_true(!P_CAP_EXCLUDED(p)))
+		return (0);
+	/*
+	 * Among excluded processes only a parent may debug its own child that
+	 * has not executed an image (owner, 2026-11-20): Core daemons cannot
+	 * debug each other, PID 1 or switchboard.  p_pptr may be read with
+	 * p's lock.
+	 */
+	if ((atomic_load_int(&td->td_proc->p_flag2) & P2_CAP_EXCLUDED) != 0 &&
+	    p->p_pptr == td->td_proc && (p->p_flag & P_EXEC) == 0)
+		return (0);
+	if ((td->td_pflags2 & TDP2_DQ_ATTACH) != 0)
+		return (0);
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+	if (mac_capability_test_issuer_exclusion_debug)
+		return (0);
+#endif
+	counter_u64_add(cap_exclusion_refused_debug, 1);
+	SDT_PROBE3(cap_exclusion, , , refuse, p->p_pid, CAPX_R_DEBUG, EPERM);
+	return (EPERM);
+}
+
+static COUNTER_U64_DEFINE_EARLY(cap_exclusion_refused_attach);
+SYSCTL_COUNTER_U64(_security_cap_exclusion, OID_AUTO, refused_attach,
+    CTLFLAG_RD, &cap_exclusion_refused_attach,
+    "Capability Broker attaches refused by base exclusion");
+
+/*
+ * May DQ_IOC_ATTACH attach the excluded p?  PROC_LOCK(p) held.  An
+ * attachable process has not exec'd (P_EXEC; dqres_attach's EBUSY test),
+ * so an excluded target is a fork child of an excluded process still
+ * running that process's code.  Only that process may hand it to a
+ * Capability Broker: by attaching it itself, or (LA-1k) through an attach
+ * token it minted from the child's shield.  An exec'd excluded target (a
+ * running Core daemon) is EPERM even to an excluded actor.  The attach
+ * clears the target's exclusion (dqres_attach()).
+ */
+int
+cap_exclusion_attach_check(struct thread *td, struct proc *p)
+{
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	if (__predict_true(!P_CAP_EXCLUDED(p)))
+		return (0);
+	if (p != initproc && (p->p_flag & P_EXEC) == 0) {
+		/* p_pptr may be read with either the proctree or p's lock. */
+		if ((atomic_load_int(&td->td_proc->p_flag2) &
+		    P2_CAP_EXCLUDED) != 0 && p->p_pptr == td->td_proc)
+			return (0);
+		/* LA-1k adds the attach-token clause here (oes-core-exemption.md 3.9.1). */
+	}
+	counter_u64_add(cap_exclusion_refused_attach, 1);
+	SDT_PROBE3(cap_exclusion, , , refuse, p->p_pid, CAPX_R_ATTACH, EPERM);
+	return (EPERM);
+}
+
+/*
+ * Clear exclusion for a reason other than an exec (CAPX_CLEAR_*): tracing,
+ * a prison change, a Capability Broker attach.  PROC_LOCK held.
+ */
+void
+cap_exclusion_clear_locked(struct proc *p, int reason)
+{
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	if (!P_CAP_EXCLUDED(p))
+		return;
+	p->p_flag2 &= ~P2_CAP_EXCLUDED;
+	SDT_PROBE2(cap_exclusion, , , clear, p->p_pid, reason);
 }
 
 int
@@ -1094,6 +1385,7 @@ lease_notify_locked(struct cap_authority_lease *lease)
 		wakeup(&s->ci_txq);
 		KNOTE_LOCKED(&s->ci_rknotes, 0);
 		KNOTE_LOCKED(&s->ci_wknotes, 0);
+		wakeup(&s->ci_wknotes);	/* SEND_F_WAIT */
 		mtx_unlock(&s->ci_mtx);
 	}
 }
@@ -1358,7 +1650,8 @@ get_install_token(struct thread *td, int fd, struct file **fp)
  * grows, and userland learns what a running kernel accepts from EINVAL.
  * The retired value is never accepted again.
  */
-#define	CAP_AUTH_ROLES_ACCEPTED	(CAP_AUTH_ROLE_DQ_SUPERVISOR)
+#define	CAP_AUTH_ROLES_ACCEPTED						\
+	(CAP_AUTH_ROLE_DQ_SUPERVISOR | CAP_AUTH_ROLE_CORE | CAP_AUTH_ROLE_SYSTEM)
 CTASSERT((CAP_AUTH_ROLES_ACCEPTED & CAP_AUTH_FLAG_RETIRED_FIXED_UID) == 0);
 
 static int
