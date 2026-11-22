@@ -30,7 +30,6 @@
 #include <libservice.h>
 #include <service_bootstrap.h>
 #include <service_private.h>
-#include <libservice_session.h>
 #include <switchboard_svc_proto.h>
 
 static struct service_context *fixture_service_context;
@@ -1049,12 +1048,11 @@ orphan_term(int signo __unused)
 
 /*
  * A unit whose child makes an ambient lookup that stays pending (the test's
- * provider holds the activation) and outlives the unit: before the lookup
- * the child leaves the unit's coalition for a new one of its own
- * (COALITION_OP_JOIN_REHOME), so neither the stop's signals nor the leader's
- * exit reach it, and it records the answer the lookup gets.  It forks before
- * the unit enters capability mode, so it takes the ambient route, not the
- * unit's bootstrap channel.
+ * provider holds the activation) and outlives the unit: the child rides out
+ * the stop's SIGTERM (its handler has SA_RESTART, so the wait goes on) and
+ * records the answer the lookup finally gets.  It forks before the unit
+ * enters capability mode, so it takes the ambient route, not the unit's
+ * bootstrap channel.
  */
 static int
 scenario_orphan_lookup(const char *name, const char *started,
@@ -1076,15 +1074,6 @@ scenario_orphan_lookup(const char *name, const char *started,
 		sigemptyset(&sa.sa_mask);
 		if (sigaction(SIGTERM, &sa, NULL) == -1)
 			err(1, "sigaction");
-		fd = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
-		rc = fd == -1 ? -1 :
-		    capability_service_connect(fd, "coalition");
-		if (fd != -1)
-			(void)close(fd);
-		if (rc == -1 || service_session_join_fd(rc) == -1) {
-			write_result(result, "rehome errno=%d\n", errno);
-			_exit(1);
-		}
 		write_result(started, "pid=%jd\n", (intmax_t)getpid());
 		fd = -1;
 		rc = service_open(name, &fd);
