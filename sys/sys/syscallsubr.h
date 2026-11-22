@@ -473,7 +473,8 @@ int	kern_wait6(struct thread *td, enum idtype idtype, id_t id, int *status,
 int	kern_writev(struct thread *td, int fd, struct uio *auio);
 int	kern_socketpair(struct thread *td, int domain, int type, int protocol,
 	    int *rsv);
-int	kern_unmount(struct thread *td, const char *path, uint64_t flags);
+int	kern_unmount(struct thread *td, const char *path,
+	    enum uio_seg pathseg, uint64_t flags);
 
 int	user_cpuset_getaffinity(struct thread *td, cpulevel_t level,
 	    cpuwhich_t which, id_t id, size_t cpusetsize, cpuset_t *maskp,
