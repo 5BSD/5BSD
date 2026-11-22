@@ -713,7 +713,8 @@ run_step() {
 		phase_expire "$name" ""
 		return 124
 	fi
-	rcf=$(mktemp "$R/.step-rc.XXXXXX")
+	# Outside $R, so an expiry export does not carry it.
+	rcf=$(mktemp -t vm-step-rc)
 	PHASE_STEP_RC=$rcf PHASE_STEP_NAME=$name PHASE_CONSOLE=$PHASE_CONSOLE \
 	    timeout -s KILL 0 sh -c "$PHASE_STEP_WRAPPER" sh "$@" &
 	spid=$!
@@ -1182,9 +1183,11 @@ echo "ROOT_DF_AFTER: $(df -k / | awk 'NR == 2 { print $2 "K total, " $4 "K free"
 sed -n '/^after-suites:$/,$s/^/TIER_INFO: /p' "$R/tier.txt"
 # The stack tier must have given its stacks test issuers, and freed them.
 if [ "$stack_tier" = yes ]; then
-	# Read once, no wait: each stack's cleanup (capd_cleanup_stack) has
-	# already waited, on the test kernel's event, for its own issuers to be
-	# freed, and reports a stack that leaked one; a count here is a leak.
+	# Read once, after the test kernel's barrier: it runs the frees already
+	# queued (a case that dropped its last issuer reference just before the
+	# end), so a count left is a leak, reported without waiting for it.
+	sysctl debug.mac_capability.test_issuers_settle=1 > /dev/null 2>&1 ||
+	    echo "NOTE: no debug.mac_capability.test_issuers_settle; the live count is read without the barrier"
 	after=$(sysctl -n kern.mac_capability.test_issuers)
 	live=$(sysctl -n kern.mac_capability.test_issuers_live)
 	echo "STACK_TIER: test issuers created=$((after - stack_issuers_before)) live=$live state=$(sysctl -n kern.mac_capability.test_issuer_state)" |
@@ -1515,7 +1518,7 @@ if LC_ALL=C tr -d '\r' < "$log" | grep -aqE '^(PHASE_STEP_EXPIRED|PHASE_DEPENDEN
 fi
 # --- end of the phase verdict
 echo "qemu_exit=$rc forced=$forced guest_poweroff=$guest_off"
-LC_ALL=C tr -d '\r' < "$log" | grep -aE '^(TIER_INFO: (KERNEL_TIER|TEST_KERNEL|stack-tier)=|STACK_TIER|REROOT_|TEST_KERNEL_PROOF|PLANEON_GATE|PLANEOFF|KYUA_SUMMARY|PLANEON_PID1|PLANEON_ISOLATION|BSDTIME|PHASE_RESERVE|PHASE_STEP_EXPIRED|PHASE_DEPENDENCY_STOPPED|PHASE_DEPENDENCY_UNKNOWN|PHASE_EXPIRY|KYUA_REPORTS_SKIPPED|KYUA_RESULTS_DISK)' || true
+LC_ALL=C tr -d '\r' < "$log" | grep -aE '^(TIER_INFO: (KERNEL_TIER|TEST_KERNEL|stack-tier)=|STACK_TIER|REROOT_|TEST_KERNEL_PROOF|PLANEON_GATE|PLANEOFF|KYUA_SUMMARY|PLANEON_PID1|PLANEON_ISOLATION|BSDTIME|PHASE_RESERVE|PHASE_STEP_EXPIRED|PHASE_DEPENDENCY_STOPPED|PHASE_DEPENDENCY_UNKNOWN|PHASE_EXPIRY|PHASE_STEP_LEFTOVER|KYUA_REPORTS_SKIPPED|KYUA_RESULTS_DISK)' || true
 # Host load over the run and the guest's last progress line (vm-monitor).
 if [ -s "$work/progress.txt" ]; then
 	awk '$1 == "LOAD" { n++; if (n == 1) first = $3; last = $3; if ($3 + 0 > peak + 0) peak = $3
