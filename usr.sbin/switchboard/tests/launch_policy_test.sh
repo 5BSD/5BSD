@@ -258,6 +258,51 @@ on_crash_restarts_only_after_signal_cleanup()
 	rm -f sig.counts ex0.counts ex1.counts
 }
 
+atf_test_case restart_pending_in_status cleanup
+restart_pending_in_status_head()
+{
+	atf_set "descr" \
+	    "status shows restart-pending for a stopped unit whose restart is scheduled, and not for one that will stay stopped"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+}
+restart_pending_in_status_body()
+{
+	local waitf
+
+	use_private_control
+	waitf="$(atf_get_srcdir)/../capsule/capd_wait_file"
+	[ -x "$waitf" ] || atf_fail "capd_wait_file not found: $waitf"
+	touch_open held.counts done.counts
+	# The throttle holds the crashed unit in its scheduled restart for the
+	# whole case; it is not a wait.
+	make_fixture_svc system held \
+	    'restart = "on-crash"; throttle = 3600; max_failures = 10;' \
+	    launch-count "${WORK}/held.counts" signal
+	make_fixture_svc system done \
+	    'restart = "on-crash"; max_failures = 10;' \
+	    launch-count "${WORK}/done.counts" exit0
+	start_stack
+	# Event waits on the log (no polling); the ATF timeout bounds them.
+	"$waitf" "$logfile" "service org.test.held/held: scheduling restart" ||
+	    fail_with_log "the crashed unit's restart was not scheduled"
+	"$waitf" "$logfile" "service org.test.done/done: exited status 0" ||
+	    fail_with_log "the exit-0 unit did not exit"
+	"$SWITCHBOARDCTL" status > status.out ||
+	    atf_fail "switchboardctl status failed"
+	grep -Eq '^ *org\.test\.held/held +stopped .* restart-pending' status.out ||
+	    atf_fail "no restart-pending for the scheduled restart: $(cat status.out)"
+	grep -Eq '^ *org\.test\.done/done +stopped ' status.out ||
+	    atf_fail "the exit-0 unit is not stopped: $(cat status.out)"
+	! grep -Eq '^ *org\.test\.done/done .*restart-pending' status.out ||
+	    atf_fail "restart-pending for a unit that stays stopped: $(cat status.out)"
+}
+restart_pending_in_status_cleanup()
+{
+	cleanup_common
+	rm -f held.counts done.counts status.out
+}
+
 # ===================================================================
 # socket activation: mode / owner / group
 # ===================================================================
@@ -308,5 +353,6 @@ atf_init_test_cases()
 	atf_add_test_case throttle_delays_restart
 	atf_add_test_case default_restart_delay_is_short
 	atf_add_test_case on_crash_restarts_only_after_signal
+	atf_add_test_case restart_pending_in_status
 	atf_add_test_case socket_mode_owner_group
 }

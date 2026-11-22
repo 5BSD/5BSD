@@ -172,6 +172,14 @@ sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 			if (svc->restart_count > 0)
 				BUF_APPEND(summary, sumlen, &off,
 				    " restarts=%u", svc->restart_count);
+			/*
+			 * A stopped unit with a restart timer armed comes back
+			 * by itself; one without (a clean exit, or the circuit
+			 * breaker's disable) stays stopped until started.
+			 */
+			if (svc->restart_pending)
+				BUF_APPEND(summary, sumlen, &off,
+				    " restart-pending");
 
 			if (svc->launched_by[0] != '\0')
 				BUF_APPEND(summary, sumlen, &off,
