@@ -96,6 +96,24 @@ work_mntpath(char *buf, size_t len, const char *name)
 }
 
 /*
+ * Cleanup for a case that mounts on DIR in its work directory: a body that
+ * failed between its mount and its unmount must not leave the file system
+ * mounted (kyua could not remove the work directory).
+ */
+static void
+mount_case_cleanup(const char *dir)
+{
+	char path[MOUNT_MAXPATH];
+
+	if (getcwd(path, sizeof(path)) == NULL ||
+	    strlcat(path, "/", sizeof(path)) >= sizeof(path) ||
+	    strlcat(path, dir, sizeof(path)) >= sizeof(path))
+		return;
+	(void)unmount(path, MNT_FORCE);
+	(void)rmdir(path);
+}
+
+/*
  * Unmount through the service and require that it did: a mount left behind
  * stays until shutdown.  If the service refused, force it off directly so
  * that nothing outlives the case.
@@ -284,7 +302,7 @@ ATF_TC_BODY(mount_bad_op, tc)
 	close(fd);
 }
 
-ATF_TC(mount_tmpfs);
+ATF_TC_WITH_CLEANUP(mount_tmpfs);
 ATF_TC_HEAD(mount_tmpfs, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
@@ -340,6 +358,12 @@ ATF_TC_BODY(mount_tmpfs, tc)
 	rmdir(mntpath);
 	close(fd);
 }
+ATF_TC_CLEANUP(mount_tmpfs, tc)
+{
+
+	(void)tc;
+	mount_case_cleanup("mac_capability_mount_test");
+}
 
 ATF_TC(unmount_rejects_bad_flags);
 ATF_TC_HEAD(unmount_rejects_bad_flags, tc)
@@ -392,7 +416,7 @@ ATF_TC_BODY(unmount_rejects_relative_path, tc)
 	close(fd);
 }
 
-ATF_TC(mount_devfs);
+ATF_TC_WITH_CLEANUP(mount_devfs);
 ATF_TC_HEAD(mount_devfs, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
@@ -438,8 +462,14 @@ ATF_TC_BODY(mount_devfs, tc)
 	rmdir(mntpath);
 	close(fd);
 }
+ATF_TC_CLEANUP(mount_devfs, tc)
+{
 
-ATF_TC(mount_tmpfs_with_opts);
+	(void)tc;
+	mount_case_cleanup("mac_capability_devfs_test");
+}
+
+ATF_TC_WITH_CLEANUP(mount_tmpfs_with_opts);
 ATF_TC_HEAD(mount_tmpfs_with_opts, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
@@ -482,8 +512,14 @@ ATF_TC_BODY(mount_tmpfs_with_opts, tc)
 	rmdir(mntpath);
 	close(fd);
 }
+ATF_TC_CLEANUP(mount_tmpfs_with_opts, tc)
+{
 
-ATF_TC(mount_procfs_retired);
+	(void)tc;
+	mount_case_cleanup("mac_capability_opts_test");
+}
+
+ATF_TC_WITH_CLEANUP(mount_procfs_retired);
 ATF_TC_HEAD(mount_procfs_retired, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "Retired native procfs cannot be mounted");
@@ -513,8 +549,14 @@ ATF_TC_BODY(mount_procfs_retired, tc)
 	ATF_CHECK(rmdir(mntpath) == 0);
 	close(fd);
 }
+ATF_TC_CLEANUP(mount_procfs_retired, tc)
+{
 
-ATF_TC(mount_fdescfs);
+	(void)tc;
+	mount_case_cleanup("mac_capability_procfs_test");
+}
+
+ATF_TC_WITH_CLEANUP(mount_fdescfs);
 ATF_TC_HEAD(mount_fdescfs, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
@@ -555,8 +597,14 @@ ATF_TC_BODY(mount_fdescfs, tc)
 	rmdir(mntpath);
 	close(fd);
 }
+ATF_TC_CLEANUP(mount_fdescfs, tc)
+{
 
-ATF_TC(mount_linprocfs);
+	(void)tc;
+	mount_case_cleanup("mac_capability_fdescfs_test");
+}
+
+ATF_TC_WITH_CLEANUP(mount_linprocfs);
 ATF_TC_HEAD(mount_linprocfs, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
@@ -595,8 +643,14 @@ ATF_TC_BODY(mount_linprocfs, tc)
 	rmdir(mntpath);
 	close(fd);
 }
+ATF_TC_CLEANUP(mount_linprocfs, tc)
+{
 
-ATF_TC(mount_linsysfs);
+	(void)tc;
+	mount_case_cleanup("mac_capability_linprocfs_test");
+}
+
+ATF_TC_WITH_CLEANUP(mount_linsysfs);
 ATF_TC_HEAD(mount_linsysfs, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
@@ -635,8 +689,14 @@ ATF_TC_BODY(mount_linsysfs, tc)
 	rmdir(mntpath);
 	close(fd);
 }
+ATF_TC_CLEANUP(mount_linsysfs, tc)
+{
 
-ATF_TC(mount_nullfs);
+	(void)tc;
+	mount_case_cleanup("mac_capability_linsysfs_test");
+}
+
+ATF_TC_WITH_CLEANUP(mount_nullfs);
 ATF_TC_HEAD(mount_nullfs, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
@@ -676,6 +736,12 @@ ATF_TC_BODY(mount_nullfs, tc)
 
 	rmdir(mntpath);
 	close(fd);
+}
+ATF_TC_CLEANUP(mount_nullfs, tc)
+{
+
+	(void)tc;
+	mount_case_cleanup("mac_capability_nullfs_test");
 }
 
 /* ----------------------------------------------------------------
