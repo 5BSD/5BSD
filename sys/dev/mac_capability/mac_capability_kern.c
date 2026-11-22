@@ -369,8 +369,10 @@ mac_capability_callback_state_get(struct mac_capability_instance *s)
 	if (s->ci_callback_state == NULL) {
 		s->ci_callback_state = candidate;
 		candidate = NULL;
-		if ((s->ci_flags & MAC_CAPABILITY_SF_REVOKE_DONE) != 0)
+		if ((s->ci_flags & MAC_CAPABILITY_SF_REVOKE_DONE) != 0) {
 			atomic_store_rel_int(&s->ci_callback_state->cs_done, 1);
+			s->ci_callback_state->cs_watch = MAC_CAPABILITY_CS_DONE;
+		}
 	}
 	cs = s->ci_callback_state;
 	refcount_acquire(&cs->cs_refs);
@@ -413,6 +415,50 @@ mac_capability_callback_state_wait(struct mac_capability_callback_state *cs,
 	PICKUP_GIANT();
 }
 
+/*
+ * Watch a callback state for completion (see mac_capability.h).  The watch
+ * list is one word: a lock-free stack of watches, or MAC_CAPABILITY_CS_DONE
+ * once the callback has returned.  A watch pushed before completion is
+ * enqueued by mac_capability_callback_state_complete_watches(); one that
+ * finds DONE is enqueued here.  Each watch is pushed at most once.
+ */
+void
+mac_capability_callback_state_watch(struct mac_capability_callback_state *cs,
+    struct mac_capability_cs_watch *w, struct task *task)
+{
+	struct mac_capability_cs_watch *head;
+
+	w->cw_task = task;
+	for (;;) {
+		head = atomic_load_ptr(&cs->cs_watch);
+		if (head == MAC_CAPABILITY_CS_DONE) {
+			taskqueue_enqueue(taskqueue_thread, task);
+			return;
+		}
+		w->cw_next = head;
+		if (atomic_cmpset_ptr((volatile uintptr_t *)&cs->cs_watch,
+		    (uintptr_t)head, (uintptr_t)w))
+			return;
+	}
+}
+
+/* The callback returned: mark DONE and enqueue every watch pushed before. */
+static void
+mac_capability_callback_state_complete_watches(
+    struct mac_capability_callback_state *cs)
+{
+	struct mac_capability_cs_watch *w, *next;
+
+	w = (struct mac_capability_cs_watch *)atomic_swap_ptr(
+	    (volatile uintptr_t *)&cs->cs_watch,
+	    (uintptr_t)MAC_CAPABILITY_CS_DONE);
+	for (; w != NULL && w != MAC_CAPABILITY_CS_DONE; w = next) {
+		/* The task may free w as soon as it is enqueued. */
+		next = w->cw_next;
+		taskqueue_enqueue(taskqueue_thread, w->cw_task);
+	}
+}
+
 void
 mac_capability_callback_state_rele(struct mac_capability_callback_state *cs)
 {
@@ -434,6 +480,7 @@ mac_capability_revoke_done_locked(struct mac_capability_instance *s)
 		/* The instance holds a reference on cs: it outlives this call. */
 		atomic_store_rel_int(&s->ci_callback_state->cs_done, 1);
 		wakeup(s->ci_callback_state);
+		mac_capability_callback_state_complete_watches(s->ci_callback_state);
 	}
 	wakeup(&s->ci_flags);
 }
@@ -691,7 +738,7 @@ mac_capability_instance_revoke_reason(struct mac_capability_instance *s,
 		mtx_unlock(&s->ci_mtx);
 		goto out;
 	}
-	s->ci_flags |= MAC_CAPABILITY_SF_REVOKED;
+	mac_capability_instance_mark_dead_locked(s, MAC_CAPABILITY_SF_REVOKED);
 	mac_capability_instance_drain_rxq(s);
 	/* Do NOT drain the TX queue here — let the receiver read
 	 * already-queued messages before seeing ECONNRESET. */
@@ -817,7 +864,8 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 	LIST_FOREACH(s, &svc->csvc_instances, ci_svc_link) {
 		mtx_lock(&s->ci_mtx);
 		if (!(s->ci_flags & MAC_CAPABILITY_SF_DEAD)) {
-			s->ci_flags |= MAC_CAPABILITY_SF_REVOKED;
+			mac_capability_instance_mark_dead_locked(s,
+			    MAC_CAPABILITY_SF_REVOKED);
 			/* Detach now, free after the locks drop: a queued
 			 * message's attached fd can recurse into
 			 * mac_capability_instance_close() and sleep. */
@@ -1117,6 +1165,62 @@ mac_capability_instance_revoke(struct mac_capability_instance *s)
 		    s->ci_service->csvc_name, s->ci_badge,
 		    MAC_CAPABILITY_REVOKE_BY_SERVICE);
 	mac_capability_instance_revoke_reason(s, MAC_CAPABILITY_REVOKE_BY_SERVICE);
+}
+
+/*
+ * Mark the instance CLOSED or REVOKED.  The first such mark runs the death
+ * hook, once, with ci_mtx held.
+ */
+void
+mac_capability_instance_mark_dead_locked(struct mac_capability_instance *s,
+    int flag)
+{
+	struct mac_capability_death_watch *w;
+
+	mtx_assert(&s->ci_mtx, MA_OWNED);
+	KASSERT(flag == MAC_CAPABILITY_SF_CLOSED ||
+	    flag == MAC_CAPABILITY_SF_REVOKED, ("not a death flag: %#x", flag));
+	if ((s->ci_flags & MAC_CAPABILITY_SF_DEAD) == 0) {
+		while ((w = LIST_FIRST(&s->ci_death_watches)) != NULL) {
+			LIST_REMOVE(w, dw_link);
+			w->dw_armed = false;
+			w->dw_fn(w->dw_arg);
+		}
+	}
+	s->ci_flags |= flag;
+}
+
+bool
+mac_capability_instance_watch_death(struct mac_capability_instance *s,
+    struct mac_capability_death_watch *w)
+{
+	bool armed;
+
+	KASSERT(!w->dw_armed, ("death watch armed twice"));
+	mtx_lock(&s->ci_mtx);
+	armed = (s->ci_flags & MAC_CAPABILITY_SF_DEAD) == 0;
+	if (armed) {
+		w->dw_armed = true;
+		LIST_INSERT_HEAD(&s->ci_death_watches, w, dw_link);
+	}
+	mtx_unlock(&s->ci_mtx);
+	return (armed);
+}
+
+bool
+mac_capability_instance_unwatch_death(struct mac_capability_instance *s,
+    struct mac_capability_death_watch *w)
+{
+	bool disarmed;
+
+	mtx_lock(&s->ci_mtx);
+	disarmed = w->dw_armed;
+	if (disarmed) {
+		LIST_REMOVE(w, dw_link);
+		w->dw_armed = false;
+	}
+	mtx_unlock(&s->ci_mtx);
+	return (disarmed);
 }
 
 void

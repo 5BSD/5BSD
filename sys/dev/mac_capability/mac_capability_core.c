@@ -308,6 +308,7 @@ mac_capability_instance_init(struct mac_capability_service *svc, uint64_t badge)
 	STAILQ_INIT(&s->ci_txq);
 	STAILQ_INIT(&s->ci_rxq);
 	LIST_INIT(&s->ci_callers);
+	LIST_INIT(&s->ci_death_watches);
 	knlist_init_mtx(&s->ci_rknotes, &s->ci_mtx);
 	knlist_init_mtx(&s->ci_wknotes, &s->ci_mtx);
 	s->ci_rxqlimit = svc->csvc_queue_depth;

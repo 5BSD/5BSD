@@ -2054,7 +2054,7 @@ mac_capability_instance_close(struct file *fp, struct thread *td __unused)
 	 * attached capability fd whose fdrop re-enters this close path and
 	 * drains a taskqueue (sleepable), which must not happen under ci_mtx. */
 	mtx_lock(&s->ci_mtx);
-	s->ci_flags |= MAC_CAPABILITY_SF_CLOSED;
+	mac_capability_instance_mark_dead_locked(s, MAC_CAPABILITY_SF_CLOSED);
 
 	STAILQ_CONCAT(&deadrx, &s->ci_rxq);
 	s->ci_rxqlen = 0;
