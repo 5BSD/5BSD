@@ -348,8 +348,9 @@ mac_capability_test_issuer_unlink(struct authority_issuer *issuer)
 /*
  * The test-only wait sysctl: sleep until at most `most` test issuers are
  * live.  The count only changes under the lock (link and unlink), so
- * checking it and sleeping under the lock cannot miss the wakeup.  A signal
- * ends the wait.
+ * checking it and sleeping under the lock cannot miss the wakeup.  A caught
+ * signal ends the sleep (EINTR; or ERESTART, which sysctl(2) restarts under
+ * SA_RESTART).
  */
 int
 mac_capability_test_issuer_wait_live(u_int most)

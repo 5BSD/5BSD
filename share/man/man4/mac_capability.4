@@ -651,7 +651,14 @@ Writing
 .Ar N
 waits, without a timeout, until at most
 .Ar N
-test issuers are live; a signal ends the wait.
+test issuers are live.
+A signal whose handler was installed without
+.Dv SA_RESTART
+ends the wait with
+.Er EINTR ;
+with
+.Dv SA_RESTART
+the wait resumes.
 .It Va kern.mac_capability.test_issuer_state
 .Cm none ,
 .Cm test
