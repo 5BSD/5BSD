@@ -61,6 +61,33 @@ static uint32_t dispatch_op;
 static int dispatch_status;
 
 /*
+ * Receive buffers for one SwitchBoard message, received whole whatever its
+ * shape: the kernel refuses a message that does not fit the caller's
+ * buffers with EMSGSIZE and leaves it at the head of the queue, and the
+ * channel's EVFILT_READ is level-triggered, so a fixed request-sized receive
+ * would make PID 1 spin on the first oversized message and never answer the
+ * requests behind it.
+ */
+static char proto_rx_payload[MAC_CAPABILITY_MAX_MSG];
+static int proto_rx_fds[MAC_CAPABILITY_MAX_FDS];
+
+/*
+ * SwitchBoard waits for each reply on the channel with no deadline: every
+ * request gets an answer, or the channel goes away so that SwitchBoard sees
+ * ECONNRESET.  When Capsule can neither answer nor receive, it ends the
+ * channel the way a SwitchBoard EOF does (close it and restart SwitchBoard).
+ */
+static void
+proto_channel_fatal(const char *why, int error)
+{
+
+	syslog(LOG_ERR, "capsule_proto: %s: %s; ending the SwitchBoard channel",
+	    why, strerror(error));
+	proto_channel_fd = -1;
+	bootstrap_handle_channel_eof();
+}
+
+/*
  * Send a reply with optional attached fds.
  */
 int
@@ -100,7 +127,27 @@ proto_reply(int status, uint64_t reply_token, int *fds, int nfds)
 	}
 
 	if (ioctl(proto_channel_fd, MAC_CAPABILITY_SENDMSG, &sa) == -1) {
-		syslog(LOG_WARNING, "capsule_proto: reply: %m");
+		int error = errno;
+
+		syslog(LOG_WARNING, "capsule_proto: reply: %s", strerror(error));
+		/*
+		 * Never leave the request unanswered: once more, status-only,
+		 * carrying why the reply failed; if that fails too, end the
+		 * channel so that SwitchBoard's wait ends with ECONNRESET.
+		 */
+		rpl.status = error;
+		memset(&sa, 0, sizeof(sa));
+		sa.payload = &rpl;
+		sa.payload_len = sizeof(rpl);
+		sa.reply_token = reply_token;
+		if (proto_channel_fd < 0 ||
+		    ioctl(proto_channel_fd, MAC_CAPABILITY_SENDMSG, &sa) == -1) {
+			proto_channel_fatal("status-only reply failed",
+			    proto_channel_fd < 0 ? EBADF : errno);
+			return (-1);
+		}
+		dispatch_status = error;
+		CAPSULE_PROBE_IPC_REPLY(dispatch_op, error);
 		return (-1);
 	}
 	dispatch_status = status;
@@ -471,34 +518,51 @@ proto_dispatch_one(void)
 		 */
 		uint8_t		raw[CAPSULE_MINT_SYSTEM_REQ_MAX];
 	} buf;
-	uint32_t op;
+	uint32_t op, i;
 	int recv_fd = -1;
 
+	if (proto_channel_fd < 0)
+		return (-1);
 	memset(&ra, 0, sizeof(ra));
-	ra.payload = &buf;
-	ra.payload_len = sizeof(buf);
-	/*
-	 * Accept at most one attached descriptor.  Only
-	 * CAPSULE_OP_SET_AMBIENT_LOOKUP (§21) sends one; any stray fd on another
-	 * op is closed below rather than leaked.
-	 */
-	ra.fds = &recv_fd;
-	ra.nfds = 1;
+	ra.payload = proto_rx_payload;
+	ra.payload_len = sizeof(proto_rx_payload);
+	ra.fds = proto_rx_fds;
+	ra.nfds = nitems(proto_rx_fds);
 
 	if (ioctl(proto_channel_fd, MAC_CAPABILITY_RECVMSG, &ra) == -1) {
 		if (errno == EAGAIN)
 			return (0);
-		syslog(LOG_WARNING, "capsule_proto: recvmsg: %m");
+		proto_channel_fatal("recvmsg", errno);
 		return (-1);
 	}
 
+	/*
+	 * Keep at most one attached descriptor.  Only
+	 * CAPSULE_OP_SET_AMBIENT_LOOKUP (§21) sends one; any other descriptor
+	 * is closed rather than leaked.
+	 */
+	if (ra.nfds > 0)
+		recv_fd = proto_rx_fds[0];
+	for (i = 1; i < ra.nfds; i++)
+		(void)close(proto_rx_fds[i]);
+
+	if (ra.payload_len > sizeof(buf)) {
+		syslog(LOG_WARNING, "capsule_proto: oversized message (%u bytes)",
+		    ra.payload_len);
+		if (recv_fd >= 0)
+			(void)close(recv_fd);
+		proto_reply(EMSGSIZE, ra.reply_token, NULL, 0);
+		return (0);
+	}
 	if (ra.payload_len < sizeof(uint32_t)) {
 		syslog(LOG_WARNING, "capsule_proto: short message (%u bytes)",
 		    ra.payload_len);
 		if (recv_fd >= 0)
 			(void)close(recv_fd);
+		proto_reply(EINVAL, ra.reply_token, NULL, 0);
 		return (0);
 	}
+	memcpy(&buf, proto_rx_payload, ra.payload_len);
 
 	/* Nonce verification — lock to first sender. */
 	if (!nonce_set) {

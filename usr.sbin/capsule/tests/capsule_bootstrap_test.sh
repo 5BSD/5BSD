@@ -376,6 +376,114 @@ bootstrap_channel_loss_kills_switchboard_cleanup()
 	cleanup_common
 }
 
+# Every request SwitchBoard sends gets an answer, or the channel ends so that
+# SwitchBoard sees ECONNRESET (SwitchBoard waits for replies with no
+# deadline).  answered_case MODE EXPECTED: the fixture sends a request
+# Capsule cannot serve, then a PING, and records both answers.
+answered_case()
+{
+	echo "$1" > mock-mode
+	build_mock_switchboard
+	start_capsule
+	if ! wait_for_file switchboard-answers.out; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "Capsule did not answer the $1 request"
+	fi
+	atf_check -s exit:0 -o inline:"$2\n" cat switchboard-answers.out
+	capd_capsule_ctl "$sockpath" status | grep -q running ||
+	    atf_fail "Capsule status request failed"
+}
+
+atf_test_case channel_short_message_answered cleanup
+channel_short_message_answered_head()
+{
+	atf_set "descr" "a message too short for an op is answered EINVAL, and the next request too"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+	atf_set "timeout" "60"
+}
+channel_short_message_answered_body()
+{
+	answered_case short-then-ping "short status=22 ping=0"
+}
+channel_short_message_answered_cleanup()
+{
+	rm -f mock-mode switchboard-answers.out
+	cleanup_common
+}
+
+atf_test_case channel_oversized_message_answered cleanup
+channel_oversized_message_answered_head()
+{
+	atf_set "descr" "a message larger than any request is received whole and answered EMSGSIZE, and the next request too"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+	atf_set "timeout" "60"
+}
+channel_oversized_message_answered_body()
+{
+	answered_case oversized-then-ping "oversized status=40 ping=0"
+}
+channel_oversized_message_answered_cleanup()
+{
+	rm -f mock-mode switchboard-answers.out
+	cleanup_common
+}
+
+atf_test_case channel_extra_descriptors_answered cleanup
+channel_extra_descriptors_answered_head()
+{
+	atf_set "descr" "a request with more descriptors than it takes is served (extras closed), and the next request too"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+	atf_set "timeout" "60"
+}
+channel_extra_descriptors_answered_body()
+{
+	answered_case fds-then-ping "fds status=0 ping=0"
+}
+channel_extra_descriptors_answered_cleanup()
+{
+	rm -f mock-mode switchboard-answers.out
+	cleanup_common
+}
+
+atf_test_case channel_unsendable_reply_ends_channel cleanup
+channel_unsendable_reply_ends_channel_head()
+{
+	atf_set "descr" "a reply Capsule cannot queue, even status-only, ends the channel rather than leaving the request unanswered"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+	atf_set "timeout" "180"
+}
+channel_unsendable_reply_ends_channel_body()
+{
+	echo "flood" > mock-mode
+	build_mock_switchboard
+	start_capsule
+	if ! wait_for_file switchboard-answers.out; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "the flood fixture did not start"
+	fi
+	i=0
+	while ! grep -q "switchboard killed by signal" "$logfile" 2>/dev/null &&
+	    [ "$i" -lt 900 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	if ! grep -q "status-only reply failed.*ending the SwitchBoard channel" "$logfile" ||
+	    ! grep -q "switchboard killed by signal" "$logfile"; then
+		cat switchboard-answers.out "$logfile" >&2
+		atf_fail "Capsule did not end the channel when it could not reply"
+	fi
+	stop_capsule
+}
+channel_unsendable_reply_ends_channel_cleanup()
+{
+	rm -f mock-mode switchboard-answers.out
+	cleanup_common
+}
+
 atf_test_case bootstrap_ready_logged cleanup
 bootstrap_ready_logged_head()
 {
@@ -576,6 +684,10 @@ atf_init_test_cases()
 {
 	atf_add_test_case bootstrap_starts_switchboard
 	atf_add_test_case bootstrap_channel_ping
+	atf_add_test_case channel_short_message_answered
+	atf_add_test_case channel_oversized_message_answered
+	atf_add_test_case channel_extra_descriptors_answered
+	atf_add_test_case channel_unsendable_reply_ends_channel
 	atf_add_test_case lookup_without_route
 	atf_add_test_case lookup_capsule_route
 	atf_add_test_case control_reload_reaches_switchboard
