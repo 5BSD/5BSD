@@ -26,12 +26,14 @@
 #include <sys/user.h>
 #include <sys/wait.h>
 #include <sys/linker.h>
+#include <sys/thr.h>
 
 #include <netinet/in.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <jail.h>
 #include <pthread.h>
+#include <sched.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -5536,14 +5538,59 @@ ATF_TC_HEAD(graceful_returns_when_members_exit, tc)
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
 	atf_tc_set_md_var(tc, "timeout", "120");
 }
+
+struct grace_release {
+	lwpid_t	tid;		/* the thread in GRACEFUL */
+	int	go;		/* write end: lets the member exit */
+};
+
+/*
+ * Let the member exit only once the GRACEFUL caller sleeps in its grace
+ * wait ("co_grace"), so the exit is what must end the wait.  The thread's
+ * wait channel is a state with no event to block on: it is read until it
+ * is reached (bounded by the case timeout, not a guessed delay).
+ */
+static void *
+grace_release_thread(void *arg)
+{
+	struct grace_release *gr = arg;
+	struct kinfo_proc *kp;
+	int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID | KERN_PROC_INC_THREAD,
+	    getpid() };
+	size_t len, n;
+	bool sleeping = false;
+
+	while (!sleeping) {
+		len = 0;
+		if (sysctl(mib, 4, NULL, &len, NULL, 0) != 0)
+			break;
+		kp = malloc(len);
+		if (kp == NULL || sysctl(mib, 4, kp, &len, NULL, 0) != 0) {
+			free(kp);
+			break;
+		}
+		for (n = 0; n < len / sizeof(*kp); n++)
+			if (kp[n].ki_tid == gr->tid &&
+			    strcmp(kp[n].ki_wmesg, "co_grace") == 0)
+				sleeping = true;
+		free(kp);
+		if (!sleeping)
+			sched_yield();
+	}
+	(void)write(gr->go, "g", 1);
+	return (NULL);
+}
+
 ATF_TC_BODY(graceful_returns_when_members_exit, tc)
 {
 	/* The longest grace GRACEFUL accepts: the case must end long before. */
 	const uint32_t grace_ms = 60000;
 	struct coalition_graceful_req gr;
 	struct coalition_reply rpl;
+	struct grace_release rel;
 	struct timespec t0, t1;
-	int cfd, pd, ready[2], wstatus;
+	pthread_t releaser;
+	int cfd, pd, ready[2], go[2], wstatus;
 	int32_t status;
 	long elapsed_ms;
 	pid_t pid;
@@ -5551,21 +5598,34 @@ ATF_TC_BODY(graceful_returns_when_members_exit, tc)
 
 	cfd = mac_capability_connect("coalition");
 	ATF_REQUIRE(cfd >= 0);
-	ATF_REQUIRE(pipe(ready) == 0);
+	ATF_REQUIRE(pipe(ready) == 0 && pipe(go) == 0);
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
 	if (pid == 0) {
 		close(ready[0]);
-		/* SIGTERM keeps its default action: it ends the process. */
+		close(go[1]);
+		/* Survive the grace signal; exit when the test says so. */
+		signal(SIGTERM, SIG_IGN);
 		(void)write(ready[1], "r", 1);
-		for (;;)
-			pause();
+		(void)read(go[0], &ch, 1);
+		_exit(0);
 	}
 	close(ready[1]);
+	close(go[0]);
 	ATF_REQUIRE_EQ(1, read(ready[0], &ch, 1));
 	close(ready[0]);
 	ATF_REQUIRE(coalition_enlist(cfd, pd, &status) == 0);
 	ATF_REQUIRE_EQ(0, status);
+
+	{
+		long tid;
+
+		ATF_REQUIRE_EQ(0, thr_self(&tid));
+		rel.tid = (lwpid_t)tid;
+	}
+	rel.go = go[1];
+	ATF_REQUIRE_EQ(0, pthread_create(&releaser, NULL, grace_release_thread,
+	    &rel));
 
 	memset(&gr, 0, sizeof(gr));
 	gr.op = COALITION_OP_GRACEFUL;
@@ -5575,15 +5635,17 @@ ATF_TC_BODY(graceful_returns_when_members_exit, tc)
 	ATF_REQUIRE(coalition_call(cfd, &gr, sizeof(gr), NULL, 0,
 	    &rpl, sizeof(rpl)) == 0);
 	ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &t1) == 0);
+	ATF_REQUIRE_EQ(0, pthread_join(releaser, NULL));
 	ATF_CHECK_EQ(0, rpl.status);
 	elapsed_ms = (t1.tv_sec - t0.tv_sec) * 1000 +
 	    (t1.tv_nsec - t0.tv_nsec) / 1000000;
 	ATF_REQUIRE_EQ(pid, waitpid(pid, &wstatus, 0));
-	ATF_CHECK_MSG(WIFSIGNALED(wstatus) && WTERMSIG(wstatus) == SIGTERM,
-	    "member ended with status %#x, not by its SIGTERM", wstatus);
+	ATF_CHECK_MSG(WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == 0,
+	    "member status %#x: it should have exited on its own", wstatus);
 	ATF_CHECK_MSG(elapsed_ms < grace_ms,
 	    "GRACEFUL returned after %ld ms: it waited out its %u ms deadline "
 	    "although the member had exited", elapsed_ms, grace_ms);
+	close(go[1]);
 	close(pd);
 	close(cfd);
 }
@@ -5605,6 +5667,17 @@ cleanup_fixture_read(const char *name)
 
 	ATF_REQUIRE_EQ(0, sysctlbyname(name, &value, &len, NULL, 0));
 	return (value);
+}
+
+/* A failed case must not leave the fixture loaded for the next one. */
+static void
+coalition_cleanup_fixture_unload(void)
+{
+	int id;
+
+	id = kldfind("mac_capability_test_cleanup.ko");
+	if (id >= 0)
+		(void)kldunload(id);
 }
 
 static void *
@@ -5668,6 +5741,7 @@ ATF_TC_CLEANUP(capability_dependency_waits_for_callback, tc)
 
 	(void)sysctlbyname("debug.capability_cleanup_test.release", NULL, NULL,
 	    &one, sizeof(one));
+	coalition_cleanup_fixture_unload();
 }
 
 ATF_TC(nested_dependency_wakes_parent);
@@ -5863,6 +5937,7 @@ ATF_TC_CLEANUP(jail_tree_cleanup_waits_for_users, tc)
 	    &one, sizeof(one));
 	(void)sysctlbyname("debug.capability_cleanup_test.release_stage", NULL,
 	    NULL, &one, sizeof(one));
+	coalition_cleanup_fixture_unload();
 	remove_jail_by_name(COALITION_TEST_JAIL_NAME "_tree.child");
 	remove_jail_by_name(COALITION_TEST_JAIL_NAME "_tree");
 }
