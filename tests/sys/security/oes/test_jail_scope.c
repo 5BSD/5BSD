@@ -2646,6 +2646,7 @@ fn_host_work(void *arg __unused)
 	}
 	return (0);
 }
+
 /*
  * Run fn(arg) in a host child to completion while watching the
  * jail-scoped AUTH client fd: an event fd receives meanwhile is outside
