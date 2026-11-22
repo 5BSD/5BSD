@@ -40,6 +40,7 @@
 #include <sys/kernel.h>
 #include <sys/systm.h>
 #include <sys/errno.h>
+#include <sys/eventhandler.h>
 #include <sys/file.h>
 #include <sys/sysproto.h>
 #include <sys/malloc.h>
@@ -3628,6 +3629,12 @@ static void
 prison_uref_released(struct prison *pr)
 {
 
+	/*
+	 * The release that called us is ordered before this state read, so a
+	 * concurrent kill (which sets DYING under pr_mtx, then reads pr_uref)
+	 * either sees our release or is seen here as not alive.
+	 */
+	atomic_thread_fence_seq_cst();
 	if (prison_isalive(pr))
 		return;
 	SDT_PROBE1(jail, kernel, prison, uref_release, pr);
@@ -3789,7 +3796,10 @@ prison_deref(struct prison *pr, int flags)
 				}
 				flags = prison_lock_xlock(pr, flags);
 				prison_deref_kill(pr, &freeprison);
-				urelpr = pr;
+				if (urelpr == NULL) {
+					urelpr = pr;
+					prison_hold(urelpr);
+				}
 			}
 		}
 		if (flags & PD_DEUREF) {
@@ -3797,8 +3807,12 @@ prison_deref(struct prison *pr, int flags)
 			KASSERT(refcount_load(&pr->pr_uref) > 0,
 			    ("prison_deref PD_DEUREF on a dead prison (jid=%d)",
 			     pr->pr_id));
-			if (urelpr == NULL)
+			if (urelpr == NULL) {
+				/* Our own hold: the reference this call drops may
+				 * be the last, and urelpr is used after the loop. */
 				urelpr = pr;
+				prison_hold(urelpr);
+			}
 			if (!refcount_release_if_not_last(&pr->pr_uref)) {
 				if (!(flags & PD_DEREF)) {
 					prison_hold(pr);
@@ -3904,11 +3918,14 @@ prison_deref(struct prison *pr, int flags)
 
 	/*
 	 * With no prison lock held: a user reference of urelpr (and maybe of
-	 * its ancestors, released as the loop climbed) was dropped.  urelpr
-	 * stays allocated until the freeprison loop below.
+	 * its ancestors, released as the loop climbed) was dropped.  The hold
+	 * taken above keeps urelpr allocated; its release may queue the final
+	 * free (prison_free defers the last reference).
 	 */
-	if (urelpr != NULL)
+	if (urelpr != NULL) {
 		prison_uref_released(urelpr);
+		prison_free(urelpr);
+	}
 
 	/* Kill any processes attached to a killed prison. */
 	if (killpr != NULL) {
