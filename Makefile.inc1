@@ -3600,7 +3600,8 @@ lib/libservice__L: lib/libcapability__L lib/libchannel__L lib/libthr__L \
 lib/libfilesystemcmp__L: lib/libservice__L lib/libtrustedzfs__L lib/libfidl__L
 lib/libbsdfilesystem__L: lib/libchannel__L lib/libservice__L lib/libtrustedzfs__L \
 	lib/libfilesystemcmp__L lib/libfidl__L
-lib/libfidl__L: lib/libc++__L lib/libchannel__L lib/libthr__L
+# libfidl is C++: its link takes libm (_DP_cplusplus).
+lib/libfidl__L: lib/libc++__L lib/libchannel__L lib/libthr__L lib/msun__L
 lib/libnotify__L: lib/libservice__L lib/libthr__L lib/libfidl__L
 
 .if ${MK_GOOGLETEST} != "no"
