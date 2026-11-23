@@ -220,13 +220,24 @@ SDT_PROBE_DEFINE3(bridge, , , control__done, "void *", "unsigned long", "int");
  * That is: for read accesses we only need to be in NET_EPOCH, but for write
  * accesses we must hold:
  *
- *  - BRIDGE_RT_LOCK, for any change to bridge_rtnodes
+ *  - BRIDGE_RT_LOCK, for any change to bridge_rtnodes, and to start or stop
+ *    the bridge (bridge_init(), bridge_stop(): IFF_DRV_RUNNING, the
+ *    routing-table callout, spanning tree start and stop)
  *  - BRIDGE_LOCK, for any other change
  *
  * The BRIDGE_LOCK is a sleepable lock, because it is held across ioctl()
  * calls to bridge member interfaces and these ioctl()s can sleep.
  * The BRIDGE_RT_LOCK is a non-sleepable mutex, because it is sometimes
  * required while we're in NET_EPOCH and then we're not allowed to sleep.
+ * It is not held across a call into another interface.
+ *
+ * A member's ioctl() takes the member's own locks (a vlan(4) member takes
+ * the global vlan lock), so those locks come after the BRIDGE_LOCK.  An
+ * interface stacked on the bridge, such as a vlan(4) SVI, calls the
+ * bridge's ioctl() with its own lock held.  The requests it sends
+ * (SIOCSIFFLAGS, SIOCADDMULTI, SIOCDELMULTI and what ether_ioctl() answers,
+ * SIOCGIFMEDIA among them) are therefore handled without the BRIDGE_LOCK;
+ * only SIOCGDRVSPEC, SIOCSDRVSPEC and SIOCSIFMTU take it in bridge_ioctl().
  */
 #define BRIDGE_LOCK_INIT(_sc)		do {			\
 	sx_init(&(_sc)->sc_sx, "if_bridge");			\
@@ -897,7 +908,12 @@ bridge_clone_destroy(struct if_clone *ifc, struct ifnet *ifp, uint32_t flags)
 
 	BRIDGE_LOCK(sc);
 
-	/* Down first: a bridge_init() after this sees it and does nothing. */
+	/*
+	 * Mark the bridge down first: bridge_stop() only stops a bridge that
+	 * is down, and a flag change propagated from an interface stacked on
+	 * the bridge then does not start it again.  A request that sets
+	 * IFF_UP again while the bridge is destroyed is not excluded.
+	 */
 	ifp->if_flags &= ~IFF_UP;
 	bridge_stop(ifp);
 
@@ -986,7 +1002,7 @@ bridge_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 		break;
 
 	default:
-		/* ether_ioctl() may call bridge_start(), which locks. */
+		/* ether_ioctl() may call bridge_init(); no bridge lock. */
 		return (ether_ioctl(ifp, cmd, data));
 	}
 
