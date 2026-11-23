@@ -253,8 +253,9 @@ self_tid(void)
  * Follow the session waits of this process's threads as they happen: a
  * channel receive ("mac_capabilityrv"), a channel send waiting for room
  * ("mcapsnd"), a condition wait ("uwait": libthr sleeps there for a private
- * condition variable) and a contended mutex ("umtxn").  Each event says
- * whether the sleep has a timeout.  sleep_trace_wait() blocks until a thread
+ * condition variable) and a contended mutex ("umtxn").  Each event carries
+ * the sleep's absolute deadline (td_sleeptimo; 0 for a sleep with no
+ * timeout).  sleep_trace_wait() blocks until a thread
  * goes to sleep in a named wait, so a case can act once a caller really is
  * asleep; the timed sleeps of every thread are kept, so a case can show that
  * a wait with no deadline never slept with one (a slice is a timed sleep).
@@ -266,6 +267,7 @@ self_tid(void)
 struct sleep_trace {
 	pid_t	pid;
 	FILE	*out;
+	long long last;		/* deadline of the event read last */
 	int	n;
 	struct {
 		long	tid;
@@ -298,7 +300,7 @@ sleep_trace_start(struct sleep_trace *t)
 		    "    stringof(curthread->td_wmesg) == \"umtxn\")/ {\n"
 		    "	printf(\"%d %s %d\\n\", tid,\n"
 		    "	    stringof(curthread->td_wmesg),\n"
-		    "	    curthread->td_sleeptimo != 0); }\n",
+		    "	    curthread->td_sleeptimo); }\n",
 		    self, (char *)NULL);
 		_exit(127);
 	}
@@ -317,14 +319,15 @@ static bool
 sleep_trace_next(struct sleep_trace *t, long *tidp, char *wmesg)
 {
 	char line[128];
-	int timed;
+	long long timed;
 
 	for (;;) {
 		if (fgets(line, sizeof(line), t->out) == NULL)
 			return (false);
-		if (sscanf(line, "%ld %31s %d", tidp, wmesg, &timed) == 3)
+		if (sscanf(line, "%ld %31s %lld", tidp, wmesg, &timed) == 3)
 			break;
 	}
+	t->last = timed;
 	if (timed != 0) {
 		ATF_REQUIRE_MSG(t->n < SLEEP_TRACE_MAX, "more than %d timed "
 		    "sleeps (thread %ld in %s)", SLEEP_TRACE_MAX, *tidp, wmesg);
@@ -957,48 +960,87 @@ ATF_TC_BODY(send_waits_only_to_deadline, tc)
 	close(provider);
 }
 
-/* ---- restarts after signals keep the call's deadline ------------------ */
+/* ---- a restart after a signal keeps the call's deadline --------------- */
 
-static atomic_int alarms;
+/*
+ * The timeout of the call below.  The call never reaches it and nothing
+ * waits for it: it only has to be finite and later than the case's own
+ * ATF timeout (120 s), so that the call sleeps with a deadline.
+ */
+#define	RESTART_TIMEOUT_MS	(1200 * 1000)
 
-static void
-count_alarm(int signo __unused)
+struct restart_probe {
+	struct sleep_trace *trace;
+	int		provider;
+	pthread_t	target;
+	long		target_tid;
+	long long	deadline[2];	/* of the sleep before, and after */
+};
+
+/*
+ * Take the request; once the caller sleeps for the reply, note that sleep's
+ * deadline and signal the caller; once the handler has run and the restarted
+ * call sleeps again, note the new sleep's deadline and reply.
+ */
+static void *
+restart_probe_thread(void *arg)
 {
+	struct restart_probe *p = arg;
+	uint64_t token;
+	char byte;
 
-	atomic_fetch_add(&alarms, 1);
+	byte = provider_receive(p->provider, &token);
+	(void)sleep_trace_wait(p->trace, p->target_tid, "mac_capabilityrv",
+	    NULL);
+	p->deadline[0] = p->trace->last;
+	(void)pthread_kill(p->target, SIGUSR1);
+	while (sem_wait(&signal_handled) == -1 && errno == EINTR)
+		;
+	(void)sleep_trace_wait(p->trace, p->target_tid, "mac_capabilityrv",
+	    NULL);
+	p->deadline[1] = p->trace->last;
+	provider_reply(p->provider, token, byte + 1);
+	return (NULL);
 }
 
 ATF_TC(restart_keeps_deadline);
 ATF_TC_HEAD(restart_keeps_deadline, tc)
 {
-	atf_tc_set_md_var(tc, "descr", "signals with SA_RESTART arriving "
-	    "more often than the call's timeout restart its wait without "
-	    "restarting its deadline: the call still times out");
+	atf_tc_set_md_var(tc, "descr", "a call with a timeout that a signal "
+	    "with SA_RESTART restarts sleeps again until the same absolute "
+	    "deadline: the restart does not start the timeout afresh");
+	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
+	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "timeout", "120");
 }
 ATF_TC_BODY(restart_keeps_deadline, tc)
 {
 	struct service_session *session;
-	struct itimerval every = { .it_interval = { 0, HOLD_MS * 200 },
-	    .it_value = { 0, HOLD_MS * 200 } };	/* HOLD_MS / 5, in us */
-	struct itimerval off = { { 0, 0 }, { 0, 0 } };
-	struct sigaction sa;
-	int provider;
+	struct sleep_trace trace;
+	struct restart_probe p;
+	pthread_t t;
 	char reply = 0;
 
-	memset(&sa, 0, sizeof(sa));
-	sa.sa_handler = count_alarm;
-	sa.sa_flags = SA_RESTART;
-	sigemptyset(&sa.sa_mask);
-	ATF_REQUIRE_EQ(0, sigaction(SIGALRM, &sa, NULL));
-	session_pair(&session, &provider);
-	ATF_REQUIRE_EQ(0, setitimer(ITIMER_REAL, &every, NULL));
-	ATF_CHECK_EQ(ETIMEDOUT, session_call(session, 'a', HOLD_MS, &reply));
-	ATF_REQUIRE_EQ(0, setitimer(ITIMER_REAL, &off, NULL));
-	ATF_CHECK_MSG(atomic_load(&alarms) >= 2, "%d signals arrived",
-	    atomic_load(&alarms));
+	catch_sigusr1(SA_RESTART);
+	session_pair(&session, &p.provider);
+	sleep_trace_start(&trace);
+	p.trace = &trace;
+	p.target = pthread_self();
+	p.target_tid = self_tid();
+	p.deadline[0] = p.deadline[1] = 0;
+	ATF_REQUIRE_EQ(0, pthread_create(&t, NULL, restart_probe_thread, &p));
+	ATF_CHECK_EQ_MSG(0, session_call(session, 'a', RESTART_TIMEOUT_MS,
+	    &reply), "call result");
+	ATF_REQUIRE_EQ(0, pthread_join(t, NULL));
+	ATF_CHECK_EQ('b', reply);
+	ATF_CHECK_EQ(1, atomic_load(&signals_taken));
+	ATF_CHECK_MSG(p.deadline[0] != 0, "the call slept with no deadline");
+	ATF_CHECK_EQ_MSG(p.deadline[0], p.deadline[1], "the restarted sleep's "
+	    "deadline moved by %lld (sbintime_t units)",
+	    p.deadline[1] - p.deadline[0]);
+	sleep_trace_stop(&trace);
 	service_session_close(session);
-	close(provider);
+	close(p.provider);
 }
 
 /* ---- close wakes a sender asleep for room ----------------------------- */
