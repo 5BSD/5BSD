@@ -14,6 +14,7 @@ MAN=		libdq.3
 MLINKS+=	libdq.3 dq_open.3 \
 		libdq.3 dq_get_stats.3 \
 		libdq.3 dq_set_queue_depth.3 \
+		libdq.3 dq_queue_set_flags.3 \
 		libdq.3 dq_policy_default.3 \
 		libdq.3 dq_ident_from_stat.3 \
 		libdq.3 dq_mint_file.3 \
@@ -32,6 +33,7 @@ MLINKS+=	libdq.3 dq_open.3 \
 		libdq.3 dq_observe_list_objects.3 \
 		libdq.3 dq_observe_subscribe.3 \
 		libdq.3 dq_get_stats2.3 \
+		libdq.3 dq_get_stats2_sized.3 \
 		libdq.3 dq_mint_file_flags.3 \
 		libdq.3 dq_push_vnode_note.3 \
 		libdq.3 dq_push_invalidate.3 \
@@ -54,6 +56,8 @@ MLINKS+=	libdq.3 dq_open.3 \
 		libdq.3 dq_event_interrupt.3 \
 		libdq.3 dq_event_reply_record.3 \
 		libdq.3 dq_reply_write.3 \
+		libdq.3 dq_reply_postop.3 \
+		libdq.3 dq_postop_from_stat.3 \
 		libdq.3 dq_reply_fspacectl.3 \
 		libdq.3 dq_reply_lock.3 \
 		libdq.3 dq_reply_ioctl.3 \

@@ -128,16 +128,19 @@ answer_swap(int q, const struct dq_event *ev, const struct dq_resolve_body *rb,
 	if (dq_reply_resolve_swap(q, ev->de_id, fd, 0) == -1) {
 		error = errno;
 		fprintf(out, "dqswap: #%lu RESOLVE open \"%s\" %s -> SWAP "
-		    "refused: %s\n", nrec, path, who(ev),
+		    "%s: %s\n", nrec, path, who(ev),
+		    error == ECANCELED ? "taken, requester gone" : "refused",
 		    strerror(error));
+		if (error == ECANCELED)
+			return;		/* fd went with the take */
 		/* The event is still in flight unless it is gone. */
 		if (error != ESRCH)
 			(void)dq_reply_resolve_errno(q, ev->de_id, EIO);
+		(void)close(fd);
 	} else
 		fprintf(out, "dqswap: #%lu RESOLVE open \"%s\" %s -> SWAP "
-		    "(my fd %d of %s, now closed)\n", nrec, path,
+		    "(my fd %d of %s, closed with the take)\n", nrec, path,
 		    who(ev), fd, swap_subst);
-	(void)close(fd);
 }
 
 static void

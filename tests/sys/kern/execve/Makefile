@@ -4,6 +4,7 @@ BINDIR=		${TESTSDIR}
 
 MAN=
 
+ATF_TESTS_C+=	fexecve_test
 ATF_TESTS_SH+=	execve_test
 
 PROGS+=		good_aout

@@ -16,6 +16,11 @@
  *   0  "OK <name> fd=<n>"          resolved + connected
  *   1  "FAIL <name> errno=<e> <s>" not reachable (ENOENT/EBADF/ETIMEDOUT/...)
  *   2  usage / no ambient channel in this environment (test should skip)
+ *
+ * Only an empty process slot is "no ambient channel".  A route that is held
+ * but whose private handle cannot be registered (refused, or the SwitchBoard
+ * that received the registration died: ECONNRESET) is a FAIL with its errno,
+ * never a skip.
  */
 
 #include <err.h>
@@ -44,10 +49,17 @@ main(int argc, char **argv)
 	 * (e.g. run on the host, off the plane): the caller should skip rather
 	 * than fail.  Exit 2 is the distinct "not applicable here" signal.
 	 */
-	lookup = service_ambient_lookup_fd();
+	lookup = service_get_ambient_lookup();
 	if (lookup < 0) {
 		printf("SKIP %s no-ambient-channel\n", argv[1]);
 		return (2);
+	}
+	(void)close(lookup);
+	lookup = service_ambient_lookup_fd();
+	if (lookup < 0) {
+		printf("FAIL %s errno=%d %s\n", argv[1], errno,
+		    strerror(errno));
+		return (1);
 	}
 
 	(void)close(lookup);

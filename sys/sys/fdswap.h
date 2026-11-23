@@ -36,19 +36,22 @@ struct fdswap {
 
 /* fdswap_take flags. */
 #define	FDSWAP_NOXFER	0x0001		/* install as CAP_XFER_NONE */
+#define	FDSWAP_PLAIN	0x0002		/* refuse an entry with states of its
+					   own (FDXFER_PLAIN) */
+#define	FDSWAP_CONSUME	0x0004		/* close the entry with the take */
 
 typedef int fdswap_admit_t(struct file *fp, const cap_rights_t *rights,
 	    void *arg);
 
 int	fdswap_take(struct thread *td, int fd, int flags,
-	    fdswap_admit_t *admit, void *arg, struct fdswap *sw);
+	    fdswap_admit_t *admit, void *arg, struct fdswap *sw, bool *plainp);
 void	fdswap_release(struct fdswap *sw, struct thread *td);
 int	fdswap_receive(struct thread *td, const struct fdswap *sw);
 int	fdswap_install(struct thread *td, struct fdswap *sw, int fdflags,
 	    const struct fdinstall_gate *gate, int *fdp);
 
 /* The open layer: a swapped file as the result of open(2). */
-int	open_swap_admit(struct file *fp, int oflags,
+int	open_swap_admit(struct file *fp, int oflags, uint32_t rflags,
 	    const cap_rights_t *rights);
 int	open_swap_check(struct thread *td, struct file *fp, int fflags,
 	    bool declared_created, bool *createdp);

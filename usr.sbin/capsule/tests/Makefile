@@ -22,6 +22,8 @@ TEST_METADATA.capsule_bootstrap_test+=	is_exclusive="true"
 PROGS+=		capd_test_guardian
 PROGS+=		capd_bootstrap_fixture
 PROGS+=		capd_lookup_exec
+# Event-driven wait for a file (or text in it) for the shell cases.
+PROGS+=		capd_wait_file
 BINDIR=		${TESTSDIR}
 
 CFLAGS.capd_bootstrap_fixture+=	-I${SRCTOP}/sys
