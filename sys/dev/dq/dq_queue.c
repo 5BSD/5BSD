@@ -1263,6 +1263,9 @@ dq_op_mutates(uint32_t op, const void *body, size_t bodylen)
 		case DQ_ROP_CHDIR:
 		case DQ_ROP_CHROOT:
 		case DQ_ROP_INOTIFY:
+		/* Asked before anything is done, answered PASS or errno. */
+		case DQ_ROP_SOCKET:
+		case DQ_ROP_SOCKETPAIR:
 			return (false);
 		default:	/* unlink, rename, mkdir, bind, setattr, ... */
 			return (true);

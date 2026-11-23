@@ -860,7 +860,11 @@ is posted, and an operation that only reads
 .Dv DQ_OP_READDIR ,
 .Dv DQ_OP_FSYNC ,
 .Dv DQ_OP_LOCK ,
-and a lookup that creates, removes or changes nothing
+a lookup that creates, removes or changes nothing, and a
+.Xr socket 2
+or
+.Xr socketpair 2
+consultation
 .Pc
 are given up (INTERRUPT to the controller for one it read) and the system
 call is restarted once the single-threading is over, as a
