@@ -241,6 +241,14 @@ deadline in nanoseconds: the wait fails with
 .Er ETIMEDOUT
 once it passes, nothing having been sent, and a restart after a signal keeps
 that deadline.
+A send that finds room succeeds whatever the deadline; a deadline of 0 or one
+already past fails a send that would have to wait at once.
+A deadline later than the kernel can represent is the latest one it can.
+.Dv MAC_CAPABILITY_SEND_F_DEADLINE
+without
+.Dv MAC_CAPABILITY_SEND_F_WAIT
+fails with
+.Er EINVAL .
 .It Dv MAC_CAPABILITY_RECVMSG
 Receive an async message.
 Blocks unless
@@ -279,6 +287,14 @@ as well,
 deadline in nanoseconds instead, which a receive restarted after a signal
 .Pq Dv SA_RESTART
 keeps; a relative wait would start again.
+A queued message is returned whatever the deadline; a deadline of 0 or one
+already past fails a receive that would have to wait at once.
+A deadline later than the kernel can represent is the latest one it can.
+.Dv MAC_CAPABILITY_RECV_F_DEADLINE
+without
+.Dv MAC_CAPABILITY_RECV_F_WAIT
+fails with
+.Er EINVAL .
 This replaces a readiness wait followed by a receive.
 .It Dv MAC_CAPABILITY_SENDMSG_V2
 As
@@ -857,8 +873,10 @@ interrupted a send sleeping for room
 or a receive sleeping for a message
 .Pq Dv MAC_CAPABILITY_RECV_F_WAIT .
 .It Bq Er EINVAL
-Invalid arguments, reserved fields nonzero, payload too large, or
-too many file descriptors attached.
+Invalid arguments, reserved fields nonzero, payload too large,
+too many file descriptors attached, or a deadline flag
+.Pq Dv MAC_CAPABILITY_SEND_F_DEADLINE , MAC_CAPABILITY_RECV_F_DEADLINE
+without its wait flag.
 .It Bq Er EMSGSIZE
 Payload too large
 .Pq Dv MAC_CAPABILITY_SENDMSG ,

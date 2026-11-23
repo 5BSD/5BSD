@@ -101,7 +101,7 @@ struct mac_capability_connect_args {
 struct mac_capability_sendmsg_args {
 	const void	*payload;
 	uint32_t	payload_len;
-	uint32_t	flags;		/* 0 or MAC_CAPABILITY_SEND_F_WAIT */
+	uint32_t	flags;		/* 0, or SEND_F_WAIT [| SEND_F_DEADLINE] */
 	const int	*fds;
 	uint32_t	nfds;
 	uint64_t	reply_token;
