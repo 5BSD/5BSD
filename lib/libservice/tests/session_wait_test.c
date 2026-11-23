@@ -1033,6 +1033,53 @@ ATF_TC_BODY(close_wakes_sender, tc)
 	close(provider);
 }
 
+/* ---- the provider goes away under two senders asleep for room --------- */
+
+ATF_TC(peer_death_ends_two_senders);
+ATF_TC_HEAD(peer_death_ends_two_senders, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "when the provider goes away while two "
+	    "calls wait to send, both end with ECONNRESET and each request "
+	    "is given up once: the session still closes cleanly");
+	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "180");
+}
+ATF_TC_BODY(peer_death_ends_two_senders, tc)
+{
+	struct service_session *session;
+	struct sleep_trace trace;
+	struct two_calls w[2];
+	int clientdup, provider;
+
+	session_pair_dup(&session, &provider, &clientdup);
+	fill_queue(clientdup);
+	sleep_trace_start(&trace);
+	two_calls_start(&w[0], session, 'a');
+	(void)sleep_trace_wait(&trace, w[0].tid, "mcapsnd", NULL);
+	/*
+	 * The second sender sleeps for room as well; a library that sends
+	 * one request at a time holds it on a mutex behind the first.
+	 */
+	two_calls_start(&w[1], session, 'c');
+	(void)sleep_trace_wait(&trace, w[1].tid, "mcapsnd", "umtxn");
+	/*
+	 * Both requests are registered and neither is sent.  The first
+	 * sender to give its request up finds the peer gone, which fails the
+	 * other's request; the other sender must not give it up again.
+	 */
+	ATF_REQUIRE_EQ(0, close(provider));
+	for (int i = 0; i < 2; i++) {
+		ATF_REQUIRE_EQ(0, pthread_join(w[i].thread, NULL));
+		ATF_CHECK_EQ_MSG(ECONNRESET, w[i].error, "call %d ended with "
+		    "%s", i, strerror(w[i].error));
+	}
+	sleep_trace_stop(&trace);
+	/* Frees every request the session ever allocated, once each. */
+	service_session_close(session);
+	close(clientdup);
+}
+
 /* ---- an event wait with a zero timeout does not wait ------------------ */
 
 ATF_TC(event_timeout_zero);
@@ -1089,6 +1136,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, send_waits_only_to_deadline);
 	ATF_TP_ADD_TC(tp, restart_keeps_deadline);
 	ATF_TP_ADD_TC(tp, close_wakes_sender);
+	ATF_TP_ADD_TC(tp, peer_death_ends_two_senders);
 	ATF_TP_ADD_TC(tp, event_timeout_zero);
 	return (atf_no_error());
 }
