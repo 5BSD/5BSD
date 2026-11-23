@@ -1266,6 +1266,56 @@ vlan_svi_cleanup()
 }
 
 #
+# The bridge runs exactly while it is up: a flag change propagated from an
+# interface stacked on it (a vlan(4) SVI going promiscuous) neither starts a
+# down bridge nor stops an up one.
+#
+atf_test_case "flags_running_follows_up" "cleanup"
+flags_running_follows_up_head()
+{
+	atf_set descr 'IFF_DRV_RUNNING follows IFF_UP, not propagated flags'
+	atf_set require.user root
+}
+
+flags_running_follows_up_body()
+{
+	vnet_init
+	vnet_init_bridge
+	_vnet_check_req vlan
+
+	bridge=$(vnet_mkbridge)
+	svi=$(vnet_mkvlan)
+	atf_check ifconfig ${svi} vlan 10 vlandev ${bridge}
+
+	# Down: not running, also after the SVI goes promiscuous and back.
+	atf_check -o not-match:"RUNNING" -x "ifconfig ${bridge} | head -1"
+	atf_check ifconfig ${svi} promisc
+	atf_check -o match:"PROMISC" -o not-match:"RUNNING" \
+	    -x "ifconfig ${bridge} | head -1"
+	atf_check ifconfig ${svi} -promisc
+	atf_check -o not-match:"RUNNING" -x "ifconfig ${bridge} | head -1"
+
+	# Up: running, and it stays running across the SVI's changes.
+	atf_check ifconfig ${bridge} up
+	atf_check -o match:"UP.*RUNNING" -x "ifconfig ${bridge} | head -1"
+	atf_check ifconfig ${svi} promisc
+	atf_check -o match:"RUNNING" -x "ifconfig ${bridge} | head -1"
+	atf_check ifconfig ${svi} -promisc
+	atf_check -o match:"RUNNING" -x "ifconfig ${bridge} | head -1"
+
+	# Down again: stopped, and the SVI's change does not restart it.
+	atf_check ifconfig ${bridge} down
+	atf_check -o not-match:"RUNNING" -x "ifconfig ${bridge} | head -1"
+	atf_check ifconfig ${svi} promisc
+	atf_check -o not-match:"RUNNING" -x "ifconfig ${bridge} | head -1"
+}
+
+flags_running_follows_up_cleanup()
+{
+	vnet_cleanup
+}
+
+#
 # A vlan(4) on the bridge (an SVI) calls into the bridge with the global vlan
 # lock held, and adding or removing a vlan(4) member calls into the vlan with
 # the bridge lock held.  Both at once used to deadlock.
@@ -1295,10 +1345,14 @@ vlan_svi_member_concurrent_body()
 
 	# The SVI: SIOCGIFMEDIA through to the bridge.  The member:
 	# ifpromisc() on it from bridge_ioctl_add() and bridge_delete_member().
+	# The rounds only make the two paths overlap: a WITNESS kernel reports
+	# the reversal on the first overlap, and before the fix 100 rounds were
+	# enough for the two loops to deadlock in the test guest.
 	n=100
 	(i=0; while [ $i -lt $n ]; do
-		ifconfig ${svi} > /dev/null; i=$((i + 1)); done) &
+		ifconfig ${svi} > /dev/null || exit 1; i=$((i + 1)); done) &
 	svi_pid=$!
+	echo ${svi_pid} > svi_loop.pid
 	i=0
 	while [ $i -lt $n ]; do
 		atf_check ifconfig ${bridge} addm ${member}
@@ -1310,6 +1364,9 @@ vlan_svi_member_concurrent_body()
 
 vlan_svi_member_concurrent_cleanup()
 {
+	if [ -f svi_loop.pid ]; then
+		kill $(cat svi_loop.pid) 2>/dev/null
+	fi
 	vnet_cleanup
 }
 
@@ -1534,6 +1591,7 @@ atf_init_test_cases()
 	atf_add_test_case "vlan_ifconfig_iftagged"
 	atf_add_test_case "vlan_svi"
 	atf_add_test_case "vlan_svi_member_concurrent"
+	atf_add_test_case "flags_running_follows_up"
 	atf_add_test_case "vlan_qinq"
 	atf_add_test_case "vlan_untagged"
 	atf_add_test_case "vlan_defuntagged"
