@@ -37,7 +37,7 @@
 # descriptions.
 #
 DQ_TEST_OPEN|live|GENERIC-TEST|dq_testopen_|@(#)5BSD DQ_TEST_OPEN test kernel: not for publication|debug.dq.unverified_open,debug.dq.test_opens
-MAC_CAPABILITY_TEST_PERMISSIVE|live|GENERIC-TEST|mac_capability_test_issuer_|@(#)5BSD MAC_CAPABILITY_TEST_PERMISSIVE test kernel: not for publication|kern.mac_capability.test_issuer,kern.mac_capability.test_issuers,kern.mac_capability.test_issuers_live,kern.mac_capability.test_issuer_state,debug.mac_capability.test_issuer_anchor,debug.mac_capability.test_issuer_fail_init
-DQ_FAULT_INJECTION|live|GENERIC-TEST|dq_faultinj_|@(#)5BSD DQ_FAULT_INJECTION test kernel: not for publication|debug.dq.delay_swap_take,debug.dq.delay_postop_apply
+DQ_FAULT_INJECTION|live|GENERIC-TEST|dq_faultinj_|@(#)5BSD DQ_FAULT_INJECTION test kernel: not for publication|debug.dq.delay_swap_take,debug.dq.delay_postop_apply,debug.dq.refuse_postop_reply,debug.dq.drop_wakeup,debug.dq.wakeups_dropped,debug.dq.wakeup_drop_wait,debug.dq.thread_sleeps
+MAC_CAPABILITY_TEST_PERMISSIVE|live|GENERIC-TEST|mac_capability_test_issuer_|@(#)5BSD MAC_CAPABILITY_TEST_PERMISSIVE test kernel: not for publication|kern.mac_capability.test_issuer,kern.mac_capability.test_issuers,kern.mac_capability.test_issuers_live,kern.mac_capability.test_issuer_state,debug.mac_capability.test_issuer_anchor,debug.mac_capability.test_issuer_fail_init,debug.mac_capability.test_issuer_fail_init_count,debug.mac_capability.test_issuer_fail_init_skip,debug.mac_capability.test_issuer_exclude_self,security.cap_exclusion.debug_allowed,debug.mac_capability.test_issuer_oes_trylock_fail,debug.mac_capability.test_issuer_oes_defer_hold,debug.mac_capability.test_issuer_oes_gate_hold
 CAPABILITY_BROKER_TEST_PERMISSIVE|reserved|GENERIC-TEST|-|@(#)5BSD CAPABILITY_BROKER_TEST_PERMISSIVE test kernel: not for publication|-
 SDT_5BSD_OMIT|reserved|-|-|@(#)5BSD SDT_5BSD_OMIT measurement kernel: not for publication|-

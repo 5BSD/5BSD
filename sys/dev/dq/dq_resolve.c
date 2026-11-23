@@ -227,6 +227,20 @@ dq_resolve_consult(struct thread *td, struct dqres_binding *b,
 		return (EIO);
 	}
 	/*
+	 * Standing rules (dq_standing.c): the controller's answer given in
+	 * advance, with exactly the return value and ans its reply would
+	 * have produced.  After the guard, so a refusal there stays counted
+	 * and traced and the rules' readers hold no lock.
+	 */
+	switch (dq_standing_decide(q, rq, ans, &error)) {
+	case DQ_SD_PASS:
+		return (0);
+	case DQ_SD_ERRNO:
+		return (error);
+	default:
+		break;
+	}
+	/*
 	 * SETATTR and TRUNCATE (D161): the setattr body follows the four
 	 * strings at the next 8-byte boundary.
 	 */

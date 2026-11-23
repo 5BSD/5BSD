@@ -69,9 +69,28 @@ ATF_TC_BODY(allocation_failure_preserves_ownership, tc)
 	close(p[0]);
 	close(p[1]);
 }
+/* The join (OES_IOC_JOIN) is best effort: a descriptor that refuses it
+ * is still wrapped, and errno is left as it was. */
+ATF_TC_WITHOUT_HEAD(join_refused_still_wraps);
+ATF_TC_BODY(join_refused_still_wraps, tc)
+{
+	int p[2];
+	oes_client_t *client;
+
+	ATF_REQUIRE_EQ(0, pipe(p));
+	errno = EDOM;
+	client = oes_client_create_from_fd(p[0]);
+	ATF_REQUIRE(client != NULL);
+	ATF_CHECK_EQ(EDOM, errno);
+	oes_client_destroy(client);
+	close(p[0]);
+	close(p[1]);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, owned_and_borrowed);
+	ATF_TP_ADD_TC(tp, join_refused_still_wraps);
 	ATF_TP_ADD_TC(tp, invalid_descriptor);
 	ATF_TP_ADD_TC(tp, allocation_failure_preserves_ownership);
 	return (atf_no_error());

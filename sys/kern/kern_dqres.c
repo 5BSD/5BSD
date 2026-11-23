@@ -259,7 +259,7 @@ dqres_attach(struct thread *td, struct proc *p, struct dqres_binding *b,
 	struct fdescenttbl *fdt;
 	struct pwddesc *pdp;
 	struct dqres *dr;
-	int error, i;
+	int error, i, save;
 
 	if (dqres_ops == NULL)
 		return (ENXIO);
@@ -284,8 +284,16 @@ dqres_attach(struct thread *td, struct proc *p, struct dqres_binding *b,
 		PROC_UNLOCK(p);
 		goto out;
 	}
-	/* Under PROC_LOCK, before the pwddesc mutex (review, low). */
+	/*
+	 * Under PROC_LOCK, before the pwddesc mutex (review, low).  Base
+	 * exclusion defers to the attach's own, narrower rule here
+	 * (TDP2_DQ_ATTACH; cap_exclusion_attach_check()).
+	 */
+	save = curthread_pflags2_set(TDP2_DQ_ATTACH);
 	error = p_candebug(td, p);
+	curthread_pflags2_restore(save);
+	if (error == 0)
+		error = cap_exclusion_attach_check(td, p);
 	if (error != 0) {
 		PROC_UNLOCK(p);
 		goto out;
@@ -328,6 +336,8 @@ dqres_attach(struct thread *td, struct proc *p, struct dqres_binding *b,
 	pdp->pd_dqres = dr;
 	dr = NULL;
 	p->p_flag2 |= P2_NO_NEW_PRIVS;
+	/* An attached process is never excluded (base exclusion rule 3). */
+	cap_exclusion_clear_locked(p, CAPX_CLEAR_DQ_ATTACH);
 	/* An attached process acts without its software authority (D336). */
 	cap_authority_strip_locked(p);
 unlock:
@@ -631,6 +641,26 @@ dq_fullpath(struct vnode *vp, char **retbuf, char **freebuf)
 	error = vn_fullpath(vp, retbuf, freebuf);
 	DQRES_NORESOLVE_LEAVE(save);
 	return (error);
+}
+
+/*
+ * The process root a standing rule may match this event under
+ * (dq-standing-decisions §4.5), or NULL: a native process's own lookup of
+ * an absolute name or absolute symbolic link target (start REAL_ROOT;
+ * relative starts always post, Q16), with neither a served root nor a
+ * served descriptor, not RINROOT or ABSTRACT.  Set after dq_req_root, so rq_root is known.  Every other request
+ * builder leaves it NULL; dq_standing_decide tests the conditions again.
+ */
+static struct vnode *
+dq_standing_root(const struct dqres_req *rq, const struct dqres_snap *snap)
+{
+
+	if (!snap->dsn_native || snap->dsn_rdir == NULL || rq->rq_root != 0 ||
+	    rq->rq_object != 0 ||
+	    (rq->rq_rflags & (DQ_RF_RINROOT | DQ_RF_ABSTRACT)) != 0)
+		return (NULL);
+	return (rq->rq_start_kind == DQ_START_REAL_ROOT ? snap->dsn_rdir :
+	    NULL);
 }
 
 /*
@@ -1401,8 +1431,10 @@ dqres_namei(struct nameidata *ndp, struct vnode *dp, bool abs,
 	}
 	error = dq_req_root(&rq, snap->dsn_root,
 	    (snap->dsn_flags & DR_ROOT_DEAD) != 0, &rootid);
-	if (error == 0)
+	if (error == 0) {
+		rq.rq_st_root = dq_standing_root(&rq, snap);
 		error = dqres_ops->dro_consult(td, dr->dr_binding, &rq, &ans);
+	}
 	free(freepath, M_TEMP);
 	free(freehint2, M_TEMP);
 	if (error != 0) {
@@ -2098,6 +2130,7 @@ dqres_namei_symlink(struct nameidata *ndp, struct vnode *dp,
 		rq.rq_startpathlen = strlen(fullpath);
 		rq.rq_rflags |= DQ_RF_STARTPATH_VALID;
 	}
+	rq.rq_st_root = dq_standing_root(&rq, snap);
 	error = dqres_ops->dro_consult(td, dr->dr_binding, &rq, &ans);
 	free(freepath, M_TEMP);
 	MPASS(error != ERESTART);

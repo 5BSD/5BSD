@@ -1984,11 +1984,34 @@ int
 sys_unmount(struct thread *td, struct unmount_args *uap)
 {
 
-	return (kern_unmount(td, uap->path, (unsigned)uap->flags));
+	return (kern_unmount(td, uap->path, UIO_USERSPACE,
+	    (unsigned)uap->flags));
+}
+
+/*
+ * The path argument of kern_unmount(), from user or kernel space, into a
+ * MNAMELEN buffer; ENAMETOOLONG when it does not fit, as copyinstr(9).  A
+ * kernel path is read no further than MNAMELEN bytes, as copyinstr(9)
+ * reads a user one.
+ */
+static int
+unmount_copypath(const char *path, enum uio_seg pathseg, char *buf)
+{
+	size_t len;
+
+	if (pathseg == UIO_SYSSPACE) {
+		len = strnlen(path, MNAMELEN);
+		if (len == MNAMELEN)
+			return (ENAMETOOLONG);
+		memcpy(buf, path, len + 1);
+		return (0);
+	}
+	return (copyinstr(path, buf, MNAMELEN, NULL));
 }
 
 int
-kern_unmount(struct thread *td, const char *path, uint64_t flags)
+kern_unmount(struct thread *td, const char *path, enum uio_seg pathseg,
+    uint64_t flags)
 {
 	struct nameidata nd;
 	struct dq_intent dqi;
@@ -2008,7 +2031,7 @@ kern_unmount(struct thread *td, const char *path, uint64_t flags)
 	}
 	if (flags & MNT_BYFSID) {
 		fsidbuf = malloc(MNAMELEN, M_TEMP, M_WAITOK);
-		error = copyinstr(path, fsidbuf, MNAMELEN, NULL);
+		error = unmount_copypath(path, pathseg, fsidbuf);
 		if (error) {
 			free(fsidbuf, M_TEMP);
 			return (error);
@@ -2028,7 +2051,7 @@ kern_unmount(struct thread *td, const char *path, uint64_t flags)
 		}
 	} else {
 		pathbuf = malloc(MNAMELEN, M_TEMP, M_WAITOK);
-		error = copyinstr(path, pathbuf, MNAMELEN, NULL);
+		error = unmount_copypath(path, pathseg, pathbuf);
 		if (error) {
 			free(pathbuf, M_TEMP);
 			return (error);

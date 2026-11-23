@@ -254,6 +254,18 @@ typedef void (*process_signal_fn)(void *, struct proc *, int);
 EVENTHANDLER_DECLARE(process_signal, process_signal_fn);
 
 /*
+ * A user reference of a prison that is no longer alive was dropped (a process
+ * left it, the deferred last release completed, a child prison was freed, or
+ * the prison was killed).  Never invoked for live prisons.  Invoked with no
+ * prison mutex or allprison_lock held; from exit1() the exiting process's
+ * and its parent's process locks are held.  Handlers must not sleep or take
+ * sleepable locks; a mutex is allowed.  The prison is valid for the call.
+ */
+struct prison;
+typedef void (*prison_uref_release_fn)(void *, struct prison *);
+EVENTHANDLER_DECLARE(prison_uref_release, prison_uref_release_fn);
+
+/*
  * application dump event
  */
 typedef void (*app_coredump_start_fn)(void *, struct thread *, char *name);

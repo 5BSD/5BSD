@@ -7,6 +7,7 @@ import json
 import os
 import re
 from pathlib import Path
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -240,8 +241,20 @@ class Reconciliation(unittest.TestCase):
             return value
         with self.assertRaisesRegex(ValueError, 'restrictive feature note'):
             self.reconcile_code(policy(binary.read_bytes()))
-        subprocess.run([os.environ.get('BSD_BUILD_ELFCTL', 'elfctl'), '-e', '+biprestrict',
-                        str(binary)], check=True, capture_output=True)
+        # elfctl(1) has no name for the BIP restriction bit (BIP is archived;
+        # NT_FREEBSD_FCTL has no 0x80 entry), so set it in the one FreeBSD
+        # feature-control note the way elfctl -e sets a known feature.
+        data = bytearray(binary.read_bytes())
+        controls = elf.inspect(bytes(data))['freebsd_feature_control_notes']
+        self.assertEqual(len(controls), 1)
+        self.assertFalse(controls[0]['value'] & elf.BIP_RESTRICT)
+        order = '<' if data[5] == 1 else '>'
+        # Note header (12 bytes), then the name "FreeBSD\0" (8), then the value.
+        struct.pack_into(order + 'I', data, controls[0]['offset'] + 20,
+                         controls[0]['value'] | elf.BIP_RESTRICT)
+        binary.write_bytes(bytes(data))
+        self.assertEqual(elf.inspect(binary.read_bytes())['freebsd_feature_control_notes'][0]['value'],
+                         controls[0]['value'] | elf.BIP_RESTRICT)
         selected = policy(binary.read_bytes())
         result = self.reconcile_code(selected)['protected_consumer_code']
         admission = result['consumers'][0]['bip_image_admission']
@@ -856,6 +869,16 @@ class Reconciliation(unittest.TestCase):
 
     def test_acl_not_discarded(self):
         target = self.file('/program')
+        # pathconf(2) _PC_ACL_EXTENDED (59) and _PC_ACL_NFS4 (64): a file
+        # system without either (UFS mounted without acls or nfsv4acls) cannot
+        # carry the ACL this case needs; any other setfacl failure still fails.
+        def supported(name):
+            try:
+                return os.pathconf(target, name) == 1
+            except OSError:
+                return False
+        if not any(supported(name) for name in (59, 64)):
+            self.skipTest('the work directory file system supports no ACL type')
         result = subprocess.run(['setfacl', '-m', 'u:12345:r:allow', str(target)],
                                 capture_output=True)
         if result.returncode:

@@ -129,13 +129,16 @@ Missing discovery, an unpublished name, visibility restrictions, and missing
 software attributes are distinct conditions to investigate. A protected name
 can return `ENOENT` when the requesting executable lacks its required
 attributes; changing UID or preserving an environment variable does not grant
-them. For example, `system.Trace` requires `system.trace.client`. A timeout
-means switchboard accepted the name but the provider did not come up within
-`SERVICE_LOOKUP_TIMEOUT_MS` (2 seconds per attempt; clients built on
-libservice retry): the unit is still starting (BSDFilesystem's cold start can
-take longer than that on a fresh pool), it failed to launch (previous entry),
-or, for a provider that runs with ambient authority, its manifest forgot
-`ambient = true` so switchboard launched it sandboxed and it never answered.
+them. For example, `system.Trace` requires `system.trace.client`. A lookup
+waits for switchboard's answer; `ETIMEDOUT` is that answer, given when the
+provider did not come up within switchboard's activation bound
+(`SERVICE_ACTIVATION_TIMEOUT_MS`, 10 seconds): the unit is still starting
+(BSDFilesystem's cold start can take longer than that on a fresh pool), it
+failed to launch (previous entry), or, for a provider that runs with ambient
+authority, its manifest forgot `ambient = true` so switchboard launched it
+sandboxed and it never answered.  A lookup that ends with `ECONNRESET` lost
+the switchboard serving it, could not be answered (switchboard logs why), or
+was waiting on behalf of a unit that exited.
 
 **Check.**
 

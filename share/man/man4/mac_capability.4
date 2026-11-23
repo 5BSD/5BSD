@@ -23,7 +23,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd November 17, 2026
+.Dd November 21, 2026
 .Dt MAC_CAPABILITY 4
 .Os
 .Sh NAME
@@ -216,6 +216,19 @@ Returns
 if the RX queue is full; wait for
 .Dv EVFILT_WRITE
 and retry.
+Setting
+.Dv MAC_CAPABILITY_SEND_F_WAIT
+in
+.Va flags
+instead sleeps until the queue has room and then sends, with no time limit,
+also on a non-blocking descriptor.
+The sleep is interruptible as for
+.Xr write 2
+on a full pipe: a signal whose handler was installed with
+.Dv SA_RESTART
+restarts the call, any other makes it fail with
+.Er EINTR .
+Nothing is sent and no descriptor is consumed before the message is accepted.
 .It Dv MAC_CAPABILITY_RECVMSG
 Receive an async message.
 Blocks unless
@@ -247,7 +260,9 @@ This replaces a readiness wait followed by a receive.
 .It Dv MAC_CAPABILITY_SENDMSG_V2
 As
 .Dv MAC_CAPABILITY_SENDMSG ,
-with per-descriptor work for any number of attachments done in the same call.
+with per-descriptor work for any number of attachments done in the same call
+.Pf ( Dv MAC_CAPABILITY_SEND_F_WAIT
+applies as well).
 .Va fd_specs
 is null or holds one
 .Vt struct mac_capability_fd_spec
@@ -562,6 +577,9 @@ Number of registered services.
 Number of active capability instances.
 .It Va kern.mac_capability.service_names
 Newline-separated list of registered service names.
+.It Va kern.mac_capability.dead_service_names
+Newline-separated list of destroyed services that open instances still keep
+allocated; a service leaves it when its last instance is freed.
 .It Va kern.mac_capability.service_details
 Newline-separated list of registered services with flags, queue depth,
 TX limit, instance limit, active instance count, and destroying state.
@@ -619,7 +637,7 @@ refuses to plan packages or media for a configuration that carries it.
 The option is not in NOTES, and is not available to a module.
 .Pp
 On such a kernel only:
-.Bl -tag -width debug.mac_capability.test_issuer_fail_init
+.Bl -tag -width debug.mac_capability.test_issuer_exclude_self
 .It Va kern.mac_capability.test_issuer
 The tunable, read once at boot; only 1 enables test issuers.
 It cannot be changed afterwards.
@@ -638,12 +656,48 @@ For tests that need revocation while test issuers are alive.
 .It Va debug.mac_capability.test_issuer_fail_init
 An errno
 .Pq Er ENOSPC , ENFILE No or Er EMFILE ,
-or 0 to clear, that PID 1's next issuer creation fails with, once, after it
-has anchored.
+or 0 to clear, that PID 1's next issuer creations fail with after it has
+anchored.
+It clears itself after
+.Va debug.mac_capability.test_issuer_fail_init_count
+failures.
+.It Va debug.mac_capability.test_issuer_fail_init_count
+How many of those creations in a row fail: 1 (the default) is one failure,
+0 fails every creation until
+.Va debug.mac_capability.test_issuer_fail_init
+is cleared.
+Clearing
+.Va debug.mac_capability.test_issuer_fail_init
+resets it to 1.
+.It Va debug.mac_capability.test_issuer_fail_init_skip
+How many of PID 1's creations succeed before those failures begin (default
+0); 1 fails the issuer
+.Xr capsule 8
+creates in advance for the next start rather than the first.
+Clearing
+.Va debug.mac_capability.test_issuer_fail_init
+resets it to 0.
+.It Va debug.mac_capability.test_issuer_exclude_self
+Writing 1, while test issuers are on, marks the calling root process
+excluded from
+.Xr oes 4
+and Capability Brokers, as process 1 is
+.Pq see Sx BASE EXCLUSION No in Xr cap_process 2 ,
+so that a test can exercise the exclusion chain with a test issuer.
+Refused
+.Pq Er EPERM
+for a traced, ktraced, jailed or attached caller or in capability mode.
 .El
 .Pp
-Neither debug control is a tunable, and neither can be written from a
-jail; both only restrict.
+No debug control is a tunable, and none can be written from a jail.
+The issuer controls only restrict;
+.Va debug.mac_capability.test_issuer_exclude_self
+stands in for process 1 and exists only on these test kernels.
+.Pp
+Also only on these kernels, the loader tunable
+.Va security.cap_exclusion.debug_allowed
+lets processes that are not excluded debug excluded ones
+.Pq BASE EXCLUSION in Xr cap_process 2 .
 .Sh DTRACE PROBES
 The
 .Nm
@@ -772,6 +826,13 @@ Service being destroyed during
 .Dv MAC_CAPABILITY_CONNECT .
 .It Bq Er ECONNRESET
 Instance terminated or peer closed.
+.It Bq Er EINTR
+A signal whose handler was installed without
+.Dv SA_RESTART
+interrupted a send sleeping for room
+.Pq Dv MAC_CAPABILITY_SEND_F_WAIT
+or a receive sleeping for a message
+.Pq Dv MAC_CAPABILITY_RECV_F_WAIT .
 .It Bq Er EINVAL
 Invalid arguments, reserved fields nonzero, payload too large, or
 too many file descriptors attached.

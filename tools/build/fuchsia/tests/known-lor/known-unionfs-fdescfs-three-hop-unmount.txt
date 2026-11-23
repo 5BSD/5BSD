@@ -1,0 +1,46 @@
+lock order reversal:
+ 1st 0xff0100017e1c1cb0 fdescfs (fdescfs, lockmgr) @ /usr/src/sys/kern/vfs_mount.c:2580
+ 2nd 0xff0100017e332230 tmpfs (tmpfs, lockmgr) @ /usr/src/sys/fs/unionfs/union_vnops.c:2264
+All lock orders from tmpfs -> fdescfs:
+"tmpfs" -> "ufs" -> "fdescfs"
+
+lock order "tmpfs"(lockmgr) -> "ufs"(lockmgr) first seen at:
+#0 0xffffffff80e7b2ea at witness_checkorder+0x36a
+#1 0xffffffff80dca1ea at lockmgr_lock_flags+0x16a
+#2 0xffffffff8135c1ed at ffs_lock+0x8d
+#3 0xffffffff81676042 at VOP_LOCK1_APV+0x32
+#4 0xffffffff80f4d682 at _vn_lock+0x62
+#5 0xffffffff80f2fb65 at vput_final+0x285
+#6 0xffffffff80f23889 at dounmount+0x6f9
+#7 0xffffffff80f24289 at kern_unmount+0x409
+#8 0xffffffff815215fc at amd64_syscall+0xaec
+#9 0xffffffff814ec79b at fast_syscall_common+0xf8
+
+lock order "ufs"(lockmgr) -> "fdescfs"(lockmgr) first seen at:
+#0 0xffffffff80e7b2ea at witness_checkorder+0x36a
+#1 0xffffffff80dca1ea at lockmgr_lock_flags+0x16a
+#2 0xffffffff81676042 at VOP_LOCK1_APV+0x32
+#3 0xffffffff80f4d682 at _vn_lock+0x62
+#4 0xffffffff80f2f2df at vget_finish+0xaf
+#5 0xffffffff80c834f2 at fdesc_root+0x22
+#6 0xffffffff80f30806 at vflush+0x56
+#7 0xffffffff80c8349e at fdesc_unmount+0x6e
+#8 0xffffffff80f23921 at dounmount+0x791
+#9 0xffffffff80f24289 at kern_unmount+0x409
+#10 0xffffffff815215fc at amd64_syscall+0xaec
+#11 0xffffffff814ec79b at fast_syscall_common+0xf8
+
+lock order fdescfs -> tmpfs attempted at:
+#0 0xffffffff80e7bcbb at witness_checkorder+0xd3b
+#1 0xffffffff80dcbb31 at lockmgr_xlock+0x51
+#2 0xffffffff81676042 at VOP_LOCK1_APV+0x32
+#3 0xffffffff83a22f1e at unionfs_lock+0x1ae
+#4 0xffffffff81676042 at VOP_LOCK1_APV+0x32
+#5 0xffffffff80f4d682 at _vn_lock+0x62
+#6 0xffffffff83a1eb23 at unionfs_root+0x43
+#7 0xffffffff80f30806 at vflush+0x56
+#8 0xffffffff83a1ea23 at unionfs_unmount+0x53
+#9 0xffffffff80f23921 at dounmount+0x791
+#10 0xffffffff80f24289 at kern_unmount+0x409
+#11 0xffffffff815215fc at amd64_syscall+0xaec
+#12 0xffffffff814ec79b at fast_syscall_common+0xf8

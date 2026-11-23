@@ -649,10 +649,17 @@ ATF_TC_BODY(pdopenpid_self, tc)
 
 /*
  * pdopenpid for a process that is exiting (P_WEXIT set) should fail with EBUSY.
+ *
+ * The child is made to exit and then waited for with WNOWAIT, so it is a
+ * zombie, still found by pget() and with P_WEXIT set, when pdopenpid()
+ * runs.  A fixed sleep instead let pdopenpid() win against the child's exit
+ * on a slow machine; it then succeeded, and closing its descriptor killed
+ * the child.
  */
 ATF_TC_WITHOUT_HEAD(pdopenpid_exiting);
 ATF_TC_BODY(pdopenpid_exiting, tc)
 {
+	siginfo_t info;
 	pid_t child;
 	int fd, pip[2], status;
 
@@ -672,15 +679,19 @@ ATF_TC_BODY(pdopenpid_exiting, tc)
 	/* Tell the child to exit. */
 	ATF_REQUIRE(close(pip[1]) == 0);
 
-	/* Might still race. */
-	usleep(1000);
+	/* Until it has exited, without reaping it. */
+	memset(&info, 0, sizeof(info));
+	ATF_REQUIRE_MSG(waitid(P_PID, child, &info, WEXITED | WNOWAIT) == 0,
+	    "waitid: %s", strerror(errno));
+	ATF_REQUIRE_EQ(info.si_pid, child);
+	ATF_REQUIRE_EQ(info.si_code, CLD_EXITED);
+
 	fd = pdopenpid(child, 0);
-	if (fd >= 0) {
-		ATF_REQUIRE(close(fd) == 0);
-	} else {
-		ATF_REQUIRE_MSG(errno == EBUSY,
-		    "unexpected errno %d (%s)", errno, strerror(errno));
-	}
+	if (fd >= 0)
+		(void)close(fd);
+	ATF_REQUIRE_MSG(fd == -1 && errno == EBUSY,
+	    "pdopenpid of an exited, unreaped child: fd %d, errno %d (%s)",
+	    fd, errno, strerror(errno));
 
 	ATF_REQUIRE(waitpid(child, &status, 0) == child);
 	ATF_REQUIRE(WIFEXITED(status));

@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd November 15, 2026
+.Dd November 21, 2026
 .Dt SERVICE_RUNTIME 3
 .Os
 .Sh NAME
@@ -140,34 +140,52 @@ lifecycle and terminate/reap failed children as necessary.
 No authority is granted and no child cleanup or hard scheduling bound is
 provided by this helper.
 .Pp
-.Fn service_retry_activation attempt arg attempt_ms
-is for a process that must open a session before it confines itself and
-so cannot defer the lookup, while switchboard may still be activating the
-provider.
-It calls
-.Fn attempt arg ,
-which returns 0 or -1 with errno, and repeats an attempt that failed with
-ETIMEDOUT after a pause of
-.Dv SERVICE_ACTIVATION_RETRY_PAUSE_MS ,
-but starts none that could end after
-.Fn SERVICE_ACTIVATION_WAIT_MS attempt_ms :
-switchboard's own activation bound,
-.Dv SERVICE_ACTIVATION_TIMEOUT_MS ,
-plus one attempt, whose bound is
-.Fa attempt_ms
-(for a lookup,
-.Dv SERVICE_LOOKUP_TIMEOUT_MS ) .
-The whole call therefore ends within that bound if each attempt keeps to
-.Fa attempt_ms .
-It returns 0, or -1 with the errno of the last attempt: any error other
-than ETIMEDOUT is final.
-A NULL attempt or a zero bound fails with EINVAL.
-Activations nest: a provider whose own start waits out another provider's
-activation this way can take longer than
+An ambient lookup
+.Po
+.Xr libservice 3
+.Fn service_open
+and
+.Fn service_connect_ambient
+from a process that switchboard did not launch
+.Pc
+waits for switchboard's answer with no time limit of its own.
+Switchboard bounds an on-demand activation by
 .Dv SERVICE_ACTIVATION_TIMEOUT_MS
-to start, so a client activating it on demand may see ETIMEDOUT from
-switchboard first and has to retry, for example with this function.
+and then answers
+.Er ETIMEDOUT
+itself.
+Activations nest: a provider whose own start waits for another provider's
+activation can take longer than that bound to start, and a client activating
+it then receives
+.Er ETIMEDOUT .
+The lookup fails with
+.Er ECONNRESET
+if the switchboard serving it exits before answering, if switchboard cannot
+deliver its answer, or if the unit the lookup was resolved to exits while
+the activation is pending.
+A registration switchboard refuses fails with the errno switchboard reports.
+While no switchboard runs (a restart), the registration of the lookup waits
+in the boot discovery channel for the next one.
+A signal behaves as it does for a slow system call such as
+.Xr read 2
+on a pipe: if its handler was installed with
+.Dv SA_RESTART
+the wait restarts, otherwise the lookup fails with
+.Er EINTR .
+This holds for every wait of the lookup: for the answer, and for room in a
+full channel queue (while switchboard is restarting or under a burst of
+registrations,
+.Dv MAC_CAPABILITY_SEND_F_WAIT
+in
+.Xr mac_capability 4 ) .
+The wait is a cancellation point, as
+.Xr read 2
+is, and a cancelled lookup closes the descriptors it created.
+A cancellation request that arrives in the instant between the library's
+check and the start of the kernel's sleep is acted on only at the next
+cancellation point.
 .Sh SEE ALSO
 .Xr libservice 3 ,
+.Xr mac_capability 4 ,
 .Xr BSDMemory 8 ,
 .Xr BSDPower 8

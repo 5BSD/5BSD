@@ -931,6 +931,37 @@ ATF_TC_BODY(dispatch_stop_drops, tc)
 	    r.ms);
 }
 
+/*
+ * Review 3 #9: dq_get_stats2 passes the size of the caller's struct, so a
+ * program built against another struct dq_stats2 fails EINVAL instead of
+ * having the kernel's struct written past its own; the plain function, a
+ * stale binary's call, cannot know the size and refuses.
+ */
+ATF_TC(stats2_size_checked);
+ATF_TC_HEAD(stats2_size_checked, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "dq_get_stats2 refuses a struct of "
+	    "another size (EINVAL), and the sizeless function refuses");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(stats2_size_checked, tc)
+{
+	struct dq_stats2 st;
+	int q;
+
+	q = dq_open();
+	ATF_REQUIRE_MSG(q >= 0, "dq_open: %s", strerror(errno));
+	ATF_CHECK_EQ(0, dq_get_stats2(q, &st));
+	ATF_CHECK_EQ(sizeof(st), st.ds2_size);
+	errno = 0;
+	ATF_CHECK_EQ(-1, dq_get_stats2_sized(q, &st, sizeof(st) - 8));
+	ATF_CHECK_EQ(EINVAL, errno);
+	errno = 0;
+	ATF_CHECK_EQ(-1, (dq_get_stats2)(q, &st));
+	ATF_CHECK_EQ(EINVAL, errno);
+	(void)close(q);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -943,5 +974,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, serve_mmap_writeback);
 	ATF_TP_ADD_TC(tp, resolve_accessor);
 	ATF_TP_ADD_TC(tp, dispatch_stop_drops);
+	ATF_TP_ADD_TC(tp, stats2_size_checked);
 	return (atf_no_error());
 }

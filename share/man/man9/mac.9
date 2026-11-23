@@ -31,7 +31,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd May 20, 2021
+.Dd November 17, 2026
 .Dt MAC 9
 .Os
 .Sh NAME
@@ -166,12 +166,43 @@ to anonymous-mount admission.
 Mount ownership credentials and admission credentials can therefore differ.
 The hook supplies an enforcement point and does not itself assign storage
 policy or grant authority.
+.Ss Inspecting and debugging processes
+The
+.Dv mpo_proc_check_debug
+entry point answers whether a credential may debug a process: stop it,
+read or write its memory, or change it.
+The
+.Dv mpo_proc_check_inspect
+entry point answers whether a credential may inspect a process: see its
+memory map, auxiliary vector, ps_strings and signal trampoline locations,
+signal fast block, umask and kernel stack, which are metadata about the
+process and never its memory contents.
+.Xr p_caninspect 9
+asks it.
+.Pp
+A policy that implements
+.Dv mpo_proc_check_debug
+but not
+.Dv mpo_proc_check_inspect
+is asked its debug question for inspect, so a policy that has not opted
+in to the finer question is never looser for it.
+The
+.Dv mac_framework:::hook-skip
+probe then reports reason 3 for the inspect hook, followed by the debug
+hook's own probes.
+A policy that implements both must not refuse inspect where it allows
+debug:
+.Fn p_candebug
+returning 0 implies
+.Fn p_caninspect
+returning 0.
 .Sh SEE ALSO
 
 .Xr acl 3 ,
 .Xr mac 3 ,
 .Xr posix1e 3 ,
 .Xr mac 4 ,
+.Xr p_candebug 9 ,
 .Xr ucred 9 ,
 .Xr vaccess 9 ,
 .Xr vaccess_acl_posix1e 9 ,

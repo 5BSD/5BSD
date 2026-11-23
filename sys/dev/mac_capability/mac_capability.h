@@ -31,6 +31,8 @@
 #include <sys/mutex.h>
 #include <sys/file.h>
 #include <sys/refcount.h>
+#include <sys/eventhandler.h>
+#include <sys/_task.h>
 
 #include "mac_capability_ioctl.h"
 
@@ -204,6 +206,24 @@ int	mac_capability_service_create(const struct mac_capability_service_params *pa
 void	mac_capability_service_destroy(struct mac_capability_service *svc);
 
 /*
+ * mac_capability_destroy_wait: service destroy is about to wait for something
+ * outside it.  Handlers run in the destroying thread, sometimes with a mutex
+ * held (the instance mutex, for MAC_CAPABILITY_DESTROY_WAIT_INFLIGHT, or the
+ * registry lock): they must not sleep or take sleepable locks.  Lets a test
+ * know that destroy is held up, and by what, without timing.
+ */
+enum mac_capability_destroy_wait_reason {
+	MAC_CAPABILITY_DESTROY_WAIT_ADMISSION = 1, /* constructors, authorization */
+	MAC_CAPABILITY_DESTROY_WAIT_INFLIGHT,	  /* co_call and op-bracketed callbacks */
+	MAC_CAPABILITY_DESTROY_WAIT_CALLBACK,	  /* another thread's co_revoke */
+	MAC_CAPABILITY_DESTROY_WAIT_REFS,	  /* references on an instance */
+};
+typedef void (*mac_capability_destroy_wait_fn)(void *arg, const char *service,
+    enum mac_capability_destroy_wait_reason reason);
+EVENTHANDLER_DECLARE(mac_capability_destroy_wait, mac_capability_destroy_wait_fn);
+EVENTHANDLER_LIST_DECLARE(mac_capability_destroy_wait);
+
+/*
  * Messaging — from co_handler or any sleeping context.
  * fcaps: per-fd Capsicum rights to preserve.  NULL = full rights
  *        (appropriate for kernel-minted fds).
@@ -224,6 +244,38 @@ void	mac_capability_instance_revoke(struct mac_capability_instance *s);
 void	mac_capability_instance_hold(struct mac_capability_instance *s);
 bool	mac_capability_instance_tryhold(struct mac_capability_instance *s);
 void	mac_capability_instance_rele(struct mac_capability_instance *s);
+
+/*
+ * Death watch: called once when the instance first becomes CLOSED or
+ * REVOKED, with the instance mutex held (it must not sleep or take sleepable
+ * locks; enqueue a task).  The watch is caller-owned and must stay allocated
+ * while armed.  watch returns false, arming nothing, when the instance is
+ * already dead; unwatch returns true if it disarmed the watch before it
+ * fired.
+ */
+struct mac_capability_death_watch {
+	LIST_ENTRY(mac_capability_death_watch) dw_link;
+	void	(*dw_fn)(void *arg);
+	void	*dw_arg;
+	bool	dw_armed;
+};
+bool	mac_capability_instance_watch_death(struct mac_capability_instance *s,
+	    struct mac_capability_death_watch *w);
+bool	mac_capability_instance_unwatch_death(struct mac_capability_instance *s,
+	    struct mac_capability_death_watch *w);
+
+/*
+ * Completion watch on a callback state: the watcher's task is enqueued on
+ * taskqueue_thread once the callback has returned (at once if it already
+ * has).  The watch must stay allocated until its task has run.
+ */
+struct mac_capability_cs_watch {
+	struct mac_capability_cs_watch *cw_next;
+	struct task	*cw_task;
+};
+struct mac_capability_callback_state;
+void	mac_capability_callback_state_watch(struct mac_capability_callback_state *cs,
+	    struct mac_capability_cs_watch *w, struct task *task);
 void	mac_capability_instance_kick(struct mac_capability_instance *s);
 void	mac_capability_instance_set_priv(struct mac_capability_instance *s, void *priv);
 /* Kernel-only operation context. Capture before service/claim locks. It owns

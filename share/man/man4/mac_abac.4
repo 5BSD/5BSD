@@ -132,6 +132,40 @@ although
 no longer opens for it.
 The calling process's session cannot be read reliably while another
 process is locked for the check.
+.Ss Idle behaviour
+A hook that evaluates rules runs only while some rule could decide its
+operation: while the policy is enabled and not in mode 0, and either
+.Va security.mac.mac_abac.default_policy
+is 1 (every operation is then evaluated, in permissive as in enforcing
+mode),
+.Va security.mac.mac_abac.force_hooks
+is 1, or some rule of an enabled set, allow or deny, names the operation.
+Otherwise the hook returns at its first test, which is what evaluation
+would have returned, and counts toward none of the MAC framework's
+fast-path flags: with no rule loaded and default allow, the policy makes
+the framework enter no system call path on its own account.
+A rule is in force for every operation that reaches its hook after the
+call that loaded it, or enabled its set, returns; removing the last rule
+that names an operation makes its hooks idle again.
+A rule that names
+.Cm lookup
+or
+.Cm read
+(which also checks
+.Xr readlink 2 )
+turns lockless name lookup off
+.Pq Va vfs.cache.param.fast_lookup_active ;
+a lookup that had already begun without locks when the call returned may
+finish without being checked, as when a MAC policy is loaded at run time.
+.Pp
+Labels are kept for every subject and object whether or not any rule is
+loaded, and the label-integrity checks (relabel, and the label attribute
+in setextattr and deleteextattr) always run.
+The statistics and the
+.Li abac:::check-*
+and
+.Li abac:::rule-nomatch
+probes count only operations some rule names.
 .Sh SYSCTLS
 .Bl -tag -width indent
 .It Va security.mac.mac_abac.enabled
@@ -142,12 +176,28 @@ Current enforcement mode (0=disabled, 1=permissive, 2=enforcing).
 Default when no rule matches (0=allow, 1=deny).
 .It Va security.mac.mac_abac.checks
 Total access checks performed.
+Only operations some rule can decide are checked
+.Pq see Sx Idle behaviour ;
+set
+.Va security.mac.mac_abac.force_hooks
+to count every check.
 .It Va security.mac.mac_abac.allowed
 Access checks that returned allow.
 .It Va security.mac.mac_abac.denied
 Access checks that returned deny.
 .It Va security.mac.mac_abac.rule_count
 Number of active rules.
+.It Va security.mac.mac_abac.live_ops
+The operations whose hooks evaluate rules, as an
+.Dv ABAC_OP_*
+bit mask
+.Pq see Sx Idle behaviour .
+.It Va security.mac.mac_abac.force_hooks
+When 1, every rule-evaluating hook evaluates even if no rule names its
+operation, so the counters and probes see every check, as before idle
+gating.
+Takes 0 or 1, and is accepted while the policy is locked: it only adds
+evaluation.
 .It Va security.mac.mac_abac.labels_allocated
 Total labels allocated (debugging).
 .It Va security.mac.mac_abac.labels_freed

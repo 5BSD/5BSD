@@ -536,9 +536,9 @@ dq_pager_release_writecount(vm_object_t obj, vm_offset_t start,
 
 /*
  * Write back [offset, offset + size) (N1: vm_object_page_clean, which
- * PGO_WRITEBACK lets flush this pager's pages), retrying after one
- * completion whenever the async bounds answered AGAIN, never spinning and
- * never past the page deadline; under syncio, wait until every WRITE_ASYNC
+ * PGO_WRITEBACK lets flush this pager's pages), retrying after the room
+ * event that frees what an AGAIN lacked (dq_async_wait), never spinning
+ * and never past the page deadline; under syncio, wait until every WRITE_ASYNC
  * of the object has completed (D42: msync(MS_SYNC) and fsync wait for the
  * completion, not the controller's reply); invalidate drops the clean pages
  * as vnode_pager_sync does (OBJPR_CLEANONLY: a dirty page is not lost).

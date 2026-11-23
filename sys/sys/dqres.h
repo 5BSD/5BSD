@@ -57,12 +57,16 @@ struct dqres {
  * record that has none or whose file could not be held.  Taken with the
  * pwd by pwd_hold_dqres, or alone by pwd_dqres_proc; released with
  * dqres_snap_release, with no lock held.  All zero for an unattached
- * process.
+ * process.  pwd_hold_dqres also records the pwd's root, which the
+ * standing rules compare by pointer (no reference: the pwd the lookup
+ * holds keeps it), and whether the process is native (no ABI root).
  */
 struct dqres_snap {
 	struct file	*dsn_cwd;
 	struct file	*dsn_root;
 	u_int		 dsn_flags;	/* DR_CWD_DEAD, DR_ROOT_DEAD */
+	struct vnode	*dsn_rdir;	/* pwd_hold_dqres: pwd_rdir */
+	bool		 dsn_native;	/* pwd_hold_dqres: pwd_adir == pwd_rdir */
 };
 
 /*
@@ -259,6 +263,10 @@ struct dqres_req {
 					   controller) */
 	const char	*rq_rootpath;	/* its di_path, the 5th string */
 	size_t		 rq_rootpathlen;
+	struct vnode	*rq_st_root;	/* the process root a standing rule
+					   may match this event under, or
+					   NULL (dqres_namei and
+					   dqres_namei_symlink only) */
 };
 
 /*

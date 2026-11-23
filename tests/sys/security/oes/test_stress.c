@@ -195,16 +195,20 @@ test_rapid_mute_unmute(void)
 	}
 
 	for (i = 0; i < NUM_ITERATIONS; i++) {
-		/* Self-mute */
+		/*
+		 * Mute the parent (the test runner): a self-mute changes no
+		 * list since a client never receives its own processes'
+		 * events (oes(4)), and unmuting self is EINVAL.
+		 */
 		memset(&mute, 0, sizeof(mute));
-		mute.emu_flags = OES_MUTE_SELF;
+		mute.emu_token.ept_id = (uint64_t)getppid();
 		if (ioctl(fd, OES_IOC_MUTE_PROCESS, &mute) < 0) {
 			perror("OES_IOC_MUTE_PROCESS");
 			close(fd);
 			return (1);
 		}
 
-		/* Self-unmute */
+		/* Unmute */
 		if (ioctl(fd, OES_IOC_UNMUTE_PROCESS, &mute) < 0) {
 			perror("OES_IOC_UNMUTE_PROCESS");
 			close(fd);

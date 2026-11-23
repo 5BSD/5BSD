@@ -7,22 +7,22 @@
 # dq_tree_hang_loop; transparency rows T-R11, T-R12): what a kyua run
 # under dqtree is doing when it stops making progress.
 #
-# Every 10 s the sampler records, for the process tree it watches, one
-# ps(1) row per thread (state, wait channel, CPU time: the deltas are
-# between samples).  A stall is a run in which no test command started
-# for a while: the newest "Executing command" line of the newest test
-# output under the root's /tmp is unchanged.  After 30 s of it, each
-# process older than 60 s whose rows did not change gets its kernel
-# stacks, mappings, descriptors and resource usage, once per stall; after
-# 60 s the tree is traced for 10 s, once per stall: user and kernel
-# stacks at 997 Hz, the off-CPU wait messages, and the dq:::event-post
-# records by pid.  Never fbt: a probe with an empty module field
-# instruments DTrace's own probe context.
-#
-# Then it gcore(1)s every process of the tree.  Everything is written to
-# the sampler's directory; hang_report prints it, and copies it, cores
-# included, to DQ_HANG_EXPORT when that directory exists (the plane-on
-# guest runner's results disk collects /tmp/kyua-results).
+# Event-driven (owner, 2026-11-19: no polling).  dq_hangwatch blocks on
+# kqueue: each new kyua work directory under the served root's /tmp is
+# progress, the watched tree's top process exiting ends the watch, and a
+# stall is a deadline, armed again at each progress event, whose length
+# comes from kyua's own per-case timeouts (hang_deadline).  At the
+# deadline the tree is captured once: every kernel stack (procstat -kk
+# -a), each tree process's kernel stacks, mappings, descriptors and
+# resource usage, a 10 s trace of the tree (user and kernel stacks at
+# 997 Hz, the off-CPU wait messages, the dq:::event-post records by pid;
+# never fbt: a probe with an empty module field instruments DTrace's own
+# probe context), and a gcore(1) of every process.  A case cleanup that
+# runs after a body timeout captures what was not captured yet
+# (hang_capture is idempotent), so a timed-out case never loses it.
+# hang_report prints it, and copies it, cores included, to
+# DQ_HANG_EXPORT when that directory exists (the plane-on guest runner's
+# results disk collects /tmp/kyua-results).
 #
 
 # The pids of the tree under $1, $1 included, one per line.
@@ -48,29 +48,6 @@ hang_tree()
 	}'
 }
 
-# The thread rows of the pids in file $1.
-hang_rows()
-{
-
-	ps -axHwwo pid,ppid,lwp,state,wchan,mwchan,time,etime,command |
-	    awk 'NR == FNR { want[$1] = 1; next }
-		FNR == 1 || ($1 in want)' "$1" -
-}
-
-# Elapsed seconds of a ps etime field ([[dd-]hh:]mm:ss).
-hang_secs()
-{
-
-	echo "$1" | awk -F'[-:]' '{
-		s = $NF + 60 * $(NF - 1)
-		if (NF >= 3)
-			s += 3600 * $(NF - 2)
-		if (NF >= 4)
-			s += 86400 * $(NF - 3)
-		print s
-	}'
-}
-
 # The newest "Executing command" line of the newest test output under the
 # root's /tmp, or "".
 hang_last_command()
@@ -83,108 +60,101 @@ hang_last_command()
 	grep 'Executing command' "${out}" 2>/dev/null | tail -n 1
 }
 
-# usage: hang_trace DIR PIDFILE TOP
-# The tree is the listed pids and the progeny of TOP: DTrace sees the
-# attached processes even where ps(1) of an unattached sampler does not.
+# usage: hang_deadline ROOT KYUAFILE [FILTER...]
+# The stall deadline in seconds, from kyua's own bounds: kyua ends a
+# case's body at the case's timeout and then runs its cleanup, bounded by
+# the same timeout, before it starts the next case.  So a run in which no
+# new case starts for twice the largest per-case timeout of the cases it
+# runs has stopped making progress.
+hang_deadline()
+{
+	local root kf max
+
+	root="$1"; kf="$2"; shift 2
+	max=$(chroot "${root}" kyua list -v -k "${kf}" "$@" 2>/dev/null |
+	    awk '$1 == "timeout" && $2 == "=" && $3 > m { m = $3 }
+		END { print m + 0 }')
+	[ "${max}" -gt 0 ] || atf_fail "no per-case timeout listed for ${kf}"
+	echo $((2 * max))
+}
+
+# usage: hang_trace DIR TOP
+# The tree is the progeny of TOP: DTrace sees the attached processes even
+# where ps(1) of an unattached watcher does not.  The trace is a 10 s
+# window of samples.
 hang_trace()
 {
-	local d pred p
 
-	d="$1"
-	pred="progenyof($3)"
-	for p in $(cat "$2"); do
-		pred="${pred} || pid == ${p}"
-	done
-	timeout 30 dtrace -q -n "
-	    profile-997 /${pred}/ { @prof[pid, execname, stack(), ustack()] = count(); }
-	    sched:::off-cpu /${pred}/ {
+	dtrace -q -n "
+	    profile-997 /progenyof($2)/ {
+		@prof[pid, execname, stack(), ustack()] = count();
+	    }
+	    sched:::off-cpu /progenyof($2)/ {
 		@offcpu[pid, execname, stringof(curthread->td_wmesg)] = count();
 	    }
-	    dq:::event-post /${pred}/ { @posts[pid, execname] = count(); }
-	    tick-10s { exit(0); }" > "${d}/dtrace.out" 2>&1
+	    dq:::event-post /progenyof($2)/ { @posts[pid, execname] = count(); }
+	    tick-10s { exit(0); }" > "$1/dtrace.out" 2>&1
 }
 
-# usage: hang_sampler DIR ROOT PATTERN ; runs until killed.  The tree
-# watched is that of the oldest process whose command line matches
-# PATTERN (pgrep -o -f), looked up at each sample.
-hang_sampler()
+# usage: hang_capture DIR ROOT TOP WHY ; once per watch.
+hang_capture()
 {
-	local d root pat top n cmd lastcmd idle traced pid etime secs
+	local d pid
 
-	d="$1"; root="$2"; pat="$3"
-	mkdir -p "${d}"
-	: > "${d}/start"
-	n=0
-	idle=0
-	traced=
-	lastcmd=
-	: > "${d}/samples"
-	: > "${d}/seen"
-	while :; do
-		sleep 10
-		top=$(pgrep -o -f "${pat}")
-		[ -n "${top}" ] || continue
-		n=$((n + 1))
-		hang_tree "${top}" > "${d}/pids.${n}"
-		hang_rows "${d}/pids.${n}" > "${d}/rows.${n}"
+	d="$1"
+	[ -e "${d}/captured" ] && return 0
+	: > "${d}/captured"
+	{
+		echo "=== $4 $(date -u +%T), last command:"
+		hang_last_command "$2" "${d}/start"
+		echo "=== every kernel stack (procstat -kk -a)"
+		procstat -kk -a 2>&1
+	} >> "${d}/stalls"
+	hang_tree "$3" > "${d}/pids"
+	for pid in $(cat "${d}/pids"); do
 		{
-			echo "=== sample ${n} $(date -u +%T)"
-			cat "${d}/rows.${n}"
-		} >> "${d}/samples"
-		cmd=$(hang_last_command "${root}" "${d}/start")
-		# No output seen yet counts as no progress too.
-		if [ "${cmd}" = "${lastcmd}" ]; then
-			idle=$((idle + 10))
-		else
-			idle=0
-			traced=
-			lastcmd="${cmd}"
-			: > "${d}/seen"
-		fi
-		# While no command starts: each process older than 60 s whose
-		# rows did not change, once per stall.
-		if [ "${idle}" -ge 30 ] && [ -f "${d}/rows.$((n - 1))" ]; then
-			for pid in $(cat "${d}/pids.${n}"); do
-				grep -qx "${pid}" "${d}/seen" && continue
-				etime=$(ps -o etime= -p "${pid}" 2>/dev/null)
-				[ -n "${etime}" ] || continue
-				secs=$(hang_secs "${etime}")
-				[ "${secs}" -ge 60 ] || continue
-				[ "$(grep "^ *${pid} " "${d}/rows.${n}")" = \
-				    "$(grep "^ *${pid} " "${d}/rows.$((n - 1))")" ] ||
-				    continue
-				echo "${pid}" >> "${d}/seen"
-				{
-					echo "=== pid ${pid} unchanged, sample ${n}," \
-					    "last command: ${cmd}"
-					procstat -kk "${pid}"
-					procstat -v "${pid}"
-					procstat -f "${pid}"
-					procstat -r "${pid}"
-				} >> "${d}/stuck" 2>&1
-			done
-		fi
-		rm -f "${d}/rows.$((n - 2))" "${d}/pids.$((n - 2))"
-		# No new command for 60 s: trace the tree, once per stall.
-		if [ "${idle}" -ge 60 ] && [ -z "${traced}" ]; then
-			{
-				echo "=== stall $(date -u +%T), last command:"
-				echo "${cmd}"
-				echo "=== every kernel stack (procstat -kk -a)"
-				procstat -kk -a 2>&1
-			} >> "${d}/stalls"
-			hang_trace "${d}" "${d}/pids.${n}" "${top}"
-			cat "${d}/dtrace.out" >> "${d}/stalls"
-			for pid in $(cat "${d}/pids.${n}"); do
-				gcore -c "${d}/core.${n}.${pid}" "${pid}" \
-				    >> "${d}/stalls" 2>&1
-			done
-			traced=yes
-		fi
+			echo "=== pid ${pid}"
+			procstat -kk "${pid}"
+			procstat -v "${pid}"
+			procstat -f "${pid}"
+			procstat -r "${pid}"
+		} >> "${d}/stuck" 2>&1
+	done
+	hang_trace "${d}" "$3"
+	cat "${d}/dtrace.out" >> "${d}/stalls"
+	for pid in $(cat "${d}/pids"); do
+		gcore -c "${d}/core.${pid}" "${pid}" >> "${d}/stalls" 2>&1
 	done
 }
 
-# usage: hang_report DIR ; what the sampler saw, on stderr.
+# usage: hang_watch DIR ROOT TOP SECONDS ; returns when TOP exits, after
+# capturing the tree if it stalled first.  Run it in the background.
+hang_watch()
+{
+	local rc
+
+	mkdir -p "$1"
+	: > "$1/start"
+	echo "$2" > "$1/root"
+	echo "$3" > "$1/top"
+	rc=0
+	"$(atf_get_srcdir)/dq_hangwatch" "$2/tmp" "$3" "$4" \
+	    > "$1/events" 2>&1 || rc=$?
+	[ "${rc}" -eq 2 ] && hang_capture "$1" "$2" "$3" "stall (no new case" \
+	    "for $4 s)"
+	return 0
+}
+
+# usage: hang_cleanup DIR ; from a case's cleanup, after a body timeout:
+# capture the watched tree if the deadline did not.
+hang_cleanup()
+{
+
+	[ -f "$1/top" ] || return 0
+	hang_capture "$1" "$(cat "$1/root")" "$(cat "$1/top")" "body timeout"
+}
+
+# usage: hang_report DIR ; what the watch saw, on stderr.
 hang_report()
 {
 	local x
@@ -192,7 +162,7 @@ hang_report()
 	x="${DQ_HANG_EXPORT:-/tmp/kyua-results}"
 	if [ -d "${x}" ] && { [ -s "$1/stalls" ] || [ -s "$1/stuck" ]; }; then
 		mkdir -p "${x}/dq-hang.$$" &&
-		    cp -p "$1"/stalls "$1"/stuck "$1"/samples "$1"/core.* \
+		    cp -p "$1"/stalls "$1"/stuck "$1"/events "$1"/core.* \
 		    "${x}/dq-hang.$$/" 2>/dev/null
 		echo "=== hang capture copied to ${x}/dq-hang.$$" >&2
 	fi
@@ -201,11 +171,11 @@ hang_report()
 		cat "$1/stalls" >&2
 	fi
 	if [ -s "$1/stuck" ]; then
-		echo "=== hang capture: unchanged processes" >&2
+		echo "=== hang capture: the tree's processes" >&2
 		tail -n 2000 "$1/stuck" >&2
 	fi
-	if [ -s "$1/samples" ]; then
-		echo "=== hang capture: the last samples" >&2
-		tail -n 200 "$1/samples" >&2
+	if [ -s "$1/events" ]; then
+		echo "=== hang capture: the watch's events" >&2
+		tail -n 200 "$1/events" >&2
 	fi
 }

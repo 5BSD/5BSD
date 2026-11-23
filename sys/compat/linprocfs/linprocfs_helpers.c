@@ -137,6 +137,18 @@ linprocfs_common_candebug(PFS_VIS_ARGS)
 }
 
 /*
+ * 5BSD: files that show the process's layout, not its memory contents
+ * (auxv), are visible to a process that can inspect the target
+ * (p_caninspect(9)).
+ */
+int
+linprocfs_common_caninspect(PFS_VIS_ARGS)
+{
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	return ((p->p_flag & P_SYSTEM) == 0 && p_caninspect(td, p) == 0);
+}
+
+/*
  * Copy data in and out of the target process.
  * We do this by mapping the process's page into
  * the kernel and then doing a uiomove direct

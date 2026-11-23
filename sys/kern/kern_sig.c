@@ -2386,6 +2386,13 @@ tdsendsignal(struct proc *p, struct thread *td, int sig, ksiginfo_t *ksi)
 	if (ret != 0)
 		return (ret);
 	signotify(td);
+	/*
+	 * Every SIGKILL (kill, killpg, pdkill, a process descriptor's close,
+	 * PROC_REAP_KILL, a jail's removal, shutdown): a thread asleep
+	 * without catching signals that ends on death is woken to see it.
+	 */
+	if (sig == SIGKILL)
+		proc_dying_notify(p);
 	/* Linux SIGKILL cannot be intercepted or deferred by a tracer. */
 	if (sig == SIGKILL && (p->p_flag & P_TRACED) != 0 &&
 	    SV_PROC_FLAG(p, SV_SIGKILL_TRACE) != 0) {
@@ -2897,6 +2904,17 @@ sig_handle_first_stop(struct thread *td, struct proc *p, int sig)
 
 	p->p_flag2 &= ~P2_PTRACE_FSTP;
 	p->p_flag |= P_STOPPED_SIG | P_STOPPED_TRACE;
+	/*
+	 * Record whether the stop was made from outside (td == NULL: a
+	 * transparent PT_ATTACH or PT_KERN_INTERRUPT), for the threads
+	 * the stop catches on their way into a sleep, see
+	 * thread_suspend_check().  A thread reporting a stop makes it a
+	 * reported one.
+	 */
+	if (td == NULL)
+		p->p_flag2 |= P2_PTRACE_OUTSTOP;
+	else
+		p->p_flag2 &= ~P2_PTRACE_OUTSTOP;
 	if (sig_suspend_threads(td, p) && td == NULL)
 		thread_stopped(p);
 }
@@ -3554,7 +3572,8 @@ sig_ast_checksusp(struct thread *td)
 		return (0);
 
 	ret = thread_suspend_check(1);
-	MPASS(ret == 0 || ret == EINTR || ret == ERESTART);
+	MPASS(ret == 0 || ret == EINTR || ret == ERESTART ||
+	    ret == TDSC_INPLACE);
 	return (ret);
 }
 
@@ -3621,9 +3640,16 @@ sig_intr(void)
 
 	PROC_LOCK(p);
 	ret = sig_ast_checksusp(td);
+	/*
+	 * Not about to sleep: the thread cannot be stopped in place and
+	 * backs out to stop at the user boundary, as before.
+	 */
+	if (ret == TDSC_INPLACE)
+		ret = EINTR;
 	if (ret == 0)
 		ret = sig_ast_needsigchk(td);
 	PROC_UNLOCK(p);
+	KASSERT(ret != TDSC_INPLACE, ("sig_intr: TDSC_INPLACE"));
 	return (ret);
 }
 
@@ -3655,8 +3681,10 @@ proc_wkilled(struct proc *p)
 {
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
-	if ((p->p_flag & P_WKILLED) == 0)
+	if ((p->p_flag & P_WKILLED) == 0) {
 		p->p_flag |= P_WKILLED;
+		proc_dying_notify(p);
+	}
 }
 
 /*

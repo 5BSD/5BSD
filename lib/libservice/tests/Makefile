@@ -57,6 +57,7 @@ CFLAGS.service_ambient_test+=	-I${SRCTOP}/lib/libservice
 CFLAGS.service_ambient_test+=	-I${SRCTOP}/lib/libchannel
 CFLAGS.service_ambient_test+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.service_ambient_test+=	-I${SRCTOP}/sys
+CFLAGS.service_ambient_test+=	-I${SRCTOP}/tests/sys/mac_capability
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libservice
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libchannel
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libcapability

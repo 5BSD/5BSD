@@ -57,8 +57,14 @@ int	dq_open(void);
 
 /* Statistics of a queue or of an observer descriptor. */
 int	dq_get_stats(int fd, struct dq_stats *st);
-/* The extended counters (DQ_IOC_GET_STATS2); ds2_size is the kernel's. */
-int	dq_get_stats2(int fd, struct dq_stats2 *st);
+/*
+ * The extended counters (DQ_IOC_GET_STATS2); ds2_size is the kernel's.
+ * The macro passes the size of the caller's struct, so a program built
+ * against another struct dq_stats2 gets EINVAL, never an overrun.
+ */
+int	dq_get_stats2_sized(int fd, struct dq_stats2 *st, size_t size);
+int	(dq_get_stats2)(int fd, struct dq_stats2 *st);
+#define	dq_get_stats2(fd, st)	dq_get_stats2_sized((fd), (st), sizeof(*(st)))
 
 /* Lower the queue's depth; 1..kern.dq.queue_depth, never above it. */
 int	dq_set_queue_depth(int q, uint32_t depth);
@@ -396,6 +402,52 @@ int	dq_dirent_add(void *buf, size_t cap, size_t *lenp, uint64_t fileno,
 	    uint64_t off, uint8_t type, const char *name);
 int	dq_reply_readdir(int q, uint64_t id, uint64_t next, int eof,
 	    const void *records, size_t len);
+
+/*
+ * Standing rules (dq-standing-decisions, stage 1): answers the queue gives
+ * without posting RESOLVE.  dq_standing_add() installs one for the root
+ * rootfd (a directory descriptor with CAP_LOOKUP, or -1 for the caller's
+ * own root; the lookup's process root must be it), the normalized
+ * absolute path under it (DQ_STANDING_F_SUBTREE: with every name beneath
+ * it), the operations ops (DQ_STANDING_OP(DQ_ROP_*); DQ_ROP_EXEC_INTERP
+ * only without DQ_STANDING_F_SUBTREE; an open is covered only when
+ * read-class unless DQ_STANDING_F_OPEN_WRITE is set) and the
+ * action DQ_STANDING_PASS, DQ_STANDING_ERRNO (error, from the RESOLVE
+ * allow-list, not EAGAIN, EINTR or ENOTCAPABLE) or DQ_STANDING_ASK (post
+ * the event: an exception to a shorter rule); *idp (may be NULL) receives
+ * the rule's id.  Among the rules that fit an event the longest path
+ * decides.  dq_standing_del() removes one rule (ESRCH for an unknown id),
+ * dq_standing_flush() all.  Covered lookups post no event and count in
+ * ds2_standing_pass or ds2_standing_deny; see dq(4).
+ */
+/* Every operation a subtree rule may name: one path, never RENAME, LINK,
+   sockets (CONNECT and BIND are consulted ahead) or INTERNAL, and not
+   EXEC_INTERP, which only an exact rule may name (the interpreter lookup
+   is not consulted again at symbolic links, so a subtree would pass a
+   link out of it). */
+#define	DQ_STANDING_OPS_ALL						\
+	(DQ_STANDING_OP(DQ_ROP_OPEN) | DQ_STANDING_OP(DQ_ROP_STAT) |	\
+	DQ_STANDING_OP(DQ_ROP_ACCESS) | DQ_STANDING_OP(DQ_ROP_READLINK) | \
+	DQ_STANDING_OP(DQ_ROP_REALPATH) | DQ_STANDING_OP(DQ_ROP_GETFH) | \
+	DQ_STANDING_OP(DQ_ROP_UNLINK) | DQ_STANDING_OP(DQ_ROP_RMDIR) |	\
+	DQ_STANDING_OP(DQ_ROP_SYMLINK) | DQ_STANDING_OP(DQ_ROP_MKDIR) |	\
+	DQ_STANDING_OP(DQ_ROP_MKNOD) | DQ_STANDING_OP(DQ_ROP_MKFIFO) |	\
+	DQ_STANDING_OP(DQ_ROP_SETATTR) | DQ_STANDING_OP(DQ_ROP_TRUNCATE) | \
+	DQ_STANDING_OP(DQ_ROP_EXEC) | DQ_STANDING_OP(DQ_ROP_CHDIR) |	\
+	DQ_STANDING_OP(DQ_ROP_CHROOT) | DQ_STANDING_OP(DQ_ROP_INOTIFY) | \
+	DQ_STANDING_OP(DQ_ROP_XATTR) | DQ_STANDING_OP(DQ_ROP_ACL) |	\
+	DQ_STANDING_OP(DQ_ROP_REVOKE))
+/* The lookups that read: XATTR and ACL are left out (one bit covers get
+   and set), EXEC_INTERP as in DQ_STANDING_OPS_ALL. */
+#define	DQ_STANDING_OPS_READ						\
+	(DQ_STANDING_OP(DQ_ROP_OPEN) | DQ_STANDING_OP(DQ_ROP_STAT) |	\
+	DQ_STANDING_OP(DQ_ROP_ACCESS) | DQ_STANDING_OP(DQ_ROP_READLINK) | \
+	DQ_STANDING_OP(DQ_ROP_REALPATH) | DQ_STANDING_OP(DQ_ROP_EXEC) |	\
+	DQ_STANDING_OP(DQ_ROP_CHDIR))
+int	dq_standing_add(int q, int rootfd, const char *path, uint32_t flags,
+	    uint32_t ops, uint32_t action, int error, uint64_t *idp);
+int	dq_standing_del(int q, uint64_t id);
+int	dq_standing_flush(int q);
 
 /*
  * One read(2) and one handler call per record.  The handler returns 0 to

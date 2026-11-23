@@ -1689,7 +1689,7 @@ linprocfs_doprocmaps(PFS_FILL_ARGS)
 	if (uio->uio_rw != UIO_READ)
 		return (EOPNOTSUPP);
 
-	error = proc_vmspace_ref(td, p, PRVM_BLOCK_EXEC | PRVM_CHECK_DEBUG,
+	error = proc_vmspace_ref(td, p, PRVM_BLOCK_EXEC | PRVM_CHECK_INSPECT,
 	    &vm);
 	if (error != 0)
 		return (error);
@@ -1796,7 +1796,7 @@ linprocfs_doprocmaps(PFS_FILL_ARGS)
 		}
 	}
 	vm_map_unlock_read(map);
-	proc_vmspace_unref(td, p, PRVM_CHECK_DEBUG | PRVM_BLOCK_EXEC, vm);
+	proc_vmspace_unref(td, p, PRVM_CHECK_INSPECT | PRVM_BLOCK_EXEC, vm);
 
 	return (error);
 }
@@ -3747,7 +3747,7 @@ linprocfs_init(PFS_INIT_ARGS)
 	fdnode->pn_fill_fd = linprocfs_dofdinfo;
 	fdnode->pn_fdlookup = linprocfs_fdinfolookup;
 	pfs_create_file(dir, NULL, "auxv", &linprocfs_doauxv, NULL,
-	    &linprocfs_common_candebug, NULL, PFS_RD | PFS_RAWRD);
+	    &linprocfs_common_caninspect, NULL, PFS_RD | PFS_RAWRD);
 	pfs_create_file(dir, NULL, "limits", &linprocfs_doproclimits, NULL,
 	    NULL, NULL, PFS_RD);
 	pfs_create_file(dir, NULL, "oom_score_adj", linprocfs_do_oom_score_adj,
@@ -3806,7 +3806,7 @@ linprocfs_init(PFS_INIT_ARGS)
 	pfs_create_file(dir, NULL, "environ", linprocfs_doprocenviron, NULL,
 	    linprocfs_common_candebug, NULL, PFS_RD);
 	pfs_create_file(dir, NULL, "auxv", linprocfs_doauxv, NULL,
-	    linprocfs_common_candebug, NULL, PFS_RD | PFS_RAWRD);
+	    linprocfs_common_caninspect, NULL, PFS_RD | PFS_RAWRD);
 	pfs_create_file(dir, NULL, "mounts", linprocfs_domtab, NULL, NULL, NULL,
 	    PFS_RD);
 	pfs_create_file(dir, NULL, "mountinfo", linprocfs_doprocmountinfo, NULL,

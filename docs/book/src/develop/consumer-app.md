@@ -163,9 +163,9 @@ logcmp_log(LOG_ERR, "giving up on %s after %d attempts", host, attempts);
 
 What this buys, concretely. If `netlog` is boot-activated and comes up before
 BSDNetwork has checked in, its first `service_open()` is parked by switchboard
-until the provider is ready and then times out after
-`SERVICE_LOOKUP_TIMEOUT_MS` if it is not; the program logs and sleeps instead
-of dying with a "no such service". If BSDNetwork is restarted by its watchdog
+until the provider is ready, and switchboard answers `ETIMEDOUT` if it does not
+come up within its activation bound (`SERVICE_ACTIVATION_TIMEOUT_MS`); the
+program logs and sleeps instead of dying with a "no such service". If BSDNetwork is restarted by its watchdog
 mid-run, the next call on the old session fails with a reset; `network_lost()`
 drops it and the next attempt opens a fresh one. If BSDFilesystem is slow, the
 fetch still happens and only the spool is skipped this round. A provider being

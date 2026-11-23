@@ -172,7 +172,7 @@ static int	sleepq_init(void *mem, int size, int flags);
 static void	sleepq_resume_thread(struct sleepqueue *sq, struct thread *td,
 		    int pri, int srqflags);
 static void	sleepq_remove_thread(struct sleepqueue *sq, struct thread *td);
-static void	sleepq_switch(const void *wchan, int pri);
+static void	sleepq_switch(const void *wchan, int pri, bool suspend);
 static void	sleepq_timeout(void *arg);
 
 SDT_PROBE_DECLARE(sched, , , sleep);
@@ -468,14 +468,52 @@ sleepq_check_ast_sc_locked(struct thread *td, struct sleepqueue_chain *sc)
 	 * can be delivered while this thread is suspended.
 	 */
 	ret = sig_ast_checksusp(td);
-	if (ret != 0) {
+	if (ret == TDSC_INPLACE) {
+		/*
+		 * A stop made from outside (P2_PTRACE_OUTSTOP) caught
+		 * this thread on its way into the sleep.  A signal
+		 * already pending ends the sleep, as it ends the sleep
+		 * of a thread stopped asleep; the thread then stops at
+		 * the user boundary.  Otherwise the thread is stopped
+		 * where it sleeps, as sig_suspend_threads() stops an
+		 * interruptible sleeper: count it stopped now, while
+		 * PROC_LOCK and PROC_SLOCK keep wait(2) and
+		 * ptrace_unsuspend() out, and suspend it in
+		 * sleepq_switch() under the same PROC_SLOCK, which is
+		 * returned held.
+		 *
+		 * cursig() may have reported a pending signal to the
+		 * debugger through ptracestop(), which drops PROC_LOCK:
+		 * meanwhile the reporting thread took the stop over and
+		 * the debugger may have resumed the process, discarding
+		 * the signal or passing one that is ignored.  So the
+		 * stop is decided again on what holds now, and PROC_LOCK
+		 * is not dropped again before the thread is counted
+		 * stopped: no stop gives 0 and an ordinary sleep, a new
+		 * stop from outside TDSC_INPLACE, any other stop EINTR
+		 * as before.
+		 */
+		ret = sig_ast_needsigchk(td);
+		if (ret == 0)
+			ret = sig_ast_checksusp(td);
+		if (ret == TDSC_INPLACE) {
+			KASSERT((p->p_flag2 & P2_PTRACE_OUTSTOP) != 0 &&
+			    (p->p_flag & P_STOPPED_SINGLE) == 0,
+			    ("TDSC_INPLACE without an outside stop"));
+			PROC_SLOCK(p);
+			thread_stopped(p);
+			mtx_lock_spin(&sc->sc_lock);
+			PROC_UNLOCK(p);
+			thread_lock(td);
+			return (TDSC_INPLACE);
+		}
+	} else if (ret != 0) {
 		PROC_UNLOCK(p);
 		mtx_lock_spin(&sc->sc_lock);
 		thread_lock(td);
 		return (ret);
-	}
-
-	ret = sig_ast_needsigchk(td);
+	} else
+		ret = sig_ast_needsigchk(td);
 
 	/*
 	 * Lock the per-process spinlock prior to dropping the
@@ -520,7 +558,15 @@ sleepq_catch_signals(const void *wchan, int pri)
 		 * No pending signals and no suspension requests found.
 		 * Switch the thread off the cpu.
 		 */
-		sleepq_switch(wchan, pri);
+		sleepq_switch(wchan, pri, false);
+	} else if (ret == TDSC_INPLACE) {
+		/*
+		 * Sleep stopped, as a thread the stop found asleep; the
+		 * sleep's result is read as for any other sleep.
+		 */
+		PROC_SLOCK_ASSERT(td->td_proc, MA_OWNED);
+		sleepq_switch(wchan, pri, true);
+		ret = 0;
 	} else {
 		/*
 		 * There were pending signals and this thread is still
@@ -534,16 +580,50 @@ sleepq_catch_signals(const void *wchan, int pri)
 		mtx_unlock_spin(&sc->sc_lock);
 		thread_unlock(td);
 	}
+	KASSERT(ret != TDSC_INPLACE, ("sleepq_catch_signals: TDSC_INPLACE"));
 	return (ret);
 }
 
 /*
+ * A thread that sleepq_switch() was to stop in place (TDSC_INPLACE) whose
+ * sleep ended (woken, timed out, or the real-time clock changed) while the
+ * chain lock was dropped in sleepq_check_ast_sc_locked().  thread_stopped()
+ * has counted it stopped, so it stops here, awake, as
+ * thread_suspend_check(0) stops a thread: suspended under its thread lock
+ * and switched out before that lock is released.  On resume the sleep's
+ * result is read as for a sleeper woken while it was stopped.
+ *
+ * The thread never handed its lock to the chain (thread_lock_set()), so
+ * td_lock is its run lock, not the chain lock; thread_suspend_one() needs
+ * that lock and PROC_SLOCK, and mi_switch() needs it held and releases it.
+ */
+static void
+sleepq_suspend_awake(struct sleepqueue_chain *sc, struct thread *td)
+{
+	struct proc *p;
+
+	p = td->td_proc;
+	mtx_assert(&sc->sc_lock, MA_OWNED);
+	THREAD_LOCK_ASSERT(td, MA_OWNED);
+	PROC_SLOCK_ASSERT(p, MA_OWNED);
+	MPASS(td->td_lock != &sc->sc_lock);
+	MPASS(!TD_ON_SLEEPQ(td));
+	mtx_unlock_spin(&sc->sc_lock);
+	thread_suspend_one(td);
+	PROC_SUNLOCK(p);
+	mi_switch(SW_INVOL | SWT_SUSPEND);
+}
+
+/*
  * Switches to another thread if we are still asleep on a sleep queue.
+ * With suspend, the thread is also suspended where it sleeps, as
+ * sig_suspend_threads() suspends an interruptible sleeper; PROC_SLOCK is
+ * then held on entry (sleepq_check_ast_sc_locked()) and released.
  *
  * The thread lock is required on entry and is no longer held on return.
  */
 static void
-sleepq_switch(const void *wchan, int pri)
+sleepq_switch(const void *wchan, int pri, bool suspend)
 {
 	struct sleepqueue_chain *sc;
 	struct sleepqueue *sq;
@@ -554,12 +634,18 @@ sleepq_switch(const void *wchan, int pri)
 	sc = SC_LOOKUP(wchan);
 	mtx_assert(&sc->sc_lock, MA_OWNED);
 	THREAD_LOCK_ASSERT(td, MA_OWNED);
+	if (suspend)
+		PROC_SLOCK_ASSERT(td->td_proc, MA_OWNED);
 
 	/*
 	 * If we have a sleep queue, then we've already been woken up, so
 	 * just return.
 	 */
 	if (td->td_sleepqueue != NULL) {
+		if (suspend) {
+			sleepq_suspend_awake(sc, td);
+			return;
+		}
 		mtx_unlock_spin(&sc->sc_lock);
 		thread_unlock(td);
 		return;
@@ -592,6 +678,10 @@ sleepq_switch(const void *wchan, int pri)
 		MPASS(TD_ON_SLEEPQ(td));
 		sq = sleepq_lookup(wchan);
 		sleepq_remove_thread(sq, td);
+		if (suspend) {
+			sleepq_suspend_awake(sc, td);
+			return;
+		}
 		mtx_unlock_spin(&sc->sc_lock);
 		thread_unlock(td);
 		return;
@@ -605,6 +695,17 @@ sleepq_switch(const void *wchan, int pri)
 	thread_lock_set(td, &sc->sc_lock);
 	SDT_PROBE0(sched, , , sleep);
 	TD_SET_SLEEPING(td);
+	if (suspend) {
+		/*
+		 * td_lock is now the chain lock, held since the thread was
+		 * found still queued: no wakeup can come between the
+		 * suspension and the switch.
+		 */
+		MPASS(td->td_lock == &sc->sc_lock);
+		MPASS((td->td_flags & TDF_SINTR) != 0);
+		thread_suspend_one(td);
+		PROC_SUNLOCK(td->td_proc);
+	}
 	mi_switch(SW_VOL | SWT_SLEEPQ);
 	KASSERT(TD_IS_RUNNING(td), ("running but not TDS_RUNNING"));
 	CTR3(KTR_PROC, "sleepq resume: thread %p (pid %ld, %s)",
@@ -656,7 +757,7 @@ sleepq_wait(const void *wchan, int pri)
 	td = curthread;
 	MPASS(!(td->td_flags & TDF_SINTR));
 	thread_lock(td);
-	sleepq_switch(wchan, pri);
+	sleepq_switch(wchan, pri, false);
 }
 
 /*
@@ -687,7 +788,7 @@ sleepq_timedwait(const void *wchan, int pri)
 	MPASS(!(td->td_flags & TDF_SINTR));
 
 	thread_lock(td);
-	sleepq_switch(wchan, pri);
+	sleepq_switch(wchan, pri, false);
 
 	return (sleepq_check_timeout());
 }

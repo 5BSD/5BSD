@@ -26,6 +26,7 @@ MANUAL_ALIASES = [
     "dq_observe_list_objects",
     "dq_observe_subscribe",
     "dq_get_stats2",
+    "dq_get_stats2_sized",
     "dq_mint_file_flags",
     "dq_push_vnode_note",
     "dq_push_invalidate",
@@ -79,7 +80,10 @@ MANUAL_ALIASES = [
     "dq_reply_resolve_real",
     "dq_event_readdir",
     "dq_dirent_add",
-    "dq_reply_readdir"
+    "dq_reply_readdir",
+    "dq_standing_add",
+    "dq_standing_del",
+    "dq_standing_flush"
 ]
 
 def library_installation(name):

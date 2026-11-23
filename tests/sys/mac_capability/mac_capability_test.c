@@ -7786,14 +7786,6 @@ require_cleanup_fixture(void)
 	    strerror(errno));
 }
 
-ATF_TC(unload_waits_for_cleanup_callback);
-ATF_TC_HEAD(unload_waits_for_cleanup_callback, tc)
-{
-	atf_tc_set_md_var(tc, "descr", "Module unload waits for revoke and final-close callbacks");
-	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "timeout", "30");
-}
-
 static unsigned
 cleanup_fixture_value(const char *name)
 {
@@ -7805,14 +7797,113 @@ cleanup_fixture_value(const char *name)
 }
 
 static void
+cleanup_fixture_set(const char *name, unsigned value)
+{
+	ATF_REQUIRE_EQ(0, sysctlbyname(name, NULL, NULL, &value, sizeof(value)));
+}
+
+/*
+ * The fixture's wait_* sysctls sleep until the callback they name has been
+ * entered (the callback wakes them); they return the value.
+ */
+static unsigned
+cleanup_fixture_wait(const char *what)
+{
+	char name[96];
+
+	snprintf(name, sizeof(name), "debug.capability_cleanup_test.wait_%s",
+	    what);
+	return (cleanup_fixture_value(name));
+}
+
+/*
+ * Release a blocked fixture callback.  The fixture answers whether service
+ * destroy had already returned when the release came: an unload that waits
+ * for the callback has not.  The unload is then reaped without a timeout: a
+ * missing wakeup hangs it, and the case's timeout reports that.
+ */
+static unsigned
+cleanup_fixture_release(const char *what)
+{
+	char name[96];
+	unsigned returned = 0, one = 1;
+	size_t len = sizeof(returned);
+
+	snprintf(name, sizeof(name), "debug.capability_cleanup_test.%s", what);
+	ATF_REQUIRE_EQ(0, sysctlbyname(name, &returned, &len, &one,
+	    sizeof(one)));
+	return (returned);
+}
+
+/* Is a destroyed service of this name still allocated (pinned by instances)? */
+static bool
+dead_service_listed(const char *name)
+{
+	char *list, *line, *next;
+	size_t len = 0;
+	bool found = false;
+
+	ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.dead_service_names",
+	    NULL, &len, NULL, 0));
+	list = calloc(1, len + 1);
+	ATF_REQUIRE(list != NULL);
+	ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.dead_service_names",
+	    list, &len, NULL, 0));
+	for (line = list; line != NULL && !found; line = next) {
+		next = strchr(line, '\n');
+		if (next != NULL)
+			*next++ = '\0';
+		found = strcmp(line, name) == 0;
+	}
+	free(list);
+	return (found);
+}
+
+/*
+ * Wait until service destroy is held up (the fixture records the
+ * mac_capability_destroy_wait event), and require what it waits for.
+ */
+static void
+require_destroy_waiting(const char *reason)
+{
+	char got[32];
+	size_t len = sizeof(got);
+
+	ATF_REQUIRE(cleanup_fixture_wait("destroy_waiting") != 0);
+	ATF_REQUIRE_EQ(0, sysctlbyname(
+	    "debug.capability_cleanup_test.destroy_wait_reason", got, &len,
+	    NULL, 0));
+	ATF_REQUIRE_STREQ_MSG(reason, got, "service destroy waited for %s", got);
+}
+
+/* A failed case must not leave a fixture callback, or an unload, blocked. */
+static void
+cleanup_fixture_release_all(void)
+{
+	unsigned one = 1;
+
+	(void)sysctlbyname("debug.capability_cleanup_test.release", NULL, NULL,
+	    &one, sizeof(one));
+	(void)sysctlbyname("debug.capability_cleanup_test.release_stage", NULL,
+	    NULL, &one, sizeof(one));
+}
+
+static void
+reap_ok(pid_t pid, const char *what)
+{
+	int status;
+
+	ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "%s: status %#x", what, status);
+}
+
+static void
 check_unload_waits_for_cleanup(bool last_close)
 {
-	const char *entered = "debug.capability_cleanup_test.entered";
-	const char *destroy = "debug.capability_cleanup_test.destroy_entered";
-	unsigned release = 1;
-	int module, fd, status, gate[2];
+	int module, fd, gate[2];
 	char go = 1;
-	pid_t terminator, unloader, observed = 0;
+	pid_t terminator, unloader;
 
 	require_cleanup_fixture();
 	module = kldload(CLEANUP_FIXTURE);
@@ -7837,60 +7928,95 @@ check_unload_waits_for_cleanup(bool last_close)
 	}
 	ATF_REQUIRE_EQ(1, write(gate[1], &go, 1));
 	close(gate[1]);
-	for (unsigned i = 0; i < 300 && cleanup_fixture_value(entered) == 0; i++)
-		usleep(10000);
-	ATF_REQUIRE_EQ(1, cleanup_fixture_value(entered));
+	ATF_REQUIRE_EQ(1, cleanup_fixture_wait("entered"));
 	unloader = fork();
 	ATF_REQUIRE(unloader >= 0);
 	if (unloader == 0)
 		_exit(kldunload(module) == 0 ? 0 : 1);
-	for (unsigned i = 0; i < 300 && cleanup_fixture_value(destroy) == 0; i++)
-		usleep(10000);
-	ATF_REQUIRE_EQ(1, cleanup_fixture_value(destroy));
-	/* Keep the callback blocked while the unload syscall is in progress. */
-	for (unsigned i = 0; i < 100; i++) {
-		observed = waitpid(unloader, &status, WNOHANG);
-		if (observed != 0)
-			break;
-		usleep(10000);
-	}
-	ATF_CHECK_EQ_MSG(0, observed, "unload returned before callback release");
-	ATF_REQUIRE_EQ(0, sysctlbyname("debug.capability_cleanup_test.release",
-	    NULL, NULL, &release, sizeof(release)));
-	ATF_REQUIRE_EQ(terminator, waitpid(terminator, &status, 0));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
-	if (observed == 0) {
-		ATF_REQUIRE_EQ(unloader, waitpid(unloader, &status, 0));
-		ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
-	}
+	require_destroy_waiting("callback");
+	ATF_CHECK_EQ_MSG(0, cleanup_fixture_release("release"),
+	    "unload returned before callback release (last_close=%d)",
+	    last_close);
+	reap_ok(terminator, "terminator");
+	reap_ok(unloader, "unloader");
 	if (fd >= 0)
 		close(fd);
 }
 
+ATF_TC_WITH_CLEANUP(unload_waits_for_cleanup_callback);
+ATF_TC_HEAD(unload_waits_for_cleanup_callback, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "Module unload waits for revoke and final-close callbacks");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
 ATF_TC_BODY(unload_waits_for_cleanup_callback, tc)
 {
 	check_unload_waits_for_cleanup(false);
 	check_unload_waits_for_cleanup(true);
 }
-
-static void
-cleanup_fixture_set(const char *name, unsigned value)
+ATF_TC_CLEANUP(unload_waits_for_cleanup_callback, tc)
 {
-	ATF_REQUIRE_EQ(0, sysctlbyname(name, NULL, NULL, &value, sizeof(value)));
+	cleanup_fixture_release_all();
+}
+
+/*
+ * A descriptor close runs the service's co_fdclose as in-flight work on the
+ * instance.  Unload must wait for it, and must return once it ends: that
+ * op's end is the only event that can end the wait.
+ */
+ATF_TC_WITH_CLEANUP(unload_waits_for_fdclose);
+ATF_TC_HEAD(unload_waits_for_fdclose, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "Module unload waits for an in-flight descriptor-close callback and returns when it ends");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(unload_waits_for_fdclose, tc)
+{
+	int module, fd, dupfd;
+	pid_t closer, unloader;
+
+	require_cleanup_fixture();
+	module = kldload(CLEANUP_FIXTURE);
+	ATF_REQUIRE_MSG(module >= 0, "load cleanup fixture: %s", strerror(errno));
+	cleanup_fixture_set("debug.capability_cleanup_test.release", 1);
+	fd = mac_capability_connect("test_cleanup");
+	ATF_REQUIRE(fd >= 0);
+	/* A second descriptor, so closing one is not the last close. */
+	dupfd = dup(fd);
+	ATF_REQUIRE(dupfd >= 0);
+	cleanup_fixture_set("debug.capability_cleanup_test.block_stage", 3);
+	closer = fork();
+	ATF_REQUIRE(closer >= 0);
+	if (closer == 0)
+		_exit(close(dupfd) == 0 ? 0 : 1);
+	ATF_REQUIRE_EQ(3, cleanup_fixture_wait("stage_entered"));
+	unloader = fork();
+	ATF_REQUIRE(unloader >= 0);
+	if (unloader == 0)
+		_exit(kldunload(module) == 0 ? 0 : 1);
+	require_destroy_waiting("inflight");
+	ATF_CHECK_EQ_MSG(0, cleanup_fixture_release("release_stage"),
+	    "unload returned while co_fdclose was running");
+	reap_ok(closer, "closer");
+	reap_ok(unloader, "unloader");
+	close(dupfd);
+	ATF_REQUIRE_EQ(0, close(fd));
+}
+ATF_TC_CLEANUP(unload_waits_for_fdclose, tc)
+{
+	cleanup_fixture_release_all();
 }
 
 static void
 check_unload_waits_for_admission(unsigned stage, bool fail, bool mint)
 {
-	const char *entered = "debug.capability_cleanup_test.stage_entered";
-	const char *destroy = "debug.capability_cleanup_test.destroy_entered";
-	uint64_t before, after;
-	size_t len = sizeof(before);
 	int module, fd = -1, status;
-	pid_t creator, unloader, observed = 0;
+	pid_t creator, unloader;
 
-	ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",
-	    &before, &len, NULL, 0));
+	ATF_REQUIRE_MSG(!dead_service_listed("test_cleanup"),
+	    "a test_cleanup service from an earlier load is still allocated");
 	module = kldload(CLEANUP_FIXTURE);
 	ATF_REQUIRE(module >= 0);
 	cleanup_fixture_set("debug.capability_cleanup_test.release", 1);
@@ -7908,53 +8034,41 @@ check_unload_waits_for_admission(unsigned stage, bool fail, bool mint)
 		int expected = fail ? EIO : stage == 1 ? EAGAIN : ECONNABORTED;
 		_exit(result == -1 && errno == expected ? 0 : 1);
 	}
-	for (unsigned i = 0; i < 300 && cleanup_fixture_value(entered) == 0; i++)
-		usleep(10000);
-	ATF_REQUIRE_EQ(stage, cleanup_fixture_value(entered));
+	ATF_REQUIRE_EQ(stage, cleanup_fixture_wait("stage_entered"));
 	unloader = fork();
 	ATF_REQUIRE(unloader >= 0);
 	if (unloader == 0)
 		_exit(kldunload(module) == 0 ? 0 : 1);
-	for (unsigned i = 0; i < 300 && cleanup_fixture_value(destroy) == 0; i++)
-		usleep(10000);
-	ATF_REQUIRE_EQ(1, cleanup_fixture_value(destroy));
-	for (unsigned i = 0; i < 100; i++) {
-		observed = waitpid(unloader, &status, WNOHANG);
-		if (observed != 0)
-			break;
-		usleep(10000);
-	}
-	ATF_REQUIRE_EQ_MSG(0, observed,
-	    "unload returned during stage %u (fail=%d mint=%d)", stage, fail, mint);
-	cleanup_fixture_set("debug.capability_cleanup_test.release_stage", 1);
+	require_destroy_waiting("admission");
+	ATF_CHECK_EQ_MSG(0, cleanup_fixture_release("release_stage"),
+	    "unload returned during stage %u (fail=%d mint=%d)", stage, fail,
+	    mint);
 	ATF_REQUIRE_EQ(creator, waitpid(creator, &status, 0));
 	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
 	    "constructor result stage=%u fail=%d mint=%d status=%d",
 	    stage, fail, mint, status);
-	ATF_REQUIRE_EQ(unloader, waitpid(unloader, &status, 0));
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	reap_ok(unloader, "unloader");
+	/*
+	 * Every instance of the service is gone once the unload and the last
+	 * close have returned: the close path frees the instance before
+	 * close(2) returns, and the processes that shared fd have been reaped.
+	 * The destroyed service stays allocated exactly as long as one of its
+	 * instances does (kern.mac_capability.dead_service_names), so this
+	 * counts this service's instances only, not the system's.  An open
+	 * minted-from descriptor keeps it listed: that is the positive control.
+	 */
 	if (fd >= 0) {
+		ATF_CHECK_MSG(dead_service_listed("test_cleanup"),
+		    "an open instance does not keep its service listed");
 		ATF_CHECK_ERRNO(ECONNABORTED, channel_mint_instance(fd) == -1);
 		ATF_REQUIRE_EQ(0, close(fd));
 	}
-	/*
-	 * An instance's last reference can be dropped by a task after close
-	 * and unload return: poll (at most 5 s) for the count to settle.
-	 */
-	for (unsigned i = 0; i < 500; i++) {
-		len = sizeof(after);
-		ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",
-		    &after, &len, NULL, 0));
-		if (after == before)
-			break;
-		usleep(10000);
-	}
-	ATF_CHECK_EQ_MSG(before, after, "instances before %ju after %ju "
-	    "(stage %u fail=%d mint=%d)", (uintmax_t)before, (uintmax_t)after,
-	    stage, fail, mint);
+	ATF_CHECK_MSG(!dead_service_listed("test_cleanup"),
+	    "an instance outlived the unload and the last close "
+	    "(stage %u fail=%d mint=%d)", stage, fail, mint);
 }
 
-ATF_TC(unload_waits_for_admission);
+ATF_TC_WITH_CLEANUP(unload_waits_for_admission);
 ATF_TC_HEAD(unload_waits_for_admission, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "Unload drains authorization, initialization, and rollback");
@@ -7969,6 +8083,66 @@ ATF_TC_BODY(unload_waits_for_admission, tc)
 			for (unsigned mint = 0; mint <= 1; mint++)
 				check_unload_waits_for_admission(stage, fail, mint);
 }
+ATF_TC_CLEANUP(unload_waits_for_admission, tc)
+{
+	cleanup_fixture_release_all();
+}
+
+/*
+ * A descriptor stays open across its service's destroy and module unload.
+ * GETINFO, CALL and a kevent registration on it must not look at the
+ * unloaded module's callbacks (csvc_ops): they test the flags copied at
+ * registration.  Reading csvc_ops here faults on the unloaded module.
+ */
+ATF_TC_WITH_CLEANUP(unloaded_service_descriptor_ops);
+ATF_TC_HEAD(unloaded_service_descriptor_ops, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "GETINFO, CALL and kevent on a "
+	    "descriptor whose service module was unloaded do not touch the "
+	    "module's callbacks");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(unloaded_service_descriptor_ops, tc)
+{
+	struct mac_capability_info_args info;
+	struct mac_capability_call_args call;
+	struct kevent ev;
+	char req[8] = "probe", reply[64];
+	int module, fd, kq;
+
+	require_cleanup_fixture();
+	module = kldload(CLEANUP_FIXTURE);
+	ATF_REQUIRE_MSG(module >= 0, "load cleanup fixture: %s", strerror(errno));
+	/* Callbacks return at once: nothing holds the unload. */
+	cleanup_fixture_set("debug.capability_cleanup_test.release", 1);
+	fd = mac_capability_connect("test_cleanup");
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, ioctl(fd, MAC_CAPABILITY_TERMINATE, NULL));
+	ATF_REQUIRE_EQ_MSG(0, kldunload(module), "unload: %s", strerror(errno));
+
+	/* The answers are refusals or empty; the point is no fault. */
+	memset(&info, 0, sizeof(info));
+	(void)ioctl(fd, MAC_CAPABILITY_GETINFO, &info);
+	memset(&call, 0, sizeof(call));
+	call.req = req;
+	call.req_len = sizeof(req);
+	call.reply = reply;
+	call.reply_len = sizeof(reply);
+	ATF_CHECK(ioctl(fd, MAC_CAPABILITY_CALL, &call) == -1);
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	EV_SET(&ev, fd, EVFILT_WRITE, EV_ADD, 0, 0, NULL);
+	(void)kevent(kq, &ev, 1, NULL, 0, NULL);
+	EV_SET(&ev, fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+	(void)kevent(kq, &ev, 1, NULL, 0, NULL);
+	close(kq);
+	close(fd);
+}
+ATF_TC_CLEANUP(unloaded_service_descriptor_ops, tc)
+{
+	cleanup_fixture_release_all();
+}
 
 ATF_TC(failed_init_completes_cleanup);
 ATF_TC_HEAD(failed_init_completes_cleanup, tc)
@@ -7979,26 +8153,17 @@ ATF_TC_HEAD(failed_init_completes_cleanup, tc)
 }
 ATF_TC_BODY(failed_init_completes_cleanup, tc)
 {
-	uint64_t before, after;
-	size_t len;
 	unsigned fail = 1, release = 1;
 	int module, fd;
 
 	require_cleanup_fixture();
+	ATF_REQUIRE(!dead_service_listed("test_cleanup"));
 	module = kldload(CLEANUP_FIXTURE);
 	ATF_REQUIRE(module >= 0);
-	len = sizeof(before);
-	ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",
-	    &before, &len, NULL, 0));
 	ATF_REQUIRE_EQ(0, sysctlbyname("debug.capability_cleanup_test.fail_init",
 	    NULL, NULL, &fail, sizeof(fail)));
-	for (unsigned i = 0; i < 16; i++) {
+	for (unsigned i = 0; i < 16; i++)
 		ATF_CHECK_ERRNO(EIO, mac_capability_connect("test_cleanup") == -1);
-		len = sizeof(after);
-		ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",
-		    &after, &len, NULL, 0));
-		ATF_CHECK_EQ(before, after);
-	}
 	ATF_CHECK_EQ(0, cleanup_fixture_value("debug.capability_cleanup_test.entered"));
 	fail = 0;
 	ATF_REQUIRE_EQ(0, sysctlbyname("debug.capability_cleanup_test.fail_init",
@@ -8010,10 +8175,9 @@ ATF_TC_BODY(failed_init_completes_cleanup, tc)
 	ATF_REQUIRE_EQ(0, close(fd));
 	ATF_CHECK_EQ(1, cleanup_fixture_value("debug.capability_cleanup_test.entered"));
 	ATF_REQUIRE_EQ(0, kldunload(module));
-	len = sizeof(after);
-	ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",
-	    &after, &len, NULL, 0));
-	ATF_CHECK_EQ(before, after);
+	/* An instance left by a failed initialization would keep it listed. */
+	ATF_CHECK_MSG(!dead_service_listed("test_cleanup"),
+	    "an instance outlived its failed initialization or the unload");
 }
 
 /* ================================================================ */
@@ -8022,6 +8186,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, unload_waits_for_admission);
 	ATF_TP_ADD_TC(tp, failed_init_completes_cleanup);
 	ATF_TP_ADD_TC(tp, unload_waits_for_cleanup_callback);
+	ATF_TP_ADD_TC(tp, unload_waits_for_fdclose);
+	ATF_TP_ADD_TC(tp, unloaded_service_descriptor_ops);
 	/* Lifecycle */
 	ATF_TP_ADD_TC(tp, open_close);
 

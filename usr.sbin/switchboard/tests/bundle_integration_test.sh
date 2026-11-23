@@ -514,8 +514,9 @@ reload_changed_core_refused_body() {
 	# A core unit takes Capsule's boot storage grant, which only the PID 1
 	# Capsule can derive (protected_storage_derive()): a test-local stack
 	# cannot launch one ("boot storage grant failed: Operation not
-	# permitted").  No tier runs this case; it is recorded in
-	# 2026-11-17-test-local-stack-pid1-only-cases.md.
+	# permitted").  No tier runs this case
+	# (2026-11-17-test-local-stack-pid1-only-cases.md);
+	# reload_changed_stopped_core_refused covers the refusal itself.
 	atf_skip "DEFERRED_PID1_ONLY: a core unit needs the PID 1 Capsule's boot storage grant"
 
 	prepare_paths
@@ -556,6 +557,68 @@ UCL
 	    "$SWITCHBOARDCTL" status
 }
 reload_changed_core_refused_cleanup() {
+	cleanup_common
+}
+
+# ---------------------------------------------------------------
+# Test: Reload refuses to change a core unit that is not running
+# ---------------------------------------------------------------
+# The refusal in reload.c (svc_management_check_op(..., "changed at
+# runtime", ...)) comes before the unit's state is looked at, so a core unit
+# that was never launched exercises it without the boot storage grant only a
+# PID 1 Capsule can derive (reload_changed_core_refused needs that grant and
+# skips on a test-local stack).  A path-activated unit gets its stopped slot
+# at start (activation_register_all()) and launches only on a change to its
+# path, which nothing makes.  Without the refusal, reload would replace the
+# stopped unit's manifest ("updating stopped service", restart=always).  The
+# install-folder watcher may reload the edited unit before the explicit
+# reload does; the checks hold either way, and the refusal is logged by
+# whichever reload sees the change first.
+atf_test_case reload_changed_stopped_core_refused cleanup
+reload_changed_stopped_core_refused_head() {
+	atf_set "descr" "Reload leaves a core unit's manifest unchanged when it is not running"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+}
+reload_changed_stopped_core_refused_body() {
+	use_private_control
+	local bundle unit trigger
+
+	prepare_paths
+	trigger="${WORK}/coreidle.trigger"
+	: > "$trigger"
+	bundle=$(create_system_bundle "CoreIdle" "org.test.core-idle" \
+	    "coreidled" "org.test.core-idle.svc" \
+	    "activation { path { path = \"${trigger}\"; } }
+control = \"core\"; restart = \"never\";")
+	unit="${bundle}/Units/coreidled.unit/Unit.ucl"
+	sed -i '' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
+	    "$unit"
+
+	start_stack
+	atf_check -s exit:0 -o match:"org.test.core-idle/coreidled.*stopped.*restart=never mgmt=core" \
+	    "$SWITCHBOARDCTL" status
+
+	cat >"$unit" <<UCL
+directories = ["${WORK}"];
+activation { path { path = "${trigger}"; } }
+control = "core";
+restart = "always";
+arguments = ["compat-ready"];
+UCL
+
+	atf_check -s exit:0 -o match:"0 changed" "$SWITCHBOARDCTL" reload
+	atf_check -s exit:0 -o ignore grep -F \
+	    "management class core: org.test.core-idle/coreidled cannot be changed at runtime" \
+	    "$logfile"
+	if grep -Fq "updating stopped service 'org.test.core-idle/coreidled'" \
+	    "$logfile"; then
+		atf_fail "reload replaced a core unit's manifest"
+	fi
+	atf_check -s exit:0 -o match:"org.test.core-idle/coreidled.*stopped.*restart=never mgmt=core" \
+	    "$SWITCHBOARDCTL" status
+}
+reload_changed_stopped_core_refused_cleanup() {
 	cleanup_common
 }
 
@@ -839,6 +902,7 @@ atf_init_test_cases() {
 	atf_add_test_case reload_remove_service
 	atf_add_test_case reload_changed_bundle
 	atf_add_test_case reload_changed_core_refused
+	atf_add_test_case reload_changed_stopped_core_refused
 	atf_add_test_case missing_system_bundle_optional
 	atf_add_test_case coalition_kill_on_timeout
 	atf_add_test_case bundles_list

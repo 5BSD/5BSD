@@ -400,7 +400,7 @@ MAC_CHECK_PROBE_DEFINE2(socket_check_poll, "struct ucred *",
     "struct socket *");
 
 int
-mac_socket_check_poll(struct ucred *cred, struct socket *so)
+mac_socket_check_poll_impl(struct ucred *cred, struct socket *so)
 {
 	int error;
 
@@ -414,7 +414,7 @@ MAC_CHECK_PROBE_DEFINE2(socket_check_receive, "struct ucred *",
     "struct socket *");
 
 int
-mac_socket_check_receive(struct ucred *cred, struct socket *so)
+mac_socket_check_receive_impl(struct ucred *cred, struct socket *so)
 {
 	int error;
 
@@ -447,7 +447,7 @@ MAC_CHECK_PROBE_DEFINE2(socket_check_send, "struct ucred *",
     "struct socket *");
 
 int
-mac_socket_check_send(struct ucred *cred, struct socket *so)
+mac_socket_check_send_impl(struct ucred *cred, struct socket *so)
 {
 	int error;
 
@@ -478,7 +478,7 @@ MAC_CHECK_PROBE_DEFINE2(socket_check_stat, "struct ucred *",
     "struct socket *");
 
 int
-mac_socket_check_stat(struct ucred *cred, struct socket *so)
+mac_socket_check_stat_impl(struct ucred *cred, struct socket *so)
 {
 	int error;
 

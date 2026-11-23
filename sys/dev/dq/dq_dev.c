@@ -96,6 +96,12 @@ SDT_PROBE_DEFINE2(dq, , , wait__abandon, "struct dq_queue *",
     "struct dq_event_k *");
 SDT_PROBE_DEFINE4(dq, , , postop__attr, "struct dq_object *", "uint32_t",
     "uint32_t", "int");
+SDT_PROBE_DEFINE4(dq, , , standing__match, "struct dq_queue *", "uint32_t",
+    "uint64_t", "int32_t");
+SDT_PROBE_DEFINE3(dq, , , standing__miss, "struct dq_queue *", "uint32_t",
+    "uint32_t");
+SDT_PROBE_DEFINE4(dq, , , standing__change, "struct dq_queue *", "uint32_t",
+    "uint64_t", "uint32_t");
 
 /*
  * Tunables (design 8.6).  Bounded setters: a controller can lower its own
@@ -103,6 +109,13 @@ SDT_PROBE_DEFINE4(dq, , , postop__attr, "struct dq_object *", "uint32_t",
  */
 SYSCTL_NODE(_kern, OID_AUTO, dq, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
     "DescriptorQueue");
+
+/*
+ * Replies may carry post-operation attributes (DQ_REPLY_F_POSTOP, T-A02):
+ * libdq offers a block only when this feature is present, and reports a
+ * refused one as the error it is.
+ */
+FEATURE(dq_postop, "DescriptorQueue post-operation attributes in replies");
 
 /*
  * Post-operation attribute blocks ignored, system-wide (counter(9): the
@@ -373,6 +386,14 @@ dq_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data, int fflag __unused
 		pa.dp_pad0 = v1->dp_pad0;
 		return (dq_queue_push(q, &pa));
 	}
+	case DQ_IOC_STANDING_ADD:
+		return (dq_standing_add(q, (struct dq_standing_rule *)data,
+		    td));
+	case DQ_IOC_STANDING_DEL:
+		return (dq_standing_del(q, *(uint64_t *)data));
+	case DQ_IOC_STANDING_FLUSH:
+		dq_standing_flush(q, DQ_STANDING_CHANGE_FLUSH);
+		return (0);
 	case FIONBIO:
 	case FIOASYNC:
 		return (0);
@@ -467,6 +488,7 @@ dq_init(void)
 		dq_pager_unregister();
 		return (error);
 	}
+	dq_mutwait_init();	/* the dying-process wakeup (owner 11-20) */
 	dq_resolve_init();	/* the resolution vector (D125), last */
 	dq_active = true;
 	return (0);

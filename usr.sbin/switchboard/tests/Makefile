@@ -115,6 +115,16 @@ ATF_TESTS_C+=	management_enforce_test
 ATF_TESTS_C+=	responsibility_test
 ATF_TESTS_C+=	bundle_selection_test
 ATF_TESTS_C+=	rc_ingest_test
+# capsule_client_test drives the channel RPC client (capsule_client.c,
+# mac_capability_direct.c) over real capability channels with a forked
+# stand-in Capsule.
+ATF_TESTS_C+=	capsule_client_test
+# It opens /dev/mac_capability (create_channel_direct): exclusive, as above.
+TEST_METADATA.capsule_client_test+=	is_exclusive="true"
+SRCS.capsule_client_test=	capsule_client_test.c capsule_client.c \
+				mac_capability_direct.c
+CFLAGS.capsule_client_test+=	-I${SRCTOP}/lib/libcapability
+LIBADD.capsule_client_test+=	capability
 # registry_watch_test drives the install-root watch through a real kqueue with
 # the supervisor stubbed (container model: pkg install/remove loads/unloads).
 ATF_TESTS_C+=	registry_watch_test
@@ -373,6 +383,12 @@ SRCTREE_MANIFESTS!=	cd ${SRCTOP} && find usr.sbin -type f \
 		    -path '*/bluetooth/BSDBluetooth/blued.ucl' \) \
 		    ! -name Bundle.ucl | sort
 SRCTREE_FILES+=	${SRCTREE_MANIFESTS}
+# shipped_manifest_policy_test checks that each Core unit is a compiled
+# program (base exclusion refuses a Core #! script): their Makefiles.
+SRCTREE_FILES+=	usr.sbin/BSDAudit/Makefile usr.sbin/BSDCrypto/Makefile \
+		usr.sbin/BSDExtension/Makefile usr.sbin/BSDFilesystem/Makefile \
+		usr.sbin/BSDLog/Makefile usr.sbin/BSDPower/Makefile \
+		usr.sbin/BSDSysctl/Makefile usr.sbin/BSDTime/Makefile
 .include "${SRCTOP}/tests/srctree.mk"
 
 ATF_TESTS_C+= cleanup_status_test

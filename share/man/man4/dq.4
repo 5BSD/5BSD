@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 16, 2026
+.Dd November 19, 2026
 .Dt DQ 4
 .Os
 .Sh NAME
@@ -832,15 +832,112 @@ returns, and a stop
 takes effect then.
 Only the answer, the deadline,
 .Dv SIGKILL ,
-the process's exit and another thread's
+the process's exit, another thread's
 .Xr _exit 2
-(which single-threads the process before it marks it exiting) end it,
-the last three with the operation abandoned.
-Another thread's
+(which single-threads the process before it marks it exiting) and a
+signal that terminates the process, one that dumps core included (the
+dump single-threads the process first, and after it no
+.Dv SIGKILL
+is delivered), end it, the last four with the operation abandoned; the
+thread that writes the core still waits for its own answers.
+Another thread single-threading the process to the user boundary (an
+.Xr execve 2 ,
+also one that then fails, an
+.Xr rfork 2
+without
+.Dv RFPROC ,
+a
+.Xr fork 2
+while the process group is being killed,
+.Xr jail_attach 2 )
+does not take the process down, and what the wait does depends on how far
+the operation got.
+An operation the controller has not read yet, a wait for room before it
+is posted, and an operation that only reads
+.Po
+.Dv DQ_OP_READ ,
+.Dv DQ_OP_GETATTR ,
+.Dv DQ_OP_READDIR ,
+.Dv DQ_OP_FSYNC ,
+.Dv DQ_OP_LOCK ,
+and a lookup that creates, removes or changes nothing
+.Pc
+are given up (INTERRUPT to the controller for one it read) and the system
+call is restarted once the single-threading is over, as a
+.Xr fusefs 4
+wait does; the program sees no error.
+An operation that changes something
+.Po
+a write, an attribute change, an allocation, a hole punch, an ioctl, a
+lookup that creates, removes or renames
+.Pc
+that the controller has read is not restarted, since it would be applied
+twice: the wait goes on, without catching signals, until the answer, the
+deadline, or the process starting to die
+.Po
+.Dv SIGKILL ,
+an exit, a core dump
+.Pc ,
+and the single-threading thread waits for it as for a disk.
+A
+.Dv SIGKILL
+counts from the moment it is sent: if a tracer then discards it, the
+operation has already been abandoned (INTERRUPT to the controller), as it
+was before these waits.
+The lookups of extended attributes and ACLs count as changes, reads
+included: the lookup does not say which it is.
+A
+.Xr connect 2
+lookup counts as a read: restarted after the controller answered it with
+a descriptor of its own, it is answered again, and the controller may
+connect twice (a listed difference).
+.Dv DQ_OP_LOCK
+waits catch signals, so a lock wait is always given up and restarted.
+A page fault is never restarted (the VM system has no retry for a page a
+pager could not read): it waits the same way, bounded by the page
+deadline.
+Both waits stay in this form when the single-threading ends first (the
 .Xr execve 2
-or a core dump waits for the answer, as for a disk read in progress.
-The wait sleeps in slices of 100 ms, whatever is pending, so a storm of
-signals costs it nothing.
+failed): the call returns only with the answer, the deadline or the
+process's death.
+A debugger's stop: a transparent
+.Dv PT_ATTACH
+.Pq Va debug.ptrace_attach_transparent
+stops a thread where it sleeps only in a wait that catches signals (an
+object minted
+.Dv DQ_PF_INTR ,
+a queue with
+.Dv DQ_QF_INTR ,
+a lock wait): the wait keeps its operation, the controller sees no
+INTERRUPT, and the call returns the answer after the detach.
+The other waits defer stops, as a disk wait does, so the stop completes
+when they end; the signal mask plays no part in it.
+A traced process stays stopped with a
+.Dv SIGKILL
+pending until the debugger continues or detaches it; a received
+mutation's wait that the
+.Dv SIGKILL
+wakes ends with
+.Er EINTR ,
+and the thread stops at the user boundary until then.
+The wait is event-driven, with no polling: it sleeps with every signal
+but
+.Dv SIGKILL
+blocked and stops deferred, as a
+.Xr fusefs 4
+wait does, so a storm of signals costs it nothing, and each of the ends
+above wakes it.
+While it waits, the thread's signal mask shows every signal but
+.Dv SIGKILL
+blocked
+.Po
+.Xr procstat 1
+.Fl i ,
+.Dv PT_LWPINFO Ns 's
+.Va pl_sigmask
+.Pc ;
+the program's own mask is back when the call returns.
+Its only timeout is the deadline.
 A deadline of 0 is then a hard mount: only the answer,
 .Dv SIGKILL
 or an exit ends the wait.
@@ -1301,6 +1398,47 @@ become the process's served root and working directory
 .Va da_flags
 is 0 or
 .Dv DQ_ATTACH_F_NODIRS .
+.It Dv DQ_IOC_STANDING_ADD Vt "struct dq_standing_rule"
+Install a standing rule
+.Pq Sx Standing rules
+and return its id in
+.Va dqs_id .
+In this order:
+.Er EINVAL
+for a wrong version, an unknown flag or action, nonzero padding, an empty
+mask or one with an operation no rule may name,
+.Dv DQ_ROP_EXEC_INTERP
+with
+.Dv DQ_STANDING_F_SUBTREE ,
+a path not
+NUL-terminated at
+.Va dqs_pathlen
+or not absolute and normalized, an errno with
+.Dv DQ_STANDING_PASS
+or
+.Dv DQ_STANDING_ASK ,
+or an errno that is not allowed;
+.Er EBADF
+for a bad
+.Va dqs_rootfd ,
+.Er ENOTCAPABLE
+when it lacks
+.Dv CAP_LOOKUP ,
+.Er EINVAL
+when it has no vnode (a served descriptor),
+.Er ENOTDIR
+when it is not a directory;
+.Er EEXIST
+for a rule with the same root and path and an overlapping operation;
+.Er ENOSPC
+past
+.Dv DQ_STANDING_MAX .
+.It Dv DQ_IOC_STANDING_DEL Vt uint64_t
+Remove the rule with this id;
+.Er ESRCH
+for an id the queue has no rule of.
+.It Dv DQ_IOC_STANDING_FLUSH
+Remove every rule.
 .It Dv DQ_IOC_GET_STATS2 Vt "struct dq_stats2"
 Everything
 .Vt struct dq_stats
@@ -1349,14 +1487,26 @@ or
 .Xr fhlink 2
 into a served directory, refused with no event),
 .Va ds2_readdirs
-.Pq Dv DQ_OP_READDIR No events
-and
+.Pq Dv DQ_OP_READDIR No events ;
 .Va ds2_full_waits
-(waited posts that waited for a slot of a full queue, once per post).
-Two words are reserved for later counters.
+(waited posts that waited for a slot of a full queue, once per post);
+.Va ds2_standing_pass
+and
+.Va ds2_standing_deny
+(lookups a standing rule decided with no event, see
+.Sx Standing rules ) .
+Two words are reserved for counters planned
+.Pq Va ds2_reserved_abi , ds2_reserved_notes ,
+and the struct ends in
+.Dv DQ_STATS2_RESERVED
+reserved words (one 64-byte line); all read 0.
+A new counter takes a reserved word, so the size stays until the line is
+used up; then the struct grows by another line and the command word of
+.Dv DQ_IOC_GET_STATS2 ,
+which encodes the size, changes.
 The kernel writes
 .Va ds2_size
-.Pq 320 .
+.Pq 400 .
 Also answered by an observer descriptor.
 .El
 .Pp
@@ -1695,14 +1845,31 @@ the backing file, and failing it would make the program repeat it.
 A larger size is applied: the backing file may have grown by another
 writer.
 .Pp
-The size and the times of a block only move forward.
 Requesters apply their replies' blocks in the order they wake, not the
 order the controller answered, so a block can be older than what another
-writer's reply has already presented; it never takes the size or a time
-back.
-A shrink is stated by
+writer's reply has already presented.
+The kernel numbers the replies to an object's events in the order the
+replies reach the kernel (the order of the controller's
+.Dv DQ_IOC_REPLY
+calls), and each presented attribute (the size, the
+block count, and each time) remembers the number of the reply it was last
+set from: a block's value is applied only when its reply is newer.
+An older block never takes the size or a time back, and a newer one
+replaces what is presented, smaller or older included: the size after
+another party truncated the backing file, the modification time of a write
+after
+.Xr futimens 2
+set it in the future.
+The size a write or an allocation proves, the kernel's stamps and a
+.Dv DQ_OP_SETATTR
+the kernel applies follow the same rule with their own reply's number;
 .Dv DQ_IOC_SETIDENT
-or comes from a truncation.
+sets every attribute as of the newest reply so far; a
+.Dv DQ_OP_GETATTR
+answer applies its size, block count and times by its own reply's
+number, like a block.
+The end a write or an allocation proves is a floor that the size of an
+older reply cannot go below.
 A
 .Dv DQ_OP_FSPACECTL
 block sets no size, whatever it names: a deallocation changes none.
@@ -1721,10 +1888,18 @@ and
 .Va di_ctime
 to
 .Fn vfs_timestamp ;
-a read that returned bytes, from the queue or from the cached pages, sets
+a read that asked for bytes and succeeded, from the queue or from the
+cached pages and at the end of the file too, sets
 .Va di_atime
 unless the presented file system is
-.Dv MNT_NOATIME .
+.Dv MNT_NOATIME
+or
+.Dv MNT_RDONLY ,
+as
+.Fn ffs_read
+and
+.Fn zfs_read
+do.
 A controller that keeps the times itself (by
 .Dv DQ_IOC_SETIDENT ,
 .Dv DQ_OP_GETATTR
@@ -2304,6 +2479,31 @@ start directories
 The preconditions are checked and the attachment committed in one
 section, so no fork, exec or descriptor transfer can slip between them.
 There is no detach.
+.Pp
+.Sy Base exclusion .
+A target the kernel excludes
+.Pq BASE EXCLUSION in Xr cap_process 2 :
+process 1,
+.Xr switchboard 8 ,
+a Core unit or a fork child of one of them, is
+.Er EPERM
+unless the caller is excluded itself and is the target's parent, and the
+target has not executed an image.
+An excluded target that has executed an image (a running Core daemon) is
+.Er EPERM
+also for its excluded parent, not
+.Er EBUSY .
+This decision replaces the debug check's exclusion refusal for
+.Dv DQ_IOC_ATTACH ;
+the other preconditions and their errnos are unchanged.
+Attaching clears the target's exclusion, so an attached process is never
+excluded.
+An attached process may execute a Core image: it stays attached, runs
+without authority and is not excluded, and its Capability Broker decides
+that exec as any other.
+A Capability Broker is never consulted about an excluded process:
+Capsule, switchboard and Core units are never attached, and their
+executions and descriptor passing are not posted to any queue.
 .Pp
 The attach also takes the target's software authority
 .Pq Xr cap_process 2
@@ -4352,6 +4552,214 @@ link's name, where an unattached process gets the resolved path.
 and
 .Va kern.proc.pathname
 show the real image.
+.Ss Standing rules
+A controller can answer in advance the lookups it always answers the same
+way.
+A
+.Em standing rule
+names a root, a path under it, the operations it covers and an answer;
+a lookup the rule decides posts no event and returns exactly what the
+controller's reply would have made it return.
+A rule is a function of the root, the operation, the open's class, the
+lookup class and the path text, and of nothing else in the event: it
+reads the lookup flags only to exclude events, and ignores
+.Dv DQ_RF_NOFOLLOW , DQ_RF_EMPTYPATH , DQ_RF_BENEATH ,
+the
+.Dv DQ_ROP_SYMLINK
+target, the
+.Dv DQ_ROP_SETATTR
+body,
+.Va drs_cmode
+and
+.Va drs_dev .
+.Pp
+.Sy The rule .
+.Vt struct dq_standing_rule
+.Pq Dv DQ_IOC_STANDING_ADD
+gives:
+.Bl -tag -width "dqs_action" -offset indent
+.It Va dqs_rootfd
+a directory descriptor with
+.Dv CAP_LOOKUP ,
+or \-1 for the caller's own root.
+The rule applies only to lookups whose process root is that directory,
+compared by vnode, which the rule holds with
+.Fn vhold
+(it does not block an unmount).
+.It Va dqs_path
+an absolute, normalized path of
+.Va dqs_pathlen
+bytes and a NUL: no empty,
+.Ql \&.
+or
+.Ql ..
+component and no trailing
+.Ql /
+except for
+.Ql /
+itself.
+It matches exactly, or with
+.Dv DQ_STANDING_F_SUBTREE
+the path and every name beneath it.
+Matching is by component:
+.Pa /usr/lib
+does not match
+.Pa /usr/lib32 .
+.It Va dqs_ops
+operations,
+.Dv DQ_STANDING_OP Ns Pq Dv DQ_ROP_* .
+.Dv DQ_ROP_RENAME
+and
+.Dv DQ_ROP_LINK
+(two paths),
+.Dv DQ_ROP_SOCKET
+and
+.Dv DQ_ROP_SOCKETPAIR
+(no path),
+.Dv DQ_ROP_CONNECT
+and
+.Dv DQ_ROP_BIND
+(always consulted ahead) and
+.Dv DQ_ROP_INTERNAL
+are
+.Er EINVAL ,
+and so is
+.Dv DQ_ROP_EXEC_INTERP
+with
+.Dv DQ_STANDING_F_SUBTREE
+(see below).
+Without
+.Dv DQ_STANDING_F_OPEN_WRITE ,
+.Dv DQ_ROP_OPEN
+covers only read-class opens:
+.Dv O_RDONLY
+without
+.Dv O_CREAT
+or
+.Dv O_TRUNC
+.Po
+.Dv O_EXEC , O_SEARCH
+and
+.Dv O_PATH
+are read-class
+.Pc .
+.Dv DQ_ROP_XATTR
+and
+.Dv DQ_ROP_ACL
+each cover both get and set.
+.It Va dqs_action
+.Dv DQ_STANDING_PASS ;
+.Dv DQ_STANDING_ERRNO
+with
+.Va dqs_errno ,
+an errno of the
+.Dv DQ_OP_RESOLVE
+allow-list other than
+.Er EAGAIN ,
+.Er EINTR
+and
+.Er ENOTCAPABLE ;
+or
+.Dv DQ_STANDING_ASK ,
+which posts the event: an exception to a shorter rule.
+.El
+.Pp
+Among the rules whose root, operation and open class fit an event, the
+one with the longest path decides; if none fits, the event is posted.
+Two rules with the same root and path must name disjoint operations
+.Pq Er EEXIST ,
+so there are no ties.
+A queue holds at most
+.Dv DQ_STANDING_MAX
+(128) rules.
+.Pp
+.Sy What a rule matches .
+The text a rule is matched against is the event's path, and only for an
+absolute name or an absolute symbolic link target
+.Pq Dv DQ_START_REAL_ROOT .
+A relative name
+.Pq Dv DQ_START_REAL_CWD , DQ_START_REAL_DIRFD , DQ_START_REAL_SYMDIR
+always posts.
+Empty components and
+.Ql \&.
+are skipped, and a trailing
+.Ql /
+matches the directory (the walk still requires one).
+A name with a
+.Ql ..
+component is never matched.
+Only the requester's own lookups (class 1) and the kernel's lookup of an
+image's interpreter, a
+.Dv PT_INTERP
+run-time linker or a
+.Ql #!
+interpreter
+.Pq Dv DQ_ROP_EXEC_INTERP , No class 3 ,
+are decided; these always post: class 2, a lookup from a served start or
+under a served root, one naming a served descriptor
+.Pq Va drs_object ,
+a
+.Dv DQ_RF_RINROOT
+or
+.Dv DQ_RF_ABSTRACT
+lookup, a lookup consulted ahead (the AF_UNIX names, swap and quota
+files), and every lookup of a process with an ABI root (the Linux ABI
+under
+.Va compat.linux.emul_path ) .
+.Pp
+.Sy When .
+The rules are checked in the consultation after the dead-controller test
+and the wait guard
+.Pq Sx Waiting, deadlines and interruption ,
+immediately before the event would be posted.
+A rule's PASS is cached in the lookup's intent slot as a reply's is, and
+every symbolic link a covered lookup meets is matched again with its
+target and the remaining path, so a link out of the rule's tree, like
+any relative link, posts.
+The interpreter lookup is not consulted again at symbolic links, so a
+subtree rule would pass a link out of its tree: only an exact rule may
+name
+.Dv DQ_ROP_EXEC_INTERP
+.Pq Er EINVAL No otherwise ,
+and it decides that one name, as a reply to it would.
+The lookup then walks with the program's own credential, MAC labels,
+Capsicum rights and
+.Dv O_RESOLVE_BENEATH
+scope; a rule never relaxes them, and the errno a rule answers comes
+before the walk, as a reply's does.
+The program sees no difference but timing: a covered lookup cannot be
+interrupted by a signal and meets no deadline.
+.Pp
+.Sy What the controller sees .
+A covered lookup posts no event, leaves no observer record and does not
+count in
+.Va ds2_resolves ;
+it counts in
+.Va ds2_standing_pass
+or
+.Va ds2_standing_deny
+and fires
+.Li dq:::standing-match
+.Pq Sx DTRACE .
+Text decides: what is renamed, linked or mounted into a covered subtree by
+another process becomes reachable, exactly as under a controller that
+passes the same names, so pass subtrees only whose writers and mounts are
+trusted.
+.Pp
+.Sy Changes .
+.Dv DQ_IOC_STANDING_DEL
+and
+.Dv DQ_IOC_STANDING_FLUSH
+wait for every consultation that is reading the rules; once they return,
+no lookup that starts afterwards is decided by a removed rule.
+A lookup decided just before is like one whose reply was sent before the
+controller changed its mind.
+Removing a rule and then adding its replacement is always safe.
+A change makes every processor pass a rendezvous: rules are meant to
+change rarely.
+The rules end with the queue's death, after which every lookup of the
+attached processes fails closed
+.Pq Er EIO .
 .Sh READ-ONLY OBJECTS
 A descriptor minted without
 .Dv DQ_MINT_F_WRITE
@@ -4879,6 +5287,28 @@ is 1
 .Xr fpathconf 2 ,
 6
 .Xr fstatfs 2 )
+.It dq:::standing-match
+.Fa "struct dq_queue *" ,
+.Fa "uint32_t rop" ,
+.Fa "uint64_t id" ,
+.Fa "int32_t verdict"
+(a standing rule decided a lookup: 0 PASS, an errno, or \-1 for ASK,
+which posts it; aggregate on the id for per-rule counts)
+.It dq:::standing-miss
+.Fa "struct dq_queue *" ,
+.Fa "uint32_t rop" ,
+.Fa "uint32_t why"
+(a queue with rules posts a lookup: 0 no rule fits, 1 the lookup is not
+one a rule decides, 2 its name has a
+.Ql ..
+component)
+.It dq:::standing-change
+.Fa "struct dq_queue *" ,
+.Fa "uint32_t what" ,
+.Fa "uint64_t id" ,
+.Fa "uint32_t nrules"
+(the rules changed: 1 ADD, 2 DEL, 3 FLUSH, 4 the queue's death with
+rules; the rule's id or 0, the rules left)
 .El
 .Pp
 The kernel core's half of the queue, which runs for attached processes

@@ -13,6 +13,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -29,18 +30,30 @@
 
 static size_t	dq_dispatch_bufsize(void);
 
+int	_dq_postop_probe(void) __hidden;
+
 int
 dq_open(void)
 {
-	int q;
+	int error, q;
 
 	q = open(DQ_DEVICE, O_RDWR | O_CLOEXEC | O_CLOFORK);
+	if (q == -1)
+		return (-1);
 	/*
-	 * Size dq_dispatch()'s buffer now: a queue is opened before the
-	 * controller restricts itself, and the size is kept for the process.
+	 * Size dq_dispatch()'s buffer and learn whether the kernel takes
+	 * post-operation blocks now: a queue is opened before the
+	 * controller restricts itself, and both are kept for the process.
+	 * The feature's absence (ENOENT) is an answer; any other failure to
+	 * read it is dq_open's, not a silent fallback to no blocks.
 	 */
-	if (q != -1)
-		(void)dq_dispatch_bufsize();
+	(void)dq_dispatch_bufsize();
+	if (_dq_postop_probe() == -1) {
+		error = errno;
+		(void)close(q);
+		errno = error;
+		return (-1);
+	}
 	return (q);
 }
 
@@ -52,12 +65,67 @@ dq_get_stats(int fd, struct dq_stats *st)
 	return (ioctl(fd, DQ_IOC_GET_STATS, st));
 }
 
+/*
+ * Whether the kernel takes post-operation blocks (FEATURE(dq_postop)):
+ * 0 not read yet, 1 yes, 2 no.  dq_open() reads it before the controller
+ * restricts itself; a controller that opened /dev/dq itself has it read
+ * at its first block (libdq_serve.c).  The feature's absence (ENOENT) is
+ * an answer; any other failure to read it is an error (-1, errno), never
+ * a silent fallback to no blocks.
+ */
+static atomic_int _dq_postop_kernel;
+
 int
-dq_get_stats2(int fd, struct dq_stats2 *st)
+_dq_postop_probe(void)
+{
+	size_t len;
+	int feature, k;
+
+	k = atomic_load_explicit(&_dq_postop_kernel, memory_order_relaxed);
+	if (k != 0)
+		return (k);
+	feature = 0;
+	len = sizeof(feature);
+	if (sysctlbyname("kern.features.dq_postop", &feature, &len, NULL,
+	    0) == -1) {
+		if (errno != ENOENT)
+			return (-1);
+		feature = 0;
+	}
+	k = feature != 0 ? 1 : 2;
+	atomic_store_explicit(&_dq_postop_kernel, k, memory_order_relaxed);
+	return (k);
+}
+
+/*
+ * The size of the caller's struct dq_stats2 comes with it (the
+ * dq_get_stats2 macro of libdq.h), so a program built against another
+ * size fails with EINVAL instead of having the kernel's struct written
+ * past its own.
+ */
+int
+dq_get_stats2_sized(int fd, struct dq_stats2 *st, size_t size)
 {
 
+	if (size != sizeof(*st)) {
+		errno = EINVAL;
+		return (-1);
+	}
 	memset(st, 0, sizeof(*st));
 	return (ioctl(fd, DQ_IOC_GET_STATS2, st));
+}
+
+/*
+ * The function of programs built before the size came with the call: it
+ * cannot know their struct's size, so it refuses (EINVAL) rather than
+ * write the kernel's into it.
+ */
+int
+(dq_get_stats2)(int fd __unused, struct dq_stats2 *st __unused)
+{
+
+	errno = EINVAL;
+	return (-1);
 }
 
 int
@@ -1002,6 +1070,56 @@ dq_attach_starts_flags(int q, int procfd, int rootfd, int cwdfd,
 	args.da_cwdfd = cwdfd;
 	args.da_flags = flags;
 	return (ioctl(q, DQ_IOC_ATTACH, &args));
+}
+
+/*
+ * Standing rules.  The path is copied with its length; the kernel checks
+ * the rest (dq(4)).
+ */
+int
+dq_standing_add(int q, int rootfd, const char *path, uint32_t flags,
+    uint32_t ops, uint32_t action, int error, uint64_t *idp)
+{
+	struct dq_standing_rule r;
+	size_t len;
+
+	if (path == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	len = strlen(path);
+	if (len >= DQ_PATH_MAX) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	memset(&r, 0, sizeof(r));
+	r.dqs_version = DQ_API_VERSION;
+	r.dqs_flags = flags;
+	r.dqs_ops = ops;
+	r.dqs_action = action;
+	r.dqs_errno = error;
+	r.dqs_rootfd = rootfd;
+	r.dqs_pathlen = (uint32_t)len;
+	memcpy(r.dqs_path, path, len);
+	if (ioctl(q, DQ_IOC_STANDING_ADD, &r) == -1)
+		return (-1);
+	if (idp != NULL)
+		*idp = r.dqs_id;
+	return (0);
+}
+
+int
+dq_standing_del(int q, uint64_t id)
+{
+
+	return (ioctl(q, DQ_IOC_STANDING_DEL, &id));
+}
+
+int
+dq_standing_flush(int q)
+{
+
+	return (ioctl(q, DQ_IOC_STANDING_FLUSH));
 }
 
 /*

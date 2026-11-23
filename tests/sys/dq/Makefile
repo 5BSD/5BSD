@@ -50,6 +50,8 @@ ATF_TESTS_C+=	dq_legitimacy_test
 ATF_TESTS_C+=	dq_owner_test
 ATF_TESTS_C+=	dq_swap_test
 ATF_TESTS_C+=	dq_restricted_test
+ATF_TESTS_C+=	dq_standing_test
+ATF_TESTS_C+=	dq_ptrace_test
 ATF_TESTS_C+=	dq_execpin_test
 ATF_TESTS_SH+=	dq_dtrace_test
 ATF_TESTS_SH+=	dq_testopen_test
@@ -81,12 +83,16 @@ CFLAGS.dq_bootstrap_test+=	-I${SRCTOP}/lib/libservice \
 				-I${SRCTOP}/lib/libsysctlcmp
 LIBADD.dq_bootstrap_test+=	notify logcmp sysctlcmp service
 
+# jail_setv(3) for the boundary rows (review 3).
+LIBADD.dq_read_test+=	jail
 # jail_setv(3) for the I5 jail_attach row.
 LIBADD.dq_resolve_test+=	jail
 # jail_setv(3) for the address-family row.
 LIBADD.dq_socket_test+=	jail
 # jail_setv(3) and jail_remove(2) for the jailed supervisor.
 LIBADD.dq_restricted_test+=	jail
+# jail_setv(3) for the jail-root rule.
+LIBADD.dq_standing_test+=	jail
 # jail_setv(3) for P1.
 LIBADD.dq_execpin_test+=	jail
 
@@ -136,6 +142,8 @@ TEST_METADATA.dq_owner_test+=	is_exclusive="true"
 TEST_METADATA.dq_start_test+=	is_exclusive="true"
 # Creates jails: run alone.
 TEST_METADATA.dq_restricted_test+=	is_exclusive="true"
+# Creates a jail, sets compat.linux.emul_path: run alone.
+TEST_METADATA.dq_standing_test+=	is_exclusive="true"
 # Runs dqswap, which attaches its command: run alone.
 TEST_METADATA.dq_dqswap_test+=	is_exclusive="true"
 # Set kern.chroot_allow_open_directories, mount linprocfs, call acct(2),
@@ -165,6 +173,11 @@ ${PACKAGE}FILES+=	dqpass.expected
 # the hang capture of the served-root runs (T-R11, T-R12).
 ${PACKAGE}FILES+=	dq_suites.subr
 ${PACKAGE}FILES+=	dq_hang.subr
+# The hang capture's event-driven watch (kqueue, no polling).
+PROGS+=		dq_hangwatch
+SRCS.dq_hangwatch=	dq_hangwatch.c
+MAN.dq_hangwatch=
+BINDIR.dq_hangwatch=	${TESTSDIR}
 
 # dqswap (share/examples/dq): the example supervisor that gives up root
 # after the attach; dq_dqswap_test runs it.
@@ -208,15 +221,15 @@ MAN.dq_legitimacy_helper=
 BINDIR.dq_legitimacy_helper=	${TESTSDIR}
 
 # The foreign-ABI programs: freestanding amd64 Linux programs for the
-# Linux rows of dq_owner_test, dq_served_test, dq_swap_test and
-# dq_legitimacy_test, and the i386 FreeBSD and Linux images of
-# dq_legitimacy_test's ilp32_no_abi.  No libc and no headers but
-# dq_linux.h: they are built here with the cross compiler for their own
-# target and installed beside the tests, which run them.  x86 assembly:
-# amd64 only, as are the rows (require.arch).  Cross targets take clang
-# and lld; with another compiler or linker (an external GCC toolchain,
-# WITHOUT_CLANG, WITHOUT_LLD) the programs are not built and the rows
-# fail, as they do for any missing prerequisite.
+# Linux rows of dq_owner_test, dq_served_test, dq_swap_test,
+# dq_legitimacy_test and dq_standing_test, and the i386 FreeBSD and
+# Linux images of dq_legitimacy_test's ilp32_no_abi.  No libc and no
+# headers but dq_linux.h: they are built here with the cross compiler
+# for their own target and installed beside the tests, which run them.
+# x86 assembly: amd64 only, as are the rows (require.arch).  Cross
+# targets take clang and lld; with another compiler or linker (an
+# external GCC toolchain, WITHOUT_CLANG, WITHOUT_LLD) the programs are
+# not built and the rows fail, as they do for any missing prerequisite.
 .include <bsd.compiler.mk>
 .include <bsd.linker.mk>
 .if ${MACHINE_ARCH} == "amd64" && ${COMPILER_TYPE} == "clang" && \
@@ -227,7 +240,8 @@ DQ_FOREIGN_CFLAGS= -fuse-ld=lld -nostdlib -static -fno-stack-protector \
 .if ${MK_WERROR} != "no"
 DQ_FOREIGN_CFLAGS+= -Werror
 .endif
-DQ_LINUX=	dq_owner_linux dq_opath_linux dq_swap_linux dq_legitimacy_linux
+DQ_LINUX=	dq_owner_linux dq_opath_linux dq_swap_linux dq_legitimacy_linux \
+		dq_standing_linux
 DQ_ILP32=	dq_legitimacy_ilp32_freebsd dq_legitimacy_ilp32_linux
 .for _p in ${DQ_LINUX}
 DQ_TARGET.${_p}=	x86_64-unknown-linux-gnu
