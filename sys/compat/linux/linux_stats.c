@@ -208,7 +208,7 @@ linux_kern_statat_id_dqserved(struct thread *td, struct dq_intent *di,
 	id = dqres_ident(di, DQ_RESOLVE_ATTR);
 	if (id == NULL)
 		return (EIO);
-	dqres_ident_to_stat(id, sbp);
+	dqres_ident_to_stat(id, td->td_ucred, sbp);
 	if (mntid != NULL)
 		*mntid = linux_dq_mount_id(di->di_res.da_qgid,
 		    id->di_statfs.ds_fsid, false);

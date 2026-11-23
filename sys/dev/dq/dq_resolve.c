@@ -133,6 +133,18 @@ dq_binding_exdev(struct dqres_binding *b)
 	DQ_UNLOCK(q);
 }
 
+/* A SWAP or FD answer the program's completion refused (EIO). */
+static void
+dq_binding_bad_answer(struct dqres_binding *b)
+{
+	struct dq_queue *q;
+
+	q = b->db_queue;
+	DQ_LOCK(q);
+	q->q_stats.ds2_bad_replies++;
+	DQ_UNLOCK(q);
+}
+
 static void
 dq_resolve_failclosed(struct dq_queue *q, int why)
 {
@@ -198,7 +210,7 @@ dq_resolve_consult(struct thread *td, struct dqres_binding *b,
 	size_t bodylen, strlen_;
 	char *p;
 	int error, rerror, ms;
-	bool dead;
+	bool catching, dead;
 
 	bzero(ans, sizeof(*ans));
 	q = b->db_queue;
@@ -291,8 +303,16 @@ dq_resolve_consult(struct thread *td, struct dqres_binding *b,
 	}
 	deadline = ms > 0 ? sbinuptime() + (sbintime_t)ms * SBT_1MS : 0;
 
+	/*
+	 * D192: a lookup waits as a local file system's does, whatever is
+	 * pending, unless the controller asked for intr (DQ_QF_INTR); a
+	 * kernel consumer's and a kernel lookup's never catch.
+	 */
+	DQ_LOCK(q);
+	catching = rq->rq_class == 1 && (q->q_qflags & DQ_QF_INTR) != 0;
+	DQ_UNLOCK(q);
 	error = dq_event_post_wait_q(q, DQ_OP_RESOLVE, rb, bodylen, td,
-	    deadline, &reply, &rerror, &robj, &rswap);
+	    deadline, catching, &reply, &rerror, &robj, &rswap);
 	free(rb, M_DQ);
 	DQ_LOCK(q);
 	q->q_stats.ds2_resolves++;
@@ -337,6 +357,7 @@ dq_resolve_consult(struct thread *td, struct dqres_binding *b,
 	    ("dq: resolve SWAP file"));
 	ans->da_kind = rr->drr_kind;
 	ans->da_qgid = q->q_gid;
+	ans->da_rflags = rq->rq_rflags;
 	switch (rr->drr_kind) {
 	case DQ_RESOLVE_FD:
 		rm = (const struct dq_resolve_mint *)(rr + 1);
@@ -548,6 +569,7 @@ static const struct dqres_ops dq_resolve_ops = {
 	.dro_file_kind = dq_file_kind,
 	.dro_file_objid = dq_file_objid,
 	.dro_swap_gate = dq_resolve_swap_gate,
+	.dro_bad_answer = dq_binding_bad_answer,
 };
 
 void
@@ -583,7 +605,7 @@ dq_resolve_errno_allowed(uint32_t rop, int error)
 	case ENODEV: case ENOTDIR: case EISDIR: case EINVAL: case ETXTBSY:
 	case EFBIG: case ENOSPC: case EROFS: case EMLINK: case EAGAIN:
 	case ENAMETOOLONG: case ENOTEMPTY: case ELOOP: case EDQUOT:
-	case ESTALE: case EOPNOTSUPP: case EINTR: case EAFNOSUPPORT:
+	case ESTALE: case EOPNOTSUPP: case EAFNOSUPPORT:
 	case EPROTONOSUPPORT: case EADDRINUSE: case EADDRNOTAVAIL:
 	case ECONNREFUSED: case EPROTOTYPE: case EFTYPE: case EAUTH:
 	case ENOATTR: case EINTEGRITY:
@@ -866,12 +888,19 @@ dq_resolve_mint_prepare(struct dq_queue *q, uint64_t id, struct dq_data *dd,
 	return (0);
 }
 
+/* The request a SWAP answers, for fdswap_take's admit. */
+struct dq_swap_req {
+	int		 mode;		/* drs_mode: the open's flags */
+	uint32_t	 rflags;	/* drs_rflags: the lookup's DQ_RF_* */
+};
+
 /* fdswap_take's admit: the open layer's rule against the request. */
 static int
 dq_resolve_swap_admit(struct file *fp, const cap_rights_t *rights, void *arg)
 {
+	const struct dq_swap_req *sr = arg;
 
-	return (open_swap_admit(fp, *(const int *)arg, rights));
+	return (open_swap_admit(fp, sr->mode, sr->rflags, rights));
 }
 
 /*
@@ -898,7 +927,9 @@ dq_resolve_swap_prepare(struct dq_queue *q, uint64_t id, struct dq_data *dd,
 	struct dq_resolve_swap *rw;
 	const struct dq_resolve_body *rb;
 	struct dq_event_k key, *ev;
-	int error, mode;
+	struct dq_swap_req sr;
+	int error, fd, flags, mode;
+	bool plain;
 
 	bzero(sw, sizeof(*sw));
 	key.ev_hdr.de_id = id;
@@ -914,6 +945,8 @@ dq_resolve_swap_prepare(struct dq_queue *q, uint64_t id, struct dq_data *dd,
 	KASSERT(rb->drs_op == DQ_ROP_OPEN, ("dq: SWAP offered for op %u",
 	    rb->drs_op));
 	mode = (int)rb->drs_mode;
+	sr.mode = mode;
+	sr.rflags = rb->drs_rflags;
 	DQ_UNLOCK(q);
 	/* Everything dq_resolve_reply_validate refuses, before the take. */
 	if (dd->dd_len != sizeof(struct dq_resolve_reply) + sizeof(*rw) ||
@@ -930,11 +963,25 @@ dq_resolve_swap_prepare(struct dq_queue *q, uint64_t id, struct dq_data *dd,
 		error = EINVAL;
 		goto refused;
 	}
-	error = fdswap_take(td, rw->drw_fd,
-	    (rw->drw_flags & DQ_SWAP_F_NOXFER) != 0 ? FDSWAP_NOXFER : 0,
-	    dq_resolve_swap_admit, &mode, sw);
-	if (error != 0)
+	/*
+	 * The entry must stand for the program's own open (FDSWAP_PLAIN)
+	 * and moves with the take (FDSWAP_CONSUME, Q6): from here the
+	 * supervisor's descriptor is consumed if and only if the take ran,
+	 * whatever then becomes of the event (dq_queue_reply: ECANCELED).
+	 */
+	flags = FDSWAP_PLAIN | FDSWAP_CONSUME;
+	if ((rw->drw_flags & DQ_SWAP_F_NOXFER) != 0)
+		flags |= FDSWAP_NOXFER;
+	fd = rw->drw_fd;
+	error = fdswap_take(td, fd, flags, dq_resolve_swap_admit, &sr, sw,
+	    &plain);
+	if (error != 0) {
+		if (plain)
+			SDT_PROBE3(dqres, , , subst__refuse, DQ_ROP_OPEN,
+			    DQRES_R_SUBST_STATES, error);
 		goto refused;
+	}
+	SDT_PROBE2(dqres, , , subst__consume, q, fd);
 	rw->drw_fd = -1;
 	return (0);
 refused:

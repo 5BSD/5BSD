@@ -96,6 +96,7 @@
 #include <sys/callout.h>
 #include <sys/counter.h>
 #include <sys/condvar.h>
+#include <sys/counter.h>
 #include <sys/file.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
@@ -135,6 +136,26 @@ SDT_PROBE_DECLARE(dq, , , resolve__served);
 SDT_PROBE_DECLARE(dq, , , resolve__retire);
 SDT_PROBE_DECLARE(dq, , , resolve__real);
 SDT_PROBE_DECLARE(dq, , , resolve__symlink);
+SDT_PROBE_DECLARE(dq, , , fop__local);
+SDT_PROBE_DECLARE(dq, , , quota__wait);
+SDT_PROBE_DECLARE(dq, , , wait__full);
+SDT_PROBE_DECLARE(dq, , , wait__abandon);
+SDT_PROBE_DECLARE(dq, , , postop__attr);
+
+/* dq:::quota-wait's quota (args: queue, event, DQ_QUOTA_*, errno). */
+#define	DQ_QUOTA_OBJECT		1	/* kern.dq.max_inflight_per_object */
+#define	DQ_QUOTA_REQUESTER	2	/* kern.dq.max_inflight_per_requester */
+
+/*
+ * dq:::fop-local's operation: a fileop the kernel answered from the
+ * identity or the descriptor, with no event (args: file, DQ_FOP_*, errno).
+ */
+#define	DQ_FOP_IOCTL		1
+#define	DQ_FOP_FCNTL		2
+#define	DQ_FOP_FADVISE		3
+#define	DQ_FOP_SEEK		4
+#define	DQ_FOP_PATHCONF		5
+#define	DQ_FOP_STATFS		6
 SDT_PROBE_DECLARE(dq, , , standing__match);
 SDT_PROBE_DECLARE(dq, , , standing__miss);
 SDT_PROBE_DECLARE(dq, , , standing__change);
@@ -176,6 +197,11 @@ int	dq_object_cmp(const struct dq_object *, const struct dq_object *);
 struct dq_data {
 	u_int			 dd_refs;
 	size_t			 dd_len;
+	size_t			 dd_plen;	/* the reply without its post-op
+						   block: what the operation
+						   reads (dd_len without one) */
+	bool			 dd_postop;	/* DQ_REPLY_F_POSTOP: a struct
+						   dq_postop_attr ends dd_bytes */
 	char			 dd_bytes[];
 };
 
@@ -191,6 +217,15 @@ enum dq_event_state {
 	DQ_EV_FAILED,		/* revoke, close, deadline or drop */
 };
 
+/* A size a write's or an allocation's reply proved (o_proofs). */
+struct dq_sizeproof {
+	TAILQ_ENTRY(dq_sizeproof) sp_link;
+	uint64_t		 sp_gen;	/* the reply's generation */
+	uint64_t		 sp_end;	/* the end it proved */
+};
+
+struct dq_mutwait;
+
 struct dq_event_k {
 	TAILQ_ENTRY(dq_event_k)	 ev_link;	/* q_pending */
 	RB_ENTRY(dq_event_k)	 ev_tree;	/* q_inflight */
@@ -204,9 +239,19 @@ struct dq_event_k {
 						   the reference */
 	bool			 ev_lock;	/* a LOCK: counted in o_locks */
 	struct dq_async		*ev_async;	/* READ_ASYNC/WRITE_ASYNC */
+	bool			 ev_mutates;	/* the controller changes state
+						   applying it (dq_op_mutates):
+						   once delivered, not given up
+						   at a user-boundary
+						   single-threading */
+	struct dq_mutwait	*ev_mutwait;	/* q_mtx: its waiter's wait for
+						   the answer while the process
+						   single-threads */
 	bool			 ev_pagein;	/* a pager READ (DQ_POST_FAULT):
 						   a shrink may fail it */
 	sbintime_t		 ev_deadline;	/* 0 = none */
+	uint64_t		 ev_agen;	/* the reply's generation
+						   (o_agen), q_mtx */
 	struct dq_object	*ev_object;	/* held; NULL for queue-level */
 	struct dq_object	*ev_robj;	/* RESOLVE FD (1c-iii): the object
 						   minted at the reply, linked,
@@ -326,6 +371,33 @@ struct dq_object {
 						   before the object is linked */
 	size_t			 o_targetlen;	/* == o_ident.di_size */
 	struct dq_ident_file	 o_ident;
+	/*
+	 * Reply generations (dq_object_gen_newer): o_agen numbers the
+	 * replies to this object's events in the order the controller
+	 * answered (q_mtx); o_gen[] is the generation each presented
+	 * attribute was last set from (o_mtx, and q_mtx too for SETIDENT).
+	 */
+	uint64_t		 o_agen;
+#define	DQ_GEN_SIZE		0
+#define	DQ_GEN_BLOCKS		1
+#define	DQ_GEN_MTIME		2
+#define	DQ_GEN_CTIME		3
+#define	DQ_GEN_ATIME		4
+#define	DQ_GEN_MODE		5
+#define	DQ_GEN_UID		6
+#define	DQ_GEN_GID		7
+#define	DQ_GEN_FLAGS		8
+#define	DQ_GEN_NLINK		9
+#define	DQ_GEN_BIRTHTIME	10
+#define	DQ_GEN_N		11
+	uint64_t		 o_gen[DQ_GEN_N];
+	/*
+	 * o_mtx: the sizes writes and allocations proved (dq_object_size_
+	 * proven) that an older reply's size cannot go below: the proofs no
+	 * other proof dominates, generation rising and end falling, none at
+	 * or below o_gen[DQ_GEN_SIZE] (no reply that old is applied).
+	 */
+	TAILQ_HEAD(, dq_sizeproof) o_proofs;
 	struct dq_policy	 o_policy;
 	struct rangelock	 o_rl;
 	struct selinfo		 o_sel;		/* EVFILT_* knotes, on o_mtx */
@@ -387,9 +459,35 @@ struct dq_object {
 	u_long			 o_writemappings; /* atomic: bytes mapped
 						   shared and writable */
 	struct task		 o_rele_task;	/* pgo_dealloc's release */
-	struct timeout_task	 o_destroy;	/* deferred close (dq_taskq) */
+	struct task		 o_destroy;	/* deferred close (dq_taskq) */
+	struct callout		 o_destroy_co;	/* its page deadline (o_mtx) */
 	struct dq_event_k	*o_closeev;	/* its CLOSE, allocated ahead */
 	sbintime_t		 o_destroy_deadline; /* the destroy task's */
+	/*
+	 * o_mtx: the destroy task's state.  dq_taskq has two threads and
+	 * runs a task queued while it runs on the other one, so the kicks
+	 * (dq_object_destroy_kick_locked) never queue it while it runs:
+	 * they mark it to run again when the pass ends.
+	 */
+	enum {
+		DQ_DESTROY_NONE = 0,	/* not closed yet */
+		DQ_DESTROY_IDLE,	/* waiting for an event */
+		DQ_DESTROY_QUEUED,
+		DQ_DESTROY_RUNNING,
+		DQ_DESTROY_AGAIN,	/* running, kicked meanwhile */
+		DQ_DESTROY_DONE,	/* the last pass ran */
+	}			 o_destroy_state;
+	/*
+	 * Room (q_mtx): an async post refused AGAIN, or the destroy task
+	 * short of memory, records q_roomgen in o_roomgen; the next room
+	 * event (dq_queue_room_locked) wakes msync's wait and enqueues a
+	 * destroy task parked on q_roomq.
+	 */
+	uint64_t		 o_roomgen;
+	bool			 o_noroom_mem;	/* q_mtx: that AGAIN was an
+						   allocation failure */
+	TAILQ_ENTRY(dq_object)	 o_roomlink;
+	bool			 o_onroomq;
 };
 #define	DQ_IDHASH		64
 
@@ -405,6 +503,8 @@ struct dq_queue {
 #define	DQ_Q_DEAD		0x2	/* the die began: no owner, no entry */
 #define	DQ_Q_DIED		0x4	/* the die's teardown is finished */
 #define	DQ_Q_PINNED		0x8	/* opened on a pinned file */
+	u_int			 q_qflags;	/* DQ_QF_* of the controller (q_mtx) */
+	char			 q_space;	/* wait channel: a slot (D205) */
 	struct proc		*q_owner;	/* the opening process, compared
 						   and never dereferenced; NULL
 						   once DEAD */
@@ -434,6 +534,9 @@ struct dq_queue {
 	LIST_ENTRY(dq_queue)	 q_all;		/* dq_queues, under dq_mtx */
 	/* Async page operations (B1, B3), under q_mtx. */
 	TAILQ_HEAD(, dq_async)	 q_async;	/* posted, oldest first */
+	uint64_t		 q_roomgen;	/* room events (q_mtx) */
+	TAILQ_HEAD(, dq_object)	 q_roomq;	/* destroy tasks waiting for
+						   room (q_mtx) */
 	uint64_t		 q_async_bytes;
 	u_int			 q_nasync;
 	struct callout		 q_callout;	/* earliest da_deadline; q_mtx */
@@ -498,6 +601,7 @@ int	dq_queue_push(struct dq_queue *q, const struct dq_push_args *args);
 void	dq_queue_stats(struct dq_queue *q, struct dq_stats *st);
 void	dq_queue_stats2(struct dq_queue *q, struct dq_stats2 *st);
 int	dq_queue_set_depth(struct dq_queue *q, uint32_t depth);
+int	dq_queue_flags(struct dq_queue *q, struct dq_queue_flags *qf);
 bool	dq_caller_holds_queue(struct dq_queue *q, struct thread *td);
 
 void	dq_object_hold(struct dq_object *o);
@@ -508,8 +612,6 @@ void	dq_object_retire_ev(struct dq_object *o, struct thread *td,
 void	dq_object_knote_siblings(struct dq_object *o, long hint);
 void	dq_object_mark_locked(struct dq_object *o, u_int bit);
 void	dq_object_cut(struct dq_object *o, off_t newsize, off_t pagecut);
-void	dq_object_set_ident(struct dq_object *o,
-	    const struct dq_ident_file *di, long hint);
 
 void	dq_event_hold(struct dq_event_k *ev);
 void	dq_event_rele(struct dq_event_k *ev);
@@ -535,28 +637,44 @@ void	dq_data_rele(struct dq_data *dd);
 #define	DQ_POST_LOCK		0x2
 /*
  * DQ_POST_FAULT (B4): the wait of a page fault.  The deadline is always
- * set (dq_page_deadline); a caught signal does not abandon the wait unless
- * the process is being killed or is exiting: after the first interrupted
- * sleep the waiter continues in non-catching 100 ms slices, re-testing
- * SIGKILL, P_WEXIT and the event on every wake, so a fault during SIGCHLD
- * or SIGALRM is not SIGBUS (I12).  Abandonment posts INTERRUPT.
+ * set (dq_page_deadline); no signal abandons the wait (DQ_WAIT_FAULT):
+ * the waiter sleeps with every signal but SIGKILL blocked, woken by the
+ * answer, SIGKILL or the process being taken down, so a fault during
+ * SIGCHLD or SIGALRM is not SIGBUS (I12).  Abandonment posts INTERRUPT.
  */
 #define	DQ_POST_FAULT		0x4
+/*
+ * How a requester waits (D192).  UNINTR: no signal ends the wait, only
+ * the answer, the deadline, SIGKILL or the process exiting (a local file
+ * system's I/O wait); CATCH: a signal ends it with EINTR or ERESTART (an
+ * NFS intr mount, a lock wait); FAULT: UNINTR with the page deadline.
+ */
+#define	DQ_WAIT_UNINTR		0
+#define	DQ_WAIT_CATCH		1
+#define	DQ_WAIT_FAULT		2
 int	dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 	    size_t bodylen, struct thread *td, int flags,
 	    struct dq_data **replyp, int *errnop);
+int	dq_event_post_wait_agen(struct dq_object *o, uint32_t op,
+	    const void *body, size_t bodylen, struct thread *td, int flags,
+	    struct dq_data **replyp, int *errnop, uint64_t *agenp);
 void	dq_event_post_nowait(struct dq_queue *q, struct dq_object *o,
 	    uint32_t op, const void *body, size_t bodylen, struct thread *td);
 void	dq_reply_free(struct dq_data *reply);
 /*
  * A queue-level event (RESOLVE) waited for by a requester with no object:
- * the per-requester quota, the EDEADLK scan, PCATCH waits, deadline (0 =
- * none) and INTERRUPT as for any waited event.
+ * the per-requester quota, the EDEADLK scan, the depth, the deadline (0 =
+ * none) and INTERRUPT as for any waited event; it catches signals only
+ * when catching (DQ_QF_INTR).
  */
 int	dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
 	    size_t bodylen, struct thread *td, sbintime_t deadline,
-	    struct dq_data **replyp, int *errnop, struct dq_object **robjp,
-	    struct fdswap *rswapp);
+	    bool catching, struct dq_data **replyp, int *errnop,
+	    struct dq_object **robjp, struct fdswap *rswapp);
+/* n slots of the queue were freed: wake that many waiters for one. */
+void	dq_queue_slots_freed(struct dq_queue *q, u_int n);
+void	dq_queue_slot_passed(struct dq_queue *q);
+void	dq_mutwait_init(void);
 
 /*
  * Objects created apart from their linking (MINT, and the RESOLVE FD reply
@@ -637,11 +755,13 @@ void	dq_async_replied_locked(struct dq_queue *q, struct dq_async *da);
 void	dq_async_timeout(void *arg);
 void	dq_async_queue_init(struct dq_queue *q);
 bool	dq_async_wait(struct dq_object *o, sbintime_t deadline, bool all);
+void	dq_queue_room_locked(struct dq_queue *q);
+void	dq_object_destroy_kick_locked(struct dq_object *o);
 void	dq_object_cancel_async(struct dq_object *o);
 bool	dq_object_vm_hold(struct dq_object *o, struct vm_object **objp);
 void	dq_object_vm_drop(struct dq_object *o);
 void	dq_object_vm_teardown(struct dq_object *o, bool close);
-void	dq_object_setsize(struct dq_object *o, off_t newsize);
+void	dq_object_sync_vmsize(struct dq_object *o);
 void	dq_object_close_begin(struct dq_object *o);
 void	dq_object_close_deferred(struct dq_object *o);
 void	dq_async_cut_locked(struct dq_queue *q, struct dq_object *o,
@@ -650,6 +770,36 @@ void	dq_object_invalidate(struct dq_object *o, off_t offset, off_t len);
 
 /* dq_pager.c */
 int	dq_pager_register(void);
+void	dq_pager_unregister(void);
+#ifdef DQ_FAULT_INJECTION
+/* dq_faultinj.c (options DQ_FAULT_INJECTION): test-kernel windows. */
+void	dq_faultinj_swap_take_pause(void);
+void	dq_faultinj_postop_apply_pause(void);
+bool	dq_faultinj_postop_refuse(void);
+bool	dq_faultinj_wake(u_int site);
+#endif
+/*
+ * The wakeups a waiter depends on (dq-served-wait-model.md, section 3).
+ * On a test kernel debug.dq.drop_wakeup can drop each, so a test proves
+ * its waiter has no other way out.
+ */
+#define	DQ_WAKE_ANSWER		0x0001	/* a reply's cv_signal */
+#define	DQ_WAKE_FAIL		0x0002	/* a failed event's cv_broadcast */
+#define	DQ_WAKE_INFLIGHT	0x0004	/* an object's in-flight slot */
+#define	DQ_WAKE_REQUESTER	0x0008	/* a requester's in-flight slot */
+#define	DQ_WAKE_SLOT		0x0010	/* a slot of the queue freed */
+#define	DQ_WAKE_DIE_SPACE	0x0020	/* the queue's death, slot waiters */
+#define	DQ_WAKE_REVOKE_SPACE	0x0040	/* a revoke, slot waiters */
+#define	DQ_WAKE_REVOKE_QUOTA	0x0080	/* a revoke, quota waiters */
+#define	DQ_WAKE_ASYNC_ROOM	0x0100	/* room for an async post */
+#define	DQ_WAKE_DESTROY		0x0200	/* a closing object's settle */
+#define	DQ_WAKE_PASS		0x0400	/* a slot waiter's unused wakeup */
+#define	DQ_WAKE_NSITES		11	/* the bits above */
+#ifdef DQ_FAULT_INJECTION
+#define	DQ_WAKE(site)		dq_faultinj_wake(site)
+#else
+#define	DQ_WAKE(site)		true
+#endif
 int	dq_object_vm_create(struct dq_object *o);
 boolean_t dq_pager_flush(struct dq_object *o, struct vm_object *obj,
 	    vm_ooffset_t offset, vm_size_t size, boolean_t syncio,
@@ -688,6 +838,18 @@ int	dq_file_start(struct file *fp, struct dq_queue *q, struct thread *td,
 int	dq_file_install(struct thread *td, struct dq_object *o,
 	    const struct dq_policy *pol, u_int mflags, int *fdp);
 void	dq_file_knote(struct dq_object *o, long hint);
+extern counter_u64_t dq_postop_ignored;	/* kern.dq.postop_ignored */
+void	dq_object_postop(struct dq_object *o, uint32_t op,
+	    const struct dq_data *reply, uint64_t minsize, size_t done,
+	    uint64_t agen);
+bool	dq_object_gen_newer(struct dq_object *o, int field, uint64_t agen);
+bool	dq_object_postop_size(struct dq_object *o, uint64_t size,
+	    uint64_t agen);
+bool	dq_object_size_proven(struct dq_object *o, uint64_t end,
+	    uint64_t agen, struct dq_sizeproof **spare);
+void	dq_object_proofs_prune(struct dq_object *o, uint64_t gen);
+void	dq_object_set_ident_agen(struct dq_object *o,
+	    const struct dq_ident_file *di, uint64_t agen);
 int	dq_file_bind(struct thread *td, struct dq_object *o, int fflags,
 	    struct file **fpp);
 
