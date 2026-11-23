@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 19, 2026
+.Dd November 23, 2026
 .Dt DQ 4
 .Os
 .Sh NAME
@@ -956,12 +956,24 @@ mount: a caught signal ends the wait with
 .Er EINTR
 (a lookup's first consultation with the restart described in
 .Sx Attachment and resolution ) .
-An operation that changes something and that the controller has already
-read is never restarted, whatever
+An operation that changes something is not restarted once its event is
+marked delivered, which happens when the controller's
+.Xr read 2
+of the queue has copied it out, whatever
 .Dv SA_RESTART
 says: the call fails with
 .Er EINTR ,
 since posted again it would be applied twice.
+An event given up before that, one still being copied to the controller
+included, counts as unread and keeps the restart.
+Another thread single-threading the process to the user boundary is not
+a signal and never fails the call: as in an uninterruptible wait, an
+unread event and an operation that only reads are given up and
+restarted, and a delivered operation that changes something waits,
+without catching signals, for the answer, the deadline or the process
+starting to die.
+A signal that arrives during that wait, or together with the
+single-threading, is delivered when the call returns with its answer.
 A lock wait
 .Pq Dv DQ_OP_LOCK
 is always interruptible, as
@@ -2855,7 +2867,8 @@ with
 .Dv O_CREAT
 or
 .Dv O_TRUNC )
-once the controller has read it,
+once it is marked delivered
+.Pq Sx Waiting, deadlines and interruption ,
 fails with
 .Er EINTR
 instead (a restarted rename could report a rename that did not happen).

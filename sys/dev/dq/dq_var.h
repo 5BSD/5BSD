@@ -647,8 +647,9 @@ void	dq_data_rele(struct dq_data *dd);
  * How a requester waits (D192).  UNINTR: no signal ends the wait, only
  * the answer, the deadline, SIGKILL or the process exiting (a local file
  * system's I/O wait); CATCH: a signal ends it with EINTR or ERESTART (an
- * NFS intr mount, a lock wait), a delivered mutation's always with EINTR;
- * FAULT: UNINTR with the page deadline.
+ * NFS intr mount, a lock wait), a delivered mutation's always with EINTR
+ * and never for a boundary single-threading; FAULT: UNINTR with the page
+ * deadline.
  */
 #define	DQ_WAIT_UNINTR		0
 #define	DQ_WAIT_CATCH		1
