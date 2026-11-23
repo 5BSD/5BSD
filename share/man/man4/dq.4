@@ -956,6 +956,12 @@ mount: a caught signal ends the wait with
 .Er EINTR
 (a lookup's first consultation with the restart described in
 .Sx Attachment and resolution ) .
+An operation that changes something and that the controller has already
+read is never restarted, whatever
+.Dv SA_RESTART
+says: the call fails with
+.Er EINTR ,
+since posted again it would be applied twice.
 A lock wait
 .Pq Dv DQ_OP_LOCK
 is always interruptible, as
@@ -2835,10 +2841,21 @@ a caught signal ends the wait: during the first consultation of a system
 call's path the call restarts
 .Pq Dv SA_RESTART
 and posts again, the abandoned event named by an INTERRUPT; any other
-wait, and every wait of
+wait, every wait of
 .Xr rename 2
 and
 .Xr link 2 ,
+and the wait of any event that changes something (a
+.Xr mkdir 2 ,
+an
+.Xr unlink 2 ,
+an
+.Xr open 2
+with
+.Dv O_CREAT
+or
+.Dv O_TRUNC )
+once the controller has read it,
 fails with
 .Er EINTR
 instead (a restarted rename could report a rename that did not happen).

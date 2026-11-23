@@ -1582,7 +1582,8 @@ dq_queue_slot_passed(struct dq_queue *q)
 
 /*
  * Wait for ev's answer, q_mtx held and kept (D192).  DQ_WAIT_CATCH: a
- * signal ends the wait (EINTR or ERESTART), as an NFS intr mount's does.
+ * signal ends the wait (EINTR or ERESTART), as an NFS intr mount's does;
+ * for a mutation the controller has received, always EINTR.
  * DQ_WAIT_UNINTR and DQ_WAIT_FAULT: no signal does, as a local file
  * system's disk wait: with the signals blocked (dq_wait_mask_enter) the
  * wait ends with the answer, the deadline (EWOULDBLOCK) or the process
@@ -1613,6 +1614,14 @@ dq_wait_event(struct dq_queue *q, struct dq_event_k *ev, struct thread *td,
 		if (error == EWOULDBLOCK)
 			break;
 		if (mode == DQ_WAIT_CATCH) {
+			/*
+			 * The signal ends the wait, but a delivered mutation
+			 * is not restarted (owner, 2026-11-23): posted again,
+			 * the controller would apply it twice.
+			 */
+			if (error == ERESTART && ev->ev_mutates &&
+			    ev->ev_state == DQ_EV_DELIVERED)
+				error = EINTR;
 			if (error != 0)
 				break;
 			continue;

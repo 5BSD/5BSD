@@ -258,7 +258,7 @@ struct dq_policy {
 /*
  * DQ_PF_INTR: the requester's waits for this object's data and attribute
  * events end on a signal (EINTR, or a short count), as an NFS intr mount's
- * do; without it no signal ends them, as a local file system's I/O, and
+ * do, a mutation the controller has read never with a restart; without it no signal ends them, as a local file system's I/O, and
  * only the answer, the deadline, SIGKILL or the process exiting does.
  * DQ_PF_NO_STAMP: the controller keeps the object's times itself (with
  * SETIDENT, GETATTR or the post-operation attributes of its replies); the
@@ -822,8 +822,8 @@ struct dq_push_args {
  * QUEUE_FLAGS: the controller's queue-wide choices.  dqf_set and
  * dqf_clear (disjoint) are applied and dqf_old receives the flags from
  * before.  DQ_QF_INTR: the requesters' own lookups (RESOLVE) end on a
- * signal, with the first consultation's ERESTART (an NFS intr mount);
- * without it they wait as a local file system's lookups do.
+ * signal, with the first consultation's ERESTART (an NFS intr mount; EINTR
+ * for a mutation the controller has read); without it they wait as a local file system's lookups do.
  */
 struct dq_queue_flags {
 	uint32_t	dqf_set;
