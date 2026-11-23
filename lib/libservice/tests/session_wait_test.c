@@ -9,8 +9,10 @@
  * deadline, and a signal behaves as for a slow system call in the thread
  * sleeping in the kernel.  The session's other end is a mock provider driven
  * with raw channel calls.  Where the claim is "no time slices", the case
- * counts the waiting threads' sleeps with dtrace(1)'s sched:::sleep probe
- * (the providers are preloaded: the plane refuses a late kldload).
+ * watches the waiting threads' sleeps with dtrace(1)'s sched:::sleep probe
+ * (the providers are preloaded: the plane refuses a late kldload).  No case
+ * orders its steps by time: a step that needs a thread asleep waits for that
+ * thread's sleep event.
  */
 
 #include <sys/types.h>
@@ -148,15 +150,6 @@ session_call(struct service_session *session, char byte, uint32_t timeout_ms,
 	    -1 ? errno : 0);
 }
 
-static void
-sleep_ms(unsigned ms)
-{
-	struct timespec ts = { ms / 1000, (long)(ms % 1000) * 1000000 };
-
-	while (nanosleep(&ts, &ts) == -1 && errno == EINTR)
-		;
-}
-
 /* ---- counting sleeps -------------------------------------------------- */
 
 /*
@@ -254,19 +247,163 @@ self_tid(void)
 	return (tid);
 }
 
+/* ---- following sleeps ------------------------------------------------- */
+
 /*
- * The time a reply is held back in the cases below: many 25 ms slices long,
- * so a sliced wait would sleep twenty times; any length is the same case.
+ * Follow the session waits of this process's threads as they happen: a
+ * channel receive ("mac_capabilityrv"), a channel send waiting for room
+ * ("mcapsnd"), a condition wait ("uwait": libthr sleeps there for a private
+ * condition variable) and a contended mutex ("umtxn").  Each event says
+ * whether the sleep has a timeout.  sleep_trace_wait() blocks until a thread
+ * goes to sleep in a named wait, so a case can act once a caller really is
+ * asleep; the timed sleeps of every thread are kept, so a case can show that
+ * a wait with no deadline never slept with one (a slice is a timed sleep).
+ * The reader's own sleep on the pipe is not one of the four, so reading the
+ * events produces none.
+ */
+#define	SLEEP_TRACE_MAX	64
+
+struct sleep_trace {
+	pid_t	pid;
+	FILE	*out;
+	int	n;
+	struct {
+		long	tid;
+		char	wmesg[32];
+	} timed[SLEEP_TRACE_MAX];
+};
+
+static void
+sleep_trace_start(struct sleep_trace *t)
+{
+	char self[32], line[128];
+	int p[2];
+
+	snprintf(self, sizeof(self), "%d", (int)getpid());
+	ATF_REQUIRE_EQ(0, pipe(p));
+	t->pid = fork();
+	ATF_REQUIRE(t->pid >= 0);
+	if (t->pid == 0) {
+		if (dup2(p[1], STDOUT_FILENO) < 0)
+			_exit(126);
+		closefrom(3);
+		execl(SLEEP_WATCH_PROG, "dtrace", "-q", "-x",
+		    "switchrate=100hz", "-n",
+		    "BEGIN { printf(\"READY\\n\"); }\n"
+		    "sched:::sleep /pid == $1 &&\n"
+		    "    (stringof(curthread->td_wmesg) ==\n"
+		    "    \"mac_capabilityrv\" ||\n"
+		    "    stringof(curthread->td_wmesg) == \"mcapsnd\" ||\n"
+		    "    stringof(curthread->td_wmesg) == \"uwait\" ||\n"
+		    "    stringof(curthread->td_wmesg) == \"umtxn\")/ {\n"
+		    "	printf(\"%d %s %d\\n\", tid,\n"
+		    "	    stringof(curthread->td_wmesg),\n"
+		    "	    curthread->td_sleeptimo != 0); }\n",
+		    self, (char *)NULL);
+		_exit(127);
+	}
+	close(p[1]);
+	t->out = fdopen(p[0], "r");
+	ATF_REQUIRE(t->out != NULL);
+	t->n = 0;
+	while (fgets(line, sizeof(line), t->out) != NULL)
+		if (strcmp(line, "READY\n") == 0)
+			return;
+	atf_tc_fail("dtrace exited before tracing sched:::sleep");
+}
+
+/* Read one event, keeping it if the sleep is timed; false at end of file. */
+static bool
+sleep_trace_next(struct sleep_trace *t, long *tidp, char *wmesg)
+{
+	char line[128];
+	int timed;
+
+	for (;;) {
+		if (fgets(line, sizeof(line), t->out) == NULL)
+			return (false);
+		if (sscanf(line, "%ld %31s %d", tidp, wmesg, &timed) == 3)
+			break;
+	}
+	if (timed != 0) {
+		ATF_REQUIRE_MSG(t->n < SLEEP_TRACE_MAX, "more than %d timed "
+		    "sleeps (thread %ld in %s)", SLEEP_TRACE_MAX, *tidp, wmesg);
+		t->timed[t->n].tid = *tidp;
+		strlcpy(t->timed[t->n].wmesg, wmesg,
+		    sizeof(t->timed[t->n].wmesg));
+		t->n++;
+	}
+	return (true);
+}
+
+/*
+ * Block until thread `tid` goes to sleep in the wait `wmesg`, or in `other`
+ * when that is not NULL; the wait it went to sleep in is returned.
+ */
+static const char *
+sleep_trace_wait(struct sleep_trace *t, long tid, const char *wmesg,
+    const char *other)
+{
+	char got[32];
+	long who;
+
+	for (;;) {
+		ATF_REQUIRE_MSG(sleep_trace_next(t, &who, got),
+		    "dtrace exited before thread %ld slept in %s", tid, wmesg);
+		if (who != tid)
+			continue;
+		if (strcmp(got, wmesg) == 0)
+			return (wmesg);
+		if (other != NULL && strcmp(got, other) == 0)
+			return (other);
+	}
+}
+
+/* Stop tracing; the events not read yet are still taken into account. */
+static void
+sleep_trace_stop(struct sleep_trace *t)
+{
+	char wmesg[32];
+	long tid;
+	int status;
+
+	ATF_REQUIRE_EQ(0, kill(t->pid, SIGINT));
+	while (sleep_trace_next(t, &tid, wmesg))
+		;
+	fclose(t->out);
+	(void)waitpid(t->pid, &status, 0);
+}
+
+/* The timed sleeps of `tid` seen so far; the first one's wait in *wmesgp. */
+static int
+sleep_trace_timed(const struct sleep_trace *t, long tid, const char **wmesgp)
+{
+	int n;
+
+	n = 0;
+	*wmesgp = "";
+	for (int i = 0; i < t->n; i++)
+		if (t->timed[i].tid == tid && n++ == 0)
+			*wmesgp = t->timed[i].wmesg;
+	return (n);
+}
+
+/*
+ * The timeout of the cases below whose call has a deadline: many 25 ms
+ * slices long, so a sliced wait would sleep twenty times before it; any
+ * length is the same case.  Nothing is ordered by it.
  */
 #define	HOLD_MS	500
 
 /* ---- a call answered later sleeps once -------------------------------- */
 
 struct late_reply {
+	struct sleep_trace *trace;
+	long	caller;
 	int	provider;
-	char	byte;
 };
 
+/* Answer the caller's request once the caller is asleep waiting for it. */
 static void *
 late_reply_thread(void *arg)
 {
@@ -275,7 +412,7 @@ late_reply_thread(void *arg)
 	char byte;
 
 	byte = provider_receive(r->provider, &token);
-	sleep_ms(HOLD_MS);
+	(void)sleep_trace_wait(r->trace, r->caller, "mac_capabilityrv", NULL);
 	provider_reply(r->provider, token, byte + 1);
 	return (NULL);
 }
@@ -283,8 +420,9 @@ late_reply_thread(void *arg)
 ATF_TC(call_waits_in_one_sleep);
 ATF_TC_HEAD(call_waits_in_one_sleep, tc)
 {
-	atf_tc_set_md_var(tc, "descr", "a call whose reply comes late sleeps "
-	    "in the kernel until it comes, not in 25 ms slices");
+	atf_tc_set_md_var(tc, "descr", "a call with no deadline, answered "
+	    "once it is asleep, slept in the kernel for its reply with no "
+	    "timeout: no time slices");
 	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "timeout", "180");
@@ -292,23 +430,26 @@ ATF_TC_HEAD(call_waits_in_one_sleep, tc)
 ATF_TC_BODY(call_waits_in_one_sleep, tc)
 {
 	struct service_session *session;
-	struct sleep_count c;
+	struct sleep_trace trace;
 	struct late_reply r;
+	const char *wmesg;
 	pthread_t t;
-	long rv;
+	int timed;
 	char reply = 0;
 
 	session_pair(&session, &r.provider);
-	sleep_count_start(&c);
+	sleep_trace_start(&trace);
+	r.trace = &trace;
+	r.caller = self_tid();
 	ATF_REQUIRE_EQ(0, pthread_create(&t, NULL, late_reply_thread, &r));
 	ATF_CHECK_EQ(0, session_call(session, 'a',
 	    SERVICE_CLIENT_TIMEOUT_INFINITE, &reply));
 	ATF_CHECK_EQ('b', reply);
 	ATF_REQUIRE_EQ(0, pthread_join(t, NULL));
-	sleep_count_stop(&c);
-	rv = sleep_count_of(&c, self_tid(), "mac_capabilityrv");
-	ATF_CHECK_MSG(rv >= 1 && rv <= 2, "the caller slept %ld times in "
-	    "channel receives for one reply", rv);
+	sleep_trace_stop(&trace);
+	timed = sleep_trace_timed(&trace, r.caller, &wmesg);
+	ATF_CHECK_MSG(timed == 0, "the caller, with no deadline, slept %d "
+	    "times with a timeout (first in %s)", timed, wmesg);
 	service_session_close(session);
 	close(r.provider);
 }
@@ -391,8 +532,9 @@ two_calls_start(struct two_calls *w, struct service_session *session,
 ATF_TC(two_threads_reverse_replies);
 ATF_TC_HEAD(two_threads_reverse_replies, tc)
 {
-	atf_tc_set_md_var(tc, "descr", "two threads on one session get their "
-	    "replies delivered in reverse order; neither waits in slices");
+	atf_tc_set_md_var(tc, "descr", "two threads call on one session; the "
+	    "thread that is not receiving is answered first, the receiver "
+	    "after; neither waits in slices");
 	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "timeout", "180");
@@ -400,38 +542,57 @@ ATF_TC_HEAD(two_threads_reverse_replies, tc)
 ATF_TC_BODY(two_threads_reverse_replies, tc)
 {
 	struct service_session *session;
+	struct sleep_trace trace;
 	struct two_calls w[2];
-	struct sleep_count c;
-	pthread_t t[2];
 	uint64_t token[2];
-	long sleeps;
-	char byte[2];
-	int provider;
+	const char *wmesg;
+	char byte[2], got[32], role[2] = { 0, 0 };
+	long tid;
+	int provider, receiver, timed, waiter;
 
 	session_pair(&session, &provider);
-	sleep_count_start(&c);
-	for (int i = 0; i < 2; i++) {
+	sleep_trace_start(&trace);
+	for (int i = 0; i < 2; i++)
 		two_calls_start(&w[i], session, (char)('a' + 2 * i));
-		t[i] = w[i].thread;
-	}
 	byte[0] = provider_receive(provider, &token[0]);
 	byte[1] = provider_receive(provider, &token[1]);
-	/* Both are waiting now; answer the second first, the first later. */
-	sleep_ms(HOLD_MS);
-	provider_reply(provider, token[1], byte[1] + 1);
-	sleep_ms(HOLD_MS);
-	provider_reply(provider, token[0], byte[0] + 1);
+	/*
+	 * No reply is on its way, so neither thread wakes again: wait until
+	 * one is asleep receiving for the session and the other is asleep
+	 * waiting for it.
+	 */
+	while (role[0] == 0 || role[1] == 0 || role[0] == role[1]) {
+		ATF_REQUIRE_MSG(sleep_trace_next(&trace, &tid, got),
+		    "dtrace exited before both callers slept");
+		for (int i = 0; i < 2; i++) {
+			if (tid != w[i].tid)
+				continue;
+			if (strcmp(got, "mac_capabilityrv") == 0)
+				role[i] = 'r';
+			else if (strcmp(got, "uwait") == 0)
+				role[i] = 'w';
+		}
+	}
+	receiver = role[0] == 'r' ? 0 : 1;
+	waiter = 1 - receiver;
+	/* Answer the waiter (the receiver delivers it), then the receiver. */
+	for (int i = 0; i < 2; i++)
+		if (byte[i] == w[waiter].byte)
+			provider_reply(provider, token[i], byte[i] + 1);
+	ATF_REQUIRE_EQ(0, pthread_join(w[waiter].thread, NULL));
+	for (int i = 0; i < 2; i++)
+		if (byte[i] == w[receiver].byte)
+			provider_reply(provider, token[i], byte[i] + 1);
+	ATF_REQUIRE_EQ(0, pthread_join(w[receiver].thread, NULL));
+	sleep_trace_stop(&trace);
 	for (int i = 0; i < 2; i++) {
-		ATF_REQUIRE_EQ(0, pthread_join(t[i], NULL));
 		ATF_CHECK_EQ(0, w[i].error);
 		ATF_CHECK_EQ(w[i].byte + 1, w[i].reply);
+		timed = sleep_trace_timed(&trace, w[i].tid, &wmesg);
+		ATF_CHECK_MSG(timed == 0, "the %s, with no deadline, slept "
+		    "%d times with a timeout (first in %s)",
+		    i == receiver ? "receiver" : "waiter", timed, wmesg);
 	}
-	sleep_count_stop(&c);
-	sleeps = sleep_count_of(&c, w[0].tid, NULL) +
-	    sleep_count_of(&c, w[1].tid, NULL);
-	/* Each thread sleeps a few times (its wait, a lock or two). */
-	ATF_CHECK_MSG(sleeps <= 8, "the two callers slept %ld times over "
-	    "%d ms", sleeps, 2 * HOLD_MS);
 	service_session_close(session);
 	close(provider);
 }
