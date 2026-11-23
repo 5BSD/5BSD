@@ -219,6 +219,14 @@ A wait for room in the session's full channel queue is the kernel's
 sleep and behaves the same way; a request that could not be sent fails with
 .Er EINTR
 and was not sent.
+A caller sleeping for room to send does not receive meanwhile: if no other
+thread is waiting on the session, the messages the provider sends in that
+time stay in the session's queue until the send ends.
+A provider therefore must not sleep for room in a client's queue, or the two
+could wait for each other; the providers in base do not: they hold what a
+full client queue refuses in a bounded queue of their own
+.Pq Xr libchannel 3 ,
+or give up on the message or the client.
 Session calls are not cancellation points: a thread cancelled during one
 finishes the call first.
 Closing the session wakes every waiter, which fails with
