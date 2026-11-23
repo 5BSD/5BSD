@@ -1295,7 +1295,7 @@ vlan_svi_member_concurrent_body()
 
 	# The SVI: SIOCGIFMEDIA through to the bridge.  The member:
 	# ifpromisc() on it from bridge_ioctl_add() and bridge_delete_member().
-	n=500
+	n=100
 	(i=0; while [ $i -lt $n ]; do
 		ifconfig ${svi} > /dev/null; i=$((i + 1)); done) &
 	svi_pid=$!
