@@ -174,11 +174,14 @@ int	channel_wait(struct channel *, int /*want_write*/, int /*timeout_ms*/);
  * sleeps without the caller's lock, and a request send in steps (see
  * channel.c).  Not a public interface.
  */
-int	channel_receive_wait(struct channel *, int /*timeout_ms*/);
+struct timespec;
+int	channel_receive_wait(struct channel *,
+	    const struct timespec * /*deadline, CLOCK_MONOTONIC, NULL: none*/);
 int	channel_request_start(struct channel *, const struct channel_outgoing *,
-	    channel_reply_handler, void *, struct channel_request **);
-int	channel_request_send_wait(struct channel *, struct channel_request *,
-	    const struct channel_outgoing *);
+	    channel_reply_handler, void *, struct channel_request **,
+	    uint64_t * /*token*/);
+int	channel_request_send_wait(struct channel *, uint64_t /*token*/,
+	    const struct channel_outgoing *, const struct timespec *);
 void	channel_request_unsend(struct channel_request *, int);
 
 int	channel_send_request(struct channel *, const struct channel_outgoing *,

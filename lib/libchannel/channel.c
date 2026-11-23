@@ -170,7 +170,7 @@ struct channel_message {
  * the page and must only exec or _exit, as for any library.
  */
 static struct channel_message *channel_message_receive_wait_ref(struct channel *,
-    int, bool);
+    int, const struct timespec *, bool);
 static struct channel_message *channel_message_receive_wait(struct channel *,
     int);
 
@@ -1308,12 +1308,18 @@ channel_request_abort(struct channel *channel, struct channel_request *request,
     int error)
 {
 	struct channel_request **link;
+	bool found;
 
+	found = false;
 	for (link = &channel->requests; *link != NULL; link = &(*link)->next)
 		if (*link == request) {
 			*link = request->next;
+			found = true;
 			break;
 		}
+	/* A request already completed is not this caller's to free again. */
+	if (!found)
+		return;
 	channel->npending--;
 	LIBCHANNEL_PROBE_REQUEST_DONE((uintptr_t)channel, request->token,
 	    error);
@@ -1542,16 +1548,19 @@ static struct channel_message *
 channel_message_receive_wait(struct channel *channel, int wait_ms)
 {
 
-	return (channel_message_receive_wait_ref(channel, wait_ms, true));
+	return (channel_message_receive_wait_ref(channel, wait_ms, NULL, true));
 }
 
 /*
- * As above; without `retain` the message takes no channel reference (the
- * caller adds it later, under its lock: channel_receive_wait()).
+ * As above; with `deadline` (absolute, CLOCK_MONOTONIC) instead of wait_ms
+ * the kernel keeps that one deadline across a restart after a signal
+ * (MAC_CAPABILITY_RECV_F_DEADLINE).  Without `retain` the message takes no
+ * channel reference (the caller adds it later, under its lock:
+ * channel_receive_wait()).
  */
 static struct channel_message *
 channel_message_receive_wait_ref(struct channel *channel, int wait_ms,
-    bool retain)
+    const struct timespec *deadline, bool retain)
 {
 	struct mac_capability_recvmsg_args receive;
 	struct mac_capability_recvmsg_v4_args described;
@@ -1580,7 +1589,16 @@ retry:
 	receive.payload_len = message->capacity;
 	receive.fds = message->inline_fds;
 	receive.nfds = MAC_CAPABILITY_MAX_FDS;
-	if (wait_ms >= -1) {
+	if (deadline != NULL) {
+		uint64_t ns;
+
+		ns = (uint64_t)deadline->tv_sec * 1000000000 +
+		    (uint64_t)deadline->tv_nsec;
+		receive.flags = MAC_CAPABILITY_RECV_F_WAIT |
+		    MAC_CAPABILITY_RECV_F_DEADLINE;
+		receive._reserved[0] = (uint32_t)ns;
+		receive._reserved[1] = (uint32_t)(ns >> 32);
+	} else if (wait_ms >= -1) {
 		receive.flags = MAC_CAPABILITY_RECV_F_WAIT;
 		receive._reserved[0] = wait_ms < 0 ?
 		    MAC_CAPABILITY_RECV_WAIT_FOREVER : (uint32_t)wait_ms;
@@ -1695,13 +1713,15 @@ retry:
  * receive block, the prefetch slot, the receive version) and takes no
  * channel reference, so the caller must let one thread at a time receive,
  * and run channel_dispatch() (which consumes the prefetched message) under
- * its lock.  Returns 1 with a message prefetched, 0 when timeout_ms (-1:
- * none) passed, or -1 with errno: EINTR when a signal whose handler lacks
- * SA_RESTART interrupted the wait (SA_RESTART restarts it in the kernel), or
- * the receive's error (ECONNRESET when the peer is gone).
+ * its lock.  `deadline` is absolute (CLOCK_MONOTONIC), NULL for none; a
+ * restart after a signal keeps it.  Returns 1 with a message prefetched, 0
+ * once the deadline has passed, or -1 with errno: EINTR when a signal whose
+ * handler lacks SA_RESTART interrupted the wait (SA_RESTART restarts it in
+ * the kernel), or the receive's error (ECONNRESET when the peer is gone).  A
+ * kernel without RECV_F_WAIT fails it with EINVAL (base only).
  */
 int
-channel_receive_wait(struct channel *channel, int timeout_ms)
+channel_receive_wait(struct channel *channel, const struct timespec *deadline)
 {
 	struct channel_message *m;
 
@@ -1712,8 +1732,7 @@ channel_receive_wait(struct channel *channel, int timeout_ms)
 	}
 	if (channel->rx_prefetched != NULL)
 		return (1);
-	m = channel_message_receive_wait_ref(channel,
-	    timeout_ms < 0 ? -1 : timeout_ms, false);
+	m = channel_message_receive_wait_ref(channel, -1, deadline, false);
 	if (m == NULL)
 		return (errno == ETIMEDOUT || errno == EAGAIN ? 0 : -1);
 	channel->rx_prefetched = m;
@@ -1726,16 +1745,19 @@ channel_receive_wait(struct channel *channel, int timeout_ms)
  * steps, so the caller can sleep for queue room without its lock.
  * channel_request_start() (under the caller's lock) registers the request
  * and its token; channel_request_send_wait() (no lock; senders serialised
- * by the caller) sends it, sleeping in the kernel for room
- * (MAC_CAPABILITY_SEND_F_WAIT: SA_RESTART restarts, otherwise EINTR); a
- * reply that arrives before it returns finds the token registered.  If the
- * send fails, channel_request_unsend() (under the caller's lock) forgets the
- * request without calling its handler.
+ * by the caller) sends it with the token start returned, sleeping in the
+ * kernel for room (MAC_CAPABILITY_SEND_F_WAIT: SA_RESTART restarts, otherwise
+ * EINTR) until `deadline` (absolute CLOCK_MONOTONIC, NULL for none:
+ * ETIMEDOUT).  It never touches the request: once started, the request can
+ * be completed and freed by another thread (a reply, or the channel failing)
+ * before the send returns.  If the send fails and the request is still
+ * pending, channel_request_unsend() (under the caller's lock) forgets it
+ * without calling its handler.
  */
 int
 channel_request_start(struct channel *channel,
     const struct channel_outgoing *outgoing, channel_reply_handler handler,
-    void *context, struct channel_request **requestp)
+    void *context, struct channel_request **requestp, uint64_t *tokenp)
 {
 	const struct channel_fd_spec *specs;
 	uint32_t flags;
@@ -1760,27 +1782,21 @@ channel_request_start(struct channel *channel,
 	if (request == NULL)
 		return (-1);
 	*requestp = request;
+	*tokenp = request->token;
 	return (0);
 }
 
 int
-channel_request_send_wait(struct channel *channel,
-    struct channel_request *request, const struct channel_outgoing *outgoing)
+channel_request_send_wait(struct channel *channel, uint64_t token,
+    const struct channel_outgoing *outgoing, const struct timespec *deadline)
 {
 	struct mac_capability_sendmsg_args send;
-	uint64_t token;
 	int error;
 
-	if (!channel_owned(channel) || request == NULL ||
-	    request->channel != channel) {
+	if (!channel_owned(channel) || token == 0) {
 		errno = EINVAL;
 		return (-1);
 	}
-	/*
-	 * The reply may be dispatched, and the request completed and freed by
-	 * another thread, before the send returns: use only the token after.
-	 */
-	token = request->token;
 	memset(&send, 0, sizeof(send));
 	send.payload = outgoing->data;
 	send.payload_len = (uint32_t)outgoing->length;
@@ -1788,6 +1804,15 @@ channel_request_send_wait(struct channel *channel,
 	send.nfds = (uint32_t)outgoing->nfds;
 	send.reply_token = token;
 	send.flags = MAC_CAPABILITY_SEND_F_WAIT;
+	if (deadline != NULL) {
+		uint64_t ns;
+
+		ns = (uint64_t)deadline->tv_sec * 1000000000 +
+		    (uint64_t)deadline->tv_nsec;
+		send.flags |= MAC_CAPABILITY_SEND_F_DEADLINE;
+		send._reserved[0] = (uint32_t)ns;
+		send._reserved[1] = (uint32_t)(ns >> 32);
+	}
 	error = ioctl(channel->fd, MAC_CAPABILITY_SENDMSG, &send) == 0 ? 0 :
 	    errno;
 	LIBCHANNEL_PROBE_SEND(token, outgoing->length, outgoing->nfds, error);
