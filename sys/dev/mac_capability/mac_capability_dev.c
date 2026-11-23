@@ -204,6 +204,24 @@ mac_capability_probe_rights_change(struct mac_capability_instance *s, u_long cmd
 	    mac_capability_proc_nonce(td->td_ucred));
 }
 
+/*
+ * An absolute CLOCK_MONOTONIC deadline in nanoseconds (RECV_F_DEADLINE,
+ * SEND_F_DEADLINE) as an sbinuptime() deadline: both count from boot.  Zero
+ * (or a time already past) still makes a sleep end at once.
+ */
+static sbintime_t
+mac_capability_abs_deadline(uint32_t low, uint32_t high)
+{
+	uint64_t ns;
+	struct timespec ts;
+
+	ns = (uint64_t)high << 32 | low;
+	ts.tv_sec = (time_t)(ns / 1000000000);
+	ts.tv_nsec = (long)(ns % 1000000000);
+	/* An absolute deadline of 0 would mean "none" to msleep_sbt(). */
+	return (ns == 0 ? 1 : tstosbt(ts));
+}
+
 static int
 mac_capability_instance_rx_ready(struct mac_capability_instance *s)
 {
@@ -987,7 +1005,7 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 	struct mac_capability_msg *msg;
 	sbintime_t start __unused, deadline;
 	const char *svc_name __unused;
-	bool drained, txdrain, wait;
+	bool absolute, drained, txdrain, wait;
 	uint32_t wait_ms;
 	int error;
 
@@ -995,16 +1013,24 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 	svc_name = (s->ci_service != NULL) ? s->ci_service->csvc_name : "<none>";
 	error = 0;
 	wait = (args->flags & MAC_CAPABILITY_RECV_F_WAIT) != 0;
+	absolute = (args->flags & MAC_CAPABILITY_RECV_F_DEADLINE) != 0;
 	wait_ms = args->_reserved[0];
-	if ((args->flags & ~MAC_CAPABILITY_RECV_F_WAIT) != 0 ||
+	if ((args->flags & ~(MAC_CAPABILITY_RECV_F_WAIT |
+	    MAC_CAPABILITY_RECV_F_DEADLINE)) != 0 || (absolute && !wait) ||
 	    (!wait && wait_ms != 0) ||
-	    (args->_reserved[1] | args->_reserved[2] | args->_reserved[3]) != 0) {
+	    ((absolute ? 0 : args->_reserved[1]) | args->_reserved[2] |
+	    args->_reserved[3]) != 0) {
 		error = EINVAL;
 		goto out;
 	}
-	deadline = wait && wait_ms != 0 &&
-	    wait_ms != MAC_CAPABILITY_RECV_WAIT_FOREVER ?
-	    sbinuptime() + (sbintime_t)wait_ms * SBT_1MS : 0;
+	if (absolute) {
+		/* One deadline that a restarted receive keeps. */
+		deadline = mac_capability_abs_deadline(args->_reserved[0],
+		    args->_reserved[1]);
+	} else
+		deadline = wait && wait_ms != 0 &&
+		    wait_ms != MAC_CAPABILITY_RECV_WAIT_FOREVER ?
+		    sbinuptime() + (sbintime_t)wait_ms * SBT_1MS : 0;
 
 	mtx_lock(&s->ci_mtx);
 	for (;;) {
@@ -1032,7 +1058,7 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 			goto out;
 		}
 		if (((fp->f_flag & FNONBLOCK) && !wait) ||
-		    (wait && wait_ms == 0)) {
+		    (wait && !absolute && wait_ms == 0)) {
 			mtx_unlock(&s->ci_mtx);
 			error = EAGAIN;
 			goto out;
@@ -1260,10 +1286,12 @@ out:
  * the same mutex (next to the EVFILT_WRITE note), so no wakeup is lost.  A
  * dead instance ends the wait with EPIPE, as the send would, without a retry
  * that would look at its service (which a destroy may have unloaded); a
- * revoked lease ends it with EPERM.
+ * revoked lease ends it with EPERM; `deadline` (sbinuptime, 0: none) with
+ * ETIMEDOUT.
  */
 static int
-mac_capability_instance_wait_room(struct mac_capability_instance *s)
+mac_capability_instance_wait_room(struct mac_capability_instance *s,
+    sbintime_t deadline)
 {
 	int error;
 
@@ -1278,8 +1306,10 @@ mac_capability_instance_wait_room(struct mac_capability_instance *s)
 			error = EPERM;
 			break;
 		}
-		error = msleep(&s->ci_wknotes, &s->ci_mtx, PCATCH,
-		    "mcapsnd", 0);
+		error = msleep_sbt(&s->ci_wknotes, &s->ci_mtx, PCATCH,
+		    "mcapsnd", deadline, 0, C_ABSOLUTE);
+		if (error == EWOULDBLOCK)
+			error = ETIMEDOUT;
 		if (error != 0)
 			break;
 	}
@@ -1294,21 +1324,33 @@ mac_capability_instance_wait_room(struct mac_capability_instance *s)
  * SENDMSG/SENDMSG_V2 with optional SEND_F_WAIT: a send refused for a full
  * queue (EAGAIN) consumed nothing, so it is repeated once there is room.  A
  * signal ends the sleep with ERESTART (SA_RESTART: the ioctl is restarted
- * whole) or EINTR, as for write(2).
+ * whole) or EINTR, as for write(2).  With SEND_F_DEADLINE the arguments'
+ * _reserved[0..1] hold an absolute deadline (a restart keeps it); they are
+ * cleared before the send, which requires them zero.
  */
 static int
 mac_capability_instance_sendmsg_wait(struct mac_capability_instance *s,
     struct mac_capability_sendmsg_args *args, struct thread *td,
     const struct mac_capability_fd_spec *uspecs, uint32_t flags)
 {
+	sbintime_t deadline;
 	int error;
 
+	deadline = 0;
+	if ((flags & MAC_CAPABILITY_SEND_F_DEADLINE) != 0) {
+		if ((flags & MAC_CAPABILITY_SEND_F_WAIT) == 0)
+			return (EINVAL);
+		deadline = mac_capability_abs_deadline(args->_reserved[0],
+		    args->_reserved[1]);
+		args->_reserved[0] = args->_reserved[1] = 0;
+	}
 	for (;;) {
 		error = mac_capability_instance_do_sendmsg(s, args, td, uspecs,
-		    flags & ~MAC_CAPABILITY_SEND_F_WAIT);
+		    flags & ~(MAC_CAPABILITY_SEND_F_WAIT |
+		    MAC_CAPABILITY_SEND_F_DEADLINE));
 		if (error != EAGAIN || (flags & MAC_CAPABILITY_SEND_F_WAIT) == 0)
 			return (error);
-		error = mac_capability_instance_wait_room(s);
+		error = mac_capability_instance_wait_room(s, deadline);
 		if (error != 0)
 			return (error);
 	}
@@ -1354,7 +1396,8 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 			return (EACCES);
 		}
 		message = *(struct mac_capability_sendmsg_args *)data;
-		if ((message.flags & ~MAC_CAPABILITY_SEND_F_WAIT) != 0)
+		if ((message.flags & ~(MAC_CAPABILITY_SEND_F_WAIT |
+		    MAC_CAPABILITY_SEND_F_DEADLINE)) != 0)
 			return (EINVAL);
 		flags = message.flags;
 		message.flags = 0;
@@ -1373,7 +1416,8 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 		flags = args->message.flags;
 		if ((flags & ~(MAC_CAPABILITY_SEND_F_MOVE |
 		    MAC_CAPABILITY_SEND_F_LOCK_INHERIT |
-		    MAC_CAPABILITY_SEND_F_WAIT)) != 0 ||
+		    MAC_CAPABILITY_SEND_F_WAIT |
+		    MAC_CAPABILITY_SEND_F_DEADLINE)) != 0 ||
 		    (args->_reserved2[0] | args->_reserved2[1]) != 0)
 			return (EINVAL);
 		message = args->message;
