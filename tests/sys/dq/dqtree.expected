@@ -29,10 +29,9 @@
 # "case  # by-design D###: reason".  dq_tree_suites_test counts the
 # differences each tag still owns.  Paths are relative to the tree.
 
-# A served directory: dq_fileops does not apply the vnode type rules of
-# vn_fadvise, vn_fcntl and vn_copy_file_range to DQ_KIND_DIR objects.
-^fadvise_test:directory[[:space:]]  # ux-1 D245: dq_fadvise returns 0 for a DIR object (dq_file.c), vn_fadvise ENODEV for non-VREG
-^fcntl_fileop_test:directory[[:space:]]  # ux-1 D245: dq_fcntl F_READAHEAD/F_RDAHEAD succeed on a DIR object (dq_file.c), vn_fcntl ENOTTY
+# A served directory: dq_fileops has no copy_file_range, so the vnode
+# type rule of vn_copy_file_range does not apply to DQ_KIND_DIR objects
+# (fadvise and fcntl on one no longer differ: r-c6-tree).
 ^copy_file_range_test:directory[[:space:]]  # ux-1 D245: dq_fileops has no fo_copy_file_range, default EINVAL (vfs_syscalls.c), base EISDIR
 
 # copy_file_range(2) between served files: no fo_copy_file_range.
@@ -45,14 +44,6 @@
 ^flock_test:main[[:space:]]  # ux-0 D247: lock events on flock_helper's open-unlinked temp file answer EIO (owner reopen libdq_serve.c, dq_serve_map EIO); test 2's parent then blocks reading its own pipe (flock_helper.c), a test-side wait, not a kernel hang
 ^flock_shared_test:blocking_upgrade_drops_shared[[:space:]]  # ux-0 D247, parked: a blocking flock SH-to-EX upgrade on a served file keeps its shared lock while it sleeps (one atomic F_OFD_SETLKW conversion on the owner reopen, libdq_serve.c); base unlocks first, so another shared holder gets LOCK_EX|LOCK_NB there and EWOULDBLOCK here
 ^flock_shared_test:interrupted_upgrade_state[[:space:]]  # ux-0 D247, parked: a blocking flock SH-to-EX upgrade on a served file that ends in EINTR still holds its shared lock (the cancelled F_OFD_SETLKW converted nothing, libdq_serve.c), so LOCK_EX|LOCK_NB by others stays EWOULDBLOCK until it unlocks or closes; base has dropped the shared lock
-
-# fspacectl(2) past EOF: the reply invariant requires dscr_len == end -
-# dscr_offset (sys/dev/dq/dq_queue.c); FreeBSD's VOP_DEALLOCATE
-# stops at EOF and reports the rest, which the invariant refuses.
-^fspacectl_test:aligned_dealloc_eof[[:space:]]  # ux-1: FSPACECTL reply past EOF refused by the invariant (dq_queue.c)
-^fspacectl_test:aligned_dealloc_offmax[[:space:]]  # ux-1: FSPACECTL reply for an OFF_MAX range refused by the invariant (dq_queue.c)
-^fspacectl_test:unaligned_dealloc_eof[[:space:]]  # ux-1: FSPACECTL reply past EOF refused by the invariant (dq_queue.c)
-^fspacectl_test:unaligned_dealloc_offmax[[:space:]]  # ux-1: FSPACECTL reply for an OFF_MAX range refused by the invariant (dq_queue.c)
 
 # A kernel consumer's relative path from a served cwd (nmount's fspath).
 ^fsetattr_test:fdescfs_(fifo|kqueue|mac_target|no_attributes|opath|ptmx_direct|ptmx_nonowner|regular_file|shm)[[:space:]]  # by-design D175: mount(2) "fspath" from a served cwd is a class-2 path, EXDEV (kern_dqres.c)

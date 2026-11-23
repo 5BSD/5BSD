@@ -13,7 +13,7 @@ cc_binary(name = "libdq_test", srcs = ["libdq_test.c"],
         "//tests/sys/dq/libdqtest:support"],
     linkopts = ["-static"], linkstatic = True, visibility = ["//visibility:public"])
 _CASES = ["walk_padded_records", "accessor_bounds", "errno_allow_lists", "serve_each_op", "serve_locks",
-    "async_accessors", "serve_mmap_writeback", "resolve_accessor"]
+    "async_accessors", "serve_mmap_writeback", "resolve_accessor", "dispatch_stop_drops"]
 [bsd_atf_test(name = case, case_name = case, body = ":libdq_test", interface = "program",
     runner = "//tools/build/bazel:atf_runner", body_timeout_seconds = 60,
     size = "small", timeout = "moderate") for case in _CASES]

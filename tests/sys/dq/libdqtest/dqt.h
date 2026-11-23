@@ -229,6 +229,23 @@ void	dqt_require_plane(void);
  * debug.dq.unverified_open="1"; a kernel without the option passes.
  */
 void	dqt_require_test_access(void);
+/*
+ * A debug.dq fault knob of options DQ_FAULT_INJECTION, or the case is owed
+ * by the knob tier: it skips with the DEFERRED_KNOB_TIER token on a kernel
+ * without the option, and fails on a test kernel that lacks the knob.
+ */
+void	dqt_require_fault_knob(const char *name);
+/*
+ * The dropped-wakeup proofs (debug.dq.drop_wakeup, options
+ * DQ_FAULT_INJECTION).  dqt_drop_count: how many wakeups the DQ_WAKE_*
+ * bit site has dropped.  dqt_drop_wait: block until it has dropped count
+ * (the kernel wakes the test at the drop: no polling; the case timeout is
+ * the hang detector).  dqt_sleep_left: whether a thread of pid sleeps in
+ * wmesg, and the ms left before that sleep's timeout (0: none).
+ */
+uint64_t dqt_drop_count(u_int site);
+void	dqt_drop_wait(u_int site, uint64_t count);
+bool	dqt_sleep_left(pid_t pid, const char *wmesg, uint64_t *left_ms);
 /* Fails, never skips, when the queue device is absent or refuses. */
 int	dqt_open_queue(void);
 void	dqt_init(struct dqt_ctl *c);		/* queue + 1 reader thread */

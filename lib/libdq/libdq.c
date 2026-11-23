@@ -13,6 +13,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -29,18 +30,30 @@
 
 static size_t	dq_dispatch_bufsize(void);
 
+int	_dq_postop_probe(void) __hidden;
+
 int
 dq_open(void)
 {
-	int q;
+	int error, q;
 
 	q = open(DQ_DEVICE, O_RDWR | O_CLOEXEC | O_CLOFORK);
+	if (q == -1)
+		return (-1);
 	/*
-	 * Size dq_dispatch()'s buffer now: a queue is opened before the
-	 * controller restricts itself, and the size is kept for the process.
+	 * Size dq_dispatch()'s buffer and learn whether the kernel takes
+	 * post-operation blocks now: a queue is opened before the
+	 * controller restricts itself, and both are kept for the process.
+	 * The feature's absence (ENOENT) is an answer; any other failure to
+	 * read it is dq_open's, not a silent fallback to no blocks.
 	 */
-	if (q != -1)
-		(void)dq_dispatch_bufsize();
+	(void)dq_dispatch_bufsize();
+	if (_dq_postop_probe() == -1) {
+		error = errno;
+		(void)close(q);
+		errno = error;
+		return (-1);
+	}
 	return (q);
 }
 
@@ -52,12 +65,67 @@ dq_get_stats(int fd, struct dq_stats *st)
 	return (ioctl(fd, DQ_IOC_GET_STATS, st));
 }
 
+/*
+ * Whether the kernel takes post-operation blocks (FEATURE(dq_postop)):
+ * 0 not read yet, 1 yes, 2 no.  dq_open() reads it before the controller
+ * restricts itself; a controller that opened /dev/dq itself has it read
+ * at its first block (libdq_serve.c).  The feature's absence (ENOENT) is
+ * an answer; any other failure to read it is an error (-1, errno), never
+ * a silent fallback to no blocks.
+ */
+static atomic_int _dq_postop_kernel;
+
 int
-dq_get_stats2(int fd, struct dq_stats2 *st)
+_dq_postop_probe(void)
+{
+	size_t len;
+	int feature, k;
+
+	k = atomic_load_explicit(&_dq_postop_kernel, memory_order_relaxed);
+	if (k != 0)
+		return (k);
+	feature = 0;
+	len = sizeof(feature);
+	if (sysctlbyname("kern.features.dq_postop", &feature, &len, NULL,
+	    0) == -1) {
+		if (errno != ENOENT)
+			return (-1);
+		feature = 0;
+	}
+	k = feature != 0 ? 1 : 2;
+	atomic_store_explicit(&_dq_postop_kernel, k, memory_order_relaxed);
+	return (k);
+}
+
+/*
+ * The size of the caller's struct dq_stats2 comes with it (the
+ * dq_get_stats2 macro of libdq.h), so a program built against another
+ * size fails with EINVAL instead of having the kernel's struct written
+ * past its own.
+ */
+int
+dq_get_stats2_sized(int fd, struct dq_stats2 *st, size_t size)
 {
 
+	if (size != sizeof(*st)) {
+		errno = EINVAL;
+		return (-1);
+	}
 	memset(st, 0, sizeof(*st));
 	return (ioctl(fd, DQ_IOC_GET_STATS2, st));
+}
+
+/*
+ * The function of programs built before the size came with the call: it
+ * cannot know their struct's size, so it refuses (EINVAL) rather than
+ * write the kernel's into it.
+ */
+int
+(dq_get_stats2)(int fd __unused, struct dq_stats2 *st __unused)
+{
+
+	errno = EINVAL;
+	return (-1);
 }
 
 int
@@ -65,6 +133,21 @@ dq_set_queue_depth(int q, uint32_t depth)
 {
 
 	return (ioctl(q, DQ_IOC_SET_QUEUE_DEPTH, &depth));
+}
+
+int
+dq_queue_set_flags(int q, uint32_t set, uint32_t clear, uint32_t *oldp)
+{
+	struct dq_queue_flags qf;
+
+	memset(&qf, 0, sizeof(qf));
+	qf.dqf_set = set;
+	qf.dqf_clear = clear;
+	if (ioctl(q, DQ_IOC_QUEUE_FLAGS, &qf) == -1)
+		return (-1);
+	if (oldp != NULL)
+		*oldp = qf.dqf_old;
+	return (0);
 }
 
 /*
@@ -567,12 +650,15 @@ dq_reply_errno_allowed(uint32_t op, int error)
 
 	if (error == 0)
 		return (1);
+	/* The kernel's alone: a controller never answers it (D193). */
+	if (error == EINTR)
+		return (0);
 	switch (op) {
 	case DQ_OP_WRITE:
 	case DQ_OP_WRITE_ASYNC:
 		return (error == EIO || error == ENOSPC || error == EDQUOT ||
 		    error == EFBIG || error == EACCES || error == EPERM ||
-		    error == EROFS || error == EINTR || error == EAGAIN ||
+		    error == EROFS || error == EAGAIN ||
 		    error == ENXIO || error == EINVAL || error == ESTALE);
 	case DQ_OP_SETATTR:
 		return (error == EPERM || error == EROFS || error == EINVAL ||
@@ -590,7 +676,7 @@ dq_reply_errno_allowed(uint32_t op, int error)
 		    error == EIO || error == EOPNOTSUPP || error == ENODEV);
 	case DQ_OP_LOCK:
 		return (error == EAGAIN || error == EDEADLK || error == ENOLCK ||
-		    error == EINVAL || error == EIO || error == EINTR);
+		    error == EINVAL || error == EIO);
 	case DQ_OP_IOCTL:
 		return (error == ENOTTY || error == EINVAL || error == EIO ||
 		    error == EPERM || error == EACCES || error == ENXIO);
@@ -628,7 +714,7 @@ dq_resolve_errno_allowed(uint32_t rop, int error)
 	case ENODEV: case ENOTDIR: case EISDIR: case EINVAL: case ETXTBSY:
 	case EFBIG: case ENOSPC: case EROFS: case EMLINK: case EAGAIN:
 	case ENAMETOOLONG: case ENOTEMPTY: case ELOOP: case EDQUOT:
-	case ESTALE: case EOPNOTSUPP: case EINTR: case EAFNOSUPPORT:
+	case ESTALE: case EOPNOTSUPP: case EAFNOSUPPORT:
 	case EPROTONOSUPPORT: case EADDRINUSE: case EADDRNOTAVAIL:
 	case ECONNREFUSED: case EPROTOTYPE: case EFTYPE: case EAUTH:
 	case ENOATTR: case EINTEGRITY:
@@ -654,6 +740,55 @@ dq_reply(int q, uint64_t id, int error, const void *data, size_t len)
 	r.dr_len = (uint32_t)len;
 	r.dr_data = data;
 	return (ioctl(q, DQ_IOC_REPLY, &r));
+}
+
+int
+dq_reply_postop(int q, uint64_t id, const void *data, size_t len,
+    const struct dq_postop_attr *pa)
+{
+	struct dq_reply r;
+	char *buf;
+	int error, rv;
+
+	if (pa == NULL || len > UINT32_MAX - sizeof(*pa) ||
+	    (len != 0 && data == NULL)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	buf = malloc(len + sizeof(*pa));
+	if (buf == NULL)
+		return (-1);
+	if (len != 0)
+		memcpy(buf, data, len);
+	memcpy(buf + len, pa, sizeof(*pa));
+	memset(&r, 0, sizeof(r));
+	r.dr_version = DQ_API_VERSION;
+	r.dr_flags = DQ_REPLY_F_POSTOP;
+	r.dr_id = id;
+	r.dr_len = (uint32_t)(len + sizeof(*pa));
+	r.dr_data = buf;
+	rv = ioctl(q, DQ_IOC_REPLY, &r);
+	error = errno;
+	free(buf);
+	errno = error;
+	return (rv);
+}
+
+void
+dq_postop_from_stat(struct dq_postop_attr *pa, const struct stat *sb,
+    uint32_t valid)
+{
+
+	memset(pa, 0, sizeof(*pa));
+	pa->dpa_valid = valid & DQ_PA_VALID;
+	pa->dpa_size = (uint64_t)sb->st_size;
+	pa->dpa_mtime.tv_sec = sb->st_mtim.tv_sec;
+	pa->dpa_mtime.tv_nsec = sb->st_mtim.tv_nsec;
+	pa->dpa_ctime.tv_sec = sb->st_ctim.tv_sec;
+	pa->dpa_ctime.tv_nsec = sb->st_ctim.tv_nsec;
+	pa->dpa_atime.tv_sec = sb->st_atim.tv_sec;
+	pa->dpa_atime.tv_nsec = sb->st_atim.tv_nsec;
+	pa->dpa_blocks = (uint64_t)sb->st_blocks;
 }
 
 int
@@ -717,6 +852,35 @@ dq_dispatch_bufsize(void)
 	return (size);
 }
 
+/*
+ * The records read with the batch after the one the handler stopped on
+ * were taken off the queue and no other read sees them: each that has a
+ * waiter (an id) is answered EIO now, so its requester fails at once
+ * instead of at its deadline (a lock, which has none, would wait for a
+ * signal).  Records without an id (CLOSE, INTERRUPT, UNLOCK_ALL) are
+ * left: the queue's close or a later UNLOCK_ALL settles their state.  An
+ * answer that finds its event gone (ESRCH) is not an error.
+ */
+static void
+dq_dispatch_fail_rest(int q, const char *buf, size_t got,
+    const struct dq_event *stop)
+{
+	const struct dq_event *ev;
+	int error;
+
+	error = errno;
+	for (ev = dq_event_next(buf, got, stop); ev != NULL;
+	    ev = dq_event_next(buf, got, ev)) {
+		if (ev->de_id == 0 || (ev->de_flags & DQ_EVENT_F_OBSERVED) != 0)
+			continue;
+		if (ev->de_op == DQ_OP_RESOLVE)
+			(void)dq_reply_resolve_errno(q, ev->de_id, EIO);
+		else
+			(void)dq_reply(q, ev->de_id, EIO, NULL, 0);
+	}
+	errno = error;
+}
+
 int
 dq_dispatch(int q, dq_handler_t handler, void *arg)
 {
@@ -742,8 +906,10 @@ dq_dispatch(int q, dq_handler_t handler, void *arg)
 	    ev = dq_event_next(buf, (size_t)got, ev)) {
 		body = dq_event_body(ev, &bodylen);
 		n++;
-		if (handler(q, ev, body, bodylen, arg) != 0)
+		if (handler(q, ev, body, bodylen, arg) != 0) {
+			dq_dispatch_fail_rest(q, buf, (size_t)got, ev);
 			break;
+		}
 	}
 	free(buf);
 	return (n);
@@ -1272,8 +1438,9 @@ dq_mint_dir(int q, const struct dq_ident_file *ident,
 
 /*
  * The identity of name relative to dirfd without following a final
- * symbolic link, presented as presented; pathconf from an O_PATH open
- * (none for a symbolic link, whose size is its target's length).
+ * symbolic link, presented as presented; pathconf from an O_PATH |
+ * O_NOFOLLOW open, which answers for the link itself as lpathconf(2)
+ * does.
  */
 int
 dq_ident_from_lstat(struct dq_ident_file *ident, const char *presented,
@@ -1289,8 +1456,7 @@ dq_ident_from_lstat(struct dq_ident_file *ident, const char *presented,
 	rv = -1;
 	if (fstatat(dirfd, name, &st, AT_SYMLINK_NOFOLLOW) == 0 &&
 	    fstatfs(fd, &sfs) == 0)
-		rv = dq_ident_from_stat(ident, presented, &st, &sfs,
-		    S_ISLNK(st.st_mode) ? -1 : fd);
+		rv = dq_ident_from_stat(ident, presented, &st, &sfs, fd);
 	error = errno;
 	close(fd);
 	errno = error;

@@ -29,6 +29,7 @@
 .Nm dq_observe_list_objects ,
 .Nm dq_observe_subscribe ,
 .Nm dq_get_stats2 ,
+.Nm dq_get_stats2_sized ,
 .Nm dq_mint_file_flags ,
 .Nm dq_push_vnode_note ,
 .Nm dq_push_invalidate ,
@@ -76,6 +77,8 @@
 .Nm dq_event_reply_record ,
 .Nm dq_reply_write ,
 .Nm dq_reply_fspacectl ,
+.Nm dq_reply_postop ,
+.Nm dq_postop_from_stat ,
 .Nm dq_reply_lock ,
 .Nm dq_reply_ioctl ,
 .Nm dq_reply_errno_allowed ,
@@ -96,6 +99,10 @@ DescriptorQueue controller library
 .Fn dq_get_stats "int fd" "struct dq_stats *st"
 .Ft int
 .Fn dq_set_queue_depth "int q" "uint32_t depth"
+.Ft int
+.Fo dq_queue_set_flags
+.Fa "int q" "uint32_t set" "uint32_t clear" "uint32_t *oldp"
+.Fc
 .Ft void
 .Fn dq_policy_default "struct dq_policy *pol"
 .Ft int
@@ -151,6 +158,8 @@ DescriptorQueue controller library
 .Fn dq_observe_subscribe "int svc" "uint64_t queue"
 .Ft int
 .Fn dq_get_stats2 "int fd" "struct dq_stats2 *st"
+.Ft int
+.Fn dq_get_stats2_sized "int fd" "struct dq_stats2 *st" "size_t size"
 .Ft int
 .Fo dq_mint_file_flags
 .Fa "int q" "const struct dq_ident_file *ident" "const struct dq_policy *pol"
@@ -302,6 +311,15 @@ DescriptorQueue controller library
 .Ft int
 .Fn dq_reply_fspacectl "int q" "uint64_t id" "uint64_t offset" "uint64_t len"
 .Ft int
+.Fo dq_reply_postop
+.Fa "int q" "uint64_t id" "const void *data" "size_t len"
+.Fa "const struct dq_postop_attr *pa"
+.Fc
+.Ft void
+.Fo dq_postop_from_stat
+.Fa "struct dq_postop_attr *pa" "const struct stat *sb" "uint32_t valid"
+.Fc
+.Ft int
 .Fn dq_reply_lock "int q" "uint64_t id" "const struct dq_lock_reply *lr"
 .Ft int
 .Fo dq_reply_ioctl
@@ -387,6 +405,12 @@ without the
 privilege, and
 .Er EOPNOTSUPP
 from a 32-bit process.
+It also reads whether the kernel takes post-operation attributes
+.Pq Va kern.features.dq_postop ,
+before the controller restricts itself; a failure to read it other than
+its absence fails
+.Fn dq_open
+with that error.
 .Pp
 .Fn dq_get_stats
 fills
@@ -396,7 +420,9 @@ with the
 of the queue, or of the queue an observer descriptor
 .Fa fd
 watches.
-.Fn dq_get_stats2
+.Fn dq_get_stats2 ,
+a macro that passes the size of the caller's struct to
+.Fn dq_get_stats2_sized ,
 fills the extended
 .Vt struct dq_stats2
 .Pq Dv DQ_IOC_GET_STATS2 :
@@ -426,10 +452,30 @@ must be between 1 and
 .Va kern.dq.queue_depth
 or the call fails with
 .Er EINVAL .
-A full queue fails the requester's operation with
-.Er EIO ,
-counts a drop and leaves a gap in
+An operation that waits for its answer waits for a slot of a full queue,
+within its deadline
+.Pq Va ds2_full_waits ;
+a record that waits for nothing is dropped there and leaves a gap in
 .Va de_seq .
+.Pp
+.Fn dq_queue_set_flags
+sets the queue flags in
+.Fa set
+and clears those in
+.Fa clear
+(the two disjoint), and stores the flags from before in
+.Fa *oldp
+unless it is
+.Dv NULL .
+.Dv DQ_QF_INTR
+makes the attached processes' own lookups end on a signal, as on an NFS
+.Cm intr
+mount; without it they wait as a local file system's lookups do
+.Pq Xr dq 4 , Sx Waiting, deadlines and interruption .
+The data and attribute waits of an object take the same choice from
+.Dv DQ_PF_INTR
+in its policy's
+.Va dp_flags .
 .Ss Identity and policy
 .Fn dq_policy_default
 fills
@@ -863,13 +909,43 @@ the controller's end of file; the requester's implicit offset becomes
 .Fn dq_reply_fspacectl
 answers a
 .Dv DQ_OP_FSPACECTL
-with the range left undone, whose
+with the range left undone, as
+.Xr fspacectl 2
+reports it: an
 .Fa offset
-is at least
-.Va dsc_offset
-and whose end is
-.Va dsc_offset No + Va dsc_len
-(a finished request answers that end and 0);
+within the request, and a
+.Fa len
+of 0 (a finished request answers its end; one that stopped at the end of
+the file, that offset) or one that ends where the request ends;
+.Fn dq_reply_postop
+sends a successful reply of
+.Fa len
+bytes at
+.Fa data
+.Po the data of a
+.Dv DQ_OP_READ ,
+a
+.Vt struct dq_write_reply ,
+nothing for a
+.Dv DQ_OP_FALLOCATE ,
+a
+.Vt struct dq_fspacectl_reply
+.Pc
+followed by the post-operation attributes
+.Fa pa
+.Pq Dv DQ_REPLY_F_POSTOP , Xr dq 4 ,
+and
+.Fn dq_postop_from_stat
+fills
+.Fa pa
+from what
+.Xr fstat 2
+said of the backing file after the operation, for the fields named in
+.Fa valid
+.Pq Dv DQ_PA_SIZE , MTIME , CTIME , BLOCKS , ATIME ;
+only
+.Dv DQ_PA_ATIME
+for a read;
 .Fn dq_reply_lock
 answers a
 .Dv DQ_LOCK_GETLK
@@ -930,9 +1006,10 @@ returns nonzero when
 reaches the requester as itself:
 .Bl -tag -width "DQ_OP_FSPACECTL" -offset indent
 .It Dv DQ_OP_READ , READ_ASYNC , GETATTR
-any errno.
+any errno but
+.Er EINTR .
 .It Dv DQ_OP_WRITE , WRITE_ASYNC
-.Er EIO , ENOSPC , EDQUOT , EFBIG , EACCES , EPERM , EROFS , EINTR ,
+.Er EIO , ENOSPC , EDQUOT , EFBIG , EACCES , EPERM , EROFS ,
 .Er EAGAIN , ENXIO , EINVAL , ESTALE .
 .It Dv DQ_OP_SETATTR
 .Er EPERM , EROFS , EINVAL , EOPNOTSUPP , EIO , EFBIG , EDQUOT , ENOSPC ,
@@ -944,7 +1021,7 @@ any errno.
 .It Dv DQ_OP_FSPACECTL
 .Er ENOSPC , EFBIG , EINVAL , EIO , EOPNOTSUPP , ENODEV .
 .It Dv DQ_OP_LOCK
-.Er EAGAIN , EDEADLK , ENOLCK , EINVAL , EIO , EINTR .
+.Er EAGAIN , EDEADLK , ENOLCK , EINVAL , EIO .
 .It Dv DQ_OP_IOCTL
 .Er ENOTTY , EINVAL , EIO , EPERM , EACCES , ENXIO .
 .It Dv DQ_OP_RESOLVE
@@ -961,11 +1038,14 @@ answers for
 .Er EPERM , ENOENT , EIO , ENXIO , E2BIG , ENOEXEC , EACCES , EBUSY ,
 .Er EEXIST , EXDEV , ENODEV , ENOTDIR , EISDIR , EINVAL , ETXTBSY , EFBIG ,
 .Er ENOSPC , EROFS , EMLINK , EAGAIN , ENAMETOOLONG , ENOTEMPTY , ELOOP ,
-.Er EDQUOT , ESTALE , EOPNOTSUPP , EINTR , EAFNOSUPPORT , EPROTONOSUPPORT ,
+.Er EDQUOT , ESTALE , EOPNOTSUPP , EAFNOSUPPORT , EPROTONOSUPPORT ,
 .Er EADDRINUSE , EADDRNOTAVAIL , ECONNREFUSED , EPROTOTYPE , EFTYPE ,
 .Er EAUTH , ENOATTR , EINTEGRITY .
 .El
 .El
+.Pp
+.Er EINTR
+is on no list: only the kernel's own wait gives it (D193).
 .Pp
 .Fn dq_dispatch
 performs one
@@ -975,6 +1055,21 @@ into a buffer sized for the largest record the kernel can post and calls
 once per record with the header, the body and
 .Fa arg .
 The handler returns 0 to continue or nonzero to stop.
+When it stops, the records read with the batch after the one it stopped
+on are not handed to it, and those that wait for an answer are answered
+.Er EIO
+.Po
+.Fn dq_reply_resolve_errno
+for a
+.Dv DQ_OP_RESOLVE ,
+.Fn dq_reply
+otherwise
+.Pc ,
+so that no requester waits out its deadline or, for a lock, its signal,
+for a record nobody will see; those that wait for nothing
+.Pq Dv DQ_OP_CLOSE , DQ_OP_INTERRUPT , DQ_OP_UNLOCK_ALL ,
+observer records
+are dropped, their state left to the kernel's close of the queue.
 .Fn dq_dispatch
 returns the number of records handed to the handler, or -1 with the errno
 of the read.
@@ -1244,7 +1339,9 @@ is
 in this mode.
 Object events go to
 .Fn dq_serve_file
-on the backing file;
+on the backing file, with
+.Dv DQ_SERVE_F_SYNC_IDENT
+so that the whole identity follows the backing file after a write;
 .Dv DQ_OP_CLOSE
 closes it.
 .Dv DQ_TREE_F_WRITE
@@ -1286,7 +1383,12 @@ fills an identity from
 relative to
 .Fa dirfd
 without following a final symbolic link, presented as
-.Fa presented .
+.Fa presented ;
+its pathconf values come from an
+.Dv O_PATH | O_NOFOLLOW
+open, so a symbolic link carries its own, as
+.Xr lpathconf 2
+reports them.
 .Fn dq_reply_resolve_fd
 also answers with
 .Dv DQ_KIND_DIR ;
@@ -1327,8 +1429,13 @@ request
 without
 .Dv O_TRUNC
 and with
-.Dv O_CLOFORK ,
-and close it after the call returns 0; the call never closes it.
+.Dv O_CLOFORK .
+The kernel closes
+.Fa fd
+when it takes the file: after a return of 0 or
+.Er ECANCELED
+the descriptor number is no longer the controller's and must not be
+closed; after any other error it still is.
 .Fa flags
 is 0 or a combination of
 .Dv DQ_SWAP_F_NOXFER
@@ -1342,7 +1449,14 @@ refuse
 .Fa fd
 or the reply and leave the event in flight, so another answer may follow;
 .Er ESRCH
-means the requester is gone.
+means the requester is gone and
+.Fa fd
+was not taken;
+.Er ECANCELED ,
+returned only by this call, means the file was taken and
+.Fa fd
+closed, but the requester left before the installation and the file was
+dropped.
 .Er EBUSY
 (the open file has another reference, possibly a transient one taken by
 another thread) is retried once before it is returned.
@@ -1657,6 +1771,10 @@ flight until its deadline:
 .It Dv DQ_OP_READ , DQ_OP_READ_ASYNC
 .Xr pread 2 ;
 a short read is the end of the file.
+A
+.Dv DQ_OP_READ
+that read bytes carries the backing file's access time as post-operation
+attributes.
 The presented size must not exceed the backing file's: a reply short of
 bytes the identity says exist fails a fault with
 .Dv SIGBUS
@@ -1682,8 +1800,8 @@ at
 .Va dw_offset ,
 or at the backing file's end under
 .Dv DQ_WRITE_F_APPEND ,
-reported through
-.Fn dq_reply_write ;
+reported with the backing file's size, times and block count as
+post-operation attributes;
 .Dv DQ_WRITE_F_SYNC
 and
 .Dv DQ_WRITE_F_DSYNC
@@ -1720,10 +1838,13 @@ for
 .Xr fsync 2
 otherwise.
 .It Dv DQ_OP_FALLOCATE
-.Xr posix_fallocate 2 .
+.Xr posix_fallocate 2 ,
+answered with the backing file's size, times and block count as
+post-operation attributes.
 .It Dv DQ_OP_FSPACECTL
 .Xr fspacectl 2 ,
-answering the range it left.
+answering the range it left, with the backing file's times and block
+count (no size: a deallocation changes none).
 .It Dv DQ_OP_LOCK
 each owner gets its own open of the backing file
 .Po
@@ -1757,7 +1878,10 @@ once, and an
 by one is answered 0.
 A
 .Dv DQ_LOCK_SETLKW
-blocks in a thread of its own, which answers when the lock is granted;
+blocks in a thread of its own, on a descriptor of its own of the owner's
+open file (the same open file, so the same OFD owner), never on the
+owner's descriptor number, which a close of the owner frees for any other
+open of the process; it answers when the lock is granted;
 when that reply finds the event no longer in flight
 .Pq Er ESRCH : No the requester gave up and its Dv DQ_OP_INTERRUPT No raced the grant
 the grant is undone by unlocking the requested range for the owner,
@@ -1775,8 +1899,8 @@ answer carries
 -1: the routine does not track which owner holds the blocker (a declared
 difference from a real file, which names a POSIX owner's pid).
 .It Dv DQ_OP_UNLOCK_ALL
-closes that owner's open, which releases its locks, and cancels its
-blocked waits.
+cancels the owner's blocked waits and waits for their threads to finish,
+then closes the owner's open, which releases its locks.
 .It Dv DQ_OP_IOCTL
 the
 .Va so_ioctl
@@ -1821,6 +1945,23 @@ drops the object's flock and OFD owners and cancels their waits; POSIX
 owners belong to the identity and go with
 .Dv DQ_OP_UNLOCK_ALL .
 .El
+.Pp
+Post-operation blocks go only to a kernel that lists the
+.Va dq_postop
+feature
+.Pq Xr feature_present 3 ;
+an older one gets the same replies without them, and stamps the times
+itself.
+A block such a kernel refuses
+.Pq Er EINVAL
+is a reply built wrong: it is answered
+.Er EIO
+and reported as above, and the next reply still carries its block.
+A
+.Dv DQ_SERVE_F_SYNC_IDENT
+refresh that finds the object closed after its operation was answered
+.Pq Er ESRCH
+is not a failure.
 .Pp
 Any other operation with a reply token is answered
 .Er EIO ,

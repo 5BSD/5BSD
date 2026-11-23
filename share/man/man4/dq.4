@@ -460,15 +460,20 @@ Body
 .Pq Xr fspacectl 2 .
 The reply is an errno and, when it is 0, one
 .Vt struct dq_fspacectl_reply ,
-the range left undone:
+the range left undone, as
+.Fn vn_deallocate
+reports it:
 .Va dscr_offset
-at least
-.Va dsc_offset
-and
+within the request
+.Pq Va dsc_offset No to Va dsc_offset No + Va dsc_len ,
+and either
+.Va dscr_len
+0 (nothing left: a finished request answers its end, a deallocation
+that stopped at the end of file answers that offset) or
 .Va dscr_offset No + Va dscr_len
 equal to
-.Va dsc_offset No + Va dsc_len
-(a finished request answers the end and 0).
+.Va dsc_offset No + Va dsc_len .
+The range reaches the requester unchanged.
 .Dv NOTE_WRITE
 fires on success.
 .It Dv DQ_OP_LOCK
@@ -566,7 +571,15 @@ and a
 .Vt struct dq_reply :
 .Va dr_id ,
 .Va dr_errno
-(0 or an errno) and
+(0 or an errno),
+.Va dr_flags
+(0 or
+.Dv DQ_REPLY_F_POSTOP ,
+see
+.Sx Post-operation attributes ;
+any other bit is
+.Er EINVAL )
+and
 .Va dr_len
 bytes at
 .Va dr_data ,
@@ -577,6 +590,18 @@ A reply fails with
 when the id is not in flight (never issued, already answered, abandoned,
 revoked or expired; counted in
 .Va ds_late_replies ) ,
+with
+.Er ECANCELED ,
+for a
+.Dv DQ_RESOLVE_SWAP
+answer only, when the kernel took and closed the answered descriptor and
+the requester left before it was installed
+.Pq see Sx Descriptor substitution ;
+an
+.Dv DQ_RESOLVE_FD
+answer whose requester left fails with
+.Er ESRCH ,
+its descriptor still the controller's),
 and with
 .Er EINVAL
 for a wrong version or padding, an errno outside the kernel's range, a
@@ -650,6 +675,12 @@ bytes for a successful command with
 set; none otherwise.
 .El
 .Pp
+With
+.Dv DQ_REPLY_F_POSTOP
+the body is followed by a post-operation block
+.Pq Sx Post-operation attributes ;
+the rules apply to what precedes it.
+.Pp
 The errno a controller may answer is allow-listed per operation.
 Any other errno reaches the requester as
 .Er EIO
@@ -663,9 +694,10 @@ raise
 .Dv SIGPIPE :
 .Bl -tag -width "DQ_OP_FSPACECTL" -offset indent
 .It Dv DQ_OP_READ , GETATTR
-any errno.
+any errno but
+.Er EINTR .
 .It Dv DQ_OP_WRITE
-.Er EIO , ENOSPC , EDQUOT , EFBIG , EACCES , EPERM , EROFS , EINTR ,
+.Er EIO , ENOSPC , EDQUOT , EFBIG , EACCES , EPERM , EROFS ,
 .Er EAGAIN , ENXIO , EINVAL , ESTALE .
 .It Dv DQ_OP_SETATTR
 .Er EPERM , EROFS , EINVAL , EOPNOTSUPP , EIO , EFBIG , EDQUOT , ENOSPC ,
@@ -677,14 +709,14 @@ any errno.
 .It Dv DQ_OP_FSPACECTL
 .Er ENOSPC , EFBIG , EINVAL , EIO , EOPNOTSUPP , ENODEV .
 .It Dv DQ_OP_LOCK
-.Er EAGAIN , EDEADLK , ENOLCK , EINVAL , EIO , EINTR .
+.Er EAGAIN , EDEADLK , ENOLCK , EINVAL , EIO .
 .It Dv DQ_OP_IOCTL
 .Er ENOTTY , EINVAL , EIO , EPERM , EACCES , ENXIO .
 .It Dv DQ_OP_RESOLVE
 .Er EPERM , ENOENT , EIO , ENXIO , E2BIG , ENOEXEC , EACCES , EBUSY ,
 .Er EEXIST , EXDEV , ENODEV , ENOTDIR , EISDIR , EINVAL , ETXTBSY , EFBIG ,
 .Er ENOSPC , EROFS , EMLINK , EAGAIN , ENAMETOOLONG , ENOTEMPTY , ELOOP ,
-.Er EDQUOT , ESTALE , EOPNOTSUPP , EINTR , EAFNOSUPPORT , EPROTONOSUPPORT ,
+.Er EDQUOT , ESTALE , EOPNOTSUPP , EAFNOSUPPORT , EPROTONOSUPPORT ,
 .Er EADDRINUSE , EADDRNOTAVAIL , ECONNREFUSED , EPROTOTYPE , EFTYPE ,
 .Er EAUTH , ENOATTR , EINTEGRITY
 (one list for every lookup operation);
@@ -695,6 +727,17 @@ and
 .Er EPERM , EACCES , EAFNOSUPPORT , EPROTONOSUPPORT , EPROTOTYPE ,
 .Er EOPNOTSUPP , ENOBUFS , EMFILE , ENFILE .
 .El
+.Pp
+.Er EINTR
+is never a controller's answer, to any operation (D193): the only
+.Er EINTR
+a requester sees comes from the kernel's own wait, in the modes that end
+on a signal
+.Pq Sx Waiting, deadlines and interruption ;
+a reply carrying one reaches the requester as
+.Er EIO
+and is counted in
+.Va ds2_bad_replies .
 .Ss Reading the queue
 .Xr read 2
 on the queue copies whole records, as many as fit, in order, and never
@@ -739,15 +782,26 @@ A queue holds
 .Va kern.dq.queue_depth
 unread events (a controller may lower its own queue's depth with
 .Dv DQ_IOC_SET_QUEUE_DEPTH ,
-never raise it); when it is full the requester's operation fails with
-.Er EIO
-at once and
-.Va ds_events_dropped
-counts it.
+never raise it); when it is full an operation that waits for its answer
+waits for a slot (D205), in the mode and within the deadline of its own
+wait, and is counted in
+.Va ds2_full_waits ;
+a slot read off the queue, or withdrawn, wakes one such waiter, and a
+waiter that cannot use it (its quota is full) passes it on.
+A record that waits for nothing and is not exempt
+.Pq Dv DQ_OP_CLOSE
+is dropped on a full queue and counted in
+.Va ds_events_dropped .
 Before that bound a requester waits for a slot when an object has
 .Va kern.dq.max_inflight_per_object
 unanswered events or the requester itself has
 .Va kern.dq.max_inflight_per_requester .
+That wait is part of the event's: the event's deadline, taken before it,
+bounds the two together, and a requester that reaches it there fails with
+.Er EIO ,
+counted in
+.Va ds_deadline_misses ,
+with no event posted (the controller sees nothing of it).
 .Ss Waiting, deadlines and interruption
 A requester waits for its reply holding only what the operation already
 held (the shared offset, the object's range lock); no vnode exists.
@@ -762,17 +816,166 @@ A missed deadline fails the operation with
 .Er EIO
 and counts in
 .Va ds_deadline_misses .
-A signal interrupts the wait with
-.Er EINTR .
-Either way the event is abandoned (design 8.2): one the controller has not
-yet read is withdrawn silently; one already delivered is marked
-interrupted and a
+.Pp
+What else ends a wait depends on its mode (D192):
+.Bl -tag -width "uninterruptible"
+.It uninterruptible
+The default for the data and attribute operations of an object
+.Pq Dv DQ_OP_READ , WRITE , GETATTR , SETATTR , FSYNC , FALLOCATE , FSPACECTL , READDIR , IOCTL
+and for a process's own lookups: the wait is a local file system's disk
+wait, as fusefs's without
+.Cm intr
+is.
+No signal ends it; a caught signal is handled once the operation
+returns, and a stop
+.Pq Dv SIGSTOP , No a debugger
+takes effect then.
+Only the answer, the deadline,
+.Dv SIGKILL ,
+the process's exit, another thread's
+.Xr _exit 2
+(which single-threads the process before it marks it exiting) and a
+signal that terminates the process, one that dumps core included (the
+dump single-threads the process first, and after it no
+.Dv SIGKILL
+is delivered), end it, the last four with the operation abandoned; the
+thread that writes the core still waits for its own answers.
+Another thread single-threading the process to the user boundary (an
+.Xr execve 2 ,
+also one that then fails, an
+.Xr rfork 2
+without
+.Dv RFPROC ,
+a
+.Xr fork 2
+while the process group is being killed,
+.Xr jail_attach 2 )
+does not take the process down, and what the wait does depends on how far
+the operation got.
+An operation the controller has not read yet, a wait for room before it
+is posted, and an operation that only reads
+.Po
+.Dv DQ_OP_READ ,
+.Dv DQ_OP_GETATTR ,
+.Dv DQ_OP_READDIR ,
+.Dv DQ_OP_FSYNC ,
+.Dv DQ_OP_LOCK ,
+and a lookup that creates, removes or changes nothing
+.Pc
+are given up (INTERRUPT to the controller for one it read) and the system
+call is restarted once the single-threading is over, as a
+.Xr fusefs 4
+wait does; the program sees no error.
+An operation that changes something
+.Po
+a write, an attribute change, an allocation, a hole punch, an ioctl, a
+lookup that creates, removes or renames
+.Pc
+that the controller has read is not restarted, since it would be applied
+twice: the wait goes on, without catching signals, until the answer, the
+deadline, or the process starting to die
+.Po
+.Dv SIGKILL ,
+an exit, a core dump
+.Pc ,
+and the single-threading thread waits for it as for a disk.
+A
+.Dv SIGKILL
+counts from the moment it is sent: if a tracer then discards it, the
+operation has already been abandoned (INTERRUPT to the controller), as it
+was before these waits.
+The lookups of extended attributes and ACLs count as changes, reads
+included: the lookup does not say which it is.
+A
+.Xr connect 2
+lookup counts as a read: restarted after the controller answered it with
+a descriptor of its own, it is answered again, and the controller may
+connect twice (a listed difference).
+.Dv DQ_OP_LOCK
+waits catch signals, so a lock wait is always given up and restarted.
+A page fault is never restarted (the VM system has no retry for a page a
+pager could not read): it waits the same way, bounded by the page
+deadline.
+Both waits stay in this form when the single-threading ends first (the
+.Xr execve 2
+failed): the call returns only with the answer, the deadline or the
+process's death.
+A debugger's stop: a transparent
+.Dv PT_ATTACH
+.Pq Va debug.ptrace_attach_transparent
+stops a thread where it sleeps only in a wait that catches signals (an
+object minted
+.Dv DQ_PF_INTR ,
+a queue with
+.Dv DQ_QF_INTR ,
+a lock wait): the wait keeps its operation, the controller sees no
+INTERRUPT, and the call returns the answer after the detach.
+The other waits defer stops, as a disk wait does, so the stop completes
+when they end; the signal mask plays no part in it.
+A traced process stays stopped with a
+.Dv SIGKILL
+pending until the debugger continues or detaches it; a received
+mutation's wait that the
+.Dv SIGKILL
+wakes ends with
+.Er EINTR ,
+and the thread stops at the user boundary until then.
+The wait is event-driven, with no polling: it sleeps with every signal
+but
+.Dv SIGKILL
+blocked and stops deferred, as a
+.Xr fusefs 4
+wait does, so a storm of signals costs it nothing, and each of the ends
+above wakes it.
+While it waits, the thread's signal mask shows every signal but
+.Dv SIGKILL
+blocked
+.Po
+.Xr procstat 1
+.Fl i ,
+.Dv PT_LWPINFO Ns 's
+.Va pl_sigmask
+.Pc ;
+the program's own mask is back when the call returns.
+Its only timeout is the deadline.
+A deadline of 0 is then a hard mount: only the answer,
+.Dv SIGKILL
+or an exit ends the wait.
+.It interruptible
+An object minted or set with
+.Dv DQ_PF_INTR
+in
+.Va dp_flags ,
+and a queue's lookups after
+.Dv DQ_IOC_QUEUE_FLAGS
+set
+.Dv DQ_QF_INTR ,
+wait as an NFS
+.Cm intr
+mount: a caught signal ends the wait with
+.Er EINTR
+(a lookup's first consultation with the restart described in
+.Sx Attachment and resolution ) .
+A lock wait
+.Pq Dv DQ_OP_LOCK
+is always interruptible, as
+.Fn lf_advlock Ns 's
+sleep is.
+.It fault
+A page fault's wait catches no signal and is bounded by the page
+deadline; it ends as an uninterruptible wait does, and with
+.Dv SIGBUS
+at the deadline
+.Pq see Sx Pages .
+.El
+.Pp
+However it ends, an unanswered event is abandoned (design 8.2): one the
+controller has not yet read is withdrawn silently; one already delivered
+is marked interrupted and a
 .Dv DQ_OP_INTERRUPT
 record names it, so a deadline that expires after delivery posts the same
 record a signal does
-.Pq Va ds_interrupts counts the signal case .
-.Dv SIGKILL
-always breaks a wait.
+.Pq Va ds_interrupts counts the other cases .
 When a reply and a signal race, the state decides: a reply that landed
 first is consumed and no interruption is recorded.
 .Pp
@@ -783,7 +986,7 @@ wait has no deadline, whatever the policy says: a blocked
 is a legitimate wait of any length on a real file.
 Lock waits are counted apart from the in-flight bounds (a blocked locker
 never holds a slot readers and writers need) and bounded by the queue
-depth alone; a signal ends one as any other wait, with
+depth alone; a signal ends one, with
 .Dv DQ_OP_INTERRUPT .
 .Dv DQ_OP_UNLOCK_ALL ,
 .Dv DQ_OP_CLOSE
@@ -829,6 +1032,24 @@ name
 .Va dq_pc_names Bq Ar i
 (a dense index of the sparse constants, shared with userland under
 .Dv DQ_WANT_PC_NAMES ) .
+.Xr fstat 2
+of a served file and
+.Xr stat 2
+of a name answered
+.Dv DQ_RESOLVE_ATTR
+present
+.Va di_gen
+as
+.Va st_gen
+only to a credential with
+.Dv PRIV_VFS_GENERATION ,
+and 0 to any other, as a vnode's
+.Fn vn_stat
+does; both go through one routine, as
+.Xr fpathconf 2
+and
+.Xr pathconf 2
+do.
 .Dv DQ_IOC_MINT
 and
 .Dv DQ_IOC_SETIDENT
@@ -951,8 +1172,14 @@ at least
 .Va dp_events
 a subset of
 .Dv DQ_EVENTS_GETATTR | DQ_EVENTS_CLOSE ;
-.Va dp_pad0
-zero.
+.Va dp_flags
+.Pq formerly Va dp_pad0
+no bit but
+.Dv DQ_PF_INTR
+.Pq see Sx Waiting, deadlines and interruption
+and
+.Dv DQ_PF_NO_STAMP
+.Pq see Sx Post-operation attributes .
 Anything else is
 .Er EINVAL
 with
@@ -1087,6 +1314,20 @@ Lower the depth to 1..
 .Va kern.dq.queue_depth ;
 .Er EINVAL
 otherwise.
+Posts waiting for a slot look again at a raised depth.
+.It Dv DQ_IOC_QUEUE_FLAGS Vt "struct dq_queue_flags"
+Set
+.Va dqf_set
+and clear
+.Va dqf_clear
+(disjoint) among the queue's flags, and return the flags from before in
+.Va dqf_old ;
+.Er EINVAL
+for an unknown bit, overlapping masks or a nonzero
+.Va dqf_pad0 .
+.Dv DQ_QF_INTR :
+the attached processes' own lookups end on a signal
+.Pq Sx Waiting, deadlines and interruption .
 .It Dv DQ_IOC_PUSH Vt "struct dq_push_args"
 With
 .Va dp_op
@@ -1244,17 +1485,28 @@ or
 .Va ds2_resolve_exdev
 (two-path operations with a served and a real start, and
 .Xr fhlink 2
-into a served directory, refused with no event) and
+into a served directory, refused with no event),
 .Va ds2_readdirs
 .Pq Dv DQ_OP_READDIR No events ;
+.Va ds2_full_waits
+(waited posts that waited for a slot of a full queue, once per post);
 .Va ds2_standing_pass
 and
 .Va ds2_standing_deny
 (lookups a standing rule decided with no event, see
 .Sx Standing rules ) .
+Two words are reserved for counters planned
+.Pq Va ds2_reserved_abi , ds2_reserved_notes ,
+and the struct ends in
+.Dv DQ_STATS2_RESERVED
+reserved words (one 64-byte line); all read 0.
+A new counter takes a reserved word, so the size stays until the line is
+used up; then the struct grows by another line and the command word of
+.Dv DQ_IOC_GET_STATS2 ,
+which encodes the size, changes.
 The kernel writes
 .Va ds2_size
-.Pq 320 .
+.Pq 400 .
 Also answered by an observer descriptor.
 .El
 .Pp
@@ -1523,20 +1775,139 @@ and
 .Dv SIGXFSZ ;
 for an append the limit is measured at the presented size, the best the
 kernel knows before the controller names its end of file.
-A failure after some chunks were accepted returns the error and the count
-is lost, except for
-.Er EINTR ,
-.Er ERESTART
-and
-.Er EWOULDBLOCK ,
-which make it a short write of the accepted bytes, as
-.Fn dofilewrite
-does.
+A failure after some chunks were accepted (the controller's errno, a
+deadline, a revoke, the signal of an interruptible object) ends the call
+with the short count of the accepted bytes and drops the error, as ZFS
+does (D194); the offset and the size already follow those bytes.
+.Er EFAULT ,
+a later chunk that cannot be copied from the caller's buffer, is kept,
+as ZFS keeps it.
 No rollback of accepted chunks is possible: a failing chunk does not undo
 the earlier ones (a vnode's all-or-nothing
 .Dv IO_UNIT
 is a property of each filesystem, and a served file has none); a declared
 difference.
+.Ss Post-operation attributes
+A successful reply to a
+.Dv DQ_OP_WRITE ,
+.Dv DQ_OP_FALLOCATE
+or
+.Dv DQ_OP_FSPACECTL ,
+or to a
+.Dv DQ_OP_READ ,
+may carry what the backing file says after the operation, as an NFS
+server returns its post-operation attributes: with
+.Dv DQ_REPLY_F_POSTOP
+in
+.Va dr_flags ,
+the last 72 bytes of the reply are a
+.Bd -literal -offset indent
+struct dq_postop_attr {
+	uint32_t	dpa_valid;	/* DQ_PA_* */
+	uint32_t	dpa_pad;	/* 0 */
+	uint64_t	dpa_size;
+	struct dq_timespec dpa_mtime;
+	struct dq_timespec dpa_ctime;
+	struct dq_timespec dpa_atime;
+	uint64_t	dpa_blocks;
+};
+.Ed
+.Pp
+and the fields
+.Va dpa_valid
+names
+.Pq Dv DQ_PA_SIZE , DQ_PA_MTIME , DQ_PA_CTIME , DQ_PA_BLOCKS , DQ_PA_ATIME
+become the presented identity's.
+A read's block names
+.Dv DQ_PA_ATIME
+only.
+The flag on a failed reply, a reply shorter than the block, an
+asynchronous operation, a lookup or any other operation is
+.Er EINVAL
+with the event left in flight.
+The size is a lower bound: a block whose size is below what the
+operation itself proves (the end of the bytes a write took, the end of an
+allocated range) is ignored, as is one with an unknown bit, a nonzero
+.Va dpa_pad ,
+a size above
+.Dv OFF_MAX
+or a time whose nanoseconds are out of range; an ignored block is
+counted in the system-wide
+.Va kern.dq.postop_ignored
+(see
+.Sx SYSCTL VARIABLES )
+and fires
+.Li dq:::postop-attr
+with
+.Er EINVAL ,
+and is never an error to the requester: the operation has happened in
+the backing file, and failing it would make the program repeat it.
+A larger size is applied: the backing file may have grown by another
+writer.
+.Pp
+Requesters apply their replies' blocks in the order they wake, not the
+order the controller answered, so a block can be older than what another
+writer's reply has already presented.
+The kernel numbers the replies to an object's events in the order the
+replies reach the kernel (the order of the controller's
+.Dv DQ_IOC_REPLY
+calls), and each presented attribute (the size, the
+block count, and each time) remembers the number of the reply it was last
+set from: a block's value is applied only when its reply is newer.
+An older block never takes the size or a time back, and a newer one
+replaces what is presented, smaller or older included: the size after
+another party truncated the backing file, the modification time of a write
+after
+.Xr futimens 2
+set it in the future.
+The size a write or an allocation proves, the kernel's stamps and a
+.Dv DQ_OP_SETATTR
+the kernel applies follow the same rule with their own reply's number;
+.Dv DQ_IOC_SETIDENT
+sets every attribute as of the newest reply so far; a
+.Dv DQ_OP_GETATTR
+answer applies its size, block count and times by its own reply's
+number, like a block.
+The end a write or an allocation proves is a floor that the size of an
+older reply cannot go below.
+A
+.Dv DQ_OP_FSPACECTL
+block sets no size, whatever it names: a deallocation changes none.
+The pages of a mapping follow the presented size as it is when they are
+resized, never a size an earlier operation saw.
+A controller that answers from several threads and also sends
+.Dv DQ_IOC_SETIDENT
+after its writes must not send an identity older than a reply it has
+already sent.
+.Pp
+With no block, or an ignored one, the kernel stamps the times as a local
+file system does: a write that took bytes, an allocation, a deallocation
+and a change of the size set
+.Va di_mtime
+and
+.Va di_ctime
+to
+.Fn vfs_timestamp ;
+a read that asked for bytes and succeeded, from the queue or from the
+cached pages and at the end of the file too, sets
+.Va di_atime
+unless the presented file system is
+.Dv MNT_NOATIME
+or
+.Dv MNT_RDONLY ,
+as
+.Fn ffs_read
+and
+.Fn zfs_read
+do.
+A controller that keeps the times itself (by
+.Dv DQ_IOC_SETIDENT ,
+.Dv DQ_OP_GETATTR
+answers or its blocks) sets
+.Dv DQ_PF_NO_STAMP
+in
+.Va dp_flags ,
+and the kernel stamps nothing.
 .Ss Attributes
 .Xr fchmod 2 ,
 .Xr fchown 2 ,
@@ -1753,7 +2124,9 @@ locked costs its closes nothing.
 .Dv FIOSEEKDATA
 and
 .Dv FIOSEEKHOLE
-are answered locally from the identity, and
+are answered locally from the identity
+.Pq Er ENOTTY No for a directory ,
+and
 .Dv FIOBMAP2
 is
 .Er EOPNOTSUPP .
@@ -1870,10 +2243,20 @@ before stage 3; declared), while
 .Dv FREAD
 and the MAC mmap check still apply.
 .Xr procstat 1
-.Fl v
-and
+.Fl v ,
 .Xr kinfo_getvmmap 3
-show a vnode mapping with the presented path, size and file id; a mapping
+and the
+.Pa maps
+file of
+.Xr linprocfs 4
+show a vnode mapping with the presented size and file id and the
+presented path, against the reader as
+.Dv F_KINFO
+presents it
+.Pq see Sx Served working directory and root :
+relative to the reader's served root of the same queue, the raw
+.Va di_path
+for any other reader; a mapping
 holds the open file, so a mapping that outlives the descriptor delays
 the last close (and with it the release of
 .Xr flock 2
@@ -2441,7 +2824,14 @@ A missed deadline fails the lookup with
 .Er EIO
 and posts
 .Dv DQ_OP_INTERRUPT .
-A caught signal ends the wait: during the first consultation of a system
+A lookup's wait is uninterruptible unless the queue has
+.Dv DQ_QF_INTR
+.Pq Sx Waiting, deadlines and interruption ;
+a kernel consumer's and the kernel's own consultations never end on a
+signal.
+With
+.Dv DQ_QF_INTR
+a caught signal ends the wait: during the first consultation of a system
 call's path the call restarts
 .Pq Dv SA_RESTART
 and posts again, the abandoned event named by an INTERRUPT; any other
@@ -2454,9 +2844,8 @@ fails with
 instead (a restarted rename could report a rename that did not happen).
 A restart copies the path in again: if the bytes changed, the new bytes
 are posted, never the old answer reused.
-A queue at its depth fails the lookup with
-.Er EIO
-at once and counts a drop.
+A queue at its depth makes the lookup wait for a slot, within its
+deadline.
 .Pp
 .Sy Failing closed .
 When the controller's queue dies, every waiting lookup and every later
@@ -2969,14 +3358,46 @@ struct dq_resolve_swap {
 .Ed
 .Pp
 The reply takes the file out of the controller's descriptor table by
-number while it validates; the descriptor itself stays open and the
-controller closes it once the reply has returned 0.
+number while it validates, and once the file is admitted closes the
+controller's descriptor: after a reply that returned 0 or
+.Er ECANCELED
+the number is no longer the controller's, and the controller must not
+close it (the number may already name another file).
+The reply's three outcomes:
+.Bl -tag -width "ECANCELED"
+.It 0
+The requester received the file.
+.It Bq Er ECANCELED
+The file was admitted and the descriptor closed, but the requester left
+before the installation; the file was dropped.
+Only a swap answers it.
+.It any other error
+The descriptor is still the controller's, as listed below.
+.El
 The kernel resolves no name for a swap and creates nothing: which object
 the requester gets, and whether it exists, is the controller's own
 .Xr open 2 .
 .Pp
 The supplied open file must present as what the requester's open would
-have produced.
+have produced, and carry no state of its own that the requester's open
+would not have (see
+.Er EFTYPE
+below).
+An
+.Dv O_CREAT | O_EXCL
+request with
+.Dv O_SHLOCK
+or
+.Dv O_EXLOCK
+is the exception: the controller takes the
+.Xr flock 2
+lock on the file it creates before it answers, so that no other opener
+can come between the creation and the lock; the completion then takes the
+requester's lock without waiting, and a lock it cannot take at once (an
+upgrade a third opener blocks) ends the open with
+.Er EIO ,
+counted in
+.Va ds2_bad_replies .
 A refusal is the reply's error; the descriptor stays open and, except for
 .Er ESRCH ,
 the event stays in flight and nothing is consumed (a
@@ -3013,7 +3434,28 @@ inherited by or passed to another process, is in use by another thread of
 the controller, or was already swapped and not closed.
 The last two can be transient.
 .It Bq Er EFTYPE
-The file's access mode
+The request's path ends in a slash and the file is not a directory; the
+file's offset is not 0; the file holds an OFD lock; the file holds a
+.Xr flock 2
+lock and the request has neither
+.Dv O_SHLOCK
+nor
+.Dv O_EXLOCK ;
+the request is an
+.Dv O_CREAT | O_EXCL
+open with
+.Dv O_SHLOCK
+or
+.Dv O_EXLOCK
+and the file holds no
+.Xr flock 2
+lock; the controller's descriptor has a locked close-on-exec or
+close-on-fork state
+.Pq Xr fcntl 2 ,
+.Dv O_RESOLVE_BENEATH
+set on it, or mmap or lookups restricted to capability mode
+.Pq Xr cap_mmap_capmode 2 ;
+or the file's access mode
 .Pq read, write, execute or search, Dv O_PATH
 or one of the status flags
 .Dv O_APPEND , O_NONBLOCK , O_SYNC , O_DSYNC , O_DIRECT , O_ASYNC
@@ -3036,10 +3478,7 @@ The reply is not 40 bytes, a spare word or an unknown flag is set, or
 answers a request without
 .Dv O_CREAT .
 .It Bq Er ESRCH
-The requester is no longer waiting.
-When it left while the kernel was taking the file, a
-.Dv CAP_XFER_ONCE
-entry has been consumed.
+The requester is no longer waiting, and the file was not taken.
 .El
 .Pp
 Flags:
@@ -3155,7 +3594,9 @@ Hold no descriptor from before that you will hand over.
 Open the file afresh for each answer, with the request's access mode and
 status flags and with
 .Dv O_CLOFORK ,
-and close the descriptor after the reply succeeds.
+and do not close the descriptor after a reply that returned 0 or
+.Er ECANCELED :
+the kernel has closed it.
 The requester is then the only holder: the offset, the status flags and
 any
 .Xr flock 2
@@ -3446,12 +3887,34 @@ is
 and
 .Xr sendfile 2
 are
-.Er EINVAL ,
+.Er EINVAL
+.Po
+.Xr mmap 2
+after its protection checks, as
+.Fn vn_mmap
+makes them:
+.Er EACCES
+for a shared writable mapping of a read-only descriptor comes first
+.Pc ,
 .Dv SEEK_DATA
 and
 .Dv SEEK_HOLE
 are
 .Er EINVAL ,
+.Dv FIOSEEKDATA ,
+.Dv FIOSEEKHOLE
+and
+.Xr fcntl 2
+.Dv F_READAHEAD
+are
+.Er ENOTTY
+(the generic layer's answers; a file system answering
+.Dv FIOSEEKDATA
+itself may differ, ufs answers
+.Er EINVAL ) ,
+.Xr posix_fadvise 2
+is
+.Er ENODEV ,
 and
 .Dv F_KINFO
 and
@@ -3730,7 +4193,10 @@ It takes
 .Dv DQ_RESOLVE_PASS ,
 .Dv DQ_RESOLVE_REAL ,
 the operation's served kinds or an errno; a signal while waiting is
-.Er EINTR .
+.Er EINTR
+under
+.Dv DQ_QF_INTR
+and otherwise ends nothing.
 Paths consulted ahead, second paths, the kernel's own lookups, exempt
 regions and capability-restricted lookups
 .Pq Dv O_RESOLVE_BENEATH , RINROOT , No capability mode
@@ -3767,16 +4233,18 @@ by
 .Xr fchdir 2
 or
 .Xr fchroot 2
-of a served directory, which for an unattached process (the controller
-included) is
+of a served directory, which for a served descriptor of another kind is
+.Er ENOTDIR
+first, whoever holds it and whatever its state (as
+.Xr fchdir 2
+of a regular file is, before any other check), then for an unattached
+process (the controller included)
 .Er EACCES
 and for one attached to another queue
 .Er EDEADLK ,
 opened with
 .Dv O_RESOLVE_BENEATH
 .Er ENOTCAPABLE ,
-of another kind
-.Er ENOTDIR ,
 and once revoked
 .Er EIO ;
 and by
@@ -4006,6 +4474,47 @@ under a served root, are
 .Er ENOENT ;
 a buffer too short is
 .Er ERANGE .
+A real object (a file opened through
+.Dv DQ_RESOLVE_PASS
+or
+.Dv DQ_RESOLVE_REAL ,
+a substitute, an inherited descriptor; the reader's own or another
+process's) shows no path to a reader whose root is served either: an
+empty
+.Va kf_path
+in
+.Dv F_KINFO
+and
+.Dv KERN_PROC_FILEDESC ,
+an empty
+.Va kve_path
+in
+.Dv KERN_PROC_VMMAP
+and no name in
+.Xr linprocfs 4 Ns 's
+.Pa maps ,
+.Er ENOENT
+from
+.Xr readlink 2
+of its
+.Xr fdescfs 4
+link and of a
+.Xr linprocfs 4
+.Pa fd/ Ns Ar N
+link, and
+.Dq unknown
+from a
+.Xr linprocfs 4
+.Pa cwd
+or
+.Pa root
+link of a real directory, as when
+.Fn vn_fullpath
+fails; the path it has is the controller's, not the program's (declared;
+owner question Q1, whose other answer would present one under the root
+relative to it).
+Every other reader sees the vnode's path as before, and an unattached
+reader pays one test of its own process for it.
 With a real root,
 .Va di_path
 is shown as given: it must then be a real-namespace path, an obligation
@@ -4293,6 +4802,12 @@ As a read-only real file: private and shared read mappings, a private
 writable one; a shared writable one is
 .Er EACCES
 .Pq see Sx Pages .
+.It Xr fexecve 2
+.Er EACCES ,
+as for a file the caller may not execute: a served file has no image to
+execute before stage 3 (declared).
+The generic answer for a descriptor without a vnode would be
+.Er EINVAL .
 .It Xr aio_read 2 , Xr aio_write 2 , Xr aio_fsync 2
 refused unless
 .Va vfs.aio.enable_unsafe
@@ -4517,6 +5032,11 @@ and the depth of observers.
 Unanswered events per object before requesters wait for a slot (64).
 .It Va max_inflight_per_requester
 Unanswered events per requester, keyed by nonce or pid (256).
+.It Va postop_ignored
+Read-only: post-operation attribute blocks ignored since boot, by every
+queue; the
+.Li dq:::postop-attr
+probe names the queue and the object of each.
 .It Va kernel_deadline_ms
 The longest a kernel-consumer or kernel-origin consultation (classes 2
 and 3) waits (5000); never 0.
@@ -4636,6 +5156,34 @@ on the console.
 On a kernel without the option, setting the tunable in
 .Xr loader.conf 5
 has no effect at all.
+.Pp
+A kernel built with
+.Bd -ragged -offset indent
+.Cd "options DQ_FAULT_INJECTION"
+.Ed
+.Pp
+is a test kernel in the same way, with the same requirements and the same
+publication refusal.
+It adds fault-injection variables that widen a window a test must hit;
+each holds a count, and the next that many times the kernel reaches its
+point it sleeps one second there, with no lock held:
+.Bl -tag -width "debug.dq.delay_postop_apply" -offset indent -compact
+.It Va debug.dq.delay_swap_take
+a
+.Dv DQ_RESOLVE_SWAP
+reply, after the take and before it looks for its event, so that the
+requester can leave and the reply answer
+.Er ECANCELED ;
+.It Va debug.dq.delay_postop_apply
+a requester woken with its reply, before it applies the reply's
+post-operation attributes.
+.El
+.Pp
+The older
+.Va debug.dq
+fault variables
+.Pq Va fail_vm_create , fail_link_closing , fail_bind_enfile , delay_reply_notify
+are still in every kernel; they move under the option later.
 .Sh DTRACE
 The
 .Nm
@@ -4664,6 +5212,29 @@ SDT provider fires:
 .It dq:::event-drop
 .Fa "struct dq_queue *" ,
 .Fa "int op"
+.It dq:::quota-wait
+.Fa "struct dq_queue *" ,
+.Fa "struct dq_event_k *" ,
+.Fa "int quota" ,
+.Fa "int errno"
+(a wait for an in-flight quota before a post ended, once per post:
+.Va quota
+1 the object's, 2 the requester's, the one waited on last;
+.Va errno
+0 when the post went on, else what ended it)
+.It dq:::wait-full
+.Fa "struct dq_queue *" ,
+.Fa "struct dq_event_k *" ,
+.Fa "int errno"
+(a waited post's wait for a slot of a full queue ended, once per post;
+.Va errno
+as for
+.Li quota-wait )
+.It dq:::wait-abandon
+.Fa "struct dq_queue *" ,
+.Fa "struct dq_event_k *"
+(a wait that catches no signal ended because the process is being
+killed, is exiting or is single-threaded for exit)
 .It dq:::reply-late
 .Fa "struct dq_queue *" ,
 .Fa "uint64_t id"
@@ -4690,6 +5261,32 @@ reply refused before the event was answered)
 .Fa "uint32_t rop" ,
 .Fa "uint32_t kind"
 (a re-consultation at a symbolic link and the kind it was answered)
+.It dq:::postop-attr
+.Fa "struct dq_object *" ,
+.Fa "uint32_t op" ,
+.Fa "uint32_t valid" ,
+.Fa "int errno"
+(a reply's post-operation attributes applied, or ignored with
+.Er EINVAL )
+.It dq:::fop-local
+.Fa "struct file *" ,
+.Fa "int op" ,
+.Fa "int errno"
+(a file operation answered from the identity or the descriptor with no
+event:
+.Va op
+is 1
+.Xr ioctl 2 ,
+2
+.Xr fcntl 2 ,
+3
+.Xr posix_fadvise 2 ,
+4
+.Xr lseek 2 ,
+5
+.Xr fpathconf 2 ,
+6
+.Xr fstatfs 2 )
 .It dq:::standing-match
 .Fa "struct dq_queue *" ,
 .Fa "uint32_t rop" ,
@@ -4712,6 +5309,49 @@ component)
 .Fa "uint32_t nrules"
 (the rules changed: 1 ADD, 2 DEL, 3 FLUSH, 4 the queue's death with
 rules; the rule's id or 0, the rules left)
+.El
+.Pp
+The kernel core's half of the queue, which runs for attached processes
+only, fires the
+.Li dqres
+provider:
+.Bl -tag -width "dqres:::subst-consume" -offset indent -compact
+.It dqres:::namei-served
+.Fa "uint32_t op" ,
+.Fa "uint32_t kind" ,
+.Fa "int errno"
+(a lookup from a served start returned: the
+.Dv DQ_ROP_*
+operation, the answer's
+.Dv DQ_RESOLVE_*
+kind, 0 when there was none, and the errno)
+.It dqres:::subst-refuse
+.Fa "uint32_t op" ,
+.Fa "int reason" ,
+.Fa "int errno"
+(a substitute refused: at the take, the reply's errno; at the
+requester's completion, the requester's.
+.Va reason
+is 23 an offset, 24 an unrequested
+.Xr flock 2
+lock, 25 an OFD lock, 26 an exclusive locked creation whose lock is not
+held or cannot be taken, 27 a descriptor entry with states of its own,
+28 a trailing slash)
+.It dqres:::subst-install
+.Fa "uint32_t op" ,
+.Fa "int fd"
+(the requester's new descriptor)
+.It dqres:::subst-consume
+.Fa "struct dq_queue *" ,
+.Fa "int fd"
+(the supervisor's descriptor closed at the take)
+.It dqres:::present
+.Fa "pid_t viewer" ,
+.Fa "int kind" ,
+.Fa "int errno"
+(a path presented to an attached viewer:
+.Va kind
+1 a served object's, 2 a real object's under a served root)
 .El
 .Pp
 Every reply also runs the

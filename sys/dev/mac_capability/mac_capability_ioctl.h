@@ -129,6 +129,15 @@ struct mac_capability_sendmsg_args {
  */
 #define	MAC_CAPABILITY_RECV_F_WAIT	0x00000004
 #define	MAC_CAPABILITY_RECV_WAIT_FOREVER	0xffffffffu
+/*
+ * Input, with RECV_F_WAIT: _reserved[0] (low 32 bits) and _reserved[1] (high)
+ * hold an absolute CLOCK_MONOTONIC deadline in nanoseconds instead of a
+ * relative wait.  A receive restarted after a signal (SA_RESTART) keeps that
+ * deadline rather than starting its budget again.  A deadline that has
+ * passed fails with ETIMEDOUT when no message is queued.  Kept in the 5BSD
+ * high block.
+ */
+#define	MAC_CAPABILITY_RECV_F_DEADLINE	0x80000000
 
 struct mac_capability_recvmsg_args {
 	void		*payload;
@@ -204,6 +213,14 @@ struct mac_capability_recvmsg_v3_args {
  * the high block, away from flags shared with other send paths.
  */
 #define	MAC_CAPABILITY_SEND_F_WAIT		0x80000000
+/*
+ * With SEND_F_WAIT: _reserved[0] (low 32 bits) and _reserved[1] (high) of the
+ * sendmsg arguments hold an absolute CLOCK_MONOTONIC deadline in
+ * nanoseconds; the wait for room fails with ETIMEDOUT once it passes (nothing
+ * sent), and a restart after a signal keeps it.  Without it the wait has no
+ * limit.  High block.
+ */
+#define	MAC_CAPABILITY_SEND_F_DEADLINE		0x40000000
 
 /* Per-descriptor spec flag: as SEND_F_LOCK_INHERIT, for this one. */
 #define	MAC_CAPABILITY_FD_SPEC_LOCK_INHERIT	0x00000001

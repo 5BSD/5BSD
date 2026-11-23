@@ -13,7 +13,8 @@
  *		"mcapsnd");
  *   'R' tid	a receive sleeping for a message (MAC_CAPABILITY_RECV_F_WAIT),
  *		only for a receive whose buffer is `recv_len` bytes, so a
- *		test can wait for one particular receive of several.
+ *		test can wait for one particular receive of several
+ *		(SLEEP_WATCH_ANY_LEN: every receive).
  *
  * Events of one thread come out in the order they happened, so a sleep
  * caused after the test acted (a restart after a signal) is the next event
@@ -37,6 +38,7 @@
 #include <dev/mac_capability/mac_capability_ioctl.h>
 
 #define	SLEEP_WATCH_PROG	"/usr/sbin/dtrace"
+#define	SLEEP_WATCH_ANY_LEN	0xffffffffu
 
 struct sleep_watch {
 	pid_t	pid;
@@ -68,7 +70,8 @@ sleep_watch_start(struct sleep_watch *w, unsigned recv_len)
 	    "sched:::sleep /pid == $1 &&\n"
 	    "    stringof(curthread->td_wmesg) == \"mcapsnd\"/ {\n"
 	    "	printf(\"S %%d\\n\", tid); }\n"
-	    "sched:::sleep /pid == $1 && $3 != 0 && self->rlen == $3 &&\n"
+	    "sched:::sleep /pid == $1 && $3 != 0 &&\n"
+	    "    ($3 == 0xffffffff || self->rlen == $3) &&\n"
 	    "    stringof(curthread->td_wmesg) == \"mac_capabilityrv\"/ {\n"
 	    "	printf(\"R %%d\\n\", tid); }\n",
 	    sizeof(void *));

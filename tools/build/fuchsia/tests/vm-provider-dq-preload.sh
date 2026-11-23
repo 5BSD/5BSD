@@ -25,7 +25,8 @@ done
 for s in "sys/mac_capability/authority_issuer_probe_test" \
     "sys/mac_capability/authority_test_issuer_anchor_test:anchor" \
     "sys/mac_capability/mac_capability_channel_test" "lib/libservice" \
-    "lib/libservice/service_ambient_test:full_route_signal_eintr"; do
+    "lib/libservice/service_ambient_test:full_route_signal_eintr" \
+    "lib/libservice/session_wait_test"; do
 	[ "$(loader "$s")" = 'dtraceall_load="YES"' ] ||
 	    { echo "FAIL: no dtraceall alone for \"$s\""; exit 1; }
 done
