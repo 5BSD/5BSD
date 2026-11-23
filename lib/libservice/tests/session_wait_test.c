@@ -16,6 +16,7 @@
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <sys/thr.h>
+#include <sys/time.h>
 #include <sys/wait.h>
 
 #include <dev/mac_capability/mac_capability_ioctl.h>
@@ -42,15 +43,56 @@
 /* ---- the mock provider ------------------------------------------------ */
 
 static void
-session_pair(struct service_session **sessionp, int *providerp)
+session_pair_dup(struct service_session **sessionp, int *providerp,
+    int *clientdupp)
 {
 	int pair[2];
 
 	if (mac_capability_channel_create(pair) == -1)
 		atf_tc_skip("mac_capability channels unavailable: %s",
 		    strerror(errno));
+	if (clientdupp != NULL)
+		ATF_REQUIRE((*clientdupp = dup(pair[0])) >= 0);
 	ATF_REQUIRE_EQ(0, service_session_create(pair[0], sessionp));
 	*providerp = pair[1];
+}
+
+static void
+session_pair(struct service_session **sessionp, int *providerp)
+{
+
+	session_pair_dup(sessionp, providerp, NULL);
+}
+
+/*
+ * Fill the session's channel toward the provider (which never reads) until
+ * the kernel says EAGAIN, through a duplicate of the session's descriptor.
+ */
+static void
+fill_queue(int clientdup)
+{
+	struct mac_capability_sendmsg_args send;
+	char byte = 0;
+	int n;
+
+	for (n = 0;; n++) {
+		memset(&send, 0, sizeof(send));
+		send.payload = &byte;
+		send.payload_len = sizeof(byte);
+		if (ioctl(clientdup, MAC_CAPABILITY_SENDMSG, &send) == -1)
+			break;
+	}
+	ATF_REQUIRE_EQ_MSG(EAGAIN, errno, "filling: %s", strerror(errno));
+	ATF_REQUIRE(n > 0);
+}
+
+static uint64_t
+now_ms(void)
+{
+	struct timespec ts;
+
+	ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &ts));
+	return ((uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000);
 }
 
 /* Receive one request: its first byte and its reply token. */
@@ -290,9 +332,14 @@ ATF_TC_BODY(deadline_is_one_sleep, tc)
 	int provider;
 	char reply = 0;
 
+	uint64_t start;
+
 	session_pair(&session, &provider);
 	sleep_count_start(&c);
+	start = now_ms();
 	ATF_CHECK_EQ(ETIMEDOUT, session_call(session, 'a', HOLD_MS, &reply));
+	ATF_CHECK_MSG(now_ms() - start >= HOLD_MS, "timed out after %ju ms",
+	    (uintmax_t)(now_ms() - start));
 	sleep_count_stop(&c);
 	rv = sleep_count_of(&c, self_tid(), "mac_capabilityrv");
 	ATF_CHECK_MSG(rv >= 1 && rv <= 2, "the caller slept %ld times "
@@ -691,6 +738,7 @@ ATF_TC_HEAD(close_wakes_receiver, tc)
 ATF_TC_BODY(close_wakes_receiver, tc)
 {
 	struct service_session *session;
+	struct sleep_count c;
 	struct sleep_watch watch;
 	struct two_calls w;
 	pthread_t t;
@@ -703,12 +751,165 @@ ATF_TC_BODY(close_wakes_receiver, tc)
 	t = w.thread;
 	(void)provider_receive(provider, &token);
 	sleep_watch_wait(&watch, 'R', w.tid);
-	/* Closing waits for the call, which only the close itself ends. */
+	sleep_count_start(&c);
+	/*
+	 * Closing waits for the call, which only the close itself ends: the
+	 * receiver wakes from its one sleep, with no sliced re-checks.
+	 */
 	service_session_close(session);
 	ATF_REQUIRE_EQ(0, pthread_join(t, NULL));
+	sleep_count_stop(&c);
+	ATF_CHECK_EQ_MSG(ECANCELED, w.error, "the call ended with %s",
+	    strerror(w.error));
+	ATF_CHECK_MSG(sleep_count_of(&c, w.tid, "mac_capabilityrv") == 0,
+	    "the receiver slept %ld more times before the close ended it",
+	    sleep_count_of(&c, w.tid, "mac_capabilityrv"));
+	sleep_watch_stop(&watch);
+	close(provider);
+}
+
+/* ---- the send waits for room only until the call's deadline ----------- */
+
+ATF_TC(send_waits_only_to_deadline);
+ATF_TC_HEAD(send_waits_only_to_deadline, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a call whose request finds the "
+	    "provider's queue full fails with ETIMEDOUT at its deadline, "
+	    "unsent");
+	atf_tc_set_md_var(tc, "timeout", "120");
+}
+ATF_TC_BODY(send_waits_only_to_deadline, tc)
+{
+	struct service_session *session;
+	uint64_t start;
+	int clientdup, provider;
+	char reply = 0;
+
+	session_pair_dup(&session, &provider, &clientdup);
+	fill_queue(clientdup);
+	start = now_ms();
+	ATF_CHECK_EQ(ETIMEDOUT, session_call(session, 'a', HOLD_MS, &reply));
+	ATF_CHECK_MSG(now_ms() - start >= HOLD_MS, "timed out after %ju ms",
+	    (uintmax_t)(now_ms() - start));
+	service_session_close(session);
+	close(clientdup);
+	close(provider);
+}
+
+/* ---- restarts after signals keep the call's deadline ------------------ */
+
+static atomic_int alarms;
+
+static void
+count_alarm(int signo __unused)
+{
+
+	atomic_fetch_add(&alarms, 1);
+}
+
+ATF_TC(restart_keeps_deadline);
+ATF_TC_HEAD(restart_keeps_deadline, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "signals with SA_RESTART arriving "
+	    "more often than the call's timeout restart its wait without "
+	    "restarting its deadline: the call still times out");
+	atf_tc_set_md_var(tc, "timeout", "120");
+}
+ATF_TC_BODY(restart_keeps_deadline, tc)
+{
+	struct service_session *session;
+	struct itimerval every = { .it_interval = { 0, HOLD_MS * 200 },
+	    .it_value = { 0, HOLD_MS * 200 } };	/* HOLD_MS / 5, in us */
+	struct itimerval off = { { 0, 0 }, { 0, 0 } };
+	struct sigaction sa;
+	int provider;
+	char reply = 0;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = count_alarm;
+	sa.sa_flags = SA_RESTART;
+	sigemptyset(&sa.sa_mask);
+	ATF_REQUIRE_EQ(0, sigaction(SIGALRM, &sa, NULL));
+	session_pair(&session, &provider);
+	ATF_REQUIRE_EQ(0, setitimer(ITIMER_REAL, &every, NULL));
+	ATF_CHECK_EQ(ETIMEDOUT, session_call(session, 'a', HOLD_MS, &reply));
+	ATF_REQUIRE_EQ(0, setitimer(ITIMER_REAL, &off, NULL));
+	ATF_CHECK_MSG(atomic_load(&alarms) >= 2, "%d signals arrived",
+	    atomic_load(&alarms));
+	service_session_close(session);
+	close(provider);
+}
+
+/* ---- close wakes a sender asleep for room ----------------------------- */
+
+ATF_TC(close_wakes_sender);
+ATF_TC_HEAD(close_wakes_sender, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "closing a session ends a call asleep "
+	    "waiting for room to send with ECANCELED");
+	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "180");
+}
+ATF_TC_BODY(close_wakes_sender, tc)
+{
+	struct service_session *session;
+	struct sleep_watch watch;
+	struct two_calls w;
+	int clientdup, provider;
+
+	session_pair_dup(&session, &provider, &clientdup);
+	fill_queue(clientdup);
+	sleep_watch_start(&watch, 0);
+	two_calls_start(&w, session, 'a');
+	sleep_watch_wait(&watch, 'S', w.tid);
+	service_session_close(session);
+	ATF_REQUIRE_EQ(0, pthread_join(w.thread, NULL));
 	ATF_CHECK_EQ_MSG(ECANCELED, w.error, "the call ended with %s",
 	    strerror(w.error));
 	sleep_watch_stop(&watch);
+	close(clientdup);
+	close(provider);
+}
+
+/* ---- an event wait with a zero timeout does not wait ------------------ */
+
+ATF_TC(event_timeout_zero);
+ATF_TC_HEAD(event_timeout_zero, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "receive_event with a zero timeout "
+	    "and nothing queued answers ETIMEDOUT at once; an event sent "
+	    "after is then received");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(event_timeout_zero, tc)
+{
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct mac_capability_sendmsg_args send;
+	struct service_session *session;
+	struct service_reply event;
+	int provider;
+	char byte = 'e', got = 0;
+
+	session_pair(&session, &provider);
+	memset(&event, 0, sizeof(event));
+	event.size = sizeof(event);
+	event.data = &got;
+	event.capacity = 1;
+	options.timeout_ms = 0;
+	ATF_CHECK_EQ(-1, service_session_receive_event(session, &event,
+	    &options));
+	ATF_CHECK_EQ(ETIMEDOUT, errno);
+	memset(&send, 0, sizeof(send));
+	send.payload = &byte;
+	send.payload_len = sizeof(byte);
+	ATF_REQUIRE_EQ(0, ioctl(provider, MAC_CAPABILITY_SENDMSG, &send));
+	/* The event may still be on its way: wait for it, with no limit. */
+	options.timeout_ms = SERVICE_CLIENT_TIMEOUT_INFINITE;
+	ATF_CHECK_EQ(0, service_session_receive_event(session, &event,
+	    &options));
+	ATF_CHECK_EQ('e', got);
+	service_session_close(session);
 	close(provider);
 }
 
@@ -724,5 +925,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, signal_without_sa_restart_eintr);
 	ATF_TP_ADD_TC(tp, signal_spares_non_receiver);
 	ATF_TP_ADD_TC(tp, close_wakes_receiver);
+	ATF_TP_ADD_TC(tp, send_waits_only_to_deadline);
+	ATF_TP_ADD_TC(tp, restart_keeps_deadline);
+	ATF_TP_ADD_TC(tp, close_wakes_sender);
+	ATF_TP_ADD_TC(tp, event_timeout_zero);
 	return (atf_no_error());
 }
