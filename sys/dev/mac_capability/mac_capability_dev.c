@@ -207,7 +207,9 @@ mac_capability_probe_rights_change(struct mac_capability_instance *s, u_long cmd
 /*
  * An absolute CLOCK_MONOTONIC deadline in nanoseconds (RECV_F_DEADLINE,
  * SEND_F_DEADLINE) as an sbinuptime() deadline: both count from boot.  Zero
- * (or a time already past) still makes a sleep end at once.
+ * (or a time already past) still makes a sleep end at once.  A time beyond
+ * what sbintime_t can hold is the latest one it can (tstosbt() would wrap,
+ * from 2^31 s on, to a deadline in the past).
  */
 static sbintime_t
 mac_capability_abs_deadline(uint32_t low, uint32_t high)
@@ -219,7 +221,7 @@ mac_capability_abs_deadline(uint32_t low, uint32_t high)
 	ts.tv_sec = (time_t)(ns / 1000000000);
 	ts.tv_nsec = (long)(ns % 1000000000);
 	/* An absolute deadline of 0 would mean "none" to msleep_sbt(). */
-	return (ns == 0 ? 1 : tstosbt(ts));
+	return (ns == 0 ? 1 : tstosbt_sat(ts));
 }
 
 static int
