@@ -52,6 +52,7 @@ ATF_TESTS_C+=	dq_swap_test
 ATF_TESTS_C+=	dq_restricted_test
 ATF_TESTS_C+=	dq_standing_test
 ATF_TESTS_C+=	dq_ptrace_test
+ATF_TESTS_C+=	dq_execpin_test
 ATF_TESTS_SH+=	dq_dtrace_test
 ATF_TESTS_SH+=	dq_testopen_test
 ATF_TESTS_SH+=	dq_oracle_test
@@ -92,6 +93,8 @@ LIBADD.dq_socket_test+=	jail
 LIBADD.dq_restricted_test+=	jail
 # jail_setv(3) for the jail-root rule.
 LIBADD.dq_standing_test+=	jail
+# jail_setv(3) for P1.
+LIBADD.dq_execpin_test+=	jail
 
 # jail_setv(3) for the jailed rows; capability_service_connect(3) on a
 # device descriptor the caller did not open.
@@ -197,6 +200,12 @@ PROGS+=		dq_exec_helper
 SRCS.dq_exec_helper=	dq_exec_helper.c
 MAN.dq_exec_helper=
 BINDIR.dq_exec_helper=	${TESTSDIR}
+
+# dq_execpin_test's image.
+PROGS+=		dq_execpin_helper
+SRCS.dq_execpin_helper=	dq_execpin_helper.c
+MAN.dq_execpin_helper=
+BINDIR.dq_execpin_helper=	${TESTSDIR}
 
 # dq_owner_test's exec'd image.
 PROGS+=		dq_owner_helper

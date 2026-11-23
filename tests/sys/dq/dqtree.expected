@@ -29,8 +29,9 @@
 # "case  # by-design D###: reason".  dq_tree_suites_test counts the
 # differences each tag still owns.  Paths are relative to the tree.
 
-# A served directory: dq_fileops does not apply the vnode type rules of
-# vn_fadvise, vn_fcntl and vn_copy_file_range to DQ_KIND_DIR objects.
+# A served directory: dq_fileops has no copy_file_range, so the vnode
+# type rule of vn_copy_file_range does not apply to DQ_KIND_DIR objects
+# (fadvise and fcntl on one no longer differ: r-c6-tree).
 ^copy_file_range_test:directory[[:space:]]  # ux-1 D245: dq_fileops has no fo_copy_file_range, default EINVAL (vfs_syscalls.c), base EISDIR
 
 # copy_file_range(2) between served files: no fo_copy_file_range.
