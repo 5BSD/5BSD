@@ -1080,6 +1080,110 @@ ATF_TC_BODY(peer_death_ends_two_senders, tc)
 	close(clientdup);
 }
 
+/* ---- the provider goes away under a reply waiter and a sender --------- */
+
+/*
+ * Two threads learn of the provider's death from the kernel: the one asleep
+ * for its reply (the session's receiver) and the one asleep for room to
+ * send.  Which runs first is the scheduler's choice, so each case fixes it:
+ * one of the two is taken out of its sleep by a signal whose handler does
+ * not return until the other's call has ended.  The handler was installed
+ * with SA_RESTART, so the held thread then restarts its sleep and finds the
+ * peer gone, as if it had been woken second.
+ */
+static sem_t hold_entered, hold_release;
+
+static void
+hold_signal(int signo __unused)
+{
+	int saved;
+
+	saved = errno;
+	(void)sem_post(&hold_entered);
+	while (sem_wait(&hold_release) == -1 && errno == EINTR)
+		;
+	errno = saved;
+}
+
+static void
+peer_death_waiter_and_sender(bool sender_first)
+{
+	struct service_session *session;
+	struct sleep_watch watch;
+	struct two_calls waiter, sender, *first, *held;
+	struct sigaction sa;
+	int clientdup, provider;
+
+	ATF_REQUIRE_EQ(0, sem_init(&hold_entered, 0, 0));
+	ATF_REQUIRE_EQ(0, sem_init(&hold_release, 0, 0));
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = hold_signal;
+	sa.sa_flags = SA_RESTART;
+	sigemptyset(&sa.sa_mask);
+	ATF_REQUIRE_EQ(0, sigaction(SIGUSR1, &sa, NULL));
+
+	session_pair_dup(&session, &provider, &clientdup);
+	sleep_watch_start(&watch, SLEEP_WATCH_ANY_LEN);
+	/* The reply waiter's request is sent; it sleeps as the receiver. */
+	two_calls_start(&waiter, session, 'a');
+	sleep_watch_wait(&watch, 'R', waiter.tid);
+	/* The sender finds the queue full and sleeps for room. */
+	fill_queue(clientdup);
+	two_calls_start(&sender, session, 'c');
+	sleep_watch_wait(&watch, 'S', sender.tid);
+
+	first = sender_first ? &sender : &waiter;
+	held = sender_first ? &waiter : &sender;
+	ATF_REQUIRE_EQ(0, pthread_kill(held->thread, SIGUSR1));
+	while (sem_wait(&hold_entered) == -1 && errno == EINTR)
+		;
+	ATF_REQUIRE_EQ(0, close(provider));
+	ATF_REQUIRE_EQ(0, pthread_join(first->thread, NULL));
+	ATF_CHECK_EQ_MSG(ECONNRESET, first->error, "the %s, first to notice, "
+	    "ended with %s", sender_first ? "sender" : "reply waiter",
+	    strerror(first->error));
+	ATF_REQUIRE_EQ(0, sem_post(&hold_release));
+	ATF_REQUIRE_EQ(0, pthread_join(held->thread, NULL));
+	ATF_CHECK_EQ_MSG(ECONNRESET, held->error, "the %s, second to notice, "
+	    "ended with %s", sender_first ? "reply waiter" : "sender",
+	    strerror(held->error));
+	sleep_watch_stop(&watch);
+	service_session_close(session);
+	close(clientdup);
+}
+
+ATF_TC(peer_death_sender_notices_first);
+ATF_TC_HEAD(peer_death_sender_notices_first, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "when the provider goes away and the "
+	    "call asleep for room to send learns of it before the call "
+	    "asleep for its reply, both end with ECONNRESET");
+	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "180");
+}
+ATF_TC_BODY(peer_death_sender_notices_first, tc)
+{
+
+	peer_death_waiter_and_sender(true);
+}
+
+ATF_TC(peer_death_waiter_notices_first);
+ATF_TC_HEAD(peer_death_waiter_notices_first, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "when the provider goes away and the "
+	    "call asleep for its reply learns of it before the call asleep "
+	    "for room to send, both end with ECONNRESET");
+	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "180");
+}
+ATF_TC_BODY(peer_death_waiter_notices_first, tc)
+{
+
+	peer_death_waiter_and_sender(false);
+}
+
 /* ---- an event wait with a zero timeout does not wait ------------------ */
 
 ATF_TC(event_timeout_zero);
@@ -1137,6 +1241,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, restart_keeps_deadline);
 	ATF_TP_ADD_TC(tp, close_wakes_sender);
 	ATF_TP_ADD_TC(tp, peer_death_ends_two_senders);
+	ATF_TP_ADD_TC(tp, peer_death_sender_notices_first);
+	ATF_TP_ADD_TC(tp, peer_death_waiter_notices_first);
 	ATF_TP_ADD_TC(tp, event_timeout_zero);
 	return (atf_no_error());
 }
