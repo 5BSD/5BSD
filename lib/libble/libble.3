@@ -585,8 +585,8 @@ on a malformed hand-off,
 .Er EINTR
 when a signal whose handler was installed without
 .Dv SA_RESTART
-interrupted the attach (the request was cancelled; calling again is safe,
-see
+interrupted the attach (its reply is discarded and any descriptor it carried
+closed; calling again attaches anew, see
 .Xr service_runtime 3 ) .
 A reply must contain either a successful status with exactly one descriptor or
 a valid positive errno with no descriptor.

@@ -55,15 +55,16 @@ struct service_event {
  * completes the call it answers or queues the event, and broadcasts `wake`.
  * Every other waiter sleeps on `wake` until its own reply or event is there,
  * its deadline passes, or the receiver leaves (it takes over).  Senders take
- * channel_lock only to register a request and sleep in the kernel for queue
- * room under send_lock alone, so a sleeping receiver never delays them.
- * Lock order: channel_lock, then lock; send_lock is taken alone.
+ * channel_lock only to register a request, then sleep in the kernel for queue
+ * room with no lock (concurrent sends are the kernel's to order), so a
+ * sleeping receiver never delays them.  The kernel sleeps take the call's
+ * absolute deadline, which a restart after a signal keeps.
+ * Lock order: channel_lock, then lock.
  */
 struct service_client {
 	struct service_client	*registry_next;
 	pthread_mutex_t		 lock;
 	pthread_mutex_t		 channel_lock;
-	pthread_mutex_t		 send_lock;
 	pthread_cond_t		 idle;
 	pthread_cond_t		 wake;	/* (lock) a call, event or receiver changed */
 	struct channel		*channel;
@@ -138,11 +139,6 @@ client_atfork_prepare(void) __no_lock_analysis
 	(void)pthread_mutex_lock(&client_registry_lock);
 	for (client = client_registry; client != NULL;
 	    client = client->registry_next) {
-		/*
-		 * Not send_lock: a sender may sleep in the kernel holding it
-		 * for as long as the peer's queue stays full.  The child
-		 * re-creates it.
-		 */
 		(void)pthread_mutex_lock(&client->channel_lock);
 		(void)pthread_mutex_lock(&client->lock);
 	}
@@ -177,7 +173,6 @@ client_atfork_child(void) __no_lock_analysis
 		client->terminal_error = ECHILD;
 		client->owner = -1;
 		client->receiving = false;
-		(void)pthread_mutex_init(&client->send_lock, NULL);
 		(void)pthread_mutex_unlock(&client->lock);
 		(void)pthread_mutex_unlock(&client->channel_lock);
 	}
@@ -224,23 +219,13 @@ deadline_expired(const struct timespec *deadline, uint32_t timeout_ms)
 	    now.tv_nsec >= deadline->tv_nsec));
 }
 
-/* What is left of the call's deadline, for the kernel: -1 none, 0 passed. */
-static int
-remaining_ms(const struct timespec *deadline, uint32_t timeout_ms)
+/* The call's deadline for a kernel sleep: NULL when the call has none. */
+static const struct timespec *
+kernel_deadline(const struct timespec *deadline, uint32_t timeout_ms)
 {
-	struct timespec now;
-	int64_t nanoseconds, milliseconds;
 
-	if (timeout_ms == SERVICE_CLIENT_TIMEOUT_INFINITE)
-		return (-1);
-	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
-		return (0);
-	nanoseconds = (deadline->tv_sec - now.tv_sec) * INT64_C(1000000000) +
-	    deadline->tv_nsec - now.tv_nsec;
-	if (nanoseconds <= 0)
-		return (0);
-	milliseconds = (nanoseconds + INT64_C(999999)) / INT64_C(1000000);
-	return (milliseconds > INT_MAX ? INT_MAX : (int)milliseconds);
+	return (timeout_ms == SERVICE_CLIENT_TIMEOUT_INFINITE ? NULL :
+	    deadline);
 }
 
 /* Every timed condition wait uses the session deadline's clock. */
@@ -390,9 +375,34 @@ static void
 terminate_channel(struct service_client *client)
 {
 
+	/* Allowed (checked at creation); a channel already dead needs none. */
 	if (client->channel != NULL)
 		(void)ioctl(channel_fd(client->channel),
 		    MAC_CAPABILITY_TERMINATE, NULL);
+}
+
+/* Whether the descriptor's ioctl rights include MAC_CAPABILITY_TERMINATE. */
+static bool
+terminate_allowed(int fd)
+{
+	unsigned long *cmds;
+	ssize_t i, n;
+	bool allowed;
+
+	n = cap_ioctls_get(fd, NULL, 0);
+	if (n == CAP_IOCTLS_ALL || (n == -1 && errno == ENOSYS))
+		return (true);
+	if (n <= 0)
+		return (false);
+	cmds = calloc((size_t)n, sizeof(*cmds));
+	if (cmds == NULL)
+		return (false);
+	allowed = false;
+	if (cap_ioctls_get(fd, cmds, (size_t)n) == n)
+		for (i = 0; i < n && !allowed; i++)
+			allowed = cmds[i] == MAC_CAPABILITY_TERMINATE;
+	free(cmds);
+	return (allowed);
 }
 
 static void
@@ -431,7 +441,7 @@ receive_once(struct service_client *client, const struct timespec *deadline,
 	client->receiving = true;
 	(void)pthread_mutex_unlock(&client->lock);
 	ready = channel_receive_wait(client->channel,
-	    remaining_ms(deadline, timeout_ms));
+	    kernel_deadline(deadline, timeout_ms));
 	error = ready == -1 ? errno : 0;
 	if (ready == 1) {
 		if (lock_mutex(&client->channel_lock) == 0) {
@@ -478,6 +488,16 @@ service_client_create_internal(int fd, struct service_client **clientp)
 		errno = error;
 		return (-1);
 	}
+	/*
+	 * Closing or failing the session wakes a thread asleep in the kernel
+	 * on it by terminating the channel: a descriptor whose ioctls are
+	 * limited without MAC_CAPABILITY_TERMINATE could leave it asleep.
+	 */
+	if (!terminate_allowed(fd)) {
+		(void)close(fd);
+		errno = ENOTCAPABLE;
+		return (-1);
+	}
 	client = calloc(1, sizeof(*client));
 	if (client == NULL) {
 		(void)close(fd);
@@ -499,13 +519,9 @@ service_client_create_internal(int fd, struct service_client **clientp)
 		initialized = 3;
 		error = monotonic_cond_init(&client->wake);
 	}
-	if (error == 0) {
-		initialized = 4;
-		error = pthread_mutex_init(&client->send_lock, NULL);
-	}
 	if (error != 0)
 		goto fail;
-	initialized = 5;
+	initialized = 4;
 	if (channel_create(fd, &options, &client->channel) == -1) {
 		error = errno;
 		goto fail;
@@ -530,8 +546,6 @@ service_client_create_internal(int fd, struct service_client **clientp)
 fail:
 	if (!channel_owns_fd)
 		(void)close(fd);
-	if (initialized >= 5)
-		(void)pthread_mutex_destroy(&client->send_lock);
 	if (initialized >= 4)
 		(void)pthread_cond_destroy(&client->wake);
 	if (initialized >= 3)
@@ -563,6 +577,7 @@ service_client_call_internal(struct service_client *client,
 	struct channel_request *request;
 	struct service_call call;
 	struct timespec deadline;
+	uint64_t token;
 	size_t i;
 	ssize_t result;
 	int cancel_state, error, sent;
@@ -620,25 +635,32 @@ service_client_call_internal(struct service_client *client,
 		goto fail_active;
 	}
 	if (channel_request_start(client->channel, &outgoing, service_reply,
-	    &call, &request) == -1) {
+	    &call, &request, &token) == -1) {
 		error = errno;
 		(void)pthread_mutex_unlock(&client->channel_lock);
 		goto fail_active;
 	}
 	(void)pthread_mutex_unlock(&client->channel_lock);
-	if (lock_mutex(&client->send_lock) == -1) {
-		error = errno;
-		sent = -1;
-	} else {
-		sent = channel_request_send_wait(client->channel, request,
-		    &outgoing);
-		error = sent == -1 ? errno : 0;
-		(void)pthread_mutex_unlock(&client->send_lock);
-	}
+	/* The request may complete (the channel failing) during the send. */
+	sent = channel_request_send_wait(client->channel, token, &outgoing,
+	    kernel_deadline(&deadline, timeout_ms));
+	error = sent == -1 ? errno : 0;
 	if (sent == -1) {
-		/* Not sent: no reply can come; forget the request. */
+		/*
+		 * Not sent: no reply can come.  Forget the request unless the
+		 * channel's failure completed it meanwhile (completion only
+		 * happens under channel_lock); then it is done and freed.
+		 */
 		if (lock_mutex(&client->channel_lock) == 0) {
-			channel_request_unsend(request, error);
+			if (lock_mutex(&client->lock) == 0) {
+				if (!call.done) {
+					(void)pthread_mutex_unlock(
+					    &client->lock);
+					channel_request_unsend(request, error);
+				} else
+					(void)pthread_mutex_unlock(
+					    &client->lock);
+			}
 			(void)pthread_mutex_unlock(&client->channel_lock);
 		}
 		/* A peer that is gone reads as on receive (ECONNRESET). */
@@ -886,7 +908,6 @@ service_client_close_internal(struct service_client *client)
 		service_event_list_free(client);
 		(void)pthread_cond_destroy(&client->wake);
 		(void)pthread_cond_destroy(&client->idle);
-		(void)pthread_mutex_destroy(&client->send_lock);
 		(void)pthread_mutex_destroy(&client->channel_lock);
 		(void)pthread_mutex_destroy(&client->lock);
 		free(client);
@@ -925,7 +946,6 @@ service_client_close_internal(struct service_client *client)
 	(void)pthread_mutex_unlock(&client_registry_lock);
 	error = pthread_cond_destroy(&client->idle);
 	(void)pthread_cond_destroy(&client->wake);
-	(void)pthread_mutex_destroy(&client->send_lock);
 	(void)pthread_mutex_destroy(&client->channel_lock);
 	(void)pthread_mutex_destroy(&client->lock);
 	free(client);

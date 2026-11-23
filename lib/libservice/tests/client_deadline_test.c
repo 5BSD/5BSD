@@ -65,31 +65,20 @@ ATF_TC_BODY(deadline_not_restarted, tc)
 	(void)tc;
 	memset(&client, 0, sizeof(client));
 	/*
-	 * A waiter sleeps to the call's own deadline, whenever it starts and
-	 * however often it is woken: one absolute deadline, never a slice.
+	 * A waiter sleeps to the call's own absolute deadline every time it
+	 * waits: the deadline is passed through as is, never recomputed from
+	 * the clock (no slice, no restarted budget).
 	 */
-	fake_now = (struct timespec){ .tv_sec = 100, .tv_nsec = 10000000 };
 	wait_wake(&client, &deadline, 10);
-	ATF_CHECK_EQ(1, wait_count);
-	ATF_CHECK_EQ(deadline.tv_sec, waited_until.tv_sec);
-	ATF_CHECK_EQ(deadline.tv_nsec, waited_until.tv_nsec);
-	fake_now = (struct timespec){ .tv_sec = 99, .tv_nsec = 999000000 };
 	wait_wake(&client, &deadline, 10);
 	ATF_CHECK_EQ(2, wait_count);
 	ATF_CHECK_EQ(deadline.tv_sec, waited_until.tv_sec);
 	ATF_CHECK_EQ(deadline.tv_nsec, waited_until.tv_nsec);
-
-	/* The kernel's sleep gets what is left of the same deadline. */
-	fake_now = (struct timespec){ .tv_sec = 99, .tv_nsec = 999000000 };
-	ATF_CHECK_EQ(6, remaining_ms(&deadline, 10));	/* 6 ms, rounded up */
-	fake_now = (struct timespec){ .tv_sec = 100, .tv_nsec = 4000001 };
-	ATF_CHECK_EQ(1, remaining_ms(&deadline, 10));
-	fake_now = (struct timespec){ .tv_sec = 100, .tv_nsec = 5000000 };
-	ATF_CHECK_EQ(0, remaining_ms(&deadline, 10));
-	fake_now = (struct timespec){ .tv_sec = 101, .tv_nsec = 0 };
-	ATF_CHECK_EQ(0, remaining_ms(&deadline, 10));
-	/* No deadline: the kernel waits without a limit. */
-	ATF_CHECK_EQ(-1, remaining_ms(NULL, SERVICE_CLIENT_TIMEOUT_INFINITE));
+	/* The kernel's sleeps get the same deadline, or none. */
+	ATF_CHECK(kernel_deadline(&deadline, 10) == &deadline);
+	ATF_CHECK(kernel_deadline(&deadline, 0) == &deadline);
+	ATF_CHECK(kernel_deadline(&deadline,
+	    SERVICE_CLIENT_TIMEOUT_INFINITE) == NULL);
 }
 
 ATF_TP_ADD_TCS(tp)
