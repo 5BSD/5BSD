@@ -130,7 +130,7 @@ struct sleep_count {
 	int	n;
 	struct {
 		long	tid;
-		char	wmesg[16];
+		char	wmesg[32];	/* WMESGLEN is 8; td_wmesg is longer */
 		long	count;
 	} row[SLEEP_COUNT_MAX];
 };
@@ -170,14 +170,14 @@ sleep_count_start(struct sleep_count *c)
 static void
 sleep_count_stop(struct sleep_count *c)
 {
-	char line[128], wmesg[16];
+	char line[128], wmesg[32];
 	long tid, count;
 	int status;
 
 	ATF_REQUIRE_EQ(0, kill(c->pid, SIGINT));
 	while (fgets(line, sizeof(line), c->out) != NULL &&
 	    strcmp(line, "DONE\n") != 0)
-		if (sscanf(line, "%ld %15s %ld", &tid, wmesg, &count) == 3 &&
+		if (sscanf(line, "%ld %31s %ld", &tid, wmesg, &count) == 3 &&
 		    c->n < SLEEP_COUNT_MAX) {
 			c->row[c->n].tid = tid;
 			strlcpy(c->row[c->n].wmesg, wmesg,
