@@ -777,6 +777,104 @@ ATF_TC_BODY(signal_mid_write_uninterruptible, tc)
 	dqt_fixture_fini(&f);
 }
 
+/*
+ * DQ_PF_INTR is not exempt from the rule that a mutation the controller
+ * received is never restarted by the kernel (owner, 2026-11-23): a signal
+ * ends the wait, but the call fails with EINTR whatever SA_RESTART says,
+ * as on an NFS intr mount.  A kernel that restarts it posts the WRITE a
+ * second time, and a controller that had applied the first appends twice.
+ */
+struct intr_res {
+	struct dqt_rr	 rr;
+	int		 signals;
+};
+
+static volatile sig_atomic_t restart_signals;
+
+static void
+on_restart_signal(int sig __unused)
+{
+
+	restart_signals++;
+}
+
+static void
+child_append_restart(void *arg, void *result)
+{
+	struct intr_res *r = result;
+	struct sigaction sa;
+	int *fdp = arg;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = on_restart_signal;
+	sa.sa_flags = SA_RESTART;
+	(void)sigaction(SIGUSR1, &sa, NULL);
+	DQT_RR(r->rr, write(*fdp, "A", 1));
+	r->signals = restart_signals;
+}
+
+ATF_TC(intr_delivered_write_no_restart);
+ATF_TC_HEAD(intr_delivered_write_no_restart, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "DQ_PF_INTR: an SA_RESTART signal "
+	    "while the controller holds a received O_APPEND write ends the "
+	    "call with EINTR; the write is not restarted, so the controller "
+	    "sees it exactly once (owner, 2026-11-23)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(intr_delivered_write_no_restart, tc)
+{
+	struct dqt_fixture f;
+	struct dqt_child ch;
+	struct dq_policy pol;
+	struct intr_res r;
+	struct stat st;
+	uint64_t first;
+
+	dqt_fill(data, sizeof(data), 43);
+	dqt_policy_write(&pol);
+	pol.dp_deadline_ms = 0;		/* only the signal ends the wait */
+	pol.dp_flags = DQ_PF_INTR;
+	dqt_fixture_init(&f, data, sizeof(data), backing_path, oracle_path,
+	    &pol, DQ_MINT_F_WRITE);
+	ATF_REQUIRE_EQ(0, fcntl(f.o->fd, F_SETFL, O_APPEND));
+	dqt_hold(&f.c, true);
+	dqt_spawn(&ch, child_append_restart, &f.o->fd);
+	ATF_REQUIRE(dqt_wait_held(&f.c, 1, DQT_WAIT_MS));
+	dqt_lock(&f.c);
+	ATF_REQUIRE_EQ(DQ_OP_WRITE, f.c.held[0].op);
+	first = f.c.held[0].id;
+	dqt_unlock(&f.c);
+	/*
+	 * The controller has the write and does not answer it.  Whatever
+	 * comes after it is served: a restarted WRITE is appended to the
+	 * backing file and answered, so the child returns on either kernel.
+	 */
+	dqt_hold(&f.c, false);
+	ATF_REQUIRE_EQ(0, kill(ch.pid, SIGUSR1));
+	memset(&r, 0, sizeof(r));
+	dqt_collect(&ch, &r, sizeof(r));
+	ATF_CHECK_EQ_MSG(-1, r.rr.rv, "the received write was restarted: "
+	    "write returned %ld", r.rr.rv);
+	ATF_CHECK_EQ(EINTR, r.rr.err);
+	ATF_CHECK_EQ(1, r.signals);
+	/* The controller is told the answer is no longer wanted. */
+	ATF_CHECK(dqt_wait_interrupts(&f.c, 1, DQT_WAIT_MS));
+	dqt_lock(&f.c);
+	ATF_CHECK_EQ(1, f.c.ninterrupted);
+	ATF_CHECK_EQ(first, f.c.interrupted[0]);
+	dqt_unlock(&f.c);
+	errno = 0;
+	ATF_CHECK_EQ(-1, dq_reply_write(f.c.q, first, 1, DATA_LEN));
+	ATF_CHECK_EQ(ESRCH, errno);
+	ATF_CHECK_EQ_MSG(1u, dqt_events(&f.c, DQ_OP_WRITE),
+	    "%u WRITE events for one write(2)", dqt_events(&f.c, DQ_OP_WRITE));
+	ATF_REQUIRE_EQ(0, fstat(f.backing, &st));
+	ATF_CHECK_EQ_MSG(DATA_LEN, st.st_size, "%jd bytes appended by a "
+	    "write that failed", (intmax_t)(st.st_size - DATA_LEN));
+	dqt_fixture_fini(&f);
+}
+
 ATF_TC(short_count_default);
 ATF_TC_HEAD(short_count_default, tc)
 {
@@ -1855,6 +1953,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, short_write);
 	ATF_TP_ADD_TC(tp, eintr_mid_chunk_intr);
 	ATF_TP_ADD_TC(tp, signal_mid_write_uninterruptible);
+	ATF_TP_ADD_TC(tp, intr_delivered_write_no_restart);
 	ATF_TP_ADD_TC(tp, short_count_default);
 	ATF_TP_ADD_TC(tp, rlimit_fsize);
 	ATF_TP_ADD_TC(tp, notes_and_size);
