@@ -897,8 +897,9 @@ bridge_clone_destroy(struct if_clone *ifc, struct ifnet *ifp, uint32_t flags)
 
 	BRIDGE_LOCK(sc);
 
-	bridge_stop(ifp);
+	/* Down first: a bridge_init() after this sees it and does nothing. */
 	ifp->if_flags &= ~IFF_UP;
+	bridge_stop(ifp);
 
 	while ((bif = CK_LIST_FIRST(&sc->sc_iflist)) != NULL)
 		bridge_delete_member(sc, bif, 0);
@@ -969,20 +970,14 @@ bridge_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 		/*
 		 * Only a change of IFF_UP needs the bridge; a propagated
 		 * IFF_PROMISC or IFF_ALLMULTI change does not.  bridge_init()
-		 * checks IFF_DRV_RUNNING the same way before it locks.
+		 * and bridge_stop() recheck under the routing-table mutex,
+		 * never the bridge lock: the netlink if_up()/if_down() leaves
+		 * IFF_UP and IFF_DRV_RUNNING apart until the next request.
 		 */
-		if ((ifp->if_flags & IFF_UP) != 0 &&
-		    (ifp->if_drv_flags & IFF_DRV_RUNNING) == 0) {
+		if ((ifp->if_flags & IFF_UP) != 0)
 			(*ifp->if_init)(sc);
-		} else if ((ifp->if_flags & IFF_UP) == 0 &&
-		    (ifp->if_drv_flags & IFF_DRV_RUNNING) != 0) {
-			BRIDGE_LOCK(sc);
-			/* If interface is marked down and running, stop it. */
-			if ((ifp->if_flags & IFF_UP) == 0 &&
-			    (ifp->if_drv_flags & IFF_DRV_RUNNING) != 0)
-				bridge_stop(ifp);
-			BRIDGE_UNLOCK(sc);
-		}
+		else
+			bridge_stop(ifp);
 		return (0);
 
 	case SIOCGDRVSPEC:
@@ -2296,17 +2291,24 @@ bridge_init(void *xsc)
 	struct bridge_softc *sc = (struct bridge_softc *)xsc;
 	struct ifnet *ifp = sc->sc_ifp;
 
-	if (ifp->if_drv_flags & IFF_DRV_RUNNING)
+	/*
+	 * The routing-table mutex serializes init and stop and is the
+	 * callout's lock (callout_init_mtx); it is never held across a call
+	 * into another interface, so a caller may hold that interface's lock.
+	 */
+	BRIDGE_RT_LOCK(sc);
+	if ((ifp->if_flags & IFF_UP) == 0 ||
+	    (ifp->if_drv_flags & IFF_DRV_RUNNING) != 0) {
+		BRIDGE_RT_UNLOCK(sc);
 		return;
-
-	BRIDGE_LOCK(sc);
+	}
 	callout_reset(&sc->sc_brcallout, bridge_rtable_prune_period * hz,
 	    bridge_timer, sc);
 
 	ifp->if_drv_flags |= IFF_DRV_RUNNING;
 	bstp_init(&sc->sc_stp);		/* Initialize Spanning Tree */
 
-	BRIDGE_UNLOCK(sc);
+	BRIDGE_RT_UNLOCK(sc);
 }
 
 /*
@@ -2319,20 +2321,20 @@ bridge_stop(struct ifnet *ifp)
 {
 	struct bridge_softc *sc = ifp->if_softc;
 
-	BRIDGE_LOCK_ASSERT(sc);
-
-	if ((ifp->if_drv_flags & IFF_DRV_RUNNING) == 0)
-		return;
-
+	/* Serialized with bridge_init() by the routing-table mutex. */
 	BRIDGE_RT_LOCK(sc);
+	if ((ifp->if_flags & IFF_UP) != 0 ||
+	    (ifp->if_drv_flags & IFF_DRV_RUNNING) == 0) {
+		BRIDGE_RT_UNLOCK(sc);
+		return;
+	}
 	callout_stop(&sc->sc_brcallout);
 
 	bstp_stop(&sc->sc_stp);
 
 	bridge_rtflush(sc, IFBF_FLUSHDYN);
-	BRIDGE_RT_UNLOCK(sc);
-
 	ifp->if_drv_flags &= ~IFF_DRV_RUNNING;
+	BRIDGE_RT_UNLOCK(sc);
 }
 
 /*
