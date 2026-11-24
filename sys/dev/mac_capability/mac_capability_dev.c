@@ -280,6 +280,10 @@ mac_capability_instance_enqueue_rx(struct mac_capability_instance *s,
 	mtx_assert(&s->ci_mtx, MA_OWNED);
 	error = mac_capability_instance_rx_ready(s);
 	if (error != 0) {
+		/* Freed under ci_mtx: it must not carry descriptors. */
+		KASSERT(msg->cm_nfds == 0,
+		    ("%s: refused message carries %d descriptors", __func__,
+		    msg->cm_nfds));
 		mac_capability_msg_free(msg);
 		return (error);
 	}
@@ -2191,8 +2195,13 @@ mac_capability_instance_close(struct file *fp, struct thread *td __unused)
 
 	mtx_unlock(&s->ci_mtx);
 
-	mac_capability_free_msgq(&deadrx);
-	mac_capability_free_msgq(&deadtx);
+	/*
+	 * Through the reaper: a message holding the last reference to another
+	 * endpoint would otherwise nest that endpoint's close here, and a
+	 * chain of them one close per link.
+	 */
+	mac_capability_free_msgq_deferred(&deadrx);
+	mac_capability_free_msgq_deferred(&deadtx);
 
 	/* Post-drain: catch any task re-scheduled between the
 	 * pre-drain and the CLOSED flag.  Harmless if nothing ran. */

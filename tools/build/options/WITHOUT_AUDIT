@@ -1,1 +1,5 @@
-Do not build audit support into system programs.
+Refused in 5BSD: BSM audit is mandatory, as
+.Cd "options AUDIT"
+is in every kernel (sys/conf/mandatory-options), and setting it stops
+the build with an error.
+Upstream, it does not build audit support into system programs.

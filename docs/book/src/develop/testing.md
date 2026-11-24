@@ -353,6 +353,19 @@ program (`py_unittest` in `bsd_build_test.sh`) fail on an expected failure
 and skip, naming each subtest, when any subtest skipped: a bare
 `OK (skipped=N)` is not a pass.
 
+`mac_capability_accounting_racct_test` needs a boot with the ignored
+`kern.racct.enable=0` tunable: run it with `RACCT_TUNABLE_ZERO=1`; elsewhere
+its cases skip with `DEFERRED_RACCT_ZERO_TIER`.  Cases that need the test
+kernel's handler park (`debug.mac_capability.test_park_*`, GENERIC-TEST)
+skip elsewhere with `DEFERRED_TEST_KERNEL_TIER`; run them with
+`KERNEL_TIER=test`.  Both are counted on their own lines, not as passes.
+`sys/vfs/ufs_quota_lock_order` needs a kernel with `options QUOTA` and
+skips elsewhere with `DEFERRED_QUOTA_KERNEL_TIER`.  A case that sees its
+defect only through WITNESS or INVARIANTS
+(`mac_capability_channel_test:refused_forward_frees_outside_mutex`,
+`ufs_suspend_atime:closed_at_resume`, `ufs_quota_lock_order`) skips on a
+kernel without them (GENERIC-NODEBUG) with `DEFERRED_DEBUG_KERNEL_TIER`.
+
 A `tests/sys/dq` case that needs a fault knob of `options DQ_FAULT_INJECTION`
 (`debug.dq.delay_swap_take`, `debug.dq.delay_postop_apply`,
 `debug.dq.refuse_postop_reply`, `debug.dq.drop_wakeup`) calls
@@ -407,6 +420,13 @@ is `VM_CLEAN` only with exactly one such line and no
 and the loaded MAC policy modules (`kldstat -v`) are written to `tier.txt`
 in the results, next to the Kyua database, and the knobs are appended again
 after the suites.
+
+Every guest mounts UFS, and the plane gate needs bsdcrypto, which opens
+`/dev/crypto`.  A stage kernel that compiles neither in, such as `MINIMAL`,
+gets the stage's `ufs.ko` and `cryptodev.ko` preloaded, since the plane
+refuses a late kldload; the runner reads the kernel's symbol table to decide
+and prints `BASE_MODULES_HOST: preloaded=...`.  A stage with neither the
+module nor its `.ko` stops the run.
 
 A stage's ELF test programs must all come from one checkout. Before it
 builds the image the runner reads the source file names recorded in every

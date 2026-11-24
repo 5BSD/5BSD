@@ -217,6 +217,7 @@ enum mac_capability_destroy_wait_reason {
 	MAC_CAPABILITY_DESTROY_WAIT_INFLIGHT,	  /* co_call and op-bracketed callbacks */
 	MAC_CAPABILITY_DESTROY_WAIT_CALLBACK,	  /* another thread's co_revoke */
 	MAC_CAPABILITY_DESTROY_WAIT_REFS,	  /* references on an instance */
+	MAC_CAPABILITY_DESTROY_WAIT_REAP,	  /* the reaper's frees */
 };
 typedef void (*mac_capability_destroy_wait_fn)(void *arg, const char *service,
     enum mac_capability_destroy_wait_reason reason);

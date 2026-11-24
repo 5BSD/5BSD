@@ -188,8 +188,9 @@ amd64_generic_kernel_objects(name = "generic_identity_privilege", srcs = ["kern_
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
         "//sys/amd64/conf:generic_opt_posix_header", "//sys/amd64/conf:generic_config_header"])
 
-amd64_generic_kernel_objects(name = "generic_resource_control", srcs = ["kern_racct.c", "kern_rctl.c"],
+amd64_generic_kernel_objects(name = "generic_resource_control", srcs = ["kern_mandatory.c", "kern_racct.c", "kern_rctl.c"],
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/amd64/conf:generic_opt_capsicum_header",
         "//sys/amd64/conf:generic_opt_sched_header", ":bus_if_headers", ":device_if_headers"])
 
 amd64_generic_kernel_objects(name = "generic_affinity_scheduling", srcs = ["kern_cpuset.c", "kern_switch.c", "ksched.c"],
@@ -1002,6 +1003,7 @@ cross_generic_kernel_objects(arch = "arm64", name = "generic_core",
         "kern_lockstat.c",
         "kern_loginclass.c",
         "kern_malloc.c",
+        "kern_mandatory.c",
         "kern_mbuf.c",
         "kern_membarrier.c",
         "kern_mib.c",
@@ -1284,6 +1286,7 @@ cross_generic_kernel_objects(arch = "riscv", name = "generic_core",
         "kern_lockstat.c",
         "kern_loginclass.c",
         "kern_malloc.c",
+        "kern_mandatory.c",
         "kern_mbuf.c",
         "kern_membarrier.c",
         "kern_mib.c",

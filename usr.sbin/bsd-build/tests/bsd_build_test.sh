@@ -1255,10 +1255,11 @@ PYTHON
 import json
 rows = [json.loads(line) for line in open('stage.jsonl')]
 assert rows[0]['verification_scope'] == 'boot-transport-makefs-input'
-assert len(rows) == 3 and [row['name'] for row in rows[1:]] == ['kernel-test-option-check', 'boot-stage']
+assert len(rows) == 4 and [row['name'] for row in rows[1:]] == ['kernel-test-option-check', 'kernel-mandatory-option-check', 'boot-stage']
+assert rows[2]['argv'] == ['sh', '/usr/src/release/scripts/check-mandatory-kernel.sh', '-a', rows[1]['argv'][3]]
 assert rows[1]['argv'][:3] == ['sh', '/usr/src/release/scripts/check-test-kernel.sh', '-a']
 assert rows[1]['argv'][3].endswith('/boot.tar') and len(rows[1]['argv']) == 4
-assert '--output' in rows[2]['argv']
+assert '--output' in rows[3]['argv']
 PYTHON
 }
 
@@ -1299,10 +1300,12 @@ import json, os
 rows = [json.loads(line) for line in open('plan.jsonl')]
 assert rows[0]['verification_scope'] == 'trusted-builder-filesystem-image'
 assert rows[0]['boot_verification'] == 'not-performed'
-assert [r['name'] for r in rows[1:]] == ['kernel-test-option-check', 'image']
+assert [r['name'] for r in rows[1:]] == ['kernel-test-option-check', 'kernel-mandatory-option-check', 'image']
 assert rows[1]['argv'] == ['sh', '/usr/src/release/scripts/check-test-kernel.sh', '-i', os.path.realpath('root')]
+assert rows[2]['argv'] == ['sh', '/usr/src/release/scripts/check-mandatory-kernel.sh', '-i', os.path.realpath('root')]
 assert rows[0]['kernel_test_option_binary_check'] == 'requested' and rows[0]['kernel_test_option_configuration'] == 'not-performed'
-args = rows[2]['argv']
+assert rows[0]['kernel_mandatory_option_binary_check'] == 'requested' and rows[0]['kernel_mandatory_option_configuration'] == 'not-performed'
+args = rows[3]['argv']
 assert args[1] == '/usr/src/tools/build/capimage/generation_image.py'
 for flag in ('--construction-receipt', '--makefs', '--mdconfig', '--mount', '--umount', '--boot-archive'):
     assert flag in args
@@ -1315,9 +1318,10 @@ PYTHON
     atf_check -s exit:0 -o empty -e empty python3.12 - <<'PYTHON'
 import json, os
 rows = [json.loads(line) for line in open('layout-image-plan.jsonl')]
-assert rows[2]['argv'][-2:] == ['--storage-layout-policy', os.path.realpath('layout.json')]
-assert '--boot-archive' in rows[2]['argv']
-assert rows[2]['argv'][rows[2]['argv'].index('--verity-policy')+1] == os.path.realpath('verity.json')
+image = next(r['argv'] for r in rows[1:] if r['name'] == 'image')
+assert image[-2:] == ['--storage-layout-policy', os.path.realpath('layout.json')]
+assert '--boot-archive' in image
+assert image[image.index('--verity-policy')+1] == os.path.realpath('verity.json')
 PYTHON
     atf_check -s not-exit:0 -o empty -e match:'usage: build-bsd' "$tool" plan image --storage-bindings "$PWD/storage-bindings.json"
     atf_check -s not-exit:0 -o empty -e match:'usage: build-bsd' "$tool" plan image --storage-layout-policy "$PWD/layout.json" --storage-bindings "$PWD/storage-bindings.json"
@@ -1637,12 +1641,15 @@ repository_snapshot_plan_body()
     atf_check -s exit:0 -o empty -e empty python3.12 - <<'PYTHON'
 import json, os
 rows = [json.loads(line) for line in open('snapshot.jsonl')]
-assert len(rows) == 3
+assert len(rows) == 4
 assert rows[0]['verification_scope'] == 'signed-repository-snapshot'
 assert rows[1]['name'] == 'kernel-test-option-check'
 assert rows[1]['argv'] == ['sh', '/usr/src/release/scripts/check-test-kernel.sh', '-r', os.getcwd() + '/source repository']
+assert rows[2]['name'] == 'kernel-mandatory-option-check'
+assert rows[2]['argv'] == ['sh', '/usr/src/release/scripts/check-mandatory-kernel.sh', '-r', os.getcwd() + '/source repository']
 assert rows[0]['kernel_test_option_binary_check'] == 'requested'
-argv = rows[2]['argv']
+assert rows[0]['kernel_mandatory_option_binary_check'] == 'requested'
+argv = rows[3]['argv']
 assert argv[:3] == ['/usr/local/bin/python3.12', '/usr/src/release/scripts/hardware-packages.py', 'copy-signed-repository']
 assert argv[argv.index('--repository') + 1] == os.getcwd() + '/source repository'
 assert argv[argv.index('--public-key') + 1] == os.getcwd() + '/trust key.pub'
