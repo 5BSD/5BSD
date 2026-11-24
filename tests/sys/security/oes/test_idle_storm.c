@@ -229,14 +229,7 @@ abac_toggler(void)
 
 	errors = 0;
 	srandom(getpid());
-	/*
-	 * mac_abac appends every rule at the end of its table and a removal
-	 * leaves a hole, so the table fills after ABAC_MAX_RULES additions:
-	 * clear it now and then (nothing else loads rules during the storm).
-	 */
 	for (rounds = 0; !stop; rounds++) {
-		if (rounds % 512 == 0)
-			(void)mac_syscall("mac_abac", ABAC_SYS_RULE_CLEAR, NULL);
 		memset(&rule, 0, sizeof(rule));
 		rule.vr_action = ABAC_ACTION_DENY;
 		rule.vr_set = 61007;
