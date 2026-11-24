@@ -90,6 +90,11 @@ An
 sharer of a software-authority holder that installs a different authority
 lets that authority's peers debug it, and so reach the holder's memory; no
 base program does this.
+A child under the inherited shield that requests tracing itself
+.Pq Dv PT_TRACE_ME
+makes its current parent its tracer, which may then debug it: the parent
+itself, or, after the parent exited, the reaper the child was reparented
+to.
 The inherited shield does not give its protector the child's software
 authority: once the parent executes a new image it is refused the child's
 debugging by the authority rule

@@ -740,16 +740,24 @@ cp_no_shields(void)
 }
 
 /*
- * The tracer of a child that carries only the ptrace shield it inherited at
- * fork.  PT_ATTACH is checked before the target becomes traced, so a process
- * the shield refuses never becomes such a child's tracer by attaching.  What
- * remains is the debugger that was tracing the parent and followed the fork
- * (PTRACE_FORK): fork1() made it the child's tracer without a debug check.
- * It was admitted to the parent and controlled it when the child was made,
- * and refusing it now would refuse PT_DETACH and PT_CONTINUE too and leave
- * the child stopped (and a vfork parent waiting for it) until the tracer
- * exits.  A shield applied explicitly is not passed this way: it is refused
- * on a traced process in the first place.
+ * The current tracer of a child that carries only the ptrace shield it
+ * inherited at fork: the child is P_TRACED and the caller is its p_pptr.
+ * PT_ATTACH is checked before the target becomes traced, so a process the
+ * shield refuses never becomes such a child's tracer by attaching.  A
+ * tracer can still be made without a debug check in two ways:
+ *
+ * - the debugger that was tracing the parent and followed the fork
+ *   (PTRACE_FORK): fork1() made it the child's tracer.  It was admitted to
+ *   the parent and controlled it when the child was made, and refusing it
+ *   now would refuse PT_DETACH and PT_CONTINUE too and leave the child
+ *   stopped (and a vfork parent waiting for it) until the tracer exits;
+ * - the child's own PT_TRACE_ME, which makes its current parent the tracer:
+ *   the parent itself (admitted anyway as the protector) or, after the
+ *   parent exited, the reaper it was reparented to.  The child chose it;
+ *   this is a documented residual.
+ *
+ * A shield applied explicitly is not passed this way: it is refused on a
+ * traced process in the first place.
  */
 static bool
 cp_inherited_tracer(struct proc *p, uint32_t flag)
