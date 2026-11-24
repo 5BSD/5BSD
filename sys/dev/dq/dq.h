@@ -706,7 +706,7 @@ struct dq_stats {
  * program built against another size fails cleanly.
  */
 #define	DQ_STATS2_WORDS		50	/* the size in words: 400 bytes */
-#define	DQ_STATS2_USED		42	/* the words before ds2_reserved */
+#define	DQ_STATS2_USED		43	/* the words before ds2_reserved */
 #define	DQ_STATS2_RESERVED	(DQ_STATS2_WORDS - DQ_STATS2_USED)
 struct dq_stats2 {
 	uint32_t	ds2_size;		/* sizeof(struct dq_stats2) */
@@ -775,6 +775,8 @@ struct dq_stats2 {
 	uint64_t	ds2_standing_deny;	/* lookups a standing rule answered
 						   an errno, no event posted */
 	uint64_t	ds2_reserved_notes;	/* reserved: ds2_notes_raised */
+	uint64_t	ds2_quota_waiters;	/* gauge: waited posts in a wait
+						   for an in-flight quota now */
 	uint64_t	ds2_reserved[DQ_STATS2_RESERVED];	/* 0 */
 };
 
@@ -1209,8 +1211,9 @@ _Static_assert(__offsetof(struct dq_standing_rule, dqs_id) == 32 &&
     "dq_standing_rule: no padding");
 _Static_assert(__offsetof(struct dq_stats2, ds2_full_waits) == 304 &&
     __offsetof(struct dq_stats2, ds2_standing_pass) == 312 &&
-    __offsetof(struct dq_stats2, ds2_reserved) == 336,
-    "dq_stats2: the counters, then one line of reserved words");
+    __offsetof(struct dq_stats2, ds2_quota_waiters) == 336 &&
+    __offsetof(struct dq_stats2, ds2_reserved) == 344,
+    "dq_stats2: the counters, then the reserved words");
 _Static_assert(sizeof(struct dq_readdir_body) == 16, "dq_readdir_body");
 _Static_assert(sizeof(struct dq_readdir_reply) == 16, "dq_readdir_reply");
 _Static_assert(sizeof(struct dq_resolve_reply) + sizeof(struct dq_resolve_mint) +

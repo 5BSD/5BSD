@@ -280,3 +280,81 @@ dq_faultinj_postop_refuse(void)
 
 	return (dq_faultinj_take(&dq_faultinj_postop_refusals));
 }
+
+/*
+ * The quota sleeps of waited posts (dq_post_quota_sleep), counted per
+ * quota (DQ_QUOTA_OBJECT, DQ_QUOTA_REQUESTER: index quota - 1) as each
+ * sleep begins, after ds2_quota_waiters is raised and with the queue lock
+ * still held, so a test woken here that reads the statistics finds the
+ * waiter counted and asleep.  debug.dq.quota_sleeps reads the counts; a
+ * write of struct dq_faultinj_quotawait to debug.dq.quota_sleep_wait
+ * sleeps (catching signals) until the quota's count reaches qw_count: the
+ * test waits on the sleep itself, not on a sample of wait messages.
+ */
+#define	DQ_FAULTINJ_NQUOTAS	2
+static struct mtx dq_faultinj_quota_mtx;
+MTX_SYSINIT(dq_faultinj_quota, &dq_faultinj_quota_mtx, "dq faultinj quota",
+    MTX_DEF);
+static uint64_t dq_faultinj_quota_slept[DQ_FAULTINJ_NQUOTAS];
+
+static int
+dq_faultinj_quota_sleeps_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	uint64_t counts[DQ_FAULTINJ_NQUOTAS];
+
+	mtx_lock(&dq_faultinj_quota_mtx);
+	memcpy(counts, dq_faultinj_quota_slept, sizeof(counts));
+	mtx_unlock(&dq_faultinj_quota_mtx);
+	return (SYSCTL_OUT(req, counts, sizeof(counts)));
+}
+SYSCTL_PROC(_debug_dq, OID_AUTO, quota_sleeps,
+    CTLTYPE_OPAQUE | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
+    dq_faultinj_quota_sleeps_sysctl, "S",
+    "Test kernel only: quota sleeps of waited posts, object then requester");
+
+struct dq_faultinj_quotawait {
+	uint32_t	qw_quota;	/* DQ_QUOTA_OBJECT or _REQUESTER */
+	uint32_t	qw_pad;
+	uint64_t	qw_count;	/* until the quota's count reaches it */
+};
+
+static int
+dq_faultinj_quotawait_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	struct dq_faultinj_quotawait qw;
+	int error;
+
+	if (req->newptr == NULL)
+		return (SYSCTL_OUT(req, NULL, 0));
+	error = SYSCTL_IN(req, &qw, sizeof(qw));
+	if (error != 0)
+		return (error);
+	if (qw.qw_quota != DQ_QUOTA_OBJECT &&
+	    qw.qw_quota != DQ_QUOTA_REQUESTER)
+		return (EINVAL);
+	mtx_lock(&dq_faultinj_quota_mtx);
+	while (dq_faultinj_quota_slept[qw.qw_quota - 1] < qw.qw_count) {
+		error = msleep(&dq_faultinj_quota_slept,
+		    &dq_faultinj_quota_mtx, PCATCH, "dqqslw", 0);
+		if (error != 0)
+			break;
+	}
+	mtx_unlock(&dq_faultinj_quota_mtx);
+	return (error);
+}
+SYSCTL_PROC(_debug_dq, OID_AUTO, quota_sleep_wait,
+    CTLTYPE_OPAQUE | CTLFLAG_WR | CTLFLAG_MPSAFE, NULL, 0,
+    dq_faultinj_quotawait_sysctl, "S",
+    "Test kernel only: sleep until a quota has had N quota sleeps");
+
+void
+dq_faultinj_quota_sleep(u_int quota)
+{
+
+	KASSERT(quota == DQ_QUOTA_OBJECT || quota == DQ_QUOTA_REQUESTER,
+	    ("dq_faultinj_quota_sleep: quota %u", quota));
+	mtx_lock(&dq_faultinj_quota_mtx);
+	dq_faultinj_quota_slept[quota - 1]++;
+	wakeup(&dq_faultinj_quota_slept);
+	mtx_unlock(&dq_faultinj_quota_mtx);
+}

@@ -1071,6 +1071,7 @@ ATF_TC_BODY(wake_requester, tc)
 	struct dqt_object *o0, *o1;
 	struct wake_req_arg a;
 	struct dqt_child ch;
+	struct dq_stats2 st2;
 	uint64_t before;
 	int oracle;
 
@@ -1084,6 +1085,9 @@ ATF_TC_BODY(wake_requester, tc)
 	dqt_spawn(&ch, child_two_reads, &a);
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
 	ATF_REQUIRE(dqt_wait_wmesg(ch.pid, "dqreq", DQT_WAIT_MS));
+	/* The requester's quota is counted as the object's is. */
+	dqt_stats2(&c, &st2);
+	ATF_CHECK_EQ(1, st2.ds2_quota_waiters);
 	before = wake_drop(WAKE_REQUESTER, WAKE_REQUESTER);
 	ATF_REQUIRE_EQ(0, dq_reply(c.q, dqt_held_id(&c, 0), 0, data, 16));
 	/* The answered thread drops the wakeup as it returns. */
@@ -1585,9 +1589,11 @@ ATF_TC_BODY(inflight_bound, tc)
 	struct one_read_res r[3];
 	struct dqt_child ch[3];
 	struct dq_stats st;
-	int64_t deadline;
-	int i, n, oracle;
+	struct dq_stats2 st2;
+	uint64_t slept;
+	int i, oracle;
 
+	dqt_require_fault_knob("debug.dq.quota_sleep_wait");
 	dqt_sysctl_save_set_uint(inflight_sysctl, 2);
 
 	dqt_fill(data, sizeof(data), 67);
@@ -1600,23 +1606,22 @@ ATF_TC_BODY(inflight_bound, tc)
 	a.fd = o->fd;
 	a.len = 100;
 	a.alarm_us = 0;
+	/*
+	 * Two requesters post and fill the object's in-flight bound, which
+	 * counts a post as it is made; the paused controller answers none,
+	 * so the third sleeps on the bound in dq_event_post_wait.  The test
+	 * kernel wakes the wait below as that sleep begins, with the sleeper
+	 * already counted; the case timeout bounds a sleep that never comes.
+	 */
+	slept = dqt_quota_sleeps(DQT_QUOTA_OBJECT);
 	for (i = 0; i < 3; i++)
 		dqt_spawn(&ch[i], child_one_pread, &a);
-	/*
-	 * Two posted; the third sleeps in dq_event_post_wait ("dqinfl").  Wait
-	 * for the two, then for the third to sleep there.
-	 */
-	ATF_CHECK(dqt_wait_stats(&c, posted_or_dropped_is, 2, DQT_WAIT_MS));
-	deadline = dqt_now_ms() + DQT_WAIT_MS;
-	for (;;) {
-		for (i = n = 0; i < 3; i++)
-			if (dqt_wait_wmesg(ch[i].pid, DQT_WMESG_INFLIGHT, 0))
-				n++;
-		if (n != 0 || dqt_now_ms() >= deadline)
-			break;
-		dqt_msleep(10);
-	}
-	ATF_REQUIRE_EQ_MSG(1, n, "%d requesters wait for a slot, not 1", n);
+	dqt_quota_sleep_wait(DQT_QUOTA_OBJECT, slept + 1);
+	dqt_stats2(&c, &st2);
+	ATF_REQUIRE_EQ_MSG(1, st2.ds2_quota_waiters,
+	    "%ju requesters wait for a slot, not 1 (posted %ju)",
+	    (uintmax_t)st2.ds2_quota_waiters,
+	    (uintmax_t)st2.ds2_events_posted);
 	dqt_stats(&c, &st);
 #define	INFL_FMT "current %ju posted %ju dropped %ju delivered %ju " \
 	"inflight %ju; harness reads %u paused_reads %u records %u"
@@ -1640,6 +1645,9 @@ ATF_TC_BODY(inflight_bound, tc)
 	dqt_lock(&c);
 	ATF_CHECK_EQ(3, c.events[DQ_OP_READ]);
 	dqt_unlock(&c);
+	/* The gauge falls back when the post goes on. */
+	dqt_stats2(&c, &st2);
+	ATF_CHECK_EQ(0, st2.ds2_quota_waiters);
 	dqt_fini(&c);
 	(void)close(oracle);
 	ATF_REQUIRE(dqt_sysctl_restore(inflight_sysctl));

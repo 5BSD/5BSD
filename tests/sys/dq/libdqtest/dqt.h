@@ -246,6 +246,18 @@ void	dqt_require_fault_knob(const char *name);
 uint64_t dqt_drop_count(u_int site);
 void	dqt_drop_wait(u_int site, uint64_t count);
 bool	dqt_sleep_left(pid_t pid, const char *wmesg, uint64_t *left_ms);
+/*
+ * The quota sleeps of waited posts (debug.dq.quota_sleeps, options
+ * DQ_FAULT_INJECTION), per quota (DQ_QUOTA_* of sys/dev/dq/dq_var.h).
+ * dqt_quota_sleeps: how many such sleeps have begun.  dqt_quota_sleep_wait:
+ * block until count have (the kernel wakes the test as the sleep begins,
+ * with the waiter counted in ds2_quota_waiters: no polling; the case
+ * timeout is the hang detector, as for dqt_drop_wait).
+ */
+#define	DQT_QUOTA_OBJECT	1	/* kern.dq.max_inflight_per_object */
+#define	DQT_QUOTA_REQUESTER	2	/* kern.dq.max_inflight_per_requester */
+uint64_t dqt_quota_sleeps(u_int quota);
+void	dqt_quota_sleep_wait(u_int quota, uint64_t count);
 /* Fails, never skips, when the queue device is absent or refuses. */
 int	dqt_open_queue(void);
 void	dqt_init(struct dqt_ctl *c);		/* queue + 1 reader thread */
