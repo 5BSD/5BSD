@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 
 #include <atf-c.h>
@@ -29,20 +30,21 @@
 #include "mac_capability_test_helpers.h"
 #include "mac_capability_accounting_proto.h"
 
-#ifndef RACCT_MEMLOCK
+/*
+ * The resource numbers of sys/racct.h, which is a kernel header: outside
+ * the kernel it declares the stubs of a kernel without options RACCT.
+ */
 #define	RACCT_MEMLOCK	5
-#endif
-#ifndef RACCT_NOFILE
 #define	RACCT_NOFILE	7
-#endif
 
 static void
 require_tunable_zero(void)
 {
 	char value[16];
 
+	/* The two spellings getenv_bool() reads as false. */
 	if (kenv(KENV_GET, "kern.racct.enable", value, sizeof(value)) < 0 ||
-	    strcmp(value, "0") != 0)
+	    (strcmp(value, "0") != 0 && strcasecmp(value, "false") != 0))
 		atf_tc_skip("DEFERRED_RACCT_ZERO_TIER: needs a boot with "
 		    "kern.racct.enable=0 (vm-provider.sh RACCT_TUNABLE_ZERO=1)");
 }

@@ -1200,10 +1200,11 @@ SYSINIT(racctd, SI_SUB_RACCTD, SI_ORDER_FIRST, racctd_init, NULL);
 static void
 racct_init(void *dummy __unused)
 {
-	int tunable;
+	bool tunable;
 
 	KASSERT(racct_enable, ("%s: racct_enable is false", __func__));
-	if (TUNABLE_INT_FETCH("kern.racct.enable", &tunable) && tunable == 0)
+	/* The tunable was a boolean: "false" turned accounting off as "0". */
+	if (TUNABLE_BOOL_FETCH("kern.racct.enable", &tunable) && !tunable)
 		printf("racct: kern.racct.enable=0 ignored: resource "
 		    "accounting cannot be disabled\n");
 
