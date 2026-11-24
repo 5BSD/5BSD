@@ -741,6 +741,33 @@ cp_no_shields(void)
 }
 
 /*
+ * The tracer of a child that carries only the ptrace shield it inherited at
+ * fork.  PT_ATTACH is checked before the target becomes traced, so a process
+ * the shield refuses never becomes such a child's tracer by attaching.  What
+ * remains is the debugger that was tracing the parent and followed the fork
+ * (PTRACE_FORK): fork1() made it the child's tracer without a debug check.
+ * It was admitted to the parent and controlled it when the child was made,
+ * and refusing it now would refuse PT_DETACH and PT_CONTINUE too and leave
+ * the child stopped (and a vfork parent waiting for it) until the tracer
+ * exits.  A shield applied explicitly is not passed this way: it is refused
+ * on a traced process in the first place.
+ */
+static bool
+cp_inherited_tracer(struct proc *p, uint32_t flag)
+{
+	struct shield_entry *se;
+
+	mtx_assert(&cp_lock, MA_OWNED);
+	if (flag != CP_SF_PTRACE)
+		return (false);
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	if ((p->p_flag & P_TRACED) == 0 || p->p_pptr != curproc)
+		return (false);
+	se = cp_shield_find(p->p_pid);
+	return (se != NULL && (se->se_flags & CP_SF_PTRACE) == 0);
+}
+
+/*
  * Shared helper for shield hooks that protect a target PROCESS from others:
  * self-check, fast-path, look up the target PID's shield, allow the target's
  * protector and explicitly authorized accessors, otherwise deny.
@@ -770,7 +797,8 @@ cp_check_shield(struct ucred *cred __unused, struct proc *p, uint32_t flag,
 		return (0);
 	}
 	denied = caller_pid != cp_shield_protector(target_pid) &&
-	    !cp_is_authorized(caller_pid, target_pid, flag);
+	    !cp_is_authorized(caller_pid, target_pid, flag) &&
+	    !cp_inherited_tracer(p, flag);
 	mtx_unlock(&cp_lock);
 	if (denied)
 		SDT_PROBE3(mac_capability_capprotect, , , deny, name,

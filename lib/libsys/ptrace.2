@@ -1636,7 +1636,10 @@ A MAC policy refused the request, for example the
 ptrace shield of the target.
 A child that shares or holds a copy of the memory of a process with a ptrace
 shield inherits that shield until it executes a new image; only the child
-itself and its parent may debug it until then.
+itself, its parent, and a debugger that was tracing the parent and became
+the child's tracer at the fork
+.Pq Dv PT_FOLLOW_FORK
+may debug it until then.
 .El
 .It Bq ECAPMODE
 The process issuing the

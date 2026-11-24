@@ -58,6 +58,18 @@ parent, until it executes a new image.
 Until then only the child itself and its parent may debug it: not the
 parent's protector, and not the holders of the parent's tokens, which can
 debug the parent and so reach the same memory.
+One of them keeps its access: a debugger that was tracing the parent and
+follows its forks
+.Po
+.Dv PT_FOLLOW_FORK ,
+.Xr ptrace 2
+.Pc
+is made the child's tracer by the kernel at the fork, and may debug that
+child.
+It controlled the parent when the child was made, and a tracer that is
+refused cannot even detach, which would leave the child stopped.
+It gets no other child, and no child by
+.Dv PT_ATTACH .
 A child whose parent exits keeps the shield with no protector until it
 executes a new image.
 .Dv CP_OP_PROTECT
