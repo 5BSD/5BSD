@@ -10,6 +10,7 @@
 #include <atf-c.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,6 +35,36 @@ require_kernel(void)
 	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
 	close(pd);
 }
+/*
+ * The timeout of the cases that run the probe (kyua's default, stated so
+ * that the body can read it).
+ */
+#define	CASE_TIMEOUT	"300"
+
+/*
+ * The exchange's deadline: the case's own ATF timeout, so the case's timer,
+ * which started first, always ends a wait that never ends before the
+ * exchange would.  A guessed short deadline fails a correct exchange on a
+ * slow machine.
+ */
+static int
+case_timeout_ms(const atf_tc_t *tc)
+{
+	const char *text;
+	char *end;
+	long seconds;
+
+	ATF_REQUIRE_MSG(atf_tc_has_md_var(tc, "timeout"),
+	    "the case states no timeout to derive its deadline from");
+	text = atf_tc_get_md_var(tc, "timeout");
+	errno = 0;
+	seconds = strtol(text, &end, 10);
+	ATF_REQUIRE_MSG(errno == 0 && end != text && *end == '\0' &&
+	    seconds > 0 && seconds <= INT_MAX / 1000,
+	    "case timeout \"%s\" is not a usable deadline", text);
+	return ((int)seconds * 1000);
+}
+
 static void
 probe(const atf_tc_t *tc)
 {
@@ -57,7 +88,8 @@ probe(const atf_tc_t *tc)
 	marker = dup2(fd, 128);
 	ATF_REQUIRE_EQ(marker, 128);
 	ATF_REQUIRE(setenv("NSS_ISOLATION_PARENT_MARKER", "must-not-survive", 1) == 0);
-	result = sb_nss_exchange(path, fd, &request, 1000, 5000, &reply);
+	result = sb_nss_exchange(path, fd, &request, 1000, case_timeout_ms(tc),
+	    &reply);
 	int error = errno;
 	ATF_REQUIRE(fcntl(marker, F_GETFD) >= 0);
 	close(marker);
@@ -66,13 +98,21 @@ probe(const atf_tc_t *tc)
 	ATF_REQUIRE_MSG(result == 0, "isolation probe failed: %s", strerror(error));
 	ATF_REQUIRE_STREQ(reply.name, "isolation-probe");
 }
-ATF_TC_WITHOUT_HEAD(clean_exec);
+ATF_TC(clean_exec);
+ATF_TC_HEAD(clean_exec, tc)
+{
+	atf_tc_set_md_var(tc, "timeout", CASE_TIMEOUT);
+}
 ATF_TC_BODY(clean_exec, tc)
 {
 	require_kernel();
 	probe(tc);
 }
-ATF_TC_WITHOUT_HEAD(inherited_authority);
+ATF_TC(inherited_authority);
+ATF_TC_HEAD(inherited_authority, tc)
+{
+	atf_tc_set_md_var(tc, "timeout", CASE_TIMEOUT);
+}
 ATF_TC_BODY(inherited_authority, tc)
 {
 	struct cap_authority_info info, after;
@@ -86,7 +126,11 @@ ATF_TC_BODY(inherited_authority, tc)
 	ATF_REQUIRE_EQ(after.generation, info.generation);
 	ATF_REQUIRE_EQ(after.valid, 1);
 }
-ATF_TC_WITHOUT_HEAD(inherited_discovery);
+ATF_TC(inherited_discovery);
+ATF_TC_HEAD(inherited_discovery, tc)
+{
+	atf_tc_set_md_var(tc, "timeout", CASE_TIMEOUT);
+}
 ATF_TC_BODY(inherited_discovery, tc)
 {
 	struct mac_cap_process_info info, after;
