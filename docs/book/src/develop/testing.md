@@ -526,7 +526,8 @@ so `REQUIRE_UNITS` can name native and rc units but not a oneshot, which
 ends `done`. A status read that fails waits the same way, to the deadline.
 `GATE_TIMEOUT` is refused: the gate has no bound of its own. A lifecycle dependency (Time, Log,
 Power, Sysctl) that will not run by itself ends that phase only, with
-`PHASE_DEPENDENCY_STOPPED unit=...` and a dump; a status that cannot be
+`PHASE_DEPENDENCY_STOPPED unit=...` and a dump (as the gate expiry, it has
+no step, so its stacks are those of SwitchBoard, PID 1 and BSDTime only); a status that cannot be
 read gives `PHASE_DEPENDENCY_UNKNOWN`; the suites still run, and the run is
 not clean. With `--progress`, `vm-monitor.py` records each progress line and
 a host-load sample (load averages, CPUs, QEMU processes, fair-slot guest

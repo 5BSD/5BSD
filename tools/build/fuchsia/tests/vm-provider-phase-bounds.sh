@@ -43,9 +43,10 @@ for c in BSDTimectl logger BSDPowerctl sysctlcmpctl; do
 	printf '#!/bin/sh\necho "%s $*" >> "%s/calls"\n' "$c" "$work" > "$stub/$c"
 done
 cp "$stub/logger" "$work/logger.ok"
-# procstat -kk -a: a header, PID 1 and a process no dump asks for.
-printf '#!/bin/sh\necho "procstat $*" >> "%s/calls"\necho "  PID    TID COMM"\necho "    1 100001 STACK-OF-1"\necho "999999999 100002 STACK-OF-NONE"\n' \
-    "$work" > "$stub/procstat"
+# procstat -kk -a: a header, PID 1, a PID no process has and this script
+# itself, a live process that no dump asks for.
+printf '#!/bin/sh\necho "procstat $*" >> "%s/calls"\necho "  PID    TID COMM"\necho "    1 100001 STACK-OF-1"\necho "999999999 100002 STACK-OF-NONE"\necho "%s 100003 STACK-OF-UNASKED"\n' \
+    "$work" $$ > "$stub/procstat"
 printf '#!/bin/sh\necho "geom $*" >> "%s/calls"\necho "   ident: kyua-results"\n' \
     "$work" > "$stub/geom"
 cat > "$stub/switchboardctl" <<EOF
@@ -133,6 +134,24 @@ grep -q '^later rc=124' "$work/out" || fail 'skipped step did not return 124'
 ! grep -q 'blocker returned 0' "$work/out" || fail 'expired step returned 0'
 ! pgrep -f '^sleep 3601$' > /dev/null || fail 'a process of the expired step survived'
 [ -e "$work/R/phase-expired" ] || fail 'the expiry was not recorded'
+
+# A dump without a step (a gate expiry, a stopped dependency) shows the
+# named processes only: SwitchBoard, PID 1 and BSDTime.  It has no tree to
+# walk; PID 0 is a process too, and a walk from it is every process.
+cat > "$work/rootless.sh" <<EOF
+phase_stacks rootless
+phase_say PHASE_DUMP_END step=rootless
+EOF
+guest_sh 30 "$work/rootless.sh" > "$work/out" 2>&1 || fail "rootless dump failed"
+sed -n '/^PHASE_DUMP_BEGIN step=rootless$/,/^PHASE_DUMP_END step=rootless$/p' "$work/out" > "$work/rootless"
+grep -q '^PHASE_DUMP_END step=rootless$' "$work/rootless" || fail 'no rootless dump'
+! grep '^--- procstat -kk ' "$work/rootless" |
+    grep -Evq '^--- procstat -kk (1 \(.*\)|[0-9]+ \((switchboard|BSDTime)\))$' ||
+    fail 'a dump without a step lists a process nobody named'
+grep -q '^--- procstat -kk 1 (' "$work/rootless" || fail 'a dump without a step lacks PID 1'
+grep -q 'STACK-OF-1$' "$work/rootless" || fail 'a dump without a step lacks the stack of PID 1'
+! grep -q 'STACK-OF-UNASKED' "$work/rootless" ||
+    fail 'a dump without a step shows the stack of a process nobody named'
 # A step whose command exits but leaves a process behind ends with the
 # command (its status kept), names the leftover, and kills it: no expiry.
 cat > "$work/leftover.sh" <<'EOF'

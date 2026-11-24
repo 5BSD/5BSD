@@ -680,19 +680,22 @@ phase_say() { echo "$*" >> "$PHASE_CONSOLE"; }
 phase_say_fresh() { printf '\n%s\n' "$*" >> "$PHASE_CONSOLE"; }
 phase_expired() { [ -e "$PHASE_EXPIRED_FILE" ]; }
 phase_left() { echo $(( RUN_DEADLINE - PHASE_RESERVE - $(date +%s) )); }
-# "PID COMM" pairs of what a dump shows: process $1 and its descendants (a
+# "PID COMM" pairs of what a dump shows: process $1 and its descendants, if
+# a step is given (a gate expiry and a stopped dependency have none, and
+# show the named processes only; PID 0 is no default, every process
+# descends from it) (a
 # step runs under timeout(1) as its reaper, so descendants that lost their
 # parent are still under it), then SwitchBoard, PID 1 and the phase's
 # provider.  One ps and one awk whatever the number of processes, so the
 # reserve measured at the start is what an expiry in a large tree costs.
 phase_procs() {
-	ps -ax -o pid= -o ppid= -o comm= | awk -v root="${1:-0}" '
+	ps -ax -o pid= -o ppid= -o comm= | awk -v root="${1:-}" '
 	{ pid[NR] = $1; par[NR] = $2; c = $3
 	  for (i = 4; i <= NF; i++) c = c "_" $i
 	  comm[$1] = c }
 	function show(p) { if (!(p in shown)) { shown[p] = 1; print p, comm[p] } }
 	END {
-		if (root in comm) {
+		if (root != "" && (root in comm)) {
 			tree[root] = 1; show(root)
 			do {
 				more = 0
