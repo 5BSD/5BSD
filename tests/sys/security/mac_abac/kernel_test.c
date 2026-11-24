@@ -36,13 +36,14 @@ reset_policy(int default_policy)
 	call_ok(ABAC_SYS_SET_ENABLE, &range);
 }
 
-static uint32_t
-add_rule(uint8_t action, uint32_t operation, uint16_t set)
+/* Add a rule matching everything; return 0 and its id, or the errno. */
+static int
+try_add_rule(uint8_t action, uint32_t operation, uint16_t set, uint32_t *id)
 {
 	struct abac_rule_arg *rule;
 	char *data;
 	size_t size;
-	uint32_t id;
+	int error;
 
 	size = sizeof(*rule) + 4;
 	rule = calloc(1, size);
@@ -54,9 +55,23 @@ add_rule(uint8_t action, uint32_t operation, uint16_t set)
 	rule->vr_object_len = 2;
 	data = (char *)(rule + 1);
 	memcpy(data, "*\0*\0", 4);
-	call_ok(ABAC_SYS_RULE_ADD, rule);
-	id = rule->vr_id;
+	error = 0;
+	if (mac_syscall("mac_abac", ABAC_SYS_RULE_ADD, rule) != 0)
+		error = errno;
+	else
+		*id = rule->vr_id;
 	free(rule);
+	return (error);
+}
+
+static uint32_t
+add_rule(uint8_t action, uint32_t operation, uint16_t set)
+{
+	uint32_t id;
+	int error;
+
+	error = try_add_rule(action, operation, set, &id);
+	ATF_REQUIRE_MSG(error == 0, "rule add failed: %s", strerror(error));
 	return (id);
 }
 
@@ -391,6 +406,41 @@ ATF_TC_BODY(set_clear_frees_slots, tc)
 }
 
 /*
+ * The table's limit is ABAC_MAX_RULES loaded rules: a full table refuses an
+ * addition with ENOSPC, and removing any one rule makes room for exactly one.
+ */
+ATF_TC(full_table_remove_one);
+ATF_TC_HEAD(full_table_remove_one, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "a full table takes one more rule after one removal");
+}
+ATF_TC_BODY(full_table_remove_one, tc)
+{
+	uint32_t id, middle;
+	int i;
+	(void)tc;
+
+	reset_policy(0);
+	middle = 0;
+	for (i = 0; i < ABAC_MAX_RULES; i++) {
+		id = add_rule(ABAC_ACTION_ALLOW, ABAC_OP_EXEC, 0);
+		if (i == ABAC_MAX_RULES / 2)
+			middle = id;
+	}
+	ATF_REQUIRE_EQ(ABAC_MAX_RULES, rule_count());
+	ATF_REQUIRE_EQ(ENOSPC,
+	    try_add_rule(ABAC_ACTION_ALLOW, ABAC_OP_EXEC, 0, &id));
+	call_ok(ABAC_SYS_RULE_REMOVE, &middle);
+	ATF_REQUIRE_EQ(ABAC_MAX_RULES - 1, rule_count());
+	(void)add_rule(ABAC_ACTION_ALLOW, ABAC_OP_EXEC, 0);
+	ATF_REQUIRE_EQ(ABAC_MAX_RULES, rule_count());
+	ATF_REQUIRE_EQ(ENOSPC,
+	    try_add_rule(ABAC_ACTION_ALLOW, ABAC_OP_EXEC, 0, &id));
+	reset_policy(0);
+}
+
+/*
  * Reusing slots keeps first-match order: a rule added after a removal is
  * evaluated after every rule added before it, whichever slot the removal
  * freed.
@@ -439,6 +489,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, default_policy_validation);
 	ATF_TP_ADD_TC(tp, remove_frees_slot);
 	ATF_TP_ADD_TC(tp, set_clear_frees_slots);
+	ATF_TP_ADD_TC(tp, full_table_remove_one);
 	ATF_TP_ADD_TC(tp, remove_keeps_order);
 	return (atf_no_error());
 }
