@@ -1634,6 +1634,9 @@ dq_wait_event(struct dq_queue *q, struct dq_event_k *ev, struct thread *td,
 			 * the other modes do; a signal pending as well is
 			 * delivered when the call returns with its answer.
 			 * Otherwise the signal ends the wait with EINTR.
+			 * The stop_all_proc() arm (TDF_ALLPROCSUSP) is from
+			 * source reading and has no test: only a reroot
+			 * reaches it.
 			 */
 			if (dq_wait_woken(q, ev, td) == ERESTART ||
 			    (td->td_flags & TDF_ALLPROCSUSP) != 0)

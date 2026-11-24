@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 23, 2026
+.Dd November 24, 2026
 .Dt DQ 4
 .Os
 .Sh NAME
@@ -916,6 +916,14 @@ a lock wait): the wait keeps its operation, the controller sees no
 INTERRUPT, and the call returns the answer after the detach.
 The other waits defer stops, as a disk wait does, so the stop completes
 when they end; the signal mask plays no part in it.
+A non-transparent
+.Dv PT_ATTACH ,
+and any signal sent to a process that is traced, ends a catching wait as
+a caught signal does, whether or not the debugger then suppresses the
+signal: in interruptible mode a delivered operation that changes
+something then fails with
+.Er EINTR
+and is not restarted.
 A traced process stays stopped with a
 .Dv SIGKILL
 pending until the debugger continues or detaches it; a received
@@ -976,8 +984,11 @@ unread event and an operation that only reads are given up and
 restarted, and a delivered operation that changes something waits,
 without catching signals, for the answer, the deadline or the process
 starting to die.
-A signal that arrives during that wait, or together with the
-single-threading, is delivered when the call returns with its answer.
+A signal that arrives during that wait is delivered when the call
+returns with its answer.
+The kernel's stop of every process for a reroot
+.Pq Xr reboot 8 Fl r
+is treated as such a single-threading.
 A lock wait
 .Pq Dv DQ_OP_LOCK
 is always interruptible, as
