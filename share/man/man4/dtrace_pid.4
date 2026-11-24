@@ -3,7 +3,7 @@
 .\"
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd September 19, 2026
+.Dd November 24, 2026
 .Dt DTRACE_PID 4
 .Os
 .Sh NAME
@@ -23,6 +23,15 @@ by instrumenting the entry and return of functions in userspace programs.
 Refer to
 .Xr dtrace_fbt 4
 for more details about function boundary instrumentation.
+.Pp
+The probes are placed at addresses the consumer chooses, so creating them
+needs permission to debug the process
+.Pq Xr p_candebug 9 ,
+the permission
+.Xr ptrace 2
+needs: a process protected from debuggers, for example by a
+.Xr mac_capability_capprotect 4
+ptrace shield, refuses it.
 .Pp
 The
 .Nm pid

@@ -131,9 +131,26 @@ Flags divide into protections, enforced against foreign processes, and
 restrictions, enforced against the shielded process itself. `flags = 0`
 means `CP_SF_ALL`.
 
+A shield is not inherited, with one exception: a child of a process with a
+ptrace shield shares (vfork, `posix_spawn`, `RFMEM`) or holds a copy of
+(fork) its parent's memory, so it carries a ptrace shield, whose protector
+is the parent, until it executes a new image. Until then only the child
+itself and its parent (which may attach) may debug it, not the parent's
+protector or token holders. A debugger that was tracing the parent and
+follows its forks (`PT_FOLLOW_FORK`) is the child's tracer from the fork
+and may debug that child; it gets no child by `PT_ATTACH`. Explicit
+protection of the
+child (SwitchBoard's `CP_OP_PROTECT`) adds its own flags; after exec the
+child carries exactly those. A traced process cannot be shielded (`EBUSY`);
+a GENERIC-TEST kernel built with `CAPPROTECT_TEST_ALLOW_TRACED`, never
+published, allows it so that Capsule or SwitchBoard can be started under a
+debugger. A documented residual: a process that already shared the memory
+when the process shielded itself (an earlier `RFMEM` or vfork child) stays
+unshielded.
+
 | Flag | Manifest word | Hook and effect |
 |---|---|---|
-| `CP_SF_PTRACE` | `ptrace` | `proc_check_debug`: `EACCES` on attach and every other debug access (memory, environment, descriptors, new DTrace pid-provider probes; a pid probe made before the shield can still be enabled). The DTrace kernel providers are not covered: root reads the process's memory with `copyin` from `syscall`, `fbt` or `profile` probes that fire in it, and with `-w` writes, signals or stops it (`copyout`, `raise`, `stop`). Inspection (`proc_check_inspect`: memory map, auxv, kernel stacks, USDT registration from read-only file mappings) is allowed |
+| `CP_SF_PTRACE` | `ptrace` | `proc_check_debug`: `EACCES` on attach and every other debug access (memory, environment, descriptors, new DTrace pid-provider probes; a pid probe made before the shield can still be enabled). The DTrace kernel providers are not covered: root reads the process's memory with `copyin` from `syscall`, `fbt` or `profile` probes that fire in it, and with `-w` writes, signals or stops it (`copyout`, `raise`, `stop`). A child of the process carries the shield until it executes a new image (see above). Inspection (`proc_check_inspect`: memory map, auxv, kernel stacks, USDT registration from read-only file mappings) is allowed |
 | `CP_SF_SIGNAL`, `CP_SF_SIGKILL`, `CP_SF_SIGCONT` | `signal`, `sigkill`, `sigcont` | `proc_check_signal`, `proc_check_suspend`; `SIGKILL` and `SIGCONT` need their own flag |
 | `CP_SF_WAIT` | `wait` | `proc_check_wait`; the real parent may always wait |
 | `CP_SF_SCHED` | `sched` | `proc_check_sched`: priority and cpuset changes |

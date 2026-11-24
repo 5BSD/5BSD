@@ -83,6 +83,12 @@ CFLAGS.capprotect_usdt_helper+=	-DWITH_DTRACE
 LIBADD.capprotect_usdt_helper+=	elf
 LIBADD.capprotect_usdt_helper+=	pthread
 .endif
+# The ptrace shield and a shielded process's children, and shielding a
+# traced process (shield-hardening design).  The fixture shares or copies
+# its memory with children; capprotect_protector_helper is the agent.
+ATF_TESTS_C+=	capprotect_hardening_test
+TEST_METADATA.capprotect_hardening_test+=	is_exclusive="true"
+PROGS+=		capprotect_share_helper
 ATF_TESTS_SH+=	process_context_test
 PROGS+=		process_context_helper process_context_edge_helper \
 		process_context_ipc_helper

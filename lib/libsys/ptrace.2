@@ -1,7 +1,7 @@
 .\"	$NetBSD: ptrace.2,v 1.2 1995/02/27 12:35:37 cgd Exp $
 .\"
 .\" This file is in the public domain.
-.Dd November 18, 2026
+.Dd November 24, 2026
 .Dt PTRACE 2
 .Os
 .Sh NAME
@@ -1628,6 +1628,19 @@ enough.
 .Fa pve_pathlen
 holds the minimum buffer size required on return.
 .El
+.It Bq Er EACCES
+.Bl -bullet -compact
+.It
+A MAC policy refused the request, for example the
+.Xr mac_capability_capprotect 4
+ptrace shield of the target.
+A child that shares or holds a copy of the memory of a process with a ptrace
+shield inherits that shield until it executes a new image; only the child
+itself, its parent, and a debugger that was tracing the parent and became
+the child's tracer at the fork
+.Pq Dv PT_FOLLOW_FORK
+may debug it until then.
+.El
 .It Bq ECAPMODE
 The process issuing the
 .Fn ptrace
@@ -1640,7 +1653,8 @@ call is in capability mode.
 .Xr wait 2 ,
 .Xr execv 3 ,
 .Xr i386_clr_watch 3 ,
-.Xr i386_set_watch 3
+.Xr i386_set_watch 3 ,
+.Xr mac_capability_capprotect 4
 .Sh HISTORY
 The
 .Fn ptrace

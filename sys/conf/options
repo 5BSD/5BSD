@@ -666,6 +666,12 @@ DQ_TEST_OPEN		opt_dq.h
 # DQ_FAULT_INJECTION adds the dq(4) fault-injection knobs of the test
 # suites; a test kernel as DQ_TEST_OPEN is, and not in NOTES either.
 DQ_FAULT_INJECTION	opt_dq.h
+# CAPPROTECT_TEST_ALLOW_TRACED makes a test kernel that is never published
+# (mac_capability_capprotect(4): a process that is traced may be shielded,
+# so that Capsule or SwitchBoard can be started under a debugger; a row of
+# the test-kernel option ledger, sys/conf/test-options).  It is
+# deliberately not in NOTES: LINT must not build it.
+CAPPROTECT_TEST_ALLOW_TRACED	opt_capprotect.h
 DEV_NETMAP		opt_global.h
 DEV_PCI			opt_pci.h
 DEV_PF			opt_pf.h

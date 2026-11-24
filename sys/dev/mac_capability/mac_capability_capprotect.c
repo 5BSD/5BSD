@@ -6,13 +6,18 @@
  * mac_capability_capprotect — Capability Protection.
  *
  * Per-process protection, persistent across exec and descriptor close, removed
- * on process exit. Forked children must install their own protection. The
+ * on process exit. Forked children must install their own protection, except
+ * that a child of a ptrace-shielded process inherits a ptrace shield, with
+ * its parent as protector, until it executes a new image: until then it
+ * shares or holds a copy of the parent's memory. The
  * launcher holding a process descriptor may protect that live process and
  * retains lifecycle access. Other access requires an explicitly activated
  * token. Tokens name a shield incarnation, never just a reusable PID.
  * CP_SF_VISIBLE is retained for wire compatibility and does not hide processes.
  * Zero flags selects CP_SF_ALL, including self-restrictions.
  */
+
+#include "opt_capprotect.h"
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -48,6 +53,20 @@
 
 MALLOC_DEFINE(M_MAC_CAPABILITY_CP, "mac_capability_cp", "mac_capability capability protection");
 
+#ifdef CAPPROTECT_TEST_ALLOW_TRACED
+/*
+ * Test kernels only (GENERIC-TEST): a traced process may be shielded, so
+ * that a developer can start Capsule or SwitchBoard under a debugger.  A
+ * kernel built with the option is never published:
+ * release/scripts/check-test-kernel.sh refuses any kernel or module that
+ * carries this marker or a capprotect_test_ symbol (its row of
+ * sys/conf/test-options).  Do not rename either without changing the
+ * ledger in the same change.
+ */
+static const char capprotect_test_allow_traced_marker[] __used =
+    "@(#)5BSD CAPPROTECT_TEST_ALLOW_TRACED test kernel: not for publication";
+#endif
+
 SDT_PROVIDER_DEFINE(mac_capability_capprotect);
 SDT_PROBE_DEFINE3(mac_capability_capprotect, , , deny,
     "const char *", "uint64_t", "uint64_t");
@@ -73,7 +92,8 @@ static struct mtx cp_lock;
  * Shield table: shielded PROCESSES, keyed by PID, with a unique lifetime generation.
  *
  * Protection is per-process, not per-nonce: a forked child does not inherit
- * its parent's shield, and an entry is dropped when the process exits (before
+ * its parent's shield, except the ptrace shield until it execs
+ * (cp_process_fork()), and an entry is dropped when the process exits (before
  * the PID can be reused).  se_protector records the PID that applied the shield
  * (the launcher, or the process itself) and is permitted to act on the target
  * for lifecycle control.
@@ -82,7 +102,8 @@ struct shield_entry {
 	LIST_ENTRY(shield_entry) se_link;
 	pid_t		se_pid;		/* shielded process */
 	pid_t		se_protector;	/* who applied it (launcher/self) */
-	uint32_t	se_flags;
+	uint32_t	se_flags;	/* applied explicitly */
+	uint32_t	se_iflags;	/* inherited at fork, until exec */
 	uint64_t	se_generation;
 };
 static LIST_HEAD(, shield_entry) *cp_shield_hash;
@@ -122,7 +143,8 @@ static volatile int cp_active_shields;
 #define	CP_AUTH_BUCKET(pid)	(&cp_auth_hash[(u_long)(pid) & cp_auth_hashmask])
 
 /*
- * Returns the shield flags for a PID, or 0 if not shielded.
+ * Returns the shield flags for a PID, explicit and inherited, or 0 if not
+ * shielded.
  */
 static uint32_t
 cp_shield_flags(pid_t pid)
@@ -132,7 +154,7 @@ cp_shield_flags(pid_t pid)
 	mtx_assert(&cp_lock, MA_OWNED);
 	LIST_FOREACH(se, CP_SHIELD_BUCKET(pid), se_link) {
 		if (se->se_pid == pid)
-			return (se->se_flags);
+			return (se->se_flags | se->se_iflags);
 	}
 	return (0);
 }
@@ -180,7 +202,15 @@ cp_shield_find(pid_t pid)
 	return (NULL);
 }
 
-/* The caller holds the live target's PROC_LOCK through publication. */
+/*
+ * The caller holds the live target's PROC_LOCK through publication.
+ *
+ * Explicit flags are added to an existing entry.  An entry that only holds
+ * the ptrace shield the process inherited at fork takes the caller as its
+ * protector: a launcher that protects its child, or the child itself.  The
+ * inherited flag is left alone and still drops at exec, so the process then
+ * carries exactly the flags it was given.
+ */
 static int
 cp_shield_add(struct proc *p, pid_t protector, uint32_t flags,
     struct cp_priv *priv, struct shield_entry *spare)
@@ -194,6 +224,19 @@ cp_shield_add(struct proc *p, pid_t protector, uint32_t flags,
 		error = EINVAL;
 		goto out;
 	}
+#ifndef CAPPROTECT_TEST_ALLOW_TRACED
+	/*
+	 * A shield never admits a debugger it did not choose.  An attached
+	 * tracer would be refused at its next request (p_candebug(9)),
+	 * leaving the process traced, and possibly stopped, under a tracer
+	 * that can neither continue nor detach it.  Refuse instead; the
+	 * caller may retry once the tracer has detached.
+	 */
+	if ((p->p_flag & P_TRACED) != 0) {
+		error = EBUSY;
+		goto out;
+	}
+#endif
 	se = cp_shield_find(p->p_pid);
 	if (se == NULL) {
 		/* Never reuse a generation, even if the counter is exhausted. */
@@ -206,10 +249,12 @@ cp_shield_add(struct proc *p, pid_t protector, uint32_t flags,
 		se->se_pid = p->p_pid;
 		se->se_protector = protector;
 		se->se_flags = 0;
+		se->se_iflags = 0;
 		se->se_generation = ++cp_generation;
 		LIST_INSERT_HEAD(CP_SHIELD_BUCKET(p->p_pid), se, se_link);
 		atomic_add_int(&cp_active_shields, 1);
-	}
+	} else if (se->se_flags == 0)
+		se->se_protector = protector;
 	se->se_flags |= flags;
 	priv->cp_target = p->p_pid;
 	priv->cp_generation = se->se_generation;
@@ -574,6 +619,101 @@ cp_process_exit(void *arg __unused, struct proc *p)
 }
 static eventhandler_tag cp_exit_tag;
 
+/*
+ * Fork of a ptrace-shielded process: the child shares (vfork, RFSPAWN,
+ * RFMEM) or holds a copy of (fork) the parent's memory, so it inherits a
+ * ptrace shield whose protector is the parent, until it executes a new
+ * image.  Only ptrace is inherited.  The child is still PRS_NEW: pfind()
+ * and tdfind() do not return it and its process descriptor is not
+ * installed yet, so no debugger reaches it before the entry exists.  No
+ * lock is held here; the allocation may sleep.
+ *
+ * The parent is looked up twice so that a fork by a process without a
+ * ptrace shield, the common case, allocates nothing.  A shield lasts until
+ * its process exits, and the forking thread keeps the parent from exiting;
+ * the second lookup only keeps the handler correct without that argument.
+ */
+static void
+cp_process_fork(void *arg __unused, struct proc *p1, struct proc *p2,
+    int flags __unused)
+{
+	struct shield_entry *se;
+	bool inherited;
+
+	if (atomic_load_int(&cp_active_shields) == 0)
+		return;
+	mtx_lock(&cp_lock);
+	inherited = (cp_shield_flags(p1->p_pid) & CP_SF_PTRACE) != 0;
+	mtx_unlock(&cp_lock);
+	if (!inherited)
+		return;
+	se = malloc(sizeof(*se), M_MAC_CAPABILITY_CP, M_WAITOK);
+	inherited = false;
+	mtx_lock(&cp_lock);
+	if ((cp_shield_flags(p1->p_pid) & CP_SF_PTRACE) != 0) {
+		/*
+		 * The fork cannot fail here, and must not leave the child
+		 * unshielded: fail closed.  The counter never reaches this.
+		 */
+		if (cp_generation == UINT64_MAX)
+			panic("capprotect: shield generations exhausted");
+		KASSERT(cp_shield_find(p2->p_pid) == NULL,
+		    ("capprotect: pid %d forked with a shield", p2->p_pid));
+		se->se_pid = p2->p_pid;
+		se->se_protector = p1->p_pid;
+		se->se_flags = 0;
+		se->se_iflags = CP_SF_PTRACE;
+		se->se_generation = ++cp_generation;
+		LIST_INSERT_HEAD(CP_SHIELD_BUCKET(p2->p_pid), se, se_link);
+		atomic_add_int(&cp_active_shields, 1);
+		inherited = true;
+		se = NULL;
+	}
+	mtx_unlock(&cp_lock);
+	free(se, M_MAC_CAPABILITY_CP);
+	if (inherited)
+		SDT_PROBE6(mac_capability_capprotect, , , state, "inherit",
+		    p2->p_pid, p1->p_pid, CP_SF_PTRACE, p1->p_pid, 0);
+}
+static eventhandler_tag cp_fork_tag;
+
+/*
+ * Exec: the new image holds nothing of the parent's memory, so the
+ * inherited ptrace shield drops.  The entry goes when nothing explicit
+ * remains in it.  This runs in exec_new_vmspace() before the old address
+ * space is replaced; P_INEXEC refuses every debugger (EBUSY) in between,
+ * and an exec that fails after this point kills the process.
+ */
+static void
+cp_process_exec(void *arg __unused, struct proc *p,
+    struct image_params *imgp __unused)
+{
+	struct shield_entry *se, *gone;
+	bool dropped;
+
+	if (atomic_load_int(&cp_active_shields) == 0)
+		return;
+	gone = NULL;
+	dropped = false;
+	mtx_lock(&cp_lock);
+	se = cp_shield_find(p->p_pid);
+	if (se != NULL && se->se_iflags != 0) {
+		se->se_iflags = 0;
+		dropped = true;
+		if (se->se_flags == 0) {
+			LIST_REMOVE(se, se_link);
+			atomic_subtract_int(&cp_active_shields, 1);
+			gone = se;
+		}
+	}
+	mtx_unlock(&cp_lock);
+	free(gone, M_MAC_CAPABILITY_CP);
+	if (dropped)
+		SDT_PROBE6(mac_capability_capprotect, , , state,
+		    "inherit-drop", p->p_pid, 0, CP_SF_PTRACE, p->p_pid, 0);
+}
+static eventhandler_tag cp_exec_tag;
+
 static const struct mac_capability_ops cp_ops = {
 	.co_connect = cp_connect,
 	.co_init = cp_init,
@@ -597,6 +737,41 @@ cp_no_shields(void)
 {
 
 	return (atomic_load_int(&cp_active_shields) == 0);
+}
+
+/*
+ * The current tracer of a child that carries only the ptrace shield it
+ * inherited at fork: the child is P_TRACED and the caller is its p_pptr.
+ * PT_ATTACH is checked before the target becomes traced, so a process the
+ * shield refuses never becomes such a child's tracer by attaching.  A
+ * tracer can still be made without a debug check in two ways:
+ *
+ * - the debugger that was tracing the parent and followed the fork
+ *   (PTRACE_FORK): fork1() made it the child's tracer.  It was admitted to
+ *   the parent and controlled it when the child was made, and refusing it
+ *   now would refuse PT_DETACH and PT_CONTINUE too and leave the child
+ *   stopped (and a vfork parent waiting for it) until the tracer exits;
+ * - the child's own PT_TRACE_ME, which makes its current parent the tracer:
+ *   the parent itself (admitted anyway as the protector) or, after the
+ *   parent exited, the reaper it was reparented to.  The child chose it;
+ *   this is a documented residual.
+ *
+ * A shield applied explicitly is not passed this way: it is refused on a
+ * traced process in the first place.
+ */
+static bool
+cp_inherited_tracer(struct proc *p, uint32_t flag)
+{
+	struct shield_entry *se;
+
+	mtx_assert(&cp_lock, MA_OWNED);
+	if (flag != CP_SF_PTRACE)
+		return (false);
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	if ((p->p_flag & P_TRACED) == 0 || p->p_pptr != curproc)
+		return (false);
+	se = cp_shield_find(p->p_pid);
+	return (se != NULL && (se->se_flags & CP_SF_PTRACE) == 0);
 }
 
 /*
@@ -629,7 +804,8 @@ cp_check_shield(struct ucred *cred __unused, struct proc *p, uint32_t flag,
 		return (0);
 	}
 	denied = caller_pid != cp_shield_protector(target_pid) &&
-	    !cp_is_authorized(caller_pid, target_pid, flag);
+	    !cp_is_authorized(caller_pid, target_pid, flag) &&
+	    !cp_inherited_tracer(p, flag);
 	mtx_unlock(&cp_lock);
 	if (denied)
 		SDT_PROBE3(mac_capability_capprotect, , , deny, name,
@@ -641,17 +817,32 @@ cp_check_shield(struct ucred *cred __unused, struct proc *p, uint32_t flag,
 	return (denied ? EACCES : 0);
 }
 
+/*
+ * Whether the caller may debug a target whose authority it does not share
+ * (the authority debug check consults this first).  Only an explicit ptrace
+ * shield grants it to the protector: the protector of an inherited shield is
+ * the parent, which the shield admits but which gets nothing of the child's
+ * authority from it.  On an exec of its own the parent no longer matches
+ * that authority and must be refused, as for a child with no shield.
+ */
 bool
 mac_capability_debug_authorized(pid_t caller, pid_t target)
 {
+	struct shield_entry *se;
 	bool allowed;
 
 	if (cp_no_shields())
 		return (false);
 	mtx_lock(&cp_lock);
-	allowed = (cp_shield_flags(target) & CP_SF_PTRACE) != 0 &&
-	    (caller == cp_shield_protector(target) ||
-	    cp_is_authorized(caller, target, CP_SF_PTRACE));
+	se = cp_shield_find(target);
+	if (se == NULL ||
+	    ((se->se_flags | se->se_iflags) & CP_SF_PTRACE) == 0)
+		allowed = false;
+	else if ((se->se_flags & CP_SF_PTRACE) != 0 &&
+	    caller == se->se_protector)
+		allowed = true;
+	else
+		allowed = cp_is_authorized(caller, target, CP_SF_PTRACE);
 	mtx_unlock(&cp_lock);
 	return (allowed);
 }
@@ -1038,6 +1229,10 @@ mac_capability_capprotect_modevent(module_t mod __unused, int type, void *unused
 		}
 		cp_exit_tag = EVENTHANDLER_REGISTER(process_exit, cp_process_exit,
 		    NULL, EVENTHANDLER_PRI_ANY);
+		cp_fork_tag = EVENTHANDLER_REGISTER(process_fork,
+		    cp_process_fork, NULL, EVENTHANDLER_PRI_ANY);
+		cp_exec_tag = EVENTHANDLER_REGISTER(process_exec,
+		    cp_process_exec, NULL, EVENTHANDLER_PRI_ANY);
 		if (bootverbose)
 			printf("mac_capability_capprotect: loaded\n");
 		return (0);

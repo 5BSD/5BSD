@@ -5504,8 +5504,8 @@ ATF_TC(cap_pro_fork_not_inherited);
 ATF_TC_HEAD(cap_pro_fork_not_inherited, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "A shield is per-process: a fork child is NOT covered by the "
-	    "parent's shield (born unprotected)");
+	    "A shield's flags are per-process: a fork child is NOT covered "
+	    "by them; it holds only the inherited ptrace shield until exec");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_capprotect");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
@@ -5523,7 +5523,7 @@ ATF_TC_BODY(cap_pro_fork_not_inherited, tc)
 		char buf;
 
 		close(sv[0]);
-		shield_fd = capprotect_shield(CP_SF_PTRACE);
+		shield_fd = capprotect_shield(CP_SF_PTRACE | CP_SF_SCHED);
 		if (shield_fd < 0)
 			_exit(10);
 		gc = fork();		/* child born after the parent shielded */
@@ -5546,9 +5546,17 @@ ATF_TC_BODY(cap_pro_fork_not_inherited, tc)
 	ATF_REQUIRE_MSG(read(sv[0], &grandchild_pid, sizeof(grandchild_pid))
 	    == (ssize_t)sizeof(grandchild_pid),
 	    "child did not shield and fork");
-	/* The shielded process is protected; its fork child is NOT. */
+	/*
+	 * The shielded process is protected.  Its fork child does not
+	 * inherit the explicit flags: CP_SF_SCHED does not cover it.  It
+	 * holds a copy of the parent's memory until exec, so it carries
+	 * the inherited ptrace shield (capprotect_hardening_test pins
+	 * that shield and its end at exec).
+	 */
 	ATF_CHECK_EQ(run_shield_helper("ptrace", child_pid), 0);
-	ATF_CHECK_EQ(run_shield_helper("ptrace", grandchild_pid), 1);
+	ATF_CHECK_EQ(run_shield_helper("sched", child_pid), 0);
+	ATF_CHECK_EQ(run_shield_helper("sched", grandchild_pid), 1);
+	ATF_CHECK_EQ(run_shield_helper("ptrace", grandchild_pid), 0);
 	release_child(sv[0], 'g');
 	ATF_REQUIRE_EQ(waitpid(child_pid, &status, 0), child_pid);
 	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,

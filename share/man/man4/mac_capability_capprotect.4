@@ -3,7 +3,7 @@
 .\"
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd November 17, 2026
+.Dd November 24, 2026
 .Dt MAC_CAPABILITY_CAPPROTECT 4
 .Os
 .Sh NAME
@@ -38,8 +38,85 @@ It persists across
 .Xr execve 2
 and across closing the capability fd that applied it, and is removed only
 when the protected process exits.
-Forked children of a shielded process are not shielded; they must install
-their own protection, or their launcher must protect them.
+Forked children of a shielded process do not inherit its shield; they must
+install their own protection, or their launcher must protect them.
+The one exception is the ptrace shield.
+A child of a process whose shield includes
+.Dv CP_SF_PTRACE
+shares
+.Po
+.Xr vfork 2 ,
+.Xr posix_spawn 3 ,
+.Xr rfork 2
+with
+.Dv RFMEM
+.Pc
+or holds a copy of
+.Pq Xr fork 2
+its parent's memory, so it inherits a ptrace shield, whose protector is the
+parent, until it executes a new image.
+Until then only the child itself and its parent may debug it: not the
+parent's protector, and not the holders of the parent's tokens, which can
+debug the parent and so reach the same memory.
+One of them keeps its access: a debugger that was tracing the parent and
+follows its forks
+.Po
+.Dv PT_FOLLOW_FORK ,
+.Xr ptrace 2
+.Pc
+is made the child's tracer by the kernel at the fork, and may debug that
+child.
+It controlled the parent when the child was made, and a tracer that is
+refused cannot even detach, which would leave the child stopped.
+It gets no other child, and no child by
+.Dv PT_ATTACH .
+A child whose parent exits keeps the shield with no protector until it
+executes a new image.
+.Dv CP_OP_PROTECT
+or
+.Dv CP_OP_SHIELD
+on such a child adds its own flags and makes the caller its protector; at
+exec the inherited ptrace shield drops and the child keeps exactly the flags
+it was given.
+Only ptrace is inherited.
+A process that already shared the memory when the process shielded itself
+(an earlier
+.Dv RFMEM
+or
+.Xr vfork 2
+child) stays unshielded: shield a process before it creates sharers.
+An
+.Dv RFMEM
+sharer of a software-authority holder that installs a different authority
+lets that authority's peers debug it, and so reach the holder's memory; no
+base program does this.
+A child under the inherited shield that requests tracing itself
+.Pq Dv PT_TRACE_ME
+makes its current parent its tracer, which may then debug it: the parent
+itself, or, after the parent exited, the reaper the child was reparented
+to.
+The inherited shield does not give its protector the child's software
+authority: once the parent executes a new image it is refused the child's
+debugging by the authority rule
+.Pq Er EPERM ,
+as for a child with no shield.
+.Pp
+A shield is not applied to a process that a debugger is tracing:
+.Dv CP_OP_SHIELD
+and
+.Dv CP_OP_PROTECT
+fail with
+.Er EBUSY
+while the target is traced, because the tracer would keep the process
+traced, and possibly stopped, while the shield refuses every further
+request it makes.
+A test kernel built with
+.Cd "options CAPPROTECT_TEST_ALLOW_TRACED"
+(GENERIC-TEST, never published) allows it, so that
+.Xr capsule 8
+or
+.Xr switchboard 8
+can be started under a debugger.
 Repeated
 .Dv CP_OP_SHIELD
 or
@@ -364,9 +441,13 @@ Fires when a protected operation is allowed (protector or valid token).
 .It Li "state(operation, target, caller, flags, pid, error)"
 Fires on a state change:
 .Dq shield , protect , token-mint , authorize , capmode ,
-.Dq chroot , chroot-error
+.Dq chroot , chroot-error ,
+.Dq token-remove ,
+.Dq inherit
+(a child inherited the ptrace shield at fork; the caller is its parent)
 or
-.Dq token-remove .
+.Dq inherit-drop
+(the inherited ptrace shield dropped at exec).
 .El
 .Sh EXAMPLES
 Shield a process from ptrace and signals:
@@ -414,6 +495,13 @@ does not hold, or without a reply descriptor slot;
 or
 .Dv CP_OP_AUTHORIZE
 on a non-token fd.
+.It Bq Er EBUSY
+The target of
+.Dv CP_OP_SHIELD
+or
+.Dv CP_OP_PROTECT
+is traced by a debugger
+.Pq Xr ptrace 2 .
 .It Bq Er ESRCH
 The target of
 .Dv CP_OP_PROTECT
@@ -438,6 +526,7 @@ Unknown operation code.
 The capability fd lacks the required rights for the operation.
 .El
 .Sh SEE ALSO
+.Xr dtrace 1 ,
 .Xr pdfork 2 ,
 .Xr ptrace 2 ,
 .Xr mac 4 ,
