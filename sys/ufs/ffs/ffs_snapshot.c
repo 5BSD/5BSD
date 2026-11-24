@@ -2640,7 +2640,9 @@ ffs_test_hold_wait_sysctl(SYSCTL_HANDLER_ARGS)
 {
 	int error, value;
 
+	mtx_lock(&ffs_test_hold_mtx);
 	value = ffs_test_hold_held;
+	mtx_unlock(&ffs_test_hold_mtx);
 	error = sysctl_handle_int(oidp, &value, 0, req);
 	if (error != 0 || req->newptr == NULL)
 		return (error);
