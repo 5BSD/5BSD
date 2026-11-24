@@ -60,11 +60,11 @@
 
 import errno
 import os
-import subprocess
 import re
 import select
 import signal
 import socket
+import subprocess
 import sys
 import time
 
