@@ -647,6 +647,13 @@ service_client_call_internal(struct service_client *client,
 	error = sent == -1 ? errno : 0;
 	if (sent == -1) {
 		/*
+		 * A peer that is gone reads as on receive (ECONNRESET), for
+		 * this caller and for the callers whose pending requests the
+		 * failure completes below.
+		 */
+		if (error == EPIPE)
+			error = ECONNRESET;
+		/*
 		 * Not sent: no reply can come.  Forget the request unless the
 		 * channel's failure completed it meanwhile (completion only
 		 * happens under channel_lock); then it is done and freed.
@@ -663,9 +670,6 @@ service_client_call_internal(struct service_client *client,
 			}
 			(void)pthread_mutex_unlock(&client->channel_lock);
 		}
-		/* A peer that is gone reads as on receive (ECONNRESET). */
-		if (error == EPIPE)
-			error = ECONNRESET;
 		/* A close revoked the channel to wake the send. */
 		if (error != EINTR && lock_mutex(&client->lock) == 0) {
 			if (client->closing)

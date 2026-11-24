@@ -1413,6 +1413,466 @@ ATF_TC_BODY(send_flags_rejected, tc)
 	close(P[1]);
 }
 
+/*
+ * MAC_CAPABILITY_RECV_F_DEADLINE and MAC_CAPABILITY_SEND_F_DEADLINE: the
+ * wait ends at an absolute CLOCK_MONOTONIC time in nanoseconds, held in
+ * _reserved[0] (low word) and _reserved[1] (high word).
+ */
+static uint64_t
+mono_ns(void)
+{
+	struct timespec ts;
+
+	ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &ts) == 0);
+	return ((uint64_t)ts.tv_sec * 1000000000 + ts.tv_nsec);
+}
+
+/*
+ * How far ahead the "not yet passed" deadlines lie.  Nothing depends on the
+ * value: the cases check only that the call does not return before its
+ * deadline, never that it returns within some time after it.
+ */
+#define	DEADLINE_AHEAD_NS	100000000
+
+static int
+recv_deadline(int fd, void *buf, size_t len, uint32_t flags, uint64_t ns)
+{
+	struct mac_capability_recvmsg_args ra;
+
+	memset(&ra, 0, sizeof(ra));
+	ra.payload = buf;
+	ra.payload_len = len;
+	ra.flags = flags;
+	ra._reserved[0] = (uint32_t)ns;
+	ra._reserved[1] = (uint32_t)(ns >> 32);
+	return (ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra));
+}
+
+/* Send `msg` through SENDMSG, or through SENDMSG_V2 if `v2`. */
+static int
+send_deadline(int fd, bool v2, const char *msg, uint32_t flags, uint64_t ns)
+{
+	struct mac_capability_sendmsg_v2_args a;
+
+	memset(&a, 0, sizeof(a));
+	a.message.payload = msg;
+	a.message.payload_len = strlen(msg);
+	a.message.flags = flags;
+	a.message._reserved[0] = (uint32_t)ns;
+	a.message._reserved[1] = (uint32_t)(ns >> 32);
+	return (v2 ? ioctl(fd, MAC_CAPABILITY_SENDMSG_V2, &a) :
+	    ioctl(fd, MAC_CAPABILITY_SENDMSG, &a.message));
+}
+
+/*
+ * Deadlines the kernel must treat as "practically never": the last whole
+ * second a 32.32 sbintime_t holds, the first it does not (2^31 s, which an
+ * unchecked conversion turns into a time before boot), and the largest
+ * value the two words can carry.
+ */
+static const uint64_t far_deadlines[] = {
+	(uint64_t)INT32_MAX * 1000000000,
+	((uint64_t)INT32_MAX + 1) * 1000000000,
+	UINT64_MAX,
+};
+
+ATF_TC(recv_deadline_args);
+ATF_TC_HEAD(recv_deadline_args, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "RECV_F_DEADLINE needs RECV_F_WAIT, "
+	    "owns _reserved[1] only when set, and a deadline of 0 or in the "
+	    "past times out at once but still returns a queued message");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+}
+ATF_TC_BODY(recv_deadline_args, tc)
+{
+	struct mac_capability_recvmsg_args ra;
+	uint64_t deadline, now, past[2];
+	char buf[16];
+	int P[2], fl;
+
+	ATF_REQUIRE(chan_create_required(P) == 0);
+	now = mono_ns();
+	ATF_REQUIRE(now > 1);
+	past[0] = 1;
+	past[1] = now - 1;
+
+	/* A deadline without the wait flag is invalid, message or none. */
+	ATF_CHECK_ERRNO(EINVAL, recv_deadline(P[1], buf, sizeof(buf),
+	    MAC_CAPABILITY_RECV_F_DEADLINE, now + DEADLINE_AHEAD_NS) == -1);
+	ATF_CHECK_ERRNO(EINVAL, recv_deadline(P[1], buf, sizeof(buf),
+	    MAC_CAPABILITY_RECV_F_DEADLINE, 0) == -1);
+	/* The high word belongs to the deadline alone. */
+	memset(&ra, 0, sizeof(ra));
+	ra.payload = buf;
+	ra.payload_len = sizeof(buf);
+	ra.flags = MAC_CAPABILITY_RECV_F_WAIT;
+	ra._reserved[1] = 1;
+	ATF_CHECK_ERRNO(EINVAL, ioctl(P[1], MAC_CAPABILITY_RECVMSG, &ra) == -1);
+	ra.flags = 0;
+	ATF_CHECK_ERRNO(EINVAL, ioctl(P[1], MAC_CAPABILITY_RECVMSG, &ra) == -1);
+	/* The words after it stay reserved with a deadline. */
+	for (int i = 2; i < 4; i++) {
+		memset(&ra, 0, sizeof(ra));
+		ra.payload = buf;
+		ra.payload_len = sizeof(buf);
+		ra.flags = MAC_CAPABILITY_RECV_F_WAIT |
+		    MAC_CAPABILITY_RECV_F_DEADLINE;
+		ra._reserved[i] = 1;
+		ATF_CHECK_ERRNO(EINVAL,
+		    ioctl(P[1], MAC_CAPABILITY_RECVMSG, &ra) == -1);
+	}
+
+	/*
+	 * Deadline 0 is the earliest deadline, not "none" and not a poll
+	 * (which answers EAGAIN): with nothing queued it has passed.  The
+	 * same on a non-blocking descriptor.
+	 */
+	for (int nb = 0; nb < 2; nb++) {
+		ATF_CHECK_ERRNO(ETIMEDOUT, recv_deadline(P[1], buf,
+		    sizeof(buf), MAC_CAPABILITY_RECV_F_WAIT |
+		    MAC_CAPABILITY_RECV_F_DEADLINE, 0) == -1);
+		for (int i = 0; i < 2; i++)
+			ATF_CHECK_ERRNO(ETIMEDOUT, recv_deadline(P[1], buf,
+			    sizeof(buf), MAC_CAPABILITY_RECV_F_WAIT |
+			    MAC_CAPABILITY_RECV_F_DEADLINE, past[i]) == -1);
+		fl = fcntl(P[1], F_GETFL);
+		ATF_REQUIRE(fcntl(P[1], F_SETFL, fl | O_NONBLOCK) == 0);
+	}
+	/* A deadline still ahead is waited for in full. */
+	deadline = mono_ns() + DEADLINE_AHEAD_NS;
+	ATF_CHECK_ERRNO(ETIMEDOUT, recv_deadline(P[1], buf, sizeof(buf),
+	    MAC_CAPABILITY_RECV_F_WAIT | MAC_CAPABILITY_RECV_F_DEADLINE,
+	    deadline) == -1);
+	now = mono_ns();
+	ATF_CHECK_MSG(now >= deadline, "returned %ju ns before the deadline",
+	    (uintmax_t)(deadline - now));
+
+	/* A queued message is returned whatever the deadline. */
+	ATF_REQUIRE(chan_send(P[0], "zero", 4) == 0);
+	memset(buf, 0, sizeof(buf));
+	ATF_CHECK_EQ(0, recv_deadline(P[1], buf, sizeof(buf),
+	    MAC_CAPABILITY_RECV_F_WAIT | MAC_CAPABILITY_RECV_F_DEADLINE, 0));
+	ATF_CHECK_STREQ("zero", buf);
+	ATF_REQUIRE(chan_send(P[0], "past", 4) == 0);
+	memset(buf, 0, sizeof(buf));
+	ATF_CHECK_EQ(0, recv_deadline(P[1], buf, sizeof(buf),
+	    MAC_CAPABILITY_RECV_F_WAIT | MAC_CAPABILITY_RECV_F_DEADLINE,
+	    past[1]));
+	ATF_CHECK_STREQ("past", buf);
+	close(P[0]);
+	close(P[1]);
+}
+
+/*
+ * A helper thread waits until the main thread sleeps in its receive ('R')
+ * or in its send ('S'), then ends that sleep: it sends a message, or
+ * receives one from the full queue.
+ */
+struct deadline_far {
+	struct sleep_watch *watch;
+	char	kind;
+	long	tid;
+	int	fd;
+};
+
+static void *
+deadline_far_helper(void *arg)
+{
+	struct deadline_far *w = arg;
+	char buf[16];
+
+	sleep_watch_wait(w->watch, w->kind, w->tid);
+	if (w->kind == 'R')
+		(void)chan_send(w->fd, "wake", 4);
+	else
+		(void)chan_recv(w->fd, buf, sizeof(buf), NULL, NULL);
+	return (NULL);
+}
+
+static void
+deadline_far_start(struct deadline_far *w, pthread_t *thread,
+    struct sleep_watch *watch, char kind, int fd)
+{
+
+	w->watch = watch;
+	w->kind = kind;
+	w->fd = fd;
+	ATF_REQUIRE(thr_self(&w->tid) == 0);
+	ATF_REQUIRE(pthread_create(thread, NULL, deadline_far_helper, w) == 0);
+}
+
+ATF_TC(recv_deadline_far_future);
+ATF_TC_HEAD(recv_deadline_far_future, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a receive with a deadline further "
+	    "ahead than the kernel's time format reaches sleeps until a "
+	    "message arrives; it does not time out");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "120");
+}
+ATF_TC_BODY(recv_deadline_far_future, tc)
+{
+	struct sleep_watch watch;
+	struct deadline_far w;
+	pthread_t thread;
+	char buf[16];
+	int P[2], r;
+
+	ATF_REQUIRE(chan_create_required(P) == 0);
+	sleep_watch_start(&watch, SLEEP_WATCH_ANY_LEN);
+	/*
+	 * Each receive sleeps once: only the helper's message wakes it, and
+	 * the helper sends only after the sleep it waited for.
+	 */
+	for (size_t i = 0; i < nitems(far_deadlines); i++) {
+		deadline_far_start(&w, &thread, &watch, 'R', P[0]);
+		memset(buf, 0, sizeof(buf));
+		r = recv_deadline(P[1], buf, sizeof(buf),
+		    MAC_CAPABILITY_RECV_F_WAIT | MAC_CAPABILITY_RECV_F_DEADLINE,
+		    far_deadlines[i]);
+		ATF_REQUIRE_MSG(r == 0, "deadline %ju ns: %s",
+		    (uintmax_t)far_deadlines[i], strerror(errno));
+		ATF_CHECK_STREQ("wake", buf);
+		ATF_REQUIRE(pthread_join(thread, NULL) == 0);
+	}
+	sleep_watch_stop(&watch);
+	close(P[0]);
+	close(P[1]);
+}
+
+static void
+send_deadline_args(bool v2)
+{
+	struct mac_capability_sendmsg_v2_args a;
+	uint64_t deadline, now, past[2];
+	int P[2], filled, sent;
+
+	ATF_REQUIRE(chan_create_required(P) == 0);
+	now = mono_ns();
+	ATF_REQUIRE(now > 1);
+	past[0] = 1;
+	past[1] = now - 1;
+
+	/* A deadline without the wait flag is invalid. */
+	ATF_CHECK_ERRNO(EINVAL, send_deadline(P[0], v2, "bad",
+	    MAC_CAPABILITY_SEND_F_DEADLINE, now + DEADLINE_AHEAD_NS) == -1);
+	ATF_CHECK_ERRNO(EINVAL, send_deadline(P[0], v2, "bad",
+	    MAC_CAPABILITY_SEND_F_DEADLINE, 0) == -1);
+	/* Without the deadline flag its words are reserved. */
+	ATF_CHECK_ERRNO(EINVAL, send_deadline(P[0], v2, "bad",
+	    MAC_CAPABILITY_SEND_F_WAIT, 1) == -1);
+	ATF_CHECK_ERRNO(EINVAL, send_deadline(P[0], v2, "bad",
+	    MAC_CAPABILITY_SEND_F_WAIT, (uint64_t)1 << 32) == -1);
+	ATF_CHECK_ERRNO(EINVAL, send_deadline(P[0], v2, "bad", 0,
+	    (uint64_t)1 << 32) == -1);
+	/* The words after them stay reserved with a deadline. */
+	for (int i = 2; i < 4; i++) {
+		memset(&a, 0, sizeof(a));
+		a.message.payload = "bad";
+		a.message.payload_len = 3;
+		a.message.flags = MAC_CAPABILITY_SEND_F_WAIT |
+		    MAC_CAPABILITY_SEND_F_DEADLINE;
+		a.message._reserved[i] = 1;
+		ATF_CHECK_ERRNO(EINVAL, (v2 ?
+		    ioctl(P[0], MAC_CAPABILITY_SENDMSG_V2, &a) :
+		    ioctl(P[0], MAC_CAPABILITY_SENDMSG, &a.message)) == -1);
+	}
+
+	/*
+	 * The deadline bounds the wait for room only: with room, a send
+	 * whose deadline is 0 or has passed is accepted.
+	 */
+	sent = 0;
+	ATF_CHECK_EQ(0, send_deadline(P[0], v2, "sent",
+	    MAC_CAPABILITY_SEND_F_WAIT | MAC_CAPABILITY_SEND_F_DEADLINE, 0));
+	sent++;
+	for (int i = 0; i < 2; i++) {
+		ATF_CHECK_EQ(0, send_deadline(P[0], v2, "sent",
+		    MAC_CAPABILITY_SEND_F_WAIT | MAC_CAPABILITY_SEND_F_DEADLINE,
+		    past[i]));
+		sent++;
+	}
+
+	/* With the queue full they time out at once; nothing is sent. */
+	filled = send_wait_fill(P[0]);
+	ATF_CHECK_ERRNO(ETIMEDOUT, send_deadline(P[0], v2, "late",
+	    MAC_CAPABILITY_SEND_F_WAIT | MAC_CAPABILITY_SEND_F_DEADLINE,
+	    0) == -1);
+	for (int i = 0; i < 2; i++)
+		ATF_CHECK_ERRNO(ETIMEDOUT, send_deadline(P[0], v2, "late",
+		    MAC_CAPABILITY_SEND_F_WAIT | MAC_CAPABILITY_SEND_F_DEADLINE,
+		    past[i]) == -1);
+	/* A deadline still ahead is waited for in full. */
+	deadline = mono_ns() + DEADLINE_AHEAD_NS;
+	ATF_CHECK_ERRNO(ETIMEDOUT, send_deadline(P[0], v2, "late",
+	    MAC_CAPABILITY_SEND_F_WAIT | MAC_CAPABILITY_SEND_F_DEADLINE,
+	    deadline) == -1);
+	now = mono_ns();
+	ATF_CHECK_MSG(now >= deadline, "returned %ju ns before the deadline",
+	    (uintmax_t)(deadline - now));
+	/* The queue holds what was accepted and none of the refused sends. */
+	send_wait_expect(P[1], sent + filled, "fill");
+	ATF_CHECK_ERRNO(EAGAIN,
+	    chan_recv_nb(P[1], &a, sizeof(a), NULL, NULL) == -1);
+	close(P[0]);
+	close(P[1]);
+}
+
+ATF_TC(send_deadline_args);
+ATF_TC_HEAD(send_deadline_args, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "SEND_F_DEADLINE needs SEND_F_WAIT "
+	    "and owns _reserved[0..1] only when set; a deadline of 0 or in "
+	    "the past sends when there is room and times out at once, "
+	    "sending nothing, when there is none");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+}
+ATF_TC_BODY(send_deadline_args, tc)
+{
+
+	send_deadline_args(false);
+}
+
+ATF_TC(send_v2_deadline_args);
+ATF_TC_HEAD(send_v2_deadline_args, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "SENDMSG_V2 treats SEND_F_DEADLINE "
+	    "as SENDMSG does");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+}
+ATF_TC_BODY(send_v2_deadline_args, tc)
+{
+
+	send_deadline_args(true);
+}
+
+ATF_TC(send_deadline_far_future);
+ATF_TC_HEAD(send_deadline_far_future, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a send (SENDMSG and SENDMSG_V2) with "
+	    "a deadline further ahead than the kernel's time format reaches "
+	    "sleeps until the queue has room; it does not time out");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "120");
+}
+ATF_TC_BODY(send_deadline_far_future, tc)
+{
+	struct sleep_watch watch;
+	struct deadline_far w;
+	pthread_t thread;
+	int P[2], filled, r;
+
+	ATF_REQUIRE(chan_create_required(P) == 0);
+	filled = send_wait_fill(P[0]);
+	sleep_watch_start(&watch, 0);
+	/*
+	 * Each send sleeps once: the helper takes one message after the
+	 * sleep it waited for, and the send fills the queue again.
+	 */
+	for (int v2 = 0; v2 < 2; v2++) {
+		for (size_t i = 0; i < nitems(far_deadlines); i++) {
+			deadline_far_start(&w, &thread, &watch, 'S', P[1]);
+			r = send_deadline(P[0], v2 != 0, "far",
+			    MAC_CAPABILITY_SEND_F_WAIT |
+			    MAC_CAPABILITY_SEND_F_DEADLINE, far_deadlines[i]);
+			ATF_REQUIRE_MSG(r == 0, "%s, deadline %ju ns: %s",
+			    v2 != 0 ? "SENDMSG_V2" : "SENDMSG",
+			    (uintmax_t)far_deadlines[i], strerror(errno));
+			ATF_REQUIRE(pthread_join(thread, NULL) == 0);
+		}
+	}
+	sleep_watch_stop(&watch);
+	send_wait_expect(P[1], filled, "far");
+	close(P[0]);
+	close(P[1]);
+}
+
+static int
+chan_call(int fd, uint32_t send_flags, uint32_t reply_flags, uint64_t ns)
+{
+	struct mac_capability_channel_call_args ca;
+	char reply[16];
+
+	memset(&ca, 0, sizeof(ca));
+	ca.request.message.payload = "call";
+	ca.request.message.payload_len = 4;
+	ca.request.message.flags = send_flags;
+	ca.request.message.reply_token = 0x5ca11;
+	ca.request.message._reserved[0] = (uint32_t)ns;
+	ca.request.message._reserved[1] = (uint32_t)(ns >> 32);
+	ca.reply.v3.message.payload = reply;
+	ca.reply.v3.message.payload_len = sizeof(reply);
+	ca.reply.v3.message.flags = reply_flags;
+	if (reply_flags != 0) {
+		ca.reply.v3.message._reserved[0] = (uint32_t)ns;
+		ca.reply.v3.message._reserved[1] = (uint32_t)(ns >> 32);
+	}
+	/* timeout_ms 0: do not wait for the reply. */
+	return (ioctl(fd, MAC_CAPABILITY_CHANNEL_CALL, &ca));
+}
+
+ATF_TC(channel_call_refuses_wait_flags);
+ATF_TC_HEAD(channel_call_refuses_wait_flags, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "CHANNEL_CALL has its own timeout: it "
+	    "refuses the send and receive wait and deadline flags with "
+	    "EINVAL and sends nothing");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+}
+ATF_TC_BODY(channel_call_refuses_wait_flags, tc)
+{
+	static const uint32_t send_flags[] = {
+		MAC_CAPABILITY_SEND_F_WAIT,
+		MAC_CAPABILITY_SEND_F_DEADLINE,
+		MAC_CAPABILITY_SEND_F_WAIT | MAC_CAPABILITY_SEND_F_DEADLINE,
+	};
+	static const uint32_t reply_flags[] = {
+		MAC_CAPABILITY_RECV_F_WAIT,
+		MAC_CAPABILITY_RECV_F_DEADLINE,
+		MAC_CAPABILITY_RECV_F_WAIT | MAC_CAPABILITY_RECV_F_DEADLINE,
+	};
+	uint64_t deadline;
+	uint32_t len;
+	char buf[16];
+	int P[2];
+
+	ATF_REQUIRE(chan_create_required(P) == 0);
+	deadline = mono_ns() + DEADLINE_AHEAD_NS;
+	for (size_t i = 0; i < nitems(send_flags); i++)
+		ATF_CHECK_ERRNO(EINVAL,
+		    chan_call(P[0], send_flags[i], 0, deadline) == -1);
+	for (size_t i = 0; i < nitems(reply_flags); i++)
+		ATF_CHECK_ERRNO(EINVAL,
+		    chan_call(P[0], 0, reply_flags[i], deadline) == -1);
+	/* The deadline words without a flag are reserved, as for a send. */
+	ATF_CHECK_ERRNO(EINVAL, chan_call(P[0], 0, 0, deadline) == -1);
+	/* No refused call sent its request. */
+	ATF_CHECK_ERRNO(EAGAIN,
+	    chan_recv_nb(P[1], buf, sizeof(buf), NULL, NULL) == -1);
+	/*
+	 * The same call without them is valid: the request is sent and,
+	 * with a timeout of 0, the call ends at once for want of a reply.
+	 */
+	ATF_CHECK_ERRNO(ETIMEDOUT, chan_call(P[0], 0, 0, 0) == -1);
+	len = 0;
+	ATF_REQUIRE(chan_recv_nb(P[1], buf, sizeof(buf), &len, NULL) == 0);
+	ATF_CHECK_EQ(4, len);
+	ATF_CHECK(memcmp(buf, "call", 4) == 0);
+	close(P[0]);
+	close(P[1]);
+}
+
 ATF_TC(xfer_once_direct);
 ATF_TC_HEAD(xfer_once_direct, tc)
 {
@@ -2133,6 +2593,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, send_wait_sa_restart);
 	ATF_TP_ADD_TC(tp, send_wait_eintr);
 	ATF_TP_ADD_TC(tp, send_flags_rejected);
+	ATF_TP_ADD_TC(tp, recv_deadline_args);
+	ATF_TP_ADD_TC(tp, recv_deadline_far_future);
+	ATF_TP_ADD_TC(tp, send_deadline_args);
+	ATF_TP_ADD_TC(tp, send_v2_deadline_args);
+	ATF_TP_ADD_TC(tp, send_deadline_far_future);
+	ATF_TP_ADD_TC(tp, channel_call_refuses_wait_flags);
 
 	return (atf_no_error());
 }
