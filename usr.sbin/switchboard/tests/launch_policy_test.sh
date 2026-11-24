@@ -286,8 +286,11 @@ restart_pending_in_status_body()
 	# Event waits on the log (no polling); the ATF timeout bounds them.
 	"$waitf" "$logfile" "service org.test.held/held: scheduling restart" ||
 	    fail_with_log "the crashed unit's restart was not scheduled"
-	"$waitf" "$logfile" "service org.test.done/done: exited status 0" ||
-	    fail_with_log "the exit-0 unit did not exit"
+	# "exited status 0" is logged while the unit is still stopping (its
+	# coalition's cleanup is pending); "stopped" is logged at the state
+	# change, so the status read below cannot see the cleanup window.
+	"$waitf" "$logfile" "service org.test.done/done: stopped" ||
+	    fail_with_log "the exit-0 unit did not stop"
 	"$SWITCHBOARDCTL" status > status.out ||
 	    atf_fail "switchboardctl status failed"
 	grep -Eq '^ *org\.test\.held/held +stopped .* restart-pending' status.out ||
