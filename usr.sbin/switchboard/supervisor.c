@@ -479,6 +479,14 @@ supervisor_finish_native_exit(struct svc_runtime *svc, int exit_status,
 
 	svc_run_container_remove(svc->manifest.label, svc->owner_uid);
 	svc->state = SVC_STATE_STOPPED;
+	/*
+	 * The exit itself was logged when the process went away, possibly
+	 * long before its coalition's cleanup let the unit leave STOPPING.
+	 * This is the line a log reader waits on to see the unit stopped:
+	 * every native exit logs it, at the state change, before any restart
+	 * decision below.
+	 */
+	syslog(LOG_INFO, "service %s: stopped", svc->manifest.label);
 
 	if (was_stopping && remove_pending) {
 		unsigned idx;

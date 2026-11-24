@@ -457,6 +457,84 @@ WITNESS lock order reversal report that matches no entry of
 most `FATAL_GRACE_S` (5 s, ending at once if QEMU exits) and then stops
 QEMU, or reports that it had already exited; the deadline prints `TIMEOUT`.
 Either way the results disk is extracted and the verdict printed.
+
+The guest meets that deadline first. The host fixes the deadline once,
+before it builds the guest image (so the image build counts against
+`TIMEOUT_S`), and passes it into the guest script (`RUN_DEADLINE`); at its
+start the guest times the stacks part of a diagnostic dump and one results
+export (`PHASE_RESERVE=`, with a second for each 1 s-resolution measurement
+and one for the guest clock). A step is bounded by the deadline less that
+reserve, with no bound of its own. The steps are the commands that wait on
+another component: the plane-on gate's convergence wait, the ambient lookup
+probe (`lookup-probe`), each BSDTime lifecycle command, the extra script
+(`extra`), the kyua run, the kyua reports (`report-*`) and the stack tier's
+settle barrier (`issuers-settle`). Not steps, and so ended only by the host
+at the deadline, without a dump or an export: the reroot restore, the
+test-kernel and tier proofs, the plane-on and plane-off readiness checks,
+the gate's own `switchboardctl status` reads (bounded by that command's
+30 s), the script's local commands between steps (`pgrep`, `awk`, `cp`,
+`dmesg`, `df`, sysctl reads, the scratch-disk naming), the reroot itself
+(`tar`, `sync`, `reboot -r`) and the end of the script (the final export,
+`sync`, `poweroff`). A step
+runs under `timeout(1)` as the reaper of its processes, without a time
+limit; `pwait -t` bounds it. A step still running then prints
+`PHASE_STEP_EXPIRED step=NAME`, saves the results to the results disk
+(`PHASE_EXPIRY_RESULTS_SAVED`), prints the kernel stacks (one
+`procstat -kk`) of its processes, SwitchBoard, PID 1 and BSDTime, kills
+every process of the step, prints
+`PHASE_EXPIRY_TIMES step= export= stacks= reserve= left=` (the seconds the
+export and the stacks took, the reserve they were given and the seconds
+left to the deadline after them), then prints the system log since the
+script began and `switchboardctl status`. The export is first because the
+reserve is a measurement from the start of the run, not a guarantee: on a
+host that is slower at the expiry the host stops QEMU during the stacks,
+and the archive is already written. kyua commits its results database
+once, at the end of its run, so the `results.db` that an expiry in the
+kyua step exports holds no committed result (SQLite rolls it back to an
+empty store when it is opened beside its journal); the cases that had
+finished are in `kyua-test.out` and on the console. The stacks come from
+one `procstat -kk -a`, filtered, so a process that exits meanwhile costs
+nothing. These lines start a console line of their own, whatever the step had
+printed. The kill is not waited for, so
+the export, the stacks and the dump never wait behind a process that
+cannot die; a caller that reads a step through a pipe (the kyua run, the
+extra script, the BSDTime reads) does, and the script then stops there
+until the host stops QEMU. The expiry is recorded in a file, so it survives
+the subshells steps run in; the remaining steps, the kyua reports and the
+final export are skipped
+(`KYUA_REPORTS_SKIPPED`, `KYUA_RESULTS_DISK: the expiry export is kept`),
+and the run is not clean: the host reads `PHASE_STEP_EXPIRED` and
+`PHASE_DEPENDENCY_STOPPED` from the console and the files `phase-expired`
+and `phase-dependency` from the extracted results, since a kernel message
+can break a console line. A step's command that leaves processes behind
+gets them named (`PHASE_STEP_LEFTOVER step= pid= comm=`) and killed, the
+extra script's included; that line is evidence in the summary and does not
+change the verdict (the suites' own results judge what test programs
+leak). PHASE lines are written to the console device, so
+steps inherit no extra descriptor. Each step prints `PHASE_STEP NAME begin`
+and `... end status=N elapsed=S`; the 200 BSDTime sessions print
+`BSDTIME_SESSIONS_PROGRESS=N` at 1, 2, 4, ... and 200.
+
+SwitchBoard has no status watch, so the gate reads the status again
+whenever SwitchBoard logs a unit line (`service ...`, `rc unit ...`,
+`unit ...`, `oneshot ...`) or
+restarts, to `messages` or `daemon.log`; the line each status request logs
+does not wake it. It waits for a required unit that is starting, stopping
+or stopped with `restart-pending`, and stops waiting for one in any other
+state (it will not run by itself). A required unit must reach `running`,
+so `REQUIRE_UNITS` can name native and rc units but not a oneshot, which
+ends `done`. A status read that fails waits the same way, to the deadline.
+`GATE_TIMEOUT` is refused: the gate has no bound of its own. A lifecycle dependency (Time, Log,
+Power, Sysctl) that will not run by itself ends that phase only, with
+`PHASE_DEPENDENCY_STOPPED unit=...` and a dump (as the gate expiry, it has
+no step, so its stacks are those of SwitchBoard, PID 1 and BSDTime only); a status that cannot be
+read gives `PHASE_DEPENDENCY_UNKNOWN`; the suites still run, and the run is
+not clean. With `--progress`, `vm-monitor.py` records each progress line and
+a host-load sample (load averages, CPUs, QEMU processes, fair-slot guest
+slots held, `lockf(1)` processes on the heavy-build lock; read-only) at the
+start, at every progress line and at the end; the run's output ends with
+`HOST_LOAD samples=... start= peak= end= max_qemus= max_slots=
+max_heavy_build_lockf=` and `LAST_PROGRESS at=EPOCH LINE`.
 `known-lor.txt` holds Python regular expressions matched against a whole
 report, through the end of its "attempted at" stack (a multi-hop report
 lists every hop first, so there is no line cap), each entry naming the

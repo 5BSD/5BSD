@@ -8,7 +8,7 @@
 #
 # usage: vm-monitor.py --pid PID --log SERIAL_LOG --deadline EPOCH
 #            --fatal REGEX --known KNOWN_LOR [--fatal-lor yes|no]
-#            [--grace SECONDS]
+#            [--grace SECONDS] [--progress FILE]
 #            [--answer REGEX --answer-text TEXT --console SOCKET]
 #        vm-monitor.py --has-unknown-lor SERIAL_LOG KNOWN_LOR
 #
@@ -38,6 +38,15 @@
 # printed.  A second prompt is a problem.  vm-provider.sh
 # uses it to answer the single-user shell prompt (SINGLE_USER_SHELL).
 #
+# With --progress, the monitor appends to FILE a host-load sample (LOAD:
+# epoch, the 1/5/15 minute load averages, logical CPUs, QEMU processes
+# running, fair-slot guest slots held, lockf(1) processes on the
+# heavy-build lock) at its start, at every
+# guest progress line (PHASE_*, BSDTIME_SESSIONS_PROGRESS, KYUA_*START,
+# KYUA_SUMMARY; also written as PROGRESS lines) and at its end.  Samples
+# follow events, never a timer: a long step without output has samples only
+# at its ends.
+#
 # The second form reads a whole serial log after the run: exit 0 when some
 # reversal report matches no known-lor.txt entry, 1 when none does, 2 when
 # the log or the list cannot be read (the caller must count that as an
@@ -55,6 +64,7 @@ import re
 import select
 import signal
 import socket
+import subprocess
 import sys
 import time
 
@@ -65,6 +75,78 @@ import time
 # shutdown output of the recorded TCG guest runs, which print within one or
 # two seconds of the first fatal line.
 FATAL_GRACE_S = 5.0
+
+PROGRESS_LINE = re.compile(r"^(PHASE_\w+|BSDTIME_SESSIONS_PROGRESS=|KYUA_\w*START|KYUA_SUMMARY:)")
+HEAVY_BUILD_LOCK = "/usr/obj/5BSD-heavy-build.lock"
+GUEST_SLOTS = "/usr/obj/dq-guest-slots"
+
+
+def count(argv):
+    """Lines of a pgrep(1) answer; -1 when it cannot run."""
+    try:
+        out = subprocess.run(argv, capture_output=True, text=True,
+                             check=False).stdout
+    except OSError:
+        return -1
+    return len(out.split())
+
+
+def slots_held():
+    """Guest slots held through fair-slot.sh: DIR/slotN whose pid file
+    names a live process (a slot left by a dead owner is not held)."""
+    try:
+        names = os.listdir(GUEST_SLOTS)
+    except OSError:
+        return -1
+    held = 0
+    for n in names:
+        if not (n.startswith("slot") and n[4:].isdigit()):
+            continue
+        try:
+            with open(os.path.join(GUEST_SLOTS, n, "pid")) as f:
+                os.kill(int(f.read().strip()), 0)
+        except PermissionError:
+            pass  # alive, another user's
+        except (OSError, ValueError):
+            continue
+        held += 1
+    return held
+
+
+def load_sample():
+    """Read-only: the heavy-build lock is never taken; lockf(1) processes
+    on it (the holder and any waiters) are counted instead."""
+    la = os.getloadavg()
+    return ("LOAD %d %.2f %.2f %.2f ncpu=%d qemus=%d slots=%d "
+            "heavy_build_lockf=%d" % (
+                int(time.time()), la[0], la[1], la[2], os.cpu_count() or 0,
+                count(["pgrep", "^qemu-system"]), slots_held(),
+                count(["pgrep", "-f", "^lockf .*" + re.escape(HEAVY_BUILD_LOCK)])))
+
+
+class Progress:
+    """Guest progress lines and host-load samples, appended to a file."""
+
+    def __init__(self, path):
+        self.f = open(path, "a", buffering=1) if path else None
+        self.partial = b""
+        self.sample()
+
+    def sample(self):
+        if self.f:
+            self.f.write(load_sample() + "\n")
+
+    def feed(self, data):
+        if not self.f:
+            return
+        lines = (self.partial + data).split(b"\n")
+        self.partial = lines.pop()
+        for raw in lines:
+            line = raw.decode("utf-8", "replace").replace("\r", "").strip()
+            if PROGRESS_LINE.match(line):
+                self.f.write("PROGRESS %d %s\n" % (int(time.time()), line))
+                self.sample()
+
 
 HEADER = "lock order reversal:"
 # Lines that belong to a WITNESS reversal report (after the header).
@@ -273,6 +355,14 @@ def monitor(args):
     grace = float(args.get("--grace", FATAL_GRACE_S))
     w = Watch(args["--fatal"], load_known(args["--known"]),
               args.get("--fatal-lor", "yes") != "no", args.get("--answer"))
+    progress = Progress(args.get("--progress"))
+    try:
+        return watch(args, pid, log, deadline, grace, w, progress)
+    finally:
+        progress.sample()
+
+
+def watch(args, pid, log, deadline, grace, w, progress):
     kq = select.kqueue()
     fd = os.open(log, os.O_RDONLY)
     kq.control([select.kevent(fd, select.KQ_FILTER_VNODE,
@@ -291,6 +381,7 @@ def monitor(args):
             d = os.read(fd, 1 << 16)
             if not d:
                 break
+            progress.feed(d)
             p = w.feed(d)
             if p:
                 print("KERNEL/INIT PROBLEM in serial log", flush=True)
@@ -307,6 +398,7 @@ def monitor(args):
                 return None
             if typist[0] is not None:
                 typist[0].output(d)
+            progress.feed(d)
             p = w.feed(d)
             if p:
                 return p
@@ -380,7 +472,7 @@ def main(argv):
     if any(args.get(k) is None for k in need):
         print("usage: vm-monitor.py --pid PID --log LOG --deadline EPOCH "
               "--fatal REGEX --known FILE [--fatal-lor yes|no] "
-              "[--grace S] [--answer REGEX --answer-text TEXT "
+              "[--grace S] [--progress FILE] [--answer REGEX --answer-text TEXT "
               "--console SOCKET]", file=sys.stderr)
         return 2
     try:
