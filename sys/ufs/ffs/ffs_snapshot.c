@@ -2747,8 +2747,7 @@ retry_vnode:
 		 * its last close writes it.
 		 */
 		update = !VN_IS_DOOMED(vp) && vp->v_usecount == 0 &&
-		    (VTOI(vp)->i_flag & UFS_INODE_FLAG_LAZY_MASK_ASSERTABLE) !=
-		    0;
+		    (ip->i_flag & UFS_INODE_FLAG_LAZY_MASK_ASSERTABLE) != 0;
 		VI_UNLOCK(vp);
 		if (update) {
 			error = UFS_UPDATE(vp, 0);
