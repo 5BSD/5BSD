@@ -1183,6 +1183,8 @@ oes_event_name(oes_event_type_t event)
 	switch (event) {
 	OES_AUTH_EVENT_LIST(OES_EVENT_NAME_CASE)
 	OES_NOTIFY_EVENT_LIST(OES_EVENT_NAME_CASE)
+	case OES_EVENT_NOTIFY_LOST:
+		return ("NOTIFY_LOST");
 	default:
 		return "UNKNOWN";
 	}

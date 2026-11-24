@@ -36,13 +36,13 @@
 #   can occupy, so ENOMEM there is expected), PARALLELISM (kyua, default 1),
 #   with sys/dq (or a program under it) in the suites, imgact_binmisc and
 #   dtraceall are preloaded for them; with sys/mac_capability or its
-#   issuer-decision probe programs or mac_capability_channel_test,
-#   dtraceall; with sys/mac_capability or its cap_exclusion_test, also
-#   filemon (all of sys gets all three); with usr.sbin/bsd-build, zfs (an
-#   md-backed pool gives one case ACLs); with sys/kern or
-#   sys/kern/ptrace_sleep_test, fusefs (its presleep cases serve one); with a
-#   kernel that does not compile them in (MINIMAL), ufs and cryptodev from
-#   the stage,
+#   issuer-decision probe programs, mac_capability_channel_test, lib/libservice
+#   or its service_ambient_test, dtraceall; with sys/mac_capability or
+#   its cap_exclusion_test, also filemon (all of sys gets all three); with
+#   usr.sbin/bsd-build, zfs (an md-backed pool gives one case ACLs); with
+#   sys/kern or sys/kern/ptrace_sleep_test, fusefs (its presleep cases serve
+#   one); with a kernel that does not compile them in (MINIMAL), ufs and
+#   cryptodev from the stage,
 #   ROOT_FS (ufs, the default, or zfs: a ZFS root pool for the suites that
 #   require one, such as the Linux ptrace ones),
 #   GATE_TIMEOUT (guest seconds to wait for provider convergence, 600),
@@ -244,7 +244,9 @@ esac
 # refuses a late kldload, and those suites fail (never skip) without
 # them.  imgact_binmisc for dq_resolve_test's binmisc row, dtraceall for
 # dq_dtrace_test and dq_socket_test's probes, and for the issuer-decision
-# probe in authority_issuer_probe_test and authority_test_issuer_anchor_test.
+# probe in authority_issuer_probe_test and authority_test_issuer_anchor_test,
+# and for the sched:::sleep waits of mac_capability_channel_test's and
+# service_ambient_test's signal cases.
 # LOADER_EXTRA still carries
 # the Linux modules, mac_test_hooks and the rest of the recipe (DQ chapter
 # of the book, section 17); a module named twice is loaded once.
@@ -266,7 +268,9 @@ case " $suites " in
 *" sys/mac_capability/authority_issuer_probe_test"*|\
 *" sys/mac_capability/authority_test_issuer_anchor_test"*|\
 *" sys/mac_capability/cap_exclusion_test"*|\
-*" sys/mac_capability/mac_capability_channel_test"*)
+*" sys/mac_capability/mac_capability_channel_test"*|\
+*" lib/libservice "*|*" lib/libservice/service_ambient_test"*|\
+*" lib/libservice/session_wait_test"*)
 	dq_loader_add 'dtraceall_load="YES"' ;;
 esac
 case " $suites " in
@@ -1239,7 +1243,7 @@ echo "skipped=$nskip (a skip in a plane-on suite is not a pass; see KYUA_SKIPPED
 # Cases that named the tier they belong to: the run is not complete without
 # a run of the same stage and suites in that tier.
 for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER \
-    DEFERRED_STACK_TIER DEFERRED_PID1_ONLY DEFERRED_SOURCE_TIER \
+    DEFERRED_STACK_TIER DEFERRED_PID1_ONLY DEFERRED_SOURCE_TIER DEFERRED_KNOB_TIER \
     DEFERRED_GUEST_SETUP DEFERRED_DISPOSABLE_GUEST DEFERRED_TEST_KERNEL_TIER \
     DEFERRED_RACCT_ZERO_TIER \
     "configuration property 'authority_anchor'"; do
@@ -1247,6 +1251,8 @@ for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER 
 	[ "$ndefer" -eq 0 ] || case $token in
 	DEFERRED_ENFORCED_TIER)
 		echo "DEFERRED_TO_ENFORCED_TIER=$ndefer (run PLANE_OFF=1 with the same stage and suites; not a pass)";;
+	DEFERRED_KNOB_TIER)
+		echo "DEFERRED_TO_KNOB_TIER=$ndefer (cases that need a fault knob of options DQ_FAULT_INJECTION: run KERNEL_TIER=test with a GENERIC-TEST stage and the same suites; not a pass)";;
 	DEFERRED_PLANEOFF_TIER)
 		echo "DEFERRED_TO_PLANEOFF_TIER=$ndefer (test-local stacks: run PLANE_OFF=1, and their unit cases on the stack tier; not a pass)";;
 	DEFERRED_STACK_TIER)

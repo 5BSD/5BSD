@@ -125,7 +125,10 @@ struct mac_capability_call_waiter {
 struct mac_capability_callback_state {
 	u_int cs_refs;
 	volatile u_int cs_done;
+	/* Watchers to enqueue on completion, or MAC_CAPABILITY_CS_DONE. */
+	struct mac_capability_cs_watch * volatile cs_watch;
 };
+#define	MAC_CAPABILITY_CS_DONE	((struct mac_capability_cs_watch *)1)
 
 /*
  * Instance — one per struct file.  Internal layout.
@@ -140,6 +143,7 @@ struct mac_capability_callback_state {
 struct mac_capability_instance {
 	struct mac_capability_service *ci_service;	/* (I) owning service */
 	struct mac_capability_callback_state *ci_callback_state; /* (M) lazy */
+	LIST_HEAD(, mac_capability_death_watch) ci_death_watches; /* (M) */
 	void		*ci_priv;		/* (I) service-private data */
 	struct cap_authority_lease *ci_lease; /* (M) Immutable lifetime binding. */
 	LIST_ENTRY(mac_capability_instance) ci_lease_link; /* lease mutex */
@@ -191,6 +195,17 @@ struct mac_capability_service {
 	LIST_ENTRY(mac_capability_service) csvc_link;	/* (L) registry list link */
 	char		csvc_name[MAC_CAPABILITY_MAXNAME]; /* (I) service name */
 	const struct mac_capability_ops *csvc_ops;	/* (I) operation callbacks */
+	/*
+	 * (I) Which callbacks csvc_ops has, copied at registration.  Every
+	 * path that may run on an open descriptor after a destroy (send,
+	 * call, GETINFO, kqfilter, receive) tests these, never csvc_ops
+	 * itself outside an op_enter bracket: the providing module may have
+	 * unloaded.
+	 */
+	bool		csvc_has_handler;
+	bool		csvc_has_call;
+	bool		csvc_has_direct_peer;
+	bool		csvc_has_txdrain;
 	void		*csvc_arg;		/* (I) callback argument */
 	LIST_HEAD(, mac_capability_instance) csvc_instances; /* (L) instance list */
 	u_int		csvc_admissions;	/* (L) constructors/authorization */
@@ -230,6 +245,9 @@ void	mac_capability_instance_wait_refs(struct mac_capability_instance *s,
 void	mac_capability_callback_state_rele(struct mac_capability_callback_state *cs);
 /* Caller holds ci_mtx and owns FINALIZED; publish completed rollback/callback. */
 void	mac_capability_revoke_done_locked(struct mac_capability_instance *s);
+/* Set CLOSED or REVOKED under ci_mtx; runs the death hook on the first. */
+void	mac_capability_instance_mark_dead_locked(struct mac_capability_instance *s,
+	    int flag);
 /* Caller owns FINALIZED and keeps the instance/service alive through return. */
 void	mac_capability_revoke_callback(struct mac_capability_instance *s,
 	    enum mac_capability_revoke_reason reason);

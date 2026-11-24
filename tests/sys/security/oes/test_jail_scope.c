@@ -330,23 +330,18 @@ rec_note(struct rec *r, const oes_message_t *msg)
 static int
 scan(int fd, pid_t stop, oes_event_type_t event, struct rec *recs, int nrec)
 {
-	struct timespec start;
 	test_msg_buf buf;
-	long left;
 	int i;
 
-	clock_gettime(CLOCK_MONOTONIC, &start);
-	while ((left = WAIT_MS - jt_elapsed_ms(&start)) > 0) {
-		if (test_wait_event(fd, &buf.msg, left > 100 ? 100 :
-		    (int)left) != 0)
-			continue;
+	for (;;) {
+		if (test_wait_event(fd, &buf.msg, INFTIM) != 0)
+			return (errno);
 		for (i = 0; i < nrec; i++)
 			rec_note(&recs[i], &buf.msg);
 		if (buf.msg.em_process.ep_pid == stop &&
 		    buf.msg.em_event == event)
 			return (0);
 	}
-	return (ETIMEDOUT);
 }
 
 /*
@@ -388,7 +383,8 @@ membership(int fd, const char *what, const int *jids, const bool *expect,
 
 /*
  * Read a dead or dying client to end of file with plain read(2) calls.
- * Counts the exit events of pid.  0 at end of file, ETIMEDOUT otherwise.
+ * Counts the exit events of pid.  0 at end of file, ETIMEDOUT if limit_ms
+ * passes first; a negative limit_ms waits for end of file however long.
  * The descriptor must not have been read through test_wait_event().
  */
 static int
@@ -403,11 +399,14 @@ read_to_eof_ms(int fd, pid_t pid, int *exits, int *events, long limit_ms)
 
 	*exits = *events = 0;
 	clock_gettime(CLOCK_MONOTONIC, &start);
-	while (jt_elapsed_ms(&start) < limit_ms) {
+	while (limit_ms < 0 || jt_elapsed_ms(&start) < limit_ms) {
 		pfd.fd = fd;
 		pfd.events = POLLIN;
 		pfd.revents = 0;
-		if (poll(&pfd, 1, 100) <= 0)
+		n = poll(&pfd, 1, limit_ms < 0 ? INFTIM : 100);
+		if (n < 0 && errno != EINTR)
+			return (errno);
+		if (n <= 0)
 			continue;
 		n = read(fd, buf, sizeof(buf));
 		if (n == 0)
@@ -435,7 +434,45 @@ static int
 read_to_eof(int fd, pid_t pid, int *exits, int *events)
 {
 
-	return (read_to_eof_ms(fd, pid, exits, events, WAIT_MS));
+	return (read_to_eof_ms(fd, pid, exits, events, -1));
+}
+
+/*
+ * Wait until the jail scope of fd is dead.  Its end wakes the client's
+ * readers (KNOTE), so with EV_CLEAR each kevent() returns once per change and
+ * a change between the check and the wait is not lost.
+ */
+static void
+wait_dead(int fd)
+{
+	struct oes_jail_scope_args args;
+	struct kevent kev;
+	int kq;
+
+	kq = kqueue();
+	if (kq < 0) {
+		TEST_FAIL("kqueue: %s", strerror(errno));
+		return;
+	}
+	EV_SET(&kev, fd, EVFILT_READ, EV_ADD | EV_CLEAR, 0, 0, NULL);
+	if (kevent(kq, &kev, 1, NULL, 0, NULL) != 0) {
+		TEST_FAIL("EV_ADD: %s", strerror(errno));
+		close(kq);
+		return;
+	}
+	for (;;) {
+		if (get_jail(fd, &args) != 0) {
+			TEST_FAIL("OES_IOC_GET_JAIL_SCOPE: %s", strerror(errno));
+			break;
+		}
+		if ((args.ejs_flags & OES_JAIL_SCOPE_DEAD) != 0)
+			break;
+		if (kevent(kq, NULL, 0, &kev, 1, NULL) < 0 && errno != EINTR) {
+			TEST_FAIL("kevent: %s", strerror(errno));
+			break;
+		}
+	}
+	close(kq);
 }
 
 static bool
@@ -645,7 +682,7 @@ test_membership(void)
 		pid_t pid = jt_run_true(j_c);
 
 		/* The exec target is filled with the process locked. */
-		if (jt_collect(fd, pid, OES_EVENT_NOTIFY_EXEC, WAIT_MS, &buf) != 0)
+		if (jt_collect(fd, pid, OES_EVENT_NOTIFY_EXEC, INFTIM, &buf) != 0)
 			TEST_FAIL("exec in the nested jail not delivered");
 		else
 			ASSERT_MSG(tp->ep_jid == j_c && (tp->ep_meta_flags &
@@ -936,7 +973,7 @@ test_linux(void)
 		}
 	}
 	/* Jailed one first: find its exit and look at the ABI. */
-	if (jt_collect(fd, recs[0].pid, OES_EVENT_NOTIFY_EXIT, WAIT_MS,
+	if (jt_collect(fd, recs[0].pid, OES_EVENT_NOTIFY_EXIT, INFTIM,
 	    &buf) != 0)
 		TEST_FAIL("exit of the jailed Linux process not delivered");
 	else {
@@ -1048,10 +1085,8 @@ inbound_proc_case(const char *what, oes_event_type_t event,
     int (*act)(void *), uint32_t flags, int victim_jid, bool expect_seen)
 {
 	struct kid victim, inside, actor, marker;
-	struct timespec start;
 	const oes_process_t *tp;
 	test_msg_buf buf;
-	long left;
 	int fd, seen;
 	bool marked;
 
@@ -1075,10 +1110,10 @@ inbound_proc_case(const char *what, oes_event_type_t event,
 
 	seen = 0;
 	marked = false;
-	clock_gettime(CLOCK_MONOTONIC, &start);
-	while (!marked && (left = WAIT_MS - jt_elapsed_ms(&start)) > 0) {
-		if (test_wait_event(fd, &buf.msg, left > 100 ? 100 :
-		    (int)left) != 0 || buf.msg.em_event != event)
+	while (!marked) {
+		if (test_wait_event(fd, &buf.msg, INFTIM) != 0)
+			break;
+		if (buf.msg.em_event != event)
 			continue;
 		tp = event == OES_EVENT_NOTIFY_PTRACE ?
 		    &buf.msg.em_event_data.ptrace.target :
@@ -1523,9 +1558,7 @@ test_event_kinds(void)
 	    OES_EVENT_NOTIFY_SOCKET_CREATE, OES_EVENT_NOTIFY_PIPE_WRITE,
 	    OES_EVENT_NOTIFY_EXIT };
 	struct kinds seen[2], *k;
-	struct timespec start;
 	test_msg_buf buf;
-	long left;
 	int fd, i, rc;
 
 	TEST_BEGIN("T-KIND fork, socket and pipe events of a jailed subject");
@@ -1549,12 +1582,9 @@ test_event_kinds(void)
 		ASSERT_MSG(rc == 0, "subject %d: status %d", i, rc);
 	}
 	/* All four are queued in order: the jailed exit is the last. */
-	clock_gettime(CLOCK_MONOTONIC, &start);
-	while (seen[1].exits == 0 &&
-	    (left = WAIT_MS - jt_elapsed_ms(&start)) > 0) {
-		if (test_wait_event(fd, &buf.msg, left > 100 ? 100 :
-		    (int)left) != 0)
-			continue;
+	while (seen[1].exits == 0) {
+		if (test_wait_event(fd, &buf.msg, INFTIM) != 0)
+			break;
 		for (i = 0; i < 2; i++) {
 			k = &seen[i];
 			if (buf.msg.em_process.ep_pid != k->pid)
@@ -1729,10 +1759,8 @@ static int
 rooted_run(int fd, int jid, const char *path, const char *marker_path,
     test_msg_buf *out)
 {
-	struct timespec start;
 	struct kid k, m;
 	test_msg_buf buf;
-	long left;
 	int rc, seen;
 
 	rc = kid_start(&k, jid, fn_exec_path, __DECONST(char *, path),
@@ -1748,11 +1776,10 @@ rooted_run(int fd, int jid, const char *path, const char *marker_path,
 		return (-1);
 	}
 	seen = 0;
-	clock_gettime(CLOCK_MONOTONIC, &start);
-	while ((left = WAIT_MS - jt_elapsed_ms(&start)) > 0) {
-		if (test_wait_event(fd, &buf.msg, left > 100 ? 100 :
-		    (int)left) != 0 ||
-		    buf.msg.em_event != OES_EVENT_NOTIFY_EXEC)
+	for (;;) {
+		if (test_wait_event(fd, &buf.msg, INFTIM) != 0)
+			break;
+		if (buf.msg.em_event != OES_EVENT_NOTIFY_EXEC)
 			continue;
 		if (buf.msg.em_process.ep_pid == k.pid) {
 			seen++;
@@ -1904,6 +1931,12 @@ struct reader {
 	ssize_t		n;
 	int		error;
 	volatile int	done;
+	/*
+	 * Zeroed, these are FreeBSD's static initializers (NULL); the
+	 * test does not destroy them.
+	 */
+	pthread_mutex_t	mtx;
+	pthread_cond_t	cv;
 };
 
 static void *
@@ -1914,19 +1947,25 @@ reader_thread(void *arg)
 
 	r->n = read(r->fd, buf, sizeof(buf));
 	r->error = errno;
+	pthread_mutex_lock(&r->mtx);
 	r->done = 1;
+	pthread_cond_signal(&r->cv);
+	pthread_mutex_unlock(&r->mtx);
 	return (NULL);
 }
 
-static bool
+/*
+ * Wait for the reader to return.  A reader the removal never wakes fails the
+ * case at its timeout.
+ */
+static void
 reader_wait(struct reader *r)
 {
-	struct timespec start;
 
-	clock_gettime(CLOCK_MONOTONIC, &start);
-	while (!r->done && jt_elapsed_ms(&start) < WAIT_MS)
-		usleep(20000);
-	return (r->done != 0);
+	pthread_mutex_lock(&r->mtx);
+	while (!r->done)
+		pthread_cond_wait(&r->cv, &r->mtx);
+	pthread_mutex_unlock(&r->mtx);
 }
 
 static void
@@ -1955,10 +1994,7 @@ test_dead_blocked_reader(void)
 	usleep(300000);
 	ASSERT_MSG(!r.done, "reader returned before the removal: %zd", r.n);
 	remove_jail(jid);
-	if (!reader_wait(&r)) {
-		TEST_FAIL("blocked reader not woken by the removal");
-		return;		/* The thread still owns the descriptor. */
-	}
+	reader_wait(&r);
 	pthread_join(th, NULL);
 	ASSERT_MSG(r.n == 0, "blocked read: %zd errno %d", r.n, r.error);
 
@@ -2023,7 +2059,6 @@ test_dead_poll_select(void)
 	static uint8_t buf[OES_MSG_MAX_SIZE * 4];
 	struct timeval tv = { 0, 0 };
 	const oes_message_t *msg;
-	struct timespec start;
 	struct pollfd pfd;
 	fd_set rfds;
 	char name[64];
@@ -2039,9 +2074,7 @@ test_dead_poll_select(void)
 		return;
 	pid = jt_run_true(jid);
 	remove_jail(jid);
-	clock_gettime(CLOCK_MONOTONIC, &start);
-	while (!is_dead(fd) && jt_elapsed_ms(&start) < WAIT_MS)
-		usleep(20000);
+	wait_dead(fd);
 	ASSERT_MSG(is_dead(fd), "scope not dead after the removal");
 
 	/* The exit is still queued. */
@@ -2299,7 +2332,6 @@ test_dead_last_exit(void)
 static void
 test_dead_kqueue(void)
 {
-	struct timespec to = { .tv_sec = WAIT_MS / 1000 };
 	struct kevent kev;
 	char name[64];
 	int fd, jid, kq, n;
@@ -2314,7 +2346,7 @@ test_dead_kqueue(void)
 	EXPECT_OK(kevent(kq, &kev, 1, NULL, 0, NULL), "EV_ADD");
 	remove_jail(jid);
 	memset(&kev, 0, sizeof(kev));
-	n = kevent(kq, NULL, 0, &kev, 1, &to);
+	n = kevent(kq, NULL, 0, &kev, 1, NULL);
 	ASSERT_MSG(n == 1 && (int)kev.ident == fd &&
 	    (kev.flags & EV_EOF) != 0, "kevent: n %d flags 0x%x", n,
 	    kev.flags);
@@ -2615,31 +2647,149 @@ fn_host_work(void *arg __unused)
 	return (0);
 }
 
-static void
-outside_never_waits(int fd, const char *what)
+/*
+ * Run fn(arg) in a host child to completion while watching the
+ * jail-scoped AUTH client fd: an event fd receives meanwhile is outside
+ * work the client must not see.  It fails the case at once, with its pid
+ * and type, and is answered ALLOW so the child goes on.  Returns the
+ * child's status, or -1 with *out left for the caller to kill after it
+ * has closed fd: a child held in fd's AUTH wait cannot be killed until
+ * the close releases it.  Outside work held without any event reaching
+ * fd leaves the child waiting, and the case fails at its timeout.
+ */
+static int
+outside_run(int fd, int (*fn)(void *), void *arg, const char *what,
+    struct kid *out)
 {
-	struct timespec start;
-	struct oes_stats st;
-	struct kid k;
-	long ms;
-	int rc;
+	struct kevent kev[2];
+	test_msg_buf other;
+	oes_response_t resp;
+	int kq, n;
 
-	if (kid_start(&k, -1, fn_host_work, NULL, true) != 0) {
-		TEST_FAIL("%s: host worker", what);
+	out->pid = -1;
+	out->go = -1;
+	kq = kqueue();
+	if (kq < 0) {
+		TEST_FAIL("%s: kqueue: %s", what, strerror(errno));
+		return (-1);
+	}
+	if (kid_start(out, -1, fn, arg, true) != 0) {
+		TEST_FAIL("%s: the outside child did not start", what);
+		close(kq);
+		return (-1);
+	}
+	/* Registered before the child runs: its exit cannot be missed. */
+	EV_SET(&kev[0], fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+	EV_SET(&kev[1], out->pid, EVFILT_PROC, EV_ADD, NOTE_EXIT, 0, NULL);
+	if (kevent(kq, kev, 2, NULL, 0, NULL) != 0) {
+		TEST_FAIL("%s: kevent: %s", what, strerror(errno));
+		close(kq);
+		return (-1);
+	}
+	kid_go(out);
+	for (;;) {
+		n = kevent(kq, NULL, 0, kev, 1, NULL);
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n != 1) {
+			TEST_FAIL("%s: kevent: %s", what, strerror(errno));
+			close(kq);
+			return (-1);
+		}
+		if (kev[0].filter == EVFILT_PROC)
+			break;
+		while (test_wait_event(fd, &other.msg, 0) == 0) {
+			TEST_FAIL("%s: event %#x of pid %d reached the client "
+			    "while the outside work ran", what,
+			    other.msg.em_event,
+			    (int)other.msg.em_process.ep_pid);
+			if (other.msg.em_action != OES_ACTION_AUTH)
+				continue;
+			memset(&resp, 0, sizeof(resp));
+			resp.er_id = other.msg.em_id;
+			resp.er_result = OES_AUTH_ALLOW;
+			(void)write(fd, &resp, sizeof(resp));
+		}
+	}
+	close(kq);
+	n = jt_reap(out->pid);
+	out->pid = -1;
+	return (n);
+}
+
+/*
+ * Outside work is never held by a jail-scoped AUTH client, shown by order
+ * rather than by time.  A jailed open's AUTH_OPEN is read and left
+ * unanswered; its deadline is the longest OES allows (OES_MAX_DEADLINE_MS)
+ * only so that it cannot run out by itself.  The outside work then runs to
+ * completion (outside_run(): an event reaching the client meanwhile fails
+ * the case at once).  Only after that is the jailed event answered DENY;
+ * the jailed open failing with EACCES shows it was still waiting, and the
+ * client received that one event, dropped none, and timed none out.
+ */
+static void
+outside_never_waits(int jid, const char *what)
+{
+	oes_event_type_t evs[] = { OES_EVENT_AUTH_OPEN, OES_EVENT_AUTH_EXEC };
+	struct open_arg oa = { file1, 1, O_RDONLY };
+	test_msg_buf buf;
+	oes_response_t resp;
+	struct oes_stats st;
+	struct kid in, out;
+	int fd, rc;
+
+	fd = auth_client(jid, OES_MAX_DEADLINE_MS, evs, 2);
+	if (fd < 0)
+		return;
+	out.pid = -1;
+	out.go = -1;
+	if (kid_start(&in, jid, fn_open, &oa, false) != 0) {
+		TEST_FAIL("%s: jailed opener", what);
+		close(fd);
 		return;
 	}
-	clock_gettime(CLOCK_MONOTONIC, &start);
-	rc = kid_finish(&k);
-	ms = jt_elapsed_ms(&start);
-	get_stats(fd, &st);
-	printf("    %s: 50 opens and 3 execs outside the jail took %ld ms\n",
-	    what, ms);
+	/* The jailed open is held: its AUTH_OPEN is here, unanswered. */
+	if (test_wait_event(fd, &buf.msg, INFTIM) != 0) {
+		TEST_FAIL("%s: reading the jailed open's event: %s", what,
+		    strerror(errno));
+		goto release;
+	}
+	if (buf.msg.em_event != OES_EVENT_AUTH_OPEN ||
+	    buf.msg.em_process.ep_pid != in.pid) {
+		TEST_FAIL("%s: event %#x of pid %d, not the jailed open's "
+		    "AUTH_OPEN", what, buf.msg.em_event,
+		    (int)buf.msg.em_process.ep_pid);
+		goto release;
+	}
+	rc = outside_run(fd, fn_host_work, NULL, what, &out);
+	if (rc == -1)
+		goto release;
 	ASSERT_MSG(rc == 0, "%s: host worker status %d", what, rc);
-	ASSERT_MSG(st.es_events_received == 0,
-	    "%s: %ju events of an outside process reached the client", what,
-	    (uintmax_t)st.es_events_received);
-	/* One held operation alone would cost the whole 3000 ms deadline. */
-	ASSERT_MSG(ms < 2500, "%s: outside work took %ld ms", what, ms);
+	memset(&resp, 0, sizeof(resp));
+	resp.er_id = buf.msg.em_id;
+	resp.er_result = OES_AUTH_DENY;
+	if (write(fd, &resp, sizeof(resp)) != sizeof(resp)) {
+		TEST_FAIL("%s: answer: %s", what, strerror(errno));
+		goto release;
+	}
+	rc = jt_reap(in.pid);
+	ASSERT_MSG(rc == 50, "%s: jailed open status %d, not EACCES (50): it "
+	    "did not wait for the answer given after the outside work", what,
+	    rc);
+	get_stats(fd, &st);
+	ASSERT_MSG(st.es_events_received == 1 && st.es_events_dropped == 0,
+	    "%s: %ju events received, %ju dropped: not only the jailed open's",
+	    what, (uintmax_t)st.es_events_received,
+	    (uintmax_t)st.es_events_dropped);
+	ASSERT_MSG(st.es_auth_timeouts == 0, "%s: %ju AUTH timeouts", what,
+	    (uintmax_t)st.es_auth_timeouts);
+	close(fd);
+	return;
+release:
+	/* Closing the client releases held operations before the kills. */
+	close(fd);
+	kid_kill(&out);
+	kid_kill(&in);
 }
 
 static int
@@ -2660,29 +2810,27 @@ test_auth(void)
 {
 	oes_event_type_t evs[] = { OES_EVENT_AUTH_OPEN, OES_EVENT_AUTH_EXEC };
 	struct open_arg oa = { file1, 1, O_RDONLY };
-	struct timespec start;
-	struct oes_stats st;
-	struct kid k, wide;
 	test_msg_buf buf;
 	oes_response_t resp;
-	long ms;
+	struct oes_stats st;
+	struct kid k, wide;
 	int fd, rc;
 	bool denied;
 
 	TEST_BEGIN("T-AUTH-1 an unanswering AUTH client holds only its jail");
-	fd = auth_client(j_a, 3000, evs, 2);
+	outside_never_waits(j_a, "T-AUTH-1");
+	/*
+	 * Left unanswered, a jailed open waits for the deadline (the
+	 * shortest OES allows) and then fails open: the timeout is counted.
+	 */
+	fd = auth_client(j_a, OES_MIN_DEADLINE_MS, evs, 2);
 	if (fd < 0)
 		return;
-	outside_never_waits(fd, "T-AUTH-1");
-	if (kid_start(&k, j_a, fn_open, &oa, true) == 0) {
-		clock_gettime(CLOCK_MONOTONIC, &start);
+	if (kid_start(&k, j_a, fn_open, &oa, false) == 0) {
 		rc = kid_finish(&k);
-		ms = jt_elapsed_ms(&start);
 		get_stats(fd, &st);
-		printf("    one open inside the jail took %ld ms\n", ms);
 		ASSERT_MSG(rc == 0, "jailed open status %d (fail-open expected)",
 		    rc);
-		ASSERT_MSG(ms >= 2500, "jailed open was not held: %ld ms", ms);
 		ASSERT_MSG(st.es_events_received == 1 &&
 		    st.es_auth_timeouts == 1, "received %ju timeouts %ju",
 		    (uintmax_t)st.es_events_received,
@@ -2695,29 +2843,28 @@ test_auth(void)
 		TEST_FAIL("idle descendants client");
 		return;
 	}
-	fd = auth_client(j_a, 3000, evs, 2);
-	if (fd >= 0) {
-		outside_never_waits(fd, "T-AUTH-2");
-		close(fd);
-	}
+	outside_never_waits(j_a, "T-AUTH-2");
 	kid_kill(&wide);
 
 	TEST_BEGIN("T-AUTH-3 a jail-scoped client denies inside, not outside");
-	fd = auth_client(j_a, 10000, evs, 1);
+	fd = auth_client(j_a, OES_MAX_DEADLINE_MS, evs, 1);
 	if (fd < 0)
 		return;
-	if (kid_start(&k, -1, fn_open, &oa, false) != 0)
+	rc = outside_run(fd, fn_open, &oa, "T-AUTH-3 host open", &k);
+	if (rc == -1) {
+		close(fd);
+		kid_kill(&k);
 		return;
-	rc = kid_finish(&k);
+	}
 	ASSERT_MSG(rc == 0, "host open status %d", rc);
 	if (kid_start(&k, j_a, fn_open, &oa, true) != 0)
 		return;
 	kid_go(&k);
 	denied = false;
-	clock_gettime(CLOCK_MONOTONIC, &start);
-	while (!denied && jt_elapsed_ms(&start) < WAIT_MS) {
-		if (test_wait_event(fd, &buf.msg, 100) != 0)
-			continue;
+	/* The jailed open's event comes; nothing else is waited for. */
+	while (!denied) {
+		if (test_wait_event(fd, &buf.msg, INFTIM) != 0)
+			break;
 		if (buf.msg.em_action != OES_ACTION_AUTH)
 			continue;
 		memset(&resp, 0, sizeof(resp));
@@ -2737,6 +2884,9 @@ test_auth(void)
 	get_stats(fd, &st);
 	ASSERT_MSG(st.es_events_received == 1, "received %ju",
 	    (uintmax_t)st.es_events_received);
+	/* Answered, not let go by its deadline. */
+	ASSERT_MSG(st.es_auth_timeouts == 0, "%ju AUTH timeouts",
+	    (uintmax_t)st.es_auth_timeouts);
 	close(fd);
 }
 
@@ -2775,10 +2925,7 @@ test_dead_auth_reader(void)
 	ASSERT_MSG(!r.done, "reader returned before the removal: %zd errno %d",
 	    r.n, r.error);
 	remove_jail(jid);
-	if (!reader_wait(&r)) {
-		TEST_FAIL("blocked reader not woken by the removal");
-		return;
-	}
+	reader_wait(&r);
 	pthread_join(th, NULL);
 	ASSERT_MSG(r.n == 0, "blocked read: %zd errno %d", r.n, r.error);
 	close(fd);
@@ -3015,7 +3162,6 @@ test_filter(void)
 	char name[64];
 	int events, exits, fd, jid, mode, rc, tfd;
 	test_msg_buf buf;
-	bool seen;
 
 	TEST_BEGIN("T-FILT-0 the counters exist");
 	c0 = filtered();
@@ -3080,13 +3226,8 @@ test_filter(void)
 		    kid_finish(&j) : -1;
 	}
 	ASSERT_MSG(rc == 0, "jailed rename status %d", rc);
-	seen = false;
-	while (jt_collect(fd, j.pid, OES_EVENT_NOTIFY_RENAME, 2000, &buf) ==
-	    0) {
-		seen = true;
-		break;
-	}
-	ASSERT_MSG(seen, "jailed rename not delivered");
+	ASSERT_MSG(jt_collect(fd, j.pid, OES_EVENT_NOTIFY_RENAME, INFTIM, &buf) ==
+	    0, "jailed rename not delivered: %s", strerror(errno));
 	unlink(ra.from);
 	unlink(ra.to);
 
@@ -3099,7 +3240,7 @@ test_filter(void)
 	rc = kid_start(&j, j_a, fn_mprotect, NULL, false) == 0 ?
 	    kid_finish(&j) : -1;
 	ASSERT_MSG(rc == 0, "jailed mprotect status %d", rc);
-	ASSERT_MSG(jt_collect(fd, j.pid, OES_EVENT_NOTIFY_MPROTECT, WAIT_MS,
+	ASSERT_MSG(jt_collect(fd, j.pid, OES_EVENT_NOTIFY_MPROTECT, INFTIM,
 	    &buf) == 0, "jailed mprotect not delivered");
 
 	/*
@@ -3168,7 +3309,6 @@ test_cache_invalidation(void)
 {
 	oes_event_type_t ev = OES_EVENT_AUTH_OPEN;
 	struct open_arg oa = { file2, 1, O_RDONLY };
-	struct timespec start;
 	oes_cache_entry_t entry;
 	struct oes_stats st;
 	oes_response_t resp;
@@ -3179,15 +3319,15 @@ test_cache_invalidation(void)
 	int fd, rc;
 
 	TEST_BEGIN("T-CACHE-2 an outside writer invalidates the jail's cache");
-	fd = auth_client(j_a, 10000, &ev, 1);
+	fd = auth_client(j_a, OES_MAX_DEADLINE_MS, &ev, 1);
 	if (fd < 0 || kid_start(&k, j_a, fn_open, &oa, true) != 0)
 		return;
 	kid_go(&k);
 	added = false;
-	clock_gettime(CLOCK_MONOTONIC, &start);
-	while (!added && jt_elapsed_ms(&start) < WAIT_MS) {
-		if (test_wait_event(fd, &buf.msg, 100) != 0 ||
-		    buf.msg.em_action != OES_ACTION_AUTH)
+	while (!added) {
+		if (test_wait_event(fd, &buf.msg, INFTIM) != 0)
+			break;
+		if (buf.msg.em_action != OES_ACTION_AUTH)
 			continue;
 		if (buf.msg.em_process.ep_pid == k.pid &&
 		    buf.msg.em_event_data.open.file.ef_token.eft_id == ino2) {
@@ -3203,7 +3343,7 @@ test_cache_invalidation(void)
 			entry.ece_key.eck_file =
 			    buf.msg.em_event_data.open.file.ef_token;
 			entry.ece_result = OES_AUTH_ALLOW;
-			entry.ece_ttl_ms = 60000;
+			entry.ece_ttl_ms = OES_MAX_CACHE_TTL_MS;
 			EXPECT_OK(ioctl(fd, OES_IOC_CACHE_ADD, &entry),
 			    "CACHE_ADD");
 			added = true;
@@ -3220,16 +3360,24 @@ test_cache_invalidation(void)
 	ASSERT_MSG(st.es_cache_entries == 1, "cache entries %u",
 	    st.es_cache_entries);
 	c0 = sysctl_u64("security.oes.jail_filtered_auth");
-	rc = kid_start(&h, -1, fn_append, file2, false) == 0 ?
-	    kid_finish(&h) : -1;
+	rc = outside_run(fd, fn_append, file2, "T-CACHE-2 outside writer", &h);
+	if (rc == -1) {
+		close(fd);
+		kid_kill(&h);
+		return;
+	}
 	ASSERT_MSG(rc == 0, "outside writer status %d", rc);
 	get_stats(fd, &st);
 	ASSERT_MSG(st.es_cache_entries == 0,
 	    "cache entries after an outside write: %u", st.es_cache_entries);
 	/* With the cache empty again, outside writes are dropped early. */
 	c0 = sysctl_u64("security.oes.jail_filtered_auth");
-	rc = kid_start(&h, -1, fn_append, file2, false) == 0 ?
-	    kid_finish(&h) : -1;
+	rc = outside_run(fd, fn_append, file2, "T-CACHE-2 outside writer", &h);
+	if (rc == -1) {
+		close(fd);
+		kid_kill(&h);
+		return;
+	}
 	ASSERT_MSG(rc == 0 &&
 	    sysctl_u64("security.oes.jail_filtered_auth") > c0,
 	    "outside write not filtered once the cache is empty");

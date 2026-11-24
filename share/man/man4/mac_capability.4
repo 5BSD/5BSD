@@ -23,7 +23,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd November 18, 2026
+.Dd November 23, 2026
 .Dt MAC_CAPABILITY 4
 .Os
 .Sh NAME
@@ -216,6 +216,39 @@ Returns
 if the RX queue is full; wait for
 .Dv EVFILT_WRITE
 and retry.
+Setting
+.Dv MAC_CAPABILITY_SEND_F_WAIT
+in
+.Va flags
+instead sleeps until the queue has room and then sends, with no time limit,
+also on a non-blocking descriptor.
+The sleep is interruptible as for
+.Xr write 2
+on a full pipe: a signal whose handler was installed with
+.Dv SA_RESTART
+restarts the call, any other makes it fail with
+.Er EINTR .
+Nothing is sent and no descriptor is consumed before the message is accepted.
+With
+.Dv MAC_CAPABILITY_SEND_F_DEADLINE
+as well,
+.Va _reserved[0]
+(low 32 bits) and
+.Va _reserved[1]
+(high) hold an absolute
+.Dv CLOCK_MONOTONIC
+deadline in nanoseconds: the wait fails with
+.Er ETIMEDOUT
+once it passes, nothing having been sent, and a restart after a signal keeps
+that deadline.
+A send that finds room succeeds whatever the deadline; a deadline of 0 or one
+already past fails a send that would have to wait at once.
+A deadline later than the kernel can represent is the latest one it can.
+.Dv MAC_CAPABILITY_SEND_F_DEADLINE
+without
+.Dv MAC_CAPABILITY_SEND_F_WAIT
+fails with
+.Er EINVAL .
 .It Dv MAC_CAPABILITY_RECVMSG
 Receive an async message.
 Blocks unless
@@ -243,11 +276,32 @@ a timeout fails with
 .Er ETIMEDOUT .
 The finite timeout uses one absolute monotonic deadline across queue wakeups;
 another receiver consuming a message does not restart the budget.
+With
+.Dv MAC_CAPABILITY_RECV_F_DEADLINE
+as well,
+.Va _reserved[0]
+(low 32 bits) and
+.Va _reserved[1]
+(high) hold an absolute
+.Dv CLOCK_MONOTONIC
+deadline in nanoseconds instead, which a receive restarted after a signal
+.Pq Dv SA_RESTART
+keeps; a relative wait would start again.
+A queued message is returned whatever the deadline; a deadline of 0 or one
+already past fails a receive that would have to wait at once.
+A deadline later than the kernel can represent is the latest one it can.
+.Dv MAC_CAPABILITY_RECV_F_DEADLINE
+without
+.Dv MAC_CAPABILITY_RECV_F_WAIT
+fails with
+.Er EINVAL .
 This replaces a readiness wait followed by a receive.
 .It Dv MAC_CAPABILITY_SENDMSG_V2
 As
 .Dv MAC_CAPABILITY_SENDMSG ,
-with per-descriptor work for any number of attachments done in the same call.
+with per-descriptor work for any number of attachments done in the same call
+.Pf ( Dv MAC_CAPABILITY_SEND_F_WAIT
+applies as well).
 .Va fd_specs
 is null or holds one
 .Vt struct mac_capability_fd_spec
@@ -839,9 +893,18 @@ Service being destroyed during
 .Dv MAC_CAPABILITY_CONNECT .
 .It Bq Er ECONNRESET
 Instance terminated or peer closed.
+.It Bq Er EINTR
+A signal whose handler was installed without
+.Dv SA_RESTART
+interrupted a send sleeping for room
+.Pq Dv MAC_CAPABILITY_SEND_F_WAIT
+or a receive sleeping for a message
+.Pq Dv MAC_CAPABILITY_RECV_F_WAIT .
 .It Bq Er EINVAL
-Invalid arguments, reserved fields nonzero, payload too large, or
-too many file descriptors attached.
+Invalid arguments, reserved fields nonzero, payload too large,
+too many file descriptors attached, or a deadline flag
+.Pq Dv MAC_CAPABILITY_SEND_F_DEADLINE , MAC_CAPABILITY_RECV_F_DEADLINE
+without its wait flag.
 .It Bq Er EMSGSIZE
 Payload too large
 .Pq Dv MAC_CAPABILITY_SENDMSG ,

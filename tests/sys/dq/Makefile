@@ -51,10 +51,13 @@ ATF_TESTS_C+=	dq_owner_test
 ATF_TESTS_C+=	dq_swap_test
 ATF_TESTS_C+=	dq_restricted_test
 ATF_TESTS_C+=	dq_standing_test
+ATF_TESTS_C+=	dq_ptrace_test
+ATF_TESTS_C+=	dq_execpin_test
 ATF_TESTS_SH+=	dq_dtrace_test
 ATF_TESTS_SH+=	dq_testopen_test
 ATF_TESTS_SH+=	dq_oracle_test
 ATF_TESTS_SH+=	dq_tree_suites_test
+ATF_TESTS_SH+=	dq_tree_hang_loop
 ATF_TESTS_SH+=	dq_dqswap_test
 
 # Every program is a controller: each links the support library
@@ -80,6 +83,8 @@ CFLAGS.dq_bootstrap_test+=	-I${SRCTOP}/lib/libservice \
 				-I${SRCTOP}/lib/libsysctlcmp
 LIBADD.dq_bootstrap_test+=	notify logcmp sysctlcmp service
 
+# jail_setv(3) for the boundary rows (review 3).
+LIBADD.dq_read_test+=	jail
 # jail_setv(3) for the I5 jail_attach row.
 LIBADD.dq_resolve_test+=	jail
 # jail_setv(3) for the address-family row.
@@ -88,6 +93,8 @@ LIBADD.dq_socket_test+=	jail
 LIBADD.dq_restricted_test+=	jail
 # jail_setv(3) for the jail-root rule.
 LIBADD.dq_standing_test+=	jail
+# jail_setv(3) for P1.
+LIBADD.dq_execpin_test+=	jail
 
 # jail_setv(3) for the jailed rows; capability_service_connect(3) on a
 # device descriptor the caller did not open.
@@ -101,6 +108,17 @@ LIBADD.dq_owner_test+=	memstat
 
 # Changes kern.dq.max_inflight_per_object: run alone.
 TEST_METADATA.dq_concurrency_test+=	is_exclusive="true"
+# Changes kern.dq.max_inflight_per_object and _per_requester: run alone.
+TEST_METADATA.dq_deadline_test+=	is_exclusive="true"
+# Runs cases of the other programs under DTrace, one of them
+# dq_deadline_test's: alone.
+TEST_METADATA.dq_dtrace_test+=	is_exclusive="true"
+# Reads the system-wide kern.dq.postop_ignored around its own replies and
+# sets debug.dq.delay_postop_apply: alone.
+TEST_METADATA.dq_write_test+=	is_exclusive="true"
+# swap_late_reply_consumed sets debug.dq.delay_swap_take, which delays
+# any swap reply: alone.
+TEST_METADATA.dq_swap_test+=	is_exclusive="true"
 # Attaches a global OES client, as the OES suite does: run alone.
 TEST_METADATA.dq_oes_test+=	is_exclusive="true"
 # Switches mac_abac to enforcing for one rule, and traces with dtrace: alone.
@@ -135,6 +153,9 @@ TEST_METADATA.dq_getcwd_test+=	is_exclusive="true"
 TEST_METADATA.dq_kclass_test+=	is_exclusive="true"
 # Runs whole suites in a served root and in chroot(8): alone, with time.
 TEST_METADATA.dq_tree_suites_test+=	is_exclusive="true" timeout="7200"
+# Runs one served-root case 200 times beside CPU burners; only with
+# test_suites.FreeBSD.dq_hang_loop set: alone.
+TEST_METADATA.dq_tree_hang_loop+=	is_exclusive="true"
 # Runs whole suites twice under kyua: alone, and with time.  670 to 1440 s
 # on an idle host; more than 3600 s on a loaded one (host load 25-40).
 TEST_METADATA.dq_oracle_test+=	is_exclusive="true" timeout="7200"
@@ -148,8 +169,15 @@ LIBADD.dqpass=	dq
 MAN.dqpass=
 BINDIR.dqpass=	${TESTSDIR}
 ${PACKAGE}FILES+=	dqpass.expected
-# The shell functions dq_oracle_test and dq_tree_suites_test share.
+# The shell functions dq_oracle_test and dq_tree_suites_test share, and
+# the hang capture of the served-root runs (T-R11, T-R12).
 ${PACKAGE}FILES+=	dq_suites.subr
+${PACKAGE}FILES+=	dq_hang.subr
+# The hang capture's event-driven watch (kqueue, no polling).
+PROGS+=		dq_hangwatch
+SRCS.dq_hangwatch=	dq_hangwatch.c
+MAN.dq_hangwatch=
+BINDIR.dq_hangwatch=	${TESTSDIR}
 
 # dqswap (share/examples/dq): the example supervisor that gives up root
 # after the attach; dq_dqswap_test runs it.
@@ -172,6 +200,12 @@ PROGS+=		dq_exec_helper
 SRCS.dq_exec_helper=	dq_exec_helper.c
 MAN.dq_exec_helper=
 BINDIR.dq_exec_helper=	${TESTSDIR}
+
+# dq_execpin_test's image.
+PROGS+=		dq_execpin_helper
+SRCS.dq_execpin_helper=	dq_execpin_helper.c
+MAN.dq_execpin_helper=
+BINDIR.dq_execpin_helper=	${TESTSDIR}
 
 # dq_owner_test's exec'd image.
 PROGS+=		dq_owner_helper

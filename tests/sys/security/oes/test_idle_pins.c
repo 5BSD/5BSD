@@ -13,9 +13,9 @@
  * compiled in; closing a client releases every thread waiting on it.
  *
  * The D-O cases measure what happens with nobody listening.  Before the
- * gates every fork and exit allocated an 8 KB event that nobody received;
- * OES_IDLE_GATED selects which of the two answers the kernel under test
- * must give.
+ * gates every fork and exit allocated a maximum-size event that nobody
+ * received; OES_IDLE_GATED selects which of the two answers the kernel
+ * under test must give.
  */
 
 #include <sys/param.h>
@@ -28,7 +28,6 @@
 #define	OES_IDLE_GATED	1	/* hooks return at their gate when idle */
 #endif
 
-#define	FORKS		1000
 
 static char work_file[PATH_MAX];
 static ino_t work_ino;
@@ -451,50 +450,79 @@ pin_close_releases_waiters(void)
 	}
 }
 
+/*
+ * What one fork and one exit allocate in OES, measured in bytes
+ * (kern.malloc_stats "oes", the allocator's sizes, allocations that were
+ * freed again included).  Before the gates each built an event, an
+ * allocation of more than OES_MSG_MAX_SIZE bytes, and nobody received it;
+ * gated, neither allocates.  One of each shows the difference: the defect
+ * allocates more than 2 * OES_MSG_MAX_SIZE bytes, the gated kernel nothing.
+ * What other processes allocate in OES meanwhile is counted too, so the
+ * gated bound (at most OES_MSG_MAX_SIZE bytes, less than one event) holds
+ * while their allocations in that window add up to no more: no other
+ * client is open (asserted, so no event is built for anyone), and the only
+ * idle allocations are an exec's credential label and path, each far
+ * smaller.
+ */
+static void
+idle_allocations_case(const char *what, int clients)
+{
+	uint64_t n0, n1, b0, b1;
+	u_int open;
+	size_t len;
+
+	open = 0;
+	len = sizeof(open);
+	if (sysctlbyname("security.oes.clients", &open, &len, NULL, 0) == 0)
+		ASSERT_MSG(open == (u_int)clients,
+		    "%s: %u clients open, want %d", what, open, clients);
+#if OES_IDLE_GATED
+	else
+		TEST_FAIL("%s: security.oes.clients: %s", what,
+		    strerror(errno));
+#else
+	else	/* The pre-gate kernel has no such count. */
+		printf("    note: security.oes.clients: %s; not checked\n",
+		    strerror(errno));
+#endif
+	if (idle_oes_mallocs(&n0, &b0) != 0) {
+		TEST_FAIL("%s: kern.malloc_stats \"oes\" cannot be read", what);
+		return;
+	}
+	ASSERT_MSG(idle_fork_exit() == 0, "%s: fork and exit: %s", what,
+	    strerror(errno));
+	if (idle_oes_mallocs(&n1, &b1) != 0) {
+		TEST_FAIL("%s: kern.malloc_stats \"oes\" cannot be read", what);
+		return;
+	}
+	printf("    one fork+exit: %ju oes allocations, %ju bytes\n",
+	    (uintmax_t)(n1 - n0), (uintmax_t)(b1 - b0));
+#if OES_IDLE_GATED
+	ASSERT_MSG(b1 - b0 <= OES_MSG_MAX_SIZE, "%s: %ju bytes allocated for "
+	    "one fork and exit, an event's worth or more", what,
+	    (uintmax_t)(b1 - b0));
+#else
+	ASSERT_MSG(b1 - b0 > 2 * OES_MSG_MAX_SIZE, "%s: %ju bytes for one fork "
+	    "and exit; the ungated kernel allocates an event for each", what,
+	    (uintmax_t)(b1 - b0));
+#endif
+}
+
 static void
 pin_idle_allocations(void)
 {
-	uint64_t before, after;
 	int fd;
 
 	TEST_BEGIN("D-O1 no client: allocations per fork and exit");
-	before = idle_oes_mallocs();
-	ASSERT_MSG(idle_fork_exit(FORKS) == 0, "fork loop: %s",
-	    strerror(errno));
-	after = idle_oes_mallocs();
-	printf("    %d fork+exit: %ju oes allocations\n", FORKS,
-	    (uintmax_t)(after - before));
-#if OES_IDLE_GATED
-	ASSERT_MSG(after - before < FORKS / 5, "%ju allocations for %d "
-	    "fork+exit with nobody listening", (uintmax_t)(after - before),
-	    FORKS);
-#else
-	ASSERT_MSG(after - before >= 2 * FORKS * 9 / 10, "%ju allocations for "
-	    "%d fork+exit; the ungated kernel allocates two events each",
-	    (uintmax_t)(after - before), FORKS);
-#endif
+	idle_allocations_case("D-O1", 0);
 
 	TEST_BEGIN("D-O2 client open, subscribed to nothing: same");
 	fd = test_open_oes();
 	ASSERT_MSG(fd >= 0 && test_set_mode(fd, OES_MODE_NOTIFY) == 0,
 	    "client: %s", strerror(errno));
-	before = idle_oes_mallocs();
-	ASSERT_MSG(idle_fork_exit(FORKS) == 0, "fork loop: %s",
-	    strerror(errno));
-	after = idle_oes_mallocs();
+	idle_allocations_case("D-O2", 1);
 	if (fd >= 0)
 		(void)close(fd);
-	printf("    %d fork+exit: %ju oes allocations\n", FORKS,
-	    (uintmax_t)(after - before));
-#if OES_IDLE_GATED
-	ASSERT_MSG(after - before < FORKS / 5, "%ju allocations for %d "
-	    "fork+exit with a client subscribed to nothing",
-	    (uintmax_t)(after - before), FORKS);
-#else
-	ASSERT_MSG(after - before >= 2 * FORKS * 9 / 10, "%ju allocations for "
-	    "%d fork+exit; the ungated kernel allocates two events each",
-	    (uintmax_t)(after - before), FORKS);
-#endif
 }
 
 int

@@ -3,6 +3,7 @@
 #include <atf-c.h>
 #include <errno.h>
 #include <pthread.h>
+#include <string.h>
 #include <time.h>
 
 static struct timespec fake_now, waited_until;
@@ -59,27 +60,25 @@ ATF_TC_WITHOUT_HEAD(deadline_not_restarted);
 ATF_TC_BODY(deadline_not_restarted, tc)
 {
 	struct timespec deadline = { .tv_sec = 100, .tv_nsec = 5000000 };
+	struct service_client client;
 
 	(void)tc;
-	/* Budget expired while this caller was acquiring the session mutex. */
-	fake_now = (struct timespec){ .tv_sec = 100, .tv_nsec = 10000000 };
-	wait_slice(NULL, NULL, &deadline, 10);
-	ATF_CHECK_EQ(1, wait_count);
-	ATF_CHECK_EQ(deadline.tv_sec, waited_until.tv_sec);
-	ATF_CHECK_EQ(deadline.tv_nsec, waited_until.tv_nsec);
-	/* Near a second boundary, a finite wait still uses the original end. */
-	fake_now = (struct timespec){ .tv_sec = 99, .tv_nsec = 999000000 };
-	wait_slice(NULL, NULL, &deadline, 10);
+	memset(&client, 0, sizeof(client));
+	/*
+	 * A waiter sleeps to the call's own absolute deadline every time it
+	 * waits: the deadline is passed through as is, never recomputed from
+	 * the clock (no slice, no restarted budget).
+	 */
+	wait_wake(&client, &deadline, 10);
+	wait_wake(&client, &deadline, 10);
 	ATF_CHECK_EQ(2, wait_count);
 	ATF_CHECK_EQ(deadline.tv_sec, waited_until.tv_sec);
 	ATF_CHECK_EQ(deadline.tv_nsec, waited_until.tv_nsec);
-	/* Infinite calls use a bounded dispatch slice without reading a deadline. */
-	wait_slice(NULL, NULL, NULL, SERVICE_CLIENT_TIMEOUT_INFINITE);
-	ATF_CHECK_EQ(3, wait_count);
-	ATF_CHECK_EQ(100, waited_until.tv_sec);
-	ATF_CHECK_EQ(24000000, waited_until.tv_nsec);
-	wait_slice(NULL, NULL, NULL, 0);
-	ATF_CHECK_EQ(3, wait_count);
+	/* The kernel's sleeps get the same deadline, or none. */
+	ATF_CHECK(kernel_deadline(&deadline, 10) == &deadline);
+	ATF_CHECK(kernel_deadline(&deadline, 0) == &deadline);
+	ATF_CHECK(kernel_deadline(&deadline,
+	    SERVICE_CLIENT_TIMEOUT_INFINITE) == NULL);
 }
 
 ATF_TP_ADD_TCS(tp)

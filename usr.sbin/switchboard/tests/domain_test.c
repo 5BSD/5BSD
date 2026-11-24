@@ -1511,6 +1511,173 @@ ATF_TC_BODY(unit_context_generation, tc)
 	sd.nservices = 0;
 }
 
+/* Registered (private) lookup channels switchboard still holds. */
+static int
+count_registered_channels(void)
+{
+	struct svc_lookup_channel *lc;
+	int n;
+
+	n = 0;
+	for (lc = lookup_channels; lc != NULL; lc = lc->next)
+		if (lc->registered)
+			n++;
+	return (n);
+}
+
+/*
+ * A client waits for its lookup's answer with no timeout, so switchboard must
+ * never lose one (lookup_channel_answer()).  These cases drive a registered
+ * (private) lookup channel by hand: the client end sends a raw SVC_OP_LOOKUP,
+ * the test dispatches switchboard's end once, then runs domain_reap_failed()
+ * as the event loop does, and the client waits for what comes back.
+ */
+static struct svc_lookup_channel *
+answer_case_adopt(int kq, int *clientp)
+{
+	struct svc_lookup_channel *lc;
+	int pair[2];
+
+	ATF_REQUIRE_EQ(0, mac_capability_channel_create(pair));
+	lc = lookup_channel_adopt(pair[1], SVC_DOMAIN_SYSTEM, 0, NULL, kq);
+	ATF_REQUIRE(lc != NULL);
+	lc->registered = true;
+	*clientp = pair[0];
+	return (lc);
+}
+
+static void
+answer_case_lookup(int client, const char *name)
+{
+	struct mac_capability_sendmsg_args send;
+	struct svc_lookup_req req;
+
+	memset(&req, 0, sizeof(req));
+	req.op = SVC_OP_LOOKUP;
+	strlcpy(req.name, name, sizeof(req.name));
+	memset(&send, 0, sizeof(send));
+	send.payload = &req;
+	send.payload_len = sizeof(req);
+	send.reply_token = 1;
+	ATF_REQUIRE_EQ(0, ioctl(client, MAC_CAPABILITY_SENDMSG, &send));
+}
+
+/* The client's wait: one reply, or -1 with errno. */
+static int
+answer_case_wait(int client, struct svc_reply *reply, int *fdp)
+{
+	struct mac_capability_recvmsg_args recv;
+
+	memset(&recv, 0, sizeof(recv));
+	recv.payload = reply;
+	recv.payload_len = sizeof(*reply);
+	recv.fds = fdp;
+	recv.nfds = 1;
+	recv.flags = MAC_CAPABILITY_RECV_F_WAIT;
+	recv._reserved[0] = MAC_CAPABILITY_RECV_WAIT_FOREVER;
+	if (ioctl(client, MAC_CAPABILITY_RECVMSG, &recv) == -1)
+		return (-1);
+	return ((int)recv.nfds);
+}
+
+static int answer_case_bad_fd = -1;
+
+/* Answer with an endpoint the kernel will not transfer. */
+static void
+answer_with_untransferable(struct channel *channel,
+    struct channel_message *request, void *context)
+{
+
+	(void)channel;
+	lookup_channel_answer(context, request, 0, &answer_case_bad_fd, 1);
+	channel_message_free(request);
+}
+
+ATF_TC(answer_falls_back_to_status);
+ATF_TC_HEAD(answer_falls_back_to_status, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a lookup answer whose endpoint cannot "
+	    "be sent is replaced by a status-only reply with the send's errno");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(answer_falls_back_to_status, tc)
+{
+	struct svc_lookup_channel *lc;
+	struct svc_reply reply;
+	int client, fd, kq, nfds, pipefd[2];
+
+	require_channel_create_syscall(tc);
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	switchboard_kq = kq;
+	lc = answer_case_adopt(kq, &client);
+	ATF_REQUIRE_EQ(0, channel_set_request_handler(lc->channel,
+	    answer_with_untransferable, lc));
+	/* A descriptor that may not be transferred: the send fails. */
+	ATF_REQUIRE_EQ(0, pipe(pipefd));
+	ATF_REQUIRE_EQ(0, cap_xfer_limit(pipefd[0], CAP_XFER_NONE));
+	answer_case_bad_fd = pipefd[0];
+
+	answer_case_lookup(client, ALLOW_LOG_NAME);
+	ATF_REQUIRE(channel_dispatch(lc->channel) != -1);
+	domain_reap_failed();
+
+	fd = -1;
+	nfds = answer_case_wait(client, &reply, &fd);
+	ATF_REQUIRE_MSG(nfds == 0, "reply: %d (%s)", nfds, strerror(errno));
+	ATF_CHECK_EQ_MSG(ENOTCAPABLE, reply.status, "status %d",
+	    (int)reply.status);
+	/* The channel stays: only an unsendable status closes it. */
+	ATF_CHECK(lookup_channel_find(lc->fd) == lc);
+
+	close(pipefd[0]);
+	close(pipefd[1]);
+	close(client);
+	domain_channel_teardown();
+	close(kq);
+}
+
+ATF_TC(answer_unsendable_closes_private_channel);
+ATF_TC_HEAD(answer_unsendable_closes_private_channel, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "when no reply can be sent on a "
+	    "client's private lookup channel, switchboard closes it and the "
+	    "waiting client gets ECONNRESET");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(answer_unsendable_closes_private_channel, tc)
+{
+	struct svc_runtime provider;
+	struct svc_lookup_channel *lc;
+	struct svc_reply reply;
+	int client, fd, kq;
+
+	require_channel_create_syscall(tc);
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	switchboard_kq = kq;
+	provider_register(&provider, ALLOW_LOG_NAME);
+	lc = answer_case_adopt(kq, &client);
+	/* Switchboard's end can no longer send anything: every reply fails. */
+	ATF_REQUIRE_EQ(0, ioctl(lc->fd, MAC_CAPABILITY_REVOKE_SEND));
+
+	answer_case_lookup(client, ALLOW_LOG_NAME);
+	ATF_REQUIRE(channel_dispatch(lc->channel) != -1);
+	ATF_CHECK(lc->failed);
+	domain_reap_failed();
+	ATF_CHECK_EQ(0, count_registered_channels());
+
+	fd = -1;
+	ATF_CHECK_EQ(-1, answer_case_wait(client, &reply, &fd));
+	ATF_CHECK_EQ_MSG(ECONNRESET, errno, "errno %d (%s)", errno,
+	    strerror(errno));
+
+	close(client);
+	naming_remove_owner(&provider);
+	domain_channel_teardown();
+	close(kq);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, unit_context_generation);
@@ -1530,6 +1697,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, hello_ack_over_system_channel);
 	ATF_TP_ADD_TC(tp, unknown_op_over_lookup_channel_enotsup);
 	ATF_TP_ADD_TC(tp, register_private_route_no_authority);
+	ATF_TP_ADD_TC(tp, answer_falls_back_to_status);
+	ATF_TP_ADD_TC(tp, answer_unsendable_closes_private_channel);
 	ATF_TP_ADD_TC(tp, register_private_user_channel_hides);
 	ATF_TP_ADD_TC(tp, register_non_channel_fd_rejected);
 	ATF_TP_ADD_TC(tp, register_multi_fd_rejected);

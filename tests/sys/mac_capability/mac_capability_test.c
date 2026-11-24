@@ -8088,6 +8088,62 @@ ATF_TC_CLEANUP(unload_waits_for_admission, tc)
 	cleanup_fixture_release_all();
 }
 
+/*
+ * A descriptor stays open across its service's destroy and module unload.
+ * GETINFO, CALL and a kevent registration on it must not look at the
+ * unloaded module's callbacks (csvc_ops): they test the flags copied at
+ * registration.  Reading csvc_ops here faults on the unloaded module.
+ */
+ATF_TC_WITH_CLEANUP(unloaded_service_descriptor_ops);
+ATF_TC_HEAD(unloaded_service_descriptor_ops, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "GETINFO, CALL and kevent on a "
+	    "descriptor whose service module was unloaded do not touch the "
+	    "module's callbacks");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(unloaded_service_descriptor_ops, tc)
+{
+	struct mac_capability_info_args info;
+	struct mac_capability_call_args call;
+	struct kevent ev;
+	char req[8] = "probe", reply[64];
+	int module, fd, kq;
+
+	require_cleanup_fixture();
+	module = kldload(CLEANUP_FIXTURE);
+	ATF_REQUIRE_MSG(module >= 0, "load cleanup fixture: %s", strerror(errno));
+	/* Callbacks return at once: nothing holds the unload. */
+	cleanup_fixture_set("debug.capability_cleanup_test.release", 1);
+	fd = mac_capability_connect("test_cleanup");
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, ioctl(fd, MAC_CAPABILITY_TERMINATE, NULL));
+	ATF_REQUIRE_EQ_MSG(0, kldunload(module), "unload: %s", strerror(errno));
+
+	/* The answers are refusals or empty; the point is no fault. */
+	memset(&info, 0, sizeof(info));
+	(void)ioctl(fd, MAC_CAPABILITY_GETINFO, &info);
+	memset(&call, 0, sizeof(call));
+	call.req = req;
+	call.req_len = sizeof(req);
+	call.reply = reply;
+	call.reply_len = sizeof(reply);
+	ATF_CHECK(ioctl(fd, MAC_CAPABILITY_CALL, &call) == -1);
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	EV_SET(&ev, fd, EVFILT_WRITE, EV_ADD, 0, 0, NULL);
+	(void)kevent(kq, &ev, 1, NULL, 0, NULL);
+	EV_SET(&ev, fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+	(void)kevent(kq, &ev, 1, NULL, 0, NULL);
+	close(kq);
+	close(fd);
+}
+ATF_TC_CLEANUP(unloaded_service_descriptor_ops, tc)
+{
+	cleanup_fixture_release_all();
+}
+
 ATF_TC(failed_init_completes_cleanup);
 ATF_TC_HEAD(failed_init_completes_cleanup, tc)
 {
@@ -8131,6 +8187,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, failed_init_completes_cleanup);
 	ATF_TP_ADD_TC(tp, unload_waits_for_cleanup_callback);
 	ATF_TP_ADD_TC(tp, unload_waits_for_fdclose);
+	ATF_TP_ADD_TC(tp, unloaded_service_descriptor_ops);
 	/* Lifecycle */
 	ATF_TP_ADD_TC(tp, open_close);
 

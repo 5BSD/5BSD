@@ -615,14 +615,14 @@ dq_tree_ident(struct dq_tree *t, const struct dq_tree_res *res,
 		/* The presented mount is "/": a prefix of every name. */
 		strlcpy(sfs.f_mntonname, "/", sizeof(sfs.f_mntonname));
 		/*
-		 * pathconf(2) values for every type but a symbolic link, as
-		 * dq_ident_from_lstat gives them: fpathconf(2) answers through
-		 * the O_PATH descriptor's vnode.  A directory without them
-		 * makes pathconf(2) EINVAL (sysconf(_SC_TTY_NAME_MAX) asks
-		 * "/dev/").
+		 * pathconf(2) values, as dq_ident_from_lstat gives them:
+		 * fpathconf(2) answers through the O_PATH | O_NOFOLLOW
+		 * descriptor's vnode, a symbolic link's for a link, as
+		 * lpathconf(2) does.  A directory without them makes
+		 * pathconf(2) EINVAL (sysconf(_SC_TTY_NAME_MAX) asks "/dev/").
 		 */
 		if (dq_ident_from_stat(ident, res->tr_name, &res->tr_st, &sfs,
-		    S_ISLNK(res->tr_st.st_mode) ? -1 : fd) != 0)
+		    fd) != 0)
 			error = errno;
 	}
 	close(fd);
@@ -1450,6 +1450,12 @@ dq_serve_tree(struct dq_tree *t, const struct dq_event *ev, const void *body,
 	memset(&opts, 0, sizeof(opts));
 	opts.so_state = t->t_state;
 	opts.so_ident = &o->to_ident;
+	/*
+	 * After a write, the whole identity follows the backing file (its
+	 * nlink, flags and the rest; the size and times already came with
+	 * the reply's post-operation attributes).
+	 */
+	opts.so_flags = DQ_SERVE_F_SYNC_IDENT;
 	ret = dq_serve_file(t->t_q, ev, body, bodylen, o->to_fd, &opts);
 	if (ev->de_op == DQ_OP_CLOSE) {
 		close(o->to_fd);

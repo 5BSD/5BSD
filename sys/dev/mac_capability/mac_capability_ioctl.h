@@ -95,12 +95,13 @@ struct mac_capability_connect_args {
 
 /*
  * Send a message with optional fd attachment and reply token.
- * Returns EAGAIN when the RX queue is full; wait for EVFILT_WRITE and retry.
+ * Returns EAGAIN when the RX queue is full; wait for EVFILT_WRITE and retry,
+ * or pass MAC_CAPABILITY_SEND_F_WAIT in flags (below).
  */
 struct mac_capability_sendmsg_args {
 	const void	*payload;
 	uint32_t	payload_len;
-	uint32_t	flags;		/* reserved, must be 0 */
+	uint32_t	flags;		/* 0, or SEND_F_WAIT [| SEND_F_DEADLINE] */
 	const int	*fds;
 	uint32_t	nfds;
 	uint64_t	reply_token;
@@ -128,6 +129,15 @@ struct mac_capability_sendmsg_args {
  */
 #define	MAC_CAPABILITY_RECV_F_WAIT	0x00000004
 #define	MAC_CAPABILITY_RECV_WAIT_FOREVER	0xffffffffu
+/*
+ * Input, with RECV_F_WAIT: _reserved[0] (low 32 bits) and _reserved[1] (high)
+ * hold an absolute CLOCK_MONOTONIC deadline in nanoseconds instead of a
+ * relative wait.  A receive restarted after a signal (SA_RESTART) keeps that
+ * deadline rather than starting its budget again.  A deadline that has
+ * passed fails with ETIMEDOUT when no message is queued.  Kept in the 5BSD
+ * high block.
+ */
+#define	MAC_CAPABILITY_RECV_F_DEADLINE	0x80000000
 
 struct mac_capability_recvmsg_args {
 	void		*payload;
@@ -193,6 +203,24 @@ struct mac_capability_recvmsg_v3_args {
 #define	MAC_CAPABILITY_FD_RIGHTS_EXACT	0x80000000	/* info: no other rights */
 #define	MAC_CAPABILITY_SEND_F_MOVE		0x00000001
 #define	MAC_CAPABILITY_SEND_F_LOCK_INHERIT	0x00000002
+/*
+ * SENDMSG and SENDMSG_V2 flag: when the queue is full, sleep until it has
+ * room and send, instead of failing with EAGAIN (also on a non-blocking
+ * descriptor), with no time limit.  The sleep is interruptible: a signal
+ * whose handler has SA_RESTART restarts the call, any other gives EINTR,
+ * as write(2) on a full pipe.  Nothing is sent or consumed before the
+ * message is accepted.  Older kernels reject the flag with EINVAL.  Kept in
+ * the high block, away from flags shared with other send paths.
+ */
+#define	MAC_CAPABILITY_SEND_F_WAIT		0x80000000
+/*
+ * With SEND_F_WAIT: _reserved[0] (low 32 bits) and _reserved[1] (high) of the
+ * sendmsg arguments hold an absolute CLOCK_MONOTONIC deadline in
+ * nanoseconds; the wait for room fails with ETIMEDOUT once it passes (nothing
+ * sent), and a restart after a signal keeps it.  Without it the wait has no
+ * limit.  High block.
+ */
+#define	MAC_CAPABILITY_SEND_F_DEADLINE		0x40000000
 
 /* Per-descriptor spec flag: as SEND_F_LOCK_INHERIT, for this one. */
 #define	MAC_CAPABILITY_FD_SPEC_LOCK_INHERIT	0x00000001

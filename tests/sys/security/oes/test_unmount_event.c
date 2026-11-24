@@ -167,6 +167,13 @@ main(void)
 	    !test_child_ok(status)) {
 		fprintf(stderr, "unmount: %s\n", WIFEXITED(status) ?
 		    strerror(WEXITSTATUS(status)) : "actor killed");
+		/*
+		 * Do not leave the tmpfs mounted in the work directory: kyua
+		 * could not remove it.  The case has failed already.
+		 */
+		if (unmount(mountpoint, MNT_FORCE) < 0 && errno != EINVAL)
+			fprintf(stderr, "cleanup: unmount %s: %s\n", mountpoint,
+			    strerror(errno));
 		rmdir(mountpoint);
 		close(fd);
 		return (1);
