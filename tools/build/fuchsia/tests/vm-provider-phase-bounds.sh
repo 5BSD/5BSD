@@ -18,7 +18,10 @@
 #  3. the gate wait: ends on a SwitchBoard unit line, is not woken by the
 #     line every status request logs, ends at once for a unit that will not
 #     run by itself, and expires at the run deadline otherwise;
-#  4. the host verdict is not clean after any of those lines;
+#  4. the host verdict is not clean after any of those lines, or with the
+#     files the guest exports for the same facts;
+#  6. the lookup probe is a step: a probe that blocks expires and does not
+#     log the console out; one that fails does.
 #  5. vm-monitor --progress records host-load samples and progress lines.
 # Every wait in it ends on an event or at a deadline the case sets.
 set -eu
@@ -39,6 +42,7 @@ mkdir -p "$stub" "$work/R"
 for c in BSDTimectl logger BSDPowerctl sysctlcmpctl; do
 	printf '#!/bin/sh\necho "%s $*" >> "%s/calls"\n' "$c" "$work" > "$stub/$c"
 done
+cp "$stub/logger" "$work/logger.ok"
 printf '#!/bin/sh\necho "procstat $*" >> "%s/calls"\necho "STACK-OF $2"\n' \
     "$work" > "$stub/procstat"
 printf '#!/bin/sh\necho "geom $*" >> "%s/calls"\necho "   ident: kyua-results"\n' \
@@ -63,6 +67,8 @@ block 'phase bounds' | paths > "$work/helpers.sh"
 grep -q '^run_step()' "$work/helpers.sh" || fail 'no phase-bounds block'
 block 'gate wait' | paths > "$work/gate.sh"
 grep -q '^gate_check()' "$work/gate.sh" || fail 'no gate-wait block'
+block 'lookup probe' | paths | sed "s|/tmp/\.kyua|$work/.kyua|g" > "$work/probe.sh"
+grep -q 'run_step lookup-probe' "$work/probe.sh" || fail 'no lookup-probe block'
 block 'lifecycle phase' | paths > "$work/lifecycle.sh"
 grep -q '^phase_deps_stopped()' "$work/lifecycle.sh" || fail 'no lifecycle block'
 running_status() {
@@ -102,6 +108,8 @@ grep -q '^PHASE_DUMP_BEGIN step=blocker' "$work/out" || fail 'no dump'
     fail "the dump does not show both sleeps"
 grep -q '^--- procstat -kk [0-9]* (timeout)$' "$work/out" || fail 'the dump does not show the reaper'
 grep -q '^PHASE_EXPIRY_RESULTS_SAVED' "$work/out" || fail 'results not saved on expiry'
+grep -Eq '^PHASE_EXPIRY_TIMES step=blocker stacks=[0-9]+ export=[0-9]+ reserve=[0-9]+ left=-?[0-9]+$' "$work/out" ||
+    fail 'no PHASE_EXPIRY_TIMES'
 tar -tf "$work/results.tar" > /dev/null 2>&1 || fail 'the export is not a tar'
 grep -q '^PHASE_DUMP_END step=blocker' "$work/out" || fail 'the dump did not end'
 grep -q '^PHASE_STEP later skipped: the run deadline was reached' "$work/out" || fail 'later step not skipped'
@@ -140,7 +148,7 @@ run_lifecycle() {   # STATUS_LINES GATE_RC
 	printf '%s\n' "$1" > "$work/R/switchboard-status.txt"
 	cp "$work/R/switchboard-status.txt" "$work/status"
 	printf 'gate_status_rc=%s\n' "$2" > "$work/pre.sh"
-	rm -f "$work/calls"
+	rm -f "$work/calls" "$work/R/phase-dependency"
 	guest_sh 3600 "$work/pre.sh" "$work/lifecycle.sh" > "$work/out" 2>&1 ||
 	    fail 'lifecycle script failed'
 }
@@ -148,13 +156,16 @@ run_lifecycle "$(running_status | grep -v bsdlog; echo "$log_stopped")" 0
 grep -q '^PHASE_DEPENDENCY_STOPPED unit=system.Log/bsdlog state=stopped restarts=10$' "$work/out" ||
     fail 'no PHASE_DEPENDENCY_STOPPED for bsdlog'
 grep -q '^PHASE_DUMP_BEGIN step=dependency' "$work/out" || fail 'no dump for the stopped dependency'
+[ -e "$work/R/phase-dependency" ] || fail 'the stopped dependency was not recorded in the results'
 grep -q '^BSDTIME_LIFECYCLE_FAIL$' "$work/out" || fail 'lifecycle not failed'
 ! grep -q BSDTimectl "$work/calls" 2>/dev/null || fail 'the phase ran with a stopped dependency'
 run_lifecycle "switchboardctl: cannot reach switchboard" 69
 grep -q '^PHASE_DEPENDENCY_UNKNOWN reason=status-failed rc=69' "$work/out" || fail 'no PHASE_DEPENDENCY_UNKNOWN'
 ! grep -q PHASE_DEPENDENCY_STOPPED "$work/out" || fail 'a failed status named a stopped unit'
+[ -e "$work/R/phase-dependency" ] || fail 'the unknown dependency was not recorded in the results'
 run_lifecycle "$(running_status | grep -v bsdlog; echo "$log_pending")" 0
 ! grep -q '^PHASE_DEPENDENCY' "$work/out" || fail 'a restart-pending dependency stopped the phase'
+[ ! -e "$work/R/phase-dependency" ] || fail 'a restart-pending dependency was recorded as stopped'
 grep -q 'BSDTimectl get' "$work/calls" || fail 'the phase did not run'
 run_lifecycle "$(running_status)" 0
 grep -q 'BSDTimectl get' "$work/calls" || fail 'the phase did not run'
@@ -176,9 +187,19 @@ $(stat -f %z "$work/daemon.log")"
 echo "Nov 22 00:00:01 guest switchboard[2]: capability control connection adopted (admin)" >> "$work/daemon.log"
 rc=0; sh -c '. "$1"; gate_sizes=$2; gate_log_wait 2' sh "$work/lw.sh" "$sizes" || rc=$?
 [ "$rc" = 124 ] || fail "the wait ended on a status request's own log line (rc $rc)"
-echo "Nov 22 00:00:02 guest switchboard[2]: service system.Time/bsdtime: exec confirmed (pid 9)" >> "$work/daemon.log"
-rc=0; sh -c '. "$1"; gate_sizes=$2; gate_log_wait 3600' sh "$work/lw.sh" "$sizes" || rc=$?
-[ "$rc" = 0 ] || fail "the wait did not end on a unit line (rc $rc)"
+# Every form of unit line SwitchBoard logs, each appended after a new
+# snapshot: native ("service"; "stopped" is the line after a native unit's
+# exit cleanup), rc, and the lines common to all kinds ("unit", "oneshot").
+for l in 'service system.Time/bsdtime: exec confirmed (pid 9)' \
+    'service system.Time/bsdtime: stopped' 'rc unit org.test/rc: started' \
+    'unit org.test/u: stopped' 'oneshot org.test/o: complete' \
+    'switchboard started'; do
+	sizes="$(stat -f %z "$work/messages")
+$(stat -f %z "$work/daemon.log")"
+	echo "Nov 22 00:00:02 guest switchboard[2]: $l" >> "$work/daemon.log"
+	rc=0; sh -c '. "$1"; gate_sizes=$2; gate_log_wait 3600' sh "$work/lw.sh" "$sizes" || rc=$?
+	[ "$rc" = 0 ] || fail "the wait did not end on the unit line '$l' (rc $rc)"
+done
 # (b) Converges when the unit runs and its line is logged.
 : > "$work/calls"
 { echo '  system.Time/bsdtime  starting'; echo '  system.Log/bsdlog running'; } > "$work/status"
@@ -228,13 +249,25 @@ for line in 'PHASE_STEP_EXPIRED step=kyua elapsed=9' \
     'PHASE_DEPENDENCY_UNKNOWN reason=status-failed rc=69: x' \
     'PHASE_STEP get1 end status=0 elapsed=1'; do
 	printf '%s\r\n' "$line" > "$work/log"
-	v=$(log=$work/log sh -c 'verdict=VM_CLEAN; . "$1"; echo $verdict' sh "$work/verdict.sh")
+	v=$(log=$work/log work=$work/host sh -c 'verdict=VM_CLEAN; . "$1"; echo $verdict' sh "$work/verdict.sh")
 	case $line in
 	PHASE_STEP_EXPIRED*|PHASE_DEPENDENCY_*) [ "$v" = VM_NOT_CLEAN ] || fail "clean with: $line" ;;
 	*) [ "$v" = VM_CLEAN ] || fail "not clean with: $line" ;;
 	esac
 done
-echo 'PASS verdict: PHASE_STEP_EXPIRED and PHASE_DEPENDENCY_* are never clean'
+# The console line broken by a kernel message: the exported file decides.
+printf 'PHASE_STEP_EXPlock order reversal:\r\nIRED step=kyua elapsed=9\r\n' > "$work/log"
+mkdir -p "$work/host/results/kyua-results"
+for f in none phase-expired phase-dependency; do
+	rm -f "$work/host/results/kyua-results"/phase-*
+	[ "$f" = none ] || : > "$work/host/results/kyua-results/$f"
+	v=$(log=$work/log work=$work/host sh -c 'verdict=VM_CLEAN; . "$1"; echo $verdict' sh "$work/verdict.sh")
+	case $f in
+	none) [ "$v" = VM_CLEAN ] || fail 'the broken line alone was matched: the case shows nothing' ;;
+	*) [ "$v" = VM_NOT_CLEAN ] || fail "clean with the exported $f" ;;
+	esac
+done
+echo 'PASS verdict: PHASE_STEP_EXPIRED and PHASE_DEPENDENCY_* are never clean, on the console or in the exported results'
 
 # 5. vm-monitor progress and host load.  The watched "QEMU" is a sleep the
 # case ends itself.
@@ -267,3 +300,28 @@ grep -q '^PROGRESS [0-9]* BSDTIME_SESSIONS_PROGRESS=4 at=1$' "$work/progress.txt
 [ "$(grep -c '^LOAD [0-9]* [0-9.]* [0-9.]* [0-9.]* ncpu=[0-9]* qemus=[0-9-]* slots=[0-9-]* heavy_build_lockf=[0-9-]*$' "$work/progress.txt")" -ge 4 ] ||
     fail 'host-load samples missing (start, two lines, end)'
 echo 'PASS monitor: progress lines and host-load samples at start, each progress line and the end'
+
+# 6. The lookup probe.
+rm -f "$work/R/phase-expired" "$work/.kyua-relogin" "$work/.kyua-planeon-started"
+# The probe runs with its output discarded, as in the guest, where PHASE
+# lines go to the console device: a file here.
+printf 'gate=PASS\nPHASE_CONSOLE=%s\n' "$work/console" > "$work/pre.sh"
+: > "$work/console"
+printf '#!/bin/sh\nexec sleep 3603\n' > "$stub/logger"
+printf '%s\n. "%s"\n. "%s"\n' "$tight" "$work/pre.sh" "$work/probe.sh" > "$work/probe-expire.sh"
+guest_sh 30 "$work/probe-expire.sh" > "$work/out" 2>&1 || fail 'probe script failed'
+grep -q '^PHASE_STEP_EXPIRED step=lookup-probe ' "$work/console" || fail 'a blocked probe did not expire'
+! grep -q PLANEON_RELOGIN "$work/out" || fail 'an expired probe logged the console out'
+[ ! -e "$work/.kyua-relogin" ] || fail 'an expired probe left the relogin mark'
+! pgrep -f '^sleep 3603$' > /dev/null || fail 'the blocked probe survived'
+rm -f "$work/R/phase-expired"
+printf '#!/bin/sh\nexit 1\n' > "$stub/logger"
+guest_sh 3600 "$work/pre.sh" "$work/probe.sh" > "$work/out" 2>&1 || fail 'probe script failed'
+grep -q '^PLANEON_RELOGIN_FOR_AMBIENT_LOOKUP$' "$work/out" || fail 'a failed probe did not log out'
+! grep -q PLANEON_GATE_PASS "$work/out" || fail 'the script went on after the relogin'
+rm -f "$work/.kyua-relogin" "$work/.kyua-planeon-started"
+cp "$work/logger.ok" "$stub/logger"
+guest_sh 3600 "$work/pre.sh" "$work/probe.sh" > "$work/out" 2>&1 || fail 'probe script failed'
+grep -q '^PLANEON_GATE_PASS$' "$work/out" || fail 'a working probe did not pass the gate'
+! grep -q PLANEON_RELOGIN "$work/out" || fail 'a working probe logged out'
+echo 'PASS lookup probe: a step; expiry does not log out, a failure does, success goes on'

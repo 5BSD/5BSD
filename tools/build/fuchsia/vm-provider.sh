@@ -645,13 +645,23 @@ R=/tmp/kyua-results
 mkdir -p "$R"
 echo KYUA_PLANEON_START
 # --- phase bounds (tests/vm-provider-phase-bounds.sh runs this block)
-# Every step runs bounded by the run's deadline less PHASE_RESERVE, the time
-# measured below for what an expiry has to do before the host stops QEMU
-# (the stacks of the blocked processes and the results export), so the
-# guest, not the host, meets the deadline first: it reports what it was
-# waiting on and exports the results.  No step has a bound of its own here;
-# components keep their declared bounds.  PHASE lines go to the console
-# device itself, so no descriptor is added to what steps inherit.
+# A step (run_step, and the gate's wait) runs bounded by the run's deadline
+# less PHASE_RESERVE, the time measured below for what an expiry has to do
+# before the host stops QEMU (the results export and the stacks of the
+# blocked processes), so the guest, not the host, meets the deadline first:
+# it exports the results and reports what it was waiting on.  No step has a
+# bound of its own here; components keep their declared bounds.  PHASE lines
+# go to the console device itself, so no descriptor is added to what steps
+# inherit.
+# Steps are the commands that wait on another component (a lookup, a
+# provider, SwitchBoard, the suites, the extra script, the test kernel's
+# barrier) and the kyua reports.  Not steps, so ended only by the host at
+# the deadline, without a dump or an export: the reroot restore, the
+# test-kernel and tier proofs, the plane-on and plane-off readiness
+# checks, the gate's own `switchboardctl status` reads (its 30 s
+# bound), the script's local commands between steps (pgrep, awk, cp, dmesg,
+# df, sysctl reads, the scratch-disk naming), the reroot itself (tar, sync,
+# reboot -r) and the end of the script: the final export, sync, poweroff.
 if [ -z "${PHASE_CONSOLE:-}" ]; then
 	if tty -s; then PHASE_CONSOLE=$(tty); else PHASE_CONSOLE=/dev/console; fi
 fi
@@ -709,13 +719,24 @@ results_export() {
 # the step (timeout's own expiry action on SIGALRM: SIGKILL to every
 # descendant), save the results, then the rest of the dump.  The kill is
 # not waited for: an expiry is typically a process asleep in the kernel,
-# which may never exit, and nothing may wait behind it.
+# which may never exit, and the stacks, the export and the dump must not
+# wait behind it.  (A caller that reads the step through a pipe does wait
+# behind a process that cannot die: it holds the pipe's write end.  The
+# script then stops there until the host stops QEMU, after everything
+# above is done.)
+# PHASE_EXPIRY_TIMES says whether the reserve held: the measured seconds of
+# the stacks and the export, the reserve they were given, and the seconds
+# left to the run deadline after them (negative: past it).
 phase_expire() {
-	local step=$1 reaper=$2
+	local step=$1 reaper=$2 e0 e1 e2
 	: > "$PHASE_EXPIRED_FILE"
+	e0=$(date +%s)
 	phase_stacks "$@"
+	e1=$(date +%s)
 	[ -z "$reaper" ] || kill -ALRM "$reaper" 2>/dev/null
 	results_export && phase_say PHASE_EXPIRY_RESULTS_SAVED
+	e2=$(date +%s)
+	phase_say "PHASE_EXPIRY_TIMES step=$step stacks=$((e1 - e0)) export=$((e2 - e1)) reserve=$PHASE_RESERVE left=$((RUN_DEADLINE - e2))"
 	phase_dump_rest "$step"
 }
 # The wrapper a step runs in, as timeout(1)'s child.  timeout, as the reaper
@@ -898,10 +919,13 @@ fi
 # Provider convergence, waited on events.  SwitchBoard has no status watch
 # (recorded ask: 5bsd-issues/2026-11-22-switchboard-no-status-watch.md), so
 # the status is read again whenever SwitchBoard logs a unit line ("service
-# ...", "rc unit ...": every transition to running or stopped logs one; or
-# a restarted SwitchBoard's "switchboard started") to messages or
-# daemon.log; its other lines (each status request logs its control
-# connection) do not wake the wait.  A required unit that is not
+# ...", "rc unit ...", "unit ...", "oneshot ...": every transition a
+# waited-for unit can make logs one, a native unit's "service L: stopped"
+# after its exit cleanup included; or a restarted SwitchBoard's "switchboard
+# started") to messages or daemon.log; its other lines (each status request
+# logs its control connection) do not wake the wait.  A required unit must
+# be one that reaches "running" (a native service or an rc unit): a oneshot
+# ends "done" and fails the gate.  A required unit that is not
 # running is waited for while it is starting, stopping, or stopped with a
 # restart scheduled (restart-pending); in any other state, or with its
 # cleanup blocked (cleanup=blocked: replacement stays refused), it will not
@@ -913,6 +937,10 @@ gate_check() {
 	gate_waiting= missing= gate_status_rc=0
 	switchboardctl status > "$R/switchboard-status.txt" 2>&1 || gate_status_rc=$?
 	if [ "$gate_status_rc" != 0 ]; then
+		# A status that cannot be read says nothing about the units:
+		# wait for SwitchBoard's next line (a restarted SwitchBoard
+		# logs "switchboard started"), to the run deadline if none
+		# comes; the expiry dump then shows why.
 		gate_waiting=" (switchboardctl status failed)" missing=" (switchboardctl status failed)"
 		return 1
 	fi
@@ -938,7 +966,7 @@ gate_log_wait() {
 	python3.12 -I -c '
 import os, re, select, sys, time
 left, files, sizes = float(sys.argv[1]), sys.argv[2].split(), sys.argv[3].split()
-unit = re.compile(rb"switchboard\[[0-9]+\]: (service |rc unit |switchboard started)")
+unit = re.compile(rb"switchboard\[[0-9]+\]: (service |rc unit |unit |oneshot |switchboard started)")
 kq, watched = select.kqueue(), {}
 for f, z in zip(files, sizes):
     try:
@@ -996,18 +1024,24 @@ phase_say "PHASE_STEP gate-convergence end elapsed=$(( $(date +%s) - gate_begin 
 # --- end of the gate wait
 cat "$R/switchboard-status.txt"
 if [ -n "$missing" ]; then echo "PLANEON_GATE: not running:$missing"; gate=FAIL; fi
+# --- lookup probe (tests/vm-provider-phase-bounds.sh runs this block)
 # Capsule hands the ambient lookup channel only to gettys forked after
 # switchboard provides it.  If the console cannot reach even the user-visible
 # system.Log, log out once so the respawned getty's login gets the channel.
 # (Login sessions use a USER-domain channel: providers without
 # visible = ["user"] are ENOENT there by design.)
-if [ "$gate" = PASS ] && ! logger -t vm-provider lookup-probe > /dev/null 2>&1 && [ ! -e /tmp/.kyua-relogin ]; then
+# The probe is an ambient lookup, which has no client timeout: a step.
+probe=0
+[ "$gate" != PASS ] ||
+    run_step lookup-probe logger -t vm-provider lookup-probe > /dev/null 2>&1 || probe=$?
+if [ "$gate" = PASS ] && [ "$probe" != 0 ] && ! phase_expired && [ ! -e /tmp/.kyua-relogin ]; then
 	: > /tmp/.kyua-relogin
 	rm -f /tmp/.kyua-planeon-started
 	echo PLANEON_RELOGIN_FOR_AMBIENT_LOOKUP
 	exit 99
 fi
 echo "PLANEON_GATE_$gate"
+# --- end of the lookup probe
 # ------------------------------------------------ BSDTime through the broker
 # --- lifecycle phase (tests/vm-provider-phase-bounds.sh runs this block)
 lc=PASS
@@ -1043,6 +1077,9 @@ phase_deps_stopped() {
 	else
 		return 1
 	fi
+	# Also in a file of the results: a kernel message can land in the
+	# middle of the console line.
+	: > "$R/phase-dependency"
 	phase_stacks dependency
 	phase_dump_rest dependency
 	return 0
@@ -1138,9 +1175,12 @@ fi
 fi # rerooted = no
 if [ -s /root/vm-extra.sh ]; then
 	echo EXTRA_SCRIPT_BEGIN
-	( set +e; sh /root/vm-extra.sh; extra_status=$?
-	  echo "$extra_status" > "$R/extra.exit"; exit 0
-	) 2>&1 | tee "$R/extra.out"
+	# A step: bounded by the run deadline, and the processes the script
+	# leaves behind are killed when it exits (PHASE_STEP_LEFTOVER).
+	{ extra_status=0
+	  run_step extra sh /root/vm-extra.sh 2>&1 || extra_status=$?
+	  echo "$extra_status" > "$R/extra.exit"
+	} | tee "$R/extra.out"
 	echo "EXTRA_SCRIPT_STATUS=$(cat "$R/extra.exit")"
 	echo EXTRA_SCRIPT_END
 fi
@@ -1192,26 +1232,27 @@ vars=; for v in $KYUA_VARS; do vars="$vars -v $v"; done
 } | tee "$R/kyua-test.out" || true
 echo "KYUA_TEST_STATUS=$(cat "$R/kyua-test.status")"
 # After an expiry only the reserve is left, and it was spent on the expiry
-# export: the reports (unbounded, over a results.db kyua did not finish)
-# are skipped, and so is the export below, so that it cannot be cut short
-# over the archive already saved.
+# export: the reports (over a results.db kyua did not finish) are skipped,
+# and so is the export below, so that it cannot be cut short over the
+# archive already saved.  The reports are steps: one that meets the run
+# deadline exports the finished results.db instead of losing it.
 if phase_expired; then
 	echo "KYUA_REPORTS_SKIPPED: the run deadline was reached"
 else
-kyua report -r "$R/results.db" --verbose > "$R/report-verbose.txt" 2>&1 || true
-kyua report-junit -r "$R/results.db" --output="$R/results.junit.xml" 2>/dev/null || true
+run_step report-verbose kyua report -r "$R/results.db" --verbose > "$R/report-verbose.txt" 2>&1 || true
+run_step report-junit kyua report-junit -r "$R/results.db" --output="$R/results.junit.xml" 2>/dev/null || true
 # kyua counts an expected failure as a success: list those too (filter
 # xfail, result expected_failure).
 for kind in failed broken skipped xfail; do
 	result=$kind; [ "$kind" != xfail ] || result=expected_failure
 	echo "KYUA_${kind}_LIST_BEGIN" | tr a-z A-Z
-	kyua report -r "$R/results.db" --results-filter "$kind" 2>&1 | grep -E " -> +$result" || true
+	run_step "report-$kind" kyua report -r "$R/results.db" --results-filter "$kind" 2>&1 | grep -E " -> +$result" || true
 	echo "KYUA_${kind}_LIST_END" | tr a-z A-Z
 done
 echo KYUA_SKIP_REASONS_BEGIN
 grep -o 'skipped: .*' "$R/kyua-test.out" | sed -e 's/ *\[[0-9.]*s\]$//' | sort | uniq -c | sort -rn
 echo KYUA_SKIP_REASONS_END
-kyua report -r "$R/results.db" --verbose --results-filter broken,failed 2>&1 | head -n 4000
+run_step report-failures kyua report -r "$R/results.db" --verbose --results-filter broken,failed 2>&1 | head -n 4000
 fi
 cp /var/log/capability.log /var/log/messages "$R/" 2>/dev/null || true
 dmesg -a > "$R/dmesg.txt" 2>&1 || true
@@ -1228,8 +1269,9 @@ if [ "$stack_tier" = yes ]; then
 	# Read once, after the test kernel's barrier: it runs the frees already
 	# queued (a case that dropped its last issuer reference just before the
 	# end), so a count left is a leak, reported without waiting for it.
-	sysctl debug.mac_capability.test_issuers_settle=1 > /dev/null 2>&1 ||
-	    echo "NOTE: no debug.mac_capability.test_issuers_settle; the live count is read without the barrier"
+	# The barrier waits in the kernel (the reaper, the taskqueue): a step.
+	run_step issuers-settle sysctl debug.mac_capability.test_issuers_settle=1 > /dev/null 2>&1 ||
+	    echo "NOTE: debug.mac_capability.test_issuers_settle is absent or did not finish; the live count is read without the barrier"
 	after=$(sysctl -n kern.mac_capability.test_issuers)
 	live=$(sysctl -n kern.mac_capability.test_issuers_live)
 	echo "STACK_TIER: test issuers created=$((after - stack_issuers_before)) live=$live state=$(sysctl -n kern.mac_capability.test_issuer_state)" |
@@ -1554,8 +1596,16 @@ if [ $forced = 0 ] && [ $lor_unknown = 0 ] && [ $rc = 0 ] && [ $guest_off = 1 ] 
 fi
 # --- phase verdict (tests/vm-provider-phase-bounds.sh runs this block)
 # A step that ran out the run deadline, or a lifecycle dependency that was
-# stopped or could not be read, is never clean, whatever else passed.
-if LC_ALL=C tr -d '\r' < "$log" | grep -aqE '^(PHASE_STEP_EXPIRED|PHASE_DEPENDENCY_STOPPED|PHASE_DEPENDENCY_UNKNOWN)'; then
+# stopped or could not be read, is never clean, whatever else passed.  The
+# console line can be broken by a kernel message landing in it, so the
+# files the guest writes for the same facts in the exported results count
+# too (tar writes them whole).  PHASE_STEP_LEFTOVER is not here: it is
+# shown in the summary below as evidence and is not a verdict (the kyua
+# step's leftovers are processes test programs leaked, which the suites'
+# own results judge).
+if LC_ALL=C tr -d '\r' < "$log" | grep -aqE '^(PHASE_STEP_EXPIRED|PHASE_DEPENDENCY_STOPPED|PHASE_DEPENDENCY_UNKNOWN)' ||
+    [ -e "$work/results/kyua-results/phase-expired" ] ||
+    [ -e "$work/results/kyua-results/phase-dependency" ]; then
 	verdict=VM_NOT_CLEAN
 fi
 # --- end of the phase verdict
