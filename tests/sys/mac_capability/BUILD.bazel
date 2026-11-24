@@ -3,3 +3,11 @@ load("@rules_cc//cc:defs.bzl", "cc_binary")
 cc_binary(name = "mac_capability_shield_helper", srcs = ["mac_capability_shield_helper.c"],
     deps = ["//sys/dev/mac_capability:shield_test_headers"], copts = ["-fPIE"], linkopts = ["-pie"],
     visibility = ["//usr.sbin/capsule/tests:__pkg__"])
+# The capprotect shield-hardening fixtures (capprotect_hardening_test.c,
+# capprotect_hardening_dtrace_test.sh).
+cc_binary(name = "capprotect_share_helper", srcs = ["capprotect_share_helper.c"],
+    deps = ["//sys/dev/mac_capability:shield_test_headers"], copts = ["-fPIE"], linkopts = ["-pie"])
+cc_binary(name = "capprotect_fasttrap_helper", srcs = ["capprotect_fasttrap_helper.c"],
+    deps = ["//sys/dev/mac_capability:shield_test_headers"], copts = ["-fPIE"], linkopts = ["-pie"])
+cc_binary(name = "capprotect_protector_helper", srcs = ["capprotect_protector_helper.c"],
+    deps = ["//sys/dev/mac_capability:shield_test_headers"], copts = ["-fPIE"], linkopts = ["-pie"])

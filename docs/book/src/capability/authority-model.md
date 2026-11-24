@@ -128,6 +128,14 @@ is refused towards it for good. The stripped process's own exec ends only the
 protection of the stripped process itself; its authority stays invalid and it
 passes the check for no process it was refused before.
 
+A fork child copies its parent's authority and execution, so the debug check
+judges a fork or `RFMEM` child exactly as it judges the parent. One case is
+a documented residual: an `RFMEM` sharer of authority holder A that installs
+a different authority B lets B's peers pass the authority check on it, and
+so reach A's memory. It needs an `RFMEM` fork and a separate install token
+in the child; no base flow does this (SwitchBoard installs only in its own
+plain fork copy).
+
 These rules were not decided by the project owner. The form of the strip
 (D362), the debug protection lasting until exec (D363), and the refusal of
 the stripped process as a debugger in all four cases, were decided by the

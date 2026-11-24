@@ -150,6 +150,7 @@ BSDTime/libtimecmp source migration now uses FIDL; installed-plane and real-gate
 - sys/sys/capsicum.h (+92), filedesc.h, file.h (DTYPE_MAC_CAPABILITY, DTYPE_ENVFD), event.h, sysent.h, procdesc.h: new rights, states, notes, flags.
 - sys/security/mac/* (+1235): 44 new MACF hooks plus `vnode_execve_will_relabel/relabel`, consumed by the plane's four MAC policies (label, capprotect, isolation, system).
 - sys/sys/proc.h: its only diffs (td_vnfile, P2_PTRACE_LISTEN/LCONT, FR2_NO_PTRACE) come from Linuxulator commit 392999caf154, not the capability plane.
+- sys/sys/proc.h: the 5BSD P2 block is allocated downward from 0x40000000: P2_DQOWNER 0x40000000, P2_DEBUGSHIELD 0x20000000 and P2_SIGSHIELD 0x10000000 (capprotect's ptrace and signal shields, read lock-free by dtrace -w's probe-context checks); 0x80000000 stays unused because p_flag2 is int.
 
 ### What the book must explain
 1. The authority rule: a held capability fd (rights, ioctl allowlist, transfer ceiling) is the authority; uid/PID/path are transitional. Nonce = program identity; fork shares, exec rotates.

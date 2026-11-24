@@ -947,6 +947,18 @@ struct proc {
 #define	P2_HWT			0x02000000	/* Process is using HWT. */
 #define	P2_PTRACE_LISTEN	0x04000000	/* Stopped ptrace listener. */
 #define	P2_PTRACE_LCONT	0x08000000	/* LISTEN woke on SIGCONT. */
+/*
+ * 5BSD P2 block, allocated downward from 0x40000000:
+ * 0x40000000 P2_DQOWNER, 0x20000000 P2_DEBUGSHIELD, 0x10000000 P2_SIGSHIELD.
+ * 0x04000000/0x08000000 are 5BSD P2_PTRACE_LISTEN/LCONT.
+ * Keep 0x80000000 unused: p_flag2 is int.
+ */
+#define	P2_SIGSHIELD		0x10000000	/* Has a capprotect signal
+						   shield; never cleared,
+						   not inherited. */
+#define	P2_DEBUGSHIELD		0x20000000	/* Has a capprotect ptrace
+						   shield, explicit or
+						   inherited until exec. */
 #define	P2_DQOWNER		0x40000000	/* Has opened a dq(4) queue;
 						   never cleared, not
 						   inherited. */

@@ -2101,10 +2101,53 @@ dtrace_priv_proc_common_nocd(void)
 	return (0);
 }
 
+#ifndef illumos
+/*
+ * 5BSD: the process-destructive actions of dtrace -w never act on a
+ * process that is protected from debuggers or signals, whatever the
+ * consumer's privilege.  copyout() and copyoutstr() (and their guest
+ * variants) are refused in a process with a capprotect ptrace shield
+ * (explicit, or inherited from its parent until it execs), a no-ambient
+ * process or a software-authority holder; raise() and stop() in a process
+ * with a capprotect signal shield or a no-ambient process.  The reads are
+ * lock-free: the P2 bits are set under the process lock and only by the
+ * process's protection, p_noambient is immutable after fork, and
+ * p_cap_authority is only tested for NULL, never dereferenced; a stale
+ * answer is possible only while the process installs or clears its own
+ * authority.  Probe context fires no SDT probe: refusals are counted.
+ */
+static u_long dtrace_protected_proc_refusals;
+SYSCTL_ULONG(_debug_dtrace, OID_AUTO, protected_proc_refusals, CTLFLAG_RD,
+    &dtrace_protected_proc_refusals, 0,
+    "process-destructive actions refused in protected processes");
+
+static int
+dtrace_priv_proc_protected(boolean_t signal)
+{
+	proc_t *p = curproc;
+	int flag2;
+
+	flag2 = atomic_load_int(&p->p_flag2);
+	if (signal ? ((flag2 & P2_SIGSHIELD) != 0 || p->p_noambient) :
+	    ((flag2 & P2_DEBUGSHIELD) != 0 || p->p_noambient ||
+	    atomic_load_ptr(&p->p_cap_authority) != NULL)) {
+		atomic_add_long(&dtrace_protected_proc_refusals, 1);
+		cpu_core[curcpu].cpuc_dtrace_flags |= CPU_DTRACE_UPRIV;
+		return (1);
+	}
+	return (0);
+}
+#endif
+
 static int
 dtrace_priv_proc_destructive(dtrace_state_t *state)
 {
 	int action = state->dts_cred.dcr_action;
+
+#ifndef illumos
+	if (dtrace_priv_proc_protected(B_TRUE))
+		return (0);
+#endif
 
 	if (((action & DTRACE_CRA_PROC_DESTRUCTIVE_ALLZONE) == 0) &&
 	    dtrace_priv_proc_common_zone(state) == 0)
@@ -2129,6 +2172,10 @@ bad:
 static int
 dtrace_priv_proc_control(dtrace_state_t *state)
 {
+#ifndef illumos
+	if (dtrace_priv_proc_protected(B_FALSE))
+		return (0);
+#endif
 	if (state->dts_cred.dcr_action & DTRACE_CRA_PROC_CONTROL)
 		return (1);
 

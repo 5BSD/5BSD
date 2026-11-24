@@ -10,9 +10,11 @@
 # sys/conf/test-options, which names this file as the one configuration
 # allowed to carry it.
 #
-# Each option does nothing until the loader sets its knob (dq(4):
-# debug.dq.unverified_open="1"; mac_capability(4):
-# kern.mac_capability.test_issuer="1").
+# Each option except CAPPROTECT_TEST_ALLOW_TRACED does nothing until the
+# loader sets its knob (dq(4): debug.dq.unverified_open="1";
+# mac_capability(4): kern.mac_capability.test_issuer="1").
+# CAPPROTECT_TEST_ALLOW_TRACED has no knob: a traced process may always be
+# shielded (mac_capability_capprotect(4)).
 #
 
 include GENERIC
@@ -21,3 +23,4 @@ ident		GENERIC-TEST
 
 options 	DQ_TEST_OPEN		# dq(4) test access: never published
 options 	MAC_CAPABILITY_TEST_PERMISSIVE	# test issuers: never published
+options 	CAPPROTECT_TEST_ALLOW_TRACED	# shield a traced process: never published

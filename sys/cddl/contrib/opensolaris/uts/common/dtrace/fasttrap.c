@@ -64,8 +64,10 @@
 #ifndef illumos
 #include <sys/dtrace_bsd.h>
 #include <sys/eventhandler.h>
+#include <sys/imgact.h>
 #include <sys/rmlock.h>
 #include <sys/sysent.h>
+#include <sys/sdt.h>
 #include <sys/sysctl.h>
 #include <sys/u8_textprep.h>
 #include <sys/user.h>
@@ -211,6 +213,8 @@ static kmutex_t			fasttrap_count_mtx;	/* lock on ref count */
 static int fasttrap_tracepoint_enable(proc_t *, fasttrap_probe_t *, uint_t);
 static void fasttrap_tracepoint_disable(proc_t *, fasttrap_probe_t *, uint_t);
 
+static fasttrap_provider_t *fasttrap_provider_lookup_proc(pid_t, proc_t *,
+    const char *, const dtrace_pattr_t *);
 static fasttrap_provider_t *fasttrap_provider_lookup(pid_t, const char *,
     const dtrace_pattr_t *);
 static void fasttrap_provider_retire(pid_t, const char *, int);
@@ -237,6 +241,10 @@ static unsigned long tpoints_hash_size = FASTTRAP_TPOINTS_DEFAULT_SIZE;
 
 #ifdef __FreeBSD__
 SYSCTL_DECL(_kern_dtrace);
+
+SDT_PROVIDER_DEFINE(dtrace_fasttrap);
+/* target pid, errno */
+SDT_PROBE_DEFINE2(dtrace_fasttrap, , , makeprobe, "pid_t", "int");
 SYSCTL_NODE(_kern_dtrace, OID_AUTO, fasttrap, CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
     "DTrace fasttrap parameters");
 SYSCTL_UINT(_kern_dtrace_fasttrap, OID_AUTO, max_probes, CTLFLAG_RWTUN, &fasttrap_max,
@@ -1613,10 +1621,23 @@ static fasttrap_provider_t *
 fasttrap_provider_lookup(pid_t pid, const char *name,
     const dtrace_pattr_t *pattr)
 {
+
+	return (fasttrap_provider_lookup_proc(pid, NULL, name, pattr));
+}
+
+/*
+ * As fasttrap_provider_lookup(), for the process p when it is not NULL: a
+ * process the caller holds (PHOLD), exec-blocked and checked, as
+ * FASTTRAPIOC_MAKEPROBE has it.  It is used instead of looking the pid up
+ * again, which could find another process.
+ */
+static fasttrap_provider_t *
+fasttrap_provider_lookup_proc(pid_t pid, proc_t *p, const char *name,
+    const dtrace_pattr_t *pattr)
+{
 	fasttrap_provider_t *fp, *new_fp = NULL;
 	fasttrap_bucket_t *bucket;
 	char provname[DTRACE_PROVNAMELEN];
-	proc_t *p;
 	cred_t *cred;
 
 	ASSERT(strlen(name) < sizeof (fp->ftp_name));
@@ -1647,8 +1668,16 @@ fasttrap_provider_lookup(pid_t pid, const char *name,
 	 * Make sure the process exists, isn't a child created as the result
 	 * of a vfork(2), and isn't a zombie (but may be in fork).
 	 */
-	if ((p = pfind(pid)) == NULL)
-		return (NULL);
+	if (p == NULL) {
+		if ((p = pfind(pid)) == NULL)
+			return (NULL);
+	} else {
+		PROC_LOCK(p);
+		if ((p->p_flag & P_WEXIT) != 0) {
+			PROC_UNLOCK(p);
+			return (NULL);
+		}
+	}
 
 	/*
 	 * Increment p_dtrace_probes so that the process knows to inform us
@@ -1852,7 +1881,7 @@ fasttrap_uint64_cmp(const void *ap, const void *bp)
 }
 
 static int
-fasttrap_add_probe(fasttrap_probe_spec_t *pdata)
+fasttrap_add_probe(fasttrap_probe_spec_t *pdata, proc_t *p)
 {
 	fasttrap_provider_t *provider;
 	fasttrap_probe_t *pp;
@@ -1882,7 +1911,7 @@ fasttrap_add_probe(fasttrap_probe_spec_t *pdata)
 		return (EINVAL);
 	}
 
-	if ((provider = fasttrap_provider_lookup(pdata->ftps_pid,
+	if ((provider = fasttrap_provider_lookup_proc(pdata->ftps_pid, p,
 	    FASTTRAP_PID_NAME, &pid_attr)) == NULL)
 		return (ESRCH);
 
@@ -2238,6 +2267,50 @@ fasttrap_open(struct cdev *dev __unused, int oflags __unused,
 	return (0);
 }
 
+/*
+ * FASTTRAPIOC_MAKEPROBE: the pid provider plants traps at addresses the
+ * consumer chooses, so it is a debugger and needs p_candebug(9) on the
+ * target: the capprotect shield (and the ptrace shield a child inherits
+ * until it execs), no-ambient processes, a software authority and the Unix
+ * debug rules all apply, as for ptrace(2).  This completes illumos's
+ * "notyet" check with FreeBSD's p_candebug().
+ *
+ * The target is held and blocked from exec from the check until the probe
+ * is made, so the probe cannot land on another image or, through a reused
+ * pid, another process.  No lock is held across fasttrap_add_probe(): exec
+ * waits for the block at its entry, and exit waits for the hold.
+ *
+ * Errors: ESRCH (no such process), EBUSY (exec in progress), EACCES (a
+ * capprotect shield), EPERM (no-ambient, a software authority, the Unix
+ * debug rules).
+ */
+static int
+fasttrap_makeprobe_checked(fasttrap_probe_spec_t *probe)
+{
+	struct thread *td = curthread;
+	proc_t *p;
+	int ret;
+
+	ret = pget(probe->ftps_pid, PGET_HOLD | PGET_NOTWEXIT, &p);
+	if (ret != 0) {
+		SDT_PROBE2(dtrace_fasttrap, , , makeprobe, probe->ftps_pid,
+		    ret);
+		return (ret);
+	}
+	PROC_LOCK(p);
+	execve_block_wait(td, p);
+	ret = p_candebug(td, p);
+	PROC_UNLOCK(p);
+	SDT_PROBE2(dtrace_fasttrap, , , makeprobe, probe->ftps_pid, ret);
+	if (ret == 0)
+		ret = fasttrap_add_probe(probe, p);
+	PROC_LOCK(p);
+	execve_unblock(td, p);
+	_PRELE(p);
+	PROC_UNLOCK(p);
+	return (ret);
+}
+
 /*ARGSUSED*/
 static int
 fasttrap_ioctl(struct cdev *dev, u_long cmd, caddr_t arg, int fflag,
@@ -2293,33 +2366,9 @@ fasttrap_ioctl(struct cdev *dev, u_long cmd, caddr_t arg, int fflag,
 			goto err;
 		}
 
-#ifdef notyet
-		if (!PRIV_POLICY_CHOICE(cr, PRIV_ALL, B_FALSE)) {
-			proc_t *p;
-			pid_t pid = probe->ftps_pid;
 
-			mutex_enter(&pidlock);
-			/*
-			 * Report an error if the process doesn't exist
-			 * or is actively being birthed.
-			 */
-			if ((p = pfind(pid)) == NULL || p->p_stat == SIDL) {
-				mutex_exit(&pidlock);
-				return (ESRCH);
-			}
-			mutex_enter(&p->p_lock);
-			mutex_exit(&pidlock);
 
-			if ((ret = priv_proc_cred_perm(cr, p, NULL,
-			    VREAD | VWRITE)) != 0) {
-				mutex_exit(&p->p_lock);
-				return (ret);
-			}
-			mutex_exit(&p->p_lock);
-		}
-#endif /* notyet */
-
-		ret = fasttrap_add_probe(probe);
+		ret = fasttrap_makeprobe_checked(probe);
 err:
 		kmem_free(probe, size);
 
@@ -2335,6 +2384,22 @@ err:
 
 		if (copyin((void *)arg, &instr, sizeof (instr)) != 0)
 			return (EFAULT);
+
+#ifndef illumos
+		{
+			proc_t *p;
+			int error;
+
+			/*
+			 * The saved instruction is the target's text: a caller
+			 * that may not see the target learns nothing.
+			 */
+			error = pget(instr.ftiq_pid, PGET_CANSEE, &p);
+			if (error != 0)
+				return (error);
+			PROC_UNLOCK(p);
+		}
+#endif
 
 #ifdef notyet
 		if (!PRIV_POLICY_CHOICE(cr, PRIV_ALL, B_FALSE)) {

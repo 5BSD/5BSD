@@ -20,7 +20,7 @@
 .\"
 .\" $FreeBSD$
 .\"
-.Dd October 30, 2026
+.Dd November 17, 2026
 .Dt DTRACE 1
 .Os
 .Sh NAME
@@ -594,6 +594,26 @@ option is not specified,
 .Nm
 does not permit the compilation or enabling of a D program that contains
 destructive actions.
+.Pp
+Inside a process protected from debuggers (a
+.Xr mac_capability_capprotect 4
+ptrace shield, also inherited by its children until they execute a new
+image; a process without ambient control; a software-authority holder),
+.Fn copyout
+and
+.Fn copyoutstr
+are refused; inside a process protected from signals (a signal shield, or no
+ambient control),
+.Fn raise
+and
+.Fn stop
+are refused.
+A refusal is reported as a privilege error and counted in
+.Va debug.dtrace.protected_proc_refusals .
+A probe that fires in an aio daemon while it works on a protected process's
+memory is in the daemon's context, which is not protected:
+.Fn copyout
+there writes the protected process's memory.
 .Pp
 Set the
 .Va security.bsd.allow_destructive_dtrace

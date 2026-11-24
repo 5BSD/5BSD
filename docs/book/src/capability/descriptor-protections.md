@@ -131,9 +131,23 @@ Flags divide into protections, enforced against foreign processes, and
 restrictions, enforced against the shielded process itself. `flags = 0`
 means `CP_SF_ALL`.
 
+A shield is not inherited, with one exception: a child of a process with a
+ptrace shield shares (vfork, `posix_spawn`, `RFMEM`) or holds a copy of
+(fork) its parent's memory, so it carries a ptrace shield, whose protector
+is the parent, until it executes a new image. Explicit protection of the
+child (SwitchBoard's `CP_OP_PROTECT`) adds its own flags; after exec the
+child carries exactly those. A traced process cannot be shielded (`EBUSY`);
+a GENERIC-TEST kernel built with `CAPPROTECT_TEST_ALLOW_TRACED`, never
+published, allows it so that Capsule or SwitchBoard can be started under a
+debugger. Inside a process with a ptrace shield `dtrace -w` cannot
+`copyout`, and inside one with a signal shield it cannot `raise` or `stop`.
+Documented residuals: sharers that existed before a process shielded itself
+stay unshielded, and a `dtrace -w` probe firing in an aio daemon that works
+on a shielded process's memory can still `copyout` into it.
+
 | Flag | Manifest word | Hook and effect |
 |---|---|---|
-| `CP_SF_PTRACE` | `ptrace` | `proc_check_debug`: `EACCES` on attach |
+| `CP_SF_PTRACE` | `ptrace` | `proc_check_debug`: `EACCES` on attach; inherited by fork children until they exec (only the child and its parent may debug it); the DTrace pid provider needs it; `dtrace -w` `copyout` is refused inside |
 | `CP_SF_SIGNAL`, `CP_SF_SIGKILL`, `CP_SF_SIGCONT` | `signal`, `sigkill`, `sigcont` | `proc_check_signal`, `proc_check_suspend`; `SIGKILL` and `SIGCONT` need their own flag |
 | `CP_SF_WAIT` | `wait` | `proc_check_wait`; the real parent may always wait |
 | `CP_SF_SCHED` | `sched` | `proc_check_sched`: priority and cpuset changes |

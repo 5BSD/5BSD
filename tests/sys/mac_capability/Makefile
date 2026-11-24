@@ -45,6 +45,15 @@ PROGS+=		mac_capability_exec_helper
 PROGS+=		mac_capability_channel_helper
 PROGS+=		mac_capability_isolation_helper
 PROGS+=		mac_capability_shield_helper
+# The capprotect shield's gaps against debuggers (shield-hardening design):
+# shared and copied memory, a traced process, the pid provider and dtrace
+# -w.  capprotect_protector_helper is the protecting agent.
+ATF_TESTS_C+=	capprotect_hardening_test
+TEST_METADATA.capprotect_hardening_test+=	is_exclusive="true"
+ATF_TESTS_SH+=	capprotect_hardening_dtrace_test
+TEST_METADATA.capprotect_hardening_dtrace_test+=	is_exclusive="true"
+PROGS+=		capprotect_share_helper capprotect_fasttrap_helper
+PROGS+=		capprotect_protector_helper
 ATF_TESTS_SH+=	process_context_test
 PROGS+=		process_context_helper process_context_edge_helper \
 		process_context_ipc_helper
