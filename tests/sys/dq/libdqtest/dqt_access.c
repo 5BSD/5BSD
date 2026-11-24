@@ -86,7 +86,10 @@ dqt_require_test_access(void)
  * without the option is the main tier, where such a case cannot run: it
  * skips with DEFERRED_KNOB_TIER, which vm-provider.sh counts as a case
  * owed by the knob tier (KERNEL_TIER=test, GENERIC-TEST), not a pass.  On
- * a test kernel the knob must be there.
+ * a test kernel the knob must be there.  The option's first knob,
+ * debug.dq.delay_swap_take, came with the option itself, so a test kernel
+ * that has it and lacks the knob asked for has the option and was built
+ * before that knob was added.
  */
 void
 dqt_require_fault_knob(const char *name)
@@ -100,9 +103,17 @@ dqt_require_fault_knob(const char *name)
 	if (errno != ENOENT)
 		atf_tc_fail("%s: %s", name, strerror(errno));
 	len = sizeof(v);
-	if (sysctlbyname("debug.dq.unverified_open", &v, &len, NULL, 0) == 0)
-		atf_tc_fail("a test kernel without %s: options "
+	if (sysctlbyname("debug.dq.unverified_open", &v, &len, NULL, 0) == 0) {
+		len = sizeof(v);
+		if (sysctlbyname("debug.dq.delay_swap_take", &v, &len, NULL,
+		    0) == 0)
+			atf_tc_fail("the test kernel has options "
+			    "DQ_FAULT_INJECTION but not its knob %s: the "
+			    "kernel predates %s (rebuild GENERIC-TEST from "
+			    "this tree)", name, name);
+		atf_tc_fail("the test kernel lacks %s: options "
 		    "DQ_FAULT_INJECTION is missing from GENERIC-TEST", name);
+	}
 	atf_tc_skip("DEFERRED_KNOB_TIER: %s needs options "
 	    "DQ_FAULT_INJECTION (GENERIC-TEST, KERNEL_TIER=test)", name);
 }
