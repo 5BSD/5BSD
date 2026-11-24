@@ -96,19 +96,30 @@ tight='PHASE_RESERVE=$(( RUN_DEADLINE - $(date +%s) - 1 ))'
 # leaves an orphaned grandchild; both must be killed.
 cat > "$work/expire.sh" <<EOF
 $tight
-run_step blocker sh -c '(sleep 3601 &); exec sleep 3601' && echo "blocker returned 0"
+run_step blocker sh -c 'printf "a case line without its end  ->  " >> "\$PHASE_CONSOLE"; (sleep 3601 &); exec sleep 3601' && echo "blocker returned 0"
 run_step later true || echo "later rc=\$?"
 EOF
 rm -f "$work/calls" "$work/results.tar"
 guest_sh 30 "$work/expire.sh" > "$work/out" 2>&1 || fail "expiry script failed"
 grep -q '^PHASE_STEP blocker begin' "$work/out" || fail 'no begin line'
 grep -q '^PHASE_STEP_EXPIRED step=blocker elapsed=' "$work/out" || fail 'no PHASE_STEP_EXPIRED'
+# The step left the console in the middle of a line; the expiry's lines
+# start their own.
+grep -q '^a case line without its end  ->  $' "$work/out" || fail 'the partial line is not there: the case shows nothing'
+# The export comes before the stacks: a slow host cuts the stacks, not the
+# archive.
+[ "$(grep -n '^PHASE_EXPIRY_RESULTS_SAVED' "$work/out" | cut -d: -f1)" -lt \
+    "$(grep -n '^PHASE_DUMP_BEGIN step=blocker' "$work/out" | cut -d: -f1)" ] ||
+    fail 'the stacks came before the export'
+# One procstat for a dump, however many processes: the baseline's and the
+# expiry's.
+[ "$(grep -c '^procstat -kk ' "$work/calls")" = 2 ] || fail 'not one procstat for each dump'
 grep -q '^PHASE_DUMP_BEGIN step=blocker' "$work/out" || fail 'no dump'
 [ "$(grep -c '^--- procstat -kk [0-9]* (sleep)$' "$work/out")" = 2 ] ||
     fail "the dump does not show both sleeps"
 grep -q '^--- procstat -kk [0-9]* (timeout)$' "$work/out" || fail 'the dump does not show the reaper'
 grep -q '^PHASE_EXPIRY_RESULTS_SAVED' "$work/out" || fail 'results not saved on expiry'
-grep -Eq '^PHASE_EXPIRY_TIMES step=blocker stacks=[0-9]+ export=[0-9]+ reserve=[0-9]+ left=-?[0-9]+$' "$work/out" ||
+grep -Eq '^PHASE_EXPIRY_TIMES step=blocker export=[0-9]+ stacks=[0-9]+ reserve=[0-9]+ left=-?[0-9]+$' "$work/out" ||
     fail 'no PHASE_EXPIRY_TIMES'
 tar -tf "$work/results.tar" > /dev/null 2>&1 || fail 'the export is not a tar'
 grep -q '^PHASE_DUMP_END step=blocker' "$work/out" || fail 'the dump did not end'
@@ -255,6 +266,10 @@ for line in 'PHASE_STEP_EXPIRED step=kyua elapsed=9' \
 	*) [ "$v" = VM_CLEAN ] || fail "not clean with: $line" ;;
 	esac
 done
+# The line after other output on the same console line.
+printf 'lib/libc/x:y  ->  PHASE_STEP_EXPIRED step=kyua elapsed=9\r\n' > "$work/log"
+v=$(log=$work/log work=$work/host sh -c 'verdict=VM_CLEAN; . "$1"; echo $verdict' sh "$work/verdict.sh")
+[ "$v" = VM_NOT_CLEAN ] || fail 'clean with the expiry line after other output'
 # The console line broken by a kernel message: the exported file decides.
 printf 'PHASE_STEP_EXPlock order reversal:\r\nIRED step=kyua elapsed=9\r\n' > "$work/log"
 mkdir -p "$work/host/results/kyua-results"

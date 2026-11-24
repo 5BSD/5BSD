@@ -675,30 +675,52 @@ rm -f "$PHASE_EXPIRED_FILE"
 PHASE_LOG_LINE=$(wc -l < /var/log/messages 2>/dev/null || echo 0)
 PHASE_LOG_LINE=$((PHASE_LOG_LINE + 0))
 phase_say() { echo "$*" >> "$PHASE_CONSOLE"; }
+# An expiry's lines begin on a line of their own: the step's output (kyua's
+# case lines) can be in the middle of a line on the same console.
+phase_say_fresh() { printf '\n%s\n' "$*" >> "$PHASE_CONSOLE"; }
 phase_expired() { [ -e "$PHASE_EXPIRED_FILE" ]; }
 phase_left() { echo $(( RUN_DEADLINE - PHASE_RESERVE - $(date +%s) )); }
-# A process and its descendants, by parent PID.  Each step runs under
-# timeout(1) as its reaper, so descendants that lost their parent are
-# still its children here.
-phase_tree() {
-	local c
-	echo "$1"
-	for c in $(pgrep -P "$1" 2>/dev/null); do phase_tree "$c"; done
+# "PID COMM" pairs of what a dump shows: process $1 and its descendants (a
+# step runs under timeout(1) as its reaper, so descendants that lost their
+# parent are still under it), then SwitchBoard, PID 1 and the phase's
+# provider.  One ps and one awk whatever the number of processes, so the
+# reserve measured at the start is what an expiry in a large tree costs.
+phase_procs() {
+	ps -ax -o pid= -o ppid= -o comm= | awk -v root="${1:-0}" '
+	{ pid[NR] = $1; par[NR] = $2; c = $3
+	  for (i = 4; i <= NF; i++) c = c "_" $i
+	  comm[$1] = c }
+	function show(p) { if (!(p in shown)) { shown[p] = 1; print p, comm[p] } }
+	END {
+		if (root in comm) {
+			tree[root] = 1; show(root)
+			do {
+				more = 0
+				for (n = 1; n <= NR; n++)
+					if (!(pid[n] in tree) && (par[n] in tree)) {
+						tree[pid[n]] = 1; show(pid[n]); more = 1
+					}
+			} while (more)
+		}
+		for (n = 1; n <= NR; n++) if (comm[pid[n]] == "switchboard") show(pid[n])
+		if (1 in comm) show(1)
+		for (n = 1; n <= NR; n++) if (comm[pid[n]] == "BSDTime") show(pid[n])
+	}'
 }
-# The kernel stacks of the given processes, SwitchBoard, PID 1 and the
-# phase's provider: what a step was waiting on.  Printed on the console,
-# which the host keeps whatever happens next.
+# The kernel stacks of those processes: what a step was waiting on.  Printed
+# on the console, which the host keeps whatever happens next.  One procstat
+# for all of them.
 phase_stacks() {
-	local step=$1 p seen; shift
-	phase_say "PHASE_DUMP_BEGIN step=$step"
-	seen=" "
-	for p in "$@" $(pgrep -x switchboard 2>/dev/null) 1 \
-	    $(pgrep -x BSDTime 2>/dev/null); do
-		case $seen in *" $p "*) continue ;; esac
-		seen="$seen$p "
-		{ echo "--- procstat -kk $p ($(ps -o comm= -p "$p" 2>/dev/null))"
-		  procstat -kk "$p" 2>&1; } >> "$PHASE_CONSOLE"
+	local step=$1 pids
+	phase_say_fresh "PHASE_DUMP_BEGIN step=$step"
+	set -- $(phase_procs "${2:-}")
+	pids=
+	while [ $# -ge 2 ]; do
+		phase_say "--- procstat -kk $1 ($2)"
+		pids="$pids $1"
+		shift 2
 	done
+	[ -z "$pids" ] || procstat -kk $pids >> "$PHASE_CONSOLE" 2>&1
 }
 # The rest of the dump, after the results are saved: the system log since
 # the script began and SwitchBoard's status (switchboardctl's own 30 s
@@ -716,29 +738,36 @@ results_export() {
 	[ "$(geom disk list vtbd1 2>/dev/null | awk '/ident:/ {print $2}')" = kyua-results ] &&
 	    tar -cf /dev/vtbd1 -C /tmp kyua-results
 }
-# An expiry of step $1 whose processes are the rest of the arguments (the
-# first, timeout(1), is their reaper): record it, print the stacks, kill
-# the step (timeout's own expiry action on SIGALRM: SIGKILL to every
-# descendant), save the results, then the rest of the dump.  The kill is
-# not waited for: an expiry is typically a process asleep in the kernel,
-# which may never exit, and the stacks, the export and the dump must not
-# wait behind it.  (A caller that reads the step through a pipe does wait
-# behind a process that cannot die: it holds the pipe's write end.  The
-# script then stops there until the host stops QEMU, after everything
-# above is done.)
+# An expiry of step $1, whose processes are timeout(1) $2 (their reaper;
+# empty for none) and its descendants: record it, save the results, print
+# the stacks, kill the step (timeout's own expiry action on SIGALRM:
+# SIGKILL to every descendant), then the rest of the dump.
+# The export comes first because the reserve is a measurement taken at the
+# start, not a guarantee: when the host is slower at the expiry than it was
+# then, the host stops QEMU inside this function, and what is cut must be
+# the end of the stacks (already partly on the console), not the archive,
+# which is all that is left of the suites' results.  (Measured: a run under
+# a -j16 buildworld measured 4 s for the stacks and lost its archive behind
+# 8 s of them.)  The price: the step's processes are still running during
+# the export, so results.db and its journal can be an inconsistent pair.
+# The kill is not waited for: an expiry is typically a process asleep in
+# the kernel, which may never exit, and the dump must not wait behind it.
+# (A caller that reads the step through a pipe does wait behind a process
+# that cannot die: it holds the pipe's write end.  The script then stops
+# there until the host stops QEMU, after everything above is done.)
 # PHASE_EXPIRY_TIMES says whether the reserve held: the measured seconds of
-# the stacks and the export, the reserve they were given, and the seconds
+# the export and the stacks, the reserve they were given, and the seconds
 # left to the run deadline after them (negative: past it).
 phase_expire() {
 	local step=$1 reaper=$2 e0 e1 e2
 	: > "$PHASE_EXPIRED_FILE"
 	e0=$(date +%s)
-	phase_stacks "$@"
+	results_export && phase_say_fresh PHASE_EXPIRY_RESULTS_SAVED
 	e1=$(date +%s)
+	phase_stacks "$step" "$reaper"
 	[ -z "$reaper" ] || kill -ALRM "$reaper" 2>/dev/null
-	results_export && phase_say PHASE_EXPIRY_RESULTS_SAVED
 	e2=$(date +%s)
-	phase_say "PHASE_EXPIRY_TIMES step=$step stacks=$((e1 - e0)) export=$((e2 - e1)) reserve=$PHASE_RESERVE left=$((RUN_DEADLINE - e2))"
+	phase_say_fresh "PHASE_EXPIRY_TIMES step=$step export=$((e1 - e0)) stacks=$((e2 - e1)) reserve=$PHASE_RESERVE left=$((RUN_DEADLINE - e2))"
 	phase_dump_rest "$step"
 }
 # The wrapper a step runs in, as timeout(1)'s child.  timeout, as the reaper
@@ -774,7 +803,7 @@ run_step() {
 	phase_say "PHASE_STEP $name begin"
 	left=$(phase_left)
 	if [ "$left" -le 0 ]; then
-		phase_say "PHASE_STEP_EXPIRED step=$name elapsed=0 (no time left before the run deadline)"
+		phase_say_fresh "PHASE_STEP_EXPIRED step=$name elapsed=0 (no time left before the run deadline)"
 		phase_expire "$name" ""
 		return 124
 	fi
@@ -788,8 +817,8 @@ run_step() {
 	# pwait failing otherwise (rc not 0 or 124) with the step alive: it can
 	# no longer be bounded, so it is treated as expired.
 	if [ "$rc" = 124 ] || { [ "$rc" != 0 ] && kill -0 "$spid" 2>/dev/null; }; then
-		phase_say "PHASE_STEP_EXPIRED step=$name elapsed=$(( $(date +%s) - begin ))"
-		phase_expire "$name" $(phase_tree "$spid")
+		phase_say_fresh "PHASE_STEP_EXPIRED step=$name elapsed=$(( $(date +%s) - begin ))"
+		phase_expire "$name" "$spid"
 		rm -f "$rcf"
 		return 124
 	fi
@@ -804,9 +833,12 @@ run_step() {
 # The reserve, measured now: the stacks part of a dump and one export (an
 # early archive on the results disk).  Each interval is rounded up to whole
 # seconds (date(1) has 1 s resolution), and one more second covers the
-# guest clock, read from the RTC at boot with 1 s resolution.
+# guest clock.  The baseline dump takes the script's own process tree through
+# the same ps, awk and procstat as an expiry, whose cost does not grow with
+# the tree, in number of commands.  The clock is read from the RTC at boot
+# with 1 s resolution.
 t0=$(date +%s)
-phase_stacks baseline
+phase_stacks baseline $$
 phase_say "PHASE_DUMP_END step=baseline"
 t1=$(date +%s)
 results_export > /dev/null 2>&1
@@ -1016,7 +1048,7 @@ while ! gate_check; do
 		rc=0; gate_log_wait "$left" || rc=$?
 	fi
 	if [ "$rc" = 124 ]; then
-		phase_say "PHASE_STEP_EXPIRED step=gate-convergence elapsed=$(( $(date +%s) - gate_begin )) waiting for:$gate_waiting"
+		phase_say_fresh "PHASE_STEP_EXPIRED step=gate-convergence elapsed=$(( $(date +%s) - gate_begin )) waiting for:$gate_waiting"
 		phase_expire gate-convergence ""
 		break
 	fi
@@ -1605,7 +1637,7 @@ fi
 # shown in the summary below as evidence and is not a verdict (the kyua
 # step's leftovers are processes test programs leaked, which the suites'
 # own results judge).
-if LC_ALL=C tr -d '\r' < "$log" | grep -aqE '^(PHASE_STEP_EXPIRED|PHASE_DEPENDENCY_STOPPED|PHASE_DEPENDENCY_UNKNOWN)' ||
+if LC_ALL=C tr -d '\r' < "$log" | grep -aqE '(PHASE_STEP_EXPIRED step=|^PHASE_DEPENDENCY_STOPPED|^PHASE_DEPENDENCY_UNKNOWN)' ||
     [ -e "$work/results/kyua-results/phase-expired" ] ||
     [ -e "$work/results/kyua-results/phase-dependency" ]; then
 	verdict=VM_NOT_CLEAN

@@ -478,14 +478,21 @@ the gate's own `switchboardctl status` reads (bounded by that command's
 `sync`, `poweroff`). A step
 runs under `timeout(1)` as the reaper of its processes, without a time
 limit; `pwait -t` bounds it. A step still running then prints
-`PHASE_STEP_EXPIRED step=NAME` and the kernel stacks (`procstat -kk`) of its
-processes, SwitchBoard, PID 1 and BSDTime, kills every process of the step,
-saves the results to the results disk (`PHASE_EXPIRY_RESULTS_SAVED`), prints
-`PHASE_EXPIRY_TIMES step= stacks= export= reserve= left=` (the seconds the
-stacks and the export took, the reserve they were given and the seconds
+`PHASE_STEP_EXPIRED step=NAME`, saves the results to the results disk
+(`PHASE_EXPIRY_RESULTS_SAVED`), prints the kernel stacks (one
+`procstat -kk`) of its processes, SwitchBoard, PID 1 and BSDTime, kills
+every process of the step, prints
+`PHASE_EXPIRY_TIMES step= export= stacks= reserve= left=` (the seconds the
+export and the stacks took, the reserve they were given and the seconds
 left to the deadline after them), then prints the system log since the
-script began and `switchboardctl status`. The kill is not waited for, so
-the stacks, the export and the dump never wait behind a process that
+script began and `switchboardctl status`. The export is first because the
+reserve is a measurement from the start of the run, not a guarantee: on a
+host that is slower at the expiry the host stops QEMU during the stacks,
+and the archive is already written. The step's processes are still running
+during that export, so `results.db` and its journal can be an inconsistent
+pair. These lines start a console line of their own, whatever the step had
+printed. The kill is not waited for, so
+the export, the stacks and the dump never wait behind a process that
 cannot die; a caller that reads a step through a pipe (the kyua run, the
 extra script, the BSDTime reads) does, and the script then stops there
 until the host stops QEMU. The expiry is recorded in a file, so it survives
