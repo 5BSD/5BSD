@@ -210,8 +210,39 @@ source_check_refusals_body()
     tree noheader
     sed -i '' '/^#include "opt_capsicum.h"$/d' noheader/sys/kern/kern_mandatory.c
     atf_check -s exit:1 -o empty -e match:'does not include opt_capsicum.h' ./check -S noheader
+    # A later nooptions takes the option out again, as config(8) reads it.
+    tree unset
+    printf 'nooptions\tAUDIT\n' >> unset/sys/arm64/conf/DEFAULTS
+    atf_check -s exit:1 -o empty \
+        -e match:'sys/arm64/conf/DEFAULTS does not set options AUDIT' ./check -S unset
     mkdir empty
     atf_check -s exit:1 -o empty -e match:'has no sys/kern/kern_mandatory.c' ./check -S empty
+}
+
+atf_test_case release_recipes
+release_recipes_head()
+{
+    atf_set descr 'The release recipes run the mandatory-option check on the kernel distribution, its kernel archives and the media trees'
+    atf_set require.progs make
+}
+release_recipes_body()
+{
+    setup
+    need_source
+    mkdir obj
+    atf_check -s exit:0 -o save:kernel.out -e ignore \
+        env MAKEOBJDIRPREFIX="$PWD/obj" make -C /usr/src/release -n kernel.txz
+    atf_check -s exit:0 -o ignore grep -E \
+        '^sh /usr/src/release/scripts/check-mandatory-kernel.sh -d .*/kernel$' kernel.out
+    # Every archive but the debug ones, which carry no kernel.
+    atf_check -s exit:0 -o ignore grep -F \
+        'sh /usr/src/release/scripts/check-mandatory-kernel.sh -a "$archive"' kernel.out
+    atf_check -s exit:0 -o ignore grep -F '*-dbg.txz) continue ;;' kernel.out
+    # The media trees' second reading.
+    atf_check -s exit:0 \
+        -o match:'sh /usr/src/release/scripts/check-mandatory-kernel.sh -d [^ ]+ &&' \
+        -e ignore env MAKEOBJDIRPREFIX="$PWD/obj" \
+        make -C /usr/src/release -V MEDIA_KERNEL_TEST_OPTION_CHECK
 }
 
 atf_test_case module_opt_global
@@ -245,7 +276,7 @@ nooptions_fails_build_body()
     setup
     need_source
     conf=/usr/src/sys/$(uname -m)/conf
-    [ -d "$conf" ] || atf_skip "no kernel configurations for $(uname -m)"
+    [ -d "$conf" ] || atf_fail "no kernel configurations for $(uname -m) in /usr/src"
     work=$PWD
     for option in $MANDATORY ""; do
         name=NO${option:-NE}
@@ -350,4 +381,5 @@ atf_init_test_cases()
     atf_add_test_case nooptions_fails_build
     atf_add_test_case world_without_audit
     atf_add_test_case plan_refusals
+    atf_add_test_case release_recipes
 }

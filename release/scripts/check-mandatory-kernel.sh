@@ -195,6 +195,7 @@ check_source()
 		[ -f "${defaults}" ] || refuse "no ${defaults}"
 		while read -r option header feature; do
 			awk -v o="${option}" '$1 == "options" && $2 == o { f = 1 }
+			    $1 == "nooptions" && $2 == o { f = 0 }
 			    END { exit !f }' "${defaults}" ||
 			    refuse "${defaults} does not set options ${option}"
 		done < "${work}/rows"
