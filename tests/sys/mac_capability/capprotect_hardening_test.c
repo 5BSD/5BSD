@@ -3,18 +3,19 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Pins of the capprotect shield's gaps against debuggers:
+ * The capprotect ptrace shield and the children of a shielded process
+ * (mac_capability_capprotect(4)).  The first cases fail on a kernel with
+ * the defect they name:
  *
  *   - a child that shares a shielded process's memory (vfork, RFMEM,
- *     posix_spawn) is debuggable, and through it the shielded memory;
- *   - a fork or unshare copy of a shielded process's memory is debuggable
- *     until it execs;
- *   - shielding a process that a debugger already traces leaves the tracer
- *     attached.
+ *     posix_spawn) was debuggable, and through it the shielded memory;
+ *   - a fork or unshare copy of a shielded process's memory was debuggable
+ *     until it executed a new image;
+ *   - shielding a process that a debugger already traced left the tracer
+ *     attached, refused at every request.
  *
- * Design: /home/koryheard/5bsd-designs/shield-hardening.md (section 4).  A
- * case pins what the running kernel answers; the commit that changes an
- * answer changes the pin and says so in its comment.
+ * The others pin the rules of the inherited shield, and what a fork of an
+ * unshielded process and a debugger that follows forks keep seeing.
  *
  * The fixture is capprotect_share_helper, driven over a socket; ptrace and
  * the protector role are played by capprotect_protector_helper (the
@@ -23,15 +24,14 @@
  */
 
 #include <sys/param.h>
+#include <sys/event.h>
 #include <sys/ioctl.h>
-#include <sys/procctl.h>
 #include <sys/procdesc.h>
 #include <sys/ptrace.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/uio.h>
-#include <sys/user.h>
 #include <sys/wait.h>
 
 #include <errno.h>
@@ -447,106 +447,59 @@ probe_rw(struct agent *a, pid_t target, uintptr_t canary, uint64_t expect,
 	return (0);
 }
 
-/* The fixture's SPAWNED line, once posix_spawn has returned. */
-static const char *
-spawn_reply(int sock)
-{
-	static char buf[256];
-
-	recv_line(sock, buf, sizeof(buf), NULL);
-	return (buf);
-}
-
 /*
- * Open the FIFO that the posix_spawn child opens as its file action, as
- * its writer.  Fails the test, with the child's state, if the child does
- * not open it within ten seconds, instead of blocking for ever.
+ * Watch the fixture for a fork (EVFILT_PROC with NOTE_TRACK) and for a
+ * reply on its control socket.
  */
 static int
-fifo_writer(const char *fifo, pid_t child, int sock)
+fork_watch(struct fx *f)
 {
-	struct kinfo_proc kp;
-	size_t len;
-	int fd, mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, 0 };
+	struct kevent kev[2];
+	int kq;
 
-	for (int tries = 0; tries < 100; tries++) {
-		fd = open(fifo, O_WRONLY | O_NONBLOCK);
-		if (fd >= 0)
-			return (fd);
-		ATF_REQUIRE_MSG(errno == ENXIO, "open %s: %s", fifo,
-		    strerror(errno));
-		usleep(100000);
-	}
-	mib[3] = child;
-	len = sizeof(kp);
-	if (sysctl(mib, 4, &kp, &len, NULL, 0) != 0 || len == 0)
-		atf_tc_fail("the posix_spawn child %d is gone: %s", (int)child,
-		    spawn_reply(sock));
-	atf_tc_fail("the posix_spawn child %d never opened the FIFO: "
-	    "stat %d flags %#x wmesg %s", (int)child, (int)kp.ki_stat,
-	    (unsigned)kp.ki_flag, kp.ki_wmesg);
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	EV_SET(&kev[0], f->server, EVFILT_PROC, EV_ADD, NOTE_FORK | NOTE_TRACK,
+	    0, NULL);
+	EV_SET(&kev[1], f->sock, EVFILT_READ, EV_ADD, 0, 0, NULL);
+	ATF_REQUIRE_MSG(kevent(kq, kev, 2, NULL, 0, NULL) == 0, "kevent: %s",
+	    strerror(errno));
+	return (kq);
 }
 
 /*
- * The posix_spawn child sleeps in the open of the FIFO.  A PT_ATTACH that
- * reaches it before that sleep leaves a SIGSTOP that interrupts the open
- * (EINTR), and posix_spawn fails; wait for the sleep first.
+ * The child the watched fixture forks next.  A reply that arrives first
+ * says that the fixture did not fork; it fails the case.
  */
-static void
-wait_fifo_open(pid_t child, int sock)
-{
-	struct kinfo_proc kp;
-	size_t len;
-	int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, 0 };
-
-	mib[3] = child;
-	for (int tries = 0; tries < 200; tries++) {
-		len = sizeof(kp);
-		if (sysctl(mib, 4, &kp, &len, NULL, 0) != 0 || len == 0)
-			atf_tc_fail("the posix_spawn child %d is gone: %s",
-			    (int)child, spawn_reply(sock));
-		if (kp.ki_stat == SSLEEP && strcmp(kp.ki_wmesg, "fifoor") == 0)
-			return;
-		usleep(50000);
-	}
-	atf_tc_fail("the posix_spawn child %d did not sleep in the FIFO "
-	    "open: stat %d wmesg %s", (int)child, (int)kp.ki_stat, kp.ki_wmesg);
-}
-
-/* The child of parent, found through kern.proc (a posix_spawn child). */
 static pid_t
-child_of(pid_t parent)
+fork_watch_child(int kq, struct fx *f)
 {
-	struct kinfo_proc *kp;
-	size_t len;
-	pid_t child;
-	int mib[3] = { CTL_KERN, KERN_PROC, KERN_PROC_PROC };
+	struct kevent kev;
+	char buf[256];
 
-	for (int tries = 0; tries < 100; tries++) {
-		len = 0;
-		ATF_REQUIRE(sysctl(mib, 3, NULL, &len, NULL, 0) == 0);
-		len += len / 4;
-		kp = malloc(len);
-		ATF_REQUIRE(kp != NULL);
-		ATF_REQUIRE(sysctl(mib, 3, kp, &len, NULL, 0) == 0);
-		child = 0;
-		for (size_t i = 0; i < len / sizeof(*kp); i++) {
-			if (kp[i].ki_ppid == parent)
-				child = kp[i].ki_pid;
+	for (;;) {
+		if (kevent(kq, NULL, 0, &kev, 1, NULL) != 1) {
+			ATF_REQUIRE_MSG(errno == EINTR, "kevent: %s",
+			    strerror(errno));
+			continue;
 		}
-		free(kp);
-		if (child != 0)
-			return (child);
-		usleep(50000);
+		if (kev.filter == EVFILT_READ) {
+			recv_line(f->sock, buf, sizeof(buf), NULL);
+			atf_tc_fail("the fixture did not fork: \"%s\"", buf);
+		}
+		ATF_REQUIRE_MSG((kev.fflags & NOTE_TRACKERR) == 0,
+		    "the kernel could not track the fork of %d", (int)f->server);
+		if ((kev.fflags & NOTE_CHILD) != 0) {
+			ATF_REQUIRE_EQ((pid_t)kev.data, f->server);
+			return ((pid_t)kev.ident);
+		}
 	}
-	atf_tc_fail("no child of %d appeared", (int)parent);
 }
 
 /*
- * The vfork and RFMEM child of a shielded process shares its vmspace.
- * Today a foreign debugger attaches the unshielded child and reads and
- * writes the shielded parent's memory (the hole of
- * 2026-11-17-ptrace-vfork-child-shared-vmspace-shield-bypass.md).
+ * The vfork and RFMEM child of a shielded process shares its vmspace.  A
+ * foreign debugger attached the unshielded child and read and wrote the
+ * shielded parent's memory.
  */
 static void
 shared_child_case(const char *how)
@@ -559,10 +512,7 @@ shared_child_case(const char *how)
 	fixture_set(&f, CANARY_SECRET);
 	child = fixture_split(&f, how);
 	agent_start(&prober, -1);
-	/*
-	 * The child inherits the parent's ptrace shield until it execs (it
-	 * was attached, read and written: the parent's memory).
-	 */
+	/* The child inherits the parent's ptrace shield until it execs. */
 	ATF_CHECK_EQ(probe_rw(&prober, child, f.canary, CANARY_SECRET,
 	    CANARY_WRITTEN), EACCES);
 	ATF_CHECK_EQ(fixture_canary(&f), CANARY_SECRET);
@@ -575,8 +525,8 @@ ATF_TC(pin_ptrace_vfork_child_shared_vmspace);
 ATF_TC_HEAD(pin_ptrace_vfork_child_shared_vmspace, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "A vfork, RFMEM or posix_spawn child "
-	    "of a ptrace-shielded process gives a foreign debugger the "
-	    "parent's memory");
+	    "of a ptrace-shielded process does not give a foreign debugger, "
+	    "or the parent's protector, the parent's memory");
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "timeout", "300");
 }
@@ -586,29 +536,39 @@ ATF_TC_BODY(pin_ptrace_vfork_child_shared_vmspace, tc)
 	struct fx f;
 	char rest[128], cwd[MAXPATHLEN], fifo[MAXPATHLEN];
 	pid_t child;
-	int wfd;
+	int error, kq, wfd;
 
 	paths_init(tc);
 	shared_child_case("vfork");
 	shared_child_case("rfmem");
 
 	/*
-	 * posix_spawn (RFSPAWN): the child blocks in a file action, the open
-	 * of a FIFO, while it still shares the parent's memory.
+	 * posix_spawn (RFSPAWN): the child's first file action opens a FIFO
+	 * for reading.  It cannot finish that open, and so cannot exec,
+	 * before this test opens the FIFO for writing: from its fork until
+	 * then it shares the parent's memory.
 	 */
 	ATF_REQUIRE(getcwd(cwd, sizeof(cwd)) != NULL);
 	snprintf(fifo, sizeof(fifo), "%s/spawn.fifo", cwd);
 	ATF_REQUIRE(mkfifo(fifo, 0600) == 0);
 	fixture_start(&f, "self");
 	fixture_set(&f, CANARY_SECRET);
+	kq = fork_watch(&f);
 	send_line(f.sock, "spawn %s", fifo);
-	child = child_of(f.pid);
-	wait_fifo_open(child, f.sock);
+	child = fork_watch_child(kq, &f);
+	close(kq);
 	agent_start(&prober, -1);
-	ATF_CHECK_EQ(probe_rw(&prober, child, f.canary, CANARY_SECRET,
-	    CANARY_WRITTEN), EACCES);
+	error = probe_rw(&prober, child, f.canary, CANARY_SECRET,
+	    CANARY_WRITTEN);
 	agent_stop(&prober);
-	wfd = fifo_writer(fifo, child, f.sock);
+	/*
+	 * Fatal: an attach that succeeded may have interrupted the child's
+	 * open, and then no reader ever arrives.
+	 */
+	ATF_REQUIRE_EQ_MSG(error, EACCES, "probe of the posix_spawn child "
+	    "%d: %d", (int)child, error);
+	wfd = open(fifo, O_WRONLY);
+	ATF_REQUIRE_MSG(wfd >= 0, "open %s: %s", fifo, strerror(errno));
 	expect_line(f.sock, "SPAWNED", rest, sizeof(rest));
 	ATF_CHECK_MSG(atoi(rest) == child, "SPAWNED %s, expected %d", rest,
 	    (int)child);
@@ -618,8 +578,8 @@ ATF_TC_BODY(pin_ptrace_vfork_child_shared_vmspace, tc)
 	fixture_stop(&f);
 
 	/*
-	 * Q12: the parent's protector is not the child's: the child's
-	 * protector is its parent (it attached the child before).
+	 * The parent's protector is not the child's: the child's protector
+	 * is its parent.
 	 */
 	agent_spawn(&protector, &f, 0, CP_SF_PTRACE, "plain");
 	fixture_set(&f, CANARY_SECRET);
@@ -652,10 +612,7 @@ ATF_TC_BODY(pin_ptrace_fork_child_copy, tc)
 	fixture_set(&f, CANARY_SECRET);
 	child = fixture_split(&f, "fork");
 	agent_start(&prober, -1);
-	/*
-	 * The copy inherits the parent's ptrace shield until it execs (it was
-	 * readable: 2026-11-17-shield-fork-copy-memory-exposed.md).
-	 */
+	/* The copy inherits the parent's ptrace shield until it execs. */
 	ATF_CHECK_EQ(agent_attach(&prober, child), EACCES);
 	v = 0;
 	ATF_CHECK_EQ(agent_read(&prober, child, f.canary, &v), EACCES);
@@ -690,7 +647,7 @@ ATF_TC_BODY(pin_ptrace_unshare_copy, tc)
 	fixture_set(&f, CANARY_SECRET);
 	child = fixture_split(&f, "unshare");
 	agent_start(&prober, -1);
-	/* The shield inherited at the RFMEM fork stays (it was readable). */
+	/* The shield inherited at the RFMEM fork stays. */
 	ATF_CHECK_EQ(agent_attach(&prober, child), EACCES);
 	v = 0;
 	ATF_CHECK_EQ(agent_read(&prober, child, f.canary, &v), EACCES);
@@ -768,11 +725,10 @@ ATF_TC_BODY(pin_shield_while_traced, tc)
 	paths_init(tc);
 	test_kernel = test_allow_traced();
 	/*
-	 * Release kernels refuse (the shield used to be applied under the
-	 * tracer, which was then refused and left the tracee stuck:
-	 * 2026-11-17-shield-applied-while-traced-keeps-tracer.md).  The test
-	 * kernel keeps that behaviour, for starting Capsule or SwitchBoard
-	 * under a debugger.
+	 * Release kernels refuse.  The shield used to be applied under the
+	 * tracer, which was then refused at every request and could neither
+	 * continue nor detach its process.  The test kernel keeps that, for
+	 * starting Capsule or SwitchBoard under a debugger.
 	 */
 	want = test_kernel ? 0 : EBUSY;
 
@@ -787,7 +743,7 @@ ATF_TC_BODY(pin_shield_while_traced, tc)
 		ATF_CHECK_EQ(agent_read(&tracer, f.pid, f.canary, &v),
 		    EACCES);
 		agent_stop(&tracer);
-		status = fixture_stop(&f);
+		(void)fixture_stop(&f);
 	} else {
 		/* Unshielded: the tracer keeps its process and detaches. */
 		ATF_REQUIRE(kill(f.pid, SIGSTOP) == 0);
@@ -820,7 +776,6 @@ ATF_TC_BODY(pin_shield_while_traced, tc)
 	close(pd);
 	close(cfd);
 }
-
 
 /* Send a command line with a descriptor attached. */
 static void
@@ -1063,8 +1018,8 @@ ATF_TC_BODY(pin_inherited_protect_without_ptrace, tc)
 ATF_TC(pin_inherited_parent_debugs);
 ATF_TC_HEAD(pin_inherited_parent_debugs, tc)
 {
-	atf_tc_set_md_var(tc, "descr", "Q-B1: the parent, which owns the "
-	    "memory, may debug its fork child before the child execs");
+	atf_tc_set_md_var(tc, "descr", "The parent, which owns the memory, "
+	    "may debug its fork child before the child execs");
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "timeout", "120");
 }
@@ -1096,6 +1051,115 @@ ATF_TC_BODY(pin_inherited_parent_debugs, tc)
 	fixture_stop(&f);
 }
 
+/* The agent becomes the holder of a ptrace token of the shielded fixture. */
+static void
+agent_authorize(struct agent *a, struct fx *f)
+{
+	char rest[64];
+	int token;
+
+	send_line(f->sock, "mint %x", CP_SF_PTRACE);
+	recv_line(f->sock, rest, sizeof(rest), &token);
+	ATF_REQUIRE_MSG(strcmp(rest, "MINT 0") == 0 && token >= 0,
+	    "mint: \"%s\"", rest);
+	send_line_fd(a->sock, "authorize", token);
+	close(token);
+	expect_line(a->sock, "AUTHORIZE", rest, sizeof(rest));
+	ATF_REQUIRE_STREQ(rest, "0");
+}
+
+ATF_TC(pin_inherited_token_holder_refused);
+ATF_TC_HEAD(pin_inherited_token_holder_refused, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "A ptrace token of a shielded process "
+	    "does not admit its holder to the process's fork child");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "120");
+}
+ATF_TC_BODY(pin_inherited_token_holder_refused, tc)
+{
+	struct agent holder;
+	struct fx f;
+	pid_t child;
+
+	paths_init(tc);
+	fixture_start(&f, "self");
+	agent_start(&holder, -1);
+	agent_authorize(&holder, &f);
+	/* The token admits its holder to the shielded process itself. */
+	ATF_REQUIRE_EQ(agent_attach(&holder, f.pid), 0);
+	ATF_REQUIRE_EQ(agent_detach(&holder, f.pid), 0);
+	child = fixture_split(&f, "fork");
+	ATF_CHECK_EQ(agent_attach(&holder, child), EACCES);
+	agent_stop(&holder);
+	fixture_join(&f, child);
+	fixture_stop(&f);
+}
+
+/*
+ * A debugger that the shield admits (here the protector) follows the forks
+ * of the shielded process: the kernel attaches each child to it at the
+ * fork, without asking.  The debugger must be able to work with that child
+ * and to detach it; a refused debugger could do neither, and the child
+ * would stay stopped (and a vfork parent with it).
+ */
+static void
+follow_fork_case(const char *how)
+{
+	struct agent debugger;
+	struct fx f;
+	char rest[64];
+	uint64_t v;
+	pid_t parent, child;
+
+	agent_spawn(&debugger, &f, 0, CP_SF_PTRACE, "plain");
+	parent = f.server;
+	fixture_set(&f, CANARY_SECRET);
+	ATF_REQUIRE_EQ(agent_attach(&debugger, parent), 0);
+	ATF_REQUIRE_EQ(agent_do(&debugger, "FOLLOWFORK", NULL, "followfork %d",
+	    (int)parent), 0);
+	ATF_REQUIRE_EQ(agent_do(&debugger, "CONT", NULL, "cont %d",
+	    (int)parent), 0);
+	send_line(f.sock, "%s", how);
+	ATF_REQUIRE_EQ(agent_do(&debugger, "WAITFORK", &v, "waitfork %d",
+	    (int)parent), 0);
+	child = (pid_t)v;
+	ATF_REQUIRE_EQ(agent_do(&debugger, "WAITSTOP", NULL, "waitstop %d",
+	    (int)child), 0);
+	v = 0;
+	ATF_REQUIRE_EQ_MSG(agent_read(&debugger, child, f.canary, &v), 0,
+	    "%s: the debugger cannot read the child it follows", how);
+	ATF_CHECK_EQ(v, CANARY_SECRET);
+	ATF_REQUIRE_EQ_MSG(agent_detach(&debugger, child), 0,
+	    "%s: the debugger cannot detach the child it follows", how);
+	ATF_REQUIRE_EQ(agent_detach(&debugger, parent), 0);
+	expect_line(f.sock, "CHILD", rest, sizeof(rest));
+	ATF_REQUIRE_EQ(atoi(rest), child);
+	f.server = child;
+	/* Detached, the parent's protector is a stranger to the child. */
+	ATF_CHECK_EQ(agent_attach(&debugger, child), EACCES);
+	ATF_CHECK_EQ(fixture_join(&f, child), CANARY_SECRET);
+	fixture_stop(&f);
+	agent_stop(&debugger);
+}
+
+ATF_TC(pin_follow_fork_keeps_child);
+ATF_TC_HEAD(pin_follow_fork_keeps_child, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "A debugger of a ptrace-shielded "
+	    "process that follows its forks can debug and detach the "
+	    "children the kernel attaches to it");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "120");
+}
+ATF_TC_BODY(pin_follow_fork_keeps_child, tc)
+{
+
+	paths_init(tc);
+	follow_fork_case("fork");
+	follow_fork_case("vfork");
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1109,6 +1173,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, pin_unshielded_fork_unchanged);
 	ATF_TP_ADD_TC(tp, pin_inherited_protect_without_ptrace);
 	ATF_TP_ADD_TC(tp, pin_inherited_parent_debugs);
+	ATF_TP_ADD_TC(tp, pin_inherited_token_holder_refused);
+	ATF_TP_ADD_TC(tp, pin_follow_fork_keeps_child);
 
 	return (atf_no_error());
 }

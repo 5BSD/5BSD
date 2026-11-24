@@ -4,13 +4,15 @@
  * Copyright (c) 2026 Kory Heard
  *
  * Agent for the capprotect debug and tracing pins
- * (capprotect_debug_pins_test.c).  It is a separate process, so that the
- * test that drives it is never the protector or the tracer by accident: the
- * capprotect shield identifies the protector and token holders by PID.
+ * (capprotect_debug_pins_test.c, capprotect_hardening_test.c).  It is a
+ * separate process, so that the test that drives it is never the protector
+ * or the tracer by accident: the capprotect shield identifies the protector
+ * and token holders by PID.
  *
  * usage: capprotect_protector_helper FIXTURE
  *
- * FIXTURE is the path of capprotect_usdt_helper.  Descriptors 3 and 4, when
+ * FIXTURE is the path of the program "spawn" executes (capprotect_usdt_helper
+ * or capprotect_share_helper).  Descriptors 3 and 4, when
  * open, become the standard input and output of a fixture started with
  * "spawn".  Commands arrive one per line on standard input, which must be a
  * UNIX-domain socket for "authorize"; each gets a one-line reply on
@@ -30,6 +32,11 @@
  *   getregs PID       PT_GETREGS.  GETREGS ERRNO
  *   cont PID          PT_CONTINUE.  CONT ERRNO
  *   waitstop PID      wait for the traced PID's next stop.  WAITSTOP ERRNO
+ *   followfork PID    PT_FOLLOW_FORK: trace the children PID forks.
+ *                     FOLLOWFORK ERRNO
+ *   waitfork PID      wait for the stop that reports a fork by the traced
+ *                     PID.  WAITFORK ERRNO CHILD (the new child, which the
+ *                     kernel attached to this agent)
  *   detach PID        PT_DETACH.  DETACH ERRNO
  *   vmmap PID         sysctl kern.proc.vmmap.  VMMAP ERRNO
  *   proc OID PID      sysctl kern.proc.OID (a KERN_PROC_* number) for PID.
@@ -266,6 +273,25 @@ waitstop(pid_t pid)
 	return (WIFSTOPPED(status) ? 0 : ECHILD);
 }
 
+/* Wait for the traced process to report a fork; *childp is the child. */
+static int
+waitfork(pid_t pid, pid_t *childp)
+{
+	struct ptrace_lwpinfo pl;
+	int error;
+
+	*childp = -1;
+	error = waitstop(pid);
+	if (error != 0)
+		return (error);
+	if (ptrace(PT_LWPINFO, pid, (caddr_t)&pl, sizeof(pl)) != 0)
+		return (errno);
+	if ((pl.pl_flags & PL_FLAG_FORKED) == 0)
+		return (ENOMSG);
+	*childp = pl.pl_child_pid;
+	return (0);
+}
+
 static int
 attach(pid_t pid)
 {
@@ -297,6 +323,7 @@ main(int argc, char **argv)
 	uintmax_t addr;
 	uint64_t val;
 	unsigned int pdflags, protect;
+	pid_t child;
 	int pid, fd, error;
 
 	if (argc != 2) {
@@ -329,7 +356,13 @@ main(int argc, char **argv)
 			    0) == 0 ? 0 : errno);
 		else if (sscanf(cmd, "waitstop %d", &pid) == 1)
 			reply("WAITSTOP %d\n", waitstop(pid));
-		else if (sscanf(cmd, "detach %d", &pid) == 1)
+		else if (sscanf(cmd, "followfork %d", &pid) == 1)
+			reply("FOLLOWFORK %d\n", ptrace(PT_FOLLOW_FORK, pid, NULL,
+			    1) == 0 ? 0 : errno);
+		else if (sscanf(cmd, "waitfork %d", &pid) == 1) {
+			error = waitfork(pid, &child);
+			reply("WAITFORK %d %#x\n", error, (unsigned int)child);
+		} else if (sscanf(cmd, "detach %d", &pid) == 1)
 			reply("DETACH %d\n", ptrace(PT_DETACH, pid, (caddr_t)1,
 			    0) == 0 ? 0 : errno);
 		else if (sscanf(cmd, "vmmap %d", &pid) == 1)

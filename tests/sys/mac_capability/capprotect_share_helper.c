@@ -3,10 +3,9 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Fixture for the capprotect shield-hardening pins
- * (capprotect_hardening_test.c, capprotect_hardening_dtrace_test.sh): a
- * process that shares (vfork, RFMEM, posix_spawn) or copies (fork,
- * unshare) its memory with a child, and runs aio and a pid-provider target.
+ * Fixture for the capprotect shield-hardening tests
+ * (capprotect_hardening_test.c): a process that shares (vfork, RFMEM,
+ * posix_spawn) or copies (fork, unshare) its memory with a child.
  *
  * usage: capprotect_share_helper MODE
  *
@@ -14,9 +13,6 @@
  *   self              shields itself with CP_SF_PTRACE|SIGNAL|SIGKILL
  *   self-signal-only  shields itself with CP_SF_SIGNAL|SIGKILL (no PTRACE)
  *   flags=HEX         shields itself with exactly HEX
- *   execloop          executes itself in "execloop" mode, again and again
- *   capmode           enters capability mode and re-executes itself
- *                     (fexecve) in "plain" mode
  *
  * The fixture then prints one line
  *
@@ -35,7 +31,6 @@
  *   mint HEX          MINT ERRNO, with the token descriptor attached when
  *                     ERRNO is 0 (CP_OP_MINT on the shield descriptor)
  *   pid               PID PID
- *   sigcount          SIGCOUNT N (SIGUSR1 deliveries counted so far)
  *   vfork             CHILD PID from the vfork(2) child, which then serves
  *   rfmem             CHILD PID from an rfork(RFPROC|RFMEM) child
  *   fork              CHILD PID from a fork(2) child
@@ -57,31 +52,24 @@
  *   pdetach           PDETACH ERRNO
  *   exec              re-executes this program in "plain" mode; the new
  *                     image prints a new READY line
- *   func              FUNC ADDR, the address of fixture_func(), which
- *                     SIGUSR1 calls (a pid-provider target)
- *   aio PATH          AIO ERRNO, after an aio_read(2) of PATH into a
- *                     buffer, so that an aio daemon runs on this vmspace
  *   exit              the server exits with status 0
  *
- * End of file on standard input makes the server exit.  An alarm ends
- * every process of the fixture after FIXTURE_TIMEOUT seconds.
+ * End of file on standard input makes the server exit.  An alarm ends a
+ * fixture process that a failed test left behind; no test waits for it.
  */
 
 #include <sys/param.h>
 #include <sys/procdesc.h>
 #include <sys/ptrace.h>
-#include <sys/capsicum.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/uio.h>
 #include <sys/wait.h>
 
-#include <aio.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
-#include <poll.h>
 #include <signal.h>
 #include <spawn.h>
 #include <stdarg.h>
@@ -95,7 +83,6 @@
 #include "mac_capability_ioctl.h"
 #include "mac_capability_capprotect_proto.h"
 
-
 #define	FIXTURE_TIMEOUT	600
 
 extern char **environ;
@@ -105,7 +92,6 @@ extern char **environ;
  * address as the parent.  The tests read and write it through PT_IO.
  */
 static volatile uint64_t cp_canary __used = 0x5ec2e75ec2e75ec2ULL;
-static volatile sig_atomic_t cp_sigusr1;
 static const char *cp_self;
 /* The shield descriptor of the process that applied it; -1 if none. */
 static int cp_shield_fd = -1;
@@ -115,52 +101,6 @@ on_alarm(int sig __unused)
 {
 
 	_exit(99);
-}
-
-/* Called by the SIGUSR1 handler; the pid-provider pins probe its entry. */
-void fixture_func(void);
-void __noinline
-fixture_func(void)
-{
-
-	cp_sigusr1++;
-	__compiler_membar();
-}
-
-static void
-on_usr1(int sig __unused)
-{
-
-	fixture_func();
-}
-
-static int
-do_aio(const char *path)
-{
-	const struct aiocb *list[1];
-	struct aiocb cb;
-	char buf[4096];
-	int error, fd;
-
-	fd = open(path, O_RDONLY);
-	if (fd < 0)
-		return (errno);
-	memset(&cb, 0, sizeof(cb));
-	cb.aio_fildes = fd;
-	cb.aio_buf = buf;
-	cb.aio_nbytes = sizeof(buf);
-	error = 0;
-	if (aio_read(&cb) != 0)
-		error = errno;
-	else {
-		list[0] = &cb;
-		while (aio_error(&cb) == EINPROGRESS)
-			(void)aio_suspend(list, 1, NULL);
-		if (aio_return(&cb) < 0)
-			error = aio_error(&cb);
-	}
-	close(fd);
-	return (error);
 }
 
 /*
@@ -285,28 +225,14 @@ mint_token(uint32_t flags)
 	close(token);
 }
 
-/*
- * Read one command line.  Returns false at end of file.  Waits in poll(2),
- * which the destructive-action pins probe (syscall::poll:entry).
- */
+/* Read one command line.  Returns false at end of file. */
 static bool
 read_command(char *buf, size_t len)
 {
-	struct pollfd pfd;
 	size_t n;
 	ssize_t r;
 	char c;
 
-	for (;;) {
-		pfd.fd = STDIN_FILENO;
-		pfd.events = POLLIN;
-		pfd.revents = 0;
-		r = poll(&pfd, 1, 100);
-		if (r < 0 && errno != EINTR)
-			_exit(95);
-		if (r > 0)
-			break;
-	}
 	n = 0;
 	for (;;) {
 		r = read(STDIN_FILENO, &c, 1);
@@ -561,8 +487,6 @@ serve(bool child)
 			mint_token((uint32_t)v);
 		else if (strcmp(cmd, "pid") == 0)
 			reply("PID %d\n", (int)getpid());
-		else if (strcmp(cmd, "sigcount") == 0)
-			reply("SIGCOUNT %d\n", (int)cp_sigusr1);
 		else if (strcmp(cmd, "vfork") == 0)
 			split_vfork();
 		else if (strcmp(cmd, "rfmem") == 0)
@@ -588,11 +512,7 @@ serve(bool child)
 			execl(cp_self, "capprotect_share_helper", "plain",
 			    (char *)NULL);
 			reply("EXEC %d\n", errno);
-		} else if (strcmp(cmd, "func") == 0)
-			reply("FUNC %p\n", (void *)(uintptr_t)fixture_func);
-		else if (strncmp(cmd, "aio ", 4) == 0)
-			reply("AIO %d\n", do_aio(cmd + 4));
-		else if (strcmp(cmd, "exit") == 0)
+		} else if (strcmp(cmd, "exit") == 0)
 			_exit(0);
 		else
 			reply("ERROR unknown command\n");
@@ -615,36 +535,16 @@ main(int argc, char **argv)
 	/* "exec" re-executes argv[0]: the tests run the fixture by full path. */
 	cp_self = argv[0];
 	signal(SIGALRM, on_alarm);
-	signal(SIGUSR1, on_usr1);
 	signal(SIGPIPE, SIG_IGN);
 	alarm(FIXTURE_TIMEOUT);
 
-	if (strcmp(argv[1], "execloop") == 0) {
-		/* Execute itself again and again (the MAKEPROBE exec race). */
-		execl(argv[0], "capprotect_share_helper", "execloop",
-		    (char *)NULL);
-		return (1);
-	}
 	if (strcmp(argv[1], "plain") == 0)
 		flags = 0;
 	else if (strcmp(argv[1], "self") == 0)
 		flags = CP_SF_PTRACE | CP_SF_SIGNAL | CP_SF_SIGKILL;
 	else if (strcmp(argv[1], "self-signal-only") == 0)
 		flags = CP_SF_SIGNAL | CP_SF_SIGKILL;
-	else if (strcmp(argv[1], "capmode") == 0) {
-		char *nargv[] = { argv[0], __DECONST(char *, "plain"),
-		    NULL };
-		int fd;
-
-		fd = open(argv[0], O_RDONLY | O_EXEC);
-		if (fd < 0 || cap_enter() != 0) {
-			reply("FAILED capmode %d\n", errno);
-			return (1);
-		}
-		fexecve(fd, nargv, environ);
-		reply("FAILED fexecve %d\n", errno);
-		return (1);
-	} else if (strncmp(argv[1], "flags=", 6) == 0)
+	else if (strncmp(argv[1], "flags=", 6) == 0)
 		flags = (uint32_t)strtoul(argv[1] + 6, NULL, 16);
 	else {
 		fprintf(stderr, "capprotect_share_helper: unknown mode %s\n",
