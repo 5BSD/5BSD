@@ -795,6 +795,7 @@ void	dq_faultinj_swap_take_pause(void);
 void	dq_faultinj_postop_apply_pause(void);
 bool	dq_faultinj_postop_refuse(void);
 bool	dq_faultinj_wake(u_int site);
+void	dq_faultinj_quota_sleep(u_int quota);
 #endif
 /*
  * The wakeups a waiter depends on (dq-served-wait-model.md, section 3).

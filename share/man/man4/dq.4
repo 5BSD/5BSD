@@ -1529,10 +1529,17 @@ and
 (lookups a standing rule decided with no event, see
 .Sx Standing rules ) .
 Two words are reserved for counters planned
-.Pq Va ds2_reserved_abi , ds2_reserved_notes ,
-and the struct ends in
+.Pq Va ds2_reserved_abi , ds2_reserved_notes .
+.Va ds2_quota_waiters
+is a gauge: the waited posts that wait now for an in-flight quota
+.Po
+.Va kern.dq.max_inflight_per_object ,
+.Va kern.dq.max_inflight_per_requester
+.Pc ,
+not yet posted.
+The struct ends in
 .Dv DQ_STATS2_RESERVED
-reserved words (one 64-byte line); all read 0.
+reserved words that read 0.
 A new counter takes a reserved word, so the size stays until the line is
 used up; then the struct grows by another line and the command word of
 .Dv DQ_IOC_GET_STATS2 ,

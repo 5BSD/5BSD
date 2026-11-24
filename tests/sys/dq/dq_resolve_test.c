@@ -2138,6 +2138,9 @@ check_stats2_zero(const struct dq_stats2 *st, const char *when)
 	    when, (uintmax_t)st->ds2_reserved_abi);
 	ATF_CHECK_EQ_MSG(0, st->ds2_reserved_notes, "%s: reserved_notes %ju",
 	    when, (uintmax_t)st->ds2_reserved_notes);
+	/* A gauge: nothing waits on a quota here. */
+	ATF_CHECK_EQ_MSG(0, st->ds2_quota_waiters, "%s: quota_waiters %ju",
+	    when, (uintmax_t)st->ds2_quota_waiters);
 	for (i = 0; i < nitems(st->ds2_reserved); i++)
 		ATF_CHECK_EQ_MSG(0, st->ds2_reserved[i], "%s: reserved[%u] %ju",
 		    when, i, (uintmax_t)st->ds2_reserved[i]);
@@ -2164,7 +2167,7 @@ ATF_TC_BODY(stats2_reserved_zero, tc)
 
 	ATF_REQUIRE_EQ(400, sizeof(struct dq_stats2));
 	ATF_REQUIRE_EQ(DQ_STATS2_RESERVED, nitems(st.ds2_reserved));
-	ATF_REQUIRE_EQ(8, DQ_STATS2_RESERVED);
+	ATF_REQUIRE_EQ(7, DQ_STATS2_RESERVED);	/* 50 words, 43 used */
 	dqt_init(&c);
 	dqt_stats2(&c, &st);
 	ATF_CHECK_EQ(sizeof(st), st.ds2_size);

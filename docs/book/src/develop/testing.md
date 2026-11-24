@@ -371,7 +371,8 @@ kernel without them (GENERIC-NODEBUG) with `DEFERRED_DEBUG_KERNEL_TIER`.
 
 A `tests/sys/dq` case that needs a fault knob of `options DQ_FAULT_INJECTION`
 (`debug.dq.delay_swap_take`, `debug.dq.delay_postop_apply`,
-`debug.dq.refuse_postop_reply`, `debug.dq.drop_wakeup`) calls
+`debug.dq.refuse_postop_reply`, `debug.dq.drop_wakeup`,
+`debug.dq.quota_sleep_wait`) calls
 `dqt_require_fault_knob` and skips on a kernel without the option with
 `DEFERRED_KNOB_TIER`, counted as `DEFERRED_TO_KNOB_TIER=N`: it runs in the
 knob tier, `KERNEL_TIER=test` with a GENERIC-TEST stage.

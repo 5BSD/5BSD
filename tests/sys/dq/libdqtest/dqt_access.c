@@ -140,6 +140,40 @@ dqt_drop_wait(u_int site, uint64_t count)
 	    strerror(errno));
 }
 
+/* DQ_QUOTA_* of sys/dev/dq/dq_var.h: index quota - 1 (test kernel). */
+#define	DQT_NQUOTAS	2
+
+uint64_t
+dqt_quota_sleeps(u_int quota)
+{
+	uint64_t counts[DQT_NQUOTAS];
+	size_t len;
+
+	ATF_REQUIRE(quota == DQT_QUOTA_OBJECT || quota == DQT_QUOTA_REQUESTER);
+	len = sizeof(counts);
+	ATF_REQUIRE_MSG(sysctlbyname("debug.dq.quota_sleeps", counts, &len,
+	    NULL, 0) == 0 && len == sizeof(counts),
+	    "debug.dq.quota_sleeps: %s", strerror(errno));
+	return (counts[quota - 1]);
+}
+
+void
+dqt_quota_sleep_wait(u_int quota, uint64_t count)
+{
+	struct {
+		uint32_t	quota;
+		uint32_t	pad;
+		uint64_t	count;
+	} qw;
+
+	qw.quota = quota;
+	qw.pad = 0;
+	qw.count = count;
+	ATF_REQUIRE_MSG(sysctlbyname("debug.dq.quota_sleep_wait", NULL, NULL,
+	    &qw, sizeof(qw)) == 0, "debug.dq.quota_sleep_wait: %s",
+	    strerror(errno));
+}
+
 bool
 dqt_sleep_left(pid_t pid, const char *wmesg, uint64_t *left_ms)
 {

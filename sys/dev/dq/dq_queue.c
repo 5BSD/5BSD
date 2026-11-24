@@ -1500,6 +1500,11 @@ dq_post_waits_done(struct dq_queue *q, struct dq_event_k *ev,
  * The quota sleeps of a waited post, bounded by the event's own deadline
  * (absolute, taken before the first sleep), so the wait for room and the
  * wait for the answer together never pass it (T-R03).
+ *
+ * ds2_quota_waiters counts the posts in a quota wait now.  It is raised
+ * and lowered here under q_mtx, which a waiter woken to find its quota
+ * still full keeps from the one sleep to the next, so a reader of the
+ * statistics never sees it dip between them.
  */
 static int
 dq_post_quota_sleep(struct dq_queue *q, struct dq_event_k *ev, void *chan,
@@ -1515,7 +1520,12 @@ dq_post_quota_sleep(struct dq_queue *q, struct dq_event_k *ev, void *chan,
 	}
 	pw->pw_quota = chan == (void *)&q->q_requesters ? DQ_QUOTA_REQUESTER :
 	    DQ_QUOTA_OBJECT;
+	q->q_stats.ds2_quota_waiters++;
+#ifdef DQ_FAULT_INJECTION
+	dq_faultinj_quota_sleep(pw->pw_quota);
+#endif
 	error = dq_wait_room(q, ev, chan, wmesg, td, mode, deadline);
+	q->q_stats.ds2_quota_waiters--;
 	if (error == EIO)
 		q->q_stats.ds2_deadline_misses++;
 	return (error);
