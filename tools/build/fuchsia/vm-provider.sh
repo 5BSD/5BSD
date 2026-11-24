@@ -1260,7 +1260,7 @@ for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER 
 	DEFERRED_RACCT_ZERO_TIER)
 		echo "DEFERRED_TO_RACCT_ZERO_TIER=$ndefer (run with RACCT_TUNABLE_ZERO=1; not a pass)";;
 	DEFERRED_QUOTA_KERNEL_TIER)
-		echo "DEFERRED_TO_QUOTA_KERNEL_TIER=$ndefer (run with a stage whose kernel has options QUOTA; not a pass)";;
+		echo "DEFERRED_TO_QUOTA_KERNEL_TIER=$ndefer (run with a stage whose kernel has options QUOTA, such as GENERIC; not a pass)";;
 	DEFERRED_DEBUG_KERNEL_TIER)
 		echo "DEFERRED_TO_DEBUG_KERNEL_TIER=$ndefer (they check through WITNESS or INVARIANTS: run with a stage whose kernel has both, such as GENERIC; not a pass)";;
 	DEFERRED_DISPOSABLE_GUEST)
