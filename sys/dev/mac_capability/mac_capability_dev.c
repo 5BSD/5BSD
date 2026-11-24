@@ -280,6 +280,10 @@ mac_capability_instance_enqueue_rx(struct mac_capability_instance *s,
 	mtx_assert(&s->ci_mtx, MA_OWNED);
 	error = mac_capability_instance_rx_ready(s);
 	if (error != 0) {
+		/* Freed under ci_mtx: it must not carry descriptors. */
+		KASSERT(msg->cm_nfds == 0,
+		    ("%s: refused message carries %d descriptors", __func__,
+		    msg->cm_nfds));
 		mac_capability_msg_free(msg);
 		return (error);
 	}

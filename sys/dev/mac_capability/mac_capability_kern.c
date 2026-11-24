@@ -225,6 +225,13 @@ mac_capability_reap_uninit(void)
  * is dropped here; a message still holding a last reference goes to the
  * reaper.  Called without ci_mtx, from the revoke, the dispatch task and
  * the close.
+ *
+ * The message's reference is dropped on f_count directly, since fdrop()
+ * would run the close when it is the last.  "Not the last" may be stale at
+ * once: another holder's fdrop() can then be the last and run the close,
+ * but in that holder's context, never here.  A reference that is the last
+ * stays the message's, so nothing else can drop it before the reaper does.
+ * mac_capability_msg_free() skips the slots cleared here.
  */
 void
 mac_capability_free_msgq_deferred(struct mac_capability_msgq *q)
