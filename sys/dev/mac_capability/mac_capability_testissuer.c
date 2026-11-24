@@ -145,14 +145,18 @@ SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuers_wait_live,
     "live (no timeout; EINTR ends it, SA_RESTART resumes it)");
 
 /*
- * A barrier for a single read of test_issuers_live: run every task queued
- * on taskqueue_thread, where a test issuer whose last reference dropped is
- * freed (issuer_drop), as are descriptors carried by unix sockets in flight
- * (unp_defer).  A count read after it is not one that a queued free was
- * about to lower; it waits for nothing that may never happen.
+ * A barrier for a single read of test_issuers_live.  First the reaper frees
+ * the messages already handed to it, whose descriptors may hold the last
+ * reference to a test issuer or to one of its authorities.  Then every task
+ * already queued on taskqueue_thread runs: there a test issuer whose last
+ * reference dropped is freed (issuer_drop), as are descriptors carried by
+ * unix sockets in flight (unp_defer).  A count read after it is not one
+ * that a free queued before the write was about to lower; a free that one
+ * of these tasks queues in turn is not waited for, and nothing is that may
+ * never happen.
  */
 static int
-mac_capability_test_issuers_settle_sysctl(SYSCTL_HANDLER_ARGS)
+mac_capability_test_issuer_settle_sysctl(SYSCTL_HANDLER_ARGS)
 {
 	int error, value;
 
@@ -162,12 +166,13 @@ mac_capability_test_issuers_settle_sysctl(SYSCTL_HANDLER_ARGS)
 		return (error);
 	if (value != 1)
 		return (EINVAL);
+	mac_capability_reap_drain();
 	taskqueue_drain_all(taskqueue_thread);
 	return (0);
 }
 SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuers_settle,
     CTLTYPE_INT | CTLFLAG_WR | CTLFLAG_MPSAFE, NULL, 0,
-    mac_capability_test_issuers_settle_sysctl, "I",
+    mac_capability_test_issuer_settle_sysctl, "I",
     "Test kernel only: write 1 to run the frees already queued, before "
     "reading test_issuers_live");
 

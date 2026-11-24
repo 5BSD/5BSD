@@ -23,7 +23,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd November 23, 2026
+.Dd November 24, 2026
 .Dt MAC_CAPABILITY 4
 .Os
 .Sh NAME
@@ -697,12 +697,14 @@ Test issuers created.
 Test issuers not yet freed.
 .It Va debug.mac_capability.test_issuers_settle
 Write-only.
-Writing 1 runs every task already queued on
+Writing 1 waits for the frees of descriptor-carrying messages already
+handed to the reaper, then runs every task already queued on
 .Va taskqueue_thread ,
 where test issuers whose last reference dropped are freed, so that a
 following read of
 .Va kern.mac_capability.test_issuers_live
-is not one a queued free was about to lower.
+is not one a free queued before the write was about to lower.
+A free that one of those tasks queues in turn is not waited for.
 .It Va debug.mac_capability.test_issuers_wait_live
 Write-only.
 Writing
