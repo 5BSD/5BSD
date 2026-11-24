@@ -469,7 +469,7 @@ serve(bool child)
 	unsigned long long v;
 
 	if (child) {
-		/* An alarm is not inherited; each process of the fixture sets one. */
+		/* An alarm is not inherited; each process sets its own. */
 		alarm(FIXTURE_TIMEOUT);
 		reply("CHILD %d\n", (int)getpid());
 	}
@@ -532,7 +532,7 @@ main(int argc, char **argv)
 		fprintf(stderr, "usage: capprotect_share_helper MODE\n");
 		return (2);
 	}
-	/* "exec" re-executes argv[0]: the tests run the fixture by full path. */
+	/* "exec" re-executes argv[0]: the tests run it by full path. */
 	cp_self = argv[0];
 	signal(SIGALRM, on_alarm);
 	signal(SIGPIPE, SIG_IGN);

@@ -357,8 +357,9 @@ main(int argc, char **argv)
 		else if (sscanf(cmd, "waitstop %d", &pid) == 1)
 			reply("WAITSTOP %d\n", waitstop(pid));
 		else if (sscanf(cmd, "followfork %d", &pid) == 1)
-			reply("FOLLOWFORK %d\n", ptrace(PT_FOLLOW_FORK, pid, NULL,
-			    1) == 0 ? 0 : errno);
+			reply("FOLLOWFORK %d\n",
+			    ptrace(PT_FOLLOW_FORK, pid, NULL, 1) == 0 ? 0 :
+			    errno);
 		else if (sscanf(cmd, "waitfork %d", &pid) == 1) {
 			error = waitfork(pid, &child);
 			reply("WAITFORK %d %#x\n", error, (unsigned int)child);

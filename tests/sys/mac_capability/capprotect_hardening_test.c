@@ -397,6 +397,22 @@ agent_detach(struct agent *a, pid_t pid)
 }
 
 /*
+ * An attach that the shield must refuse.  One that succeeds is detached
+ * again, so that the case fails by its check and not by the timeout of a
+ * child left stopped.
+ */
+static int
+agent_attach_refused(struct agent *a, pid_t pid)
+{
+	int error;
+
+	error = agent_attach(a, pid);
+	if (error == 0)
+		(void)agent_detach(a, pid);
+	return (error);
+}
+
+/*
  * The agent spawns the fixture in mode, with pdflags and protection flags;
  * the fixture's control socket is handed back in *f.
  */
@@ -488,7 +504,8 @@ fork_watch_child(int kq, struct fx *f)
 			atf_tc_fail("the fixture did not fork: \"%s\"", buf);
 		}
 		ATF_REQUIRE_MSG((kev.fflags & NOTE_TRACKERR) == 0,
-		    "the kernel could not track the fork of %d", (int)f->server);
+		    "the kernel could not track the fork of %d",
+		    (int)f->server);
 		if ((kev.fflags & NOTE_CHILD) != 0) {
 			ATF_REQUIRE_EQ((pid_t)kev.data, f->server);
 			return ((pid_t)kev.ident);
@@ -613,7 +630,7 @@ ATF_TC_BODY(pin_ptrace_fork_child_copy, tc)
 	child = fixture_split(&f, "fork");
 	agent_start(&prober, -1);
 	/* The copy inherits the parent's ptrace shield until it execs. */
-	ATF_CHECK_EQ(agent_attach(&prober, child), EACCES);
+	ATF_CHECK_EQ(agent_attach_refused(&prober, child), EACCES);
 	v = 0;
 	ATF_CHECK_EQ(agent_read(&prober, child, f.canary, &v), EACCES);
 
@@ -648,7 +665,7 @@ ATF_TC_BODY(pin_ptrace_unshare_copy, tc)
 	child = fixture_split(&f, "unshare");
 	agent_start(&prober, -1);
 	/* The shield inherited at the RFMEM fork stays. */
-	ATF_CHECK_EQ(agent_attach(&prober, child), EACCES);
+	ATF_CHECK_EQ(agent_attach_refused(&prober, child), EACCES);
 	v = 0;
 	ATF_CHECK_EQ(agent_read(&prober, child, f.canary, &v), EACCES);
 	agent_stop(&prober);
@@ -871,17 +888,17 @@ ATF_TC_BODY(pin_inherited_converts_on_protect, tc)
 	agent_start(&protector, -1);
 	agent_start(&stranger, -1);
 	/* Inherited: protector is the parent; the agent is not yet. */
-	ATF_CHECK_EQ(agent_attach(&protector, child), EACCES);
+	ATF_CHECK_EQ(agent_attach_refused(&protector, child), EACCES);
 	ATF_REQUIRE_EQ(agent_protect_fd(&protector, pd, CP_SF_PTRACE), 0);
 	close(pd);
 	ATF_CHECK_EQ(agent_attach(&protector, child), 0);
 	ATF_CHECK_EQ(agent_detach(&protector, child), 0);
-	ATF_CHECK_EQ(agent_attach(&stranger, child), EACCES);
+	ATF_CHECK_EQ(agent_attach_refused(&stranger, child), EACCES);
 	fixture_exec(&f);
 	/* The explicit shield and its protector survive the exec. */
 	ATF_CHECK_EQ(agent_attach(&protector, child), 0);
 	ATF_CHECK_EQ(agent_detach(&protector, child), 0);
-	ATF_CHECK_EQ(agent_attach(&stranger, child), EACCES);
+	ATF_CHECK_EQ(agent_attach_refused(&stranger, child), EACCES);
 	agent_stop(&stranger);
 	agent_stop(&protector);
 	fixture_join(&f, child);
@@ -906,7 +923,7 @@ ATF_TC_BODY(pin_inherited_dropped_at_exec, tc)
 	fixture_start(&f, "self");
 	child = fixture_split(&f, "fork");
 	agent_start(&stranger, -1);
-	ATF_CHECK_EQ(agent_attach(&stranger, child), EACCES);
+	ATF_CHECK_EQ(agent_attach_refused(&stranger, child), EACCES);
 	fixture_exec(&f);
 	ATF_CHECK_EQ(agent_attach(&stranger, child), 0);
 	ATF_CHECK_EQ(agent_detach(&stranger, child), 0);
@@ -938,7 +955,7 @@ ATF_TC_BODY(pin_inherited_parent_exit, tc)
 	ATF_REQUIRE(waitpid(f.pid, &status, 0) == f.pid);
 	f.pid = 0;
 	agent_start(&stranger, -1);
-	ATF_CHECK_EQ(agent_attach(&stranger, child), EACCES);
+	ATF_CHECK_EQ(agent_attach_refused(&stranger, child), EACCES);
 	fixture_exec(&f);
 	ATF_CHECK_EQ(agent_attach(&stranger, child), 0);
 	ATF_CHECK_EQ(agent_detach(&stranger, child), 0);
@@ -1002,7 +1019,7 @@ ATF_TC_BODY(pin_inherited_protect_without_ptrace, tc)
 	agent_start(&stranger, -1);
 	ATF_REQUIRE_EQ(agent_protect_fd(&protector, pd, CP_SF_SIGNAL), 0);
 	close(pd);
-	ATF_CHECK_EQ(agent_attach(&stranger, child), EACCES);
+	ATF_CHECK_EQ(agent_attach_refused(&stranger, child), EACCES);
 	ATF_CHECK(kill(child, SIGUSR1) == -1 && errno == EACCES);
 	fixture_exec(&f);
 	/* After exec: exactly the explicit flags, SIGNAL. */
@@ -1038,7 +1055,7 @@ ATF_TC_BODY(pin_inherited_parent_debugs, tc)
 	child = atoi(rest);
 	ATF_REQUIRE(child > 0);
 	agent_start(&stranger, -1);
-	ATF_CHECK_EQ(agent_attach(&stranger, child), EACCES);
+	ATF_CHECK_EQ(agent_attach_refused(&stranger, child), EACCES);
 	agent_stop(&stranger);
 	send_line(f.sock, "pattach");
 	expect_line(f.sock, "PATTACH", rest, sizeof(rest));
@@ -1090,7 +1107,7 @@ ATF_TC_BODY(pin_inherited_token_holder_refused, tc)
 	ATF_REQUIRE_EQ(agent_attach(&holder, f.pid), 0);
 	ATF_REQUIRE_EQ(agent_detach(&holder, f.pid), 0);
 	child = fixture_split(&f, "fork");
-	ATF_CHECK_EQ(agent_attach(&holder, child), EACCES);
+	ATF_CHECK_EQ(agent_attach_refused(&holder, child), EACCES);
 	agent_stop(&holder);
 	fixture_join(&f, child);
 	fixture_stop(&f);
@@ -1137,7 +1154,7 @@ follow_fork_case(const char *how)
 	ATF_REQUIRE_EQ(atoi(rest), child);
 	f.server = child;
 	/* Detached, the parent's protector is a stranger to the child. */
-	ATF_CHECK_EQ(agent_attach(&debugger, child), EACCES);
+	ATF_CHECK_EQ(agent_attach_refused(&debugger, child), EACCES);
 	ATF_CHECK_EQ(fixture_join(&f, child), CANARY_SECRET);
 	fixture_stop(&f);
 	agent_stop(&debugger);

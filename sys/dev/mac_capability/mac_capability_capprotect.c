@@ -103,8 +103,7 @@ struct shield_entry {
 	pid_t		se_pid;		/* shielded process */
 	pid_t		se_protector;	/* who applied it (launcher/self) */
 	uint32_t	se_flags;	/* applied explicitly */
-	uint32_t	se_iflags;	/* inherited at fork: CP_SF_PTRACE, until
-					   exec */
+	uint32_t	se_iflags;	/* inherited at fork, until exec */
 	uint64_t	se_generation;
 };
 static LIST_HEAD(, shield_entry) *cp_shield_hash;
@@ -681,9 +680,9 @@ static eventhandler_tag cp_fork_tag;
 /*
  * Exec: the new image holds nothing of the parent's memory, so the
  * inherited ptrace shield drops.  The entry goes when nothing explicit
- * remains in it.  This runs in exec_new_vmspace() before the old address space is
- * replaced; P_INEXEC refuses every debugger (EBUSY) in between, and an
- * exec that fails after this point kills the process.
+ * remains in it.  This runs in exec_new_vmspace() before the old address
+ * space is replaced; P_INEXEC refuses every debugger (EBUSY) in between,
+ * and an exec that fails after this point kills the process.
  */
 static void
 cp_process_exec(void *arg __unused, struct proc *p,
@@ -1207,10 +1206,10 @@ mac_capability_capprotect_modevent(module_t mod __unused, int type, void *unused
 		}
 		cp_exit_tag = EVENTHANDLER_REGISTER(process_exit, cp_process_exit,
 		    NULL, EVENTHANDLER_PRI_ANY);
-		cp_fork_tag = EVENTHANDLER_REGISTER(process_fork, cp_process_fork,
-		    NULL, EVENTHANDLER_PRI_ANY);
-		cp_exec_tag = EVENTHANDLER_REGISTER(process_exec, cp_process_exec,
-		    NULL, EVENTHANDLER_PRI_ANY);
+		cp_fork_tag = EVENTHANDLER_REGISTER(process_fork,
+		    cp_process_fork, NULL, EVENTHANDLER_PRI_ANY);
+		cp_exec_tag = EVENTHANDLER_REGISTER(process_exec,
+		    cp_process_exec, NULL, EVENTHANDLER_PRI_ANY);
 		if (bootverbose)
 			printf("mac_capability_capprotect: loaded\n");
 		return (0);
