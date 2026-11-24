@@ -39,7 +39,6 @@
 #   issuer-decision probe programs, mac_capability_channel_test, lib/libservice
 #   or its service_ambient_test, dtraceall; with sys/mac_capability or
 #   its cap_exclusion_test, also filemon (all of sys gets all three); with
-#   usr.sbin/bsd-build, zfs (an md-backed pool gives one case ACLs); with
 #   sys/kern or sys/kern/ptrace_sleep_test, fusefs (its presleep cases serve
 #   one); with a kernel that does not compile them in (MINIMAL), ufs and
 #   cryptodev from the stage,
@@ -278,14 +277,6 @@ case " $suites " in
 	dq_loader_add 'filemon_load="YES"' ;;
 esac
 # end of dq_loader
-# bsd_build_test:generation_reconciliation runs its ACL subtest on an
-# md-backed ZFS pool (GENERIC has no UFS_ACL); the plane refuses a late
-# kldload of zfs.
-case " $suites " in
-*" usr.sbin/bsd-build "*|*" usr.sbin/bsd-build/bsd_build_test"*)
-	dq_loader="${dq_loader:+$dq_loader
-}zfs_load=\"YES\"" ;;
-esac
 # ptrace_sleep_test's presleep cases hold a lookup in a fusefs file system
 # they serve; the plane refuses a late kldload of fusefs.
 case " $suites " in
@@ -1269,7 +1260,7 @@ for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER 
 	DEFERRED_RACCT_ZERO_TIER)
 		echo "DEFERRED_TO_RACCT_ZERO_TIER=$ndefer (run with RACCT_TUNABLE_ZERO=1; not a pass)";;
 	DEFERRED_QUOTA_KERNEL_TIER)
-		echo "DEFERRED_TO_QUOTA_KERNEL_TIER=$ndefer (run with a stage whose kernel has options QUOTA; not a pass)";;
+		echo "DEFERRED_TO_QUOTA_KERNEL_TIER=$ndefer (run with a stage whose kernel has options QUOTA, such as GENERIC; not a pass)";;
 	DEFERRED_DEBUG_KERNEL_TIER)
 		echo "DEFERRED_TO_DEBUG_KERNEL_TIER=$ndefer (they check through WITNESS or INVARIANTS: run with a stage whose kernel has both, such as GENERIC; not a pass)";;
 	DEFERRED_DISPOSABLE_GUEST)

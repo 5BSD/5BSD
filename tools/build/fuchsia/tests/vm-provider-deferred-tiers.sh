@@ -26,10 +26,11 @@ sys/m:twelve  ->  skipped: DEFERRED_RACCT_ZERO_TIER: needs a boot with kern.racc
 sys/v:thirteen  ->  skipped: DEFERRED_QUOTA_KERNEL_TIER: kernel without options QUOTA  [0.1s]
 sys/v:fourteen  ->  skipped: DEFERRED_DEBUG_KERNEL_TIER: WITNESS is not running  [0.1s]
 sys/v:fifteen  ->  skipped: DEFERRED_DEBUG_KERNEL_TIER: no INVARIANTS  [0.1s]
+usr.sbin/c:sixteen  ->  skipped: DEFERRED_GUEST_SETUP: requires the explicit disposable scratch-device input  [0.1s]
 KYUA_SKIPPED_LIST_END
 EOS
 out=$(log=$log sh -c ". '$work/summary.sh'")
-echo "$out" | grep -q '^skipped=15 '
+echo "$out" | grep -q '^skipped=16 '
 echo "$out" | grep -q '^DEFERRED_TO_ENFORCED_TIER=2 '
 echo "$out" | grep -q '^DEFERRED_TO_DEVICE_TIER=1 '
 echo "$out" | grep -q '^DEFERRED_TO_PLANEOFF_TIER=1 '
@@ -41,8 +42,9 @@ echo "$out" | grep -q '^DEFERRED_TO_TEST_KERNEL_TIER=1 '
 echo "$out" | grep -q '^DEFERRED_TO_RACCT_ZERO_TIER=1 '
 echo "$out" | grep -q '^DEFERRED_TO_QUOTA_KERNEL_TIER=1 '
 echo "$out" | grep -q '^DEFERRED_TO_DEBUG_KERNEL_TIER=2 '
+echo "$out" | grep -q '^DEFERRED_GUEST_SETUP=1 '
 printf 'KYUA_SKIPPED_LIST_BEGIN\nKYUA_SKIPPED_LIST_END\n' > "$log"
 out=$(log=$log sh -c ". '$work/summary.sh'")
-if echo "$out" | grep -q DEFERRED_TO; then echo "FAIL: deferred line without deferred skips"; exit 1; fi
+if echo "$out" | grep -q 'DEFERRED_TO\|DEFERRED_GUEST_SETUP='; then echo "FAIL: deferred line without deferred skips"; exit 1; fi
 
 echo 'PASS deferred-tier skips are counted per tier'

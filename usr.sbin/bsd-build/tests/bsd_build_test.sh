@@ -992,45 +992,56 @@ generation_reconciliation_body()
 {
     helper=$(atf_config_get generation_helper "$(atf_get_srcdir)/generation_check.py")
     tests=$(atf_config_get generation_tests "$(atf_get_srcdir)/generation_check_test.py")
-    # The ACL subtest needs a file system with ACLs, which the work
-    # directory's often lacks (a guest's UFS root has none, and GENERIC has
-    # no options UFS_ACL): as root, the program's temporary files go to an
-    # md(4)-backed ZFS pool (NFSv4 ACLs), or else to a UFS mounted with acls
-    # where the kernel supports that.
-    tmp=${TMPDIR:-/tmp}
-    if [ "$(id -u)" = 0 ] && md=$(mdconfig -a -t swap -s 256m 2>/dev/null); then
-        echo "$md" > acl_md
-        mkdir acl
-        pool=bbtacl$$
-        if zpool create -o cachefile=none -O mountpoint="$PWD/acl" \
-            "$pool" "/dev/$md" > /dev/null 2>&1; then
-            echo "$pool" > acl_pool
-            tmp=$PWD/acl
-        elif newfs -U "/dev/$md" > /dev/null 2>&1 &&
-            mount -o acls "/dev/$md" "$PWD/acl"; then
-            tmp=$PWD/acl
-        fi
-    fi
-    # pathconf(2) _PC_ACL_EXTENDED (59) or _PC_ACL_NFS4 (64), as the subtest
-    # itself decides.
-    acl_fs=$(python3.12 -c 'import os, sys
+    acl_case=Reconciliation.test_acl_not_discarded
+    # Every subtest runs on the work directory's file system (UFS in a
+    # guest), where the ACL subtest skips unless that file system has ACLs.
+    atf_check -s exit:0 -o ignore -e save:stderr env \
+        BSD_BUILD_GENERATION_HELPER="$helper" python3.12 -B "$tests" -v
+    atf_check -s exit:0 -o ignore grep -q '^OK' stderr
+    grep -q 'supports no ACL type' stderr || return 0
+    # The ACL subtest alone then runs on a file system with ACLs, as root:
+    # an md(4)-backed UFS mounted with acls (a kernel with options UFS_ACL,
+    # as GENERIC), or else an md(4)-backed ZFS pool (NFSv4 ACLs) where the
+    # zfs module is loaded.  The file system qualifies as the subtest itself
+    # decides: pathconf(2) _PC_ACL_EXTENDED (59) or _PC_ACL_NFS4 (64).
+    acl_ok() {
+        python3.12 -c 'import os, sys
 def ok(n):
     try:
         return os.pathconf(sys.argv[1], n) == 1
     except OSError:
         return False
-print("yes" if ok(59) or ok(64) else "no")' "$tmp")
-    atf_check -s exit:0 -o ignore -e save:stderr env TMPDIR="$tmp" \
-        BSD_BUILD_GENERATION_HELPER="$helper" python3.12 -B "$tests" -v
-    atf_check -s exit:0 -o ignore grep -q '^OK' stderr
-    [ "$acl_fs" = no ] || atf_check -s exit:0 -o ignore \
-        grep -q '^test_acl_not_discarded .* ok$' stderr
-    # A skipped ACL subtest is a gap, never a silent pass.
-    if grep -q 'supports no ACL type' stderr; then
-        [ "$acl_fs" = no ] ||
-            atf_fail "the ACL subtest skipped on $tmp, which supports ACLs"
-        atf_skip 'DEFERRED_GUEST_SETUP: the ACL subtest needs root, md(4) and ZFS, or a UFS_ACL kernel (the other subtests passed)'
+sys.exit(0 if ok(59) or ok(64) else 1)' "$1"
+    }
+    tmp=
+    if [ "$(id -u)" = 0 ] && md=$(mdconfig -a -t swap -s 256m 2>/dev/null); then
+        echo "$md" > acl_md
+        mkdir acl
+        if newfs -U "/dev/$md" > /dev/null 2>&1 &&
+            mount -o acls "/dev/$md" "$PWD/acl"; then
+            if acl_ok "$PWD/acl"; then
+                tmp=$PWD/acl
+            else
+                umount "$PWD/acl"
+            fi
+        fi
+        pool=bbtacl$$
+        if [ -z "$tmp" ] && zpool create -f -o cachefile=none \
+            -O mountpoint="$PWD/acl" "$pool" "/dev/$md" > /dev/null 2>&1; then
+            echo "$pool" > acl_pool
+            ! acl_ok "$PWD/acl" || tmp=$PWD/acl
+        fi
     fi
+    acl_fs=no
+    [ -z "$tmp" ] || acl_fs=yes
+    echo "ACL subtest file system: ${tmp:+$(df -T "$tmp" | awk 'NR == 2 { print $2 }') }${tmp:-none}"
+    # A skipped ACL subtest is a gap, never a silent pass.
+    [ "$acl_fs" = yes ] ||
+        atf_skip 'DEFERRED_GUEST_SETUP: the ACL subtest needs root and md(4), with a UFS_ACL kernel or the zfs module (the other subtests passed)'
+    atf_check -s exit:0 -o ignore -e save:acl-stderr env TMPDIR="$tmp" \
+        BSD_BUILD_GENERATION_HELPER="$helper" python3.12 -B "$tests" -v "$acl_case"
+    atf_check -s exit:0 -o ignore grep -q '^test_acl_not_discarded .* ok$' acl-stderr
+    atf_check -s exit:0 -o ignore grep -q '^Ran 1 test' acl-stderr
 }
 generation_reconciliation_cleanup()
 {

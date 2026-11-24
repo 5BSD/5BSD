@@ -334,8 +334,9 @@ destroys a disk: when a suite is `usr.sbin/capsule`, the program or the case
 in the case's `scratch-device` input; the case refuses any disk with
 another ident.  Cases that need a guest setup no tier provides yet
 (`devctl_device_test` with devd and auditd stopped,
-`bsd_build_test:generation_reconciliation`'s ACL subtest without root and
-md(4)), and `disk_import_and_binding` run without its disk, skip with
+`bsd_build_test:generation_reconciliation`'s ACL subtest, which needs root,
+md(4) and a kernel with `options UFS_ACL`, as GENERIC has, or else the zfs
+module), and `disk_import_and_binding` run without its disk, skip with
 `DEFERRED_GUEST_SETUP` and are counted as `DEFERRED_GUEST_SETUP=N`, not as
 passes.  Destructive cases
 that need an opt-in and a guest of their own (`disposable_vm=yes`,
@@ -359,8 +360,10 @@ its cases skip with `DEFERRED_RACCT_ZERO_TIER`.  Cases that need the test
 kernel's handler park (`debug.mac_capability.test_park_*`, GENERIC-TEST)
 skip elsewhere with `DEFERRED_TEST_KERNEL_TIER`; run them with
 `KERNEL_TIER=test`.  Both are counted on their own lines, not as passes.
-`sys/vfs/ufs_quota_lock_order` needs a kernel with `options QUOTA` and
-skips elsewhere with `DEFERRED_QUOTA_KERNEL_TIER`.  A case that sees its
+`sys/vfs/ufs_quota_lock_order` and
+`sys/dq/dq_resolve_test:kernel_consumer_quotaon` need a kernel with
+`options QUOTA`, which GENERIC and MINIMAL have, and skip on a kernel
+configured without it with `DEFERRED_QUOTA_KERNEL_TIER`.  A case that sees its
 defect only through WITNESS or INVARIANTS
 (`mac_capability_channel_test:refused_forward_frees_outside_mutex`,
 `ufs_suspend_atime:closed_at_resume`, `ufs_quota_lock_order`) skips on a

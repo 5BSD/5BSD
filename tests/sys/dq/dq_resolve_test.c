@@ -1579,8 +1579,8 @@ ATF_TC_CLEANUP(kernel_consumer_rows, tc)
 /*
  * kernel_consumer_quotaon: the quota file named to quotactl(Q_QUOTAON) is
  * opened by the file system (ufs_quota.c quotaon), a class-2 consumer.
- * It needs a kernel with options QUOTA, which the GENERIC test kernel does
- * not have; that is the case's one skip, taken before anything is done
+ * It needs a kernel with options QUOTA, as GENERIC has; a kernel without it
+ * is the case's one skip, taken before anything is done
  * (kern.features.ufs_quota, set by options QUOTA).  With it, the case
  * makes its own UFS (md swap, newfs, mount -o userquota) and accepts only
  * success.
@@ -1631,8 +1631,9 @@ ATF_TC_BODY(kernel_consumer_quotaon, tc)
 
 	len = sizeof(on);
 	if (sysctlbyname("kern.features.ufs_quota", &on, &len, NULL, 0) != 0)
-		atf_tc_skip("kernel without options QUOTA (no "
-		    "kern.features.ufs_quota): quotaon cannot open a file");
+		atf_tc_skip("DEFERRED_QUOTA_KERNEL_TIER: kernel without "
+		    "options QUOTA (no kern.features.ufs_quota): quotaon "
+		    "cannot open a file");
 	ATF_REQUIRE(getcwd(cwd, sizeof(cwd)) != NULL);
 	ATF_REQUIRE_EQ_MSG(0, run_cmd("mdconfig -a -t swap -s 32m", out,
 	    sizeof(out)), "mdconfig: %s", out);
