@@ -126,6 +126,56 @@ SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuer_anchor,
     mac_capability_test_issuer_anchor_sysctl, "I",
     "Test kernel only: write 1 to anchor the boot as PID 1's attempt does");
 
+static int
+mac_capability_test_issuer_wait_live_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	u_int value;
+	int error;
+
+	value = 0;
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	return (mac_capability_test_issuer_wait_live(value));
+}
+SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuers_wait_live,
+    CTLTYPE_UINT | CTLFLAG_WR | CTLFLAG_MPSAFE, NULL, 0,
+    mac_capability_test_issuer_wait_live_sysctl, "IU",
+    "Test kernel only: write N to wait until at most N test issuers are "
+    "live (no timeout; EINTR ends it, SA_RESTART resumes it)");
+
+/*
+ * A barrier for a single read of test_issuers_live.  First the reaper frees
+ * the messages already handed to it, whose descriptors may hold the last
+ * reference to a test issuer or to one of its authorities.  Then every task
+ * already queued on taskqueue_thread runs: there a test issuer whose last
+ * reference dropped is freed (issuer_drop), as are descriptors carried by
+ * unix sockets in flight (unp_defer).  A count read after it is not one
+ * that a free queued before the write was about to lower; a free that one
+ * of these tasks queues in turn is not waited for, and nothing is that may
+ * never happen.
+ */
+static int
+mac_capability_test_issuer_settle_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	int error, value;
+
+	value = 0;
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	if (value != 1)
+		return (EINVAL);
+	mac_capability_reap_drain();
+	taskqueue_drain_all(taskqueue_thread);
+	return (0);
+}
+SYSCTL_PROC(_debug_mac_capability, OID_AUTO, test_issuers_settle,
+    CTLTYPE_INT | CTLFLAG_WR | CTLFLAG_MPSAFE, NULL, 0,
+    mac_capability_test_issuer_settle_sysctl, "I",
+    "Test kernel only: write 1 to run the frees already queued, before "
+    "reading test_issuers_live");
+
 volatile u_int mac_capability_test_issuer_fail_init;
 
 static int

@@ -313,6 +313,7 @@ extern volatile u_long mac_capability_test_issuer_created;
 extern volatile u_int mac_capability_test_issuer_live;
 u_int	mac_capability_test_issuer_state(void);
 void	mac_capability_test_issuer_anchor(void);
+int	mac_capability_test_issuer_wait_live(u_int);
 void	mac_capability_test_issuer_park(pid_t pid, size_t len);
 #endif
 

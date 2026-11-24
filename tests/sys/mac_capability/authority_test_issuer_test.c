@@ -379,8 +379,10 @@ ATF_TC_BODY(relaxed_issuer, tc)
 	ATF_REQUIRE(op(CAP_AUTH_TOKEN_INFO, token, &info) == 0);
 	ATF_CHECK_EQ_MSG(info.revoked, 1, "closing the issuer revokes its grants");
 	ATF_REQUIRE(close(token) == 0);
-	for (int i = 0; i < 50 && test_issuers_live() != live; i++)
-		usleep(100000);
+	/* Wait for the free (no polling; the case's timeout bounds it). */
+	ATF_REQUIRE_MSG(sysctlbyname(
+	    "debug.mac_capability.test_issuers_wait_live", NULL, NULL, &live,
+	    sizeof(live)) == 0, "wait_live: %s", strerror(errno));
 	ATF_CHECK_EQ(test_issuers_live(), live);
 }
 

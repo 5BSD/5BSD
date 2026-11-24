@@ -22,6 +22,9 @@ LIBADD.mac_capability_jail_lock_order_test+=	jail
 TEST_METADATA.mac_capability_jail_lock_order_test+=	is_exclusive="true"
 ATF_TESTS_C+=	mac_capability_procdesc_test
 ATF_TESTS_C+=	authority_test_issuer_test
+# relaxed_issuer waits on the global count of live test issuers; other
+# cases of this program create test issuers.
+TEST_METADATA.authority_test_issuer_test+=	is_exclusive="true"
 # Base exclusion (oes-core-exemption.md): pins and mechanics.  Its issuer
 # cases need the stack tier (test issuers); its PID 1 and switchboard cases
 # run on every tier.
