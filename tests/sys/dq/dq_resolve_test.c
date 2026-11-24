@@ -578,6 +578,7 @@ on_usr1(int sig __unused)
 struct sig_arg {
 	int		 restart;	/* SA_RESTART */
 	int		 rename;	/* rename rt-ren-a rt-ren-b */
+	int		 mkdir;		/* mkdir rt-mkd */
 	int		 swap;		/* stat(swapbuf) */
 };
 
@@ -597,6 +598,8 @@ child_signal(void *arg, void *result)
 	memcpy(swapbuf, "rt-swap-A", sizeof("rt-swap-A"));
 	if (a->rename)
 		r->r[0].rv = rename("rt-ren-a", "rt-ren-b");
+	else if (a->mkdir)
+		r->r[0].rv = mkdir("rt-mkd", 0755);
 	else if (a->swap)
 		r->r[0].rv = stat(swapbuf, &sb);
 	else
@@ -743,6 +746,135 @@ ATF_TC_BODY(signal_lookup_intr, tc)
 	ATF_CHECK_EQ(0, access("rt-ren-a", F_OK));
 	ATF_CHECK_EQ(-1, access("rt-ren-b", F_OK));
 	dqt_fini(&c);
+}
+
+/*
+ * DQ_QF_INTR is not exempt from the rule that a mutation the controller
+ * received is never restarted by the kernel (owner, 2026-11-23).  mkdir
+ * may restart from its first consultation while the event is undelivered;
+ * once the controller has it, a signal ends the call with EINTR whatever
+ * SA_RESTART says.  A kernel that restarts it posts the MKDIR again.
+ */
+ATF_TC(signal_mutation_intr);
+ATF_TC_HEAD(signal_mutation_intr, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "DQ_QF_INTR: an SA_RESTART signal "
+	    "while the controller holds a received mkdir consultation ends "
+	    "the call with EINTR; it is not restarted, so the controller "
+	    "sees one MKDIR and nothing is made (owner, 2026-11-23)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(signal_mutation_intr, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_achild ch;
+	struct sig_arg a;
+	struct one_res r;
+
+	dqt_init(&c);
+	memset(&a, 0, sizeof(a));
+	a.restart = 1;
+	a.mkdir = 1;
+	signal_during(&c, &ch, &a, "rt-mkd", &r);
+	ATF_CHECK_EQ_MSG(-1, r.r[0].rv, "the received mkdir was restarted");
+	ATF_CHECK_EQ(EINTR, r.r[0].err);
+	ATF_CHECK_EQ(1, dqt_count_resolve(&c, "rt-mkd", DQ_ROP_MKDIR));
+	ATF_CHECK_EQ(-1, access("rt-mkd", F_OK));
+	dqt_fini(&c);
+	(void)rmdir("rt-mkd");
+}
+
+/*
+ * A sibling single-threading the process to the user boundary is not a
+ * signal.  Under DQ_QF_INTR too, a mkdir consultation the controller
+ * received waits for its answer there (D404, D193): it is neither
+ * restarted nor failed with an EINTR that no signal caused.
+ */
+struct bnd_arg {
+	int		 go[2];
+};
+
+static struct one_res *bnd_r;
+
+static void *
+bnd_mkdir(void *arg __unused)
+{
+
+	DQT_RR(bnd_r->r[0], mkdir("rt-bmk", 0755));
+	return (NULL);
+}
+
+static void
+child_boundary(void *arg, void *result)
+{
+	struct bnd_arg *a = arg;
+	pthread_t thr;
+	char ch;
+
+	bnd_r = result;
+	if (pthread_create(&thr, NULL, bnd_mkdir, NULL) != 0)
+		_exit(70);
+	/* The parent has seen the controller hold the MKDIR. */
+	if (read(a->go[0], &ch, 1) != 1)
+		_exit(71);
+	DQT_RR(bnd_r->r[1], execl("/nonexistent/dq_resolve_test",
+	    "dq_resolve_test", (char *)NULL));
+	(void)pthread_join(thr, NULL);
+}
+
+ATF_TC(boundary_mutation_intr);
+ATF_TC_HEAD(boundary_mutation_intr, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "DQ_QF_INTR: a mkdir consultation the "
+	    "controller received waits for its answer while a sibling's "
+	    "failing execve single-threads the process; the controller sees "
+	    "one MKDIR and no INTERRUPT, and mkdir returns its answer");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(boundary_mutation_intr, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_achild ch;
+	struct bnd_arg a;
+	struct one_res r;
+	int i, n, status;
+
+	ATF_REQUIRE_EQ(0, pipe(a.go));
+	dqt_init(&c);
+	ATF_REQUIRE_EQ(0, dq_queue_set_flags(c.q, DQ_QF_INTR, 0, NULL));
+	dqt_resolve_hold(&c, "rt-bmk", 0);
+	dqt_attach_spawn(&c, &ch, child_boundary, &a);
+	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	ATF_REQUIRE_EQ(1, write(a.go[1], "g", 1));
+	/*
+	 * A kernel that gives the consultation up never sleeps there: it
+	 * fails the mkdir, or restarts it and the second MKDIR is held.
+	 */
+	ATF_CHECK_MSG(dqt_wait_wmesg(ch.pid, "dqbndy", DQT_WAIT_MS),
+	    "the received mkdir did not wait for its answer at the boundary");
+	dqt_resolve_hold(&c, "", 0);
+	dqt_lock(&c);
+	n = c.nheld;
+	dqt_unlock(&c);
+	for (i = 0; i < n; i++)
+		(void)dq_reply_resolve_pass(c.q, dqt_held_id(&c, i));
+	memset(&r, 0, sizeof(r));
+	status = dqt_attach_wait(&ch, &r, sizeof(r));
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "status %#x", status);
+	ATF_CHECK_EQ_MSG(0, r.r[0].rv, "mkdir: %s", strerror(r.r[0].err));
+	ATF_CHECK_EQ(-1, r.r[1].rv);
+	ATF_CHECK_EQ(ENOENT, r.r[1].err);
+	ATF_CHECK_EQ(1, dqt_count_resolve(&c, "rt-bmk", DQ_ROP_MKDIR));
+	dqt_lock(&c);
+	ATF_CHECK_EQ(0, c.ninterrupted);
+	dqt_unlock(&c);
+	ATF_CHECK_EQ(0, access("rt-bmk", F_OK));
+	(void)close(a.go[0]);
+	(void)close(a.go[1]);
+	dqt_fini(&c);
+	(void)rmdir("rt-bmk");
 }
 
 ATF_TC(path_swap_reconsults);
@@ -2055,6 +2187,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, controller_exit_fails_closed);
 	ATF_TP_ADD_TC(tp, signal_lookup_uninterruptible);
 	ATF_TP_ADD_TC(tp, signal_lookup_intr);
+	ATF_TP_ADD_TC(tp, signal_mutation_intr);
+	ATF_TP_ADD_TC(tp, boundary_mutation_intr);
 	ATF_TP_ADD_TC(tp, path_swap_reconsults);
 	ATF_TP_ADD_TC(tp, depth_full_waits);
 	ATF_TP_ADD_TC(tp, i5_no_new_privileges);

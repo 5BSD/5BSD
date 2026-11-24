@@ -716,6 +716,61 @@ dead_controller(uint64_t *delta, bool trace, char *why, size_t whylen)
 	return (n);
 }
 
+/*
+ * A socket consultation is a question, not a mutation: it is asked before
+ * anything is done for the call and the controller can only pass or deny
+ * it.  Abandoning and restarting one is as clean as for a lookup, so under
+ * DQ_QF_INTR a caught SA_RESTART signal restarts socket(2), which does not
+ * document EINTR.
+ */
+static void
+on_sock_signal(int sig __unused)
+{
+}
+
+static void
+child_socket_restart(void *arg __unused, void *result)
+{
+	struct sock_res *r = result;
+	struct sigaction sa;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = on_sock_signal;
+	sa.sa_flags = SA_RESTART;
+	(void)sigaction(SIGUSR1, &sa, NULL);
+	DQT_RR(r->r[0], socket(AF_INET, SOCK_STREAM, 0));
+}
+
+ATF_TC(intr_signal_restarts);
+ATF_TC_HEAD(intr_signal_restarts, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "DQ_QF_INTR: an SA_RESTART signal "
+	    "while the controller holds a SOCKET consultation restarts "
+	    "socket(2): the abandoned event gets INTERRUPT, the consultation "
+	    "is posted again and the call succeeds");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(intr_signal_restarts, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_achild ch;
+	struct sock_res r;
+
+	dqt_init(&c);
+	ATF_REQUIRE_EQ(0, dq_queue_set_flags(c.q, DQ_QF_INTR, 0, NULL));
+	dqt_resolve_hold(&c, NULL, DQ_ROP_SOCKET);
+	dqt_attach_spawn(&c, &ch, child_socket_restart, NULL);
+	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	dqt_resolve_hold(&c, NULL, 0);
+	ATF_REQUIRE_EQ(0, pdkill(ch.pd, SIGUSR1));
+	memset(&r, 0, sizeof(r));
+	dqt_attach_collect(&ch, &r, sizeof(r));
+	ATF_CHECK_MSG(r.r[0].rv >= 0, "socket: %s", strerror(r.r[0].err));
+	ATF_CHECK(dqt_wait_interrupts(&c, 1, DQT_WAIT_MS));
+	ATF_CHECK_EQ(2, count_events(&c, DQ_ROP_SOCKET, -1, -1));
+	dqt_fini(&c);
+}
+
 ATF_TC(dead_controller_eacces);
 ATF_TC_HEAD(dead_controller_eacces, tc)
 {
@@ -1243,6 +1298,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, mac_denial_no_event);
 	ATF_TP_ADD_TC(tp, errno_answers);
 	ATF_TP_ADD_TC(tp, no_fd_slot_while_waiting);
+	ATF_TP_ADD_TC(tp, intr_signal_restarts);
 	ATF_TP_ADD_TC(tp, dead_controller_eacces);
 	ATF_TP_ADD_TC(tp, dead_controller_probe);
 	ATF_TP_ADD_TC(tp, deadline_counts_failclosed);

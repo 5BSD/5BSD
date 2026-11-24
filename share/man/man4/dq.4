@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 19, 2026
+.Dd November 24, 2026
 .Dt DQ 4
 .Os
 .Sh NAME
@@ -860,7 +860,11 @@ is posted, and an operation that only reads
 .Dv DQ_OP_READDIR ,
 .Dv DQ_OP_FSYNC ,
 .Dv DQ_OP_LOCK ,
-and a lookup that creates, removes or changes nothing
+a lookup that creates, removes or changes nothing, and a
+.Xr socket 2
+or
+.Xr socketpair 2
+consultation
 .Pc
 are given up (INTERRUPT to the controller for one it read) and the system
 call is restarted once the single-threading is over, as a
@@ -912,6 +916,14 @@ a lock wait): the wait keeps its operation, the controller sees no
 INTERRUPT, and the call returns the answer after the detach.
 The other waits defer stops, as a disk wait does, so the stop completes
 when they end; the signal mask plays no part in it.
+A non-transparent
+.Dv PT_ATTACH ,
+and any signal sent to a process that is traced, ends a catching wait as
+a caught signal does, whether or not the debugger then suppresses the
+signal: in interruptible mode a delivered operation that changes
+something then fails with
+.Er EINTR
+and is not restarted.
 A traced process stays stopped with a
 .Dv SIGKILL
 pending until the debugger continues or detaches it; a received
@@ -956,6 +968,27 @@ mount: a caught signal ends the wait with
 .Er EINTR
 (a lookup's first consultation with the restart described in
 .Sx Attachment and resolution ) .
+An operation that changes something is not restarted once its event is
+marked delivered, which happens when the controller's
+.Xr read 2
+of the queue has copied it out, whatever
+.Dv SA_RESTART
+says: the call fails with
+.Er EINTR ,
+since posted again it would be applied twice.
+An event given up before that, one still being copied to the controller
+included, counts as unread and keeps the restart.
+Another thread single-threading the process to the user boundary is not
+a signal and never fails the call: as in an uninterruptible wait, an
+unread event and an operation that only reads are given up and
+restarted, and a delivered operation that changes something waits,
+without catching signals, for the answer, the deadline or the process
+starting to die.
+A signal that arrives during that wait is delivered when the call
+returns with its answer.
+The kernel's stop of every process for a reroot
+.Pq Xr reboot 8 Fl r
+is treated as such a single-threading.
 A lock wait
 .Pq Dv DQ_OP_LOCK
 is always interruptible, as
@@ -2835,10 +2868,22 @@ a caught signal ends the wait: during the first consultation of a system
 call's path the call restarts
 .Pq Dv SA_RESTART
 and posts again, the abandoned event named by an INTERRUPT; any other
-wait, and every wait of
+wait, every wait of
 .Xr rename 2
 and
 .Xr link 2 ,
+and the wait of any event that changes something (a
+.Xr mkdir 2 ,
+an
+.Xr unlink 2 ,
+an
+.Xr open 2
+with
+.Dv O_CREAT
+or
+.Dv O_TRUNC )
+once it is marked delivered
+.Pq Sx Waiting, deadlines and interruption ,
 fails with
 .Er EINTR
 instead (a restarted rename could report a rename that did not happen).
