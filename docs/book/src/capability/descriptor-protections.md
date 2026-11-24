@@ -134,10 +134,12 @@ means `CP_SF_ALL`.
 A shield is not inherited, with one exception: a child of a process with a
 ptrace shield shares (vfork, `posix_spawn`, `RFMEM`) or holds a copy of
 (fork) its parent's memory, so it carries a ptrace shield, whose protector
-is the parent, until it executes a new image. A debugger that was tracing
-the parent and follows its forks (`PT_FOLLOW_FORK`) is the child's tracer
-from the fork and may debug it; nobody else but the parent may, and nobody
-may attach. Explicit protection of the
+is the parent, until it executes a new image. Until then only the child
+itself and its parent (which may attach) may debug it, not the parent's
+protector or token holders. A debugger that was tracing the parent and
+follows its forks (`PT_FOLLOW_FORK`) is the child's tracer from the fork
+and may debug that child; it gets no child by `PT_ATTACH`. Explicit
+protection of the
 child (SwitchBoard's `CP_OP_PROTECT`) adds its own flags; after exec the
 child carries exactly those. A traced process cannot be shielded (`EBUSY`);
 a GENERIC-TEST kernel built with `CAPPROTECT_TEST_ALLOW_TRACED`, never
