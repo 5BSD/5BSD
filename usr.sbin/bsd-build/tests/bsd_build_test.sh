@@ -998,7 +998,13 @@ generation_reconciliation_body()
     atf_check -s exit:0 -o ignore -e save:stderr env \
         BSD_BUILD_GENERATION_HELPER="$helper" python3.12 -B "$tests" -v
     atf_check -s exit:0 -o ignore grep -q '^OK' stderr
-    grep -q 'supports no ACL type' stderr || return 0
+    # Without the skip text the ACL subtest must have run and passed here:
+    # a renamed, removed or reworded subtest must not pass unchecked.
+    if ! grep -q 'supports no ACL type' stderr; then
+        atf_check -s exit:0 -o ignore \
+            grep -q '^test_acl_not_discarded .* ok$' stderr
+        return 0
+    fi
     # The ACL subtest alone then runs on a file system with ACLs, as root:
     # an md(4)-backed UFS mounted with acls (a kernel with options UFS_ACL,
     # as GENERIC), or else an md(4)-backed ZFS pool (NFSv4 ACLs) where the
