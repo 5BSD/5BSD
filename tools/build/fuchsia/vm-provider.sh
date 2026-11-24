@@ -1245,7 +1245,8 @@ echo "skipped=$nskip (a skip in a plane-on suite is not a pass; see KYUA_SKIPPED
 for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER \
     DEFERRED_STACK_TIER DEFERRED_PID1_ONLY DEFERRED_SOURCE_TIER DEFERRED_KNOB_TIER \
     DEFERRED_GUEST_SETUP DEFERRED_DISPOSABLE_GUEST DEFERRED_TEST_KERNEL_TIER \
-    DEFERRED_RACCT_ZERO_TIER \
+    DEFERRED_RACCT_ZERO_TIER DEFERRED_QUOTA_KERNEL_TIER \
+    DEFERRED_DEBUG_KERNEL_TIER \
     "configuration property 'authority_anchor'"; do
 	ndefer=$(LC_ALL=C tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c "$token" || true)
 	[ "$ndefer" -eq 0 ] || case $token in
@@ -1267,6 +1268,10 @@ for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER 
 		echo "DEFERRED_TO_TEST_KERNEL_TIER=$ndefer (run on GENERIC-TEST with KERNEL_TIER=test; not a pass)";;
 	DEFERRED_RACCT_ZERO_TIER)
 		echo "DEFERRED_TO_RACCT_ZERO_TIER=$ndefer (run with RACCT_TUNABLE_ZERO=1; not a pass)";;
+	DEFERRED_QUOTA_KERNEL_TIER)
+		echo "DEFERRED_TO_QUOTA_KERNEL_TIER=$ndefer (run with a stage whose kernel has options QUOTA; not a pass)";;
+	DEFERRED_DEBUG_KERNEL_TIER)
+		echo "DEFERRED_TO_DEBUG_KERNEL_TIER=$ndefer (they check through WITNESS or INVARIANTS: run with a stage whose kernel has both, such as GENERIC; not a pass)";;
 	DEFERRED_DISPOSABLE_GUEST)
 		echo "DEFERRED_DISPOSABLE_GUEST=$ndefer (destructive cases: run them in a guest of their own with their opt-in, disposable_vm=yes or live_securelevel=yes in KYUA_VARS; not a pass)";;
 	"configuration property 'authority_anchor'")

@@ -2954,8 +2954,9 @@ ATF_TC_BODY(refused_forward_frees_outside_mutex, tc)
 	u_int i;
 
 	if (!witness_reports())
-		atf_tc_skip("checks only through WITNESS_WARN; the kernel has no "
-		    "WITNESS or its checking is off");
+		atf_tc_skip("DEFERRED_DEBUG_KERNEL_TIER: checks only through "
+		    "WITNESS_WARN; the kernel has no WITNESS or its checking "
+		    "is off");
 	ATF_REQUIRE(chan_create_required(P) == 0);
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
 	fill_peer_tx(P, chan_tx_limit());

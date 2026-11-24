@@ -359,6 +359,12 @@ its cases skip with `DEFERRED_RACCT_ZERO_TIER`.  Cases that need the test
 kernel's handler park (`debug.mac_capability.test_park_*`, GENERIC-TEST)
 skip elsewhere with `DEFERRED_TEST_KERNEL_TIER`; run them with
 `KERNEL_TIER=test`.  Both are counted on their own lines, not as passes.
+`sys/vfs/ufs_quota_lock_order` needs a kernel with `options QUOTA` and
+skips elsewhere with `DEFERRED_QUOTA_KERNEL_TIER`.  A case that sees its
+defect only through WITNESS or INVARIANTS
+(`mac_capability_channel_test:refused_forward_frees_outside_mutex`,
+`ufs_suspend_atime:closed_at_resume`, `ufs_quota_lock_order`) skips on a
+kernel without them (GENERIC-NODEBUG) with `DEFERRED_DEBUG_KERNEL_TIER`.
 
 A `tests/sys/dq` case that needs a fault knob of `options DQ_FAULT_INJECTION`
 (`debug.dq.delay_swap_take`, `debug.dq.delay_postop_apply`,

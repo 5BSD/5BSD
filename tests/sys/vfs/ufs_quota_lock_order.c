@@ -65,11 +65,13 @@ require_quota_witness(void)
 
 	len = sizeof(on);
 	if (sysctlbyname("kern.features.ufs_quota", &on, &len, NULL, 0) != 0)
-		atf_tc_skip("kernel without options QUOTA");
+		atf_tc_skip("DEFERRED_QUOTA_KERNEL_TIER: kernel without "
+		    "options QUOTA");
 	len = sizeof(watch);
 	if (sysctlbyname("debug.witness.watch", &watch, &len, NULL, 0) != 0 ||
 	    watch < 1)
-		atf_tc_skip("WITNESS is not running");
+		atf_tc_skip("DEFERRED_DEBUG_KERNEL_TIER: WITNESS is not "
+		    "running");
 	if (witness_reversal("\"struct mount mtx\"", "\"FFS Lock\""))
 		atf_tc_skip("the reversal was recorded earlier in this boot");
 }

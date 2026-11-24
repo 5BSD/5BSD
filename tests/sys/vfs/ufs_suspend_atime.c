@@ -90,8 +90,9 @@ require_invariants(void)
 	len = sizeof(on);
 	if (sysctlbyname("kern.features.invariants", &on, &len, NULL, 0) != 0 ||
 	    on == 0)
-		atf_tc_skip("detects the defect only through an INVARIANTS "
-		    "assertion; the kernel has no kern.features.invariants");
+		atf_tc_skip("DEFERRED_DEBUG_KERNEL_TIER: detects the defect "
+		    "only through an INVARIANTS assertion; the kernel has no "
+		    "kern.features.invariants");
 }
 
 /* A soft updates UFS on a swap-backed md(4) device, with NREAD files. */
@@ -376,7 +377,8 @@ ATF_TC_HEAD(open_across_resume, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "a file read during a suspension and still open after it can be "
-	    "used after the resume");
+	    "used after the resume (control: no defect known, passes before "
+	    "and after the fix closed_at_resume pins)");
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "require.progs", "mdconfig newfs fsck_ffs");
 	atf_tc_set_md_var(tc, "timeout", "300");
