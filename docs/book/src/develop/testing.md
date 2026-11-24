@@ -488,9 +488,13 @@ left to the deadline after them), then prints the system log since the
 script began and `switchboardctl status`. The export is first because the
 reserve is a measurement from the start of the run, not a guarantee: on a
 host that is slower at the expiry the host stops QEMU during the stacks,
-and the archive is already written. The step's processes are still running
-during that export, so `results.db` and its journal can be an inconsistent
-pair. These lines start a console line of their own, whatever the step had
+and the archive is already written. kyua commits its results database
+once, at the end of its run, so the `results.db` that an expiry in the
+kyua step exports holds no committed result (SQLite rolls it back to an
+empty store when it is opened beside its journal); the cases that had
+finished are in `kyua-test.out` and on the console. The stacks come from
+one `procstat -kk -a`, filtered, so a process that exits meanwhile costs
+nothing. These lines start a console line of their own, whatever the step had
 printed. The kill is not waited for, so
 the export, the stacks and the dump never wait behind a process that
 cannot die; a caller that reads a step through a pipe (the kyua run, the

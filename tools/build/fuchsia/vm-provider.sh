@@ -708,8 +708,10 @@ phase_procs() {
 	}'
 }
 # The kernel stacks of those processes: what a step was waiting on.  Printed
-# on the console, which the host keeps whatever happens next.  One procstat
-# for all of them.
+# on the console, which the host keeps whatever happens next.  One procstat,
+# of all processes and filtered: given PIDs, procstat stops at the first
+# that has exited, and a step's processes are still running (measured: the
+# stacks of SwitchBoard, PID 1 and BSDTime were lost behind a test's shell).
 phase_stacks() {
 	local step=$1 pids
 	phase_say_fresh "PHASE_DUMP_BEGIN step=$step"
@@ -720,7 +722,9 @@ phase_stacks() {
 		pids="$pids $1"
 		shift 2
 	done
-	[ -z "$pids" ] || procstat -kk $pids >> "$PHASE_CONSOLE" 2>&1
+	procstat -kk -a 2>&1 | awk -v pids="$pids" '
+	BEGIN { n = split(pids, p, " "); for (i = 1; i <= n; i++) want[p[i]] = 1 }
+	NR == 1 || ($1 in want)' >> "$PHASE_CONSOLE"
 }
 # The rest of the dump, after the results are saved: the system log since
 # the script began and SwitchBoard's status (switchboardctl's own 30 s
@@ -748,8 +752,11 @@ results_export() {
 # the end of the stacks (already partly on the console), not the archive,
 # which is all that is left of the suites' results.  (Measured: a run under
 # a -j16 buildworld measured 4 s for the stacks and lost its archive behind
-# 8 s of them.)  The price: the step's processes are still running during
-# the export, so results.db and its journal can be an inconsistent pair.
+# 8 s of them.)  The step's processes are still running during the export.
+# For the kyua step that costs nothing: kyua commits results.db once, at the
+# end of its run, so an expiry there never exports committed results in it
+# (measured: the store rolls back to empty); the finished cases are in
+# kyua-test.out, which the archive carries.
 # The kill is not waited for: an expiry is typically a process asleep in
 # the kernel, which may never exit, and the dump must not wait behind it.
 # (A caller that reads the step through a pipe does wait behind a process

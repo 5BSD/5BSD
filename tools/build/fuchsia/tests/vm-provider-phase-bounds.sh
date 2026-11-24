@@ -43,7 +43,8 @@ for c in BSDTimectl logger BSDPowerctl sysctlcmpctl; do
 	printf '#!/bin/sh\necho "%s $*" >> "%s/calls"\n' "$c" "$work" > "$stub/$c"
 done
 cp "$stub/logger" "$work/logger.ok"
-printf '#!/bin/sh\necho "procstat $*" >> "%s/calls"\necho "STACK-OF $2"\n' \
+# procstat -kk -a: a header, PID 1 and a process no dump asks for.
+printf '#!/bin/sh\necho "procstat $*" >> "%s/calls"\necho "  PID    TID COMM"\necho "    1 100001 STACK-OF-1"\necho "999999999 100002 STACK-OF-NONE"\n' \
     "$work" > "$stub/procstat"
 printf '#!/bin/sh\necho "geom $*" >> "%s/calls"\necho "   ident: kyua-results"\n' \
     "$work" > "$stub/geom"
@@ -113,7 +114,11 @@ grep -q '^a case line without its end  ->  $' "$work/out" || fail 'the partial l
     fail 'the stacks came before the export'
 # One procstat for a dump, however many processes: the baseline's and the
 # expiry's.
-[ "$(grep -c '^procstat -kk ' "$work/calls")" = 2 ] || fail 'not one procstat for each dump'
+[ "$(grep -c '^procstat -kk -a$' "$work/calls")" = 2 ] || fail 'not one procstat for each dump'
+# Of all processes (given PIDs, procstat stops at the first that has exited),
+# filtered to the dump's.
+grep -q 'STACK-OF-1$' "$work/out" || fail 'the dump lacks the stack of PID 1'
+! grep -q 'STACK-OF-NONE' "$work/out" || fail 'the dump shows a process it did not ask for'
 grep -q '^PHASE_DUMP_BEGIN step=blocker' "$work/out" || fail 'no dump'
 [ "$(grep -c '^--- procstat -kk [0-9]* (sleep)$' "$work/out")" = 2 ] ||
     fail "the dump does not show both sleeps"
