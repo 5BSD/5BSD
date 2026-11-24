@@ -103,8 +103,12 @@
  *                                               moves to each call, EPERM
  *                                               (design 2.4)
  * constrain_reserved_words: flags bits  lg-1    landed: the supervisor role
- *                                               (0x2) passes (EBADF here);
- *                                               the other 31 stay EINVAL
+ *                                               (0x2) and, with base
+ *                                               exclusion, the Core role
+ *                                               (0x40) and the System
+ *                                               launch role (0x200) pass
+ *                                               (EBADF here); the other
+ *                                               29 stay EINVAL
  * constrain_reserved_words: reserved    lg-11k  assigned bits pass
  * constrain_reserved_words: nexec       -       preserve
  * linux_open_ioctl: root open, read     lg-3    P: EPERM, then EBADF.
@@ -176,7 +180,7 @@
 
 #include <dev/dq/dq_observe_proto.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	NOBODY_UID	65534
 #define	PROC_DEBUG	"security.bsd.unprivileged_proc_debug"
@@ -1220,7 +1224,9 @@ ATF_TC_BODY(constrain_reserved_words, tc)
 		c.flags = 1U << bit;
 		errno = 0;
 		ATF_CHECK_EQ(-1, constrain(&c));
-		expect = c.flags == CAP_AUTH_ROLE_DQ_SUPERVISOR ? EBADF : EINVAL;
+		expect = c.flags == CAP_AUTH_ROLE_DQ_SUPERVISOR ||
+		    c.flags == CAP_AUTH_ROLE_CORE ||
+		    c.flags == CAP_AUTH_ROLE_SYSTEM ? EBADF : EINVAL;
 		ATF_CHECK_EQ_MSG(expect, errno, "flags bit %d: errno %d", bit,
 		    errno);
 		c.flags = 0;

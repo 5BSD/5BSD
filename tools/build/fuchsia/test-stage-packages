@@ -1,0 +1,29 @@
+# Packages every vm-provider.sh guest image carries under /usr/local: the
+# guest test stage only, never base or a base package set (Python is a
+# build-host and test-stage prerequisite; owner decision 2026-11-20).  Each
+# line is the exact NAME-VERSION of TEST_PKGDIR/NAME-VERSION.pkg, then its
+# sha256 and where it came from.  The set is the run-time closure of
+# python3, python, py312-pytest, py312-dpkt and nist-kat.  Built from
+# /usr/obj/5BSD-ports 9d79606889791c80d931cdde85062a05d2cf825b in a builder
+# guest (docs/book/src/develop/testing.md); python312 is the 5BSD-ports
+# catalogue's package (a from-source build does not fit the builder guest's
+# bound under TCG); the seven C libraries are 5BSD-ports builds too (libb2
+# bootstrapped with the catalogue python312 for its meson build).  Change a line
+# only together with a rebuild from the revision named here.
+expat-2.10.0 0fcc5c9541463217af3be81cce88ae5b85b4a32929b7cac99b25ff1c71c627c2 5BSD-ports-build
+gettext-runtime-1.0_1 00c0ff6963008328e129d08d36c353d5827c81b7d5a034777a8d7673c32ca7f2 5BSD-ports-build
+indexinfo-0.3.1_1 6b1256e4df05eaae80cf722cea52abcf27cab58d61c6d7e12d8ced8d73bf14e3 5BSD-ports-build
+libb2-0.98.1_1 f25fdc82836a1e16789a696623056b0956917f90e947a5e6af7ff7092b38d9fc 5BSD-ports-build
+libffi-3.8.0 38e803a03a32b73a83e7cfa35443a10cd0ed755b13f6e9aa158f3a4bf3cf2035 5BSD-ports-build
+mpdecimal-4.0.1 85194ac8ca0a28c9017825464ab8f62a515aaa6d501eabde569dcbf17e097aef 5BSD-ports-build
+nist-kat-0.0.2015.02.23_1 d4dbbc47a96dea901ba8bb2bd5a3cbdda33dbf1cf4ccc5c1e944779fe7890f9f 5BSD-ports-build
+py312-dpkt-1.9.6_1 370d6165866b9cfa96d01306fb5548a6c8664ada21b70f1216a44177491de16b 5BSD-ports-build
+py312-iniconfig-2.3.1 27f7a3b7441fbdcaa10f3fc16be144da13f1bb8d16d59f3840b4131488d712da 5BSD-ports-build
+py312-packaging-26.3 565e708174b7fa2003a5b50c74614e5660f5499cb8368e0cf5856499befd81a2 5BSD-ports-build
+py312-pluggy-1.6.0 96d182b0ef9ff924b3be2815281413256f90f85c8feb7edb338f84737e921e6d 5BSD-ports-build
+py312-pygments-2.21.0 8703a34fa18d94fd67af9966553043ce1b37b3671f0ea73aee87ef0ebdd5ea57 5BSD-ports-build
+py312-pytest-9.1.1,1 a8a8cc3d4db8be28c7d2a11696b98cb979d796aff53a3e2f4c8512499801cb0a 5BSD-ports-build
+python-3.12_3,2 5a089c247608465634313df725939b61eb42ad8dde0cc59f577a8469c1818885 5BSD-ports-build
+python3-3_4 c5eb47b213728df2fc80fecb3ade1545202097d24b8b21ccd6897e9134d8b5a7 5BSD-ports-build
+python312-3.12.15_1 56897e296635e7e632c7d674ec2e69af39390e059fe1b84ae7405bf8d8720db1 5BSD-ports-catalogue
+readline-8.3.6 10199ee69731b20d9b472592533f597b7db0327b46efedab7e5b15cc0b9b07cc 5BSD-ports-build

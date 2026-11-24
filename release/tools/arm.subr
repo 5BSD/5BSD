@@ -188,6 +188,9 @@ arm_install_base() {
 	# with a test-kernel option.  release.sh runs under set -e.
 	chroot ${CHROOTDIR} sh ${WORLDDIR}/release/scripts/check-test-kernel.sh \
 		-d ${DESTDIR}
+	# Nor one without a mandatory option (sys/conf/mandatory-options).
+	chroot ${CHROOTDIR} sh ${WORLDDIR}/release/scripts/check-mandatory-kernel.sh \
+		-d ${DESTDIR}
 	chroot ${CHROOTDIR} mkdir -p ${DESTDIR}/boot/efi
 	# Compatibility symlink to /boot/msdos for 13.1 and earlier
 	chroot ${CHROOTDIR} ln -s efi ${DESTDIR}/boot/msdos

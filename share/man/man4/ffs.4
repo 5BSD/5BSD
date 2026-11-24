@@ -28,7 +28,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd February 24, 2026
+.Dd November 18, 2026
 .Dt FFS 4
 .Os
 .Sh NAME
@@ -245,12 +245,56 @@ Print a console message when timestamps for UFS1 filesystems are found
 to be in the future and are changed to be the present time.
 .Pq Default: 0 .
 .El
+.Ss DTrace Probes
+The
+.Xr dtrace 1
+provider
+.Sy ffs
+includes:
+.Bl -tag -width indent
+.It Sy ffs:::deferred-inactive-update
+Fires when the resume of a suspended file system writes the inode of a
+vnode that was accessed during the suspension and is no longer in use, as
+its inactivation would have.
+.Fa args[0]
+is the
+.Vt "struct vnode *"
+and
+.Fa args[1]
+the error
+.Fn UFS_UPDATE
+returned.
+.El
+.Ss Test kernels
+A kernel built with
+.Cd "options FFS_TEST_HOOKS"
+(the configuration
+.Pa GENERIC-TEST ,
+a row of the test-kernel option ledger
+.Pa sys/conf/test-options )
+is a test kernel and is never published.
+On such a kernel only, a test can hold the walk with which the resume of a
+suspended file system writes the vnodes accessed during the suspension:
+.Bl -tag -width debug.ffs.test_hold_release
+.It Va debug.ffs.test_hold_fsid
+A file system ID
+.Pq Vt fsid_t ,
+or all zero (the default) for none: the next resume of that file system
+stops before its walk, holding no vnode or mount lock, after it has woken
+the threads the suspension held, until released.
+The walk that stops consumes the setting.
+.It Va debug.ffs.test_hold_wait
+Reads 1 while a walk is held; a write sleeps, interruptibly, until one is.
+.It Va debug.ffs.test_hold_release
+Writing 1 lets the held walk go on.
+.El
 .Sh HISTORY
 The
 .Nm
 manual page first appeared in
 .Fx 4.5 .
 .Sh SEE ALSO
+.Xr dtrace 1 ,
 .Xr quota 1 ,
 .Xr acl 3 ,
 .Xr extattr 3 ,

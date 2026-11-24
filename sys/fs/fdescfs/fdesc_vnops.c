@@ -56,6 +56,7 @@
 #include <sys/sysctl.h>
 #include <sys/unistd.h>
 #include <sys/vnode.h>
+#include <sys/dqres.h>
 
 #include <security/mac/mac_framework.h>
 
@@ -840,6 +841,16 @@ fdesc_readlink(struct vop_readlink_args *va)
 	case DTYPE_VNODE:
 		vp = fp->f_vnode;
 		error = vn_fullpath(vp, &fullpath, &freepath);
+		if (error != 0)
+			break;
+		/*
+		 * Under a served root a real object may have no name for the
+		 * reader (T-A10): ENOENT, as for a failed vn_fullpath and an
+		 * empty served path, never a zero-length link.
+		 */
+		dqres_present_real_maybe(td, fullpath, strlen(fullpath) + 1);
+		if (fullpath[0] == '\0')
+			error = ENOENT;
 		break;
 	case DTYPE_DQ:
 		/*

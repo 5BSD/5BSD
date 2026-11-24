@@ -115,8 +115,13 @@ service_session_create(fd)   -----------------------------------------> direct c
 one, and returns its result verbatim: a genuine `ENOENT` there is not retried
 on the ambient channel. A program with no bootstrap (a CLI in a shell) goes
 straight to `service_connect_ambient()`, which sends the same `SVC_OP_LOOKUP`
-over the private lookup channel with a 2 s bound (`SERVICE_LOOKUP_TIMEOUT_MS`)
-so a wedged switchboard cannot stall a tool forever.
+over the private lookup channel and waits for switchboard's answer with no
+time limit of its own.  Switchboard answers every lookup: an on-demand
+activation is bounded by `SERVICE_ACTIVATION_TIMEOUT_MS` (then `ETIMEDOUT`),
+and a reply that cannot be sent closes the client's private channel, so the
+client sees `ECONNRESET`, never silence.  A signal ends the wait as it ends a
+slow system call: a handler installed with `SA_RESTART` restarts it, any
+other gives `EINTR` (service_runtime(3)).
 
 When the name is reserved but no listener is published, `naming_lookup()`
 returns `ENOENT` internally and `on_demand.c` takes over: it launches the
@@ -146,7 +151,13 @@ every relay is the same: send it onward, then close your copy. Fork
 inheritance is a separate axis (`CAP_CLOFORK`), which is how a session's shell
 descendants share the session channel without any transfer.
 
-Closing or crashing either peer revokes the other endpoint. A successful send
+Closing or crashing either peer revokes the other endpoint. The system
+discovery route is the exception: Capsule holds its server end for the whole
+boot and hands it to each SwitchBoard (`SWITCHBOARD_DISCOVERY_FD`), so a
+SwitchBoard exit does not break it. A lookup sent while no SwitchBoard is
+running waits in the channel and is answered by the next one.  A lookup on a
+private channel whose switchboard exits before answering fails at once with
+`ECONNRESET`. A successful send
 means the kernel accepted the message, not that the provider processed it;
 typed protocols use non-zero reply tokens for acknowledgement, and only
 operations a protocol defines as idempotent may be retried across a provider
@@ -163,7 +174,8 @@ A consumer sees one of a small set of errors and must treat all of them as
 | no ambient channel in this process at all | `ENOENT` |
 | reserved name whose provider never published within 10 s | `ETIMEDOUT` |
 | provider died between claim and publish | its exit fails the waiters immediately |
-| switchboard itself unreachable | `ETIMEDOUT` from the bounded call |
+| the switchboard serving the lookup exited | `ECONNRESET` |
+| no switchboard running (restarting) | the lookup waits for the next one |
 | more than 64 lookups pending at once | `EAGAIN` |
 | requester tried to look itself up | `ELOOP` |
 

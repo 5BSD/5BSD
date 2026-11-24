@@ -33,6 +33,7 @@ firecracker-5bsd-kern.bin:
 	${MAKE} -C ${WORLDDIR} DESTDIR=${FCKDIR} \
 	    KERNCONF=FIRECRACKER TARGET=${TARGET} installkernel
 	@sh ${.CURDIR}/scripts/check-test-kernel.sh -d ${FCKDIR}
+	@sh ${.CURDIR}/scripts/check-mandatory-kernel.sh -d ${FCKDIR}
 	cp ${FCKDIR}/boot/kernel/kernel ${DESTDIR}/5bsd-kern.bin
 
 FCWDIR=	${.OBJDIR}/${TARGET}/firecracker-world

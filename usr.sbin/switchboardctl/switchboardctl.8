@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd October 11, 2026
+.Dd November 22, 2026
 .Dt SWITCHBOARDCTL 8
 .Os
 .Sh NAME
@@ -48,6 +48,11 @@ for a shared provider activated on demand,
 the requesting unit's label for a private helper or a per-user unit
 started by another unit of the same owner.
 Software attributes do not establish a login-session coalition.
+.Pp
+A unit whose automatic restart is scheduled shows
+.Ql restart-pending ;
+a stopped unit without it stays stopped until it is started (it exited
+without a restart, or its restarts were disabled after too many failures).
 .Pp
 A service waiting for resource teardown also shows
 .Ql cleanup= ,

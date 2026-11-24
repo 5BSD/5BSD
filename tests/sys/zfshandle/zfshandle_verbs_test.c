@@ -148,7 +148,7 @@ ATF_TC_BODY(readonly_inheritance, tc)
 
 	if (strcmp(atf_tc_get_config_var_wd(tc, "disposable_vm", "no"),
 	    "yes") != 0)
-		atf_tc_skip("requires disposable_vm=yes for pool mutation");
+		atf_tc_skip("DEFERRED_DISPOSABLE_GUEST: requires disposable_vm=yes for pool mutation");
 	zht_setup(tc, ds, sizeof(ds));
 	snprintf(child, sizeof(child), "%s/child", ds);
 	ATF_REQUIRE_EQ(0, zht_systemf("zfs create %s", child));

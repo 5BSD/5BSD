@@ -42,6 +42,7 @@ abac_kenv_check_dump(struct ucred *cred)
 	struct abac_label *subj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_READ);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -71,6 +72,7 @@ abac_kenv_check_get(struct ucred *cred, char *name)
 	struct abac_label *subj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_READ);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -100,6 +102,7 @@ abac_kenv_check_set(struct ucred *cred, char *name, char *value)
 	struct abac_label *subj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)
@@ -129,6 +132,7 @@ abac_kenv_check_unset(struct ucred *cred, char *name)
 	struct abac_label *subj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	if (cred == NULL || cred->cr_label == NULL)

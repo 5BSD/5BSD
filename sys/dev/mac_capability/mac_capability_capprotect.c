@@ -59,11 +59,11 @@ MALLOC_DEFINE(M_MAC_CAPABILITY_CP, "mac_capability_cp", "mac_capability capabili
  * that a developer can start Capsule or SwitchBoard under a debugger.  A
  * kernel built with the option is never published:
  * release/scripts/check-test-kernel.sh refuses any kernel or module that
- * carries this marker or a cp_test_ symbol (its row of
+ * carries this marker or a capprotect_test_ symbol (its row of
  * sys/conf/test-options).  Do not rename either without changing the
  * ledger in the same change.
  */
-static const char cp_test_allow_traced_marker[] __used =
+static const char capprotect_test_allow_traced_marker[] __used =
     "@(#)5BSD CAPPROTECT_TEST_ALLOW_TRACED test kernel: not for publication";
 #endif
 
@@ -92,7 +92,8 @@ static struct mtx cp_lock;
  * Shield table: shielded PROCESSES, keyed by PID, with a unique lifetime generation.
  *
  * Protection is per-process, not per-nonce: a forked child does not inherit
- * its parent's shield, and an entry is dropped when the process exits (before
+ * its parent's shield, except the ptrace shield until it execs
+ * (cp_process_fork()), and an entry is dropped when the process exits (before
  * the PID can be reused).  se_protector records the PID that applied the shield
  * (the launcher, or the process itself) and is permitted to act on the target
  * for lifecycle control.
@@ -256,11 +257,6 @@ cp_shield_add(struct proc *p, pid_t protector, uint32_t flags,
 	} else if (se->se_flags == 0)
 		se->se_protector = protector;
 	se->se_flags |= flags;
-	/* Probe context (dtrace -w) reads these without the shield lock. */
-	if ((flags & CP_SF_PTRACE) != 0)
-		p->p_flag2 |= P2_DEBUGSHIELD;
-	if ((flags & (CP_SF_SIGNAL | CP_SF_SIGKILL | CP_SF_SIGCONT)) != 0)
-		p->p_flag2 |= P2_SIGSHIELD;
 	priv->cp_target = p->p_pid;
 	priv->cp_generation = se->se_generation;
 	priv->cp_flags = flags;
@@ -632,6 +628,11 @@ static eventhandler_tag cp_exit_tag;
  * and tdfind() do not return it and its process descriptor is not
  * installed yet, so no debugger reaches it before the entry exists.  No
  * lock is held here; the allocation may sleep.
+ *
+ * The parent is looked up twice so that a fork by a process without a
+ * ptrace shield, the common case, allocates nothing.  A shield lasts until
+ * its process exits, and the forking thread keeps the parent from exiting;
+ * the second lookup only keeps the handler correct without that argument.
  */
 static void
 cp_process_fork(void *arg __unused, struct proc *p1, struct proc *p2,
@@ -641,6 +642,11 @@ cp_process_fork(void *arg __unused, struct proc *p1, struct proc *p2,
 	bool inherited;
 
 	if (atomic_load_int(&cp_active_shields) == 0)
+		return;
+	mtx_lock(&cp_lock);
+	inherited = (cp_shield_flags(p1->p_pid) & CP_SF_PTRACE) != 0;
+	mtx_unlock(&cp_lock);
+	if (!inherited)
 		return;
 	se = malloc(sizeof(*se), M_MAC_CAPABILITY_CP, M_WAITOK);
 	inherited = false;
@@ -666,21 +672,16 @@ cp_process_fork(void *arg __unused, struct proc *p1, struct proc *p2,
 	}
 	mtx_unlock(&cp_lock);
 	free(se, M_MAC_CAPABILITY_CP);
-	if (inherited) {
-		PROC_LOCK(p2);
-		p2->p_flag2 |= P2_DEBUGSHIELD;
-		PROC_UNLOCK(p2);
+	if (inherited)
 		SDT_PROBE6(mac_capability_capprotect, , , state, "inherit",
 		    p2->p_pid, p1->p_pid, CP_SF_PTRACE, p1->p_pid, 0);
-	}
 }
 static eventhandler_tag cp_fork_tag;
 
 /*
  * Exec: the new image holds nothing of the parent's memory, so the
  * inherited ptrace shield drops.  The entry goes when nothing explicit
- * remains in it, and P2_DEBUGSHIELD when no explicit ptrace shield does.
- * This runs in exec_new_vmspace() before the old address space is
+ * remains in it.  This runs in exec_new_vmspace() before the old address space is
  * replaced; P_INEXEC refuses every debugger (EBUSY) in between, and an
  * exec that fails after this point kills the process.
  */
@@ -689,12 +690,12 @@ cp_process_exec(void *arg __unused, struct proc *p,
     struct image_params *imgp __unused)
 {
 	struct shield_entry *se, *gone;
-	bool dropped, explicit_ptrace;
+	bool dropped;
 
 	if (atomic_load_int(&cp_active_shields) == 0)
 		return;
 	gone = NULL;
-	dropped = explicit_ptrace = false;
+	dropped = false;
 	mtx_lock(&cp_lock);
 	se = cp_shield_find(p->p_pid);
 	if (se != NULL && se->se_iflags != 0) {
@@ -704,20 +705,13 @@ cp_process_exec(void *arg __unused, struct proc *p,
 			LIST_REMOVE(se, se_link);
 			atomic_subtract_int(&cp_active_shields, 1);
 			gone = se;
-		} else
-			explicit_ptrace = (se->se_flags & CP_SF_PTRACE) != 0;
+		}
 	}
 	mtx_unlock(&cp_lock);
 	free(gone, M_MAC_CAPABILITY_CP);
-	if (dropped) {
-		if (!explicit_ptrace) {
-			PROC_LOCK(p);
-			p->p_flag2 &= ~P2_DEBUGSHIELD;
-			PROC_UNLOCK(p);
-		}
+	if (dropped)
 		SDT_PROBE6(mac_capability_capprotect, , , state,
 		    "inherit-drop", p->p_pid, 0, CP_SF_PTRACE, p->p_pid, 0);
-	}
 }
 static eventhandler_tag cp_exec_tag;
 
@@ -808,6 +802,24 @@ cp_mac_check_ptrace(struct ucred *cred, struct proc *p)
 {
 
 	return (cp_check_shield(cred, p, CP_SF_PTRACE, "ptrace"));
+}
+
+/*
+ * Inspect (p_caninspect(9)): the process's memory map, auxv and kernel
+ * stack, not its memory contents.  No shield refuses it, CP_SF_PTRACE
+ * included: a shield protects the process's memory and control, and
+ * DTrace's symbolisation and USDT registration need its layout.  Without
+ * this hook the framework would ask cp_mac_check_ptrace() instead.  It
+ * never calls cp_check_shield(), so a no-ambient process is not refused
+ * either (Q3).
+ */
+static int
+cp_mac_check_inspect(struct ucred *cred __unused, struct proc *p)
+{
+
+	SDT_PROBE3(mac_capability_capprotect, , , allow, "inspect",
+	    (uint64_t)p->p_pid, (uint64_t)curthread->td_proc->p_pid);
+	return (0);
 }
 
 static int
@@ -1105,6 +1117,7 @@ CP_IPC_CHECK(cp_mac_posixsem_check_open,
 static struct mac_policy_ops cp_mac_ops = {
 	/* Existing shield hooks (protect target from foreign nonces) */
 	.mpo_proc_check_debug = cp_mac_check_ptrace,
+	.mpo_proc_check_inspect = cp_mac_check_inspect,
 	.mpo_proc_check_signal = cp_mac_check_signal,
 	.mpo_cred_check_visible = cp_mac_cred_check_visible,
 	.mpo_proc_check_wait = cp_mac_proc_check_wait,

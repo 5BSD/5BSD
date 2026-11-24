@@ -3,7 +3,7 @@
 #
 # Integration tests: each program opens /dev/dq as a controller and forks
 # requesters, so they need the dq(4) device and root.  One skip policy (see
-# libdqtest/dq_test.h): a missing device, module, program or other
+# libdqtest/dqt.h): a missing device, module, program or other
 # prerequisite of the plane-on test guest is a failure, not a skip; the
 # skips left are by architecture (require.arch), a race a one-CPU machine
 # cannot run, and a case deferred by name to another VM tier
@@ -50,10 +50,14 @@ ATF_TESTS_C+=	dq_legitimacy_test
 ATF_TESTS_C+=	dq_owner_test
 ATF_TESTS_C+=	dq_swap_test
 ATF_TESTS_C+=	dq_restricted_test
+ATF_TESTS_C+=	dq_standing_test
+ATF_TESTS_C+=	dq_ptrace_test
+ATF_TESTS_C+=	dq_execpin_test
 ATF_TESTS_SH+=	dq_dtrace_test
 ATF_TESTS_SH+=	dq_testopen_test
 ATF_TESTS_SH+=	dq_oracle_test
 ATF_TESTS_SH+=	dq_tree_suites_test
+ATF_TESTS_SH+=	dq_tree_hang_loop
 ATF_TESTS_SH+=	dq_dqswap_test
 
 # Every program is a controller: each links the support library
@@ -79,12 +83,18 @@ CFLAGS.dq_bootstrap_test+=	-I${SRCTOP}/lib/libservice \
 				-I${SRCTOP}/lib/libsysctlcmp
 LIBADD.dq_bootstrap_test+=	notify logcmp sysctlcmp service
 
+# jail_setv(3) for the boundary rows (review 3).
+LIBADD.dq_read_test+=	jail
 # jail_setv(3) for the I5 jail_attach row.
 LIBADD.dq_resolve_test+=	jail
 # jail_setv(3) for the address-family row.
 LIBADD.dq_socket_test+=	jail
 # jail_setv(3) and jail_remove(2) for the jailed supervisor.
 LIBADD.dq_restricted_test+=	jail
+# jail_setv(3) for the jail-root rule.
+LIBADD.dq_standing_test+=	jail
+# jail_setv(3) for P1.
+LIBADD.dq_execpin_test+=	jail
 
 # jail_setv(3) for the jailed rows; capability_service_connect(3) on a
 # device descriptor the caller did not open.
@@ -93,9 +103,22 @@ CFLAGS.dq_legitimacy_test+=	-I${SRCTOP}/lib/libcapability
 
 # The controller thread, the harness's kinfo_getfile(3) oracle.
 LIBADD+=	dq pthread util
+# exit_close_storm reads the "dq" malloc type.
+LIBADD.dq_owner_test+=	memstat
 
 # Changes kern.dq.max_inflight_per_object: run alone.
 TEST_METADATA.dq_concurrency_test+=	is_exclusive="true"
+# Changes kern.dq.max_inflight_per_object and _per_requester: run alone.
+TEST_METADATA.dq_deadline_test+=	is_exclusive="true"
+# Runs cases of the other programs under DTrace, one of them
+# dq_deadline_test's: alone.
+TEST_METADATA.dq_dtrace_test+=	is_exclusive="true"
+# Reads the system-wide kern.dq.postop_ignored around its own replies and
+# sets debug.dq.delay_postop_apply: alone.
+TEST_METADATA.dq_write_test+=	is_exclusive="true"
+# swap_late_reply_consumed sets debug.dq.delay_swap_take, which delays
+# any swap reply: alone.
+TEST_METADATA.dq_swap_test+=	is_exclusive="true"
 # Attaches a global OES client, as the OES suite does: run alone.
 TEST_METADATA.dq_oes_test+=	is_exclusive="true"
 # Switches mac_abac to enforcing for one rule, and traces with dtrace: alone.
@@ -119,6 +142,8 @@ TEST_METADATA.dq_owner_test+=	is_exclusive="true"
 TEST_METADATA.dq_start_test+=	is_exclusive="true"
 # Creates jails: run alone.
 TEST_METADATA.dq_restricted_test+=	is_exclusive="true"
+# Creates a jail, sets compat.linux.emul_path: run alone.
+TEST_METADATA.dq_standing_test+=	is_exclusive="true"
 # Runs dqswap, which attaches its command: run alone.
 TEST_METADATA.dq_dqswap_test+=	is_exclusive="true"
 # Set kern.chroot_allow_open_directories, mount linprocfs, call acct(2),
@@ -128,6 +153,9 @@ TEST_METADATA.dq_getcwd_test+=	is_exclusive="true"
 TEST_METADATA.dq_kclass_test+=	is_exclusive="true"
 # Runs whole suites in a served root and in chroot(8): alone, with time.
 TEST_METADATA.dq_tree_suites_test+=	is_exclusive="true" timeout="7200"
+# Runs one served-root case 200 times beside CPU burners; only with
+# test_suites.FreeBSD.dq_hang_loop set: alone.
+TEST_METADATA.dq_tree_hang_loop+=	is_exclusive="true"
 # Runs whole suites twice under kyua: alone, and with time.  670 to 1440 s
 # on an idle host; more than 3600 s on a loaded one (host load 25-40).
 TEST_METADATA.dq_oracle_test+=	is_exclusive="true" timeout="7200"
@@ -141,8 +169,15 @@ LIBADD.dqpass=	dq
 MAN.dqpass=
 BINDIR.dqpass=	${TESTSDIR}
 ${PACKAGE}FILES+=	dqpass.expected
-# The shell functions dq_oracle_test and dq_tree_suites_test share.
+# The shell functions dq_oracle_test and dq_tree_suites_test share, and
+# the hang capture of the served-root runs (T-R11, T-R12).
 ${PACKAGE}FILES+=	dq_suites.subr
+${PACKAGE}FILES+=	dq_hang.subr
+# The hang capture's event-driven watch (kqueue, no polling).
+PROGS+=		dq_hangwatch
+SRCS.dq_hangwatch=	dq_hangwatch.c
+MAN.dq_hangwatch=
+BINDIR.dq_hangwatch=	${TESTSDIR}
 
 # dqswap (share/examples/dq): the example supervisor that gives up root
 # after the attach; dq_dqswap_test runs it.
@@ -166,6 +201,12 @@ SRCS.dq_exec_helper=	dq_exec_helper.c
 MAN.dq_exec_helper=
 BINDIR.dq_exec_helper=	${TESTSDIR}
 
+# dq_execpin_test's image.
+PROGS+=		dq_execpin_helper
+SRCS.dq_execpin_helper=	dq_execpin_helper.c
+MAN.dq_execpin_helper=
+BINDIR.dq_execpin_helper=	${TESTSDIR}
+
 # dq_owner_test's exec'd image.
 PROGS+=		dq_owner_helper
 SRCS.dq_owner_helper=	dq_owner_helper.c
@@ -180,15 +221,15 @@ MAN.dq_legitimacy_helper=
 BINDIR.dq_legitimacy_helper=	${TESTSDIR}
 
 # The foreign-ABI programs: freestanding amd64 Linux programs for the
-# Linux rows of dq_owner_test, dq_served_test, dq_swap_test and
-# dq_legitimacy_test, and the i386 FreeBSD and Linux images of
-# dq_legitimacy_test's ilp32_no_abi.  No libc and no headers but
-# dq_linux.h: they are built here with the cross compiler for their own
-# target and installed beside the tests, which run them.  x86 assembly:
-# amd64 only, as are the rows (require.arch).  Cross targets take clang
-# and lld; with another compiler or linker (an external GCC toolchain,
-# WITHOUT_CLANG, WITHOUT_LLD) the programs are not built and the rows
-# fail, as they do for any missing prerequisite.
+# Linux rows of dq_owner_test, dq_served_test, dq_swap_test,
+# dq_legitimacy_test and dq_standing_test, and the i386 FreeBSD and
+# Linux images of dq_legitimacy_test's ilp32_no_abi.  No libc and no
+# headers but dq_linux.h: they are built here with the cross compiler
+# for their own target and installed beside the tests, which run them.
+# x86 assembly: amd64 only, as are the rows (require.arch).  Cross
+# targets take clang and lld; with another compiler or linker (an
+# external GCC toolchain, WITHOUT_CLANG, WITHOUT_LLD) the programs are
+# not built and the rows fail, as they do for any missing prerequisite.
 .include <bsd.compiler.mk>
 .include <bsd.linker.mk>
 .if ${MACHINE_ARCH} == "amd64" && ${COMPILER_TYPE} == "clang" && \
@@ -199,7 +240,8 @@ DQ_FOREIGN_CFLAGS= -fuse-ld=lld -nostdlib -static -fno-stack-protector \
 .if ${MK_WERROR} != "no"
 DQ_FOREIGN_CFLAGS+= -Werror
 .endif
-DQ_LINUX=	dq_owner_linux dq_opath_linux dq_swap_linux dq_legitimacy_linux
+DQ_LINUX=	dq_owner_linux dq_opath_linux dq_swap_linux dq_legitimacy_linux \
+		dq_standing_linux
 DQ_ILP32=	dq_legitimacy_ilp32_freebsd dq_legitimacy_ilp32_linux
 .for _p in ${DQ_LINUX}
 DQ_TARGET.${_p}=	x86_64-unknown-linux-gnu

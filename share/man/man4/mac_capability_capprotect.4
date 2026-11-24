@@ -3,7 +3,7 @@
 .\"
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd November 17, 2026
+.Dd November 24, 2026
 .Dt MAC_CAPABILITY_CAPPROTECT 4
 .Os
 .Sh NAME
@@ -67,6 +67,17 @@ on such a child adds its own flags and makes the caller its protector; at
 exec the inherited ptrace shield drops and the child keeps exactly the flags
 it was given.
 Only ptrace is inherited.
+A process that already shared the memory when the process shielded itself
+(an earlier
+.Dv RFMEM
+or
+.Xr vfork 2
+child) stays unshielded: shield a process before it creates sharers.
+An
+.Dv RFMEM
+sharer of a software-authority holder that installs a different authority
+lets that authority's peers debug it, and so reach the holder's memory; no
+base program does this.
 .Pp
 A shield is not applied to a process that a debugger is tracing:
 .Dv CP_OP_SHIELD
@@ -127,7 +138,36 @@ process; restriction flags limit what the shielded process may do itself.
 .It Dv CP_SF_PTRACE Pq 0x0001
 Block
 .Xr ptrace 2
-attach from foreign processes.
+attach from foreign processes, and every other debugging access
+.Pq Xr p_candebug 9 :
+reading or writing the process's memory, its environment, descriptors and
+working directory, and new probes of the pid provider of
+.Xr dtrace 1
+.Pq Dv FASTTRAPIOC_MAKEPROBE .
+A pid probe made before the shield can still be enabled, and an enabled
+one keeps firing.
+The shield does not apply to the DTrace kernel providers: a consumer with
+the DTrace kernel privilege reads the process's memory with
+.Fn copyin
+from
+.Sy syscall ,
+.Sy fbt
+or
+.Sy profile
+probes that fire in it, and with
+.Fl w
+writes it, signals it or stops it
+.Pq Fn copyout , Fn raise , Fn stop .
+Inspection is not blocked: the process's memory map, auxiliary vector,
+ps_strings and signal trampoline locations, umask and kernel stacks
+.Pq Xr p_caninspect 9 ,
+as
+.Xr procstat 1 Fl v Fl k Fl x
+and the symbols of
+.Xr dtrace 1 Ns 's
+.Fn ustack
+read them, and the registration of the process's USDT probes from its own
+read-only file mappings.
 .It Dv CP_SF_SIGNAL Pq 0x0002
 Block signals from foreign processes, and suspension that bypasses signal
 delivery.
@@ -311,7 +351,9 @@ Foreign access to a shielded process is denied with
 .Er EACCES
 by the following hooks when the corresponding flag is set:
 .Fn mpo_proc_check_debug
-.Pq Dv CP_SF_PTRACE ,
+.Pq Dv CP_SF_PTRACE ;
+.Fn mpo_proc_check_inspect
+always allows,
 .Fn mpo_proc_check_signal
 .Pq Dv CP_SF_SIGNAL , CP_SF_SIGKILL , CP_SF_SIGCONT ,
 .Fn mpo_proc_check_suspend
@@ -384,58 +426,6 @@ Fires on a state change:
 or
 .Dq inherit-drop
 (the inherited ptrace shield dropped at exec).
-.El
-.Sh DTRACE
-The pid provider of
-.Xr dtrace 1
-places breakpoints at addresses the consumer chooses, so creating its
-probes
-.Pq Dv FASTTRAPIOC_MAKEPROBE
-needs permission to debug the process: a ptrace shield refuses it with
-.Er EACCES ,
-except for the protector and token holders.
-Inside a process with a ptrace shield, a no-ambient process or a
-software-authority holder, the process-destructive actions
-.Fn copyout
-and
-.Fn copyoutstr
-of
-.Fl w
-are refused; inside a process with a signal shield or a no-ambient process,
-.Fn raise
-and
-.Fn stop
-are refused.
-The sysctl
-.Va debug.dtrace.protected_proc_refusals
-counts the refusals.
-Observation is not refused: kernel providers, reads of the process's memory
-in probe context, and USDT probes.
-.Ss Residuals
-.Bl -bullet
-.It
-A process that already had
-.Dv RFMEM
-sharers when it shielded itself leaves those sharers unshielded.
-Shield a process before it creates sharers.
-.It
-An
-.Dv RFMEM
-sharer of a software-authority holder that installs a different authority
-lets that authority's peers debug it, and so reach the holder's memory.
-No base program does this.
-.It
-A pid probe created before the process was shielded can still be enabled,
-and a probe created by a token holder stays enableable after the token is
-revoked: revocation stops only new probes.
-Close the consumer, or let the process execute a new image, to remove them.
-.It
-A
-.Fl w
-probe that fires in an aio daemon while it works on a shielded process's
-memory acts in the daemon, which is not shielded, so
-.Fn copyout
-there writes the shielded process's memory.
 .El
 .Sh EXAMPLES
 Shield a process from ptrace and signals:

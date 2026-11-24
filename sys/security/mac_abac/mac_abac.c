@@ -233,7 +233,7 @@ sysctl_abac_enabled(SYSCTL_HANDLER_ARGS)
 		return (EPERM);
 	if (value != 0 && value != 1)
 		return (EINVAL);
-	abac_enabled = value;
+	abac_gate_store(&abac_enabled, value);
 	return (0);
 }
 
@@ -250,7 +250,7 @@ sysctl_abac_mode(SYSCTL_HANDLER_ARGS)
 		return (EPERM);
 	if (value < ABAC_MODE_DISABLED || value > ABAC_MODE_ENFORCING)
 		return (EINVAL);
-	abac_mode = value;
+	abac_gate_store(&abac_mode, value);
 	return (0);
 }
 
@@ -330,6 +330,7 @@ abac_dq_check(struct ucred *active_cred, struct file *fp, uint32_t op)
 
 	if (fp->f_type != DTYPE_DQ)
 		return (0);
+	ABAC_CHECK_LIVE(op);
 	ABAC_CHECK_ENABLED();
 	qcred = dq_file_cred(fp);
 	if (qcred == NULL)
@@ -414,19 +415,6 @@ static struct mac_policy_ops abac_ops = {
 
 	/* Credential checks */
 	.mpo_cred_check_relabel = abac_cred_check_relabel,
-	.mpo_cred_check_setuid = abac_cred_check_setuid,
-	.mpo_cred_check_seteuid = abac_cred_check_seteuid,
-	.mpo_cred_check_setgid = abac_cred_check_setgid,
-	.mpo_cred_check_setegid = abac_cred_check_setegid,
-	.mpo_cred_check_setgroups = abac_cred_check_setgroups,
-	.mpo_cred_check_setreuid = abac_cred_check_setreuid,
-	.mpo_cred_check_setregid = abac_cred_check_setregid,
-	.mpo_cred_check_setresuid = abac_cred_check_setresuid,
-	.mpo_cred_check_setresgid = abac_cred_check_setresgid,
-	.mpo_cred_check_setcred = abac_cred_check_setcred,
-	.mpo_cred_check_setaudit = abac_cred_check_setaudit,
-	.mpo_cred_check_setaudit_addr = abac_cred_check_setaudit_addr,
-	.mpo_cred_check_setauid = abac_cred_check_setauid,
 
 	/* Vnode label lifecycle */
 	.mpo_vnode_init_label = abac_vnode_init_label,
@@ -493,13 +481,9 @@ static struct mac_policy_ops abac_ops = {
 	.mpo_socket_check_accept = abac_socket_check_accept,
 	.mpo_socket_check_bind = abac_socket_check_bind,
 	.mpo_socket_check_connect = abac_socket_check_connect,
-	.mpo_socket_check_create = abac_socket_check_create,
 	.mpo_socket_check_listen = abac_socket_check_listen,
-	.mpo_socket_check_poll = abac_socket_check_poll,
 	.mpo_socket_check_receive = abac_socket_check_receive,
 	.mpo_socket_check_send = abac_socket_check_send,
-	.mpo_socket_check_stat = abac_socket_check_stat,
-	.mpo_socket_check_visible = abac_socket_check_visible,
 	.mpo_socket_check_deliver = abac_socket_check_deliver,
 
 	/* Socketpeer label lifecycle */
@@ -515,8 +499,6 @@ static struct mac_policy_ops abac_ops = {
 	.mpo_pipe_create = abac_pipe_create,
 
 	/* Pipe checks */
-	.mpo_pipe_check_ioctl = abac_pipe_check_ioctl,
-	.mpo_pipe_check_poll = abac_pipe_check_poll,
 	.mpo_pipe_check_read = abac_pipe_check_read,
 	.mpo_pipe_check_relabel = abac_pipe_check_relabel,
 	.mpo_pipe_check_stat = abac_pipe_check_stat,
@@ -528,7 +510,6 @@ static struct mac_policy_ops abac_ops = {
 	.mpo_posixshm_create = abac_posixshm_create,
 
 	/* POSIX shm checks */
-	.mpo_posixshm_check_create = abac_posixshm_check_create,
 	.mpo_posixshm_check_mmap = abac_posixshm_check_mmap,
 	.mpo_posixshm_check_open = abac_posixshm_check_open,
 	.mpo_posixshm_check_read = abac_posixshm_check_read,
@@ -547,10 +528,6 @@ static struct mac_policy_ops abac_ops = {
 	.mpo_file_check_mmap = abac_dq_check_mmap,
 	.mpo_file_check_setattr = abac_dq_check_setattr,
 #endif
-
-	/* Privilege hooks */
-	.mpo_priv_check = abac_priv_check,
-	.mpo_priv_grant = abac_priv_grant,
 
 	/* System-level checks */
 	.mpo_kld_check_load = abac_kld_check_load,
@@ -714,7 +691,7 @@ abac_syscall(struct thread *td, int call, void *arg)
 		if (abac_log_level >= ABAC_LOG_ADMIN)
 			log(LOG_NOTICE, "abac: mode changed %d -> %d by pid %d uid %d\n",
 			    abac_mode, val, td->td_proc->p_pid, td->td_ucred->cr_uid);
-		abac_mode = val;
+		abac_gate_store(&abac_mode, val);
 		break;
 
 	case ABAC_SYS_GETSTATS:
@@ -745,7 +722,7 @@ abac_syscall(struct thread *td, int call, void *arg)
 		if (abac_log_level >= ABAC_LOG_ADMIN)
 			log(LOG_NOTICE, "abac: default policy changed %d -> %d by pid %d uid %d\n",
 			    abac_default_policy, val, td->td_proc->p_pid, td->td_ucred->cr_uid);
-		abac_default_policy = val;
+		abac_gate_store(&abac_default_policy, val);
 		break;
 
 	case ABAC_SYS_RULE_ADD:
@@ -1299,7 +1276,179 @@ abac_syscall(struct thread *td, int call, void *arg)
  *
  * ABAC must be present when the MAC framework initializes object labels.
  * It cannot be loaded after boot, and omitting UNLOADOK prevents labels and
- * their UMA-backed storage from outliving the policy code.
+ * their UMA-backed storage from outliving the policy code.  Its hooks count
+ * toward the framework's fast-path flags only while abac_live_ops needs
+ * them (abac_gate_update_locked()).
  */
 MAC_POLICY_SET(&abac_ops, mac_abac, "ABAC MAC Policy",
-    MPC_LOADTIME_FLAG_NOTLATE, &abac_slot);
+    MPC_LOADTIME_FLAG_NOTLATE | MPC_LOADTIME_FLAG_FP_INACTIVE, &abac_slot);
+
+/*
+ * Idle gating.
+ *
+ * mac_abac is compiled in and costs nothing for an operation no rule can
+ * decide.  abac_live_ops is the set of operations whose hooks must
+ * evaluate: none while the policy is disabled; all of them under default
+ * deny (no rule matching is then a denial) or force_hooks; otherwise the
+ * operations named by the rules of enabled sets.  A rule-evaluating hook
+ * whose operations are not live returns 0 at its first test, which is what
+ * its evaluation would have returned: with default allow only a matching
+ * rule can deny, and no rule names the operation.
+ *
+ * abac_gate_update_locked() runs with abac_rules_lock held for writing,
+ * immediately before every release after a change of the rule table, of a
+ * set's state, or of enabled, mode, default policy or force_hooks.  Every
+ * evaluator holds the lock shared, so the change is invisible until the
+ * release, and the gates and the framework's fast-path flags are already
+ * set by then: an operation that starts after the call that made the
+ * change returns is checked against it.  Labels and the rule-independent
+ * label protections are never gated.
+ */
+uint32_t abac_live_ops __read_mostly;
+int abac_force_hooks;
+
+
+/* The fast-path hooks of mac_abac and the operations they evaluate. */
+static const struct abac_fp_gate {
+	u_short		afg_hook;
+	uint32_t	afg_ops;
+} abac_fp_gate[] = {
+	{ MAC_FP_HOOK(vnode_check_access),	ABAC_OP_ACCESS },
+	{ MAC_FP_HOOK(vnode_check_lookup),	ABAC_OP_LOOKUP },
+	{ MAC_FP_HOOK(vnode_check_readlink),	ABAC_OP_READ },
+	{ MAC_FP_HOOK(vnode_check_open),	ABAC_OP_OPEN },
+	{ MAC_FP_HOOK(vnode_check_stat),	ABAC_OP_STAT },
+	{ MAC_FP_HOOK(vnode_check_read),	ABAC_OP_READ },
+	{ MAC_FP_HOOK(vnode_check_write),	ABAC_OP_WRITE },
+	{ MAC_FP_HOOK(vnode_check_mmap),	ABAC_OP_MMAP },
+	{ MAC_FP_HOOK(vnode_check_poll),	ABAC_OP_READ },
+	{ MAC_FP_HOOK(vnode_check_rename_from),	ABAC_OP_RENAME },
+	{ MAC_FP_HOOK(proc_check_mprotect),	ABAC_OP_MPROTECT },
+	{ MAC_FP_HOOK(pipe_check_read),		ABAC_OP_READ },
+	{ MAC_FP_HOOK(pipe_check_stat),		ABAC_OP_STAT },
+	{ MAC_FP_HOOK(pipe_check_write),	ABAC_OP_WRITE },
+	{ MAC_FP_HOOK(socket_check_send),	ABAC_OP_SEND },
+	{ MAC_FP_HOOK(socket_check_receive),	ABAC_OP_RECEIVE },
+#ifdef DEV_DQ
+	{ MAC_FP_HOOK(file_check_read),		ABAC_OP_READ },
+	{ MAC_FP_HOOK(file_check_write),	ABAC_OP_WRITE },
+	{ MAC_FP_HOOK(file_check_stat),		ABAC_OP_STAT },
+	{ MAC_FP_HOOK(file_check_mmap),		ABAC_OP_MMAP },
+#endif
+};
+
+void
+abac_gate_update_locked(void)
+{
+	u_short on[nitems(abac_fp_gate)], off[nitems(abac_fp_gate)];
+	const struct abac_rule *r;
+	uint32_t old, want;
+	u_int i, non, noff;
+	bool was, now;
+	int error __diagused;
+
+	rw_assert(&abac_rules_lock, RA_WLOCKED);
+	want = 0;
+	if (abac_initialized && abac_enabled != 0 &&
+	    abac_mode != ABAC_MODE_DISABLED) {
+		if (abac_default_policy != 0 || abac_force_hooks != 0)
+			want = ABAC_OP_ALL;
+		else {
+			for (i = 0; i < abac_rule_end; i++) {
+				r = abac_rules[i];
+				if (r != NULL && ABAC_SET_IS_ENABLED(r->vr_set))
+					want |= r->vr_operations & ABAC_OP_ALL;
+			}
+		}
+	}
+	old = abac_live_ops;
+	if (want == old)
+		return;
+	non = noff = 0;
+	for (i = 0; i < nitems(abac_fp_gate); i++) {
+		was = (old & abac_fp_gate[i].afg_ops) != 0;
+		now = (want & abac_fp_gate[i].afg_ops) != 0;
+		if (now && !was)
+			on[non++] = abac_fp_gate[i].afg_hook;
+		else if (!now && was)
+			off[noff++] = abac_fp_gate[i].afg_hook;
+	}
+	/* Enable before publishing, disable after. */
+	atomic_store_32(&abac_live_ops, old | want);
+	error = mac_policy_fastpath_set(&mac_abac_mac_policy_conf, on, non,
+	    true);
+	KASSERT(error == 0, ("abac gate on: %d", error));
+	error = mac_policy_fastpath_set(&mac_abac_mac_policy_conf, off, noff,
+	    false);
+	KASSERT(error == 0, ("abac gate off: %d", error));
+	atomic_store_32(&abac_live_ops, want);
+}
+
+/*
+ * Every fast-path hook mac_abac implements must be in abac_fp_gate[]: one
+ * that is not would never be counted, and its rules never enforced while
+ * no other policy held the flag.  An uncovered hook is counted for good
+ * instead (it costs time, never enforcement); INVARIANTS kernels stop.
+ * Registration happened at SI_SUB_MAC_POLICY with nothing counted.
+ */
+static void
+abac_gate_check_coverage(void *arg __unused)
+{
+	u_short hooks[64];
+	u_int i, j, n;
+	int error __diagused;
+
+	n = mac_policy_fastpath_hooks(&mac_abac_mac_policy_conf, hooks,
+	    nitems(hooks));
+	KASSERT(n <= nitems(hooks), ("mac_abac: %u fast-path hooks", n));
+	for (i = 0; i < MIN(n, nitems(hooks)); i++) {
+		for (j = 0; j < nitems(abac_fp_gate); j++)
+			if (abac_fp_gate[j].afg_hook == hooks[i])
+				break;
+		if (j < nitems(abac_fp_gate))
+			continue;
+		printf("mac_abac: fast-path hook %u has no gate entry; "
+		    "kept active\n", hooks[i]);
+		error = mac_policy_fastpath_set(&mac_abac_mac_policy_conf,
+		    &hooks[i], 1, true);
+		KASSERT(false, ("mac_abac: fast-path hook %u not gated (%d)",
+		    hooks[i], error));
+	}
+}
+SYSINIT(abac_gate, SI_SUB_MAC_LATE, SI_ORDER_ANY, abac_gate_check_coverage,
+    NULL);
+
+/* Store a setting that decides liveness, under the rule lock. */
+void
+abac_gate_store(int *setting, int value)
+{
+
+	rw_wlock(&abac_rules_lock);
+	*setting = value;
+	abac_gate_update_locked();
+	rw_wunlock(&abac_rules_lock);
+}
+
+static int
+sysctl_abac_force_hooks(SYSCTL_HANDLER_ARGS)
+{
+	int error, value;
+
+	value = abac_force_hooks;
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	/* It only adds evaluation, so a locked policy accepts it. */
+	if (value != 0 && value != 1)
+		return (EINVAL);
+	abac_gate_store(&abac_force_hooks, value);
+	return (0);
+}
+
+SYSCTL_UINT(_security_mac_mac_abac, OID_AUTO, live_ops,
+    CTLFLAG_RD | CTLFLAG_MPSAFE, &abac_live_ops, 0,
+    "Operations whose hooks evaluate (ABAC_OP_* bits)");
+SYSCTL_PROC(_security_mac_mac_abac, OID_AUTO, force_hooks,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+    sysctl_abac_force_hooks, "I",
+    "Evaluate every hook even when no rule names its operation");

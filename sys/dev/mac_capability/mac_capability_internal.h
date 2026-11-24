@@ -30,7 +30,6 @@
 #define	MAC_CAPABILITY_DEF_INSTANCE_LIMIT	1024	/* default instances per service */
 #define	MAC_CAPABILITY_MAX_INSTANCES	(1024 * 1024) /* max instances per service */
 #define	MAC_CAPABILITY_MAX_SVC_THREADS	4	/* max taskqueue threads per service */
-#define	MAC_CAPABILITY_POLL_TICKS		(hz / 20) /* 50ms refcount poll interval */
 
 /*
  * Fixed-size message — 16384 bytes (4 pages).
@@ -126,7 +125,10 @@ struct mac_capability_call_waiter {
 struct mac_capability_callback_state {
 	u_int cs_refs;
 	volatile u_int cs_done;
+	/* Watchers to enqueue on completion, or MAC_CAPABILITY_CS_DONE. */
+	struct mac_capability_cs_watch * volatile cs_watch;
 };
+#define	MAC_CAPABILITY_CS_DONE	((struct mac_capability_cs_watch *)1)
 
 /*
  * Instance — one per struct file.  Internal layout.
@@ -141,6 +143,7 @@ struct mac_capability_callback_state {
 struct mac_capability_instance {
 	struct mac_capability_service *ci_service;	/* (I) owning service */
 	struct mac_capability_callback_state *ci_callback_state; /* (M) lazy */
+	LIST_HEAD(, mac_capability_death_watch) ci_death_watches; /* (M) */
 	void		*ci_priv;		/* (I) service-private data */
 	struct cap_authority_lease *ci_lease; /* (M) Immutable lifetime binding. */
 	LIST_ENTRY(mac_capability_instance) ci_lease_link; /* lease mutex */
@@ -177,6 +180,8 @@ struct mac_capability_instance {
 };
 
 #define	MAC_CAPABILITY_SVCF_DESTROYING	0x0001
+/* Destroyed and still pinned by instances: on mac_capability_dead_services. */
+#define	MAC_CAPABILITY_SVCF_DEAD_LISTED	0x0002
 
 /*
  * Registered service — internal layout.
@@ -190,6 +195,17 @@ struct mac_capability_service {
 	LIST_ENTRY(mac_capability_service) csvc_link;	/* (L) registry list link */
 	char		csvc_name[MAC_CAPABILITY_MAXNAME]; /* (I) service name */
 	const struct mac_capability_ops *csvc_ops;	/* (I) operation callbacks */
+	/*
+	 * (I) Which callbacks csvc_ops has, copied at registration.  Every
+	 * path that may run on an open descriptor after a destroy (send,
+	 * call, GETINFO, kqfilter, receive) tests these, never csvc_ops
+	 * itself outside an op_enter bracket: the providing module may have
+	 * unloaded.
+	 */
+	bool		csvc_has_handler;
+	bool		csvc_has_call;
+	bool		csvc_has_direct_peer;
+	bool		csvc_has_txdrain;
 	void		*csvc_arg;		/* (I) callback argument */
 	LIST_HEAD(, mac_capability_instance) csvc_instances; /* (L) instance list */
 	u_int		csvc_admissions;	/* (L) constructors/authorization */
@@ -207,6 +223,7 @@ struct mac_capability_service {
 extern struct sx mac_capability_registry_lock;
 LIST_HEAD(mac_capability_service_list, mac_capability_service);
 extern struct mac_capability_service_list mac_capability_services;
+extern struct mac_capability_service_list mac_capability_dead_services;
 extern uma_zone_t mac_capability_instance_zone;
 extern uma_zone_t mac_capability_msg_zone;
 extern uma_zone_t mac_capability_msg_small_zone;
@@ -219,9 +236,18 @@ extern counter_u64_t mac_capability_stat_instances;
 struct mac_capability_callback_state *mac_capability_callback_state_get(
 	    struct mac_capability_instance *s);
 bool	mac_capability_callback_state_done(struct mac_capability_callback_state *cs);
+/* Sleep until the callback returned (event driven); caller holds a reference. */
+void	mac_capability_callback_state_wait(struct mac_capability_callback_state *cs,
+	    const char *wmesg);
+/* Sleep until at most max (1 or 2) references remain; caller holds one. */
+void	mac_capability_instance_wait_refs(struct mac_capability_instance *s,
+	    u_int max, const char *wmesg);
 void	mac_capability_callback_state_rele(struct mac_capability_callback_state *cs);
 /* Caller holds ci_mtx and owns FINALIZED; publish completed rollback/callback. */
 void	mac_capability_revoke_done_locked(struct mac_capability_instance *s);
+/* Set CLOSED or REVOKED under ci_mtx; runs the death hook on the first. */
+void	mac_capability_instance_mark_dead_locked(struct mac_capability_instance *s,
+	    int flag);
 /* Caller owns FINALIZED and keeps the instance/service alive through return. */
 void	mac_capability_revoke_callback(struct mac_capability_instance *s,
 	    enum mac_capability_revoke_reason reason);
@@ -255,9 +281,12 @@ int	mac_capability_call_intercept_locked(struct mac_capability_instance *s,
 	    struct mac_capability_msg *msg);
 void	mac_capability_call_cancel_locked(struct mac_capability_instance *s,
 	    uint64_t token);
-void	mac_capability_instance_drain_txq(struct mac_capability_instance *s);
-void	mac_capability_instance_drain_rxq(struct mac_capability_instance *s);
-void	mac_capability_free_msgq(struct mac_capability_msgq *q);
+void	mac_capability_instance_drain_rxq(struct mac_capability_instance *s,
+	    struct mac_capability_msgq *q);
+void	mac_capability_free_msgq_deferred(struct mac_capability_msgq *q);
+void	mac_capability_reap_init(void);
+void	mac_capability_reap_uninit(void);
+void	mac_capability_reap_drain(void);
 void	mac_capability_service_free(struct mac_capability_service *svc);
 extern const struct fileops mac_capability_instance_ops;
 
@@ -272,10 +301,20 @@ extern const struct fileops mac_capability_instance_ops;
 #define	MAC_CAPABILITY_TEST_ISSUER_ANCHORED	2
 extern int mac_capability_test_issuer_enabled;	/* the tunable, 0 or 1 */
 extern volatile u_int mac_capability_test_issuer_fail_init;
+extern volatile u_int mac_capability_test_issuer_fail_count;
+extern volatile u_int mac_capability_test_issuer_fail_skip;
+int	mac_capability_test_issuer_fail_take(void);
+extern volatile u_int mac_capability_test_issuer_oes_trylock_fail;
+/* The OES deferred-delivery and gate hold points; also in oes_internal.h. */
+void	mac_capability_test_issuer_oes_defer_park(void);
+void	mac_capability_test_issuer_oes_gate_park(void);
+void	mac_capability_test_issuer_oes_gate_release(void);
 extern volatile u_long mac_capability_test_issuer_created;
 extern volatile u_int mac_capability_test_issuer_live;
 u_int	mac_capability_test_issuer_state(void);
 void	mac_capability_test_issuer_anchor(void);
+int	mac_capability_test_issuer_wait_live(u_int);
+void	mac_capability_test_issuer_park(pid_t pid, size_t len);
 #endif
 
 #endif /* _KERNEL */

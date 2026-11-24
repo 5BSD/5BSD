@@ -21,6 +21,7 @@
 #include <unistd.h>
 
 #include <security/oes/oes.h>
+#include "test_common.h"
 
 static int
 test_read_default_paths_sysctl(void)
@@ -46,27 +47,24 @@ test_read_default_paths_sysctl(void)
 	return (0);
 }
 
+/*
+ * security.oes.default_self_mute is gone: a client never receives its own
+ * processes' events, unconditionally (oes(4), "A client's own processes").
+ */
 static int
-test_read_default_self_mute_sysctl(void)
+test_no_default_self_mute_sysctl(void)
 {
 	int val;
 	size_t len = sizeof(val);
-	int ret;
 
-	printf("  Testing read security.oes.default_self_mute...\n");
+	printf("  Testing security.oes.default_self_mute is absent...\n");
 
-	ret = sysctlbyname("security.oes.default_self_mute", &val, &len, NULL, 0);
-	if (ret < 0) {
-		if (errno == ENOENT) {
-			printf("    FAIL: sysctl not found (module not loaded?)\n");
-			return (1);
-		}
-		perror("sysctlbyname");
+	if (sysctlbyname("security.oes.default_self_mute", &val, &len, NULL,
+	    0) == 0 || errno != ENOENT) {
+		printf("    FAIL: security.oes.default_self_mute exists\n");
 		return (1);
 	}
-
-	printf("    current value: %d\n", val);
-	printf("    PASS: read default_self_mute\n");
+	printf("    PASS: no default_self_mute sysctl\n");
 	return (0);
 }
 
@@ -233,8 +231,14 @@ test_default_mute_applied(void)
 	return (1);
 }
 
+/*
+ * The rule that replaced the default self-mute is not a mute: a new client
+ * lists no self entry, and clearing every process mute does not let it
+ * receive its opener's events.  The fence is an open by a child, which is
+ * not a reader of the client.
+ */
 static int
-test_default_self_mute(void)
+test_own_events_not_a_mute(void)
 {
 	int fd;
 	struct oes_mode_args mode;
@@ -242,110 +246,80 @@ test_default_self_mute(void)
 	struct oes_get_muted_processes_args get_procs;
 	struct oes_muted_process_entry entries[16];
 	oes_event_type_t events[] = { OES_EVENT_NOTIFY_OPEN };
-	int old_val, new_val = 1;
-	size_t old_len = sizeof(old_val);
-	int ret;
+	test_msg_buf buf;
 	size_t i;
-	int found = 0, mutable = 0;
-	pid_t mypid = getpid();
+	pid_t mypid = getpid(), child;
+	int own = 0, fence = 0, listed = 0, status, tfd;
 
-	printf("  Testing default self-mute...\n");
+	printf("  Testing own events are not a removable mute...\n");
 
-	if (geteuid() != 0) {
-		printf("    SKIP: requires root\n");
-		return (0);
-	}
-
-	/* Save old sysctl value */
-	ret = sysctlbyname("security.oes.default_self_mute", &old_val, &old_len, NULL, 0);
-	if (ret < 0) {
-		if (errno == ENOENT) {
-			printf("    FAIL: sysctl not found (module not loaded?)\n");
-			return (1);
-		}
-		perror("sysctlbyname (read)");
-		return (1);
-	}
-
-	/* Enable default self-mute */
-	ret = sysctlbyname("security.oes.default_self_mute", NULL, NULL,
-	    &new_val, sizeof(new_val));
-	if (ret < 0) {
-		perror("sysctlbyname (write)");
-		return (1);
-	}
-
-	/* Open new client */
 	fd = open("/dev/oes", O_RDWR | O_NONBLOCK);
 	if (fd < 0) {
 		perror("open /dev/oes");
-		sysctlbyname("security.oes.default_self_mute", NULL, NULL,
-		    &old_val, sizeof(old_val));
 		return (1);
 	}
-
 	memset(&mode, 0, sizeof(mode));
 	mode.ema_mode = OES_MODE_NOTIFY;
-	if (ioctl(fd, OES_IOC_SET_MODE, &mode) < 0) {
-		perror("OES_IOC_SET_MODE");
-		close(fd);
-		sysctlbyname("security.oes.default_self_mute", NULL, NULL,
-		    &old_val, sizeof(old_val));
-		return (1);
-	}
-
 	memset(&sub, 0, sizeof(sub));
 	sub.esa_events = events;
 	sub.esa_count = 1;
 	sub.esa_flags = OES_SUB_REPLACE;
-	if (ioctl(fd, OES_IOC_SUBSCRIBE, &sub) < 0) {
-		perror("OES_IOC_SUBSCRIBE");
+	if (ioctl(fd, OES_IOC_SET_MODE, &mode) < 0 ||
+	    ioctl(fd, OES_IOC_SUBSCRIBE, &sub) < 0) {
+		perror("client setup");
 		close(fd);
-		sysctlbyname("security.oes.default_self_mute", NULL, NULL,
-		    &old_val, sizeof(old_val));
 		return (1);
 	}
 
-	/* Query muted processes - should include self */
 	memset(&get_procs, 0, sizeof(get_procs));
 	get_procs.egmp_entries = entries;
 	get_procs.egmp_count = 16;
 	if (ioctl(fd, OES_IOC_GET_MUTED_PROCESSES, &get_procs) < 0) {
 		perror("OES_IOC_GET_MUTED_PROCESSES");
 		close(fd);
-		sysctlbyname("security.oes.default_self_mute", NULL, NULL,
-		    &old_val, sizeof(old_val));
 		return (1);
 	}
+	for (i = 0; i < get_procs.egmp_actual && i < 16; i++)
+		if (entries[i].emp_token.ept_id == (uint64_t)mypid)
+			listed = 1;
 
-	for (i = 0; i < get_procs.egmp_actual && i < 16; i++) {
-		if (entries[i].emp_token.ept_id == (uint64_t)mypid) {
-			found = 1;
-			break;
-		}
+	if (ioctl(fd, OES_IOC_UNMUTE_ALL_PROCESSES) < 0) {
+		perror("OES_IOC_UNMUTE_ALL_PROCESSES");
+		close(fd);
+		return (1);
 	}
-	if (found && ioctl(fd, OES_IOC_UNMUTE_ALL_PROCESSES) == 0) {
-		memset(&get_procs, 0, sizeof(get_procs));
-		get_procs.egmp_entries = entries;
-		get_procs.egmp_count = 16;
-		if (ioctl(fd, OES_IOC_GET_MUTED_PROCESSES, &get_procs) == 0 &&
-		    get_procs.egmp_actual == 0)
-			mutable = 1;
+	tfd = open("/etc/passwd", O_RDONLY);
+	if (tfd >= 0)
+		close(tfd);
+	child = fork();
+	if (child < 0) {
+		perror("fork");
+		close(fd);
+		return (1);
 	}
-
+	if (child == 0) {
+		close(fd);
+		tfd = open("/etc/hosts", O_RDONLY);
+		_exit(tfd >= 0 ? 0 : 1);
+	}
+	(void)waitpid(child, &status, 0);
+	while (!fence && test_wait_event(fd, &buf.msg,
+	    OES_TEST_DEADLINE_MS) == 0) {
+		if (buf.msg.em_event != OES_EVENT_NOTIFY_OPEN)
+			continue;
+		if (buf.msg.em_process.ep_pid == mypid)
+			own++;
+		else if (buf.msg.em_process.ep_pid == child)
+			fence = 1;
+	}
 	close(fd);
 
-	/* Restore old sysctl value */
-	sysctlbyname("security.oes.default_self_mute", NULL, NULL,
-	    &old_val, sizeof(old_val));
-
-	if (found && mutable) {
-		printf("    PASS: default self-mute applied and removable\n");
+	if (!listed && fence && own == 0) {
+		printf("    PASS: no self entry, own events never delivered\n");
 		return (0);
 	}
-	printf("    FAIL: default self-mute was %s and %s\n",
-	    found ? "applied" : "not applied",
-	    mutable ? "removable" : "not removable");
+	printf("    FAIL: self entry %s, fence %s, %d own events\n",
+	    listed ? "listed" : "absent", fence ? "seen" : "not seen", own);
 	return (1);
 }
 
@@ -357,10 +331,10 @@ main(void)
 	printf("Testing default muting sysctls...\n");
 
 	failed += test_read_default_paths_sysctl();
-	failed += test_read_default_self_mute_sysctl();
+	failed += test_no_default_self_mute_sysctl();
 	failed += test_write_default_paths_sysctl();
 	failed += test_default_mute_applied();
-	failed += test_default_self_mute();
+	failed += test_own_events_not_a_mute();
 
 	if (failed > 0) {
 		printf("default muting: FAILED (%d tests)\n", failed);

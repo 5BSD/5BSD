@@ -172,6 +172,14 @@ sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 			if (svc->restart_count > 0)
 				BUF_APPEND(summary, sumlen, &off,
 				    " restarts=%u", svc->restart_count);
+			/*
+			 * A stopped unit with a restart timer armed comes back
+			 * by itself; one without (a clean exit, or the circuit
+			 * breaker's disable) stays stopped until started.
+			 */
+			if (svc->restart_pending)
+				BUF_APPEND(summary, sumlen, &off,
+				    " restart-pending");
 
 			if (svc->launched_by[0] != '\0')
 				BUF_APPEND(summary, sumlen, &off,
@@ -781,9 +789,16 @@ sctl_capsule_request(struct channel *ch __unused,
 				    "Capsule: %s (spine, PID 1)\n"
 				    "control plane: capability "
 				    "(system.lifecycle)\n"
-				    "services loaded: %u\n",
+				    "services loaded: %u\n%s%s%s",
 				    sd.capsule_channel_fd >= 0 ? "reachable" :
-				    "unreachable", sd.nservices);
+				    "unreachable", sd.nservices,
+				    sd.next_issuer_error != 0 ?
+				    "next authority issuer: none (" : "",
+				    sd.next_issuer_error != 0 ?
+				    strerror(sd.next_issuer_error) : "",
+				    sd.next_issuer_error != 0 ? "); the next "
+				    "switchboard start creates one or enters "
+				    "single-user\n" : "");
 				reply.status = 0;
 				break;
 			default:

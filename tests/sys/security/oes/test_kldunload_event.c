@@ -75,6 +75,40 @@ read_events(int fd, int *kldunload_seen, const char *expected_name)
 	}
 }
 
+/*
+ * In the actor: load a module that is not loaded yet and unload it again.
+ * One that loads but will not unload is left and the next one tried.
+ * Exits with 1 + the index of the module it unloaded, or 0.
+ */
+static int
+load_unload(void *arg __unused)
+{
+	const char *modname;
+	int fileid, i;
+
+	for (i = 0; test_modules[i] != NULL; i++) {
+		modname = test_modules[i];
+
+		if (kldfind(modname) >= 0) {
+			fprintf(stderr, "  %s: already loaded, not ours to "
+			    "unload\n", modname);
+			continue;
+		}
+		fileid = kldload(modname);
+		if (fileid < 0) {
+			fprintf(stderr, "  %s: kldload: %s (errno=%d)\n",
+			    modname, strerror(errno), errno);
+			continue;
+		}
+		fprintf(stderr, "  loaded %s (fileid=%d)\n", modname, fileid);
+		if (kldunload(fileid) == 0)
+			return (i + 1);
+		fprintf(stderr, "  %s: kldunload: %s (errno=%d)\n", modname,
+		    strerror(errno), errno);
+	}
+	return (0);
+}
+
 int
 main(void)
 {
@@ -87,10 +121,9 @@ main(void)
 	int kldunload_seen = 0;
 	struct pollfd pfd;
 	struct timespec start;
-	int fileid = -1;
-	int unloaded = 0;
+	int unloaded = 0, status;
 	const char *modname = NULL;
-	int i;
+	pid_t actor;
 
 	printf("Testing NOTIFY_KLDUNLOAD event...\n");
 
@@ -132,38 +165,14 @@ main(void)
 		close(fd);
 		return (1);
 	}
-	/* The unload is this process's own doing: lift the default self mute. */
-	if (test_unmute_self(fd) < 0) {
-		perror("OES_IOC_UNMUTE_PROCESS");
-		close(fd);
-		return (1);
-	}
-
 	/*
-	 * Load a module that is not loaded yet and unload it again.  One
-	 * that loads but will not unload is left and the next one tried.
+	 * The unload is done by an actor child: the test opened the client,
+	 * so its own events never reach it (oes(4)).
 	 */
-	for (i = 0; test_modules[i] != NULL; i++) {
-		modname = test_modules[i];
-
-		if (kldfind(modname) >= 0) {
-			fprintf(stderr, "  %s: already loaded, not ours to "
-			    "unload\n", modname);
-			continue;
-		}
-		fileid = kldload(modname);
-		if (fileid < 0) {
-			fprintf(stderr, "  %s: kldload: %s (errno=%d)\n",
-			    modname, strerror(errno), errno);
-			continue;
-		}
-		fprintf(stderr, "  loaded %s (fileid=%d)\n", modname, fileid);
-		if (kldunload(fileid) == 0) {
-			unloaded = 1;
-			break;
-		}
-		fprintf(stderr, "  %s: kldunload: %s (errno=%d)\n", modname,
-		    strerror(errno), errno);
+	actor = test_in_child(load_unload, NULL, &status);
+	if (actor > 0 && WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+		unloaded = 1;
+		modname = test_modules[WEXITSTATUS(status) - 1];
 	}
 
 	if (!unloaded) {

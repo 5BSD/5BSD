@@ -17,11 +17,13 @@
 #include <sys/filio.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 
 #include <atf-c.h>
 #include <errno.h>
+#include <poll.h>
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
@@ -30,7 +32,7 @@
 
 #include <liboes.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	DATA_LEN	8192
 #define	READ_LEN	100
@@ -167,7 +169,6 @@ collect_ops(oes_client_t *client, oes_message_t *got[NOPS], pid_t pid,
 static oes_client_t *
 oes_client_open(void)
 {
-	struct oes_mute_args mute;
 	oes_client_t *client;
 	int error;
 
@@ -178,15 +179,6 @@ oes_client_open(void)
 	}
 	ATF_REQUIRE_MSG(oes_set_mode(client, OES_MODE_NOTIFY, 0, 0) == 0,
 	    "oes_set_mode: %s", strerror(errno));
-	/*
-	 * security.oes.default_self_mute makes the first SET_MODE mute this
-	 * process; the controller's own close(2) and its DQ_REPLY come from
-	 * here, so lift it.
-	 */
-	memset(&mute, 0, sizeof(mute));
-	mute.emu_flags = OES_MUTE_SELF;
-	ATF_REQUIRE_MSG(ioctl(oes_client_fd(client), OES_IOC_UNMUTE_PROCESS,
-	    &mute) == 0, "unmute self: %s", strerror(errno));
 	ATF_REQUIRE_MSG(oes_subscribe(client, served_events,
 	    nitems(served_events), OES_SUB_REPLACE) == 0, "oes_subscribe: %s",
 	    strerror(errno));
@@ -213,13 +205,44 @@ seen_all(const struct seen *s)
 }
 
 /* Read until every expected event arrived or the wait is over. */
+/* Keep msg if it is one of the events of interest not yet seen. */
+static void
+note(struct seen *s, const oes_message_t *msg, pid_t requester,
+    pid_t controller)
+{
+	pid_t pid;
+
+	pid = msg->em_process.ep_pid;
+	switch (msg->em_event) {
+	case OES_EVENT_NOTIFY_FILE_READ:
+		if (pid == requester && s->read == NULL)
+			s->read = oes_message_copy(msg);
+		break;
+	case OES_EVENT_NOTIFY_FILE_STAT:
+		if (pid == requester && s->stat == NULL)
+			s->stat = oes_message_copy(msg);
+		break;
+	case OES_EVENT_NOTIFY_FILE_CLOSE:
+		/* The requester's exit or the controller's close. */
+		if ((pid == requester || pid == controller) &&
+		    s->close == NULL)
+			s->close = oes_message_copy(msg);
+		break;
+	case OES_EVENT_NOTIFY_DQ_REPLY:
+		if (pid == controller && s->reply == NULL)
+			s->reply = oes_message_copy(msg);
+		break;
+	default:
+		break;
+	}
+}
+
 static void
 collect(oes_client_t *client, struct seen *s, pid_t requester, pid_t controller,
     int ms)
 {
 	const oes_message_t *msg;
 	long start;
-	pid_t pid;
 
 	start = dqt_now_ms();
 	while (!seen_all(s) && dqt_now_ms() - start < ms) {
@@ -229,29 +252,123 @@ collect(oes_client_t *client, struct seen *s, pid_t requester, pid_t controller,
 			dqt_msleep(10);
 			continue;
 		}
-		pid = msg->em_process.ep_pid;
-		switch (msg->em_event) {
-		case OES_EVENT_NOTIFY_FILE_READ:
-			if (pid == requester && s->read == NULL)
-				s->read = oes_message_copy(msg);
-			break;
-		case OES_EVENT_NOTIFY_FILE_STAT:
-			if (pid == requester && s->stat == NULL)
-				s->stat = oes_message_copy(msg);
-			break;
-		case OES_EVENT_NOTIFY_FILE_CLOSE:
-			/* The requester's exit or the controller's close. */
-			if ((pid == requester || pid == controller) &&
-			    s->close == NULL)
-				s->close = oes_message_copy(msg);
-			break;
-		case OES_EVENT_NOTIFY_DQ_REPLY:
-			if (pid == controller && s->reply == NULL)
-				s->reply = oes_message_copy(msg);
-			break;
-		default:
-			break;
+		note(s, msg, requester, controller);
+	}
+}
+
+/*
+ * An observer process for events the controller itself causes: a client
+ * never receives events of the processes that act as it (oes(4), "A
+ * client's own processes"), so the controller (this process) cannot read
+ * them from a client it opened or reads.  The observer opens and reads the
+ * client and forwards each message, length first, over a stream socket;
+ * it exits when the socket closes.
+ */
+static void __dead2
+observer_main(int sock)
+{
+	oes_client_t *client;
+	const oes_message_t *msg;
+	struct pollfd pfd[2];
+	uint32_t len;
+
+	/* No ATF calls here: this is a child of the test case. */
+	client = oes_client_create();
+	if (client == NULL ||
+	    oes_set_mode(client, OES_MODE_NOTIFY, 0, 0) != 0 ||
+	    oes_subscribe(client, served_events, nitems(served_events),
+	    OES_SUB_REPLACE) != 0)
+		_exit(4);
+	if (write(sock, "R", 1) != 1)
+		_exit(1);
+	pfd[0].fd = oes_client_fd(client);
+	pfd[0].events = POLLIN;
+	pfd[1].fd = sock;
+	pfd[1].events = POLLIN;
+	for (;;) {
+		if (poll(pfd, 2, INFTIM) < 0) {
+			if (errno == EINTR)
+				continue;
+			_exit(2);
 		}
+		if (pfd[1].revents != 0)
+			_exit(0);	/* the test closed its end */
+		while (oes_read_event(client, &msg, false) == 0) {
+			len = msg->em_size;
+			if (write(sock, &len, sizeof(len)) != sizeof(len) ||
+			    write(sock, msg, len) != (ssize_t)len)
+				_exit(3);
+		}
+	}
+}
+
+static pid_t
+observer_start(int *sockp)
+{
+	int sv[2];
+	pid_t pid;
+	char c;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		close(sv[0]);
+		observer_main(sv[1]);
+	}
+	close(sv[1]);
+	ATF_REQUIRE_MSG(read(sv[0], &c, 1) == 1 && c == 'R',
+	    "observer did not start");
+	*sockp = sv[0];
+	return (pid);
+}
+
+static void
+observer_stop(int sock, pid_t pid)
+{
+	int status;
+
+	close(sock);
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+}
+
+static bool
+read_full(int fd, void *buf, size_t len)
+{
+	char *p = buf;
+	ssize_t n;
+
+	while (len > 0) {
+		n = read(fd, p, len);
+		if (n <= 0)
+			return (false);
+		p += n;
+		len -= n;
+	}
+	return (true);
+}
+
+/* As collect(), from the observer's socket; ms is the whole deadline. */
+static void
+collect_observed(int sock, struct seen *s, pid_t requester, pid_t controller,
+    int ms)
+{
+	static union {
+		oes_message_t	msg;
+		uint8_t		raw[OES_MSG_MAX_SIZE];
+	} buf;
+	struct pollfd pfd = { .fd = sock, .events = POLLIN };
+	uint32_t len;
+	long start, left;
+
+	start = dqt_now_ms();
+	while (!seen_all(s) && (left = ms - (dqt_now_ms() - start)) > 0) {
+		if (poll(&pfd, 1, (int)left) <= 0)
+			continue;
+		ATF_REQUIRE_MSG(read_full(sock, &len, sizeof(len)) &&
+		    len >= sizeof(oes_message_t) && len <= sizeof(buf) &&
+		    read_full(sock, &buf, len), "observer stream broken");
+		note(s, &buf.msg, requester, controller);
 	}
 }
 
@@ -288,18 +405,23 @@ ATF_TC_BODY(served_file_events, tc)
 	struct dqt_child ch;
 	struct seen s;
 	const oes_event_presented_t *rep;
-	oes_client_t *client;
 	uint64_t nonce, total;
 	size_t count, i;
-	int oracle, status, svc;
+	pid_t observer;
+	int oracle, osock, status, svc;
 	bool have_nonce;
 
 	dqt_fill(data, sizeof(data), 111);
+	/*
+	 * The controller's close and DQ_REPLY come from this process.  The
+	 * observer is forked first, before the queue, its reader threads and
+	 * the served object exist, so it holds none of them.
+	 */
+	observer = observer_start(&osock);
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
 	    sizeof(oracle_path));
 	dqt_init(&c);
 	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
-	client = oes_client_open();
 
 	/* The controller's identity nonce, as dq.observe reports it. */
 	have_nonce = false;
@@ -330,11 +452,11 @@ ATF_TC_BODY(served_file_events, tc)
 	o->fd = -1;
 
 	memset(&s, 0, sizeof(s));
-	collect(client, &s, ch.pid, getpid(), EVENT_WAIT_MS);
+	collect_observed(osock, &s, ch.pid, getpid(), EVENT_WAIT_MS);
 	ATF_REQUIRE_MSG(s.read != NULL, "no NOTIFY_FILE_READ from %d", ch.pid);
 	ATF_REQUIRE_MSG(s.stat != NULL, "no NOTIFY_FILE_STAT from %d", ch.pid);
 	ATF_REQUIRE_MSG(s.close != NULL, "no NOTIFY_FILE_CLOSE");
-	/* Unmuted above, so the controller's reply is always reported. */
+	/* The observer is not the controller: its reply is reported. */
 	ATF_REQUIRE_MSG(s.reply != NULL, "no NOTIFY_DQ_REPLY from %d", getpid());
 
 	check_presented(s.read, &s.read->em_event_data.rw.file, &o->ident);
@@ -361,7 +483,7 @@ ATF_TC_BODY(served_file_events, tc)
 	oes_message_free(s.stat);
 	oes_message_free(s.close);
 	oes_message_free(s.reply);
-	oes_client_destroy(client);
+	observer_stop(osock, observer);
 	dqt_fini(&c);
 	(void)close(oracle);
 }

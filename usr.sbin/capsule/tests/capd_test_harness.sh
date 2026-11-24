@@ -27,6 +27,12 @@ capd_paths_init()
 	CAPD_LOG="${CAPD_WORK}/capsule.log"
 	CAPD_GUARDIAN_SOCKET="${CAPD_WORK}/guardian.sock"
 	CAPD_LEASE="${CAPD_WORK}/guardian.lease"
+	# The guardian's PID, for an ATF cleanup (a new process) to wait on.
+	CAPD_GUARDIAN_PIDFILE="${CAPD_WORK}/guardian.pid"
+	# Test issuers live and created before the case's first stack, for the
+	# cleanup (a separate process) to wait back to and report against.
+	CAPD_ISSUERS_LIVE_FILE="${CAPD_WORK}/issuers-live.before"
+	CAPD_ISSUERS_CREATED_FILE="${CAPD_WORK}/issuers-created.before"
 	CAPD_APPS_SYSTEM="${CAPD_WORK}/Capabilities/System"
 	CAPD_APPS_USER="${CAPD_WORK}/Capabilities"
 }
@@ -353,10 +359,17 @@ capd_launch_capsule()
 	capd_find_capsule
 	# The test issuers created before this Capsule: its own must be a new one.
 	CAPD_TEST_ISSUERS_BEFORE=$(sysctl -n kern.mac_capability.test_issuers 2>/dev/null || echo 0)
+	# Only before the case's first stack: a relaunch must not count an
+	# earlier stack's issuer, not yet freed, as the baseline.
+	if [ ! -e "$CAPD_ISSUERS_LIVE_FILE" ]; then
+		capd_test_issuers_live > "$CAPD_ISSUERS_LIVE_FILE" 2>/dev/null || true
+		echo "$CAPD_TEST_ISSUERS_BEFORE" > "$CAPD_ISSUERS_CREATED_FILE"
+	fi
 	"$capd_guardian_bin" run -l "$CAPD_LEASE" \
 	    -s "$CAPD_GUARDIAN_SOCKET" -- \
 	    "$capd_capsule_bin" -d -f "$CAPD_CONFIG" >"$CAPD_LOG" 2>&1 9>&- &
 	capd_guardian_pid=$!
+	echo "$capd_guardian_pid" > "$CAPD_GUARDIAN_PIDFILE"
 
 	i=0
 	while ! capd_guardian_is_running && [ "$i" -lt 100 ]; do
@@ -481,7 +494,7 @@ capd_stop_stack()
 
 capd_cleanup_stack()
 {
-	local i
+	local guardian_pid killed before live
 
 	capd_paths_init
 	capd_find_guardian
@@ -493,34 +506,62 @@ capd_cleanup_stack()
 	# the test-body process group is killed when the body exits, which
 	# strips the guardian of its atexit socket removal and leaves a
 	# stale file behind.
-	if capd_guardian_is_running; then
-		"$capd_guardian_bin" ctl -s "$CAPD_GUARDIAN_SOCKET" kill \
-		    >/dev/null 2>&1 || true
+	killed=no
+	if capd_guardian_is_running &&
+	    "$capd_guardian_bin" ctl -s "$CAPD_GUARDIAN_SOCKET" kill \
+	    >/dev/null 2>&1; then
+		killed=yes
 	fi
-	i=0
-	while capd_guardian_is_running && [ "$i" -lt 50 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
+	# Wait for the guardian process itself to exit (pwait: a kqueue
+	# NOTE_EXIT, no polling; the ATF cleanup timeout bounds it).  The PID
+	# is checked to still name the guardian, so a recycled PID is never
+	# waited on.  A live guardian that did not take the kill request (its
+	# socket gone or unanswered) is sent SIGTERM, which ends it and, with
+	# its process descriptor, Capsule.
+	guardian_pid=$(cat "$CAPD_GUARDIAN_PIDFILE" 2>/dev/null || true)
+	case "$guardian_pid" in
+	''|*[!0-9]*) ;;
+	*)	if [ "$(ps -p "$guardian_pid" -o comm= 2>/dev/null)" = \
+		    "$(basename "$capd_guardian_bin")" ]; then
+			if [ "$killed" = no ]; then
+				echo "guardian $guardian_pid did not take the kill request: SIGTERM" >&2
+				kill -TERM "$guardian_pid" 2>/dev/null || true
+			fi
+			pwait "$guardian_pid" 2>/dev/null || true
+		fi ;;
+	esac
 	if capd_guardian_is_running; then
 		capd_dump_diagnostics
 		return 1
 	fi
-	# The stack is gone, so is its test issuer (freed asynchronously).
-	i=0
-	while [ -n "$(capd_test_issuers_live)" ] &&
-	    [ "$(capd_test_issuers_live)" -ne 0 ] && [ "$i" -lt 50 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
-	if [ -n "$(capd_test_issuers_live)" ] && [ "$(capd_test_issuers_live)" -ne 0 ]; then
-		echo "test issuers still alive after the stack stopped:" \
-		    "$(capd_test_issuers_live)" >&2
-		dmesg -a | grep -a 'mac_capability: TEST MODE' | tail -n 5 >&2
-		return 1
-	fi
+	# The stack is gone, so are its test issuers, freed asynchronously once
+	# their last reference drops.  Wait back to the count live before this
+	# stack (so an issuer leaked earlier does not hold every later cleanup)
+	# with the test kernel's wait: a sleep woken by each free, no polling,
+	# bounded by the ATF cleanup timeout.  The evidence is written first, so
+	# a leak that holds the wait until that timeout still leaves it.
+	before=$(cat "$CAPD_ISSUERS_LIVE_FILE" 2>/dev/null || true)
+	live=$(capd_test_issuers_live)
+	case "$before:$live" in
+	*[!0-9:]*|:*|*:) ;;
+	*)	if [ "$live" -gt "$before" ]; then
+			echo "waiting for this case's test issuers to be freed" \
+			    "(normal: they are freed asynchronously; evidence if" \
+			    "the cleanup times out): live=$live before=$before" \
+			    "created=$(sysctl -n kern.mac_capability.test_issuers)" \
+			    "created-before=$(cat "$CAPD_ISSUERS_CREATED_FILE" 2>/dev/null || echo unknown)" >&2
+			dmesg -a | grep -a 'mac_capability: TEST MODE' | tail -n 5 >&2
+			if ! sysctl debug.mac_capability.test_issuers_wait_live="$before" \
+			    >/dev/null; then
+				echo "waiting for test issuers to be freed failed" >&2
+				return 1
+			fi
+		fi ;;
+	esac
 	rm -rf "$CAPD_PIDFILE" "$CAPD_CONFIG" "$CAPD_CAPSULE_SOCKET" \
 	    "$CAPD_SWITCHBOARD_SOCKET" "$CAPD_GUARDIAN_SOCKET" "$CAPD_LEASE" \
-	    "$CAPD_LOG" "${CAPD_WORK}/Capabilities"
+	    "$CAPD_GUARDIAN_PIDFILE" "$CAPD_ISSUERS_LIVE_FILE" \
+	    "$CAPD_ISSUERS_CREATED_FILE" "$CAPD_LOG" \
+	    "${CAPD_WORK}/Capabilities"
 	return 0
 }

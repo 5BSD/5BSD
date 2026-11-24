@@ -23,7 +23,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	DATA_LEN	8192
 #define	OBS_BUFSIZE	65536
@@ -508,7 +508,7 @@ ATF_TC(get_stats2);
 ATF_TC_HEAD(get_stats2, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "DQ_IOC_GET_STATS2 answers on the queue "
-	    "and on an observer, ds2_size 320, the 1a counters equal to "
+	    "and on an observer, ds2_size 400, the 1a counters equal to "
 	    "DQ_IOC_GET_STATS's, the 1b-ii counters 0, ds2_pushes counted");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
@@ -537,7 +537,7 @@ ATF_TC_BODY(get_stats2, tc)
 
 	dqt_stats2(&c, &s2);
 	dqt_stats(&c, &st);
-	ATF_CHECK_EQ(320, s2.ds2_size);
+	ATF_CHECK_EQ(400, s2.ds2_size);
 	ATF_CHECK_EQ(st.ds_queue_id, s2.ds2_queue_id);
 	ATF_CHECK_EQ(st.ds_events_posted, s2.ds2_events_posted);
 	ATF_CHECK_EQ(st.ds_replies, s2.ds2_replies);
@@ -553,7 +553,7 @@ ATF_TC_BODY(get_stats2, tc)
 	/* The observer answers it too (its ioctl set holds both commands). */
 	memset(&o2, 0xa5, sizeof(o2));
 	ATF_REQUIRE_EQ_MSG(0, dq_get_stats2(obs, &o2), "%s", strerror(errno));
-	ATF_CHECK_EQ(320, o2.ds2_size);
+	ATF_CHECK_EQ(400, o2.ds2_size);
 	ATF_CHECK_EQ(s2.ds2_queue_id, o2.ds2_queue_id);
 	ATF_CHECK_EQ(s2.ds2_pushes, o2.ds2_pushes);
 	(void)close(obs);

@@ -30,6 +30,8 @@
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/socket.h>
+#include <sys/sysctl.h>
+#include <sys/user.h>
 
 #include <arpa/inet.h>
 #include <err.h>
@@ -342,6 +344,12 @@ emit_process(FILE *fp, int depth, const char *key, const oes_message_t *msg,
 	    proc->ep_responsible_coalition, true);
 	json_kv_int(fp, depth + 1, "responsible_pid",
 	    proc->ep_responsible_pid, true);
+	/* Base exclusion and managed authority (cap_process(2)) */
+	json_kv_bool(fp, depth + 1, "cap_excluded",
+	    (proc->ep_flags & EP_FLAG_CAP_EXCLUDED) != 0, true);
+	json_kv_bool(fp, depth + 1, "cap_managed",
+	    (proc->ep_flags & EP_FLAG_CAP_MANAGED) != 0, true);
+	json_kv_uint(fp, depth + 1, "cap_roles", proc->ep_cap_roles, true);
 	json_kv_str(fp, depth + 1, "pcomm", proc->ep_pcomm, true);
 	json_kv_int(fp, depth + 1, "pgid", proc->ep_pgid, true);
 	json_kv_int(fp, depth + 1, "sid", proc->ep_sid, true);
@@ -1277,6 +1285,18 @@ emit_event_data(FILE *fp, int depth, const oes_message_t *msg)
 		obj_close(fp, depth, false, false);
 		break;
 
+	/* --- Events this client lost (not an event) --- */
+	case OES_EVENT_NOTIFY_LOST:
+		obj_open(fp, depth, "event_data", false);
+		json_kv_uint(fp, depth + 1, "count",
+		    msg->em_event_data.lost.el_count, true);
+		json_kv_uint(fp, depth + 1, "unsent",
+		    msg->em_event_data.lost.el_unsent, true);
+		json_kv_uint(fp, depth + 1, "queue",
+		    msg->em_event_data.lost.el_queue, false);
+		obj_close(fp, depth, false, false);
+		break;
+
 	case OES_EVENT_NOTIFY_PROC_SCHED:
 		obj_open(fp, depth, "event_data", false);
 		emit_process(fp, depth + 1, "target", msg,
@@ -1313,11 +1333,57 @@ list_events(void)
 #undef OES_EVENT_NAME_CASE
 }
 
+
+/*
+ * The processes the kernel excludes from OES (cap_process(2) BASE
+ * EXCLUSION): they produce no events.  With list, print each as
+ * "pid ppid comm path"; return how many there are, or -1.
+ */
+static int
+excluded_processes(bool list)
+{
+	struct kinfo_proc *kp;
+	int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PROC, 0 };
+	int pmib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, 0 };
+	char path[PATH_MAX];
+	size_t len, plen;
+	int n = 0;
+
+	len = 0;
+	if (sysctl(mib, 3, NULL, &len, NULL, 0) != 0)
+		return (-1);
+	/* Room for processes created between the two calls. */
+	len += len / 4;
+	kp = malloc(len);
+	if (kp == NULL)
+		return (-1);
+	if (sysctl(mib, 3, kp, &len, NULL, 0) != 0) {
+		free(kp);
+		return (-1);
+	}
+	for (size_t i = 0; i < len / sizeof(*kp); i++) {
+		if ((kp[i].ki_flag2 & P2_CAP_EXCLUDED) == 0)
+			continue;
+		n++;
+		if (!list)
+			continue;
+		pmib[3] = kp[i].ki_pid;
+		plen = sizeof(path);
+		if (sysctl(pmib, 4, path, &plen, NULL, 0) != 0)
+			strlcpy(path, "-", sizeof(path));
+		printf("%d %d %s %s\n", kp[i].ki_pid, kp[i].ki_ppid,
+		    kp[i].ki_comm, path);
+	}
+	free(kp);
+	return (n);
+}
+
 static void
 usage(void)
 {
 	fprintf(stderr,
 	    "usage: oeslogger [-dinp] [-j jail | -J jail] [-m path] [-o file]\n"
+	    "       oeslogger -X\n"
 	    "                 [event_type ...]\n"
 	    "  -d       Observe this process and descendants only\n"
 	    "  -j jail  Observe one jail (ID or name) and the jails nested in it\n"
@@ -1329,6 +1395,7 @@ usage(void)
 	    "  -o file  Write JSON output to file (default: stdout)\n"
 	    "  -p       Pretty-print JSON output\n"
 	    "  -l       List available event names\n"
+	    "  -X       List the processes excluded from OES and exit\n"
 	    "\n"
 	    "With no event names, subscribes to all NOTIFY events.\n"
 	    "Event names: exec, open, create, unlink, fork, exit, etc.\n"
@@ -1560,7 +1627,7 @@ main(int argc, char *argv[])
 	uint32_t scope_flags;
 	int ch, i, saved_errno, scope_jid = 0;
 
-	while ((ch = getopt(argc, argv, "dhij:J:lm:no:p")) != -1) {
+	while ((ch = getopt(argc, argv, "dhij:J:lm:no:pX")) != -1) {
 		switch (ch) {
 		case 'd':
 			descendants = true;
@@ -1591,6 +1658,10 @@ main(int argc, char *argv[])
 			break;
 		case 'l':
 			list_events();
+			exit(0);
+		case 'X':
+			if (excluded_processes(true) < 0)
+				err(EX_OSERR, "kern.proc");
 			exit(0);
 		case 'h':
 		default:
@@ -1625,6 +1696,12 @@ main(int argc, char *argv[])
 		if (nevents < nitems(events))
 			events[nevents++] = ev;
 	}
+
+	/* Excluded processes produce no events (oes(4)). */
+	i = excluded_processes(false);
+	if (i >= 0)
+		fprintf(stderr, "oeslogger: %d processes are excluded from OES\n",
+		    i);
 
 	/* Create client */
 	if (jail_arg != NULL)

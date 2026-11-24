@@ -25,14 +25,16 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <libdq.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	DATA_LEN	8192
 
@@ -217,6 +219,11 @@ ATF_TC_BODY(async_accessors, tc)
 	ATF_CHECK(dq_reply_errno_allowed(DQ_OP_WRITE_ASYNC, ENOSPC));
 	ATF_CHECK(!dq_reply_errno_allowed(DQ_OP_WRITE_ASYNC, EPIPE));
 	ATF_CHECK(dq_reply_errno_allowed(DQ_OP_READ_ASYNC, EPIPE));
+	/* EINTR is the kernel's alone, for every operation (D193). */
+	ATF_CHECK(!dq_reply_errno_allowed(DQ_OP_WRITE, EINTR));
+	ATF_CHECK(!dq_reply_errno_allowed(DQ_OP_LOCK, EINTR));
+	ATF_CHECK(!dq_reply_errno_allowed(DQ_OP_READ, EINTR));
+	ATF_CHECK(!dq_reply_errno_allowed(DQ_OP_GETATTR, EINTR));
 	free(big);
 }
 
@@ -296,6 +303,8 @@ ATF_TC_BODY(resolve_accessor, tc)
 	ATF_CHECK(!dq_resolve_errno_allowed(DQ_ROP_SOCKET, ENOENT));
 	ATF_CHECK(!dq_resolve_errno_allowed(DQ_ROP_OPEN, ENOBUFS));
 	ATF_CHECK(dq_resolve_errno_allowed(DQ_ROP_OPEN, ENOENT));
+	ATF_CHECK(!dq_resolve_errno_allowed(DQ_ROP_OPEN, EINTR));
+	ATF_CHECK(!dq_reply_errno_allowed(DQ_OP_RESOLVE, EINTR));
 
 	/* A SOCKET body: five empty strings, the request in the fixed part. */
 	memset(body, 0, sizeof(body));
@@ -721,6 +730,238 @@ ATF_TC_BODY(serve_mmap_writeback, tc)
 	ctl_stop(&c);
 }
 
+/*
+ * T-R06: dq_dispatch with a handler that stops.  The requester's first
+ * call (a read) is answered by the handler, which then stops; its second
+ * (a read with a 1 s deadline, or an F_SETLKW, which has none) was read
+ * from the queue in the same batch and is left unanswered.
+ */
+struct stop_arg {
+	int		 fd;
+	int		 go[2];		/* the test: the first event is queued */
+	bool		 lock;		/* the second call is F_SETLKW */
+};
+
+struct stop_res {
+	struct rr	 r;		/* the second call */
+	long		 ms;		/* its time */
+};
+
+static long
+stop_now_ms(void)
+{
+	struct timespec ts;
+
+	(void)clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ((long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+}
+
+static void
+stop_alarm(int sig __unused)
+{
+}
+
+static void *
+stop_first(void *argp)
+{
+	struct stop_arg *a = argp;
+	unsigned char buf[16];
+
+	(void)pread(a->fd, buf, sizeof(buf), 0);
+	return (NULL);
+}
+
+static void
+child_stop(struct stop_arg *a, struct stop_res *r)
+{
+	struct sigaction sa;
+	struct flock fl;
+	unsigned char buf[16];
+	sigset_t set, oset;
+	pthread_t thr;
+	long start;
+	char c;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = stop_alarm;
+	(void)sigaction(SIGALRM, &sa, NULL);
+	sigemptyset(&set);
+	sigaddset(&set, SIGALRM);
+	(void)pthread_sigmask(SIG_BLOCK, &set, &oset);
+	(void)pthread_create(&thr, NULL, stop_first, a);
+	(void)pthread_sigmask(SIG_SETMASK, &oset, NULL);
+	if (read(a->go[0], &c, 1) != 1)
+		_exit(2);
+	/* A dropped call that would wait for ever ends with the signal. */
+	(void)alarm(3);
+	start = stop_now_ms();
+	if (a->lock) {
+		memset(&fl, 0, sizeof(fl));
+		fl.l_type = F_RDLCK;
+		fl.l_whence = SEEK_SET;
+		r->r.rv = fcntl(a->fd, F_SETLKW, &fl);
+	} else
+		r->r.rv = pread(a->fd, buf, sizeof(buf), 0);
+	r->r.err = r->r.rv == -1 ? errno : 0;
+	r->ms = stop_now_ms() - start;
+	(void)alarm(0);
+	(void)pthread_join(thr, NULL);
+}
+
+/* Answer the first record (a READ) with 16 bytes and stop. */
+static int
+stop_handler(int q, const struct dq_event *ev, const void *body __unused,
+    size_t bodylen __unused, void *arg)
+{
+	int *handled = arg;
+
+	(*handled)++;
+	if (ev->de_op == DQ_OP_READ)
+		(void)dq_reply(q, ev->de_id, 0, data, 16);
+	return (1);
+}
+
+/* Wait (5 s at most) until n records are queued on q. */
+static void
+stop_wait_queued(int q, uint64_t n)
+{
+	struct dq_stats st;
+	long end;
+
+	end = stop_now_ms() + 5000;
+	for (;;) {
+		ATF_REQUIRE_EQ(0, dq_get_stats(q, &st));
+		if (st.ds_queue_current >= n)
+			return;
+		ATF_REQUIRE_MSG(stop_now_ms() < end, "%ju of %ju records queued",
+		    (uintmax_t)st.ds_queue_current, (uintmax_t)n);
+		(void)usleep(1000);
+	}
+}
+
+static void
+stop_round(bool lock, struct stop_res *r, int *handled, int *n)
+{
+	struct dq_ident_file ident;
+	struct dq_policy pol;
+	struct stop_arg a;
+	struct statfs sfs;
+	struct stat sb;
+	char path[PATH_MAX];
+	uint64_t object;
+	pid_t pid;
+	int fd, q, rfd[2], status;
+
+	fd = open("stop", O_RDWR | O_CREAT | O_TRUNC, 0644);
+	ATF_REQUIRE(fd != -1);
+	ATF_REQUIRE_EQ((ssize_t)sizeof(data), write(fd, data, sizeof(data)));
+	ATF_REQUIRE(realpath("stop", path) != NULL);
+	ATF_REQUIRE_EQ(0, fstat(fd, &sb));
+	ATF_REQUIRE_EQ(0, fstatfs(fd, &sfs));
+	ATF_REQUIRE_EQ(0, dq_ident_from_stat(&ident, path, &sb, &sfs, fd));
+	q = dqt_open_queue();
+	dq_policy_default(&pol);
+	pol.dp_deadline_ms = 1000;
+	memset(&a, 0, sizeof(a));
+	ATF_REQUIRE_EQ(0, dq_mint_file(q, &ident, &pol, &object, &a.fd, NULL));
+	a.lock = lock;
+	ATF_REQUIRE_EQ(0, pipe(a.go));
+	ATF_REQUIRE_EQ(0, pipe(rfd));
+	pid = fork();
+	ATF_REQUIRE(pid != -1);
+	if (pid == 0) {
+		struct stop_res cr;
+
+		memset(&cr, 0, sizeof(cr));
+		child_stop(&a, &cr);
+		_exit(write(rfd[1], &cr, sizeof(cr)) == sizeof(cr) ? 0 : 3);
+	}
+	(void)close(rfd[1]);
+	stop_wait_queued(q, 1);
+	ATF_REQUIRE_EQ(1, write(a.go[1], "g", 1));
+	stop_wait_queued(q, 2);
+	*handled = 0;
+	*n = dq_dispatch(q, stop_handler, handled);
+	memset(r, 0, sizeof(*r));
+	ATF_CHECK_EQ((ssize_t)sizeof(*r), read(rfd[0], r, sizeof(*r)));
+	ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	(void)close(rfd[0]);
+	(void)close(a.go[0]);
+	(void)close(a.go[1]);
+	(void)close(a.fd);
+	(void)close(q);
+	(void)close(fd);
+}
+
+ATF_TC(dispatch_stop_drops);
+ATF_TC_HEAD(dispatch_stop_drops, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "dq_dispatch: the records after a "
+	    "handler's stop are left unanswered (T-R06)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(dispatch_stop_drops, tc)
+{
+	struct stop_res r;
+	int handled, n;
+
+	/*
+	 * A read behind the stop is answered EIO at once (it waited out its
+	 * 1 s deadline).
+	 */
+	stop_round(false, &r, &handled, &n);
+	ATF_CHECK_EQ(1, handled);
+	ATF_CHECK_EQ(1, n);
+	ATF_CHECK_EQ(-1, r.r.rv);
+	ATF_CHECK_EQ(EIO, r.r.err);
+	ATF_CHECK_MSG(r.ms < 900, "the dropped read ended after %ld ms",
+	    r.ms);
+
+	/*
+	 * A lock behind the stop, which has no deadline: EIO at once (it
+	 * hung until the 3 s signal's EINTR).
+	 */
+	stop_round(true, &r, &handled, &n);
+	ATF_CHECK_EQ(1, handled);
+	ATF_CHECK_EQ(-1, r.r.rv);
+	ATF_CHECK_EQ(EIO, r.r.err);
+	ATF_CHECK_MSG(r.ms < 2900, "the dropped lock ended after %ld ms",
+	    r.ms);
+}
+
+/*
+ * Review 3 #9: dq_get_stats2 passes the size of the caller's struct, so a
+ * program built against another struct dq_stats2 fails EINVAL instead of
+ * having the kernel's struct written past its own; the plain function, a
+ * stale binary's call, cannot know the size and refuses.
+ */
+ATF_TC(stats2_size_checked);
+ATF_TC_HEAD(stats2_size_checked, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "dq_get_stats2 refuses a struct of "
+	    "another size (EINVAL), and the sizeless function refuses");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(stats2_size_checked, tc)
+{
+	struct dq_stats2 st;
+	int q;
+
+	q = dq_open();
+	ATF_REQUIRE_MSG(q >= 0, "dq_open: %s", strerror(errno));
+	ATF_CHECK_EQ(0, dq_get_stats2(q, &st));
+	ATF_CHECK_EQ(sizeof(st), st.ds2_size);
+	errno = 0;
+	ATF_CHECK_EQ(-1, dq_get_stats2_sized(q, &st, sizeof(st) - 8));
+	ATF_CHECK_EQ(EINVAL, errno);
+	errno = 0;
+	ATF_CHECK_EQ(-1, (dq_get_stats2)(q, &st));
+	ATF_CHECK_EQ(EINVAL, errno);
+	(void)close(q);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -732,5 +973,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, async_accessors);
 	ATF_TP_ADD_TC(tp, serve_mmap_writeback);
 	ATF_TP_ADD_TC(tp, resolve_accessor);
+	ATF_TP_ADD_TC(tp, dispatch_stop_drops);
+	ATF_TP_ADD_TC(tp, stats2_size_checked);
 	return (atf_no_error());
 }

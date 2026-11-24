@@ -6,11 +6,10 @@
  * Shared harness of the DescriptorQueue tests.
  *
  * The controller is a thread of the test process serving one or more
- * objects from memory; requesters are forked children (D86: until RESOLVE
- * installs served descriptors the minted fd reaches a requester by
- * inheritance, and the controller's own process is refused with EDEADLK).
- * The queue is pinned to the process that opened it (sc-q), so a child
- * holds the object and never the queue.  Results travel back over a pipe.
+ * objects from memory; requesters are forked children (a minted
+ * descriptor reaches a requester by inheritance, and the controller's own
+ * process is refused with EDEADLK).  The queue is pinned to the process
+ * that opened it, so a child holds the object and never the queue.  Results travel back over a pipe.
  *
  * One skip policy: these suites run in plane-on guests where the device,
  * the preloaded modules (linux64, dtraceall, mac_test_hooks, ...) and the
@@ -28,8 +27,8 @@
  * two answers field by field.
  */
 
-#ifndef _DQ_TEST_H_
-#define	_DQ_TEST_H_
+#ifndef _DQT_H_
+#define	_DQT_H_
 
 #include <sys/types.h>
 #include <sys/mount.h>
@@ -76,7 +75,7 @@ struct dqt_object {
 	size_t		 len;
 	struct dq_ident_file ident;	/* the GETATTR answer / serve copy */
 	int		 read_errno;	/* 0: serve bytes; else this errno */
-	int		 serve_errno;	/* != 0: answer every 1b event with it */
+	int		 serve_errno;	/* != 0: answer write-path events so */
 	bool		 fence;		/* a fence sentinel */
 	int		 backing;	/* -1, or the file dq_serve_file serves */
 	struct dq_serve_state *lockstate;	/* the queue's (dqt_ctl), shared */
@@ -181,7 +180,7 @@ struct dqt_ctl {
 	uint64_t	 op_seq[DQ_OP_REPLY + 1] DQT_GUARDED;
 	struct dq_caller op_caller[DQ_OP_REPLY + 1];
 	/*
-	 * RESOLVE (1c): every event recorded; answered PASS unless its path
+	 * RESOLVE: every event recorded; answered PASS unless its path
 	 * contains resolve_fail_match (then resolve_fail_errno) or
 	 * resolve_hold_match or its op is resolve_hold_op (then held, see
 	 * dqt_held), or its op has an errno in resolve_errno[].
@@ -194,6 +193,8 @@ struct dqt_ctl {
 		int32_t		 domain, type, protocol;	/* sockets */
 		uint32_t	 pathlen;	/* exact: abstract names */
 		char		 path[DQT_RPATH], path2[DQT_RPATH];
+		char		 startpath[DQT_RPATH];	/* "" without
+						   DQ_RF_STARTPATH_VALID */
 		char		 startpath2[DQT_RPATH];
 	}		 rs[DQT_MAX_RESOLVES] DQT_GUARDED;
 	int		 nrs DQT_GUARDED;
@@ -228,6 +229,23 @@ void	dqt_require_plane(void);
  * debug.dq.unverified_open="1"; a kernel without the option passes.
  */
 void	dqt_require_test_access(void);
+/*
+ * A debug.dq fault knob of options DQ_FAULT_INJECTION, or the case is owed
+ * by the knob tier: it skips with the DEFERRED_KNOB_TIER token on a kernel
+ * without the option, and fails on a test kernel that lacks the knob.
+ */
+void	dqt_require_fault_knob(const char *name);
+/*
+ * The dropped-wakeup proofs (debug.dq.drop_wakeup, options
+ * DQ_FAULT_INJECTION).  dqt_drop_count: how many wakeups the DQ_WAKE_*
+ * bit site has dropped.  dqt_drop_wait: block until it has dropped count
+ * (the kernel wakes the test at the drop: no polling; the case timeout is
+ * the hang detector).  dqt_sleep_left: whether a thread of pid sleeps in
+ * wmesg, and the ms left before that sleep's timeout (0: none).
+ */
+uint64_t dqt_drop_count(u_int site);
+void	dqt_drop_wait(u_int site, uint64_t count);
+bool	dqt_sleep_left(pid_t pid, const char *wmesg, uint64_t *left_ms);
 /* Fails, never skips, when the queue device is absent or refuses. */
 int	dqt_open_queue(void);
 void	dqt_init(struct dqt_ctl *c);		/* queue + 1 reader thread */
@@ -271,7 +289,10 @@ void	dqt_resolve_hold(struct dqt_ctl *c, const char *match, uint32_t op)
 	    __requires_unlocked(c->mtx);
 void	dqt_resolve_errno(struct dqt_ctl *c, uint32_t op, int error)
 	    __requires_unlocked(c->mtx);
-/* An object's answer to its 1b events, and to READ (0: the bytes). */
+/*
+ * An object's answer to its write-path events (WRITE, SETATTR, FSYNC,
+ * locks and the rest after READ), and to READ (0: the bytes).
+ */
 void	dqt_object_serve_errno(struct dqt_ctl *c, struct dqt_object *o,
 	    int error)
 	    __requires_unlocked(c->mtx);
@@ -433,6 +454,16 @@ struct dqt_rr {
 	ATF_CHECK_EQ_MSG(-1, _dqt_rv, "%s returned %ld", #call, _dqt_rv);\
 	ATF_CHECK_EQ_MSG((want), _dqt_err, "%s: errno %d want %d", #call,\
 	    _dqt_err, (want));						\
+} while (0)
+
+/* errno values with their names; strerror(3) shares one buffer. */
+#define	DQT_CHECK_ERRNO(want, got, what) do {				\
+	char _ws[64], _gs[64];						\
+	int _w = (want), _g = (got);					\
+	(void)strerror_r(_w, _ws, sizeof(_ws));				\
+	(void)strerror_r(_g, _gs, sizeof(_gs));				\
+	ATF_CHECK_EQ_MSG(_w, _g, "%s: want %d (%s), got %d (%s)",	\
+	    (what), _w, _ws, _g, _gs);					\
 } while (0)
 
 /* A dqt_child_fn: read(2) once, up to len (at most 4096) bytes of fd. */
@@ -614,7 +645,7 @@ void	dqt_sync_post(int fd);
 bool	dqt_sync_wait(int fd, int ms);
 
 /*
- * Resolution (1c).  dqt_attach_spawn pdforks a requester, attaches it to
+ * Resolution.  dqt_attach_spawn pdforks a requester, attaches it to
  * the controller's queue before it runs fn (a child that has not exec'd,
  * holding no queue descriptor: no child has one), and returns its
  * process descriptor; dqt_attach_wait collects the result and returns the
@@ -648,4 +679,4 @@ uint64_t dqt_held_id(struct dqt_ctl *c, int i)
 void	dqt_resolve_at(struct dqt_ctl *c, int i, struct dqt_resolve_seen *rs)
 	    __requires_unlocked(c->mtx);
 
-#endif /* !_DQ_TEST_H_ */
+#endif /* !_DQT_H_ */

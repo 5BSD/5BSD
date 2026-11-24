@@ -17,6 +17,7 @@
 #include <sys/types.h>
 #include <sys/_uio.h>
 #include <sys/caprights.h>
+#include <sys/sdt.h>
 
 struct dqres_binding;
 struct fdinstall_gate;
@@ -56,12 +57,16 @@ struct dqres {
  * record that has none or whose file could not be held.  Taken with the
  * pwd by pwd_hold_dqres, or alone by pwd_dqres_proc; released with
  * dqres_snap_release, with no lock held.  All zero for an unattached
- * process.
+ * process.  pwd_hold_dqres also records the pwd's root, which the
+ * standing rules compare by pointer (no reference: the pwd the lookup
+ * holds keeps it), and whether the process is native (no ABI root).
  */
 struct dqres_snap {
 	struct file	*dsn_cwd;
 	struct file	*dsn_root;
 	u_int		 dsn_flags;	/* DR_CWD_DEAD, DR_ROOT_DEAD */
+	struct vnode	*dsn_rdir;	/* pwd_hold_dqres: pwd_rdir */
+	bool		 dsn_native;	/* pwd_hold_dqres: pwd_adir == pwd_rdir */
 };
 
 /*
@@ -87,6 +92,7 @@ struct dqres_answer {
 					   and installs; dro_answer_release
 					   drops what is left */
 	uint32_t	 da_swflags;	/* SWAP: DQ_SWAP_F_* of the reply */
+	uint32_t	 da_rflags;	/* the lookup's DQ_RF_* as posted */
 	bool		 da_swcreated;	/* SWAP: DQ_SWAP_F_CREATED honoured
 					   by the completion */
 };
@@ -257,6 +263,10 @@ struct dqres_req {
 					   controller) */
 	const char	*rq_rootpath;	/* its di_path, the 5th string */
 	size_t		 rq_rootpathlen;
+	struct vnode	*rq_st_root;	/* the process root a standing rule
+					   may match this event under, or
+					   NULL (dqres_namei and
+					   dqres_namei_symlink only) */
 };
 
 /*
@@ -313,10 +323,45 @@ struct dqres_ops {
 	 */
 	void	(*dro_swap_gate)(struct dqres_binding *,
 		    struct fdinstall_gate *);
+	/*
+	 * An answer the requester's completion refused as outside the
+	 * contract (EIO to the requester): ds2_bad_replies.
+	 */
+	void	(*dro_bad_answer)(struct dqres_binding *);
 };
 
 void	dqres_register(const struct dqres_ops *ops);
 extern const struct dqres_ops *dqres_ops;
+
+/*
+ * DTrace: the dqres provider (kern_dqres.c).  dqres:::namei-served (op,
+ * answer kind, errno): a lookup from a served start returned.
+ * dqres:::subst-refuse (op, DQRES_R_*, errno) names why a Descriptor
+ * Substitution was refused, to the supervisor (the take) or to the
+ * program (the completion); dqres:::subst-install (op, fd) is the
+ * program's new descriptor; dqres:::subst-consume (queue, fd) the
+ * supervisor's entry closed with the take.  The reasons continue the
+ * dtrace-observability list after 22.  dqres:::present (viewer pid,
+ * DQRES_PRESENT_*, errno): a path presented to an attached viewer.
+ */
+SDT_PROVIDER_DECLARE(dqres);
+SDT_PROBE_DECLARE(dqres, , , namei__served);
+SDT_PROBE_DECLARE(dqres, , , subst__refuse);
+SDT_PROBE_DECLARE(dqres, , , subst__install);
+SDT_PROBE_DECLARE(dqres, , , subst__consume);
+#define	DQRES_R_SUBST_OFFSET	23	/* the file was read or seeked */
+#define	DQRES_R_SUBST_FLOCK	24	/* a flock the request did not ask */
+#define	DQRES_R_SUBST_OFDLOCK	25	/* an OFD lock (sticky FHASOFDLOCK) */
+#define	DQRES_R_SUBST_EXCL_LOCK	26	/* O_CREAT|O_EXCL + lock: not held,
+					   or a type that would wait */
+#define	DQRES_R_SUBST_STATES	27	/* the entry carries states (PLAIN) */
+#define	DQRES_R_SUBST_SLASH	28	/* a trailing slash, not a directory */
+/* dqres:::present (viewer pid, DQRES_PRESENT_*, errno). */
+#define	DQRES_PRESENT_SERVED	1	/* a served object's di_path */
+#define	DQRES_PRESENT_REAL	2	/* a real object's vn_fullpath */
+
+/* The requester's completion refused the answer (dro_bad_answer). */
+void	dqres_bad_answer(struct thread *td);
 
 /* Is the process attached?  Racy fast test; the slow paths lock. */
 bool	dqres_proc_attached(struct proc *p);
@@ -466,6 +511,7 @@ int	dqres_present_viewer(struct thread *viewer, uint64_t qgid,
 	    const char *path, size_t pathlen, char *out, size_t outsz);
 int	dqres_present_file(struct thread *viewer, struct file *fp, char *out,
 	    size_t outsz);
+void	dqres_present_real(struct thread *viewer, char *path, size_t size);
 bool	dqres_served_root(struct thread *td);
 int	dqres_getcwd(struct thread *td, char *buf, size_t *buflenp);
 int	dqres_proc_dirpath(struct thread *viewer, struct proc *p, bool root,
@@ -525,7 +571,8 @@ struct stat;
 struct statfs;
 struct ucred;
 const struct dq_ident_file *dqres_ident(struct dq_intent *di, uint32_t kind);
-void	dqres_ident_to_stat(const struct dq_ident_file *di, struct stat *sb);
+void	dqres_ident_to_stat(const struct dq_ident_file *di, struct ucred *cred,
+	    struct stat *sb);
 void	dqres_ident_to_statfs(const struct dq_ident_file *di,
 	    struct statfs *sf);
 int	dqres_ident_pathconf(const struct dq_ident_file *di, int name,
@@ -627,6 +674,18 @@ int	dqres_kpath_refused(struct thread *td);
 
 #define	DQRES_ATTACHED_TD(td)						\
 	(__predict_false(dqres_ops != NULL && dqres_proc_attached((td)->td_proc)))
+
+/*
+ * The path of a real object (vn_fullpath's answer, in path[size]) as the
+ * viewer may see it (T-A10): for an attached viewer with a served root it
+ * is rewritten in place by dqres_present_real; every other viewer pays
+ * this test alone, with no call and no copy.  A macro: the headers that
+ * include this one need not define struct thread.
+ */
+#define	dqres_present_real_maybe(viewer, path, size) do {		\
+	if (DQRES_ATTACHED_TD(viewer))					\
+		dqres_present_real((viewer), (path), (size));		\
+} while (0)
 
 #endif /* _KERNEL */
 #endif /* !_SYS_DQRES_H_ */

@@ -234,9 +234,10 @@ int oes_subscribe_bitmap(oes_client_t *client, const uint64_t auth_bitmap[2],
 int oes_subscribe_all(oes_client_t *client, bool auth, bool notify);
 
 /*
- * oes_mute_self - Mute events from the current process
+ * oes_mute_self - Kept for source compatibility; a no-op.
  *
- * Prevents recursion when this process triggers events.
+ * A client never receives events its own processes cause (oes(4)), so
+ * there is nothing to mute; this succeeds and changes nothing.
  */
 int oes_mute_self(oes_client_t *client);
 

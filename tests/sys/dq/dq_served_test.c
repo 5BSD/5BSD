@@ -39,7 +39,7 @@
 
 #include <libdq.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	SRV_MAX_SEEN	256
 
@@ -1338,7 +1338,9 @@ ATF_TC_CLEANUP(opath_as_vnode, tc)
 /*
  * fexecve(2) lets an O_PATH descriptor past its open-mode test, a served
  * one too, and then wants a vnode: a served file, however it was opened,
- * has none to execute.  aio_fsync(2) on a served file that is not O_PATH
+ * has none to execute before stage 3, which fgetvp_exec answers EACCES,
+ * the errno of a file the caller may not execute (T-A09; EINVAL, the
+ * answer for a descriptor with no vnode, before).  aio_fsync(2) on a served file that is not O_PATH
  * is queued as any request on a file aio(4) does not know to be safe is:
  * refused unless vfs.aio.enable_unsafe is set, the descriptor's own fsync
  * if it is.
@@ -1382,9 +1384,9 @@ ATF_TC_BODY(served_fexecve_aio_fsync, tc)
 	srv_start(&s, 0);
 	run_child(&s, c_served_fexecve_aio, r);
 	ATF_REQUIRE_EQ(0, r[0]);
-	ATF_CHECK_EQ(EINVAL, r[1]);
+	ATF_CHECK_EQ(EACCES, r[1]);
 	ATF_REQUIRE_EQ(0, r[2]);
-	ATF_CHECK_EQ(EINVAL, r[3]);
+	ATF_CHECK_EQ(EACCES, r[3]);
 	if (unsafe == 0) {
 		ATF_CHECK_EQ(EOPNOTSUPP, r[4]);
 	} else {

@@ -1041,6 +1041,51 @@ scenario_crash_client(const char *name, const char *started,
 	hold();
 }
 
+static void
+orphan_term(int signo __unused)
+{
+}
+
+/*
+ * A unit whose child makes an ambient lookup that stays pending (the test's
+ * provider holds the activation) and outlives the unit: the child rides out
+ * the stop's SIGTERM (its handler has SA_RESTART, so the wait goes on) and
+ * records the answer the lookup finally gets.  It forks before the unit
+ * enters capability mode, so it takes the ambient route, not the unit's
+ * bootstrap channel.
+ */
+static int
+scenario_orphan_lookup(const char *name, const char *started,
+    const char *result)
+{
+	struct sigaction sa;
+	pid_t child;
+	int fd, rc, error;
+
+	if (fixture_service_initialize() == -1)
+		err(1, "orphan-lookup initialization");
+	child = fork();
+	if (child == -1)
+		err(1, "fork");
+	if (child == 0) {
+		memset(&sa, 0, sizeof(sa));
+		sa.sa_handler = orphan_term;
+		sa.sa_flags = SA_RESTART;
+		sigemptyset(&sa.sa_mask);
+		if (sigaction(SIGTERM, &sa, NULL) == -1)
+			err(1, "sigaction");
+		write_result(started, "pid=%jd\n", (intmax_t)getpid());
+		fd = -1;
+		rc = service_open(name, &fd);
+		error = rc == 0 ? 0 : errno;
+		write_result(result, "rc=%d errno=%d\n", rc, error);
+		_exit(0);
+	}
+	if (fixture_service_ready() == -1)
+		err(1, "orphan-lookup readiness");
+	hold();
+}
+
 static int
 scenario_named_client(const char *name, const char *result)
 {
@@ -2381,6 +2426,8 @@ main(int argc, char **argv)
 		    argv[5]));
 	if (argc == 5 && strcmp(argv[1], "crash-client") == 0)
 		return (scenario_crash_client(argv[2], argv[3], argv[4]));
+	if (argc == 5 && strcmp(argv[1], "orphan-lookup") == 0)
+		return (scenario_orphan_lookup(argv[2], argv[3], argv[4]));
 	if (argc == 4 && strcmp(argv[1], "named-client") == 0)
 		return (scenario_named_client(argv[2], argv[3]));
 	if (argc == 3 && strcmp(argv[1], "lookup-missing") == 0)

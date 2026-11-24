@@ -226,7 +226,7 @@ pf_jail_removed(void *obj, void *data)
 	struct prison *pr = obj;
 	struct pfioc_state_kill psk;
 
-	if (prison_owns_vnet(pr)) {
+	if (pf_prison_owns_vnet(pr)) {
 		CURVNET_SET(pr->pr_vnet);
 		if (pf_fbsd_vnet_ready()) {
 			pflow_jail_remove();

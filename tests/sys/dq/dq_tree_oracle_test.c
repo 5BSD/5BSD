@@ -32,7 +32,7 @@
 
 #include <libdq.h>
 
-#include "dq_test.h"
+#include "dqt_tree.h"
 
 /* Every case is root (a controller of /dev/dq) and bounded in time. */
 #define	DQ_TC_HEAD_BODY(name)						\
@@ -364,9 +364,120 @@ ATF_TC_BODY(tree_oracle, tc)
 	free(served);
 }
 
+/*
+ * T-A12: lpathconf(2) of a served symbolic link (ATTR, no pathconf in its
+ * identity) against the real link.
+ */
+static const int lpc_names[] = { _PC_LINK_MAX, _PC_NAME_MAX, _PC_PATH_MAX,
+    _PC_SYMLINK_MAX, _PC_FILESIZEBITS };
+#define	LPC_N	nitems(lpc_names)
+
+struct lpc_res {
+	long	value[LPC_N];
+	int	err[LPC_N];
+};
+
+static void
+lpc_fill(const char *path, struct lpc_res *r)
+{
+	size_t i;
+
+	for (i = 0; i < LPC_N; i++) {
+		errno = 0;
+		r->value[i] = lpathconf(path, lpc_names[i]);
+		r->err[i] = r->value[i] == -1 ? errno : 0;
+	}
+}
+
+static void
+lpc_fn(void *arg __unused, void *out)
+{
+
+	lpc_fill("/l", out);
+}
+
+DQT_TREE_TC(lpathconf_symlink);
+ATF_TC_BODY(lpathconf_symlink, tc)
+{
+	struct lpc_res real, served;
+	struct dqt_tree s;
+	size_t i;
+
+	dqt_tree_make("t");
+	lpc_fill("t/l", &real);
+	dqt_tree_start(&s, "t", DQ_TREE_F_ROOT);
+	memset(&served, 0, sizeof(served));
+	dqt_require_exit0(dqt_tree_child(&s, s.sroot, s.sroot, lpc_fn, NULL, &served,
+	    sizeof(served)), "child");
+	for (i = 0; i < LPC_N; i++) {
+		ATF_CHECK_MSG(real.value[i] != -1, "real lpathconf %d: %s",
+		    lpc_names[i], strerror(real.err[i]));
+		/* The link's own values (it presented none: EINVAL). */
+		ATF_CHECK_EQ_MSG(real.value[i], served.value[i],
+		    "name %d: real %ld served %ld (%s)", lpc_names[i],
+		    real.value[i], served.value[i], strerror(served.err[i]));
+	}
+	dqt_tree_stop(&s);
+}
+
+/*
+ * T-A02: under the served root, fstat(2) of a file just written against
+ * stat(2) of its name (answered from the backing file).
+ */
+struct fs_res {
+	int		 err[4];
+	struct stat	 before, fst, st;
+};
+
+static void
+fs_fn(void *arg __unused, void *out)
+{
+	struct fs_res *r = out;
+	int fd;
+
+	fd = open("/a", O_RDWR);
+	r->err[0] = fd < 0 ? errno : 0;
+	if (fd < 0)
+		return;
+	r->err[1] = DQT_ERRNO_OF(fstat(fd, &r->before));
+	dqt_msleep(20);
+	r->err[2] = write(fd, "more", 4) == 4 ? 0 : errno;
+	r->err[3] = DQT_ERRNO_OF(fstat(fd, &r->fst));
+	if (stat("/a", &r->st) != 0)
+		r->err[3] = errno;
+	(void)close(fd);
+}
+
+DQT_TREE_TC(fstat_stat_after_write);
+ATF_TC_BODY(fstat_stat_after_write, tc)
+{
+	struct fs_res r;
+	struct dqt_tree s;
+
+	dqt_tree_make("t");
+	dqt_tree_start(&s, "t", DQ_TREE_F_ROOT | DQ_TREE_F_WRITE);
+	memset(&r, 0, sizeof(r));
+	dqt_require_exit0(dqt_tree_child(&s, s.sroot, s.sroot, fs_fn, NULL, &r,
+	    sizeof(r)), "child");
+	DQT_CHECK_ERRNO(0, r.err[0], "open /a");
+	DQT_CHECK_ERRNO(0, r.err[2], "write");
+	DQT_CHECK_ERRNO(0, r.err[3], "fstat, stat");
+	ATF_CHECK_EQ(r.st.st_size, r.fst.st_size);
+	ATF_REQUIRE(timespeccmp(&r.st.st_mtim, &r.before.st_mtim, >));
+	/*
+	 * fstat has the times stat has, from the write's post-operation
+	 * attributes (it kept the open-time ones).
+	 */
+	ATF_CHECK(timespeccmp(&r.fst.st_mtim, &r.st.st_mtim, ==));
+	ATF_CHECK(timespeccmp(&r.fst.st_ctim, &r.st.st_ctim, ==));
+	dqt_tree_stop(&s);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, tree_oracle);
+	ATF_TP_ADD_TC(tp, lpathconf_symlink);
+	ATF_TP_ADD_TC(tp, fstat_stat_after_write);
 	return (atf_no_error());
 }

@@ -28,7 +28,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 /* A stat(2) of a path naming the tag: posts STAT when attached. */
 static int

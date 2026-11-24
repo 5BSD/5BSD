@@ -150,7 +150,6 @@ BSDTime/libtimecmp source migration now uses FIDL; installed-plane and real-gate
 - sys/sys/capsicum.h (+92), filedesc.h, file.h (DTYPE_MAC_CAPABILITY, DTYPE_ENVFD), event.h, sysent.h, procdesc.h: new rights, states, notes, flags.
 - sys/security/mac/* (+1235): 44 new MACF hooks plus `vnode_execve_will_relabel/relabel`, consumed by the plane's four MAC policies (label, capprotect, isolation, system).
 - sys/sys/proc.h: its only diffs (td_vnfile, P2_PTRACE_LISTEN/LCONT, FR2_NO_PTRACE) come from Linuxulator commit 392999caf154, not the capability plane.
-- sys/sys/proc.h: the 5BSD P2 block is allocated downward from 0x40000000: P2_DQOWNER 0x40000000, P2_DEBUGSHIELD 0x20000000 and P2_SIGSHIELD 0x10000000 (capprotect's ptrace and signal shields, read lock-free by dtrace -w's probe-context checks); 0x80000000 stays unused because p_flag2 is int.
 
 ### What the book must explain
 1. The authority rule: a held capability fd (rights, ioctl allowlist, transfer ceiling) is the authority; uid/PID/path are transitional. Nonce = program identity; fork shares, exec rotates.
@@ -200,7 +199,7 @@ Beside the mandatory mac_capability plane, 5BSD widens the TrustedBSD MAC framew
 - `abac_label_check_relabel` -> credential relabel requires `PRIV_MAC_PARTITION` and may only narrow -> kernel, fixed policy.
 - `security.oes.require_auth_clients` -> deny AUTH-hooked operations when no client is subscribed -> sysctl.
 - `security.oes.auth_fail_closed`, `.default_deadline_ms`, `.default_deadline_miss_mode` -> outcome when an AUTH client misses its deadline or the queue is full -> sysctl defaults, overridable per client via `OES_IOC_SET_DEADLINE_*` ioctls.
-- `security.oes.max_clients`, `.default_queue_size`, `.cache_max_entries`, `.default_self_mute`, `.default_muted_paths[_literal]` -> resource limits and initial noise suppression -> sysctl (`oeslogger -n` clears mutes).
+- `security.oes.max_clients`, `.default_queue_size`, `.cache_max_entries`, `.default_muted_paths[_literal]` (a client's own processes never reach it; no knob) -> resource limits and initial noise suppression -> sysctl (`oeslogger -n` clears mutes).
 - Per-client OES state (subscriptions, mutes, scope, mode, decision cache) -> which events a client sees and may veto -> ioctls / `liboes(3)`; opening `/dev/oes` needs device privilege (devfs).
 - `security.mac.test_hooks.deny.<hook>` -> force-deny a hook for testing -> sysctl (test module only).
 - `MAC_VERIEXEC` state -> verified execution enforcement -> `veriexec(8)` manifest load + enforcement sysctls; not entered by default.

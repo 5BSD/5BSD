@@ -316,11 +316,15 @@ int	finstall_refed_gate(struct thread *td, struct file *fp, int *resultfd,
 	    int flags, struct filecaps *fcaps,
 	    const struct fdinstall_prop *prop,
 	    const struct fdinstall_gate *gate);
+/* fdxfer_source_locked xflags. */
+#define	FDXFER_PLAIN	0x0001	/* refuse an entry carrying states of its own */
 int	fdxfer_source_locked(struct thread *td, struct filedesc *fdp, int fd,
-	    pid_t srcpid, struct file **fpp, struct filecaps *fcaps,
+	    pid_t srcpid, int xflags, struct file **fpp, struct filecaps *fcaps,
 	    struct fdinstall_prop *prop, int *flagsp,
 	    int (*admit)(struct file *, const cap_rights_t *, void *),
 	    void *arg);
+void	fdclose_taken(struct thread *td, struct filedesc *fdp, int fd,
+	    struct file *fp);
 int	fdalloc(struct thread *td, int minfd, int *result);
 int	fdallocn(struct thread *td, int minfd, int *fds, int n);
 int	fdroom(struct thread *td, int n);

@@ -3,6 +3,8 @@
 /* Run the disk test only in a disposable VM with an explicit scratch-device input. */
 #include <sys/types.h>
 #include <sys/capsicum.h>
+#include <sys/disk.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <atf-c.h>
@@ -16,6 +18,30 @@
 #include <trustedzfs.h>
 #include "protected_storage.h"
 #include "zfshandle_test_helpers.h"
+
+/*
+ * The runner names the disk it gave the guest for this case (vm-provider.sh
+ * attaches it with the serial "kyua-scratch" and writes this input).  The case
+ * destroys the disk's contents, so it requires that identity, not a name.
+ */
+#define	SCRATCH_DISK_IDENT	"kyua-scratch"
+
+static void
+require_scratch_disk(const char *device)
+{
+	char ident[DISK_IDENT_SIZE];
+	int fd;
+
+	fd = open(device, O_RDONLY);
+	ATF_REQUIRE_MSG(fd >= 0, "open %s: %s", device, strerror(errno));
+	memset(ident, 0, sizeof(ident));
+	ATF_REQUIRE_MSG(ioctl(fd, DIOCGIDENT, ident) == 0,
+	    "DIOCGIDENT %s: %s", device, strerror(errno));
+	close(fd);
+	ATF_REQUIRE_MSG(strcmp(ident, SCRATCH_DISK_IDENT) == 0,
+	    "%s has the ident \"%s\", not the scratch disk's \"%s\"", device,
+	    ident, SCRATCH_DISK_IDENT);
+}
 
 static void
 spec_init(struct capsule_storage *spec, const char *device)
@@ -70,12 +96,23 @@ ATF_TC_BODY(disk_import_and_binding, tc)
 
 	snprintf(input, sizeof(input), "%s/scratch-device", atf_tc_get_config_var(tc, "srcdir"));
 	file = fopen(input, "r");
-	ATF_REQUIRE_MSG(file != NULL, "explicit disposable scratch-device input required");
+	/*
+	 * The input is an environment requirement: without it there is no
+	 * disk this destructive case may use.  An input that exists but
+	 * cannot be read, or is malformed, still fails.
+	 */
+	if (file == NULL && errno == ENOENT)
+		atf_tc_skip("DEFERRED_GUEST_SETUP: requires the explicit "
+		    "disposable scratch-device input %s (vm-provider.sh writes it "
+		    "when it attaches the kyua-scratch disk)", input);
+	ATF_REQUIRE_MSG(file != NULL, "cannot read the scratch-device input %s: %s",
+	    input, strerror(errno));
 	ATF_REQUIRE(fgets(device, sizeof(device), file) != NULL);
 	ATF_REQUIRE_EQ(EOF, fgetc(file)); fclose(file);
 	device[strcspn(device, "\n")] = '\0';
-	/* This test is destructive to its explicit input: accept the VM role only. */
-	ATF_REQUIRE_STREQ("/dev/vtbd1", device);
+	/* This test is destructive to its explicit input: accept only the disk the
+	 * runner made for it. */
+	require_scratch_disk(device);
 	zht_require(tc);
 	zht_poolname(tc, zht_pool, sizeof(zht_pool));
 	ATF_REQUIRE_EQ(0, zht_systemf("zpool create -f -o cachefile=none -O mountpoint=none %s %s", zht_pool, device));
@@ -143,6 +180,9 @@ ATF_TC_CLEANUP(disk_import_and_binding, tc)
 {
 	char pool[128];
 	zht_poolname(tc, pool, sizeof(pool));
+	/* A body that skipped or failed early created no pool. */
+	if (zht_systemf("zpool list -H -o name %s >/dev/null 2>&1", pool) != 0)
+		return;
 	for (unsigned i = 0; i < 20; i++) {
 		if (zht_systemf("zpool destroy -f %s", pool) == 0) return;
 		usleep(100000);

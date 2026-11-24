@@ -220,13 +220,24 @@ SDT_PROBE_DEFINE3(bridge, , , control__done, "void *", "unsigned long", "int");
  * That is: for read accesses we only need to be in NET_EPOCH, but for write
  * accesses we must hold:
  *
- *  - BRIDGE_RT_LOCK, for any change to bridge_rtnodes
+ *  - BRIDGE_RT_LOCK, for any change to bridge_rtnodes, and to start or stop
+ *    the bridge (bridge_init(), bridge_stop(): IFF_DRV_RUNNING, the
+ *    routing-table callout, spanning tree start and stop)
  *  - BRIDGE_LOCK, for any other change
  *
  * The BRIDGE_LOCK is a sleepable lock, because it is held across ioctl()
  * calls to bridge member interfaces and these ioctl()s can sleep.
  * The BRIDGE_RT_LOCK is a non-sleepable mutex, because it is sometimes
  * required while we're in NET_EPOCH and then we're not allowed to sleep.
+ * It is not held across a call into another interface.
+ *
+ * A member's ioctl() takes the member's own locks (a vlan(4) member takes
+ * the global vlan lock), so those locks come after the BRIDGE_LOCK.  An
+ * interface stacked on the bridge, such as a vlan(4) SVI, calls the
+ * bridge's ioctl() with its own lock held.  The requests it sends
+ * (SIOCSIFFLAGS, SIOCADDMULTI, SIOCDELMULTI and what ether_ioctl() answers,
+ * SIOCGIFMEDIA among them) are therefore handled without the BRIDGE_LOCK;
+ * only SIOCGDRVSPEC, SIOCSDRVSPEC and SIOCSIFMTU take it in bridge_ioctl().
  */
 #define BRIDGE_LOCK_INIT(_sc)		do {			\
 	sx_init(&(_sc)->sc_sx, "if_bridge");			\
@@ -897,8 +908,14 @@ bridge_clone_destroy(struct if_clone *ifc, struct ifnet *ifp, uint32_t flags)
 
 	BRIDGE_LOCK(sc);
 
-	bridge_stop(ifp);
+	/*
+	 * Mark the bridge down first: bridge_stop() only stops a bridge that
+	 * is down, and a flag change propagated from an interface stacked on
+	 * the bridge then does not start it again.  A request that sets
+	 * IFF_UP again while the bridge is destroyed is not excluded.
+	 */
 	ifp->if_flags &= ~IFF_UP;
+	bridge_stop(ifp);
 
 	while ((bif = CK_LIST_FIRST(&sc->sc_iflist)) != NULL)
 		bridge_delete_member(sc, bif, 0);
@@ -952,13 +969,46 @@ bridge_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 	const struct bridge_control *bc;
 	int error = 0, oldmtu;
 
-	BRIDGE_LOCK(sc);
-
+	/*
+	 * Requests that need no bridge state are answered without the bridge
+	 * lock.  An interface stacked on the bridge, such as a vlan(4) SVI,
+	 * sends them while holding its own lock (vlan_sx), and the bridge
+	 * calls into its members, which may be vlan(4) interfaces too, with
+	 * the bridge lock held: taking the bridge lock here would close that
+	 * cycle.
+	 */
 	switch (cmd) {
 	case SIOCADDMULTI:
 	case SIOCDELMULTI:
+		return (0);
+
+	case SIOCSIFFLAGS:
+		/*
+		 * Only a change of IFF_UP needs the bridge; a propagated
+		 * IFF_PROMISC or IFF_ALLMULTI change does not.  bridge_init()
+		 * and bridge_stop() recheck under the routing-table mutex,
+		 * never the bridge lock: the netlink if_up()/if_down() leaves
+		 * IFF_UP and IFF_DRV_RUNNING apart until the next request.
+		 */
+		if ((ifp->if_flags & IFF_UP) != 0)
+			(*ifp->if_init)(sc);
+		else
+			bridge_stop(ifp);
+		return (0);
+
+	case SIOCGDRVSPEC:
+	case SIOCSDRVSPEC:
+	case SIOCSIFMTU:
 		break;
 
+	default:
+		/* ether_ioctl() may call bridge_init(); no bridge lock. */
+		return (ether_ioctl(ifp, cmd, data));
+	}
+
+	BRIDGE_LOCK(sc);
+
+	switch (cmd) {
 	case SIOCGDRVSPEC:
 	case SIOCSDRVSPEC:
 		if (ifd->ifd_cmd >= bridge_control_table_size) {
@@ -1022,26 +1072,6 @@ bridge_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 
 		break;
 
-	case SIOCSIFFLAGS:
-		if (!(ifp->if_flags & IFF_UP) &&
-		    (ifp->if_drv_flags & IFF_DRV_RUNNING)) {
-			/*
-			 * If interface is marked down and it is running,
-			 * then stop it.
-			 */
-			bridge_stop(ifp);
-		} else if ((ifp->if_flags & IFF_UP) &&
-		    !(ifp->if_drv_flags & IFF_DRV_RUNNING)) {
-			/*
-			 * If interface is marked up and it is stopped, then
-			 * start it.
-			 */
-			BRIDGE_UNLOCK(sc);
-			(*ifp->if_init)(sc);
-			BRIDGE_LOCK(sc);
-		}
-		break;
-
 	case SIOCSIFMTU:
 		oldmtu = sc->sc_ifp->if_mtu;
 
@@ -1078,15 +1108,6 @@ bridge_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 		} else {
 			sc->sc_ifp->if_mtu = ifr->ifr_mtu;
 		}
-		break;
-	default:
-		/*
-		 * drop the lock as ether_ioctl() will call bridge_start() and
-		 * cause the lock to be recursed.
-		 */
-		BRIDGE_UNLOCK(sc);
-		error = ether_ioctl(ifp, cmd, data);
-		BRIDGE_LOCK(sc);
 		break;
 	}
 
@@ -2286,17 +2307,24 @@ bridge_init(void *xsc)
 	struct bridge_softc *sc = (struct bridge_softc *)xsc;
 	struct ifnet *ifp = sc->sc_ifp;
 
-	if (ifp->if_drv_flags & IFF_DRV_RUNNING)
+	/*
+	 * The routing-table mutex serializes init and stop and is the
+	 * callout's lock (callout_init_mtx); it is never held across a call
+	 * into another interface, so a caller may hold that interface's lock.
+	 */
+	BRIDGE_RT_LOCK(sc);
+	if ((ifp->if_flags & IFF_UP) == 0 ||
+	    (ifp->if_drv_flags & IFF_DRV_RUNNING) != 0) {
+		BRIDGE_RT_UNLOCK(sc);
 		return;
-
-	BRIDGE_LOCK(sc);
+	}
 	callout_reset(&sc->sc_brcallout, bridge_rtable_prune_period * hz,
 	    bridge_timer, sc);
 
 	ifp->if_drv_flags |= IFF_DRV_RUNNING;
 	bstp_init(&sc->sc_stp);		/* Initialize Spanning Tree */
 
-	BRIDGE_UNLOCK(sc);
+	BRIDGE_RT_UNLOCK(sc);
 }
 
 /*
@@ -2309,20 +2337,20 @@ bridge_stop(struct ifnet *ifp)
 {
 	struct bridge_softc *sc = ifp->if_softc;
 
-	BRIDGE_LOCK_ASSERT(sc);
-
-	if ((ifp->if_drv_flags & IFF_DRV_RUNNING) == 0)
-		return;
-
+	/* Serialized with bridge_init() by the routing-table mutex. */
 	BRIDGE_RT_LOCK(sc);
+	if ((ifp->if_flags & IFF_UP) != 0 ||
+	    (ifp->if_drv_flags & IFF_DRV_RUNNING) == 0) {
+		BRIDGE_RT_UNLOCK(sc);
+		return;
+	}
 	callout_stop(&sc->sc_brcallout);
 
 	bstp_stop(&sc->sc_stp);
 
 	bridge_rtflush(sc, IFBF_FLUSHDYN);
-	BRIDGE_RT_UNLOCK(sc);
-
 	ifp->if_drv_flags &= ~IFF_DRV_RUNNING;
+	BRIDGE_RT_UNLOCK(sc);
 }
 
 /*

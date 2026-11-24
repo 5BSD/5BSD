@@ -139,15 +139,13 @@ child (SwitchBoard's `CP_OP_PROTECT`) adds its own flags; after exec the
 child carries exactly those. A traced process cannot be shielded (`EBUSY`);
 a GENERIC-TEST kernel built with `CAPPROTECT_TEST_ALLOW_TRACED`, never
 published, allows it so that Capsule or SwitchBoard can be started under a
-debugger. Inside a process with a ptrace shield `dtrace -w` cannot
-`copyout`, and inside one with a signal shield it cannot `raise` or `stop`.
-Documented residuals: sharers that existed before a process shielded itself
-stay unshielded, and a `dtrace -w` probe firing in an aio daemon that works
-on a shielded process's memory can still `copyout` into it.
+debugger. A documented residual: a process that already shared the memory
+when the process shielded itself (an earlier `RFMEM` or vfork child) stays
+unshielded.
 
 | Flag | Manifest word | Hook and effect |
 |---|---|---|
-| `CP_SF_PTRACE` | `ptrace` | `proc_check_debug`: `EACCES` on attach; inherited by fork children until they exec (only the child and its parent may debug it); the DTrace pid provider needs it; `dtrace -w` `copyout` is refused inside |
+| `CP_SF_PTRACE` | `ptrace` | `proc_check_debug`: `EACCES` on attach and every other debug access (memory, environment, descriptors, new DTrace pid-provider probes; a pid probe made before the shield can still be enabled). The DTrace kernel providers are not covered: root reads the process's memory with `copyin` from `syscall`, `fbt` or `profile` probes that fire in it, and with `-w` writes, signals or stops it (`copyout`, `raise`, `stop`). A child of the process carries the shield until it executes a new image (see above). Inspection (`proc_check_inspect`: memory map, auxv, kernel stacks, USDT registration from read-only file mappings) is allowed |
 | `CP_SF_SIGNAL`, `CP_SF_SIGKILL`, `CP_SF_SIGCONT` | `signal`, `sigkill`, `sigcont` | `proc_check_signal`, `proc_check_suspend`; `SIGKILL` and `SIGCONT` need their own flag |
 | `CP_SF_WAIT` | `wait` | `proc_check_wait`; the real parent may always wait |
 | `CP_SF_SCHED` | `sched` | `proc_check_sched`: priority and cpuset changes |

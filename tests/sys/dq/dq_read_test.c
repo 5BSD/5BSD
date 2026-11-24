@@ -10,20 +10,28 @@
  */
 
 #include <sys/param.h>
+#include <sys/event.h>
+#include <sys/jail.h>
+#include <sys/mman.h>
 #include <sys/module.h>
+#include <sys/resource.h>
 #include <sys/sysctl.h>
 #include <sys/uio.h>
+#include <sys/wait.h>
 
 #include <aio.h>
 #include <atf-c.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <jail.h>
 #include <pthread.h>
+#include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	DATA_LEN	20000
 #define	MAX_CALLS	8
@@ -744,6 +752,7 @@ ATF_TC_BODY(two_objects_same_identity, tc)
 {
 	struct dqt_ctl c;
 	struct dqt_object *o1, *o2;
+	struct dq_policy pol;
 	struct io_arg a;
 	struct io_res r1, r2;
 	struct stat st1, st2;
@@ -754,8 +763,15 @@ ATF_TC_BODY(two_objects_same_identity, tc)
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
 	    sizeof(oracle_path));
 	dqt_init(&c);
-	o1 = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
-	o2 = dqt_mint(&c, oracle, oracle_path, data2, sizeof(data2), NULL);
+	/*
+	 * The controller keeps the times: each object stamps its own access
+	 * time at its own reads (C7b), and two objects of one identity do
+	 * not share one until the identity group (C10).
+	 */
+	dq_policy_default(&pol);
+	pol.dp_flags = DQ_PF_NO_STAMP;
+	o1 = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
+	o2 = dqt_mint(&c, oracle, oracle_path, data2, sizeof(data2), &pol);
 	ATF_CHECK(o1->id != o2->id);
 
 	memset(&a, 0, sizeof(a));
@@ -815,6 +831,979 @@ ATF_TC_BODY(read_error_reply, tc)
 	(void)close(oracle);
 }
 
+/*
+ * T-A02: st_atime after a read of a served file whose controller sends no
+ * attributes, on a presented file system with and without MNT_NOATIME.
+ */
+struct atime_res {
+	long		 rv;
+	struct stat	 before, after;
+};
+
+static void
+child_read_atime(void *arg, void *result)
+{
+	struct atime_res *r = result;
+	int fd = *(int *)arg;
+	char buf[16];
+
+	(void)fstat(fd, &r->before);
+	dqt_msleep(20);
+	r->rv = read(fd, buf, sizeof(buf));
+	(void)fstat(fd, &r->after);
+}
+
+ATF_TC(atime_after_read);
+ATF_TC_HEAD(atime_after_read, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "st_atime after a read of a served "
+	    "file (T-A02)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(atime_after_read, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct dq_ident_file *ident;
+	struct dq_policy pol;
+	struct atime_res r;
+	struct statfs sfs;
+	struct stat st;
+	int fd, oracle;
+
+	dqt_fill(data, sizeof(data), 61);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	ident = calloc(1, sizeof(*ident));
+	ATF_REQUIRE(ident != NULL);
+	dqt_ident_of(oracle, oracle_path, ident, &st, &sfs);
+	ident->di_statfs.ds_flags &= ~(uint64_t)MNT_NOATIME;
+	dq_policy_default(&pol);
+	dqt_init(&c);
+	o = dqt_mint_ident(&c, ident, &pol, data, sizeof(data));
+	fd = o->fd;
+	memset(&r, 0, sizeof(r));
+	dqt_run_child(child_read_atime, &fd, &r, sizeof(r));
+	ATF_REQUIRE_EQ(16, r.rv);
+	/*
+	 * No attributes came: the kernel stamps the access time, as a local
+	 * file system's read does (it stayed where it was).
+	 */
+	ATF_CHECK(timespeccmp(&r.after.st_atim, &r.before.st_atim, >));
+
+	/* DQ_PF_NO_STAMP: the controller keeps the times; none moves. */
+	pol.dp_flags = DQ_PF_NO_STAMP;
+	o = dqt_mint_ident(&c, ident, &pol, data, sizeof(data));
+	fd = o->fd;
+	memset(&r, 0, sizeof(r));
+	dqt_run_child(child_read_atime, &fd, &r, sizeof(r));
+	ATF_REQUIRE_EQ(16, r.rv);
+	ATF_CHECK(timespeccmp(&r.after.st_atim, &r.before.st_atim, ==));
+	pol.dp_flags = 0;
+
+	/* Presented MNT_NOATIME: never stamped. */
+	ident->di_statfs.ds_flags |= MNT_NOATIME;
+	o = dqt_mint_ident(&c, ident, &pol, data, sizeof(data));
+	fd = o->fd;
+	memset(&r, 0, sizeof(r));
+	dqt_run_child(child_read_atime, &fd, &r, sizeof(r));
+	ATF_REQUIRE_EQ(16, r.rv);
+	ATF_CHECK(timespeccmp(&r.after.st_atim, &r.before.st_atim, ==));
+	free(ident);
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
+/*
+ * Review 2: the access time a read stamps when no attributes came, as
+ * ffs_read and zfs_read stamp it: a read at the end of the file (0 bytes)
+ * stamps it too, and a presented MNT_RDONLY file system never does.
+ */
+/*
+ * The presented access time starts at 1 s past the epoch, so a stamp is
+ * later than it without waiting for the clock to tick.
+ */
+static void
+child_read_atime_at(void *arg, void *result, bool eof)
+{
+	struct atime_res *r = result;
+	int fd = *(int *)arg;
+	char buf[16];
+
+	if (eof)
+		(void)lseek(fd, 0, SEEK_END);
+	(void)fstat(fd, &r->before);
+	r->rv = read(fd, buf, sizeof(buf));
+	(void)fstat(fd, &r->after);
+}
+
+static void
+child_read_atime_eof(void *arg, void *result)
+{
+
+	child_read_atime_at(arg, result, true);
+}
+
+static void
+child_read_atime_start(void *arg, void *result)
+{
+
+	child_read_atime_at(arg, result, false);
+}
+
+ATF_TC(atime_eof_and_rdonly);
+ATF_TC_HEAD(atime_eof_and_rdonly, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "st_atime after a served read at the "
+	    "end of the file moves, and on a presented MNT_RDONLY file system "
+	    "never does (review 2)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(atime_eof_and_rdonly, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct dq_ident_file *ident;
+	struct dq_policy pol;
+	struct atime_res r;
+	struct statfs sfs;
+	struct stat st;
+	int fd, oracle;
+
+	dqt_fill(data, sizeof(data), 63);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	ident = calloc(1, sizeof(*ident));
+	ATF_REQUIRE(ident != NULL);
+	dqt_ident_of(oracle, oracle_path, ident, &st, &sfs);
+	ident->di_statfs.ds_flags &= ~(uint64_t)(MNT_NOATIME | MNT_RDONLY);
+	ident->di_atime.tv_sec = 1;
+	ident->di_atime.tv_nsec = 0;
+	dq_policy_default(&pol);
+	dqt_init(&c);
+
+	/* At the end of the file: 0 bytes, stamped. */
+	o = dqt_mint_ident(&c, ident, &pol, data, sizeof(data));
+	fd = o->fd;
+	memset(&r, 0, sizeof(r));
+	dqt_run_child(child_read_atime_eof, &fd, &r, sizeof(r));
+	ATF_REQUIRE_EQ(0, r.rv);
+	ATF_CHECK_MSG(timespeccmp(&r.after.st_atim, &r.before.st_atim, >),
+	    "a read at the end of the file left st_atime");
+
+	/* Presented MNT_RDONLY: never stamped. */
+	ident->di_statfs.ds_flags |= MNT_RDONLY;
+	o = dqt_mint_ident(&c, ident, &pol, data, sizeof(data));
+	fd = o->fd;
+	memset(&r, 0, sizeof(r));
+	dqt_run_child(child_read_atime_start, &fd, &r, sizeof(r));
+	ATF_REQUIRE_EQ(16, r.rv);
+	ATF_CHECK_MSG(timespeccmp(&r.after.st_atim, &r.before.st_atim, ==),
+	    "a read on a read-only file system moved st_atime");
+	free(ident);
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
+/*
+ * T-A28: a signal, caught by a handler installed without SA_RESTART,
+ * during a read of a served regular file that the controller answers
+ * 300 ms later.  A local file system's read completes, and so does this
+ * one under the default policy (DQ_PF_INTR would end it EINTR, see
+ * dq_concurrency_test:sigalrm_read_intr).
+ */
+static volatile sig_atomic_t alrm_seen;
+
+static void
+on_alrm(int sig __unused)
+{
+
+	alrm_seen++;
+}
+
+struct norestart_res {
+	struct dqt_rr	 rr;
+	int		 signals;
+};
+
+static void
+child_read_norestart(void *arg, void *result)
+{
+	struct norestart_res *r = result;
+	struct sigaction sa;
+	int fd = *(int *)arg;
+	char buf[16];
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = on_alrm;
+	(void)sigaction(SIGALRM, &sa, NULL);
+	DQT_RR(r->rr, read(fd, buf, sizeof(buf)));
+	r->signals = alrm_seen;
+}
+
+ATF_TC(sigalrm_no_restart);
+ATF_TC_HEAD(sigalrm_no_restart, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "SIGALRM without SA_RESTART during a "
+	    "served read the controller answers late (T-A28)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(sigalrm_no_restart, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct norestart_res r;
+	struct dqt_child ch;
+	int fd, oracle;
+
+	dqt_fill(data, sizeof(data), 62);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
+	dqt_hold(&c, true);
+	fd = o->fd;
+	dqt_spawn(&ch, child_read_norestart, &fd);
+	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	ATF_REQUIRE(dqt_wait_wmesg(ch.pid, DQT_WMESG_REPLY, DQT_WAIT_MS));
+	ATF_REQUIRE_EQ(0, kill(ch.pid, SIGALRM));
+	dqt_msleep(300);
+	/* The wait did not end: the answer is taken. */
+	ATF_CHECK_EQ(0, dq_reply(c.q, dqt_held_id(&c, 0), 0, data, 16));
+	memset(&r, 0, sizeof(r));
+	dqt_collect(&ch, &r, sizeof(r));
+	ATF_CHECK_EQ(1, r.signals);
+	/*
+	 * The read completes, as a local file system's, and the handler
+	 * runs after it (it ended EINTR with the signal, D192).
+	 */
+	ATF_CHECK_EQ_MSG(16, r.rr.rv, "read: %s", strerror(r.rr.err));
+	dqt_lock(&c);
+	ATF_CHECK_EQ(0, c.ninterrupted);
+	dqt_unlock(&c);
+	dqt_hold(&c, false);
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
+ATF_TC(same_identity_atime_diverges);
+ATF_TC_HEAD(same_identity_atime_diverges, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "pin (review 1 L7): two objects of one "
+	    "identity stamp their own access times, where two opens of one "
+	    "file share the inode's; the identity group (C10) flips it");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(same_identity_atime_diverges, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o1, *o2;
+	struct atime_res r1, r2;
+	struct stat st1, st2;
+	int fd, oracle;
+
+	dqt_fill(data, sizeof(data), 27);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	o1 = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
+	o2 = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
+	fd = o1->fd;
+	memset(&r1, 0, sizeof(r1));
+	dqt_run_child(child_read_atime, &fd, &r1, sizeof(r1));
+	ATF_REQUIRE_EQ(16, r1.rv);
+	fd = o2->fd;
+	memset(&r2, 0, sizeof(r2));
+	dqt_run_child(child_read_atime, &fd, &r2, sizeof(r2));
+	ATF_REQUIRE_EQ(16, r2.rv);
+	ATF_REQUIRE_EQ(0, fstat(o1->fd, &st1));
+	ATF_REQUIRE_EQ(0, fstat(o2->fd, &st2));
+	/* Pin: each kept its own stamp (one file would show one atime). */
+	ATF_CHECK(timespeccmp(&st1.st_atim, &st2.st_atim, !=));
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
+ATF_TC(eintr_reply_refused);
+ATF_TC_HEAD(eintr_reply_refused, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a controller's EINTR is never the "
+	    "requester's: with no signal it is EIO and a bad reply (D193)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(eintr_reply_refused, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct dq_stats2 st0, st1;
+	struct io_arg a;
+	struct io_res served;
+	int oracle;
+
+	dqt_fill(data, sizeof(data), 23);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
+	dqt_object_read_errno(&c, o, EINTR);
+	dqt_stats2(&c, &st0);
+	memset(&a, 0, sizeof(a));
+	a.chunk = 4096;
+	a.fd = o->fd;
+	dqt_run_child(child_read_all, &a, &served, sizeof(served));
+	ATF_CHECK_EQ(1, served.n);
+	ATF_CHECK_EQ(-1, served.rv[0]);
+	ATF_CHECK_EQ(EIO, served.err[0]);
+	dqt_stats2(&c, &st1);
+	ATF_CHECK_EQ(1, st1.ds2_bad_replies - st0.ds2_bad_replies);
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
+/*
+ * D192 (B1): thread A of a process waits in a read of an object with no
+ * deadline, which the controller never answers; thread B calls _exit.
+ * The exit single-threads the process, and A's non-catching wait must see
+ * it when the exit aborts its sleep (D402: no slices).
+ */
+static void *
+read_forever(void *arg)
+{
+	char buf[16];
+
+	(void)read(*(int *)arg, buf, sizeof(buf));
+	return (NULL);
+}
+
+ATF_TC(read_deadline0_exit_sibling);
+ATF_TC_HEAD(read_deadline0_exit_sibling, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a sibling's _exit ends a read that "
+	    "waits with no deadline, at once; the controller gets the "
+	    "INTERRUPT (D192)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(read_deadline0_exit_sibling, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct dq_policy pol;
+	pthread_t thr;
+	int64_t start, ms;
+	int fd, go[2], oracle, status;
+	pid_t pid;
+	char ch;
+
+	dqt_fill(data, sizeof(data), 24);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	dq_policy_default(&pol);
+	pol.dp_deadline_ms = 0;
+	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
+	dqt_hold(&c, true);
+	ATF_REQUIRE_EQ(0, pipe(go));
+	fd = o->fd;
+	pid = fork();
+	ATF_REQUIRE(pid != -1);
+	if (pid == 0) {
+		if (pthread_create(&thr, NULL, read_forever, &fd) != 0)
+			_exit(3);
+		if (read(go[0], &ch, 1) != 1)
+			_exit(4);
+		_exit(0);
+	}
+	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	start = dqt_now_ms();
+	ATF_REQUIRE_EQ(1, write(go[1], "g", 1));
+	ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+	ms = dqt_now_ms() - start;
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	ATF_CHECK_MSG(ms < 1500, "the exit took %jd ms", (intmax_t)ms);
+	ATF_CHECK(dqt_wait_interrupts(&c, 1, DQT_WAIT_MS));
+	(void)close(go[0]);
+	(void)close(go[1]);
+	dqt_hold(&c, false);
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
+/*
+ * Review 2: as read_deadline0_exit_sibling, but thread B calls abort(3):
+ * a signal that dumps core (RLIMIT_CORE 0 still single-threads for the
+ * dump).  sigexit marks the process exiting (P2_WEXIT) and single-threads
+ * with SINGLE_NO_EXIT, which sets no P_SINGLE_EXIT, and no SIGKILL is
+ * delivered after P2_WEXIT; A's wait must see it when the dump aborts
+ * its sleep.
+ */
+/*
+ * Reap pid if it exits within ms: a kqueue EVFILT_PROC NOTE_EXIT wait, no
+ * polling.
+ */
+static bool
+reaped_within(pid_t pid, int *status, int ms)
+{
+	struct kevent kev;
+	struct timespec ts;
+	int kq, n;
+
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	EV_SET(&kev, pid, EVFILT_PROC, EV_ADD | EV_ONESHOT, NOTE_EXIT, 0,
+	    NULL);
+	ts.tv_sec = ms / 1000;
+	ts.tv_nsec = (long)(ms % 1000) * 1000000;
+	n = kevent(kq, &kev, 1, &kev, 1, &ts);
+	ATF_REQUIRE_MSG(n != -1, "kevent: %s", strerror(errno));
+	(void)close(kq);
+	if (n == 0)
+		return (false);
+	ATF_REQUIRE_EQ(pid, waitpid(pid, status, 0));
+	return (true);
+}
+
+ATF_TC(read_deadline0_abort_sibling);
+ATF_TC_HEAD(read_deadline0_abort_sibling, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a sibling's abort(3), a signal that "
+	    "dumps core, ends a read that waits with no deadline; the "
+	    "controller gets the INTERRUPT (review 2)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(read_deadline0_abort_sibling, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct dq_policy pol;
+	struct rlimit rl;
+	pthread_t thr;
+	int64_t start, ms;
+	int fd, go[2], oracle, status;
+	bool reaped;
+	pid_t pid;
+	char ch;
+
+	dqt_fill(data, sizeof(data), 27);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	dq_policy_default(&pol);
+	pol.dp_deadline_ms = 0;
+	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
+	dqt_hold(&c, true);
+	ATF_REQUIRE_EQ(0, pipe(go));
+	fd = o->fd;
+	pid = fork();
+	ATF_REQUIRE(pid != -1);
+	if (pid == 0) {
+		rl.rlim_cur = rl.rlim_max = 0;
+		if (setrlimit(RLIMIT_CORE, &rl) != 0)
+			_exit(2);
+		if (pthread_create(&thr, NULL, read_forever, &fd) != 0)
+			_exit(3);
+		if (read(go[0], &ch, 1) != 1)
+			_exit(4);
+		abort();
+	}
+	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	start = dqt_now_ms();
+	ATF_REQUIRE_EQ(1, write(go[1], "g", 1));
+	/*
+	 * The controller never answers and the deadline is 0: only the
+	 * dying process's own abandon can end the read.
+	 */
+	reaped = reaped_within(pid, &status, DQT_WAIT_MS);
+	ms = dqt_now_ms() - start;
+	if (!reaped) {
+		/* Release the read, so the process can finish dying. */
+		(void)dq_reply(c.q, dqt_held_id(&c, 0), 0, data, 16);
+		ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+	}
+	ATF_CHECK_MSG(reaped, "the process was still dying %jd ms after the "
+	    "abort, its read waiting for the controller", (intmax_t)ms);
+	ATF_CHECK_MSG(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT,
+	    "status %#x", status);
+	ATF_CHECK(dqt_wait_interrupts(&c, 1, DQT_WAIT_MS));
+	(void)close(go[0]);
+	(void)close(go[1]);
+	dqt_hold(&c, false);
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
+/*
+ * Design 2.4 (a) (dq-served-wait-model.md): thread A waits in a read of an
+ * object with no deadline, which the controller never answers; thread B
+ * calls execve(2).  exec single-threads the process to the user boundary
+ * (SINGLE_BOUNDARY) and aborts each catching sleep it finds, so A's wait
+ * gives up its operation (INTERRUPT to the controller) and the exec goes
+ * on, instead of waiting for an answer that never comes.
+ */
+ATF_TC(read_deadline0_exec_sibling);
+ATF_TC_HEAD(read_deadline0_exec_sibling, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a sibling's execve ends a read that "
+	    "waits with no deadline; the controller gets the INTERRUPT and "
+	    "the new image runs (no polling, design 2.4 (a))");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(read_deadline0_exec_sibling, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct dq_policy pol;
+	pthread_t thr;
+	int64_t start, ms;
+	int fd, go[2], oracle, status;
+	bool reaped;
+	pid_t pid;
+	char ch;
+
+	dqt_fill(data, sizeof(data), 28);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	dq_policy_default(&pol);
+	pol.dp_deadline_ms = 0;
+	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
+	dqt_hold(&c, true);
+	ATF_REQUIRE_EQ(0, pipe(go));
+	fd = o->fd;
+	pid = fork();
+	ATF_REQUIRE(pid != -1);
+	if (pid == 0) {
+		if (pthread_create(&thr, NULL, read_forever, &fd) != 0)
+			_exit(3);
+		if (read(go[0], &ch, 1) != 1)
+			_exit(4);
+		execl("/usr/bin/true", "true", (char *)NULL);
+		_exit(5);
+	}
+	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	start = dqt_now_ms();
+	ATF_REQUIRE_EQ(1, write(go[1], "g", 1));
+	reaped = reaped_within(pid, &status, DQT_WAIT_MS);
+	ms = dqt_now_ms() - start;
+	if (!reaped) {
+		/* Release the read, so the exec can go on. */
+		(void)dq_reply(c.q, dqt_held_id(&c, 0), 0, data, 16);
+		ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+	}
+	ATF_CHECK_MSG(reaped, "the exec still waited %jd ms after it began, "
+	    "for the sibling's read", (intmax_t)ms);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "status %#x", status);
+	ATF_CHECK(dqt_wait_interrupts(&c, 1, DQT_WAIT_MS));
+	(void)close(go[0]);
+	(void)close(go[1]);
+	dqt_hold(&c, false);
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
+/*
+ * Review 3 #1: a sibling single-threading the process to the user
+ * boundary without taking it down (an execve that fails, jail_attach)
+ * must not fail a read that catches no signal.  Thread A reads an object
+ * with no deadline, held by the controller; thread B single-threads.  The
+ * read gives up its operation (INTERRUPT), lets B through, and is
+ * restarted once the single-threading ends, as a fusefs wait is: A gets
+ * its data, never EINTR.  A kernel that holds B until the read is
+ * answered (before the waits were event-driven) also passes: the test
+ * answers once it has seen the INTERRUPT, or after DQT_WAIT_MS without
+ * one.
+ */
+#define	BOUNDARY_EXEC	1
+#define	BOUNDARY_JAIL	2
+#define	BOUNDARY_JAIL_NAME	"dq_read_boundary"
+
+struct boundary_arg {
+	int	fd;
+	int	go[2];
+	int	mode;
+	int	jid;
+};
+
+struct boundary_res {
+	struct dqt_rr	 a;		/* A's read */
+	struct dqt_rr	 b;		/* B's execve or jail_attach */
+	unsigned char	 buf[16];
+};
+
+static struct boundary_res *boundary_r;
+
+static void *
+boundary_reader(void *arg)
+{
+	struct boundary_arg *a = arg;
+
+	DQT_RR(boundary_r->a, pread(a->fd, boundary_r->buf,
+	    sizeof(boundary_r->buf), 0));
+	return (NULL);
+}
+
+static void
+child_boundary(void *arg, void *result)
+{
+	struct boundary_arg *a = arg;
+	pthread_t thr;
+	char ch;
+
+	boundary_r = result;
+	if (pthread_create(&thr, NULL, boundary_reader, a) != 0)
+		_exit(3);
+	if (read(a->go[0], &ch, 1) != 1)
+		_exit(4);
+	if (a->mode == BOUNDARY_EXEC) {
+		/* Fails after exec has single-threaded the process. */
+		DQT_RR(boundary_r->b, execl("/nonexistent/dq_read_test",
+		    "x", (char *)NULL));
+	} else
+		DQT_RR(boundary_r->b, jail_attach(a->jid));
+	(void)pthread_join(thr, NULL);
+}
+
+static void
+boundary_sibling(int mode, unsigned seed)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct dq_policy pol;
+	struct boundary_arg a;
+	struct boundary_res r;
+	struct dqt_child ch;
+	struct dqt_held h[DQT_MAX_HELD];
+	int i, n, oracle, status;
+
+	dqt_fill(data, sizeof(data), seed);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	dq_policy_default(&pol);
+	pol.dp_deadline_ms = 0;
+	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
+	memset(&a, 0, sizeof(a));
+	a.fd = o->fd;
+	a.mode = mode;
+	if (mode == BOUNDARY_JAIL) {
+		a.jid = jail_setv(JAIL_CREATE, "path", "/", "name",
+		    BOUNDARY_JAIL_NAME, "persist", NULL, NULL);
+		ATF_REQUIRE_MSG(a.jid > 0, "jail: %s", jail_errmsg);
+	}
+	ATF_REQUIRE_EQ(0, pipe(a.go));
+	dqt_hold(&c, true);
+	dqt_spawn(&ch, child_boundary, &a);
+	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	ATF_REQUIRE_EQ(1, write(a.go[1], "g", 1));
+	(void)dqt_wait_interrupts(&c, 1, DQT_WAIT_MS);
+	/* Answer the reads held so far; later ones are answered at once. */
+	dqt_hold(&c, false);
+	dqt_lock(&c);
+	n = c.nheld;
+	memcpy(h, c.held, (size_t)n * sizeof(h[0]));
+	dqt_unlock(&c);
+	for (i = 0; i < n; i++)
+		(void)dq_reply(c.q, h[i].id, 0, data, 16);
+	status = dqt_wait(&ch, &r, sizeof(r));
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "status %#x", status);
+	ATF_CHECK_EQ_MSG(16, r.a.rv, "A's read: %s (the single-threading "
+	    "failed a wait that catches no signal)", strerror(r.a.err));
+	ATF_CHECK(memcmp(r.buf, data, 16) == 0);
+	if (mode == BOUNDARY_EXEC) {
+		ATF_CHECK_EQ(-1, r.b.rv);
+		ATF_CHECK_EQ(ENOENT, r.b.err);
+	} else {
+		ATF_CHECK_EQ_MSG(0, r.b.rv, "jail_attach: %s",
+		    strerror(r.b.err));
+		ATF_CHECK_EQ(0, jail_remove(a.jid));
+	}
+	(void)close(a.go[0]);
+	(void)close(a.go[1]);
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
+/*
+ * Re-review of D404 (1a): a page fault waits for its answer at the user
+ * boundary without catching signals, and an ordinary kill(2) SIGKILL must
+ * end it (tdsendsignal calls the dying-process hook).  The object's page
+ * deadline is far past the case timeout, so a fault only the deadline
+ * ends shows as the case timing out.
+ */
+#define	FAULT_LONG_DEADLINE_MS	600000
+
+static void *
+boundary_toucher(void *arg)
+{
+	volatile const unsigned char *p = arg;
+
+	(void)p[0];
+	return (NULL);
+}
+
+static void
+child_fault_boundary(void *arg, void *result __unused)
+{
+	struct boundary_arg *a = arg;
+	pthread_t thr;
+	void *p;
+	char ch;
+
+	p = mmap(NULL, 4096, PROT_READ, MAP_SHARED, a->fd, 0);
+	if (p == MAP_FAILED)
+		_exit(6);
+	if (pthread_create(&thr, NULL, boundary_toucher, p) != 0)
+		_exit(3);
+	if (read(a->go[0], &ch, 1) != 1)
+		_exit(4);
+	(void)execl("/nonexistent/dq_read_test", "x", (char *)NULL);
+	(void)pthread_join(thr, NULL);
+}
+
+ATF_TC(fault_boundary_sigkill);
+ATF_TC_HEAD(fault_boundary_sigkill, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a page fault waiting for its answer "
+	    "while a sibling's execve single-threads the process ends at an "
+	    "ordinary SIGKILL, not at the page deadline (D404 re-review)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(fault_boundary_sigkill, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct dq_policy pol;
+	struct boundary_arg a;
+	struct dqt_child ch;
+	int oracle, status;
+
+	dqt_fill(data, sizeof(data), 33);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	dq_policy_default(&pol);
+	pol.dp_deadline_ms = FAULT_LONG_DEADLINE_MS;
+	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
+	memset(&a, 0, sizeof(a));
+	a.fd = o->fd;
+	ATF_REQUIRE_EQ(0, pipe(a.go));
+	dqt_hold(&c, true);
+	dqt_spawn(&ch, child_fault_boundary, &a);
+	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	ATF_REQUIRE_EQ(1, write(a.go[1], "g", 1));
+	ATF_REQUIRE_MSG(dqt_wait_wmesg(ch.pid, "dqbndy", DQT_WAIT_MS),
+	    "the fault did not wait for its answer at the boundary");
+	ATF_REQUIRE_EQ(0, kill(ch.pid, SIGKILL));
+	/* The case's timeout is the hang detector. */
+	ATF_REQUIRE_EQ(ch.pid, waitpid(ch.pid, &status, 0));
+	ATF_CHECK(WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL);
+	(void)close(ch.pipefd);
+	(void)close(a.go[0]);
+	(void)close(a.go[1]);
+	dqt_hold(&c, false);
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
+ATF_TC(read_deadline0_failed_exec_sibling);
+ATF_TC_HEAD(read_deadline0_failed_exec_sibling, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a sibling's execve that fails does "
+	    "not fail a read that waits with no deadline: the read is "
+	    "restarted and gets its data (review 3)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(read_deadline0_failed_exec_sibling, tc)
+{
+
+	boundary_sibling(BOUNDARY_EXEC, 31);
+}
+
+ATF_TC_WITH_CLEANUP(read_deadline0_jail_attach_sibling);
+ATF_TC_HEAD(read_deadline0_jail_attach_sibling, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a sibling's jail_attach does not fail "
+	    "a read that waits with no deadline: the read is restarted and "
+	    "gets its data (review 3)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(read_deadline0_jail_attach_sibling, tc)
+{
+
+	boundary_sibling(BOUNDARY_JAIL, 32);
+}
+ATF_TC_CLEANUP(read_deadline0_jail_attach_sibling, tc)
+{
+	int jid;
+
+	jid = jail_getid(BOUNDARY_JAIL_NAME);
+	if (jid > 0)
+		(void)jail_remove(jid);
+}
+
+/*
+ * D192 (B1): a signal storm during an uninterruptible wait does not make
+ * it spin: the signals are blocked while it waits (D402), so none wakes it.
+ */
+struct storm_res {
+	struct dqt_rr	 rr;
+	long		 cpu_ms;
+};
+
+static volatile sig_atomic_t storm_seen;
+
+static void
+on_storm(int sig __unused)
+{
+
+	storm_seen++;
+}
+
+static void
+child_read_storm(void *arg, void *result)
+{
+	struct storm_res *r = result;
+	struct sigaction sa;
+	struct rusage ru0, ru1;
+	int fd = *(int *)arg;
+	char buf[16];
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = on_storm;
+	sa.sa_flags = SA_RESTART;
+	(void)sigaction(SIGUSR1, &sa, NULL);
+	(void)getrusage(RUSAGE_THREAD, &ru0);
+	DQT_RR(r->rr, read(fd, buf, sizeof(buf)));
+	(void)getrusage(RUSAGE_THREAD, &ru1);
+	/* The read's own CPU time, user and system, from before it. */
+	r->cpu_ms = (ru1.ru_utime.tv_sec - ru0.ru_utime.tv_sec) * 1000 +
+	    (ru1.ru_utime.tv_usec - ru0.ru_utime.tv_usec) / 1000 +
+	    (ru1.ru_stime.tv_sec - ru0.ru_stime.tv_sec) * 1000 +
+	    (ru1.ru_stime.tv_usec - ru0.ru_stime.tv_usec) / 1000;
+}
+
+struct unintr_res {
+	struct dqt_rr	 rr;
+	long		 ms;
+	int		 signals;
+};
+
+static void
+child_read_sigint(void *arg, void *result)
+{
+	struct unintr_res *r = result;
+	struct sigaction sa;
+	int fd = *(int *)arg;
+	int64_t start;
+	char buf[16];
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = on_storm;	/* caught, no SA_RESTART */
+	(void)sigaction(SIGINT, &sa, NULL);
+	start = dqt_now_ms();
+	DQT_RR(r->rr, read(fd, buf, sizeof(buf)));
+	r->ms = (long)(dqt_now_ms() - start);
+	r->signals = storm_seen;
+}
+
+ATF_TC(deadline_unintr);
+ATF_TC_HEAD(deadline_unintr, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a SIGINT storm during a read of a "
+	    "200 ms object the controller never answers: the read ends EIO "
+	    "at its deadline, not EINTR (rev 8 3.5, D192)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(deadline_unintr, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct dq_policy pol;
+	struct unintr_res r;
+	struct dqt_child ch;
+	int fd, i, oracle;
+
+	dqt_fill(data, sizeof(data), 26);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	dq_policy_default(&pol);
+	pol.dp_deadline_ms = 200;
+	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
+	dqt_hold(&c, true);
+	fd = o->fd;
+	dqt_spawn(&ch, child_read_sigint, &fd);
+	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	for (i = 0; i < 200; i++)
+		if (kill(ch.pid, SIGINT) != 0)
+			break;
+	memset(&r, 0, sizeof(r));
+	dqt_collect(&ch, &r, sizeof(r));
+	ATF_CHECK_EQ(-1, r.rr.rv);
+	ATF_CHECK_EQ(EIO, r.rr.err);
+	ATF_CHECK_MSG(r.ms >= 150 && r.ms < 1500, "the read took %ld ms",
+	    r.ms);
+	ATF_CHECK(r.signals >= 1);
+	dqt_hold(&c, false);
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
+ATF_TC(signal_storm_no_spin);
+ATF_TC_HEAD(signal_storm_no_spin, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "10000 signals during a 2 s "
+	    "uninterruptible read wait: the read completes and its thread "
+	    "spends no more than a little CPU time (D192)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(signal_storm_no_spin, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct storm_res r;
+	struct dqt_child ch;
+	int fd, i, oracle;
+
+	dqt_fill(data, sizeof(data), 25);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
+	dqt_hold(&c, true);
+	fd = o->fd;
+	dqt_spawn(&ch, child_read_storm, &fd);
+	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	for (i = 0; i < 10000; i++) {
+		if (kill(ch.pid, SIGUSR1) != 0)
+			break;
+		if (i % 50 == 0)
+			dqt_msleep(10);
+	}
+	ATF_CHECK_EQ(0, dq_reply(c.q, dqt_held_id(&c, 0), 0, data, 16));
+	memset(&r, 0, sizeof(r));
+	dqt_collect(&ch, &r, sizeof(r));
+	ATF_CHECK_EQ_MSG(16, r.rr.rv, "read: %s", strerror(r.rr.err));
+	/*
+	 * The handler runs once the read returns (pending signals merge);
+	 * the waiting thread itself did nearly nothing for 2 s.
+	 */
+	printf("the reader used %ld ms of CPU\n", r.cpu_ms);
+	ATF_CHECK_MSG(r.cpu_ms < 50, "the reader used %ld ms of CPU",
+	    r.cpu_ms);
+	dqt_hold(&c, false);
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -829,5 +1818,18 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, shared_offset_two_threads);
 	ATF_TP_ADD_TC(tp, two_objects_same_identity);
 	ATF_TP_ADD_TC(tp, read_error_reply);
+	ATF_TP_ADD_TC(tp, atime_after_read);
+	ATF_TP_ADD_TC(tp, atime_eof_and_rdonly);
+	ATF_TP_ADD_TC(tp, sigalrm_no_restart);
+	ATF_TP_ADD_TC(tp, eintr_reply_refused);
+	ATF_TP_ADD_TC(tp, same_identity_atime_diverges);
+	ATF_TP_ADD_TC(tp, read_deadline0_exit_sibling);
+	ATF_TP_ADD_TC(tp, read_deadline0_abort_sibling);
+	ATF_TP_ADD_TC(tp, read_deadline0_exec_sibling);
+	ATF_TP_ADD_TC(tp, read_deadline0_failed_exec_sibling);
+	ATF_TP_ADD_TC(tp, read_deadline0_jail_attach_sibling);
+	ATF_TP_ADD_TC(tp, fault_boundary_sigkill);
+	ATF_TP_ADD_TC(tp, signal_storm_no_spin);
+	ATF_TP_ADD_TC(tp, deadline_unintr);
 	return (atf_no_error());
 }

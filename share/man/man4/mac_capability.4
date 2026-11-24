@@ -23,7 +23,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd November 17, 2026
+.Dd November 24, 2026
 .Dt MAC_CAPABILITY 4
 .Os
 .Sh NAME
@@ -216,6 +216,39 @@ Returns
 if the RX queue is full; wait for
 .Dv EVFILT_WRITE
 and retry.
+Setting
+.Dv MAC_CAPABILITY_SEND_F_WAIT
+in
+.Va flags
+instead sleeps until the queue has room and then sends, with no time limit,
+also on a non-blocking descriptor.
+The sleep is interruptible as for
+.Xr write 2
+on a full pipe: a signal whose handler was installed with
+.Dv SA_RESTART
+restarts the call, any other makes it fail with
+.Er EINTR .
+Nothing is sent and no descriptor is consumed before the message is accepted.
+With
+.Dv MAC_CAPABILITY_SEND_F_DEADLINE
+as well,
+.Va _reserved[0]
+(low 32 bits) and
+.Va _reserved[1]
+(high) hold an absolute
+.Dv CLOCK_MONOTONIC
+deadline in nanoseconds: the wait fails with
+.Er ETIMEDOUT
+once it passes, nothing having been sent, and a restart after a signal keeps
+that deadline.
+A send that finds room succeeds whatever the deadline; a deadline of 0 or one
+already past fails a send that would have to wait at once.
+A deadline later than the kernel can represent is the latest one it can.
+.Dv MAC_CAPABILITY_SEND_F_DEADLINE
+without
+.Dv MAC_CAPABILITY_SEND_F_WAIT
+fails with
+.Er EINVAL .
 .It Dv MAC_CAPABILITY_RECVMSG
 Receive an async message.
 Blocks unless
@@ -243,11 +276,32 @@ a timeout fails with
 .Er ETIMEDOUT .
 The finite timeout uses one absolute monotonic deadline across queue wakeups;
 another receiver consuming a message does not restart the budget.
+With
+.Dv MAC_CAPABILITY_RECV_F_DEADLINE
+as well,
+.Va _reserved[0]
+(low 32 bits) and
+.Va _reserved[1]
+(high) hold an absolute
+.Dv CLOCK_MONOTONIC
+deadline in nanoseconds instead, which a receive restarted after a signal
+.Pq Dv SA_RESTART
+keeps; a relative wait would start again.
+A queued message is returned whatever the deadline; a deadline of 0 or one
+already past fails a receive that would have to wait at once.
+A deadline later than the kernel can represent is the latest one it can.
+.Dv MAC_CAPABILITY_RECV_F_DEADLINE
+without
+.Dv MAC_CAPABILITY_RECV_F_WAIT
+fails with
+.Er EINVAL .
 This replaces a readiness wait followed by a receive.
 .It Dv MAC_CAPABILITY_SENDMSG_V2
 As
 .Dv MAC_CAPABILITY_SENDMSG ,
-with per-descriptor work for any number of attachments done in the same call.
+with per-descriptor work for any number of attachments done in the same call
+.Pf ( Dv MAC_CAPABILITY_SEND_F_WAIT
+applies as well).
 .Va fd_specs
 is null or holds one
 .Vt struct mac_capability_fd_spec
@@ -554,6 +608,17 @@ Queued messages are allocated by size: payloads up to 1024 bytes use a small
 zone, larger ones the maximum-size zone, and descriptor bookkeeping is
 allocated only for messages that carry descriptors.
 Sync-only services do not allocate message queues.
+.Pp
+A message freed undelivered (by a revoke, a close, or a service that
+refused or consumed it) drops its references to the descriptors it carries.
+A reference that is not the last is dropped at once.
+The last reference to a descriptor is dropped by a kernel thread of its own,
+because that close may sleep or wait for the caller that freed the message:
+the descriptor is closed after the call that freed the message returns.
+Its peer reads end of file, its
+.Xr flock 2
+locks are released, and its file system can be unmounted, only once that
+close has run.
 .Sh SYSCTL VARIABLES
 .Bl -tag -width kern.mac_capability.service_details
 .It Va kern.mac_capability.services
@@ -562,6 +627,9 @@ Number of registered services.
 Number of active capability instances.
 .It Va kern.mac_capability.service_names
 Newline-separated list of registered service names.
+.It Va kern.mac_capability.dead_service_names
+Newline-separated list of destroyed services that open instances still keep
+allocated; a service leaves it when its last instance is freed.
 .It Va kern.mac_capability.service_details
 Newline-separated list of registered services with flags, queue depth,
 TX limit, instance limit, active instance count, and destroying state.
@@ -619,7 +687,7 @@ refuses to plan packages or media for a configuration that carries it.
 The option is not in NOTES, and is not available to a module.
 .Pp
 On such a kernel only:
-.Bl -tag -width debug.mac_capability.test_issuer_fail_init
+.Bl -tag -width debug.mac_capability.test_issuer_exclude_self
 .It Va kern.mac_capability.test_issuer
 The tunable, read once at boot; only 1 enables test issuers.
 It cannot be changed afterwards.
@@ -627,6 +695,30 @@ It cannot be changed afterwards.
 Test issuers created.
 .It Va kern.mac_capability.test_issuers_live
 Test issuers not yet freed.
+.It Va debug.mac_capability.test_issuers_settle
+Write-only.
+Writing 1 waits for the frees of descriptor-carrying messages already
+handed to the reaper, then runs every task already queued on
+.Va taskqueue_thread ,
+where test issuers whose last reference dropped are freed, so that a
+following read of
+.Va kern.mac_capability.test_issuers_live
+is not one a free queued before the write was about to lower.
+A free that one of those tasks queues in turn is not waited for.
+.It Va debug.mac_capability.test_issuers_wait_live
+Write-only.
+Writing
+.Ar N
+waits, without a timeout, until at most
+.Ar N
+test issuers are live.
+A signal whose handler was installed without
+.Dv SA_RESTART
+ends the wait with
+.Er EINTR ;
+with
+.Dv SA_RESTART
+the wait resumes.
 .It Va kern.mac_capability.test_issuer_state
 .Cm none ,
 .Cm test
@@ -638,12 +730,57 @@ For tests that need revocation while test issuers are alive.
 .It Va debug.mac_capability.test_issuer_fail_init
 An errno
 .Pq Er ENOSPC , ENFILE No or Er EMFILE ,
-or 0 to clear, that PID 1's next issuer creation fails with, once, after it
-has anchored.
+or 0 to clear, that PID 1's next issuer creations fail with after it has
+anchored.
+It clears itself after
+.Va debug.mac_capability.test_issuer_fail_init_count
+failures.
+.It Va debug.mac_capability.test_issuer_fail_init_count
+How many of those creations in a row fail: 1 (the default) is one failure,
+0 fails every creation until
+.Va debug.mac_capability.test_issuer_fail_init
+is cleared.
+Clearing
+.Va debug.mac_capability.test_issuer_fail_init
+resets it to 1.
+.It Va debug.mac_capability.test_issuer_fail_init_skip
+How many of PID 1's creations succeed before those failures begin (default
+0); 1 fails the issuer
+.Xr capsule 8
+creates in advance for the next start rather than the first.
+Clearing
+.Va debug.mac_capability.test_issuer_fail_init
+resets it to 0.
+.It Va debug.mac_capability.test_issuer_exclude_self
+Writing 1, while test issuers are on, marks the calling root process
+excluded from
+.Xr oes 4
+and Capability Brokers, as process 1 is
+.Pq see Sx BASE EXCLUSION No in Xr cap_process 2 ,
+so that a test can exercise the exclusion chain with a test issuer.
+Refused
+.Pq Er EPERM
+for a traced, ktraced, jailed or attached caller or in capability mode.
+.It Va debug.mac_capability.test_park_len
+A payload length, or 0 (the default) for none: the next forward of a
+message with that payload length sent by the process that set it stops in
+the forwarding handler, with its references held, until released.
+The forward that stops consumes the setting.
+.It Va debug.mac_capability.test_park_wait
+Reads 1 while a forward is stopped; a write sleeps until one is.
+.It Va debug.mac_capability.test_park_release
+Writing 1 lets the stopped forward go on.
 .El
 .Pp
-Neither debug control is a tunable, and neither can be written from a
-jail; both only restrict.
+No debug control is a tunable, and none can be written from a jail.
+The issuer controls only restrict;
+.Va debug.mac_capability.test_issuer_exclude_self
+stands in for process 1 and exists only on these test kernels.
+.Pp
+Also only on these kernels, the loader tunable
+.Va security.cap_exclusion.debug_allowed
+lets processes that are not excluded debug excluded ones
+.Pq BASE EXCLUSION in Xr cap_process 2 .
 .Sh DTRACE PROBES
 The
 .Nm
@@ -661,7 +798,15 @@ instance-create, instance-finalize, instance-lastclose.
 .Ss Service lifecycle
 service-create, service-destroy.
 .Ss Queue
-queue-pressure.
+queue-pressure, rxq-discard (a revoked or dead instance discards
+the messages still queued for its service; arguments: service name,
+badge, number of messages), reap-defer (a revoke, a dispatch task or a
+close hands messages that hold the last reference to a carried descriptor
+to the reaper thread, which frees them holding no lock and no instance
+reference, since that close may sleep or wait for its caller; argument:
+number of messages), reap-done (the reaper finished a pass; argument:
+number of messages freed).
+The reaper runs again after a pass when more were handed to it meanwhile.
 .Ss Authority issuers
 issuer-decision: every
 .Dv CAP_AUTH_ISSUER_CREATE ,
@@ -772,9 +917,18 @@ Service being destroyed during
 .Dv MAC_CAPABILITY_CONNECT .
 .It Bq Er ECONNRESET
 Instance terminated or peer closed.
+.It Bq Er EINTR
+A signal whose handler was installed without
+.Dv SA_RESTART
+interrupted a send sleeping for room
+.Pq Dv MAC_CAPABILITY_SEND_F_WAIT
+or a receive sleeping for a message
+.Pq Dv MAC_CAPABILITY_RECV_F_WAIT .
 .It Bq Er EINVAL
-Invalid arguments, reserved fields nonzero, payload too large, or
-too many file descriptors attached.
+Invalid arguments, reserved fields nonzero, payload too large,
+too many file descriptors attached, or a deadline flag
+.Pq Dv MAC_CAPABILITY_SEND_F_DEADLINE , MAC_CAPABILITY_RECV_F_DEADLINE
+without its wait flag.
 .It Bq Er EMSGSIZE
 Payload too large
 .Pq Dv MAC_CAPABILITY_SENDMSG ,

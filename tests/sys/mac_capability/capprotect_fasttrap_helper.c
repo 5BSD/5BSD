@@ -3,11 +3,11 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Raw FASTTRAPIOC_MAKEPROBE for the capprotect hardening pins
- * (capprotect_hardening_dtrace_test.sh): asks fasttrap(4) to create a
- * pid-provider entry probe on a function of another process, as libdtrace
- * does after its ptrace grab, but without the grab.  It never enables the
- * probe.
+ * Raw FASTTRAPIOC_MAKEPROBE for the capprotect tracing and hardening pins
+ * (capprotect_dtrace_test.sh, capprotect_hardening_dtrace_test.sh): asks
+ * fasttrap(4) to create a pid-provider entry probe on a function of another
+ * process, as libdtrace does after its ptrace grab, but without the grab.
+ * It never enables the probe.
  *
  * usage: capprotect_fasttrap_helper PID MODULE FUNCTION ADDRESS
  *        capprotect_fasttrap_helper protect FIXTURE

@@ -26,3 +26,11 @@ options 	GEOM_PART_GPT
 options 	CC_CUBIC		# include CUBIC congestion control
 
 options 	NETLINK			# netlink(4) support
+
+# Mandatory in 5BSD (sys/conf/mandatory-options): every configuration has
+# them, and standalone module builds see them in opt_global.h.
+options 	AUDIT			# Security event auditing
+options 	CAPABILITY_MODE		# Capsicum capability mode
+options 	CAPABILITIES		# Capsicum capabilities
+options 	RACCT			# Resource accounting framework
+options 	RCTL			# Resource limits

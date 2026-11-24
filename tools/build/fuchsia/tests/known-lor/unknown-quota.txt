@@ -1,0 +1,20 @@
+lock order reversal:
+ 1st 0xff0100000d0b90a0 FFS (FFS Lock, sleep mutex) @ /usr/obj/5BSD-fix-userland-3-followups/sys/ufs/ufs/ufs_quota.c:768
+ 2nd 0xfffffe0084330640 struct mount mtx (struct mount mtx, sleep mutex) @ /usr/obj/5BSD-fix-userland-3-followups/sys/ufs/ufs/ufs_quota.c:774
+lock order struct mount mtx -> FFS Lock established at:
+#0 0xffffffff80e7b99a at witness_checkorder+0x36a
+#1 0xffffffff80dd8501 at __mtx_lock_flags+0x91
+#2 0xffffffff81334814 at softdep_flushfiles+0x3a4
+#3 0xffffffff81359be6 at ffs_unmount+0x66
+#4 0xffffffff80f23fd1 at dounmount+0x791
+#5 0xffffffff80f24939 at kern_unmount+0x409
+#6 0xffffffff815265fc at amd64_syscall+0xaec
+#7 0xffffffff814f179b at fast_syscall_common+0xf8
+lock order FFS Lock -> struct mount mtx attempted at:
+#0 0xffffffff80e7c36b at witness_checkorder+0xd3b
+#1 0xffffffff80dd8501 at __mtx_lock_flags+0x91
+#2 0xffffffff81369cfb at quotaoff_inchange+0xbb
+#3 0xffffffff8136b56b at ufs_quotactl+0x1bb
+#4 0xffffffff80f3e54d at sys_quotactl_dqimpl+0x1dd
+#5 0xffffffff815265fc at amd64_syscall+0xaec
+#6 0xffffffff814f179b at fast_syscall_common+0xf8

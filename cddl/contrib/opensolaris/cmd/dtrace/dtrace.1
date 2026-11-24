@@ -595,26 +595,6 @@ option is not specified,
 does not permit the compilation or enabling of a D program that contains
 destructive actions.
 .Pp
-Inside a process protected from debuggers (a
-.Xr mac_capability_capprotect 4
-ptrace shield, also inherited by its children until they execute a new
-image; a process without ambient control; a software-authority holder),
-.Fn copyout
-and
-.Fn copyoutstr
-are refused; inside a process protected from signals (a signal shield, or no
-ambient control),
-.Fn raise
-and
-.Fn stop
-are refused.
-A refusal is reported as a privilege error and counted in
-.Va debug.dtrace.protected_proc_refusals .
-A probe that fires in an aio daemon while it works on a protected process's
-memory is in the daemon's context, which is not protected:
-.Fn copyout
-there writes the protected process's memory.
-.Pp
 Set the
 .Va security.bsd.allow_destructive_dtrace
 .Xr loader 8
@@ -1921,6 +1901,106 @@ command line to define a set of macro variables and so forth).
 The additional arguments can be used in D programs specified using the
 .Fl s
 option or on the command line.
+.Sh PROCESS PROBES
+A program's USDT probes are described by the DOF in the
+.Li .SUNW_dof
+section of each of its objects.
+A program registers its own DOF at start-up through
+.Pa /dev/dtrace/helper ,
+which is owned by root and group wheel, mode 0660:
+programs run by root or by a member of group wheel can open it, other
+programs cannot.
+.Pp
+The kernel also accepts the DOF of another process, without stopping it,
+from a caller that has the DTrace process privilege
+.Pq Dv PRIV_DTRACE_PROC ,
+which root outside a jail holds, and may inspect the process
+.Pq Xr p_caninspect 9 .
+The DOF must lie in a read-only mapping of a file whose bytes are the
+file's own: a mapping the process made writable and wrote, even if it made
+it read-only again, is refused, and so is DOF the process copied into other
+memory.
+The kernel then reads the DOF from the file, at the offsets that mapping
+covers, not from the process's memory.
+The object's load base is the start of its mapping at file offset 0
+.Pq Dv ET_DYN
+or 0
+.Pq Dv ET_EXEC ;
+a caller that passes another base is refused with
+.Er EINVAL .
+Every probe site the DOF names must lie in an executable mapping of the
+same file, or the registration fails with
+.Er EFAULT .
+A caller in capability mode is refused with
+.Er ECAPMODE ,
+and a process that has begun to exit with
+.Er ESRCH .
+Files on
+.Xr tmpfs 4
+map as anonymous memory, so programs and libraries run from tmpfs cannot
+have their probes registered by another process.
+.Pp
+For a USDT probe description that names a process, such as
+.Li myprov1234:::start ,
+.Nm
+finds the process's DOF in its object files and registers it as described
+above, through a read-only process handle that never attaches to the
+process with
+.Xr ptrace 2
+or stops it.
+Only a description that gives all four fields without a pattern, such as
+.Li myprov1234:a.out:main:start ,
+is first looked up in the kernel; when the probe it names exists, as for a
+program that registered itself, nothing more is done.
+A partial or globbed description may name probes of objects the process
+loaded later, so it always registers the process's objects again; the
+kernel creates nothing twice.
+When the kernel refuses the registration
+.Pq Er EPERM No or Er EACCES ,
+.Nm
+reports that it cannot register the process's USDT probes, unless
+.Fl Z
+allows the description to match nothing.
+.Pp
+The pid provider places breakpoints at addresses the consumer chooses.
+It needs permission to debug the process
+.Pq Xr p_candebug 9 :
+.Nm
+attaches to the process to find its functions, and the kernel checks the
+permission again when the probe is made
+.Pq Dv FASTTRAPIOC_MAKEPROBE ,
+which fails with
+.Er EACCES
+or
+.Er EPERM .
+A process protected from debuggers, such as one with a
+.Xr mac_capability_capprotect 4
+ptrace shield, therefore refuses new pid probes.
+The check is made only then: a pid probe made before the process was
+protected can still be enabled, by any consumer, until the process exits
+or executes another image, and a probe already enabled keeps firing.
+.Fl p
+and
+.Fl c
+attach to or create the process in the same way.
+.Pp
+The kernel providers are not checked against a process's protection.
+A consumer with the DTrace kernel privilege can read a protected process's
+memory with
+.Fn copyin
+from
+.Sy syscall ,
+.Sy fbt
+or
+.Sy profile
+probes that fire in it, and with
+.Fl w
+write it with
+.Fn copyout
+and signal or stop it with
+.Fn raise
+and
+.Fn stop .
 .Sh ENVIRONMENT
 .Bl -tag -width 'DTRACE_DEBUG'
 .It Ev DTRACE_DEBUG

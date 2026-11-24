@@ -20,12 +20,13 @@
 #include <atf-c.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	NPAGES		8
 #define	DATA_LEN	(NPAGES * 4096)
@@ -435,6 +436,361 @@ ATF_TC_BODY(shrink_fails_pending, tc)
 	dqt_fixture_fini(&f);
 }
 
+/*
+ * A full queue refuses msync's write-back AGAIN; msync then sleeps for a
+ * room event ("dqroom", dq_async_wait), with no timer but the page
+ * deadline.  The object's page deadline here is far past the case's
+ * timeout, so a wait that only the deadline ends shows as the case timing
+ * out.  The one slot is taken by a read of a second object with no
+ * deadline, left unread (the controller paused).
+ */
+#define	LONG_DEADLINE_MS	600000	/* past every case timeout here */
+#define	DROP_WAKEUP		"debug.dq.drop_wakeup"
+#define	WAKE_ASYNC_ROOM		0x0100	/* DQ_WAKE_* of dq_var.h */
+#define	WAKE_DESTROY		0x0200
+
+struct fill_res {
+	ssize_t	rv;
+	int	err;
+};
+
+/*
+ * The filler: fd[0] is the second object's descriptor, read; fd[1], when
+ * not -1, a descriptor of the first object the child inherited and closes
+ * first, so that it does not keep that object open (its last close is
+ * what close_destroy_deadline waits for).
+ */
+static void
+child_fill_read(void *arg, void *result)
+{
+	struct fill_res *r = result;
+	int *fd = arg;
+	char buf[16];
+
+	if (fd[1] != -1)
+		(void)close(fd[1]);
+	r->rv = pread(fd[0], buf, sizeof(buf), 0);
+	r->err = r->rv == -1 ? errno : 0;
+}
+
+static bool
+posted_reach(const struct dq_stats *st, uintptr_t n)
+{
+
+	return (st->ds_events_posted >= n);
+}
+
+/*
+ * The writer's msync asleep in "dqroom" behind the filler's read; the
+ * controller paused.  fillfd[0] is the second object's descriptor.
+ */
+static void
+room_setup(struct dqt_fixture *f, unsigned seed, struct dirty_arg *a,
+    struct dqt_child *ch, struct dqt_child *chf, int *fillfd)
+{
+	struct dqt_object *fo;
+	struct dq_policy pol;
+	struct dq_stats st;
+
+	setup(f, seed, LONG_DEADLINE_MS, 0);
+	dq_policy_default(&pol);
+	pol.dp_deadline_ms = 0;
+	fo = dqt_mint_backing(&f->c, f->backing, path, &pol, 0);
+	fillfd[0] = fo->fd;
+	fillfd[1] = -1;
+	memset(a, 0, sizeof(*a));
+	a->fd = f->o->fd;
+	a->npages = 1;
+	dqt_sync_init(&a->s);
+	dqt_spawn(ch, child_dirty, a);
+	ATF_REQUIRE_MSG(dqt_sync_wait(a->s.toparent[0], 4 * DQT_WAIT_MS),
+	    "the requester did not fault its pages in");
+	ATF_REQUIRE_EQ(0, dq_set_queue_depth(f->c.q, 1));
+	dqt_pause(&f->c);
+	dqt_stats(&f->c, &st);
+	dqt_spawn(chf, child_fill_read, fillfd);
+	ATF_REQUIRE(dqt_wait_stats(&f->c, posted_reach,
+	    st.ds_events_posted + 1, DQT_WAIT_MS));
+	dqt_sync_post(a->s.tochild[1]);
+	ATF_REQUIRE_MSG(dqt_wait_wmesg(ch->pid, "dqroom", DQT_WAIT_MS),
+	    "msync did not wait for room");
+}
+
+static void
+room_finish(struct dqt_fixture *f, struct dqt_child *ch)
+{
+	struct dirty_res r;
+	int status;
+
+	status = dqt_wait(ch, &r, sizeof(r));
+	ATF_CHECK_EQ_MSG(0, r.sig, "signal %d in the requester", r.sig);
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	ATF_CHECK_EQ_MSG(0, r.rv1, "msync: %s", strerror(r.err1));
+	check_backing_dirtied(f, 0, 1);
+	dqt_fixture_fini(f);
+}
+
+ATF_TC(msync_again_full);
+ATF_TC_HEAD(msync_again_full, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "msync(MS_SYNC) refused AGAIN by a "
+	    "full queue sleeps until the slot frees, then writes the page "
+	    "back (the room event ends its wait, not the page deadline)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "120");
+}
+ATF_TC_BODY(msync_again_full, tc)
+{
+	struct dirty_arg a;
+	struct dqt_fixture f;
+	struct dqt_child ch, chf;
+	struct fill_res fr;
+	int fillfd[2];
+
+	room_setup(&f, 11, &a, &ch, &chf, fillfd);
+	dqt_resume(&f.c);
+	dqt_collect(&chf, &fr, sizeof(fr));
+	ATF_CHECK_EQ(16, fr.rv);
+	room_finish(&f, &ch);
+}
+
+ATF_TC(msync_depth_rise);
+ATF_TC_HEAD(msync_depth_rise, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "msync(MS_SYNC) refused AGAIN by a "
+	    "full queue posts its write-back as soon as the controller raises "
+	    "the depth (a room event), with the slot still taken");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "120");
+}
+ATF_TC_BODY(msync_depth_rise, tc)
+{
+	struct dirty_arg a;
+	struct dqt_fixture f;
+	struct dqt_child ch, chf;
+	struct dq_stats2 st;
+	struct fill_res fr;
+	int fillfd[2];
+
+	room_setup(&f, 12, &a, &ch, &chf, fillfd);
+	ATF_REQUIRE_EQ(0, dq_set_queue_depth(f.c.q, 2));
+	/*
+	 * Still paused: the write-back is posted beside the filler.  The
+	 * case's timeout is the hang detector.
+	 */
+	ATF_REQUIRE(wait_stats2(&f.c, pred_pending, 1, INT_MAX, &st));
+	dqt_resume(&f.c);
+	dqt_collect(&chf, &fr, sizeof(fr));
+	ATF_CHECK_EQ(16, fr.rv);
+	room_finish(&f, &ch);
+}
+
+ATF_TC(msync_revoke_room);
+ATF_TC_HEAD(msync_revoke_room, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "msync(MS_SYNC) waiting for room ends "
+	    "when its object is revoked (the revoke is a room event), not at "
+	    "the page deadline");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "120");
+}
+ATF_TC_BODY(msync_revoke_room, tc)
+{
+	struct dirty_arg a;
+	struct dqt_fixture f;
+	struct dqt_child ch, chf;
+	struct dirty_res r;
+	struct fill_res fr;
+	int fillfd[2], status;
+
+	room_setup(&f, 13, &a, &ch, &chf, fillfd);
+	ATF_REQUIRE_EQ(0, dq_revoke(f.c.q, f.o->id));
+	/* Still paused; the case's timeout is the hang detector. */
+	status = dqt_wait(&ch, &r, sizeof(r));
+	ATF_CHECK_EQ_MSG(0, r.sig, "signal %d in the requester", r.sig);
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	ATF_CHECK_EQ(-1, r.rv1);
+	ATF_CHECK_EQ(EIO, r.err1);
+	dqt_resume(&f.c);
+	dqt_collect(&chf, &fr, sizeof(fr));
+	ATF_CHECK_EQ(16, fr.rv);
+	dqt_fixture_fini(&f);
+}
+
+ATF_TC_WITH_CLEANUP(wake_async_room);
+ATF_TC_HEAD(wake_async_room, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "msync(MS_SYNC) waiting for room ends "
+	    "only by the room event's wakeup: with it dropped, the freed slot "
+	    "leaves msync asleep (no polling)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "120");
+}
+ATF_TC_BODY(wake_async_room, tc)
+{
+	struct dirty_arg a;
+	struct dqt_fixture f;
+	struct dqt_child ch, chf;
+	struct fill_res fr;
+	uint64_t before, left;
+	int fillfd[2];
+
+	dqt_require_fault_knob(DROP_WAKEUP);
+	room_setup(&f, 14, &a, &ch, &chf, fillfd);
+	before = dqt_drop_count(WAKE_ASYNC_ROOM);
+	dqt_sysctl_save_set_uint(DROP_WAKEUP, WAKE_ASYNC_ROOM);
+	dqt_resume(&f.c);
+	dqt_collect(&chf, &fr, sizeof(fr));
+	ATF_CHECK_EQ(16, fr.rv);
+	/* The slot read off: its room event, dropped. */
+	dqt_drop_wait(WAKE_ASYNC_ROOM, before + 1);
+	/*
+	 * One look: msync still waits for room, and its only timeout is the
+	 * page deadline (LONG_DEADLINE_MS, far past this case), not a
+	 * re-check timer.
+	 */
+	left = 0;
+	ATF_CHECK_MSG(dqt_sleep_left(ch.pid, "dqroom", &left), "msync left "
+	    "\"dqroom\" with the room event's wakeup dropped: another wakeup "
+	    "reached it");
+	ATF_CHECK_MSG(left > LONG_DEADLINE_MS / 2, "msync's sleep times out "
+	    "in %ju ms, not at the page deadline: a timer could end it",
+	    (uintmax_t)left);
+	ATF_REQUIRE(dqt_sysctl_restore(DROP_WAKEUP));
+	/* The release: a depth raise is a room event too. */
+	ATF_REQUIRE_EQ(0, dq_set_queue_depth(f.c.q, 2));
+	room_finish(&f, &ch);
+}
+ATF_TC_CLEANUP(wake_async_room, tc)
+{
+
+	(void)dqt_sysctl_restore(DROP_WAKEUP);
+}
+
+ATF_TC(close_destroy_deadline);
+ATF_TC_HEAD(close_destroy_deadline, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a dirty page whose write-back after "
+	    "the last close a full queue refuses is dropped and counted at the "
+	    "page deadline (the destroy task's one timeout), with no "
+	    "write-back posted");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(close_destroy_deadline, tc)
+{
+	struct dqt_fixture f;
+	struct dqt_object *fo;
+	struct dqt_child ch, chf;
+	struct dirty_arg a;
+	struct dirty_res r;
+	struct dq_policy pol;
+	struct dq_stats2 st;
+	struct dq_stats st1;
+	struct fill_res fr;
+	int fillfd[2], status;
+
+	setup(&f, 15, 300, 0);
+	dq_policy_default(&pol);
+	pol.dp_deadline_ms = 0;
+	fo = dqt_mint_backing(&f.c, f.backing, path, &pol, 0);
+	fillfd[0] = fo->fd;
+	fillfd[1] = f.o->fd;	/* the child must not keep it open */
+	memset(&a, 0, sizeof(a));
+	a.fd = f.o->fd;
+	a.npages = 1;
+	a.unmap_close = 1;
+	dqt_sync_init(&a.s);
+	dqt_spawn(&ch, child_dirty, &a);
+	ATF_REQUIRE_MSG(dqt_sync_wait(a.s.toparent[0], 4 * DQT_WAIT_MS),
+	    "the requester did not fault its pages in");
+	ATF_REQUIRE_EQ(0, dq_set_queue_depth(f.c.q, 1));
+	dqt_pause(&f.c);
+	dqt_stats(&f.c, &st1);
+	dqt_spawn(&chf, child_fill_read, fillfd);
+	ATF_REQUIRE(dqt_wait_stats(&f.c, posted_reach,
+	    st1.ds_events_posted + 1, DQT_WAIT_MS));
+	(void)close(f.o->fd);
+	f.o->fd = -1;
+	dqt_sync_post(a.s.tochild[1]);
+	status = dqt_wait(&ch, &r, sizeof(r));
+	ATF_CHECK_EQ_MSG(0, r.sig, "signal %d in the requester", r.sig);
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	ATF_CHECK_EQ(0, r.unmap);
+	ATF_CHECK_EQ(0, r.closed);
+	/* The case's timeout is the hang detector. */
+	ATF_REQUIRE(wait_stats2(&f.c, pred_dropped, 1, INT_MAX, &st));
+	ATF_CHECK_EQ_MSG(0, st.ds2_async_deadlines, "a write-back was "
+	    "posted and missed its deadline: the queue was not full");
+	dqt_resume(&f.c);
+	dqt_collect(&chf, &fr, sizeof(fr));
+	ATF_CHECK_EQ(16, fr.rv);
+	dqt_fixture_fini(&f);
+}
+
+ATF_TC_WITH_CLEANUP(wake_destroy);
+ATF_TC_HEAD(wake_destroy, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "the destroy task of a closed object "
+	    "waiting for its write-back runs again only by the completion's "
+	    "kick: with it dropped, the object stays until another kick (no "
+	    "polling)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(wake_destroy, tc)
+{
+	struct dqt_fixture f;
+	struct dqt_child ch;
+	struct dirty_arg a;
+	struct dirty_res r;
+	struct dq_stats st;
+	struct dqt_held h;
+	uint64_t before;
+	int status;
+
+	dqt_require_fault_knob(DROP_WAKEUP);
+	setup(&f, 16, DQ_DEADLINE_DEFAULT, DQ_EVENTS_CLOSE);
+	memset(&a, 0, sizeof(a));
+	a.fd = f.o->fd;
+	a.npages = 1;
+	a.unmap_close = 1;
+	start_dirty(&f, &a, &ch, true);
+	(void)close(f.o->fd);
+	f.o->fd = -1;
+	status = dqt_wait(&ch, &r, sizeof(r));
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	/* The destroy task's write-back, held. */
+	ATF_REQUIRE(dqt_wait_held(&f.c, 1, DQT_WAIT_MS));
+	dqt_lock(&f.c);
+	h = f.c.held[0];
+	dqt_unlock(&f.c);
+	ATF_REQUIRE_EQ(DQ_OP_WRITE_ASYNC, h.op);
+	before = dqt_drop_count(WAKE_DESTROY);
+	dqt_sysctl_save_set_uint(DROP_WAKEUP, WAKE_DESTROY);
+	ATF_REQUIRE_EQ(0, dq_reply_write(f.c.q, h.id, h.len, h.offset));
+	/*
+	 * The completion runs on a task: wait for its kick to be dropped,
+	 * then one look that the object is still there (live, no CLOSE).
+	 */
+	dqt_drop_wait(WAKE_DESTROY, before + 1);
+	dqt_stats(&f.c, &st);
+	ATF_CHECK_EQ_MSG(1, st.ds_objects_live, "the object went with the "
+	    "completion's kick dropped: something polls or another kick "
+	    "reached the task");
+	dqt_lock(&f.c);
+	ATF_CHECK_EQ(0, f.c.events[DQ_OP_CLOSE]);
+	dqt_unlock(&f.c);
+	ATF_REQUIRE(dqt_sysctl_restore(DROP_WAKEUP));
+	/* The release: a revoke holds and drops the pager, a kick. */
+	ATF_REQUIRE_EQ(0, dq_revoke(f.c.q, f.o->id));
+	dqt_hold(&f.c, false);
+	dqt_fixture_fini(&f);
+}
+ATF_TC_CLEANUP(wake_destroy, tc)
+{
+
+	(void)dqt_sysctl_restore(DROP_WAKEUP);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -443,5 +799,11 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, controller_exit_completes);
 	ATF_TP_ADD_TC(tp, close_dropped_counted);
 	ATF_TP_ADD_TC(tp, shrink_fails_pending);
+	ATF_TP_ADD_TC(tp, msync_again_full);
+	ATF_TP_ADD_TC(tp, msync_depth_rise);
+	ATF_TP_ADD_TC(tp, msync_revoke_room);
+	ATF_TP_ADD_TC(tp, wake_async_room);
+	ATF_TP_ADD_TC(tp, close_destroy_deadline);
+	ATF_TP_ADD_TC(tp, wake_destroy);
 	return (atf_no_error());
 }

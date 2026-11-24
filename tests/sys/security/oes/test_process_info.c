@@ -27,8 +27,9 @@
 #include <security/oes/oes.h>
 #include "test_common.h"
 
+/* The FORK event whose forking process is parent. */
 static int
-read_fork_event(int fd, oes_message_t *out_msg)
+read_fork_event(int fd, pid_t parent, oes_message_t *out_msg)
 {
 	test_msg_buf _msg_buf;
 	oes_message_t *msg = &_msg_buf.msg;
@@ -53,13 +54,28 @@ read_fork_event(int fd, oes_message_t *out_msg)
 
 		if (test_wait_event(fd, msg, remaining) != 0)
 			continue;
-		if (msg->em_event != OES_EVENT_NOTIFY_FORK)
+		if (msg->em_event != OES_EVENT_NOTIFY_FORK ||
+		    msg->em_process.ep_pid != parent)
 			continue;
 
 		memcpy(out_msg, msg, msg->em_size);
 		return (0);
 	}
 	return (-1);
+}
+
+static int
+fork_one(void *arg __unused)
+{
+	pid_t pid;
+	int status;
+
+	pid = fork();
+	if (pid < 0)
+		return (1);
+	if (pid == 0)
+		_exit(0);
+	return (waitpid(pid, &status, 0) == pid ? 0 : 2);
 }
 
 int
@@ -73,16 +89,14 @@ main(void)
 	};
 	test_msg_buf _msg_buf;
 	oes_message_t *msg = &_msg_buf.msg;
-	pid_t child, mypid;
+	pid_t actor, mypid;
 	int status;
 	int errors = 0;
 	char my_comm[20];
 
 	printf("Testing process info (ABI, parent)...\n");
 
-	/* Get our own info for comparison */
-	mypid = getpid();
-	/* Our comm name is test_process_info (truncated) */
+	/* The actor's comm is ours, test_process_info (truncated) */
 	strlcpy(my_comm, "test_process_in", sizeof(my_comm));
 
 	fd = open("/dev/oes", O_RDWR | O_NONBLOCK | O_CLOEXEC);
@@ -110,42 +124,30 @@ main(void)
 	}
 
 	/*
-	 * Clear the default self-mute so we can see our own fork events.
-	 * (security.oes.default_self_mute=1 would otherwise block them.)
+	 * The fork is made by an actor child: the test opened the client, so
+	 * its own events (its forks included) never reach it (oes(4), "A
+	 * client's own processes").  The actor forks one child, reaps it and
+	 * exits; the event's child record names the actor as parent.
 	 */
-	if (ioctl(fd, OES_IOC_UNMUTE_ALL_PROCESSES, NULL) < 0) {
-		perror("OES_IOC_UNMUTE_ALL_PROCESSES");
+	actor = test_in_child(fork_one, NULL, &status);
+	if (actor < 0 || !test_child_ok(status)) {
+		fprintf(stderr, "FAIL: actor fork failed\n");
 		close(fd);
 		return (1);
 	}
+	mypid = actor;
 
-	/* Fork a child to generate event */
-	child = fork();
-	if (child < 0) {
-		perror("fork");
-		close(fd);
-		return (1);
-	}
-	if (child == 0) {
-		/* Child - just exit */
-		_exit(0);
-	}
-
-	/* Parent - wait for fork event */
-	if (read_fork_event(fd, msg) < 0) {
+	if (read_fork_event(fd, actor, msg) < 0) {
 		fprintf(stderr, "FAIL: no FORK event received\n");
-		waitpid(child, &status, 0);
 		close(fd);
 		return (1);
 	}
-
-	waitpid(child, &status, 0);
 	close(fd);
 
 	/* Verify child info from fork event */
 	oes_process_t *proc = &msg->em_event_data.fork.child;
 
-	printf("  Child PID: %d (expected around %d)\n", proc->ep_pid, child);
+	printf("  Child PID: %d\n", proc->ep_pid);
 	printf("  Parent PID: %d (expected %d)\n", proc->ep_ppid, mypid);
 	printf("  Parent comm: '%s'\n", proc->ep_pcomm);
 	printf("  ABI: %d (EP_ABI_FREEBSD=%d, EP_ABI_LINUX=%d)\n",
@@ -156,7 +158,7 @@ main(void)
 	printf("  Executable path: '%s'\n",
 	    oes_msg_string(msg, proc->ep_path_off));
 
-	/* Test 1: Parent PID should be us */
+	/* Test 1: Parent PID should be the actor */
 	if (proc->ep_ppid != mypid) {
 		fprintf(stderr, "  FAIL: ep_ppid=%d, expected %d\n",
 		    proc->ep_ppid, mypid);

@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 13, 2026
+.Dd November 19, 2026
 .Dt OESLOGGER 8
 .Os
 .Sh NAME
@@ -18,11 +18,27 @@
 .Op Ar event_type ...
 .Nm
 .Fl l
+.Nm
+.Fl X
 .Sh DESCRIPTION
 .Nm
 is a passive
 .Xr oes 4
 client which writes observed security events as newline-delimited JSON.
+At start-up
+.Nm
+reports on standard error how many processes are excluded from OES by the
+kernel
+.Pq Xr capsule 8 , Xr switchboard 8 and Core units; see Xr oes 4 ;
+they produce no events.
+Each process record carries
+.Va cap_excluded ,
+.Va cap_managed
+and
+.Va cap_roles :
+whether the process is excluded, whether it runs the image pinned by a
+valid managed software authority, and that authority's role bits
+.Pq Xr cap_process 2 .
 With no event types it subscribes to all notification events.
 Named event types restrict the subscription, for example
 .Cm exec ,
@@ -76,6 +92,10 @@ Like
 but log only the named jail itself, not the jails nested beneath it.
 .It Fl l
 List accepted event names and exit.
+.It Fl X
+List the processes the kernel excludes from OES
+.Pq process ID, parent, command and executable path
+and exit.
 .It Fl m Ar path
 Mute events whose primary object has the given path prefix.
 This option may be repeated.

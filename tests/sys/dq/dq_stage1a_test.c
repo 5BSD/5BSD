@@ -32,12 +32,13 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <poll.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	DATA_LEN	8192
 
@@ -566,6 +567,119 @@ ATF_TC_BODY(seals_readdir, tc)
 	teardown(&f);
 }
 
+/*
+ * A served directory minted from a real one, and that real directory
+ * opened read-only: the oracle of the local answers below.
+ */
+struct dir_fixture {
+	struct dqt_ctl	 c;
+	int		 sdir;		/* the served directory (controller's) */
+	int		 rdir;		/* the real one */
+};
+
+static void
+dir_setup(struct dir_fixture *f)
+{
+	struct dq_ident_file *ident;
+	struct dq_policy pol;
+	struct statfs sfs;
+	struct stat st;
+	char path[PATH_MAX];
+	uint64_t object;
+
+	ATF_REQUIRE(mkdir("rdir", 0755) == 0);
+	ATF_REQUIRE(realpath("rdir", path) != NULL);
+	f->rdir = open(path, O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(f->rdir >= 0);
+	ATF_REQUIRE(fstat(f->rdir, &st) == 0);
+	ATF_REQUIRE(fstatfs(f->rdir, &sfs) == 0);
+	ident = calloc(1, sizeof(*ident));
+	ATF_REQUIRE(ident != NULL);
+	ATF_REQUIRE_EQ(0, dq_ident_from_stat(ident, path, &st, &sfs,
+	    f->rdir));
+	dq_policy_default_dir(&pol);
+	dqt_init(&f->c);
+	ATF_REQUIRE_MSG(dq_mint_dir(f->c.q, ident, &pol, &object, &f->sdir,
+	    NULL) == 0, "dq_mint_dir: %s", strerror(errno));
+	free(ident);
+}
+
+static void
+dir_teardown(struct dir_fixture *f)
+{
+
+	/* Every answer below is local: nothing reached the controller. */
+	dqt_lock(&f->c);
+	ATF_CHECK_EQ(0, f->c.records);
+	dqt_unlock(&f->c);
+	(void)close(f->sdir);
+	dqt_fini(&f->c);
+	(void)close(f->rdir);
+}
+
+/* An mmap(2) result as an errno: 0 on success (the mapping is removed). */
+static int
+dir_mmap_errno(int fd, int prot, int flags)
+{
+	void *p;
+
+	p = mmap(NULL, PAGE_SIZE, prot, flags, fd, 0);
+	if (p == MAP_FAILED)
+		return (errno);
+	(void)munmap(p, PAGE_SIZE);
+	return (0);
+}
+
+ATF_TC(dir_local_answers);
+ATF_TC_HEAD(dir_local_answers, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "posix_fadvise, FIOSEEKDATA/HOLE, "
+	    "F_READAHEAD and mmap on a served directory against a real "
+	    "directory (T-A16 to T-A19)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(dir_local_answers, tc)
+{
+	struct dir_fixture f;
+	off_t off;
+	int error;
+
+	dir_setup(&f);
+	/*
+	 * The real directory: base's answers.  The seek ioctls are the
+	 * file system's: the generic ones (vop_stdioctl, vn_bmap_seekhole)
+	 * are ENOTTY for anything but a regular file, and ufs answers
+	 * FIOSEEKDATA itself (ufs_bmap_seekdata: EINVAL).
+	 */
+	ATF_CHECK_EQ(ENODEV, posix_fadvise(f.rdir, 0, 0, POSIX_FADV_NORMAL));
+	off = 0;
+	error = DQT_ERRNO_OF(ioctl(f.rdir, FIOSEEKDATA, &off));
+	ATF_CHECK_MSG(error == ENOTTY || error == EINVAL, "FIOSEEKDATA: %d",
+	    error);
+	off = 0;
+	ATF_CHECK_EQ(ENOTTY, DQT_ERRNO_OF(ioctl(f.rdir, FIOSEEKHOLE, &off)));
+	ATF_CHECK_EQ(ENOTTY, DQT_ERRNO_OF(fcntl(f.rdir, F_READAHEAD, 0)));
+	ATF_CHECK_EQ(EACCES, dir_mmap_errno(f.rdir, PROT_READ | PROT_WRITE,
+	    MAP_SHARED));
+	ATF_CHECK_EQ(EINVAL, dir_mmap_errno(f.rdir, PROT_READ, MAP_SHARED));
+
+	/*
+	 * The served directory answers as the generic layer answers a
+	 * directory (T-A16 to T-A19; they answered 0, 0, 0, 0 and EINVAL):
+	 * the seek ioctls ENOTTY, where ufs answers FIOSEEKDATA itself.
+	 */
+	ATF_CHECK_EQ(ENODEV, posix_fadvise(f.sdir, 0, 0, POSIX_FADV_NORMAL));
+	off = 0;
+	ATF_CHECK_EQ(ENOTTY, DQT_ERRNO_OF(ioctl(f.sdir, FIOSEEKDATA, &off)));
+	off = 0;
+	ATF_CHECK_EQ(ENOTTY, DQT_ERRNO_OF(ioctl(f.sdir, FIOSEEKHOLE, &off)));
+	ATF_CHECK_EQ(ENOTTY, DQT_ERRNO_OF(fcntl(f.sdir, F_READAHEAD, 0)));
+	ATF_CHECK_EQ(EACCES, dir_mmap_errno(f.sdir, PROT_READ | PROT_WRITE,
+	    MAP_SHARED));
+	ATF_CHECK_EQ(EINVAL, dir_mmap_errno(f.sdir, PROT_READ, MAP_SHARED));
+	dir_teardown(&f);
+}
+
 struct lock_res {
 	struct dqt_rr	 rd, fl;
 };
@@ -752,5 +866,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, ioctls);
 	ATF_TP_ADD_TC(tp, poll_select_kqueue);
 	ATF_TP_ADD_TC(tp, seals_readdir);
+	ATF_TP_ADD_TC(tp, dir_local_answers);
 	return (atf_no_error());
 }

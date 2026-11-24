@@ -32,7 +32,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	DATA_LEN	4096
 #define	MAX_OPS		10
@@ -432,6 +432,84 @@ ATF_TC_BODY(setlkw_no_deadline, tc)
 	holder_release(&h, &hch, &hr);
 	dqt_collect(&wch, &r, sizeof(r));
 	ATF_CHECK_EQ_MSG(0, r.rv, "F_SETLKW: %s", strerror(r.err));
+	dqt_fixture_fini(&f);
+}
+
+/* flock(LOCK_EX) blocking, with SIGUSR1 caught without SA_RESTART. */
+static void
+child_flock_block(void *arg, void *result)
+{
+	struct wait_arg *a = arg;
+	struct dqt_rr *r = result;
+	struct sigaction sa;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = on_usr1;
+	(void)sigaction(SIGUSR1, &sa, NULL);
+	r->rv = flock(a->fd, LOCK_EX);
+	r->err = r->rv == -1 ? errno : 0;
+}
+
+ATF_TC(flock_block_interrupt);
+ATF_TC_HEAD(flock_block_interrupt, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a signal ends a blocked flock(LOCK_EX) "
+	    "with EINTR on a served file as on the real one: a lock wait "
+	    "always catches signals (rev 8 3.5, D192)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(flock_block_interrupt, tc)
+{
+	struct dqt_fixture f;
+	struct dqt_child hch, wch;
+	struct holder_arg h;
+	struct holder_res hr;
+	struct wait_arg w;
+	struct dqt_object *o2;
+	struct dqt_rr r;
+	int oracle2;
+
+	setup(&f, 4);
+	memset(&h, 0, sizeof(h));
+	h.sfd = f.o->fd;
+	h.ofd = f.oracle;
+	h.cmd = 0;		/* flock, on both files */
+	holder_start(&h, &hch);
+	/*
+	 * A flock belongs to the open file: the waiter asks through other
+	 * open files of the same two files, or it would already hold it.
+	 */
+	o2 = dqt_mint_backing(&f.c, f.backing, backing_path, NULL,
+	    DQ_MINT_F_WRITE);
+	oracle2 = open(oracle_path, O_RDWR);
+	ATF_REQUIRE(oracle2 >= 0);
+
+	/* The real file: the waiter sleeps in the lock; signal it there. */
+	memset(&w, 0, sizeof(w));
+	w.fd = oracle2;
+	dqt_spawn(&wch, child_flock_block, &w);
+	ATF_REQUIRE(dqt_wait_wmesg(wch.pid, "lockf", DQT_WAIT_MS));
+	ATF_REQUIRE_EQ(0, kill(wch.pid, SIGUSR1));
+	dqt_collect(&wch, &r, sizeof(r));
+	ATF_CHECK_EQ(-1, r.rv);
+	ATF_CHECK_EQ(EINTR, r.err);
+
+	/*
+	 * The served file: the waiter sleeps for its LOCK's reply.  Signal
+	 * it once the controller has read the LOCK, as setlkw_interrupt
+	 * does: a LOCK still pending is withdrawn with no INTERRUPT.
+	 */
+	w.fd = o2->fd;
+	dqt_spawn(&wch, child_flock_block, &w);
+	ATF_REQUIRE(dqt_wait_locks(&f.c, o2, 1, DQT_WAIT_MS));
+	ATF_REQUIRE(dqt_wait_wmesg(wch.pid, DQT_WMESG_REPLY, DQT_WAIT_MS));
+	ATF_REQUIRE_EQ(0, kill(wch.pid, SIGUSR1));
+	dqt_collect(&wch, &r, sizeof(r));
+	ATF_CHECK_EQ(-1, r.rv);
+	ATF_CHECK_EQ(EINTR, r.err);
+	ATF_CHECK(dqt_wait_interrupts(&f.c, 1, DQT_WAIT_MS));
+	holder_release(&h, &hch, &hr);
+	(void)close(oracle2);
 	dqt_fixture_fini(&f);
 }
 
@@ -1098,17 +1176,184 @@ ATF_TC_BODY(unlock_all_over_depth, tc)
 	(void)close(oracle);
 }
 
+/*
+ * T-R07: dq_serve_file's SETLKW waiter acts on the owner's descriptor
+ * number, which the owner's close frees for reuse.  Each round: the test
+ * holds [0, 10) on the backing file; requester A waits for it (SETLKW,
+ * write); the test releases and kills A at once, so A's grant races its
+ * UNLOCK_ALL; requester B then takes a read lock on [0, 10) through a new
+ * owner (likely A's old number) and holds it; the test asks the backing
+ * file who holds [0, 10).  B's read lock must be there: none means a
+ * foreign unlock (A's waiter undid its late grant on B's open file), a
+ * write lock a foreign grant.  Recorded, not gated, until the waiter
+ * stops using numbers.
+ */
+#define	REUSE_SECS	60
+#define	REUSE_ROUNDS	400
+
+struct reuse_arg {
+	int		 sfd;
+	int		 ready[2], go[2];
+	short		 type;
+};
+
+static void
+child_reuse(void *argp, void *result)
+{
+	struct reuse_arg *a = argp;
+	struct dqt_rr *r = result;
+	struct flock fl;
+	char b;
+
+	setfl(&fl, a->type, 0, 10);
+	r->rv = fcntl(a->sfd, F_SETLKW, &fl);
+	r->err = r->rv == -1 ? errno : 0;
+	b = 'r';
+	(void)write(a->ready[1], &b, 1);
+	(void)read(a->go[0], &b, 1);
+}
+
+/* Wait (ms at most) until nobody holds any lock on [0, 10). */
+static bool
+reuse_unlocked(int fd, int ms)
+{
+	struct flock fl;
+	int64_t end;
+
+	end = dqt_now_ms() + ms;
+	for (;;) {
+		setfl(&fl, F_WRLCK, 0, 10);
+		ATF_REQUIRE_EQ(0, fcntl(fd, F_OFD_GETLK, &fl));
+		if (fl.l_type == F_UNLCK)
+			return (true);
+		if (dqt_now_ms() >= end)
+			return (false);
+		dqt_msleep(1);
+	}
+}
+
+static uint64_t
+reuse_locks(struct dqt_ctl *c)
+{
+	struct dq_stats2 st;
+
+	dqt_stats2(c, &st);
+	return (st.ds2_locks);
+}
+
+ATF_TC(waiter_fd_reuse_stress);
+ATF_TC_HEAD(waiter_fd_reuse_stress, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a SETLKW waiter granted as its owner "
+	    "goes must not act on another owner's reused descriptor (T-R07; "
+	    "C5)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "300");
+}
+ATF_TC_BODY(waiter_fd_reuse_stress, tc)
+{
+	struct dqt_fixture f;
+	struct reuse_arg a, b;
+	struct dqt_child cha, chb;
+	struct dqt_rr ra, rb;
+	struct flock fl;
+	uint64_t n0;
+	int64_t end;
+	int foreign_unlock, foreign_grant, rounds, hb, hc, status, stray;
+	char c;
+
+	setup(&f, 61);
+	hb = open(backing_path, O_RDWR);
+	hc = open(backing_path, O_RDWR);
+	ATF_REQUIRE(hb >= 0 && hc >= 0);
+	foreign_unlock = foreign_grant = rounds = stray = 0;
+	end = dqt_now_ms() + REUSE_SECS * 1000;
+	while (rounds < REUSE_ROUNDS && dqt_now_ms() < end) {
+		/*
+		 * B's UNLOCK_ALL of the last round is posted without waiting:
+		 * its owner's open goes when the controller has read it.  A
+		 * lock still there after that is a stray one.
+		 */
+		if (!reuse_unlocked(hc, 2000)) {
+			stray++;
+			break;
+		}
+		setfl(&fl, F_WRLCK, 0, 10);
+		ATF_REQUIRE_EQ(0, fcntl(hb, F_OFD_SETLK, &fl));
+		memset(&a, 0, sizeof(a));
+		a.sfd = f.o->fd;
+		a.type = F_WRLCK;
+		ATF_REQUIRE(pipe(a.ready) == 0 && pipe(a.go) == 0);
+		n0 = reuse_locks(&f.c);
+		dqt_spawn(&cha, child_reuse, &a);
+		while (reuse_locks(&f.c) == n0)
+			dqt_msleep(1);
+		/* A's grant and A's death, as close together as can be. */
+		setfl(&fl, F_UNLCK, 0, 10);
+		ATF_REQUIRE_EQ(0, fcntl(hb, F_OFD_SETLK, &fl));
+		(void)kill(cha.pid, SIGKILL);
+		(void)dqt_wait(&cha, &ra, sizeof(ra));
+
+		memset(&b, 0, sizeof(b));
+		b.sfd = f.o->fd;
+		b.type = F_RDLCK;
+		ATF_REQUIRE(pipe(b.ready) == 0 && pipe(b.go) == 0);
+		dqt_spawn(&chb, child_reuse, &b);
+		ATF_REQUIRE_EQ(1, read(b.ready[0], &c, 1));
+		/* Let a late waiter of A act, if one is left. */
+		dqt_msleep(20);
+		setfl(&fl, F_WRLCK, 0, 10);
+		ATF_REQUIRE_EQ(0, fcntl(hc, F_OFD_GETLK, &fl));
+		if (fl.l_type == F_UNLCK)
+			foreign_unlock++;
+		else if (fl.l_type == F_WRLCK)
+			foreign_grant++;
+		ATF_REQUIRE_EQ(1, write(b.go[1], "g", 1));
+		status = dqt_wait(&chb, &rb, sizeof(rb));
+		ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+		    "B: status %#x", status);
+		ATF_CHECK_EQ_MSG(0, rb.rv, "B's lock: %s", strerror(rb.err));
+		(void)close(a.ready[0]);
+		(void)close(a.ready[1]);
+		(void)close(a.go[0]);
+		(void)close(a.go[1]);
+		(void)close(b.ready[0]);
+		(void)close(b.ready[1]);
+		(void)close(b.go[0]);
+		(void)close(b.go[1]);
+		rounds++;
+	}
+	printf("waiter_fd_reuse_stress: %d rounds, %d foreign unlocks, "
+	    "%d foreign grants, %d stray locks\n", rounds, foreign_unlock,
+	    foreign_grant, stray);
+	/*
+	 * The waiter works on its own descriptor of the owner's open file
+	 * and the owner's close drains it first: no grant or undo reaches
+	 * another owner's open (on dev 74daf2dc9f7, 35 rounds showed none
+	 * either: the window is narrow).
+	 */
+	ATF_CHECK(rounds > 0);
+	ATF_CHECK_EQ(0, foreign_unlock);
+	ATF_CHECK_EQ(0, foreign_grant);
+	ATF_CHECK_EQ(0, stray);
+	(void)close(hb);
+	(void)close(hc);
+	dqt_fixture_fini(&f);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, posix_oracle);
 	ATF_TP_ADD_TC(tp, setlkw_no_deadline);
 	ATF_TP_ADD_TC(tp, setlkw_interrupt);
+	ATF_TP_ADD_TC(tp, flock_block_interrupt);
 	ATF_TP_ADD_TC(tp, flock_owners_and_release);
 	ATF_TP_ADD_TC(tp, flock_gone_when_last_close_returns);
 	ATF_TP_ADD_TC(tp, normalisation_and_errnos);
 	ATF_TP_ADD_TC(tp, posix_spans_siblings);
 	ATF_TP_ADD_TC(tp, getlk_creates_no_owner);
 	ATF_TP_ADD_TC(tp, unlock_all_over_depth);
+	ATF_TP_ADD_TC(tp, waiter_fd_reuse_stress);
 	return (atf_no_error());
 }

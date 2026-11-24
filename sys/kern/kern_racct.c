@@ -65,16 +65,19 @@ FEATURE(racct, "Resource Accounting");
  * Do not block processes that have their %cpu usage <= pcpu_threshold.
  */
 static int pcpu_threshold = 1;
-#ifdef RACCT_DEFAULT_TO_DISABLED
-bool __read_frequently racct_enable = false;
-#else
+
+/*
+ * Resource accounting cannot be turned off in 5BSD: racct_enable is always
+ * true.  The variable is kept, rather than its readers changed, so that
+ * code shared with FreeBSD keeps its tests.  A kern.racct.enable=0 boot
+ * tunable is ignored with a console notice (racct_init()).
+ */
 bool __read_frequently racct_enable = true;
-#endif
 
 SYSCTL_NODE(_kern, OID_AUTO, racct, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
     "Resource Accounting");
-SYSCTL_BOOL(_kern_racct, OID_AUTO, enable, CTLFLAG_RDTUN, &racct_enable,
-    0, "Enable RACCT/RCTL");
+SYSCTL_BOOL(_kern_racct, OID_AUTO, enable, CTLFLAG_RD, &racct_enable,
+    0, "RACCT/RCTL is enabled (always 1)");
 SYSCTL_UINT(_kern_racct, OID_AUTO, pcpu_threshold, CTLFLAG_RW, &pcpu_threshold,
     0, "Processes with higher %cpu usage than this value can be throttled.");
 
@@ -1197,8 +1200,13 @@ SYSINIT(racctd, SI_SUB_RACCTD, SI_ORDER_FIRST, racctd_init, NULL);
 static void
 racct_init(void *dummy __unused)
 {
-	if (!racct_enable)
-		return;
+	bool tunable;
+
+	KASSERT(racct_enable, ("%s: racct_enable is false", __func__));
+	/* The tunable was a boolean: "false" turned accounting off as "0". */
+	if (TUNABLE_BOOL_FETCH("kern.racct.enable", &tunable) && !tunable)
+		printf("racct: kern.racct.enable=0 ignored: resource "
+		    "accounting cannot be disabled\n");
 
 	racct_zone = uma_zcreate("racct", sizeof(struct racct),
 	    NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, 0);

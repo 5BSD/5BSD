@@ -26,7 +26,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "dq_test.h"
+#include "dqt.h"
 
 #define	DATA_LEN	8192
 
@@ -205,7 +205,6 @@ ATF_TC_BODY(revoke, tc)
 	    sizeof(oracle_path));
 	dqt_init(&c);
 	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
-	ATF_REQUIRE_EQ(0, fstat(o->fd, &before));
 
 	kq = kqueue();
 	ATF_REQUIRE(kq != -1);
@@ -221,6 +220,8 @@ ATF_TC_BODY(revoke, tc)
 	a.len = 100;
 	dqt_run_child(dqt_child_read, &a, &r, sizeof(r));
 	ATF_CHECK_EQ(100, r.rv);
+	/* After the read, which stamps the access time (C7b). */
+	ATF_REQUIRE_EQ(0, fstat(o->fd, &before));
 
 	ATF_REQUIRE_EQ(0, dq_revoke(c.q, o->id));
 	/* Idempotent: the object is still in the table, already revoked. */

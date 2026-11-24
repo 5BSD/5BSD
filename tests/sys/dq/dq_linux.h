@@ -21,9 +21,11 @@
 #define	LINUX_SYS_clone		56
 #define	LINUX_SYS_wait4		61
 #define	LINUX_SYS_exit_group	231
+#define	LINUX_SYS_newfstatat	262
 #define	LINUX_SYS_unshare	272
 #define	LINUX_SYS_syncfs	306
 #define	LINUX_SYS_pidfd_open	434
+#define	LINUX_SYS_openat2	437
 #define	LINUX_SYS_pidfd_getfd	438
 
 /* A Linux system call: the result, or a negated Linux errno. */

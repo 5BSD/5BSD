@@ -1231,7 +1231,8 @@ fasttrap_pid_enable(void *arg, dtrace_id_t id, void *parg)
 	ASSERT(!(p->p_flag & SVFORK));
 	mutex_exit(&p->p_lock);
 #else
-	if (pget(probe->ftp_pid, PGET_HOLD | PGET_NOTWEXIT, &p) != 0)
+	if (pget(probe->ftp_pid, PGET_HOLD | PGET_NOTWEXIT | PGET_NOTID,
+	    &p) != 0)
 		return;
 #endif
 
@@ -2270,10 +2271,16 @@ fasttrap_open(struct cdev *dev __unused, int oflags __unused,
 /*
  * FASTTRAPIOC_MAKEPROBE: the pid provider plants traps at addresses the
  * consumer chooses, so it is a debugger and needs p_candebug(9) on the
- * target: the capprotect shield (and the ptrace shield a child inherits
- * until it execs), no-ambient processes, a software authority and the Unix
- * debug rules all apply, as for ptrace(2).  This completes illumos's
- * "notyet" check with FreeBSD's p_candebug().
+ * target: the capprotect shield, no-ambient processes, a software
+ * authority and the Unix debug rules all apply, as for ptrace(2).  This
+ * completes illumos's "notyet" check with FreeBSD's p_candebug().
+ *
+ * The check is made here only.  Enabling runs in whatever thread matches
+ * an enabling (another consumer, a process registering USDT probes, the
+ * DTrace taskq), which cannot answer for the consumer that made the probe;
+ * so a probe made before the process was shielded can still be enabled,
+ * by any consumer, until the process exits or execs, and an enabled probe
+ * keeps trapping.
  *
  * The target is held and blocked from exec from the check until the probe
  * is made, so the probe cannot land on another image or, through a reused
@@ -2291,7 +2298,8 @@ fasttrap_makeprobe_checked(fasttrap_probe_spec_t *probe)
 	proc_t *p;
 	int ret;
 
-	ret = pget(probe->ftps_pid, PGET_HOLD | PGET_NOTWEXIT, &p);
+	ret = pget(probe->ftps_pid, PGET_HOLD | PGET_NOTWEXIT | PGET_NOTID,
+	    &p);
 	if (ret != 0) {
 		SDT_PROBE2(dtrace_fasttrap, , , makeprobe, probe->ftps_pid,
 		    ret);
@@ -2366,8 +2374,6 @@ fasttrap_ioctl(struct cdev *dev, u_long cmd, caddr_t arg, int fflag,
 			goto err;
 		}
 
-
-
 		ret = fasttrap_makeprobe_checked(probe);
 err:
 		kmem_free(probe, size);
@@ -2394,7 +2400,8 @@ err:
 			 * The saved instruction is the target's text: a caller
 			 * that may not see the target learns nothing.
 			 */
-			error = pget(instr.ftiq_pid, PGET_CANSEE, &p);
+			error = pget(instr.ftiq_pid, PGET_CANSEE | PGET_NOTID,
+			    &p);
 			if (error != 0)
 				return (error);
 			PROC_UNLOCK(p);

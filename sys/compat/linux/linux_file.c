@@ -1952,7 +1952,7 @@ linux_umount(struct thread *td, struct linux_umount_args *args)
 			return (EINVAL);
 	}
 
-	error = kern_unmount(td, args->path, flags);
+	error = kern_unmount(td, args->path, UIO_USERSPACE, flags);
 	if (error == EINVAL) {
 		/*
 		 * Native unmount also uses EINVAL for a nonexistent path.

@@ -35,6 +35,7 @@
 
 #define	EXTERR_CATEGORY	EXTERR_KTRACE
 #include <sys/systm.h>
+#include <sys/cap_authority.h>
 #include <sys/capsicum.h>
 #include <sys/exterrvar.h>
 #include <sys/fcntl.h>
@@ -1356,6 +1357,8 @@ ktrops(struct thread *td, struct proc *p, int ops, int facs,
 			ktr_io_params_ref(new_kiop);
 		}
 		p->p_traceflag |= facs;
+		/* A traced process is never excluded (cap_process(2)). */
+		cap_exclusion_clear_locked(p, CAPX_CLEAR_KTRACE);
 		if (priv_check(td, PRIV_KTRACE) == 0)
 			p->p_traceflag |= KTRFAC_ROOT;
 	} else {
