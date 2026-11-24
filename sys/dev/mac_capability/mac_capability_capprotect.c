@@ -809,17 +809,32 @@ cp_check_shield(struct ucred *cred __unused, struct proc *p, uint32_t flag,
 	return (denied ? EACCES : 0);
 }
 
+/*
+ * Whether the caller may debug a target whose authority it does not share
+ * (the authority debug check consults this first).  Only an explicit ptrace
+ * shield grants it to the protector: the protector of an inherited shield is
+ * the parent, which the shield admits but which gets nothing of the child's
+ * authority from it.  On an exec of its own the parent no longer matches
+ * that authority and must be refused, as for a child with no shield.
+ */
 bool
 mac_capability_debug_authorized(pid_t caller, pid_t target)
 {
+	struct shield_entry *se;
 	bool allowed;
 
 	if (cp_no_shields())
 		return (false);
 	mtx_lock(&cp_lock);
-	allowed = (cp_shield_flags(target) & CP_SF_PTRACE) != 0 &&
-	    (caller == cp_shield_protector(target) ||
-	    cp_is_authorized(caller, target, CP_SF_PTRACE));
+	se = cp_shield_find(target);
+	if (se == NULL ||
+	    ((se->se_flags | se->se_iflags) & CP_SF_PTRACE) == 0)
+		allowed = false;
+	else if ((se->se_flags & CP_SF_PTRACE) != 0 &&
+	    caller == se->se_protector)
+		allowed = true;
+	else
+		allowed = cp_is_authorized(caller, target, CP_SF_PTRACE);
 	mtx_unlock(&cp_lock);
 	return (allowed);
 }

@@ -141,7 +141,14 @@ other memory contents. USDT registration reads the DOF from the object's
 file, not from the process's memory.
 
 A fork child copies its parent's authority and execution, so the debug check
-judges a fork or `RFMEM` child exactly as it judges the parent. One case is
+judges a fork or `RFMEM` child by the same authority and execution as the
+parent. The capprotect shield does not carry over: the protector and token
+holders of the parent's explicit ptrace shield pass the check on the parent
+but not on the child, whose inherited ptrace shield
+(`mac_capability_capprotect(4)`) names the parent as protector and grants
+it nothing of the authority. The parent therefore debugs its pre-exec child
+only while it shares its execution; after its own exec it is refused
+(`EPERM`), as for a child with no shield. One case is
 a documented residual: an `RFMEM` sharer of authority holder A that installs
 a different authority B lets B's peers pass the authority check on it, and
 so reach A's memory. It needs an `RFMEM` fork and a separate install token

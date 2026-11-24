@@ -24,12 +24,14 @@
  */
 
 #include <sys/param.h>
+#include <sys/cap_authority.h>
 #include <sys/event.h>
 #include <sys/ioctl.h>
 #include <sys/procdesc.h>
 #include <sys/ptrace.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/sysctl.h>
 #include <sys/uio.h>
 #include <sys/wait.h>
@@ -306,8 +308,13 @@ fixture_shield(struct fx *f, uint32_t flags)
 	return (atoi(rest));
 }
 
+/*
+ * Start an agent; fixture_end, when not -1, becomes the agent's descriptors
+ * 3 and 4, and token, when not -1, is installed before the agent's image is
+ * executed, so that the agent runs under its software authority.
+ */
 static void
-agent_start(struct agent *a, int fixture_end)
+agent_start_token(struct agent *a, int fixture_end, int token)
 {
 	int sv[2];
 	pid_t pid;
@@ -323,6 +330,10 @@ agent_start(struct agent *a, int fixture_end)
 		if (fixture_end >= 0 && (dup2(fixture_end, 3) < 0 ||
 		    dup2(fixture_end, 4) < 0))
 			_exit(121);
+		if (token >= 0 &&
+		    syscall(SYS_cap_process, CAP_AUTH_INSTALL, token, 0,
+		    NULL) != 0)
+			_exit(123);
 		closefrom(fixture_end >= 0 ? 5 : 3);
 		execl(agent_path, AGENT_NAME, fixture_path, (char *)NULL);
 		_exit(122);
@@ -330,6 +341,13 @@ agent_start(struct agent *a, int fixture_end)
 	close(sv[1]);
 	a->pid = pid;
 	a->sock = sv[0];
+}
+
+static void
+agent_start(struct agent *a, int fixture_end)
+{
+
+	agent_start_token(a, fixture_end, -1);
 }
 
 static int
@@ -1177,6 +1195,82 @@ ATF_TC_BODY(pin_follow_fork_keeps_child, tc)
 	follow_fork_case("vfork");
 }
 
+/*
+ * A managed software authority constrained to the agent's image, from the
+ * test issuer of a GENERIC-TEST kernel booted with
+ * kern.mac_capability.test_issuer=1 (the stack tier); skips elsewhere.
+ */
+static int
+agent_token(int *issuerp)
+{
+	struct cap_authority_spec spec = {
+		.version = CAP_AUTH_VERSION, .kind = CAP_AUTH_MANAGED,
+	};
+	struct cap_authority_constraint c;
+	size_t len;
+	int enabled, image, issuer, token;
+
+	len = sizeof(enabled);
+	if (sysctlbyname("kern.mac_capability.test_issuer", &enabled, &len,
+	    NULL, 0) != 0 || enabled != 1 ||
+	    (issuer = syscall(SYS_cap_process, CAP_AUTH_ISSUER_CREATE, -1, 0,
+	    NULL)) < 0)
+		atf_tc_skip("DEFERRED_STACK_TIER: no test issuer: needs "
+		    "GENERIC-TEST with kern.mac_capability.test_issuer=1, boot "
+		    "not anchored (vm-provider.sh STACK_TIER=1)");
+	token = syscall(SYS_cap_process, CAP_AUTH_ISSUE, issuer, 0, &spec);
+	ATF_REQUIRE_MSG(token >= 0, "issue: %s", strerror(errno));
+	image = open(agent_path, O_RDONLY | O_CLOEXEC);
+	ATF_REQUIRE(image >= 0);
+	memset(&c, 0, sizeof(c));
+	c.token_fd = token;
+	c.nexec = 1;
+	c.executable_fds[0] = image;
+	ATF_REQUIRE_MSG(syscall(SYS_cap_process, CAP_AUTH_CONSTRAIN, issuer, 0,
+	    &c) == 0, "constrain: %s", strerror(errno));
+	close(image);
+	*issuerp = issuer;
+	return (token);
+}
+
+ATF_TC(pin_inherited_parent_exec_authority);
+ATF_TC_HEAD(pin_inherited_parent_exec_authority, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "The inherited ptrace shield does "
+	    "not pass the authority debug check: once a ptrace-shielded "
+	    "authority holder executes a new image, it is refused its "
+	    "pre-exec fork child (EPERM), as for a child with no shield");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "120");
+}
+ATF_TC_BODY(pin_inherited_parent_exec_authority, tc)
+{
+	struct agent holder;
+	uint64_t v;
+	pid_t child;
+	int issuer, token;
+
+	paths_init(tc);
+	token = agent_token(&issuer);
+	agent_start_token(&holder, -1, token);
+	close(token);
+	ATF_REQUIRE_EQ(agent_do(&holder, "SHIELD", NULL, "shield %x",
+	    CP_SF_PTRACE), 0);
+	ATF_REQUIRE_EQ(agent_do(&holder, "FORK", &v, "fork"), 0);
+	child = (pid_t)v;
+	ATF_REQUIRE(child > 0);
+	/* Control: sharing the child's execution, the parent debugs it. */
+	ATF_CHECK_EQ(agent_attach(&holder, child), 0);
+	ATF_CHECK_EQ(agent_detach(&holder, child), 0);
+	/* A new image is a new execution of the authority, or none. */
+	ATF_REQUIRE_EQ(agent_do(&holder, "PID", NULL, "reexec\npid"),
+	    holder.pid);
+	ATF_CHECK_EQ(agent_attach_refused(&holder, child), EPERM);
+	ATF_CHECK(kill(child, SIGKILL) == 0);
+	agent_stop(&holder);
+	close(issuer);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1192,6 +1286,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, pin_inherited_parent_debugs);
 	ATF_TP_ADD_TC(tp, pin_inherited_token_holder_refused);
 	ATF_TP_ADD_TC(tp, pin_follow_fork_keeps_child);
+	ATF_TP_ADD_TC(tp, pin_inherited_parent_exec_authority);
 
 	return (atf_no_error());
 }

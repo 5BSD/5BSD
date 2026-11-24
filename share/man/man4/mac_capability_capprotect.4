@@ -90,6 +90,11 @@ An
 sharer of a software-authority holder that installs a different authority
 lets that authority's peers debug it, and so reach the holder's memory; no
 base program does this.
+The inherited shield does not give its protector the child's software
+authority: once the parent executes a new image it is refused the child's
+debugging by the authority rule
+.Pq Er EPERM ,
+as for a child with no shield.
 .Pp
 A shield is not applied to a process that a debugger is tracing:
 .Dv CP_OP_SHIELD

@@ -44,6 +44,13 @@
  *   authorize         CP_OP_AUTHORIZE on the token descriptor that arrived
  *                     with the command line.  AUTHORIZE ERRNO
  *   pid               PID PID
+ *   shield FLAGS      CP_OP_SHIELD this agent with FLAGS (hex); the
+ *                     capability descriptor stays open.  SHIELD ERRNO
+ *   fork              fork(2) a child that waits for a signal and never
+ *                     executes an image.  FORK ERRNO PID
+ *   reexec            execute this agent's image again, with the same
+ *                     arguments and descriptors.  No reply on success (send
+ *                     "pid" to the new image); REEXEC ERRNO on failure.
  */
 
 #include <sys/param.h>
@@ -74,6 +81,7 @@
 #include "mac_capability_capprotect_proto.h"
 
 static const char *fixture;
+static char **agent_argv;
 static int child_pd = -1;
 static int protect_fd = -1;
 
@@ -209,6 +217,56 @@ protect_child(uint32_t flags, int pd)
 	return (0);
 }
 
+static int
+shield_self(uint32_t flags)
+{
+	int error, fd;
+
+	fd = cp_connect();
+	if (fd < 0)
+		return (errno);
+	error = cp_call(fd, CP_OP_SHIELD, flags, NULL);
+	if (error != 0)
+		close(fd);
+	return (error);
+}
+
+static int
+fork_waiter(pid_t *childp)
+{
+	pid_t pid;
+
+	pid = fork();
+	if (pid < 0)
+		return (errno);
+	if (pid == 0) {
+		closefrom(0);
+		for (;;)
+			pause();
+	}
+	*childp = pid;
+	return (0);
+}
+
+/* Execute this image again; returns only on failure, with the errno. */
+static int
+reexec(void)
+{
+	char path[MAXPATHLEN];
+	size_t len;
+	int mib[4];
+
+	mib[0] = CTL_KERN;
+	mib[1] = KERN_PROC;
+	mib[2] = KERN_PROC_PATHNAME;
+	mib[3] = -1;
+	len = sizeof(path);
+	if (sysctl(mib, 4, path, &len, NULL, 0) != 0)
+		return (errno);
+	execv(path, agent_argv);
+	return (errno);
+}
+
 static void
 spawn(int pdflags, uint32_t protect, const char *mode)
 {
@@ -331,6 +389,7 @@ main(int argc, char **argv)
 		return (2);
 	}
 	fixture = argv[1];
+	agent_argv = argv;
 	signal(SIGPIPE, SIG_IGN);
 	alarm(600);
 	while (read_command(cmd, sizeof(cmd), &fd)) {
@@ -381,6 +440,13 @@ main(int argc, char **argv)
 			fd = -1;
 		} else if (strcmp(cmd, "pid") == 0)
 			reply("PID %d\n", (int)getpid());
+		else if (sscanf(cmd, "shield %x", &protect) == 1)
+			reply("SHIELD %d\n", shield_self(protect));
+		else if (strcmp(cmd, "fork") == 0) {
+			error = fork_waiter(&child);
+			reply("FORK %d %#x\n", error, (unsigned int)child);
+		} else if (strcmp(cmd, "reexec") == 0)
+			reply("REEXEC %d\n", reexec());
 		else
 			reply("ERROR unknown command\n");
 		if (fd >= 0)
