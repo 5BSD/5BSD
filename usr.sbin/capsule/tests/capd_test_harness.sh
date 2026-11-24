@@ -10,6 +10,7 @@ CAPD_LEASE_FD=9
 capd_guardian_pid=
 capd_guardian_bin=
 capd_lookup_exec_bin=
+capd_wait_file_bin=
 capd_switchboard_bin=
 capd_capsule_bin=
 
@@ -33,6 +34,11 @@ capd_paths_init()
 	# cleanup (a separate process) to wait back to and report against.
 	CAPD_ISSUERS_LIVE_FILE="${CAPD_WORK}/issuers-live.before"
 	CAPD_ISSUERS_CREATED_FILE="${CAPD_WORK}/issuers-created.before"
+	# What the body is waiting for while it waits without a deadline, one
+	# file per wait (CAPD_WAITING.XXXXXX; waits can run concurrently, in
+	# background subshells): a case its ATF timeout ends there leaves them
+	# for the cleanup to report.
+	CAPD_WAITING="${CAPD_WORK}/capd-waiting"
 	CAPD_APPS_SYSTEM="${CAPD_WORK}/Capabilities/System"
 	CAPD_APPS_USER="${CAPD_WORK}/Capabilities"
 }
@@ -84,19 +90,17 @@ capd_require_unit_issuer()
 # secondary "service did not start" failures.
 capd_expect_test_issuer()
 {
-	local i pid line
+	local pid line
 
 	capd_test_relax || return 0
 	pid=$("$capd_guardian_bin" ctl -s "$CAPD_GUARDIAN_SOCKET" status 2>/dev/null |
 	    sed -n 's/^running pid=//p')
 	[ -n "$pid" ] || atf_fail "cannot read the test-local Capsule's pid"
-	i=0
-	while [ "$i" -lt 100 ]; do
-		line=$(dmesg -a 2>/dev/null | grep -a "mac_capability: TEST MODE: pid $pid ([^)]*) created authority issuer " | tail -n 1)
-		[ -z "$line" ] || break
-		i=$((i + 1))
-		sleep 0.1
-	done
+	# No wait: Capsule creates the start's issuer before it forks
+	# SwitchBoard (bootstrap_issuer_take()), the kernel logs the creation
+	# before the create returns, and the caller has already seen
+	# "switchboard ready", which only that SwitchBoard can cause.
+	line=$(dmesg -a 2>/dev/null | grep -a "mac_capability: TEST MODE: pid $pid ([^)]*) created authority issuer " | tail -n 1)
 	if [ -z "$line" ]; then
 		capd_dump_diagnostics
 		atf_fail "test-local Capsule did not create a relaxed issuer (pid $pid)"
@@ -190,6 +194,53 @@ capd_find_lookup_exec()
 		fi
 	done
 	atf_fail "capd_lookup_exec is unavailable"
+}
+
+capd_find_wait_file()
+{
+	local candidate srcdir
+
+	if [ -n "$capd_wait_file_bin" ] && [ -x "$capd_wait_file_bin" ]; then
+		return 0
+	fi
+	srcdir=$(atf_get_srcdir 2>/dev/null || pwd)
+	for candidate in \
+	    "${srcdir}/capd_wait_file" \
+	    "$(command -v capd_wait_file 2>/dev/null)"
+	do
+		if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+			capd_wait_file_bin=$candidate
+			return 0
+		fi
+	done
+	atf_fail "capd_wait_file is unavailable"
+}
+
+# Wait on file events, with no deadline of its own (the case's ATF timeout
+# bounds it): capd_wait_path [-e] [-p pid] path [text]; see capd_wait_file.c.
+# Exit 2: process pid exited first.
+capd_wait_path()
+{
+	local rc waiting
+
+	capd_find_wait_file
+	waiting=$(capd_waiting_begin "capd_wait_file $*")
+	rc=0
+	"$capd_wait_file_bin" "$@" || rc=$?
+	[ -z "$waiting" ] || rm -f "$waiting"
+	return "$rc"
+}
+
+# Record what a wait is waiting for in a file of its own; print its name
+# (nothing when there is no work directory).
+capd_waiting_begin()
+{
+	local waiting
+
+	[ -n "${CAPD_WAITING:-}" ] || return 0
+	waiting=$(mktemp "${CAPD_WAITING}.XXXXXX") || return 0
+	echo "$1" > "$waiting"
+	echo "$waiting"
 }
 
 capd_find_switchboard()
@@ -330,6 +381,12 @@ capd_dump_diagnostics()
 	if [ -n "${CAPD_LOG:-}" ] && [ -r "$CAPD_LOG" ]; then
 		tail -100 "$CAPD_LOG" >&2
 	fi
+	# The service fixtures' own errors (capd_service_fixture writes its
+	# stderr there; SwitchBoard discards a unit's stderr).
+	if [ -n "${CAPD_WORK:-}" ] && [ -s "${CAPD_WORK}/fixture-errors" ]; then
+		echo "fixture-errors:" >&2
+		cat "${CAPD_WORK}/fixture-errors" >&2
+	fi
 	# Kernel wait-channel states show whether a lingering stack process is
 	# stuck in an unkillable kernel sleep rather than merely slow.
 	ps -axo pid,ppid,state,wchan,command 2>/dev/null | \
@@ -346,12 +403,15 @@ capd_guardian_is_running()
 
 capd_launch_capsule()
 {
-	local i
+	local rc
 
 	# Every test-local Capsule needs its own claim on the control device,
 	# including the suites that launch one without capd_start_stack.
 	capd_require_device
-	rm -f "$CAPD_GUARDIAN_SOCKET" "$CAPD_LEASE"
+	capd_find_wait_file
+	# The Capsule socket is the launch's readiness event: a leftover of an
+	# earlier stack must not stand for it.
+	rm -f "$CAPD_GUARDIAN_SOCKET" "$CAPD_LEASE" "$CAPD_CAPSULE_SOCKET"
 	mkfifo -m 0600 "$CAPD_LEASE" || atf_fail "cannot create guardian lease"
 	# Open read/write before launch so neither side blocks.  Close this inherited
 	# descriptor in the guardian process; only the test shell owns the writer.
@@ -371,30 +431,34 @@ capd_launch_capsule()
 	capd_guardian_pid=$!
 	echo "$capd_guardian_pid" > "$CAPD_GUARDIAN_PIDFILE"
 
-	i=0
-	while ! capd_guardian_is_running && [ "$i" -lt 100 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
+	# The guardian listens on its socket before it forks Capsule, so
+	# Capsule's control socket appearing means both are up.  Wait on that
+	# event, or on the guardian's exit (Capsule exited), with no deadline:
+	# the case's ATF timeout bounds a launch that hangs.
+	echo "waiting for Capsule's control socket $CAPD_CAPSULE_SOCKET" \
+	    "(guardian pid $capd_guardian_pid)"
+	rc=0
+	capd_wait_path -e -p "$capd_guardian_pid" "$CAPD_CAPSULE_SOCKET" ||
+	    rc=$?
+	if [ "$rc" -ne 0 ]; then
+		capd_dump_diagnostics
+		[ "$rc" -eq 2 ] &&
+		    atf_fail "Capsule exited before it created its control socket"
+		atf_fail "waiting for Capsule's control socket failed"
+	fi
+	if [ ! -S "$CAPD_CAPSULE_SOCKET" ]; then
+		capd_dump_diagnostics
+		atf_fail "$CAPD_CAPSULE_SOCKET is not a socket"
+	fi
 	if ! capd_guardian_is_running; then
 		capd_dump_diagnostics
 		atf_fail "guardian did not launch Capsule"
-	fi
-
-	i=0
-	while [ ! -S "$CAPD_CAPSULE_SOCKET" ] && [ "$i" -lt 100 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
-	if [ ! -S "$CAPD_CAPSULE_SOCKET" ]; then
-		capd_dump_diagnostics
-		atf_fail "Capsule did not create its control socket"
 	fi
 }
 
 capd_start_stack()
 {
-	local i
+	local rc
 
 	# A test-local Capsule stack must never replay the host's rc(8).
 	# Some suites provide their own readable config and bypass prepare().
@@ -408,29 +472,46 @@ capd_start_stack()
 	fi
 	capd_launch_capsule
 
-	i=0
-	while ! grep -q "switchboard ready" "$CAPD_LOG" 2>/dev/null &&
-	    [ "$i" -lt 150 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
-	if ! grep -q "switchboard ready" "$CAPD_LOG" 2>/dev/null; then
+	# Event wait on the log, ended early by Capsule's exit; the case's ATF
+	# timeout bounds a SwitchBoard that never becomes ready.
+	echo "waiting for \"switchboard ready\" in $CAPD_LOG"
+	rc=0
+	capd_wait_path -p "$capd_guardian_pid" "$CAPD_LOG" \
+	    "switchboard ready" || rc=$?
+	if [ "$rc" -ne 0 ]; then
 		capd_dump_diagnostics
-		atf_fail "switchboard did not become ready"
+		[ "$rc" -eq 2 ] &&
+		    atf_fail "Capsule exited before switchboard became ready"
+		atf_fail "waiting for switchboard ready failed"
 	fi
 	capd_expect_test_issuer
 }
 
+# Wait for the guardian to exit (pwait: a kqueue NOTE_EXIT, no polling and
+# no deadline; the case's ATF timeout bounds it).  The body's own guardian
+# is its unreaped child, so its PID cannot be reused; a PID read from the
+# pidfile (an ATF cleanup) is waited on only while it still names the
+# guardian.
 capd_wait_guardian_exit()
 {
-	local i limit
+	local pid waiting
 
-	limit=$1
-	i=0
-	while capd_guardian_is_running && [ "$i" -lt "$limit" ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
+	pid=${capd_guardian_pid:-$(cat "$CAPD_GUARDIAN_PIDFILE" 2>/dev/null || true)}
+	case "$pid" in
+	''|*[!0-9]*)
+		echo "no guardian PID to wait on" >&2
+		return 1 ;;
+	esac
+	if [ -z "$capd_guardian_pid" ] &&
+	    [ "$(ps -p "$pid" -o comm= 2>/dev/null)" != \
+	    "$(basename "$capd_guardian_bin")" ]; then
+		! capd_guardian_is_running
+		return
+	fi
+	echo "waiting for guardian $pid to exit"
+	waiting=$(capd_waiting_begin "guardian $pid to exit")
+	pwait "$pid" 2>/dev/null || true
+	[ -z "$waiting" ] || rm -f "$waiting"
 	! capd_guardian_is_running
 }
 
@@ -465,22 +546,19 @@ capd_stop_stack()
 			graceful=1
 		fi
 	fi
-	if capd_wait_guardian_exit 350; then
-		capd_close_lease
-		if [ -n "$capd_guardian_pid" ]; then
-			wait "$capd_guardian_pid" 2>/dev/null || true
-			capd_guardian_pid=
-		fi
-		[ "$graceful" -eq 1 ]
-		return
-	fi
-
-	capd_dump_diagnostics
-	if capd_guardian_is_running; then
+	# A shutdown Capsule took ends in the guardian's exit, waited for
+	# without a deadline (the case's ATF timeout bounds a shutdown that
+	# hangs).  One it did not take is a failure: the guardian kills the
+	# stack, and the stop still waits for its exit.
+	if [ "$graceful" -eq 0 ]; then
+		echo "Capsule did not take the shutdown request:" \
+		    "the guardian kills the stack" >&2
+		capd_dump_diagnostics
 		"$capd_guardian_bin" ctl -s "$CAPD_GUARDIAN_SOCKET" kill \
 		    >/dev/null 2>&1 || true
 	fi
-	if ! capd_wait_guardian_exit 50; then
+	if ! capd_wait_guardian_exit; then
+		capd_dump_diagnostics
 		echo "guardian could not terminate the Capsule stack" >&2
 		return 1
 	fi
@@ -489,15 +567,24 @@ capd_stop_stack()
 		wait "$capd_guardian_pid" 2>/dev/null || true
 		capd_guardian_pid=
 	fi
-	return 1
+	[ "$graceful" -eq 1 ]
 }
 
 capd_cleanup_stack()
 {
-	local guardian_pid killed before live
+	local f guardian_pid killed before live waiting
 
 	capd_paths_init
 	capd_find_guardian
+	# A body its ATF timeout ended in a wait: report what it waited for
+	# and the stack's state, which the timeout did not.
+	waiting=
+	for f in "$CAPD_WAITING".*; do
+		[ -s "$f" ] || continue
+		echo "the body ended while waiting for: $(cat "$f")" >&2
+		waiting=yes
+	done
+	[ -z "$waiting" ] || capd_dump_diagnostics
 	if [ -S "$CAPD_CAPSULE_SOCKET" ]; then
 		capd_capsule_ctl "$CAPD_CAPSULE_SOCKET" shutdown \
 		    >/dev/null 2>&1 || true
@@ -561,7 +648,7 @@ capd_cleanup_stack()
 	rm -rf "$CAPD_PIDFILE" "$CAPD_CONFIG" "$CAPD_CAPSULE_SOCKET" \
 	    "$CAPD_SWITCHBOARD_SOCKET" "$CAPD_GUARDIAN_SOCKET" "$CAPD_LEASE" \
 	    "$CAPD_GUARDIAN_PIDFILE" "$CAPD_ISSUERS_LIVE_FILE" \
-	    "$CAPD_ISSUERS_CREATED_FILE" "$CAPD_LOG" \
+	    "$CAPD_ISSUERS_CREATED_FILE" "$CAPD_LOG" "$CAPD_WAITING".* \
 	    "${CAPD_WORK}/Capabilities"
 	return 0
 }

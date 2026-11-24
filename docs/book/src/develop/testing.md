@@ -203,14 +203,17 @@ results.
 The rules those tests follow are written down in
 `docs/book/src/develop/testing.md`. The test owns every process it starts
 and stops its stack before passing; `pkill -f`, `killall` and PID guesses are
-forbidden; readiness is event-driven with a monotonic deadline, never a fixed
-sleep; fixtures are built with the tree, not compiled from heredocs at run
+forbidden; readiness is event-driven (file events with `capd_wait_file`,
+process exit with pwait(1) or kqueue) with no guessed deadline of its own,
+never a fixed sleep or a polling loop: the case's ATF timeout bounds a wait
+that never ends, and the evidence is printed before the wait; fixtures are built with the tree, not compiled from heredocs at run
 time; a denial test checks the exact errno or protocol status and that no
 side effect happened. The compiled fixtures are `capd_test_guardian`
 (`usr.sbin/capsule/tests`), which starts a protected capsule with pdfork(2)
 and keeps the process descriptor as the only termination authority;
 `capd_test_harness.sh` beside it, which supplies guarded start, stop and
-bounded wait to shell tests; `capd_service_fixture` (`lib/libservice/tests`),
+event waits to shell tests (a case its timeout ends in such a wait has the
+wait and the stack's state reported by `capd_cleanup_stack`); `capd_service_fixture` (`lib/libservice/tests`),
 a scenario-selected managed service that sends its ready record only after
 the observed operation has completed; `capd_protocol_fixture`
 (`usr.sbin/switchboard/tests`), which sends deliberately malformed control

@@ -354,6 +354,9 @@ ln -s "$req_validate_prog" \
 	"$suite_dir/req_validate_test" || exit 1
 ln -s "$guardian_prog" \
 	"$suite_dir/capd_test_guardian" || exit 1
+# capd_test_harness.sh's file-event waits; it links only libc.
+ln -s "$capsule_test_dir/capd_wait_file" \
+	"$suite_dir/capd_wait_file" || exit 1
 ln -s "$bootstrap_fixture_prog" \
 	"$suite_dir/capd_bootstrap_fixture" || exit 1
 ln -s "$service_fixture_prog" \
