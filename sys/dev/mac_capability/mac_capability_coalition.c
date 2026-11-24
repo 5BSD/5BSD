@@ -27,7 +27,9 @@
  *   COALITION_OP_GRACEFUL    — signal → grace → SIGKILL
  *   COALITION_OP_SET_DEADLINE — auto-terminate after timeout
  *   COALITION_OP_SET_WATCHDOG — dead-man switch
- *   COALITION_OP_HEARTBEAT   — reset watchdog
+ *   COALITION_OP_HEARTBEAT   — re-arm watchdog (absolute deadline)
+ *   COALITION_OP_WATCHDOG_STAT — watchdog arm count, arm time, deadline,
+ *                              scheduled callout time, last expiry
  *   COALITION_OP_SET_LEADER  — designate leader (death triggers term)
  *   COALITION_OP_RUSAGE      — aggregate resource usage
  *   COALITION_OP_SET_RESPONSIBLE — record the responsible parent (set once)
@@ -140,7 +142,14 @@ struct coalition_dependency {
 	struct coalition *cd_parent;
 	struct coalition *cd_child;
 	struct mac_capability_callback_state *cd_callback;
-	struct timeout_task cd_task;
+	struct task cd_task;
+	/*
+	 * Watching for completion: on cd_child's co_dependents (under the
+	 * child's co_sx), or through cd_watch on cd_callback.
+	 */
+	LIST_ENTRY(coalition_dependency) cd_child_link;
+	struct mac_capability_cs_watch cd_watch;
+	bool cd_watching;
 };
 
 static void coalition_dependency_task(void *, int);
@@ -168,8 +177,11 @@ struct coalition {
 	struct sx		co_sx;
 	TAILQ_HEAD(, coalition_member) co_members;
 	LIST_HEAD(, coalition_waiter) co_waiters;
+	/* Parents' dependencies waiting for this coalition's cleanup (co_sx). */
+	LIST_HEAD(, coalition_dependency) co_dependents;
 	u_int			co_flags;
 	u_int			co_manual_grace_count;
+	u_int			co_live;	/* wait channel: a member left or termination began */
 	int			co_signal;
 	bool			co_cleanup_released; /* Detached unconfirmed processes. */
 	int			co_termination_error; /* First cleanup error, co_sx. */
@@ -190,11 +202,26 @@ struct coalition {
 	struct callout		co_watchdog_callout;
 	struct task		co_watchdog_task;
 	uint32_t		co_watchdog_timeout_ms;
+	uint64_t		co_watchdog_seq;	/* arms so far */
+	sbintime_t		co_watchdog_armed;	/* uptime of the last arm */
+	sbintime_t		co_watchdog_deadline;	/* armed + timeout */
+	uint64_t		co_watchdog_fired_seq;	/* arm that fired last */
+	sbintime_t		co_watchdog_fired;	/* when its expiry ran */
 	/* Leader */
 	struct coalition_member	*co_leader;
 	pid_t			co_leader_pid;
-	/* Mac_capability leader monitor — polls leader liveness */
-	struct callout		co_leader_callout;
+	/*
+	 * Mac_capability leader monitor: a death watch on the leader instance
+	 * enqueues co_leader_task when it is closed or revoked;
+	 * co_leader_watch_ci is the watched instance (a member: see
+	 * coalition_leader_watch_locked()).
+	 */
+	struct mac_capability_death_watch co_leader_watch;	/* co_sx */
+	struct mac_capability_instance *co_leader_watch_ci;	/* co_sx */
+	/* A stopped monitor's task is still running (co_sx). */
+	bool			co_leader_stopping;
+	/* co_leader_task was enqueued and has not yet taken co_sx (atomic). */
+	u_int			co_leader_task_queued;
 	struct task		co_leader_task;
 	/* Back-reference for timer tasks */
 	struct mac_capability_instance	*co_instance;
@@ -261,10 +288,26 @@ struct coalition_jail_osd {
 	struct coalition	*cjo_coalition;
 	struct coalition_member	*cjo_member;
 	struct file		*cjo_fp;
-	struct timeout_task	cjo_cleanup_task;
+	struct task		cjo_cleanup_task;
 	struct prison		*cjo_prison; /* Ordinary hold, never a user hold. */
 	bool			cjo_cleanup_queued;
+	/* On coalition_jail_waiting while users of the jail tree remain. */
+	LIST_ENTRY(coalition_jail_osd) cjo_wait_link;
+	bool			cjo_waiting;	/* coalition_jail_wait_mtx */
 };
+
+/*
+ * Jail cleanups waiting for the user references of a dead jail tree to
+ * drain.  prison_uref_release (sys/jail.h) re-runs each one's task.  The
+ * mutex is taken from that event, possibly under a process lock: never
+ * take a process lock, or sleep, while holding it.
+ */
+static LIST_HEAD(, coalition_jail_osd) coalition_jail_waiting =
+    LIST_HEAD_INITIALIZER(coalition_jail_waiting);
+static struct mtx coalition_jail_wait_mtx;
+MTX_SYSINIT(coalition_jail_wait, &coalition_jail_wait_mtx,
+    "coalition jail wait", MTX_DEF);
+static eventhandler_tag coalition_uref_tag;
 
 static eventhandler_tag coalition_fork_tag;
 static eventhandler_tag coalition_exit_tag;
@@ -311,12 +354,10 @@ static void	coalition_deadline_callout_fn(void *arg);
 static void	coalition_deadline_task_fn(void *context, int pending);
 static void	coalition_watchdog_callout_fn(void *arg);
 static void	coalition_watchdog_task_fn(void *context, int pending);
-static void	coalition_leader_callout_fn(void *arg);
+static void	coalition_leader_watch_locked(struct coalition *co);
 static void	coalition_leader_task_fn(void *context, int pending);
 static void	coalition_jail_cleanup_task_fn(void *context, int pending);
 
-/* Leader monitor polling interval: 100ms */
-#define	COALITION_LEADER_POLL_TICKS	(hz / 10)
 
 /* ----------------------------------------------------------------
  * Coalition lifecycle
@@ -383,6 +424,7 @@ coalition_alloc(void)
 	sx_init_flags(&co->co_sx, "mac_capability_coalition", SX_DUPOK);
 	TAILQ_INIT(&co->co_members);
 	LIST_INIT(&co->co_waiters);
+	LIST_INIT(&co->co_dependents);
 	co->co_signal = SIGKILL;
 	co->co_nesting_depth = 0;
 	refcount_init(&co->co_refcount, 1);
@@ -390,7 +432,6 @@ coalition_alloc(void)
 	TASK_INIT(&co->co_deadline_task, 0, coalition_deadline_task_fn, co);
 	callout_init(&co->co_watchdog_callout, 1);
 	TASK_INIT(&co->co_watchdog_task, 0, coalition_watchdog_task_fn, co);
-	callout_init(&co->co_leader_callout, 1);
 	TASK_INIT(&co->co_leader_task, 0, coalition_leader_task_fn, co);
 	atomic_add_int(&coalition_count, 1);
 	return (co);
@@ -509,8 +550,8 @@ coalition_jail_set_atomic(struct prison *pr, struct coalition *co,
 		return (EBADF);
 	}
 	cjo->cjo_fp = fp;
-	TIMEOUT_TASK_INIT(taskqueue_thread, &cjo->cjo_cleanup_task, 0,
-	    coalition_jail_cleanup_task_fn, cjo);
+	TASK_INIT(&cjo->cjo_cleanup_task, 0, coalition_jail_cleanup_task_fn, cjo);
+	cjo->cjo_waiting = false;
 	rsv = osd_reserve(coalition_jail_osd_slot);
 
 	prison_lock(pr);
@@ -670,12 +711,25 @@ coalition_jail_cleanup_task_fn(void *context, int pending __unused)
 	 * workers waiting for processes.  Check descendants while excluding
 	 * hierarchy-only references; this is not a public wait API.
 	 */
-	if (coalition_jail_has_users(cjo->cjo_prison)) {
-		taskqueue_enqueue_timeout(taskqueue_thread,
-		    &cjo->cjo_cleanup_task, MAX(1, hz / 10));
-		return;
+	/*
+	 * Join the waiting list before checking, so a user reference dropped
+	 * between the check and the return re-runs this task
+	 * (coalition_jail_uref_released()).
+	 */
+	mtx_lock(&coalition_jail_wait_mtx);
+	if (!cjo->cjo_waiting) {
+		LIST_INSERT_HEAD(&coalition_jail_waiting, cjo, cjo_wait_link);
+		cjo->cjo_waiting = true;
 	}
-	callout_drain(&cjo->cjo_cleanup_task.c);
+	mtx_unlock(&coalition_jail_wait_mtx);
+	if (coalition_jail_has_users(cjo->cjo_prison))
+		return;
+	mtx_lock(&coalition_jail_wait_mtx);
+	LIST_REMOVE(cjo, cjo_wait_link);
+	cjo->cjo_waiting = false;
+	mtx_unlock(&coalition_jail_wait_mtx);
+	/* Off the list: drop a run an event queued before the removal. */
+	(void)taskqueue_cancel(taskqueue_thread, &cjo->cjo_cleanup_task, NULL);
 	prison_free(cjo->cjo_prison);
 	sx_xlock(&co->co_sx);
 	KASSERT(co->co_pending_jails != 0, ("jail cleanup underflow"));
@@ -684,6 +738,22 @@ coalition_jail_cleanup_task_fn(void *context, int pending __unused)
 	sx_xunlock(&co->co_sx);
 	coalition_rel(co);
 	free(cjo, M_COALITION);
+}
+
+/*
+ * prison_uref_release: a user reference of a dead prison was dropped.  Re-run
+ * every waiting jail cleanup; each checks its own tree.  May run under a
+ * process lock (sys/jail.h): only the wait mutex and enqueues.
+ */
+static void
+coalition_jail_uref_released(void *arg __unused, struct prison *pr __unused)
+{
+	struct coalition_jail_osd *cjo;
+
+	mtx_lock(&coalition_jail_wait_mtx);
+	LIST_FOREACH(cjo, &coalition_jail_waiting, cjo_wait_link)
+		taskqueue_enqueue(taskqueue_thread, &cjo->cjo_cleanup_task);
+	mtx_unlock(&coalition_jail_wait_mtx);
 }
 
 static void
@@ -700,8 +770,7 @@ coalition_jail_osd_dtor(void *value)
 	 */
 	if (!cjo->cjo_cleanup_queued) {
 		cjo->cjo_cleanup_queued = true;
-		taskqueue_enqueue_timeout(taskqueue_thread,
-		    &cjo->cjo_cleanup_task, 0);
+		taskqueue_enqueue(taskqueue_thread, &cjo->cjo_cleanup_task);
 	}
 }
 
@@ -1270,8 +1339,7 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 			cd->cd_callback = mac_capability_callback_state_get(fp->f_data);
 			co->co_pending_caps++;
 		}
-		TIMEOUT_TASK_INIT(taskqueue_thread, &cd->cd_task, 0,
-		    coalition_dependency_task, cd);
+		TASK_INIT(&cd->cd_task, 0, coalition_dependency_task, cd);
 		cm->cm_dependency = cd;
 	}
 
@@ -1532,8 +1600,12 @@ coalition_notify_cleanup_locked(struct coalition *co)
 {
 	struct coalition_cleanup_reply state;
 	struct coalition_waiter *cw;
+	struct coalition_dependency *cd;
 
 	sx_assert(&co->co_sx, SA_XLOCKED);
+	/* A parent waiting on our cleanup re-checks it in its dependency task. */
+	LIST_FOREACH(cd, &co->co_dependents, cd_child_link)
+		taskqueue_enqueue(taskqueue_thread, &cd->cd_task);
 	if (LIST_EMPTY(&co->co_waiters))
 		return;
 	coalition_cleanup_status_locked(co, &state);
@@ -1690,7 +1762,7 @@ coalition_start_dependencies_locked(struct coalition *co)
 		if (cd == NULL)
 			continue;
 		cm->cm_dependency = NULL;
-		taskqueue_enqueue_timeout(taskqueue_thread, &cd->cd_task, 0);
+		taskqueue_enqueue(taskqueue_thread, &cd->cd_task);
 	}
 }
 
@@ -1803,6 +1875,14 @@ coalition_dependency_task(void *arg, int pending __unused)
 	bool done, released = false;
 	int error;
 
+	/*
+	 * Not done: watch for the event that can make it done, and return.
+	 * The child's cleanup transitions enqueue this task
+	 * (coalition_notify_cleanup_locked()); a capability member's callback
+	 * completion does through cd_watch.  Each watch is registered under
+	 * the same lock (or atomically with the same check) as the test, so a
+	 * transition in between is not missed.
+	 */
 	if (child != NULL) {
 		sx_xlock(&child->co_sx);
 		coalition_cleanup_status_locked(child, &state);
@@ -1810,17 +1890,40 @@ coalition_dependency_task(void *arg, int pending __unused)
 		    state.phase != COALITION_CLEANUP_DRAINING;
 		error = state.cleanup_error;
 		released = (state.flags & COALITION_CLEANUP_F_RELEASED) != 0;
+		if (!done && !cd->cd_watching) {
+			LIST_INSERT_HEAD(&child->co_dependents, cd,
+			    cd_child_link);
+			cd->cd_watching = true;
+		} else if (done && cd->cd_watching) {
+			LIST_REMOVE(cd, cd_child_link);
+			cd->cd_watching = false;
+		}
 		sx_xunlock(&child->co_sx);
 	} else {
-		done = mac_capability_callback_state_done(cd->cd_callback);
+		/*
+		 * The first run only arms the watch, which enqueues this task
+		 * exactly once: at once if the callback has already returned,
+		 * otherwise from mac_capability_revoke_done_locked().  So the
+		 * second run is the completion, and nothing enqueues it again.
+		 */
+		if (!cd->cd_watching) {
+			cd->cd_watching = true;
+			mac_capability_callback_state_watch(cd->cd_callback,
+			    &cd->cd_watch, &cd->cd_task);
+			return;
+		}
+		KASSERT(mac_capability_callback_state_done(cd->cd_callback),
+		    ("capability dependency woken before its callback returned"));
+		done = true;
 		error = 0;
 	}
-	if (!done) {
-		taskqueue_enqueue_timeout(taskqueue_thread, &cd->cd_task,
-		    MAX(1, hz / 10));
+	if (!done)
 		return;
-	}
-	callout_drain(&cd->cd_task.c);
+	/*
+	 * Off the child's list now, so nothing enqueues this task again; drop
+	 * a run a cleanup transition queued before the removal.
+	 */
+	(void)taskqueue_cancel(taskqueue_thread, &cd->cd_task, NULL);
 	sx_xlock(&parent->co_sx);
 	coalition_record_error_locked(parent, error);
 	parent->co_cleanup_released |= released;
@@ -1907,6 +2010,7 @@ coalition_terminate_members_locked(struct coalition *co, struct thread *td,
 		return;
 	co->co_flags |= COF_TERMINATING;
 	coalition_notify_event(co, COALITION_NOTE_TERMINATING);
+	wakeup(&co->co_live);
 
 	/* Clean up leader tracking */
 	co->co_leader = NULL;
@@ -2021,9 +2125,9 @@ coalition_terminate_graceful(struct coalition *co, int sig, u_int timeout_ms)
 	struct mac_capability_instance **mac_capability_cis;
 	bool had_process_members;
 	bool force_kill;
-	int jail_count, mac_capability_count;
+	int serror, jail_count, mac_capability_count;
 
-	u_int remaining, elapsed;
+	sbintime_t deadline;
 
 	if (sig <= 0 || sig >= NSIG)
 		return (EINVAL);
@@ -2047,19 +2151,20 @@ coalition_terminate_graceful(struct coalition *co, int sig, u_int timeout_ms)
 	SDT_PROBE3(mac_capability_coalition, , , graceful,
 	    sig, timeout_ms, 0);
 
-	elapsed = 0;
-	while (elapsed < timeout_ms) {
-		remaining = coalition_count_live_procs_locked(co);
-		if (remaining == 0)
+	/*
+	 * Wait for the last live process member, or termination, until the
+	 * caller's deadline: one absolute timer.  coalition_process_exit() and
+	 * termination wake co_live with co_sx held, and sx_sleep drops co_sx
+	 * atomically, so a member that exits between the count and the sleep
+	 * is not missed.
+	 */
+	deadline = sbinuptime() + SBT_1MS * timeout_ms;
+	for (;;) {
+		if (coalition_count_live_procs_locked(co) == 0)
 			break;
-		sx_xunlock(&co->co_sx);
-		u_int sleep_ms = (timeout_ms - elapsed);
-		if (sleep_ms > 100)
-			sleep_ms = 100;
-		(void)pause_sbt("co_grace", SBT_1MS * sleep_ms,
-		    0, C_HARDCLOCK);
-		elapsed += sleep_ms;
-		sx_xlock(&co->co_sx);
+		serror = _sleep(&co->co_live, &co->co_sx.lock_object, 0,
+		    "co_grace", deadline, 0, C_ABSOLUTE);
+		/* Termination that began during the sleep wins over the deadline. */
 		if (co->co_flags & COF_TERMINATING) {
 			if (co->co_manual_grace_count > 0)
 				co->co_manual_grace_count--;
@@ -2067,6 +2172,8 @@ coalition_terminate_graceful(struct coalition *co, int sig, u_int timeout_ms)
 			sx_xunlock(&co->co_sx);
 			return (coalition_termination_error(co));
 		}
+		if (serror == EWOULDBLOCK)
+			break;
 	}
 
 	force_kill = (coalition_count_live_procs_locked(co) != 0);
@@ -2261,6 +2368,8 @@ coalition_watchdog_task_fn(void *context, int pending __unused)
 	}
 
 	co->co_flags &= ~COF_WATCHDOG_ACTIVE;
+	co->co_watchdog_fired_seq = co->co_watchdog_seq;
+	co->co_watchdog_fired = sbinuptime();
 	SDT_PROBE1(mac_capability_coalition, , , watchdog__expire, SIGKILL);
 	coalition_notify_event(co, COALITION_NOTE_WATCHDOG_FIRED);
 	coalition_collect_external_members_locked(co, &jail_fps,
@@ -2280,14 +2389,89 @@ coalition_watchdog_callout_fn(void *arg)
 	taskqueue_enqueue(taskqueue_thread, &co->co_watchdog_task);
 }
 
+/*
+ * Arm the watchdog for co_watchdog_timeout_ms from now, at an absolute
+ * uptime, so the deadline reported by WATCHDOG_STAT is exactly the time the
+ * callout was set for.  The caller holds co_sx exclusively and has set
+ * COF_WATCHDOG_ACTIVE; the callout takes a coalition reference.
+ */
+static void
+coalition_watchdog_arm_locked(struct coalition *co)
+{
+
+	sx_assert(&co->co_sx, SA_XLOCKED);
+	co->co_watchdog_seq++;
+	co->co_watchdog_armed = sbinuptime();
+	co->co_watchdog_deadline = co->co_watchdog_armed +
+	    co->co_watchdog_timeout_ms * SBT_1MS;
+	coalition_ref(co);
+	callout_reset_sbt(&co->co_watchdog_callout, co->co_watchdog_deadline,
+	    0, coalition_watchdog_callout_fn, co, C_ABSOLUTE);
+}
+
 /* ----------------------------------------------------------------
  * Mac_capability leader monitor
  * ---------------------------------------------------------------- */
 
+/* Death watch on the leader instance: runs with its ci_mtx held. */
+static void
+coalition_leader_died(void *arg)
+{
+	struct coalition *co = arg;
+
+	atomic_store_rel_int(&co->co_leader_task_queued, 1);
+	taskqueue_enqueue(taskqueue_thread, &co->co_leader_task);
+}
+
 /*
- * Taskqueue handler: check if the mac_capability leader is still alive.
- * If dead, terminate the coalition immediately.  If still alive,
- * reschedule the monitor callout.
+ * Arm the death watch on the current mac_capability leader.  If the
+ * instance is already dead, enqueue the task, which will see it.
+ *
+ * The watched instance stays allocated while the watch is armed without a
+ * reference of our own: it is a mac_capability member, whose file the
+ * member entry holds until coalition_close_internal() drops it, and close
+ * disarms the watch first; every other way the leader changes stops the
+ * monitor (disarming) first.
+ */
+static void
+coalition_leader_watch_locked(struct coalition *co)
+{
+	struct mac_capability_instance *ci;
+
+	sx_assert(&co->co_sx, SA_XLOCKED);
+	KASSERT(co->co_leader_watch_ci == NULL, ("leader watch armed twice"));
+	KASSERT(!(co->co_flags & COF_CLOSING), ("leader watch armed in close"));
+	ci = co->co_leader != NULL && co->co_leader->cm_fp != NULL ?
+	    co->co_leader->cm_fp->f_data : NULL;
+	co->co_leader_watch.dw_fn = coalition_leader_died;
+	co->co_leader_watch.dw_arg = co;
+	if (ci != NULL &&
+	    mac_capability_instance_watch_death(ci, &co->co_leader_watch)) {
+		co->co_leader_watch_ci = ci;
+		return;
+	}
+	atomic_store_rel_int(&co->co_leader_task_queued, 1);
+	taskqueue_enqueue(taskqueue_thread, &co->co_leader_task);
+}
+
+/* Disarm the watch.  Returns true if it was still armed (had not fired). */
+static bool
+coalition_leader_unwatch_locked(struct coalition *co)
+{
+	struct mac_capability_instance *ci;
+
+	sx_assert(&co->co_sx, SA_XLOCKED);
+	ci = co->co_leader_watch_ci;
+	co->co_leader_watch_ci = NULL;
+	return (ci != NULL &&
+	    mac_capability_instance_unwatch_death(ci, &co->co_leader_watch));
+}
+
+/*
+ * Taskqueue handler, enqueued by the death watch on the mac_capability
+ * leader instance (or when the watch could not be armed because the
+ * instance was already dead).  If the leader is dead, terminate the
+ * coalition; otherwise (a watch on a leader since replaced) watch again.
  */
 static void
 coalition_leader_task_fn(void *context, int pending __unused)
@@ -2296,8 +2480,25 @@ coalition_leader_task_fn(void *context, int pending __unused)
 	struct coalition_member *leader;
 	struct mac_capability_instance *ci;
 	bool dead = false;
+	bool disarmed __diagused;
 
 	sx_xlock(&co->co_sx);
+	atomic_store_rel_int(&co->co_leader_task_queued, 0);
+	/*
+	 * The monitor was stopped while this run was starting: the watch, if
+	 * armed, belongs to a newer monitor.  Release the stopped monitor's
+	 * reference and let a waiting start proceed.
+	 */
+	if (co->co_leader_stopping) {
+		co->co_leader_stopping = false;
+		wakeup(&co->co_leader_stopping);
+		sx_xunlock(&co->co_sx);
+		coalition_rel(co);	/* the stopped monitor's ref */
+		return;
+	}
+	/* The watch fired, or was never armed. */
+	disarmed = coalition_leader_unwatch_locked(co);
+	KASSERT(!disarmed, ("leader task ran with its watch armed"));
 
 	/*
 	 * close_internal is draining us: keep COF_LEADER_MONITOR and the monitor
@@ -2346,26 +2547,17 @@ coalition_leader_task_fn(void *context, int pending __unused)
 		coalition_terminate(co);
 		coalition_rel(co);	/* monitor's ref */
 	} else {
-		/* Still alive — reschedule, keep ref */
-		callout_reset(&co->co_leader_callout,
-		    COALITION_LEADER_POLL_TICKS,
-		    coalition_leader_callout_fn, co);
+		/* A watch on a leader since replaced fired: watch the current one. */
+		coalition_leader_watch_locked(co);
 		sx_xunlock(&co->co_sx);
 	}
-}
-
-static void
-coalition_leader_callout_fn(void *arg)
-{
-	struct coalition *co = arg;
-
-	taskqueue_enqueue(taskqueue_thread, &co->co_leader_task);
 }
 
 /*
  * Start or restart the mac_capability leader monitor.
  * Exactly one coalition reference is held while the monitor
- * is active (tracked by COF_LEADER_MONITOR flag).
+ * is active (tracked by COF_LEADER_MONITOR flag): it belongs to the armed
+ * death watch, or to the leader task once the watch has fired.
  * Caller must hold co_sx.
  */
 static void
@@ -2373,20 +2565,30 @@ coalition_leader_monitor_start_locked(struct coalition *co)
 {
 
 	sx_assert(&co->co_sx, SA_XLOCKED);
+	/*
+	 * A stopped monitor's running task must finish first (it owns a ref).
+	 * The sleep drops co_sx.  Termination meanwhile is still handled:
+	 * it clears co_leader, so the watch below finds no leader, queues the
+	 * task and the task bails.  The coalition cannot start closing here:
+	 * the caller is an operation in flight, which keeps the control file
+	 * open, and co_revoke waits for in-flight operations, so it is not
+	 * COF_CLOSING after the sleep either (watch_locked asserts that).
+	 */
+	while (co->co_leader_stopping)
+		sx_sleep(&co->co_leader_stopping, &co->co_sx, 0, "coleadr", 0);
 	if (!(co->co_flags & COF_LEADER_MONITOR)) {
 		co->co_flags |= COF_LEADER_MONITOR;
 		coalition_ref(co);
 	}
-	callout_reset(&co->co_leader_callout,
-	    COALITION_LEADER_POLL_TICKS,
-	    coalition_leader_callout_fn, co);
+	coalition_leader_watch_locked(co);
 }
 
 /*
  * Stop the monitor.  Clears the flag; the running task will
- * see the flag clear and release the ref.  If a task is
- * merely queued, cancel it and release the ref here.
- * Caller must hold co_sx.
+ * see the flag clear and release the ref.  If the watch is still armed,
+ * or the task merely queued, disarm or cancel it and release the ref here.
+ * Returns true when the task is running: the caller must drain it before
+ * it starts a new monitor.  Caller must hold co_sx.
  */
 static bool
 coalition_leader_monitor_stop_locked(struct coalition *co)
@@ -2398,13 +2600,24 @@ coalition_leader_monitor_stop_locked(struct coalition *co)
 	if (!(co->co_flags & COF_LEADER_MONITOR))
 		return (false);
 	co->co_flags &= ~COF_LEADER_MONITOR;
-	if (callout_stop(&co->co_leader_callout))
+	if (coalition_leader_unwatch_locked(co))
 		coalition_rel(co);
 	pending = 0;
 	error = taskqueue_cancel(taskqueue_thread, &co->co_leader_task,
 	    &pending);
-	if (pending != 0)
+	if (pending != 0) {
+		atomic_store_rel_int(&co->co_leader_task_queued, 0);
 		coalition_rel(co);
+	}
+	/*
+	 * A run that is executing but has not yet taken co_sx owns the
+	 * monitor reference (the watch fired): it must release it and not
+	 * touch a newer monitor's watch.  A run already past co_sx owns
+	 * nothing (it re-armed, and the unwatch above handled that).
+	 */
+	if (error == EBUSY &&
+	    atomic_load_acq_int(&co->co_leader_task_queued) != 0)
+		co->co_leader_stopping = true;
 	return (error == EBUSY);
 }
 
@@ -2431,6 +2644,8 @@ coalition_process_exit(void *arg __unused, struct proc *p)
 	rw_runlock(&coalition_proc_hash_lock);
 	/* Re-find under co_sx; close may have freed the hash entry. */
 	sx_xlock(&co->co_sx);
+	/* p has P_WEXIT set: a graceful wait counts one live member fewer. */
+	wakeup(&co->co_live);
 	TAILQ_FOREACH(cm, &co->co_members, cm_link) {
 		if (cm->cm_data == p) {
 			if ((co->co_flags & COF_HAS_LEADER) && co->co_leader == cm) {
@@ -2652,6 +2867,13 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 	co->co_pending_external++;
 	coalition_start_dependencies_locked(co);
 	co->co_flags |= COF_CLOSING;
+	/*
+	 * Disarm the leader death watch: nothing re-arms it once CLOSING is
+	 * set.  If it was armed, its reference is the monitor reference that
+	 * close releases below; a watch that already fired left the task
+	 * queued, which the drain below waits for.
+	 */
+	(void)coalition_leader_unwatch_locked(co);
 	sx_xunlock(&co->co_sx);
 
 	/*
@@ -2663,7 +2885,6 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 	taskqueue_drain(taskqueue_thread, &co->co_deadline_task);
 	callout_drain(&co->co_watchdog_callout);
 	taskqueue_drain(taskqueue_thread, &co->co_watchdog_task);
-	callout_drain(&co->co_leader_callout);
 	taskqueue_drain(taskqueue_thread, &co->co_leader_task);
 
 	/*
@@ -3151,6 +3372,35 @@ coalition_call(struct mac_capability_instance *s,
 			*reply_nfdsp = 1;
 		break;
 
+	case COALITION_OP_WATCHDOG_STAT:
+	{
+		struct coalition_watchdog_stat_reply *wsr;
+
+		if (reqlen != sizeof(*hdr) || nfds != 0) {
+			rpl->status = EINVAL;
+			break;
+		}
+		if (reply_avail < sizeof(*wsr)) {
+			*replylenp = sizeof(*wsr);
+			error = EMSGSIZE;
+			goto out;
+		}
+		wsr = reply;
+		memset(wsr, 0, sizeof(*wsr));
+		sx_slock(&co->co_sx);
+		wsr->flags = co->co_flags;
+		wsr->timeout_ms = co->co_watchdog_timeout_ms;
+		wsr->seq = co->co_watchdog_seq;
+		wsr->armed_sbt = co->co_watchdog_armed;
+		wsr->deadline_sbt = co->co_watchdog_deadline;
+		wsr->callout_sbt = co->co_watchdog_callout.c_time;
+		wsr->fired_seq = co->co_watchdog_fired_seq;
+		wsr->fired_sbt = co->co_watchdog_fired;
+		sx_sunlock(&co->co_sx);
+		*replylenp = sizeof(*wsr);
+		break;
+	}
+
 	case COALITION_OP_CLEANUP_STATUS:
 		if (reqlen != sizeof(*hdr) || nfds != 0) {
 			rpl->status = EINVAL;
@@ -3369,10 +3619,7 @@ coalition_call(struct mac_capability_instance *s,
 
 		co->co_watchdog_timeout_ms = wr->timeout_ms;
 		co->co_flags |= COF_WATCHDOG_ACTIVE;
-		coalition_ref(co);
-		callout_reset(&co->co_watchdog_callout,
-		    coalition_timeout_ticks(wr->timeout_ms),
-		    coalition_watchdog_callout_fn, co);
+		coalition_watchdog_arm_locked(co);
 		SDT_PROBE2(mac_capability_coalition, , , watchdog__set,
 		    wr->timeout_ms, 0);
 		sx_xunlock(&co->co_sx);
@@ -3408,10 +3655,7 @@ coalition_call(struct mac_capability_instance *s,
 			}
 		}
 		co->co_flags |= COF_WATCHDOG_ACTIVE;
-		coalition_ref(co);
-		callout_reset(&co->co_watchdog_callout,
-		    coalition_timeout_ticks(co->co_watchdog_timeout_ms),
-		    coalition_watchdog_callout_fn, co);
+		coalition_watchdog_arm_locked(co);
 		SDT_PROBE1(mac_capability_coalition, , , heartbeat,
 		    co->co_watchdog_timeout_ms);
 		sx_xunlock(&co->co_sx);
@@ -3442,11 +3686,16 @@ coalition_call(struct mac_capability_instance *s,
 		/* Clear leader if no fd passed */
 		if (nfds == 0) {
 			if (had_mac_capability_leader)
-				(void)coalition_leader_monitor_stop_locked(co);
+				need_drain =
+				    coalition_leader_monitor_stop_locked(co);
 			co->co_leader = NULL;
 			co->co_leader_pid = 0;
 			co->co_flags &= ~COF_HAS_LEADER;
 			sx_xunlock(&co->co_sx);
+			/* A later SET_LEADER must not race the stopped task. */
+			if (need_drain)
+				taskqueue_drain(taskqueue_thread,
+				    &co->co_leader_task);
 			rpl->status = 0;
 			break;
 		}
@@ -3502,7 +3751,11 @@ coalition_call(struct mac_capability_instance *s,
 		/* Validation passed — stop old monitor, set new leader */
 		if (had_mac_capability_leader)
 			need_drain = coalition_leader_monitor_stop_locked(co);
-		if (need_drain && new_mac_capability_leader) {
+		/*
+		 * Drain a running monitor task whatever the new leader is: a
+		 * later SET_LEADER may start a monitor it would otherwise race.
+		 */
+		if (need_drain) {
 			sx_xunlock(&co->co_sx);
 			taskqueue_drain(taskqueue_thread,
 			    &co->co_leader_task);
@@ -3791,6 +4044,13 @@ coalition_mod_init(void)
 		goto fail_osd;
 	}
 
+	coalition_uref_tag = EVENTHANDLER_REGISTER(prison_uref_release,
+	    coalition_jail_uref_released, NULL, EVENTHANDLER_PRI_ANY);
+	if (coalition_uref_tag == NULL) {
+		error = ENOMEM;
+		goto fail_uref;
+	}
+
 	coalition_fork_tag = EVENTHANDLER_REGISTER(process_fork,
 	    coalition_process_fork, NULL, EVENTHANDLER_PRI_ANY);
 	if (coalition_fork_tag == NULL) {
@@ -3843,6 +4103,8 @@ fail_resources:
 fail_exit:
 	EVENTHANDLER_DEREGISTER(process_fork, coalition_fork_tag);
 fail_fork:
+	EVENTHANDLER_DEREGISTER(prison_uref_release, coalition_uref_tag);
+fail_uref:
 	osd_jail_deregister(coalition_jail_osd_slot);
 fail_osd:
 	sx_destroy(&coalition_nest_lock);
@@ -3875,6 +4137,7 @@ coalition_modevent(module_t mod __unused, int type, void *arg __unused)
 		EVENTHANDLER_DEREGISTER(process_exit_resources, coalition_resources_tag);
 		EVENTHANDLER_DEREGISTER(process_exit, coalition_exit_tag);
 		EVENTHANDLER_DEREGISTER(process_fork, coalition_fork_tag);
+		EVENTHANDLER_DEREGISTER(prison_uref_release, coalition_uref_tag);
 		osd_jail_deregister(coalition_jail_osd_slot);
 		sx_destroy(&coalition_nest_lock);
 		rw_destroy(&coalition_proc_hash_lock);

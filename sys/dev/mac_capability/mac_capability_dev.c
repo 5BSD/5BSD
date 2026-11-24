@@ -204,6 +204,26 @@ mac_capability_probe_rights_change(struct mac_capability_instance *s, u_long cmd
 	    mac_capability_proc_nonce(td->td_ucred));
 }
 
+/*
+ * An absolute CLOCK_MONOTONIC deadline in nanoseconds (RECV_F_DEADLINE,
+ * SEND_F_DEADLINE) as an sbinuptime() deadline: both count from boot.  Zero
+ * (or a time already past) still makes a sleep end at once.  A time beyond
+ * what sbintime_t can hold is the latest one it can (tstosbt() would wrap,
+ * from 2^31 s on, to a deadline in the past).
+ */
+static sbintime_t
+mac_capability_abs_deadline(uint32_t low, uint32_t high)
+{
+	uint64_t ns;
+	struct timespec ts;
+
+	ns = (uint64_t)high << 32 | low;
+	ts.tv_sec = (time_t)(ns / 1000000000);
+	ts.tv_nsec = (long)(ns % 1000000000);
+	/* An absolute deadline of 0 would mean "none" to msleep_sbt(). */
+	return (ns == 0 ? 1 : tstosbt_sat(ts));
+}
+
 static int
 mac_capability_instance_rx_ready(struct mac_capability_instance *s)
 {
@@ -260,6 +280,10 @@ mac_capability_instance_enqueue_rx(struct mac_capability_instance *s,
 	mtx_assert(&s->ci_mtx, MA_OWNED);
 	error = mac_capability_instance_rx_ready(s);
 	if (error != 0) {
+		/* Freed under ci_mtx: it must not carry descriptors. */
+		KASSERT(msg->cm_nfds == 0,
+		    ("%s: refused message carries %d descriptors", __func__,
+		    msg->cm_nfds));
 		mac_capability_msg_free(msg);
 		return (error);
 	}
@@ -334,7 +358,7 @@ mac_capability_direct_peer(struct mac_capability_instance *s)
 	bool idle;
 
 	svc = s->ci_service;
-	if (svc == NULL || svc->csvc_ops->co_direct_peer == NULL ||
+	if (svc == NULL || !svc->csvc_has_direct_peer ||
 	    atomic_load_int(&mac_capability_direct_delivery) == 0)
 		return (NULL);
 	mtx_lock(&s->ci_mtx);
@@ -541,16 +565,17 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 		goto out;
 	}
 
-	svc = s->ci_service;
-	if (svc != NULL)
-		svc_name = svc->csvc_name;
-	if (svc == NULL || svc->csvc_ops->co_handler == NULL) {
-		error = EOPNOTSUPP;
+	/* A dead instance's service may be gone: look at nothing of it. */
+	if (atomic_load_acq_int(&s->ci_flags) & MAC_CAPABILITY_SF_DEAD) {
+		error = EPIPE;
 		goto out;
 	}
 
-	if (atomic_load_acq_int(&s->ci_flags) & MAC_CAPABILITY_SF_DEAD) {
-		error = EPIPE;
+	svc = s->ci_service;
+	if (svc != NULL)
+		svc_name = svc->csvc_name;
+	if (svc == NULL || !svc->csvc_has_handler) {
+		error = EOPNOTSUPP;
 		goto out;
 	}
 
@@ -986,7 +1011,7 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 	struct mac_capability_msg *msg;
 	sbintime_t start __unused, deadline;
 	const char *svc_name __unused;
-	bool drained, txdrain, wait;
+	bool absolute, drained, txdrain, wait;
 	uint32_t wait_ms;
 	int error;
 
@@ -994,16 +1019,24 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 	svc_name = (s->ci_service != NULL) ? s->ci_service->csvc_name : "<none>";
 	error = 0;
 	wait = (args->flags & MAC_CAPABILITY_RECV_F_WAIT) != 0;
+	absolute = (args->flags & MAC_CAPABILITY_RECV_F_DEADLINE) != 0;
 	wait_ms = args->_reserved[0];
-	if ((args->flags & ~MAC_CAPABILITY_RECV_F_WAIT) != 0 ||
+	if ((args->flags & ~(MAC_CAPABILITY_RECV_F_WAIT |
+	    MAC_CAPABILITY_RECV_F_DEADLINE)) != 0 || (absolute && !wait) ||
 	    (!wait && wait_ms != 0) ||
-	    (args->_reserved[1] | args->_reserved[2] | args->_reserved[3]) != 0) {
+	    ((absolute ? 0 : args->_reserved[1]) | args->_reserved[2] |
+	    args->_reserved[3]) != 0) {
 		error = EINVAL;
 		goto out;
 	}
-	deadline = wait && wait_ms != 0 &&
-	    wait_ms != MAC_CAPABILITY_RECV_WAIT_FOREVER ?
-	    sbinuptime() + (sbintime_t)wait_ms * SBT_1MS : 0;
+	if (absolute) {
+		/* One deadline that a restarted receive keeps. */
+		deadline = mac_capability_abs_deadline(args->_reserved[0],
+		    args->_reserved[1]);
+	} else
+		deadline = wait && wait_ms != 0 &&
+		    wait_ms != MAC_CAPABILITY_RECV_WAIT_FOREVER ?
+		    sbinuptime() + (sbintime_t)wait_ms * SBT_1MS : 0;
 
 	mtx_lock(&s->ci_mtx);
 	for (;;) {
@@ -1031,7 +1064,7 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 			goto out;
 		}
 		if (((fp->f_flag & FNONBLOCK) && !wait) ||
-		    (wait && wait_ms == 0)) {
+		    (wait && !absolute && wait_ms == 0)) {
 			mtx_unlock(&s->ci_mtx);
 			error = EAGAIN;
 			goto out;
@@ -1071,7 +1104,7 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 	 * A revoked instance may already have lost its bearer state.
 	 */
 	txdrain = s->ci_service != NULL &&
-	    s->ci_service->csvc_ops->co_txdrain != NULL &&
+	    s->ci_service->csvc_has_txdrain &&
 	    mac_capability_op_enter_locked(s);
 	mtx_unlock(&s->ci_mtx);
 
@@ -1139,7 +1172,7 @@ mac_capability_instance_do_channel_call(struct mac_capability_instance *s,
 		error = EINVAL;
 		goto out;
 	}
-	if (s->ci_service == NULL || s->ci_service->csvc_ops->co_handler == NULL) {
+	if (s->ci_service == NULL || !s->ci_service->csvc_has_handler) {
 		error = EOPNOTSUPP;
 		goto out;
 	}
@@ -1252,6 +1285,83 @@ out:
 	return (error);
 }
 
+/*
+ * MAC_CAPABILITY_SEND_F_WAIT: sleep until the send queue has room.  The
+ * condition is mac_capability_instance_rx_ready()'s, checked under ci_mtx;
+ * every path that frees room or kills the instance wakes &ci_wknotes under
+ * the same mutex (next to the EVFILT_WRITE note), so no wakeup is lost.  A
+ * dead instance ends the wait with EPIPE, as the send would, without a retry
+ * that would look at its service (which a destroy may have unloaded); a
+ * revoked lease ends it with EPERM; `deadline` (sbinuptime, 0: none) with
+ * ETIMEDOUT.
+ */
+static int
+mac_capability_instance_wait_room(struct mac_capability_instance *s,
+    sbintime_t deadline)
+{
+	int error;
+
+	error = 0;
+	mtx_lock(&s->ci_mtx);
+	while (s->ci_rxqlen + s->ci_rxheld >= s->ci_rxqlimit) {
+		if (s->ci_flags & MAC_CAPABILITY_SF_DEAD) {
+			error = EPIPE;
+			break;
+		}
+		if (!cap_authority_lease_valid(s->ci_lease)) {
+			error = EPERM;
+			break;
+		}
+		error = msleep_sbt(&s->ci_wknotes, &s->ci_mtx, PCATCH,
+		    "mcapsnd", deadline, 0, C_ABSOLUTE);
+		if (error == EWOULDBLOCK)
+			error = ETIMEDOUT;
+		if (error != 0)
+			break;
+	}
+	/* Woken by a death that also drained the queue. */
+	if (error == 0 && (s->ci_flags & MAC_CAPABILITY_SF_DEAD) != 0)
+		error = EPIPE;
+	mtx_unlock(&s->ci_mtx);
+	return (error);
+}
+
+/*
+ * SENDMSG/SENDMSG_V2 with optional SEND_F_WAIT: a send refused for a full
+ * queue (EAGAIN) consumed nothing, so it is repeated once there is room.  A
+ * signal ends the sleep with ERESTART (SA_RESTART: the ioctl is restarted
+ * whole) or EINTR, as for write(2).  With SEND_F_DEADLINE the arguments'
+ * _reserved[0..1] hold an absolute deadline (a restart keeps it); they are
+ * cleared before the send, which requires them zero.
+ */
+static int
+mac_capability_instance_sendmsg_wait(struct mac_capability_instance *s,
+    struct mac_capability_sendmsg_args *args, struct thread *td,
+    const struct mac_capability_fd_spec *uspecs, uint32_t flags)
+{
+	sbintime_t deadline;
+	int error;
+
+	deadline = 0;
+	if ((flags & MAC_CAPABILITY_SEND_F_DEADLINE) != 0) {
+		if ((flags & MAC_CAPABILITY_SEND_F_WAIT) == 0)
+			return (EINVAL);
+		deadline = mac_capability_abs_deadline(args->_reserved[0],
+		    args->_reserved[1]);
+		args->_reserved[0] = args->_reserved[1] = 0;
+	}
+	for (;;) {
+		error = mac_capability_instance_do_sendmsg(s, args, td, uspecs,
+		    flags & ~(MAC_CAPABILITY_SEND_F_WAIT |
+		    MAC_CAPABILITY_SEND_F_DEADLINE));
+		if (error != EAGAIN || (flags & MAC_CAPABILITY_SEND_F_WAIT) == 0)
+			return (error);
+		error = mac_capability_instance_wait_room(s, deadline);
+		if (error != 0)
+			return (error);
+	}
+}
+
 static int
 mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
     struct ucred *active_cred __unused, struct thread *td)
@@ -1283,13 +1393,23 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 		 * successful return lets the generic layer update f_flag.
 		 */
 		return (0);
-	case MAC_CAPABILITY_SENDMSG:
+	case MAC_CAPABILITY_SENDMSG: {
+		struct mac_capability_sendmsg_args message;
+		uint32_t flags;
+
 		if (s->ci_restricted & MAC_CAPABILITY_RF_NO_SEND) {
 			mac_capability_probe_error(s, cmd, EACCES, td);
 			return (EACCES);
 		}
-		return (mac_capability_instance_do_sendmsg(s,
-		    (struct mac_capability_sendmsg_args *)data, td, NULL, 0));
+		message = *(struct mac_capability_sendmsg_args *)data;
+		if ((message.flags & ~(MAC_CAPABILITY_SEND_F_WAIT |
+		    MAC_CAPABILITY_SEND_F_DEADLINE)) != 0)
+			return (EINVAL);
+		flags = message.flags;
+		message.flags = 0;
+		return (mac_capability_instance_sendmsg_wait(s, &message, td,
+		    NULL, flags));
+	}
 	case MAC_CAPABILITY_SENDMSG_V2: {
 		struct mac_capability_sendmsg_v2_args *args = data;
 		struct mac_capability_sendmsg_args message;
@@ -1301,12 +1421,14 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 		}
 		flags = args->message.flags;
 		if ((flags & ~(MAC_CAPABILITY_SEND_F_MOVE |
-		    MAC_CAPABILITY_SEND_F_LOCK_INHERIT)) != 0 ||
+		    MAC_CAPABILITY_SEND_F_LOCK_INHERIT |
+		    MAC_CAPABILITY_SEND_F_WAIT |
+		    MAC_CAPABILITY_SEND_F_DEADLINE)) != 0 ||
 		    (args->_reserved2[0] | args->_reserved2[1]) != 0)
 			return (EINVAL);
 		message = args->message;
 		message.flags = 0;
-		return (mac_capability_instance_do_sendmsg(s, &message, td,
+		return (mac_capability_instance_sendmsg_wait(s, &message, td,
 		    args->fd_specs, flags));
 	}
 	case MAC_CAPABILITY_RECVMSG:
@@ -1385,7 +1507,7 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 			error = EINVAL;
 			goto call_done;
 		}
-		if (svc == NULL || svc->csvc_ops->co_call == NULL) {
+		if (svc == NULL || !svc->csvc_has_call) {
 			error = EOPNOTSUPP;
 			goto call_done;
 		}
@@ -1728,11 +1850,8 @@ call_out:
 
 		mtx_lock(&s->ci_mtx);
 		s->ci_inflight--;
-		if (s->ci_inflight == 0 && (s->ci_flags & MAC_CAPABILITY_SF_DEAD)) {
+		if (s->ci_inflight == 0 && (s->ci_flags & MAC_CAPABILITY_SF_DEAD))
 			wakeup(&s->ci_inflight);
-			/* Wake service destroy loop waiting on svc. */
-			wakeup(s->ci_service);
-		}
 		mtx_unlock(&s->ci_mtx);
 
 		if (held)
@@ -1754,7 +1873,7 @@ call_done:
 			info->msg_limit = MAC_CAPABILITY_MSG_PAYLOAD_SIZE;
 			info->queue_depth = svc->csvc_queue_depth;
 			info->tx_limit = svc->csvc_tx_limit;
-			if (svc->csvc_ops->co_handler != NULL) {
+			if (svc->csvc_has_handler) {
 				info->features |= MAC_CAPABILITY_INFO_F_SENDMSG;
 				info->features |= MAC_CAPABILITY_INFO_F_RECVMSG;
 				info->features |= MAC_CAPABILITY_INFO_F_KQUEUE;
@@ -1765,7 +1884,7 @@ call_done:
 				info->features |= MAC_CAPABILITY_INFO_F_RECVMSG;
 				info->features |= MAC_CAPABILITY_INFO_F_KQUEUE;
 			}
-			if (svc->csvc_ops->co_call != NULL)
+			if (svc->csvc_has_call)
 				info->features |= MAC_CAPABILITY_INFO_F_CALL;
 		}
 		info->max_fds = MAC_CAPABILITY_MAX_FDS;
@@ -1951,7 +2070,7 @@ mac_capability_instance_kqfilter(struct file *fp, struct knote *kn)
 	if (svc == NULL)
 		return (EOPNOTSUPP);
 
-	can_send = svc->csvc_ops->co_handler != NULL;
+	can_send = svc->csvc_has_handler;
 	can_recv = can_send ||
 	    (svc->csvc_svc_flags & MAC_CAPABILITY_SVC_NOTIFY) != 0;
 
@@ -2057,7 +2176,7 @@ mac_capability_instance_close(struct file *fp, struct thread *td __unused)
 	 * attached capability fd whose fdrop re-enters this close path and
 	 * drains a taskqueue (sleepable), which must not happen under ci_mtx. */
 	mtx_lock(&s->ci_mtx);
-	s->ci_flags |= MAC_CAPABILITY_SF_CLOSED;
+	mac_capability_instance_mark_dead_locked(s, MAC_CAPABILITY_SF_CLOSED);
 
 	STAILQ_CONCAT(&deadrx, &s->ci_rxq);
 	s->ci_rxqlen = 0;
@@ -2072,11 +2191,17 @@ mac_capability_instance_close(struct file *fp, struct thread *td __unused)
 	wakeup(&s->ci_txq);
 	KNOTE_LOCKED(&s->ci_rknotes, 0);
 	KNOTE_LOCKED(&s->ci_wknotes, 0);
+	wakeup(&s->ci_wknotes);	/* SEND_F_WAIT */
 
 	mtx_unlock(&s->ci_mtx);
 
-	mac_capability_free_msgq(&deadrx);
-	mac_capability_free_msgq(&deadtx);
+	/*
+	 * Through the reaper: a message holding the last reference to another
+	 * endpoint would otherwise nest that endpoint's close here, and a
+	 * chain of them one close per link.
+	 */
+	mac_capability_free_msgq_deferred(&deadrx);
+	mac_capability_free_msgq_deferred(&deadtx);
 
 	/* Post-drain: catch any task re-scheduled between the
 	 * pre-drain and the CLOSED flag.  Harmless if nothing ran. */
@@ -2090,7 +2215,7 @@ mac_capability_instance_close(struct file *fp, struct thread *td __unused)
 	 */
 	/* Atomically exclude registry/peer tryhold before claiming final close. */
 	while (!refcount_release_if_last(&s->ci_refcnt))
-		tsleep(s, 0, "mac_capabilityfr", MAC_CAPABILITY_POLL_TICKS);
+		mac_capability_instance_wait_refs(s, 1, "mac_capabilityfr");
 
 	/* Fire co_revoke exactly once, after all work is done. */
 	mtx_lock(&s->ci_mtx);

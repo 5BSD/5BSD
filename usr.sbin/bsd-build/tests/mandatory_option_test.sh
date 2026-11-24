@@ -97,11 +97,15 @@ kernel_checked_body()
         atf_check -s exit:1 -o empty -e match:"built without options $option\$" \
             ./check -k without
     done
-    fake_kernel none
+    # A kernel with other kern.features but none of the ledger's.
+    fake_kernel none compat_freebsd11
     atf_check -s exit:1 -o empty \
         -e match:'built without options AUDIT CAPABILITY_MODE CAPABILITIES RACCT RCTL$' \
         ./check -k none
-    # No symbol table: nothing can be concluded.
+    # No kern.features symbol at all, or no symbol table: nothing can be
+    # concluded.
+    fake_kernel nofeatures
+    atf_check -s exit:1 -o empty -e match:'no symbol table' ./check -k nofeatures
     cp kernel stripped
     atf_check -s exit:0 strip stripped
     atf_check -s exit:1 -o empty -e match:'no symbol table' ./check -k stripped
@@ -161,6 +165,9 @@ source_agrees_body()
     atf_check -s exit:0 -o file:expected -e empty \
         sh /usr/src/release/scripts/check-mandatory-kernel.sh -L
     atf_check -s exit:0 -o empty cmp -s /usr/src/sys/conf/mandatory-options "$ledger"
+    # The script's own consistency check agrees with the reading below.
+    atf_check -s exit:0 -o inline:'check-mandatory-kernel: 1 source tree(s) agree with the ledger\n' \
+        -e empty ./check -S /usr/src
     sed -n 's/^#ifndef \([A-Z_]*\)$/\1/p' /usr/src/sys/kern/kern_mandatory.c > mandatory.c.list
     atf_check -s exit:0 -o empty diff -u expected mandatory.c.list
     atf_check -s exit:0 -o match:'^kern/kern_mandatory\.c[[:space:]]+standard$' \
@@ -170,6 +177,72 @@ source_agrees_body()
             grep -xE "$(echo $MANDATORY | tr ' ' '|')" > defaults.$arch
         atf_check -s exit:0 -o empty diff -u expected defaults.$arch
     done
+}
+
+atf_test_case source_check_refusals
+source_check_refusals_head()
+{
+    atf_set descr 'check-mandatory-kernel.sh -S refuses a tree whose kern_mandatory.c or DEFAULTS disagree with the ledger'
+}
+source_check_refusals_body()
+{
+    setup
+    need_source
+    # tree name: a copy of the three files -S reads.
+    tree()
+    {
+        for f in sys/kern/kern_mandatory.c sys/amd64/conf/DEFAULTS \
+            sys/arm64/conf/DEFAULTS sys/riscv/conf/DEFAULTS; do
+            mkdir -p "$1/${f%/*}"
+            cp "/usr/src/$f" "$1/$f"
+        done
+    }
+    tree good
+    atf_check -s exit:0 -o match:'1 source tree' -e empty ./check -S good
+    tree nodefault
+    sed -i '' '/^options[[:space:]]*RCTL/d' nodefault/sys/riscv/conf/DEFAULTS
+    atf_check -s exit:1 -o empty \
+        -e match:'sys/riscv/conf/DEFAULTS does not set options RCTL' ./check -S nodefault
+    tree noifndef
+    sed -i '' 's/^#ifndef RACCT$/#ifndef RACCT_RENAMED/' noifndef/sys/kern/kern_mandatory.c
+    atf_check -s exit:1 -o empty -e match:'kern_mandatory.c refuses .* but the ledger lists' \
+        ./check -S noifndef
+    tree noheader
+    sed -i '' '/^#include "opt_capsicum.h"$/d' noheader/sys/kern/kern_mandatory.c
+    atf_check -s exit:1 -o empty -e match:'does not include opt_capsicum.h' ./check -S noheader
+    # A later nooptions takes the option out again, as config(8) reads it.
+    tree unset
+    printf 'nooptions\tAUDIT\n' >> unset/sys/arm64/conf/DEFAULTS
+    atf_check -s exit:1 -o empty \
+        -e match:'sys/arm64/conf/DEFAULTS does not set options AUDIT' ./check -S unset
+    mkdir empty
+    atf_check -s exit:1 -o empty -e match:'has no sys/kern/kern_mandatory.c' ./check -S empty
+}
+
+atf_test_case release_recipes
+release_recipes_head()
+{
+    atf_set descr 'The release recipes run the mandatory-option check on the kernel distribution, its kernel archives and the media trees'
+    atf_set require.progs make
+}
+release_recipes_body()
+{
+    setup
+    need_source
+    mkdir obj
+    atf_check -s exit:0 -o save:kernel.out -e ignore \
+        env MAKEOBJDIRPREFIX="$PWD/obj" make -C /usr/src/release -n kernel.txz
+    atf_check -s exit:0 -o ignore grep -E \
+        '^sh /usr/src/release/scripts/check-mandatory-kernel.sh -d .*/kernel$' kernel.out
+    # Every archive but the debug ones, which carry no kernel.
+    atf_check -s exit:0 -o ignore grep -F \
+        'sh /usr/src/release/scripts/check-mandatory-kernel.sh -a "$archive"' kernel.out
+    atf_check -s exit:0 -o ignore grep -F '*-dbg.txz) continue ;;' kernel.out
+    # The media trees' second reading.
+    atf_check -s exit:0 \
+        -o match:'sh /usr/src/release/scripts/check-mandatory-kernel.sh -d [^ ]+ &&' \
+        -e ignore env MAKEOBJDIRPREFIX="$PWD/obj" \
+        make -C /usr/src/release -V MEDIA_KERNEL_TEST_OPTION_CHECK
 }
 
 atf_test_case module_opt_global
@@ -203,7 +276,7 @@ nooptions_fails_build_body()
     setup
     need_source
     conf=/usr/src/sys/$(uname -m)/conf
-    [ -d "$conf" ] || atf_skip "no kernel configurations for $(uname -m)"
+    [ -d "$conf" ] || atf_fail "no kernel configurations for $(uname -m) in /usr/src"
     work=$PWD
     for option in $MANDATORY ""; do
         name=NO${option:-NE}
@@ -242,7 +315,8 @@ world_without_audit_body()
     atf_check -s exit:0 -o inline:'yes\n' -e empty \
         env WITHOUT_AUTO_OBJ=yes MAKEOBJDIRPREFIX="$PWD/obj" \
         make -m /usr/src/share/mk -C /usr/src/usr.bin/id -V MK_AUDIT
-    atf_check -s not-exit:0 -o empty \
+    # make reports where it stopped on stdout; no value is printed.
+    atf_check -s not-exit:0 -o not-match:'^(yes|no)$' \
         -e match:'WITHOUT_AUDIT is refused in 5BSD: BSM audit is mandatory' \
         env WITHOUT_AUTO_OBJ=yes MAKEOBJDIRPREFIX="$PWD/obj" \
         make -m /usr/src/share/mk -C /usr/src/usr.bin/id -V MK_AUDIT WITHOUT_AUDIT=yes
@@ -302,8 +376,10 @@ atf_init_test_cases()
     atf_add_test_case kernel_checked
     atf_add_test_case trees_and_archives
     atf_add_test_case source_agrees
+    atf_add_test_case source_check_refusals
     atf_add_test_case module_opt_global
     atf_add_test_case nooptions_fails_build
     atf_add_test_case world_without_audit
     atf_add_test_case plan_refusals
+    atf_add_test_case release_recipes
 }

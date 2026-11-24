@@ -240,11 +240,16 @@ malloc-production-check:
 #
 KERNEL_TEST_OPTION_CHECK= sh ${.CURDIR}/scripts/check-test-kernel.sh
 # Every kernel carries the options of sys/conf/mandatory-options; see
-# scripts/check-mandatory-kernel.sh.  It reads the kernels where the
-# test-kernel check first reads a staged tree or a repository.
+# scripts/check-mandatory-kernel.sh.  It reads the kernels of each staged
+# tree and repository the test-kernel check reads, of each kernel archive
+# of the distribution (the debug archives carry no kernel), and of the
+# media trees at their second reading.  It does not read the media stores
+# again: their kernels are those of the distribution and the repositories
+# already read.
 KERNEL_MANDATORY_OPTION_CHECK= sh ${.CURDIR}/scripts/check-mandatory-kernel.sh
 MEDIA_KERNEL_TEST_OPTION_CHECK= \
 	${KERNEL_TEST_OPTION_CHECK} -d ${.OBJDIR}/${.TARGET} && \
+	${KERNEL_MANDATORY_OPTION_CHECK} -d ${.OBJDIR}/${.TARGET} && \
 	for store in usr/5bsd-packages usr/5bsd-dist usr/obj; do \
 		[ ! -d ${.OBJDIR}/${.TARGET}/$$store ] || \
 		    ${KERNEL_TEST_OPTION_CHECK} \
@@ -279,9 +284,14 @@ kernel.txz: # Also (if enabled) kernel-dbg.txz.
 	@${KERNEL_MANDATORY_OPTION_CHECK} -d ${.OBJDIR}/${DISTDIR}/kernel
 	( cd ${WORLDDIR} && ${IMAKE} packagekernel DISTDIR=${.OBJDIR}/${DISTDIR} )
 # Every archive produced, which includes additional kernels
-# (kernel.NAME.txz) and the debug archives.
+# (kernel.NAME.txz) and the debug archives.  The debug archives carry no
+# kernel for the mandatory-option check to read.
 	@for archive in ${.OBJDIR}/${DISTDIR}/kernel*.txz; do \
 		${KERNEL_TEST_OPTION_CHECK} -a "$$archive" || exit 1; \
+		case "$$archive" in \
+		*-dbg.txz) continue ;; \
+		esac; \
+		${KERNEL_MANDATORY_OPTION_CHECK} -a "$$archive" || exit 1; \
 	done
 	mv ${DISTDIR}/kernel*.txz .
 

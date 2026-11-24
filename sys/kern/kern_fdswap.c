@@ -33,6 +33,7 @@
 struct fdswap_take_args {
 	fdswap_admit_t	*admit;
 	void		*arg;
+	bool		 admitted;	/* the rules below were reached */
 };
 
 /*
@@ -41,11 +42,10 @@ struct fdswap_take_args {
  * front end's own rule.
  *
  * Sole reference: the open file must have no holder but the table entry
- * named in the answer, so that once the answering process closes that
- * descriptor the requester alone owns the offset, the status flags and
- * any flock.  It catches a dup, a file shared with or inherited by
- * another process, one in flight in a socket buffer, and one already
- * handed over and not yet closed.  It is a check against mistakes: a
+ * named in the answer, so that once that entry is gone (FDSWAP_CONSUME
+ * closes it with the take) the requester alone owns the offset, the
+ * status flags and any lock.  It catches a dup, a file shared with or
+ * inherited by another process and one in flight in a socket buffer.  A
  * lockless fget in another thread of the answering process can take a
  * reference after it, and can also make it refuse (EBUSY) a file that is
  * only transiently in use; the answer can be repeated.
@@ -56,6 +56,7 @@ fdswap_take_admit(struct file *fp, const cap_rights_t *rights, void *arg)
 	struct fdswap_take_args *ta;
 
 	ta = arg;
+	ta->admitted = true;
 	if (refcount_load(&fp->f_count) != 1)
 		return (EBUSY);
 	return (ta->admit != NULL ? ta->admit(fp, rights, ta->arg) : 0);
@@ -64,37 +65,54 @@ fdswap_take_admit(struct file *fp, const cap_rights_t *rights, void *arg)
 /*
  * Step 1, in the answering thread, with no front-end lock held.  Errors:
  * EBADF, EOPNOTSUPP (the type cannot be passed), ENOTCAPABLE (the entry
- * may not be transferred), EBUSY (another reference), or what 'admit'
- * returned; on error nothing was consumed and 'sw' is empty.  On success
- * 'sw' holds one reference, the rights and the propagation states to
- * install, and a CAP_XFER_ONCE entry has been consumed.  The entry stays
- * open: closing it is the answering process's.
+ * may not be transferred), EFTYPE (FDSWAP_PLAIN: the entry carries
+ * states of its own; *plainp, when not NULL, then says so), EBUSY
+ * (another reference), or what 'admit' returned; on error nothing was
+ * consumed and 'sw' is empty.  On success 'sw' holds one reference, the
+ * rights and the propagation states to install, and a CAP_XFER_ONCE
+ * entry has been consumed.  With FDSWAP_CONSUME the entry is closed with
+ * the take, under the same table lock, as close(2) closes it: the file
+ * moves to the carrier instead of being shared with it, and the number
+ * is free once this returns 0.  Without it the entry stays open.
  */
 int
 fdswap_take(struct thread *td, int fd, int flags, fdswap_admit_t *admit,
-    void *arg, struct fdswap *sw)
+    void *arg, struct fdswap *sw, bool *plainp)
 {
 	struct fdswap_take_args ta;
 	struct filedesc *fdp;
 	int error;
 
 	bzero(sw, sizeof(*sw));
-	if ((flags & ~FDSWAP_NOXFER) != 0)
+	if (plainp != NULL)
+		*plainp = false;
+	if ((flags & ~(FDSWAP_NOXFER | FDSWAP_PLAIN | FDSWAP_CONSUME)) != 0)
 		return (EINVAL);
 	ta.admit = admit;
 	ta.arg = arg;
+	ta.admitted = false;
 	fdp = td->td_proc->p_fd;
 	FILEDESC_XLOCK(fdp);
 	error = fdxfer_source_locked(td, fdp, fd, td->td_proc->p_pid,
-	    &sw->fs_fp, &sw->fs_caps, &sw->fs_prop, &sw->fs_fdflags,
-	    fdswap_take_admit, &ta);
-	FILEDESC_XUNLOCK(fdp);
+	    (flags & FDSWAP_PLAIN) != 0 ? FDXFER_PLAIN : 0, &sw->fs_fp,
+	    &sw->fs_caps, &sw->fs_prop, &sw->fs_fdflags, fdswap_take_admit,
+	    &ta);
 	if (error != 0) {
+		FILEDESC_XUNLOCK(fdp);
+		/* The plain test is the only EFTYPE before the admit rule. */
+		if (plainp != NULL && error == EFTYPE && !ta.admitted)
+			*plainp = true;
 		bzero(sw, sizeof(*sw));
 		return (error);
 	}
 	if ((flags & FDSWAP_NOXFER) != 0)
 		sw->fs_prop.fip_xfer_state = CAP_XFER_NONE;
+	if ((flags & FDSWAP_CONSUME) != 0) {
+		/* Drops the table lock. */
+		fdclose_taken(td, fdp, fd, sw->fs_fp);
+		return (0);
+	}
+	FILEDESC_XUNLOCK(fdp);
 	return (0);
 }
 

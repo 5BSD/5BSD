@@ -21,15 +21,19 @@
  *   7. Enter event loop
  */
 
+#include <sys/cap_authority.h>
 #include <sys/capsicum.h>
 #include <sys/event.h>
 #include <sys/mount.h>
 #include <sys/sysctl.h>
+#include <sys/syscall.h>
+#include <sys/user.h>
 #include <sys/wait.h>
 
 #include <dev/mac_capability/mac_capability_capprotect_proto.h>
 #include <dev/mac_capability/mac_capability_isolation_proto.h>
 
+#include <err.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
@@ -88,8 +92,19 @@ add_signal_event(int kq, int sig)
  * lookups and on-demand launches while rc runs) instead of blocking on a
  * dedicated kqueue that only sees rc's exit.
  */
+static void switchboard_dispatch_one(struct kevent *kev);
+
 void
 switchboard_dispatch_event(struct kevent *kev)
+{
+
+	switchboard_dispatch_one(kev);
+	/* Lookup channels whose answer could not be sent (domain.c). */
+	domain_reap_failed();
+}
+
+static void
+switchboard_dispatch_one(struct kevent *kev)
 {
 	if (kev->filter == EVFILT_SIGNAL) {
 		switch ((int)kev->ident) {
@@ -138,6 +153,13 @@ switchboard_dispatch_event(struct kevent *kev)
 			sd.shutting_down = true;
 			sd.running = false;
 			supervisor_stop(switchboard_kq);
+		} else {
+			/*
+			 * Level-triggered: an unexpected message (a reply
+			 * Capsule sent twice, or unasked) stays queued and
+			 * fires this again until it is taken.
+			 */
+			(void)capsule_drop_unexpected(sd.capsule_channel_fd);
 		}
 		return;
 	}
@@ -306,6 +328,39 @@ main(int argc, char *argv[])
 	const char *channel_fd_str, *s;
 	int ch;
 
+	/*
+	 * Capsule's Core authority only carried the Core role across this
+	 * exec (P2_CAP_EXCLUDED is set now and stays until our next exec;
+	 * cap_process(2) BASE EXCLUSION).  Drop it, so the children we fork
+	 * carry no authority until they install their unit's: a Capability
+	 * Broker attaching a parked launch child is refused by the authority
+	 * debug check while the child holds ours.  rtld has already taken its
+	 * library directories as descriptors.
+	 */
+	if (syscall(SYS_cap_process, CAP_AUTH_CLEAR, -1, 0, NULL) == -1)
+		err(1, "drop launch authority");
+	/*
+	 * Started by PID 1, we must be excluded.  PID 1 never starts us
+	 * without an issuer and a Core authority, and it executes the image
+	 * descriptor that authority pins (fexecve), so this fails only when
+	 * the kernel refused the Core role at exec.  Say so loudly (review
+	 * D3).
+	 */
+	if (getppid() == 1) {
+		struct kinfo_proc kp;
+		int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, 0 };
+		size_t kplen = sizeof(kp);
+
+		mib[3] = getpid();
+		if (sysctl(mib, 4, &kp, &kplen, NULL, 0) == 0 &&
+		    (kp.ki_flag2 & P2_CAP_EXCLUDED) == 0)
+			syslog(LOG_CRIT, "switchboard is not excluded from OES "
+			    "and Capability Brokers (cap_process(2) BASE "
+			    "EXCLUSION): the Core role was refused at exec "
+			    "(traced, ktraced, no_new_privs, or the image was "
+			    "not the pinned one)");
+	}
+
 	/* Present as "SwitchBoard" in ps/top, distinct from lowercase base daemons. */
 	setproctitle("-SwitchBoard");
 
@@ -316,6 +371,7 @@ main(int argc, char *argv[])
 	sd.capprotect_fd = -1;
 	sd.identity_fd = -1;
 	sd.authority_issuer_fd = -1;
+	sd.discovery_fd = -1;
 
 	/*
 	 * LOG_CONS: during early boot switchboard runs before syslogd exists, so
@@ -354,7 +410,11 @@ main(int argc, char *argv[])
 		return (1);
 	}
 
-	/* Non-blocking so capsule_rpc can timeout instead of hanging. */
+	/*
+	 * Non-blocking so that a send to a full Capsule queue fails instead of
+	 * blocking the event loop.  Replies are waited for on the channel
+	 * (mac_cap_recv_wait()), which does not depend on the descriptor mode.
+	 */
 	(void)fcntl(sd.capsule_channel_fd, F_SETFL, O_NONBLOCK);
 
 	/* Inherit delegated service instance fds (optional). */
@@ -402,6 +462,28 @@ main(int argc, char *argv[])
 			else
 				sd.identity_fd = (int)val;
 		}
+		s = getenv("SWITCHBOARD_DISCOVERY_FD");
+		if (s != NULL) {
+			errno = 0;
+			val = strtol(s, &endp, 10);
+			if (errno != 0 || *endp != '\0' ||
+			    val < 0 || val > INT_MAX)
+				sd.discovery_fd = -1;
+			else
+				sd.discovery_fd = (int)val;
+		}
+		s = getenv("SWITCHBOARD_BOOT_COMPLETE");
+		sd.boot_complete = s != NULL && strcmp(s, "1") == 0;
+		s = getenv("SWITCHBOARD_RC_FASTBOOT");
+		sd.rc_fastboot = s != NULL && strcmp(s, "1") == 0;
+		s = getenv("SWITCHBOARD_NEXT_ISSUER_ERROR");
+		if (s != NULL) {
+			errno = 0;
+			val = strtol(s, &endp, 10);
+			if (errno == 0 && *endp == '\0' && val > 0 &&
+			    val <= ELAST)
+				sd.next_issuer_error = (int)val;
+		}
 		s = getenv("SWITCHBOARD_AUTHORITY_FD");
 		if (s != NULL) {
 			errno = 0;
@@ -416,9 +498,11 @@ main(int argc, char *argv[])
 	if (sd.channel_svc_fd >= 0) {
 		(void)fcntl(sd.channel_svc_fd, F_SETFL, O_NONBLOCK);
 		syslog(LOG_INFO, "inherited service fds: channel=%d "
-		    "coalition=%d capprotect=%d identity=%d",
+		    "coalition=%d capprotect=%d identity=%d authority=%d "
+		    "discovery=%d%s",
 		    sd.channel_svc_fd, sd.coalition_svc_fd,
-		    sd.capprotect_fd, sd.identity_fd);
+		    sd.capprotect_fd, sd.identity_fd, sd.authority_issuer_fd,
+		    sd.discovery_fd, sd.boot_complete ? " boot-complete" : "");
 	}
 	if (sd.coalition_svc_fd >= 0)
 		(void)fcntl(sd.coalition_svc_fd, F_SETFL, O_NONBLOCK);
@@ -457,6 +541,7 @@ main(int argc, char *argv[])
 			sd.capprotect_fd,
 			sd.identity_fd,
 			sd.authority_issuer_fd,
+			sd.discovery_fd,
 		};
 		for (int i = 0; i < (int)(sizeof(lockfds)/sizeof(lockfds[0])); i++) {
 			if (lockfds[i] < 0)
@@ -509,7 +594,10 @@ main(int argc, char *argv[])
 		return (1);
 	}
 
-	/* Register Capsule channel for read (detect EOF = Capsule exited). */
+	/*
+	 * Register Capsule channel for read: EV_EOF means Capsule exited, and a
+	 * queued message outside an RPC is unexpected and dropped.
+	 */
 	EV_SET(&kev, sd.capsule_channel_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
 	if (kevent(switchboard_kq, &kev, 1, NULL, 0, NULL) == -1) {
 		syslog(LOG_ERR, "kevent channel: %m");
@@ -593,6 +681,9 @@ main(int argc, char *argv[])
 		    svc_boot_id(bid, sizeof(bid)),
 		    (uintmax_t)sd.root_coalition_id);
 	}
+
+	if (startup_adopt_discovery() == -1)
+		return (1);
 
 	/* Launch system services (tier-based parallel). */
 	if (startup_launch_system(switchboard_kq) != 0) {

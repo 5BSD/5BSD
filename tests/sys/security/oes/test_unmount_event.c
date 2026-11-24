@@ -7,10 +7,17 @@
 /*
  * OES unmount event test.
  *
- * Tests NOTIFY_UNMOUNT event by mounting and unmounting a filesystem.
- * Tries tmpfs first, falls back to mdmfs (memory disk).
- * Requires root privileges.
+ * Tests NOTIFY_UNMOUNT event by mounting and unmounting a tmpfs.  The mount
+ * point is in the test's own work directory, not under /tmp: /tmp is itself a
+ * tmpfs in the test guests, and a file system mounted and unmounted on a
+ * tmpfs directory records a tmpfs -> <fs> lock order that WITNESS reports
+ * against the system's <fs> -> tmpfs order (a /tmp on UFS) as a reversal.
+ * tmpfs has no mount(2) (cmount) entry: it is mounted with nmount(2).  Kyua
+ * runs it as root (required_user); a refused mount is a failure, since the
+ * case then tested nothing.
  */
+#include <sys/param.h>
+#include <sys/uio.h>
 #include <sys/ioctl.h>
 #include <sys/mount.h>
 #include <sys/poll.h>
@@ -28,8 +35,29 @@
 #include <security/oes/oes.h>
 #include "test_common.h"
 
-#define TEST_MOUNTPOINT	"/tmp/oes_test_mount"
-#define TEST_MDFILE	"/tmp/oes_test_md"
+#define TEST_MOUNTDIR	"oes_test_mount"
+
+static char mountpoint[PATH_MAX];
+
+static int
+mount_tmpfs(const char *path)
+{
+	struct iovec iov[6];
+
+	iov[0].iov_base = __DECONST(char *, "fstype");
+	iov[0].iov_len = sizeof("fstype");
+	iov[1].iov_base = __DECONST(char *, "tmpfs");
+	iov[1].iov_len = sizeof("tmpfs");
+	iov[2].iov_base = __DECONST(char *, "fspath");
+	iov[2].iov_len = sizeof("fspath");
+	iov[3].iov_base = __DECONST(char *, path);
+	iov[3].iov_len = strlen(path) + 1;
+	iov[4].iov_base = __DECONST(char *, "from");
+	iov[4].iov_len = sizeof("from");
+	iov[5].iov_base = __DECONST(char *, "tmpfs");
+	iov[5].iov_len = sizeof("tmpfs");
+	return (nmount(iov, nitems(iov), MNT_NOSUID | MNT_NOEXEC));
+}
 
 static int
 read_events(int fd, int *unmount_seen, const char *expected_path)
@@ -56,6 +84,14 @@ read_events(int fd, int *unmount_seen, const char *expected_path)
 	}
 }
 
+/* In the actor: the unmount; its errno is the exit status. */
+static int
+unmount_test_fs(void *arg __unused)
+{
+
+	return (unmount(mountpoint, 0) == 0 ? 0 : errno);
+}
+
 int
 main(void)
 {
@@ -68,14 +104,19 @@ main(void)
 	int unmount_seen = 0;
 	struct pollfd pfd;
 	struct timespec start;
-	int ret;
+	int status = 0;
 
 	printf("Testing NOTIFY_UNMOUNT event...\n");
 
 	if (geteuid() != 0) {
-		printf("SKIP: test requires root\n");
-		return (0);
+		fprintf(stderr, "FAIL: test requires root (required_user=root)\n");
+		return (1);
 	}
+	if (getcwd(mountpoint, sizeof(mountpoint) - sizeof(TEST_MOUNTDIR) - 1) == NULL) {
+		perror("getcwd");
+		return (1);
+	}
+	strlcat(mountpoint, "/" TEST_MOUNTDIR, sizeof(mountpoint));
 
 	fd = open("/dev/oes", O_RDWR | O_NONBLOCK | O_CLOEXEC);
 	if (fd < 0) {
@@ -101,56 +142,39 @@ main(void)
 		return (1);
 	}
 
-	/*
-	 * Clear the default self-mute so we can see our own unmount events.
-	 * (security.oes.default_self_mute=1 would otherwise block them.)
-	 */
-	if (ioctl(fd, OES_IOC_UNMUTE_ALL_PROCESSES, NULL) < 0) {
-		perror("OES_IOC_UNMUTE_ALL_PROCESSES");
-		close(fd);
-		return (1);
-	}
-
 	/* Create mountpoint */
-	(void)rmdir(TEST_MOUNTPOINT);
-	if (mkdir(TEST_MOUNTPOINT, 0755) < 0 && errno != EEXIST) {
+	(void)rmdir(mountpoint);
+	if (mkdir(mountpoint, 0755) < 0 && errno != EEXIST) {
 		perror("mkdir mountpoint");
 		close(fd);
 		return (1);
 	}
 
-	/* Try tmpfs first */
-	ret = mount("tmpfs", TEST_MOUNTPOINT, MNT_NOSUID | MNT_NOEXEC, NULL);
-	if (ret < 0) {
-		int tmpfs_errno = errno;
-		fprintf(stderr, "  tmpfs mount failed: %s, trying mdmfs\n",
-		    strerror(tmpfs_errno));
-
-		/* Try mdmfs as fallback - create and mount memory disk */
-		char cmd[256];
-		snprintf(cmd, sizeof(cmd),
-		    "mdmfs -s 1m md %s 2>/dev/null", TEST_MOUNTPOINT);
-		ret = system(cmd);
-		if (ret != 0) {
-			if (tmpfs_errno == EPERM || tmpfs_errno == ENOTSUP ||
-			    tmpfs_errno == EOPNOTSUPP) {
-				printf("SKIP: mount not permitted (jail/securelevel)\n");
-			} else {
-				fprintf(stderr, "FAIL: neither tmpfs nor mdmfs mount worked\n");
-				fprintf(stderr, "  tmpfs error: %s\n", strerror(tmpfs_errno));
-			}
-			rmdir(TEST_MOUNTPOINT);
-			close(fd);
-			return (ret != 0 && (tmpfs_errno == EPERM ||
-			    tmpfs_errno == ENOTSUP || tmpfs_errno == EOPNOTSUPP)) ? 0 : 1;
-		}
-		fprintf(stderr, "  using mdmfs instead of tmpfs\n");
+	if (mount_tmpfs(mountpoint) < 0) {
+		fprintf(stderr, "FAIL: tmpfs mount on %s: %s\n", mountpoint,
+		    strerror(errno));
+		rmdir(mountpoint);
+		close(fd);
+		return (1);
 	}
 
-	/* Unmount - this should trigger the event */
-	if (unmount(TEST_MOUNTPOINT, 0) < 0) {
-		perror("unmount");
-		rmdir(TEST_MOUNTPOINT);
+	/*
+	 * Unmount - this should trigger the event.  An actor child unmounts:
+	 * the test opened the client, so its own events never reach it
+	 * (oes(4), "A client's own processes").
+	 */
+	if (test_in_child(unmount_test_fs, NULL, &status) < 0 ||
+	    !test_child_ok(status)) {
+		fprintf(stderr, "unmount: %s\n", WIFEXITED(status) ?
+		    strerror(WEXITSTATUS(status)) : "actor killed");
+		/*
+		 * Do not leave the tmpfs mounted in the work directory: kyua
+		 * could not remove it.  The case has failed already.
+		 */
+		if (unmount(mountpoint, MNT_FORCE) < 0 && errno != EINVAL)
+			fprintf(stderr, "cleanup: unmount %s: %s\n", mountpoint,
+			    strerror(errno));
+		rmdir(mountpoint);
 		close(fd);
 		return (1);
 	}
@@ -172,7 +196,7 @@ main(void)
 
 		if (poll(&pfd, 1, 100) > 0 && (pfd.revents & POLLIN)) {
 			if (read_events(fd, &unmount_seen, "oes_test_mount") < 0) {
-				rmdir(TEST_MOUNTPOINT);
+				rmdir(mountpoint);
 				close(fd);
 				return (1);
 			}
@@ -182,7 +206,7 @@ main(void)
 			break;
 	}
 
-	rmdir(TEST_MOUNTPOINT);
+	rmdir(mountpoint);
 	close(fd);
 
 	if (!unmount_seen) {

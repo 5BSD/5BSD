@@ -56,28 +56,22 @@
 #define	LOGCMP_SHUTDOWN_TIMEOUT_MS 5000U
 /*
  * A pool worker opens its own system.Audit session before it enters
- * capability mode with NOIPC, so the session cannot be acquired lazily.  One
- * ambient lookup gives up after SERVICE_LOOKUP_TIMEOUT_MS, while switchboard
- * lets an on-demand activation take up to SERVICE_ACTIVATION_TIMEOUT_MS
- * before it answers ETIMEDOUT itself.  The worker therefore repeats a lookup
- * that timed out with service_retry_activation(3), which pauses between
- * attempts and starts none that could end after switchboard's bound plus one
- * lookup (LOGCMP_POOL_AUDIT_TIMEOUT_MS).
+ * capability mode with NOIPC, so the session cannot be acquired lazily.  The
+ * ambient lookup waits for switchboard's answer, which comes within
+ * switchboard's own activation bound (SERVICE_ACTIVATION_TIMEOUT_MS, after
+ * which it answers ETIMEDOUT): one lookup, no retries.
  *
  * The parent's bootstrap wait is the sum of what the worker may spend before
  * it reports: the storage attach (LOGCMP_STORAGE_TIMEOUT_MS), the Audit
- * lookups, and slack for the kqueue, the confinement and scheduling, so the
+ * lookup, and slack for the kqueue, the confinement and scheduling, so the
  * parent always receives the worker's own status rather than timing out.
  */
-#define	LOGCMP_POOL_AUDIT_TIMEOUT_MS	\
-	SERVICE_ACTIVATION_WAIT_MS(SERVICE_LOOKUP_TIMEOUT_MS)
-#define	LOGCMP_POOL_AUDIT_PAUSE_MS	SERVICE_ACTIVATION_RETRY_PAUSE_MS
+#define	LOGCMP_POOL_AUDIT_TIMEOUT_MS	SERVICE_ACTIVATION_TIMEOUT_MS
 #define	LOGCMP_POOL_START_SLACK_MS	3000U
 #define	LOGCMP_POOL_START_TIMEOUT_MS	(LOGCMP_STORAGE_TIMEOUT_MS + \
-		LOGCMP_POOL_AUDIT_TIMEOUT_MS + LOGCMP_POOL_AUDIT_PAUSE_MS + \
-		LOGCMP_POOL_START_SLACK_MS)
+		LOGCMP_POOL_AUDIT_TIMEOUT_MS + LOGCMP_POOL_START_SLACK_MS)
 _Static_assert(LOGCMP_POOL_START_TIMEOUT_MS >= LOGCMP_STORAGE_TIMEOUT_MS +
-    LOGCMP_POOL_AUDIT_TIMEOUT_MS + LOGCMP_POOL_AUDIT_PAUSE_MS + 1000U,
+    LOGCMP_POOL_AUDIT_TIMEOUT_MS + 1000U,
     "the pool start wait must cover every step of a worker's start");
 
 enum pool_source_type {
@@ -1495,25 +1489,15 @@ pool_add_session(struct pool_state *pool)
 	return (0);
 }
 
-/* One Audit lookup, for service_retry_activation(). */
-static int
-pool_audit_attempt(void *arg)
-{
-
-	return (auditcmp_client_open(arg));
-}
-
 /*
- * Open the worker's system.Audit session, repeating a lookup that timed out
- * while switchboard may still be activating the provider (see
- * LOGCMP_POOL_AUDIT_TIMEOUT_MS).
+ * Open the worker's system.Audit session: one lookup, which waits for
+ * switchboard's answer (see LOGCMP_POOL_AUDIT_TIMEOUT_MS).
  */
 static int
 pool_audit_open(struct auditcmp_client **auditp)
 {
 
-	return (service_retry_activation(pool_audit_attempt, auditp,
-	    SERVICE_LOOKUP_TIMEOUT_MS));
+	return (auditcmp_client_open(auditp));
 }
 
 static int

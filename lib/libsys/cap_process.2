@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd November 13, 2026
+.Dd November 19, 2026
 .Dt CAP_PROCESS 2
 .Os
 .Sh NAME
@@ -103,6 +103,26 @@ An authority with a role cannot be registered as an application
 The role is written once with the constraint and cannot be added, removed
 or changed afterwards; a child shares its parent's authority and there is
 no operation that derives another from it.
+.It Dv CAP_AUTH_ROLE_SYSTEM
+Mark the authority as the launch of a unit of a System bundle.
+The same rules apply as for the supervisor role.
+When an excluded process executes the image with this authority installed,
+.Xr oes 4
+delivers the exec events fail-open; it grants nothing else.
+Fail-open covers the execution of the pinned image itself: for a script,
+only the script's own pass, not its interpreter's.
+.Xr switchboard 8
+therefore launches System bundle units only from ELF programs.
+.It Dv CAP_AUTH_ROLE_CORE
+Mark the authority as a Core launch.
+The same rules apply as for the supervisor role: exactly one image, written
+once, never registered as an application.
+The two roles may be combined.
+When a process that is already excluded
+.Pq see Sx BASE EXCLUSION
+executes the image such an authority pins, with the authority installed,
+the new image is excluded too.
+The role grants nothing to a process that is not already excluded.
 .El
 .Pp
 Every other bit, including the retired value 0x1, and a role with more than
@@ -124,7 +144,9 @@ The policy that a role is given only to a program from a signed bundle that
 carries the entitlement for it belongs to the issuer,
 .Xr switchboard 8 ;
 this bit only carries the issuer's decision.
-At present no kernel interface consults the role.
+At present no kernel interface consults the supervisor role;
+.Sx BASE EXCLUSION
+consults the Core role.
 .Sh SOFTWARE AUTHORITY OF AN ATTACHED PROCESS
 A process attached to a descriptor queue
 .Po Dv DQ_IOC_ATTACH ,
@@ -175,6 +197,115 @@ An image executed by the stripped process itself changes only who may debug
 that process.
 Nothing else is taken at the attach: the discovery context described above
 and endpoints that are not bound to an authority are unchanged.
+.Sh BASE EXCLUSION
+The kernel marks some processes as excluded from observation and
+interposition by
+.Xr oes 4
+and by Capability Brokers
+.Pq Xr dq 4 :
+process 1, and any image a process that is already excluded executes
+under a valid installed authority that carries
+.Dv CAP_AUTH_ROLE_CORE
+and pins that image.
+Exclusion is decided at every
+.Xr execve 2 ,
+before the image is checked: any other image clears it.
+Exclusion is handed on, never acquired: a process that is not excluded
+cannot become excluded, whatever authority it installs.
+An exec that would be excluded fails with
+.Er EACCES
+if the image is a script or binmisc image or uses a non-native ABI, except
+in process 1.
+The ELF activator is the only one that runs a native image; the shell
+.Pq Li #!
+and binmisc activators interpret, so an exec reaching them is refused by
+the script rule.
+Process 1 is excluded whatever image it executes, also when it is traced;
+tracing it is refused by these rules and
+.Va kern.securelevel ,
+except on a test kernel with the loader tunable below.
+Exclusion is inherited by
+.Xr fork 2
+and cleared when the process is traced with
+.Xr ptrace 2
+or
+.Xr ktrace 2 ,
+enters another jail, or is attached to a Capability Broker queue.
+A process that is not excluded, root included, cannot debug, trace or pull
+from an excluded process: every check made by
+.Xr p_candebug 9
+refuses it with
+.Er EPERM
+after the MAC policies have been asked.
+That covers
+.Xr ptrace 2 ,
+.Xr procfs 4
+.Pa mem ,
+.Pa regs
+and the other debug nodes,
+.Xr ktrace 2 ,
+.Xr pdopenpid 2 ,
+.Xr pddupfd 2 ,
+.Xr kcmp 2 ,
+the
+.Xr procctl 2
+control operations, hwpmc, filemon, the DTrace pid provider, the Linux
+process interfaces, and the
+.Va kern.proc
+sysctls filedesc, cwd, env, kqueue and the rlimit and osrel writes.
+Inspection
+.Pq Xr p_caninspect 9 :
+the memory map, auxiliary vector, kernel stacks,
+.Va ps_strings ,
+umask, signal trampoline, vm layout and USDT probes
+is not refused.
+For process 1 these debug interfaces were previously refused only at
+.Va kern.securelevel
+greater than 0 or by a capprotect shield.
+Among excluded processes only a parent may debug its own child that has
+not executed an image; excluded processes cannot debug one another otherwise
+.Pq Er EPERM .
+A process that may not see the target
+.Pq Va security.bsd.see_other_uids
+gets
+.Er ESRCH ,
+as for any process.
+Only a test kernel
+.Pq Cd options MAC_CAPABILITY_TEST_PERMISSIVE ,
+never published, has the loader tunable
+.Va security.cap_exclusion.debug_allowed
+that lifts the refusal; attaching then clears the target's exclusion.
+.Va security.cap_exclusion.refused_debug
+counts refusals.
+Only its excluded parent may attach a fork child of an excluded process
+that has not executed another image to a Capability Broker queue
+.Pq Dv DQ_IOC_ATTACH , Xr dq 4 ;
+other attaches of an excluded process fail with
+.Er EPERM .
+The attach clears the child's exclusion.
+.Va security.cap_exclusion.refused_attach
+counts refusals.
+Exclusion grants no privilege.
+.Xr ps 1
+shows it as
+.Dv P2_CAP_EXCLUDED
+in
+.Cm flags2 .
+The
+.Va security.cap_exclusion
+sysctl tree counts exclusions granted
+.Pq Va granted
+and excluded executions refused
+.Pq Va refused_interp , refused_abi ;
+the
+.Nm cap_exclusion
+DTrace provider fires
+.Fn exec pid excluded
+at every exec commit,
+.Fn clear pid reason
+when exclusion is cleared otherwise, and
+.Fn refuse pid reason errno
+on every refusal.
 .Sh RETURN VALUES
 GET and ORIGIN_EXPORT return a descriptor on success.
 Other operations return

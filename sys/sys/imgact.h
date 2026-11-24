@@ -90,6 +90,8 @@ struct image_params {
 	unsigned char interpreted;	/* mask of interpreters that have run */
 	bool credential_setid;		/* true if becoming setid */
 	bool authority_setid;		/* secure software-authority exec */
+	bool cap_will_exclude;		/* base exclusion after this exec */
+	bool cap_system_launch;		/* excluded launcher, System unit */
 	bool vmspace_destroyed;		/* we've blown away original vm space */
 	bool opened;			/* we have opened executable vnode */
 	bool textset;

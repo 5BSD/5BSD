@@ -41,6 +41,12 @@ typedef enum {
 	OES_AUTH_EVENT_LIST(OES_ENUM_EVENT)
 	OES_NOTIFY_EVENT_LIST(OES_ENUM_EVENT)
 #undef OES_ENUM_EVENT
+	/*
+	 * Not an event: the events-lost marker (oes_event_lost_t).  Outside
+	 * both lists and the subscription bitmaps, so it cannot be subscribed
+	 * or muted; read(2) returns it to every client that lost events.
+	 */
+	OES_EVENT_NOTIFY_LOST = 0x1FFF,
 } oes_event_type_t;
 
 #define OES_EVENT_IS_AUTH(e)	(((e) & 0x1000) == 0)
@@ -241,7 +247,8 @@ typedef struct {
 	uint64_t	ep_coalition;		/* coalition id, 0 = none */
 	uint64_t	ep_responsible_coalition; /* responsible id, 0 = unset */
 	pid_t		ep_responsible_pid;	/* responsible coalition's leader */
-	uint32_t	ep_pad3;
+	uint32_t	ep_cap_roles;	/* CAP_AUTH_ROLE_* of a valid managed
+					   authority (EP_FLAG_CAP_MANAGED) */
 } oes_process_t;
 
 /* Process flags */
@@ -255,7 +262,12 @@ typedef struct {
 #define EP_FLAG_WEXIT		0x0040	/* Process is exiting */
 #define EP_FLAG_EXEC		0x0080	/* Process did exec */
 #define EP_FLAG_CONTROLT	0x0100	/* Has controlling terminal */
-#define EP_FLAG_OES_CLIENT	0x0400	/* Owns an active OES client */
+#define EP_FLAG_OES_CLIENT	0x0400	/* Acts as an OES client (a reader
+						   of one: oes(4)) */
+#define EP_FLAG_CAP_EXCLUDED	0x0800	/* Excluded by the kernel (base
+					   exclusion, cap_process(2)) */
+#define EP_FLAG_CAP_MANAGED	0x1000	/* Runs the image pinned by a valid
+					   managed software authority */
 
 #define OES_PROC_STATE_NEW	1
 #define OES_PROC_STATE_NORMAL	2
@@ -713,6 +725,20 @@ typedef struct {
 } oes_event_file_ioctl_t;
 
 /*
+ * OES_EVENT_NOTIFY_LOST: events this client did not receive since the
+ * previous marker (oes(4) "Lost events").  el_unsent were sent to no
+ * client: refused at the deferred-delivery bound or not allocated,
+ * counted for every client subscribed to their type; el_queue were
+ * discarded at this client's own full queue (or failed to be copied for
+ * it).
+ */
+typedef struct {
+	uint64_t	el_count;	/* el_unsent + el_queue */
+	uint64_t	el_unsent;	/* Sent to no client */
+	uint64_t	el_queue;	/* Lost at this client's queue */
+} oes_event_lost_t;
+
+/*
  * Main message structure
  *
  * Clients read these from the oes fd. Messages are variable-length:
@@ -809,6 +835,7 @@ typedef struct {
 		oes_event_file_t	fsync;		/* FILE_FSYNC */
 		oes_event_file_lock_t	file_lock;
 		oes_event_file_ioctl_t	file_ioctl;
+		oes_event_lost_t	lost;		/* NOTIFY_LOST */
 		uint8_t			_reserved[128]; /* Future expansion */
 	} em_event_data;
 } oes_message_t;
@@ -1065,6 +1092,25 @@ struct oes_jail_scope_args {
  */
 #define OES_IOC_SET_JAIL_SCOPE	_IOW('E', 43, struct oes_jail_scope_args)
 #define OES_IOC_GET_JAIL_SCOPE	_IOR('E', 44, struct oes_jail_scope_args)
+
+/*
+ * Make the caller one of the client's readers (oes(4), "A client's own
+ * processes"): events the caller causes are never delivered to this client.
+ * Reading, answering, polling and kevent registration do the same; call it
+ * first on a descriptor received from another process.
+ */
+#define OES_IOC_JOIN		_IO('E', 45)
+
+/*
+ * Test kernels only (options MAC_CAPABILITY_TEST_PERMISSIVE; ENOTTY
+ * elsewhere): the number of the client's reader-set entries for a pid.
+ */
+struct oes_test_reader_entries {
+	pid_t		otre_pid;
+	uint32_t	otre_count;
+};
+#define OES_IOC_TEST_READER_ENTRIES \
+	_IOWR('E', 46, struct oes_test_reader_entries)
 
 /* Set client mode and parameters */
 struct oes_mode_args {
@@ -1336,7 +1382,7 @@ struct oes_stats {
 #ifndef _KERNEL
 #define OES_IOCTLS_THIRD_PARTY_INIT \
 	{ OES_IOC_SUBSCRIBE, OES_IOC_SUBSCRIBE_BITMAP, \
-	  OES_IOC_GET_SUBSCRIPTIONS, \
+	  OES_IOC_GET_SUBSCRIPTIONS, OES_IOC_JOIN, \
 	  OES_IOC_GET_SCOPE, OES_IOC_GET_JAIL_SCOPE, \
 	  OES_IOC_GET_MODE, \
 	  OES_IOC_SET_DEADLINE_MAX, OES_IOC_GET_DEADLINE_MAX, \
@@ -1355,7 +1401,7 @@ struct oes_stats {
 
 #define OES_IOCTLS_ALL_INIT \
 	{ OES_IOC_SUBSCRIBE, OES_IOC_SUBSCRIBE_BITMAP, \
-	  OES_IOC_GET_SUBSCRIPTIONS, \
+	  OES_IOC_GET_SUBSCRIPTIONS, OES_IOC_JOIN, \
 	  OES_IOC_SET_SCOPE, OES_IOC_GET_SCOPE, \
 	  OES_IOC_SET_JAIL_SCOPE, OES_IOC_GET_JAIL_SCOPE, \
 	  OES_IOC_SET_MODE, OES_IOC_GET_MODE, \

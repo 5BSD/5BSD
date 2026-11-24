@@ -719,6 +719,7 @@ _INPUT_ROWS = [
     ('', '{"source":"dev/dq/dq_async.c","origin":"kernel","object":"dq_async.o","flags":0,"compile_with":null,"depends":null}'),
     ('', '{"source":"dev/dq/dq_resolve.c","origin":"kernel","object":"dq_resolve.o","flags":0,"compile_with":null,"depends":null}'),
     ('', '{"source":"dev/dq/dq_dir.c","origin":"kernel","object":"dq_dir.o","flags":0,"compile_with":null,"depends":null}'),
+    ('', '{"source":"dev/dq/dq_standing.c","origin":"kernel","object":"dq_standing.o","flags":0,"compile_with":null,"depends":null}'),
     ('', '{"source":"dq_resolve_ledger.chk","origin":"kernel","object":null,"flags":39,"compile_with":"sh $S/tools/dq_resolve_ledger.sh check $S $S/dev/dq/dq_resolve_ledger.txt && touch $@","depends":"$S/tools/dq_resolve_ledger.sh $S/dev/dq/dq_resolve_ledger.txt .PHONY"}'),
     ('', '{"source":"dev/efidev/efidev.c","origin":"kernel","object":"efidev.o","flags":0,"compile_with":null,"depends":null}'),
     ('', '{"source":"dev/efidev/efirt.c","origin":"kernel","object":"efirt.o","flags":0,"compile_with":null,"depends":null}'),

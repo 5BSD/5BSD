@@ -85,6 +85,23 @@ SDT_PROBE_DEFINE3(dq, , , resolve__real, "struct dq_queue *", "uint32_t",
     "char *");
 SDT_PROBE_DEFINE3(dq, , , resolve__symlink, "struct dq_queue *", "uint32_t",
     "uint32_t");
+SDT_PROBE_DEFINE3(dq, , , fop__local, "struct file *", "int", "int");
+SDT_PROBE_DEFINE4(dq, , , quota__wait, "struct dq_queue *",
+    "struct dq_event_k *", "int", "int");
+/* A waited post's wait for a slot of a full queue ended (D205). */
+SDT_PROBE_DEFINE3(dq, , , wait__full, "struct dq_queue *",
+    "struct dq_event_k *", "int");
+/* A wait that catches no signal ended because the process is dying. */
+SDT_PROBE_DEFINE2(dq, , , wait__abandon, "struct dq_queue *",
+    "struct dq_event_k *");
+SDT_PROBE_DEFINE4(dq, , , postop__attr, "struct dq_object *", "uint32_t",
+    "uint32_t", "int");
+SDT_PROBE_DEFINE4(dq, , , standing__match, "struct dq_queue *", "uint32_t",
+    "uint64_t", "int32_t");
+SDT_PROBE_DEFINE3(dq, , , standing__miss, "struct dq_queue *", "uint32_t",
+    "uint32_t");
+SDT_PROBE_DEFINE4(dq, , , standing__change, "struct dq_queue *", "uint32_t",
+    "uint64_t", "uint32_t");
 
 /*
  * Tunables (design 8.6).  Bounded setters: a controller can lower its own
@@ -92,6 +109,25 @@ SDT_PROBE_DEFINE3(dq, , , resolve__symlink, "struct dq_queue *", "uint32_t",
  */
 SYSCTL_NODE(_kern, OID_AUTO, dq, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
     "DescriptorQueue");
+
+/*
+ * Replies may carry post-operation attributes (DQ_REPLY_F_POSTOP, T-A02):
+ * libdq offers a block only when this feature is present, and reports a
+ * refused one as the error it is.
+ */
+FEATURE(dq_postop, "DescriptorQueue post-operation attributes in replies");
+
+/*
+ * Post-operation attribute blocks ignored, system-wide (counter(9): the
+ * reply path does not contend on one line).  Per-queue attribution is the
+ * dq:::postop-attr probe's; struct dq_stats2 has no word for it (its three
+ * reserved words are allocated by Unix-illusion plan rev 8 0.3).
+ */
+COUNTER_U64_DEFINE_EARLY(dq_postop_ignored);
+SYSCTL_COUNTER_U64(_kern_dq, OID_AUTO, postop_ignored, CTLFLAG_RD,
+    &dq_postop_ignored,
+    "Post-operation attribute blocks ignored (DQ_REPLY_F_POSTOP), all "
+    "queues");
 
 u_int dq_max_io = 131072;
 u_int dq_queue_depth = 1024;
@@ -330,6 +366,8 @@ dq_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data, int fflag __unused
 		return (0);
 	case DQ_IOC_SET_QUEUE_DEPTH:
 		return (dq_queue_set_depth(q, *(uint32_t *)data));
+	case DQ_IOC_QUEUE_FLAGS:
+		return (dq_queue_flags(q, (struct dq_queue_flags *)data));
 	case DQ_IOC_PUSH:
 		return (dq_queue_push(q, (const struct dq_push_args *)data));
 	case DQ_IOC_PUSH_V1: {
@@ -348,6 +386,14 @@ dq_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data, int fflag __unused
 		pa.dp_pad0 = v1->dp_pad0;
 		return (dq_queue_push(q, &pa));
 	}
+	case DQ_IOC_STANDING_ADD:
+		return (dq_standing_add(q, (struct dq_standing_rule *)data,
+		    td));
+	case DQ_IOC_STANDING_DEL:
+		return (dq_standing_del(q, *(uint64_t *)data));
+	case DQ_IOC_STANDING_FLUSH:
+		dq_standing_flush(q, DQ_STANDING_CHANGE_FLUSH);
+		return (0);
 	case FIONBIO:
 	case FIOASYNC:
 		return (0);
@@ -395,10 +441,16 @@ static struct cdevsw dq_cdevsw = {
 	.d_name = "dq",
 };
 
+/*
+ * Everything the device needs, in an order that can be undone: the
+ * resolution vector (dqres_ops) is registered last, once nothing can fail,
+ * so a failed MOD_LOAD of a preloaded module never leaves the kernel core
+ * calling into a module the linker drops.
+ */
 static int
 dq_init(void)
 {
-
+	struct make_dev_args args;
 	int error;
 
 	/*
@@ -421,12 +473,23 @@ dq_init(void)
 	taskqueue_start_threads(&dq_taskq, 2, PVM, "dq taskq");
 	mtx_init(&dq_mtx, "dq", NULL, MTX_DEF);
 	dq_file_init();		/* the lock-owner hash key */
-	dq_resolve_init();	/* the resolution vector (D125) */
-	dq_cdev = make_dev(&dq_cdevsw, 0, UID_ROOT, GID_WHEEL, 0600, "dq");
-	if (dq_cdev == NULL) {
+	make_dev_args_init(&args);
+	args.mda_devsw = &dq_cdevsw;
+	args.mda_uid = UID_ROOT;
+	args.mda_gid = GID_WHEEL;
+	args.mda_mode = 0600;
+	args.mda_flags = MAKEDEV_WAITOK | MAKEDEV_CHECKNAME;
+	error = make_dev_s(&args, &dq_cdev, "dq");
+	if (error != 0) {
+		printf("dq: cannot create /dev/dq: %d\n", error);
 		mtx_destroy(&dq_mtx);
-		return (ENXIO);
+		taskqueue_free(dq_taskq);
+		dq_taskq = NULL;
+		dq_pager_unregister();
+		return (error);
 	}
+	dq_mutwait_init();	/* the dying-process wakeup (owner 11-20) */
+	dq_resolve_init();	/* the resolution vector (D125), last */
 	dq_active = true;
 	return (0);
 }

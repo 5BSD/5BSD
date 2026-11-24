@@ -474,9 +474,6 @@ int	service_helper_open(struct service_context *, const char *name,
 int	service_connect_ambient(const char *name, int *session_fd);
 int	service_open(const char *name, int *session_fd);
 
-/* Bound discovery requests even while providers are starting. */
-#define	SERVICE_LOOKUP_TIMEOUT_MS	2000U
-
 #define	SERVICE_CLIENT_TIMEOUT_INFINITE	UINT32_MAX
 
 struct service_message {

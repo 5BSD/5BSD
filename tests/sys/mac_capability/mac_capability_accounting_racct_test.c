@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 
 #include <atf-c.h>
@@ -29,21 +30,57 @@
 #include "mac_capability_test_helpers.h"
 #include "mac_capability_accounting_proto.h"
 
-#ifndef RACCT_MEMLOCK
+/*
+ * The resource numbers of sys/racct.h, which is a kernel header: outside
+ * the kernel it declares the stubs of a kernel without options RACCT.
+ */
 #define	RACCT_MEMLOCK	5
-#endif
-#ifndef RACCT_NOFILE
 #define	RACCT_NOFILE	7
-#endif
 
 static void
 require_tunable_zero(void)
 {
 	char value[16];
 
+	/* The two spellings getenv_bool() reads as false. */
 	if (kenv(KENV_GET, "kern.racct.enable", value, sizeof(value)) < 0 ||
-	    strcmp(value, "0") != 0)
-		atf_tc_skip("needs a boot with kern.racct.enable=0");
+	    (strcmp(value, "0") != 0 && strcasecmp(value, "false") != 0))
+		atf_tc_skip("DEFERRED_RACCT_ZERO_TIER: needs a boot with "
+		    "kern.racct.enable=0 (vm-provider.sh RACCT_TUNABLE_ZERO=1)");
+}
+
+/*
+ * Whether the boot's console messages hold line.  The kernel message
+ * buffer is read first; a long run may have pushed the boot out of it, and
+ * then the copy the boot saved, /var/run/dmesg.boot, is read.
+ */
+static bool
+boot_message(const char *line)
+{
+	char *buf;
+	size_t len;
+	FILE *fp;
+	char l[512];
+	bool found;
+
+	len = 0;
+	ATF_REQUIRE(sysctlbyname("kern.msgbuf", NULL, &len, NULL, 0) == 0);
+	len += 4096;
+	buf = malloc(len + 1);
+	ATF_REQUIRE(buf != NULL);
+	ATF_REQUIRE(sysctlbyname("kern.msgbuf", buf, &len, NULL, 0) == 0);
+	buf[len] = '\0';
+	found = strstr(buf, line) != NULL;
+	free(buf);
+	if (found)
+		return (true);
+	fp = fopen("/var/run/dmesg.boot", "r");
+	if (fp == NULL)
+		return (false);
+	while (!found && fgets(l, sizeof(l), fp) != NULL)
+		found = strstr(l, line) != NULL;
+	fclose(fp);
+	return (found);
 }
 
 static int
@@ -74,6 +111,9 @@ ATF_TC_BODY(tunable_zero_ignored, tc)
 	bool enabled;
 
 	require_tunable_zero();
+	ATF_CHECK_MSG(boot_message("racct: kern.racct.enable=0 ignored: "
+	    "resource accounting cannot be disabled"),
+	    "the boot did not report that it ignored kern.racct.enable=0");
 	ATF_REQUIRE(feature_present("racct"));
 	enabled = false;
 	len = sizeof(enabled);

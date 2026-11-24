@@ -290,6 +290,11 @@ SOFTUPDATES	opt_ffs.h
 # used, if it is used at all.
 NO_FFS_SNAPSHOT	opt_ffs.h
 
+# FFS_TEST_HOOKS makes a test kernel that is never published (ffs(4); a row
+# of the test-kernel option ledger, sys/conf/test-options).  It is
+# deliberately not in NOTES: LINT must not build it.
+FFS_TEST_HOOKS	opt_ffs.h
+
 # Enabling this option turns on support for Access Control Lists in UFS,
 # which can be used to support high security configurations.  Depends on
 # UFS_EXTATTR.
@@ -658,6 +663,9 @@ DEV_DQ			opt_dq.h
 # the test-kernel option ledger, sys/conf/test-options).  It is
 # deliberately not in NOTES: LINT must not build it.
 DQ_TEST_OPEN		opt_dq.h
+# DQ_FAULT_INJECTION adds the dq(4) fault-injection knobs of the test
+# suites; a test kernel as DQ_TEST_OPEN is, and not in NOTES either.
+DQ_FAULT_INJECTION	opt_dq.h
 DEV_NETMAP		opt_global.h
 DEV_PCI			opt_pci.h
 DEV_PF			opt_pf.h

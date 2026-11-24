@@ -934,6 +934,8 @@ Provider: `mac_capability` (core messaging)
 | `control` / `rights-change` | service name, badge, cmd, pid, cred, nonce |
 | `queue-pressure` | service name, badge, reason, current, limit |
 | `rxq-discard` | service name, badge, messages discarded from the RX queue of a revoked or dead instance |
+| `reap-defer` | messages holding the last reference to a carried descriptor that a revoke, a dispatch task or a close handed to the reaper thread |
+| `reap-done` | messages the reaper freed in one pass |
 | `error` | service name, badge, cmd, pid, nonce, errno |
 
 Provider: `mac_capability_isolation` (file/net/vsock/jail enforcement)

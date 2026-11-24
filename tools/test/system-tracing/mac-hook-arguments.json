@@ -3127,6 +3127,21 @@
       }
     ]
   },
+  "proc_check_inspect": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "p",
+        "type": "struct proc *",
+        "encoding": "pointer"
+      }
+    ]
+  },
   "proc_check_fork": {
     "result": "int",
     "arguments": [

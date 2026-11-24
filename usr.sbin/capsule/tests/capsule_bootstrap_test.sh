@@ -108,29 +108,17 @@ start_capsule()
 	    sed -n 's/^running pid=//p')
 }
 
+# Wait, on file events and without a deadline of its own (the case's ATF
+# timeout bounds it), until a file exists and is not empty, or until the
+# Capsule log contains a fixed string.
 wait_for_file()
 {
-	local path i
-	path="$1"
-	i=0
-	while [ ! -s "$path" ] && [ "$i" -lt 100 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
-	test -s "$path"
+	"$(atf_get_srcdir)/capd_wait_file" "$1"
 }
 
 wait_for_log()
 {
-	local pattern i
-	pattern="$1"
-	i=0
-	while ! grep -q "$pattern" "$logfile" 2>/dev/null &&
-	    [ "$i" -lt 100 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
-	grep -q "$pattern" "$logfile" 2>/dev/null
+	"$(atf_get_srcdir)/capd_wait_file" "$logfile" "$1"
 }
 
 wait_for_authenticated_shutdown()
@@ -172,7 +160,6 @@ cleanup_common()
 	# concerned with graceful shutdown assert that behavior in their body.
 	stop_capsule || true
 	capd_cleanup_stack || cleanup_status=1
-	sleep 0.2
 	rm -rf capsule.pid capsule.conf switchboard.d capsule.sock \
 	    capsule.log mock_switchboard mock_switchboard.c mock-mode \
 	    switchboard-started.out switchboard-ping-ok.out
@@ -224,20 +211,57 @@ lookup_without_route_head()
 }
 lookup_without_route_body()
 {
-	build_mock_switchboard
 	capd_find_lookup_exec
-	start_capsule
-	# This service-manager double never sends CAPSULE_OP_SET_AMBIENT_LOOKUP.
-	if ! wait_for_file switchboard-started.out; then
-		cat "$logfile" 2>/dev/null
-		atf_fail "bootstrap fixture did not start"
-	fi
+	prepare_paths
+	mkdir -p "$(pwd)/switchboard.d"
+	# No service manager: no SwitchBoard start, so Capsule creates no boot
+	# discovery channel, and no SwitchBoard hands one over.
+	cat > "$conffile" <<EOF
+pidfile = "$pidfile";
+control_socket = "$sockpath";
+control_socket_mode = "0700";
+lookup_route_export = true;
+service_manager = "";
+EOF
+	capd_find_guardian
+	capd_launch_capsule
+	daemon_pid=$("$capd_guardian_bin" ctl -s "$CAPD_GUARDIAN_SOCKET" status |
+	    sed -n 's/^running pid=//p')
 	# A refusal that carried a descriptor would exit 76 (EX_PROTOCOL).
 	atf_check -s exit:69 -e match:"No such file or directory" \
 	    "$capd_lookup_exec_bin" -s "$sockpath" /usr/bin/true
 	atf_check -s exit:0 -o ignore grep "control: lookup: no route held" "$logfile"
 }
 lookup_without_route_cleanup()
+{
+	cleanup_common
+}
+
+atf_test_case lookup_capsule_route cleanup
+lookup_capsule_route_head()
+{
+	atf_set "descr" "CTL_OP_LOOKUP hands out Capsule's own boot route although SwitchBoard never sent one"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+}
+lookup_capsule_route_body()
+{
+	build_mock_switchboard
+	capd_find_lookup_exec
+	start_capsule
+	# This service-manager double never sends CAPSULE_OP_SET_AMBIENT_LOOKUP.
+	# Capsule creates the boot discovery channel itself before it starts
+	# SwitchBoard, so a route is held anyway.
+	if ! wait_for_file switchboard-started.out; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "bootstrap fixture did not start"
+	fi
+	atf_check -s exit:0 -o ignore grep "bootstrap: boot discovery channel created" "$logfile"
+	atf_check -s exit:0 -o empty -e empty \
+	    "$capd_lookup_exec_bin" -s "$sockpath" /usr/bin/true
+	atf_check -s exit:1 grep "control: lookup: no route held" "$logfile"
+}
+lookup_capsule_route_cleanup()
 {
 	cleanup_common
 }
@@ -321,12 +345,8 @@ bootstrap_channel_loss_kills_switchboard_body()
 		atf_fail "bootstrap fixture did not start"
 	fi
 
-	i=0
-	while ! grep -q "switchboard killed by signal" "$logfile" 2>/dev/null &&
-	    [ "$i" -lt 100 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
+	wait_for_log "switchboard killed by signal" ||
+	    atf_fail "Capsule did not kill the switchboard instance"
 	atf_check -s exit:0 -o ignore \
 	    grep "switchboard closed channel" "$logfile"
 	atf_check -s exit:0 -o ignore \
@@ -336,6 +356,184 @@ bootstrap_channel_loss_kills_switchboard_body()
 bootstrap_channel_loss_kills_switchboard_cleanup()
 {
 	rm -f mock-mode
+	cleanup_common
+}
+
+# Every request SwitchBoard sends gets an answer, or the channel ends so that
+# SwitchBoard sees ECONNRESET (SwitchBoard waits for replies with no
+# deadline).  answered_case MODE EXPECTED: the fixture sends a request
+# Capsule cannot serve, then a PING, and records both answers.
+answered_case()
+{
+	echo "$1" > mock-mode
+	build_mock_switchboard
+	start_capsule
+	if ! wait_for_file switchboard-answers.out; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "Capsule did not answer the $1 request"
+	fi
+	atf_check -s exit:0 -o inline:"$2\n" cat switchboard-answers.out
+	capd_capsule_ctl "$sockpath" status | grep -q running ||
+	    atf_fail "Capsule status request failed"
+}
+
+atf_test_case channel_short_message_answered cleanup
+channel_short_message_answered_head()
+{
+	atf_set "descr" "a message too short for an op is answered EINVAL, and the next request too"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+	atf_set "timeout" "60"
+}
+channel_short_message_answered_body()
+{
+	answered_case short-then-ping "short status=22 ping=0"
+}
+channel_short_message_answered_cleanup()
+{
+	rm -f mock-mode switchboard-answers.out
+	cleanup_common
+}
+
+atf_test_case channel_oversized_message_answered cleanup
+channel_oversized_message_answered_head()
+{
+	atf_set "descr" "a message larger than any request is received whole and answered EMSGSIZE, and the next request too"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+	atf_set "timeout" "60"
+}
+channel_oversized_message_answered_body()
+{
+	answered_case oversized-then-ping "oversized status=40 ping=0"
+}
+channel_oversized_message_answered_cleanup()
+{
+	rm -f mock-mode switchboard-answers.out
+	cleanup_common
+}
+
+atf_test_case channel_extra_descriptors_answered cleanup
+channel_extra_descriptors_answered_head()
+{
+	atf_set "descr" "a request with more descriptors than it takes is served (extras closed), and the next request too"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+	atf_set "timeout" "60"
+}
+channel_extra_descriptors_answered_body()
+{
+	answered_case fds-then-ping "fds status=0 ping=0"
+}
+channel_extra_descriptors_answered_cleanup()
+{
+	rm -f mock-mode switchboard-answers.out
+	cleanup_common
+}
+
+atf_test_case channel_unsendable_reply_ends_channel cleanup
+channel_unsendable_reply_ends_channel_head()
+{
+	atf_set "descr" "a reply Capsule cannot queue, even status-only, ends the channel rather than leaving the request unanswered"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+	atf_set "timeout" "180"
+}
+channel_unsendable_reply_ends_channel_body()
+{
+	echo "flood" > mock-mode
+	build_mock_switchboard
+	start_capsule
+	if ! wait_for_file switchboard-answers.out; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "the flood fixture did not start"
+	fi
+	wait_for_log "switchboard killed by signal" ||
+	    atf_fail "waiting for the end of the channel failed"
+	if ! grep -q "status-only reply failed.*ending the SwitchBoard channel" "$logfile" ||
+	    ! grep -q "switchboard killed by signal" "$logfile"; then
+		cat switchboard-answers.out "$logfile" >&2
+		atf_fail "Capsule did not end the channel when it could not reply"
+	fi
+	stop_capsule
+}
+channel_unsendable_reply_ends_channel_cleanup()
+{
+	rm -f mock-mode switchboard-answers.out
+	cleanup_common
+}
+
+atf_test_case wait_file_follows_replaced_file
+wait_file_follows_replaced_file_head()
+{
+	atf_set "descr" "capd_wait_file follows a path whose file is replaced by a rename and written afterwards"
+	atf_set "timeout" "60"
+}
+wait_file_follows_replaced_file_body()
+{
+	local pid
+
+	echo old > target.out
+	"$(atf_get_srcdir)/capd_wait_file" target.out wanted &
+	pid=$!
+	# Replace the file with an empty one, then write the text into the
+	# replacement: a wait still watching the old file would never end.
+	: > empty.tmp
+	mv empty.tmp target.out
+	echo wanted >> target.out
+	wait "$pid" || atf_fail "capd_wait_file failed"
+}
+
+atf_test_case channel_end_resets_held_lookup cleanup
+channel_end_resets_held_lookup_head()
+{
+	atf_set "descr" "a lookup registration SwitchBoard received but never answered ends with ECONNRESET when Capsule ends the channel and kills SwitchBoard"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+	atf_set "timeout" "180"
+}
+channel_end_resets_held_lookup_body()
+{
+	local probe probe_pid
+
+	probe="$(atf_get_srcdir)/../switchboard/service_probe"
+	[ -x "$probe" ] || atf_fail "service_probe not found: $probe"
+	echo "hold-lookup-then-flood" > mock-mode
+	build_mock_switchboard
+	capd_find_lookup_exec
+	start_capsule
+	wait_for_file switchboard-started.out ||
+	    atf_fail "bootstrap fixture did not start"
+	# The probe registers on Capsule's boot route; the SwitchBoard double
+	# receives the registration (holding the probe's private endpoint)
+	# and never answers it, then fills its Capsule channel until Capsule
+	# cannot reply and kills it.
+	"$capd_lookup_exec_bin" -s "$sockpath" "$probe" org.test.held \
+	    > probe.out 2>&1 &
+	probe_pid=$!
+	wait_for_file switchboard-lookup-held.out ||
+	    atf_fail "the double did not receive the lookup registration"
+	wait_for_log "switchboard killed by signal" ||
+	    atf_fail "waiting for the end of the channel failed"
+	grep -q "status-only reply failed.*ending the SwitchBoard channel" \
+	    "$logfile" || {
+		cat "$logfile" >&2
+		atf_fail "SwitchBoard was not killed by Capsule ending the channel"
+	}
+	# Without a deadline: the probe's wait must end now that the only
+	# holder of its endpoint is dead (the ATF timeout bounds a hang).
+	wait "$probe_pid" || true
+	# 54: ECONNRESET.
+	if ! grep -Eq "^FAIL org\.test\.held errno=54 " probe.out; then
+		cat probe.out >&2
+		atf_fail "the held lookup did not end with ECONNRESET"
+	fi
+	stop_capsule
+}
+channel_end_resets_held_lookup_cleanup()
+{
+	rm -f mock-mode probe.out switchboard-answers.out \
+	    switchboard-lookup-held.out
 	cleanup_common
 }
 
@@ -539,7 +737,14 @@ atf_init_test_cases()
 {
 	atf_add_test_case bootstrap_starts_switchboard
 	atf_add_test_case bootstrap_channel_ping
+	atf_add_test_case channel_short_message_answered
+	atf_add_test_case channel_oversized_message_answered
+	atf_add_test_case channel_extra_descriptors_answered
+	atf_add_test_case channel_unsendable_reply_ends_channel
+	atf_add_test_case channel_end_resets_held_lookup
+	atf_add_test_case wait_file_follows_replaced_file
 	atf_add_test_case lookup_without_route
+	atf_add_test_case lookup_capsule_route
 	atf_add_test_case control_reload_reaches_switchboard
 	atf_add_test_case bootstrap_channel_loss_kills_switchboard
 	atf_add_test_case bootstrap_ready_logged

@@ -10,7 +10,7 @@
 # elsewhere or before, wherever it is about to be booted or published.
 #
 # usage: check-mandatory-kernel.sh [-l ledger] -k kernel | -o kernel-objdir |
-#	    -d root | -i root | -a archive | -r repository
+#	    -d root | -i root | -a archive | -r repository | -S srctree
 #        check-mandatory-kernel.sh [-l ledger] -L
 #
 #   -l  The ledger to read (default: sys/conf/mandatory-options in the
@@ -26,7 +26,14 @@
 #   -a  One archive (a kernel package): every member boot/*/kernel.  At
 #       least one must exist.
 #   -r  A repository directory: every member boot/*/kernel of every *.pkg
-#       below it.  At least one kernel must exist.
+#       below it.  At least one kernel must exist.  Every package is
+#       listed: a kernel may be packaged under any name, and the
+#       test-kernel check (check-test-kernel.sh -r) reads every package of
+#       the same repositories the same way, once per publication.
+#   -S  A source tree: its sys/kern/kern_mandatory.c refuses exactly the
+#       ledger's options (with the option header the ledger names
+#       included), and the DEFAULTS of amd64, arm64 and riscv set each of
+#       them.  The three must be changed together.
 #
 # The modes may be repeated and combined; every argument is checked.  A
 # kernel passes when its symbol table holds, for every ledger row, the
@@ -43,7 +50,7 @@ export LC_ALL
 usage()
 {
 	echo "usage: ${0##*/} [-l ledger] -k kernel | -o kernel-objdir |" \
-	    "-d root | -i root | -a archive | -r repository" >&2
+	    "-d root | -i root | -a archive | -r repository | -S srctree" >&2
 	echo "       ${0##*/} [-l ledger] -L" >&2
 	exit 2
 }
@@ -167,6 +174,35 @@ check_archive()
 	return 0
 }
 
+# check_source root: kern_mandatory.c, the DEFAULTS and the ledger agree.
+check_source()
+{
+	km=$1/sys/kern/kern_mandatory.c
+	[ -f "${km}" ] || refuse "source tree has no sys/kern/kern_mandatory.c: $1"
+	awk '{ print $1 }' "${work}/rows" | sort > "${work}/ledger.opts"
+	sed -n 's/^#ifndef \([A-Z0-9_]*\)$/\1/p' "${km}" | sort > "${work}/km.opts"
+	cmp -s "${work}/ledger.opts" "${work}/km.opts" ||
+	    refuse "sys/kern/kern_mandatory.c refuses" \
+	    "$(tr '\n' ' ' < "${work}/km.opts")but the ledger lists" \
+	    "$(tr '\n' ' ' < "${work}/ledger.opts")"
+	for header in $(awk '$2 != "opt_global.h" { print $2 }' \
+	    "${work}/rows" | sort -u); do
+		grep -qx "#include \"${header}\"" "${km}" ||
+		    refuse "sys/kern/kern_mandatory.c does not include ${header}"
+	done
+	for arch in amd64 arm64 riscv; do
+		defaults=$1/sys/${arch}/conf/DEFAULTS
+		[ -f "${defaults}" ] || refuse "no ${defaults}"
+		while read -r option header feature; do
+			awk -v o="${option}" '$1 == "options" && $2 == o { f = 1 }
+			    $1 == "nooptions" && $2 == o { f = 0 }
+			    END { exit !f }' "${defaults}" ||
+			    refuse "${defaults} does not set options ${option}"
+		done < "${work}/rows"
+	done
+	sources=$((sources + 1))
+}
+
 check_repository()
 {
 	[ -d "$1" ] || refuse "repository does not exist: $1"
@@ -187,11 +223,11 @@ case "$0" in
 esac
 list=no
 modes=0
-while getopts "a:d:i:k:l:Lo:r:" opt; do
+while getopts "a:d:i:k:l:Lo:r:S:" opt; do
 	case "${opt}" in
 	l)	ledger=${OPTARG} ;;
 	L)	list=yes ;;
-	[adikor]) modes=$((modes + 1)) ;;
+	[adikorS]) modes=$((modes + 1)) ;;
 	*)	usage ;;
 	esac
 done
@@ -209,7 +245,8 @@ if [ "${list}" = yes ]; then
 	exit 0
 fi
 kernels=0
-while getopts "a:d:i:k:l:Lo:r:" opt; do
+sources=0
+while getopts "a:d:i:k:l:Lo:r:S:" opt; do
 	case "${opt}" in
 	l|L)	continue ;;
 	a)	check_archive "${OPTARG}" ||
@@ -219,8 +256,12 @@ while getopts "a:d:i:k:l:Lo:r:" opt; do
 	k)	check_kernel "${OPTARG}" "kernel ${OPTARG}" ;;
 	o)	check_objdir "${OPTARG%/}" ;;
 	r)	check_repository "${OPTARG%/}" ;;
+	S)	check_source "${OPTARG%/}" ;;
 	*)	usage ;;
 	esac
 done
+[ "${sources}" -eq 0 ] ||
+    echo "check-mandatory-kernel: ${sources} source tree(s) agree with the ledger"
+[ "${sources}" -gt 0 ] && [ "${kernels}" -eq 0 ] && exit 0
 echo "check-mandatory-kernel: ${kernels} kernel(s) carry" \
     "$(awk '{ printf "%s%s", sep, $1; sep = " " }' "${work}/rows")"

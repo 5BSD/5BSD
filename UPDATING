@@ -27,6 +27,16 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	world, or to merely disable the most expensive debugging functionality
 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
 
+20261124:
+	Every kernel is built with options AUDIT, CAPABILITY_MODE,
+	CAPABILITIES, RACCT and RCTL (sys/conf/mandatory-options).  They
+	are set in each architecture's DEFAULTS, so MINIMAL gains RACCT
+	and RCTL, and a configuration that removes one with nooptions
+	does not build.  Resource accounting is always on: the
+	kern.racct.enable loader tunable is ignored with a console notice
+	and should be removed from loader.conf.  A world built with
+	WITHOUT_AUDIT is refused; remove it from src.conf.
+
 20261115:
 	The capability test fixtures (mac_capability_test_keystore,
 	mac_capability_test_kernelstore, mac_capability_test_cleanup) are

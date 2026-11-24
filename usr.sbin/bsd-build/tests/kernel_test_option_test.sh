@@ -360,7 +360,7 @@ publish_recipe_body()
     atf_check -s exit:0 -o inline:"sh $PWD/src/release/scripts/check-test-kernel.sh -r $PWD/base -r $PWD/hardware\n" \
         sed -n 1p recipe.out
     atf_check -s exit:0 -o match:'check-malloc-production.sh  *-r ' sed -n 2p recipe.out
-    atf_check -s exit:0 -o inline:"sh $PWD/src/release/scripts/check-mandatory-kernel.sh -r $PWD/hardware\n" \
+    atf_check -s exit:0 -o inline:"sh $PWD/src/release/scripts/check-mandatory-kernel.sh -r $PWD/base -r $PWD/hardware\n" \
         sed -n 3p recipe.out
     atf_check -s exit:0 -o match:'^mkdir -p ' sed -n 4p recipe.out
     [ ! -e published ] || atf_fail 'a dry run created the destination'
@@ -449,7 +449,7 @@ hardware_check_body()
 atf_test_case publish_refused
 publish_refused_head()
 {
-    atf_set descr 'Publication refuses a test kernel in either input, or a hardware kernel without a mandatory option, and creates nothing'
+    atf_set descr 'Publication refuses a test kernel or a kernel without a mandatory option in either input, and creates nothing'
     atf_set require.progs 'cc readelf'
 }
 publish_refused_body()
@@ -499,6 +499,16 @@ publish_refused_body()
     atf_check -s not-exit:0 -o not-match:'kernel\(s\) carry' \
         -e match:'built without options RCTL$' \
         env HARDWARE_BUILDER=/usr/bin/true ./recipe hardware-packages-check
+
+    # A base kernel without a mandatory option, here AUDIT: the base
+    # repository is checked as well.
+    kernel_package hardware 5BSD-kernel-generic-nodebug-1.pkg plain
+    kernel_package base 5BSD-kernel-generic-1.pkg plain \
+        security_capability_mode security_capabilities racct rctl
+    atf_check -s not-exit:0 -o match:'2 kernel and boot files checked' \
+        -e match:'base/5BSD-kernel-generic-1.pkg: boot/kernel/kernel was built without options AUDIT$' \
+        ./recipe publish-packages
+    [ ! -e published ] || atf_fail 'a refused publication created the destination'
 
     # A hardware repository that cannot be checked.
     kernel_package base 5BSD-kernel-generic-1.pkg plain
@@ -591,7 +601,7 @@ ledger_unreadable_body()
                     ./plan $action --kernel PLAIN
             done
             atf_check -s exit:0 -o match:'kernel-mandatory-option-configuration=not-performed' \
-                -e empty ./plan world
+                -e empty env NO_KERNEL_DIR=1 ./plan world
         elif [ $kind = many ]; then
             configuration LAST 'ident LAST' 'options LG3_200'
             atf_check -s exit:1 -o empty \

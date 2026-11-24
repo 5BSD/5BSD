@@ -38,6 +38,39 @@ returns 0 (allow). `MAC_POLICY_PERFORM*` does nothing. The FPFLAG
 mechanism (when used) short-circuits entirely — the inline wrapper returns
 0 without entering the framework function at all.
 
+### Switching a policy's fast-path contribution
+
+A flag is set while at least one registered policy *counts* the hook.  A
+policy counts every hook it implements from registration, unless it
+registers with `MPC_LOADTIME_FLAG_FP_INACTIVE` (0x40000000, a 5BSD value
+clear of upstream's); it then counts nothing until it calls
+
+```c
+int	mac_policy_fastpath_set(struct mac_policy_conf *mpc,
+	    const u_short *hooks, u_int nhooks, bool active);
+u_int	mac_policy_fastpath_hooks(const struct mac_policy_conf *mpc,
+	    u_short *hooks, u_int maxhooks);
+```
+
+with hooks named by `MAC_FP_HOOK(<hook>)`.  `mac_policy_fastpath_set()`
+takes one mutex (`mac_policy_fp_mtx`), never sleeps and never waits for
+threads inside hooks; every flag test made after it returns sees the new
+value, and it recalculates lockless-lookup enablement.  A policy using it
+must behave as if nothing were configured whenever its hook is called while
+inactive (another policy may hold the flag), and must count a hook before
+the state that needs it becomes visible.  `mac_policy_fastpath_hooks()`
+lists the fast-path hooks a policy implements, to check its own table
+covers them all.  OES and mac_abac use this to cost nothing while nothing
+listens and no rule is loaded.  `security.mac.fastpath` exports the flags,
+the counts and each policy's counted and implemented hooks;
+`vfs.cache.param.fast_lookup_active` exports whether lockless lookup is in
+effect.
+
+Fast-path flags for close, pipe write and socket I/O (5BSD, with
+`mac_policy_fastpath_set()`): `file_notify_close`, `vnode_check_close`,
+`pipe_check_write`, `socket_check_send`, `socket_check_receive`,
+`socket_check_poll` and `socket_check_stat`.
+
 ---
 
 ## 1. Process Lifecycle Hooks
@@ -572,7 +605,7 @@ int mac_file_check_mmap(struct ucred *cred, struct file *fp, int fd,
 - **Lock context:** No locks held at entry
 - **Can sleep:** YES
 - **Composition macro:** `MAC_POLICY_PERFORM` (void, sleepable)
-- **Fast-path flag:** No
+- **Fast-path flag:** YES (`file_notify_close`): every close(2) would otherwise enter the framework
 
 ```c
 typedef void (*mpo_file_notify_close_t)(struct ucred *cred,

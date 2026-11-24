@@ -40,6 +40,11 @@
  * Wait FD accepts CLEANUP_STATUS CALL and one terminal cleanup_reply via RECVMSG.
  */
 #define	COALITION_OP_CLEANUP_WATCH	16
+/*
+ * 5BSD high block (op numbers 1000 and up, see the upstream-sync ABI rule):
+ * operations added after the first release.
+ */
+#define	COALITION_OP_WATCHDOG_STAT	1000
 
 /*
  * Common request header.
@@ -168,6 +173,33 @@ struct coalition_set_deadline_req {
 struct coalition_set_watchdog_req {
 	uint32_t	op;
 	uint32_t	timeout_ms;
+};
+
+/*
+ * COALITION_OP_WATCHDOG_STAT
+ *   req:  coalition_req_hdr { .op = COALITION_OP_WATCHDOG_STAT }
+ *   reply: coalition_watchdog_stat_reply
+ *
+ * Every SET_WATCHDOG with a timeout and every HEARTBEAT arms the watchdog:
+ * seq counts the arms, armed_sbt is the uptime (sbinuptime) when the last
+ * one was taken and deadline_sbt = armed_sbt + timeout; the callout is set
+ * for exactly that absolute time (callout_sbt, read from the callout).
+ * fired_seq is the arm that fired last (0 = never) and fired_sbt when its
+ * expiry ran.  The times are in sbintime_t units.
+ * callout_sbt equals deadline_sbt by construction; it is read from the
+ * callout itself so that a caller can see the re-arm actually moved it.
+ */
+struct coalition_watchdog_stat_reply {
+	int32_t		status;
+	uint32_t	flags;		/* COF_* */
+	uint32_t	timeout_ms;
+	uint32_t	_pad;
+	uint64_t	seq;
+	int64_t		armed_sbt;
+	int64_t		deadline_sbt;
+	int64_t		callout_sbt;
+	uint64_t	fired_seq;
+	int64_t		fired_sbt;
 };
 
 /*

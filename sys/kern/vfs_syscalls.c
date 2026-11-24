@@ -1533,9 +1533,10 @@ bad:
  *
  * open_swap_admit(): may this open file, held by the process answering
  * the open, be what an open(2) with 'oflags' (the caller's, before
- * openflags()) returns?  It must present as what the open would have
- * produced: a vnode file, of a type and with the access mode and status
- * flags the request asked for.  Run in the answering thread under its
+ * openflags()) and lookup flags 'rflags' (DQ_RF_*) returns?  It must
+ * present as what the open would have produced: a vnode file, of a type
+ * and with the access mode and status flags the request asked for, as
+ * fresh as a new open is.  Run in the answering thread under its
  * descriptor-table lock (fdswap_take), so it does not sleep; 'rights' are
  * the rights that would be transferred.  A refusal goes to the answering
  * process, never to the program:
@@ -1545,19 +1546,38 @@ bad:
  *			run for the program)
  *	EFTYPE		type, access mode or status flags differ; a
  *			directory for an O_CREAT without O_DIRECTORY; a
- *			symbolic link for anything but O_PATH | O_NOFOLLOW
+ *			symbolic link for anything but O_PATH | O_NOFOLLOW;
+ *			not a directory for a name with a trailing slash;
+ *			a file that was read or seeked (non-zero offset);
+ *			that holds a flock the request did not ask for, or
+ *			has ever held an OFD lock (FHASOFDLOCK is never
+ *			cleared); for O_CREAT | O_EXCL with a lock, a file
+ *			on which the answering process does not hold the
+ *			flock (the program's must never wait: base's
+ *			F_FIRSTOPEN)
  *	ENOTCAPABLE	O_SHLOCK/O_EXLOCK asked and CAP_FLOCK not transferred
  *	EINVAL		the request's flags are not valid open flags
  * O_CREAT, O_EXCL, and the choice of object are the answering process's
  * own open; O_TRUNC is applied at completion (open_swap_check, then the
- * caller), so the supplied file must not have been opened with it.
+ * caller), so the supplied file must not have been opened with it.  The
+ * offset test is racy by nature, as the sole-reference rule is: a check
+ * against mistakes.
  */
 #define	OPEN_SWAP_ACCMODE	(FREAD | FWRITE | FEXEC | O_PATH)
 #define	OPEN_SWAP_STATUS	(FAPPEND | FNONBLOCK | FFSYNC | FDSYNC | \
 	    O_DIRECT | FASYNC)
 
+static int
+open_swap_refuse(int reason)
+{
+
+	SDT_PROBE3(dqres, , , subst__refuse, DQ_ROP_OPEN, reason, EFTYPE);
+	return (EFTYPE);
+}
+
 int
-open_swap_admit(struct file *fp, int oflags, const cap_rights_t *rights)
+open_swap_admit(struct file *fp, int oflags, uint32_t rflags,
+    const cap_rights_t *rights)
 {
 	struct vnode *vp;
 	int fflags;
@@ -1590,6 +1610,20 @@ open_swap_admit(struct file *fp, int oflags, const cap_rights_t *rights)
 	if ((fflags & (O_SHLOCK | O_EXLOCK)) != 0 && (fflags & O_PATH) == 0 &&
 	    !cap_rights_is_set(rights, CAP_FLOCK))
 		return (ENOTCAPABLE);
+	/* namei: a trailing slash names a directory. */
+	if ((rflags & DQ_RF_TRAILINGSLASH) != 0 && vp->v_type != VDIR)
+		return (open_swap_refuse(DQRES_R_SUBST_SLASH));
+	if (foffset_get(fp) != 0)
+		return (open_swap_refuse(DQRES_R_SUBST_OFFSET));
+	if ((fp->f_flag & FHASOFDLOCK) != 0)
+		return (open_swap_refuse(DQRES_R_SUBST_OFDLOCK));
+	if ((fp->f_flag & FHASLOCK) != 0 &&
+	    (fflags & (O_SHLOCK | O_EXLOCK)) == 0)
+		return (open_swap_refuse(DQRES_R_SUBST_FLOCK));
+	if ((fflags & (O_CREAT | O_EXCL)) == (O_CREAT | O_EXCL) &&
+	    (fflags & (O_SHLOCK | O_EXLOCK)) != 0 &&
+	    (fp->f_flag & FHASLOCK) == 0)
+		return (open_swap_refuse(DQRES_R_SUBST_EXCL_LOCK));
 	return (0);
 }
 
@@ -1682,6 +1716,15 @@ open_swap_check(struct thread *td, struct file *fp, int fflags,
 		goto out;
 	}
 	*createdp = created;
+#ifdef MAC
+	/*
+	 * The open the program receives, under its own credential and with
+	 * the vnode locked, as vn_open_vnode tells the policies.  inotify is
+	 * not told again: the answering process's open raised IN_OPEN, and
+	 * the file has one close.
+	 */
+	mac_vnode_notify_open(td->td_ucred, vp, fflags);
+#endif
 out:
 	VOP_UNLOCK(vp);
 	return (error);
@@ -1701,7 +1744,13 @@ out:
  * the truncation is the kernel's, made only now that write permission
  * was checked under this thread's credential, and not for a file the
  * supervisor created for this open (base does not truncate what it
- * created).  Any failure drops the file: nothing is installed.
+ * created).  A lock wait interrupted under SA_RESTART restarts the open,
+ * which consults the supervisor again, as base's open restarts.  For
+ * O_CREAT | O_EXCL the supervisor holds the flock (open_swap_admit), so
+ * the program's lock converts it without waiting, as base's F_FIRSTOPEN
+ * never waits; a conversion that would wait (a shared lock handed over
+ * for O_EXLOCK, with another holder) is a refused answer: EIO, counted.
+ * Any failure drops the file: nothing is installed.
  */
 static int
 openatfp_dqserved(struct thread *td, struct dq_intent *di, int flags,
@@ -1738,10 +1787,18 @@ openatfp_dqserved(struct thread *td, struct dq_intent *di, int flags,
 		lf.l_len = 0;
 		lf.l_type = (flags & O_EXLOCK) != 0 ? F_WRLCK : F_RDLCK;
 		type = F_FLOCK;
-		if ((flags & FNONBLOCK) == 0)
+		if ((flags & FNONBLOCK) == 0 && (!swap ||
+		    (flags & (O_CREAT | O_EXCL)) != (O_CREAT | O_EXCL)))
 			type |= F_WAIT;
 		error = fo_advlock(fp, (caddr_t)fp, F_SETLK, &lf, type, td);
-		if (error == ERESTART)
+		if (swap && (type & F_WAIT) == 0 && error == EAGAIN &&
+		    (flags & FNONBLOCK) == 0) {
+			SDT_PROBE3(dqres, , , subst__refuse, DQ_ROP_OPEN,
+			    DQRES_R_SUBST_EXCL_LOCK, EIO);
+			dqres_bad_answer(td);
+			error = EIO;
+		}
+		if (error == ERESTART && !swap)
 			error = EINTR;
 		if (error != 0) {
 			fdrop(fp, td);	/* the last reference: retired */
@@ -3361,7 +3418,7 @@ kern_statat_dqserved(struct thread *td, struct dq_intent *di,
 	id = dqres_ident(di, DQ_RESOLVE_ATTR);
 	if (id == NULL)
 		return (EIO);
-	dqres_ident_to_stat(id, sbp);
+	dqres_ident_to_stat(id, td->td_ucred, sbp);
 #ifdef KTRACE
 	if (KTRPOINT(td, KTR_STRUCT))
 		ktrstat_error(sbp, 0);

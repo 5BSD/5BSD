@@ -81,6 +81,8 @@ SDT_PROBE_DEFINE4(mac_capability, , , revoke__done,
     "const char *", "uint64_t", "int", "sbintime_t");
 SDT_PROBE_DEFINE3(mac_capability, , , rxq__discard,
     "const char *", "uint64_t", "int");
+SDT_PROBE_DEFINE1(mac_capability, , , reap__defer, "int");
+SDT_PROBE_DEFINE1(mac_capability, , , reap__done, "int");
 SDT_PROBE_DEFINE2(mac_capability, , , close,
     "const char *", "uint64_t");
 SDT_PROBE_DEFINE6(mac_capability, , , fd__install,
@@ -118,12 +120,18 @@ SDT_PROBE_DEFINE5(mac_capability, , , service__create,
     "const char *", "uint32_t", "uint32_t", "uint32_t", "uint32_t");
 SDT_PROBE_DEFINE2(mac_capability, , , service__destroy,
     "const char *", "uint32_t");
+SDT_PROBE_DEFINE2(mac_capability, , , service__destroy__wait,
+    "const char *", "int");
 SDT_PROBE_DEFINE5(mac_capability, , , queue__pressure,
     "const char *", "uint64_t", "const char *", "int", "int");
 
 struct sx mac_capability_registry_lock;
 struct mac_capability_service_list mac_capability_services =
     LIST_HEAD_INITIALIZER(mac_capability_services);
+/* Destroyed services that open instances still keep allocated (csvc_link). */
+struct mac_capability_service_list mac_capability_dead_services =
+    LIST_HEAD_INITIALIZER(mac_capability_dead_services);
+EVENTHANDLER_LIST_DEFINE(mac_capability_destroy_wait);
 uma_zone_t mac_capability_instance_zone;
 uma_zone_t mac_capability_msg_zone;
 uma_zone_t mac_capability_msg_small_zone;
@@ -168,6 +176,32 @@ SYSCTL_PROC(_kern_mac_capability, OID_AUTO, service_names,
     CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
     mac_capability_sysctl_service_names, "A",
     "Newline-separated list of registered mac_capability service names");
+
+static int
+mac_capability_sysctl_dead_service_names(SYSCTL_HANDLER_ARGS)
+{
+	struct mac_capability_service *svc;
+	struct sbuf sb;
+	int error;
+
+	error = sysctl_wire_old_buffer(req, 0);
+	if (error != 0)
+		return (error);
+	sbuf_new_for_sysctl(&sb, NULL, 128, req);
+	sbuf_clear_flags(&sb, SBUF_INCLUDENUL);
+	sx_slock(&mac_capability_registry_lock);
+	LIST_FOREACH(svc, &mac_capability_dead_services, csvc_link)
+		(void)sbuf_printf(&sb, "%s\n", svc->csvc_name);
+	sx_sunlock(&mac_capability_registry_lock);
+	error = sbuf_finish(&sb);
+	sbuf_delete(&sb);
+	return (error);
+}
+SYSCTL_PROC(_kern_mac_capability, OID_AUTO, dead_service_names,
+    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
+    mac_capability_sysctl_dead_service_names, "A",
+    "Newline-separated list of destroyed services that open instances "
+    "still keep allocated");
 
 static int
 mac_capability_sysctl_service_details(SYSCTL_HANDLER_ARGS)
@@ -250,6 +284,10 @@ mac_capability_msg_free(struct mac_capability_msg *msg)
 {
 	int i;
 
+	/* Dropping a carried descriptor may run its close, which sleeps. */
+	if (msg->cm_nfds > 0)
+		WITNESS_WARN(WARN_GIANTOK | WARN_SLEEPOK, NULL,
+		    "mac_capability_msg_free() of a message carrying descriptors");
 	for (i = 0; i < msg->cm_nfds; i++) {
 		if (msg->cm_fdset->fds[i] != NULL)
 			fdrop(msg->cm_fdset->fds[i], curthread);
@@ -278,9 +316,17 @@ mac_capability_instance_init(struct mac_capability_service *svc, uint64_t badge)
 	STAILQ_INIT(&s->ci_txq);
 	STAILQ_INIT(&s->ci_rxq);
 	LIST_INIT(&s->ci_callers);
+	LIST_INIT(&s->ci_death_watches);
 	knlist_init_mtx(&s->ci_rknotes, &s->ci_mtx);
 	knlist_init_mtx(&s->ci_wknotes, &s->ci_mtx);
 	s->ci_rxqlimit = svc->csvc_queue_depth;
+	/*
+	 * Every allocated instance holds its service, so a destroyed service
+	 * stays allocated (and on mac_capability_dead_services) exactly as
+	 * long as one of its instances does, and ci_service never dangles.
+	 * The caller already holds svc, so this is not the first reference.
+	 */
+	refcount_acquire(&svc->csvc_refcnt);
 	s->ci_service = svc;
 	s->ci_badge = badge;
 	refcount_init(&s->ci_refcnt, 1);
@@ -296,6 +342,7 @@ mac_capability_instance_init(struct mac_capability_service *svc, uint64_t badge)
 void
 mac_capability_instance_free(struct mac_capability_instance *s)
 {
+	struct mac_capability_service *svc = s->ci_service;
 
 	mac_capability_callback_state_rele(s->ci_callback_state);
 	cap_authority_lease_detach(s);
@@ -305,6 +352,8 @@ mac_capability_instance_free(struct mac_capability_instance *s)
 	mtx_destroy(&s->ci_mtx);
 	uma_zfree(mac_capability_instance_zone, s);
 	counter_u64_add(mac_capability_stat_instances, -1);
+	if (refcount_release(&svc->csvc_refcnt))
+		mac_capability_service_free(svc);
 }
 
 /*
@@ -630,6 +679,7 @@ mac_capability_init(void)
 	    UMA_ALIGN_PTR, 0);
 	mac_capability_stat_services = counter_u64_alloc(M_WAITOK);
 	mac_capability_stat_instances = counter_u64_alloc(M_WAITOK);
+	mac_capability_reap_init();
 	return (0);
 }
 
@@ -637,6 +687,7 @@ void
 mac_capability_uninit(void)
 {
 
+	mac_capability_reap_uninit();
 	counter_u64_free(mac_capability_stat_instances);
 	counter_u64_free(mac_capability_stat_services);
 	uma_zdestroy(mac_capability_msg_fdset_zone);

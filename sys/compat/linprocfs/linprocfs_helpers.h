@@ -9,5 +9,6 @@ int linprocfs_common_doprocmem(PFS_FILL_ARGS);
 int linprocfs_common_attr_rw(PFS_ATTR_ARGS);
 int linprocfs_common_notsystem(PFS_VIS_ARGS);
 int linprocfs_common_candebug(PFS_VIS_ARGS);
+int linprocfs_common_caninspect(PFS_VIS_ARGS);
 
 #endif

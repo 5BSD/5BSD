@@ -75,8 +75,11 @@
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/mac.h>
+#include <sys/malloc.h>
 #include <sys/module.h>
+#include <sys/mutex.h>
 #include <sys/rmlock.h>
+#include <sys/sbuf.h>
 #include <sys/sdt.h>
 #include <sys/sx.h>
 #include <sys/sysctl.h>
@@ -175,6 +178,13 @@ FPFLAG(proc_check_mmap_anon);
 FPFLAG(proc_check_mprotect);
 FPFLAG(proc_check_syscall);
 FPFLAG(system_check_kas_info);
+FPFLAG(file_notify_close);
+FPFLAG(vnode_check_close);
+FPFLAG(pipe_check_write);
+FPFLAG(socket_check_send);
+FPFLAG(socket_check_receive);
+FPFLAG(socket_check_poll);
+FPFLAG(socket_check_stat);
 
 #undef FPFLAG
 #undef FPFLAG_RARE
@@ -239,6 +249,16 @@ MALLOC_DEFINE(M_MACTEMP, "mactemp", "MAC temporary label storage");
 static struct rmlock mac_policy_rm;	/* Non-sleeping entry points. */
 static struct rmslock mac_policy_rms;	/* Sleeping entry points. */
 #endif
+
+/*
+ * Fast-path flag state: every count, every flag write and every policy's
+ * mpc_fp_active.  Never held across policy code.  It is not the policy-list
+ * lock on purpose: a policy switching its hooks must not wait for threads
+ * inside hooks, which a thread asleep in a policy may keep there for long.
+ * Lock order: mac_policy_rms and mac_policy_rm, then mac_policy_fp_mtx, then
+ * the lockless-lookup recalculation mutex in vfs_cache.c.
+ */
+static struct mtx mac_policy_fp_mtx;
 
 struct mac_policy_list_head mac_policy_list;
 struct mac_policy_list_head mac_static_policy_list;
@@ -350,6 +370,7 @@ mac_init(void *dummy __unused)
 	LIST_INIT(&mac_static_policy_list);
 	LIST_INIT(&mac_policy_list);
 	mac_labelzone_init();
+	mtx_init(&mac_policy_fp_mtx, "mac fastpath", NULL, MTX_DEF);
 
 #ifndef MAC_STATIC
 	rm_init_flags(&mac_policy_rm, "mac_policy_rm", RM_NOWITNESS |
@@ -442,76 +463,69 @@ mac_policy_update(void)
  */
 
 #define FPO(f)	(offsetof(struct mac_policy_ops, mpo_##f) / sizeof(void *))
+#define	FPE(f)	{ .offset = FPO(f), .flag = &mac_##f##_fp_flag, .name = #f }
 
 struct mac_policy_fastpath_elem {
-	int	count;
-	bool	*flag;
-	size_t	offset;
+	int		count;
+	bool		*flag;
+	size_t		offset;
+	const char	*name;
 };
 
 struct mac_policy_fastpath_elem mac_policy_fastpath_array[] = {
-	{ .offset = FPO(priv_check), .flag = &mac_priv_check_fp_flag },
-	{ .offset = FPO(priv_grant), .flag = &mac_priv_grant_fp_flag },
-	{ .offset = FPO(vnode_check_lookup),
-		.flag = &mac_vnode_check_lookup_fp_flag },
-	{ .offset = FPO(vnode_check_readlink),
-		.flag = &mac_vnode_check_readlink_fp_flag },
-	{ .offset = FPO(vnode_check_open),
-		.flag = &mac_vnode_check_open_fp_flag },
-	{ .offset = FPO(vnode_check_stat),
-		.flag = &mac_vnode_check_stat_fp_flag },
-	{ .offset = FPO(vnode_check_read),
-		.flag = &mac_vnode_check_read_fp_flag },
-	{ .offset = FPO(vnode_check_write),
-		.flag = &mac_vnode_check_write_fp_flag },
-	{ .offset = FPO(vnode_check_mmap_image),
-		.flag = &mac_vnode_check_mmap_image_fp_flag },
-	{ .offset = FPO(vnode_check_mmap),
-		.flag = &mac_vnode_check_mmap_fp_flag },
-	{ .offset = FPO(vnode_check_poll),
-		.flag = &mac_vnode_check_poll_fp_flag },
-	{ .offset = FPO(vnode_check_rename_from),
-		.flag = &mac_vnode_check_rename_from_fp_flag },
-	{ .offset = FPO(vnode_check_access),
-		.flag = &mac_vnode_check_access_fp_flag },
-	{ .offset = FPO(pipe_check_stat),
-		.flag = &mac_pipe_check_stat_fp_flag },
-	{ .offset = FPO(pipe_check_poll),
-		.flag = &mac_pipe_check_poll_fp_flag },
-	{ .offset = FPO(pipe_check_read),
-		.flag = &mac_pipe_check_read_fp_flag },
-	{ .offset = FPO(ifnet_create_mbuf),
-		.flag = &mac_ifnet_create_mbuf_fp_flag },
-	{ .offset = FPO(ifnet_check_transmit),
-		.flag = &mac_ifnet_check_transmit_fp_flag },
-	{ .offset = FPO(file_check_ioctl),
-		.flag = &mac_file_check_ioctl_fp_flag },
-	{ .offset = FPO(file_check_mmap),
-		.flag = &mac_file_check_mmap_fp_flag },
-	{ .offset = FPO(file_check_read),
-		.flag = &mac_file_check_read_fp_flag },
-	{ .offset = FPO(file_check_write),
-		.flag = &mac_file_check_write_fp_flag },
-	{ .offset = FPO(file_check_stat),
-		.flag = &mac_file_check_stat_fp_flag },
-	{ .offset = FPO(file_check_fcntl),
-		.flag = &mac_file_check_fcntl_fp_flag },
-	{ .offset = FPO(proc_check_fork),
-		.flag = &mac_proc_check_fork_fp_flag },
-	{ .offset = FPO(proc_check_mmap_anon),
-		.flag = &mac_proc_check_mmap_anon_fp_flag },
-	{ .offset = FPO(proc_check_mprotect),
-		.flag = &mac_proc_check_mprotect_fp_flag },
-	{ .offset = FPO(proc_check_syscall),
-		.flag = &mac_proc_check_syscall_fp_flag },
-	{ .offset = FPO(system_check_kas_info),
-		.flag = &mac_system_check_kas_info_fp_flag },
+	FPE(priv_check),
+	FPE(priv_grant),
+	FPE(vnode_check_lookup),
+	FPE(vnode_check_readlink),
+	FPE(vnode_check_open),
+	FPE(vnode_check_stat),
+	FPE(vnode_check_read),
+	FPE(vnode_check_write),
+	FPE(vnode_check_mmap_image),
+	FPE(vnode_check_mmap),
+	FPE(vnode_check_poll),
+	FPE(vnode_check_rename_from),
+	FPE(vnode_check_access),
+	FPE(pipe_check_stat),
+	FPE(pipe_check_poll),
+	FPE(pipe_check_read),
+	FPE(ifnet_create_mbuf),
+	FPE(ifnet_check_transmit),
+	FPE(file_check_ioctl),
+	FPE(file_check_mmap),
+	FPE(file_check_read),
+	FPE(file_check_write),
+	FPE(file_check_stat),
+	FPE(file_check_fcntl),
+	FPE(proc_check_fork),
+	FPE(proc_check_mmap_anon),
+	FPE(proc_check_mprotect),
+	FPE(proc_check_syscall),
+	FPE(system_check_kas_info),
+	FPE(file_notify_close),
+	FPE(vnode_check_close),
+	FPE(pipe_check_write),
+	FPE(socket_check_send),
+	FPE(socket_check_receive),
+	FPE(socket_check_poll),
+	FPE(socket_check_stat),
 };
+
+/*
+ * Bit i of mpc_fp_active stands for mac_policy_fastpath_array[i]; the top
+ * bit marks a policy whose fast-path state the framework keeps (from
+ * registration to unregistration), so that a late mac_policy_fastpath_set()
+ * cannot count a hook of a policy that is going away.
+ */
+#define	MAC_FP_COUNTED	(1ULL << 63)
+_Static_assert(nitems(mac_policy_fastpath_array) < 64,
+    "mpc_fp_active has one bit per fast-path hook and a marker bit");
 
 static void
 mac_policy_fastpath_enable(struct mac_policy_fastpath_elem *mpfe)
 {
 
+	mtx_assert(&mac_policy_fp_mtx, MA_OWNED);
 	MPASS(mpfe->count >= 0);
 	mpfe->count++;
 	if (mpfe->count == 1) {
@@ -524,6 +538,7 @@ static void
 mac_policy_fastpath_disable(struct mac_policy_fastpath_elem *mpfe)
 {
 
+	mtx_assert(&mac_policy_fp_mtx, MA_OWNED);
 	MPASS(mpfe->count >= 1);
 	mpfe->count--;
 	if (mpfe->count == 0) {
@@ -532,40 +547,227 @@ mac_policy_fastpath_disable(struct mac_policy_fastpath_elem *mpfe)
 	}
 }
 
+/* Count or uncount hook i of mpc; idempotent. */
+static void
+mac_policy_fastpath_apply(struct mac_policy_conf *mpc, int i, bool active)
+{
+	uint64_t bit;
+
+	mtx_assert(&mac_policy_fp_mtx, MA_OWNED);
+	bit = 1ULL << i;
+	if (active) {
+		if ((mpc->mpc_fp_active & bit) != 0)
+			return;
+		mpc->mpc_fp_active |= bit;
+		mac_policy_fastpath_enable(&mac_policy_fastpath_array[i]);
+	} else {
+		if ((mpc->mpc_fp_active & bit) == 0)
+			return;
+		mpc->mpc_fp_active &= ~bit;
+		mac_policy_fastpath_disable(&mac_policy_fastpath_array[i]);
+	}
+}
+
 static void
 mac_policy_fastpath_register(struct mac_policy_conf *mpc)
 {
-	struct mac_policy_fastpath_elem *mpfe;
 	const void * const *ops;
 	int i;
 
 	mac_policy_xlock_assert();
 
 	ops = (const void * const *)mpc->mpc_ops;
-	for (i = 0; i < nitems(mac_policy_fastpath_array); i++) {
-		mpfe = &mac_policy_fastpath_array[i];
-		if (ops[mpfe->offset] != NULL)
-			mac_policy_fastpath_enable(mpfe);
+	mtx_lock(&mac_policy_fp_mtx);
+	mpc->mpc_fp_active = MAC_FP_COUNTED;
+	if ((mpc->mpc_loadtime_flags & MPC_LOADTIME_FLAG_FP_INACTIVE) == 0) {
+		for (i = 0; i < nitems(mac_policy_fastpath_array); i++) {
+			if (ops[mac_policy_fastpath_array[i].offset] != NULL)
+				mac_policy_fastpath_apply(mpc, i, true);
+		}
 	}
+	mtx_unlock(&mac_policy_fp_mtx);
 }
 
 static void
 mac_policy_fastpath_unregister(struct mac_policy_conf *mpc)
 {
-	struct mac_policy_fastpath_elem *mpfe;
-	const void * const *ops;
 	int i;
 
 	mac_policy_xlock_assert();
 
+	mtx_lock(&mac_policy_fp_mtx);
+	for (i = 0; i < nitems(mac_policy_fastpath_array); i++)
+		mac_policy_fastpath_apply(mpc, i, false);
+	mpc->mpc_fp_active = 0;
+	mtx_unlock(&mac_policy_fp_mtx);
+}
+
+int
+mac_policy_fastpath_set(struct mac_policy_conf *mpc, const u_short *hooks,
+    u_int nhooks, bool active)
+{
+	const void * const *ops;
+	int idx[nitems(mac_policy_fastpath_array)];
+	u_int n;
+	int i;
+
+	if (mpc == NULL || (nhooks != 0 && hooks == NULL) ||
+	    nhooks > nitems(mac_policy_fastpath_array))
+		return (EINVAL);
+	if (nhooks == 0)
+		return (0);
+	ops = (const void * const *)mpc->mpc_ops;
+	/*
+	 * A policy publishes its own state (its live hooks) before it turns a
+	 * flag on.  Taking the mutex is only an acquire: order those stores
+	 * before the flag stores below.
+	 */
+	atomic_thread_fence_rel();
+	mtx_lock(&mac_policy_fp_mtx);
+	if ((mpc->mpc_fp_active & MAC_FP_COUNTED) == 0) {
+		mtx_unlock(&mac_policy_fp_mtx);
+		return (ENOENT);
+	}
+	/* Validate every hook before changing any. */
+	for (n = 0; n < nhooks; n++) {
+		for (i = 0; i < nitems(mac_policy_fastpath_array); i++) {
+			if (mac_policy_fastpath_array[i].offset == hooks[n])
+				break;
+		}
+		if (i == nitems(mac_policy_fastpath_array)) {
+			mtx_unlock(&mac_policy_fp_mtx);
+			return (EOPNOTSUPP);
+		}
+		if (ops[hooks[n]] == NULL) {
+			mtx_unlock(&mac_policy_fp_mtx);
+			return (EINVAL);
+		}
+		idx[n] = i;
+	}
+	for (n = 0; n < nhooks; n++)
+		mac_policy_fastpath_apply(mpc, idx[n], active);
+	cache_fast_lookup_enabled_recalc();
+	mtx_unlock(&mac_policy_fp_mtx);
+	/* Publish before the caller's next store, its return included. */
+	atomic_thread_fence_seq_cst();
+	return (0);
+}
+
+u_int
+mac_policy_fastpath_hooks(const struct mac_policy_conf *mpc, u_short *hooks,
+    u_int maxhooks)
+{
+	const void * const *ops;
+	u_int n;
+	int i;
+
+	ops = (const void * const *)mpc->mpc_ops;
+	n = 0;
+	for (i = 0; i < nitems(mac_policy_fastpath_array); i++) {
+		if (ops[mac_policy_fastpath_array[i].offset] == NULL)
+			continue;
+		if (n < maxhooks)
+			hooks[n] = (u_short)mac_policy_fastpath_array[i].offset;
+		n++;
+	}
+	return (n);
+}
+
+/*
+ * security.mac.fastpath: the framework's fast-path state, for tests and
+ * for measuring what a configuration keeps hot.
+ *
+ *	flags 0x<bit i set: flag i is true>
+ *	hook <name> count <policies counting it>	(one per hook)
+ *	policy <name> inactive <0|1> active 0x<counted hooks>
+ *	    implemented 0x<hooks the policy has>	(one per policy)
+ *
+ * The state is copied under the locks and formatted after they are dropped.
+ */
+#define	MAC_FP_NAMELEN	32
+
+struct mac_fastpath_snap {
+	char		mfs_name[MAC_FP_NAMELEN];
+	int		mfs_inactive;
+	uint64_t	mfs_active;
+	uint64_t	mfs_implemented;
+};
+
+static void
+mac_fastpath_snap_policy(struct mac_fastpath_snap *s,
+    const struct mac_policy_conf *mpc)
+{
+	const void * const *ops;
+	int i;
+
+	mtx_assert(&mac_policy_fp_mtx, MA_OWNED);
+	strlcpy(s->mfs_name, mpc->mpc_name, sizeof(s->mfs_name));
+	s->mfs_inactive =
+	    (mpc->mpc_loadtime_flags & MPC_LOADTIME_FLAG_FP_INACTIVE) != 0;
+	s->mfs_active = mpc->mpc_fp_active & ~MAC_FP_COUNTED;
+	s->mfs_implemented = 0;
 	ops = (const void * const *)mpc->mpc_ops;
 	for (i = 0; i < nitems(mac_policy_fastpath_array); i++) {
-		mpfe = &mac_policy_fastpath_array[i];
-		if (ops[mpfe->offset] != NULL)
-			mac_policy_fastpath_disable(mpfe);
+		if (ops[mac_policy_fastpath_array[i].offset] != NULL)
+			s->mfs_implemented |= 1ULL << i;
 	}
 }
 
+static int
+sysctl_mac_fastpath(SYSCTL_HANDLER_ARGS)
+{
+	int counts[nitems(mac_policy_fastpath_array)];
+	struct mac_fastpath_snap *snap;
+	struct mac_policy_conf *mpc;
+	struct sbuf sb;
+	uint64_t flags;
+	u_int cap, i, npol;
+	int error;
+
+	/* Policies registering now wait; mac_policy_count holds still. */
+	mac_policy_slock_sleep();
+	cap = mac_policy_count;
+	snap = malloc(sizeof(*snap) * MAX(cap, 1), M_TEMP, M_WAITOK | M_ZERO);
+	npol = 0;
+	mtx_lock(&mac_policy_fp_mtx);
+	LIST_FOREACH(mpc, &mac_static_policy_list, mpc_list) {
+		if (npol < cap)
+			mac_fastpath_snap_policy(&snap[npol++], mpc);
+	}
+	LIST_FOREACH(mpc, &mac_policy_list, mpc_list) {
+		if (npol < cap)
+			mac_fastpath_snap_policy(&snap[npol++], mpc);
+	}
+	flags = 0;
+	for (i = 0; i < nitems(mac_policy_fastpath_array); i++) {
+		counts[i] = mac_policy_fastpath_array[i].count;
+		if (*mac_policy_fastpath_array[i].flag)
+			flags |= 1ULL << i;
+	}
+	mtx_unlock(&mac_policy_fp_mtx);
+	mac_policy_sunlock_sleep();
+
+	sbuf_new_for_sysctl(&sb, NULL, 1024, req);
+	sbuf_printf(&sb, "flags 0x%016jx\n", (uintmax_t)flags);
+	for (i = 0; i < nitems(mac_policy_fastpath_array); i++)
+		sbuf_printf(&sb, "hook %s count %d\n",
+		    mac_policy_fastpath_array[i].name, counts[i]);
+	for (i = 0; i < npol; i++)
+		sbuf_printf(&sb, "policy %s inactive %d active 0x%016jx "
+		    "implemented 0x%016jx\n", snap[i].mfs_name,
+		    snap[i].mfs_inactive, (uintmax_t)snap[i].mfs_active,
+		    (uintmax_t)snap[i].mfs_implemented);
+	error = sbuf_finish(&sb);
+	sbuf_delete(&sb);
+	free(snap, M_TEMP);
+	return (error);
+}
+SYSCTL_PROC(_security_mac, OID_AUTO, fastpath,
+    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
+    sysctl_mac_fastpath, "A",
+    "Fast-path flags, their counts, and each policy's counted hooks");
+
+#undef FPE
 #undef FPO
 
 static int

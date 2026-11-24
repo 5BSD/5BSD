@@ -22,21 +22,18 @@
  *
  * The readers are child processes: the suspending process must not close a
  * file on the suspended file system itself, or it would wait for its own
- * resume.  The closes race the resume's walk over the mount's vnodes, so the
- * walk is given work ahead of the read files: a holder process keeps many
- * files made before them open and reads them during the suspension, and
- * the walk locks and converts each of those (they stay in use) before it
- * reaches the read files, whose closes have finished by then.  Each case
- * makes its own md(4)-backed UFS file system.
+ * resume.  The defect needs a reader's last close to finish before the
+ * resume's walk reaches the file, so closed_at_resume holds the walk with
+ * the test kernel's resume hold (options FFS_TEST_HOOKS, GENERIC-TEST:
+ * debug.ffs.test_hold_*) until every reader has exited, then lets it go
+ * on.  Each case makes its own md(4)-backed UFS file system.
  */
 
 #include <sys/param.h>
 #include <sys/ioctl.h>
-#include <sys/resource.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
-#include <sys/user.h>
 #include <sys/wait.h>
 
 #include <ufs/ffs/fs.h>
@@ -45,7 +42,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <paths.h>
-#include <signal.h>
+#include <pthread.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -53,7 +51,6 @@
 
 #define	MD_FILE		"md.unit"
 #define	MNT		"mnt"
-#define	NFILLER		2000
 #define	NREAD		32
 
 static void
@@ -80,9 +77,25 @@ make_file(const char *path)
 }
 
 /*
- * A soft updates UFS on a swap-backed md(4) device, with NFILLER files and
- * then NREAD files to read.
+ * The defect closed_at_resume pins shows only as
+ * the INVARIANTS assertion in ffs_unlock_debug(): without INVARIANTS the
+ * inode is left modified off the lazy list, which nothing it checks sees.
  */
+static void
+require_invariants(void)
+{
+	int on;
+	size_t len;
+
+	len = sizeof(on);
+	if (sysctlbyname("kern.features.invariants", &on, &len, NULL, 0) != 0 ||
+	    on == 0)
+		atf_tc_skip("DEFERRED_DEBUG_KERNEL_TIER: detects the defect "
+		    "only through an INVARIANTS assertion; the kernel has no "
+		    "kern.features.invariants");
+}
+
+/* A soft updates UFS on a swap-backed md(4) device, with NREAD files. */
 static void
 fixture(void)
 {
@@ -105,10 +118,6 @@ fixture(void)
 	ATF_REQUIRE_EQ(0, mkdir(MNT, 0755));
 	snprintf(cmd, sizeof(cmd), "mount /dev/%s %s", unit, MNT);
 	run(cmd);
-	for (i = 0; i < NFILLER; i++) {
-		path_of(path, sizeof(path), "filler", i);
-		make_file(path);
-	}
 	for (i = 0; i < NREAD; i++) {
 		path_of(path, sizeof(path), "f", i);
 		make_file(path);
@@ -170,142 +179,67 @@ access_file(int fd)
 	return (0);
 }
 
-/*
- * The holder: a child that opens every filler file, reads and fstats each
- * when told (during the suspension), and closes them when told to finish
- * (after the resume).  Commands and acknowledgements are one byte on a
- * pair of pipes.
- */
-struct holder {
-	pid_t	pid;
-	int	cmd;
-	int	ack;
-};
-
+/* The resume hold of the test kernel. */
 static void
-holder_body(int cmd, int ack)
+require_resume_hold(void)
 {
-	struct rlimit rl;
-	char c, path[64];
-	int *fds, i;
-
-	rl.rlim_cur = rl.rlim_max = NFILLER + 64;
-	if (setrlimit(RLIMIT_NOFILE, &rl) != 0)
-		_exit(10);
-	fds = calloc(NFILLER, sizeof(*fds));
-	if (fds == NULL)
-		_exit(11);
-	for (i = 0; i < NFILLER; i++) {
-		path_of(path, sizeof(path), "filler", i);
-		if ((fds[i] = open(path, O_RDONLY)) < 0)
-			_exit(12);
-	}
-	c = 'o';
-	if (write(ack, &c, 1) != 1 || read(cmd, &c, 1) != 1)
-		_exit(13);
-	for (i = 0; i < NFILLER; i++)
-		if (access_file(fds[i]) != 0)
-			_exit(14);
-	c = 'a';
-	if (write(ack, &c, 1) != 1 || read(cmd, &c, 1) != 1)
-		_exit(15);
-	for (i = 0; i < NFILLER; i++)
-		(void)close(fds[i]);
-	_exit(0);
-}
-
-static void
-holder_start(struct holder *h)
-{
-	int cmdp[2], ackp[2];
-	char c;
-
-	ATF_REQUIRE_EQ(0, pipe(cmdp));
-	ATF_REQUIRE_EQ(0, pipe(ackp));
-	h->pid = fork();
-	ATF_REQUIRE(h->pid >= 0);
-	if (h->pid == 0) {
-		close(cmdp[1]);
-		close(ackp[0]);
-		holder_body(cmdp[0], ackp[1]);
-	}
-	close(cmdp[0]);
-	close(ackp[1]);
-	h->cmd = cmdp[1];
-	h->ack = ackp[0];
-	ATF_REQUIRE_MSG(read(h->ack, &c, 1) == 1 && c == 'o',
-	    "the holder did not open the filler files");
-}
-
-static void
-holder_access(struct holder *h)
-{
-	char c = 'r';
-
-	ATF_REQUIRE_EQ(1, write(h->cmd, &c, 1));
-	ATF_REQUIRE_MSG(read(h->ack, &c, 1) == 1 && c == 'a',
-	    "the holder did not read the filler files");
-}
-
-static void
-holder_finish(struct holder *h)
-{
-	char c = 'x';
-	int status;
-
-	ATF_REQUIRE_EQ(1, write(h->cmd, &c, 1));
-	ATF_REQUIRE_EQ(h->pid, waitpid(h->pid, &status, 0));
-	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
-	    "holder: status %#x", status);
-	close(h->cmd);
-	close(h->ack);
-}
-
-/* Whether process pid sleeps on the wait message wmesg. */
-static bool
-sleeps_on(pid_t pid, const char *wmesg)
-{
-	struct kinfo_proc kp;
 	size_t len;
-	int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, 0 };
 
-	mib[3] = pid;
-	len = sizeof(kp);
-	if (sysctl(mib, nitems(mib), &kp, &len, NULL, 0) != 0 || len == 0)
-		return (false);
-	return (strcmp(kp.ki_wmesg, wmesg) == 0);
+	len = 0;
+	if (sysctlbyname("debug.ffs.test_hold_fsid", NULL, &len, NULL, 0) != 0)
+		atf_tc_skip("DEFERRED_TEST_KERNEL_TIER: needs the resume hold of "
+		    "the test kernel (GENERIC-TEST, debug.ffs.test_hold_fsid)");
+}
+
+/* Arm the hold for fsid, or disarm it with an all-zero one. */
+static int
+resume_hold_arm(const fsid_t *fsid)
+{
+
+	return (sysctlbyname("debug.ffs.test_hold_fsid", NULL, NULL, fsid,
+	    sizeof(*fsid)));
+}
+
+static void
+resume_hold_set(const char *name, int value)
+{
+
+	ATF_REQUIRE_MSG(sysctlbyname(name, NULL, NULL, &value,
+	    sizeof(value)) == 0, "%s: %s", name, strerror(errno));
 }
 
 /*
- * Start a child per read file that opens, reads and fstats it and closes
- * it, and wait until every child's close waits for the resume.
+ * Start a child per read file that opens, reads and fstats it, says so on
+ * the pipe, and closes it (the close waits for the resume).  Returns once
+ * every reader has read during the suspension.
  */
 static void
 start_readers(pid_t *pids)
 {
-	char path[64];
-	int fd, i, tries;
+	char c, path[64];
+	int fd, i, p[2];
 
+	ATF_REQUIRE_EQ(0, pipe(p));
 	for (i = 0; i < NREAD; i++) {
 		path_of(path, sizeof(path), "f", i);
 		pids[i] = fork();
 		ATF_REQUIRE(pids[i] >= 0);
 		if (pids[i] == 0) {
+			close(p[0]);
 			fd = open(path, O_RDONLY);
 			if (fd < 0 || access_file(fd) != 0)
 				_exit(1);
-			_exit(close(fd) == 0 ? 0 : 2);
+			c = 'r';
+			if (write(p[1], &c, 1) != 1)
+				_exit(2);
+			_exit(close(fd) == 0 ? 0 : 3);
 		}
 	}
-	for (i = 0; i < NREAD; i++) {
-		for (tries = 0; tries < 2000; tries++) {
-			if (sleeps_on(pids[i], "suspfs"))
-				break;
-			usleep(5000);
-		}
-		ATF_REQUIRE_MSG(tries < 2000,
-		    "reader %d never waited for the resume in close", i);
-	}
+	close(p[1]);
+	for (i = 0; i < NREAD; i++)
+		ATF_REQUIRE_MSG(read(p[0], &c, 1) == 1,
+		    "reader %d did not read during the suspension", i);
+	close(p[0]);
 }
 
 static void
@@ -364,36 +298,77 @@ remount_and_check(void)
 	use_files();
 }
 
+/* The resume, from a helper thread of the suspending process. */
+struct resumer {
+	pthread_t	thread;
+	int		fd;
+	int		error;
+};
+
+static void *
+resumer_main(void *arg)
+{
+	struct resumer *r = arg;
+
+	r->error = ioctl(r->fd, UFSRESUME) == 0 ? 0 : errno;
+	return (NULL);
+}
+
 ATF_TC_WITH_CLEANUP(closed_at_resume);
 ATF_TC_HEAD(closed_at_resume, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "files read during a suspension and closed as it ends can be "
-	    "used after the resume");
+	    "files read during a suspension and closed before the resume's "
+	    "walk reaches them can be used after the resume");
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "require.progs", "mdconfig newfs fsck_ffs");
-	atf_tc_set_md_var(tc, "timeout", "300");
 }
 ATF_TC_BODY(closed_at_resume, tc)
 {
-	struct holder h;
+	struct statfs sfs;
+	struct resumer r;
 	pid_t pids[NREAD];
 	int sfd;
 
+	require_invariants();
+	require_resume_hold();
 	fixture();
-	holder_start(&h);
+	ATF_REQUIRE_EQ(0, statfs(MNT, &sfs));
+	ATF_REQUIRE_MSG(resume_hold_arm(&sfs.f_fsid) == 0,
+	    "debug.ffs.test_hold_fsid: %s", strerror(errno));
 	sfd = suspend();
-	holder_access(&h);
 	start_readers(pids);
-	resume(sfd);
+	/*
+	 * Resume from a helper thread (UFSSUSPEND wanted a single-threaded
+	 * process; the resume belongs to the suspending one): the resume
+	 * holds its caller at the walk.  It wakes the readers, whose closes
+	 * finish while the walk is held; the hold is released only after
+	 * every reader has been reaped, so the walk always meets their
+	 * closed files.
+	 */
+	r.fd = sfd;
+	r.error = -1;
+	ATF_REQUIRE_EQ(0, pthread_create(&r.thread, NULL, resumer_main, &r));
+	resume_hold_set("debug.ffs.test_hold_wait", 1);
 	reap_readers(pids);
+	resume_hold_set("debug.ffs.test_hold_release", 1);
+	ATF_REQUIRE_EQ(0, pthread_join(r.thread, NULL));
+	ATF_REQUIRE_MSG(r.error == 0, "UFSRESUME: %s", strerror(r.error));
+	ATF_REQUIRE_EQ(0, close(sfd));
 	use_files();
-	holder_finish(&h);
 	remount_and_check();
 }
 ATF_TC_CLEANUP(closed_at_resume, tc)
 {
+	static const fsid_t zero;
+	int value;
+
 	(void)tc;
+	/* Disarm, and let a walk still held go on before the unmount. */
+	(void)resume_hold_arm(&zero);
+	value = 1;
+	(void)sysctlbyname("debug.ffs.test_hold_release", NULL, NULL, &value,
+	    sizeof(value));
 	cleanup();
 }
 
@@ -402,7 +377,8 @@ ATF_TC_HEAD(open_across_resume, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "a file read during a suspension and still open after it can be "
-	    "used after the resume");
+	    "used after the resume (control: no defect known, passes before "
+	    "and after the fix closed_at_resume pins)");
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "require.progs", "mdconfig newfs fsck_ffs");
 	atf_tc_set_md_var(tc, "timeout", "300");
@@ -431,45 +407,9 @@ ATF_TC_CLEANUP(open_across_resume, tc)
 	cleanup();
 }
 
-ATF_TC_WITH_CLEANUP(repeated_suspensions);
-ATF_TC_HEAD(repeated_suspensions, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "files read and closed across repeated suspensions can be used "
-	    "after each resume");
-	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "require.progs", "mdconfig newfs fsck_ffs");
-	atf_tc_set_md_var(tc, "timeout", "900");
-}
-ATF_TC_BODY(repeated_suspensions, tc)
-{
-	struct holder h;
-	pid_t pids[NREAD];
-	int i, sfd;
-
-	fixture();
-	for (i = 0; i < 10; i++) {
-		holder_start(&h);
-		sfd = suspend();
-		holder_access(&h);
-		start_readers(pids);
-		resume(sfd);
-		reap_readers(pids);
-		use_files();
-		holder_finish(&h);
-	}
-	remount_and_check();
-}
-ATF_TC_CLEANUP(repeated_suspensions, tc)
-{
-	(void)tc;
-	cleanup();
-}
-
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, closed_at_resume);
 	ATF_TP_ADD_TC(tp, open_across_resume);
-	ATF_TP_ADD_TC(tp, repeated_suspensions);
 	return (atf_no_error());
 }

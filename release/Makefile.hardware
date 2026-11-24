@@ -88,12 +88,14 @@ kernel-test-option-check: .PHONY
 	@${KERNEL_TEST_OPTION_CHECK} -o ${OBJTOP:Q}/sys/${_kernconf}
 .endfor
 
-# Read-only: every kernel in the object tree carries the mandatory options.
+# Read-only: the source tree's kern_mandatory.c and DEFAULTS agree with the
+# ledger, and every kernel in the object tree carries the mandatory options.
 kernel-mandatory-option-check: .PHONY
 .if empty(KERNCONF)
 	@echo "ERROR: kernel-mandatory-option-check: KERNCONF names no kernel" >&2; \
 	    false
 .endif
+	@${KERNEL_MANDATORY_OPTION_CHECK} -S ${.CURDIR:Q}
 .for _kernconf in ${KERNCONF}
 	@${KERNEL_MANDATORY_OPTION_CHECK} -o ${OBJTOP:Q}/sys/${_kernconf}
 .endfor
@@ -119,12 +121,14 @@ hardware-packages hardware-packages-check: .PHONY
 # must be supplied together. The combined catalogue covers the copied archive.
 # APPLICATION_PACKAGE_SELECTION optionally adds a format-1 hash-bound archive
 # selection without rewriting package identities. Format 2 is not supported.
-# Both inputs are checked for a test-kernel option before anything is
-# created: the published kernel package is the hardware repository's copy.
+# Both inputs are checked for a test-kernel option, and for the mandatory
+# kernel options, before anything is created: the published kernel package
+# is the hardware repository's copy, and the base repository carries the
+# kernels it was built with.
 publish-packages: .PHONY
 	@${KERNEL_TEST_OPTION_CHECK} -r ${BASE_REPOSITORY:Q} -r ${HARDWARE_REPO:Q}
 	@${MALLOC_PRODUCTION_CHECK} -r ${BASE_REPOSITORY:Q}
-	@${KERNEL_MANDATORY_OPTION_CHECK} -r ${HARDWARE_REPO:Q}
+	@${KERNEL_MANDATORY_OPTION_CHECK} -r ${BASE_REPOSITORY:Q} -r ${HARDWARE_REPO:Q}
 	@mkdir -p ${COMPLETE_REPOSITORY:H:Q}
 	${HARDWARE_PYTHON} ${.CURDIR}/release/scripts/hardware-packages.py publish \
 	    --repository ${HARDWARE_REPO:Q} --base-repository ${BASE_REPOSITORY:Q} \

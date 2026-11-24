@@ -65,6 +65,7 @@
 #include <sys/syscall.h>
 #include <sys/sysctl.h>
 #include <sys/sysent.h>
+#include <sys/cap_authority.h>
 #include <sys/ucoredump.h>
 #include <sys/vnode.h>
 #include <sys/syslog.h>
@@ -1392,6 +1393,17 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 	 * the vnode is unlocked.
 	 */
 	IS_UNLOCK(imgp);
+
+	/*
+	 * Base exclusion: an exec predicted excluded runs only a native image
+	 * (cap_process(2)).  Refused before anything below changes the
+	 * process.
+	 */
+	error = cap_exclusion_exec_check_abi(imgp, sv);
+	if (error != 0) {
+		IS_LOCK(imgp);
+		goto ret;
+	}
 
 	/*
 	 * Decide whether to enable randomization of user mappings.  First,

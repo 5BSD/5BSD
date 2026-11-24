@@ -1700,6 +1700,9 @@ uifree(struct uidinfo *uip)
 	if (uip->ui_envfdbytes != 0)
 		printf("freeing uidinfo: uid = %d, envfdbytes = %ld\n",
 		    uip->ui_uid, uip->ui_envfdbytes);
+	if (uip->ui_oesdefer != 0)
+		printf("freeing uidinfo: uid = %d, oesdefer = %ld\n",
+		    uip->ui_uid, uip->ui_oesdefer);
 	free(uip, M_UIDINFO);
 }
 

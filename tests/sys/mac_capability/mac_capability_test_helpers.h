@@ -136,9 +136,9 @@ require_isolation_enforced(void)
 }
 
 /*
- * Skip, naming the reason, when racct(9) (and, with need_rctl, rctl(8)) is
- * not available: a kernel built without options RACCT or RCTL, or booted with
- * kern.racct.enable=0.  GENERIC has both, enabled.
+ * racct(9) (and, with need_rctl, rctl(8)) is there and enabled: options
+ * RACCT and RCTL are mandatory (sys/conf/mandatory-options) and
+ * kern.racct.enable cannot be turned off, so anything else is a failure.
  */
 static inline void
 require_racct(bool need_rctl)
@@ -146,16 +146,16 @@ require_racct(bool need_rctl)
 	size_t len;
 	int enabled;
 
-	if (!feature_present("racct"))
-		atf_tc_skip("kernel built without options RACCT");
+	ATF_REQUIRE_MSG(feature_present("racct"),
+	    "kernel built without options RACCT");
 	enabled = 0;
 	len = sizeof(enabled);
 	ATF_REQUIRE_MSG(sysctlbyname("kern.racct.enable", &enabled, &len,
 	    NULL, 0) == 0, "sysctl kern.racct.enable: %s", strerror(errno));
 	/* 5BSD cannot turn resource accounting off (kern_racct.c). */
 	ATF_REQUIRE_MSG(enabled != 0, "kern.racct.enable reads 0");
-	if (need_rctl && !feature_present("rctl"))
-		atf_tc_skip("kernel built without options RCTL");
+	ATF_REQUIRE_MSG(!need_rctl || feature_present("rctl"),
+	    "kernel built without options RCTL");
 }
 
 /*

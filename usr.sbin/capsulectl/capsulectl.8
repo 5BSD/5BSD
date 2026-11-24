@@ -67,6 +67,13 @@ Rescan
 Quiesce for a fast, non-clean teardown.
 .It Cm status
 Print the state of Capsule and its supervised units.
+When Capsule could not create the authority issuer it holds for the next
+.Xr switchboard 8
+start, a line
+.Dq next authority issuer: none ( Ns Ar reason Ns )
+says so; that start creates one itself or, failing, sends the system to
+single-user
+.Pq see Xr capsule 8 .
 .It Cm reload
 Transactionally rescan bundles, validate the dependency graph, and apply
 additions, changes, and removals, printing a summary of what changed.

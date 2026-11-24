@@ -8,7 +8,10 @@
  * Descendants-scoped client integration test.
  *
  * The monitor is a sibling of the outside actor.  It must receive OPEN
- * notifications from itself and its child, but never from its parent.
+ * notifications from its child, but never from its parent, and never from
+ * itself: it opened the client, and a client never receives the events of
+ * the processes that act as it (oes(4), "A client's own processes").  Its
+ * own open comes first, so the child's later event fences it.
  */
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -83,7 +86,7 @@ monitor_subtree(int ready_fd, int go_fd, const char *root_path,
 	saw_root = saw_child = saw_outside = false;
 	pfd.fd = oes_client_fd(client);
 	pfd.events = POLLIN;
-	for (i = 0; i < 200 && (!saw_root || !saw_child); i++) {
+	for (i = 0; i < 200 && !saw_child; i++) {
 		if (poll(&pfd, 1, 10) <= 0)
 			continue;
 		while (oes_read_event(client, &msg, false) == 0) {
@@ -96,9 +99,6 @@ monitor_subtree(int ready_fd, int go_fd, const char *root_path,
 			fprintf(stderr, "descendants event: pid=%d flags=0x%x path=%s\n",
 			    msg->em_process.ep_pid, msg->em_process.ep_flags, path);
 			if (msg->em_process.ep_pid == getpid()) {
-				if ((msg->em_process.ep_flags &
-				    EP_FLAG_OES_CLIENT) == 0)
-					return (21);
 				saw_root = true;
 			} else if (msg->em_process.ep_pid == child) {
 				if ((msg->em_process.ep_flags &
@@ -112,7 +112,7 @@ monitor_subtree(int ready_fd, int go_fd, const char *root_path,
 			return (19);
 	}
 	oes_client_destroy(client);
-	if (!saw_root || !saw_child || saw_outside) {
+	if (saw_root || !saw_child || saw_outside) {
 		fprintf(stderr,
 		    "descendants visibility: root=%d child=%d outside=%d\n",
 		    saw_root, saw_child, saw_outside);

@@ -2175,8 +2175,8 @@ retry_flush:
 #ifdef QUOTA
 			/*
 			 * The FFS lock is taken before the mount interlock
-			 * (quotaon(), quotaoff_inchange()): look at the
-			 * quota files first.
+			 * (quotaoff_inchange() clears MNT_QUOTA with both
+			 * held): look at the quota files first.
 			 */
 			UFS_LOCK(ump);
 			for (i = 0; i < MAXQUOTAS; i++) {

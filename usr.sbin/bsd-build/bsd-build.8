@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd November 17, 2026
+.Dd November 24, 2026
 .Dt BUILD-BSD 8
 .Os
 .Sh NAME
@@ -2000,19 +2000,30 @@ the
 .Va kern.features
 sysctl each ledger option registers, and one without a symbol table is
 refused.
-Every step that runs the test-kernel check runs it on the same kernels:
+It runs beside the test-kernel check:
 system-packages checks each
 .Va KERNCONF
-object directory before packaging and the hardware repository after it is
-built, publish-packages checks the hardware repository, the release
-makefile checks the kernel distribution, the staged media trees and the
-package repositories it copies, and the
+object directory before packaging (after checking that the source tree's
+.Pa sys/kern/kern_mandatory.c
+and the amd64, arm64 and riscv
+.Pa DEFAULTS
+name exactly the ledger's options,
+.Fl S )
+and the hardware repository after it is
+built, publish-packages checks the base and hardware repositories, the release
+makefile checks the kernel distribution and each of its kernel archives
+(not the debug archives, which carry no kernel), the staged media trees,
+again once packages are staged into them, and the package repositories it
+copies, and the
 .Cm snapshot ,
 .Cm image
 and
 .Cm boot-stage
 actions add a kernel-mandatory-option-check step after their
 kernel-test-option-check step.
+Unlike the test-kernel check it reads kernels only, not modules, and it
+does not read the archives of the media package stores a second time: their
+kernels are those of the distribution and the repositories already checked.
 The kernel_mandatory_option_binary_check field takes the value of
 kernel_test_option_binary_check.
 The text format prints both fields on the

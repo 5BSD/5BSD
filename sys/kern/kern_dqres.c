@@ -52,6 +52,7 @@
 #include <sys/proc.h>
 #include <sys/refcount.h>
 #include <sys/dqres.h>
+#include <sys/sdt.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/sx.h>
@@ -65,6 +66,20 @@
 
 static MALLOC_DEFINE(M_DQRES, "dqres", "DescriptorQueue attachments");
 
+/*
+ * The kernel core's half of the supervisor queue.  Nothing fires for an
+ * unattached process: every site is behind DQRES_ATTACHED_TD or inside a
+ * served lookup.
+ */
+SDT_PROVIDER_DEFINE(dqres);
+/* A lookup from a served start returned: op, answer kind (0: none), errno. */
+SDT_PROBE_DEFINE3(dqres, , , namei__served, "uint32_t", "uint32_t", "int");
+SDT_PROBE_DEFINE3(dqres, , , subst__refuse, "uint32_t", "int", "int");
+SDT_PROBE_DEFINE2(dqres, , , subst__install, "uint32_t", "int");
+SDT_PROBE_DEFINE2(dqres, , , subst__consume, "void *", "int");
+/* A path presented to a viewer: viewer pid, DQRES_PRESENT_*, errno. */
+SDT_PROBE_DEFINE3(dqres, , , present, "pid_t", "int", "int");
+
 const struct dqres_ops *dqres_ops;
 
 void
@@ -73,6 +88,16 @@ dqres_register(const struct dqres_ops *ops)
 
 	KASSERT(dqres_ops == NULL, ("dqres: second registration"));
 	atomic_store_rel_ptr((volatile uintptr_t *)&dqres_ops, (uintptr_t)ops);
+}
+
+void
+dqres_bad_answer(struct thread *td)
+{
+	struct dqres *dr;
+
+	dr = atomic_load_ptr(&td->td_proc->p_pd->pd_dqres);
+	if (dqres_ops != NULL && dr != NULL)
+		dqres_ops->dro_bad_answer(dr->dr_binding);
 }
 
 bool
@@ -234,7 +259,7 @@ dqres_attach(struct thread *td, struct proc *p, struct dqres_binding *b,
 	struct fdescenttbl *fdt;
 	struct pwddesc *pdp;
 	struct dqres *dr;
-	int error, i;
+	int error, i, save;
 
 	if (dqres_ops == NULL)
 		return (ENXIO);
@@ -259,8 +284,16 @@ dqres_attach(struct thread *td, struct proc *p, struct dqres_binding *b,
 		PROC_UNLOCK(p);
 		goto out;
 	}
-	/* Under PROC_LOCK, before the pwddesc mutex (review, low). */
+	/*
+	 * Under PROC_LOCK, before the pwddesc mutex (review, low).  Base
+	 * exclusion defers to the attach's own, narrower rule here
+	 * (TDP2_DQ_ATTACH; cap_exclusion_attach_check()).
+	 */
+	save = curthread_pflags2_set(TDP2_DQ_ATTACH);
 	error = p_candebug(td, p);
+	curthread_pflags2_restore(save);
+	if (error == 0)
+		error = cap_exclusion_attach_check(td, p);
 	if (error != 0) {
 		PROC_UNLOCK(p);
 		goto out;
@@ -303,6 +336,8 @@ dqres_attach(struct thread *td, struct proc *p, struct dqres_binding *b,
 	pdp->pd_dqres = dr;
 	dr = NULL;
 	p->p_flag2 |= P2_NO_NEW_PRIVS;
+	/* An attached process is never excluded (base exclusion rule 3). */
+	cap_exclusion_clear_locked(p, CAPX_CLEAR_DQ_ATTACH);
 	/* An attached process acts without its software authority (D336). */
 	cap_authority_strip_locked(p);
 unlock:
@@ -544,6 +579,19 @@ dq_class_rflags(uint32_t class)
 	return (class == 1 ? DQ_RF_USER : class == 2 ? DQ_RF_KCONSUMER : 0);
 }
 
+static bool
+dq_path_trailing_slash(const char *path)
+{
+	size_t len;
+
+	len = strlen(path);
+	if (len == 0 || path[len - 1] != '/')
+		return (false);
+	while (len > 0 && path[len - 1] == '/')
+		len--;
+	return (len > 0);
+}
+
 static uint32_t
 dq_rflags(struct nameidata *ndp, uint32_t class)
 {
@@ -568,7 +616,13 @@ dq_rflags(struct nameidata *ndp, uint32_t class)
 		rf |= DQ_RF_NOMAGICLINKS;
 	if ((cnp->cn_flags & NOXDEV) != 0)
 		rf |= DQ_RF_NOXDEV;
-	if ((cnp->cn_flags & TRAILINGSLASH) != 0)
+	/*
+	 * namei sets TRAILINGSLASH only while it walks, after this
+	 * consultation; the path says it already: a last component with a
+	 * '/' after it ("/" alone has none).
+	 */
+	if ((cnp->cn_flags & TRAILINGSLASH) != 0 ||
+	    dq_path_trailing_slash(cnp->cn_pnbuf))
 		rf |= DQ_RF_TRAILINGSLASH;
 	return (rf);
 }
@@ -587,6 +641,26 @@ dq_fullpath(struct vnode *vp, char **retbuf, char **freebuf)
 	error = vn_fullpath(vp, retbuf, freebuf);
 	DQRES_NORESOLVE_LEAVE(save);
 	return (error);
+}
+
+/*
+ * The process root a standing rule may match this event under
+ * (dq-standing-decisions §4.5), or NULL: a native process's own lookup of
+ * an absolute name or absolute symbolic link target (start REAL_ROOT;
+ * relative starts always post, Q16), with neither a served root nor a
+ * served descriptor, not RINROOT or ABSTRACT.  Set after dq_req_root, so rq_root is known.  Every other request
+ * builder leaves it NULL; dq_standing_decide tests the conditions again.
+ */
+static struct vnode *
+dq_standing_root(const struct dqres_req *rq, const struct dqres_snap *snap)
+{
+
+	if (!snap->dsn_native || snap->dsn_rdir == NULL || rq->rq_root != 0 ||
+	    rq->rq_object != 0 ||
+	    (rq->rq_rflags & (DQ_RF_RINROOT | DQ_RF_ABSTRACT)) != 0)
+		return (NULL);
+	return (rq->rq_start_kind == DQ_START_REAL_ROOT ? snap->dsn_rdir :
+	    NULL);
 }
 
 /*
@@ -1203,7 +1277,8 @@ dqres_namei(struct nameidata *ndp, struct vnode *dp, bool abs,
 		rq.rq_class = dq_islot_class(di, s);
 		rq.rq_op = di->di_op;
 		rq.rq_mode = di->di_mode;
-		rq.rq_object = di->di_drs_object;
+		/* A served fd argument goes with the path it names (B4). */
+		rq.rq_object = slot == 0 ? di->di_drs_object : 0;
 		rq.rq_syscall = di->di_syscall;
 		rq.rq_expected_locks = di->di_expected_locks;
 		rq.rq_no_erestart = (di->di_flags & DQI_NO_ERESTART) != 0;
@@ -1356,8 +1431,10 @@ dqres_namei(struct nameidata *ndp, struct vnode *dp, bool abs,
 	}
 	error = dq_req_root(&rq, snap->dsn_root,
 	    (snap->dsn_flags & DR_ROOT_DEAD) != 0, &rootid);
-	if (error == 0)
+	if (error == 0) {
+		rq.rq_st_root = dq_standing_root(&rq, snap);
 		error = dqres_ops->dro_consult(td, dr->dr_binding, &rq, &ans);
+	}
 	free(freepath, M_TEMP);
 	free(freehint2, M_TEMP);
 	if (error != 0) {
@@ -1801,6 +1878,9 @@ dqres_namei_served(struct nameidata *ndp, struct file *fp, int how,
 		di->di_startnioctls = 0;	/* a dropped list permits none */
 	error = EDQRESOLVED;
 out:
+	SDT_PROBE3(dqres, , , namei__served, (di != NULL ? di->di_op : 0),
+	    (*realp ? DQ_RESOLVE_REAL : error == EDQRESOLVED ?
+	    di->di_res.da_kind : 0), (error == EDQRESOLVED ? 0 : error));
 	if (s1 != NULL)
 		dq_islot_forget(s1);
 	free(rootid, M_TEMP);
@@ -2050,6 +2130,7 @@ dqres_namei_symlink(struct nameidata *ndp, struct vnode *dp,
 		rq.rq_startpathlen = strlen(fullpath);
 		rq.rq_rflags |= DQ_RF_STARTPATH_VALID;
 	}
+	rq.rq_st_root = dq_standing_root(&rq, snap);
 	error = dqres_ops->dro_consult(td, dr->dr_binding, &rq, &ans);
 	free(freepath, M_TEMP);
 	MPASS(error != ERESTART);
@@ -2185,7 +2266,8 @@ dq_present_rel(const char *root, size_t rlen, const char *path, size_t plen,
 	}
 	if (n + 1 > outsz)
 		return (ENAMETOOLONG);
-	memcpy(out, rest, n + 1);
+	/* out may be path itself (dqres_present_real): rest is its suffix. */
+	memmove(out, rest, n + 1);
 	return (0);
 }
 
@@ -2216,6 +2298,8 @@ dqres_present_viewer(struct thread *viewer, uint64_t qgid, const char *path,
 		if (rqgid == qgid) {
 			error = dq_present_rel(root->di_path, root->di_pathlen,
 			    path, pathlen, out, outsz);
+			SDT_PROBE3(dqres, , , present, viewer->td_proc->p_pid,
+			    DQRES_PRESENT_SERVED, error);
 			goto out;
 		}
 	}
@@ -2231,6 +2315,60 @@ out:
 	dqres_snap_release(&snap);
 	free(root, M_TEMP);
 	return (error);
+}
+
+/*
+ * Paths of real objects (vnodes) under a served root (T-A10, owner
+ * question Q1).  A process whose root is served has no name for a real
+ * object outside it, and the backing path of one inside is the
+ * supervisor's, not the program's.
+ *
+ * DQRES_REAL_ONE_RULE is the choice: with it, a path at or under the
+ * root's presented di_path (component-bounded, D174) is shown relative to
+ * the root, as a served object's is, and any other is emptied; without it
+ * (the default until Q1 is answered) every real object's path is emptied
+ * for such a viewer, as realpath(3) and getcwd(3) already answer ENOENT.
+ * An empty path is what kinfo shows when vn_fullpath fails; fdescfs turns
+ * it into ENOENT.  A viewer without a served root sees vn_fullpath's
+ * answer unchanged.
+ */
+static const bool dqres_real_one_rule = false;
+
+void
+dqres_present_real(struct thread *viewer, char *path, size_t size)
+{
+	struct dq_ident_file *root;
+	struct dqres_snap snap;
+	uint64_t qgid;
+	size_t len;
+	int error;
+	bool closed;
+
+	bzero(&snap, sizeof(snap));
+	root = NULL;
+	if (dqres_ops == NULL || !dqres_proc_attached(viewer->td_proc))
+		return;
+	pwd_dqres_proc(viewer->td_proc, &snap);
+	if (snap.dsn_root == NULL && (snap.dsn_flags & DR_ROOT_DEAD) == 0)
+		goto out;	/* a real root: vn_fullpath's answer stands */
+	error = ENOENT;
+	if (dqres_real_one_rule && snap.dsn_root != NULL &&
+	    (snap.dsn_flags & DR_ROOT_DEAD) == 0) {
+		root = malloc(sizeof(*root), M_TEMP, M_WAITOK);
+		len = strnlen(path, size);
+		if (len < size && dqres_ops->dro_file_ident(snap.dsn_root,
+		    root, &qgid, &closed) == 0)
+			/* The result is a suffix of path: rewritten in place. */
+			error = dq_present_rel(root->di_path, root->di_pathlen,
+			    path, len, path, size);
+	}
+	if (error != 0)
+		path[0] = '\0';
+	SDT_PROBE3(dqres, , , present, viewer->td_proc->p_pid,
+	    DQRES_PRESENT_REAL, error);
+out:
+	dqres_snap_release(&snap);
+	free(root, M_TEMP);
 }
 
 /* A served file's path presented against the viewer (dq's fill_kinfo). */
@@ -2357,10 +2495,13 @@ dqres_fchdir_file(struct thread *td, int fd, const cap_rights_t *rights,
 }
 
 /*
- * The served directory fchdir(2) or fchroot(2) names: EACCES for an
+ * The served descriptor fchdir(2) or fchroot(2) names: ENOTDIR for any
+ * kind but a directory first, as kern_fchdir tests the type before
+ * anything else and whatever the caller's attachment or the object's
+ * state (the kind is fixed at mint: no lock); then EACCES for an
  * unattached process and EDEADLK for one attached elsewhere (D163), EIO
- * once revoked or closing, ENOTDIR for another kind, then the D166 search
- * check on its identity with the caller's credential.
+ * once revoked or closing, then the D166 search check on its identity
+ * with the caller's credential.
  */
 int
 dqres_dir_check(struct thread *td, struct file *fp)
@@ -2372,13 +2513,14 @@ dqres_dir_check(struct thread *td, struct file *fp)
 	int error;
 	bool closed;
 
+	if (dqres_ops->dro_file_kind(fp) != DQ_KIND_DIR)
+		return (ENOTDIR);
 	dr = atomic_load_ptr(&td->td_proc->p_pd->pd_dqres);
 	error = dqres_ops->dro_start(td, dr != NULL ? dr->dr_binding : NULL,
 	    fp, &kind, &obj);
 	if (error != 0)
 		return (error == ENOTTY ? ENOTDIR : error);
-	if (kind != DQ_KIND_DIR)
-		return (ENOTDIR);
+	KASSERT(kind == DQ_KIND_DIR, ("dq: object kind changed to %u", kind));
 	ident = malloc(sizeof(*ident), M_TEMP, M_WAITOK);
 	error = dqres_ops->dro_file_ident(fp, ident, &qgid, &closed);
 	if (error == 0)
@@ -2584,7 +2726,7 @@ dqres_consult_slot(struct thread *td, int slot)
 	rq.rq_rflags = dq_class_rflags(rq.rq_class);
 	rq.rq_op = di->di_op;
 	rq.rq_mode = di->di_mode;
-	rq.rq_object = di->di_drs_object;
+	rq.rq_object = slot == 0 ? di->di_drs_object : 0;
 	rq.rq_syscall = di->di_syscall;
 	rq.rq_expected_locks = di->di_expected_locks;
 	rq.rq_no_erestart = (di->di_flags & DQI_NO_ERESTART) != 0;
@@ -2761,9 +2903,15 @@ dqres_ident(struct dq_intent *di, uint32_t kind)
 	return (di->di_res.da_ident);
 }
 
-/* As dq_stat presents an object's identity; no mount-point flag. */
+/*
+ * An identity as stat(2) presents it, for fstat of a served descriptor
+ * (dq_stat) and for a name answered ATTR; no mount-point flag.  st_gen
+ * is answered as vn_stat answers it (vop_stat_helper_post): only to a
+ * credential with PRIV_VFS_GENERATION.
+ */
 void
-dqres_ident_to_stat(const struct dq_ident_file *di, struct stat *sb)
+dqres_ident_to_stat(const struct dq_ident_file *di, struct ucred *cred,
+    struct stat *sb)
 {
 
 	bzero(sb, sizeof(*sb));
@@ -2786,7 +2934,7 @@ dqres_ident_to_stat(const struct dq_ident_file *di, struct stat *sb)
 	sb->st_blocks = di->di_blocks;
 	sb->st_blksize = di->di_blksize;
 	sb->st_flags = di->di_flags;
-	sb->st_gen = di->di_gen;
+	sb->st_gen = priv_check_cred_vfs_generation(cred) == 0 ? di->di_gen : 0;
 	sb->st_filerev = di->di_filerev;
 }
 
@@ -2926,6 +3074,38 @@ dqres_swap_gate(struct thread *td, struct fdinstall_gate *gate)
  * failure retires the object (D171).  The file is returned referenced,
  * not installed.
  */
+/*
+ * The type rules an open of the presented object meets (D133, D168): a
+ * trailing slash names a directory (namei, first); then vn_open_vnode's
+ * by kind.
+ */
+static int
+dqres_take_type(const struct dqres_answer *ans, int flags)
+{
+
+	if ((ans->da_rflags & DQ_RF_TRAILINGSLASH) != 0 &&
+	    ans->da_okind != DQ_KIND_DIR)
+		return (ENOTDIR);
+	switch (ans->da_okind) {
+	case DQ_KIND_SYMLINK:
+		/* O_PATH | O_NOFOLLOW only; anything else is EMLINK. */
+		if ((flags & O_PATH) == 0 || (flags & FEXEC) != 0)
+			return (EMLINK);
+		if ((flags & O_DIRECTORY) != 0)
+			return (ENOTDIR);
+		return (0);
+	case DQ_KIND_DIR:
+		/* vn_open_cred's O_CREAT of an existing directory. */
+		if ((flags & (O_CREAT | O_PATH)) == O_CREAT)
+			return (EISDIR);
+		if ((flags & O_PATH) == 0 && (flags & (FWRITE | O_TRUNC)) != 0)
+			return (EISDIR);
+		return (0);
+	default:
+		return ((flags & O_DIRECTORY) != 0 ? ENOTDIR : 0);
+	}
+}
+
 int
 dqres_take_file(struct thread *td, struct dq_intent *di, int flags,
     struct file **fpp)
@@ -2973,29 +3153,7 @@ dqres_take_file(struct thread *td, struct dq_intent *di, int flags,
 	KASSERT(ans->da_kind == DQ_RESOLVE_FD && ans->da_obj != NULL,
 	    ("dq: take_file of kind %u", ans->da_kind));
 	id = ans->da_ident;
-	error = 0;
-	/* vn_open_vnode's type rules, by kind (D133, D168). */
-	switch (ans->da_okind) {
-	case DQ_KIND_SYMLINK:
-		/* O_PATH | O_NOFOLLOW only; anything else is EMLINK. */
-		if ((flags & O_PATH) == 0 || (flags & FEXEC) != 0)
-			error = EMLINK;
-		else if ((flags & O_DIRECTORY) != 0)
-			error = ENOTDIR;
-		break;
-	case DQ_KIND_DIR:
-		/* vn_open_cred's O_CREAT of an existing directory. */
-		if ((flags & (O_CREAT | O_PATH)) == O_CREAT)
-			error = EISDIR;
-		else if ((flags & O_PATH) == 0 &&
-		    (flags & (FWRITE | O_TRUNC)) != 0)
-			error = EISDIR;
-		break;
-	default:
-		if ((flags & O_DIRECTORY) != 0)
-			error = ENOTDIR;
-		break;
-	}
+	error = dqres_take_type(ans, flags);
 	if (error == 0 && (ans->da_mflags & DQ_MINT_F_CREATED) == 0) {
 		accmode = 0;
 		if ((flags & O_PATH) == 0) {
@@ -3159,7 +3317,10 @@ dqres_install(struct thread *td, struct dq_intent *di, struct file *fp,
 			fdswap_release(sw, td);
 			return (EIO);
 		}
-		return (fdswap_install(td, sw, flags, &gate, fdp));
+		error = fdswap_install(td, sw, flags, &gate, fdp);
+		if (error == 0)
+			SDT_PROBE2(dqres, , , subst__install, di->di_op, *fdp);
+		return (error);
 	}
 	error = finstall_refed_prop(td, fp, fdp, flags, fc, &prop);
 	if (error != 0) {

@@ -25,11 +25,15 @@
 #include <sys/proc.h>
 #include <sys/user.h>
 #include <sys/wait.h>
+#include <sys/linker.h>
+#include <sys/thr.h>
 
 #include <netinet/in.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <jail.h>
+#include <pthread.h>
+#include <sched.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -4980,57 +4984,72 @@ ATF_TC_HEAD(watchdog_reset_extends, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Heartbeat resets watchdog, extending the deadline");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
-	atf_tc_set_md_var(tc, "timeout", "10");
 }
+
+static void
+watchdog_stat(int cfd, struct coalition_watchdog_stat_reply *wsr)
+{
+	struct coalition_req_hdr hdr = { .op = COALITION_OP_WATCHDOG_STAT };
+
+	memset(wsr, 0, sizeof(*wsr));
+	ATF_REQUIRE(coalition_call(cfd, &hdr, sizeof(hdr), NULL, 0, wsr,
+	    sizeof(*wsr)) == 0);
+	ATF_REQUIRE_EQ(0, wsr->status);
+}
+
+/*
+ * The watchdog is armed at an absolute uptime, and WATCHDOG_STAT reports
+ * that time and the one the callout was set for.  So the case needs no
+ * sleep: arm, heartbeat at once, and check that the heartbeat was a new arm
+ * whose deadline is its own arm time plus the timeout, with the callout
+ * moved to it.  The timeout only has to outlast the case; the watchdog is
+ * cancelled at the end.
+ */
+#define	WATCHDOG_TIMEOUT_MS	3600000u
+
 ATF_TC_BODY(watchdog_reset_extends, tc)
 {
 	struct coalition_set_watchdog_req wr;
-	struct coalition_stat_reply sr;
+	struct coalition_watchdog_stat_reply w1, w2;
 	struct coalition_reply rpl;
+	const int64_t timeout = (int64_t)WATCHDOG_TIMEOUT_MS * SBT_1MS;
 	int cfd;
-	struct timespec t0, t1;
-	long elapsed_ms;
 	int32_t status;
 
 	cfd = mac_capability_connect("coalition");
 	ATF_REQUIRE(cfd >= 0);
 
-	/*
-	 * A 2 s watchdog, a heartbeat at 1 s and a check at 2.5 s: wide
-	 * margins, because a loaded guest can oversleep by hundreds of ms.
-	 * The sleeps are periods, not synchronisation: the case asserts that
-	 * the watchdog has NOT fired 2.5 s after arming because the heartbeat
-	 * moved it.
-	 */
-	ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &t0) == 0);
+	memset(&wr, 0, sizeof(wr));
 	wr.op = COALITION_OP_SET_WATCHDOG;
-	wr.timeout_ms = 2000;
+	wr.timeout_ms = WATCHDOG_TIMEOUT_MS;
 	ATF_REQUIRE(coalition_call(cfd, &wr, sizeof(wr), NULL, 0,
 	    &rpl, sizeof(rpl)) == 0);
-	ATF_CHECK_EQ(rpl.status, 0);
+	ATF_REQUIRE_EQ(0, rpl.status);
+	watchdog_stat(cfd, &w1);
 
-	usleep(1000000);
 	ATF_REQUIRE(coalition_op(cfd, COALITION_OP_HEARTBEAT, &status) == 0);
-	ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &t1) == 0);
-	ATF_CHECK_EQ(status, 0);
-	elapsed_ms = (t1.tv_sec - t0.tv_sec) * 1000 +
-	    (t1.tv_nsec - t0.tv_nsec) / 1000000;
-	if (elapsed_ms >= 1800)
-		atf_tc_skip("heartbeat sent %ld ms after arming a 2000 ms "
-		    "watchdog: the window was missed", elapsed_ms);
+	ATF_REQUIRE_EQ(0, status);
+	watchdog_stat(cfd, &w2);
 
-	/* 1.5 s after the heartbeat, inside its fresh 2 s window. */
-	usleep(1500000);
+	ATF_CHECK_EQ(1, w1.seq);
+	ATF_CHECK_EQ(w1.armed_sbt + timeout, w1.deadline_sbt);
+	ATF_CHECK_EQ_MSG(w1.deadline_sbt, w1.callout_sbt,
+	    "SET_WATCHDOG: callout %jd, deadline %jd",
+	    (intmax_t)w1.callout_sbt, (intmax_t)w1.deadline_sbt);
+	ATF_CHECK_EQ_MSG(w1.seq + 1, w2.seq, "the heartbeat did not re-arm");
+	ATF_CHECK(w2.armed_sbt >= w1.armed_sbt);
+	ATF_CHECK_EQ(w2.armed_sbt + timeout, w2.deadline_sbt);
+	ATF_CHECK_EQ_MSG(w2.deadline_sbt, w2.callout_sbt,
+	    "HEARTBEAT: callout %jd, deadline %jd (first deadline %jd)",
+	    (intmax_t)w2.callout_sbt, (intmax_t)w2.deadline_sbt,
+	    (intmax_t)w1.deadline_sbt);
+	ATF_CHECK(w2.flags & COF_WATCHDOG_ACTIVE);
+	ATF_CHECK_EQ(0, w2.flags & COF_TERMINATING);
+	ATF_CHECK_EQ(0, w2.fired_seq);
 
-	ATF_REQUIRE(coalition_stat(cfd, &sr) == 0);
-	ATF_CHECK(sr.flags & COF_WATCHDOG_ACTIVE);
-	ATF_CHECK_EQ(sr.flags & COF_TERMINATING, 0);
-
-	/* Cancel watchdog to clean up */
 	wr.timeout_ms = 0;
 	ATF_REQUIRE(coalition_call(cfd, &wr, sizeof(wr), NULL, 0,
 	    &rpl, sizeof(rpl)) == 0);
-
 	close(cfd);
 }
 
@@ -5414,8 +5433,522 @@ ATF_TC_BODY(coalition_churn_no_leak, tc)
  * Test registration
  * ================================================================ */
 
+/* ================================================================
+ * Event-driven waits (fix/coalition-event-waits).  Each case waits on the
+ * event the kernel wait is woken by, without a timeout: a missing wakeup
+ * hangs the case and its timeout reports it.
+ * ================================================================ */
+
+/* Block until the cleanup watch reports a terminal phase. */
+static unsigned
+cleanup_wait_terminal(int watch)
+{
+	struct coalition_cleanup_reply state;
+	struct mac_capability_recvmsg_args recv;
+	struct kevent event;
+	int kq;
+
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	EV_SET(&event, watch, EVFILT_READ, EV_ADD, 0, 0, NULL);
+	ATF_REQUIRE_EQ(0, kevent(kq, &event, 1, NULL, 0, NULL));
+	ATF_REQUIRE_EQ(1, kevent(kq, NULL, 0, &event, 1, NULL));
+	close(kq);
+	memset(&recv, 0, sizeof(recv));
+	recv.payload = &state;
+	recv.payload_len = sizeof(state);
+	ATF_REQUIRE_EQ(0, ioctl(watch, MAC_CAPABILITY_RECVMSG, &recv));
+	ATF_REQUIRE_EQ(sizeof(state), recv.payload_len);
+	return (state.phase);
+}
+
+/* Block until the coalition sends an event with one of the flags. */
+static uint32_t
+coalition_wait_note(int cfd, uint32_t want)
+{
+	struct coalition_event_msg ev;
+	struct kevent event;
+	int kq;
+
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	EV_SET(&event, cfd, EVFILT_READ, EV_ADD | EV_CLEAR, 0, 0, NULL);
+	ATF_REQUIRE_EQ(0, kevent(kq, &event, 1, NULL, 0, NULL));
+	for (;;) {
+		memset(&ev, 0, sizeof(ev));
+		if (coalition_recv_event(cfd, &ev) == 0) {
+			if ((ev.flags & want) != 0)
+				break;
+			continue;
+		}
+		ATF_REQUIRE_EQ(EAGAIN, errno);
+		ATF_REQUIRE_EQ(1, kevent(kq, NULL, 0, &event, 1, NULL));
+	}
+	close(kq);
+	return (ev.flags);
+}
+
+ATF_TC(leader_death_wakes_monitor);
+ATF_TC_HEAD(leader_death_wakes_monitor, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Revoking a capability leader wakes the leader monitor (no timer)");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(leader_death_wakes_monitor, tc)
+{
+	struct coalition_req_hdr hdr = { .op = COALITION_OP_SET_LEADER };
+	struct coalition_reply rpl;
+	int cfd, leader, other, flags;
+	int32_t status;
+
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+	leader = mac_capability_connect("coalition");
+	ATF_REQUIRE(leader >= 0);
+	other = mac_capability_connect("coalition");
+	ATF_REQUIRE(other >= 0);
+	flags = fcntl(cfd, F_GETFL);
+	ATF_REQUIRE(fcntl(cfd, F_SETFL, flags | O_NONBLOCK) == 0);
+	ATF_REQUIRE(coalition_enlist(cfd, leader, &status) == 0);
+	ATF_REQUIRE_EQ(0, status);
+	ATF_REQUIRE(coalition_enlist(cfd, other, &status) == 0);
+	ATF_REQUIRE_EQ(0, status);
+	ATF_REQUIRE(coalition_call(cfd, &hdr, sizeof(hdr), &leader, 1,
+	    &rpl, sizeof(rpl)) == 0);
+	ATF_REQUIRE_EQ(0, rpl.status);
+
+	ATF_REQUIRE(ioctl(leader, MAC_CAPABILITY_TERMINATE, NULL) == 0);
+	ATF_CHECK(coalition_wait_note(cfd, COALITION_NOTE_LEADER_DIED) &
+	    COALITION_NOTE_LEADER_DIED);
+	(void)coalition_wait_note(cfd, COALITION_NOTE_TERMINATING);
+	ATF_CHECK(coalition_flags(cfd) & COF_TERMINATING);
+	ATF_CHECK(instance_revoked(other));
+	close(other);
+	close(leader);
+	close(cfd);
+}
+
+ATF_TC(graceful_returns_when_members_exit);
+ATF_TC_HEAD(graceful_returns_when_members_exit, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "GRACEFUL returns when the last member exits, not at its deadline");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+	atf_tc_set_md_var(tc, "timeout", "120");
+}
+
+struct grace_release {
+	lwpid_t	tid;		/* the thread in GRACEFUL */
+	int	go;		/* write end: lets the member exit */
+};
+
+/*
+ * Let the member exit only once the GRACEFUL caller sleeps in its grace
+ * wait ("co_grace"), so the exit is what must end the wait.  The thread's
+ * wait channel is a state with no event to block on: it is read until it
+ * is reached (bounded by the case timeout, not a guessed delay).
+ */
+static void *
+grace_release_thread(void *arg)
+{
+	struct grace_release *gr = arg;
+	struct kinfo_proc *kp;
+	int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID | KERN_PROC_INC_THREAD,
+	    getpid() };
+	size_t len, n;
+	bool sleeping = false;
+
+	while (!sleeping) {
+		len = 0;
+		if (sysctl(mib, 4, NULL, &len, NULL, 0) != 0)
+			break;
+		kp = malloc(len);
+		if (kp == NULL || sysctl(mib, 4, kp, &len, NULL, 0) != 0) {
+			free(kp);
+			break;
+		}
+		for (n = 0; n < len / sizeof(*kp); n++)
+			if (kp[n].ki_tid == gr->tid &&
+			    strcmp(kp[n].ki_wmesg, "co_grace") == 0)
+				sleeping = true;
+		free(kp);
+		if (!sleeping)
+			sched_yield();
+	}
+	(void)write(gr->go, "g", 1);
+	return (NULL);
+}
+
+ATF_TC_BODY(graceful_returns_when_members_exit, tc)
+{
+	/* The longest grace GRACEFUL accepts: the case must end long before. */
+	const uint32_t grace_ms = 60000;
+	struct coalition_graceful_req gr;
+	struct coalition_reply rpl;
+	struct grace_release rel;
+	struct timespec t0, t1;
+	pthread_t releaser;
+	int cfd, pd, ready[2], go[2], wstatus;
+	int32_t status;
+	long elapsed_ms;
+	pid_t pid;
+	char ch;
+
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+	ATF_REQUIRE(pipe(ready) == 0 && pipe(go) == 0);
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		close(ready[0]);
+		close(go[1]);
+		/* Survive the grace signal; exit when the test says so. */
+		signal(SIGTERM, SIG_IGN);
+		(void)write(ready[1], "r", 1);
+		(void)read(go[0], &ch, 1);
+		_exit(0);
+	}
+	close(ready[1]);
+	close(go[0]);
+	ATF_REQUIRE_EQ(1, read(ready[0], &ch, 1));
+	close(ready[0]);
+	ATF_REQUIRE(coalition_enlist(cfd, pd, &status) == 0);
+	ATF_REQUIRE_EQ(0, status);
+
+	{
+		long tid;
+
+		ATF_REQUIRE_EQ(0, thr_self(&tid));
+		rel.tid = (lwpid_t)tid;
+	}
+	rel.go = go[1];
+	ATF_REQUIRE_EQ(0, pthread_create(&releaser, NULL, grace_release_thread,
+	    &rel));
+
+	memset(&gr, 0, sizeof(gr));
+	gr.op = COALITION_OP_GRACEFUL;
+	gr.signal = SIGTERM;
+	gr.timeout_ms = grace_ms;
+	ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &t0) == 0);
+	ATF_REQUIRE(coalition_call(cfd, &gr, sizeof(gr), NULL, 0,
+	    &rpl, sizeof(rpl)) == 0);
+	ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &t1) == 0);
+	ATF_REQUIRE_EQ(0, pthread_join(releaser, NULL));
+	ATF_CHECK_EQ(0, rpl.status);
+	elapsed_ms = (t1.tv_sec - t0.tv_sec) * 1000 +
+	    (t1.tv_nsec - t0.tv_nsec) / 1000000;
+	ATF_REQUIRE_EQ(pid, waitpid(pid, &wstatus, 0));
+	ATF_CHECK_MSG(WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == 0,
+	    "member status %#x: it should have exited on its own", wstatus);
+	ATF_CHECK_MSG(elapsed_ms < grace_ms,
+	    "GRACEFUL returned after %ld ms: it waited out its %u ms deadline "
+	    "although the member had exited", elapsed_ms, grace_ms);
+	close(go[1]);
+	close(pd);
+	close(cfd);
+}
+
+#define	COALITION_CLEANUP_FIXTURE FIXTURE_DIR "/mac_capability_test_cleanup.ko"
+
+static void
+cleanup_fixture_write(const char *name, unsigned value)
+{
+	ATF_REQUIRE_EQ(0, sysctlbyname(name, NULL, NULL, &value,
+	    sizeof(value)));
+}
+
+static unsigned
+cleanup_fixture_read(const char *name)
+{
+	unsigned value = 0;
+	size_t len = sizeof(value);
+
+	ATF_REQUIRE_EQ(0, sysctlbyname(name, &value, &len, NULL, 0));
+	return (value);
+}
+
+/* A failed case must not leave the fixture loaded for the next one. */
+static void
+coalition_cleanup_fixture_unload(void)
+{
+	int id;
+
+	id = kldfind("mac_capability_test_cleanup.ko");
+	if (id >= 0)
+		(void)kldunload(id);
+}
+
+static void *
+close_fd_thread(void *arg)
+{
+	close(*(int *)arg);
+	return (NULL);
+}
+
+ATF_TC_WITH_CLEANUP(capability_dependency_waits_for_callback);
+ATF_TC_HEAD(capability_dependency_waits_for_callback, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Cleanup of a capability member completes when its co_revoke "
+	    "returns (callback-state watch, no timer)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(capability_dependency_waits_for_callback, tc)
+{
+	struct kevent event;
+	struct timespec zero = { 0 };
+	pthread_t closer;
+	int module, cfd, capfd, watch, kq;
+	int32_t status;
+
+	ATF_REQUIRE_MSG(access(COALITION_CLEANUP_FIXTURE, R_OK) == 0,
+	    "%s: %s", COALITION_CLEANUP_FIXTURE, strerror(errno));
+	module = kldload(COALITION_CLEANUP_FIXTURE);
+	ATF_REQUIRE_MSG(module >= 0, "kldload: %s", strerror(errno));
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+	capfd = mac_capability_connect("test_cleanup");
+	ATF_REQUIRE(capfd >= 0);
+	ATF_REQUIRE(coalition_enlist(cfd, capfd, &status) == 0);
+	ATF_REQUIRE_EQ(0, status);
+	ATF_REQUIRE_EQ(0, close(capfd));
+	watch = cleanup_watch(cfd);
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	EV_SET(&event, watch, EVFILT_READ, EV_ADD, 0, 0, NULL);
+	ATF_REQUIRE_EQ(0, kevent(kq, &event, 1, NULL, 0, NULL));
+
+	/* Close the control in another thread: it revokes the member. */
+	ATF_REQUIRE_EQ(0, pthread_create(&closer, NULL, close_fd_thread, &cfd));
+	ATF_REQUIRE_EQ(1, cleanup_fixture_read(
+	    "debug.capability_cleanup_test.wait_entered"));
+	/* The member's co_revoke is running: cleanup must not be complete. */
+	ATF_CHECK_EQ(0, kevent(kq, NULL, 0, &event, 1, &zero));
+	cleanup_fixture_write("debug.capability_cleanup_test.release", 1);
+	ATF_REQUIRE_EQ(0, pthread_join(closer, NULL));
+	ATF_CHECK_EQ(COALITION_CLEANUP_COMPLETE, cleanup_wait_terminal(watch));
+	close(kq);
+	close(watch);
+	ATF_REQUIRE_EQ(0, kldunload(module));
+}
+ATF_TC_CLEANUP(capability_dependency_waits_for_callback, tc)
+{
+	unsigned one = 1;
+
+	(void)sysctlbyname("debug.capability_cleanup_test.release", NULL, NULL,
+	    &one, sizeof(one));
+	coalition_cleanup_fixture_unload();
+}
+
+ATF_TC(nested_dependency_wakes_parent);
+ATF_TC_HEAD(nested_dependency_wakes_parent, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A parent's cleanup completes when its nested child's does "
+	    "(child cleanup transition wakes the dependency, no timer)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(nested_dependency_wakes_parent, tc)
+{
+	struct coalition_set_signal_req stop = {
+	    .op = COALITION_OP_SET_SIGNAL, .signal = SIGSTOP };
+	struct coalition_reply reply;
+	struct kevent event;
+	struct timespec zero = { 0 };
+	int parent, child, pd, watch, kq, wstatus;
+	int32_t status;
+	pid_t pid;
+
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		for (;;)
+			pause();
+	}
+	parent = mac_capability_connect("coalition");
+	ATF_REQUIRE(parent >= 0);
+	child = mac_capability_connect("coalition");
+	ATF_REQUIRE(child >= 0);
+	/* Termination stops the member, so the child's cleanup stays open. */
+	ATF_REQUIRE_EQ(0, coalition_call(child, &stop, sizeof(stop), NULL, 0,
+	    &reply, sizeof(reply)));
+	ATF_REQUIRE_EQ(0, reply.status);
+	ATF_REQUIRE_EQ(0, coalition_enlist(child, pd, &status));
+	ATF_REQUIRE_EQ(0, status);
+	ATF_REQUIRE_EQ(0, coalition_enlist(parent, child, &status));
+	ATF_REQUIRE_EQ(0, status);
+	ATF_REQUIRE_EQ(0, close(child));
+	watch = cleanup_watch(parent);
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	EV_SET(&event, watch, EVFILT_READ, EV_ADD, 0, 0, NULL);
+	ATF_REQUIRE_EQ(0, kevent(kq, &event, 1, NULL, 0, NULL));
+	ATF_REQUIRE_EQ(0, close(parent));
+	/* The member is stopped, not gone: the parent waits for the child. */
+	ATF_REQUIRE_EQ(pid, waitpid(pid, &wstatus, WUNTRACED));
+	ATF_CHECK(WIFSTOPPED(wstatus));
+	ATF_CHECK_EQ(0, kevent(kq, NULL, 0, &event, 1, &zero));
+	ATF_REQUIRE_EQ(0, pdkill(pd, SIGKILL));
+	ATF_REQUIRE_EQ(pid, waitpid(pid, &wstatus, 0));
+	ATF_CHECK_EQ(COALITION_CLEANUP_COMPLETE, cleanup_wait_terminal(watch));
+	close(kq);
+	close(watch);
+	close(pd);
+}
+
+/*
+ * A jail tree: a process in a parent jail and one in its child jail, each
+ * kept from exiting by a blocked cleanup-fixture callback (uninterruptible,
+ * so jail removal's SIGKILL waits): the parent's in co_connect (released
+ * by release_stage), the child's in co_revoke (released by release).  The
+ * coalition's jail cleanup must wait for both users of the dead tree and
+ * complete when the last one exits; it is re-run by prison_uref_release,
+ * not a timer.  The users end in the given order.
+ */
+static void
+check_jail_tree_cleanup(bool child_first)
+{
+	const char *pname = COALITION_TEST_JAIL_NAME "_tree";
+	char cname[128], desc[16] = "";
+	struct kevent event;
+	struct timespec zero = { 0 };
+	int module, cfd, jfd, watch, kq, pjid, cjid, wstatus, cp[2];
+	int32_t status;
+	pid_t ppid, cpid, first, second;
+	const char *first_release, *second_release;
+	char ch;
+
+	ATF_REQUIRE_MSG(access(COALITION_CLEANUP_FIXTURE, R_OK) == 0,
+	    "%s: %s", COALITION_CLEANUP_FIXTURE, strerror(errno));
+	module = kldload(COALITION_CLEANUP_FIXTURE);
+	ATF_REQUIRE_MSG(module >= 0, "kldload: %s", strerror(errno));
+	remove_jail_by_name(pname);
+	pjid = jail_setv(JAIL_CREATE | JAIL_GET_DESC, "name", pname,
+	    "path", "/", "persist", NULL, "children.max", "1", "desc", desc,
+	    NULL);
+	ATF_REQUIRE_MSG(pjid > 0, "parent jail: %s", jail_errmsg);
+	jfd = atoi(desc);
+	snprintf(cname, sizeof(cname), "%s.child", pname);
+	cjid = jail_setv(JAIL_CREATE, "name", cname, "path", "/",
+	    "persist", NULL, NULL);
+	ATF_REQUIRE_MSG(cjid > 0, "child jail: %s", jail_errmsg);
+
+	/* Child jail's user: blocks in co_revoke when it closes its instance. */
+	ATF_REQUIRE(pipe(cp) == 0);
+	cpid = fork();
+	ATF_REQUIRE(cpid >= 0);
+	if (cpid == 0) {
+		int fd;
+
+		close(cp[0]);
+		if (jail_attach(cjid) != 0)
+			_exit(1);
+		fd = mac_capability_connect("test_cleanup");
+		if (fd < 0)
+			_exit(2);
+		(void)write(cp[1], "r", 1);
+		close(fd);
+		_exit(0);
+	}
+	close(cp[1]);
+	ATF_REQUIRE_EQ(1, read(cp[0], &ch, 1));
+	close(cp[0]);
+	ATF_REQUIRE_EQ(1, cleanup_fixture_read(
+	    "debug.capability_cleanup_test.wait_entered"));
+
+	/*
+	 * Parent jail's user: blocks in co_connect, which then fails (EIO), so
+	 * it holds no instance whose close would block on the release the
+	 * child jail's user is parked on.
+	 */
+	cleanup_fixture_write("debug.capability_cleanup_test.fail_stage", 1);
+	cleanup_fixture_write("debug.capability_cleanup_test.block_stage", 1);
+	ppid = fork();
+	ATF_REQUIRE(ppid >= 0);
+	if (ppid == 0) {
+		if (jail_attach(pjid) != 0)
+			_exit(1);
+		(void)mac_capability_connect("test_cleanup");
+		_exit(0);
+	}
+	ATF_REQUIRE_EQ(1, cleanup_fixture_read(
+	    "debug.capability_cleanup_test.wait_stage_entered"));
+
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+	ATF_REQUIRE_EQ(0, coalition_enlist(cfd, jfd, &status));
+	ATF_REQUIRE_EQ(0, status);
+	watch = cleanup_watch(cfd);
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	EV_SET(&event, watch, EVFILT_READ, EV_ADD, 0, 0, NULL);
+	ATF_REQUIRE_EQ(0, kevent(kq, &event, 1, NULL, 0, NULL));
+	/* Remove the tree (its users are killed but cannot exit yet). */
+	ATF_REQUIRE_EQ(0, jail_remove(pjid));
+	ATF_REQUIRE_EQ(0, close(cfd));
+	ATF_REQUIRE_EQ(0, close(jfd));
+	ATF_CHECK_EQ(0, kevent(kq, NULL, 0, &event, 1, &zero));
+
+	first = child_first ? cpid : ppid;
+	second = child_first ? ppid : cpid;
+	first_release = child_first ? "debug.capability_cleanup_test.release" :
+	    "debug.capability_cleanup_test.release_stage";
+	second_release = child_first ?
+	    "debug.capability_cleanup_test.release_stage" :
+	    "debug.capability_cleanup_test.release";
+	cleanup_fixture_write(first_release, 1);
+	ATF_REQUIRE_EQ(first, waitpid(first, &wstatus, 0));
+	/* One user of the tree is left: cleanup is not complete. */
+	ATF_CHECK_EQ(0, kevent(kq, NULL, 0, &event, 1, &zero));
+	cleanup_fixture_write(second_release, 1);
+	ATF_REQUIRE_EQ(second, waitpid(second, &wstatus, 0));
+	ATF_CHECK_EQ(COALITION_CLEANUP_COMPLETE, cleanup_wait_terminal(watch));
+	close(kq);
+	close(watch);
+	ATF_REQUIRE_EQ(0, kldunload(module));
+}
+
+ATF_TC_WITH_CLEANUP(jail_tree_cleanup_waits_for_users);
+ATF_TC_HEAD(jail_tree_cleanup_waits_for_users, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Jail-tree cleanup completes on the last user's exit, either "
+	    "order (prison_uref_release, no timer)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+	atf_tc_set_md_var(tc, "timeout", "120");
+}
+ATF_TC_BODY(jail_tree_cleanup_waits_for_users, tc)
+{
+	check_jail_tree_cleanup(true);
+	check_jail_tree_cleanup(false);
+}
+ATF_TC_CLEANUP(jail_tree_cleanup_waits_for_users, tc)
+{
+	unsigned one = 1;
+
+	(void)sysctlbyname("debug.capability_cleanup_test.release", NULL, NULL,
+	    &one, sizeof(one));
+	(void)sysctlbyname("debug.capability_cleanup_test.release_stage", NULL,
+	    NULL, &one, sizeof(one));
+	coalition_cleanup_fixture_unload();
+	remove_jail_by_name(COALITION_TEST_JAIL_NAME "_tree.child");
+	remove_jail_by_name(COALITION_TEST_JAIL_NAME "_tree");
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, leader_death_wakes_monitor);
+	ATF_TP_ADD_TC(tp, graceful_returns_when_members_exit);
+	ATF_TP_ADD_TC(tp, capability_dependency_waits_for_callback);
+	ATF_TP_ADD_TC(tp, nested_dependency_wakes_parent);
+	ATF_TP_ADD_TC(tp, jail_tree_cleanup_waits_for_users);
 	ATF_TP_ADD_TC(tp, cleanup_watch_inheritance);
 	ATF_TP_ADD_TC(tp, cleanup_watch_close);
 	/* Lifecycle */
