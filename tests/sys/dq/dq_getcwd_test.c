@@ -13,6 +13,7 @@
 
 #include <sys/param.h>
 #include <sys/linker.h>
+#include <sys/mman.h>
 #include <sys/module.h>
 #include <sys/mount.h>
 #include <sys/sysctl.h>
@@ -237,8 +238,11 @@ ATF_TC_BODY(real_under_served_root, tc)
 	DQT_CHECK_ERRNO(ENOENT, r.err[2], "getcwd: real cwd, served root");
 	DQT_CHECK_ERRNO(ENOENT, r.err[3], "realpath of a real object");
 	DQT_CHECK_ERRNO(0, r.err[4], "kinfo");
-	/* Observation, not resolution: the real vnode's path. */
-	ATF_CHECK_STREQ(a.real, r.path[4]);
+	/*
+	 * Under a served root a real object shows no path, in kinfo too
+	 * (C4, Q1's default; it showed the real vnode's path).
+	 */
+	ATF_CHECK_STREQ("", r.path[4]);
 	ATF_CHECK_STREQ("/", r.path[5]);
 	close(a.realfd);
 	dqt_tree_stop(&s);
@@ -538,6 +542,324 @@ ATF_TC_BODY(revoked_frozen, tc)
 	dqt_tree_stop(&s);
 }
 
+/*
+ * T-A10: what a program under a served root sees of the paths of real
+ * objects it holds: a file the supervisor substituted (SWAP), a real file
+ * reached through a real directory descriptor (PASS) and its mapping, by
+ * every route that shows a path (F_KINFO, kinfo_getfile, kinfo_getvmmap,
+ * linprocfs maps and an fdescfs link).  The test, unattached, looks at
+ * the same process too.
+ */
+#define	RO_SWAP		0	/* the substituted file */
+#define	RO_PASS		1	/* the real file through the real dirfd */
+
+struct ro_arg {
+	int	 tochild[2];
+	int	 toparent[2];
+	int	 realdir;	/* a real directory, inherited */
+	int	 lpfd;		/* linprocfs */
+	int	 fdescfd;	/* an fdescfs instance (rdlnk) */
+};
+
+struct ro_res {
+	int	 err[8];
+	int	 fd[2];
+	char	 kinfo[2][PATH_MAX];	/* F_KINFO */
+	char	 table[2][PATH_MAX];	/* kinfo_getfile */
+	char	 vmmap[PATH_MAX];	/* kinfo_getvmmap of the mapping */
+	char	 lpmap[PATH_MAX];	/* linprocfs maps of the mapping */
+	char	 link[2][PATH_MAX];	/* fdescfs readlink */
+	char	 lpfdl[2][PATH_MAX];	/* linprocfs <pid>/fd/<n> */
+	char	 lpcwd[PATH_MAX];	/* linprocfs <ppid>/cwd */
+	char	 lproot[PATH_MAX];	/* linprocfs <ppid>/root */
+	int	 lperr[4];		/* their readlink errnos */
+	uintptr_t start;
+};
+
+static int
+ro_swap_hook(struct dqt_tree *s, const struct dq_event *ev,
+    const struct dq_resolve_body *rb, const char *path)
+{
+	char p[PATH_MAX];
+	int fd;
+
+	if (rb->drs_op != DQ_ROP_OPEN || strcmp(path, "/a") != 0)
+		return (0);
+	snprintf(p, sizeof(p), "%s/a", s->backing);
+	fd = open(p, O_RDONLY | O_CLOEXEC | O_CLOFORK);
+	if (fd < 0)
+		(void)dq_reply_resolve_errno(s->q, ev->de_id, EIO);
+	else if (dq_reply_resolve_swap(s->q, ev->de_id, fd, 0) != 0) {
+		if (errno != ECANCELED) {
+			(void)close(fd);
+			(void)dq_reply_resolve_errno(s->q, ev->de_id, EIO);
+		}
+	}
+	/* Taken (0, ECANCELED): the kernel closed fd. */
+	return (1);
+}
+
+static void
+ro_kve(pid_t pid, uintptr_t start, char *out)
+{
+	struct kinfo_vmentry *kve;
+	int cnt, i;
+
+	strlcpy(out, "<no row>", PATH_MAX);
+	kve = kinfo_getvmmap(pid, &cnt);
+	for (i = 0; kve != NULL && i < cnt; i++)
+		if (kve[i].kve_start == start)
+			strlcpy(out, kve[i].kve_path, PATH_MAX);
+	free(kve);
+}
+
+static void
+ro_table(pid_t pid, const int *fds, char out[2][PATH_MAX])
+{
+	struct kinfo_file *kif;
+	int cnt, i, j;
+
+	for (j = 0; j < 2; j++)
+		strlcpy(out[j], "<no row>", PATH_MAX);
+	kif = kinfo_getfile(pid, &cnt);
+	for (i = 0; kif != NULL && i < cnt; i++)
+		for (j = 0; j < 2; j++)
+			if (kif[i].kf_fd == fds[j])
+				strlcpy(out[j], kif[i].kf_path, PATH_MAX);
+	free(kif);
+}
+
+static int
+ro_lpmap(int lpfd, pid_t pid, uintptr_t start, char *out)
+{
+	char name[64], buf[16384], key[32], *line, *next, *sp;
+	ssize_t n;
+	int fd;
+
+	out[0] = '\0';
+	snprintf(name, sizeof(name), "%d/maps", (int)pid);
+	fd = openat(lpfd, name, O_RDONLY);
+	if (fd < 0)
+		return (errno);
+	n = dqt_read_full(fd, buf, sizeof(buf) - 1);
+	(void)close(fd);
+	buf[n] = '\0';
+	snprintf(key, sizeof(key), "%016lx-", (unsigned long)start);
+	for (line = buf; line != NULL && *line != '\0'; line = next) {
+		next = strchr(line, '\n');
+		if (next != NULL)
+			*next++ = '\0';
+		if (strncmp(line, key, strlen(key)) != 0)
+			continue;
+		sp = strrchr(line, ' ');
+		strlcpy(out, sp != NULL ? sp + 1 : "", PATH_MAX);
+		return (0);
+	}
+	return (ENOENT);
+}
+
+/* readlinkat of a linprocfs link: 0 and out, or the errno and "". */
+static int
+ro_lplink(int lpfd, const char *name, char *out)
+{
+	ssize_t n;
+
+	n = readlinkat(lpfd, name, out, PATH_MAX - 1);
+	if (n < 0) {
+		out[0] = '\0';
+		return (errno);
+	}
+	out[n] = '\0';
+	return (0);
+}
+
+static void
+ro_fn(void *argp, void *out)
+{
+	struct ro_arg *a = argp;
+	struct ro_res *r = out;
+	struct kinfo_file kif;
+	char name[32];
+	void *p;
+	ssize_t n;
+	pid_t me;
+	int i;
+	char c;
+
+	r->fd[RO_SWAP] = open("/a", O_RDONLY);
+	r->err[0] = r->fd[RO_SWAP] < 0 ? errno : 0;
+	r->fd[RO_PASS] = openat(a->realdir, "x", O_RDONLY);
+	r->err[1] = r->fd[RO_PASS] < 0 ? errno : 0;
+	for (i = 0; i < 2; i++) {
+		memset(&kif, 0, sizeof(kif));
+		kif.kf_structsize = sizeof(kif);
+		if (fcntl(r->fd[i], F_KINFO, &kif) == 0)
+			strlcpy(r->kinfo[i], kif.kf_path, PATH_MAX);
+		else
+			r->err[2] = errno;
+		snprintf(name, sizeof(name), "%d", r->fd[i]);
+		n = readlinkat(a->fdescfd, name, r->link[i], PATH_MAX - 1);
+		if (n < 0) {
+			r->err[4 + i] = errno;
+			r->link[i][0] = '\0';
+		} else
+			r->link[i][n] = '\0';
+	}
+	ro_table(getpid(), r->fd, r->table);
+	p = mmap(NULL, 4096, PROT_READ, MAP_SHARED, r->fd[RO_PASS], 0);
+	r->err[3] = p == MAP_FAILED ? errno : 0;
+	r->start = p == MAP_FAILED ? 0 : (uintptr_t)p;
+	ro_kve(getpid(), r->start, r->vmmap);
+	r->err[6] = ro_lpmap(a->lpfd, getpid(), r->start, r->lpmap);
+	/* linprocfs: its own descriptors, and the unattached parent's cwd and
+	   root (real directories outside the served root). */
+	for (i = 0; i < 2; i++) {
+		snprintf(name, sizeof(name), "%d/fd/%d", (int)getpid(),
+		    r->fd[i]);
+		r->lperr[i] = ro_lplink(a->lpfd, name, r->lpfdl[i]);
+	}
+	snprintf(name, sizeof(name), "%d/cwd", (int)getppid());
+	r->lperr[2] = ro_lplink(a->lpfd, name, r->lpcwd);
+	snprintf(name, sizeof(name), "%d/root", (int)getppid());
+	r->lperr[3] = ro_lplink(a->lpfd, name, r->lproot);
+	me = getpid();
+	(void)write(a->toparent[1], &me, sizeof(me));
+	(void)write(a->toparent[1], r, sizeof(*r));
+	(void)read(a->tochild[0], &c, 1);
+}
+
+static bool
+ro_mount_linprocfs(const char *dir)
+{
+	struct iovec iov[4];
+
+	if (modfind("linprocfs") < 0 && kldload("linprocfs") < 0 &&
+	    errno != EEXIST)
+		return (false);
+	if (mkdir(dir, 0755) != 0)
+		return (false);
+	iov[0].iov_base = __DECONST(char *, "fstype");
+	iov[0].iov_len = sizeof("fstype");
+	iov[1].iov_base = __DECONST(char *, "linprocfs");
+	iov[1].iov_len = sizeof("linprocfs");
+	iov[2].iov_base = __DECONST(char *, "fspath");
+	iov[2].iov_len = sizeof("fspath");
+	iov[3].iov_base = __DECONST(char *, dir);
+	iov[3].iov_len = strlen(dir) + 1;
+	return (nmount(iov, 4, 0) == 0);
+}
+
+DQT_TREE_TC_CLEANUP(real_object_paths_served_root);
+ATF_TC_BODY(real_object_paths_served_root, tc)
+{
+	struct dqt_tree s;
+	struct ro_arg a;
+	struct ro_res r, ra;
+	char real[2][PATH_MAX], view[2][PATH_MAX], vm[PATH_MAX];
+	int pd, status, ready[2], go[2], back[2];
+	size_t got;
+	pid_t apid, pid;
+	char c;
+
+	dqt_tree_make("t");
+	ATF_REQUIRE(mkdir("w", 0755) == 0);
+	dqt_tree_file("w", "x", "x\n");
+	dqt_tree_start(&s, "t", DQ_TREE_F_ROOT | DQ_TREE_F_OUTSIDE_PASS);
+	s.hook = ro_swap_hook;
+	dqt_mount_fdesc("rdlnk");
+	ATF_REQUIRE_MSG(ro_mount_linprocfs("lp"), "linprocfs: %s",
+	    strerror(errno));
+	memset(&a, 0, sizeof(a));
+	a.realdir = open("w", O_RDONLY | O_DIRECTORY);
+	a.lpfd = open("lp", O_RDONLY | O_DIRECTORY);
+	a.fdescfd = open(DQT_FDESC_DIR, O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(a.realdir >= 0 && a.lpfd >= 0 && a.fdescfd >= 0);
+	ATF_REQUIRE(pipe(a.tochild) == 0 && pipe(a.toparent) == 0);
+	snprintf(real[RO_SWAP], PATH_MAX, "%s/a", s.backing);
+	ATF_REQUIRE(realpath("w/x", real[RO_PASS]) != NULL);
+
+	ATF_REQUIRE(pipe(ready) == 0 && pipe(go) == 0 && pipe(back) == 0);
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		close(s.q);
+		close(s.sroot);
+		close(s.bfd);
+		(void)write(ready[1], "r", 1);
+		if (read(go[0], &c, 1) != 1)
+			_exit(1);
+		memset(&ra, 0, sizeof(ra));
+		ro_fn(&a, &ra);
+		_exit(write(back[1], &ra, sizeof(ra)) == (ssize_t)sizeof(ra) ?
+		    0 : DQT_EXIT_NORESULT);
+	}
+	close(ready[1]);
+	close(go[0]);
+	close(back[1]);
+	ATF_REQUIRE(read(ready[0], &c, 1) == 1);
+	ATF_REQUIRE(dq_attach_starts(s.q, pd, s.sroot, s.sroot) == 0);
+	ATF_REQUIRE(write(go[1], "g", 1) == 1);
+	ATF_REQUIRE(read(a.toparent[0], &apid, sizeof(apid)) == sizeof(apid));
+	ATF_REQUIRE(dqt_read_full(a.toparent[0], &r, sizeof(r)) == sizeof(r));
+
+	/* The test, unattached: real objects show their real paths. */
+	ro_table(apid, r.fd, view);
+	ATF_CHECK_STREQ(real[RO_SWAP], view[RO_SWAP]);
+	ATF_CHECK_STREQ(real[RO_PASS], view[RO_PASS]);
+	ro_kve(apid, r.start, vm);
+	ATF_CHECK_STREQ(real[RO_PASS], vm);
+	ATF_CHECK_EQ(0, ro_lpmap(a.lpfd, apid, r.start, vm));
+	ATF_CHECK_STREQ(real[RO_PASS], vm);
+
+	ATF_REQUIRE(write(a.tochild[1], "g", 1) == 1);
+	got = dqt_read_full(back[0], &ra, sizeof(ra));
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	dqt_require_exit0(status, "A");
+	ATF_REQUIRE_EQ(sizeof(ra), got);
+	DQT_CHECK_ERRNO(0, ra.err[0], "open /a (SWAP)");
+	DQT_CHECK_ERRNO(0, ra.err[1], "openat real");
+	DQT_CHECK_ERRNO(0, ra.err[2], "F_KINFO");
+	DQT_CHECK_ERRNO(0, ra.err[3], "mmap");
+	/*
+	 * T-A10, Q1's default: under a served root a real object shows no
+	 * path by any route (the program saw the backing paths, outside
+	 * its root): empty kf_path and kve_path, and fdescfs ENOENT, as
+	 * when vn_fullpath fails.
+	 */
+	ATF_CHECK_STREQ("", ra.kinfo[RO_SWAP]);
+	ATF_CHECK_STREQ("", ra.kinfo[RO_PASS]);
+	ATF_CHECK_STREQ("", ra.table[RO_SWAP]);
+	ATF_CHECK_STREQ("", ra.table[RO_PASS]);
+	ATF_CHECK_STREQ("", ra.vmmap);
+	DQT_CHECK_ERRNO(0, ra.err[6], "linprocfs maps");
+	ATF_CHECK_STREQ("", ra.lpmap);
+	DQT_CHECK_ERRNO(ENOENT, ra.err[4], "fdescfs link, SWAP");
+	DQT_CHECK_ERRNO(ENOENT, ra.err[5], "fdescfs link, PASS");
+	/*
+	 * linprocfs shows no real path either (review 1 M3; it showed them):
+	 * an fd link is ENOENT, as fdescfs's, and the cwd and root links of
+	 * real directories read "unknown", linprocfs's answer when it has
+	 * no path.
+	 */
+	DQT_CHECK_ERRNO(ENOENT, ra.lperr[0], "linprocfs fd link, SWAP");
+	DQT_CHECK_ERRNO(ENOENT, ra.lperr[1], "linprocfs fd link, PASS");
+	DQT_CHECK_ERRNO(0, ra.lperr[2], "linprocfs cwd of the parent");
+	DQT_CHECK_ERRNO(0, ra.lperr[3], "linprocfs root of the parent");
+	ATF_CHECK_STREQ("unknown", ra.lpcwd);
+	ATF_CHECK_STREQ("unknown", ra.lproot);
+	close(pd);
+	close(a.realdir);
+	close(a.lpfd);
+	close(a.fdescfd);
+	dqt_tree_stop(&s);
+}
+ATF_TC_CLEANUP(real_object_paths_served_root, tc)
+{
+
+	(void)unmount("lp", MNT_FORCE);
+	dqt_umount_fdesc();
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -545,5 +867,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, real_under_served_root);
 	ATF_TP_ADD_TC(tp, viewer_rule);
 	ATF_TP_ADD_TC(tp, revoked_frozen);
+	ATF_TP_ADD_TC(tp, real_object_paths_served_root);
 	return (atf_no_error());
 }

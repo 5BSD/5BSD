@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd November 15, 2026
+.Dd November 23, 2026
 .Dt LIBSERVICE 3
 .Os
 .Sh NAME
@@ -363,15 +363,25 @@ separates buffer and descriptor capacities from returned lengths and includes
 authenticated sender metadata.
 .Vt struct service_call_options
 sets a bounded timeout.
-Finite waits use one monotonic deadline, including condition waits behind
-another dispatcher; wall-clock adjustments do not extend that budget.
+Finite waits use one monotonic deadline for the whole call: the wait for
+room to send, the wait for the reply, and waits behind the thread receiving
+for the session; wall-clock adjustments and restarts after a signal do not
+extend that budget.
 This is a waiting budget, not a guarantee of scheduling latency under load.
+A signal behaves as for a slow system call in the thread sleeping in the
+kernel: with
+.Dv SA_RESTART
+the wait restarts, otherwise the call fails with
+.Er EINTR ;
+threads waiting behind it are not interrupted
+.Pq Xr service_runtime 3 .
 .Pp
 Concurrent calls share one dispatcher and are correlated by channel reply
 tokens.
 Reply reordering cannot deliver one call's response to another.
-A timed-out or canceled call discards its late reply and closes all attached
-descriptors.
+A timed-out, interrupted or canceled call discards its late reply and closes
+all attached descriptors; a request that was sent may still have been acted
+on by the provider.
 Peer death completes every outstanding call.
 .Pp
 When a typed library detects a malformed service-protocol reply,
@@ -381,6 +391,10 @@ atomically marks the session terminal with a positive
 value.
 The first terminal error wins, concurrent waiters are awakened, and every
 later call returns that error without sending another message.
+It also ends the session's channel
+.Pq Dv MAC_CAPABILITY_TERMINATE ,
+which wakes a thread asleep in the kernel on it; the provider sees the
+session close.
 This lets typed protocol code fail closed without racing session destruction;
 transport framing and concurrency remain owned by
 .Nm .
@@ -390,8 +404,17 @@ On
 the reply reports the required payload length and descriptor count; received
 descriptors remain library-owned and are closed.
 .Fn service_session_close
-cancels active waiters, closes queued event descriptors, and consumes the
-session.
+cancels active waiters
+.Pq Er ECANCELED ,
+closes queued event descriptors, and consumes the session.
+With calls in progress it ends the channel first, as
+.Fn service_session_fail
+does, to wake a thread asleep in the kernel on it.
+.Fn service_session_create
+refuses
+.Pq Er ENOTCAPABLE
+a descriptor whose ioctl rights exclude
+.Dv MAC_CAPABILITY_TERMINATE .
 .Sh PROCESS CONTEXT AND ATTRIBUTION
 UNIX login providers establish UNIX credentials without issuing software
 attributes or replacing the discovery channel for each account.
@@ -525,6 +548,7 @@ for status and adaptation requirements.
 .Xr libfilesystemcmp 3 ,
 .Xr libnamespacecmp 3 ,
 .Xr libvmcmp 3 ,
+.Xr service_runtime 3 ,
 .Xr capsicum 4 ,
 .Xr BSDExtension 8 ,
 .Xr BSDFilesystem 8 ,

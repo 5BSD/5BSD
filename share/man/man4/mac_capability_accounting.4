@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd June 5, 2026
+.Dd November 17, 2026
 .Dt MAC_CAPABILITY_ACCOUNTING 4
 .Os
 .Sh NAME
@@ -172,11 +172,6 @@ and racct limit violations.
 Request too small, reply buffer too small, invalid resource constant,
 invalid operation code, or invalid signal number for
 .Dv ACCT_RULE_SIGNAL .
-.It Bq Er ENOSYS
-The kernel was booted with
-.Va kern.racct.enable
-set to 0: resource accounting is disabled; connecting to the service (after
-the privilege check) and every operation are refused.
 .It Bq Er EPERM
 The caller lacks
 .Dv PRIV_ACCT

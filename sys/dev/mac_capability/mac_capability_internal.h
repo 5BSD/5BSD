@@ -281,9 +281,12 @@ int	mac_capability_call_intercept_locked(struct mac_capability_instance *s,
 	    struct mac_capability_msg *msg);
 void	mac_capability_call_cancel_locked(struct mac_capability_instance *s,
 	    uint64_t token);
-void	mac_capability_instance_drain_txq(struct mac_capability_instance *s);
-void	mac_capability_instance_drain_rxq(struct mac_capability_instance *s);
-void	mac_capability_free_msgq(struct mac_capability_msgq *q);
+void	mac_capability_instance_drain_rxq(struct mac_capability_instance *s,
+	    struct mac_capability_msgq *q);
+void	mac_capability_free_msgq_deferred(struct mac_capability_msgq *q);
+void	mac_capability_reap_init(void);
+void	mac_capability_reap_uninit(void);
+void	mac_capability_reap_drain(void);
 void	mac_capability_service_free(struct mac_capability_service *svc);
 extern const struct fileops mac_capability_instance_ops;
 
@@ -311,6 +314,7 @@ extern volatile u_int mac_capability_test_issuer_live;
 u_int	mac_capability_test_issuer_state(void);
 void	mac_capability_test_issuer_anchor(void);
 int	mac_capability_test_issuer_wait_live(u_int);
+void	mac_capability_test_issuer_park(pid_t pid, size_t len);
 #endif
 
 #endif /* _KERNEL */

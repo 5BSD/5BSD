@@ -558,3 +558,9 @@ MK_SYSCONS= no
 .error Old DRM2 has been removed; use the maintained DRM hardware packages
 .endif
 MK_MODULE_DRM2= no
+
+# BSM audit is mandatory in 5BSD, as options AUDIT is in every kernel
+# (sys/conf/mandatory-options): refuse a world built without it.
+.if ${MK_AUDIT} == "no"
+.error WITHOUT_AUDIT is refused in 5BSD: BSM audit is mandatory (sys/conf/mandatory-options)
+.endif

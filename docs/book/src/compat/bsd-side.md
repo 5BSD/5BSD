@@ -27,7 +27,7 @@ GENERIC is the 5BSD kernel; there is no overlay configuration. The mac_capabilit
 | Line in GENERIC | Effect |
 |---|---|
 | `options HWT_HOOKS` | hardware trace hooks for hwt(4) and bsdtrace(8) |
-| `options RACCT` without `RACCT_DEFAULT_TO_DISABLED` | resource accounting is on; `kern.racct.enable` defaults to 1 |
+| `options RACCT`; `RACCT_DEFAULT_TO_DISABLED` removed | resource accounting is always on; `kern.racct.enable=0` is ignored with a console notice and the sysctl reads 1 |
 | `device vsock`, `device virtio_vsock` | the `AF_VSOCK` domain and its VirtIO transport |
 | `options BHYVE_SNAPSHOT` | checkpoint and restore in bhyve(8) |
 | no `COMPAT_FREEBSD32` option | no 32-bit binaries |

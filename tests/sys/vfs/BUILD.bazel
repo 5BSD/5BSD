@@ -10,17 +10,17 @@ _PLATFORM = ["@platforms//os:freebsd"] + select({
     "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
     "//conditions:default": ["@platforms//:incompatible"],
 })
-_ATF = ['lookup_cap_dotdot', 'lookup_cap_dotdot_mount']
+_ATF = ['lookup_cap_dotdot', 'lookup_cap_dotdot_mount', 'ufs_suspend_atime', 'ufs_quota_lock_order']
 _PLAIN = []
 _TAP = []
 _HELPERS = []
 _ATF_SHELL = ['abi_root_symlink']
 _TAP_SHELL = ['trailing_slash']
-_DEPS = {}
-_SHARED = {}
+_DEPS = {'ufs_suspend_atime': ['//lib/libthr:thr']}
+_SHARED = {'ufs_suspend_atime': ['//lib/libthr:thr_shared']}
 _GLOBAL_DEPS = ['//tests:suite_macros']
 _GLOBAL_SHARED = []
-_METADATA = {}
+_METADATA = {"ufs_suspend_atime": {"is_exclusive": "true"}, "ufs_quota_lock_order": {"is_exclusive": "true"}}
 _DIRECTORY = "/usr/tests/sys/vfs"
 
 [cc_binary(name = program, srcs = [program + ".c"],

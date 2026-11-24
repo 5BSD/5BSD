@@ -1560,6 +1560,7 @@ dev/dq/dq_resolve.c		optional dq
 dev/dq/dq_dir.c			optional dq
 dev/dq/dq_standing.c		optional dq
 dev/dq/dq_testopen.c		optional dq dq_test_open
+dev/dq/dq_faultinj.c		optional dq dq_fault_injection
 dq_resolve_ledger.chk		standard				   \
 	dependency	"$S/tools/dq_resolve_ledger.sh $S/dev/dq/dq_resolve_ledger.txt .PHONY" \
 	compile-with	"sh $S/tools/dq_resolve_ledger.sh check $S $S/dev/dq/dq_resolve_ledger.txt && touch $@" \
@@ -3793,6 +3794,7 @@ kern/kern_lockf.c		standard
 kern/kern_lockstat.c		optional kdtrace_hooks
 kern/kern_loginclass.c		standard
 kern/kern_malloc.c		standard
+kern/kern_mandatory.c		standard
 kern/kern_mbuf.c		standard
 kern/kern_membarrier.c		standard
 kern/kern_mib.c			standard

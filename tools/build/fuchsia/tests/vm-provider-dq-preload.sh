@@ -15,7 +15,7 @@ grep -q imgact_binmisc_load "$work/dq.sh"
 loader() {
 	env -i PATH="$PATH" suites="$1" sh -c ". '$work/dq.sh'; printf '%s\n' \"\$dq_loader\""
 }
-for s in "sys/dq" "sys/dq lib/libdq" "lib/libdq sys/dq" \
+for s in "sys" "sys/dq" "sys/dq lib/libdq" "lib/libdq sys/dq" \
     "sys/dq/dq_resolve_test" "sys/dq/dq_resolve_test:attached_kernel_paths"; do
 	loader "$s" | grep -qx 'imgact_binmisc_load="YES"' ||
 	    { echo "FAIL: no imgact_binmisc for \"$s\""; exit 1; }
@@ -25,7 +25,8 @@ done
 for s in "sys/mac_capability/authority_issuer_probe_test" \
     "sys/mac_capability/authority_test_issuer_anchor_test:anchor" \
     "sys/mac_capability/mac_capability_channel_test" "lib/libservice" \
-    "lib/libservice/service_ambient_test:full_route_signal_eintr"; do
+    "lib/libservice/service_ambient_test:full_route_signal_eintr" \
+    "lib/libservice/session_wait_test"; do
 	[ "$(loader "$s")" = 'dtraceall_load="YES"' ] ||
 	    { echo "FAIL: no dtraceall alone for \"$s\""; exit 1; }
 done
@@ -41,12 +42,15 @@ dtraceall_load="YES"
 filemon_load="YES"'
 [ "$(loader "sys/mac_capability/cap_exclusion_test sys/dq/dq_attach_test")" = "$all" ] ||
     { echo "FAIL: dq and cap_exclusion modules do not add up"; exit 1; }
+[ "$(loader "sys")" = "$all" ] ||
+    { echo "FAIL: a run of all of sys does not get every module"; exit 1; }
 for s in "sys/file" "lib/libdq" "sys/dq_regress" "usr.sbin/BSDTime" \
     "lib/libservice/runtime_test" \
-    "sys/mac_capability/mac_capability_test"; do
+    "sys/mac_capability/mac_capability_test" "sys/vfs" \
+    "sys/vfs/ufs_suspend_atime"; do
 	[ -z "$(loader "$s")" ] ||
 	    { echo "FAIL: dq modules for \"$s\""; exit 1; }
 done
 # Written to the image's loader.conf ahead of LOADER_EXTRA.
 grep -q '^\[ -z "\$dq_loader" \] || printf .*"\$x/loader.conf"$' "$root/vm-provider.sh"
-echo 'PASS the dq suites get imgact_binmisc and dtraceall, the issuer-decision probe programs and the sched:::sleep tests dtraceall, sys/mac_capability and cap_exclusion_test dtraceall and filemon, the lists add up, others nothing'
+echo 'PASS the dq suites get imgact_binmisc and dtraceall, the issuer-decision probe programs and the sched:::sleep tests dtraceall, sys/mac_capability and cap_exclusion_test dtraceall and filemon, all of sys all three, the lists add up, others nothing'

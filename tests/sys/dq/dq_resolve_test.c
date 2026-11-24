@@ -393,7 +393,9 @@ ATF_TC_HEAD(reply_validation, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "a RESOLVE reply other than an errno "
 	    "with no body or exactly PASS (another kind, a padded PASS, a body "
-	    "with an errno) is EINVAL and the event stays in flight");
+	    "with an errno, a post-operation block) is EINVAL and the event "
+	    "stays in flight; an FD answer with a post-operation block mints "
+	    "nothing");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(reply_validation, tc)
@@ -402,8 +404,14 @@ ATF_TC_BODY(reply_validation, tc)
 	struct dqt_achild ch;
 	struct one_res r;
 	struct dq_resolve_reply rr;
+	struct {
+		struct dq_resolve_reply	rr;
+		struct dq_resolve_mint	rm;
+	} fdr;
+	struct dq_postop_attr pa;
+	struct dq_stats st0, st1;
 	char big[16];
-	uint64_t id;
+	uint64_t id, oid;
 
 	dqt_init(&c);
 	dqt_resolve_hold(&c, "rt-deny", 0);
@@ -434,6 +442,31 @@ ATF_TC_BODY(reply_validation, tc)
 	errno = 0;
 	ATF_CHECK_EQ(-1, dq_reply(c.q, id, 0, NULL, 0));
 	ATF_CHECK_EQ(EINVAL, errno);
+	/*
+	 * A RESOLVE has no post-operation block.  A PASS with one is EINVAL,
+	 * and so is an FD answer with one, refused before the mint: no id is
+	 * written and no object is made.
+	 */
+	memset(&pa, 0, sizeof(pa));
+	memset(&rr, 0, sizeof(rr));
+	rr.drr_kind = DQ_RESOLVE_PASS;
+	errno = 0;
+	ATF_CHECK_EQ(-1, dq_reply_postop(c.q, id, &rr, sizeof(rr), &pa));
+	ATF_CHECK_EQ(EINVAL, errno);
+	memset(&fdr, 0, sizeof(fdr));
+	fdr.rr.drr_kind = DQ_RESOLVE_FD;
+	fdr.rm.drm_kind = DQ_KIND_FILE;
+	fdr.rm.drm_ident.di_mode = S_IFREG | 0644;
+	dq_policy_default(&fdr.rm.drm_policy);
+	oid = UINT64_MAX;
+	fdr.rm.drm_objectp = &oid;
+	dqt_stats(&c, &st0);
+	errno = 0;
+	ATF_CHECK_EQ(-1, dq_reply_postop(c.q, id, &fdr, sizeof(fdr), &pa));
+	ATF_CHECK_EQ(EINVAL, errno);
+	ATF_CHECK_EQ(UINT64_MAX, oid);
+	dqt_stats(&c, &st1);
+	ATF_CHECK_EQ(st0.ds_objects_total, st1.ds_objects_total);
 	/* Still in flight: answer it, then let the rest through. */
 	dqt_resolve_hold(&c, "", 0);
 	ATF_CHECK_EQ(0, dq_reply_resolve_errno(c.q, id, EROFS));
@@ -545,6 +578,7 @@ on_usr1(int sig __unused)
 struct sig_arg {
 	int		 restart;	/* SA_RESTART */
 	int		 rename;	/* rename rt-ren-a rt-ren-b */
+	int		 mkdir;		/* mkdir rt-mkd */
 	int		 swap;		/* stat(swapbuf) */
 };
 
@@ -564,6 +598,8 @@ child_signal(void *arg, void *result)
 	memcpy(swapbuf, "rt-swap-A", sizeof("rt-swap-A"));
 	if (a->rename)
 		r->r[0].rv = rename("rt-ren-a", "rt-ren-b");
+	else if (a->mkdir)
+		r->r[0].rv = mkdir("rt-mkd", 0755);
 	else if (a->swap)
 		r->r[0].rv = stat(swapbuf, &sb);
 	else
@@ -571,13 +607,17 @@ child_signal(void *arg, void *result)
 	r->r[0].err = r->r[0].rv == -1 ? errno : 0;
 }
 
-/* Hold the first event matching match, release later ones, signal. */
+/*
+ * Hold the first event matching match, release later ones, signal.  The
+ * queue is DQ_QF_INTR: its lookups end on a signal (an NFS intr mount).
+ */
 static void
 signal_during(struct dqt_ctl *c, struct dqt_achild *ch, struct sig_arg *a,
     const char *match, struct one_res *r)
     __requires_unlocked(c->mtx)
 {
 
+	ATF_REQUIRE_EQ(0, dq_queue_set_flags(c->q, DQ_QF_INTR, 0, NULL));
 	dqt_resolve_hold(c, match, 0);
 	dqt_attach_spawn(c, ch, child_signal, a);
 	ATF_REQUIRE(dqt_wait_held(c, 1, DQT_WAIT_MS));
@@ -591,16 +631,86 @@ signal_during(struct dqt_ctl *c, struct dqt_achild *ch, struct sig_arg *a,
 	dqt_unlock(c);
 }
 
-ATF_TC(signal_restart_rules);
-ATF_TC_HEAD(signal_restart_rules, tc)
+/*
+ * The default (D192): the held lookup is signalled, then answered PASS
+ * after 300 ms; the call completes with that answer, one event, no
+ * INTERRUPT.
+ */
+static void
+signal_unintr(struct dqt_ctl *c, struct dqt_achild *ch, struct sig_arg *a,
+    const char *match, struct one_res *r)
+    __requires_unlocked(c->mtx)
 {
-	atf_tc_set_md_var(tc, "descr", "a caught signal during a lookup's first "
-	    "consultation: with SA_RESTART the syscall restarts and posts again "
-	    "(the abandoned event gets INTERRUPT), without it EINTR; rename "
-	    "never restarts (EINTR, nothing renamed)");
+	uint64_t id;
+
+	dqt_resolve_hold(c, match, 0);
+	dqt_attach_spawn(c, ch, child_signal, a);
+	ATF_REQUIRE(dqt_wait_held(c, 1, DQT_WAIT_MS));
+	dqt_resolve_hold(c, "", 0);
+	ATF_REQUIRE_EQ(0, pdkill(ch->pd, SIGUSR1));
+	dqt_msleep(300);
+	dqt_lock(c);
+	ATF_CHECK_EQ(0, c->ninterrupted);
+	id = c->held[0].id;
+	dqt_unlock(c);
+	ATF_REQUIRE_EQ(0, dq_reply_resolve_pass(c->q, id));
+	memset(r, 0, sizeof(*r));
+	dqt_attach_collect(ch, r, sizeof(*r));
+	dqt_lock(c);
+	ATF_CHECK_EQ(0, c->ninterrupted);
+	dqt_unlock(c);
+}
+
+ATF_TC(signal_lookup_uninterruptible);
+ATF_TC_HEAD(signal_lookup_uninterruptible, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a caught signal, with or without "
+	    "SA_RESTART, during a lookup's consultation does not end it: the "
+	    "call completes with the controller's answer, as a local file "
+	    "system's lookup (D192)");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(signal_restart_rules, tc)
+ATF_TC_BODY(signal_lookup_uninterruptible, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_achild ch;
+	struct sig_arg a;
+	struct one_res r;
+	int fd;
+
+	memset(&a, 0, sizeof(a));
+	for (a.restart = 0; a.restart <= 1; a.restart++) {
+		dqt_init(&c);
+		signal_unintr(&c, &ch, &a, "rt-sig", &r);
+		ATF_CHECK_EQ(ENOENT, r.r[0].err);	/* PASSed, once */
+		ATF_CHECK_EQ(1, dqt_count_resolve(&c, "rt-sig", DQ_ROP_STAT));
+		dqt_fini(&c);
+	}
+
+	fd = open("rt-ren-a", O_CREAT | O_WRONLY, 0644);
+	ATF_REQUIRE(fd != -1);
+	(void)close(fd);
+	dqt_init(&c);
+	a.restart = 0;
+	a.rename = 1;
+	signal_unintr(&c, &ch, &a, "rt-ren", &r);
+	ATF_CHECK_EQ_MSG(0, r.r[0].rv, "rename: %s", strerror(r.r[0].err));
+	ATF_CHECK_EQ(-1, access("rt-ren-a", F_OK));
+	ATF_CHECK_EQ(0, access("rt-ren-b", F_OK));
+	dqt_fini(&c);
+	(void)unlink("rt-ren-b");
+}
+
+ATF_TC(signal_lookup_intr);
+ATF_TC_HEAD(signal_lookup_intr, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "DQ_QF_INTR: a caught signal during a "
+	    "lookup's first consultation: with SA_RESTART the syscall restarts "
+	    "and posts again (the abandoned event gets INTERRUPT), without it "
+	    "EINTR; rename never restarts (EINTR, nothing renamed)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(signal_lookup_intr, tc)
 {
 	struct dqt_ctl c;
 	struct dqt_achild ch;
@@ -638,13 +748,142 @@ ATF_TC_BODY(signal_restart_rules, tc)
 	dqt_fini(&c);
 }
 
+/*
+ * DQ_QF_INTR is not exempt from the rule that a mutation the controller
+ * received is never restarted by the kernel (owner, 2026-11-23).  mkdir
+ * may restart from its first consultation while the event is undelivered;
+ * once the controller has it, a signal ends the call with EINTR whatever
+ * SA_RESTART says.  A kernel that restarts it posts the MKDIR again.
+ */
+ATF_TC(signal_mutation_intr);
+ATF_TC_HEAD(signal_mutation_intr, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "DQ_QF_INTR: an SA_RESTART signal "
+	    "while the controller holds a received mkdir consultation ends "
+	    "the call with EINTR; it is not restarted, so the controller "
+	    "sees one MKDIR and nothing is made (owner, 2026-11-23)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(signal_mutation_intr, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_achild ch;
+	struct sig_arg a;
+	struct one_res r;
+
+	dqt_init(&c);
+	memset(&a, 0, sizeof(a));
+	a.restart = 1;
+	a.mkdir = 1;
+	signal_during(&c, &ch, &a, "rt-mkd", &r);
+	ATF_CHECK_EQ_MSG(-1, r.r[0].rv, "the received mkdir was restarted");
+	ATF_CHECK_EQ(EINTR, r.r[0].err);
+	ATF_CHECK_EQ(1, dqt_count_resolve(&c, "rt-mkd", DQ_ROP_MKDIR));
+	ATF_CHECK_EQ(-1, access("rt-mkd", F_OK));
+	dqt_fini(&c);
+	(void)rmdir("rt-mkd");
+}
+
+/*
+ * A sibling single-threading the process to the user boundary is not a
+ * signal.  Under DQ_QF_INTR too, a mkdir consultation the controller
+ * received waits for its answer there (D404, D193): it is neither
+ * restarted nor failed with an EINTR that no signal caused.
+ */
+struct bnd_arg {
+	int		 go[2];
+};
+
+static struct one_res *bnd_r;
+
+static void *
+bnd_mkdir(void *arg __unused)
+{
+
+	DQT_RR(bnd_r->r[0], mkdir("rt-bmk", 0755));
+	return (NULL);
+}
+
+static void
+child_boundary(void *arg, void *result)
+{
+	struct bnd_arg *a = arg;
+	pthread_t thr;
+	char ch;
+
+	bnd_r = result;
+	if (pthread_create(&thr, NULL, bnd_mkdir, NULL) != 0)
+		_exit(70);
+	/* The parent has seen the controller hold the MKDIR. */
+	if (read(a->go[0], &ch, 1) != 1)
+		_exit(71);
+	DQT_RR(bnd_r->r[1], execl("/nonexistent/dq_resolve_test",
+	    "dq_resolve_test", (char *)NULL));
+	(void)pthread_join(thr, NULL);
+}
+
+ATF_TC(boundary_mutation_intr);
+ATF_TC_HEAD(boundary_mutation_intr, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "DQ_QF_INTR: a mkdir consultation the "
+	    "controller received waits for its answer while a sibling's "
+	    "failing execve single-threads the process; the controller sees "
+	    "one MKDIR and no INTERRUPT, and mkdir returns its answer");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(boundary_mutation_intr, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_achild ch;
+	struct bnd_arg a;
+	struct one_res r;
+	int i, n, status;
+
+	ATF_REQUIRE_EQ(0, pipe(a.go));
+	dqt_init(&c);
+	ATF_REQUIRE_EQ(0, dq_queue_set_flags(c.q, DQ_QF_INTR, 0, NULL));
+	dqt_resolve_hold(&c, "rt-bmk", 0);
+	dqt_attach_spawn(&c, &ch, child_boundary, &a);
+	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	ATF_REQUIRE_EQ(1, write(a.go[1], "g", 1));
+	/*
+	 * A kernel that gives the consultation up never sleeps there: it
+	 * fails the mkdir, or restarts it and the second MKDIR is held.
+	 */
+	ATF_CHECK_MSG(dqt_wait_wmesg(ch.pid, "dqbndy", DQT_WAIT_MS),
+	    "the received mkdir did not wait for its answer at the boundary");
+	dqt_resolve_hold(&c, "", 0);
+	dqt_lock(&c);
+	n = c.nheld;
+	dqt_unlock(&c);
+	for (i = 0; i < n; i++)
+		(void)dq_reply_resolve_pass(c.q, dqt_held_id(&c, i));
+	memset(&r, 0, sizeof(r));
+	status = dqt_attach_wait(&ch, &r, sizeof(r));
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "status %#x", status);
+	ATF_CHECK_EQ_MSG(0, r.r[0].rv, "mkdir: %s", strerror(r.r[0].err));
+	ATF_CHECK_EQ(-1, r.r[1].rv);
+	ATF_CHECK_EQ(ENOENT, r.r[1].err);
+	ATF_CHECK_EQ(1, dqt_count_resolve(&c, "rt-bmk", DQ_ROP_MKDIR));
+	dqt_lock(&c);
+	ATF_CHECK_EQ(0, c.ninterrupted);
+	dqt_unlock(&c);
+	ATF_CHECK_EQ(0, access("rt-bmk", F_OK));
+	(void)close(a.go[0]);
+	(void)close(a.go[1]);
+	dqt_fini(&c);
+	(void)rmdir("rt-bmk");
+}
+
 ATF_TC(path_swap_reconsults);
 ATF_TC_HEAD(path_swap_reconsults, tc)
 {
-	atf_tc_set_md_var(tc, "descr", "B1: the path buffer changes between "
-	    "the first consultation and the restart (a signal handler rewrites "
-	    "it): the restart posts a second event with the new bytes; the "
-	    "first is never PASSed");
+	atf_tc_set_md_var(tc, "descr", "B1, DQ_QF_INTR: the path buffer "
+	    "changes between the first consultation and the restart (a signal "
+	    "handler rewrites it): the restart posts a second event with the "
+	    "new bytes; the first is never PASSed");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(path_swap_reconsults, tc)
@@ -692,21 +931,33 @@ child_depth(void *arg, void *result)
 	r->r[1].rv = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 
+/* Wait until the queue's waited posts have waited for a slot n times. */
 static bool
-pred_dropped(const struct dq_stats *st, uintptr_t n)
+full_waits_reach(struct dqt_ctl *c, uint64_t n, int ms)
 {
+	struct dq_stats2 st;
+	int64_t end;
 
-	return (st->ds_events_dropped >= n);
+	end = dqt_now_ms() + ms;
+	for (;;) {
+		dqt_stats2(c, &st);
+		if (st.ds2_full_waits >= n)
+			return (true);
+		if (dqt_now_ms() >= end)
+			return (false);
+		dqt_msleep(5);
+	}
 }
 
-ATF_TC(depth_exhausted);
-ATF_TC_HEAD(depth_exhausted, tc)
+ATF_TC(depth_full_waits);
+ATF_TC_HEAD(depth_full_waits, tc)
 {
-	atf_tc_set_md_var(tc, "descr", "a RESOLVE posted to a full queue fails "
-	    "the lookup with EIO at once, counted as a drop (sequence gap)");
+	atf_tc_set_md_var(tc, "descr", "a RESOLVE that finds the queue full "
+	    "waits for a slot and then posts (D205; it failed EIO at once and "
+	    "counted a drop)");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(depth_exhausted, tc)
+ATF_TC_BODY(depth_full_waits, tc)
 {
 	struct dqt_ctl c;
 	struct dqt_achild ch;
@@ -721,15 +972,15 @@ ATF_TC_BODY(depth_exhausted, tc)
 	dqt_attach_spawn(&c, &ch, child_depth, &a);
 	ATF_REQUIRE(dqt_wait_stats(&c, dqt_pred_current, 1, DQT_WAIT_MS));
 	dqt_sync_post(a.s.tochild[1]);
-	/* The child's own lookup is refused at once (a drop). */
-	ATF_CHECK(dqt_wait_stats(&c, pred_dropped, 1, DQT_WAIT_MS));
-	dqt_stats(&c, &st);
-	ATF_CHECK(st.ds_events_dropped >= 1);
+	/* The child's own lookup waits for the slot. */
+	ATF_CHECK(full_waits_reach(&c, 1, DQT_WAIT_MS));
 	dqt_resume(&c);
 	memset(&r, 0, sizeof(r));
 	dqt_attach_collect(&ch, &r, sizeof(r));
-	ATF_CHECK_EQ(EIO, r.r[0].err);
+	ATF_CHECK_EQ(ENOENT, r.r[0].err);	/* posted, then PASSed */
 	ATF_CHECK_EQ(ENOENT, r.r[1].rv);
+	dqt_stats(&c, &st);
+	ATF_CHECK_EQ(0, st.ds_events_dropped);
 	dqt_fini(&c);
 }
 
@@ -1328,8 +1579,8 @@ ATF_TC_CLEANUP(kernel_consumer_rows, tc)
 /*
  * kernel_consumer_quotaon: the quota file named to quotactl(Q_QUOTAON) is
  * opened by the file system (ufs_quota.c quotaon), a class-2 consumer.
- * It needs a kernel with options QUOTA, which the GENERIC test kernel does
- * not have; that is the case's one skip, taken before anything is done
+ * It needs a kernel with options QUOTA, as GENERIC has; a kernel without it
+ * is the case's one skip, taken before anything is done
  * (kern.features.ufs_quota, set by options QUOTA).  With it, the case
  * makes its own UFS (md swap, newfs, mount -o userquota) and accepts only
  * success.
@@ -1380,8 +1631,9 @@ ATF_TC_BODY(kernel_consumer_quotaon, tc)
 
 	len = sizeof(on);
 	if (sysctlbyname("kern.features.ufs_quota", &on, &len, NULL, 0) != 0)
-		atf_tc_skip("kernel without options QUOTA (no "
-		    "kern.features.ufs_quota): quotaon cannot open a file");
+		atf_tc_skip("DEFERRED_QUOTA_KERNEL_TIER: kernel without "
+		    "options QUOTA (no kern.features.ufs_quota): quotaon "
+		    "cannot open a file");
 	ATF_REQUIRE(getcwd(cwd, sizeof(cwd)) != NULL);
 	ATF_REQUIRE_EQ_MSG(0, run_cmd("mdconfig -a -t swap -s 32m", out,
 	    sizeof(out)), "mdconfig: %s", out);
@@ -1872,16 +2124,23 @@ child_some_lookups(void *arg __unused, void *result)
 }
 
 /*
- * The standing counters took two of the three reserved slots (review 2
- * N1): with no rule installed they and the slot left read 0, on a fresh
- * queue and after attached lookups, all of which post.
+ * With no rule installed the standing counters and every reserved word
+ * read 0, on a fresh queue and after attached lookups, all of which post
+ * (review 2 N1; the struct grew by one reserved line, 2026-11-19).
  */
 static void
 check_stats2_zero(const struct dq_stats2 *st, const char *when)
 {
 
-	ATF_CHECK_EQ_MSG(0, st->ds2_reserved[0], "%s: reserved[0] %ju", when,
-	    (uintmax_t)st->ds2_reserved[0]);
+	u_int i;
+
+	ATF_CHECK_EQ_MSG(0, st->ds2_reserved_abi, "%s: reserved_abi %ju",
+	    when, (uintmax_t)st->ds2_reserved_abi);
+	ATF_CHECK_EQ_MSG(0, st->ds2_reserved_notes, "%s: reserved_notes %ju",
+	    when, (uintmax_t)st->ds2_reserved_notes);
+	for (i = 0; i < nitems(st->ds2_reserved); i++)
+		ATF_CHECK_EQ_MSG(0, st->ds2_reserved[i], "%s: reserved[%u] %ju",
+		    when, i, (uintmax_t)st->ds2_reserved[i]);
 	ATF_CHECK_EQ_MSG(0, st->ds2_standing_pass, "%s: standing pass %ju",
 	    when, (uintmax_t)st->ds2_standing_pass);
 	ATF_CHECK_EQ_MSG(0, st->ds2_standing_deny, "%s: standing deny %ju",
@@ -1891,8 +2150,8 @@ check_stats2_zero(const struct dq_stats2 *st, const char *when)
 ATF_TC(stats2_reserved_zero);
 ATF_TC_HEAD(stats2_reserved_zero, tc)
 {
-	atf_tc_set_md_var(tc, "descr", "struct dq_stats2 is 320 bytes; with "
-	    "no standing rule its standing counters and its reserved counter "
+	atf_tc_set_md_var(tc, "descr", "struct dq_stats2 is 400 bytes; with "
+	    "no standing rule its standing counters and its reserved words "
 	    "read 0 on a fresh queue and after attached lookups");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
@@ -1903,8 +2162,9 @@ ATF_TC_BODY(stats2_reserved_zero, tc)
 	struct one_res r;
 	struct dq_stats2 st;
 
-	ATF_REQUIRE_EQ(320, sizeof(struct dq_stats2));
-	ATF_REQUIRE_EQ(1, nitems(st.ds2_reserved));
+	ATF_REQUIRE_EQ(400, sizeof(struct dq_stats2));
+	ATF_REQUIRE_EQ(DQ_STATS2_RESERVED, nitems(st.ds2_reserved));
+	ATF_REQUIRE_EQ(8, DQ_STATS2_RESERVED);
 	dqt_init(&c);
 	dqt_stats2(&c, &st);
 	ATF_CHECK_EQ(sizeof(st), st.ds2_size);
@@ -1926,9 +2186,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, reply_validation);
 	ATF_TP_ADD_TC(tp, deadline_eio);
 	ATF_TP_ADD_TC(tp, controller_exit_fails_closed);
-	ATF_TP_ADD_TC(tp, signal_restart_rules);
+	ATF_TP_ADD_TC(tp, signal_lookup_uninterruptible);
+	ATF_TP_ADD_TC(tp, signal_lookup_intr);
+	ATF_TP_ADD_TC(tp, signal_mutation_intr);
+	ATF_TP_ADD_TC(tp, boundary_mutation_intr);
 	ATF_TP_ADD_TC(tp, path_swap_reconsults);
-	ATF_TP_ADD_TC(tp, depth_exhausted);
+	ATF_TP_ADD_TC(tp, depth_full_waits);
 	ATF_TP_ADD_TC(tp, i5_no_new_privileges);
 	ATF_TP_ADD_TC(tp, two_path_calls);
 	ATF_TP_ADD_TC(tp, slot_revalidation);

@@ -5,14 +5,19 @@
  *
  * Deadlines (design 15, D3): an unanswered event fails the requester with
  * EIO when the object's deadline passes; dp_deadline_ms = 0 waits for the
- * reply; SIGKILL always breaks a wait (I12).
+ * reply; SIGKILL always breaks a wait (I12).  The withdraw_* cases pin how
+ * both waited posts give an event up (pending or delivered, deadline or
+ * signal).
  */
 
 #include <sys/param.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 
 #include <atf-c.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
@@ -282,6 +287,581 @@ ATF_TC_BODY(sigkill_breaks_wait, tc)
 	(void)close(oracle);
 }
 
+/*
+ * T-R03: the quota sleep before a post.  QUOTA_HOLDERS threads of the
+ * child pread the first object and are held unanswered; once the
+ * controller holds them all, the child's main thread preads the second
+ * object (the same one for the per-object quota) and times the call.
+ * SIGALRM, with a handler installed without SA_RESTART, arrives after
+ * alarm_s seconds (0: none); the holders block it, so it interrupts the
+ * main thread.
+ */
+#define	QUOTA_HOLDERS	2
+
+struct quota_arg {
+	int		 hold_fd;	/* the holders' object */
+	int		 fd;		/* the timed read's */
+	int		 go[2];		/* the test says: all held */
+	unsigned	 alarm_s;
+};
+
+static void
+quota_alarm(int sig __unused)
+{
+}
+
+static void *
+quota_holder(void *arg)
+{
+	unsigned char buf[16];
+
+	(void)pread(*(int *)arg, buf, sizeof(buf), 0);
+	return (NULL);
+}
+
+static void
+child_quota_read(void *argp, void *result)
+{
+	struct quota_arg *a = argp;
+	struct timed_res *r = result;
+	struct sigaction sa;
+	pthread_t thr[QUOTA_HOLDERS];
+	sigset_t set, oset;
+	unsigned char buf[16];
+	long start;
+	int i;
+	char c;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = quota_alarm;
+	(void)sigaction(SIGALRM, &sa, NULL);
+	sigemptyset(&set);
+	sigaddset(&set, SIGALRM);
+	(void)pthread_sigmask(SIG_BLOCK, &set, &oset);
+	for (i = 0; i < QUOTA_HOLDERS; i++)
+		(void)pthread_create(&thr[i], NULL, quota_holder, &a->hold_fd);
+	(void)pthread_sigmask(SIG_SETMASK, &oset, NULL);
+	if (read(a->go[0], &c, 1) != 1)
+		_exit(DQT_EXIT_NOGO);
+	if (a->alarm_s != 0)
+		(void)alarm(a->alarm_s);
+	start = dqt_now_ms();
+	r->rr.rv = pread(a->fd, buf, sizeof(buf), 0);
+	r->rr.err = r->rr.rv == -1 ? errno : 0;
+	r->elapsed_ms = dqt_now_ms() - start;
+	(void)alarm(0);
+	/* The holders end with the process. */
+}
+
+static void
+quota_run(struct dqt_ctl *c, struct quota_arg *a, struct timed_res *r)
+{
+	struct dqt_child ch;
+
+	ATF_REQUIRE(pipe(a->go) == 0);
+	dqt_spawn(&ch, child_quota_read, a);
+	ATF_REQUIRE(dqt_wait_held(c, QUOTA_HOLDERS, DQT_WAIT_MS));
+	ATF_REQUIRE(write(a->go[1], "g", 1) == 1);
+	dqt_collect(&ch, r, sizeof(*r));
+	(void)close(a->go[0]);
+	(void)close(a->go[1]);
+}
+
+#define	QUOTA_REQUESTER	"kern.dq.max_inflight_per_requester"
+#define	QUOTA_OBJECT	"kern.dq.max_inflight_per_object"
+
+ATF_TC_WITH_CLEANUP(quota_requester_bounded);
+ATF_TC_HEAD(quota_requester_bounded, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "the per-requester quota held by "
+	    "events of a deadline-0 object: a read of a 200 ms object waits "
+	    "for its post no longer than its deadline (T-R03)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(quota_requester_bounded, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *x, *y;
+	struct dq_policy pol;
+	struct quota_arg a;
+	struct timed_res r;
+	int oracle;
+
+	dqt_sysctl_save_set_uint(QUOTA_REQUESTER, QUOTA_HOLDERS);
+	dqt_fill(data, sizeof(data), 76);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	dq_policy_default(&pol);
+	pol.dp_deadline_ms = 0;
+	x = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
+	pol.dp_deadline_ms = 200;
+	y = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
+	dqt_hold(&c, true);
+
+	memset(&a, 0, sizeof(a));
+	a.hold_fd = x->fd;
+	a.fd = y->fd;
+	a.alarm_s = 1;
+	quota_run(&c, &a, &r);
+	/*
+	 * The quota sleep is bounded by the event's 200 ms deadline: EIO
+	 * then, well before the 1 s signal (it waited for the signal).
+	 */
+	ATF_CHECK_EQ(-1, r.rr.rv);
+	ATF_CHECK_EQ(EIO, r.rr.err);
+	ATF_CHECK_MSG(r.elapsed_ms >= 150 && r.elapsed_ms < 900,
+	    "returned after %ld ms", r.elapsed_ms);
+	/* Only the holders' events were ever posted. */
+	dqt_lock(&c);
+	ATF_CHECK_EQ(QUOTA_HOLDERS, c.nheld);
+	dqt_unlock(&c);
+	dqt_fini(&c);
+	(void)close(oracle);
+	ATF_REQUIRE(dqt_sysctl_restore(QUOTA_REQUESTER));
+}
+ATF_TC_CLEANUP(quota_requester_bounded, tc)
+{
+
+	(void)dqt_sysctl_restore(QUOTA_REQUESTER);
+}
+
+ATF_TC_WITH_CLEANUP(quota_object_one_deadline);
+ATF_TC_HEAD(quota_object_one_deadline, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "the per-object quota held by events "
+	    "of the same 1 s policy: the read behind it fails EIO at its own "
+	    "deadline (T-R03)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(quota_object_one_deadline, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *x;
+	struct dq_policy pol;
+	struct quota_arg a;
+	struct timed_res r;
+	int oracle;
+
+	dqt_sysctl_save_set_uint(QUOTA_OBJECT, QUOTA_HOLDERS);
+	dqt_fill(data, sizeof(data), 77);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	dq_policy_default(&pol);
+	pol.dp_deadline_ms = 1000;
+	x = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
+	dqt_hold(&c, true);
+
+	memset(&a, 0, sizeof(a));
+	a.hold_fd = x->fd;
+	a.fd = x->fd;
+	quota_run(&c, &a, &r);
+	ATF_CHECK_EQ(-1, r.rr.rv);
+	ATF_CHECK_EQ(EIO, r.rr.err);
+	/*
+	 * The event's deadline is absolute, taken before the quota sleep:
+	 * the holders' expiry wakes the sleeper just before it, and the
+	 * post then waits only what is left.  One deadline in all.
+	 */
+	ATF_CHECK_MSG(r.elapsed_ms >= 950 && r.elapsed_ms <= 1600,
+	    "returned after %ld ms", r.elapsed_ms);
+	dqt_fini(&c);
+	(void)close(oracle);
+	ATF_REQUIRE(dqt_sysctl_restore(QUOTA_OBJECT));
+}
+ATF_TC_CLEANUP(quota_object_one_deadline, tc)
+{
+
+	(void)dqt_sysctl_restore(QUOTA_OBJECT);
+}
+
+/*
+ * The withdrawal of a waited event its requester gave up on, for both
+ * waited posts (an object's READ and an attached process's RESOLVE), each
+ * way it can be given up: the event still pending (the controller never
+ * read it) or delivered (it did), by the deadline or by a caught signal of
+ * an interruptible wait.  Pending: the controller sees nothing of it, no
+ * INTERRUPT, and only the deadline is counted.  Delivered: one INTERRUPT
+ * names it, the deadline counts a miss and the signal an interrupt, and
+ * the late reply is ESRCH.  Either way the requester's next call on the
+ * same queue is posted and answered, so nothing it held (the slot, the
+ * quotas) is left behind.
+ */
+enum wd_at { WD_PENDING, WD_DELIVERED };
+enum wd_by { WD_DEADLINE, WD_SIGNAL };
+
+struct wd_arg {
+	int		 fd;		/* READ: the served file */
+	int		 go[2];		/* the test says: post the second call */
+};
+
+struct wd_res {
+	struct dqt_rr	 first;
+	struct dqt_rr	 second;
+	int		 signals;
+};
+
+static volatile sig_atomic_t wd_signals;
+
+static void
+wd_on_signal(int sig __unused)
+{
+
+	wd_signals++;
+}
+
+/* Catch sig without SA_RESTART, so a caught signal ends the call. */
+static void
+wd_catch(int sig)
+{
+	struct sigaction sa;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = wd_on_signal;
+	(void)sigaction(sig, &sa, NULL);
+}
+
+static void
+wd_child_read(void *argp, void *result)
+{
+	struct wd_arg *a = argp;
+	struct wd_res *r = result;
+	unsigned char buf[100];
+	char g;
+
+	wd_catch(SIGALRM);
+	DQT_RR(r->first, pread(a->fd, buf, sizeof(buf), 0));
+	if (read(a->go[0], &g, 1) != 1)
+		_exit(DQT_EXIT_NOGO);
+	DQT_RR(r->second, pread(a->fd, buf, sizeof(buf), 0));
+	r->signals = wd_signals;
+}
+
+static void
+wd_child_stat(void *argp, void *result)
+{
+	struct wd_arg *a = argp;
+	struct wd_res *r = result;
+	struct stat sb;
+	char g;
+
+	wd_catch(SIGUSR1);
+	DQT_RR(r->first, stat("wd-first", &sb));
+	if (read(a->go[0], &g, 1) != 1)
+		_exit(DQT_EXIT_NOGO);
+	DQT_RR(r->second, stat("wd-second", &sb));
+	r->signals = wd_signals;
+}
+
+/* Nothing queued and nothing in flight: the event was withdrawn. */
+static bool
+wd_pred_withdrawn(const struct dq_stats *st, uintptr_t unused __unused)
+{
+
+	return (st->ds_queue_current == 0 && st->ds_inflight == 0);
+}
+
+/*
+ * Bring the first call to where it is given up: pending or delivered
+ * (held), then signalled if by is WD_SIGNAL; wait until it is withdrawn.
+ */
+static void
+wd_give_up(struct dqt_ctl *c, pid_t pid, int sig, enum wd_at at,
+    enum wd_by by)
+{
+
+	if (at == WD_PENDING)
+		ATF_REQUIRE(dqt_wait_stats(c, dqt_pred_current, 1,
+		    DQT_WAIT_MS));
+	else
+		ATF_REQUIRE(dqt_wait_held(c, 1, DQT_WAIT_MS));
+	if (by == WD_SIGNAL) {
+		ATF_REQUIRE(dqt_wait_wmesg(pid, DQT_WMESG_REPLY,
+		    DQT_WAIT_MS));
+		ATF_REQUIRE_EQ(0, kill(pid, sig));
+	}
+	ATF_REQUIRE(dqt_wait_stats(c, wd_pred_withdrawn, 0, DQT_WAIT_MS));
+}
+
+/* What the controller saw of the first event, and the counters. */
+static void
+wd_check(struct dqt_ctl *c, const struct wd_res *r, enum wd_at at,
+    enum wd_by by, uint64_t interrupts_before, bool resolve)
+{
+	struct dq_stats st;
+	uint64_t id;
+	int rv;
+
+	ATF_CHECK_EQ(-1, r->first.rv);
+	ATF_CHECK_EQ(by == WD_DEADLINE ? EIO : EINTR, r->first.err);
+	ATF_CHECK_EQ(by == WD_SIGNAL ? 1 : 0, r->signals);
+	ATF_CHECK_MSG(r->second.rv >= 0, "second call: %s",
+	    strerror(r->second.err));
+	dqt_stats(c, &st);
+	ATF_CHECK_EQ(by == WD_DEADLINE ? 1u : 0u, st.ds_deadline_misses);
+	ATF_CHECK_EQ(at == WD_DELIVERED && by == WD_SIGNAL ? 1u : 0u,
+	    st.ds_interrupts - interrupts_before);
+	ATF_CHECK_EQ(0, st.ds_inflight);
+	ATF_CHECK_EQ(0, st.ds_queue_current);
+	if (at == WD_PENDING) {
+		/* Withdrawn silently: no record of it, no INTERRUPT. */
+		dqt_msleep(200);
+		ATF_CHECK_EQ(0, dqt_events(c, DQ_OP_INTERRUPT));
+		return;
+	}
+	ATF_REQUIRE(dqt_wait_interrupts(c, 1, DQT_WAIT_MS));
+	dqt_lock(c);
+	ATF_CHECK_EQ(1, c->ninterrupted);
+	ATF_CHECK_EQ(c->held[0].id, c->interrupted[0]);
+	dqt_unlock(c);
+	id = dqt_held_id(c, 0);
+	errno = 0;
+	rv = resolve ? dq_reply_resolve_pass(c->q, id) :
+	    dq_reply(c->q, id, 0, data, 100);
+	ATF_CHECK_EQ(-1, rv);
+	ATF_CHECK_EQ(ESRCH, errno);
+}
+
+static void
+wd_object(enum wd_at at, enum wd_by by, unsigned seed)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct dq_policy pol;
+	struct dqt_child ch;
+	struct wd_arg a;
+	struct wd_res r;
+	int oracle;
+
+	dqt_fill(data, sizeof(data), seed);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	dq_policy_default(&pol);
+	if (by == WD_DEADLINE) {
+		pol.dp_deadline_ms = 300;
+	} else {
+		pol.dp_deadline_ms = 0;
+		pol.dp_flags = DQ_PF_INTR;
+	}
+	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
+	if (at == WD_PENDING)
+		dqt_pause(&c);
+	else
+		dqt_hold(&c, true);
+
+	memset(&a, 0, sizeof(a));
+	a.fd = o->fd;
+	ATF_REQUIRE_EQ(0, pipe(a.go));
+	dqt_spawn(&ch, wd_child_read, &a);
+	wd_give_up(&c, ch.pid, SIGALRM, at, by);
+	if (at == WD_PENDING)
+		dqt_resume(&c);
+	else
+		dqt_hold(&c, false);
+	ATF_REQUIRE_EQ(1, write(a.go[1], "g", 1));
+	memset(&r, 0, sizeof(r));
+	dqt_collect(&ch, &r, sizeof(r));
+	/* Pending: the controller read only the second READ. */
+	ATF_CHECK_EQ(at == WD_PENDING ? 1u : 2u, dqt_events(&c, DQ_OP_READ));
+	wd_check(&c, &r, at, by, 0, false);
+	dqt_fini(&c);
+	(void)close(a.go[0]);
+	(void)close(a.go[1]);
+	(void)close(oracle);
+}
+
+#define	DEFAULT_DEADLINE	"kern.dq.default_deadline_ms"
+
+static void
+wd_resolve(enum wd_at at, enum wd_by by)
+{
+	struct dqt_ctl c;
+	struct dqt_achild ch;
+	struct dq_stats st;
+	struct wd_arg a;
+	struct wd_res r;
+	int fd;
+
+	fd = open("wd-second", O_CREAT | O_WRONLY, 0644);
+	ATF_REQUIRE(fd != -1);
+	(void)close(fd);
+	if (by == WD_DEADLINE)
+		dqt_sysctl_save_set_uint(DEFAULT_DEADLINE, 300);
+	dqt_init(&c);
+	if (by == WD_SIGNAL)
+		ATF_REQUIRE_EQ(0, dq_queue_set_flags(c.q, DQ_QF_INTR, 0,
+		    NULL));
+	if (at == WD_PENDING)
+		dqt_pause(&c);
+	else
+		dqt_resolve_hold(&c, "wd-first", 0);
+	dqt_stats(&c, &st);
+
+	memset(&a, 0, sizeof(a));
+	ATF_REQUIRE_EQ(0, pipe(a.go));
+	dqt_attach_spawn(&c, &ch, wd_child_stat, &a);
+	wd_give_up(&c, ch.pid, SIGUSR1, at, by);
+	if (at == WD_PENDING)
+		dqt_resume(&c);
+	else
+		dqt_resolve_hold(&c, "", 0);
+	ATF_REQUIRE_EQ(1, write(a.go[1], "g", 1));
+	memset(&r, 0, sizeof(r));
+	dqt_attach_collect(&ch, &r, sizeof(r));
+	ATF_CHECK_EQ(at == WD_PENDING ? 0 : 1,
+	    dqt_count_resolve(&c, "wd-first", 0));
+	ATF_CHECK_EQ(1, dqt_count_resolve(&c, "wd-second", 0));
+	wd_check(&c, &r, at, by, st.ds_interrupts, true);
+	dqt_fini(&c);
+	(void)close(a.go[0]);
+	(void)close(a.go[1]);
+	if (by == WD_DEADLINE)
+		ATF_REQUIRE(dqt_sysctl_restore(DEFAULT_DEADLINE));
+}
+
+#define	WD_OBJECT_TC(name, at, by, seed)				\
+ATF_TC(name);								\
+ATF_TC_HEAD(name, tc)							\
+{									\
+	atf_tc_set_md_var(tc, "descr", "a READ given up " #at " by "	\
+	    #by ": the withdrawal's errno, record and counters");	\
+	atf_tc_set_md_var(tc, "require.user", "root");			\
+	atf_tc_set_md_var(tc, "timeout", "60");				\
+}									\
+ATF_TC_BODY(name, tc)							\
+{									\
+	wd_object(at, by, seed);					\
+}
+
+#define	WD_RESOLVE_TC(name, at, by)					\
+ATF_TC_WITH_CLEANUP(name);						\
+ATF_TC_HEAD(name, tc)							\
+{									\
+	atf_tc_set_md_var(tc, "descr", "a RESOLVE given up " #at " by "	\
+	    #by ": the withdrawal's errno, record and counters");	\
+	atf_tc_set_md_var(tc, "require.user", "root");			\
+	atf_tc_set_md_var(tc, "timeout", "60");				\
+}									\
+ATF_TC_BODY(name, tc)							\
+{									\
+	wd_resolve(at, by);						\
+}									\
+ATF_TC_CLEANUP(name, tc)						\
+{									\
+	if ((by) == WD_DEADLINE)					\
+		(void)dqt_sysctl_restore(DEFAULT_DEADLINE);		\
+}
+
+/*
+ * A READ given up delivered by a signal caught with SA_RESTART: the wait
+ * ends with ERESTART, which withdraws the event as EINTR does (one
+ * INTERRUPT names it, one interrupt counted, its late reply is ESRCH), and
+ * the restarted pread(2) posts a new READ whose answer the caller gets.
+ */
+struct wr_res {
+	struct dqt_rr	 rr;
+	int		 signals;
+	int		 same;
+};
+
+static void
+wr_child_read(void *argp, void *result)
+{
+	struct wd_arg *a = argp;
+	struct wr_res *r = result;
+	struct sigaction sa;
+	unsigned char buf[100];
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = wd_on_signal;
+	sa.sa_flags = SA_RESTART;
+	(void)sigaction(SIGALRM, &sa, NULL);
+	DQT_RR(r->rr, pread(a->fd, buf, sizeof(buf), 0));
+	r->signals = wd_signals;
+	r->same = r->rr.rv == (ssize_t)sizeof(buf) &&
+	    memcmp(buf, data, sizeof(buf)) == 0;
+}
+
+ATF_TC(withdraw_read_delivered_restart);
+ATF_TC_HEAD(withdraw_read_delivered_restart, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a READ given up delivered by an "
+	    "SA_RESTART signal: one INTERRUPT, then the restarted READ is "
+	    "posted and answered");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(withdraw_read_delivered_restart, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct dq_policy pol;
+	struct dqt_child ch;
+	struct dq_stats st;
+	struct wd_arg a;
+	struct wr_res r;
+	uint64_t first, second;
+	int oracle;
+
+	dqt_fill(data, sizeof(data), 85);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	dq_policy_default(&pol);
+	pol.dp_deadline_ms = 0;
+	pol.dp_flags = DQ_PF_INTR;
+	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
+	dqt_hold(&c, true);
+
+	memset(&a, 0, sizeof(a));
+	a.fd = o->fd;
+	dqt_spawn(&ch, wr_child_read, &a);
+	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	ATF_REQUIRE(dqt_wait_wmesg(ch.pid, DQT_WMESG_REPLY, DQT_WAIT_MS));
+	ATF_REQUIRE_EQ(0, kill(ch.pid, SIGALRM));
+	/* The restarted READ is posted and held in its turn. */
+	ATF_REQUIRE(dqt_wait_held(&c, 2, DQT_WAIT_MS));
+	ATF_REQUIRE(dqt_wait_interrupts(&c, 1, DQT_WAIT_MS));
+	first = dqt_held_id(&c, 0);
+	second = dqt_held_id(&c, 1);
+	ATF_CHECK(first != second);
+	dqt_lock(&c);
+	ATF_CHECK_EQ(1, c.ninterrupted);
+	ATF_CHECK_EQ(first, c.interrupted[0]);
+	dqt_unlock(&c);
+	errno = 0;
+	ATF_CHECK_EQ(-1, dq_reply(c.q, first, 0, data, 100));
+	ATF_CHECK_EQ(ESRCH, errno);
+	ATF_REQUIRE_EQ(0, dq_reply(c.q, second, 0, data, 100));
+	memset(&r, 0, sizeof(r));
+	dqt_collect(&ch, &r, sizeof(r));
+	ATF_CHECK_EQ_MSG(100, r.rr.rv, "restarted pread: %s",
+	    strerror(r.rr.err));
+	ATF_CHECK(r.same);
+	ATF_CHECK_EQ(1, r.signals);
+	ATF_CHECK_EQ(2u, dqt_events(&c, DQ_OP_READ));
+	dqt_stats(&c, &st);
+	ATF_CHECK_EQ(1u, st.ds_interrupts);
+	ATF_CHECK_EQ(0u, st.ds_deadline_misses);
+	ATF_CHECK_EQ(0, st.ds_inflight);
+	ATF_CHECK_EQ(0, st.ds_queue_current);
+	dqt_hold(&c, false);
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
+WD_OBJECT_TC(withdraw_read_pending_deadline, WD_PENDING, WD_DEADLINE, 81)
+WD_OBJECT_TC(withdraw_read_pending_signal, WD_PENDING, WD_SIGNAL, 82)
+WD_OBJECT_TC(withdraw_read_delivered_deadline, WD_DELIVERED, WD_DEADLINE, 83)
+WD_OBJECT_TC(withdraw_read_delivered_signal, WD_DELIVERED, WD_SIGNAL, 84)
+WD_RESOLVE_TC(withdraw_resolve_pending_deadline, WD_PENDING, WD_DEADLINE)
+WD_RESOLVE_TC(withdraw_resolve_pending_signal, WD_PENDING, WD_SIGNAL)
+WD_RESOLVE_TC(withdraw_resolve_delivered_deadline, WD_DELIVERED, WD_DEADLINE)
+WD_RESOLVE_TC(withdraw_resolve_delivered_signal, WD_DELIVERED, WD_SIGNAL)
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -290,5 +870,16 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, default_deadline_accepted);
 	ATF_TP_ADD_TC(tp, setpolicy_deadline);
 	ATF_TP_ADD_TC(tp, sigkill_breaks_wait);
+	ATF_TP_ADD_TC(tp, quota_requester_bounded);
+	ATF_TP_ADD_TC(tp, quota_object_one_deadline);
+	ATF_TP_ADD_TC(tp, withdraw_read_pending_deadline);
+	ATF_TP_ADD_TC(tp, withdraw_read_pending_signal);
+	ATF_TP_ADD_TC(tp, withdraw_read_delivered_deadline);
+	ATF_TP_ADD_TC(tp, withdraw_read_delivered_signal);
+	ATF_TP_ADD_TC(tp, withdraw_read_delivered_restart);
+	ATF_TP_ADD_TC(tp, withdraw_resolve_pending_deadline);
+	ATF_TP_ADD_TC(tp, withdraw_resolve_pending_signal);
+	ATF_TP_ADD_TC(tp, withdraw_resolve_delivered_deadline);
+	ATF_TP_ADD_TC(tp, withdraw_resolve_delivered_signal);
 	return (atf_no_error());
 }

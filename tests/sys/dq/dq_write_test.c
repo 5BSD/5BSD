@@ -12,8 +12,10 @@
 
 #include <sys/param.h>
 #include <sys/event.h>
+#include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <sys/uio.h>
 #include <sys/wait.h>
 
@@ -21,7 +23,10 @@
 #include <atf-c.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
+#include <setjmp.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -331,6 +336,187 @@ child_appender(void *arg, void *result)
 	}
 }
 
+/*
+ * Owner decision 2026-11-20 (review 3 re-review): a mutation the
+ * controller has received is not given up when a sibling single-threads
+ * the process to the user boundary without taking it down (here an
+ * execve that fails): restarted, it would be applied twice.  Thread A
+ * appends one byte to an object with no deadline; the controller holds
+ * the WRITE; thread B execs a path that does not exist.  The controller
+ * applies each WRITE it holds to the backing file, as a real one would
+ * before answering, then answers.  Exactly one byte must land.
+ */
+struct bwrite_arg {
+	int	fd;
+	int	go[2];
+	int	catch;			/* SIGUSR1 caught with SA_RESTART */
+};
+
+struct bwrite_res {
+	struct dqt_rr	 a;		/* A's write */
+	struct dqt_rr	 b;		/* B's execve */
+	int		 signals;
+};
+
+static volatile sig_atomic_t restart_signals;
+
+static void
+on_restart_signal(int sig __unused)
+{
+
+	restart_signals++;
+}
+
+static struct bwrite_res *bwrite_r;
+
+static void *
+bwrite_writer(void *arg)
+{
+	struct bwrite_arg *a = arg;
+
+	DQT_RR(bwrite_r->a, write(a->fd, "A", 1));
+	return (NULL);
+}
+
+static void
+child_bwrite(void *arg, void *result)
+{
+	struct bwrite_arg *a = arg;
+	struct sigaction sa;
+	pthread_t thr;
+	char ch;
+
+	bwrite_r = result;
+	if (a->catch) {
+		memset(&sa, 0, sizeof(sa));
+		sa.sa_handler = on_restart_signal;
+		sa.sa_flags = SA_RESTART;
+		(void)sigaction(SIGUSR1, &sa, NULL);
+	}
+	if (fcntl(a->fd, F_SETFL, O_APPEND) != 0)
+		_exit(6);
+	if (pthread_create(&thr, NULL, bwrite_writer, a) != 0)
+		_exit(3);
+	if (read(a->go[0], &ch, 1) != 1)
+		_exit(4);
+	DQT_RR(bwrite_r->b, execl("/nonexistent/dq_write_test", "x",
+	    (char *)NULL));
+	(void)pthread_join(thr, NULL);
+	bwrite_r->signals = restart_signals;
+}
+
+static void
+bwrite_setup(struct dqt_fixture *f, unsigned seed, uint32_t pflags,
+    struct bwrite_arg *a, struct dqt_child *ch)
+{
+	struct dq_policy pol;
+
+	dqt_fill(data, sizeof(data), seed);
+	dqt_policy_write(&pol);
+	pol.dp_deadline_ms = 0;		/* no deadline ends the wait */
+	pol.dp_flags = pflags;
+	dqt_fixture_init(f, data, sizeof(data), backing_path, oracle_path,
+	    &pol, DQ_MINT_F_WRITE);
+	memset(a, 0, sizeof(*a));
+	a->fd = f->o->fd;
+	a->catch = (pflags & DQ_PF_INTR) != 0;
+	ATF_REQUIRE_EQ(0, pipe(a->go));
+	dqt_hold(&f->c, true);
+	dqt_spawn(ch, child_bwrite, a);
+	ATF_REQUIRE(dqt_wait_held(&f->c, 1, DQT_WAIT_MS));
+	ATF_REQUIRE_EQ(1, write(a->go[1], "g", 1));
+}
+
+ATF_TC(append_boundary_once);
+ATF_TC_HEAD(append_boundary_once, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "an O_APPEND write the controller "
+	    "received is not restarted when a sibling's execve fails: it "
+	    "appends exactly once (owner, 2026-11-20)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(append_boundary_once, tc)
+{
+	struct dqt_fixture f;
+	struct dqt_child ch;
+	struct dqt_held h[DQT_MAX_HELD];
+	struct bwrite_arg a;
+	struct bwrite_res r;
+	struct stat st;
+	off_t end;
+	int i, n, status;
+
+	bwrite_setup(&f, 41, 0, &a, &ch);
+	/*
+	 * A kernel that gives the write up posts an INTERRUPT and then the
+	 * restarted WRITE; one that keeps it posts nothing more.  Either
+	 * way, wait no longer than the suite's bound for that.
+	 */
+	(void)dqt_wait_interrupts(&f.c, 1, DQT_WAIT_MS);
+	(void)dqt_wait_held(&f.c, 2, DQT_WAIT_MS);
+	dqt_hold(&f.c, false);
+	dqt_lock(&f.c);
+	n = f.c.nheld;
+	memcpy(h, f.c.held, (size_t)n * sizeof(h[0]));
+	dqt_unlock(&f.c);
+	for (i = 0; i < n; i++) {
+		if (h[i].op != DQ_OP_WRITE)
+			continue;
+		/* Applied first, as a controller does, then answered. */
+		ATF_REQUIRE_EQ(0, fstat(f.backing, &st));
+		end = st.st_size;
+		ATF_REQUIRE_EQ(1, pwrite(f.backing, "A", 1, end));
+		(void)dq_reply_write(f.c.q, h[i].id, 1, (uint64_t)end);
+	}
+	status = dqt_wait(&ch, &r, sizeof(r));
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "status %#x", status);
+	ATF_CHECK_EQ_MSG(1, r.a.rv, "A's write: %s", strerror(r.a.err));
+	ATF_CHECK_EQ(-1, r.b.rv);
+	ATF_CHECK_EQ(ENOENT, r.b.err);
+	ATF_REQUIRE_EQ(0, fstat(f.backing, &st));
+	ATF_CHECK_EQ_MSG(DATA_LEN + 1, st.st_size, "%jd bytes appended for "
+	    "one write: the received write was restarted",
+	    (intmax_t)(st.st_size - DATA_LEN));
+	(void)close(a.go[0]);
+	(void)close(a.go[1]);
+	dqt_fixture_fini(&f);
+}
+
+ATF_TC(append_boundary_sigkill);
+ATF_TC_HEAD(append_boundary_sigkill, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a received write with no deadline "
+	    "that waits for its answer while a sibling's execve single-"
+	    "threads the process ends at SIGKILL (the dying-process wakeup)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(append_boundary_sigkill, tc)
+{
+	struct dqt_fixture f;
+	struct dqt_child ch;
+	struct bwrite_arg a;
+	int status;
+
+	bwrite_setup(&f, 42, 0, &a, &ch);
+	/* The write keeps waiting, now without catching signals. */
+	ATF_REQUIRE_MSG(dqt_wait_wmesg(ch.pid, "dqbndy", DQT_WAIT_MS),
+	    "the received write did not wait for its answer at the "
+	    "boundary");
+	ATF_REQUIRE_EQ(0, kill(ch.pid, SIGKILL));
+	/* The case's timeout is the hang detector. */
+	ATF_REQUIRE_EQ(ch.pid, waitpid(ch.pid, &status, 0));
+	ATF_CHECK(WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL);
+	(void)close(ch.pipefd);
+	ATF_CHECK(dqt_wait_interrupts(&f.c, 1, DQT_WAIT_MS));
+	dqt_hold(&f.c, false);
+	(void)close(a.go[0]);
+	(void)close(a.go[1]);
+	dqt_fixture_fini(&f);
+}
+
 ATF_TC(append_two_writers);
 ATF_TC_HEAD(append_two_writers, tc)
 {
@@ -517,38 +703,56 @@ ATF_TC_BODY(short_write, tc)
 	dqt_fixture_fini(&f);
 }
 
-ATF_TC(eintr_mid_chunk);
-ATF_TC_HEAD(eintr_mid_chunk, tc)
+/*
+ * A write of two max_io chunks; the first is accepted, and while the
+ * second waits the requester is signalled (SIGUSR1, caught, no
+ * SA_RESTART).  pol: the object's policy (NULL: the default).
+ */
+static void
+mid_chunk_start(struct dqt_fixture *f, const struct dq_policy *pol,
+    struct dqt_child *ch, struct big_arg *a, u_int *max_io)
 {
-	atf_tc_set_md_var(tc, "descr", "a signal while the second max_io chunk "
-	    "waits: INTERRUPT names it and the call returns the bytes of the "
-	    "accepted chunk (dofilewrite's count rule), not EINTR");
+
+	ATF_REQUIRE(dqt_sysctl_get_uint("kern.dq.max_io", max_io));
+	dqt_fill(data, sizeof(data), 7);
+	dqt_fixture_init(f, data, sizeof(data), backing_path, oracle_path,
+	    pol, DQ_MINT_F_WRITE);
+	dqt_hold(&f->c, true);
+	a->fd = f->o->fd;
+	a->len = 2 * (size_t)*max_io;
+	a->off = 0;
+	dqt_spawn(ch, child_big_pwrite, a);
+	ATF_REQUIRE(dqt_wait_held(&f->c, 1, DQT_WAIT_MS));
+	answer_write(f, 0, *max_io, 0);
+	ATF_REQUIRE(dqt_wait_held(&f->c, 2, DQT_WAIT_MS));
+	dqt_lock(&f->c);
+	ATF_REQUIRE_EQ(2, f->c.nwr);
+	ATF_CHECK_EQ((uint64_t)*max_io, f->c.wr[1].offset);
+	ATF_CHECK_EQ(*max_io, f->c.wr[1].len);
+	dqt_unlock(&f->c);
+	ATF_REQUIRE_EQ(0, kill(ch->pid, SIGUSR1));
+}
+
+ATF_TC(eintr_mid_chunk_intr);
+ATF_TC_HEAD(eintr_mid_chunk_intr, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "DQ_PF_INTR: a signal while the second "
+	    "max_io chunk waits: INTERRUPT names it and the call returns the "
+	    "bytes of the accepted chunk (the short count), not EINTR");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(eintr_mid_chunk, tc)
+ATF_TC_BODY(eintr_mid_chunk_intr, tc)
 {
 	struct dqt_fixture f;
 	struct dqt_child ch;
+	struct dq_policy pol;
 	struct big_arg a;
 	struct dqt_rr r;
 	u_int max_io;
 
-	ATF_REQUIRE(dqt_sysctl_get_uint("kern.dq.max_io", &max_io));
-	setup(&f, 7);
-	dqt_hold(&f.c, true);
-	a.fd = f.o->fd;
-	a.len = 2 * (size_t)max_io;
-	a.off = 0;
-	dqt_spawn(&ch, child_big_pwrite, &a);
-	ATF_REQUIRE(dqt_wait_held(&f.c, 1, DQT_WAIT_MS));
-	answer_write(&f, 0, max_io, 0);
-	ATF_REQUIRE(dqt_wait_held(&f.c, 2, DQT_WAIT_MS));
-	dqt_lock(&f.c);
-	ATF_REQUIRE_EQ(2, f.c.nwr);
-	ATF_CHECK_EQ((uint64_t)max_io, f.c.wr[1].offset);
-	ATF_CHECK_EQ(max_io, f.c.wr[1].len);
-	dqt_unlock(&f.c);
-	ATF_REQUIRE_EQ(0, kill(ch.pid, SIGUSR1));
+	dqt_policy_write(&pol);
+	pol.dp_flags = DQ_PF_INTR;
+	mid_chunk_start(&f, &pol, &ch, &a, &max_io);
 	ATF_CHECK(dqt_wait_interrupts(&f.c, 1, DQT_WAIT_MS));
 	dqt_lock(&f.c);
 	ATF_CHECK_EQ(f.c.held[1].id, f.c.interrupted[0]);
@@ -560,6 +764,327 @@ ATF_TC_BODY(eintr_mid_chunk, tc)
 	ATF_CHECK_EQ(-1, dq_reply_write(f.c.q, dqt_held_id(&f.c, 1), max_io,
 	    max_io));
 	ATF_CHECK_EQ(ESRCH, errno);
+	dqt_hold(&f.c, false);
+	dqt_fixture_fini(&f);
+}
+
+ATF_TC(signal_mid_write_uninterruptible);
+ATF_TC_HEAD(signal_mid_write_uninterruptible, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "the default policy: a signal while the "
+	    "second chunk waits does not end the write, which completes when "
+	    "the controller answers, as a local file system's (D192)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(signal_mid_write_uninterruptible, tc)
+{
+	struct dqt_fixture f;
+	struct dqt_child ch;
+	struct big_arg a;
+	struct dqt_rr r;
+	u_int max_io;
+
+	mid_chunk_start(&f, NULL, &ch, &a, &max_io);
+	/* Nothing is abandoned: the write still waits for its answer. */
+	dqt_msleep(300);
+	dqt_lock(&f.c);
+	ATF_CHECK_EQ(0, f.c.ninterrupted);
+	dqt_unlock(&f.c);
+	answer_write(&f, 1, max_io, max_io);
+	dqt_collect(&ch, &r, sizeof(r));
+	ATF_CHECK_EQ_MSG((long)(2 * max_io), r.rv, "rv %ld errno %d", r.rv,
+	    r.err);
+	dqt_hold(&f.c, false);
+	dqt_fixture_fini(&f);
+}
+
+/*
+ * DQ_PF_INTR is not exempt from the rule that a mutation the controller
+ * received is never restarted by the kernel (owner, 2026-11-23): a signal
+ * ends the wait, but the call fails with EINTR whatever SA_RESTART says,
+ * as on an NFS intr mount.  A kernel that restarts it posts the WRITE a
+ * second time, and a controller that had applied the first appends twice.
+ */
+struct intr_res {
+	struct dqt_rr	 rr;
+	int		 signals;
+};
+
+static void
+child_append_restart(void *arg, void *result)
+{
+	struct intr_res *r = result;
+	struct sigaction sa;
+	int *fdp = arg;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = on_restart_signal;
+	sa.sa_flags = SA_RESTART;
+	(void)sigaction(SIGUSR1, &sa, NULL);
+	DQT_RR(r->rr, write(*fdp, "A", 1));
+	r->signals = restart_signals;
+}
+
+ATF_TC(intr_delivered_write_no_restart);
+ATF_TC_HEAD(intr_delivered_write_no_restart, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "DQ_PF_INTR: an SA_RESTART signal "
+	    "while the controller holds a received O_APPEND write ends the "
+	    "call with EINTR; the write is not restarted, so the controller "
+	    "sees it exactly once (owner, 2026-11-23)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(intr_delivered_write_no_restart, tc)
+{
+	struct dqt_fixture f;
+	struct dqt_child ch;
+	struct dq_policy pol;
+	struct intr_res r;
+	struct stat st;
+	uint64_t first;
+
+	dqt_fill(data, sizeof(data), 43);
+	dqt_policy_write(&pol);
+	pol.dp_deadline_ms = 0;		/* only the signal ends the wait */
+	pol.dp_flags = DQ_PF_INTR;
+	dqt_fixture_init(&f, data, sizeof(data), backing_path, oracle_path,
+	    &pol, DQ_MINT_F_WRITE);
+	ATF_REQUIRE_EQ(0, fcntl(f.o->fd, F_SETFL, O_APPEND));
+	dqt_hold(&f.c, true);
+	dqt_spawn(&ch, child_append_restart, &f.o->fd);
+	ATF_REQUIRE(dqt_wait_held(&f.c, 1, DQT_WAIT_MS));
+	dqt_lock(&f.c);
+	ATF_REQUIRE_EQ(DQ_OP_WRITE, f.c.held[0].op);
+	first = f.c.held[0].id;
+	dqt_unlock(&f.c);
+	/*
+	 * The controller has the write and does not answer it.  Whatever
+	 * comes after it is served: a restarted WRITE is appended to the
+	 * backing file and answered, so the child returns on either kernel.
+	 */
+	dqt_hold(&f.c, false);
+	ATF_REQUIRE_EQ(0, kill(ch.pid, SIGUSR1));
+	memset(&r, 0, sizeof(r));
+	dqt_collect(&ch, &r, sizeof(r));
+	ATF_CHECK_EQ_MSG(-1, r.rr.rv, "the received write was restarted: "
+	    "write returned %ld", r.rr.rv);
+	ATF_CHECK_EQ(EINTR, r.rr.err);
+	ATF_CHECK_EQ(1, r.signals);
+	/* The controller is told the answer is no longer wanted. */
+	ATF_CHECK(dqt_wait_interrupts(&f.c, 1, DQT_WAIT_MS));
+	dqt_lock(&f.c);
+	ATF_CHECK_EQ(1, f.c.ninterrupted);
+	ATF_CHECK_EQ(first, f.c.interrupted[0]);
+	dqt_unlock(&f.c);
+	errno = 0;
+	ATF_CHECK_EQ(-1, dq_reply_write(f.c.q, first, 1, DATA_LEN));
+	ATF_CHECK_EQ(ESRCH, errno);
+	ATF_CHECK_EQ_MSG(1u, dqt_events(&f.c, DQ_OP_WRITE),
+	    "%u WRITE events for one write(2)", dqt_events(&f.c, DQ_OP_WRITE));
+	ATF_REQUIRE_EQ(0, fstat(f.backing, &st));
+	ATF_CHECK_EQ_MSG(DATA_LEN, st.st_size, "%jd bytes appended by a "
+	    "write that failed", (intmax_t)(st.st_size - DATA_LEN));
+	dqt_fixture_fini(&f);
+}
+
+/*
+ * A sibling single-threading the process to the user boundary is not a
+ * signal: in DQ_PF_INTR mode too a write the controller received waits
+ * for its answer there (D404, D193), and is neither restarted nor failed
+ * with an EINTR no signal caused.  An SA_RESTART signal sent while it
+ * waits does not end the wait either; its handler runs when the write
+ * returns with its answer.
+ */
+ATF_TC(intr_append_boundary_once);
+ATF_TC_HEAD(intr_append_boundary_once, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "DQ_PF_INTR: an O_APPEND write the "
+	    "controller received waits for its answer while a sibling's "
+	    "failing execve single-threads the process, also when a caught "
+	    "signal arrives during that wait: it returns its answer and "
+	    "appends exactly once");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(intr_append_boundary_once, tc)
+{
+	struct dqt_fixture f;
+	struct dqt_child ch;
+	struct dqt_held h[DQT_MAX_HELD];
+	struct bwrite_arg a;
+	struct bwrite_res r;
+	struct stat st;
+	off_t end;
+	int i, n, status;
+
+	bwrite_setup(&f, 44, DQ_PF_INTR, &a, &ch);
+	/*
+	 * A kernel that gives the write up never sleeps there: it fails
+	 * the write, or restarts it and holds the second WRITE.
+	 */
+	ATF_CHECK_MSG(dqt_wait_wmesg(ch.pid, "dqbndy", DQT_WAIT_MS),
+	    "the received write did not wait for its answer at the "
+	    "boundary");
+	ATF_REQUIRE_EQ(0, kill(ch.pid, SIGUSR1));
+	dqt_hold(&f.c, false);
+	dqt_lock(&f.c);
+	n = f.c.nheld;
+	memcpy(h, f.c.held, (size_t)n * sizeof(h[0]));
+	dqt_unlock(&f.c);
+	for (i = 0; i < n; i++) {
+		if (h[i].op != DQ_OP_WRITE)
+			continue;
+		/* Applied first, as a controller does, then answered. */
+		ATF_REQUIRE_EQ(0, fstat(f.backing, &st));
+		end = st.st_size;
+		ATF_REQUIRE_EQ(1, pwrite(f.backing, "A", 1, end));
+		(void)dq_reply_write(f.c.q, h[i].id, 1, (uint64_t)end);
+	}
+	status = dqt_wait(&ch, &r, sizeof(r));
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "status %#x", status);
+	ATF_CHECK_EQ_MSG(1, r.a.rv, "A's write: %s", strerror(r.a.err));
+	ATF_CHECK_EQ(-1, r.b.rv);
+	ATF_CHECK_EQ(ENOENT, r.b.err);
+	ATF_CHECK_EQ(1, r.signals);
+	ATF_CHECK_EQ(0u, dqt_events(&f.c, DQ_OP_INTERRUPT));
+	ATF_CHECK_EQ_MSG(1u, dqt_events(&f.c, DQ_OP_WRITE),
+	    "%u WRITE events for one write(2)", dqt_events(&f.c, DQ_OP_WRITE));
+	ATF_REQUIRE_EQ(0, fstat(f.backing, &st));
+	ATF_CHECK_EQ_MSG(DATA_LEN + 1, st.st_size, "%jd bytes appended for "
+	    "one write", (intmax_t)(st.st_size - DATA_LEN));
+	(void)close(a.go[0]);
+	(void)close(a.go[1]);
+	dqt_fixture_fini(&f);
+}
+
+/*
+ * The control: a write the controller has not read is still withdrawn
+ * silently and restarted by an SA_RESTART signal in DQ_PF_INTR mode, and
+ * the controller sees it once.  The handler tells the parent it ran, which
+ * is after the first event was withdrawn; the controller reads the queue
+ * only once the restarted WRITE is queued.
+ */
+struct pend_arg {
+	int	fd;
+	int	tell[2];
+};
+
+static int pend_tellfd;
+
+static void
+on_pend_signal(int sig __unused)
+{
+
+	restart_signals++;
+	(void)write(pend_tellfd, "s", 1);
+}
+
+static void
+child_append_pending(void *arg, void *result)
+{
+	struct pend_arg *a = arg;
+	struct intr_res *r = result;
+	struct sigaction sa;
+
+	pend_tellfd = a->tell[1];
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = on_pend_signal;
+	sa.sa_flags = SA_RESTART;
+	(void)sigaction(SIGUSR1, &sa, NULL);
+	DQT_RR(r->rr, write(a->fd, "A", 1));
+	r->signals = restart_signals;
+}
+
+ATF_TC(intr_pending_write_restarts);
+ATF_TC_HEAD(intr_pending_write_restarts, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "DQ_PF_INTR: an SA_RESTART signal "
+	    "while an O_APPEND write is queued and the controller has not "
+	    "read it restarts the write; it is withdrawn silently, posted "
+	    "again and applied once");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(intr_pending_write_restarts, tc)
+{
+	struct dqt_fixture f;
+	struct dqt_child ch;
+	struct dq_policy pol;
+	struct dq_stats ds;
+	struct pend_arg a;
+	struct intr_res r;
+	struct stat st;
+	char s;
+
+	dqt_fill(data, sizeof(data), 45);
+	dqt_policy_write(&pol);
+	pol.dp_deadline_ms = 0;		/* only the signal ends the wait */
+	pol.dp_flags = DQ_PF_INTR;
+	dqt_fixture_init(&f, data, sizeof(data), backing_path, oracle_path,
+	    &pol, DQ_MINT_F_WRITE);
+	ATF_REQUIRE_EQ(0, fcntl(f.o->fd, F_SETFL, O_APPEND));
+	a.fd = f.o->fd;
+	ATF_REQUIRE_EQ(0, pipe(a.tell));
+	dqt_pause(&f.c);
+	dqt_spawn(&ch, child_append_pending, &a);
+	ATF_REQUIRE(dqt_wait_stats(&f.c, dqt_pred_current, 1, DQT_WAIT_MS));
+	ATF_REQUIRE(dqt_wait_wmesg(ch.pid, DQT_WMESG_REPLY, DQT_WAIT_MS));
+	ATF_REQUIRE_EQ(0, kill(ch.pid, SIGUSR1));
+	/* The case's timeout is the hang detector. */
+	ATF_REQUIRE_EQ(1, read(a.tell[0], &s, 1));
+	ATF_REQUIRE(dqt_wait_stats(&f.c, dqt_pred_current, 1, DQT_WAIT_MS));
+	dqt_resume(&f.c);
+	memset(&r, 0, sizeof(r));
+	dqt_collect(&ch, &r, sizeof(r));
+	ATF_CHECK_EQ_MSG(1, r.rr.rv, "the unread write was not restarted: "
+	    "%s", strerror(r.rr.err));
+	ATF_CHECK_EQ(1, r.signals);
+	ATF_CHECK_EQ(1u, dqt_events(&f.c, DQ_OP_WRITE));
+	ATF_CHECK_EQ(0u, dqt_events(&f.c, DQ_OP_INTERRUPT));
+	dqt_stats(&f.c, &ds);
+	ATF_CHECK_EQ(0u, ds.ds_interrupts);
+	ATF_REQUIRE_EQ(0, fstat(f.backing, &st));
+	ATF_CHECK_EQ(DATA_LEN + 1, st.st_size);
+	(void)close(a.tell[0]);
+	(void)close(a.tell[1]);
+	dqt_fixture_fini(&f);
+}
+
+ATF_TC(short_count_default);
+ATF_TC_HEAD(short_count_default, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a controller errno on the second chunk "
+	    "after the first was accepted: the write returns the accepted "
+	    "bytes (D194, ZFS's rule; the errno was returned and the count "
+	    "lost)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(short_count_default, tc)
+{
+	struct dqt_fixture f;
+	struct dqt_child ch;
+	struct big_arg a;
+	struct dqt_rr r;
+	struct stat st;
+	u_int max_io;
+
+	ATF_REQUIRE(dqt_sysctl_get_uint("kern.dq.max_io", &max_io));
+	setup(&f, 8);
+	dqt_hold(&f.c, true);
+	a.fd = f.o->fd;
+	a.len = 2 * (size_t)max_io;
+	a.off = 0;
+	dqt_spawn(&ch, child_big_pwrite, &a);
+	ATF_REQUIRE(dqt_wait_held(&f.c, 1, DQT_WAIT_MS));
+	answer_write(&f, 0, max_io, 0);
+	ATF_REQUIRE(dqt_wait_held(&f.c, 2, DQT_WAIT_MS));
+	ATF_REQUIRE_EQ(0, dq_reply(f.c.q, dqt_held_id(&f.c, 1), ENOSPC, NULL,
+	    0));
+	dqt_collect(&ch, &r, sizeof(r));
+	ATF_CHECK_EQ_MSG((long)max_io, r.rv, "rv %ld errno %d", r.rv, r.err);
+	ATF_REQUIRE_EQ(0, fstat(f.o->fd, &st));
+	ATF_CHECK(st.st_size >= (off_t)max_io);
 	dqt_hold(&f.c, false);
 	dqt_fixture_fini(&f);
 }
@@ -868,6 +1393,729 @@ ATF_TC_BODY(reply_offset_and_zero, tc)
 	dqt_fixture_fini(&f);
 }
 
+/*
+ * T-A02: the attributes fstat(2) shows after a served write, against what
+ * stat(2) of the backing file shows.  The requester stats, writes 16
+ * bytes and stats again.
+ */
+struct times_res {
+	struct dqt_rr	 w;
+	struct stat	 before, after;
+};
+
+static void
+child_write_times(void *arg, void *result)
+{
+	struct times_res *r = result;
+	int fd = *(int *)arg;
+	char buf[16];
+
+	memset(buf, 'm', sizeof(buf));
+	(void)fstat(fd, &r->before);
+	/* A clock tick past the open-time times. */
+	dqt_msleep(20);
+	DQT_RR(r->w, pwrite(fd, buf, sizeof(buf), DATA_LEN - 8));
+	(void)fstat(fd, &r->after);
+}
+
+/*
+ * Bad-fix audit (327e7e3f415, the size): another party truncates the backing
+ * file; a served write inside the new size then carries a post-operation
+ * block with the backing file's size.  The served file must show what the
+ * real file shows: the smaller size through fstat(2) and lseek(SEEK_END),
+ * and a mapping's page past the new end raises SIGBUS.
+ */
+struct trunc_res {
+	struct dqt_rr	 w;
+	struct stat	 st;
+	off_t		 end;
+	int		 bus;		/* 1: touching page 1 raised SIGBUS */
+};
+
+static sigjmp_buf trunc_jb;
+
+static void
+trunc_bus(int sig __unused)
+{
+
+	siglongjmp(trunc_jb, 1);
+}
+
+static void
+trunc_probe(int fd, struct trunc_res *r)
+{
+	volatile char *p;
+	char buf[16];
+
+	memset(buf, 't', sizeof(buf));
+	DQT_RR(r->w, pwrite(fd, buf, sizeof(buf), 0));
+	(void)fstat(fd, &r->st);
+	r->end = lseek(fd, 0, SEEK_END);
+	p = mmap(NULL, DATA_LEN, PROT_READ, MAP_SHARED, fd, 0);
+	if (p == MAP_FAILED) {
+		r->bus = -1;
+		return;
+	}
+	signal(SIGBUS, trunc_bus);
+	signal(SIGSEGV, trunc_bus);
+	if (sigsetjmp(trunc_jb, 1) == 0) {
+		(void)p[PAGE_SIZE];
+		r->bus = 0;
+	} else
+		r->bus = 1;
+	(void)munmap(__DEVOLATILE(char *, p), DATA_LEN);
+}
+
+static void
+child_trunc_probe(void *arg, void *result)
+{
+
+	trunc_probe(*(int *)arg, result);
+}
+
+ATF_TC(postop_size_after_external_truncate);
+ATF_TC_HEAD(postop_size_after_external_truncate, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a backing file truncated by another "
+	    "party: a served write's post-operation size shows the smaller "
+	    "size, as the real file does (bad-fix audit)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(postop_size_after_external_truncate, tc)
+{
+	struct dqt_fixture f;
+	struct trunc_res s, o;
+	struct stat bs;
+	int fd;
+
+	setup(&f, 63);
+	ATF_REQUIRE_EQ(0, ftruncate(f.backing, 100));
+	ATF_REQUIRE_EQ(0, ftruncate(f.oracle, 100));
+	memset(&s, 0, sizeof(s));
+	memset(&o, 0, sizeof(o));
+	fd = f.o->fd;
+	dqt_run_child(child_trunc_probe, &fd, &s, sizeof(s));
+	fd = f.oracle;
+	dqt_run_child(child_trunc_probe, &fd, &o, sizeof(o));
+	ATF_REQUIRE_EQ(0, fstat(f.backing, &bs));
+	printf("backing %jd; served st_size %jd end %jd bus %d; oracle "
+	    "st_size %jd end %jd bus %d\n", (intmax_t)bs.st_size,
+	    (intmax_t)s.st.st_size, (intmax_t)s.end, s.bus,
+	    (intmax_t)o.st.st_size, (intmax_t)o.end, o.bus);
+	ATF_REQUIRE_EQ(16, s.w.rv);
+	ATF_CHECK_EQ(100, bs.st_size);
+	ATF_CHECK_EQ(o.st.st_size, s.st.st_size);
+	ATF_CHECK_EQ(o.end, s.end);
+	ATF_CHECK_EQ(o.bus, s.bus);
+	dqt_fixture_fini(&f);
+}
+
+ATF_TC(mtime_after_write);
+ATF_TC_HEAD(mtime_after_write, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "fstat(2) after a served write shows "
+	    "the times, size and blocks of the backing file (T-A02)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(mtime_after_write, tc)
+{
+	struct dqt_fixture f;
+	struct times_res r;
+	struct stat bs;
+	int fd;
+
+	setup(&f, 14);
+	fd = f.o->fd;
+	memset(&r, 0, sizeof(r));
+	dqt_run_child(child_write_times, &fd, &r, sizeof(r));
+	ATF_REQUIRE_EQ(16, r.w.rv);
+	ATF_REQUIRE_EQ(0, fstat(f.backing, &bs));
+	ATF_CHECK_EQ(DATA_LEN + 8, bs.st_size);
+	ATF_CHECK_EQ(bs.st_size, r.after.st_size);
+	/* The backing file's times moved. */
+	ATF_REQUIRE(timespeccmp(&bs.st_mtim, &r.before.st_mtim, >));
+	/*
+	 * The served file's times are the backing file's, from the reply's
+	 * post-operation attributes (fstat kept the open-time ones).
+	 */
+	ATF_CHECK(timespeccmp(&r.after.st_mtim, &bs.st_mtim, ==));
+	ATF_CHECK(timespeccmp(&r.after.st_ctim, &bs.st_ctim, ==));
+	ATF_CHECK_EQ(bs.st_blocks, r.after.st_blocks);
+	dqt_fixture_fini(&f);
+}
+
+/*
+ * C7 (R2-H3): the size of the post-operation attributes is a lower bound.
+ * A requester writes 10 bytes at 100 and fstats; the controller answers
+ * with a block whose size is above, or below, what the write proves.
+ */
+#define	POSTOP_SEC	4000000000LL	/* later than any stamp (2096) */
+
+struct postop_res {
+	struct dqt_rr	 w;
+	struct stat	 before, after;
+};
+
+static void
+child_write_fstat(void *arg, void *result)
+{
+	struct postop_res *r = result;
+	int fd = *(int *)arg;
+	char buf[10];
+
+	memset(buf, 'p', sizeof(buf));
+	(void)fstat(fd, &r->before);
+	dqt_msleep(20);
+	DQT_RR(r->w, pwrite(fd, buf, sizeof(buf), 100));
+	(void)fstat(fd, &r->after);
+}
+
+static void
+postop_round(struct dqt_fixture *f, uint64_t size, struct postop_res *r,
+    uint64_t *ignored)
+{
+	struct dq_postop_attr pa;
+	struct dq_write_reply wr;
+	struct dqt_child ch;
+	uint64_t n0, n1;
+	size_t len;
+	int fd;
+
+	/*
+	 * kern.dq.postop_ignored is system-wide: its delta across this one
+	 * reply is this reply's, since this program runs alone (Makefile)
+	 * and no other program sends a block that is ignored.
+	 */
+	len = sizeof(n0);
+	ATF_REQUIRE_EQ(0, sysctlbyname("kern.dq.postop_ignored", &n0, &len,
+	    NULL, 0));
+	dqt_hold(&f->c, true);
+	fd = f->o->fd;
+	memset(r, 0, sizeof(*r));
+	dqt_spawn(&ch, child_write_fstat, &fd);
+	ATF_REQUIRE(dqt_wait_held(&f->c, 1, DQT_WAIT_MS));
+	memset(&pa, 0, sizeof(pa));
+	pa.dpa_valid = DQ_PA_SIZE | DQ_PA_MTIME | DQ_PA_CTIME;
+	pa.dpa_size = size;
+	pa.dpa_mtime.tv_sec = pa.dpa_ctime.tv_sec = POSTOP_SEC;
+	memset(&wr, 0, sizeof(wr));
+	wr.dwr_written = 10;
+	wr.dwr_offset = 100;
+	ATF_REQUIRE_MSG(dq_reply_postop(f->c.q, dqt_held_id(&f->c, 0), &wr,
+	    sizeof(wr), &pa) == 0, "dq_reply_postop: %s", strerror(errno));
+	dqt_collect(&ch, r, sizeof(*r));
+	dqt_hold(&f->c, false);
+	len = sizeof(n1);
+	ATF_REQUIRE_EQ(0, sysctlbyname("kern.dq.postop_ignored", &n1, &len,
+	    NULL, 0));
+	*ignored = n1 - n0;
+}
+
+ATF_TC(postop_size_larger_accepted);
+ATF_TC_HEAD(postop_size_larger_accepted, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "post-operation attributes whose size "
+	    "is above the write's end are applied: the backing file may have "
+	    "grown by another writer (C7, R2-H3)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(postop_size_larger_accepted, tc)
+{
+	struct dqt_fixture f;
+	struct postop_res r;
+	uint64_t ignored;
+
+	setup(&f, 16);
+	postop_round(&f, DATA_LEN + 100, &r, &ignored);
+	ATF_CHECK_EQ(10, r.w.rv);
+	ATF_CHECK_EQ(0, ignored);
+	ATF_CHECK_EQ(DATA_LEN + 100, r.after.st_size);
+	ATF_CHECK_EQ(POSTOP_SEC, r.after.st_mtim.tv_sec);
+	ATF_CHECK_EQ(POSTOP_SEC, r.after.st_ctim.tv_sec);
+	dqt_fixture_fini(&f);
+}
+
+ATF_TC(postop_size_smaller_ignored);
+ATF_TC_HEAD(postop_size_smaller_ignored, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "post-operation attributes whose size "
+	    "is below the write's end are ignored and counted; the write "
+	    "succeeds (C7, R2-H3)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(postop_size_smaller_ignored, tc)
+{
+	struct dqt_fixture f;
+	struct postop_res r;
+	uint64_t ignored;
+
+	setup(&f, 17);
+	postop_round(&f, 50, &r, &ignored);
+	ATF_CHECK_EQ(10, r.w.rv);
+	ATF_CHECK_EQ(1, ignored);
+	/*
+	 * Nothing of the block: the size is the kernel's and the times are
+	 * its stamp, as with no block.
+	 */
+	ATF_CHECK_EQ(r.before.st_size, r.after.st_size);
+	ATF_CHECK(r.after.st_mtim.tv_sec != POSTOP_SEC);
+	ATF_CHECK(r.after.st_ctim.tv_sec != POSTOP_SEC);
+	ATF_CHECK(timespeccmp(&r.after.st_mtim, &r.before.st_mtim, >));
+	dqt_fixture_fini(&f);
+}
+
+/*
+ * Review 1 H1: two disjoint extending writers whose replies carry
+ * post-operation sizes, answered A (the smaller end) then B, with A's
+ * apply held back a second (debug.dq.delay_postop_apply) so that B's
+ * larger size is applied first.  The presented size, the backing file and
+ * the mapping must end at B's end: no apply may move the size back.
+ */
+#define	TWO_A_OFF	(DATA_LEN)
+#define	TWO_B_OFF	(DATA_LEN + 6000)
+#define	TWO_A_BLOCKS	1000
+#define	TWO_B_BLOCKS	2000
+#define	TWO_LEN		100
+#define	DELAY_POSTOP	"debug.dq.delay_postop_apply"
+
+static void
+child_pwrite_at(void *arg, void *result)
+{
+	struct big_arg *a = arg;
+	struct dqt_rr *r = result;
+	char buf[TWO_LEN];
+
+	memset(buf, a->off == TWO_A_OFF ? 'A' : 'B', sizeof(buf));
+	DQT_RR(*r, pwrite(a->fd, buf, a->len, a->off));
+}
+
+struct two_map_res {
+	int		 sig_a, sig_b;
+	unsigned char	 va, vb;
+	struct stat	 st;
+};
+
+/* A requester's view: its fstat, and its mapping of both writes. */
+static void
+child_two_map(void *arg, void *result)
+{
+	struct two_map_res *r = result;
+	int fd = *(int *)arg;
+	unsigned char *p;
+	size_t maplen;
+
+	(void)fstat(fd, &r->st);
+	maplen = TWO_B_OFF + TWO_LEN;
+	p = mmap(NULL, maplen, PROT_READ, MAP_SHARED, fd, 0);
+	if (p == MAP_FAILED)
+		_exit(3);
+	r->sig_b = dqt_touch(p + TWO_B_OFF + 50, false, 0, &r->vb);
+	r->sig_a = dqt_touch(p + TWO_A_OFF + 50, false, 0, &r->va);
+	(void)munmap(p, maplen);
+}
+
+static void
+two_reply(struct dqt_fixture *f, int i, off_t off)
+{
+	struct dq_postop_attr pa;
+	struct dq_write_reply wr;
+	struct stat bs;
+	char buf[TWO_LEN];
+
+	/* The controller's write, then what fstat says of its file. */
+	memset(buf, off == TWO_A_OFF ? 'A' : 'B', sizeof(buf));
+	ATF_REQUIRE_EQ(TWO_LEN, pwrite(f->backing, buf, TWO_LEN, off));
+	ATF_REQUIRE_EQ(0, fstat(f->backing, &bs));
+	dq_postop_from_stat(&pa, &bs, DQ_PA_SIZE | DQ_PA_MTIME | DQ_PA_CTIME |
+	    DQ_PA_BLOCKS);
+	/* A count of each writer's own, to see whose block was applied. */
+	pa.dpa_blocks = off == TWO_A_OFF ? TWO_A_BLOCKS : TWO_B_BLOCKS;
+	memset(&wr, 0, sizeof(wr));
+	wr.dwr_written = TWO_LEN;
+	wr.dwr_offset = (uint64_t)off;
+	ATF_REQUIRE_MSG(dq_reply_postop(f->c.q, dqt_held_id(&f->c, i), &wr,
+	    sizeof(wr), &pa) == 0, "dq_reply_postop: %s", strerror(errno));
+}
+
+/*
+ * A new object's rangelock serves its requests in cheat mode, as one sx
+ * lock: a second writer drains behind the first, whatever their ranges,
+ * instead of being posted (kern_rangelock.c).  Two writers that meet
+ * switch it to tracking ranges for good, as they do any file's, so the
+ * disjoint pair of the test is then in flight at once.  These two write
+ * inside the file and change no size.
+ */
+static void
+warm_reply(struct dqt_fixture *f, int i, off_t off)
+{
+	struct dq_write_reply wr;
+	char buf[TWO_LEN];
+
+	memset(buf, 'B', sizeof(buf));
+	ATF_REQUIRE_EQ(TWO_LEN, pwrite(f->backing, buf, TWO_LEN, off));
+	memset(&wr, 0, sizeof(wr));
+	wr.dwr_written = TWO_LEN;
+	wr.dwr_offset = (uint64_t)off;
+	ATF_REQUIRE_MSG(dq_reply(f->c.q, dqt_held_id(&f->c, i), 0, &wr,
+	    sizeof(wr)) == 0, "dq_reply: %s", strerror(errno));
+}
+
+static void
+two_precise_rangelock(struct dqt_fixture *f)
+{
+	struct dqt_child c0, c1;
+	struct big_arg w0, w1;
+	struct dqt_rr r0, r1;
+
+	w0.fd = w1.fd = f->o->fd;
+	w0.len = w1.len = TWO_LEN;
+	w0.off = 0;
+	w1.off = 4096;
+	dqt_spawn(&c0, child_pwrite_at, &w0);
+	ATF_REQUIRE(dqt_wait_held(&f->c, 1, DQT_WAIT_MS));
+	dqt_spawn(&c1, child_pwrite_at, &w1);
+	/* The second drains the cheat mode behind the first. */
+	ATF_REQUIRE(dqt_wait_wmesg(c1.pid, "ranged1", DQT_WAIT_MS));
+	warm_reply(f, 0, w0.off);
+	ATF_REQUIRE(dqt_wait_held(&f->c, 2, DQT_WAIT_MS));
+	warm_reply(f, 1, w1.off);
+	dqt_collect(&c0, &r0, sizeof(r0));
+	dqt_collect(&c1, &r1, sizeof(r1));
+	ATF_REQUIRE_EQ(TWO_LEN, r0.rv);
+	ATF_REQUIRE_EQ(TWO_LEN, r1.rv);
+}
+
+ATF_TC_WITH_CLEANUP(postop_two_writers_size);
+ATF_TC_HEAD(postop_two_writers_size, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "two disjoint extending writers whose "
+	    "post-operation sizes are applied out of order end with the "
+	    "larger size, the backing file's, and a mapping to it (review 1 "
+	    "H1)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(postop_two_writers_size, tc)
+{
+	struct dqt_fixture f;
+	struct dqt_child cha, chb;
+	struct big_arg a, b;
+	struct dqt_rr ra, rb;
+	struct two_map_res m;
+	struct stat bs;
+	int fd, ia, ib;
+
+	dqt_require_fault_knob(DELAY_POSTOP);
+	setup(&f, 18);
+	dqt_hold(&f.c, true);
+	two_precise_rangelock(&f);
+	a.fd = b.fd = f.o->fd;
+	a.len = b.len = TWO_LEN;
+	a.off = TWO_A_OFF;
+	b.off = TWO_B_OFF;
+	dqt_spawn(&cha, child_pwrite_at, &a);
+	dqt_spawn(&chb, child_pwrite_at, &b);
+	ATF_REQUIRE_MSG(dqt_wait_held(&f.c, 4, DQT_WAIT_MS),
+	    "the two disjoint writes are not both posted");
+	dqt_lock(&f.c);
+	ia = f.c.held[2].offset == TWO_A_OFF ? 2 : 3;
+	ib = 5 - ia;
+	ATF_REQUIRE_EQ(TWO_A_OFF, f.c.held[ia].offset);
+	ATF_REQUIRE_EQ(TWO_B_OFF, f.c.held[ib].offset);
+	dqt_unlock(&f.c);
+	/* A's apply waits a second; B's reply lands meanwhile. */
+	dqt_sysctl_save_set_uint(DELAY_POSTOP, 1);
+	two_reply(&f, ia, TWO_A_OFF);
+	dqt_msleep(100);
+	two_reply(&f, ib, TWO_B_OFF);
+	dqt_collect(&chb, &rb, sizeof(rb));
+	dqt_collect(&cha, &ra, sizeof(ra));
+	ATF_REQUIRE(dqt_sysctl_restore(DELAY_POSTOP));
+	ATF_CHECK_EQ(TWO_LEN, ra.rv);
+	ATF_CHECK_EQ(TWO_LEN, rb.rv);
+
+	ATF_REQUIRE_EQ(0, fstat(f.backing, &bs));
+	ATF_CHECK_EQ(TWO_B_OFF + TWO_LEN, bs.st_size);
+	/* The mapping reaches B's bytes: the VM object was not cut. */
+	dqt_hold(&f.c, false);
+	memset(&m, 0, sizeof(m));
+	fd = f.o->fd;
+	dqt_run_child(child_two_map, &fd, &m, sizeof(m));
+	ATF_CHECK_EQ_MSG(bs.st_size, m.st.st_size, "presented size %jd, "
+	    "backing %jd", (intmax_t)m.st.st_size, (intmax_t)bs.st_size);
+	ATF_CHECK_EQ_MSG(0, m.sig_b, "B's page: signal %d", m.sig_b);
+	ATF_CHECK_EQ_MSG(0, m.sig_a, "A's page: signal %d", m.sig_a);
+	ATF_CHECK_EQ('B', m.vb);
+	ATF_CHECK_EQ('A', m.va);
+	/* The block count goes with the newer reply too (review 2). */
+	ATF_CHECK_EQ_MSG(TWO_B_BLOCKS, m.st.st_blocks, "st_blocks %jd",
+	    (intmax_t)m.st.st_blocks);
+	dqt_fixture_fini(&f);
+}
+ATF_TC_CLEANUP(postop_two_writers_size, tc)
+{
+
+	(void)dqt_sysctl_restore(DELAY_POSTOP);
+}
+
+/*
+ * T-A24: fspacectl(2) past the end of the file.  vop_stddeallocate
+ * answers {EOF, 0}, or {offset, 0} past it, which the requester then
+ * sees; the served file's controller says the same and is refused.
+ */
+struct space_res {
+	struct dqt_rr		 r;
+	struct spacectl_range	 rm;
+};
+
+static void
+child_space_past_eof(void *arg, void *result)
+{
+	struct space_res *r = result;
+	struct spacectl_range rq;
+	int fd = *(int *)arg;
+
+	rq.r_offset = DATA_LEN - 100;
+	rq.r_len = 1000;
+	DQT_RR(r->r, fspacectl(fd, SPACECTL_DEALLOC, &rq, 0, &r->rm));
+}
+
+ATF_TC(fspacectl_past_eof);
+ATF_TC_HEAD(fspacectl_past_eof, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "fspacectl(2) of a range that ends "
+	    "past the end of the file (T-A24)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(fspacectl_past_eof, tc)
+{
+	struct dqt_fixture f;
+	struct dq_policy pol;
+	struct space_res s, o;
+	int fd;
+
+	dqt_policy_write(&pol);
+	pol.dp_deadline_ms = 1000;
+	dqt_fill(data, sizeof(data), 15);
+	dqt_fixture_init(&f, data, sizeof(data), backing_path, oracle_path,
+	    &pol, DQ_MINT_F_WRITE);
+	memset(&o, 0, sizeof(o));
+	fd = f.oracle;
+	dqt_run_child(child_space_past_eof, &fd, &o, sizeof(o));
+	ATF_CHECK_EQ(0, o.r.rv);
+	ATF_CHECK_EQ(DATA_LEN, o.rm.r_offset);
+	ATF_CHECK_EQ(0, o.rm.r_len);
+	memset(&s, 0, sizeof(s));
+	fd = f.o->fd;
+	dqt_run_child(child_space_past_eof, &fd, &s, sizeof(s));
+	/*
+	 * The controller's {EOF, 0} is accepted and reaches the requester
+	 * unchanged, as the real file's (it was refused, EINVAL to the
+	 * controller, and the requester failed EIO at its deadline).
+	 */
+	ATF_CHECK_EQ_MSG(0, s.r.rv, "fspacectl: %s", strerror(s.r.err));
+	ATF_CHECK_EQ(o.rm.r_offset, s.rm.r_offset);
+	ATF_CHECK_EQ(o.rm.r_len, s.rm.r_len);
+	dqt_lock(&f.c);
+	ATF_CHECK_EQ(0, f.c.reply_failures);
+	dqt_unlock(&f.c);
+	dqt_fini(&f.c);
+	(void)close(f.backing);
+	(void)close(f.oracle);
+}
+
+/*
+ * Review 1 H1: a deallocation changes no size, so an FSPACECTL reply's
+ * post-operation size is not applied, even one that would shrink the file.
+ */
+static void
+child_space_mid(void *arg, void *result)
+{
+	struct space_res *r = result;
+	struct spacectl_range rq;
+	int fd = *(int *)arg;
+
+	rq.r_offset = 0;
+	rq.r_len = 4096;
+	DQT_RR(r->r, fspacectl(fd, SPACECTL_DEALLOC, &rq, 0, &r->rm));
+}
+
+ATF_TC(postop_fspacectl_no_size);
+ATF_TC_HEAD(postop_fspacectl_no_size, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "the size of an FSPACECTL reply's "
+	    "post-operation block is not applied: a deallocation changes none "
+	    "(review 1 H1)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(postop_fspacectl_no_size, tc)
+{
+	struct dqt_fixture f;
+	struct dq_postop_attr pa;
+	struct dq_fspacectl_reply sr;
+	struct dqt_child ch;
+	struct space_res s;
+	struct stat st;
+	int fd;
+
+	setup(&f, 19);
+	dqt_hold(&f.c, true);
+	fd = f.o->fd;
+	memset(&s, 0, sizeof(s));
+	dqt_spawn(&ch, child_space_mid, &fd);
+	ATF_REQUIRE(dqt_wait_held(&f.c, 1, DQT_WAIT_MS));
+	memset(&pa, 0, sizeof(pa));
+	pa.dpa_valid = DQ_PA_SIZE;
+	pa.dpa_size = 10;		/* a shrink, were it applied */
+	sr.dscr_offset = 4096;
+	sr.dscr_len = 0;
+	ATF_REQUIRE_MSG(dq_reply_postop(f.c.q, dqt_held_id(&f.c, 0), &sr,
+	    sizeof(sr), &pa) == 0, "dq_reply_postop: %s", strerror(errno));
+	dqt_collect(&ch, &s, sizeof(s));
+	ATF_CHECK_EQ_MSG(0, s.r.rv, "fspacectl: %s", strerror(s.r.err));
+	ATF_REQUIRE_EQ(0, fstat(f.o->fd, &st));
+	ATF_CHECK_EQ(DATA_LEN, st.st_size);
+	dqt_hold(&f.c, false);
+	dqt_fixture_fini(&f);
+}
+
+/*
+ * Review 2: futimens(2) sets the times in the future (2030) and a write
+ * follows.  A local file system's write sets the modification time to
+ * now; the served file's must be the backing file's after the write (the
+ * reply's post-operation block names now), not 2030.
+ */
+#define	FUTURE_SEC	1900000000	/* 2030 */
+
+struct future_res {
+	struct dqt_rr	 t, w;
+	struct stat	 set, after;
+};
+
+static void
+future_then_write(int fd, struct future_res *r)
+{
+	struct timespec ts[2];
+	char buf[16];
+
+	ts[0].tv_sec = ts[1].tv_sec = FUTURE_SEC;
+	ts[0].tv_nsec = ts[1].tv_nsec = 0;
+	memset(buf, 'f', sizeof(buf));
+	DQT_RR(r->t, futimens(fd, ts));
+	(void)fstat(fd, &r->set);
+	DQT_RR(r->w, pwrite(fd, buf, sizeof(buf), 100));
+	(void)fstat(fd, &r->after);
+}
+
+static void
+child_future_write(void *arg, void *result)
+{
+
+	future_then_write(*(int *)arg, result);
+}
+
+ATF_TC(postop_time_after_future_set);
+ATF_TC_HEAD(postop_time_after_future_set, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a write after futimens(2) to 2030 "
+	    "shows the modification time its reply names (now), as a local "
+	    "file's write sets it (review 2)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(postop_time_after_future_set, tc)
+{
+	struct dqt_fixture f;
+	struct future_res r, o;
+	struct stat bs;
+	int fd;
+
+	setup(&f, 20);
+	fd = f.o->fd;
+	memset(&r, 0, sizeof(r));
+	dqt_run_child(child_future_write, &fd, &r, sizeof(r));
+	ATF_REQUIRE_EQ_MSG(0, r.t.rv, "futimens: %s", strerror(r.t.err));
+	ATF_REQUIRE_EQ(16, r.w.rv);
+	ATF_CHECK_EQ(FUTURE_SEC, r.set.st_mtim.tv_sec);
+	ATF_REQUIRE_EQ(0, fstat(f.backing, &bs));
+	/* The oracle: the same two calls on a local file. */
+	memset(&o, 0, sizeof(o));
+	future_then_write(f.oracle, &o);
+	ATF_REQUIRE_EQ(16, o.w.rv);
+	ATF_CHECK(o.after.st_mtim.tv_sec < FUTURE_SEC);
+	ATF_CHECK(bs.st_mtim.tv_sec < FUTURE_SEC);
+	ATF_CHECK_MSG(r.after.st_mtim.tv_sec < FUTURE_SEC,
+	    "the served mtime stayed at %jd", (intmax_t)r.after.st_mtim.tv_sec);
+	ATF_CHECK(timespeccmp(&r.after.st_mtim, &bs.st_mtim, ==));
+	ATF_CHECK(timespeccmp(&r.after.st_ctim, &bs.st_ctim, ==));
+	dqt_fixture_fini(&f);
+}
+
+/*
+ * Bad-fix audit (7cad15105ff): a post-operation block the kernel refuses
+ * is an error dq_serve_file reports (and answers EIO, so the write fails
+ * at once), not a reason to stop offering blocks: the next reply still
+ * carries one.  DQ_PF_NO_STAMP keeps the kernel's stamp out, so only a
+ * block moves the presented times.
+ */
+#define	REFUSE_POSTOP	"debug.dq.refuse_postop_reply"
+
+ATF_TC_WITH_CLEANUP(postop_refused_reported);
+ATF_TC_HEAD(postop_refused_reported, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a refused post-operation block is "
+	    "reported by dq_serve_file and the write fails EIO; the next "
+	    "reply still carries a block (bad-fix audit)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(postop_refused_reported, tc)
+{
+	struct dqt_fixture f;
+	struct dq_policy pol;
+	struct postop_res r;
+	struct stat bs;
+	int fd, failures, last;
+
+	dqt_require_fault_knob(REFUSE_POSTOP);
+	dqt_policy_write(&pol);
+	pol.dp_flags = DQ_PF_NO_STAMP;
+	dqt_fill(data, sizeof(data), 22);
+	dqt_fixture_init(&f, data, sizeof(data), backing_path, oracle_path,
+	    &pol, DQ_MINT_F_WRITE);
+	fd = f.o->fd;
+
+	dqt_sysctl_save_set_uint(REFUSE_POSTOP, 1);
+	memset(&r, 0, sizeof(r));
+	dqt_run_child(child_write_fstat, &fd, &r, sizeof(r));
+	ATF_REQUIRE(dqt_sysctl_restore(REFUSE_POSTOP));
+	ATF_CHECK_EQ(-1, r.w.rv);
+	ATF_CHECK_EQ(EIO, r.w.err);
+	dqt_lock(&f.c);
+	failures = f.c.reply_failures;
+	last = f.c.last_reply_errno;
+	f.c.reply_failures = 0;
+	dqt_unlock(&f.c);
+	ATF_CHECK_EQ_MSG(1, failures, "dq_serve_file failures %d", failures);
+	ATF_CHECK_EQ_MSG(EINVAL, last, "last errno %d", last);
+
+	memset(&r, 0, sizeof(r));
+	dqt_run_child(child_write_fstat, &fd, &r, sizeof(r));
+	ATF_REQUIRE_EQ(10, r.w.rv);
+	ATF_REQUIRE_EQ(0, fstat(f.backing, &bs));
+	ATF_CHECK_MSG(timespeccmp(&r.after.st_mtim, &bs.st_mtim, ==),
+	    "the second reply carried no block: served mtime %jd.%09ld, "
+	    "backing %jd.%09ld", (intmax_t)r.after.st_mtim.tv_sec,
+	    r.after.st_mtim.tv_nsec, (intmax_t)bs.st_mtim.tv_sec,
+	    bs.st_mtim.tv_nsec);
+	ATF_CHECK(timespeccmp(&r.after.st_mtim, &r.before.st_mtim, !=));
+	dqt_fixture_fini(&f);
+}
+ATF_TC_CLEANUP(postop_refused_reported, tc)
+{
+
+	(void)dqt_sysctl_restore(REFUSE_POSTOP);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -875,13 +2123,29 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, aio_write);
 	ATF_TP_ADD_TC(tp, append);
 	ATF_TP_ADD_TC(tp, append_two_writers);
+	ATF_TP_ADD_TC(tp, append_boundary_once);
+	ATF_TP_ADD_TC(tp, append_boundary_sigkill);
 	ATF_TP_ADD_TC(tp, sync_flags);
 	ATF_TP_ADD_TC(tp, short_write);
-	ATF_TP_ADD_TC(tp, eintr_mid_chunk);
+	ATF_TP_ADD_TC(tp, eintr_mid_chunk_intr);
+	ATF_TP_ADD_TC(tp, signal_mid_write_uninterruptible);
+	ATF_TP_ADD_TC(tp, intr_delivered_write_no_restart);
+	ATF_TP_ADD_TC(tp, intr_append_boundary_once);
+	ATF_TP_ADD_TC(tp, intr_pending_write_restarts);
+	ATF_TP_ADD_TC(tp, short_count_default);
 	ATF_TP_ADD_TC(tp, rlimit_fsize);
 	ATF_TP_ADD_TC(tp, notes_and_size);
 	ATF_TP_ADD_TC(tp, controller_errnos);
 	ATF_TP_ADD_TC(tp, edeadlk_while_held);
 	ATF_TP_ADD_TC(tp, reply_offset_and_zero);
+	ATF_TP_ADD_TC(tp, mtime_after_write);
+	ATF_TP_ADD_TC(tp, postop_size_after_external_truncate);
+	ATF_TP_ADD_TC(tp, postop_size_larger_accepted);
+	ATF_TP_ADD_TC(tp, postop_size_smaller_ignored);
+	ATF_TP_ADD_TC(tp, postop_two_writers_size);
+	ATF_TP_ADD_TC(tp, postop_fspacectl_no_size);
+	ATF_TP_ADD_TC(tp, postop_time_after_future_set);
+	ATF_TP_ADD_TC(tp, postop_refused_reported);
+	ATF_TP_ADD_TC(tp, fspacectl_past_eof);
 	return (atf_no_error());
 }

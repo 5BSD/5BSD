@@ -3600,7 +3600,8 @@ lib/libservice__L: lib/libcapability__L lib/libchannel__L lib/libthr__L \
 lib/libfilesystemcmp__L: lib/libservice__L lib/libtrustedzfs__L lib/libfidl__L
 lib/libbsdfilesystem__L: lib/libchannel__L lib/libservice__L lib/libtrustedzfs__L \
 	lib/libfilesystemcmp__L lib/libfidl__L
-lib/libfidl__L: lib/libc++__L lib/libchannel__L lib/libthr__L
+# libfidl is C++ (LIB_CXX): its link through c++ takes libm.
+lib/libfidl__L: lib/libc++__L lib/libchannel__L lib/libthr__L lib/msun__L
 lib/libnotify__L: lib/libservice__L lib/libthr__L lib/libfidl__L
 
 .if ${MK_GOOGLETEST} != "no"
@@ -3612,7 +3613,8 @@ lib/libkldelf__L: lib/libelf__L
 lib/libkvm__L: lib/libelf__L
 lib/libucl__L: lib/msun__L
 # libprivateprotobuf (lib/protobuf) links libprivateabsl.
-lib/libabsl__L: lib/libc++__L lib/libthr__L
+# libabsl is C++ (LIB_CXX): its link through c++ takes libm.
+lib/libabsl__L: lib/libc++__L lib/libthr__L lib/msun__L
 lib/libcapsulert__L: lib/libucl__L
 lib/libcapimage__L: secure/lib/libcrypto__L
 
@@ -3703,8 +3705,9 @@ _cddl_lib_libctf= cddl/lib/libctf
 _cddl_lib= cddl/lib
 cddl/lib/libctf__L: lib/libz__L cddl/lib/libspl__L
 cddl/lib/libdtrace__L: cddl/lib/libctf__L lib/libelf__L lib/libproc__L
+# libdtrace is C++ (LIB_CXX): its link through c++ takes libm.
 cddl/lib/libdtrace__L: lib/libthr__L lib/librtld_db__L lib/libxo__L \
-	secure/lib/libcrypto__L lib/libc++__L
+	secure/lib/libcrypto__L lib/libc++__L lib/msun__L
 .endif
 # cddl/lib/libdtrace requires lib/libproc and lib/librtld_db
 _prebuild_libs+=	lib/libprocstat lib/libproc lib/librtld_db

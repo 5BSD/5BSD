@@ -74,6 +74,7 @@
 #include <sys/unistd.h>
 #include <sys/user.h>
 #include <sys/vnode.h>
+#include <sys/dqres.h>
 
 #include <security/audit/audit.h>
 #include <security/mac/mac_framework.h>
@@ -4119,6 +4120,9 @@ vn_fill_kinfo_vnode(struct vnode *vp, struct kinfo_file *kif)
 	error = vn_fullpath(vp, &fullpath, &freepath);
 	if (error == 0) {
 		strlcpy(kif->kf_path, fullpath, sizeof(kif->kf_path));
+		/* The reader under a served root (T-A10). */
+		dqres_present_real_maybe(curthread, kif->kf_path,
+		    sizeof(kif->kf_path));
 	}
 	if (freepath != NULL)
 		free(freepath, M_TEMP);

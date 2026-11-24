@@ -26,11 +26,22 @@ dq_kyua_test()
 	out="$(basename "${db}").out"
 	"$@" kyua test --results-file="${db}" -k "${kf}" > "${out}" 2>&1
 	rc=$?
+	dq_kyua_rc "${db}" "${kf}" "${rc}" "$@"
+}
+
+# The verdict on a kyua test run's exit status, for dq_kyua_test and for
+# a run started in the background (the hang watch needs its pid).
+# usage: dq_kyua_rc DB KYUAFILE RC [COMMAND ...]
+dq_kyua_rc()
+{
+	local db kf rc
+
+	db="$1"; kf="$2"; rc="$3"; shift 3
 	case "${rc}" in
 	0|1)	return 0 ;;
 	125)	[ $# -gt 0 ] && return 125 ;;
 	esac
-	tail -n 100 "${out}" >&2
+	tail -n 100 "$(basename "${db}").out" >&2
 	atf_fail "kyua test of ${kf}${1:+ under $1} exited ${rc}"
 }
 
@@ -250,4 +261,53 @@ dq_pattern_verdict()
 	done < verdict.lines
 	[ -z "${none}" ] || atf_fail "$(basename "$1"): entries that match" \
 	    "no case of the suites they are for"
+}
+
+# A system tree for a served-root run at $1 (under /usr/obj, never
+# /home): read-only nullfs views of /bin, /sbin, /lib, /libexec, /usr and
+# /etc, a tmpfs /tmp and a devfs /dev.  What was made is recorded in
+# root.made and mounts, for dq_teardown_root.
+dq_assemble_root()
+{
+	local r d
+
+	r="$1"
+	mkdir -p "${r}" || return 1
+	echo "${r}" > root.made
+	for d in bin sbin lib libexec usr etc; do
+		mkdir -p "${r}/${d}"
+		mount_nullfs -o ro "/${d}" "${r}/${d}" || return 1
+		echo "${r}/${d}" >> mounts
+	done
+	mkdir -p "${r}/tmp" "${r}/dev" "${r}/var/run" "${r}/var/tmp"
+	mount -t tmpfs tmpfs "${r}/tmp" || return 1
+	echo "${r}/tmp" >> mounts
+	mount -t devfs devfs "${r}/dev" || return 1
+	echo "${r}/dev" >> mounts
+	chmod 1777 "${r}/tmp" "${r}/var/tmp"
+}
+
+# Undo dq_assemble_root, from a cleanup (always returns 0).
+dq_teardown_root()
+{
+	local m r
+
+	if [ -f mounts ]; then
+		sort -r mounts | while read -r m; do
+			umount -f "${m}" 2>/dev/null
+		done
+	fi
+	if [ -f root.made ]; then
+		r="$(cat root.made)"
+		# Never remove through a mount that is still there: the
+		# read-only views are of the system's own /bin, /usr and /etc.
+		if mount -p | awk -v r="${r}" '
+		    $2 == r || index($2, r "/") == 1 { found = 1 }
+		    END { exit !found }'; then
+			echo "${r}: still mounted, left in place" >&2
+		else
+			rm -rf "${r}" 2>/dev/null
+		fi
+	fi
+	return 0
 }
