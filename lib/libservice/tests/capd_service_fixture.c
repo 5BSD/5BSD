@@ -928,10 +928,11 @@ scenario_multi_provider(const char *first, const char *second,
 		    &accepted[i]) != 0)
 			errx(1, "pthread_create");
 	}
+	/* The pid lets a test wait on this provider's exit. */
 	write_result(registered,
-	    "listeners_ready=1\nlistener_fds_distinct=%d\n",
+	    "listeners_ready=1\nlistener_fds_distinct=%d\npid=%jd\n",
 	    service_listener_fd(listeners[0]) !=
-	    service_listener_fd(listeners[1]));
+	    service_listener_fd(listeners[1]), (intmax_t)getpid());
 	for (i = 0; i < 2; i++) {
 		if (pthread_join(threads[i], NULL) != 0)
 			errx(1, "pthread_join");

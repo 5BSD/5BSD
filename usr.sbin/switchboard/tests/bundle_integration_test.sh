@@ -981,7 +981,7 @@ multiple_provides_secondary_activation_head() {
 }
 multiple_provides_secondary_activation_body() {
 	use_private_control
-	local bundle first lookup_pid second p1 p2
+	local bundle first lookup_pid second p1 p2 provider rc
 
 	prepare_paths
 	build_lookup_client
@@ -996,14 +996,26 @@ arguments = [\"multi-provider\", \"${first}\", \"${second}\",
 restart = \"on-failure\";" "${capd_service_fixture}")
 
 	start_stack
-	run_lookup_client "${second}" &
+	# The waits are on events, with no deadline of their own: the case's
+	# ATF timeout bounds one that never ends, and the cleanup then
+	# reports the evidence.
+	await_lookup_client "${second}" &
 	p2=$!
-	run_lookup_client "${first}" &
+	await_lookup_client "${first}" &
 	p1=$!
-	wait "${p1}" || atf_fail "primary-name lookup failed"
-	wait "${p2}" || atf_fail "secondary-name lookup failed"
-	wait_for_file "${WORK}/multi-routed.out" 10 ||
-	    atf_fail "multi-name provider did not route both endpoints"
+	wait "${p1}" || fail_with_log "primary-name lookup failed"
+	wait "${p2}" || fail_with_log "secondary-name lookup failed"
+	# Once ready the provider records its pid; its exit ends the wait for
+	# the routing record.
+	capd_wait_path "${WORK}/multi-registered.out" "pid=" ||
+	    fail_with_log "waiting for the provider's registration failed"
+	provider=$(sed -n 's/^pid=//p' "${WORK}/multi-registered.out")
+	echo "waiting for provider ${provider} to route both endpoints"
+	rc=0
+	capd_wait_path -p "${provider}" "${WORK}/multi-routed.out" \
+	    "publication_ack_before_accept=" || rc=$?
+	[ "${rc}" -eq 0 ] || fail_with_log \
+	    "multi-name provider did not route both endpoints (wait exit ${rc}; 2: provider ${provider} exited)"
 	atf_check -s exit:0 -o match:"first=${first}" \
 	    grep "first=${first}" "${WORK}/multi-routed.out"
 	atf_check -s exit:0 -o match:"second=${second}" \
@@ -1020,12 +1032,17 @@ restart = \"on-failure\";" "${capd_service_fixture}")
 	count=$(grep -c "on_demand: launching 'org.test.multi-provider/multi-provider'" \
 	    "${logfile}" 2>/dev/null || true)
 	[ "${count}" -eq 1 ] ||
-	    atf_fail "multi-name service launched ${count} times"
+	    fail_with_log "multi-name service launched ${count} times"
 	stop_stack
+	: > "${WORK}/body.done"
 }
 multiple_provides_secondary_activation_cleanup() {
+	# A body that did not finish (a failed check, or its ATF timeout in a
+	# wait) leaves its evidence before the stack and its files go.
+	prepare_paths
+	[ -e body.done ] || [ -e evidence.shown ] || case_evidence
 	cleanup_common
-	rm -f multi-registered.out multi-routed.out
+	rm -f multi-registered.out multi-routed.out body.done evidence.shown
 }
 
 # ---------------------------------------------------------------

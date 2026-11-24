@@ -490,15 +490,13 @@ build_lookup_client()
 	chmod 0555 lookup_client
 }
 
-# Trigger a lookup of <name> from a managed client service and wait for the
-# result, returning 0 if the lookup succeeded and 1 otherwise (including
-# timeout).  Prints nothing on stdout so it can be wrapped in atf_check.
-#
-# Usage: run_lookup_client <name> [timeout_seconds]
-run_lookup_client()
+# Install a managed client that looks up <name> once and have switchboard
+# start it.  Sets lookup_result to the file (relative to the work directory)
+# where the client records its result: rc=0 on a successful lookup.
+lookup_client_start()
 {
-	local name="$1" timeout="${2:-5}"
-	local bundle label result i max
+	local name="$1"
+	local bundle label unit
 
 	build_lookup_client
 
@@ -507,8 +505,8 @@ run_lookup_client()
 	# fixture flattens '/' to '.' when deriving its marker file names.
 	label="org.test.$(basename "$(mktemp -u lookupcli-XXXXXX)" | tr 'A-Z' 'a-z')"
 	unit=${label##*.}
-	result="${label}.${unit}.result"
-	rm -f "$result"
+	lookup_result="${label}.${unit}.result"
+	rm -f "$lookup_result"
 	printf '%s\n' "$name" > "${label}.${unit}.target"
 
 	# Install the client as a boot-start service (runs once) and ask
@@ -517,6 +515,20 @@ run_lookup_client()
 	    'restart = "never"; arguments = ["compat-lookup"];' \
 	    "$(pwd)/lookup_client")
 	reload_stack
+}
+
+# Trigger a lookup of <name> from a managed client service and wait for the
+# result, returning 0 if the lookup succeeded and 1 otherwise (including
+# timeout).  Prints nothing on stdout so it can be wrapped in atf_check.
+#
+# Usage: run_lookup_client <name> [timeout_seconds]
+run_lookup_client()
+{
+	local name="$1" timeout="${2:-5}"
+	local result i max
+
+	lookup_client_start "$name"
+	result=$lookup_result
 
 	# Wait for the client to record its lookup result.
 	max=$(( timeout * 10 ))
@@ -529,6 +541,44 @@ run_lookup_client()
 		return 1
 	fi
 	grep -q '^rc=0$' "$result"
+}
+
+# As run_lookup_client, but wait for the client's result on file events,
+# with no deadline of its own: the case's ATF timeout bounds a lookup that
+# never ends, and the case's cleanup reports it (case_evidence).
+await_lookup_client()
+{
+	local name="$1"
+
+	lookup_client_start "$name"
+	echo "waiting for the lookup of $name: $lookup_result"
+	capd_wait_path "$lookup_result" "rc=" || return 1
+	grep -q '^rc=0$' "$lookup_result"
+}
+
+# The evidence of a failed case, on stderr: the whole stack log, the
+# service fixtures' own errors (SwitchBoard discards a unit's stderr, so
+# capd_service_fixture writes it to fixture-errors) and the result files
+# the units wrote.  A case's cleanup calls it when the body did not finish
+# (kyua appends the cleanup's output to the case's).
+case_evidence()
+{
+	local f
+
+	for f in "$logfile" "${WORK}/fixture-errors" "${WORK}"/*.result \
+	    "${WORK}"/*.out; do
+		[ -f "$f" ] || continue
+		echo "=== $f" >&2
+		cat "$f" >&2
+	done
+}
+
+# Fail with the case's evidence (case_evidence).
+fail_with_log()
+{
+	case_evidence
+	: > "${WORK}/evidence.shown"
+	atf_fail "$1"
 }
 
 # Wait for a supervised PID to disappear.  Capsule shutdown is asynchronous:
