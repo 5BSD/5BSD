@@ -104,6 +104,8 @@ acct_op_charge(struct proc *p, const void *req, size_t reqlen,
 			break;
 		}
 		amt = cr->amount;
+		KASSERT(p->p_racct != NULL, ("%s: process %d has no racct",
+		    __func__, p->p_pid));
 		RACCT_LOCK();
 		cur = p->p_racct->r_resources[cr->resource];
 		RACCT_UNLOCK();
@@ -286,26 +288,26 @@ acct_op_get_rules(struct proc *p, void *reply, size_t *replylenp)
 		int n = 0;
 
 		PROC_LOCK_ASSERT(p, MA_OWNED);
+		KASSERT(p->p_racct != NULL, ("%s: process %d has no racct",
+		    __func__, p->p_pid));
 
-		if (p->p_racct != NULL) {
-			RACCT_LOCK();
-			LIST_FOREACH(link, &p->p_racct->r_rule_links,
-			    rrl_next) {
-				if (n >= ACCT_MAX_RULES)
-					break;
-				rule = link->rrl_rule;
-				if (rule->rr_subject_type !=
-				    RCTL_SUBJECT_TYPE_PROCESS)
-					continue;
-				rp->rules[n].resource = rule->rr_resource;
-				rp->rules[n].action =
-				    rctl_action_to_acct(rule->rr_action,
-				    &rp->rules[n].signal);
-				rp->rules[n].limit = rule->rr_amount;
-				n++;
-			}
-			RACCT_UNLOCK();
+		RACCT_LOCK();
+		LIST_FOREACH(link, &p->p_racct->r_rule_links,
+		    rrl_next) {
+			if (n >= ACCT_MAX_RULES)
+				break;
+			rule = link->rrl_rule;
+			if (rule->rr_subject_type !=
+			    RCTL_SUBJECT_TYPE_PROCESS)
+				continue;
+			rp->rules[n].resource = rule->rr_resource;
+			rp->rules[n].action =
+			    rctl_action_to_acct(rule->rr_action,
+			    &rp->rules[n].signal);
+			rp->rules[n].limit = rule->rr_amount;
+			n++;
 		}
+		RACCT_UNLOCK();
 		rp->nrules = n;
 		rp->status = ACCT_STATUS_OK;
 	}
@@ -336,16 +338,6 @@ accounting_call(struct mac_capability_instance *s __unused,
 		return (EINVAL);
 
 	hdr = (const struct acct_charge_request *)req;
-
-#ifdef RACCT
-	/*
-	 * kern.racct.enable=0: no process has racct state (p_racct is NULL)
-	 * and rctl refuses to run.  Refuse every operation as rctl(2) refuses
-	 * its system calls, before reaching either.
-	 */
-	if (!racct_enable)
-		return (ENOSYS);
-#endif
 
 	/*
 	 * No Capsicum rights check on the attached procdesc.
@@ -407,11 +399,6 @@ accounting_connect(struct ucred *cred, void *arg __unused,
 		    cred->cr_uid, EPERM);
 		return (EPERM);
 	}
-#ifdef RACCT
-	/* Refused as every operation is, see accounting_call(). */
-	if (!racct_enable)
-		return (ENOSYS);
-#endif
 	return (0);
 }
 

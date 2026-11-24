@@ -61,20 +61,58 @@ static uint32_t dispatch_op;
 static int dispatch_status;
 
 /*
- * Send a reply with optional attached fds.
+ * Receive buffers for one SwitchBoard message, received whole whatever its
+ * shape: the kernel refuses a message that does not fit the caller's
+ * buffers with EMSGSIZE and leaves it at the head of the queue, and the
+ * channel's EVFILT_READ is level-triggered, so a fixed request-sized receive
+ * would make PID 1 spin on the first oversized message and never answer the
+ * requests behind it.
+ */
+static char proto_rx_payload[MAC_CAPABILITY_MAX_MSG];
+static int proto_rx_fds[MAC_CAPABILITY_MAX_FDS];
+
+/*
+ * SwitchBoard waits for each reply on the channel with no deadline: every
+ * request is answered, or the channel ends.  When Capsule can neither answer
+ * nor receive, it ends the channel the way a SwitchBoard EOF does: it closes
+ * its end and kills SwitchBoard, which it then restarts (a fresh channel;
+ * the dynamic claims are swept on the exit).  A receive that fails with
+ * EMFILE or ENFILE (no descriptor slot for an attached descriptor) ends the
+ * channel the same way: Capsule cannot take the message, and restarting
+ * SwitchBoard is the acceptable outcome for a PID 1 out of descriptors.
+ */
+static void
+proto_channel_fatal(const char *why, int error)
+{
+
+	syslog(LOG_ERR, "capsule_proto: %s: %s; ending the SwitchBoard channel",
+	    why, strerror(error));
+	proto_channel_fd = -1;
+	bootstrap_handle_channel_eof();
+}
+
+/*
+ * Send a reply with optional attached fds.  Returns 0 when SwitchBoard was
+ * sent exactly this status with these descriptors, -1 otherwise: the
+ * descriptors could not be confined (an EIO status was sent instead), the
+ * reply could not be sent (a status-only error was sent instead), or not
+ * even that could be sent (the channel ended: SwitchBoard is killed and
+ * restarted).  A caller that granted something for the reply must take it
+ * back on -1, since SwitchBoard does not hold it.
  */
 int
 proto_reply(int status, uint64_t reply_token, int *fds, int nfds)
 {
 	struct mac_capability_sendmsg_args sa;
 	struct capsule_reply rpl;
-	int i;
+	int i, asked;
 
 	/*
 	 * Delegated authority descriptors cross exactly this one message edge.
 	 * CAP_XFER_ONCE is consumed atomically by SENDMSG and the receiving
 	 * descriptor is installed as CAP_XFER_NONE.
 	 */
+	asked = status;
 	if (status == 0 && nfds > 0) {
 		for (i = 0; i < nfds; i++) {
 			if (cap_xfer_limit(fds[i], CAP_XFER_ONCE) == -1) {
@@ -100,12 +138,32 @@ proto_reply(int status, uint64_t reply_token, int *fds, int nfds)
 	}
 
 	if (ioctl(proto_channel_fd, MAC_CAPABILITY_SENDMSG, &sa) == -1) {
-		syslog(LOG_WARNING, "capsule_proto: reply: %m");
+		int error = errno;
+
+		syslog(LOG_WARNING, "capsule_proto: reply: %s", strerror(error));
+		/*
+		 * Never leave the request unanswered: once more, status-only,
+		 * carrying why the reply failed; if that fails too, end the
+		 * channel (close it, kill and restart SwitchBoard).
+		 */
+		rpl.status = error;
+		memset(&sa, 0, sizeof(sa));
+		sa.payload = &rpl;
+		sa.payload_len = sizeof(rpl);
+		sa.reply_token = reply_token;
+		if (proto_channel_fd < 0 ||
+		    ioctl(proto_channel_fd, MAC_CAPABILITY_SENDMSG, &sa) == -1) {
+			proto_channel_fatal("status-only reply failed",
+			    proto_channel_fd < 0 ? EBADF : errno);
+			return (-1);
+		}
+		dispatch_status = error;
+		CAPSULE_PROBE_IPC_REPLY(dispatch_op, error);
 		return (-1);
 	}
 	dispatch_status = status;
 	CAPSULE_PROBE_IPC_REPLY(dispatch_op, status);
-	return (0);
+	return (status == asked ? 0 : -1);
 }
 
 
@@ -150,14 +208,15 @@ handle_mint_net(const void *payload, uint32_t len, uint64_t reply_token)
 {
 	struct ort_net_claim nc;
 	int err, token_fd;
+	bool claimed;
 
 	if (!validate_net_req(payload, len, &nc, &err)) {
 		proto_reply(err, reply_token, NULL, 0);
 		return;
 	}
 
-	if (auto_claim_net(&nc, &err) != 0 &&
-	    !net_is_claimed(&nc)) {
+	claimed = auto_claim_net(&nc, &err) == 0;
+	if (!claimed && !net_is_claimed(&nc)) {
 		CAPSULE_PROBE_MINT_NET(nc.port_min, nc.port_max,
 		    nc.protocol, err);
 		proto_reply(err, reply_token, NULL, 0);
@@ -166,7 +225,8 @@ handle_mint_net(const void *payload, uint32_t len, uint64_t reply_token)
 
 	token_fd = mac_capability_mint_net_token(&nc);
 	if (token_fd == -1) {
-		release_auto_claim_net(&nc);
+		if (claimed)
+			release_auto_claim_net(&nc);
 		CAPSULE_PROBE_MINT_NET(nc.port_min, nc.port_max, nc.protocol,
 		    EIO);
 		proto_reply(EIO, reply_token, NULL, 0);
@@ -174,7 +234,9 @@ handle_mint_net(const void *payload, uint32_t len, uint64_t reply_token)
 	}
 
 	CAPSULE_PROBE_MINT_NET(nc.port_min, nc.port_max, nc.protocol, 0);
-	proto_reply(0, reply_token, &token_fd, 1);
+	/* SwitchBoard did not get the token: take back this request's claim. */
+	if (proto_reply(0, reply_token, &token_fd, 1) != 0 && claimed)
+		release_auto_claim_net(&nc);
 	close(token_fd);
 }
 
@@ -200,7 +262,9 @@ handle_mint_vsock(const void *payload, uint32_t len, uint64_t reply_token)
 		return;
 	}
 	CAPSULE_PROBE_MINT_VSOCK(vc.cid, vc.port_min, vc.port_max, 0);
-	proto_reply(0, reply_token, &token_fd, 1);
+	/* SwitchBoard did not get the token: take back the claim. */
+	if (proto_reply(0, reply_token, &token_fd, 1) != 0)
+		release_auto_claim_vsock(&vc);
 	close(token_fd);
 }
 
@@ -254,7 +318,9 @@ handle_mint_system(const void *payload, uint32_t len, uint64_t reply_token)
 			return;
 		}
 		CAPSULE_PROBE_MINT_SYSTEM(req->gates, 0);
-		proto_reply(0, reply_token, &token_fd, 1);
+		/* SwitchBoard did not get the token: take back the claim. */
+		if (proto_reply(0, reply_token, &token_fd, 1) != 0)
+			(void)mac_capability_release_system_sysctl();
 		close(token_fd);
 		return;
 	}
@@ -275,7 +341,9 @@ handle_mint_system(const void *payload, uint32_t len, uint64_t reply_token)
 	}
 
 	CAPSULE_PROBE_MINT_SYSTEM(req->gates, 0);
-	proto_reply(0, reply_token, &token_fd, 1);
+	/* SwitchBoard did not get the token: take back the claim. */
+	if (proto_reply(0, reply_token, &token_fd, 1) != 0)
+		release_auto_claim_system(req->gates);
 	close(token_fd);
 }
 
@@ -321,6 +389,7 @@ handle_ready(uint64_t reply_token)
 		switchboard_ready = true;
 		syslog(LOG_INFO, "capsule_proto: switchboard ready");
 	}
+	bootstrap_note_ready();
 	proto_reply(0, reply_token, NULL, 0);
 }
 
@@ -399,6 +468,17 @@ handle_set_ambient_lookup(uint32_t len, int fd, uint64_t reply_token)
 		proto_reply(EINVAL, reply_token, NULL, 0);
 		return;
 	}
+	/*
+	 * Capsule's own boot-long channel is the route every process holds; a
+	 * SwitchBoard's own route must not replace it for later logins.
+	 */
+	if (bootstrap_owns_discovery()) {
+		(void)close(fd);
+		syslog(LOG_NOTICE, "capsule_proto: ambient lookup refused: "
+		    "Capsule serves the boot discovery channel");
+		proto_reply(EEXIST, reply_token, NULL, 0);
+		return;
+	}
 	if (capsule_set_ambient_lookup(fd) == -1) {
 		/* set_ambient_lookup already closed fd on failure. */
 		syslog(LOG_NOTICE,
@@ -459,34 +539,57 @@ proto_dispatch_one(void)
 		 */
 		uint8_t		raw[CAPSULE_MINT_SYSTEM_REQ_MAX];
 	} buf;
-	uint32_t op;
+	uint32_t op, i;
 	int recv_fd = -1;
 
+	if (proto_channel_fd < 0)
+		return (-1);
 	memset(&ra, 0, sizeof(ra));
-	ra.payload = &buf;
-	ra.payload_len = sizeof(buf);
-	/*
-	 * Accept at most one attached descriptor.  Only
-	 * CAPSULE_OP_SET_AMBIENT_LOOKUP (§21) sends one; any stray fd on another
-	 * op is closed below rather than leaked.
-	 */
-	ra.fds = &recv_fd;
-	ra.nfds = 1;
+	ra.payload = proto_rx_payload;
+	ra.payload_len = sizeof(proto_rx_payload);
+	ra.fds = proto_rx_fds;
+	ra.nfds = nitems(proto_rx_fds);
 
 	if (ioctl(proto_channel_fd, MAC_CAPABILITY_RECVMSG, &ra) == -1) {
 		if (errno == EAGAIN)
 			return (0);
-		syslog(LOG_WARNING, "capsule_proto: recvmsg: %m");
+		/*
+		 * Any other failure leaves the request unreceived and so
+		 * unanswerable: end the channel.  That includes EMFILE and
+		 * ENFILE (no slot to install an attached descriptor), where a
+		 * SwitchBoard restart is the acceptable outcome.
+		 */
+		proto_channel_fatal("recvmsg", errno);
 		return (-1);
 	}
 
+	/*
+	 * Keep at most one attached descriptor.  Only
+	 * CAPSULE_OP_SET_AMBIENT_LOOKUP (§21) sends one; any other descriptor
+	 * is closed rather than leaked.
+	 */
+	if (ra.nfds > 0)
+		recv_fd = proto_rx_fds[0];
+	for (i = 1; i < ra.nfds; i++)
+		(void)close(proto_rx_fds[i]);
+
+	if (ra.payload_len > sizeof(buf)) {
+		syslog(LOG_WARNING, "capsule_proto: oversized message (%u bytes)",
+		    ra.payload_len);
+		if (recv_fd >= 0)
+			(void)close(recv_fd);
+		proto_reply(EMSGSIZE, ra.reply_token, NULL, 0);
+		return (0);
+	}
 	if (ra.payload_len < sizeof(uint32_t)) {
 		syslog(LOG_WARNING, "capsule_proto: short message (%u bytes)",
 		    ra.payload_len);
 		if (recv_fd >= 0)
 			(void)close(recv_fd);
+		proto_reply(EINVAL, ra.reply_token, NULL, 0);
 		return (0);
 	}
+	memcpy(&buf, proto_rx_payload, ra.payload_len);
 
 	/* Nonce verification — lock to first sender. */
 	if (!nonce_set) {

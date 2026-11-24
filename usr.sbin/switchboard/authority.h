@@ -39,6 +39,7 @@ int svc_authority_issue(uid_t, struct svc_domain *,
     const struct svc_runtime *, int *);
 int svc_authority_applications_sync(void);
 int svc_authority_constrain_application(const struct svc_runtime *, int);
+bool svc_authority_core(const struct svc_runtime *);
 int svc_authority_resolve(const struct channel_message *, struct svc_domain *,
     struct svc_runtime **);
 uid_t svc_authority_personal_uid(const struct svc_domain *, const struct channel_sender *);

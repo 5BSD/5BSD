@@ -517,7 +517,7 @@ enum {
 /* Userland debug flags */
 #define	TDB_SUSPEND	0x00000001 /* Thread is suspended by debugger */
 #define	TDB_XSIG	0x00000002 /* Thread is exchanging signal under trace */
-#define	TDB_USERWR	0x00000004 /* Debugger modified memory or registers */
+#define	TDB_USERWR	0x00000004 /* Debugger modified registers or pc */
 #define	TDB_SCE		0x00000008 /* Thread performs syscall enter */
 #define	TDB_SCX		0x00000010 /* Thread performs syscall exit */
 #define	TDB_EXEC	0x00000020 /* TDB_SCX from exec(2) family */
@@ -536,6 +536,8 @@ enum {
 #define	TDB_COREDUMPREQ	0x00010000 /* Coredump request */
 #define	TDB_SCREMOTEREQ	0x00020000 /* Remote syscall request */
 #define	TDB_SET_SC_RET	0x00040000 /* PT_SET_SC_RET applied */
+/* 5BSD private bits are allocated downward from 0x80000000. */
+#define	TDB_MEMWR	0x80000000 /* Debugger modified memory */
 
 /*
  * "Private" flags kept in td_pflags:
@@ -586,6 +588,9 @@ enum {
 /* 5BSD private bits are allocated downward from 0x80000000. */
 #define	TDP2_CAPCHAN_RECV 0x80000000 /* Admitting a descriptor received
 					      over a capability channel */
+#define	TDP2_DQ_ATTACH	0x40000000 /* Inside DQ_IOC_ATTACH's p_candebug():
+					      base exclusion defers to the
+					      attach rule */
 
 /*
  * Reasons that the current thread can not be run yet.
@@ -947,9 +952,20 @@ struct proc {
 #define	P2_HWT			0x02000000	/* Process is using HWT. */
 #define	P2_PTRACE_LISTEN	0x04000000	/* Stopped ptrace listener. */
 #define	P2_PTRACE_LCONT	0x08000000	/* LISTEN woke on SIGCONT. */
+#define	P2_CAP_EXCLUDED		0x10000000	/* Base exclusion: OES and
+						   Capability Brokers leave
+						   this process alone.  Set
+						   only at exec commit;
+						   inherited by fork. */
+#define	P2_PTRACE_OUTSTOP	0x20000000	/* Stopped from outside by a
+						   transparent PT_ATTACH or
+						   PT_KERN_INTERRUPT; implies
+						   P_STOPPED_TRACE. */
 #define	P2_DQOWNER		0x40000000	/* Has opened a dq(4) queue;
 						   never cleared, not
 						   inherited. */
+
+#define	P_CAP_EXCLUDED(p)	(((p)->p_flag2 & P2_CAP_EXCLUDED) != 0)
 
 /* Flags protected by proctree_lock, kept in p_treeflags. */
 #define	P_TREE_ORPHANED		0x00000001	/* Reparented, on orphan list */
@@ -1197,8 +1213,11 @@ struct	fork_req {
 #define	PGET_NOTWEXIT	0x00010	/* Check that the process is not in P_WEXIT. */
 #define	PGET_NOTINEXEC	0x00020	/* Check that the process is not in P_INEXEC. */
 #define	PGET_NOTID	0x00040	/* Do not assume tid if pid > PID_MAX. */
+/* 5BSD block. */
+#define	PGET_CANINSPECT	0x10000	/* Check against p_caninspect(). */
 
 #define	PGET_WANTREAD	(PGET_HOLD | PGET_CANDEBUG | PGET_NOTWEXIT)
+#define	PGET_WANTINSPECT (PGET_HOLD | PGET_CANINSPECT | PGET_NOTWEXIT)
 
 int	pget(pid_t pid, int flags, struct proc **pp);
 
@@ -1242,6 +1261,7 @@ int	leavepgrp(struct proc *p);
 void	maybe_yield(void);
 void	mi_switch(int flags);
 int	p_candebug(struct thread *td, struct proc *p);
+int	p_caninspect(struct thread *td, struct proc *p);
 int	p_canopen(struct thread *td, struct proc *p);
 int	p_cansee(struct thread *td, struct proc *p);
 int	p_cansched(struct thread *td, struct proc *p);
@@ -1265,6 +1285,8 @@ struct proc *proc_realparent(struct proc *child);
 void	proc_reap(struct thread *td, struct proc *p, int *status, int options,
 	    int zombieref);
 void	proc_reparent(struct proc *child, struct proc *newparent, bool set_oppid);
+extern void (*proc_dying_hook)(struct proc *p);
+void	proc_dying_notify(struct proc *p);
 void	proc_set_p2_wexit(struct proc *p);
 void	proc_set_traced(struct proc *p, bool stop);
 void	proc_wkilled(struct proc *p);

@@ -3,7 +3,7 @@
 .\"
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd November 15, 2026
+.Dd November 17, 2026
 .Dt MAC_CAPABILITY_CAPPROTECT 4
 .Os
 .Sh NAME
@@ -83,7 +83,36 @@ process; restriction flags limit what the shielded process may do itself.
 .It Dv CP_SF_PTRACE Pq 0x0001
 Block
 .Xr ptrace 2
-attach from foreign processes.
+attach from foreign processes, and every other debugging access
+.Pq Xr p_candebug 9 :
+reading or writing the process's memory, its environment, descriptors and
+working directory, and new probes of the pid provider of
+.Xr dtrace 1
+.Pq Dv FASTTRAPIOC_MAKEPROBE .
+A pid probe made before the shield can still be enabled, and an enabled
+one keeps firing.
+The shield does not apply to the DTrace kernel providers: a consumer with
+the DTrace kernel privilege reads the process's memory with
+.Fn copyin
+from
+.Sy syscall ,
+.Sy fbt
+or
+.Sy profile
+probes that fire in it, and with
+.Fl w
+writes it, signals it or stops it
+.Pq Fn copyout , Fn raise , Fn stop .
+Inspection is not blocked: the process's memory map, auxiliary vector,
+ps_strings and signal trampoline locations, umask and kernel stacks
+.Pq Xr p_caninspect 9 ,
+as
+.Xr procstat 1 Fl v Fl k Fl x
+and the symbols of
+.Xr dtrace 1 Ns 's
+.Fn ustack
+read them, and the registration of the process's USDT probes from its own
+read-only file mappings.
 .It Dv CP_SF_SIGNAL Pq 0x0002
 Block signals from foreign processes, and suspension that bypasses signal
 delivery.
@@ -267,7 +296,9 @@ Foreign access to a shielded process is denied with
 .Er EACCES
 by the following hooks when the corresponding flag is set:
 .Fn mpo_proc_check_debug
-.Pq Dv CP_SF_PTRACE ,
+.Pq Dv CP_SF_PTRACE ;
+.Fn mpo_proc_check_inspect
+always allows,
 .Fn mpo_proc_check_signal
 .Pq Dv CP_SF_SIGNAL , CP_SF_SIGKILL , CP_SF_SIGCONT ,
 .Fn mpo_proc_check_suspend

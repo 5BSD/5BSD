@@ -9,19 +9,28 @@
  * The child inherits one end of a mac_capability channel on fd 3.  Capsule
  * monitors the process descriptor and restarts switchboard on crash
  * with exponential backoff.
+ *
+ * Every start hands SwitchBoard its own authority issuer (see "PID 1's
+ * authority issuer" below).  Without one SwitchBoard is not started: PID 1
+ * enters single-user, saying "no authority issuer".
  */
 
+#include <sys/param.h>
 #include <sys/capsicum.h>
 #include <sys/cap_authority.h>
 #include <sys/syscall.h>
 #include <sys/event.h>
 #include <sys/procdesc.h>
 #include <sys/procctl.h>
+#include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <sys/wait.h>
 
 #include <errno.h>
 #include <fcntl.h>
+#include <kenv.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,16 +38,25 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "capsule.h"
+#include "capsule_ctl.h"	/* CTL_OP_SINGLE */
 #include "capsule_daemon.h"
 #include "capsule_svc_proto.h"
 #include "probes.h"
 #include "bootstrap_exec.h"
+#include "service_bootstrap.h"
 
 /* Restart policy constants. */
 #define	BOOTSTRAP_MIN_UPTIME	5	/* seconds before reset */
 #define	BOOTSTRAP_BASE_DELAY	1	/* initial restart delay (seconds) */
 #define	BOOTSTRAP_MAX_DELAY	30	/* max restart delay (seconds) */
 #define	BOOTSTRAP_MAX_FAILURES	10	/* circuit breaker threshold */
+
+/*
+ * Descriptors kept in reserve for issuer creates: one take makes at most two
+ * (this start's, when none is held, and the next start's).
+ */
+#define	BOOTSTRAP_ISSUER_RESERVE	2
 
 /* Well-known fds for switchboard. */
 #define	SWITCHBOARD_CHANNEL_FD	3	/* channel to capsule */
@@ -47,7 +65,8 @@
 #define	SWITCHBOARD_CAPPROTECT_FD	6	/* capprotect service instance */
 #define	SWITCHBOARD_IDENTITY_FD	7	/* identity service instance */
 #define	SWITCHBOARD_AUTHORITY_FD	8
-#define	SWITCHBOARD_LAST_FD	8	/* highest well-known fd */
+#define	SWITCHBOARD_DISCOVERY_FD	9	/* system discovery, server end */
+#define	SWITCHBOARD_LAST_FD	9	/* highest well-known fd */
 
 static struct {
 	pid_t		pid;
@@ -57,9 +76,28 @@ static struct {
 	struct timespec	last_start;
 	bool		started;
 	uintptr_t	timer_ident;	/* kevent timer ident */
-} bs;
+	int		issuer_next_fd;	/* the next start's issuer, held unused */
+	int		issuer_next_error; /* errno of its failed create, or 0 */
+	int		issuer_refused;	/* errno that refused this start, or 0 */
+	/* Released for the creates in one take: Capsule's own limit never fails them. */
+	int		reserve_fd[BOOTSTRAP_ISSUER_RESERVE];
+	/*
+	 * The system discovery channel, kept for the whole boot.  Its client
+	 * end is capsule.c's ambient lookup (every getty, and each
+	 * SwitchBoard's own slot); its server end goes to each SwitchBoard.
+	 * Every slot names this one channel, so a restarted SwitchBoard serves
+	 * the routes of processes started under the one before it.
+	 */
+	int		discovery_fd;	/* server end */
+	bool		discovery_tried; /* created once per Capsule, or never */
+	/* The boot converged (a SwitchBoard reported READY): no rc replay. */
+	bool		boot_complete;
+} bs = { .issuer_next_fd = -1, .discovery_fd = -1,
+    .reserve_fd = { [0 ... BOOTSTRAP_ISSUER_RESERVE - 1] = -1 } };
 
 static uintptr_t next_timer_ident = 90000;
+
+static void	bootstrap_backoff(int kq);
 
 /*
  * Child setup and exec for switchboard.
@@ -75,6 +113,23 @@ struct bootstrap_delegate_fds {
 	int	capprotect_fd;
 	int	identity_fd;
 	int	authority_fd;
+	int	discovery_fd;	/* dup of the discovery server end, or -1 */
+	int	lookup_fd;	/* discovery client end for the slot, or -1 */
+	bool	boot_complete;
+	bool	rc_fastboot;	/* /etc/rc without autoboot (after single-user) */
+	int	issuer_next_error;	/* the next start's issuer failed, or 0 */
+	/*
+	 * The managed authority, constrained to service_manager with
+	 * CAP_AUTH_ROLE_CORE, that carries base exclusion across switchboard's
+	 * exec (cap_process(2) BASE EXCLUSION).  -1 when none was made.
+	 */
+	int	core_token;
+	/*
+	 * The service manager's image, opened O_VERIFY: the vnode the Core
+	 * authority pins.  The child executes this descriptor (fexecve), so
+	 * a binary replaced on disk after the pin is never what runs.
+	 */
+	int	core_image;
 	/*
 	 * Bundle-directory overrides forwarded to switchboard.  Captured from
 	 * capsule's environment in the parent (getenv is not async-signal-safe,
@@ -103,15 +158,30 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 {
 	char channel_env[64];
 	char channel_svc_env[64], coalition_svc_env[64], capprotect_env[64];
-	char identity_env[64], authority_env[64];
+	char identity_env[64], authority_env[64], discovery_env[64];
+	char next_issuer_env[64];
 	char bundle_sys_env[PATH_MAX + 32], bundle_usr_env[PATH_MAX + 32];
 	char skip_rc_env[32], no_sigkill_env[40];
 	char run_dir_env[PATH_MAX + 32], settle_env[64];
-	char *env[16];
+	char *env[20];
 	char *argv[2];
 	int nullfd, fd, safe_base;
-	int src_fds[6], dst_fds[6];
+	int src_fds[9], dst_fds[9], image_dst = -1;
 	unsigned envc, i, nfds;
+
+	/*
+	 * First: install the Core authority while its descriptor is still
+	 * here (the remapping below closes everything outside the reserved
+	 * slots).  It stays pending until the execve() at the end, and
+	 * nothing in between installs another.  This child of PID 1 is
+	 * excluded, so switchboard's exec of the pinned image keeps it.
+	 */
+	if (d->core_token >= 0) {
+		if (syscall(SYS_cap_process, CAP_AUTH_INSTALL, d->core_token, 0,
+		    NULL) == -1)
+			_exit(126);
+		(void)close(d->core_token);
+	}
 
 	/*
 	 * Redirect stdio to /dev/null.  In foreground mode, preserve
@@ -130,6 +200,13 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 	}
 	if (nullfd > STDERR_FILENO)
 		(void)close(nullfd);
+
+	/*
+	 * The system discovery route goes into the kernel slot, as for getty:
+	 * SwitchBoard's own lookups, rc and the rc-world daemons inherit it.
+	 */
+	if (d->lookup_fd >= 0 && service_install_ambient_lookup(d->lookup_fd) == -1)
+		_exit(126);
 
 	/*
 	 * Collect source→dest fd mappings, then move all sources
@@ -164,9 +241,18 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 		src_fds[nfds] = d->authority_fd;
 		dst_fds[nfds++] = SWITCHBOARD_AUTHORITY_FD;
 	}
+	if (d->discovery_fd >= 0) {
+		src_fds[nfds] = d->discovery_fd;
+		dst_fds[nfds++] = SWITCHBOARD_DISCOVERY_FD;
+	}
+	/* The pinned image, just above the reserved range, for fexecve(). */
+	if (d->core_image >= 0) {
+		image_dst = SWITCHBOARD_LAST_FD + 1;
+		src_fds[nfds] = d->core_image;
+		dst_fds[nfds++] = image_dst;
+	}
 
-
-	safe_base = SWITCHBOARD_LAST_FD + 1;
+	safe_base = (image_dst >= 0 ? image_dst : SWITCHBOARD_LAST_FD) + 1;
 	for (i = 0; i < nfds; i++) {
 		if (src_fds[i] < safe_base) {
 			fd = fcntl(src_fds[i], F_DUPFD, safe_base);
@@ -203,11 +289,19 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 			(void)close(fd);
 	}
 
-	/* Close everything above the reserved range. */
-	closefrom(SWITCHBOARD_LAST_FD + 1);
+	/* Close everything above the reserved range (and the image). */
+	closefrom(safe_base);
 
-	/* Permit this exec only; prevent propagation before manager startup. */
+	/*
+	 * Permit this exec only; prevent propagation before manager startup.
+	 * The image descriptor is close-on-exec: executing it consumes it.
+	 */
 	for (i = 0; i < nfds; i++) {
+		if (dst_fds[i] == image_dst) {
+			if (fcntl(image_dst, F_SETFD, FD_CLOEXEC) == -1)
+				_exit(126);
+			continue;
+		}
 		if (bootstrap_confine_manager_fd(dst_fds[i]) == -1)
 			_exit(126);
 	}
@@ -247,6 +341,21 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 		(void)snprintf(authority_env, sizeof(authority_env),
 		    "SWITCHBOARD_AUTHORITY_FD=%d", SWITCHBOARD_AUTHORITY_FD);
 		env[envc++] = authority_env;
+	}
+	if (d->discovery_fd >= 0) {
+		(void)snprintf(discovery_env, sizeof(discovery_env),
+		    "SWITCHBOARD_DISCOVERY_FD=%d", SWITCHBOARD_DISCOVERY_FD);
+		env[envc++] = discovery_env;
+	}
+	if (d->boot_complete)
+		env[envc++] = __DECONST(char *, "SWITCHBOARD_BOOT_COMPLETE=1");
+	else if (d->rc_fastboot)
+		env[envc++] = __DECONST(char *, "SWITCHBOARD_RC_FASTBOOT=1");
+	/* Reported by capsulectl status: the next start must create its own. */
+	if (d->issuer_next_error != 0) {
+		(void)snprintf(next_issuer_env, sizeof(next_issuer_env),
+		    "SWITCHBOARD_NEXT_ISSUER_ERROR=%d", d->issuer_next_error);
+		env[envc++] = next_issuer_env;
 	}
 
 
@@ -308,8 +417,355 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 		if (procctl(P_PID, getpid(), PROC_SPROTECT, &flags) == -1)
 			_exit(126);
 	}
-	execve(od.cfg.service_manager, argv, env);
+	if (image_dst >= 0)
+		fexecve(image_dst, argv, env);
+	else
+		execve(od.cfg.service_manager, argv, env);
 	_exit(127);
+}
+
+/*
+ * Q15 (rev 3 delta 3.4): with mac_veriexec enforcing, the O_VERIFY open of
+ * the service manager already refused an image outside the signed base
+ * manifest; without it, nothing distinguishes a replaced binary, and the
+ * grant says so, as switchboard does for each Core unit.
+ */
+static void
+bootstrap_core_verified_warning(const char *image_path)
+{
+	char state[64], *word, *rest;
+	size_t len = sizeof(state) - 1;
+	bool enforcing = false;
+
+	if (sysctlbyname("security.mac.veriexec.state", state, &len, NULL,
+	    0) == 0) {
+		state[len] = '\0';
+		rest = state;
+		while ((word = strsep(&rest, " ")) != NULL)
+			if (strcmp(word, "enforce") == 0)
+				enforcing = true;
+	}
+	if (!enforcing)
+		syslog(LOG_WARNING, "bootstrap: %s: Core role granted without "
+		    "Veriexec enforcement: image not verified against the base "
+		    "manifest", image_path);
+}
+
+/*
+ * Issue and constrain the managed authority that carries the Core role
+ * into switchboard's exec (cap_process(2) BASE EXCLUSION).  The image is
+ * opened O_VERIFY; library directories are the system ones, checked as
+ * switchboard checks its units' (authority.c set_loader_directories()).
+ * The token cannot be passed on (CAP_XFER_NONE).
+ */
+static int
+bootstrap_core_authority(int issuer, const char *image_path, int *tokenp,
+    int *imagep)
+{
+	static const char *const libdirs[] = { "/lib", "/usr/lib" };
+	struct cap_authority_spec spec = { .version = CAP_AUTH_VERSION,
+	    .kind = CAP_AUTH_MANAGED };
+	struct cap_authority_constraint c = { .flags = CAP_AUTH_ROLE_CORE,
+	    .nexec = 1 };
+	struct cap_authority_libdirs dirs = { .count = 0 };
+	struct stat st;
+	int image = -1, token = -1, saved, result = -1;
+	unsigned i;
+
+	token = syscall(SYS_cap_process, CAP_AUTH_ISSUE, issuer, 0, &spec);
+	if (token == -1)
+		goto out;
+	image = open(image_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_VERIFY);
+	if (image == -1)
+		goto out;
+	c.token_fd = token;
+	c.executable_fds[0] = image;
+	if (syscall(SYS_cap_process, CAP_AUTH_CONSTRAIN, issuer, 0, &c) == -1)
+		goto out;
+	bootstrap_core_verified_warning(image_path);
+	dirs.token_fd = token;
+	for (i = 0; i < nitems(libdirs); i++) {
+		int fd = open(libdirs[i], O_RDONLY | O_DIRECTORY | O_CLOEXEC |
+		    O_NOFOLLOW);
+
+		if (fd == -1)
+			goto out;
+		dirs.directory_fds[dirs.count++] = fd;
+		if (fstat(fd, &st) == -1)
+			goto out;
+		if (st.st_uid != 0 || (st.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+			errno = EPERM;
+			goto out;
+		}
+	}
+	if (syscall(SYS_cap_process, CAP_AUTH_SET_LIBDIRS, issuer, 0,
+	    &dirs) == -1)
+		goto out;
+	if (cap_xfer_limit(token, CAP_XFER_NONE) == -1)
+		goto out;
+	*tokenp = token;
+	token = -1;
+	*imagep = image;
+	image = -1;
+	result = 0;
+out:
+	saved = errno;
+	for (i = 0; i < dirs.count; i++)
+		close(dirs.directory_fds[i]);
+	if (image != -1)
+		close(image);
+	if (token != -1)
+		close(token);
+	errno = saved;
+	return (result);
+}
+
+/*
+ * PID 1 has no environment to carry SWITCHBOARD_TEST_SHIELD_NO_SIGKILL, so a
+ * test kernel also takes it from the loader: switchboard_test_no_sigkill="1"
+ * lets a guest test kill SwitchBoard to exercise a crash restart.  Honoured
+ * only on a test kernel booted with kern.mac_capability.test_issuer=1.
+ */
+static bool
+bootstrap_test_no_sigkill(void)
+{
+	char value[8];
+	size_t len;
+	int knob;
+
+	len = sizeof(knob);
+	if (sysctlbyname("kern.mac_capability.test_issuer", &knob, &len,
+	    NULL, 0) == -1 || knob != 1)
+		return (false);
+	if (kenv(KENV_GET, "switchboard_test_no_sigkill", value,
+	    sizeof(value)) <= 0 || strcmp(value, "1") != 0)
+		return (false);
+	syslog(LOG_WARNING, "bootstrap: TEST MODE: switchboard shield without "
+	    "SIGKILL (switchboard_test_no_sigkill)");
+	return (true);
+}
+
+/*
+ * PID 1's authority issuer.  Each SwitchBoard start is handed its own; when
+ * that SwitchBoard exits its descriptor closes, and issuer_close() revokes
+ * every grant the issuer made and removes its application catalogue
+ * (sys/dev/mac_capability/mac_capability_authority.c).
+ *
+ * Capsule creates the next start's issuer as soon as one is handed out and
+ * holds it unused, so that a restart does not depend on a create succeeding
+ * at that moment.  A held issuer authorises nothing: authority exists only as
+ * grants an issuer has made, and Capsule makes none.  Holding it does not
+ * change the running SwitchBoard's revocation either: issuer_revoke() acts on
+ * one issuer's own grants, leases and applications, and every grant records
+ * the issuer that made it (tests/sys/mac_capability
+ * authority_test_issuer_test:held_issuer_independent).
+ *
+ * No failure of CAP_AUTH_ISSUER_CREATE ends with an event Capsule could wait
+ * on.  EPERM, EINVAL, ENOSPC (the identity sequence never wraps) and a kernel
+ * without the operation are permanent.  ENFILE, the system file table full,
+ * clears only when something closes a file, which nothing reports.  So a
+ * start without an issuer is refused, and PID 1 enters single-user.  EMFILE,
+ * Capsule's own table being full, is prevented: BOOTSTRAP_ISSUER_RESERVE
+ * reserved descriptors are released for the creates of one take.  The
+ * kernel's allocations wait rather than fail (M_WAITOK), so there is no
+ * ENOMEM.
+ *
+ * The held issuer is close-on-fork and not transferable from creation: a
+ * Capsule child that stalls between fork and exec (getty's respawn sleep,
+ * the window-system wait) must not hold a reference, or the issuer would
+ * outlive the SwitchBoard it was handed to and its grants and catalogue with
+ * it (issuer_close() revokes on the last close).  Only the pdfork into
+ * SwitchBoard carries it: bootstrap_issuer_take() clears close-on-fork for the
+ * issuer being handed out.
+ *
+ * A test kernel (options MAC_CAPABILITY_TEST_PERMISSIVE, booted with
+ * kern.mac_capability.test_issuer=1) also gives a test-local Capsule a test
+ * issuer until PID 1 anchors the boot; that is said loudly.
+ */
+static void
+bootstrap_reserve(bool acquire)
+{
+	unsigned i;
+
+	for (i = 0; i < BOOTSTRAP_ISSUER_RESERVE; i++) {
+		if (!acquire) {
+			if (bs.reserve_fd[i] >= 0)
+				(void)close(bs.reserve_fd[i]);
+			bs.reserve_fd[i] = -1;
+		} else if (bs.reserve_fd[i] < 0 &&
+		    (bs.reserve_fd[i] = open("/dev/null",
+		    O_RDONLY | O_CLOEXEC | O_CLOFORK)) == -1)
+			syslog(LOG_CRIT, "bootstrap: descriptor reserve for "
+			    "issuer creates lost: %m; a create may fail with "
+			    "EMFILE");
+	}
+}
+
+static int
+bootstrap_issuer_create(void)
+{
+	int fd;
+
+	fd = syscall(SYS_cap_process, CAP_AUTH_ISSUER_CREATE, -1, 0, NULL);
+	if (fd < 0)
+		return (-1);
+	/* Held: close on fork and exec, never transferable (see above). */
+	if (fcntl(fd, F_SETFD, FD_CLOEXEC | FD_CLOFORK) == -1 ||
+	    cap_xfer_limit(fd, CAP_XFER_NONE) == -1) {
+		syslog(LOG_ERR, "bootstrap: confine held issuer: %m");
+		(void)close(fd);
+		errno = EBADF;
+		return (-1);
+	}
+	if (getpid() != 1)
+		syslog(LOG_WARNING,
+		    "bootstrap: TEST MODE: authority issuer created off PID 1");
+	return (fd);
+}
+
+/*
+ * The issuer for this start: the one held from the last start, or, when that
+ * create failed or this is the first start, one created now.  Then the next
+ * start's issuer is created.  Returns -1 with bs.issuer_refused set when this
+ * start has none.  The returned issuer may be inherited by the next fork,
+ * which must be the pdfork into SwitchBoard.
+ */
+static int
+bootstrap_issuer_take(void)
+{
+	int error, fd;
+
+	bootstrap_reserve(false);
+	fd = bs.issuer_next_fd;
+	bs.issuer_next_fd = -1;
+	if (fd < 0 && (fd = bootstrap_issuer_create()) < 0) {
+		error = errno;
+		bootstrap_reserve(true);
+		bs.issuer_refused = error;
+		syslog(LOG_CRIT, "bootstrap: no authority issuer: %s; "
+		    "switchboard not started", strerror(error));
+		return (-1);
+	}
+	bs.issuer_next_fd = bootstrap_issuer_create();
+	bs.issuer_next_error = bs.issuer_next_fd < 0 ? errno : 0;
+	bootstrap_reserve(true);
+	if (bs.issuer_next_fd < 0)
+		syslog(LOG_CRIT, "bootstrap: no authority issuer for the next "
+		    "switchboard start: %s; that start will create one, or "
+		    "refuse", strerror(bs.issuer_next_error));
+	/* This one crosses the pdfork into SwitchBoard. */
+	if (fcntl(fd, F_SETFD, FD_CLOEXEC) == -1) {
+		error = errno;
+		(void)close(fd);
+		bs.issuer_refused = error;
+		syslog(LOG_CRIT, "bootstrap: no authority issuer: %s; "
+		    "switchboard not started", strerror(error));
+		return (-1);
+	}
+	return (fd);
+}
+
+/*
+ * A start refused for want of an issuer.  At first boot capsule_engine_start()
+ * reports it and enters recovery; on a running system (a restart) PID 1 goes to
+ * single-user the same way an operator's "capsulectl single" would.
+ */
+static void
+bootstrap_issuer_refuse(void)
+{
+
+	if (getpid() != 1) {
+		syslog(LOG_CRIT, "bootstrap: no authority issuer: %s; "
+		    "switchboard not restarted", strerror(bs.issuer_refused));
+		return;
+	}
+	syslog(LOG_CRIT, "bootstrap: no authority issuer: %s; entering "
+	    "single-user", strerror(bs.issuer_refused));
+	(void)capsule_lifecycle(CTL_OP_SINGLE);
+}
+
+/*
+ * A descriptor for the discovery server end to delegate, creating the channel
+ * on the first start of this Capsule.  Its client end becomes capsule.c's
+ * ambient lookup for logins.  If the channel cannot be created on that first
+ * start, this Capsule never owns one: every SwitchBoard mints its own route
+ * and hands it over, as before (*fdp -1, return 0).  Once Capsule owns the
+ * channel, a failed dup fails the start (-1): a SwitchBoard with its own
+ * route would split discovery from the route every existing process holds.
+ */
+static int
+bootstrap_discovery_dup(int *fdp)
+{
+	int client, server;
+
+	*fdp = -1;
+	if (!bs.discovery_tried) {
+		bs.discovery_tried = true;
+		if (mac_capability_create_channel(&server, &client) == -1) {
+			syslog(LOG_WARNING, "bootstrap: no boot discovery "
+			    "channel: %m; switchboard provides the route");
+			return (0);
+		}
+		if (capsule_set_ambient_lookup(client) == -1) {
+			syslog(LOG_WARNING, "bootstrap: boot discovery channel "
+			    "client end: %m; switchboard provides the route");
+			(void)close(server);
+			return (0);
+		}
+		(void)fcntl(server, F_SETFD, FD_CLOEXEC | FD_CLOFORK);
+		bs.discovery_fd = server;
+		syslog(LOG_INFO, "bootstrap: boot discovery channel created");
+	}
+	if (bs.discovery_fd < 0)
+		return (0);
+	*fdp = fcntl(bs.discovery_fd, F_DUPFD_CLOEXEC, 0);
+	if (*fdp == -1) {
+		syslog(LOG_ERR, "bootstrap: dup discovery channel: %m");
+		return (-1);
+	}
+	return (0);
+}
+
+/* Capsule serves discovery itself: a SwitchBoard route must not replace it. */
+bool
+bootstrap_owns_discovery(void)
+{
+
+	return (bs.discovery_fd >= 0);
+}
+
+/*
+ * The capability world stopped (shutdown, single-user): the boot is over, and
+ * the next SwitchBoard start runs /etc/rc again.  Called from
+ * capsule_world_stop() whether or not a SwitchBoard was running.
+ */
+void
+bootstrap_world_stopped(void)
+{
+
+	bs.boot_complete = false;
+}
+
+/*
+ * The SwitchBoard that was started reported READY: the boot converged, and
+ * any later start in this boot is a restart, which must not replay /etc/rc.
+ */
+void
+bootstrap_note_ready(void)
+{
+
+	if (!bs.boot_complete)
+		syslog(LOG_INFO, "bootstrap: boot converged; later switchboard "
+		    "starts do not replay /etc/rc");
+	bs.boot_complete = true;
+}
+
+/* The errno that made Capsule refuse to start SwitchBoard, or 0. */
+int
+bootstrap_issuer_refused(void)
+{
+
+	return (bs.issuer_refused);
 }
 
 /*
@@ -327,6 +783,7 @@ bootstrap_start(int kq)
 	int pd_fd;
 	pid_t pid;
 
+	bs.issuer_refused = 0;
 	if (od.cfg.service_manager[0] == '\0') {
 		syslog(LOG_INFO, "bootstrap: no service_manager configured");
 		return (0);
@@ -337,6 +794,9 @@ bootstrap_start(int kq)
 		    od.cfg.service_manager);
 		return (-1);
 	}
+
+	/* The descriptor reserve that keeps EMFILE from the issuer creates. */
+	bootstrap_reserve(true);
 
 	/* Create channel. */
 	if (mac_capability_create_channel(&capsule_end, &child_end) == -1) {
@@ -383,18 +843,62 @@ bootstrap_start(int kq)
 		    "on-demand attribution disabled");
 	}
 
-	/* Only PID 1 can create this boot trust anchor. The environment merely
-	 * names a descriptor; the kernel validates its unforgeable object type.
-	 * A test kernel (options MAC_CAPABILITY_TEST_PERMISSIVE, booted with
-	 * kern.mac_capability.test_issuer=1) also gives a test-local Capsule a
-	 * test issuer until PID 1 anchors the boot; that is said loudly. */
-	dfds.authority_fd = syscall(SYS_cap_process, CAP_AUTH_ISSUER_CREATE,
-	    -1, 0, NULL);
-	if (dfds.authority_fd < 0)
-		syslog(LOG_ERR, "bootstrap: protected authority issuer unavailable: %m");
-	else if (getpid() != 1)
-		syslog(LOG_WARNING,
-		    "bootstrap: TEST MODE: authority issuer created off PID 1");
+	dfds.core_token = -1;
+	dfds.core_image = -1;
+	dfds.authority_fd = bootstrap_issuer_take();
+	if (dfds.authority_fd < 0) {
+		close(capsule_end);
+		close(child_end);
+		close(dfds.channel_svc_fd);
+		close(dfds.coalition_svc_fd);
+		close(dfds.capprotect_fd);
+		if (dfds.identity_fd >= 0)
+			close(dfds.identity_fd);
+		return (-1);
+	}
+	dfds.issuer_next_error = bs.issuer_next_error;
+
+	/*
+	 * PID 1's start carries base exclusion across switchboard's exec: a
+	 * Core authority from the issuer just taken, pinning the image opened
+	 * now (each start opens it again).  Without it the start is refused,
+	 * as for a missing issuer; switchboard never runs unexcluded under
+	 * PID 1.  Only PID 1's fork chain can be excluded, so a test-local
+	 * Capsule makes no Core authority.
+	 */
+	if (getpid() == 1 && bootstrap_core_authority(dfds.authority_fd,
+	    od.cfg.service_manager, &dfds.core_token, &dfds.core_image) == -1) {
+		syslog(LOG_ERR, "bootstrap: core authority for switchboard: %m");
+		close(capsule_end);
+		close(child_end);
+		close(dfds.channel_svc_fd);
+		close(dfds.coalition_svc_fd);
+		close(dfds.capprotect_fd);
+		if (dfds.identity_fd >= 0)
+			close(dfds.identity_fd);
+		close(dfds.authority_fd);
+		return (-1);
+	}
+
+	/* The boot-long discovery route (see bs.discovery_fd). */
+	if (bootstrap_discovery_dup(&dfds.discovery_fd) == -1) {
+		close(capsule_end);
+		close(child_end);
+		close(dfds.channel_svc_fd);
+		close(dfds.coalition_svc_fd);
+		close(dfds.capprotect_fd);
+		if (dfds.identity_fd >= 0)
+			close(dfds.identity_fd);
+		close(dfds.authority_fd);
+		if (dfds.core_token >= 0)
+			close(dfds.core_token);
+		if (dfds.core_image >= 0)
+			close(dfds.core_image);
+		return (-1);
+	}
+	dfds.lookup_fd = dfds.discovery_fd >= 0 ? capsule_ambient_lookup() : -1;
+	dfds.boot_complete = bs.boot_complete;
+	dfds.rc_fastboot = !capsule_rc_autoboot();
 
 	/* Capture bundle-dir overrides here — getenv is not safe post-fork. */
 	dfds.bundle_dir_system = getenv("SWITCHBOARD_BUNDLE_DIR_SYSTEM");
@@ -403,6 +907,8 @@ bootstrap_start(int kq)
 	dfds.watch_settle = getenv("SWITCHBOARD_REGISTRY_WATCH_SETTLE");
 	dfds.skip_rc = getenv("SWITCHBOARD_SKIP_RC");
 	dfds.test_no_sigkill = getenv("SWITCHBOARD_TEST_SHIELD_NO_SIGKILL");
+	if (dfds.test_no_sigkill == NULL && bootstrap_test_no_sigkill())
+		dfds.test_no_sigkill = "1";
 
 	/*
 	 * These descriptors cross exactly one fork edge into switchboard.  They
@@ -418,7 +924,9 @@ bootstrap_start(int kq)
 	    (dfds.identity_fd >= 0 &&
 	    cap_xfer_limit(dfds.identity_fd, CAP_XFER_NONE) == -1) ||
 	    (dfds.authority_fd >= 0 &&
-	    cap_xfer_limit(dfds.authority_fd, CAP_XFER_NONE) == -1)) {
+	    cap_xfer_limit(dfds.authority_fd, CAP_XFER_NONE) == -1) ||
+	    (dfds.discovery_fd >= 0 &&
+	    cap_xfer_limit(dfds.discovery_fd, CAP_XFER_NONE) == -1)) {
 		syslog(LOG_ERR, "bootstrap: confine delegated fd: %m");
 		close(capsule_end);
 		close(child_end);
@@ -429,6 +937,12 @@ bootstrap_start(int kq)
 			close(dfds.identity_fd);
 		if (dfds.authority_fd >= 0)
 			close(dfds.authority_fd);
+		if (dfds.core_token >= 0)
+			close(dfds.core_token);
+		if (dfds.core_image >= 0)
+			close(dfds.core_image);
+		if (dfds.discovery_fd >= 0)
+			close(dfds.discovery_fd);
 		return (-1);
 	}
 
@@ -443,6 +957,9 @@ bootstrap_start(int kq)
 		if (dfds.capprotect_fd >= 0) close(dfds.capprotect_fd);
 		if (dfds.identity_fd >= 0) close(dfds.identity_fd);
 		if (dfds.authority_fd >= 0) close(dfds.authority_fd);
+		if (dfds.core_token >= 0) close(dfds.core_token);
+		if (dfds.core_image >= 0) close(dfds.core_image);
+		if (dfds.discovery_fd >= 0) close(dfds.discovery_fd);
 		return (-1);
 	}
 
@@ -464,6 +981,12 @@ bootstrap_start(int kq)
 		close(dfds.identity_fd);
 	if (dfds.authority_fd >= 0)
 		close(dfds.authority_fd);
+	if (dfds.core_token >= 0)
+		close(dfds.core_token);
+	if (dfds.core_image >= 0)
+		close(dfds.core_image);
+	if (dfds.discovery_fd >= 0)
+		close(dfds.discovery_fd);
 
 	/*
 	 * The process descriptor is capsule's explicit and exclusive authority
@@ -557,7 +1080,6 @@ bootstrap_teardown_and_restart(int kq, int status)
 {
 	struct timespec now;
 	long uptime;
-	unsigned delay;
 
 	if (WIFEXITED(status))
 		syslog(LOG_WARNING, "bootstrap: switchboard exited status %d",
@@ -604,21 +1126,7 @@ bootstrap_teardown_and_restart(int kq, int status)
 		/* Fall through to backoff. */
 	}
 
-	bs.restart_count++;
-	if (bs.restart_count >= BOOTSTRAP_MAX_FAILURES) {
-		syslog(LOG_CRIT,
-		    "bootstrap: switchboard failed %u times, giving up",
-		    bs.restart_count);
-		CAPSULE_PROBE_ERROR("bootstrap", "circuit breaker tripped");
-		return;
-	}
-
-	delay = BOOTSTRAP_BASE_DELAY << (bs.restart_count - 1);
-	if (delay > BOOTSTRAP_MAX_DELAY)
-		delay = BOOTSTRAP_MAX_DELAY;
-
-	CAPSULE_PROBE_BOOTSTRAP_RESTART(bs.restart_count, delay);
-	bootstrap_schedule_restart(kq, delay);
+	bootstrap_backoff(kq);
 }
 
 /*
@@ -659,14 +1167,29 @@ bootstrap_handle_exit(struct kevent *kev, int kq)
 void
 bootstrap_handle_timer(int kq)
 {
-	unsigned delay;
 
 	syslog(LOG_INFO, "bootstrap: restart timer fired");
 	if (bootstrap_start(kq) == 0)
 		return;
 
 	syslog(LOG_ERR, "bootstrap: restart failed");
+	bootstrap_backoff(kq);
+}
 
+/*
+ * Count one failed start and schedule the next with exponential backoff,
+ * or trip the circuit breaker.
+ */
+static void
+bootstrap_backoff(int kq)
+{
+	unsigned delay;
+
+	/* Without an issuer no restart can succeed: do not count, refuse. */
+	if (bs.issuer_refused != 0) {
+		bootstrap_issuer_refuse();
+		return;
+	}
 	bs.restart_count++;
 	if (bs.restart_count >= BOOTSTRAP_MAX_FAILURES) {
 		syslog(LOG_CRIT,

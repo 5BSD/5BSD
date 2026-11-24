@@ -79,6 +79,7 @@ the end rather than listed one by one.
 | `kern.mac_capability.services` | counter | | Registered kernel services | `sys/dev/mac_capability/mac_capability_core.c` |
 | `kern.mac_capability.instances` | counter | | Active service instances | same |
 | `kern.mac_capability.service_names` | string RD | | Newline-separated registered service names | same |
+| `kern.mac_capability.dead_service_names` | string RD | | Destroyed services still kept allocated by open instances | same |
 | `kern.mac_capability.service_details` | string RD | | Services with flags, limits and instance counts | same |
 | `kern.mac_capability.direct_delivery` | int RW, tunable | 1 | Forwarding services (the channel bearer) deliver straight to the peer queue when nothing earlier is queued; 0 forces the taskqueue path | `sys/dev/mac_capability/mac_capability_dev.c` |
 | `kern.mac_capability_capprotect.max_auth` | uint RDTUN | 4096 | Cap on outstanding capprotect authorizations (0 = unlimited) | `mac_capability_capprotect.c` |
@@ -136,7 +137,6 @@ the end rather than listed one by one.
 | `security.oes.max_clients` | int RW | 64 | Concurrent clients | same |
 | `security.oes.cache_max_entries` | int RW | 1024 | Decision cache size | same |
 | `security.oes.default_muted_paths`, `.default_muted_paths_literal` | string RW | empty | Path mutes applied to new clients (`oeslogger -n` clears them) | same |
-| `security.oes.default_self_mute` | int RW | 1 | New clients do not see their own events | same |
 
 ### vfs.
 

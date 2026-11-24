@@ -26,6 +26,7 @@ SRCS.libservice_api_test= libservice_api_test.c
 CFLAGS.libservice_api_test+= -I${SRCTOP}/usr.sbin/switchboard
 ATF_TESTS_C+=	libservice_api_test
 ATF_TESTS_C+=	service_ambient_test
+ATF_TESTS_C+=	session_wait_test
 .PATH: ${SRCTOP}/lib/libservice
 ATF_TESTS_C+=	software_identity_test
 
@@ -57,6 +58,14 @@ CFLAGS.service_ambient_test+=	-I${SRCTOP}/lib/libservice
 CFLAGS.service_ambient_test+=	-I${SRCTOP}/lib/libchannel
 CFLAGS.service_ambient_test+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.service_ambient_test+=	-I${SRCTOP}/sys
+CFLAGS.service_ambient_test+=	-I${SRCTOP}/tests/sys/mac_capability
+LIBADD.session_wait_test+=	service
+LIBADD.session_wait_test+=	channel
+LIBADD.session_wait_test+=	pthread
+CFLAGS.session_wait_test+=	-I${SRCTOP}/lib/libservice
+CFLAGS.session_wait_test+=	-I${SRCTOP}/lib/libchannel
+CFLAGS.session_wait_test+=	-I${SRCTOP}/sys
+CFLAGS.session_wait_test+=	-I${SRCTOP}/tests/sys/mac_capability
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libservice
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libchannel
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libcapability

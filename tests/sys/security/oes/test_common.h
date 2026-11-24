@@ -41,6 +41,15 @@ struct test_event_reader {
 #define OES_TEST_DEFAULT_READERS	16
 
 /*
+ * The longest an event the kernel has already generated may take to reach
+ * a client, under TCG and host load.  A deadline for waits on an event the
+ * test knows is coming, never a pacing interval: absence is shown with a
+ * fence (a later event of the same subject, or of another process on the
+ * same delivery path), not by waiting this long.
+ */
+#define	OES_TEST_DEADLINE_MS	30000
+
+/*
  * Keep independent batch state for each descriptor.  Multi-client tests
  * commonly alternate reads between descriptors; a single shared reader
  * silently discarded the unread tail of the previous descriptor's batch.
@@ -95,22 +104,39 @@ oes_test_report_failures(void)
 	}
 }
 
+/*
+ * Seconds since the program started, printed with each case so a slow
+ * or timed-out run shows where its time went.  One clock read per case.
+ */
+static struct timespec oes_test_t0;
+
+static inline double
+oes_test_stamp(void)
+{
+	struct timespec now;
+
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	return ((double)(now.tv_sec - oes_test_t0.tv_sec) +
+	    (now.tv_nsec - oes_test_t0.tv_nsec) / 1e9);
+}
+
 __attribute__((constructor))
 static void
 oes_test_install_reporter(void)
 {
 
+	(void)clock_gettime(CLOCK_MONOTONIC, &oes_test_t0);
 	(void)atexit(oes_test_report_failures);
 }
 
 #define TEST_BEGIN(_name) \
-	printf("  Testing %s...\n", (_name))
+	printf("  Testing %s... [%.3f s]\n", (_name), oes_test_stamp())
 
 #define TEST_SUITE_BEGIN(_name) \
 	printf("Testing %s...\n", (_name))
 
 #define TEST_SUITE_END(_name) \
-	printf("%s: ok\n", (_name))
+	printf("%s: ok [%.3f s]\n", (_name), oes_test_stamp())
 
 #define TEST_PASS() \
 	printf("    PASS\n")
@@ -378,8 +404,6 @@ test_wait_event_pid(int fd, pid_t pid, oes_event_type_t event, int timeout_ms,
 			break;
 
 		remaining = timeout_ms - (int)elapsed_ms;
-		if (remaining > 100)
-			remaining = 100;
 
 		if (test_wait_event(fd, msg, remaining) != 0)
 			continue;
@@ -419,8 +443,6 @@ test_wait_event_pid_full(int fd, pid_t pid, oes_event_type_t event,
 			break;
 
 		remaining = timeout_ms - (int)elapsed_ms;
-		if (remaining > 100)
-			remaining = 100;
 
 		if (test_wait_event(fd, out, remaining) != 0)
 			continue;
@@ -465,6 +487,46 @@ test_create_temp_file(char *path, size_t pathlen)
 	}
 	fd = mkstemp(path);
 	return (fd);
+}
+
+/*
+ * A client never receives events caused by its readers: the process that
+ * opened it and any process that read, wrote, polled or kqueued it
+ * (oes(4), "A client's own processes").  A test that watches events it
+ * makes itself makes them in a child: a forked child is not a reader of
+ * the clients it inherits until it uses them, and this one never does.
+ *
+ * Run fn(arg) in such a child and reap it.  The child's exit status is
+ * fn's return value; *status (if not NULL) gets the wait status.  Returns
+ * the child's pid, the ep_pid of its events, or -1 if fork failed.
+ */
+static inline pid_t
+test_in_child(int (*fn)(void *), void *arg, int *status)
+{
+	pid_t pid;
+	int st;
+
+	(void)fflush(NULL);
+	pid = fork();
+	if (pid < 0)
+		return (-1);
+	if (pid == 0)
+		_exit(fn(arg));
+	while (waitpid(pid, &st, 0) < 0) {
+		if (errno != EINTR)
+			return (-1);
+	}
+	if (status != NULL)
+		*status = st;
+	return (pid);
+}
+
+/* As test_in_child(), true when the child exited 0. */
+static inline bool
+test_child_ok(int status)
+{
+
+	return (WIFEXITED(status) && WEXITSTATUS(status) == 0);
 }
 
 #endif /* !_OES_TEST_COMMON_H_ */

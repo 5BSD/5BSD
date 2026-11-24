@@ -18,6 +18,7 @@
 #
 
 . "$(atf_get_srcdir)/dq_suites.subr"
+. "$(atf_get_srcdir)/dq_hang.subr"
 
 dqtree()
 {
@@ -81,22 +82,6 @@ count_by_tag()
 	}' "$3" "$2" | sort
 }
 
-# While a served-root run lasts, every 10 seconds, the kernel stacks of
-# the threads waiting in dq(4), with the time: a stall (a requester that
-# waits until kern.dq.default_deadline_ms) shows which wait it is and what
-# it holds.  Written to $1 until killed.
-stall_sampler()
-{
-
-	while :; do
-		sleep 10
-		{
-			date -u +%T
-			procstat -kka 2>/dev/null | grep -E 'dq_|dqres_'
-		} >> "$1"
-	done
-}
-
 # A failure recorded for the end of the case (suites_body's "failed").
 fail_later()
 {
@@ -104,25 +89,6 @@ fail_later()
 	failed="${failed}${failed:+; }$*"
 }
 
-assemble()
-{
-	local r d
-
-	r="$1"
-	mkdir -p "${r}" || return 1
-	echo "${r}" > root.made
-	for d in bin sbin lib libexec usr etc; do
-		mkdir -p "${r}/${d}"
-		mount_nullfs -o ro "/${d}" "${r}/${d}" || return 1
-		echo "${r}/${d}" >> mounts
-	done
-	mkdir -p "${r}/tmp" "${r}/dev" "${r}/var/run" "${r}/var/tmp"
-	mount -t tmpfs tmpfs "${r}/tmp" || return 1
-	echo "${r}/tmp" >> mounts
-	mount -t devfs devfs "${r}/dev" || return 1
-	echo "${r}/dev" >> mounts
-	chmod 1777 "${r}/tmp" "${r}/var/tmp"
-}
 
 atf_test_case suites cleanup
 suites_head()
@@ -134,8 +100,8 @@ suites_head()
 }
 suites_body()
 {
-	local root suite kf expected env failed sampler stalled nsuites rc
-	local defaults
+	local root suite kf expected env failed stalled nsuites rc
+	local defaults deadline top watcher
 
 	[ -c /dev/dq ] || atf_fail "/dev/dq is absent"
 	[ -x "$(atf_get_srcdir)/dqtree" ] || atf_fail "dqtree is not installed"
@@ -143,7 +109,8 @@ suites_body()
 		root="${DQ_TREE_ROOT}"
 	else
 		root="/usr/obj/dqtree-root.$$"
-		assemble "${root}" || atf_fail "cannot assemble ${root}"
+		dq_assemble_root "${root}" ||
+		    atf_fail "cannot assemble ${root}"
 	fi
 	expected=patterns
 	tagged_patterns "$(atf_get_srcdir)/dqtree.expected" \
@@ -171,19 +138,25 @@ suites_body()
 		rm -f "${root}/tmp/chroot.db" "${root}/tmp/tree.db"
 		dq_kyua_test /tmp/chroot.db "${kf}" ${env} chroot "${root}" ||
 		    true
-		: > stalls
+		rm -rf hang
 		stalled=
-		stall_sampler stalls &
-		sampler=$!
+		# The served run in the background, so the hang watch
+		# (dq_hang.subr) has its pid.
+		deadline=$(hang_deadline "${root}" "${kf}")
+		${env} "$(atf_get_srcdir)/dqtree" -o tree.report "${root}" \
+		    kyua test --results-file=/tmp/tree.db -k "${kf}" \
+		    > tree.db.out 2>&1 &
+		top=$!
+		hang_watch hang "${root}" "${top}" "${deadline}" &
+		watcher=$!
 		rc=0
-		dq_kyua_test /tmp/tree.db "${kf}" ${env} \
-		    "$(atf_get_srcdir)/dqtree" -o tree.report "${root}" || rc=$?
+		wait "${top}" || rc=$?
+		wait "${watcher}"
+		dq_kyua_rc /tmp/tree.db "${kf}" "${rc}" dqtree || rc=$?
 		if [ "${rc}" -eq 125 ]; then
 			fail_later "${suite}: dqtree saw a dropped, failed-closed" \
 			    "or unmarked consultation or a malformed reply"
 		fi
-		kill "${sampler}" 2>/dev/null
-		wait "${sampler}" 2>/dev/null
 		[ -s tree.report ] || atf_fail "${suite}: dqtree wrote no report"
 		dq_kyua_test plain.db "${kf}" || true
 		dq_results "${root}/tmp/chroot.db" chroot.all
@@ -218,9 +191,12 @@ suites_body()
 			fail_later "${suite}: a requester waited until its deadline"
 			stalled=yes
 		fi
-		if [ -n "${stalled}" ]; then
-			echo "=== ${suite}: dq(4) waits sampled every 10 s" >&2
-			tail -n 400 stalls >&2
+		# The hang capture (dq_hang.subr): always when it saw a
+		# stall or a process that stopped moving, else with a failure.
+		if [ -n "${stalled}" ] || [ -s hang/stalls ] ||
+		    [ -s hang/stuck ]; then
+			echo "=== ${suite}: hang capture" >&2
+			hang_report hang
 		fi
 		dq_report_zero tree.report unmarked failclosed dropped \
 		    bad_replies >&2 ||
@@ -229,7 +205,8 @@ suites_body()
 		dq_report_zero tree.report objects >&2 ||
 		    fail_later "${suite}: served objects left live"
 		rm -f plain.db chroot.res tree.res plain.res tree.report \
-		    chroot.all* tree.all* plain.all* stalls
+		    chroot.all* tree.all* plain.all*
+		rm -rf hang
 		nsuites=$((nsuites + 1))
 	done
 	[ "${nsuites}" -gt 0 ] || atf_fail "no suite was compared"
@@ -240,26 +217,16 @@ suites_body()
 }
 suites_cleanup()
 {
-	local m r
 
-	if [ -f mounts ]; then
-		sort -r mounts | while read -r m; do
-			umount -f "${m}" 2>/dev/null
-		done
+	# A body killed at its timeout never printed its capture: the
+	# cleanup takes it if the deadline did not, and copies it to the
+	# results disk.
+	if [ -d hang ]; then
+		hang_cleanup hang
+		echo "=== hang capture at the timeout" >&2
+		hang_report hang
 	fi
-	if [ -f root.made ]; then
-		r="$(cat root.made)"
-		# Never remove through a mount that is still there: the
-		# read-only views are of the system's own /bin, /usr and /etc.
-		if mount -p | awk -v r="${r}" '
-		    $2 == r || index($2, r "/") == 1 { found = 1 }
-		    END { exit !found }'; then
-			echo "${r}: still mounted, left in place" >&2
-		else
-			rm -rf "${r}" 2>/dev/null
-		fi
-	fi
-	return 0
+	dq_teardown_root
 }
 
 atf_init_test_cases()

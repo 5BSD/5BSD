@@ -174,6 +174,7 @@ static struct state_next reroot_phase_two(void);
 static struct state_next run_script(const char *);
 
 static enum { AUTOBOOT, FASTBOOT } runcom_mode = AUTOBOOT;
+static bool capsule_rc_fastboot;	/* the coming /etc/rc runs without autoboot */
 
 static bool Reboot = false;
 static int howto = RB_AUTOBOOT;
@@ -1062,6 +1063,8 @@ runcom(void)
 	 * path is unchanged; init_rc/autoboot no longer apply here.
 	 */
 	BOOTTRACE("rc startup delegated to switchboard");
+	/* As init would: no autoboot (fsck) for the rc after single-user. */
+	capsule_rc_fastboot = runcom_mode == FASTBOOT;
 	runcom_mode = AUTOBOOT;
 	return (NEXT_STATE(establish_capsule));
 }
@@ -1275,8 +1278,13 @@ capsule_engine_start(void)
 
 	od.shutting_down = false;
 	if (bootstrap_start(capsule_kq) == -1) {
-		warning("bootstrap: switchboard start failed; "
-		    "capability engine unavailable; entering recovery");
+		if (bootstrap_issuer_refused() != 0)
+			warning("no authority issuer: %s; switchboard not "
+			    "started; entering recovery",
+			    strerror(bootstrap_issuer_refused()));
+		else
+			warning("bootstrap: switchboard start failed; "
+			    "capability engine unavailable; entering recovery");
 		return;
 	}
 
@@ -1435,6 +1443,8 @@ capsule_world_stop(void)
 	time_t deadline;
 	int nev;
 
+	/* Even with no SwitchBoard running: the next start is a boot. */
+	bootstrap_world_stopped();
 	if (!capsule_engine_up && bootstrap_is_stopped())
 		return;
 	if (capsule_kq < 0)
@@ -1919,6 +1929,13 @@ capsule_set_ambient_lookup(int fd)
 	CAPSULE_PROBE_CAPSULE_AMBIENT_INSTALL(capsule_ambient_lookup_fd,
 	    (int)replaced);
 	return (0);
+}
+
+bool
+capsule_rc_autoboot(void)
+{
+
+	return (!capsule_rc_fastboot);
 }
 
 int

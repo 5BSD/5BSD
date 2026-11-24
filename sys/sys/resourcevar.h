@@ -127,6 +127,7 @@ struct uidinfo {
 	long	ui_vmmcnt;		/* (b) number of vmm instances */
 	long	ui_envfdcnt;		/* (b) number of environment fds */
 	long	ui_envfdbytes;		/* (b) environment fd kernel bytes */
+	long	ui_oesdefer;		/* (b) oes(4) deferred-queue bytes */
 	uid_t	ui_uid;			/* (a) uid */
 	u_int	ui_ref;			/* (b) reference count */
 #ifdef	RACCT

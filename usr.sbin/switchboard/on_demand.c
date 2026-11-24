@@ -426,9 +426,9 @@ would_deadlock(const char *name, struct svc_runtime *requester,
  * on the requester's *current* channel — never a cached fd, which may have
  * been recycled once the requester exited.  Two requester kinds are served:
  * a service-to-service requester (a live svc_runtime), and an ambient login-
- * session lookup channel (§21) that owns no svc_runtime.  If the requester is
- * gone (service exited, or the lookup channel closed), there is nobody to
- * answer, so nothing is sent.  Domain scope is the requester's own: a service
+ * session lookup channel (§21) that owns no svc_runtime.  A service requester
+ * that exited has nobody to answer, so nothing is sent; an ambient channel
+ * whose owning unit is gone is answered ECONNRESET.  Domain scope is the requester's own: a service
  * uses its channel's domain, an ambient requester the domain captured at
  * launch — so activation never widens a caller's authority.
  *
@@ -447,8 +447,18 @@ on_demand_broker(struct pending_lookup *pl, int kq)
 
 	ambient = (pl->ambient_lc != NULL);
 	if (ambient) {
+		/*
+		 * A pending lookup's channel is still listed (a closed one
+		 * dropped its lookups: on_demand_lookup_channel_gone()), so
+		 * "not live" means the route's owning unit is gone while a
+		 * process may still wait on the channel, with no timeout:
+		 * answer as lookup_channel_request() does.
+		 */
 		if (!lookup_channel_is_live(pl->ambient_lc)) {
+			lookup_channel_answer(pl->ambient_lc, request,
+			    ECONNRESET, NULL, 0);
 			channel_message_free(request);
+			lookup_channel_sync_events(pl->ambient_lc, kq);
 			return (false);
 		}
 		req_svc = lookup_channel_requester(pl->ambient_lc);
@@ -480,7 +490,11 @@ on_demand_broker(struct pending_lookup *pl, int kq)
 		 */
 		if (!sendable && cap_xfer_limit(client_fd, CAP_XFER_ONCE) == -1)
 			status = errno;
-		if (status == 0) {
+		if (ambient) {
+			/* An ambient client waits with no timeout (domain.c). */
+			lookup_channel_answer(pl->ambient_lc, request, status,
+			    status == 0 ? &client_fd : NULL, status == 0 ? 1 : 0);
+		} else if (status == 0) {
 			if (channel_send_reply(request,
 			    &(struct channel_outgoing){
 				.size = sizeof(struct channel_outgoing),
@@ -509,8 +523,11 @@ on_demand_broker(struct pending_lookup *pl, int kq)
 	}
 	/* Out-of-scope (EACCES) looks like unregistered (ENOENT) on the wire. */
 	status = (error == EACCES) ? ENOENT : error;
-	(void)channel_send_reply(request, &(struct channel_outgoing)
-	    CHANNEL_OUTGOING_INITIALIZER(&status, sizeof(status)));
+	if (ambient)
+		lookup_channel_answer(pl->ambient_lc, request, status, NULL, 0);
+	else
+		(void)channel_send_reply(request, &(struct channel_outgoing)
+		    CHANNEL_OUTGOING_INITIALIZER(&status, sizeof(status)));
 	channel_message_free(request);
 	if (ambient)
 		lookup_channel_sync_events(pl->ambient_lc, kq);
@@ -522,7 +539,9 @@ on_demand_broker(struct pending_lookup *pl, int kq)
 /*
  * Send a status-only reply to a pending's requester (service or ambient),
  * flushing the appropriate channel.  Reply-only: the caller still owns and
- * frees pl->request.  A requester that has since gone away is silently skipped.
+ * frees pl->request.  A service requester that has gone away is skipped; an
+ * ambient lookup is always answered (ECONNRESET when its channel's owning
+ * unit is gone), since its client waits with no timeout.
  */
 static void
 pending_reply_status(struct pending_lookup *pl, int32_t status, int kq)
@@ -531,10 +550,11 @@ pending_reply_status(struct pending_lookup *pl, int32_t status, int kq)
 	if (pl->request == NULL)
 		return;
 	if (pl->ambient_lc != NULL) {
+		/* Listed but not live: answered too (on_demand_broker()). */
 		if (!lookup_channel_is_live(pl->ambient_lc))
-			return;
-		(void)channel_send_reply(pl->request, &(struct channel_outgoing)
-		    CHANNEL_OUTGOING_INITIALIZER(&status, sizeof(status)));
+			status = ECONNRESET;
+		lookup_channel_answer(pl->ambient_lc, pl->request, status, NULL,
+		    0);
 		lookup_channel_sync_events(pl->ambient_lc, kq);
 	} else {
 		struct svc_runtime *req = pending_requester(pl);
@@ -1123,6 +1143,17 @@ on_demand_requester_gone(struct svc_runtime *svc, int kq)
 		    pl->requester_owner_uid != svc->owner_uid) {
 			pp = &pl->next;
 			continue;
+		}
+		/*
+		 * An ambient lookup's reply goes to its own lookup channel,
+		 * which may outlive the unit it was resolved to (a descendant
+		 * that inherited the route).  Its client waits with no
+		 * timeout, so answer it.
+		 */
+		if (pl->ambient_lc != NULL) {
+			lookup_channel_answer(pl->ambient_lc, pl->request,
+			    ECONNRESET, NULL, 0);
+			lookup_channel_sync_events(pl->ambient_lc, kq);
 		}
 		EV_SET(&kev, pl->timeout_ident, EVFILT_TIMER,
 		    EV_DELETE, 0, 0, NULL);

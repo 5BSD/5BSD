@@ -108,5 +108,8 @@ int	dqt_tree_child_ex(struct dqt_tree *s, int rootfd, int cwdfd,
 	    void *arg, void *out, size_t outlen);
 int	dqt_tree_child(struct dqt_tree *s, int rootfd, int cwdfd,
 	    dqt_tree_child_fn fn, void *arg, void *out, size_t outlen);
+/* As dqt_tree_child, the child running as uid (set before the attach). */
+int	dqt_tree_child_uid(struct dqt_tree *s, int rootfd, int cwdfd, uid_t uid,
+	    dqt_tree_child_fn fn, void *arg, void *out, size_t outlen);
 
 #endif /* !_DQT_TREE_H_ */

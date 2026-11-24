@@ -310,18 +310,88 @@ then reroots into Capsule as PID 1 with the plane on (`kenv -u
 capability_plane; kenv init_path=/sbin/capsule; reboot -r`), and runs it
 again with `VM_REROOT=after` before the suites.  The run is clean only when
 both runs exit 0 and Capsule is PID 1 after the reroot.  By default the
-script also sets `debug.mac_capability.test_issuer_fail_init`, so PID 1's
-create fails after it anchors; `LOADER_EXTRA` with
-`vm_reroot_variant="plain"` selects the plain reroot.  The `usr.sbin/bsd-build` cases that read the
+script also sets `debug.mac_capability.test_issuer_fail_init` (with
+`test_issuer_fail_init_skip=1`), so the issuer PID 1 creates in advance for the
+next SwitchBoard start fails after it anchors; `LOADER_EXTRA` with
+`vm_reroot_variant="plain"` selects the plain reroot.
+`tests/sys/mac_capability/switchboard_no_issuer_reroot.sh` is the same kind of
+extra script for SwitchBoard starts and restarts under Capsule: the loader
+variable `sb_case` is `plain`, `crash` (SwitchBoard killed after boot; no
+/etc/rc replay, existing shells keep their route), `next` (the issuer Capsule
+creates in advance for the next start fails once), `refused` (it keeps failing:
+the restart is refused and PID 1 enters single-user) or `firstboot` (the first
+create fails: recovery).  The killing cases need `switchboard_test_no_sigkill="1"`,
+which a test kernel's Capsule turns into the test-only
+`SWITCHBOARD_TEST_SHIELD_NO_SIGKILL`; `refused` and `firstboot` end in
+single-user, so the host reads their result from the serial log.  The `usr.sbin/bsd-build` cases that read the
 source tree need `SRC_IMAGE` (and `PORTS_IMAGE` for package plans); without it
-they are counted as `DEFERRED_TO_SOURCE_TIER=N`.  With python, the source and
+they are counted as `DEFERRED_TO_SOURCE_TIER=N`.  With the source and
 the ports images, a long bsd-build run fills the default 8 GB guest root:
-give it `ROOT_SIZE=16g`.  Cases that need a guest setup no tier provides yet
-(`storage_test:disk_import_and_binding`'s scratch disk, `devctl_device_test`
-with devd and auditd stopped, `bsd_build_test:generation_reconciliation`'s
-ACL subtest, which needs root, md(4) and a kernel with `options UFS_ACL`, as
-GENERIC has, or else the zfs module) skip with `DEFERRED_GUEST_SETUP` and are
-counted as `DEFERRED_GUEST_SETUP=N`, not as passes.
+give it `ROOT_SIZE=16g`.  `usr.sbin/capsule/storage_test:disk_import_and_binding`
+destroys a disk: when a suite is `usr.sbin/capsule`, the program or the case
+(or with `SCRATCH_DISK=1`; a wider selection such as `usr.sbin` gets no disk) the runner attaches a blank
+1 GB disk with the serial `kyua-scratch`, preloads zfs, and names the disk
+in the case's `scratch-device` input; the case refuses any disk with
+another ident.  Cases that need a guest setup no tier provides yet
+(`devctl_device_test` with devd and auditd stopped,
+`bsd_build_test:generation_reconciliation`'s ACL subtest, which needs root,
+md(4) and a kernel with `options UFS_ACL`, as GENERIC has, or else the zfs
+module), and `disk_import_and_binding` run without its disk, skip with
+`DEFERRED_GUEST_SETUP` and are counted as `DEFERRED_GUEST_SETUP=N`, not as
+passes.  Destructive cases
+that need an opt-in and a guest of their own (`disposable_vm=yes`,
+`live_securelevel=yes`) skip with `DEFERRED_DISPOSABLE_GUEST`.
+A case skipped because the stage lacks a program or file it requires
+(kyua's "Required program/file ... not found", atf-sh's required program)
+makes the run `VM_NOT_CLEAN` (`STAGE_PREREQ_SKIPPED=N`), as a missing
+kernel module does (`KMOD_SKIPPED=N`).  A device only a kernel option
+provides (`/dev/kcov`) is not a stage input and stays a plain skip.  Every other skip without a
+`DEFERRED_*` token is listed, all of them, as `PLAIN_SKIPS=N` with one
+`PLAIN_SKIP:` line each, and expected failures, which kyua counts as passed,
+as `EXPECTED_FAILURES=N`; neither changes the verdict, so read `VM_CLEAN`
+together with these lines.  The bsd-build cases that wrap a Python unittest
+program (`py_unittest` in `bsd_build_test.sh`) fail on an expected failure
+and skip, naming each subtest, when any subtest skipped: a bare
+`OK (skipped=N)` is not a pass.
+
+`mac_capability_accounting_racct_test` needs a boot with the ignored
+`kern.racct.enable=0` tunable: run it with `RACCT_TUNABLE_ZERO=1`; elsewhere
+its cases skip with `DEFERRED_RACCT_ZERO_TIER`.  Cases that need the test
+kernel's handler park (`debug.mac_capability.test_park_*`, GENERIC-TEST)
+skip elsewhere with `DEFERRED_TEST_KERNEL_TIER`; run them with
+`KERNEL_TIER=test`.  Both are counted on their own lines, not as passes.
+`sys/vfs/ufs_quota_lock_order` needs a kernel with `options QUOTA` and
+skips elsewhere with `DEFERRED_QUOTA_KERNEL_TIER`.  A case that sees its
+defect only through WITNESS or INVARIANTS
+(`mac_capability_channel_test:refused_forward_frees_outside_mutex`,
+`ufs_suspend_atime:closed_at_resume`, `ufs_quota_lock_order`) skips on a
+kernel without them (GENERIC-NODEBUG) with `DEFERRED_DEBUG_KERNEL_TIER`.
+
+A `tests/sys/dq` case that needs a fault knob of `options DQ_FAULT_INJECTION`
+(`debug.dq.delay_swap_take`, `debug.dq.delay_postop_apply`,
+`debug.dq.refuse_postop_reply`, `debug.dq.drop_wakeup`) calls
+`dqt_require_fault_knob` and skips on a kernel without the option with
+`DEFERRED_KNOB_TIER`, counted as `DEFERRED_TO_KNOB_TIER=N`: it runs in the
+knob tier, `KERNEL_TIER=test` with a GENERIC-TEST stage.
+
+Python is part of the guest test stage, never of base or a base package set
+(owner decision, 2026-11-20).  Every image vm-provider.sh builds carries the
+packages pinned in `tools/build/fuchsia/test-stage-packages`, extracted under
+`/usr/local` (not registered with pkg): Python 3.12 with the `python3` and
+`python` commands, pytest, py-dpkt and the nist-kat vectors, the run-time
+closure that `sys/opencrypto/runtests`, `sys/kern/sonewconn_overflow`, the
+pytest programs (`sys/kern/virtio_iommu_identity_test.py`) and the bsd-build
+Python programs need.  They are built from `/usr/obj/5BSD-ports` at the
+revision the list names and read from `TEST_PKGDIR`
+(`/usr/obj/5BSD-test-packages/All` by default); a run without every pinned
+package refuses to start (`TEST_PACKAGES_MISSING`).  To rebuild them, run a
+builder guest with `SRC_IMAGE` and `PORTS_IMAGE` that `make install`s
+`lang/python3`, `lang/python`, `devel/py-pytest@py312`, `net/py-dpkt@py312`
+and `security/nist-kat` offline (distfiles fetched on the host with
+`make fetch-recursive DISTDIR=...`) and `pkg create`s their run-time
+closure; root on the host is not needed.  A suite that still finds one of
+them missing is a stage defect (`STAGE_PREREQ_SKIPPED`).
+
 Cases that drive their private SwitchBoard with `switchboardctl` call
 `use_private_control` (`usr.sbin/switchboard/tests/test_helpers.sh`): it runs
 `switchboardctl` through `capd_lookup_exec`, which installs the private
@@ -352,8 +422,67 @@ and the loaded MAC policy modules (`kldstat -v`) are written to `tier.txt`
 in the results, next to the Kyua database, and the knobs are appended again
 after the suites.
 
+Every guest mounts UFS, and the plane gate needs bsdcrypto, which opens
+`/dev/crypto`.  A stage kernel that compiles neither in, such as `MINIMAL`,
+gets the stage's `ufs.ko` and `cryptodev.ko` preloaded, since the plane
+refuses a late kldload; the runner reads the kernel's symbol table to decide
+and prints `BASE_MODULES_HOST: preloaded=...`.  A stage with neither the
+module nor its `.ko` stops the run.
+
+A stage's ELF test programs must all come from one checkout. Before it
+builds the image the runner reads the source file names recorded in every
+ELF program under the stage's `usr/tests`
+(`tools/build/fuchsia/check-stage-tests.py`, one `TESTS_SRC_ROOT=` line per
+checkout) and stops with `STALE_TESTS` when there is more than one, naming
+programs of each minority checkout. A stage copied forward from another
+branch's stage with only some test directories reinstalled fails this way:
+the oracles that run whole suites (`dq_tree_suites_test`,
+`dq_oracle_test`) would otherwise compare another branch's tests. Make the
+stage fresh from the branch's world, or reinstall all of `usr/tests` from
+the branch; a deliberate overlay lists every checkout its programs come
+from, the main one included, in `TESTS_SRC_ROOTS`. The check proves which
+checkout built each program, not which commit, and scripts and data under
+`usr/tests` (Kyuafiles, atf-sh programs, `dq_suites.subr`, `*.expected`)
+record no source path and are not checked.
+
+The runner watches the guest without polling: `tools/build/fuchsia/vm-monitor.py`
+waits on one kqueue for QEMU's exit, writes to the serial log and the
+deadline. A fatal console line (panic, fatal trap, a mountroot or shell
+prompt, init dying) or, with `FATAL_LOR=yes` (the default), a complete
+WITNESS lock order reversal report that matches no entry of
+`tools/build/fuchsia/known-lor.txt` stops the run: the monitor prints
+`KERNEL/INIT PROBLEM in serial log`, lets the guest finish printing for at
+most `FATAL_GRACE_S` (5 s, ending at once if QEMU exits) and then stops
+QEMU, or reports that it had already exited; the deadline prints `TIMEOUT`.
+Either way the results disk is extracted and the verdict printed.
+`known-lor.txt` holds Python regular expressions matched against a whole
+report, through the end of its "attempted at" stack (a multi-hop report
+lists every hop first, so there is no line cap), each entry naming the
+analysis that classes its family; matched reports are counted as
+`KNOWN_LOR=N`. `tools/build/fuchsia/tests/known-lor/` holds recorded
+reports each entry must class (`known-*.txt`) or must not (`unknown-*.txt`). An entry hides more
+than its report: WITNESS reports a pair of lock classes once per boot, so
+every later reversal between the same two classes goes unreported for the
+rest of the boot. Entries should therefore match only at shutdown, where
+nothing follows; the tmpfs-unmount family entry does, the unionfs entries
+(test-time unmounts) do not. After the guest exits
+the runner classifies the whole log again, so a reversal printed just
+before power-off still makes the run `VM_NOT_CLEAN` (`UNKNOWN_LOR`).
+`FATAL_LOR=no` only keeps the guest running past an unknown reversal (for a
+sweep that reads them all from the serial log); the run still ends
+`UNKNOWN_LOR` and `VM_NOT_CLEAN`.
+
+The dq oracles' expected-differences files (`tests/sys/dq/dqpass.expected`,
+`dqtree.expected`) fail on an entry that matches no case. An entry whose
+difference exists only with the capability plane on carries `[plane-on]` in
+its owner tag. On a guest whose PID 1 is known and not `capsule`
+(`PLANE_OFF=1`) such an entry is reported `not exercised` instead, provided
+its cases ran (they were then compared like any other case); a PID 1 that
+cannot be read counts as the plane on.
+
 The runner's own checks (the tier selection and gate above, the stage root
-metadata preflight, the extra-script status) are shell scripts under
+metadata preflight, the stage's test checkout, the monitor, the
+known-lor classes, the extra-script status) are shell scripts under
 `tools/build/fuchsia/tests/`; `make -C tools/build/fuchsia check-runner`
 runs them on the build host without booting a guest, and `check` includes it.
 

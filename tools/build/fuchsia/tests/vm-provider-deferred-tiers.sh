@@ -21,11 +21,16 @@ usr.sbin/s:seven  ->  skipped: DEFERRED_STACK_TIER: requires a unit issuer  [0.1
 usr.sbin/s:eight  ->  skipped: DEFERRED_PID1_ONLY: protected crypto  [0.1s]
 usr.sbin/b:nine  ->  skipped: DEFERRED_SOURCE_TIER: source build frontend requires /usr/src  [0.1s]
 sys/m:ten  ->  skipped: Required configuration property 'authority_anchor' not defined  [0.1s]
-usr.sbin/c:eleven  ->  skipped: DEFERRED_GUEST_SETUP: requires the explicit disposable scratch-device input  [0.1s]
+sys/m:eleven  ->  skipped: DEFERRED_TEST_KERNEL_TIER: needs the handler park  [0.1s]
+sys/m:twelve  ->  skipped: DEFERRED_RACCT_ZERO_TIER: needs a boot with kern.racct.enable=0  [0.1s]
+sys/v:thirteen  ->  skipped: DEFERRED_QUOTA_KERNEL_TIER: kernel without options QUOTA  [0.1s]
+sys/v:fourteen  ->  skipped: DEFERRED_DEBUG_KERNEL_TIER: WITNESS is not running  [0.1s]
+sys/v:fifteen  ->  skipped: DEFERRED_DEBUG_KERNEL_TIER: no INVARIANTS  [0.1s]
+usr.sbin/c:sixteen  ->  skipped: DEFERRED_GUEST_SETUP: requires the explicit disposable scratch-device input  [0.1s]
 KYUA_SKIPPED_LIST_END
 EOS
 out=$(log=$log sh -c ". '$work/summary.sh'")
-echo "$out" | grep -q '^skipped=11 '
+echo "$out" | grep -q '^skipped=16 '
 echo "$out" | grep -q '^DEFERRED_TO_ENFORCED_TIER=2 '
 echo "$out" | grep -q '^DEFERRED_TO_DEVICE_TIER=1 '
 echo "$out" | grep -q '^DEFERRED_TO_PLANEOFF_TIER=1 '
@@ -33,6 +38,10 @@ echo "$out" | grep -q '^DEFERRED_TO_STACK_TIER=2 '
 echo "$out" | grep -q '^DEFERRED_PID1_ONLY=1 '
 echo "$out" | grep -q '^DEFERRED_TO_SOURCE_TIER=1 '
 echo "$out" | grep -q '^DEFERRED_TO_ANCHOR_RUN=1 '
+echo "$out" | grep -q '^DEFERRED_TO_TEST_KERNEL_TIER=1 '
+echo "$out" | grep -q '^DEFERRED_TO_RACCT_ZERO_TIER=1 '
+echo "$out" | grep -q '^DEFERRED_TO_QUOTA_KERNEL_TIER=1 '
+echo "$out" | grep -q '^DEFERRED_TO_DEBUG_KERNEL_TIER=2 '
 echo "$out" | grep -q '^DEFERRED_GUEST_SETUP=1 '
 printf 'KYUA_SKIPPED_LIST_BEGIN\nKYUA_SKIPPED_LIST_END\n' > "$log"
 out=$(log=$log sh -c ". '$work/summary.sh'")

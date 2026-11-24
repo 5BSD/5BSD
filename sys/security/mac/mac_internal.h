@@ -345,7 +345,10 @@ SDT_PROBE_DECLARE(mac_framework, , , hook__skip);
 #define MAC_POLICY_CALL_VOID(hook, policy, args...) \
 	MAC_HOOK_INVOKE(VOID, hook, policy, ##args)
 
-/* Skip reasons: 1 = policy has no callback, 2 = boolean short circuit. */
+/*
+ * Skip reasons: 1 = policy has no callback, 2 = boolean short circuit,
+ * 3 = answered by the fallback hook (MAC_POLICY_CHECK_NOSLEEP_FALLBACK).
+ */
 #define MAC_POLICY_PRESENT(hook, policy) __extension__ ({ \
 	int __mac_present; \
 	__mac_present = (policy)->mpc_ops->mpo_ ## hook != NULL; \
@@ -416,6 +419,59 @@ SDT_PROBE_DECLARE(mac_framework, , , hook__skip);
 				error = mac_error_select(__mac_perr,	\
 				    error);				\
 			}						\
+		}							\
+		mac_policy_sunlock_nosleep(&tracker);			\
+	}								\
+} while (0)
+
+/*
+ * 5BSD: MAC_POLICY_CHECK_NOSLEEP for a check that a policy may answer
+ * through a coarser fallback hook it already implements.  For each policy:
+ * with the check, call it; without it but with the fallback, report skip
+ * reason 3 for the check and call the fallback, whose own start, args and
+ * done probes fire; with neither, report skip reason 1.  The answers
+ * compose with mac_error_select().  A policy that has not opted in to the
+ * finer question answers the coarser one: fail closed.
+ */
+#define	MAC_POLICY_CALL_FALLBACK(check, fallback, mpc, perr, args...)	\
+    __extension__ ({							\
+	int __mac_answered = 1;						\
+									\
+	if ((mpc)->mpc_ops->mpo_ ## check != NULL) {			\
+		(perr) = MAC_POLICY_CALL_INT(check, mpc, ##args);	\
+		MAC_POLICY_CHECK_PROBE(check, mpc, (perr));		\
+	} else if ((mpc)->mpc_ops->mpo_ ## fallback != NULL) {		\
+		SDT_PROBE3(mac_framework, , , hook__skip,		\
+		    __XSTRING(check), (mpc)->mpc_name, 3);		\
+		(perr) = MAC_POLICY_CALL_INT(fallback, mpc, ##args);	\
+		MAC_POLICY_CHECK_PROBE(fallback, mpc, (perr));		\
+	} else {							\
+		SDT_PROBE3(mac_framework, , , hook__skip,		\
+		    __XSTRING(check), (mpc)->mpc_name, 1);		\
+		__mac_answered = 0;					\
+	}								\
+	__mac_answered;							\
+})
+
+#define	MAC_POLICY_CHECK_NOSLEEP_FALLBACK(check, fallback, args...) do {	\
+	struct mac_policy_conf *mpc;					\
+	int __mac_perr;							\
+									\
+	error = 0;							\
+	LIST_FOREACH(mpc, &mac_static_policy_list, mpc_list) {		\
+		if (MAC_POLICY_CALL_FALLBACK(check, fallback, mpc,	\
+		    __mac_perr, ##args))				\
+			error = mac_error_select(__mac_perr, error);	\
+	}								\
+	if (!LIST_EMPTY(&mac_policy_list)) {				\
+		struct rm_priotracker tracker;				\
+									\
+		mac_policy_slock_nosleep(&tracker);			\
+		LIST_FOREACH(mpc, &mac_policy_list, mpc_list) {		\
+			if (MAC_POLICY_CALL_FALLBACK(check, fallback,	\
+			    mpc, __mac_perr, ##args))			\
+				error = mac_error_select(__mac_perr,	\
+				    error);				\
 		}							\
 		mac_policy_sunlock_nosleep(&tracker);			\
 	}								\

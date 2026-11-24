@@ -252,9 +252,23 @@ struct dq_policy {
 	int32_t		dp_deadline_ms;		/* DQ_DEADLINE_DEFAULT, 0 = none, or ms */
 	uint32_t	dp_events;		/* DQ_EVENTS_* */
 	uint32_t	dp_rights_version;	/* CAP_RIGHTS_VERSION dp_rights was built with */
-	uint32_t	dp_pad0;
+	uint32_t	dp_flags;		/* DQ_PF_* (was dp_pad0, zero) */
 	cap_rights_t	dp_rights;		/* rights of the minted descriptor */
 };
+/*
+ * DQ_PF_INTR: the requester's waits for this object's data and attribute
+ * events end on a signal (EINTR, or a short count), as an NFS intr mount's
+ * do, a mutation marked delivered never with a restart; without it no
+ * signal ends them, as a local file system's I/O, and only the answer, the
+ * deadline, SIGKILL or the process exiting does.
+ * DQ_PF_NO_STAMP: the controller keeps the object's times itself (with
+ * SETIDENT, GETATTR or the post-operation attributes of its replies); the
+ * kernel does not stamp them after an operation that carried none.
+ * 0x00000002 is reserved (DQ_PF_WRITE_UNIT).
+ */
+#define	DQ_PF_INTR		0x00000001
+#define	DQ_PF_NO_STAMP		0x00000004
+#define	DQ_PF_VALID		(DQ_PF_INTR | DQ_PF_NO_STAMP)
 
 /*
  * Event header (design 8.1).  de_size is the whole record, header and
@@ -316,6 +330,36 @@ enum dq_op {
 	DQ_OP_INTERRUPT = 18,
 	DQ_OP_REPLY = 64,	/* observer record of a controller reply */
 };
+
+/*
+ * Post-operation attributes (DQ_REPLY_F_POSTOP): what the controller's
+ * backing file says after the operation, appended to the reply of a
+ * WRITE, FALLOCATE or FSPACECTL (any of the fields), or of a READ
+ * (DQ_PA_ATIME alone), as an NFS server returns wcc data.  The fields
+ * dpa_valid names become the presented identity's; the kernel stamps
+ * none of the times itself then.  A size below what the operation itself
+ * proves (WRITE: dwr_offset + dwr_written; FALLOCATE: the range's end), a
+ * time with tv_nsec outside 0..999999999, a size above OFF_MAX, an
+ * unknown bit or a non-zero dpa_pad make the block ignored and counted
+ * (kern.dq.postop_ignored, dq:::postop-attr), never an error on an operation
+ * that has already happened; the kernel then stamps as without one.
+ */
+struct dq_postop_attr {
+	uint32_t	dpa_valid;		/* DQ_PA_* */
+	uint32_t	dpa_pad;
+	uint64_t	dpa_size;
+	struct dq_timespec dpa_mtime;
+	struct dq_timespec dpa_ctime;
+	struct dq_timespec dpa_atime;
+	uint64_t	dpa_blocks;
+};
+#define	DQ_PA_SIZE		0x00000001
+#define	DQ_PA_MTIME		0x00000002
+#define	DQ_PA_CTIME		0x00000004
+#define	DQ_PA_BLOCKS		0x00000008
+#define	DQ_PA_ATIME		0x00000010
+#define	DQ_PA_VALID		(DQ_PA_SIZE | DQ_PA_MTIME | DQ_PA_CTIME | \
+	    DQ_PA_BLOCKS | DQ_PA_ATIME)
 
 /* Bodies.  READ: reply is errno + up to dr_len bytes (short = EOF). */
 struct dq_read_body {
@@ -460,8 +504,9 @@ struct dq_fspacectl_body {
 	uint64_t	dsc_len;
 };
 struct dq_fspacectl_reply {		/* the range left to do */
-	uint64_t	dscr_offset;	/* >= dsc_offset */
-	uint64_t	dscr_len;	/* offset + len == dsc_offset + dsc_len */
+	uint64_t	dscr_offset;	/* dsc_offset..dsc_offset + dsc_len */
+	uint64_t	dscr_len;	/* 0, or offset + len == dsc_offset +
+					   dsc_len */
 };
 
 /*
@@ -533,12 +578,21 @@ struct dq_ioctl_body {
  */
 struct dq_reply {
 	uint32_t	dr_version;
-	uint32_t	dr_pad0;
+	uint32_t	dr_flags;		/* DQ_REPLY_F_* (was dr_pad0, zero) */
 	uint64_t	dr_id;
 	int32_t		dr_errno;		/* 0 or an errno */
 	uint32_t	dr_len;			/* <= kern.dq.max_io */
 	const void	*dr_data;
 };
+
+/*
+ * DQ_REPLY_F_POSTOP: the last sizeof(struct dq_postop_attr) bytes of
+ * dr_data are post-operation attributes; the rest is the reply as without
+ * them.  For a READ, WRITE, FALLOCATE or FSPACECTL that succeeded only
+ * (EINVAL otherwise, and for a reply shorter than the block).
+ */
+#define	DQ_REPLY_F_POSTOP	0x00000001
+#define	DQ_REPLY_F_VALID	(DQ_REPLY_F_POSTOP)
 
 /* MINT refusal reasons, written through dm_reasonp with EINVAL. */
 enum dq_reason {
@@ -640,7 +694,20 @@ struct dq_stats {
 /*
  * GET_STATS2 (B8): dq_stats is frozen (its size is in the command word);
  * everything new goes here.  ds2_size is written by the kernel.
+ *
+ * The struct is DQ_STATS2_WORDS 64-bit words; the words no counter uses
+ * yet (DQ_STATS2_RESERVED, what is left of them) read 0.  A new counter
+ * adds one to DQ_STATS2_USED, and the reserved tail shrinks by one, so
+ * the size, and with it DQ_IOC_GET_STATS2's command word, stays the same
+ * until the tail is used up; then DQ_STATS2_WORDS grows by a 64-byte
+ * cache line (8 words) and the command word changes once (owner,
+ * 2026-11-19: grow, keep spare room; nothing to stay compatible with
+ * before 1.0).  libdq passes the caller's size (dq_get_stats2), so a
+ * program built against another size fails cleanly.
  */
+#define	DQ_STATS2_WORDS		50	/* the size in words: 400 bytes */
+#define	DQ_STATS2_USED		42	/* the words before ds2_reserved */
+#define	DQ_STATS2_RESERVED	(DQ_STATS2_WORDS - DQ_STATS2_USED)
 struct dq_stats2 {
 	uint32_t	ds2_size;		/* sizeof(struct dq_stats2) */
 	uint32_t	ds2_pad0;
@@ -676,9 +743,12 @@ struct dq_stats2 {
 	uint64_t	ds2_close_dropped;	/* dirty pages dropped after the
 						   last close because their
 						   write-back failed or expired */
-	uint64_t	ds2_task_drops;		/* INTERRUPT records the completion
-						   task could not allocate (the
-						   late reply gets ESRCH) */
+	uint64_t	ds2_task_drops;		/* records a task could not
+						   allocate: a completion's
+						   INTERRUPT (the late reply
+						   gets ESRCH), a closed
+						   object's CLOSE past the page
+						   deadline */
 	uint64_t	ds2_resolves;		/* RESOLVE events posted (1c) */
 	uint64_t	ds2_resolve_pass;	/* answered PASS */
 	uint64_t	ds2_resolve_kernel;	/* class 2/3 consultations */
@@ -696,7 +766,16 @@ struct dq_stats2 {
 	uint64_t	ds2_resolve_exdev;	/* refused EXDEV with no event
 						   (1c-iii-b/c) */
 	uint64_t	ds2_readdirs;		/* READDIR events (1c-iii-b) */
-	uint64_t	ds2_reserved[3];
+	uint64_t	ds2_reserved_abi;	/* reserved: ds2_abi_data
+						   (Unix-illusion rev 8 0.3) */
+	uint64_t	ds2_full_waits;		/* waited posts that waited for a
+						   slot of a full queue */
+	uint64_t	ds2_standing_pass;	/* lookups a standing rule passed,
+						   no event posted */
+	uint64_t	ds2_standing_deny;	/* lookups a standing rule answered
+						   an errno, no event posted */
+	uint64_t	ds2_reserved_notes;	/* reserved: ds2_notes_raised */
+	uint64_t	ds2_reserved[DQ_STATS2_RESERVED];	/* 0 */
 };
 
 /*
@@ -726,7 +805,8 @@ struct dq_push_args {
 
 /*
  * Ioctls on the queue, group 'j' (the only unused letter near 'q'/'Q').
- * 10 is ATTACH (stage 1c); 11 is reserved for REGISTER_NAME.
+ * 10 is ATTACH (stage 1c); 11 is reserved for REGISTER_NAME; 40-42 are
+ * the standing rules.
  */
 #define	DQ_IOC_MINT		_IOWR('j', 1, struct dq_mint_args)
 #define	DQ_IOC_MINT_OBSERVER	_IOWR('j', 2, struct dq_observer_args)
@@ -738,6 +818,24 @@ struct dq_push_args {
 #define	DQ_IOC_SET_QUEUE_DEPTH	_IOW('j', 8, uint32_t)
 #define	DQ_IOC_PUSH		_IOW('j', 9, struct dq_push_args)
 #define	DQ_IOC_GET_STATS2	_IOR('j', 12, struct dq_stats2)
+
+/*
+ * QUEUE_FLAGS: the controller's queue-wide choices.  dqf_set and
+ * dqf_clear (disjoint) are applied and dqf_old receives the flags from
+ * before.  DQ_QF_INTR: the requesters' own lookups (RESOLVE) end on a
+ * signal, with the first consultation's ERESTART (an NFS intr mount; EINTR
+ * for a mutation marked delivered); without it they wait as a local file
+ * system's lookups do.
+ */
+struct dq_queue_flags {
+	uint32_t	dqf_set;
+	uint32_t	dqf_clear;
+	uint32_t	dqf_old;		/* out */
+	uint32_t	dqf_pad0;
+};
+#define	DQ_QF_INTR		0x00000001
+#define	DQ_QF_VALID		(DQ_QF_INTR)
+#define	DQ_IOC_QUEUE_FLAGS	_IOWR('j', 13, struct dq_queue_flags)
 
 /*
  * Stage 1c: resolution (design 11).  A process attached to a queue
@@ -1003,6 +1101,40 @@ struct dq_attach_args {
 };
 #define	DQ_IOC_ATTACH		_IOW('j', 10, struct dq_attach_args)
 
+/*
+ * Standing rules (dq-standing-decisions, stage 1): answers the queue gives
+ * without posting RESOLVE.  A rule names a root (a directory; the lookup's
+ * process root must be it), a normalized absolute path under that root,
+ * exact or with everything beneath it, the operations it covers and the
+ * answer.  A rule is a function of (root, op, open class, class, path text)
+ * only.  Among the rules that fit an event the longest path wins.
+ */
+struct dq_standing_rule {
+	uint32_t	dqs_version;		/* DQ_API_VERSION */
+	uint32_t	dqs_flags;		/* DQ_STANDING_F_* */
+	uint32_t	dqs_ops;		/* DQ_STANDING_OP(DQ_ROP_*) only */
+	uint32_t	dqs_action;		/* DQ_STANDING_PASS, _ERRNO, _ASK */
+	int32_t		dqs_errno;		/* _ERRNO: the answer; else 0 */
+	int32_t		dqs_rootfd;		/* a directory, or -1 for the
+						   caller's own root */
+	uint32_t	dqs_pathlen;		/* NUL excluded */
+	uint32_t	dqs_pad0;		/* 0 */
+	uint64_t	dqs_id;			/* out */
+	char		dqs_path[DQ_PATH_MAX];	/* NUL-terminated */
+};
+#define	DQ_STANDING_F_SUBTREE		0x00000001
+#define	DQ_STANDING_F_OPEN_WRITE	0x00000002	/* write-class opens */
+#define	DQ_STANDING_F_VALID		0x00000003
+#define	DQ_STANDING_OP(rop)		(1u << (rop))
+#define	DQ_STANDING_PASS		1
+#define	DQ_STANDING_ERRNO		2
+#define	DQ_STANDING_ASK			3
+#define	DQ_STANDING_MAX			128	/* rules per queue */
+
+#define	DQ_IOC_STANDING_ADD	_IOWR('j', 40, struct dq_standing_rule)
+#define	DQ_IOC_STANDING_DEL	_IOW('j', 41, uint64_t)
+#define	DQ_IOC_STANDING_FLUSH	_IO('j', 42)
+
 #ifdef _KERNEL
 /* The stage 1b-i PUSH layout, before the INVALIDATE range (24 bytes). */
 struct dq_push_args_v1 {
@@ -1025,6 +1157,7 @@ _Static_assert(sizeof(struct dq_policy) == 56, "dq_policy");
 _Static_assert(sizeof(struct dq_caller) == 48, "dq_caller");
 _Static_assert(sizeof(struct dq_event) == 104, "dq_event");
 _Static_assert(sizeof(struct dq_read_body) == 16, "dq_read_body");
+_Static_assert(sizeof(struct dq_postop_attr) == 72, "dq_postop_attr");
 _Static_assert(sizeof(struct dq_resolve_swap) == 32, "dq_resolve_swap");
 _Static_assert(sizeof(struct dq_reply) == 32, "dq_reply");
 _Static_assert(sizeof(struct dq_mint_args) == 3976, "dq_mint_args");
@@ -1042,7 +1175,11 @@ _Static_assert(sizeof(struct dq_lock_body) == 48, "dq_lock_body");
 _Static_assert(sizeof(struct dq_lock_reply) == 32, "dq_lock_reply");
 _Static_assert(sizeof(struct dq_unlock_all_body) == 16, "dq_unlock_all_body");
 _Static_assert(sizeof(struct dq_ioctl_body) == 16, "dq_ioctl_body");
-_Static_assert(sizeof(struct dq_stats2) == 320, "dq_stats2");
+_Static_assert(sizeof(struct dq_stats2) == DQ_STATS2_WORDS * 8 &&
+    __offsetof(struct dq_stats2, ds2_reserved) == DQ_STATS2_USED * 8,
+    "dq_stats2: DQ_STATS2_USED counts the words before ds2_reserved");
+_Static_assert(sizeof(struct dq_stats2) == 400, "dq_stats2");
+_Static_assert(sizeof(struct dq_queue_flags) == 16, "dq_queue_flags");
 _Static_assert(sizeof(struct dq_push_args) == 40, "dq_push_args");
 _Static_assert(sizeof(struct dq_resolve_body) == 112, "dq_resolve_body");
 _Static_assert(__offsetof(struct dq_resolve_body, drs_root) == 96 &&
@@ -1066,6 +1203,14 @@ _Static_assert(sizeof(struct dq_resolve_reply) + sizeof(struct dq_resolve_attr) 
 _Static_assert(sizeof(struct dq_resolve_reply) == 8, "dq_resolve_reply");
 _Static_assert(sizeof(struct dq_resolve_mint) == 3968, "dq_resolve_mint");
 _Static_assert(sizeof(struct dq_attach_args) == 24, "dq_attach_args");
+_Static_assert(sizeof(struct dq_standing_rule) == 1064, "dq_standing_rule");
+_Static_assert(__offsetof(struct dq_standing_rule, dqs_id) == 32 &&
+    __offsetof(struct dq_standing_rule, dqs_path) == 40,
+    "dq_standing_rule: no padding");
+_Static_assert(__offsetof(struct dq_stats2, ds2_full_waits) == 304 &&
+    __offsetof(struct dq_stats2, ds2_standing_pass) == 312 &&
+    __offsetof(struct dq_stats2, ds2_reserved) == 336,
+    "dq_stats2: the counters, then one line of reserved words");
 _Static_assert(sizeof(struct dq_readdir_body) == 16, "dq_readdir_body");
 _Static_assert(sizeof(struct dq_readdir_reply) == 16, "dq_readdir_reply");
 _Static_assert(sizeof(struct dq_resolve_reply) + sizeof(struct dq_resolve_mint) +

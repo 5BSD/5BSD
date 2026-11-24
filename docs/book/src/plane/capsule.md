@@ -114,6 +114,16 @@ triggered only when switchboard permanently fails before convergence, meaning
 its restart circuit breaker trips (below). A wedged-but-alive switchboard
 hangs boot exactly as a wedged `/etc/rc` hung init before.
 
+switchboard waits for each Capsule reply on that channel with no deadline, so
+Capsule keeps one rule: every request is answered, or the channel ends. A
+malformed request (too short, too large, extra descriptors) gets an error
+status. A reply that cannot be sent is retried once as a status-only error
+carrying the send errno; when not even that can be sent, or Capsule cannot
+receive a message at all (including `EMFILE`/`ENFILE` while installing an
+attached descriptor), Capsule closes its end and kills switchboard, which it
+then restarts with a fresh channel, as after any switchboard exit. Anything a
+request had claimed for a reply that switchboard never received is released.
+
 Two compatibility invariants carry over from init: PID 1 is already the
 real-init reaper (Capsule verifies `PROC_REAP_STATUS` rather than acquiring
 it), and `init_exec` is ignored because it is the hook that led the kernel to
@@ -260,20 +270,30 @@ single source of truth for lifecycle (`usr.sbin/capsule/bootstrap.c`,
 | died within 5 s | delay `1 << (count - 1)` s, capped at 30 s (`BOOTSTRAP_MAX_DELAY`) |
 | 10 consecutive fast failures (`BOOTSTRAP_MAX_FAILURES`) | circuit breaker trips; `bootstrap: switchboard failed 10 times, giving up` |
 | Capsule is shutting down | no restart |
+| no authority issuer for the start (`CAP_AUTH_ISSUER_CREATE` failed) | no restart, not counted; `no authority issuer: <reason>`; PID 1 enters single-user (at first boot: recovery; no `/etc/rc`, so no fsck, has run in that boot, and the rc after the single-user shell runs without `autoboot`: run fsck(8) from that shell) |
+| the boot had converged (a SwitchBoard reported READY) | the restart gets `SWITCHBOARD_BOOT_COMPLETE=1` and does not run `/etc/rc` again (`startup: restart after boot: /etc/rc not replayed`) |
+| the world was stopped (shutdown, single-user) since | the next start runs `/etc/rc` again, without `autoboot` after single-user (`SWITCHBOARD_RC_FASTBOOT=1`), as init does |
+
+Each start is handed its own authority issuer. Capsule creates the next start's
+issuer in advance and holds it unused, close-on-fork and not transferable; if
+that create fails, `capsulectl status` reports "next authority issuer: none
+(<reason>)" and the next start makes one create of its own.
 
 Every dynamic claim is swept from the kernel when switchboard exits; policy
 claims survive. Because each unit's coalition descriptor is held by the
 switchboard instance that launched it, those descriptors close as switchboard
 dies and the units are terminated with it. The replacement switchboard rescans
 the registry and relaunches boot units, and every provider begins with all of
-its names unclaimed. Existing login sessions keep running, but their old
-lookup channels do not reconnect automatically. They need a newly authenticated
-session; preserving a kernel reference alone cannot restore the broker's lost
-scope records. A replacement switchboard sends Capsule a fresh channel through
-`capsule_set_ambient_lookup()` for future launches. Capsule installs that channel
-in the getty child's kernel process context before launching either a configured
-window-system helper or getty. Ordinary fork, exec, descriptor cleanup and
-environment replacement preserve it without a reserved discovery descriptor.
+its names unclaimed. Existing login sessions and rc daemons keep running and
+keep their discovery route: Capsule creates the system discovery channel once
+and holds it, installs its client end in each getty child's and each
+switchboard's kernel process context, and passes its server end to every
+switchboard as `SWITCHBOARD_DISCOVERY_FD`. Sessions opened through the old
+switchboard (connections to it or to its units) end with it; clients open new
+ones through the same route. Ordinary fork, exec, descriptor cleanup and
+environment replacement preserve the route without a reserved discovery
+descriptor. While Capsule owns the channel it refuses a switchboard's own
+route (`CAPSULE_OP_SET_AMBIENT_LOOKUP` answers `EEXIST`).
 See [Discovery and the Lookup Channel](discovery-and-lookup.md).
 
 If the breaker trips before convergence, `establish_capsule()` logs

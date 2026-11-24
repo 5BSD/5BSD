@@ -57,11 +57,23 @@ int	dq_open(void);
 
 /* Statistics of a queue or of an observer descriptor. */
 int	dq_get_stats(int fd, struct dq_stats *st);
-/* The extended counters (DQ_IOC_GET_STATS2); ds2_size is the kernel's. */
-int	dq_get_stats2(int fd, struct dq_stats2 *st);
+/*
+ * The extended counters (DQ_IOC_GET_STATS2); ds2_size is the kernel's.
+ * The macro passes the size of the caller's struct, so a program built
+ * against another struct dq_stats2 gets EINVAL, never an overrun.
+ */
+int	dq_get_stats2_sized(int fd, struct dq_stats2 *st, size_t size);
+int	(dq_get_stats2)(int fd, struct dq_stats2 *st);
+#define	dq_get_stats2(fd, st)	dq_get_stats2_sized((fd), (st), sizeof(*(st)))
 
 /* Lower the queue's depth; 1..kern.dq.queue_depth, never above it. */
 int	dq_set_queue_depth(int q, uint32_t depth);
+/*
+ * Set and clear queue flags (DQ_QF_*, disjoint); *oldp, unless NULL,
+ * receives the flags from before.  DQ_QF_INTR: the requesters' lookups
+ * end on a signal (dq(4) "Waiting, deadlines and interruption").
+ */
+int	dq_queue_set_flags(int q, uint32_t set, uint32_t clear, uint32_t *oldp);
 
 /*
  * Identity and policy
@@ -210,6 +222,18 @@ int	dq_reply(int q, uint64_t id, int error, const void *data, size_t len);
  * IOCPARM_LEN(cmd) for a successful IOC_OUT command and 0 otherwise.
  */
 int	dq_reply_write(int q, uint64_t id, uint64_t written, uint64_t offset);
+/*
+ * dq_reply_postop(): a successful reply of len bytes (a READ's data, a
+ * struct dq_write_reply, nothing for a FALLOCATE, a struct
+ * dq_fspacectl_reply) followed by the post-operation attributes pa
+ * (DQ_REPLY_F_POSTOP, dq(4)).  dq_postop_from_stat() fills pa from what
+ * fstat(2) said of the backing file after the operation, for the fields
+ * of valid (DQ_PA_*).
+ */
+int	dq_reply_postop(int q, uint64_t id, const void *data, size_t len,
+	    const struct dq_postop_attr *pa);
+void	dq_postop_from_stat(struct dq_postop_attr *pa, const struct stat *sb,
+	    uint32_t valid);
 int	dq_reply_fspacectl(int q, uint64_t id, uint64_t offset, uint64_t len);
 int	dq_reply_lock(int q, uint64_t id, const struct dq_lock_reply *lr);
 int	dq_reply_ioctl(int q, uint64_t id, int error, const void *out,
@@ -314,12 +338,24 @@ int	dq_reply_resolve_ok(int q, uint64_t id);
  * program then works on the real file with no further events.  Open fd
  * afresh for each answer, with the request's access mode and status
  * flags (drs_mode) but without O_TRUNC, and with O_CLOFORK so that no
- * child shares it; close it after success.  flags are DQ_SWAP_F_*.
- * The kernel's errno is returned unchanged: EBADF, EOPNOTSUPP, EFTYPE,
- * ENOTCAPABLE, EBUSY and EINVAL refuse fd or the reply and leave the
- * event in flight (answer again); ESRCH means the requester is gone.  fd
- * stays open in every case.  EBUSY (the open file has another reference,
- * possibly a transient one of another thread) is retried once.
+ * child shares it; do not read from it, lock it (but for an O_CREAT |
+ * O_EXCL request with O_SHLOCK or O_EXLOCK, where it must hold that
+ * flock), or give it per-descriptor states (dq(4)).  flags are
+ * DQ_SWAP_F_*.  Three outcomes:
+ *	0		taken: the kernel closed fd with the take, and the
+ *			file is the program's (installed, or being
+ *			installed);
+ *	ECANCELED	taken, but the program is gone: fd was closed with
+ *			the take and the file released;
+ *	any other	not taken: fd is still this process's, to close or
+ *			to answer again with.  EBADF, EOPNOTSUPP, EFTYPE,
+ *			ENOTCAPABLE, EBUSY and EINVAL refuse fd or the
+ *			reply and leave the event in flight; ESRCH means
+ *			there was no event to answer.
+ * After the first two fd must not be closed again: the number may
+ * already name another file.  EBUSY (the open file has another
+ * reference, possibly a transient one of another thread) is retried
+ * once; it is refused before anything is taken.
  * The file keeps the credential of this process's open and the rights
  * of fd (descriptor substitution): restrict this process (setuid,
  * jail_attach, cap_enter) after dq_open and dq_attach and before
@@ -366,6 +402,52 @@ int	dq_dirent_add(void *buf, size_t cap, size_t *lenp, uint64_t fileno,
 	    uint64_t off, uint8_t type, const char *name);
 int	dq_reply_readdir(int q, uint64_t id, uint64_t next, int eof,
 	    const void *records, size_t len);
+
+/*
+ * Standing rules (dq-standing-decisions, stage 1): answers the queue gives
+ * without posting RESOLVE.  dq_standing_add() installs one for the root
+ * rootfd (a directory descriptor with CAP_LOOKUP, or -1 for the caller's
+ * own root; the lookup's process root must be it), the normalized
+ * absolute path under it (DQ_STANDING_F_SUBTREE: with every name beneath
+ * it), the operations ops (DQ_STANDING_OP(DQ_ROP_*); DQ_ROP_EXEC_INTERP
+ * only without DQ_STANDING_F_SUBTREE; an open is covered only when
+ * read-class unless DQ_STANDING_F_OPEN_WRITE is set) and the
+ * action DQ_STANDING_PASS, DQ_STANDING_ERRNO (error, from the RESOLVE
+ * allow-list, not EAGAIN, EINTR or ENOTCAPABLE) or DQ_STANDING_ASK (post
+ * the event: an exception to a shorter rule); *idp (may be NULL) receives
+ * the rule's id.  Among the rules that fit an event the longest path
+ * decides.  dq_standing_del() removes one rule (ESRCH for an unknown id),
+ * dq_standing_flush() all.  Covered lookups post no event and count in
+ * ds2_standing_pass or ds2_standing_deny; see dq(4).
+ */
+/* Every operation a subtree rule may name: one path, never RENAME, LINK,
+   sockets (CONNECT and BIND are consulted ahead) or INTERNAL, and not
+   EXEC_INTERP, which only an exact rule may name (the interpreter lookup
+   is not consulted again at symbolic links, so a subtree would pass a
+   link out of it). */
+#define	DQ_STANDING_OPS_ALL						\
+	(DQ_STANDING_OP(DQ_ROP_OPEN) | DQ_STANDING_OP(DQ_ROP_STAT) |	\
+	DQ_STANDING_OP(DQ_ROP_ACCESS) | DQ_STANDING_OP(DQ_ROP_READLINK) | \
+	DQ_STANDING_OP(DQ_ROP_REALPATH) | DQ_STANDING_OP(DQ_ROP_GETFH) | \
+	DQ_STANDING_OP(DQ_ROP_UNLINK) | DQ_STANDING_OP(DQ_ROP_RMDIR) |	\
+	DQ_STANDING_OP(DQ_ROP_SYMLINK) | DQ_STANDING_OP(DQ_ROP_MKDIR) |	\
+	DQ_STANDING_OP(DQ_ROP_MKNOD) | DQ_STANDING_OP(DQ_ROP_MKFIFO) |	\
+	DQ_STANDING_OP(DQ_ROP_SETATTR) | DQ_STANDING_OP(DQ_ROP_TRUNCATE) | \
+	DQ_STANDING_OP(DQ_ROP_EXEC) | DQ_STANDING_OP(DQ_ROP_CHDIR) |	\
+	DQ_STANDING_OP(DQ_ROP_CHROOT) | DQ_STANDING_OP(DQ_ROP_INOTIFY) | \
+	DQ_STANDING_OP(DQ_ROP_XATTR) | DQ_STANDING_OP(DQ_ROP_ACL) |	\
+	DQ_STANDING_OP(DQ_ROP_REVOKE))
+/* The lookups that read: XATTR and ACL are left out (one bit covers get
+   and set), EXEC_INTERP as in DQ_STANDING_OPS_ALL. */
+#define	DQ_STANDING_OPS_READ						\
+	(DQ_STANDING_OP(DQ_ROP_OPEN) | DQ_STANDING_OP(DQ_ROP_STAT) |	\
+	DQ_STANDING_OP(DQ_ROP_ACCESS) | DQ_STANDING_OP(DQ_ROP_READLINK) | \
+	DQ_STANDING_OP(DQ_ROP_REALPATH) | DQ_STANDING_OP(DQ_ROP_EXEC) |	\
+	DQ_STANDING_OP(DQ_ROP_CHDIR))
+int	dq_standing_add(int q, int rootfd, const char *path, uint32_t flags,
+	    uint32_t ops, uint32_t action, int error, uint64_t *idp);
+int	dq_standing_del(int q, uint64_t id);
+int	dq_standing_flush(int q);
 
 /*
  * One read(2) and one handler call per record.  The handler returns 0 to

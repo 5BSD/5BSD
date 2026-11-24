@@ -39,6 +39,7 @@ abac_proc_check_debug(struct ucred *cred, struct proc *p)
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_DEBUG);
 	ABAC_CHECK_ENABLED();
 
 	/* Get subject (debugger) label from credential */
@@ -78,6 +79,7 @@ abac_proc_check_sched(struct ucred *cred, struct proc *p)
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_SCHED);
 	ABAC_CHECK_ENABLED();
 
 	/* Get subject label */
@@ -115,6 +117,7 @@ abac_proc_check_signal(struct ucred *cred, struct proc *p, int signum)
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_SIGNAL);
 	ABAC_CHECK_ENABLED();
 
 	/* Get subject label */
@@ -153,6 +156,7 @@ abac_proc_check_wait(struct ucred *cred, struct proc *p)
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WAIT);
 	ABAC_CHECK_ENABLED();
 
 	/* Get subject label */
@@ -180,52 +184,7 @@ abac_proc_check_wait(struct ucred *cred, struct proc *p)
 }
 
 /*
- * Privilege check - invoked before a process uses a privilege
- *
- * This is called before any privileged operation. Unlike priv_grant,
- * which is called to check if a policy grants privileges, priv_check
- * is for denying use of privileges that would otherwise be granted.
- *
- * Use cases:
- *   - Prevent sandboxed processes from using certain privileges
- *   - Restrict privilege use based on process labels
- *
- * Note: priv_check returns 0 to allow (let other policies decide),
- * or EPERM to deny the privilege use.
+ * No priv_check or priv_grant hook: mac_abac neither restricts nor grants
+ * privilege, and either hook would be called on every privileged
+ * operation for nothing.
  */
-int
-abac_priv_check(struct ucred *cred, int priv)
-{
-	struct abac_label *subj;
-
-	ABAC_CHECK_ENABLED();
-
-	/* Get subject label from credential */
-	if (cred == NULL || cred->cr_label == NULL)
-		return (0);
-	subj = SLOT(cred->cr_label);
-	if (subj == NULL)
-		return (0);
-
-	/*
-	 * For now, we don't restrict privilege use.
-	 * This hook is here for future expansion to allow rules like:
-	 *   deny priv type=untrusted -> priv:PRIV_VFS_SETGID
-	 *
-	 * TODO: Add privilege-based rules support.
-	 */
-	return (0);
-}
-
-/*
- * Privilege grant - always deny (return EPERM)
- *
- * This prevents the policy from granting additional privileges.
- * We only restrict, never expand, access.
- */
-int
-abac_priv_grant(struct ucred *cred, int priv)
-{
-
-	return (EPERM);
-}

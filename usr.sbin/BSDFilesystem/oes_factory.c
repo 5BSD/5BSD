@@ -23,6 +23,8 @@ bsdfilesystem_oes_open_notify(int rootfd)
 		OES_IOC_GET_MODE,
 		OES_IOC_GET_SCOPE,
 		OES_IOC_GET_STATS,
+		/* The consumer joins first (oes(4)); it changes nothing else. */
+		OES_IOC_JOIN,
 	};
 	struct oes_mode_args mode = { 0 };
 	struct oes_scope_args scope = { 0 };

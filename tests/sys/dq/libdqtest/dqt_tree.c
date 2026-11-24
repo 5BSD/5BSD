@@ -181,11 +181,13 @@ dqt_tree_count_op(struct dqt_tree *s, int from, uint32_t op)
  * Run fn in a pdfork child attached to s->q with the given served starts
  * (-1 for none), sending back outlen bytes of out; returns the child's
  * wait status.  The child closes the controller's root descriptor unless
- * keep_sroot (an inherited served directory counts against chroot).
+ * keep_sroot (an inherited served directory counts against chroot).  A
+ * uid other than (uid_t)-1 is set before the attach: an attached process
+ * cannot change its credential.
  */
-int
-dqt_tree_child_ex(struct dqt_tree *s, int rootfd, int cwdfd, bool keep_sroot,
-    bool close_before_go, dqt_tree_child_fn fn, void *arg, void *out,
+static int
+dqt_tree_child_impl(struct dqt_tree *s, int rootfd, int cwdfd, bool keep_sroot,
+    bool close_before_go, uid_t uid, dqt_tree_child_fn fn, void *arg, void *out,
     size_t outlen)
 {
 	int ready[2], go[2], back[2], pd, status;
@@ -207,6 +209,8 @@ dqt_tree_child_ex(struct dqt_tree *s, int rootfd, int cwdfd, bool keep_sroot,
 		close(ready[0]);
 		close(go[1]);
 		close(back[0]);
+		if (uid != (uid_t)-1 && setuid(uid) != 0)
+			_exit(1);
 		(void)write(ready[1], "r", 1);
 		if (read(go[0], &c, 1) != 1)
 			_exit(1);
@@ -247,10 +251,29 @@ dqt_tree_child_ex(struct dqt_tree *s, int rootfd, int cwdfd, bool keep_sroot,
 }
 
 int
+dqt_tree_child_ex(struct dqt_tree *s, int rootfd, int cwdfd, bool keep_sroot,
+    bool close_before_go, dqt_tree_child_fn fn, void *arg, void *out,
+    size_t outlen)
+{
+
+	return (dqt_tree_child_impl(s, rootfd, cwdfd, keep_sroot,
+	    close_before_go, (uid_t)-1, fn, arg, out, outlen));
+}
+
+int
 dqt_tree_child(struct dqt_tree *s, int rootfd, int cwdfd, dqt_tree_child_fn fn,
     void *arg, void *out, size_t outlen)
 {
 
 	return (dqt_tree_child_ex(s, rootfd, cwdfd, false, false, fn, arg, out,
 	    outlen));
+}
+
+int
+dqt_tree_child_uid(struct dqt_tree *s, int rootfd, int cwdfd, uid_t uid, dqt_tree_child_fn fn,
+    void *arg, void *out, size_t outlen)
+{
+
+	return (dqt_tree_child_impl(s, rootfd, cwdfd, false, false, uid, fn, arg,
+	    out, outlen));
 }

@@ -598,7 +598,7 @@ do_fork(struct thread *td, struct fork_req *fr, struct proc *p2, struct thread *
 	    P2_PROTMAX_ENABLE | P2_PROTMAX_DISABLE | P2_TRAPCAP |
 	    P2_STKGAP_DISABLE | P2_STKGAP_DISABLE_EXEC | P2_NO_NEW_PRIVS |
 	    P2_WXORX_DISABLE | P2_WXORX_ENABLE_EXEC | P2_LOGSIGEXIT_CTL |
-	    P2_LOGSIGEXIT_ENABLE);
+	    P2_LOGSIGEXIT_ENABLE | P2_CAP_EXCLUDED);
 	if ((fr->fr_flags & RFPROCDESC) != 0) {
 		p2->p_zombieref = PZOMBIEREF_PROCDESC;
 		if (((fr->fr_pd_flags & PD_NOWAITPID) == 0 &&

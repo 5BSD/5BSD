@@ -781,9 +781,16 @@ sctl_capsule_request(struct channel *ch __unused,
 				    "Capsule: %s (spine, PID 1)\n"
 				    "control plane: capability "
 				    "(system.lifecycle)\n"
-				    "services loaded: %u\n",
+				    "services loaded: %u\n%s%s%s",
 				    sd.capsule_channel_fd >= 0 ? "reachable" :
-				    "unreachable", sd.nservices);
+				    "unreachable", sd.nservices,
+				    sd.next_issuer_error != 0 ?
+				    "next authority issuer: none (" : "",
+				    sd.next_issuer_error != 0 ?
+				    strerror(sd.next_issuer_error) : "",
+				    sd.next_issuer_error != 0 ? "); the next "
+				    "switchboard start creates one or enters "
+				    "single-user\n" : "");
 				reply.status = 0;
 				break;
 			default:

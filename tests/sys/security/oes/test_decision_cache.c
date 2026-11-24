@@ -324,7 +324,15 @@ main(void)
 	entry.ece_key.eck_exec_id = msg->em_process.ep_exec_id;
 	entry.ece_key.eck_file = msg->em_event_data.open.file.ef_token;
 	entry.ece_result = OES_AUTH_ALLOW;
-	entry.ece_ttl_ms = 300;
+	/*
+	 * Long enough to outlive the hit, the wait for no event and the stats
+	 * read below, short enough for the expiry check after it.  The wait
+	 * alone lasts at least 300 ms, so a 300 ms entry had always expired by
+	 * the stats read, and expiry is lazy: any process's open (the
+	 * subscription is global) dropped it there, which the read then saw as
+	 * "entries=0".  A test-design race, on dev as well.
+	 */
+	entry.ece_ttl_ms = 1500;
 	if (ioctl(fd, OES_IOC_CACHE_ADD, &entry) < 0) {
 		perror("OES_IOC_CACHE_ADD allow");
 		goto fail;
@@ -354,7 +362,7 @@ main(void)
 		goto fail;
 	}
 
-	sleep_ms(400);
+	sleep_ms(1600);
 
 	cmd = 'o';
 	(void)write(ctl_pipe[1], &cmd, 1);
