@@ -282,7 +282,11 @@ drives the device itself and is not part of it.  A case of a deployed-tier
 suite that needs the device skips with `DEFERRED_DEVICE_TIER`, counted as
 `DEFERRED_TO_DEVICE_TIER=N`: it runs in the plane-on test tier.  Cases that
 start a test-local Capsule and switchboard skip with any plane on as
-`DEFERRED_PLANEOFF_TIER` (`DEFERRED_TO_PLANEOFF_TIER=N`).  Those that launch
+`DEFERRED_PLANEOFF_TIER` (`DEFERRED_TO_PLANEOFF_TIER=N`).  The reverse, a
+case that needs Capsule as PID 1 (`dqt_require_plane` in `tests/sys/dq`),
+skips on a boot with `capability_plane="NO"` (the plane-off and stack tiers)
+as `DEFERRED_PLANEON_TIER` (`DEFERRED_TO_PLANEON_TIER=N`, not a pass) and
+fails on any other boot whose PID 1 is not Capsule.  Those that launch
 no unit run plane-off on any kernel.  Those that launch units need a unit
 issuer, which only PID 1 creates on GENERIC; they call
 `capd_require_unit_issuer` and skip elsewhere with `DEFERRED_STACK_TIER`

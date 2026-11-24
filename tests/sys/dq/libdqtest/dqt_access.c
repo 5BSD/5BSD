@@ -14,17 +14,27 @@
 
 #include <atf-c.h>
 #include <errno.h>
+#include <kenv.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <unistd.h>
 
+#include "capsule_plane.h"
 #include "dqt.h"
 
+/*
+ * The case needs Capsule as PID 1.  A boot that turned the plane off
+ * (capability_plane="NO", the plane-off and stack tiers) cannot run it: it
+ * skips with DEFERRED_PLANEON_TIER, which vm-provider.sh counts as a case
+ * owed by a plane-on run, not a pass.  On any other boot the plane should
+ * be on, and PID 1 not being Capsule is a failure.
+ */
 void
 dqt_require_plane(void)
 {
+	char plane[KENV_MVALLEN + 1];
 	struct kinfo_proc kp;
 	size_t len;
 	int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, 1 };
@@ -32,9 +42,15 @@ dqt_require_plane(void)
 	len = sizeof(kp);
 	if (sysctl(mib, nitems(mib), &kp, &len, NULL, 0) != 0)
 		atf_tc_fail("kern.proc.pid.1: %s", strerror(errno));
-	if (strcmp(kp.ki_comm, "capsule") != 0)
+	if (strcmp(kp.ki_comm, "capsule") != 0) {
+		if (kenv(KENV_GET, "capability_plane", plane,
+		    sizeof(plane)) > 0 && capsule_plane_disabled(plane))
+			atf_tc_skip("DEFERRED_PLANEON_TIER: needs Capsule as "
+			    "PID 1; this boot has capability_plane=%s (PID 1 "
+			    "is %s)", plane, kp.ki_comm);
 		atf_tc_fail("the capability plane is off: PID 1 is %s, not "
 		    "capsule", kp.ki_comm);
+	}
 	if (access(DQ_DEVICE, F_OK) != 0)
 		atf_tc_fail("%s: %s", DQ_DEVICE, strerror(errno));
 }

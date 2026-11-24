@@ -27,13 +27,15 @@ sys/v:thirteen  ->  skipped: DEFERRED_QUOTA_KERNEL_TIER: kernel without options 
 sys/v:fourteen  ->  skipped: DEFERRED_DEBUG_KERNEL_TIER: WITNESS is not running  [0.1s]
 sys/v:fifteen  ->  skipped: DEFERRED_DEBUG_KERNEL_TIER: no INVARIANTS  [0.1s]
 usr.sbin/c:sixteen  ->  skipped: DEFERRED_GUEST_SETUP: requires the explicit disposable scratch-device input  [0.1s]
+sys/dq/d:seventeen  ->  skipped: DEFERRED_PLANEON_TIER: needs Capsule as PID 1; this boot has capability_plane=NO (PID 1 is init)  [0.1s]
 KYUA_SKIPPED_LIST_END
 EOS
 out=$(log=$log sh -c ". '$work/summary.sh'")
-echo "$out" | grep -q '^skipped=16 '
+echo "$out" | grep -q '^skipped=17 '
 echo "$out" | grep -q '^DEFERRED_TO_ENFORCED_TIER=2 '
 echo "$out" | grep -q '^DEFERRED_TO_DEVICE_TIER=1 '
 echo "$out" | grep -q '^DEFERRED_TO_PLANEOFF_TIER=1 '
+echo "$out" | grep -q '^DEFERRED_TO_PLANEON_TIER=1 '
 echo "$out" | grep -q '^DEFERRED_TO_STACK_TIER=2 '
 echo "$out" | grep -q '^DEFERRED_PID1_ONLY=1 '
 echo "$out" | grep -q '^DEFERRED_TO_SOURCE_TIER=1 '

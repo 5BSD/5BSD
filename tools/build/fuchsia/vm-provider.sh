@@ -1672,8 +1672,8 @@ nskip=$(LC_ALL=C tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYU
 echo "skipped=$nskip (a skip in a plane-on suite is not a pass; see KYUA_SKIPPED_LIST in $log)"
 # Cases that named the tier they belong to: the run is not complete without
 # a run of the same stage and suites in that tier.
-for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER \
-    DEFERRED_STACK_TIER DEFERRED_PID1_ONLY DEFERRED_SOURCE_TIER DEFERRED_KNOB_TIER \
+for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_PLANEON_TIER \
+    DEFERRED_DEVICE_TIER DEFERRED_STACK_TIER DEFERRED_PID1_ONLY DEFERRED_SOURCE_TIER DEFERRED_KNOB_TIER \
     DEFERRED_GUEST_SETUP DEFERRED_DISPOSABLE_GUEST DEFERRED_TEST_KERNEL_TIER \
     DEFERRED_RACCT_ZERO_TIER DEFERRED_QUOTA_KERNEL_TIER \
     DEFERRED_DEBUG_KERNEL_TIER \
@@ -1686,6 +1686,8 @@ for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER 
 		echo "DEFERRED_TO_KNOB_TIER=$ndefer (cases that need a fault knob of options DQ_FAULT_INJECTION: run KERNEL_TIER=test with a GENERIC-TEST stage and the same suites; not a pass)";;
 	DEFERRED_PLANEOFF_TIER)
 		echo "DEFERRED_TO_PLANEOFF_TIER=$ndefer (test-local stacks: run PLANE_OFF=1, and their unit cases on the stack tier; not a pass)";;
+	DEFERRED_PLANEON_TIER)
+		echo "DEFERRED_TO_PLANEON_TIER=$ndefer (they need Capsule as PID 1: run without PLANE_OFF with the same stage and suites; not a pass)";;
 	DEFERRED_STACK_TIER)
 		echo "DEFERRED_TO_STACK_TIER=$ndefer (run on GENERIC-TEST with KERNEL_TIER=test PLANE_OFF=1 and kern.mac_capability.test_issuer=1; not a pass)";;
 	DEFERRED_PID1_ONLY)
