@@ -157,6 +157,8 @@ kyua_vars=${KYUA_VARS:-}
 # PLANE_OFF=1: boot with capability_plane="NO" (stock init; the "VM, plane off"
 # tier) for raw kernel-service suites.  EXTRA_SCRIPT: a host shell script run
 # as root in the guest before Kyua; its output is captured in the results.
+# It runs as a step ("extra"): bounded by the run deadline, and processes it
+# leaves behind when it exits are named (PHASE_STEP_LEFTOVER) and killed.
 # EXTRA_DIR: a host directory whose regular files are installed executable in
 # the guest under /root/vm-extra.d (for example legacy latency benches).
 # REROOT=1 (with PLANE_OFF=1, KERNEL_TIER=test and EXTRA_SCRIPT): the reroot
