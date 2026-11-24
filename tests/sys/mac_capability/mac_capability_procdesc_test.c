@@ -26,14 +26,39 @@
  * Helpers
  * ---------------------------------------------------------------- */
 
-static int
-pd_kevent_poll(int kq, struct kevent *out, int timeout_ms)
+/*
+ * Wait for the next event, with no deadline: NOTE_EXIT always arrives when
+ * the child exits, and every child here exits, so a missing note shows as
+ * the case's ATF timeout, never as a slow machine's failure.
+ */
+static void
+pd_kevent_wait(int kq, struct kevent *out)
 {
-	struct timespec ts;
+	int n;
 
-	ts.tv_sec = timeout_ms / 1000;
-	ts.tv_nsec = (timeout_ms % 1000) * 1000000L;
-	return (kevent(kq, NULL, 0, out, 1, &ts));
+	do {
+		n = kevent(kq, NULL, 0, out, 1, NULL);
+	} while (n == -1 && errno == EINTR);
+	ATF_REQUIRE_MSG(n == 1, "kevent: %s", n == -1 ? strerror(errno) :
+	    "no event");
+}
+
+/*
+ * Collect the child's notes up to and including NOTE_EXIT, its last.
+ * Returns the union of the notes seen.
+ */
+static u_int
+pd_collect_until_exit(int kq)
+{
+	struct kevent kev;
+	u_int notes;
+
+	notes = 0;
+	do {
+		pd_kevent_wait(kq, &kev);
+		notes |= kev.fflags;
+	} while ((notes & NOTE_EXIT) == 0);
+	return (notes);
 }
 
 /* ----------------------------------------------------------------
@@ -49,7 +74,7 @@ ATF_TC_HEAD(procdesc_note_exit, tc)
 ATF_TC_BODY(procdesc_note_exit, tc)
 {
 	struct kevent kev;
-	int kq, pd, status, n;
+	int kq, pd, status;
 	pid_t pid;
 
 	pid = pdfork(&pd, 0);
@@ -63,8 +88,7 @@ ATF_TC_BODY(procdesc_note_exit, tc)
 	EV_SET(&kev, pd, EVFILT_PROCDESC, EV_ADD, NOTE_EXIT, 0, NULL);
 	ATF_REQUIRE(kevent(kq, &kev, 1, NULL, 0, NULL) == 0);
 
-	n = pd_kevent_poll(kq, &kev, 2000);
-	ATF_REQUIRE(n == 1);
+	pd_kevent_wait(kq, &kev);
 	ATF_CHECK(kev.fflags & NOTE_EXIT);
 
 	waitpid(pid, &status, 0);
@@ -81,7 +105,8 @@ ATF_TC_HEAD(procdesc_note_fork, tc)
 ATF_TC_BODY(procdesc_note_fork, tc)
 {
 	struct kevent kev;
-	int kq, pd, status, n, sv[2];
+	u_int notes;
+	int kq, pd, status, sv[2];
 	pid_t pid;
 
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
@@ -117,20 +142,8 @@ ATF_TC_BODY(procdesc_note_fork, tc)
 	close(sv[0]);
 
 	/* Collect events — should get NOTE_FORK and then NOTE_EXIT */
-	int got_fork = 0, got_exit = 0;
-	for (int i = 0; i < 5; i++) {
-		n = pd_kevent_poll(kq, &kev, 2000);
-		if (n <= 0)
-			break;
-		if (kev.fflags & NOTE_FORK)
-			got_fork = 1;
-		if (kev.fflags & NOTE_EXIT)
-			got_exit = 1;
-		if (got_fork && got_exit)
-			break;
-	}
-	ATF_CHECK_MSG(got_fork, "did not receive NOTE_FORK");
-	ATF_CHECK_MSG(got_exit, "did not receive NOTE_EXIT");
+	notes = pd_collect_until_exit(kq);
+	ATF_CHECK_MSG(notes & NOTE_FORK, "did not receive NOTE_FORK");
 
 	waitpid(pid, &status, 0);
 	close(pd);
@@ -146,7 +159,8 @@ ATF_TC_HEAD(procdesc_note_exec, tc)
 ATF_TC_BODY(procdesc_note_exec, tc)
 {
 	struct kevent kev;
-	int kq, pd, status, n, sv[2];
+	u_int notes;
+	int kq, pd, status, sv[2];
 	pid_t pid;
 
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
@@ -178,20 +192,8 @@ ATF_TC_BODY(procdesc_note_exec, tc)
 	close(sv[0]);
 
 	/* Collect events — should get NOTE_EXEC and then NOTE_EXIT */
-	int got_exec = 0, got_exit = 0;
-	for (int i = 0; i < 5; i++) {
-		n = pd_kevent_poll(kq, &kev, 2000);
-		if (n <= 0)
-			break;
-		if (kev.fflags & NOTE_EXEC)
-			got_exec = 1;
-		if (kev.fflags & NOTE_EXIT)
-			got_exit = 1;
-		if (got_exec && got_exit)
-			break;
-	}
-	ATF_CHECK_MSG(got_exec, "did not receive NOTE_EXEC");
-	ATF_CHECK_MSG(got_exit, "did not receive NOTE_EXIT");
+	notes = pd_collect_until_exit(kq);
+	ATF_CHECK_MSG(notes & NOTE_EXEC, "did not receive NOTE_EXEC");
 
 	waitpid(pid, &status, 0);
 	close(pd);
@@ -207,7 +209,8 @@ ATF_TC_HEAD(procdesc_note_all, tc)
 ATF_TC_BODY(procdesc_note_all, tc)
 {
 	struct kevent kev;
-	int kq, pd, status, n, sv[2];
+	u_int notes;
+	int kq, pd, status, sv[2];
 	pid_t pid;
 
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
@@ -242,23 +245,9 @@ ATF_TC_BODY(procdesc_note_all, tc)
 	write(sv[0], "g", 1);
 	close(sv[0]);
 
-	int got_fork = 0, got_exec = 0, got_exit = 0;
-	for (int i = 0; i < 10; i++) {
-		n = pd_kevent_poll(kq, &kev, 2000);
-		if (n <= 0)
-			break;
-		if (kev.fflags & NOTE_FORK)
-			got_fork = 1;
-		if (kev.fflags & NOTE_EXEC)
-			got_exec = 1;
-		if (kev.fflags & NOTE_EXIT)
-			got_exit = 1;
-		if (got_fork && got_exec && got_exit)
-			break;
-	}
-	ATF_CHECK_MSG(got_fork, "did not receive NOTE_FORK");
-	ATF_CHECK_MSG(got_exec, "did not receive NOTE_EXEC");
-	ATF_CHECK_MSG(got_exit, "did not receive NOTE_EXIT");
+	notes = pd_collect_until_exit(kq);
+	ATF_CHECK_MSG(notes & NOTE_FORK, "did not receive NOTE_FORK");
+	ATF_CHECK_MSG(notes & NOTE_EXEC, "did not receive NOTE_EXEC");
 
 	waitpid(pid, &status, 0);
 	close(pd);
