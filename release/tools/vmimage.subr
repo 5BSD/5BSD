@@ -153,6 +153,11 @@ vm_install_base() {
 	sh ${WORLDDIR}/release/scripts/check-test-kernel.sh \
 		-d ${DESTDIR} || \
 		err "\n\nRefusing a kernel with a test-kernel option."
+	# Nor one without an option every 5BSD kernel requires
+	# (sys/conf/mandatory-options).
+	sh ${WORLDDIR}/release/scripts/check-mandatory-kernel.sh \
+		-d ${DESTDIR} || \
+		err "\n\nRefusing a kernel without a mandatory option."
 
 	# Bootstrap etcupdate(8) database.
 	mkdir -p ${DESTDIR}/var/db/etcupdate

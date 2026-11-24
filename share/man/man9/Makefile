@@ -1870,6 +1870,7 @@ MLINKS+=pci_iov_schema.9 pci_iov_schema_alloc_node.9 \
 	pci_iov_schema.9 pci_iov_schema_add_uint32.9 \
 	pci_iov_schema.9 pci_iov_schema_add_uint64.9 \
 	pci_iov_schema.9 pci_iov_schema_add_unicast_mac.9
+MLINKS+=p_candebug.9 p_caninspect.9
 MLINKS+=pfil.9 pfil_add_hook.9 \
 	pfil.9 pfil_head_register.9 \
 	pfil.9 pfil_head_unregister.9 \

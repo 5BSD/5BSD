@@ -16,12 +16,29 @@
 # the per-case results must agree, except the cases dqpass.expected lists (I5, jail, setcred,
 # fplookup, core dumps).
 #
+# oracle_standing: both again under dqpass -r /:all, a standing rule that
+# passes every lookup a rule can cover without posting it
+# (dq-standing-decisions, stage 1): the results must agree just the same,
+# and every run must have counted standing passes.
+#
 
 . "$(atf_get_srcdir)/dq_suites.subr"
 
+# DQPASS_RULES: the standing rules dqpass installs (oracle_standing).
+DQPASS_RULES=
 dqpass()
 {
-	"$(atf_get_srcdir)/dqpass" "$@"
+	"$(atf_get_srcdir)/dqpass" ${DQPASS_RULES} "$@"
+}
+
+# With standing rules, a report must show that they decided something.
+require_standing()
+{
+	[ -z "${DQPASS_RULES}" ] && return 0
+	grep -Eq '^dqpass: standing pass [1-9]' "$1" || {
+		cat "$1" >&2
+		atf_fail "$2: no standing pass under ${DQPASS_RULES}"
+	}
 }
 
 require_dq()
@@ -53,6 +70,7 @@ same_both_ways()
 	fi
 	grep -q 'RESOLVE events' dqpass.report ||
 	    atf_fail "dqpass wrote no report for '$*'"
+	require_standing dqpass.report "$*"
 }
 
 atf_test_case commands
@@ -63,6 +81,11 @@ commands_head()
 	atf_set "require.user" "root"
 }
 commands_body()
+{
+	run_commands
+}
+
+run_commands()
 {
 	require_dq
 	mkdir work
@@ -78,7 +101,8 @@ commands_body()
 	same_both_ways /bin/sh -c 'exec /usr/bin/true'
 	same_both_ways /bin/sh -c 'exit 3'
 	same_both_ways /usr/bin/env -i /bin/sh -c 'cd /usr/share && pwd -P'
-	# A #! script: the interpreter lookup is consulted as EXEC_INTERP.
+	# A #! script: the interpreter lookup is consulted as EXEC_INTERP,
+	# under -r too: a subtree rule never covers it (dq(4)).
 	printf '#!/bin/sh\necho script $1\n' > work/s.sh
 	chmod 755 work/s.sh
 	same_both_ways ./work/s.sh arg
@@ -101,6 +125,11 @@ suites_head()
 	atf_set "require.progs" "kyua"
 }
 suites_body()
+{
+	run_suites
+}
+
+run_suites()
 {
 	local suite kf expected nsuites rc defaults
 
@@ -134,6 +163,7 @@ suites_body()
 			    "or unmarked consultation"
 		fi
 		[ -s pass.report ] || atf_fail "${suite}: dqpass wrote no report"
+		require_standing pass.report "${suite}"
 		dq_results plain.db plain.all
 		dq_results pass.db pass.all
 		echo "=== ${suite}: cases dqpass.expected excludes" >&2
@@ -165,8 +195,70 @@ suites_body()
 	    dq_pattern_verdict "$(atf_get_srcdir)/dqpass.expected" used
 }
 
+atf_test_case rules_option
+rules_option_head()
+{
+	atf_set "descr" "dqpass -r splits off only a final :read or :all; " \
+	    "any other ':' belongs to the path"
+	atf_set "require.user" "root"
+}
+rules_option_body()
+{
+	local d rule
+
+	require_dq
+	d=$(realpath .)
+	mkdir "a:b"
+	echo x > "a:b/f"
+	for rule in "$d/a:b" "$d/a:b:read" "$d/a:b:all"; do
+		atf_check -o inline:'x\n' -e save:ev \
+		    "$(atf_get_srcdir)/dqpass" -v -o r -r "${rule}" \
+		    /bin/cat "$d/a:b/f"
+		atf_check -o match:'^dqpass: standing pass [1-9]' cat r
+		posted open "$d/a:b/f" && atf_fail "-r ${rule}: the open posted"
+	done
+	# Neither suffix: the whole argument is the rule's path, which
+	# covers nothing here.
+	atf_check -o inline:'x\n' -e save:ev "$(atf_get_srcdir)/dqpass" -v \
+	    -o r -r "$d/a:b:x" /bin/cat "$d/a:b/f"
+	atf_check -o match:'^dqpass: standing pass 0 ' cat r
+	posted open "$d/a:b/f" || atf_fail "-r $d/a:b:x: the open did not post"
+	# :all covers a write-class open, :read does not.
+	atf_check -e save:ev "$(atf_get_srcdir)/dqpass" -v -o r \
+	    -r "$d/a:b:read" /usr/bin/truncate -s 0 "$d/a:b/f"
+	posted open "$d/a:b/f" || atf_fail ":read: the write open did not post"
+	atf_check -e save:ev "$(atf_get_srcdir)/dqpass" -v -o r \
+	    -r "$d/a:b:all" /usr/bin/truncate -s 0 "$d/a:b/f"
+	posted open "$d/a:b/f" && atf_fail ":all: the write open posted"
+	return 0
+}
+
+# posted OP PATH: dqpass -v (in ev) printed an OP event for exactly PATH.
+posted()
+{
+	grep '^dqpass: pid ' ev | grep -F " $1 class " | grep -qF "\"$2\""
+}
+
+atf_test_case oracle_standing
+oracle_standing_head()
+{
+	atf_set "descr" "the commands and suites give the same results " \
+	    "under dqpass -r /:all, whose standing rule passes every " \
+	    "lookup a rule covers without posting it, as unattached"
+	atf_set "require.user" "root"
+	atf_set "require.progs" "kyua"
+}
+oracle_standing_body()
+{
+	DQPASS_RULES="-r /:all"
+	run_commands
+	run_suites
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case commands
 	atf_add_test_case suites
+	atf_add_test_case rules_option
+	atf_add_test_case oracle_standing
 }

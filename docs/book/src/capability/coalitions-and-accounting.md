@@ -46,6 +46,7 @@ The operations, from `sys/dev/mac_capability/mac_capability_coalition_proto.h`:
 | `SET_SIGNAL` | choose the termination signal |
 | `SET_DEADLINE` | time-bounded lifetime: signal at `timeout_ms`, optional grace, then `SIGKILL` |
 | `SET_WATCHDOG`, `HEARTBEAT` | dead-man switch: terminate unless a heartbeat arrives within `timeout_ms` |
+| `WATCHDOG_STAT` | the watchdog's arm count, last arm time, deadline and the absolute time its callout is set for (each arm is exact, precision 0); op 1000, in the 5BSD high block |
 | `SET_LEADER` | name a process whose exit terminates the whole coalition |
 | `SET_RESPONSIBLE` | record, once, the coalition this one exists on behalf of (see below) |
 | `STAT` | member counts by type, flags (`COF_*`), signal, nesting depth, the permanent id, the responsible id, both leader pids |
@@ -197,9 +198,10 @@ is attached.
 The resources it charges are therefore whatever racct(4) counts: CPU
 time, RSS, swap, memory locked, file descriptors, processes, and the rest
 of the `RACCT_*` set. A kernel built without `RACCT` or `RCTL` answers
-`ACCT_STATUS_ERR`; 5BSD kernels build with both on by default (the
-`RACCT_DEFAULT_TO_DISABLED` option is gone, so rctl rules are effective
-without a loader knob). Related read-only views live in the `node`
+`ACCT_STATUS_ERR`; 5BSD kernels build with both on by default, and resource
+accounting cannot be disabled at boot: the `RACCT_DEFAULT_TO_DISABLED`
+option is gone and a `kern.racct.enable=0` tunable is ignored with a
+console notice, so rctl rules are always effective. Related read-only views live in the `node`
 service: `NODE_OP_GET_RACCT` reads one counter with its limit and headroom,
 `NODE_OP_GET_RLIMIT`/`SET_RLIMIT` read and set one rlimit, and
 `NODE_OP_RUSAGE` reads live usage, all through an attached process

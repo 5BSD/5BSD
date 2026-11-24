@@ -48,6 +48,7 @@
 
 #ifndef illumos
 #include <sys/sysctl.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <libproc_compat.h>
 #include <libelf.h>
@@ -564,10 +565,50 @@ dt_pid_create_pid_probes(dtrace_probedesc_t *pdp, dtrace_hdl_t *dtp,
 	return (ret);
 }
 
+/*
+ * State of one USDT registration pass over a process's objects.  The handle
+ * is read-only: libdtrace never stops a process to register its probes.
+ */
+typedef struct dt_pid_usdt {
+	dt_proc_t	*dpu_dpr;
+	int		dpu_err;	/* errno of the last refused ADDDOF */
+} dt_pid_usdt_t;
+
+/*
+ * The ELF type of the object mapped at pmp, read from its file: a
+ * read-only process handle cannot read the process's memory.  The file is
+ * found by its current path, as libproc's symbol lookup finds it; a file
+ * replaced after it was mapped gives a wrong answer, which the kernel's
+ * checks of the DOF address and of the DOF itself refuse.
+ */
+static int
+dt_pid_usdt_etype(const prmap_t *pmp, GElf_Half *e_type)
+{
+	GElf_Ehdr ehdr;
+	Elf *elf;
+	int fd, ret;
+
+	if ((fd = open(pmp->pr_mapname, O_RDONLY | O_CLOEXEC)) < 0)
+		return (-1);
+	ret = -1;
+	if ((elf = elf_begin(fd, ELF_C_READ, NULL)) != NULL) {
+		if (gelf_getehdr(elf, &ehdr) != NULL) {
+			*e_type = ehdr.e_type;
+			ret = 0;
+		}
+		(void) elf_end(elf);
+	}
+	(void) close(fd);
+	return (ret);
+}
+
+static int dt_pid_usdt_anymatch(dtrace_hdl_t *, const dtrace_probedesc_t *);
+
 static int
 dt_pid_usdt_mapping(void *data, const prmap_t *pmp, const char *oname)
 {
-	dt_proc_t *dpr = data;
+	dt_pid_usdt_t *dpu = data;
+	dt_proc_t *dpr = dpu->dpu_dpr;
 	struct ps_prochandle *P = dpr->dpr_proc;
 	dt_proc_dof_t *dpd;
 	GElf_Sym sym;
@@ -597,9 +638,9 @@ dt_pid_usdt_mapping(void *data, const prmap_t *pmp, const char *oname)
 
 		dt_dprintf("lookup of %s succeeded for %s\n", syms[i], mname);
 
-		if (Pread(P, &e_type, sizeof (e_type), pmp->pr_vaddr +
-		    offsetof(Elf64_Ehdr, e_type)) != sizeof (e_type)) {
-			dt_dprintf("read of ELF header failed");
+		if (dt_pid_usdt_etype(pmp, &e_type) != 0) {
+			dt_dprintf("read of ELF header of %s failed\n",
+			    pmp->pr_mapname);
 			continue;
 		}
 
@@ -630,7 +671,9 @@ dt_pid_usdt_mapping(void *data, const prmap_t *pmp, const char *oname)
 		}
 
 		if (ioctl(fd, DTRACEHIOC_ADDDOF, &dh, sizeof (dh)) < 0) {
-			dt_dprintf("DOF was rejected for %s\n", dh.dofhp_mod);
+			dpu->dpu_err = errno;
+			dt_dprintf("DOF was rejected for %s: %s\n",
+			    dh.dofhp_mod, strerror(errno));
 			continue;
 		}
 #else
@@ -668,25 +711,52 @@ dt_pid_create_usdt_probes(dtrace_probedesc_t *pdp, dtrace_hdl_t *dtp,
     dt_pcb_t *pcb, dt_proc_t *dpr)
 {
 	struct ps_prochandle *P = dpr->dpr_proc;
+	dt_pid_usdt_t dpu;
 	int ret = 0;
 
 	assert(DT_MUTEX_HELD(&dpr->dpr_lock));
+	dpu.dpu_dpr = dpr;
+	dpu.dpu_err = 0;
 	(void) Pupdate_maps(P);
-	if (Pobject_iter(P, dt_pid_usdt_mapping, dpr) != 0) {
-		ret = -1;
-		(void) dt_pid_error(dtp, pcb, dpr, NULL, D_PROC_USDT,
-		    "failed to instantiate probes for pid %d: %s",
+	/*
+	 * A failure to (re)register the process's objects is reported only
+	 * when the description matches no probe: a process that registered
+	 * itself has its probes even when a read-only handle cannot list its
+	 * objects (as for Capsule, PID 1).
+	 */
+	if (Pobject_iter(P, dt_pid_usdt_mapping, &dpu) != 0) {
+		int iter_errno = errno;
+
+		if (!dt_pid_usdt_anymatch(dtp, pdp)) {
+			ret = -1;
+			(void) dt_pid_error(dtp, pcb, dpr, NULL, D_PROC_USDT,
+			    "failed to instantiate probes for pid %d: %s",
 #ifdef illumos
-		    (int)Pstatus(P)->pr_pid, strerror(errno));
+			    (int)Pstatus(P)->pr_pid, strerror(iter_errno));
 #else
-		    (int)proc_getpid(P), strerror(errno));
+			    (int)proc_getpid(P), strerror(iter_errno));
 #endif
+		}
 	}
 
 	/*
 	 * Put the module name in its canonical form.
 	 */
 	(void) dt_pid_fix_mod(pdp, P);
+
+	/*
+	 * The kernel refused the registration (no DTrace privilege, or no
+	 * permission to inspect the process): say so, unless the probes
+	 * matched anyway or unmatched descriptions are allowed (-Z).
+	 */
+	if (ret == 0 && (dpu.dpu_err == EPERM || dpu.dpu_err == EACCES) &&
+	    !dt_pid_usdt_anymatch(dtp, pdp) &&
+	    (pcb == NULL || !(pcb->pcb_cflags & DTRACE_C_ZDEFS))) {
+		ret = -1;
+		(void) dt_pid_error(dtp, pcb, dpr, NULL, D_PROC_USDT,
+		    "cannot register USDT probes of pid %d: %s",
+		    (int)proc_getpid(P), strerror(dpu.dpu_err));
+	}
 
 	return (ret);
 }
@@ -704,6 +774,51 @@ dt_pid_rematch(dtrace_hdl_t *dtp)
 
 	bzero(&args, sizeof (args));
 	(void) dt_ioctl(dtp, DTRACEIOC_ENABLE, &args);
+}
+
+/*
+ * Whether the description names one probe: all four fields given, none a
+ * pattern.
+ */
+static int
+dt_pid_desc_exact(const dtrace_probedesc_t *pdp)
+{
+	const char *f[] = { pdp->dtpd_provider, pdp->dtpd_mod,
+	    pdp->dtpd_func, pdp->dtpd_name };
+
+	for (size_t i = 0; i < sizeof (f) / sizeof (f[0]); i++) {
+		if (f[i][0] == '\0' || strpbrk(f[i], "*?[\\") != NULL)
+			return (0);
+	}
+	return (1);
+}
+
+/*
+ * Whether the kernel has a host probe matching the description.
+ */
+static int
+dt_pid_usdt_anymatch(dtrace_hdl_t *dtp, const dtrace_probedesc_t *pdp)
+{
+	dtrace_probedesc_t pd;
+
+	pd = *pdp;
+	pd.dtpd_vmid = 0;
+	pd.dtpd_id = DTRACE_IDNONE;
+	return (dt_ioctl(dtp, DTRACEIOC_PROBEMATCH, &pd) == 0);
+}
+
+/*
+ * Whether the kernel already has the one probe an exact description names:
+ * a process that registered its own probes (drti), or one registered
+ * earlier, needs no registration for it.  A partial or globbed description
+ * may also name probes of objects not registered yet (a library loaded
+ * later), so it never counts as matched.
+ */
+static int
+dt_pid_usdt_matched(dtrace_hdl_t *dtp, const dtrace_probedesc_t *pdp)
+{
+
+	return (dt_pid_desc_exact(pdp) && dt_pid_usdt_anymatch(dtp, pdp));
 }
 
 static pid_t
@@ -773,8 +888,14 @@ dt_pid_create_probes(dtrace_probedesc_t *pdp, dtrace_hdl_t *dtp, dt_pcb_t *pcb)
 		    0)) == NULL)
 #endif
 		{
+			/*
+			 * The pid provider plants breakpoints at addresses the
+			 * consumer chooses: it needs to attach the process, which
+			 * takes permission to debug it.
+			 */
 			(void) dt_pid_error(dtp, pcb, NULL, NULL, D_PROC_GRAB,
-			    "failed to grab process %d", (int)pid);
+			    "failed to grab process %d: the pid provider needs "
+			    "permission to debug it", (int)pid);
 			return (-1);
 		}
 
@@ -796,11 +917,21 @@ dt_pid_create_probes(dtrace_probedesc_t *pdp, dtrace_hdl_t *dtp, dt_pcb_t *pcb)
 
 	/*
 	 * If it's not strictly a pid provider, we might match a USDT provider.
+	 * An exact description whose probe exists (the process registered
+	 * itself, or an earlier pass registered it) needs nothing more.
+	 * Otherwise register the process's DOF through a read-only
+	 * handle, which never attaches or stops the process: the kernel
+	 * accepts another process's DOF from its read-only file mappings
+	 * when the caller may inspect it.
 	 */
-	if (strcmp(provname, pdp->dtpd_provider) != 0) {
-		if ((P = dt_proc_grab(dtp, pid, 0, 1)) == NULL) {
+	if (strcmp(provname, pdp->dtpd_provider) != 0 &&
+	    !dt_pid_usdt_matched(dtp, pdp)) {
+		if ((P = dt_proc_grab(dtp, pid, PGRAB_RDONLY | PGRAB_FORCE,
+		    1)) == NULL) {
+			if (pcb->pcb_cflags & DTRACE_C_ZDEFS)
+				return (err ? -1 : 0);
 			(void) dt_pid_error(dtp, pcb, NULL, NULL, D_PROC_GRAB,
-			    "failed to grab process %d", (int)pid);
+			    "failed to inspect process %d", (int)pid);
 			return (-1);
 		}
 

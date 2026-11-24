@@ -10,9 +10,11 @@
 # sys/conf/test-options, which names this file as the one configuration
 # allowed to carry it.
 #
-# Each option does nothing until the loader sets its knob (dq(4):
-# debug.dq.unverified_open="1"; mac_capability(4):
-# kern.mac_capability.test_issuer="1").
+# Each option does nothing until its knob is set (dq(4):
+# debug.dq.unverified_open="1" in the loader, the debug.dq fault knobs of
+# DQ_FAULT_INJECTION by sysctl; mac_capability(4), at boot:
+# kern.mac_capability.test_issuer="1"; ffs(4), by a test:
+# debug.ffs.test_hold_fsid).
 #
 
 include GENERIC
@@ -21,3 +23,5 @@ ident		GENERIC-TEST
 
 options 	DQ_TEST_OPEN		# dq(4) test access: never published
 options 	MAC_CAPABILITY_TEST_PERMISSIVE	# test issuers: never published
+options 	DQ_FAULT_INJECTION	# dq(4) fault knobs: never published
+options 	FFS_TEST_HOOKS		# ffs(4) resume hold: never published

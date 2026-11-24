@@ -12,7 +12,8 @@ amd64_generic_kernel_objects(name = "generic_builtin", srcs = _KERNEL_SOURCES, d
 
 # Public management ABI; userland clients must not import kernel-only headers.
 cc_library(name = "abi_headers", hdrs = ["mac_abac.h"], strip_include_prefix = "/sys",
-    visibility = ["//usr.sbin/mac_abacd:__pkg__", "//usr.sbin/mac_abac_ctl:__pkg__", "//tests/sys/security/mac_abac:__pkg__"])
+    visibility = ["//usr.sbin/mac_abacd:__pkg__", "//usr.sbin/mac_abac_ctl:__pkg__", "//tests/sys/security/mac_abac:__pkg__",
+        "//tests/sys/security/oes:__pkg__"])
 exports_files(["mac_abac.h"], visibility = ["//usr.sbin/mac_abac_ctl:__pkg__"])
 
 load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")

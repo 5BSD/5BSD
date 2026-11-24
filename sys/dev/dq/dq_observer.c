@@ -40,6 +40,9 @@
 /* fc_ioctls is freed by filecaps_free() with this type (kern_descrip.c). */
 MALLOC_DECLARE(M_FILECAPS);
 
+/* The pad after an observed record's data. */
+static const char dq_obs_zeros[8];
+
 static fo_rdwr_t	dq_observer_read;
 static fo_ioctl_t	dq_observer_ioctl;
 static fo_poll_t	dq_observer_poll;
@@ -227,7 +230,7 @@ dq_observer_deliver_locked(struct dq_queue *q, struct dq_observer *ob,
 	if (ev != NULL)
 		size += ev->ev_size - sizeof(struct dq_event);
 	if (data != NULL)
-		size += roundup2(data->dd_len, 8);
+		size += roundup2(data->dd_plen, 8);
 	rec = (ob->ob_count < ob->ob_depth) ?
 	    malloc(offsetof(struct dq_obs_rec, or_hdr) + sizeof(struct dq_event) +
 	    bodylen, M_DQ, M_NOWAIT) : NULL;
@@ -322,7 +325,8 @@ dq_observer_fanout_reply(struct dq_queue *q, uint64_t id, int error,
 	hdr.de_time.tv_nsec = ts.tv_nsec;
 	rr.drr_id = id;
 	rr.drr_errno = error;
-	rr.drr_len = data != NULL ? data->dd_len : 0;
+	/* The reply proper: a post-operation block is not recorded. */
+	rr.drr_len = data != NULL ? data->dd_plen : 0;
 	LIST_FOREACH(ob, &q->q_observers, ob_link) {
 		if ((ob->ob_flags & DQ_OBS_F_DATA) != 0)
 			dq_observer_deliver_locked(q, ob, &hdr, &rr, sizeof(rr),
@@ -358,9 +362,19 @@ dq_observer_copyout(struct dq_obs_rec *rec, struct uio *uio,
 		error = uiomove((char *)&rec->or_ev->ev_hdr +
 		    sizeof(struct dq_event),
 		    rec->or_ev->ev_size - sizeof(struct dq_event), uio);
-	if (error == 0 && rec->or_data != NULL)
+	if (error == 0 && rec->or_data != NULL) {
+		/*
+		 * The data proper, then zeros to the record's alignment: the
+		 * bytes after dd_plen may be a post-operation block, which
+		 * the record does not carry (review 1 L2).
+		 */
 		error = uiomove(rec->or_data->dd_bytes,
-		    roundup2(rec->or_data->dd_len, 8), uio);
+		    rec->or_data->dd_plen, uio);
+		if (error == 0 && (rec->or_data->dd_plen & 7) != 0)
+			error = uiomove(__DECONST(char *, dq_obs_zeros),
+			    roundup2(rec->or_data->dd_plen, 8) -
+			    rec->or_data->dd_plen, uio);
+	}
 	if (error != 0) {
 		memcpy(iovbase, iovsave, (size_t)iovcnt * sizeof(*iovsave));
 		uio->uio_iov = iovbase;

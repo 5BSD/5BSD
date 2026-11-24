@@ -952,10 +952,11 @@ h_noswap(struct srv *s, const struct dq_event *ev,
 		fd = openat(s->rootfd, "a", O_RDONLY | O_CLOEXEC | O_CLOFORK);
 		ATF_REQUIRE(fd >= 0);
 		errno = 0;
-		if (dq_reply_resolve_swap(s->q, ev->de_id, fd, 0) == -1 &&
-		    errno == EINVAL)
-			s->hook_err[i] |= 2;
-		(void)close(fd);
+		if (dq_reply_resolve_swap(s->q, ev->de_id, fd, 0) == -1) {
+			if (errno == EINVAL)
+				s->hook_err[i] |= 2;
+			(void)close(fd);	/* refused: still ours */
+		}
 	}
 	return (0);		/* the tree answers the open */
 }
@@ -1928,6 +1929,216 @@ ATF_TC_CLEANUP(round4_rows, tc)
 	(void)dqt_sysctl_restore("vfs.lookup_cap_dotdot_nonlocal");
 }
 
+/*
+ * Start hints of real starts (dq-standing-decisions §9.1, review 1 M3):
+ * pinned before the standing rules, whose relative matching reads the hint
+ * of a process under the global root.  The hints below must stay the same
+ * strings.  The harness controller (dqt_ctl) answers PASS and records each
+ * event's start kind and hint.
+ */
+
+/* The recorded RESOLVE of op with exactly this path and start, or -1. */
+static int
+hint_find(struct dqt_ctl *c, uint32_t op, const char *path, uint32_t kind,
+    struct dqt_resolve_seen *rs)
+{
+	int i, n;
+
+	n = -1;
+	dqt_lock(c);
+	for (i = 0; i < c->nrs; i++) {
+		if (c->rs[i].op == op && c->rs[i].start_kind == kind &&
+		    strcmp(c->rs[i].path, path) == 0) {
+			*rs = c->rs[i];
+			n = i;
+			break;
+		}
+	}
+	dqt_unlock(c);
+	return (n);
+}
+
+/* The real work directory, short enough for the harness's records. */
+static void
+hint_cwd(char *cwd, size_t len)
+{
+
+	ATF_REQUIRE(len >= PATH_MAX && realpath(".", cwd) != NULL);
+	ATF_REQUIRE_MSG(strlen(cwd) + sizeof("/absdir/inner") <= DQT_RPATH,
+	    "work directory %s too long for the records", cwd);
+}
+
+struct hint_res {
+	struct dqt_rr	 r[4];
+};
+
+static void
+c_hints(void *arg __unused, void *result)
+{
+	struct hint_res *r = result;
+	struct stat st;
+	int d;
+
+	/* A cwd start; a dirfd start; a relative link's re-consultation. */
+	DQT_RR(r->r[0], stat("hdir/hint-f", &st));
+	d = open("hdir", O_RDONLY | O_DIRECTORY);
+	DQT_RR(r->r[1], d);
+	if (d >= 0) {
+		DQT_RR(r->r[2], fstatat(d, "hint-f", &st, 0));
+		(void)close(d);
+	}
+	DQT_RR(r->r[3], stat("hdir/hint-l", &st));
+}
+
+DQ_TC(start_hint_global_root);
+ATF_TC_BODY(start_hint_global_root, tc)
+{
+	struct dqt_resolve_seen rs;
+	struct dqt_ctl c;
+	struct dqt_achild ch;
+	struct hint_res r;
+	char cwd[PATH_MAX], want[PATH_MAX];
+	int fd, k;
+
+	hint_cwd(cwd, sizeof(cwd));
+	ATF_REQUIRE_EQ(0, mkdir("hdir", 0755));
+	fd = open("hdir/hint-f", O_CREAT | O_WRONLY, 0644);
+	ATF_REQUIRE(fd >= 0);
+	(void)close(fd);
+	ATF_REQUIRE_EQ(0, symlink("hint-f", "hdir/hint-l"));
+	dqt_init(&c);
+	dqt_attach_spawn(&c, &ch, c_hints, NULL);
+	memset(&r, 0, sizeof(r));
+	dqt_attach_collect(&ch, &r, sizeof(r));
+	for (k = 0; k < 4; k++)
+		CHECK_ERRNO(0, r.r[k].err);
+
+	/* The working directory, relative to the process's root ("/"). */
+	ATF_REQUIRE(hint_find(&c, DQ_ROP_STAT, "hdir/hint-f",
+	    DQ_START_REAL_CWD, &rs) != -1);
+	ATF_CHECK((rs.rflags & DQ_RF_STARTPATH_VALID) != 0);
+	ATF_CHECK((rs.rflags & DQ_RF_SYMLINK_RESTART) == 0);
+	ATF_CHECK_STREQ(cwd, rs.startpath);
+
+	/* The directory descriptor's directory. */
+	snprintf(want, sizeof(want), "%s/hdir", cwd);
+	ATF_REQUIRE(hint_find(&c, DQ_ROP_STAT, "hint-f", DQ_START_REAL_DIRFD,
+	    &rs) != -1);
+	ATF_CHECK((rs.rflags & DQ_RF_STARTPATH_VALID) != 0);
+	ATF_CHECK_STREQ(want, rs.startpath);
+
+	/* The link's directory, at the re-consultation of its target. */
+	ATF_REQUIRE(hint_find(&c, DQ_ROP_STAT, "hdir/hint-l",
+	    DQ_START_REAL_CWD, &rs) != -1);
+	ATF_CHECK_STREQ(cwd, rs.startpath);
+	ATF_REQUIRE(hint_find(&c, DQ_ROP_STAT, "hint-f", DQ_START_REAL_SYMDIR,
+	    &rs) != -1);
+	ATF_CHECK((rs.rflags & DQ_RF_SYMLINK_RESTART) != 0);
+	ATF_CHECK((rs.rflags & DQ_RF_STARTPATH_VALID) != 0);
+	ATF_CHECK_STREQ(want, rs.startpath);
+	dqt_fini(&c);
+}
+
+static void
+c_outside(void *arg __unused, void *result)
+{
+	struct hint_res *r = result;
+	struct stat st;
+	int d;
+
+	d = open("outside", O_RDONLY | O_DIRECTORY);
+	DQT_RR(r->r[0], d);
+	DQT_RR(r->r[1], chroot("newroot"));
+	if (d >= 0)
+		DQT_RR(r->r[2], fstatat(d, "of", &st, 0));
+}
+
+/*
+ * The §7.7 finding, pinned as it is: a directory descriptor opened before
+ * chroot(2) names a start outside the new root, and the hint the
+ * controller gets is that directory's global path, which reads like a
+ * path under the new root.  Only the separate Q15 fix changes it.
+ */
+DQ_TC(relative_hint_outside_root);
+ATF_TC_BODY(relative_hint_outside_root, tc)
+{
+	struct dqt_resolve_seen rs;
+	struct dqt_ctl c;
+	struct dqt_achild ch;
+	struct hint_res r;
+	char cwd[PATH_MAX], want[PATH_MAX];
+	int fd;
+
+	hint_cwd(cwd, sizeof(cwd));
+	ATF_REQUIRE_EQ(0, mkdir("outside", 0755));
+	ATF_REQUIRE_EQ(0, mkdir("newroot", 0755));
+	fd = open("outside/of", O_CREAT | O_WRONLY, 0644);
+	ATF_REQUIRE(fd >= 0);
+	(void)close(fd);
+	dqt_init(&c);
+	dqt_attach_spawn(&c, &ch, c_outside, NULL);
+	memset(&r, 0, sizeof(r));
+	dqt_attach_collect(&ch, &r, sizeof(r));
+	CHECK_ERRNO(0, r.r[0].err);
+	CHECK_ERRNO(0, r.r[1].err);
+	CHECK_ERRNO(0, r.r[2].err);
+	snprintf(want, sizeof(want), "%s/outside", cwd);
+	ATF_REQUIRE(hint_find(&c, DQ_ROP_STAT, "of", DQ_START_REAL_DIRFD,
+	    &rs) != -1);
+	ATF_CHECK((rs.rflags & DQ_RF_STARTPATH_VALID) != 0);
+	ATF_CHECK_STREQ(want, rs.startpath);
+	dqt_fini(&c);
+}
+
+static void
+c_abslink(void *arg __unused, void *result)
+{
+	struct hint_res *r = result;
+	struct stat st;
+
+	DQT_RR(r->r[0], stat("abs-l/inner", &st));
+}
+
+/*
+ * A PASSed lookup meeting a symbolic link with an absolute target is
+ * consulted again: start REAL_ROOT, the target followed by what remains,
+ * DQ_RF_SYMLINK_RESTART, no hint.  (symlink_reconsult pins the relative
+ * target, REAL_SYMDIR.)
+ */
+DQ_TC(symlink_reconsult_absolute);
+ATF_TC_BODY(symlink_reconsult_absolute, tc)
+{
+	struct dqt_resolve_seen rs;
+	struct dqt_ctl c;
+	struct dqt_achild ch;
+	struct hint_res r;
+	char cwd[PATH_MAX], target[PATH_MAX], want[PATH_MAX];
+	int fd;
+
+	hint_cwd(cwd, sizeof(cwd));
+	ATF_REQUIRE_EQ(0, mkdir("absdir", 0755));
+	fd = open("absdir/inner", O_CREAT | O_WRONLY, 0644);
+	ATF_REQUIRE(fd >= 0);
+	(void)close(fd);
+	snprintf(target, sizeof(target), "%s/absdir", cwd);
+	snprintf(want, sizeof(want), "%s/absdir/inner", cwd);
+	ATF_REQUIRE_EQ(0, symlink(target, "abs-l"));
+	dqt_init(&c);
+	dqt_attach_spawn(&c, &ch, c_abslink, NULL);
+	memset(&r, 0, sizeof(r));
+	dqt_attach_collect(&ch, &r, sizeof(r));
+	CHECK_ERRNO(0, r.r[0].err);
+	ATF_REQUIRE(hint_find(&c, DQ_ROP_STAT, "abs-l/inner",
+	    DQ_START_REAL_CWD, &rs) != -1);
+	ATF_CHECK((rs.rflags & DQ_RF_SYMLINK_RESTART) == 0);
+	ATF_REQUIRE(hint_find(&c, DQ_ROP_STAT, want, DQ_START_REAL_ROOT,
+	    &rs) != -1);
+	ATF_CHECK((rs.rflags & DQ_RF_SYMLINK_RESTART) != 0);
+	ATF_CHECK((rs.rflags & DQ_RF_STARTPATH_VALID) == 0);
+	ATF_CHECK_STREQ("", rs.startpath);
+	dqt_fini(&c);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1952,5 +2163,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, reconsult_skips);
 	ATF_TP_ADD_TC(tp, round3_rows);
 	ATF_TP_ADD_TC(tp, round4_rows);
+	ATF_TP_ADD_TC(tp, start_hint_global_root);
+	ATF_TP_ADD_TC(tp, relative_hint_outside_root);
+	ATF_TP_ADD_TC(tp, symlink_reconsult_absolute);
 	return (atf_no_error());
 }

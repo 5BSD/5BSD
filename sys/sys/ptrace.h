@@ -310,6 +310,7 @@ int	proc_sstep(struct thread *_td);
 #define	PRVM_BLOCK_EXEC		0x00000001
 #define	PRVM_CHECK_VISIBILITY	0x00000002
 #define	PRVM_CHECK_DEBUG	0x00000004
+#define	PRVM_CHECK_INSPECT	0x00010000	/* 5BSD: p_caninspect(9) */
 
 #include <sys/_uio.h>
 struct vmspace;

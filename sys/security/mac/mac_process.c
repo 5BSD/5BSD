@@ -525,6 +525,28 @@ mac_proc_check_debug(struct ucred *cred, struct proc *p)
 	return (error);
 }
 
+MAC_CHECK_PROBE_DEFINE2(proc_check_inspect, "struct ucred *", "struct proc *");
+
+/*
+ * 5BSD: may cred inspect p (its memory map, auxv and kernel stack)?  Each
+ * policy without the inspect hook answers through its debug hook, so no
+ * policy becomes looser by not knowing the finer question.  No fast-path
+ * flag, as for proc_check_debug: these are cold paths.
+ */
+int
+mac_proc_check_inspect(struct ucred *cred, struct proc *p)
+{
+	int error;
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+
+	MAC_POLICY_CHECK_NOSLEEP_FALLBACK(proc_check_inspect,
+	    proc_check_debug, cred, p);
+	MAC_CHECK_PROBE2(proc_check_inspect, error, cred, p);
+
+	return (error);
+}
+
 MAC_CHECK_PROBE_DEFINE2(proc_check_sched, "struct ucred *", "struct proc *");
 
 int

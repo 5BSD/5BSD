@@ -1,0 +1,103 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
+ * cap_exclusion_test pins: each interface's answer, as root, on the
+ * pre-change kernel (dev 9b7cad0df2e with only these tests added), recorded
+ * in 4-vCPU QEMU guests under vm-provider.sh on 2026-11-19.  check_interfaces()
+ * derives the answer once the target is excluded (commit 4).
+ */
+/* PID 1 = capsule(8), plane-on tier (r-pre-on3): its capprotect shield answers first. */
+static const struct expect_row pins_pid1_capsule[] = {
+	{ "P20 ptrace-attach", EACCES },
+	{ "P21 linprocfs-mem", ENOENT },
+	{ "P45 linprocfs-fd", ENOENT },
+	{ "P23 kern.proc.filedesc", EACCES },
+	{ "P24 kern.proc.cwd", EACCES },
+	{ "P25 kern.proc.env", EACCES },
+	{ "P26 kern.proc.auxv", 0 },
+	{ "P27 kern.proc.vmmap", 0 },
+	{ "P28 kern.proc.kstack", 0 },
+	{ "P29 kern.proc.rlimit-write", EACCES },
+	{ "P30 kern.proc.ps_strings", 0 },
+	{ "P31 kern.proc.umask", 0 },
+	{ "P32 kern.proc.osrel-write", EACCES },
+	{ "P33 kern.proc.sigtramp", 0 },
+	{ "P34 kern.proc.sigfastblk", 0 },
+	{ "P35 kern.proc.vm_layout", 0 },
+	{ "P36 kern.proc.kqueue", EACCES },
+	{ "P37 kcmp", EACCES },
+	{ "P38 pdopenpid", EACCES },
+	{ "P40 ktrace", EPERM },
+	{ "procctl-trace", EACCES },
+	{ "procctl-trapcap", EACCES },
+	{ "procctl-aslr", EACCES },
+	{ "procctl-protmax", EACCES },
+	{ "procctl-stackgap", EACCES },
+	{ "procctl-nnp", EACCES },
+	{ "procctl-wxmap", EACCES },
+	{ "procctl-logsigexit", EACCES },
+};
+/* PID 1 = init(8), plane off (r-pre-stack3). */
+static const struct expect_row pins_pid1_init[] = {
+	{ "P20 ptrace-attach", EINVAL },
+	{ "P21 linprocfs-mem", ENOENT },
+	{ "P45 linprocfs-fd", ENOENT },
+	{ "P23 kern.proc.filedesc", 0 },
+	{ "P24 kern.proc.cwd", 0 },
+	{ "P25 kern.proc.env", 0 },
+	{ "P26 kern.proc.auxv", 0 },
+	{ "P27 kern.proc.vmmap", 0 },
+	{ "P28 kern.proc.kstack", 0 },
+	{ "P29 kern.proc.rlimit-write", 0 },
+	{ "P30 kern.proc.ps_strings", 0 },
+	{ "P31 kern.proc.umask", 0 },
+	{ "P32 kern.proc.osrel-write", 0 },
+	{ "P33 kern.proc.sigtramp", 0 },
+	{ "P34 kern.proc.sigfastblk", 0 },
+	{ "P35 kern.proc.vm_layout", 0 },
+	{ "P36 kern.proc.kqueue", EBADF },
+	{ "P37 kcmp", EBADF },
+	{ "P38 pdopenpid", EBUSY },
+	{ "P40 ktrace", 0 },
+	{ "procctl-trace", EINVAL },
+	{ "procctl-trapcap", EINVAL },
+	{ "procctl-aslr", EINVAL },
+	{ "procctl-protmax", EINVAL },
+	{ "procctl-stackgap", EINVAL },
+	{ "procctl-nnp", EINVAL },
+	{ "procctl-wxmap", EINVAL },
+	{ "procctl-logsigexit", EINVAL },
+};
+/* switchboard(8), plane-on tier (r-pre-on3): its shield answers first. */
+static const struct expect_row pins_switchboard[] = {
+	{ "P20 ptrace-attach", EACCES },
+	{ "P21 linprocfs-mem", ENOENT },
+	{ "P45 linprocfs-fd", ENOENT },
+	{ "P23 kern.proc.filedesc", EACCES },
+	{ "P24 kern.proc.cwd", EACCES },
+	{ "P25 kern.proc.env", EACCES },
+	{ "P26 kern.proc.auxv", 0 },
+	{ "P27 kern.proc.vmmap", 0 },
+	{ "P28 kern.proc.kstack", 0 },
+	{ "P29 kern.proc.rlimit-write", EACCES },
+	{ "P30 kern.proc.ps_strings", 0 },
+	{ "P31 kern.proc.umask", 0 },
+	{ "P32 kern.proc.osrel-write", EACCES },
+	{ "P33 kern.proc.sigtramp", 0 },
+	{ "P34 kern.proc.sigfastblk", 0 },
+	{ "P35 kern.proc.vm_layout", 0 },
+	{ "P36 kern.proc.kqueue", EACCES },
+	{ "P37 kcmp", EACCES },
+	{ "P38 pdopenpid", EACCES },
+	{ "P40 ktrace", EPERM },
+	{ "procctl-trace", EACCES },
+	{ "procctl-trapcap", EACCES },
+	{ "procctl-aslr", EACCES },
+	{ "procctl-protmax", EACCES },
+	{ "procctl-stackgap", EACCES },
+	{ "procctl-nnp", EACCES },
+	{ "procctl-wxmap", EACCES },
+	{ "procctl-logsigexit", EACCES },
+};

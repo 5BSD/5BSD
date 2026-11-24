@@ -6,6 +6,48 @@ setup()
     [ -f "$tool" ] || atf_skip 'build-bsd not installed'
     [ -f /usr/src/Makefile ] || atf_skip 'DEFERRED_SOURCE_TIER: source build frontend requires /usr/src (vm-provider.sh SRC_IMAGE)'
 }
+# py_unittest STDOUT-CHECK ARG...: run a Python unittest program (ARG...)
+# with -v.  It must exit 0 and end "OK".  unittest prints "OK (skipped=N)"
+# when subtests skipped (skipTest, skipUnless, a skipping setUpClass or
+# subTest) and "OK (expected failures=N)" when an expectedFailure failed as
+# expected, so matching "OK" alone let a case pass with subtests that never
+# ran.  An expected failure fails the case; skipped subtests make it a plain
+# skip naming each one, which vm-provider.sh lists as a PLAIN_SKIP.
+py_unittest()
+{
+    _out=$1; shift
+    atf_check -s exit:0 -o "$_out" -e save:py_unittest.err "$@" -v
+    _verdict=$(python3.12 -I -c '
+import re, sys
+text = open(sys.argv[1], errors="replace").read()
+lines = text.splitlines()
+summary = [l for l in lines if re.fullmatch(r"(OK|FAILED)( \(.*\))?", l)]
+if not summary or not summary[-1].startswith("OK"):
+    print("fail:no final OK line"); sys.exit()
+counts = dict(re.findall(r"(skipped|expected failures)=(\d+)", summary[-1]))
+if "expected failures" in counts:
+    print("fail:%s expected failure(s): an expected failure is not a pass" % counts["expected failures"]); sys.exit()
+if "skipped" not in counts:
+    print("pass"); sys.exit()
+# "NAME (ID) ... skipped REASON", where the result may follow a docstring
+# line or the test output on a later line, and REASON is a quoted repr.
+skips, name = [], None
+for l in lines:
+    m = re.match(r"^\s*((?:test\w*|setUpClass|setUpModule|tearDownClass)\b.*?)(?: \.\.\. (.*))?$", l)
+    if m and (m.group(2) is not None or l.endswith(")")):
+        name = m.group(1)
+    r = re.search(r"(?:^|\.\.\. )skipped ([\x27\x22])(.*)\1$", l)
+    if r:
+        skips.append("%s: %s" % (name or "?", r.group(2)))
+n = int(counts["skipped"])
+print("skip:%d Python subtests skipped: %s" % (n, "; ".join(skips) if skips else "reasons not printed"))
+' py_unittest.err)
+    case $_verdict in
+    pass) ;;
+    skip:*) atf_skip "${_verdict#skip:}; the others passed" ;;
+    *) atf_fail "${_verdict#fail:} (see py_unittest.err)" ;;
+    esac
+}
 atf_test_case plans
 plans_body()
 {
@@ -511,7 +553,7 @@ deploy_lifecycle_body()
 {
     helper=$(atf_config_get deploy_helper "$(atf_get_srcdir)/deploy.py")
     tests=$(atf_config_get deploy_tests "$(atf_get_srcdir)/deploy_test.py")
-    atf_check -s exit:0 -o ignore -e match:'OK' env BSD_BUILD_DEPLOY_HELPER="$helper" python3.12 "$tests"
+    py_unittest ignore env BSD_BUILD_DEPLOY_HELPER="$helper" python3.12 "$tests"
 }
 atf_test_case package_closure
 package_closure_head()
@@ -523,7 +565,7 @@ package_closure_body()
 {
     helper=$(atf_config_get closure_helper "$(atf_get_srcdir)/package_closure.py")
     tests=$(atf_config_get closure_tests "$(atf_get_srcdir)/package_closure_test.py")
-    atf_check -s exit:0 -o ignore -e match:'OK' env BSD_BUILD_CLOSURE_HELPER="$helper" python3.12 "$tests"
+    py_unittest ignore env BSD_BUILD_CLOSURE_HELPER="$helper" python3.12 "$tests"
 }
 atf_test_case package_inventory
 package_inventory_head()
@@ -535,7 +577,7 @@ package_inventory_body()
 {
     helper=$(atf_config_get inventory_helper "$(atf_get_srcdir)/package_inventory.py")
     tests=$(atf_config_get inventory_tests "$(atf_get_srcdir)/package_inventory_test.py")
-    atf_check -s exit:0 -o ignore -e match:'OK' env BSD_BUILD_INVENTORY_HELPER="$helper" python3.12 "$tests"
+    py_unittest ignore env BSD_BUILD_INVENTORY_HELPER="$helper" python3.12 "$tests"
 }
 atf_test_case installer_lifecycle
 installer_lifecycle_head()
@@ -547,7 +589,7 @@ installer_lifecycle_body()
 {
     helper=$(atf_config_get installer_helper "$(atf_get_srcdir)/installer.py")
     tests=$(atf_config_get installer_tests "$(atf_get_srcdir)/installer_test.py")
-    atf_check -s exit:0 -o ignore -e match:'OK' env BSD_BUILD_INSTALLER_HELPER="$helper" python3.12 "$tests"
+    py_unittest ignore env BSD_BUILD_INSTALLER_HELPER="$helper" python3.12 "$tests"
 }
 atf_test_case media_orchestration cleanup
 media_orchestration_body()
@@ -950,45 +992,56 @@ generation_reconciliation_body()
 {
     helper=$(atf_config_get generation_helper "$(atf_get_srcdir)/generation_check.py")
     tests=$(atf_config_get generation_tests "$(atf_get_srcdir)/generation_check_test.py")
-    # The ACL subtest needs a file system with ACLs, which the work
-    # directory's often lacks (a guest's UFS root has none, and GENERIC has
-    # no options UFS_ACL): as root, the program's temporary files go to an
-    # md(4)-backed ZFS pool (NFSv4 ACLs), or else to a UFS mounted with acls
-    # where the kernel supports that.
-    tmp=${TMPDIR:-/tmp}
-    if [ "$(id -u)" = 0 ] && md=$(mdconfig -a -t swap -s 256m 2>/dev/null); then
-        echo "$md" > acl_md
-        mkdir acl
-        pool=bbtacl$$
-        if zpool create -o cachefile=none -O mountpoint="$PWD/acl" \
-            "$pool" "/dev/$md" > /dev/null 2>&1; then
-            echo "$pool" > acl_pool
-            tmp=$PWD/acl
-        elif newfs -U "/dev/$md" > /dev/null 2>&1 &&
-            mount -o acls "/dev/$md" "$PWD/acl"; then
-            tmp=$PWD/acl
-        fi
-    fi
-    # pathconf(2) _PC_ACL_EXTENDED (59) or _PC_ACL_NFS4 (64), as the subtest
-    # itself decides.
-    acl_fs=$(python3.12 -c 'import os, sys
+    acl_case=Reconciliation.test_acl_not_discarded
+    # Every subtest runs on the work directory's file system (UFS in a
+    # guest), where the ACL subtest skips unless that file system has ACLs.
+    atf_check -s exit:0 -o ignore -e save:stderr env \
+        BSD_BUILD_GENERATION_HELPER="$helper" python3.12 -B "$tests" -v
+    atf_check -s exit:0 -o ignore grep -q '^OK' stderr
+    grep -q 'supports no ACL type' stderr || return 0
+    # The ACL subtest alone then runs on a file system with ACLs, as root:
+    # an md(4)-backed UFS mounted with acls (a kernel with options UFS_ACL,
+    # as GENERIC), or else an md(4)-backed ZFS pool (NFSv4 ACLs) where the
+    # zfs module is loaded.  The file system qualifies as the subtest itself
+    # decides: pathconf(2) _PC_ACL_EXTENDED (59) or _PC_ACL_NFS4 (64).
+    acl_ok() {
+        python3.12 -c 'import os, sys
 def ok(n):
     try:
         return os.pathconf(sys.argv[1], n) == 1
     except OSError:
         return False
-print("yes" if ok(59) or ok(64) else "no")' "$tmp")
-    atf_check -s exit:0 -o ignore -e save:stderr env TMPDIR="$tmp" \
-        BSD_BUILD_GENERATION_HELPER="$helper" python3.12 -B "$tests" -v
-    atf_check -s exit:0 -o ignore grep -q '^OK' stderr
-    [ "$acl_fs" = no ] || atf_check -s exit:0 -o ignore \
-        grep -q '^test_acl_not_discarded .* ok$' stderr
-    # A skipped ACL subtest is a gap, never a silent pass.
-    if grep -q 'supports no ACL type' stderr; then
-        [ "$acl_fs" = no ] ||
-            atf_fail "the ACL subtest skipped on $tmp, which supports ACLs"
-        atf_skip 'DEFERRED_GUEST_SETUP: the ACL subtest needs root, md(4) and ZFS, or a UFS_ACL kernel (the other subtests passed)'
+sys.exit(0 if ok(59) or ok(64) else 1)' "$1"
+    }
+    tmp=
+    if [ "$(id -u)" = 0 ] && md=$(mdconfig -a -t swap -s 256m 2>/dev/null); then
+        echo "$md" > acl_md
+        mkdir acl
+        if newfs -U "/dev/$md" > /dev/null 2>&1 &&
+            mount -o acls "/dev/$md" "$PWD/acl"; then
+            if acl_ok "$PWD/acl"; then
+                tmp=$PWD/acl
+            else
+                umount "$PWD/acl"
+            fi
+        fi
+        pool=bbtacl$$
+        if [ -z "$tmp" ] && zpool create -f -o cachefile=none \
+            -O mountpoint="$PWD/acl" "$pool" "/dev/$md" > /dev/null 2>&1; then
+            echo "$pool" > acl_pool
+            ! acl_ok "$PWD/acl" || tmp=$PWD/acl
+        fi
     fi
+    acl_fs=no
+    [ -z "$tmp" ] || acl_fs=yes
+    echo "ACL subtest file system: ${tmp:+$(df -T "$tmp" | awk 'NR == 2 { print $2 }') }${tmp:-none}"
+    # A skipped ACL subtest is a gap, never a silent pass.
+    [ "$acl_fs" = yes ] ||
+        atf_skip 'DEFERRED_GUEST_SETUP: the ACL subtest needs root and md(4), with a UFS_ACL kernel or the zfs module (the other subtests passed)'
+    atf_check -s exit:0 -o ignore -e save:acl-stderr env TMPDIR="$tmp" \
+        BSD_BUILD_GENERATION_HELPER="$helper" python3.12 -B "$tests" -v "$acl_case"
+    atf_check -s exit:0 -o ignore grep -q '^test_acl_not_discarded .* ok$' acl-stderr
+    atf_check -s exit:0 -o ignore grep -q '^Ran 1 test' acl-stderr
 }
 generation_reconciliation_cleanup()
 {
@@ -1034,7 +1087,7 @@ inventory_audit_head()
 }
 inventory_audit_body()
 {
-    atf_check -s exit:0 -o ignore -e match:'OK' python3.12 -B "$(atf_get_srcdir)/inventory_audit_test.py"
+    py_unittest ignore python3.12 -B "$(atf_get_srcdir)/inventory_audit_test.py"
 }
 atf_test_case inventory_audit_plan
 inventory_audit_plan_head()
@@ -1109,7 +1162,7 @@ construction_execution_body()
 {
     helper=$(atf_config_get construction_helper "$(atf_get_srcdir)/construction.py")
     tests=$(atf_config_get construction_tests "$(atf_get_srcdir)/construction_test.py")
-    atf_check -s exit:0 -o ignore -e match:'OK' env BSD_BUILD_CONSTRUCTION_HELPER="$helper" python3.12 "$tests"
+    py_unittest ignore env BSD_BUILD_CONSTRUCTION_HELPER="$helper" python3.12 "$tests"
 }
 atf_test_case loader_build_configuration
 loader_build_configuration_head()
@@ -1153,7 +1206,7 @@ boot_transport_body()
     [ -x "$mkimg" ] || atf_skip 'selected mkimg unavailable'
     [ -f "$loader" ] || atf_skip 'selected EFI fixture unavailable'
     [ -x "$signer" ] || atf_skip 'selected uefisign unavailable'
-    atf_check -s exit:0 -o empty -e match:'OK' env BSD_BUILD_HELPERS="$helpers" \
+    py_unittest empty env BSD_BUILD_HELPERS="$helpers" \
         BSD_BUILD_MAKEFS="$makefs" BSD_BUILD_MKIMG="$mkimg" BSD_BUILD_EFI_FIXTURE="$loader" \
         BSD_BUILD_UEFISIGN="$signer" python3.12 -B "$tests"
 }
@@ -1213,10 +1266,11 @@ PYTHON
 import json
 rows = [json.loads(line) for line in open('stage.jsonl')]
 assert rows[0]['verification_scope'] == 'boot-transport-makefs-input'
-assert len(rows) == 3 and [row['name'] for row in rows[1:]] == ['kernel-test-option-check', 'boot-stage']
+assert len(rows) == 4 and [row['name'] for row in rows[1:]] == ['kernel-test-option-check', 'kernel-mandatory-option-check', 'boot-stage']
+assert rows[2]['argv'] == ['sh', '/usr/src/release/scripts/check-mandatory-kernel.sh', '-a', rows[1]['argv'][3]]
 assert rows[1]['argv'][:3] == ['sh', '/usr/src/release/scripts/check-test-kernel.sh', '-a']
 assert rows[1]['argv'][3].endswith('/boot.tar') and len(rows[1]['argv']) == 4
-assert '--output' in rows[2]['argv']
+assert '--output' in rows[3]['argv']
 PYTHON
 }
 
@@ -1233,7 +1287,7 @@ image_validation_body()
     tests=$(atf_config_get image_tests "$(atf_get_srcdir)/generation_image_test.py")
     capsule_validator=$(atf_config_get image_capsule_validator "")
     elfctl=$(atf_config_get elfctl elfctl)
-    atf_check -s exit:0 -o ignore -e match:'OK' env BSD_BUILD_IMAGE_HELPER="$helper" BSD_BUILD_CONSTRUCTION_HELPER="$construction" BSD_BUILD_ELFCTL="$elfctl" BSD_BUILD_CAPSULE_VALIDATOR="$capsule_validator" python3.12 -B "$tests"
+    py_unittest ignore env BSD_BUILD_IMAGE_HELPER="$helper" BSD_BUILD_CONSTRUCTION_HELPER="$construction" BSD_BUILD_ELFCTL="$elfctl" BSD_BUILD_CAPSULE_VALIDATOR="$capsule_validator" python3.12 -B "$tests"
 }
 
 atf_test_case image_plan
@@ -1257,10 +1311,12 @@ import json, os
 rows = [json.loads(line) for line in open('plan.jsonl')]
 assert rows[0]['verification_scope'] == 'trusted-builder-filesystem-image'
 assert rows[0]['boot_verification'] == 'not-performed'
-assert [r['name'] for r in rows[1:]] == ['kernel-test-option-check', 'image']
+assert [r['name'] for r in rows[1:]] == ['kernel-test-option-check', 'kernel-mandatory-option-check', 'image']
 assert rows[1]['argv'] == ['sh', '/usr/src/release/scripts/check-test-kernel.sh', '-i', os.path.realpath('root')]
+assert rows[2]['argv'] == ['sh', '/usr/src/release/scripts/check-mandatory-kernel.sh', '-i', os.path.realpath('root')]
 assert rows[0]['kernel_test_option_binary_check'] == 'requested' and rows[0]['kernel_test_option_configuration'] == 'not-performed'
-args = rows[2]['argv']
+assert rows[0]['kernel_mandatory_option_binary_check'] == 'requested' and rows[0]['kernel_mandatory_option_configuration'] == 'not-performed'
+args = rows[3]['argv']
 assert args[1] == '/usr/src/tools/build/capimage/generation_image.py'
 for flag in ('--construction-receipt', '--makefs', '--mdconfig', '--mount', '--umount', '--boot-archive'):
     assert flag in args
@@ -1273,9 +1329,10 @@ PYTHON
     atf_check -s exit:0 -o empty -e empty python3.12 - <<'PYTHON'
 import json, os
 rows = [json.loads(line) for line in open('layout-image-plan.jsonl')]
-assert rows[2]['argv'][-2:] == ['--storage-layout-policy', os.path.realpath('layout.json')]
-assert '--boot-archive' in rows[2]['argv']
-assert rows[2]['argv'][rows[2]['argv'].index('--verity-policy')+1] == os.path.realpath('verity.json')
+image = next(r['argv'] for r in rows[1:] if r['name'] == 'image')
+assert image[-2:] == ['--storage-layout-policy', os.path.realpath('layout.json')]
+assert '--boot-archive' in image
+assert image[image.index('--verity-policy')+1] == os.path.realpath('verity.json')
 PYTHON
     atf_check -s not-exit:0 -o empty -e match:'usage: build-bsd' "$tool" plan image --storage-bindings "$PWD/storage-bindings.json"
     atf_check -s not-exit:0 -o empty -e match:'usage: build-bsd' "$tool" plan image --storage-layout-policy "$PWD/layout.json" --storage-bindings "$PWD/storage-bindings.json"
@@ -1360,7 +1417,7 @@ payload_extraction_body()
 {
     helper=$(atf_config_get extraction_helper "$(atf_get_srcdir)/payload_extract.py")
     tests=$(atf_config_get extraction_tests "$(atf_get_srcdir)/payload_extract_test.py")
-    atf_check -s exit:0 -o empty -e match:'OK' env BSD_BUILD_EXTRACTION_HELPER="$helper" python3.12 -B "$tests"
+    py_unittest empty env BSD_BUILD_EXTRACTION_HELPER="$helper" python3.12 -B "$tests"
 }
 
 atf_test_case certificate_policy
@@ -1373,7 +1430,7 @@ certificate_policy_body()
 {
     helper=$(atf_config_get construction_helper "$(atf_get_srcdir)/construction.py")
     tests=$(atf_config_get certificate_policy_tests "$(atf_get_srcdir)/certificate_policy_test.py")
-    atf_check -s exit:0 -o empty -e match:"OK" env BSD_BUILD_CONSTRUCTION_HELPER="$helper" python3.12 -B "$tests"
+    py_unittest empty env BSD_BUILD_CONSTRUCTION_HELPER="$helper" python3.12 -B "$tests"
 }
 
 atf_test_case installation_policy
@@ -1387,7 +1444,7 @@ installation_policy_body()
     helper=$(atf_config_get construction_helper "$(atf_get_srcdir)/construction.py")
     tests=$(atf_config_get installation_policy_tests "$(atf_get_srcdir)/installation_policy_test.py")
     retained=$(atf_config_get retained_helper "$(atf_get_srcdir)/verify_retained.py")
-    atf_check -s exit:0 -o empty -e match:'OK' env BSD_BUILD_CONSTRUCTION_HELPER="$helper" \
+    py_unittest empty env BSD_BUILD_CONSTRUCTION_HELPER="$helper" \
         BSD_BUILD_RETAINED_HELPER="$retained" python3.12 -B "$tests"
 }
 atf_test_case signing_custody
@@ -1419,7 +1476,7 @@ elf_feature_build_body()
     [ -f "$source/share/mk/bsd.prog.mk" ] || atf_skip 'requires source build rules'
     tests=$(atf_config_get elf_build_tests "$(atf_get_srcdir)/elf_features_build_test.py")
     elfctl=$(atf_config_get elfctl elfctl)
-    atf_check -s exit:0 -o empty -e match:'OK' env BSD_BUILD_SRC="$source" BSD_BUILD_ELFCTL="$elfctl" python3.12 -B "$tests"
+    py_unittest empty env BSD_BUILD_SRC="$source" BSD_BUILD_ELFCTL="$elfctl" python3.12 -B "$tests"
 }
 atf_test_case elf_dependency_metadata
 elf_dependency_metadata_head()
@@ -1432,7 +1489,7 @@ elf_dependency_metadata_body()
     helper=$(atf_config_get elf_helper "$(atf_get_srcdir)/elf_dependencies.py")
     tests=$(atf_config_get elf_tests "$(atf_get_srcdir)/elf_dependencies_test.py")
     elfctl=$(atf_config_get elfctl elfctl)
-    atf_check -s exit:0 -o empty -e match:'OK' env BSD_BUILD_ELF_HELPER="$helper" BSD_BUILD_ELFCTL="$elfctl" python3.12 -B "$tests"
+    py_unittest empty env BSD_BUILD_ELF_HELPER="$helper" BSD_BUILD_ELFCTL="$elfctl" python3.12 -B "$tests"
 }
 atf_test_case library_policy
 library_policy_head()
@@ -1444,7 +1501,7 @@ library_policy_body()
 {
     helper=$(atf_config_get construction_helper "$(atf_get_srcdir)/construction.py")
     tests=$(atf_config_get library_policy_tests "$(atf_get_srcdir)/library_policy_test.py")
-    atf_check -s exit:0 -o empty -e match:'OK' env BSD_BUILD_CONSTRUCTION_HELPER="$helper" python3.12 -B "$tests"
+    py_unittest empty env BSD_BUILD_CONSTRUCTION_HELPER="$helper" python3.12 -B "$tests"
 }
 atf_test_case module_policy
 module_policy_head()
@@ -1456,7 +1513,7 @@ module_policy_body()
 {
     helper=$(atf_config_get construction_helper "$(atf_get_srcdir)/construction.py")
     tests=$(atf_config_get module_policy_tests "$(atf_get_srcdir)/module_policy_test.py")
-    atf_check -s exit:0 -o empty -e match:'OK' env BSD_BUILD_CONSTRUCTION_HELPER="$helper" python3.12 -B "$tests"
+    py_unittest empty env BSD_BUILD_CONSTRUCTION_HELPER="$helper" python3.12 -B "$tests"
 }
 atf_test_case database_preflight
 database_preflight_head()
@@ -1472,7 +1529,7 @@ database_preflight_body()
 {
     helper=$(atf_config_get database_preflight_helper "$(atf_get_srcdir)/database_preflight.py")
     tests=$(atf_config_get database_preflight_tests "$(atf_get_srcdir)/database_preflight_test.py")
-    atf_check -s exit:0 -o empty -e match:'OK' env BSD_BUILD_DATABASE_PREFLIGHT_HELPER="$helper" python3.12 -B "$tests" --sqlite "$(command -v sqlite3)"
+    py_unittest empty env BSD_BUILD_DATABASE_PREFLIGHT_HELPER="$helper" python3.12 -B "$tests" --sqlite "$(command -v sqlite3)"
 }
 
 atf_test_case database_payload
@@ -1489,7 +1546,7 @@ database_payload_body()
 {
     helper=$(atf_config_get database_payload_helper "$(atf_get_srcdir)/database_payload.py")
     tests=$(atf_config_get database_payload_tests "$(atf_get_srcdir)/database_payload_test.py")
-    atf_check -s exit:0 -o empty -e match:'OK' env BSD_BUILD_DATABASE_PAYLOAD_HELPER="$helper" python3.12 -B "$tests" --sqlite "$(command -v sqlite3)"
+    py_unittest empty env BSD_BUILD_DATABASE_PAYLOAD_HELPER="$helper" python3.12 -B "$tests" --sqlite "$(command -v sqlite3)"
 }
 
 atf_test_case boot_observation_plan
@@ -1527,7 +1584,7 @@ configuration_composition_head()
 configuration_composition_body()
 {
     tests=$(atf_config_get configuration_compose_tests "$(atf_get_srcdir)/configuration_compose_test.py")
-    atf_check -s exit:0 -o empty -e match:'OK' python3.12 -B "$tests"
+    py_unittest empty python3.12 -B "$tests"
 }
 
 atf_test_case ucl_policy_normalization
@@ -1540,7 +1597,7 @@ ucl_policy_normalization_body()
 {
     helper=$(atf_config_get ucl_policy_helper /usr/libexec/bsd-build/bsd-ucl-json)
     tests=$(atf_config_get ucl_policy_tests "$(atf_get_srcdir)/ucl_policy_json_test.py")
-    atf_check -s exit:0 -o empty -e match:'OK' env BSD_BUILD_UCL_JSON="$helper" python3.12 -B "$tests"
+    py_unittest empty env BSD_BUILD_UCL_JSON="$helper" python3.12 -B "$tests"
 }
 
 atf_test_case configuration_composition_plan
@@ -1595,12 +1652,15 @@ repository_snapshot_plan_body()
     atf_check -s exit:0 -o empty -e empty python3.12 - <<'PYTHON'
 import json, os
 rows = [json.loads(line) for line in open('snapshot.jsonl')]
-assert len(rows) == 3
+assert len(rows) == 4
 assert rows[0]['verification_scope'] == 'signed-repository-snapshot'
 assert rows[1]['name'] == 'kernel-test-option-check'
 assert rows[1]['argv'] == ['sh', '/usr/src/release/scripts/check-test-kernel.sh', '-r', os.getcwd() + '/source repository']
+assert rows[2]['name'] == 'kernel-mandatory-option-check'
+assert rows[2]['argv'] == ['sh', '/usr/src/release/scripts/check-mandatory-kernel.sh', '-r', os.getcwd() + '/source repository']
 assert rows[0]['kernel_test_option_binary_check'] == 'requested'
-argv = rows[2]['argv']
+assert rows[0]['kernel_mandatory_option_binary_check'] == 'requested'
+argv = rows[3]['argv']
 assert argv[:3] == ['/usr/local/bin/python3.12', '/usr/src/release/scripts/hardware-packages.py', 'copy-signed-repository']
 assert argv[argv.index('--repository') + 1] == os.getcwd() + '/source repository'
 assert argv[argv.index('--public-key') + 1] == os.getcwd() + '/trust key.pub'
@@ -1623,7 +1683,7 @@ state_storage_inputs_head()
 state_storage_inputs_body()
 {
     tests=$(atf_config_get state_storage_tests "$(atf_get_srcdir)/state_storage_test.py")
-    atf_check -s exit:0 -o empty -e match:'OK' python3.12 -B "$tests"
+    py_unittest empty python3.12 -B "$tests"
 }
 
 atf_test_case state_storage_plan
@@ -1690,7 +1750,7 @@ PYTHON
     printf "WITH_AUTO_OBJ=yes\n" > source-environment.conf
     atf_check -s not-exit:0 -o empty -e match:"fixed trust profile" "$tool" plan loader-build --loader-anchors "$PWD/anchors.pem" --src-env-conf "$PWD/source-environment.conf"
     atf_check -s not-exit:0 -o ignore -e ignore "$tool" plan loader-build --loader-anchors "$PWD/anchors.pem" --arch arm64
-    atf_check -s exit:0 -o ignore -e ignore python3.12 -B "$(atf_get_srcdir)/loader_production_test.py"
+    py_unittest ignore python3.12 -B "$(atf_get_srcdir)/loader_production_test.py"
 }
 
 atf_test_case firmware_plan

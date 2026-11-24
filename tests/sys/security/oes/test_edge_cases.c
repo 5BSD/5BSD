@@ -296,15 +296,21 @@ test_self_mute_pid_zero(void)
 		return (1);
 	}
 
-	/* Unmute */
-	if (ioctl(fd, OES_IOC_UNMUTE_PROCESS, &mute) < 0) {
-		perror("OES_IOC_UNMUTE_PROCESS");
+	/*
+	 * A client never receives its own processes' events (oes(4)): the
+	 * self-mute above is accepted and does nothing, and there is no
+	 * self-mute to lift, so unmuting it is EINVAL.
+	 */
+	errno = 0;
+	if (ioctl(fd, OES_IOC_UNMUTE_PROCESS, &mute) == 0 || errno != EINVAL) {
+		fprintf(stderr, "FAIL: unmuting self was not EINVAL (%s)\n",
+		    strerror(errno));
 		close(fd);
 		return (1);
 	}
 
 	close(fd);
-	printf("    PASS: self-mute with PID 0 works\n");
+	printf("    PASS: self-mute with PID 0 accepted, self-unmute EINVAL\n");
 	return (0);
 }
 

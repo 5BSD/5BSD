@@ -7,6 +7,8 @@
  * Open Endpoint Security (OES) - Decision Cache
  */
 
+#include "opt_mac_capability.h"
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/malloc.h>
@@ -427,6 +429,27 @@ oes_client_cache_add(struct oes_client *ec, const oes_cache_entry_t *entry)
 	if (entry->ece_ttl_ms == 0 ||
 	    entry->ece_ttl_ms > OES_MAX_CACHE_TTL_MS)
 		return (EINVAL);
+
+	/*
+	 * A cached decision must be dropped by any later change of its file,
+	 * whoever makes it, so the hooks of the changing events must run from
+	 * before the first entry can be found.  The flag stays set.  Whether
+	 * those hooks are live is ec_gate_cache, which oes_gate_client_update()
+	 * sets only once it has published them; the flag says only that some
+	 * thread of this client has started to.  Until ec_gate_cache is set,
+	 * every adder makes the update itself: it is idempotent, and sc_gate_sx
+	 * makes a later adder wait for an earlier one.
+	 */
+	EC_LOCK(ec);
+	ec->ec_flags |= EC_FLAG_CACHE_USED;
+	EC_UNLOCK(ec);
+	if (atomic_load_acq_int(&ec->ec_gate_cache) == 0) {
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+		/* Test kernels: an adder that waits releases a parked one. */
+		mac_capability_test_issuer_oes_gate_release();
+#endif
+		oes_gate_client_update(ec, false);
+	}
 
 	oes_cache_make_deadline(&expires, entry->ece_ttl_ms);
 	new_entry = malloc(sizeof(*new_entry), M_OES, M_WAITOK | M_ZERO);

@@ -111,7 +111,7 @@ sysctl_abac_default_policy(SYSCTL_HANDLER_ARGS)
 		return (EPERM);
 	if (value != 0 && value != 1)
 		return (EINVAL);
-	abac_default_policy = value;
+	abac_gate_store(&abac_default_policy, value);
 	return (0);
 }
 
@@ -353,6 +353,7 @@ abac_rule_remove(uint32_t id)
 			abac_rules[i] = NULL;
 			abac_rule_count--;
 			abac_rules_compact_locked();
+			abac_gate_update_locked();
 			rw_wunlock(&abac_rules_lock);
 			/* DTrace: rule removed */
 			SDT_PROBE1(abac, rules, rule, remove, id);
@@ -361,6 +362,7 @@ abac_rule_remove(uint32_t id)
 		}
 	}
 
+	abac_gate_update_locked();
 	rw_wunlock(&abac_rules_lock);
 	return (ENOENT);
 }
@@ -390,6 +392,7 @@ abac_rules_clear(void)
 	abac_rule_end = 0;
 	abac_active_set_count = 0;	/* Reset active sets */
 
+	abac_gate_update_locked();
 	rw_wunlock(&abac_rules_lock);
 
 	/* DTrace: rules cleared */
@@ -483,6 +486,7 @@ abac_set_enable_range(uint16_t start, uint16_t end)
 	rw_wlock(&abac_rules_lock);
 	for (s = start; s <= end; s++)
 		ABAC_SET_ENABLE(s);
+	abac_gate_update_locked();
 	rw_wunlock(&abac_rules_lock);
 }
 
@@ -497,6 +501,7 @@ abac_set_disable_range(uint16_t start, uint16_t end)
 	rw_wlock(&abac_rules_lock);
 	for (s = start; s <= end; s++)
 		ABAC_SET_DISABLE(s);
+	abac_gate_update_locked();
 	rw_wunlock(&abac_rules_lock);
 }
 
@@ -545,6 +550,7 @@ abac_set_swap(uint16_t set_a, uint16_t set_b)
 	/* Rebuild active sets (set numbers changed but list is still valid) */
 	abac_rebuild_active_sets();
 
+	abac_gate_update_locked();
 	rw_wunlock(&abac_rules_lock);
 	return (0);
 }
@@ -574,6 +580,7 @@ abac_set_move(uint16_t from_set, uint16_t to_set)
 
 	abac_rebuild_active_sets();
 
+	abac_gate_update_locked();
 	rw_wunlock(&abac_rules_lock);
 	return (0);
 }
@@ -606,6 +613,7 @@ abac_set_clear(uint16_t set)
 	abac_rules_compact_locked();
 	abac_rebuild_active_sets();
 
+	abac_gate_update_locked();
 	rw_wunlock(&abac_rules_lock);
 
 	(void)cleared;

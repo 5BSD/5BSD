@@ -27,6 +27,13 @@ int	capsule_set_ambient_lookup(int fd);
 int	capsule_ambient_lookup(void);
 
 /*
+ * Whether the /etc/rc SwitchBoard runs next is an autoboot, as init passes
+ * it: false after single-user (FASTBOOT), so file systems are not checked
+ * again while mounted.
+ */
+bool	capsule_rc_autoboot(void);
+
+/*
  * Apply a system lifecycle transition requested over the capability plane
  * (docs/book/src/plane/capsule.md, P4b).  op is a CTL_OP_* lifecycle
  * opcode.  Returns 0 when applied, EPERM when Capsule is not PID 1.

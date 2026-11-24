@@ -245,7 +245,8 @@ test_event(const char *name, oes_event_type_t event, void (*action)(void))
 	/*
 	 * Hooks that run with VFS locks held are delivered NOSLEEP: the event
 	 * is handed to a deferred task and is dropped outright once that queue
-	 * reaches OES_DEFER_MAX, which the kernel counts in es_nosleep_drops.
+	 * reaches its byte bound (security.oes.defer_max_bytes), which the
+	 * kernel counts in es_nosleep_drops.
 	 * An absent event with the counter moving is that bounded-queue drop
 	 * under load, not a hook that failed to fire, so the action is tried
 	 * again; an event absent with no drop counted is a failure.

@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd October 20, 2026
+.Dd November 22, 2026
 .Dt CAPSULE 8
 .Os
 .Sh NAME
@@ -91,6 +91,22 @@ It mints capability tokens on request from
 .Xr switchboard 8
 via the Capsule protocol, a message-passing channel over a mac_capability
 channel descriptor.
+Every request on that channel is answered, or the channel ends:
+.Xr switchboard 8
+waits for each reply without a deadline.
+A malformed request gets an error status; a reply that cannot be sent is
+sent again as a status-only error carrying the send error, and anything
+granted for it is released.
+When not even that reply can be sent, or a message cannot be received
+(including
+.Er EMFILE
+or
+.Er ENFILE
+while installing an attached descriptor),
+.Nm
+closes the channel and kills
+.Xr switchboard 8 ,
+then restarts it as after any exit.
 .Pp
 During startup,
 .Nm
@@ -133,6 +149,20 @@ Start
 .Xr switchboard 8
 as a single child process via
 .Xr pdfork 2 .
+.Nm
+gives the child an authority constrained to the service manager's image
+with
+.Dv CAP_AUTH_ROLE_CORE ,
+so the service manager runs excluded from
+.Xr oes 4
+and Capability Brokers
+.Pq BASE EXCLUSION in Xr cap_process 2 .
+Holding an authority issuer,
+.Nm
+never starts the service manager without it: a failure to make it fails the
+start.
+Without an issuer the service manager cannot be excluded, and the
+issuer-unavailable message says so.
 The resulting process descriptor is restricted to supervision rights and
 irreversibly confined against descriptor transfer, fork inheritance, and exec
 inheritance.
@@ -608,6 +638,97 @@ doubles up to a maximum of 30 seconds.
 After 10 consecutive fast crashes, the circuit breaker trips and
 .Nm
 gives up restarting.
+.Pp
+Each start of
+.Xr switchboard 8
+is handed its own PID 1 authority issuer, which
+.Xr switchboard 8
+needs to grant applications and units anything, as
+.Ev SWITCHBOARD_AUTHORITY_FD ;
+its grants are revoked when that
+.Xr switchboard 8
+exits.
+.Nm
+creates the next start's issuer as soon as one is handed out and holds it
+unused, close-on-fork and not transferable, so a restart does not depend on
+a create succeeding at that moment and no other child of
+.Nm
+can keep it.
+If that create fails,
+.Nm
+logs
+.Dq no authority issuer for the next switchboard start
+at
+.Dv LOG_CRIT ,
+.Xr capsulectl 8
+.Cm status
+reports it, and the next start tries one create of its own.
+A start that has no issuer is refused: no failure of the create ends with an
+event
+.Nm
+could wait for
+.Po
+.Er ENFILE
+when the system file table is full,
+.Er ENOSPC
+when the identity sequence is exhausted,
+.Er EPERM
+for a jailed or non-PID-1
+.Nm
+.Pc ,
+so
+.Nm
+logs
+.Dq no authority issuer: Ar reason
+and, as PID 1, enters single-user (recovery at first boot); off PID 1 it
+does not restart
+.Xr switchboard 8 .
+After recovery at first boot no
+.Pa /etc/rc
+has run, so no file system has been checked in this boot, and the
+.Pa /etc/rc
+that follows the single-user shell does not check them either: run
+.Xr fsck 8
+from that shell before leaving it.
+.Nm
+keeps two descriptors in reserve and releases them for the creates of one
+start, so its own descriptor limit
+.Pq Er EMFILE
+does not fail them; if a reserve cannot be taken back it logs that at
+.Dv LOG_CRIT .
+.Pp
+.Nm
+creates the system discovery channel once and keeps it for its lifetime.
+Its client end is the route installed in every getty and in each
+.Xr switchboard 8
+process; its server end is passed to each
+.Xr switchboard 8
+as
+.Ev SWITCHBOARD_DISCOVERY_FD .
+Shells and daemons started under one
+.Xr switchboard 8
+therefore reach the next one after a restart.
+Once a
+.Xr switchboard 8
+has reported that the boot converged, every later start in the same boot
+(a crash restart or a planned restart) is passed
+.Ev SWITCHBOARD_BOOT_COMPLETE=1
+and does not run
+.Pa /etc/rc
+again.
+Stopping the capability world (shutdown or single-user) ends the boot,
+whether or not a
+.Xr switchboard 8
+was running: the next start runs
+.Pa /etc/rc .
+After single-user, as with
+.Xr init 8 ,
+that
+.Pa /etc/rc
+runs without
+.Dq autoboot
+.Pq Ev SWITCHBOARD_RC_FASTBOOT=1 ,
+so mounted file systems are not checked again.
 .Sh DTRACE PROBES
 .Nm
 is instrumented with DTrace USDT probes in the

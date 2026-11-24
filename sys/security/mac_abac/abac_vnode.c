@@ -217,6 +217,45 @@ abac_vnode_refresh_label(struct vnode *vp, struct label *vplabel)
 }
 
 /*
+ * The label to match a vnode against: its own once loaded, else the default
+ * object label.  Every reader of a vnode label slot goes through here, so
+ * neither NULL (no label) nor the lazy-load sentinel reaches rule matching,
+ * whichever hook happens to run first on a fresh single-label vnode.  The
+ * vnode must be locked, as for any hook that is given its label.
+ */
+struct abac_label *
+abac_vnode_obj_label(struct vnode *vp, struct label *vplabel)
+{
+
+	if (vplabel == NULL)
+		return (&abac_default_object);
+	if (vp != NULL) {
+		/* A loaded label is freed under the exclusive lock (SETLABEL). */
+		ASSERT_VOP_LOCKED(vp, __func__);
+		abac_vnode_lazy_load(vp, vplabel);
+	}
+	return (abac_vnode_obj_label_noload(vplabel));
+}
+
+/*
+ * As abac_vnode_obj_label(), without reading the extended attribute: a
+ * label not yet read counts as the default object label.  For the one hook
+ * that must not issue a VOP of its own (setextattr of the label attribute).
+ */
+struct abac_label *
+abac_vnode_obj_label_noload(struct label *vplabel)
+{
+	struct abac_label *vl;
+
+	if (vplabel == NULL)
+		return (&abac_default_object);
+	vl = SLOT(vplabel);
+	if (vl == NULL || vl == ABAC_LABEL_NEEDS_LOAD)
+		return (&abac_default_object);
+	return (vl);
+}
+
+/*
  * Associate vnode label from extended attribute (UFS with multilabel).
  */
 int
@@ -278,6 +317,7 @@ abac_vnode_lazy_load(struct vnode *vp, struct label *vplabel)
 	/* Check if lazy load is needed (sentinel marker) */
 	if (vl != ABAC_LABEL_NEEDS_LOAD)
 		return;
+	ASSERT_VOP_LOCKED(vp, __func__);
 
 	/*
 	 * Slot has sentinel marker - try to read extattr.
@@ -324,6 +364,7 @@ abac_vnode_check_access(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_ACCESS);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -339,9 +380,7 @@ abac_vnode_check_access(struct ucred *cred, struct vnode *vp,
 	/* Get object label from vnode */
 	if (vplabel == NULL)
 		return (0);
-	obj = SLOT(vplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(vp, vplabel);
 
 	/* Evaluate rules */
 	error = abac_rules_check(cred, subj, obj, ABAC_OP_ACCESS, NULL);
@@ -360,6 +399,7 @@ abac_vnode_check_chdir(struct ucred *cred, struct vnode *dvp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_CHDIR);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -373,9 +413,7 @@ abac_vnode_check_chdir(struct ucred *cred, struct vnode *dvp,
 
 	if (dvplabel == NULL)
 		return (0);
-	obj = SLOT(dvplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(dvp, dvplabel);
 
 	error = abac_rules_check(cred, subj, obj, ABAC_OP_CHDIR, NULL);
 
@@ -392,6 +430,7 @@ abac_vnode_check_chroot(struct ucred *cred, struct vnode *dvp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_CHDIR);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -405,9 +444,7 @@ abac_vnode_check_chroot(struct ucred *cred, struct vnode *dvp,
 
 	if (dvplabel == NULL)
 		return (0);
-	obj = SLOT(dvplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(dvp, dvplabel);
 
 	/* Use CHDIR for chroot - both are directory access checks */
 	error = abac_rules_check(cred, subj, obj, ABAC_OP_CHDIR, NULL);
@@ -425,6 +462,7 @@ abac_vnode_check_create(struct ucred *cred, struct vnode *dvp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_CREATE);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -439,9 +477,7 @@ abac_vnode_check_create(struct ucred *cred, struct vnode *dvp,
 	/* Check against parent directory label */
 	if (dvplabel == NULL)
 		return (0);
-	obj = SLOT(dvplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(dvp, dvplabel);
 
 	error = abac_rules_check(cred, subj, obj, ABAC_OP_CREATE, NULL);
 
@@ -458,6 +494,7 @@ abac_vnode_check_deleteacl(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -471,9 +508,7 @@ abac_vnode_check_deleteacl(struct ucred *cred, struct vnode *vp,
 
 	if (vplabel == NULL)
 		return (0);
-	obj = SLOT(vplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(vp, vplabel);
 
 	/* Use WRITE as proxy for ACL modification */
 	error = abac_rules_check(cred, subj, obj, ABAC_OP_WRITE, NULL);
@@ -512,9 +547,7 @@ abac_vnode_check_deleteextattr(struct ucred *cred, struct vnode *vp,
 		/* Get object label from vnode */
 		if (vplabel == NULL)
 			return (EPERM);
-		obj = SLOT(vplabel);
-		if (obj == NULL)
-			obj = &abac_default_object;
+		obj = abac_vnode_obj_label(vp, vplabel);
 
 		/* A confined subject may not drop an object's mac_abac label. */
 		if (!abac_label_is_default(subj)) {
@@ -528,6 +561,9 @@ abac_vnode_check_deleteextattr(struct ucred *cred, struct vnode *vp,
 		}
 
 		/* Check setextattr operation - deletion is a form of modification */
+		/* Rule-independent checks done; no rule names the operation. */
+		if (!ABAC_OPS_LIVE(ABAC_OP_SETEXTATTR))
+			return (0);
 		error = abac_rules_check(cred, subj, obj, ABAC_OP_SETEXTATTR, NULL);
 
 		/* In permissive mode, log but allow */
@@ -547,6 +583,7 @@ abac_vnode_check_exec(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_EXEC);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -564,9 +601,7 @@ abac_vnode_check_exec(struct ucred *cred, struct vnode *vp,
 	if (vplabel == NULL) {
 		return (0);
 	}
-	obj = SLOT(vplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(vp, vplabel);
 
 	/* Evaluate rules - no target process for vnode ops */
 	error = abac_rules_check(cred, subj, obj, ABAC_OP_EXEC, NULL);
@@ -585,6 +620,7 @@ abac_vnode_check_getacl(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_STAT);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -598,9 +634,7 @@ abac_vnode_check_getacl(struct ucred *cred, struct vnode *vp,
 
 	if (vplabel == NULL)
 		return (0);
-	obj = SLOT(vplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(vp, vplabel);
 
 	/* Use STAT as proxy for reading ACLs */
 	error = abac_rules_check(cred, subj, obj, ABAC_OP_STAT, NULL);
@@ -618,6 +652,7 @@ abac_vnode_check_getextattr(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_GETEXTATTR);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -641,9 +676,7 @@ abac_vnode_check_getextattr(struct ucred *cred, struct vnode *vp,
 		/* Get object label from vnode */
 		if (vplabel == NULL)
 			return (0);
-		obj = SLOT(vplabel);
-		if (obj == NULL)
-			obj = &abac_default_object;
+		obj = abac_vnode_obj_label(vp, vplabel);
 
 		/* Check getextattr operation */
 		error = abac_rules_check(cred, subj, obj, ABAC_OP_GETEXTATTR, NULL);
@@ -666,6 +699,7 @@ abac_vnode_check_link(struct ucred *cred, struct vnode *dvp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_LINK);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -680,9 +714,7 @@ abac_vnode_check_link(struct ucred *cred, struct vnode *dvp,
 	/* Check against target file's label */
 	if (vplabel == NULL)
 		return (0);
-	obj = SLOT(vplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(vp, vplabel);
 
 	error = abac_rules_check(cred, subj, obj, ABAC_OP_LINK, NULL);
 
@@ -699,6 +731,7 @@ abac_vnode_check_listextattr(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_GETEXTATTR);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -712,9 +745,7 @@ abac_vnode_check_listextattr(struct ucred *cred, struct vnode *vp,
 
 	if (vplabel == NULL)
 		return (0);
-	obj = SLOT(vplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(vp, vplabel);
 
 	/* Use GETEXTATTR as proxy for listing extattrs */
 	error = abac_rules_check(cred, subj, obj, ABAC_OP_GETEXTATTR, NULL);
@@ -732,6 +763,7 @@ abac_vnode_check_lookup(struct ucred *cred, struct vnode *dvp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_LOOKUP);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -745,9 +777,7 @@ abac_vnode_check_lookup(struct ucred *cred, struct vnode *dvp,
 
 	if (dvplabel == NULL)
 		return (0);
-	obj = SLOT(dvplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(dvp, dvplabel);
 
 	error = abac_rules_check(cred, subj, obj, ABAC_OP_LOOKUP, NULL);
 
@@ -764,6 +794,7 @@ abac_vnode_check_mmap(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_MMAP);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -779,9 +810,7 @@ abac_vnode_check_mmap(struct ucred *cred, struct vnode *vp,
 	/* Get object label from vnode */
 	if (vplabel == NULL)
 		return (0);
-	obj = SLOT(vplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(vp, vplabel);
 
 	/* Evaluate rules */
 	error = abac_rules_check(cred, subj, obj, ABAC_OP_MMAP, NULL);
@@ -825,6 +854,7 @@ abac_proc_check_mprotect(struct ucred *cred, vm_offset_t addr,
 	struct vnode *vp;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_MPROTECT);
 	ABAC_CHECK_ENABLED();
 
 	/* Get subject label from credential */
@@ -851,10 +881,7 @@ abac_proc_check_mprotect(struct ucred *cred, vm_offset_t addr,
 		    NULL);
 	else {
 		vn_lock(vp, LK_SHARED | LK_RETRY);
-		/* Lazy load label from extattr if needed (ZFS) */
-		abac_vnode_lazy_load(vp, vp->v_label);
-		if (vp->v_label != NULL && SLOT(vp->v_label) != NULL)
-			obj = SLOT(vp->v_label);
+		obj = abac_vnode_obj_label(vp, vp->v_label);
 		error = abac_rules_check(cred, subj, obj, ABAC_OP_MPROTECT,
 		    NULL);
 		vput(vp);
@@ -874,6 +901,7 @@ abac_vnode_check_open(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_OPEN);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -889,9 +917,7 @@ abac_vnode_check_open(struct ucred *cred, struct vnode *vp,
 	/* Get object label from vnode */
 	if (vplabel == NULL)
 		return (0);
-	obj = SLOT(vplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(vp, vplabel);
 
 	/* Evaluate rules */
 	error = abac_rules_check(cred, subj, obj, ABAC_OP_OPEN, NULL);
@@ -910,6 +936,7 @@ abac_vnode_check_poll(struct ucred *active_cred, struct ucred *file_cred,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_READ);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -923,9 +950,7 @@ abac_vnode_check_poll(struct ucred *active_cred, struct ucred *file_cred,
 
 	if (vplabel == NULL)
 		return (0);
-	obj = SLOT(vplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(vp, vplabel);
 
 	/* Use READ as proxy for poll - checking readability */
 	error = abac_rules_check(active_cred, subj, obj, ABAC_OP_READ, NULL);
@@ -943,6 +968,7 @@ abac_vnode_check_read(struct ucred *active_cred, struct ucred *file_cred,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_READ);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -958,9 +984,7 @@ abac_vnode_check_read(struct ucred *active_cred, struct ucred *file_cred,
 	/* Get object label from vnode */
 	if (vplabel == NULL)
 		return (0);
-	obj = SLOT(vplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(vp, vplabel);
 
 	/* Evaluate rules */
 	error = abac_rules_check(active_cred, subj, obj, ABAC_OP_READ, NULL);
@@ -979,6 +1003,7 @@ abac_vnode_check_readdir(struct ucred *cred, struct vnode *dvp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_READDIR);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -992,9 +1017,7 @@ abac_vnode_check_readdir(struct ucred *cred, struct vnode *dvp,
 
 	if (dvplabel == NULL)
 		return (0);
-	obj = SLOT(dvplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(dvp, dvplabel);
 
 	error = abac_rules_check(cred, subj, obj, ABAC_OP_READDIR, NULL);
 
@@ -1011,6 +1034,7 @@ abac_vnode_check_readlink(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_READ);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -1026,9 +1050,7 @@ abac_vnode_check_readlink(struct ucred *cred, struct vnode *vp,
 	/* Get object label from vnode */
 	if (vplabel == NULL)
 		return (0);
-	obj = SLOT(vplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(vp, vplabel);
 
 	/* Evaluate rules - use READ since readlink is reading symlink target */
 	error = abac_rules_check(cred, subj, obj, ABAC_OP_READ, NULL);
@@ -1060,9 +1082,7 @@ abac_vnode_check_relabel(struct ucred *cred, struct vnode *vp,
 
 	if (vplabel == NULL)
 		return (0);
-	obj = SLOT(vplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(vp, vplabel);
 
 	/* Enforce privilege and no-upgrade before any permissive rule handling. */
 	if (newlabel != NULL) {
@@ -1075,7 +1095,9 @@ abac_vnode_check_relabel(struct ucred *cred, struct vnode *vp,
 		}
 	}
 
-	/* Use SETEXTATTR as proxy for relabeling */
+	/* Use SETEXTATTR as proxy for relabeling; nothing to evaluate idle. */
+	if (!ABAC_OPS_LIVE(ABAC_OP_SETEXTATTR))
+		return (0);
 	error = abac_rules_check(cred, subj, obj, ABAC_OP_SETEXTATTR, NULL);
 
 	if (error != 0 && abac_mode == ABAC_MODE_PERMISSIVE)
@@ -1092,6 +1114,7 @@ abac_vnode_check_rename_from(struct ucred *cred, struct vnode *dvp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_RENAME);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -1106,9 +1129,7 @@ abac_vnode_check_rename_from(struct ucred *cred, struct vnode *dvp,
 	/* Check against source file's label */
 	if (vplabel == NULL)
 		return (0);
-	obj = SLOT(vplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(vp, vplabel);
 
 	error = abac_rules_check(cred, subj, obj, ABAC_OP_RENAME, NULL);
 
@@ -1126,6 +1147,7 @@ abac_vnode_check_rename_to(struct ucred *cred, struct vnode *dvp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_RENAME);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -1140,9 +1162,7 @@ abac_vnode_check_rename_to(struct ucred *cred, struct vnode *dvp,
 	/* Check against target directory's label */
 	if (dvplabel == NULL)
 		return (0);
-	obj = SLOT(dvplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(dvp, dvplabel);
 
 	error = abac_rules_check(cred, subj, obj, ABAC_OP_RENAME, NULL);
 
@@ -1159,6 +1179,7 @@ abac_vnode_check_revoke(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -1172,9 +1193,7 @@ abac_vnode_check_revoke(struct ucred *cred, struct vnode *vp,
 
 	if (vplabel == NULL)
 		return (0);
-	obj = SLOT(vplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(vp, vplabel);
 
 	/* Use WRITE as proxy for revoke - modifies file state */
 	error = abac_rules_check(cred, subj, obj, ABAC_OP_WRITE, NULL);
@@ -1192,6 +1211,7 @@ abac_vnode_check_setacl(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -1205,9 +1225,7 @@ abac_vnode_check_setacl(struct ucred *cred, struct vnode *vp,
 
 	if (vplabel == NULL)
 		return (0);
-	obj = SLOT(vplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(vp, vplabel);
 
 	/* Use WRITE as proxy for ACL modification */
 	error = abac_rules_check(cred, subj, obj, ABAC_OP_WRITE, NULL);
@@ -1250,12 +1268,13 @@ abac_vnode_check_setextattr(struct ucred *cred, struct vnode *vp,
 		if (subj == NULL)
 			subj = &abac_default_subject;
 
-		/* Get object label from vnode */
+		/*
+		 * Get object label from vnode, as stored: not read here (see
+		 * above), so a label not yet read counts as the default.
+		 */
 		if (vplabel == NULL)
 			return (EPERM);
-		obj = SLOT(vplabel);
-		if (obj == NULL || obj == ABAC_LABEL_NEEDS_LOAD)
-			obj = &abac_default_object;
+		obj = abac_vnode_obj_label_noload(vplabel);
 
 		/*
 		 * This hook cannot inspect the value being written, so a confined
@@ -1272,6 +1291,9 @@ abac_vnode_check_setextattr(struct ucred *cred, struct vnode *vp,
 		}
 
 		/* Check setextattr operation */
+		/* Rule-independent checks done; no rule names the operation. */
+		if (!ABAC_OPS_LIVE(ABAC_OP_SETEXTATTR))
+			return (0);
 		error = abac_rules_check(cred, subj, obj, ABAC_OP_SETEXTATTR, NULL);
 
 		/* In permissive mode, log but allow */
@@ -1291,6 +1313,7 @@ abac_vnode_check_setflags(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -1304,9 +1327,7 @@ abac_vnode_check_setflags(struct ucred *cred, struct vnode *vp,
 
 	if (vplabel == NULL)
 		return (0);
-	obj = SLOT(vplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(vp, vplabel);
 
 	/* Use WRITE as proxy for setting file flags */
 	error = abac_rules_check(cred, subj, obj, ABAC_OP_WRITE, NULL);
@@ -1324,6 +1345,7 @@ abac_vnode_check_setmode(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -1337,9 +1359,7 @@ abac_vnode_check_setmode(struct ucred *cred, struct vnode *vp,
 
 	if (vplabel == NULL)
 		return (0);
-	obj = SLOT(vplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(vp, vplabel);
 
 	/* Use WRITE as proxy for chmod */
 	error = abac_rules_check(cred, subj, obj, ABAC_OP_WRITE, NULL);
@@ -1357,6 +1377,7 @@ abac_vnode_check_setowner(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -1370,9 +1391,7 @@ abac_vnode_check_setowner(struct ucred *cred, struct vnode *vp,
 
 	if (vplabel == NULL)
 		return (0);
-	obj = SLOT(vplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(vp, vplabel);
 
 	/* Use WRITE as proxy for chown */
 	error = abac_rules_check(cred, subj, obj, ABAC_OP_WRITE, NULL);
@@ -1390,6 +1409,7 @@ abac_vnode_check_setutimes(struct ucred *cred, struct vnode *vp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -1403,9 +1423,7 @@ abac_vnode_check_setutimes(struct ucred *cred, struct vnode *vp,
 
 	if (vplabel == NULL)
 		return (0);
-	obj = SLOT(vplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(vp, vplabel);
 
 	/* Use WRITE as proxy for utimes */
 	error = abac_rules_check(cred, subj, obj, ABAC_OP_WRITE, NULL);
@@ -1423,6 +1441,7 @@ abac_vnode_check_stat(struct ucred *active_cred, struct ucred *file_cred,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_STAT);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -1436,9 +1455,7 @@ abac_vnode_check_stat(struct ucred *active_cred, struct ucred *file_cred,
 
 	if (vplabel == NULL)
 		return (0);
-	obj = SLOT(vplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(vp, vplabel);
 
 	error = abac_rules_check(active_cred, subj, obj, ABAC_OP_STAT, NULL);
 
@@ -1456,6 +1473,7 @@ abac_vnode_check_unlink(struct ucred *cred, struct vnode *dvp,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_UNLINK);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -1470,9 +1488,7 @@ abac_vnode_check_unlink(struct ucred *cred, struct vnode *dvp,
 	/* Check against target file's label */
 	if (vplabel == NULL)
 		return (0);
-	obj = SLOT(vplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(vp, vplabel);
 
 	error = abac_rules_check(cred, subj, obj, ABAC_OP_UNLINK, NULL);
 
@@ -1489,6 +1505,7 @@ abac_vnode_check_write(struct ucred *active_cred, struct ucred *file_cred,
 	struct abac_label *subj, *obj;
 	int error;
 
+	ABAC_CHECK_LIVE(ABAC_OP_WRITE);
 	ABAC_CHECK_ENABLED();
 
 	/* Lazy load label from extattr if needed (ZFS) */
@@ -1504,9 +1521,7 @@ abac_vnode_check_write(struct ucred *active_cred, struct ucred *file_cred,
 	/* Get object label from vnode */
 	if (vplabel == NULL)
 		return (0);
-	obj = SLOT(vplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	obj = abac_vnode_obj_label(vp, vplabel);
 
 	/* Evaluate rules */
 	error = abac_rules_check(active_cred, subj, obj, ABAC_OP_WRITE, NULL);

@@ -53,6 +53,6 @@ if gate 1 "" | grep -qx PLANEOFF_READY; then echo "FAIL: ready without the sysct
 gate 1 "" | grep -q '^PLANEOFF_GATE: .*enforce=unset'
 
 # The host verdict requires PLANEOFF_READY in the plane-off tier.
-grep -q "plane_off\" = 1 \] && tr -d '\\\\r' < \"\$log\" | grep -aqx 'PLANEOFF_READY'" \
+grep -q "plane_off\" = 1 \] && LC_ALL=C tr -d '\\\\r' < \"\$log\" | grep -aqx 'PLANEOFF_READY'" \
     "$root/vm-provider.sh"
 echo 'PASS plane-off tier defaults to enforce=1, writes it, and gates on the booted value'

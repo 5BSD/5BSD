@@ -39,6 +39,9 @@ mac_framework:::hook-skip:
   arg0: hook name; arg1: policy name; arg2: reason.
   1: this traversed policy has no implementation of the hook.
   2: a present boolean hook was skipped by && or || short-circuiting.
+  3: this traversed policy has no implementation of the hook but answers it
+     through its fallback hook (proc_check_inspect through proc_check_debug);
+     the fallback's own start, args and done probes follow.
 
 A skip is not a denial and has no matching start/done or argument snapshot.
 No-policy fast paths and checks that never enter framework dispatch do not
