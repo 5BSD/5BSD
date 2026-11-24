@@ -37,6 +37,7 @@ ${PACKAGE}FILESMODE_pcp.py=		0555
 ${PACKAGE}FILESMODE_stp.py=		0555
 
 MAN=
+PROGS+=		nl_ifupdown
 PROGS+=		randsleep
 PROGS+=		transient_tuntap
 

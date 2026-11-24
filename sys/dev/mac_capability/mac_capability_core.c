@@ -79,6 +79,10 @@ SDT_PROBE_DEFINE3(mac_capability, , , revoke,
     "const char *", "uint64_t", "int");
 SDT_PROBE_DEFINE4(mac_capability, , , revoke__done,
     "const char *", "uint64_t", "int", "sbintime_t");
+SDT_PROBE_DEFINE3(mac_capability, , , rxq__discard,
+    "const char *", "uint64_t", "int");
+SDT_PROBE_DEFINE1(mac_capability, , , reap__defer, "int");
+SDT_PROBE_DEFINE1(mac_capability, , , reap__done, "int");
 SDT_PROBE_DEFINE2(mac_capability, , , close,
     "const char *", "uint64_t");
 SDT_PROBE_DEFINE6(mac_capability, , , fd__install,
@@ -280,6 +284,10 @@ mac_capability_msg_free(struct mac_capability_msg *msg)
 {
 	int i;
 
+	/* Dropping a carried descriptor may run its close, which sleeps. */
+	if (msg->cm_nfds > 0)
+		WITNESS_WARN(WARN_GIANTOK | WARN_SLEEPOK, NULL,
+		    "mac_capability_msg_free() of a message carrying descriptors");
 	for (i = 0; i < msg->cm_nfds; i++) {
 		if (msg->cm_fdset->fds[i] != NULL)
 			fdrop(msg->cm_fdset->fds[i], curthread);
@@ -671,6 +679,7 @@ mac_capability_init(void)
 	    UMA_ALIGN_PTR, 0);
 	mac_capability_stat_services = counter_u64_alloc(M_WAITOK);
 	mac_capability_stat_instances = counter_u64_alloc(M_WAITOK);
+	mac_capability_reap_init();
 	return (0);
 }
 
@@ -678,6 +687,7 @@ void
 mac_capability_uninit(void)
 {
 
+	mac_capability_reap_uninit();
 	counter_u64_free(mac_capability_stat_instances);
 	counter_u64_free(mac_capability_stat_services);
 	uma_zdestroy(mac_capability_msg_fdset_zone);

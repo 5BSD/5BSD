@@ -42,9 +42,10 @@
 #   dtraceall are preloaded for them; with sys/mac_capability or its
 #   issuer-decision probe programs, mac_capability_channel_test, lib/libservice
 #   or its service_ambient_test, dtraceall; with sys/mac_capability or
-#   its cap_exclusion_test, also filemon; with usr.sbin/bsd-build,
-#   zfs (an md-backed pool gives one case ACLs); with sys/kern or
-#   sys/kern/ptrace_sleep_test, fusefs (its presleep cases serve one),
+#   its cap_exclusion_test, also filemon (all of sys gets all three); with
+#   sys/kern or sys/kern/ptrace_sleep_test, fusefs (its presleep cases serve
+#   one); with a kernel that does not compile them in (MINIMAL), ufs and
+#   cryptodev from the stage,
 #   ROOT_FS (ufs, the default, or zfs: a ZFS root pool for the suites that
 #   require one, such as the Linux ptrace ones),
 #   REQUIRE_UNITS (space-separated SwitchBoard labels that must be "running"
@@ -53,6 +54,9 @@
 #   DRYRUN=1 (build and check the image, do not boot), LOADER_EXTRA (extra
 #   loader.conf lines), SRC_IMAGE and PORTS_IMAGE (UFS images mounted
 #   read-only at /usr/src and /usr/obj/5BSD-ports).
+#   RACCT_TUNABLE_ZERO=1 boots with kern.racct.enable="0", the tunable 5BSD
+#   ignores: the tier of mac_capability_accounting_racct_test, whose cases
+#   skip with DEFERRED_RACCT_ZERO_TIER otherwise.
 #   TEST_PKGDIR (default /usr/obj/5BSD-test-packages/All): the directory of
 #   the pinned test-stage packages that every guest image carries under
 #   /usr/local (tools/build/fuchsia/test-stage-packages: Python 3.12, python3
@@ -91,6 +95,11 @@
 #   main is GENERIC, or any kernel without a test-kernel option; test is
 #   GENERIC-TEST, and must be asked for: a stage whose kernel carries a
 #   test-kernel option is refused unless KERNEL_TIER=test.
+#
+# Mandatory options.  Before any tier, release/scripts/check-mandatory-kernel.sh
+# reads every kernel under the stage's boot directory and the run is refused
+# when one lacks an option of sys/conf/mandatory-options (AUDIT,
+# CAPABILITY_MODE, CAPABILITIES, RACCT, RCTL).
 #
 # Kernel tier.  The main tiers (plane on, PLANE_OFF=1, ISOLATION_ENFORCE=1)
 # boot a kernel without any option of the test-kernel option ledger
@@ -253,31 +262,24 @@ dq_loader_add() {
 }$1"
 }
 case " $suites " in
-*" sys/dq "*|*" sys/dq/"*)
+*" sys "*|*" sys/dq "*|*" sys/dq/"*)
 	dq_loader_add 'imgact_binmisc_load="YES"' ;;
 esac
 case " $suites " in
-*" sys/dq "*|*" sys/dq/"*|*" sys/mac_capability "*|\
+*" sys "*|*" sys/dq "*|*" sys/dq/"*|*" sys/mac_capability "*|\
 *" sys/mac_capability/authority_issuer_probe_test"*|\
 *" sys/mac_capability/authority_test_issuer_anchor_test"*|\
 *" sys/mac_capability/cap_exclusion_test"*|\
 *" sys/mac_capability/mac_capability_channel_test"*|\
-*" lib/libservice "*|*" lib/libservice/service_ambient_test"*)
+*" lib/libservice "*|*" lib/libservice/service_ambient_test"*|\
+*" lib/libservice/session_wait_test"*)
 	dq_loader_add 'dtraceall_load="YES"' ;;
 esac
 case " $suites " in
-*" sys/mac_capability "*|*" sys/mac_capability/cap_exclusion_test"*)
+*" sys "*|*" sys/mac_capability "*|*" sys/mac_capability/cap_exclusion_test"*)
 	dq_loader_add 'filemon_load="YES"' ;;
 esac
 # end of dq_loader
-# bsd_build_test:generation_reconciliation runs its ACL subtest on an
-# md-backed ZFS pool (GENERIC has no UFS_ACL); the plane refuses a late
-# kldload of zfs.
-case " $suites " in
-*" usr.sbin/bsd-build "*|*" usr.sbin/bsd-build/bsd_build_test"*)
-	dq_loader="${dq_loader:+$dq_loader
-}zfs_load=\"YES\"" ;;
-esac
 # ptrace_sleep_test's presleep cases hold a lookup in a fusefs file system
 # they serve; the plane refuses a late kldload of fusefs.
 case " $suites " in
@@ -464,12 +466,46 @@ test_knobs=$(sh "$tk_check" -l "$tk_ledger" -L |
     awk -F '|' '$2 == "live" && $6 != "-" { gsub(",", " ", $6); printf "%s ", $6 }')
 case $test_knobs in *[!a-z0-9_.\ ]*) die "unexpected knob names in the ledger";; esac
 echo "TEST_KERNEL_HOST: binary-check=$test_kernel_host option=$test_option kernel-sha256=$kernel_sha256"
+# Every tier: the stage's kernels carry every option of
+# sys/conf/mandatory-options (a separate check from the test-kernel one).
+mk_check=$src_root/release/scripts/check-mandatory-kernel.sh
+[ -f "$mk_check" ] ||
+    die "no release/scripts/check-mandatory-kernel.sh in $src_root"
+sh "$mk_check" -d "$stage" > "$work/mandatory-kernel-check.out" \
+    2> "$work/mandatory-kernel-check.err" ||
+    { cat "$work/mandatory-kernel-check.err" >&2
+      die "the stage's kernel lacks an option of sys/conf/mandatory-options"; }
+echo "MANDATORY_KERNEL_HOST: $(cat "$work/mandatory-kernel-check.out")"
 echo "TEST_KERNEL_HOST: version=$kernel_version"
 case $kernel_tier:$test_kernel_host in
 main:yes) die "the stage's kernel was built with options $test_option: a test kernel runs only with KERNEL_TIER=test";;
 test:no) die "KERNEL_TIER=test, but the stage's kernel carries no test-kernel option";;
 esac
 # --- end of the kernel tier, host side
+
+# --- base modules, host side (tests/vm-provider-base-modules.sh runs this block)
+# Every guest mounts UFS (its root, the source and ports images, the
+# suites' md(4) file systems), and the plane gate requires bsdcrypto, which
+# opens /dev/crypto.  The plane refuses a late kldload, so a kernel that does
+# not compile ufs or cryptodev in (MINIMAL) gets the stage's module
+# preloaded.  The kernel's symbol table names its compiled-in modules
+# (_mod_metadata_md_<name>); the mandatory-option check above has already
+# refused a kernel without a symbol table.
+base_loader= base_preloaded=
+readelf -sW "$stage/boot/kernel/kernel" > "$work/kernel-symbols" 2> /dev/null ||
+    die "cannot read the symbol table of the stage's kernel"
+for module in ufs cryptodev; do
+	awk -v s="_mod_metadata_md_$module" '$8 == s { found = 1 }
+	    END { exit !found }' "$work/kernel-symbols" && continue
+	[ -f "$stage/boot/kernel/$module.ko" ] ||
+	    die "the stage's kernel has no $module module compiled in, and the stage has no boot/kernel/$module.ko to preload"
+	base_loader="$base_loader${module}_load=\"YES\"
+"
+	base_preloaded="${base_preloaded:+$base_preloaded }$module"
+done
+rm -f "$work/kernel-symbols"
+echo "BASE_MODULES_HOST: preloaded=${base_preloaded:-none}"
+# --- end of the base modules, host side
 
 # ---------------------------------------------------------------- overlay ---
 x=$work/extra
@@ -501,7 +537,13 @@ fi
 if [ "$root_fs" = zfs ]; then
 	printf 'zfs_load="YES"\nvfs.root.mountfrom="zfs:kyuaroot"\n' >> "$x/loader.conf"
 fi
+[ -z "$base_loader" ] || printf '%s' "$base_loader" >> "$x/loader.conf"
 [ -z "$dq_loader" ] || printf '%s\n' "$dq_loader" >> "$x/loader.conf"
+case ${RACCT_TUNABLE_ZERO:-0} in
+0) ;;
+1) printf 'kern.racct.enable="0"\n' >> "$x/loader.conf" ;;
+*) die "RACCT_TUNABLE_ZERO must be 0 or 1" ;;
+esac
 [ -z "${LOADER_EXTRA:-}" ] || printf '%s\n' "$LOADER_EXTRA" >> "$x/loader.conf"
 if [ -n "$extra_script" ]; then cp "$extra_script" "$x/extra.sh"; else : > "$x/extra.sh"; fi
 cat > "$x/fstab" <<'EOF'
@@ -1534,13 +1576,17 @@ echo "skipped=$nskip (a skip in a plane-on suite is not a pass; see KYUA_SKIPPED
 # Cases that named the tier they belong to: the run is not complete without
 # a run of the same stage and suites in that tier.
 for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER \
-    DEFERRED_STACK_TIER DEFERRED_PID1_ONLY DEFERRED_SOURCE_TIER \
-    DEFERRED_GUEST_SETUP DEFERRED_DISPOSABLE_GUEST \
+    DEFERRED_STACK_TIER DEFERRED_PID1_ONLY DEFERRED_SOURCE_TIER DEFERRED_KNOB_TIER \
+    DEFERRED_GUEST_SETUP DEFERRED_DISPOSABLE_GUEST DEFERRED_TEST_KERNEL_TIER \
+    DEFERRED_RACCT_ZERO_TIER DEFERRED_QUOTA_KERNEL_TIER \
+    DEFERRED_DEBUG_KERNEL_TIER \
     "configuration property 'authority_anchor'"; do
 	ndefer=$(LC_ALL=C tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c "$token" || true)
 	[ "$ndefer" -eq 0 ] || case $token in
 	DEFERRED_ENFORCED_TIER)
 		echo "DEFERRED_TO_ENFORCED_TIER=$ndefer (run PLANE_OFF=1 with the same stage and suites; not a pass)";;
+	DEFERRED_KNOB_TIER)
+		echo "DEFERRED_TO_KNOB_TIER=$ndefer (cases that need a fault knob of options DQ_FAULT_INJECTION: run KERNEL_TIER=test with a GENERIC-TEST stage and the same suites; not a pass)";;
 	DEFERRED_PLANEOFF_TIER)
 		echo "DEFERRED_TO_PLANEOFF_TIER=$ndefer (test-local stacks: run PLANE_OFF=1, and their unit cases on the stack tier; not a pass)";;
 	DEFERRED_STACK_TIER)
@@ -1551,6 +1597,14 @@ for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER 
 		echo "DEFERRED_TO_SOURCE_TIER=$ndefer (they read /usr/src: run with SRC_IMAGE; not a pass)";;
 	DEFERRED_GUEST_SETUP)
 		echo "DEFERRED_GUEST_SETUP=$ndefer (they need a guest setup no tier provides yet, such as a scratch disk or a stopped devd; not a pass)";;
+	DEFERRED_TEST_KERNEL_TIER)
+		echo "DEFERRED_TO_TEST_KERNEL_TIER=$ndefer (run on GENERIC-TEST with KERNEL_TIER=test; not a pass)";;
+	DEFERRED_RACCT_ZERO_TIER)
+		echo "DEFERRED_TO_RACCT_ZERO_TIER=$ndefer (run with RACCT_TUNABLE_ZERO=1; not a pass)";;
+	DEFERRED_QUOTA_KERNEL_TIER)
+		echo "DEFERRED_TO_QUOTA_KERNEL_TIER=$ndefer (run with a stage whose kernel has options QUOTA, such as GENERIC; not a pass)";;
+	DEFERRED_DEBUG_KERNEL_TIER)
+		echo "DEFERRED_TO_DEBUG_KERNEL_TIER=$ndefer (they check through WITNESS or INVARIANTS: run with a stage whose kernel has both, such as GENERIC; not a pass)";;
 	DEFERRED_DISPOSABLE_GUEST)
 		echo "DEFERRED_DISPOSABLE_GUEST=$ndefer (destructive cases: run them in a guest of their own with their opt-in, disposable_vm=yes or live_securelevel=yes in KYUA_VARS; not a pass)";;
 	"configuration property 'authority_anchor'")

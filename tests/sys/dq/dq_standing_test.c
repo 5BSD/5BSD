@@ -317,7 +317,7 @@ ATF_TC_BODY(validation, tc)
 
 	ATF_REQUIRE_EQ(1064, sizeof(struct dq_standing_rule));
 	ATF_REQUIRE_EQ(32, __offsetof(struct dq_standing_rule, dqs_id));
-	ATF_REQUIRE_EQ(320, sizeof(struct dq_stats2));
+	ATF_REQUIRE_EQ(400, sizeof(struct dq_stats2));
 	q = dqt_open_queue();
 
 	/* The rule itself: EINVAL. */

@@ -992,45 +992,56 @@ generation_reconciliation_body()
 {
     helper=$(atf_config_get generation_helper "$(atf_get_srcdir)/generation_check.py")
     tests=$(atf_config_get generation_tests "$(atf_get_srcdir)/generation_check_test.py")
-    # The ACL subtest needs a file system with ACLs, which the work
-    # directory's often lacks (a guest's UFS root has none, and GENERIC has
-    # no options UFS_ACL): as root, the program's temporary files go to an
-    # md(4)-backed ZFS pool (NFSv4 ACLs), or else to a UFS mounted with acls
-    # where the kernel supports that.
-    tmp=${TMPDIR:-/tmp}
-    if [ "$(id -u)" = 0 ] && md=$(mdconfig -a -t swap -s 256m 2>/dev/null); then
-        echo "$md" > acl_md
-        mkdir acl
-        pool=bbtacl$$
-        if zpool create -o cachefile=none -O mountpoint="$PWD/acl" \
-            "$pool" "/dev/$md" > /dev/null 2>&1; then
-            echo "$pool" > acl_pool
-            tmp=$PWD/acl
-        elif newfs -U "/dev/$md" > /dev/null 2>&1 &&
-            mount -o acls "/dev/$md" "$PWD/acl"; then
-            tmp=$PWD/acl
-        fi
-    fi
-    # pathconf(2) _PC_ACL_EXTENDED (59) or _PC_ACL_NFS4 (64), as the subtest
-    # itself decides.
-    acl_fs=$(python3.12 -c 'import os, sys
+    acl_case=Reconciliation.test_acl_not_discarded
+    # Every subtest runs on the work directory's file system (UFS in a
+    # guest), where the ACL subtest skips unless that file system has ACLs.
+    atf_check -s exit:0 -o ignore -e save:stderr env \
+        BSD_BUILD_GENERATION_HELPER="$helper" python3.12 -B "$tests" -v
+    atf_check -s exit:0 -o ignore grep -q '^OK' stderr
+    grep -q 'supports no ACL type' stderr || return 0
+    # The ACL subtest alone then runs on a file system with ACLs, as root:
+    # an md(4)-backed UFS mounted with acls (a kernel with options UFS_ACL,
+    # as GENERIC), or else an md(4)-backed ZFS pool (NFSv4 ACLs) where the
+    # zfs module is loaded.  The file system qualifies as the subtest itself
+    # decides: pathconf(2) _PC_ACL_EXTENDED (59) or _PC_ACL_NFS4 (64).
+    acl_ok() {
+        python3.12 -c 'import os, sys
 def ok(n):
     try:
         return os.pathconf(sys.argv[1], n) == 1
     except OSError:
         return False
-print("yes" if ok(59) or ok(64) else "no")' "$tmp")
-    atf_check -s exit:0 -o ignore -e save:stderr env TMPDIR="$tmp" \
-        BSD_BUILD_GENERATION_HELPER="$helper" python3.12 -B "$tests" -v
-    atf_check -s exit:0 -o ignore grep -q '^OK' stderr
-    [ "$acl_fs" = no ] || atf_check -s exit:0 -o ignore \
-        grep -q '^test_acl_not_discarded .* ok$' stderr
-    # A skipped ACL subtest is a gap, never a silent pass.
-    if grep -q 'supports no ACL type' stderr; then
-        [ "$acl_fs" = no ] ||
-            atf_fail "the ACL subtest skipped on $tmp, which supports ACLs"
-        atf_skip 'DEFERRED_GUEST_SETUP: the ACL subtest needs root, md(4) and ZFS, or a UFS_ACL kernel (the other subtests passed)'
+sys.exit(0 if ok(59) or ok(64) else 1)' "$1"
+    }
+    tmp=
+    if [ "$(id -u)" = 0 ] && md=$(mdconfig -a -t swap -s 256m 2>/dev/null); then
+        echo "$md" > acl_md
+        mkdir acl
+        if newfs -U "/dev/$md" > /dev/null 2>&1 &&
+            mount -o acls "/dev/$md" "$PWD/acl"; then
+            if acl_ok "$PWD/acl"; then
+                tmp=$PWD/acl
+            else
+                umount "$PWD/acl"
+            fi
+        fi
+        pool=bbtacl$$
+        if [ -z "$tmp" ] && zpool create -f -o cachefile=none \
+            -O mountpoint="$PWD/acl" "$pool" "/dev/$md" > /dev/null 2>&1; then
+            echo "$pool" > acl_pool
+            ! acl_ok "$PWD/acl" || tmp=$PWD/acl
+        fi
     fi
+    acl_fs=no
+    [ -z "$tmp" ] || acl_fs=yes
+    echo "ACL subtest file system: ${tmp:+$(df -T "$tmp" | awk 'NR == 2 { print $2 }') }${tmp:-none}"
+    # A skipped ACL subtest is a gap, never a silent pass.
+    [ "$acl_fs" = yes ] ||
+        atf_skip 'DEFERRED_GUEST_SETUP: the ACL subtest needs root and md(4), with a UFS_ACL kernel or the zfs module (the other subtests passed)'
+    atf_check -s exit:0 -o ignore -e save:acl-stderr env TMPDIR="$tmp" \
+        BSD_BUILD_GENERATION_HELPER="$helper" python3.12 -B "$tests" -v "$acl_case"
+    atf_check -s exit:0 -o ignore grep -q '^test_acl_not_discarded .* ok$' acl-stderr
+    atf_check -s exit:0 -o ignore grep -q '^Ran 1 test' acl-stderr
 }
 generation_reconciliation_cleanup()
 {
@@ -1255,10 +1266,11 @@ PYTHON
 import json
 rows = [json.loads(line) for line in open('stage.jsonl')]
 assert rows[0]['verification_scope'] == 'boot-transport-makefs-input'
-assert len(rows) == 3 and [row['name'] for row in rows[1:]] == ['kernel-test-option-check', 'boot-stage']
+assert len(rows) == 4 and [row['name'] for row in rows[1:]] == ['kernel-test-option-check', 'kernel-mandatory-option-check', 'boot-stage']
+assert rows[2]['argv'] == ['sh', '/usr/src/release/scripts/check-mandatory-kernel.sh', '-a', rows[1]['argv'][3]]
 assert rows[1]['argv'][:3] == ['sh', '/usr/src/release/scripts/check-test-kernel.sh', '-a']
 assert rows[1]['argv'][3].endswith('/boot.tar') and len(rows[1]['argv']) == 4
-assert '--output' in rows[2]['argv']
+assert '--output' in rows[3]['argv']
 PYTHON
 }
 
@@ -1299,10 +1311,12 @@ import json, os
 rows = [json.loads(line) for line in open('plan.jsonl')]
 assert rows[0]['verification_scope'] == 'trusted-builder-filesystem-image'
 assert rows[0]['boot_verification'] == 'not-performed'
-assert [r['name'] for r in rows[1:]] == ['kernel-test-option-check', 'image']
+assert [r['name'] for r in rows[1:]] == ['kernel-test-option-check', 'kernel-mandatory-option-check', 'image']
 assert rows[1]['argv'] == ['sh', '/usr/src/release/scripts/check-test-kernel.sh', '-i', os.path.realpath('root')]
+assert rows[2]['argv'] == ['sh', '/usr/src/release/scripts/check-mandatory-kernel.sh', '-i', os.path.realpath('root')]
 assert rows[0]['kernel_test_option_binary_check'] == 'requested' and rows[0]['kernel_test_option_configuration'] == 'not-performed'
-args = rows[2]['argv']
+assert rows[0]['kernel_mandatory_option_binary_check'] == 'requested' and rows[0]['kernel_mandatory_option_configuration'] == 'not-performed'
+args = rows[3]['argv']
 assert args[1] == '/usr/src/tools/build/capimage/generation_image.py'
 for flag in ('--construction-receipt', '--makefs', '--mdconfig', '--mount', '--umount', '--boot-archive'):
     assert flag in args
@@ -1315,9 +1329,10 @@ PYTHON
     atf_check -s exit:0 -o empty -e empty python3.12 - <<'PYTHON'
 import json, os
 rows = [json.loads(line) for line in open('layout-image-plan.jsonl')]
-assert rows[2]['argv'][-2:] == ['--storage-layout-policy', os.path.realpath('layout.json')]
-assert '--boot-archive' in rows[2]['argv']
-assert rows[2]['argv'][rows[2]['argv'].index('--verity-policy')+1] == os.path.realpath('verity.json')
+image = next(r['argv'] for r in rows[1:] if r['name'] == 'image')
+assert image[-2:] == ['--storage-layout-policy', os.path.realpath('layout.json')]
+assert '--boot-archive' in image
+assert image[image.index('--verity-policy')+1] == os.path.realpath('verity.json')
 PYTHON
     atf_check -s not-exit:0 -o empty -e match:'usage: build-bsd' "$tool" plan image --storage-bindings "$PWD/storage-bindings.json"
     atf_check -s not-exit:0 -o empty -e match:'usage: build-bsd' "$tool" plan image --storage-layout-policy "$PWD/layout.json" --storage-bindings "$PWD/storage-bindings.json"
@@ -1637,12 +1652,15 @@ repository_snapshot_plan_body()
     atf_check -s exit:0 -o empty -e empty python3.12 - <<'PYTHON'
 import json, os
 rows = [json.loads(line) for line in open('snapshot.jsonl')]
-assert len(rows) == 3
+assert len(rows) == 4
 assert rows[0]['verification_scope'] == 'signed-repository-snapshot'
 assert rows[1]['name'] == 'kernel-test-option-check'
 assert rows[1]['argv'] == ['sh', '/usr/src/release/scripts/check-test-kernel.sh', '-r', os.getcwd() + '/source repository']
+assert rows[2]['name'] == 'kernel-mandatory-option-check'
+assert rows[2]['argv'] == ['sh', '/usr/src/release/scripts/check-mandatory-kernel.sh', '-r', os.getcwd() + '/source repository']
 assert rows[0]['kernel_test_option_binary_check'] == 'requested'
-argv = rows[2]['argv']
+assert rows[0]['kernel_mandatory_option_binary_check'] == 'requested'
+argv = rows[3]['argv']
 assert argv[:3] == ['/usr/local/bin/python3.12', '/usr/src/release/scripts/hardware-packages.py', 'copy-signed-repository']
 assert argv[argv.index('--repository') + 1] == os.getcwd() + '/source repository'
 assert argv[argv.index('--public-key') + 1] == os.getcwd() + '/trust key.pub'

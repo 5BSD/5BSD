@@ -220,8 +220,8 @@ test_extattr_delete_list(void)
 
 /*
  * The ACL events need a filesystem with ACLs.  The test directory's (tmpfs
- * in the guest tier) has none, and neither has UFS in this kernel, which is
- * built without UFS_ACL.  ZFS has NFSv4 ACLs, so the test brings its own
+ * in the guest tier) has none, and UFS has them only in a kernel with
+ * options UFS_ACL.  ZFS has NFSv4 ACLs, so the test brings its own
  * pool: one memory disk, mounted on a temporary directory and destroyed at
  * the end.
  */

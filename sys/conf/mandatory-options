@@ -1,0 +1,27 @@
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
+# Kernel options every 5BSD kernel must have.  They are not optional in
+# 5BSD: the capability plane, Capsicum-confined programs, the audit trail
+# and the accounting service depend on them.  A kernel without one of them
+# does not build (sys/kern/kern_mandatory.c), and a built kernel without
+# one is refused by release/scripts/check-mandatory-kernel.sh and by
+# bsd-build.
+#
+# The options are set in sys/{amd64,arm64,riscv}/conf/DEFAULTS, which
+# config(8) applies to every configuration and from which standalone module
+# builds take their opt_global.h (sys/conf/config.mk).  "nooptions" in a
+# configuration still removes one, and the build then fails.
+#
+# Format: option, the option header config(8) writes it to, and the
+# kern.features name the kernel registers when it is compiled in.  Keep
+# kern_mandatory.c, the DEFAULTS files and this ledger in agreement.
+#
+# option		header		feature
+AUDIT			opt_global.h	audit
+CAPABILITY_MODE		opt_capsicum.h	security_capability_mode
+CAPABILITIES		opt_capsicum.h	security_capabilities
+RACCT			opt_global.h	racct
+RCTL			opt_global.h	rctl

@@ -233,6 +233,31 @@ proc_set_p2_wexit(struct proc *p)
 {
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 	p->p_flag2 |= P2_WEXIT;
+	proc_dying_notify(p);
+}
+
+/*
+ * A subsystem whose threads may sleep without catching signals while the
+ * process is being taken down (dq(4): a served mutation waiting for its
+ * answer) registers one hook, called with the process lock held, and no
+ * spin lock, each time the process starts to die: every SIGKILL sent
+ * (tdsendsignal), a kill marked P_WKILLED (proc_wkilled), an exit's
+ * single-threading (thread_single SINGLE_EXIT), a core dump
+ * (proc_set_p2_wexit).  The hook only wakes its sleepers; they see the
+ * process dying themselves.  One owner (dq), set once at boot before any
+ * process can use it.
+ */
+void	(*proc_dying_hook)(struct proc *p);
+
+void
+proc_dying_notify(struct proc *p)
+{
+	void (*hook)(struct proc *);
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	hook = atomic_load_ptr(&proc_dying_hook);
+	if (hook != NULL)
+		hook(p);
 }
 
 static void

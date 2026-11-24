@@ -807,15 +807,17 @@ ATF_TC_BODY(plane_services_procdesc, tc)
 /* --- the queue ABI rows of item 18 -------------------------------------- */
 
 /*
- * Item 18.  Command 13 of the queue, _IOWR('j', 13, 16 bytes), is ENOTTY
- * today on a queue; an observer's descriptor is limited to its own
- * commands and answers ENOTCAPABLE.  The number is DQ_IOC_QUEUE_FLAGS,
- * defined by ux-2 or by b6c, whichever lands first: the queue's row
- * flips there; the observer's does not (the command is not added to the
- * observer's ioctl list).
+ * Item 18.  Command 13 of the queue, _IOWR('j', 13, 16 bytes), is
+ * DQ_IOC_QUEUE_FLAGS since ux-2 (dq-transparency C8, b02f7856b28): on a
+ * queue an all-zero argument (no flag set or cleared) is accepted and
+ * returns the old flags, 0.  The row was ENOTTY before C8 and was to flip
+ * there; it did not, because the guest stages ran dq_regress binaries
+ * built before C8, which hid it.  An observer's descriptor is limited to
+ * its own commands and still answers ENOTCAPABLE (the command is not in
+ * the observer's ioctl list).
  */
-ATF_TC_WITHOUT_HEAD(queue_ioctl_13_enotty);
-ATF_TC_BODY(queue_ioctl_13_enotty, tc)
+ATF_TC_WITHOUT_HEAD(queue_ioctl_13_flags);
+ATF_TC_BODY(queue_ioctl_13_flags, tc)
 {
 	char arg[16];
 	int obs, q;
@@ -826,7 +828,8 @@ ATF_TC_BODY(queue_ioctl_13_enotty, tc)
 	obs = dq_mint_observer(q, 0);
 	ATF_REQUIRE_MSG(obs != -1, "dq_mint_observer: %s", strerror(errno));
 	memset(arg, 0, sizeof(arg));
-	PN_EXPECT(ENOTTY, ioctl(q, _IOWR('j', 13, char[16]), arg));
+	ATF_CHECK_EQ_MSG(0, ioctl(q, _IOWR('j', 13, char[16]), arg),
+	    "DQ_IOC_QUEUE_FLAGS: %s", strerror(errno));
 	/* Not in the observer's ioctl list: refused before dq_ioctl(). */
 	PN_EXPECT(ENOTCAPABLE, ioctl(obs, _IOWR('j', 13, char[16]), arg));
 	(void)close(obs);
@@ -834,10 +837,13 @@ ATF_TC_BODY(queue_ioctl_13_enotty, tc)
 }
 
 /*
- * Item 18.  GET_STATS2 answers ds2_size 320 and ds2_pad0 0 on a queue and
- * on an observer.  No slice changes the size: it stays 320.  b6c renames
- * ds2_pad0 ds2_qflags and reports the queue's user flag word in it, which
- * is 0 for a queue that set none.
+ * Item 18.  GET_STATS2 answers ds2_size and ds2_pad0 0 on a queue and on
+ * an observer.  The size was 320 until the merge of dev into
+ * dq/transparency-1-r2 (6754772dbe2): both branches had used its spare
+ * words, and the owner chose (2026-11-19) to grow the struct by one
+ * reserved 64-byte line, to 400.  b6c renames ds2_pad0 ds2_qflags and
+ * reports the queue's user flag word in it, which is 0 for a queue that
+ * set none.
  */
 ATF_TC_WITHOUT_HEAD(stats2_size);
 ATF_TC_BODY(stats2_size, tc)
@@ -850,14 +856,14 @@ ATF_TC_BODY(stats2_size, tc)
 	ATF_REQUIRE_MSG(q != -1, "dq_open: %s", strerror(errno));
 	obs = dq_mint_observer(q, 0);
 	ATF_REQUIRE_MSG(obs != -1, "dq_mint_observer: %s", strerror(errno));
-	ATF_CHECK_EQ(320, sizeof(st));
+	ATF_CHECK_EQ(400, sizeof(st));
 	memset(&st, 0xa5, sizeof(st));
 	ATF_REQUIRE_EQ(0, dq_get_stats2(q, &st));
-	ATF_CHECK_EQ(320, st.ds2_size);
+	ATF_CHECK_EQ(400, st.ds2_size);
 	ATF_CHECK_EQ(0, st.ds2_pad0);
 	memset(&st, 0xa5, sizeof(st));
 	ATF_REQUIRE_EQ(0, dq_get_stats2(obs, &st));
-	ATF_CHECK_EQ(320, st.ds2_size);
+	ATF_CHECK_EQ(400, st.ds2_size);
 	ATF_CHECK_EQ(0, st.ds2_pad0);
 	(void)close(obs);
 	(void)close(q);
@@ -871,7 +877,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, sigio_group_with_attached);
 	ATF_TP_ADD_TC(tp, linux_probe_attached_target);
 	ATF_TP_ADD_TC(tp, plane_services_procdesc);
-	ATF_TP_ADD_TC(tp, queue_ioctl_13_enotty);
+	ATF_TP_ADD_TC(tp, queue_ioctl_13_flags);
 	ATF_TP_ADD_TC(tp, stats2_size);
 	return (atf_no_error());
 }

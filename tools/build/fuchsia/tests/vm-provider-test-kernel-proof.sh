@@ -28,11 +28,20 @@ marker=$(sh "$root/../../../release/scripts/check-test-kernel.sh" \
     awk -F '|' '$2 == "live" { print $5; exit }')
 [ -n "$marker" ] || fail 'the ledger has no live row'
 version='5BSD 16.0-CURRENT #0 lg3-n1-0123456789ab: Mon Nov 16 00:00:00 UTC 2026'
+# The block also refuses a kernel whose symbol table lacks an option of
+# sys/conf/mandatory-options: a passing kernel is an object defining the
+# ledger's kern.features symbols, with the strings under test appended
+# (readelf ignores bytes after the sections).
+awk '!/^#/ && NF == 3 { printf "int sysctl___kern_features_%s;\n", $3 }' \
+    "$root/../../../sys/conf/mandatory-options" > "$work/features.c"
+[ -s "$work/features.c" ] || fail 'the mandatory-option ledger lists nothing'
+cc -c -o "$work/features.o" "$work/features.c" || fail 'cannot compile the kernel symbols'
 stage() {
 	rm -rf "$work/stage"
 	mkdir -p "$work/stage/boot/kernel"
 	# The marker first, as a real kernel has it: it too begins "@(#)5BSD ".
-	printf 'ELF\0%s\0@(#)%s\0' "$1" "$version" > "$work/stage/boot/kernel/kernel"
+	{ cat "$work/features.o"
+	  printf 'ELF\0%s\0@(#)%s\0' "$1" "$version"; } > "$work/stage/boot/kernel/kernel"
 }
 # host [VAR=value...]: runs the block as vm-provider.sh would, with the
 # given environment; prints its variables.
@@ -77,6 +86,11 @@ for env in '' PLANE_OFF=1 KERNEL_TIER=main 'PLANE_OFF=1 KERNEL_TIER=main'; do
 	grep -q 'a test kernel runs only with KERNEL_TIER=test' "$work/err" ||
 	    fail "[$env]: $(cat "$work/err")"
 done
+# A kernel without a mandatory option stops the run.
+printf 'ELF\0@(#)%s\0' "$version" > "$work/stage/boot/kernel/kernel"
+if host > "$work/err" 2>&1; then fail 'a kernel without the mandatory options passed'; fi
+grep -q 'lacks an option of sys/conf/mandatory-options' "$work/err" ||
+    fail "no mandatory options: $(cat "$work/err")"
 # A kernel without a version string stops the run.
 printf 'ELF\0no version\0' > "$work/stage/boot/kernel/kernel"
 if host > "$work/err" 2>&1; then fail 'a kernel without a version passed'; fi
