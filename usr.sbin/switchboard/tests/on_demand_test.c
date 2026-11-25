@@ -1957,6 +1957,46 @@ ATF_TC_BODY(idle_quiesce_busy_resumes_provider, tc)
 	(void)close(kq);
 }
 
+/*
+ * A stop that arrives while an idle quiesce is outstanding (shutdown,
+ * removal) is not undone by the provider declining the idle stop.
+ */
+ATF_TC_WITHOUT_HEAD(idle_quiesce_busy_yields_to_stop);
+ATF_TC_BODY(idle_quiesce_busy_yields_to_stop, tc)
+{
+	struct svc_runtime svc;
+	unsigned which;
+	int kq;
+
+	(void)tc;
+	for (which = 0; which < 2; which++) {
+		kq = kqueue();
+		ATF_REQUIRE(kq >= 0);
+		switchboard_kq = kq;
+		idle_runtime_init(&svc, "org.test.idle-stop");
+		svc.state = SVC_STATE_STOPPING;
+		svc.protocol_ready = true;
+		svc.idle_stop_pending = true;
+		svc.quiesce_pending = true;
+		svc.idle_timeout_sec = 5;
+		svc.manifest.stop_timeout = 2;
+		schedule_stop_kill(&svc, kq);
+		ATF_REQUIRE(svc.stop_kill_pending);
+		/* The shutdown (or a removal) reached the stopping unit. */
+		if (which == 0)
+			sd.shutting_down = true;
+		else
+			svc.remove_pending = true;
+		svc_quiesce_complete(&svc, EBUSY, kq);
+		ATF_CHECK_EQ(SVC_STATE_STOPPING, svc.state);
+		ATF_CHECK_MSG(svc.stop_kill_pending,
+		    "the stop lost its deadline");
+		sd.shutting_down = false;
+		switchboard_kq = -1;
+		(void)close(kq);
+	}
+}
+
 ATF_TC_WITHOUT_HEAD(retired_principal_claim);
 ATF_TC_BODY(retired_principal_claim, tc)
 {
@@ -1994,6 +2034,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, idle_timer_ident_range);
 	ATF_TP_ADD_TC(tp, idle_timer_fire_stops_provider);
 	ATF_TP_ADD_TC(tp, idle_quiesce_busy_resumes_provider);
+	ATF_TP_ADD_TC(tp, idle_quiesce_busy_yields_to_stop);
 	ATF_TP_ADD_TC(tp, idle_note_exit_reactivatable);
 	ATF_TP_ADD_TC(tp, cleanup_stop_intent);
 	ATF_TP_ADD_TC(tp, cleanup_terminal_states);

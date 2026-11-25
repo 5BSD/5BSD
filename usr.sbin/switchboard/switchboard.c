@@ -141,6 +141,12 @@ switchboard_dispatch_one(struct kevent *kev)
 	if (kev->filter == EVFILT_READ &&
 	    (int)kev->ident == sd.capsule_channel_fd) {
 		if (kev->flags & EV_EOF) {
+			struct kevent change;
+
+			/* Level-triggered: report the loss once. */
+			EV_SET(&change, sd.capsule_channel_fd, EVFILT_READ,
+			    EV_DELETE, 0, 0, NULL);
+			(void)kevent(switchboard_kq, &change, 1, NULL, 0, NULL);
 			syslog(LOG_CRIT,
 			    "Capsule exited, stopping all services");
 			SWITCHBOARD_PROBE_CAPSULE_DISCONNECTED();
@@ -735,28 +741,38 @@ main(int argc, char *argv[])
 
 shutdown:
 
-	/* Graceful shutdown: ensure services are stopping.
-	 * supervisor_stop() may have already been called from the
-	 * signal handler — it's idempotent (checks sd.nservices). */
-	if (!sd.shutting_down)
+	/* Graceful shutdown: ensure services are stopping.  The signal and
+	 * Capsule-loss paths have already called supervisor_stop(). */
+	if (!sd.shutting_down) {
+		sd.shutting_down = true;
 		supervisor_stop(switchboard_kq);
+	}
 	SWITCHBOARD_PROBE_SHUTDOWN_START(sd.nservices);
 	{
 		struct kevent sevent;
 		struct timespec drain_start;
-		int w, sn;
+		int sn;
 
 		clock_gettime(CLOCK_MONOTONIC, &drain_start);
 
-		w = 0;
-		while (!supervisor_is_stopped() && w < 600) {  /* 60 seconds */
-			sn = kevent(switchboard_kq, NULL, 0, &sevent, 1,
-			    &(struct timespec){.tv_sec = 0, .tv_nsec = 100000000});
+		/*
+		 * Wait for every unit to stop.  Each stop carries its own
+		 * deadline: the stop-kill timer after the unit's stop_timeout,
+		 * then the cleanup deadline for its coalition.  So the drain
+		 * needs no bound of its own.
+		 */
+		while (!supervisor_is_stopped()) {
+			sn = kevent(switchboard_kq, NULL, 0, &sevent, 1, NULL);
+			if (sn == -1) {
+				if (errno == EINTR)
+					continue;
+				syslog(LOG_ERR, "shutdown: kevent: %m");
+				break;
+			}
 			if (sn == 1) {
 				switchboard_dispatch_event(&sevent);
 				svc_reclaim_publish_if_dirty();
 			}
-			w++;
 		}
 		{
 			struct timespec now;

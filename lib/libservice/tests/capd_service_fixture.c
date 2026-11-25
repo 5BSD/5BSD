@@ -2211,6 +2211,48 @@ scenario_lifecycle_subtree(const char *parent_marker,
 	hold();
 }
 
+/*
+ * Load the manager while it stops this unit: once SwitchBoard asks it to
+ * quiesce, send <count> heartbeats, each a request SwitchBoard answers (EBUSY
+ * while the unit is stopping), record that they all completed, acknowledge
+ * the quiesce and exit 0.  libservice reports a quiesce request only as
+ * state, so this waits for it the way hold() does.
+ */
+static int
+scenario_lifecycle_quiesce_flood(const char *ready_marker,
+    const char *done_marker, const char *count_text)
+{
+	struct timespec start, end;
+	const char *errstr;
+	long count, n;
+
+	count = strtonum(count_text, 1, 1000000, &errstr);
+	if (errstr != NULL)
+		errx(64, "heartbeat count %s: %s", count_text, errstr);
+	/* Its exit, not the SIGTERM that follows the quiesce, ends it. */
+	if (signal(SIGTERM, SIG_IGN) == SIG_ERR ||
+	    fixture_service_initialize() == -1 || fixture_service_ready() == -1)
+		err(1, "quiesce-flood fixture readiness");
+	write_result(ready_marker, "ready pid=%jd\n", (intmax_t)getpid());
+	while (service_provider_quiescing(fixture_service_provider) != 1)
+		if (poll(NULL, 0, 10) == -1 && errno != EINTR)
+			err(1, "poll");
+	if (clock_gettime(CLOCK_MONOTONIC, &start) == -1)
+		err(1, "clock_gettime");
+	for (n = 0; n < count; n++)
+		if (service_heartbeat(fixture_service_context) == -1 &&
+		    errno != EBUSY)
+			err(1, "heartbeat %ld", n);
+	if (clock_gettime(CLOCK_MONOTONIC, &end) == -1)
+		err(1, "clock_gettime");
+	write_result(done_marker, "done heartbeats=%ld ms=%jd\n", count,
+	    (intmax_t)((end.tv_sec - start.tv_sec) * 1000 +
+	    (end.tv_nsec - start.tv_nsec) / 1000000));
+	if (service_provider_quiesce_complete(fixture_service_provider, 0) == -1)
+		err(1, "service_provider_quiesce_complete");
+	return (0);
+}
+
 static int term_result_fd = -1;
 
 static void
@@ -2512,6 +2554,9 @@ main(int argc, char **argv)
 		return (scenario_lifecycle_subtree(argv[2], argv[3]));
 	if (argc == 4 && strcmp(argv[1], "lifecycle-term") == 0)
 		return (scenario_lifecycle_term(argv[2], argv[3]));
+	if (argc == 5 && strcmp(argv[1], "lifecycle-quiesce-flood") == 0)
+		return (scenario_lifecycle_quiesce_flood(argv[2], argv[3],
+		    argv[4]));
 	if (argc == 3 && strcmp(argv[1], "lifecycle-environment") == 0)
 		return (scenario_lifecycle_environment(argv[2]));
 	if (argc == 3 && strcmp(argv[1], "lifecycle-rlimit") == 0)

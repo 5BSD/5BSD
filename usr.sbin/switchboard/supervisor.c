@@ -1163,8 +1163,12 @@ svc_quiesce_complete(struct svc_runtime *svc, int status, int kq)
 		return;
 	svc->quiesce_pending = false;
 	SWITCHBOARD_PROBE_QUIESCE_COMPLETE(svc->manifest.label, status);
-	if (svc->idle_stop_pending && status == EBUSY) {
-		/* Accepted work won the race with the idle timer. */
+	/*
+	 * Accepted work won the race with the idle timer.  A stop that came
+	 * after the idle stop (shutdown, removal, reload) still stands.
+	 */
+	if (svc->idle_stop_pending && status == EBUSY && !sd.shutting_down &&
+	    !svc->remove_pending && !svc->reload_pending) {
 		cancel_stop_timer(svc);
 		svc->idle_stop_pending = false;
 		svc->idle_timeout_sec = 0;
@@ -1197,9 +1201,9 @@ supervisor_stop(int kq)
 
 	syslog(LOG_INFO, "supervisor: stopping %u services", sd.nservices);
 
-	/* Stop in reverse dependency order.  Services that are already
-	 * stopped or waiting for a restart timer are removed immediately.
-	 * Running services get graceful stop + remove on NOTE_EXIT. */
+	/* Stop in reverse load order (units carry no dependency order).
+	 * Units already stopped, done or waiting for a restart timer are
+	 * removed now; the others are stopped and removed once they exit. */
 	for (i = sd.nservices; i > 0; i--) {
 		struct svc_runtime *svc = sd.services[i - 1];
 
@@ -1212,7 +1216,8 @@ supervisor_stop(int kq)
 			svc->restart_pending = false;
 		}
 
-		if (svc->state == SVC_STATE_STOPPED) {
+		if (svc->state == SVC_STATE_STOPPED ||
+		    svc->state == SVC_STATE_DONE) {
 			svc_remove(svc);
 			continue;
 		}
@@ -1222,11 +1227,30 @@ supervisor_stop(int kq)
 	}
 }
 
+/*
+ * True once no unit has a stop still to come: every unit is stopped or done,
+ * or waits on a cleanup that cannot complete (its observation failed or its
+ * deadline passed).  Units that are stopped but not removed (a unit loaded
+ * during the shutdown) need no wait.
+ */
 bool
 supervisor_is_stopped(void)
 {
+	struct svc_runtime *svc;
+	unsigned i;
 
-	return (sd.services == NULL || sd.nservices == 0);
+	for (i = 0; i < sd.nservices; i++) {
+		svc = sd.services[i];
+		if (svc->cleanup.pending) {
+			if (svc->cleanup.error == 0)
+				return (false);
+			continue;
+		}
+		if (svc->state != SVC_STATE_STOPPED &&
+		    svc->state != SVC_STATE_DONE)
+			return (false);
+	}
+	return (true);
 }
 
 void

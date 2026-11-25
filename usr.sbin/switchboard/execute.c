@@ -872,6 +872,11 @@ static int svc_exec_oneshot(struct svc_runtime *svc, int kq);
 int
 svc_exec(struct svc_runtime *svc, int kq)
 {
+	/* A shutdown stops units; it starts none. */
+	if (sd.shutting_down) {
+		errno = ESHUTDOWN;
+		return (-1);
+	}
 	if (svc->cleanup.pending) {
 		errno = EBUSY;
 		return (-1);

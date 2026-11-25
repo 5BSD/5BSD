@@ -271,6 +271,60 @@ shutdown_kills_sigterm_ignorer_cleanup()
 }
 
 # ===================================================================
+# Shutdown: the drain waits for each unit's stop, however busy
+# ===================================================================
+
+atf_test_case shutdown_drain_waits_under_load cleanup
+shutdown_drain_waits_under_load_head()
+{
+	atf_set "descr" "the shutdown drain waits for a quiescing unit to stop while that unit sends SwitchBoard many requests"
+	atf_set "require.user" "root"
+	atf_set "timeout" "300"
+	require_capsule_stack_kmods
+}
+shutdown_drain_waits_under_load_body()
+{
+	capd_require_unit_issuer
+	local svc_pid
+
+	prepare_paths
+	# Asked to quiesce, the unit sends 700 requests, one at a time and so
+	# at least one SwitchBoard event each: more than the 600 event
+	# iterations that bounded the drain.  Then it acknowledges and exits 0.
+	# Its stop_timeout keeps the SIGKILL backstop out of the way while
+	# staying inside the test-local Capsule's own 30 s wait for SwitchBoard.
+	make_fixture_svc system org.test.flood.unit 'stop_timeout = 25;' \
+	    lifecycle-quiesce-flood "${WORK}/flood.ready" "${WORK}/flood.done" \
+	    700 >/dev/null
+
+	start_stack
+	wait_for_file flood.ready || fail_case "service did not start"
+	svc_pid=$(sed -n 's/^ready pid=//p' flood.ready)
+	[ -n "$svc_pid" ] || fail_case "service recorded no pid"
+
+	capd_capsule_ctl "$sockpath" shutdown >/dev/null ||
+	    atf_fail "Capsule shutdown request failed"
+	wait "$daemon_pid" 2>/dev/null || true
+	daemon_pid=
+	wait_for_pid_exit "$svc_pid" 600 ||
+	    fail_case "service survived shutdown"
+	[ -s flood.done ] ||
+	    fail_case "SwitchBoard finished its drain before the unit stopped"
+	cat flood.done
+	grep -Eq 'service org\.test\.flood\.unit[^ ]*: exited status 0' \
+	    "$logfile" || fail_case "the unit did not exit by itself"
+}
+shutdown_drain_waits_under_load_cleanup()
+{
+	if [ -f flood.ready ]; then
+		kill -KILL "$(sed -n 's/^ready pid=//p' flood.ready)" \
+		    2>/dev/null || true
+	fi
+	cleanup_common
+	rm -f flood.ready flood.done
+}
+
+# ===================================================================
 # Shutdown: child subtree is cleaned up
 # ===================================================================
 
@@ -1587,6 +1641,7 @@ atf_init_test_cases()
 
 	# Shutdown
 	atf_add_test_case shutdown_kills_sigterm_ignorer
+	atf_add_test_case shutdown_drain_waits_under_load
 	atf_add_test_case shutdown_kills_subtree
 	atf_add_test_case managed_quiesce_roundtrip
 	atf_add_test_case private_worker_channel

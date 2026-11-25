@@ -707,11 +707,13 @@ If the service has not exited when the timer fires,
 .Dv SIGKILL
 is sent.
 .Pp
-During daemon shutdown, services are stopped in reverse dependency
-order.
-The kevent loop is drained for up to 60 seconds, after which
+During daemon shutdown, services are stopped in reverse load order and no
+new service is started.
 .Nm
-exits.
+exits once every service has stopped; each stop is bounded by the service's
+.Va stop_timeout
+and its coalition cleanup deadline, so the shutdown needs no bound of its
+own.
 .Sh NAMING REGISTRY
 .Nm
 provides a naming registry that allows services to discover
