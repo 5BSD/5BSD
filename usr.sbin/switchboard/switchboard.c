@@ -6,17 +6,18 @@
  * switchboard — service manager and naming registry.
  *
  * Started by capsule as its single child.  Inherits a mac_capability channel
- * on fd 3 for requesting activation tokens, channels, coalitions, named
- * capability-service descriptors, and kernel-module prerequisites from
- * Capsule.  Scans capability bundles, dependency-sorts, pdfork/execs
- * services, and manages their lifecycle (restart, shutdown).
+ * to Capsule (CAPSULE_CHANNEL_FD) and the delegated capability-service
+ * descriptors named by the SWITCHBOARD_*_FD variables.  Scans capability
+ * bundles, pdfork/execs services, and manages their lifecycle (restart,
+ * shutdown).
  *
  * Startup sequence:
- *   1. Inherit channel fd from CAPSULE_CHANNEL_FD env (fd 3)
- *   2. Create kqueue, register channel + signals
+ *   1. Take the inherited descriptors from the environment and lock them
+ *   2. Create kqueue, register the Capsule channel and signals
  *   3. Scan bundle directories
- *   4. Dependency sort
- *   5. Run /etc/rc, then fork/exec services (requesting tokens from capsule)
+ *   4. Apply the capprotect shield
+ *   5. Run /etc/rc (the boot's SwitchBoard only), then launch the boot
+ *      units in parallel (no ordering)
  *   6. Send CAPSULE_OP_READY to capsule to confirm this boot converged
  *   7. Enter event loop
  */
@@ -28,7 +29,6 @@
 #include <sys/sysctl.h>
 #include <sys/syscall.h>
 #include <sys/user.h>
-#include <sys/wait.h>
 
 #include <dev/mac_capability/mac_capability_capprotect_proto.h>
 #include <dev/mac_capability/mac_capability_isolation_proto.h>
@@ -154,11 +154,6 @@ switchboard_dispatch_one(struct kevent *kev)
 			supervisor_reload(switchboard_kq,
 			    NULL, 0);
 			break;
-		case SIGCHLD:
-			/* Reap strays. */
-			while (waitpid(-1, NULL, WNOHANG) > 0)
-				;
-			break;
 		}
 		return;
 	}
@@ -201,12 +196,6 @@ switchboard_dispatch_one(struct kevent *kev)
 		return;
 	}
 
-	/*
-	 * Label-reclaim bridge listener (docs/book/src/plane/containers-and-storage.md
-	 * §5b) — the sole deliberate UNIX socket.  Its listener fd carries
-	 * udata == NULL, so it is routed by fd identity here, before the generic
-	 * udata-keyed channel handling below.
-	 */
 	/* Process descriptor events — service lifecycle. */
 	if (kev->filter == EVFILT_PROCDESC) {
 		supervisor_handle_procdesc(kev);
@@ -657,7 +646,6 @@ main(int argc, char *argv[])
 	add_signal_event(switchboard_kq, SIGTERM);
 	add_signal_event(switchboard_kq, SIGINT);
 	add_signal_event(switchboard_kq, SIGHUP);
-	add_signal_event(switchboard_kq, SIGCHLD);
 
 	/* Initialize bundle registry (scan /Capabilities/System + /Capabilities). */
 	if (bundle_registry_init() == -1) {
@@ -752,16 +740,6 @@ main(int argc, char *argv[])
 	(void)activation_register_all(switchboard_kq);
 	/* Watch the install roots so pkg install/remove loads/unloads units. */
 	registry_watch_arm(switchboard_kq);
-
-	/*
-	 * Bring up the label-reclaim bridge (docs/book/src/plane/containers-and-storage.md
-	 * §5b) — the sole deliberate UNIX socket, whose only function is to let a
-	 * pkg(8) post-deinstall script (a plain root context with no ambient
-	 * discovery channel) trigger a bundle-label reclaim.  Done AFTER
-	 * startup_launch_system() so /etc/rc has set up /var/run.  Strictly
-	 * best-effort: a setup failure is logged and switchboard runs normally
-	 * (reclaim stays reachable over the ambient ADMIN control plane).
-	 */
 
 	/*
 	 * Control is served entirely over the capability discovery plane: an

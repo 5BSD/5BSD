@@ -1940,7 +1940,6 @@ svc_launch_release(struct svc_runtime *svc, int kq, int gate_fd)
 		svc_authority_revoke_unit(svc);
 		domain_unit_channels_close(svc);
 		pdkill(svc->pd_fd, SIGKILL);
-		waitpid(svc->pid, NULL, WNOHANG);
 		capsule_release_manifest(sd.capsule_channel_fd, &L->minted);
 		if (L->capprotect_fd >= 0)
 			close(L->capprotect_fd);

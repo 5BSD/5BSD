@@ -400,7 +400,6 @@ supervisor_command_exited(struct svc_runtime *svc, int exit_status)
 	rc_stopping = svc->rc_stopping;
 	was_stopping = (svc->state == SVC_STATE_STOPPING);
 
-	waitpid(svc->pid, NULL, WNOHANG);
 	cancel_stop_timer(svc);
 	if (svc->pd_fd >= 0) {
 		(void)close(svc->pd_fd);	/* EVFILT_PROCDESC auto-removed */
@@ -839,7 +838,6 @@ supervisor_handle_procdesc(struct kevent *kev)
 		if (svc->cleanup.child_pending &&
 		    (int)kev->ident == svc->pd_fd && (kev->fflags & NOTE_EXIT)) {
 			/* Kernel emits NOTE_EXIT after process_exit_resources. */
-			(void)waitpid(svc->pid, NULL, WNOHANG);
 			close(svc->pd_fd);
 			svc->pd_fd = -1;
 			svc->cleanup.child_pending = false;
@@ -941,7 +939,6 @@ supervisor_handle_procdesc(struct kevent *kev)
 
 		was_stopping = (svc->state == SVC_STATE_STOPPING);
 
-		waitpid(svc->pid, NULL, WNOHANG);
 		cancel_stop_timer(svc);
 		/*
 		 * The process is gone, so any idle timer armed for it (e.g. a
