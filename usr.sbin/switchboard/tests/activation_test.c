@@ -451,6 +451,121 @@ ATF_TC_BODY(register_all_creates_slot, tc)
 	(void)close(kq);
 }
 
+/*
+ * A unit whose only demand source is a calendar schedule, a queue directory
+ * or a mount trigger has no boot launch and no IPC name either: register_all
+ * must give it a stopped slot and arm that source.
+ */
+enum register_source { REG_CALENDAR, REG_QUEUE, REG_MOUNT };
+
+static void
+register_source_only(enum register_source source)
+{
+	struct capbundle_service *cs;
+	struct svc_runtime *svc;
+	char queue[PATH_MAX];
+	int kq;
+
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	reset_globals(kq);
+	services_alloc(0);
+	sd.nservices = 0;
+
+	memset(&reg_bundle, 0, sizeof(reg_bundle));
+	strlcpy(reg_bundle.bundle_id, "org.test.reg",
+	    sizeof(reg_bundle.bundle_id));
+	reg_bundle.nservices = 1;
+	cs = &reg_bundle.services[0];
+	strlcpy(cs->label, "org.test.reg/sourceunit", sizeof(cs->label));
+	strlcpy(cs->program, "/dev/null", sizeof(cs->program));
+	switch (source) {
+	case REG_CALENDAR:
+		cs->has_calendar = true;
+		cs->calendar.minute = SVC_CAL_ANY;
+		cs->calendar.hour = SVC_CAL_ANY;
+		cs->calendar.mday = SVC_CAL_ANY;
+		cs->calendar.month = SVC_CAL_ANY;
+		cs->calendar.wday = SVC_CAL_ANY;
+		break;
+	case REG_QUEUE:
+		ATF_REQUIRE(getcwd(queue, sizeof(queue)) != NULL);
+		ATF_REQUIRE(strlcat(queue, "/queue", sizeof(queue)) <
+		    sizeof(queue));
+		ATF_REQUIRE_EQ(0, mkdir(queue, 0700));
+		strlcpy(cs->queue_directory, queue,
+		    sizeof(cs->queue_directory));
+		break;
+	case REG_MOUNT:
+		cs->activation_on_mount = true;
+		break;
+	}
+	reg_present = true;
+
+	ATF_CHECK_EQ(0, activation_register_all(kq));
+	ATF_REQUIRE_EQ(1, sd.nservices);
+	svc = svc_by_label("org.test.reg/sourceunit");
+	ATF_REQUIRE(svc != NULL);
+	ATF_CHECK_EQ(SVC_STATE_STOPPED, svc->state);
+	switch (source) {
+	case REG_CALENDAR:
+		ATF_CHECK(svc->activation_timer_ident != 0);
+		break;
+	case REG_QUEUE:
+		ATF_CHECK(svc->activation_queue_fd >= 0);
+		break;
+	case REG_MOUNT:
+		ATF_CHECK(svc->activation_mount_ident != 0);
+		break;
+	}
+	ATF_CHECK_EQ(0, launch_calls);
+
+	activation_source_teardown(svc, kq);
+	services_free();
+	sd.services = NULL;
+	sd.nservices = 0;
+	(void)close(kq);
+}
+
+ATF_TC(register_calendar_only_unit);
+ATF_TC_HEAD(register_calendar_only_unit, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "register_all gives a calendar-only unit a slot and arms its "
+	    "schedule");
+}
+ATF_TC_BODY(register_calendar_only_unit, tc)
+{
+
+	register_source_only(REG_CALENDAR);
+}
+
+ATF_TC(register_queue_only_unit);
+ATF_TC_HEAD(register_queue_only_unit, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "register_all gives a queue-directory-only unit a slot and "
+	    "watches its directory");
+}
+ATF_TC_BODY(register_queue_only_unit, tc)
+{
+
+	register_source_only(REG_QUEUE);
+}
+
+ATF_TC(register_mount_only_unit);
+ATF_TC_HEAD(register_mount_only_unit, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "register_all gives a mount-only unit a slot and arms its mount "
+	    "watch");
+}
+ATF_TC_BODY(register_mount_only_unit, tc)
+{
+
+	register_source_only(REG_MOUNT);
+}
+
 /* --- Phase 4: socket activation --- */
 
 /* Fill a loopback TCP stream socket spec with an ephemeral (port 0) bind. */
@@ -805,6 +920,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, path_arm_write_and_teardown);
 	ATF_TP_ADD_TC(tp, path_delete_reopen_and_drop);
 	ATF_TP_ADD_TC(tp, register_all_creates_slot);
+	ATF_TP_ADD_TC(tp, register_calendar_only_unit);
+	ATF_TP_ADD_TC(tp, register_queue_only_unit);
+	ATF_TP_ADD_TC(tp, register_mount_only_unit);
 	ATF_TP_ADD_TC(tp, socket_listener_create_binds_and_listens);
 	ATF_TP_ADD_TC(tp, socket_arm_connect_demand_and_coalesce);
 	ATF_TP_ADD_TC(tp, socket_restart_preserves_listener);

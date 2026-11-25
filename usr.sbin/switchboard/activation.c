@@ -865,11 +865,12 @@ activation_socket_event(struct kevent *kev, int kq)
 
 /*
  * Arm activation sources for every unit that declares one.  A unit activated
- * purely by a timer or path has no boot launch and no IPC name, so startup
- * never gave it a runtime slot; create a stopped slot here so its source has a
- * unit to activate.  Units that already have a slot (boot units, or units that
- * also publish IPC names) are found by label and only have their sources
- * armed.  Idempotent, so it is safe to call again on reload.
+ * purely by a timer, path, socket, calendar, queue directory or mount has no
+ * boot launch and no IPC name, so startup never gave it a runtime slot;
+ * create a stopped slot here so its source has a unit to activate.  Units
+ * that already have a slot (boot units, or units that also publish IPC
+ * names) are found by label and only have their sources armed.  Idempotent,
+ * so it is safe to call again on reload.
  */
 int
 activation_register_all(int kq)
@@ -891,9 +892,7 @@ activation_register_all(int kq)
 			asvc = capbundle_service(b, si);
 			if (asvc == NULL)
 				continue;
-			if (capbundle_svc_timer_interval(asvc) == 0 &&
-			    capbundle_svc_activation_path(asvc)[0] == '\0' &&
-			    capbundle_svc_nactivation_sockets(asvc) == 0)
+			if (!capbundle_svc_has_activation_source(asvc))
 				continue;
 
 			svc = svc_by_label_scoped(capbundle_svc_label(asvc),
