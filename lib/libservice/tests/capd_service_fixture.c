@@ -940,8 +940,16 @@ scenario_multi_provider(const char *first, const char *second,
 			errno = accepted[i].error;
 			err(1, "service_listener_accept");
 		}
+		/*
+		 * Tell the client which name it reached.  A client that has
+		 * already closed its end (compat-lookup records its result
+		 * and exits as soon as it is connected) makes the send fail
+		 * with EPIPE or ECONNRESET: the routing already happened, and
+		 * the accept above is its evidence, so that is no failure.
+		 */
 		if (fixture_event_send(accepted[i].fd, accepted[i].service_name,
-		    strlen(accepted[i].service_name) + 1) == -1)
+		    strlen(accepted[i].service_name) + 1) == -1 &&
+		    errno != EPIPE && errno != ECONNRESET)
 			err(1, "channel_send_event");
 		/*
 		 * Keep the accepted endpoint open: a fire-and-forget event is
