@@ -312,17 +312,17 @@ find_launching_service(const char *name, uid_t owner_uid)
 }
 
 /*
- * A runtime whose restart circuit breaker has opened stays in the registry so
- * an operator can inspect or explicitly start it.  It must not, however, be
- * treated like an ordinary idle-stopped provider: otherwise every lookup
- * immediately relaunches it and the advertised max_failures limit is illusory.
+ * A runtime whose restart circuit breaker has opened (it is disabled) stays in
+ * the registry so an operator can inspect or explicitly start it.  It must
+ * not, however, be treated like an ordinary idle-stopped provider: otherwise
+ * every lookup immediately relaunches it and the advertised max_failures
+ * limit is illusory.
  */
 static bool
 on_demand_circuit_open(const struct svc_runtime *svc)
 {
 
-	return (svc->manifest.max_failures != 0 &&
-	    svc->restart_count >= svc->manifest.max_failures);
+	return (svc->disabled);
 }
 
 /*

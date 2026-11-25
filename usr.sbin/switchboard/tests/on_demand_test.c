@@ -561,16 +561,22 @@ ATF_TC_BODY(circuit_breaker_blocks_on_demand_relaunch, tc)
 	(void)tc;
 	runtime_init(&svc, "org.test.crashloop", 0, 0);
 	svc.manifest.max_failures = 3;
+	svc.manifest.restart = SVC_RESTART_ALWAYS;
+	svc.state = SVC_STATE_STOPPING;
 
+	/* Failures below the limit leave the unit launchable. */
 	svc.restart_count = 2;
 	ATF_CHECK(!on_demand_circuit_open(&svc));
-	svc.restart_count = 3;
-	ATF_CHECK(on_demand_circuit_open(&svc));
-	svc.restart_count = 30;
+	/* The supervisor's breaker trips on the last allowed failure. */
+	supervisor_finish_native_exit(&svc, W_EXITCODE(1, 0), false, false,
+	    false, 0);
+	ATF_CHECK_EQ(SVC_STATE_STOPPED, svc.state);
+	ATF_CHECK_EQ(3, svc.restart_count);
+	ATF_CHECK(svc.disabled);
 	ATF_CHECK(on_demand_circuit_open(&svc));
 
-	/* A fresh runtime and an explicitly reset counter remain launchable. */
-	svc.restart_count = 0;
+	/* Only an operator start clears it (sctl.c); a fresh runtime is not. */
+	runtime_init(&svc, "org.test.fresh", 0, 0);
 	ATF_CHECK(!on_demand_circuit_open(&svc));
 }
 

@@ -214,6 +214,11 @@ struct svc_runtime {
 
 	/* Restart tracking */
 	unsigned	restart_count;
+	/*
+	 * Too many failures (manifest max_failures): nothing starts the unit
+	 * again until an operator does (svc_exec() refuses with ECANCELED).
+	 */
+	bool		disabled;
 	bool		restart_pending;	/* timer scheduled */
 	uintptr_t	timer_ident;		/* unique kevent ident */
 	bool		stop_kill_pending;	/* SIGKILL timer scheduled */

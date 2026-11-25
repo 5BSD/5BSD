@@ -633,13 +633,17 @@ is reset.
 .Ss Circuit Breaker
 After
 .Va max_failures
-consecutive rapid failures (default 10), the service is permanently
-disabled and not restarted.
-A manifest reload via
-.Dv SIGHUP
-or the
-.Cm reload
-control command will re-evaluate the manifest.
+consecutive rapid failures (default 10), the service is disabled:
+status shows it as
+.Ql disabled ,
+and no restart, lookup or activation source starts it again
+.Po
+a lookup fails with
+.Er ECANCELED
+.Pc .
+An operator
+.Cm start
+clears it.
 .Pp
 .Nm
 also watches its install directories

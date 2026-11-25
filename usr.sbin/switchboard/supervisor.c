@@ -186,6 +186,7 @@ svc_restart_now(struct svc_runtime *svc, int kq)
 		SWITCHBOARD_PROBE_SVC_DISABLED(svc->manifest.label,
 		    svc->restart_count);
 		svc->state = SVC_STATE_STOPPED;
+		svc->disabled = true;
 		return;
 	}
 	/* A launch that failed after its fork retries once its teardown ends. */
@@ -633,6 +634,7 @@ supervisor_finish_native_exit(struct svc_runtime *svc, int exit_status,
 		SWITCHBOARD_PROBE_SVC_DISABLED(svc->manifest.label,
 		    svc->restart_count);
 		svc->state = SVC_STATE_STOPPED;
+		svc->disabled = true;
 		return;
 	}
 

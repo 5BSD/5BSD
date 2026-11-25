@@ -227,6 +227,72 @@ circuit_breaker_disables_cleanup()
 }
 
 # ===================================================================
+# Circuit breaker: a disabled unit stays down until an operator starts it
+# ===================================================================
+
+atf_test_case disabled_unit_stays_down cleanup
+disabled_unit_stays_down_head()
+{
+	atf_set "descr" "a unit the circuit breaker disabled shows as disabled, its activation timer does not relaunch it, and an operator start does"
+	atf_set "require.user" "root"
+	atf_set "timeout" "300"
+	require_capsule_stack_kmods
+}
+disabled_unit_stays_down_body()
+{
+	local disabled verdict i starts
+
+	use_private_control
+	prepare_paths
+	# Crashes at once; its one-second timer keeps creating demand.
+	make_fixture_svc system org.test.crashy.unit \
+	    'restart = "always"; max_failures = 3;
+activation { boot = true; timer = { interval = 1; } }' \
+	    lifecycle-exit "${WORK}/crashy.pid" 1 >/dev/null
+	start_stack
+	svc_wait_log 'service org\.test\.crashy\.unit[^ ]*: (exec )?failed .*disabling' \
+	    120 || fail_case "the circuit breaker did not trip"
+	disabled=$(svc_log_line 'service org\.test\.crashy\.unit[^ ]*: (exec )?failed .*disabling')
+
+	# The next timer fire after the disable must be refused, not launch.
+	i=0
+	verdict=
+	while [ -z "$verdict" ] && [ "$i" -lt 600 ]; do
+		verdict=$(sed -n "$((disabled + 1)),\$p" "$logfile" |
+		    grep -Eo "activation: timer (activated|launch of) 'org\.test\.crashy" |
+		    head -n 1)
+		i=$((i + 1))
+		[ -n "$verdict" ] || sleep 0.1
+	done
+	case "$verdict" in
+	*"launch of"*) ;;
+	*activated*) fail_case "the timer relaunched the disabled unit" ;;
+	*) fail_case "the timer did not fire after the disable" ;;
+	esac
+	atf_check -s exit:0 -o match:"org\.test\.crashy\.unit/unit +stopped +disabled" \
+	    "$SWITCHBOARDCTL" status
+
+	# An operator start clears it.
+	starts=$(grep -c 'service org\.test\.crashy\.unit[^ ]*: started pid' "$logfile")
+	atf_check -s exit:0 -o match:"starting" \
+	    "$SWITCHBOARDCTL" start "org.test.crashy.unit/unit"
+	i=0
+	while [ "$(grep -c 'service org\.test\.crashy\.unit[^ ]*: started pid' "$logfile")" -le "$starts" ] &&
+	    [ "$i" -lt 150 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	[ "$(grep -c 'service org\.test\.crashy\.unit[^ ]*: started pid' "$logfile")" -gt "$starts" ] ||
+	    fail_case "the operator start did not launch the unit"
+	assert_stack_alive
+}
+disabled_unit_stays_down_cleanup()
+{
+	cleanup_common
+	rm -f crashy.pid
+}
+
+# ===================================================================
 # Shutdown: SIGTERM-ignoring service gets SIGKILL after timeout
 # ===================================================================
 
@@ -1637,6 +1703,7 @@ atf_init_test_cases()
 	atf_add_test_case restart_on_failure_restarts_on_error
 	atf_add_test_case restart_always_restarts_clean
 	atf_add_test_case circuit_breaker_disables
+	atf_add_test_case disabled_unit_stays_down
 	atf_add_test_case restart_backoff
 
 	# Shutdown

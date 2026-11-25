@@ -890,6 +890,11 @@ svc_exec(struct svc_runtime *svc, int kq)
 		errno = EBUSY;
 		return (-1);
 	}
+	/* Disabled after too many failures: only an operator start clears it. */
+	if (svc->disabled) {
+		errno = ECANCELED;
+		return (-1);
+	}
 
 	if (svc->manifest.exec_application)
 		return (errno = EOPNOTSUPP, -1);

@@ -143,6 +143,8 @@ sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 			else
 				BUF_APPEND(summary, sumlen, &off,
 				    "  %-20s %-8s", svc->manifest.label, state);
+			if (svc->disabled)
+				BUF_APPEND(summary, sumlen, &off, " disabled");
 
 			if (svc->state == SVC_STATE_RUNNING ||
 			    svc->state == SVC_STATE_STARTING) {
@@ -175,8 +177,9 @@ sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 				    " restarts=%u", svc->restart_count);
 			/*
 			 * A stopped unit with a restart timer armed comes back
-			 * by itself; one without (a clean exit, or the circuit
-			 * breaker's disable) stays stopped until started.
+			 * by itself; one without (a clean exit) stays stopped
+			 * until started, and a disabled one (above) until an
+			 * operator starts it.
 			 */
 			if (svc->restart_pending)
 				BUF_APPEND(summary, sumlen, &off,
@@ -525,6 +528,7 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 				svc_cancel_restart(svc, switchboard_kq);
 				svc->state = SVC_STATE_STOPPED;
 				svc->restart_count = 0;
+				svc->disabled = false;
 				svc->lookup_activated = false;
 				strlcpy(svc->launched_by, "operator",
 				    sizeof(svc->launched_by));

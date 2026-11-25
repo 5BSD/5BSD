@@ -52,7 +52,15 @@ Software attributes do not establish a login-session coalition.
 A unit whose automatic restart is scheduled shows
 .Ql restart-pending ;
 a stopped unit without it stays stopped until it is started (it exited
-without a restart, or its restarts were disabled after too many failures).
+without a restart).
+A unit that failed
+.Ql max_failures
+times shows
+.Ql disabled :
+no restart, lookup or activation source starts it again until an
+authorized
+.Cm start ,
+which clears it.
 .Pp
 A service waiting for resource teardown also shows
 .Ql cleanup= ,
