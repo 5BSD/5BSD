@@ -5,13 +5,16 @@
  * dq_exec_test's image: a dynamic program that prints what the kernel
  * gave it (AT_EXECPATH, the cwd, its arguments) and, with "wait" as an
  * argument, waits for its standard input to close so the test can look
- * at its mappings.
+ * at its mappings.  With "queue" it first opens a queue of its own and
+ * prints "queue=ok" (or the error): dq_observe_test lists a queue whose
+ * controller is a new execution.
  */
 
 #include <sys/param.h>
 #include <sys/auxv.h>
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -30,6 +33,14 @@ main(int argc, char **argv)
 	for (i = 0; i < argc; i++)
 		printf("argv%d=%s\n", i, argv[i]);
 	fflush(stdout);
+	for (i = 1; i < argc; i++) {
+		if (strcmp(argv[i], "queue") == 0) {
+			/* Held until exit; the queue dies with this process. */
+			printf("queue=%s\n", open("/dev/dq", O_RDWR) >= 0 ?
+			    "ok" : strerror(errno));
+			fflush(stdout);
+		}
+	}
 	for (i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "wait") == 0) {
 			while (read(STDIN_FILENO, &c, 1) == 1)

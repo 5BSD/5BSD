@@ -1017,4 +1017,7 @@ const char *syscallnames[] = {
 	"cap_mmap_capmode",			/* 1009 = cap_mmap_capmode */
 	"cap_lookup_capmode",			/* 1010 = cap_lookup_capmode */
 	"cap_process",			/* 1011 = cap_process */
+	"#1012",			/* 1012 = audit_token_get */
+	"#1013",			/* 1013 = audit_token_check */
+	"#1014",			/* 1014 = pdopentoken */
 };

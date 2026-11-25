@@ -1060,4 +1060,7 @@ struct sysent sysent[] = {
 	{ .sy_narg = AS(cap_mmap_capmode_args), .sy_call = (sy_call_t *)sys_cap_mmap_capmode, .sy_auevent = AUE_CAP_MMAP_CAPMODE, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 1009 = cap_mmap_capmode */
 	{ .sy_narg = AS(cap_lookup_capmode_args), .sy_call = (sy_call_t *)sys_cap_lookup_capmode, .sy_auevent = AUE_CAP_LOOKUP_CAPMODE, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 1010 = cap_lookup_capmode */
 	{ .sy_narg = AS(cap_process_args), .sy_call = (sy_call_t *)sys_cap_process, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 1011 = cap_process */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 1012 = audit_token_get */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 1013 = audit_token_check */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 1014 = pdopentoken */
 };

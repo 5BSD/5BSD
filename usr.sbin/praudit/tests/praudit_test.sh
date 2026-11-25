@@ -177,6 +177,90 @@ praudit_raw_short_exclusive_body()
 }
 
 
+# Every token type a program can make (input/golden_tokens, written by
+# mkgolden.c), printed as the praudit of the tree before the procident
+# token printed it.  Numeric forms only, so that no name database is read.
+atf_test_case praudit_golden_tokens
+praudit_golden_tokens_head()
+{
+	atf_set "descr" "Verify that every existing token type prints as " \
+			"before (numeric, raw, short, one-line and XML forms)"
+	atf_set "require.progs" praudit
+}
+
+praudit_golden_tokens_body()
+{
+	local in=$(atf_get_srcdir)/golden_tokens
+
+	export TZ=UTC
+	atf_check -o file:$(atf_get_srcdir)/golden_numeric praudit -n $in
+	atf_check -o file:$(atf_get_srcdir)/golden_raw praudit -rn $in
+	atf_check -o file:$(atf_get_srcdir)/golden_short praudit -sn $in
+	atf_check -o file:$(atf_get_srcdir)/golden_oneline praudit -ln $in
+	# From standard input praudit does not fork (praudit.c), so the
+	# XML header is printed once; it then exits 1 without the footer.
+	atf_check -s exit:1 -o file:$(atf_get_srcdir)/golden_xml \
+		praudit -xn < $in
+}
+
+# A record whose procident token (0xc0) is read by a praudit that does not
+# know it: header, subject and return print as before, the token alone is
+# "unknown" (fetch_invalid_tok() takes the bytes up to the trailer), and
+# the XML form drops it.  The XML of praudit -x is completed with the
+# footer praudit leaves out when it reads standard input, then parsed.
+# config: old_praudit, a praudit built before the token (default: the
+# system's, when it does not know the token).
+atf_test_case praudit_procident_old_reader
+praudit_procident_old_reader_head()
+{
+	atf_set "descr" "Verify that a praudit without the procident " \
+			"token still prints the rest of the record"
+	atf_set "require.progs" praudit python3
+}
+
+praudit_procident_old_reader_body()
+{
+	local in=$(atf_get_srcdir)/procident_trail
+	local pr=$(atf_config_get old_praudit praudit)
+
+	export TZ=UTC
+	if ! atf_config_has old_praudit &&
+	    praudit -n $in | grep -q '^procident,'; then
+		atf_skip "praudit knows the procident token; set old_praudit" \
+		    "to a praudit built before it"
+	fi
+	atf_check -o file:$(atf_get_srcdir)/procident_old_numeric $pr -n $in
+	atf_check -o file:$(atf_get_srcdir)/procident_old_raw $pr -rn $in
+	atf_check -s exit:1 -o save:old.xml $pr -xn < $in
+	atf_check -o file:$(atf_get_srcdir)/procident_old_xml cat old.xml
+	echo '</audit>' >> old.xml
+	atf_check python3 -I -c 'import sys, xml.dom.minidom; \
+	    xml.dom.minidom.parse(sys.argv[1])' old.xml
+}
+
+# The same record read by a praudit that knows the token.
+atf_test_case praudit_procident
+praudit_procident_head()
+{
+	atf_set "descr" "Verify that praudit prints the procident token"
+	atf_set "require.progs" praudit python3
+}
+
+praudit_procident_body()
+{
+	local in=$(atf_get_srcdir)/procident_trail
+
+	export TZ=UTC
+	atf_check -o file:$(atf_get_srcdir)/procident_new_numeric praudit -n $in
+	atf_check -o file:$(atf_get_srcdir)/procident_new_raw praudit -rn $in
+	atf_check -s exit:1 -o save:new.xml praudit -xn < $in
+	atf_check -o file:$(atf_get_srcdir)/procident_new_xml cat new.xml
+	echo '</audit>' >> new.xml
+	atf_check python3 -I -c 'import sys, xml.dom.minidom; \
+	    xml.dom.minidom.parse(sys.argv[1])' new.xml
+}
+
+
 atf_init_test_cases()
 {
 	atf_add_test_case praudit_delim_comma
@@ -189,4 +273,7 @@ atf_init_test_cases()
 	atf_add_test_case praudit_xml_form
 	atf_add_test_case praudit_sync_to_next_record
 	atf_add_test_case praudit_raw_short_exclusive
+	atf_add_test_case praudit_golden_tokens
+	atf_add_test_case praudit_procident_old_reader
+	atf_add_test_case praudit_procident
 }

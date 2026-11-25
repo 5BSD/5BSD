@@ -3394,4 +3394,8 @@
             _Inout_opt_ void *data
         );
     }
+; Reserved for the audit token (audit_token(3)); implemented by slice T0.
+1012	AUE_NULL	UNIMPL	audit_token_get
+1013	AUE_NULL	UNIMPL	audit_token_check
+1014	AUE_NULL	UNIMPL	pdopentoken
 ; vim: syntax=off

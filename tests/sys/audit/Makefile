@@ -14,6 +14,8 @@ ATF_TESTS_C+=	inter-process
 ATF_TESTS_C+=	administrative
 ATF_TESTS_C+=	process-control
 ATF_TESTS_C+=	miscellaneous
+# The procident token of kernel records (audit_token(3)).
+ATF_TESTS_C+=	procident
 # DescriptorQueue served starts (dq(4) stage 1c-iii-b): skips without /dev/dq.
 ATF_TESTS_C+=	dq_served
 
@@ -45,6 +47,8 @@ SRCS.process-control+=		process-control.c
 SRCS.process-control+=		utils.c
 SRCS.miscellaneous+=		miscellaneous.c
 SRCS.miscellaneous+=		utils.c
+SRCS.procident+=		procident.c
+SRCS.procident+=		utils.c
 SRCS.dq_served+=		dq_served.c
 SRCS.dq_served+=		utils.c
 CFLAGS.dq_served.c+=		-I${SRCTOP}/sys -I${SRCTOP}/lib/libdq

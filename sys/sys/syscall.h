@@ -556,4 +556,4 @@
 #define	SYS_cap_mmap_capmode	1009
 #define	SYS_cap_lookup_capmode	1010
 #define	SYS_cap_process	1011
-#define	SYS_MAXSYSCALL	1012
+#define	SYS_MAXSYSCALL	1015
