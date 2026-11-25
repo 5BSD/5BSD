@@ -36,6 +36,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
+#include <login_cap.h>
 #include <pwd.h>
 #include <poll.h>
 #include <signal.h>
@@ -94,6 +95,14 @@ static uint64_t svc_launch_sequence;
  * getty, login, su — carries system service discovery.
  */
 int switchboard_ambient_lookup_fd = -1;
+
+/*
+ * RC and oneshot commands (svc_exec_command) start from an empty environment
+ * and take the login class init(8) gives /etc/rc (RESOURCE_RC in init.c).
+ */
+#define	SVC_COMMAND_LOGIN_CLASS	"daemon"
+extern char **environ;
+static char *command_environment[] = { NULL };
 
 #define	SVC_TOKEN_BASE	6	/* after the typed bootstrap descriptor */
 #define	SVC_MAX_TOKENS	SVC_LAUNCH_MAX_TOKENS
@@ -1113,6 +1122,27 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[], bool for_stop)
 		if (lookup_fd >= 0 && service_install_ambient_lookup(lookup_fd) == -1)
 			_exit(126);
 		closefrom(STDERR_FILENO + 1);
+
+		/*
+		 * Run the command the way init(8) runs /etc/rc: an empty
+		 * environment, then the login.conf "daemon" class's environment,
+		 * priority, resource limits, login class and CPU mask
+		 * (init's setprocresources(RESOURCE_RC)).  SwitchBoard's own
+		 * environment (its descriptor numbers, bundle and test settings)
+		 * and its raised descriptor limit are not the rc world's.
+		 */
+		environ = command_environment;
+		{
+			login_cap_t *lc;
+
+			if ((lc = login_getclassbyname(SVC_COMMAND_LOGIN_CLASS,
+			    NULL)) != NULL) {
+				(void)setusercontext(lc, NULL, 0, LOGIN_SETENV |
+				    LOGIN_SETPRIORITY | LOGIN_SETRESOURCES |
+				    LOGIN_SETLOGINCLASS | LOGIN_SETCPUMASK);
+				login_close(lc);
+			}
+		}
 
 		if (svc_user_credentials_match(svc->owner_uid, uid, have_creds) == -1)
 			_exit(126);
