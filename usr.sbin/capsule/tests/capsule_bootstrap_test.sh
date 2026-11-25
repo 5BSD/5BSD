@@ -202,6 +202,38 @@ bootstrap_starts_switchboard_cleanup()
 	cleanup_common
 }
 
+# R17 of the channel promotion (channel-ipc-promotion.md S0): on dev Capsule
+# holds the system route's server end and hands it to every SwitchBoard start
+# as fd 9, named by SWITCHBOARD_DISCOVERY_FD.  S7 takes Capsule out of the
+# discovery path and inverts this case.
+atf_test_case bootstrap_hands_discovery_fd cleanup
+bootstrap_hands_discovery_fd_head()
+{
+	atf_set "descr" "SwitchBoard's start receives Capsule's discovery route as fd 9 (SWITCHBOARD_DISCOVERY_FD), a channel end"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+}
+bootstrap_hands_discovery_fd_body()
+{
+	build_mock_switchboard
+	start_capsule
+
+	if ! wait_for_file switchboard-started.out; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "bootstrap fixture did not start"
+	fi
+	atf_check -s exit:0 -o ignore grep -x "discovery_env=9" \
+	    switchboard-started.out
+	atf_check -s exit:0 -o ignore grep -x "discovery_fd9=channel" \
+	    switchboard-started.out
+	atf_check -s exit:0 -o ignore \
+	    grep "bootstrap: boot discovery channel created" "$logfile"
+}
+bootstrap_hands_discovery_fd_cleanup()
+{
+	cleanup_common
+}
+
 atf_test_case lookup_without_route cleanup
 lookup_without_route_head()
 {
@@ -736,6 +768,7 @@ bootstrap_no_service_manager_cleanup()
 atf_init_test_cases()
 {
 	atf_add_test_case bootstrap_starts_switchboard
+	atf_add_test_case bootstrap_hands_discovery_fd
 	atf_add_test_case bootstrap_channel_ping
 	atf_add_test_case channel_short_message_answered
 	atf_add_test_case channel_oversized_message_answered
