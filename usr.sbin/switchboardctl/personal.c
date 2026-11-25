@@ -85,7 +85,7 @@ personal_child_dir(int parent, const char *name, uid_t owner, bool create)
 static int
 personal_root(void)
 {
-	const char *root = getenv("SWITCHBOARD_LIFECYCLE_ROOT");
+	const char *root = secure_getenv("SWITCHBOARD_LIFECYCLE_ROOT");
 	char *copy, *part, *next;
 	struct stat st;
 	int fd, child, saved;
@@ -293,7 +293,7 @@ cmd_install_personal(const char *path)
 		warnx("install --personal: refuse changed process credentials");
 		return (1);
 	}
-	if (getenv("SWITCHBOARD_BUNDLE_DIR_USER") != NULL) {
+	if (secure_getenv("SWITCHBOARD_BUNDLE_DIR_USER") != NULL) {
 		warnx("install --personal: custom global bundle directory is not a personal destination");
 		return (1);
 	}

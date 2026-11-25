@@ -70,6 +70,37 @@ _Static_assert(SB_NSS_NAME_MAX == sizeof(((struct svc_manifest *)0)->group),
 struct switchboard_state sd;
 int switchboard_kq;
 
+/*
+ * Whether this SwitchBoard is the boot's service manager (Capsule as PID 1
+ * started it) and whether the kernel is a test kernel
+ * (kern.mac_capability.test_issuer=1).  Set first thing in main().
+ */
+static bool switchboard_boot_manager;
+static bool switchboard_test_kernel;
+
+/*
+ * Test configuration in the environment (the bundle, user and run
+ * directories, the disable list, the rc switches) is honoured only where a
+ * test can have set it: on a test kernel, or in a SwitchBoard that is not the
+ * boot's (a test-local Capsule started it).  The boot's SwitchBoard on any
+ * other kernel ignores it.
+ */
+const char *
+switchboard_test_getenv(const char *name)
+{
+
+	if (switchboard_boot_manager && !switchboard_test_kernel)
+		return (NULL);
+	return (getenv(name));
+}
+
+bool
+switchboard_is_boot_manager(void)
+{
+
+	return (switchboard_boot_manager);
+}
+
 const char *switchboard_bundle_dir_system = SWITCHBOARD_BUNDLE_DIR_SYSTEM_DEFAULT;
 const char *switchboard_bundle_dir_user = SWITCHBOARD_BUNDLE_DIR_USER_DEFAULT;
 const char *switchboard_users_dir = SWITCHBOARD_USERS_DIR_DEFAULT;
@@ -345,6 +376,16 @@ main(int argc, char *argv[])
 	 */
 	if (syscall(SYS_cap_process, CAP_AUTH_CLEAR, -1, 0, NULL) == -1)
 		err(1, "drop launch authority");
+	switchboard_boot_manager = getppid() == 1;
+	{
+		size_t len;
+		int knob;
+
+		len = sizeof(knob);
+		switchboard_test_kernel = sysctlbyname(
+		    "kern.mac_capability.test_issuer", &knob, &len, NULL,
+		    0) == 0 && knob == 1;
+	}
 	/*
 	 * Started by PID 1, we must be excluded.  PID 1 never starts us
 	 * without an issuer and a Core authority, and it executes the image
@@ -352,7 +393,7 @@ main(int argc, char *argv[])
 	 * the kernel refused the Core role at exec.  Say so loudly (review
 	 * D3).
 	 */
-	if (getppid() == 1) {
+	if (switchboard_boot_manager) {
 		struct kinfo_proc kp;
 		int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, 0 };
 		size_t kplen = sizeof(kp);
@@ -519,17 +560,17 @@ main(int argc, char *argv[])
 	if (svc_responsibility_root_init() == -1)
 		syslog(LOG_NOTICE, "no system root coalition: %m");
 
-	/* Override bundle directories from environment (for testing). */
-	s = getenv("SWITCHBOARD_BUNDLE_DIR_SYSTEM");
+	/* Test fixtures' bundle and run directories. */
+	s = switchboard_test_getenv("SWITCHBOARD_BUNDLE_DIR_SYSTEM");
 	if (s != NULL && s[0] != '\0')
 		switchboard_bundle_dir_system = s;
-	s = getenv("SWITCHBOARD_BUNDLE_DIR_USER");
+	s = switchboard_test_getenv("SWITCHBOARD_BUNDLE_DIR_USER");
 	if (s != NULL && s[0] != '\0')
 		switchboard_bundle_dir_user = s;
-	s = getenv("SWITCHBOARD_USERS_DIR");
+	s = switchboard_test_getenv("SWITCHBOARD_USERS_DIR");
 	if (s != NULL && s[0] != '\0')
 		switchboard_users_dir = s;
-	s = getenv("SWITCHBOARD_RUN_DIR");
+	s = switchboard_test_getenv("SWITCHBOARD_RUN_DIR");
 	if (s != NULL && *s != '\0')
 		switchboard_run_dir = s;
 
@@ -654,11 +695,15 @@ main(int argc, char *argv[])
 		/*
 		 * Test harnesses need to induce a manager crash to prove
 		 * supervisor loss is observable; the shield otherwise denies
-		 * ambient SIGKILL by design.  Only capsule's environment
-		 * allowlist can set this.
+		 * ambient SIGKILL by design.  Only on a test kernel, as for
+		 * Capsule's switchboard_test_no_sigkill.
 		 */
-		if (getenv("SWITCHBOARD_TEST_SHIELD_NO_SIGKILL") != NULL)
+		if (switchboard_test_kernel &&
+		    getenv("SWITCHBOARD_TEST_SHIELD_NO_SIGKILL") != NULL) {
+			syslog(LOG_WARNING, "TEST MODE: shield without SIGKILL "
+			    "(SWITCHBOARD_TEST_SHIELD_NO_SIGKILL)");
 			cp_req.flags &= ~CP_SF_SIGKILL;
+		}
 
 		reply_length = 0;
 		reply_nfds = 0;

@@ -278,6 +278,20 @@ and
 .Ev SWITCHBOARD_PRINCIPAL_POLICY
 override the registry directories and the policy file.
 .El
+.Pp
+The environment overrides
+.Po
+.Ev SWITCHBOARD_BUNDLE_DIR_SYSTEM ,
+.Ev SWITCHBOARD_BUNDLE_DIR_USER ,
+.Ev SWITCHBOARD_DISABLED_PATH
+and
+.Ev SWITCHBOARD_LIFECYCLE_ROOT
+.Pc
+are read with
+.Xr secure_getenv 3 :
+a set-user-ID or set-group-ID
+.Nm
+ignores them.
 .Sh PERSONAL NAMESPACES
 System and Apps bundles share the global namespace.
 Personal bundles are indexed separately for each authenticated installation

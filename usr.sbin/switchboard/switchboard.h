@@ -356,6 +356,11 @@ struct switchboard_state {
 extern struct switchboard_state sd;
 extern int switchboard_kq;
 
+/* switchboard.c: test configuration in the environment (see there). */
+const char *switchboard_test_getenv(const char *name);
+/* switchboard.c: Capsule as PID 1 started this SwitchBoard. */
+bool	switchboard_is_boot_manager(void);
+
 /* switchboard.c — dispatch one ready switchboard_kq event (main loop + rc bootstrap). */
 void	switchboard_dispatch_event(struct kevent *kev);
 

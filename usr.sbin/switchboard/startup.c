@@ -353,10 +353,17 @@ startup_launch_system(int kq)
 	struct capbundle_service *asvc;
 	struct timespec start_ts;
 	const char *skip_rc_env;
-	bool skip_rc;
+	bool boot, skip_rc;
 
-	skip_rc_env = getenv("SWITCHBOARD_SKIP_RC");
-	skip_rc = skip_rc_env != NULL && skip_rc_env[0] == '1';
+	/*
+	 * /etc/rc and rc.d adoption belong to the boot's SwitchBoard, the one
+	 * Capsule as PID 1 started.  A test-local SwitchBoard never runs them;
+	 * a boot fixture may skip them where test configuration is honoured
+	 * (switchboard_test_getenv()).
+	 */
+	boot = switchboard_is_boot_manager();
+	skip_rc_env = switchboard_test_getenv("SWITCHBOARD_SKIP_RC");
+	skip_rc = !boot || (skip_rc_env != NULL && skip_rc_env[0] == '1');
 
 	clock_gettime(CLOCK_MONOTONIC, &start_ts);
 
@@ -455,7 +462,7 @@ startup_launch_system(int kq)
 	 * fixture that skips rc under Capsule as PID 1 (the daemon-runtime
 	 * OES-admission image) keeps the route-less boot it was written for.
 	 */
-	if (!skip_rc || getppid() != 1)
+	if (!skip_rc || !boot)
 		startup_ambient_lookup();
 
 	/*
@@ -473,7 +480,10 @@ startup_launch_system(int kq)
 	 * not replayed.  Adopted rc.d services below still find their running
 	 * instance through onestatus.
 	 */
-	if (skip_rc)
+	if (!boot)
+		syslog(LOG_INFO, "startup: not the boot's service manager: "
+		    "/etc/rc not run");
+	else if (skip_rc)
 		syslog(LOG_INFO, "startup: /etc/rc skipped by environment");
 	else if (sd.boot_complete)
 		syslog(LOG_NOTICE, "startup: restart after boot: /etc/rc not "

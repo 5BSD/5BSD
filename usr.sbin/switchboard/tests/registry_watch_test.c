@@ -25,6 +25,13 @@
 
 /* ---- stubs for the switchboard globals registry_watch.c reaches ---- */
 struct switchboard_state sd;
+
+/* As in a test-local SwitchBoard: test configuration is honoured. */
+const char *
+switchboard_test_getenv(const char *name)
+{
+	return (getenv(name));
+}
 const char *switchboard_bundle_dir_system;
 const char *switchboard_bundle_dir_user;
 const char *switchboard_users_dir = "/nonexistent/switchboard-users";

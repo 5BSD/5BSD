@@ -46,7 +46,7 @@ static bool adopt_loaded;
 static const char *
 rc_adopt_conf_path(void)
 {
-	const char *p = getenv("SWITCHBOARD_ADOPT_CONF");
+	const char *p = switchboard_test_getenv("SWITCHBOARD_ADOPT_CONF");
 
 	return (p != NULL && p[0] != '\0') ? p : RC_ADOPT_DEFAULT_CONF;
 }
@@ -286,7 +286,7 @@ rc_adopt_register(int kq)
 
 	(void)kq;	/* the caller's boot launch loop starts appended units */
 
-	dir = getenv("SWITCHBOARD_RCD_DIR");
+	dir = switchboard_test_getenv("SWITCHBOARD_RCD_DIR");
 	if (dir == NULL || dir[0] == '\0')
 		dir = "/etc/rc.d";
 

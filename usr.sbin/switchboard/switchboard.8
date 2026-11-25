@@ -384,6 +384,31 @@ Default:
 .Pa /Capabilities .
 Primarily useful for testing.
 .El
+.Pp
+The directory overrides above,
+.Ev SWITCHBOARD_USERS_DIR ,
+.Ev SWITCHBOARD_DISABLED_PATH ,
+.Ev SWITCHBOARD_SKIP_RC ,
+.Ev SWITCHBOARD_ADOPT_CONF
+and
+.Ev SWITCHBOARD_RCD_DIR
+are test configuration, as is
+.Ev SWITCHBOARD_REGISTRY_WATCH_SETTLE .
+The boot's
+.Nm ,
+the one
+.Xr capsule 8
+started as PID 1, ignores them unless the kernel is a test kernel
+.Pq Va kern.mac_capability.test_issuer Ns =1 .
+A
+.Nm
+that is not the boot's never runs
+.Pa /etc/rc
+or adopts rc.d services.
+.Ev SWITCHBOARD_TEST_SHIELD_NO_SIGKILL ,
+which leaves
+.Dv SIGKILL
+out of the process shield, is honoured only on a test kernel.
 .Ss Runtime directory lifecycle
 The service manager cleans leftover runtime containers immediately before its
 first native service launch. During normal boot, rc must first make runtime

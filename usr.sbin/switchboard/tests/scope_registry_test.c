@@ -13,6 +13,7 @@ const char *switchboard_bundle_dir_system;
 const char *switchboard_bundle_dir_user;
 const char *switchboard_users_dir;
 struct switchboard_state sd;
+const char *switchboard_test_getenv(const char *name) { return (getenv(name)); }
 static void file(const char *path,const char *text) {
  FILE *f=fopen(path,"w");assert(f);assert(fputs(text,f)>=0);assert(fclose(f)==0);
 }

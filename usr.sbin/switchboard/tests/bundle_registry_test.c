@@ -29,6 +29,13 @@ const char *switchboard_bundle_dir_user;
 const char *switchboard_users_dir = "/nonexistent/switchboard-users";
 struct switchboard_state sd;
 
+/* As in a test-local SwitchBoard: test configuration is honoured. */
+const char *
+switchboard_test_getenv(const char *name)
+{
+	return (getenv(name));
+}
+
 static char sysroot[PATH_MAX], userroot[PATH_MAX];
 
 /* Test only the system-policy input; parsing and verification stay real.
