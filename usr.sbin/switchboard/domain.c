@@ -274,7 +274,7 @@ lookup_channel_requester(const struct svc_lookup_channel *lc)
 	if (lc == NULL || lc->owner_label[0] == '\0')
 		return (NULL);
 	for (i = 0; i < sd.nservices; i++) {
-		struct svc_runtime *svc = &sd.services[i];
+		struct svc_runtime *svc = sd.services[i];
 		if (svc->owner_uid == lc->owner_uid &&
 		    svc->launch_id == lc->owner_launch_id &&
 		    strcmp(svc->manifest.label, lc->owner_label) == 0)

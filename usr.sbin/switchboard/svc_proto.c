@@ -674,18 +674,6 @@ svc_channel_attach(struct svc_runtime *svc, int fd)
 	return (0);
 }
 
-int
-svc_channel_rebind(struct svc_runtime *svc)
-{
-
-	if (svc == NULL || svc->control_channel == NULL) {
-		errno = EINVAL;
-		return (-1);
-	}
-	return (channel_set_request_handler(svc->control_channel, svc_request,
-	    svc));
-}
-
 void
 svc_channel_close(struct svc_runtime *svc)
 {

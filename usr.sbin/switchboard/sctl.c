@@ -98,7 +98,7 @@ sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 
 	if (sd.services != NULL) {
 		for (i = 0; i < sd.nservices; i++) {
-			switch (sd.services[i].state) {
+			switch (sd.services[i]->state) {
 			case SVC_STATE_RUNNING:  nrunning++;  break;
 			case SVC_STATE_STOPPED:  nstopped++;  break;
 			case SVC_STATE_STARTING: nstarting++; break;
@@ -129,7 +129,7 @@ sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 	if (sd.nservices > 0) {
 		BUF_APPEND(summary, sumlen, &off, "\n");
 		for (i = 0; i < sd.nservices; i++) {
-			struct svc_runtime *svc = &sd.services[i];
+			struct svc_runtime *svc = sd.services[i];
 			const char *state;
 
 			if ((unsigned)svc->state < nitems(state_names))
@@ -251,7 +251,7 @@ sctl_tree_children(char *summary, size_t sumlen, size_t *off,
 	if (depth > SCTL_TREE_MAX_DEPTH)
 		return;
 	for (i = 0; i < sd.nservices; i++) {
-		struct svc_runtime *svc = &sd.services[i];
+		struct svc_runtime *svc = sd.services[i];
 
 		if (svc->coalition_id == 0 ||
 		    svc->responsible.parent_id != parent_id ||
@@ -292,7 +292,7 @@ sctl_cmd_tree(struct sctl_reply *reply, char *summary, size_t sumlen)
 	}
 	/* Units activated by a session, under it. */
 	for (i = 0; i < sd.nservices; i++) {
-		struct svc_runtime *svc = &sd.services[i];
+		struct svc_runtime *svc = sd.services[i];
 
 		if (svc->coalition_id == 0 ||
 		    svc->responsible.kind != SVC_RESP_SESSION)
@@ -310,7 +310,7 @@ sctl_cmd_tree(struct sctl_reply *reply, char *summary, size_t sumlen)
 	}
 	any = false;
 	for (i = 0; i < sd.nservices; i++) {
-		struct svc_runtime *svc = &sd.services[i];
+		struct svc_runtime *svc = sd.services[i];
 
 		if (svc->coalition_id == 0 ||
 		    svc->responsible.parent_id != svc->coalition_id)
@@ -370,7 +370,8 @@ sctl_target_scoped(const char *label, uid_t owner, uid_t caller, bool is_admin,
 			*error = svc_management_check_op(candidate, "started", caller, is_admin);
 			if (*error != 0)
 				goto rejected;
-			if (sd.services == NULL || sd.nservices >= SWITCHBOARD_MAX_SERVICES) {
+			if (sd.services == NULL ||
+			    sd.nservices >= SWITCHBOARD_MAX_SERVICES) {
 				*error = sd.services == NULL ? ENOMEM : ENOSPC;
 				goto rejected;
 			}
@@ -379,10 +380,8 @@ sctl_target_scoped(const char *label, uid_t owner, uid_t caller, bool is_admin,
 			svc_runtime_init_fds(candidate);
 			candidate->state = SVC_STATE_STOPPED;
 			clock_gettime(CLOCK_MONOTONIC, &candidate->launch_time);
-			svc = &sd.services[sd.nservices++];
-			*svc = *candidate;
-			free(candidate);
-			return (svc);
+			svc_unit_publish(candidate);
+			return (candidate);
 rejected:
 			free(candidate);
 			return (NULL);

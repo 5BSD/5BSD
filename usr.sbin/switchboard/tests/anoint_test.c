@@ -82,8 +82,8 @@ struct svc_runtime *
 svc_by_label(const char *label)
 {
 	for (unsigned i = 0; i < sd.nservices; i++)
-		if (strcmp(sd.services[i].manifest.label, label) == 0)
-			return (&sd.services[i]);
+		if (strcmp(sd.services[i]->manifest.label, label) == 0)
+			return (sd.services[i]);
 	return (NULL);
 }
 

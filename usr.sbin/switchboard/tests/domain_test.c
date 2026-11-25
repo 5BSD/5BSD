@@ -83,8 +83,8 @@ struct svc_runtime *
 svc_by_label(const char *label)
 {
 	for (unsigned i = 0; i < sd.nservices; i++)
-		if (strcmp(sd.services[i].manifest.label, label) == 0)
-			return (&sd.services[i]);
+		if (strcmp(sd.services[i]->manifest.label, label) == 0)
+			return (sd.services[i]);
 	return (NULL);
 }
 
@@ -1449,6 +1449,7 @@ ATF_TC_BODY(unit_context_generation, tc)
 {
 	struct svc_runtime original, moved;
 	struct svc_lookup_channel *lc;
+	struct svc_runtime *unit;
 	struct pump_ctx ctx;
 	pthread_t pump;
 	int unit_fd, other_fd, private_fd, kq, count, error;
@@ -1462,7 +1463,8 @@ ATF_TC_BODY(unit_context_generation, tc)
 	original.domain.anoint.n = 1;
 	strlcpy(original.domain.anoint.names[0], "test.grant",
 	    sizeof(original.domain.anoint.names[0]));
-	sd.services = &original;
+	unit = &original;
+	sd.services = &unit;
 	sd.nservices = 1;
 	kq = kqueue();
 	ATF_REQUIRE(kq >= 0);
@@ -1480,7 +1482,7 @@ ATF_TC_BODY(unit_context_generation, tc)
 	(void)pthread_join(pump, NULL);
 
 	moved = original;
-	sd.services = &moved;
+	unit = &moved;
 	moved.domain.anoint.all = true;
 	count = 0;
 	for (lc = lookup_channels; lc != NULL; lc = lc->next) {

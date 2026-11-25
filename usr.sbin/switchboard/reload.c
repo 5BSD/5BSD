@@ -35,9 +35,9 @@ svc_by_label_scoped(const char *label, uid_t owner_uid)
 	unsigned i;
 
 	for (i = 0; i < sd.nservices; i++) {
-		if (sd.services[i].owner_uid == owner_uid &&
-		    strcmp(sd.services[i].manifest.label, label) == 0)
-			return (&sd.services[i]);
+		if (sd.services[i]->owner_uid == owner_uid &&
+		    strcmp(sd.services[i]->manifest.label, label) == 0)
+			return (sd.services[i]);
 	}
 	return (NULL);
 }
@@ -49,44 +49,51 @@ svc_by_label(const char *label)
 }
 
 /*
- * Remove a service from the array by index, shifting remaining
- * entries down.  Caller must re-register kevents afterward.
+ * Remove a unit from the index and free it.  A unit whose previous coalition
+ * is still being cleaned up is only marked; cleanup completion removes it.
+ * Units are separate allocations, so removal never moves another unit and
+ * nothing registered on another unit's behalf needs to be told.  Everything
+ * still registered with this unit's address is dropped here, before the
+ * free.
  */
 void
-svc_remove(unsigned idx)
+svc_remove(struct svc_runtime *svc)
 {
-	unsigned i;
+	unsigned idx;
 
-	if (idx >= sd.nservices)
+	for (idx = 0; idx < sd.nservices && sd.services[idx] != svc; idx++)
+		;
+	if (idx == sd.nservices)
 		return;
-	if (sd.services[idx].cleanup.pending) {
-		sd.services[idx].remove_pending = true;
+	if (svc->cleanup.pending) {
+		svc->remove_pending = true;
 		return;
 	}
 
-	/* Abandon any async launch on the slot before it is overwritten, so
-	 * its descriptors are released and its session event is unregistered. */
-	if (sd.services[idx].launch != NULL)
-		svc_launch_cancel(&sd.services[idx], switchboard_kq);
+	/* Abandon any launch in progress, releasing its descriptors. */
+	if (svc->launch != NULL)
+		svc_launch_cancel(svc, switchboard_kq);
 
 	/*
-	 * Tear down this unit's activation sources (Phase 5) before the slot is
-	 * shifted away: the periodic timer and vnode watch outlive the unit's
-	 * own start/stop cycles, so removal is the only point they are dropped.
+	 * Activation sources outlive the unit's own start/stop cycles, so
+	 * removal is the only point they are dropped.
 	 */
-	activation_source_teardown(&sd.services[idx], switchboard_kq);
-	svc_responsibility_clear(&sd.services[idx]);
+	activation_source_teardown(svc, switchboard_kq);
+	supervisor_disarm_timers(svc, switchboard_kq);
+	naming_remove_owner(svc);
+	svc_channel_close(svc);
+	/* A stopped unit holds no process; close what a caller left behind. */
+	if (svc->pd_fd >= 0)
+		(void)close(svc->pd_fd);
+	if (svc->coalition_fd >= 0)
+		(void)close(svc->coalition_fd);
+	svc_responsibility_clear(svc);
 
-	for (i = idx; i < sd.nservices - 1; i++) {
-		sd.services[i] = sd.services[i + 1];
-		naming_rebind_owner(&sd.services[i + 1], &sd.services[i]);
-	}
-
+	memmove(&sd.services[idx], &sd.services[idx + 1],
+	    (sd.nservices - idx - 1) * sizeof(sd.services[0]));
 	sd.nservices--;
-
-	/* Clear the vacated slot. */
-	memset(&sd.services[sd.nservices], 0, sizeof(sd.services[0]));
-	svc_runtime_init_fds(&sd.services[sd.nservices]);
+	sd.services[sd.nservices] = NULL;
+	free(svc);
 }
 
 /* Compare and queue the policy that launch actually enforces. */
@@ -159,78 +166,6 @@ desired_service_manifest(const char *label, uid_t owner_uid, struct svc_manifest
 }
 
 /*
- * Re-register kevent udata pointers for all running services.
- * Called after svc_remove() shifts array entries (Phase 1).
- */
-void
-svc_reregister_kevents(int kq)
-{
-	struct kevent kev;
-	unsigned i;
-
-	for (i = 0; i < sd.nservices; i++) {
-		struct svc_runtime *svc = &sd.services[i];
-
-		if (supervisor_cleanup_rebind(svc, kq) == -1)
-			syslog(LOG_ERR, "reload: cleanup rebind for %s: %m",
-			    svc->manifest.label);
-		if (svc->state == SVC_STATE_STOPPED &&
-		    !svc->restart_pending)
-			continue;
-
-		if (svc->pd_fd >= 0) {
-			EV_SET(&kev, svc->pd_fd, EVFILT_PROCDESC,
-			    EV_ADD, NOTE_EXIT | NOTE_EXEC | NOTE_CAPMODE, 0, svc);
-			if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
-				syslog(LOG_WARNING,
-				    "reload: re-register pd_fd for %s: %m",
-				    svc->manifest.label);
-		}
-		if (svc->channel_fd >= 0) {
-			if (svc_channel_rebind(svc) == -1)
-				syslog(LOG_WARNING,
-				    "reload: rebind channel for %s: %m",
-				    svc->manifest.label);
-			EV_SET(&kev, svc->channel_fd, EVFILT_READ,
-			    EV_ADD, 0, 0, svc);
-			if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
-				syslog(LOG_WARNING,
-				    "reload: re-register channel_fd for %s: %m",
-				    svc->manifest.label);
-			svc_channel_sync_events(svc, kq);
-		}
-		if (svc->coalition_fd >= 0) {
-			EV_SET(&kev, svc->coalition_fd, EVFILT_READ,
-			    EV_ADD, 0, 0, svc);
-			if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
-				syslog(LOG_WARNING,
-				    "reload: re-register coalition_fd "
-				    "for %s: %m", svc->manifest.label);
-		}
-		/*
-		 * Re-schedule a pending restart timer with the post-compaction
-		 * udata.  The old timer was NOT cancelled before the reload
-		 * compaction, and its EVFILT_TIMER udata still points at this
-		 * service's pre-move slot address — which now holds a different
-		 * service — so it must be EV_DELETEd first (svc_cancel_restart),
-		 * or when it fires supervisor_handle_timer reads restart/idle
-		 * state off the wrong service.  Then arm a fresh one carrying the
-		 * correct udata.
-		 */
-		if (svc->restart_pending) {
-			svc_cancel_restart(svc, kq);
-			schedule_restart(svc, kq);
-		}
-		/* Update stop-kill timer udata if active. */
-		if (svc->stop_kill_pending && svc->stop_timer_ident != 0) {
-			EV_SET(&kev, svc->stop_timer_ident, EVFILT_TIMER,
-			    EV_ADD | EV_ONESHOT, NOTE_SECONDS, 5, svc);
-			(void)kevent(kq, &kev, 1, NULL, 0, NULL);
-		}
-	}
-}
-
-/*
  * Reload: re-scan bundle directories and diff against running services.
  * Add new services, stop removed ones.
  */
@@ -278,8 +213,8 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 
 	/* Invalidate bundle indices — the old registry is gone. */
 	for (i = 0; i < sd.nservices; i++) {
-		sd.services[i].bundle_idx = (unsigned)-1;
-		sd.services[i].bundle_svc_idx = (unsigned)-1;
+		sd.services[i]->bundle_idx = (unsigned)-1;
+		sd.services[i]->bundle_svc_idx = (unsigned)-1;
 	}
 
 	/* Rebind retained native slots by canonical label. A restart resolves its
@@ -309,7 +244,7 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 
 		nstopped = 0;
 		for (si = 0; si < sd.nservices; si++) {
-			struct svc_runtime *svc = &sd.services[si];
+			struct svc_runtime *svc = sd.services[si];
 
 			/* RC units belong to rc.d adoption, not the bundle registry.
 			 * A bundle rescan must not stop an adopted daemon simply
@@ -373,7 +308,7 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 				syslog(LOG_INFO,
 				    "reload: removing stopped service '%s'",
 				    removed_label);
-				svc_remove(si);
+				svc_remove(svc);
 				si--;
 				SWITCHBOARD_PROBE_SVC_REMOVED(removed_label);
 				reload_nremoved++;
@@ -382,9 +317,6 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 		if (nstopped > 0)
 			syslog(LOG_INFO, "reload: %u services marked for removal",
 			    nstopped);
-		/* Re-register kevents after svc_remove shifted the array. */
-		if (reload_nremoved > 0)
-			svc_reregister_kevents(kq);
 	}
 
 	/*
@@ -395,7 +327,7 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 
 		nchanged = 0;
 		for (si = 0; si < sd.nservices; si++) {
-			struct svc_runtime *svc = &sd.services[si];
+			struct svc_runtime *svc = sd.services[si];
 
 			if (svc->kind == SVC_KIND_RC || svc->remove_pending)
 				continue;
@@ -493,13 +425,13 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 			    bundle_registry_owner_uid(bi))
 				    != NULL)
 					continue;
-				if (sd.nservices >= SWITCHBOARD_MAX_SERVICES)
-					break;
-
-				svc = &sd.services[sd.nservices];
-				memset(svc, 0, sizeof(*svc));
-				svc_runtime_init_fds(svc);
-				svc->state = SVC_STATE_STOPPED;
+				svc = svc_unit_alloc();
+				if (svc == NULL) {
+					syslog(LOG_WARNING, "reload: cannot "
+					    "add '%s': %m",
+					    capbundle_svc_label(asvc));
+					continue;
+				}
 				svc->bundle_idx = bi;
 				svc->bundle_svc_idx = si;
 				strlcpy(svc->launched_by, "reload",
@@ -511,17 +443,18 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 					    "reload: skipping invalid "
 					    "bundle service '%s'",
 					    capbundle_svc_label(asvc));
+					free(svc);
 					continue;
 				}
 				svc_slot_apply_bundle_policy(svc, bi);
-				sd.nservices++;
+				svc_unit_publish(svc);
 				nnew_collected++;
 			}
 		}
 
 		/* 3b: Launch new services in parallel (no startup ordering). */
 		for (i = first_new; i < first_new + nnew_collected; i++) {
-			struct svc_runtime *svc = &sd.services[i];
+			struct svc_runtime *svc = sd.services[i];
 
 			if (svc_launch_or_await(svc, kq) == 0) {
 				syslog(LOG_INFO,

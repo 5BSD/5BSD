@@ -16,8 +16,9 @@ struct switchboard_state sd;
 int switchboard_kq=-1;
 int main(void) {
  int error;
- sd.services=calloc(2,sizeof(*sd.services));assert(sd.services);sd.nservices=2;
- struct svc_runtime *a=&sd.services[0],*b=&sd.services[1];
+ sd.services=calloc(SWITCHBOARD_MAX_SERVICES,sizeof(*sd.services));assert(sd.services);sd.nservices=2;
+ struct svc_runtime *a=calloc(1,sizeof(*a)),*b=calloc(1,sizeof(*b));assert(a&&b);
+ sd.services[0]=a;sd.services[1]=b;
  a->owner_uid=1001;b->owner_uid=1002;
  strlcpy(a->manifest.label,"Same/demo",sizeof(a->manifest.label));
  strlcpy(b->manifest.label,"Same/demo",sizeof(b->manifest.label));
@@ -55,7 +56,7 @@ int main(void) {
  assert(naming_find_for_uid("org.test.endpoint",1001)==NULL);
  assert(naming_find_for_uid("org.test.endpoint",1002)->owner==b);
  assert(naming_unregister("org.test.endpoint",b)==0);
- free(sd.services);
+ free(a);free(b);free(sd.services);
  puts("PASS scoped runtime slots/endpoints, no root namespace bypass, explicit authorized management, independent pending activation and unregister");return 0;
 }
 

@@ -43,8 +43,9 @@ ATF_TC_WITHOUT_HEAD(incomplete_publication_preserves_owners);
 ATF_TC_BODY(incomplete_publication_preserves_owners, tc)
 {
 	struct svc_runtime svc = { .owner_uid = (uid_t)-1 };
+	struct svc_runtime *unit = &svc;
 
-	sd.services = &svc;
+	sd.services = &unit;
 	sd.nservices = 1;
 	svc.state = SVC_STATE_RUNNING;
 	svc_reclaim_publish_live();

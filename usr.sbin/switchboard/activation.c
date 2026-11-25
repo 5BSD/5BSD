@@ -18,9 +18,9 @@
  *   activation { path  = { path = "/some/dir"; } } kqueue vnode events
  *
  * Timer idents carry ACTIVATION_TIMER_BIT so the main event loop routes them
- * here; they are matched to their unit by value, immune to services[]
- * compaction.  Path watches use EVFILT_VNODE whose ident is the watched
- * descriptor, so they are routed and matched by fd.  Path events are hints:
+ * here; they are matched to their unit by value.  Path watches use
+ * EVFILT_VNODE whose ident is the watched descriptor, so they are routed and
+ * matched by fd.  Path events are hints:
  * bursts coalesce (EV_CLEAR), and a delete/rename triggers a re-open so an
  * atomic replacement keeps being watched, or the watch is dropped and logged.
  *
@@ -89,9 +89,7 @@ static uintptr_t activation_mount_next = 1;
 	(NOTE_WRITE | NOTE_DELETE | NOTE_RENAME | NOTE_EXTEND | NOTE_ATTRIB)
 
 /*
- * Locate the unit that owns a periodic activation timer ident.  Matching by
- * value (not by a udata pointer) survives services[] compaction moving the
- * owning svc_runtime.
+ * Locate the unit that owns a periodic activation timer ident, by value.
  */
 static struct svc_runtime *
 timer_owner(uintptr_t ident)
@@ -99,15 +97,14 @@ timer_owner(uintptr_t ident)
 	unsigned i;
 
 	for (i = 0; i < sd.nservices; i++)
-		if (sd.services[i].activation_timer_ident == ident)
-			return (&sd.services[i]);
+		if (sd.services[i]->activation_timer_ident == ident)
+			return (sd.services[i]);
 	return (NULL);
 }
 
 /*
  * Locate the unit watching a given vnode descriptor.  The EVFILT_VNODE ident
- * is the descriptor, which is unique among open fds and moves with the struct
- * across compaction, so a scan by fd is stable.
+ * is the descriptor, which is unique among open fds.
  */
 static struct svc_runtime *
 path_owner(int fd)
@@ -115,8 +112,8 @@ path_owner(int fd)
 	unsigned i;
 
 	for (i = 0; i < sd.nservices; i++)
-		if (sd.services[i].activation_path_fd == fd)
-			return (&sd.services[i]);
+		if (sd.services[i]->activation_path_fd == fd)
+			return (sd.services[i]);
 	return (NULL);
 }
 
@@ -127,8 +124,8 @@ queue_owner(int fd)
 	unsigned i;
 
 	for (i = 0; i < sd.nservices; i++)
-		if (sd.services[i].activation_queue_fd == fd)
-			return (&sd.services[i]);
+		if (sd.services[i]->activation_queue_fd == fd)
+			return (sd.services[i]);
 	return (NULL);
 }
 
@@ -139,8 +136,8 @@ mount_owner(uintptr_t ident)
 	unsigned i;
 
 	for (i = 0; i < sd.nservices; i++)
-		if (sd.services[i].activation_mount_ident == ident)
-			return (&sd.services[i]);
+		if (sd.services[i]->activation_mount_ident == ident)
+			return (sd.services[i]);
 	return (NULL);
 }
 
@@ -181,8 +178,8 @@ dir_nonempty(int dirfd)
 
 /*
  * Locate the unit that owns a given socket-activation listen descriptor.  Like
- * path watches, the EVFILT_READ ident is the descriptor, unique among open fds
- * and stable across services[] compaction, so a scan by fd is safe.  The listen
+ * path watches, the EVFILT_READ ident is the descriptor, unique among open
+ * fds.  The listen
  * fd set is disjoint from every channel/control fd, so matching by fd here can
  * never mistake a listener for another EVFILT_READ user.
  */
@@ -194,9 +191,9 @@ listen_owner(int fd)
 	if (fd < 0)
 		return (NULL);
 	for (i = 0; i < sd.nservices; i++)
-		for (j = 0; j < sd.services[i].nactivation_listen; j++)
-			if (sd.services[i].activation_listen_fds[j] == fd)
-				return (&sd.services[i]);
+		for (j = 0; j < sd.services[i]->nactivation_listen; j++)
+			if (sd.services[i]->activation_listen_fds[j] == fd)
+				return (sd.services[i]);
 	return (NULL);
 }
 
@@ -902,17 +899,13 @@ activation_register_all(int kq)
 			svc = svc_by_label_scoped(capbundle_svc_label(asvc),
 			    bundle_registry_owner_uid(bi));
 			if (svc == NULL) {
-				if (sd.nservices >= SWITCHBOARD_MAX_SERVICES) {
-					syslog(LOG_WARNING,
-					    "activation: service limit reached, "
-					    "cannot register '%s'",
+				svc = svc_unit_alloc();
+				if (svc == NULL) {
+					syslog(LOG_WARNING, "activation: "
+					    "cannot register '%s': %m",
 					    capbundle_svc_label(asvc));
 					continue;
 				}
-				svc = &sd.services[sd.nservices];
-				memset(svc, 0, sizeof(*svc));
-				svc_runtime_init_fds(svc);
-				svc->state = SVC_STATE_STOPPED;
 				svc->bundle_idx = bi;
 				svc->bundle_svc_idx = si;
 				if (capbundle_svc_fill_manifest(asvc,
@@ -920,8 +913,7 @@ activation_register_all(int kq)
 					syslog(LOG_WARNING,
 					    "activation: invalid bundle service "
 					    "'%s'", capbundle_svc_label(asvc));
-					memset(svc, 0, sizeof(*svc));
-					svc_runtime_init_fds(svc);
+					free(svc);
 					continue;
 				}
 				svc_slot_apply_bundle_policy(svc, bi);
@@ -929,7 +921,7 @@ activation_register_all(int kq)
 				    sizeof(svc->launched_by));
 				clock_gettime(CLOCK_MONOTONIC,
 				    &svc->launch_time);
-				sd.nservices++;
+				svc_unit_publish(svc);
 			}
 			activation_source_arm(svc, kq);
 			armed++;

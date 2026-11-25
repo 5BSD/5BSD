@@ -161,7 +161,7 @@ svc_reclaim_publish_live(void)
 
 	/* 1. One marker per running unit's bundle. */
 	for (i = 0; i < sd.nservices; i++) {
-		struct svc_runtime *svc = &sd.services[i];
+		struct svc_runtime *svc = sd.services[i];
 		char bundle[BUNDLE_MAX];
 		int fd;
 

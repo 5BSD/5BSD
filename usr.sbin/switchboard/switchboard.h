@@ -14,7 +14,9 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 
+#include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -196,7 +198,6 @@ struct svc_runtime {
 		bool pending, was_stopping, child_pending, coalition_complete;
 		time_t uptime_sec;
 		uintptr_t timer_ident;
-		struct timespec deadline;
 	} cleanup;
 	struct svc_launch *launch;	/* non-NULL while a launch is in progress */
 	bool		protocol_ready;	/* SVC_OP_READY advisory received */
@@ -336,8 +337,13 @@ struct switchboard_state {
 	bool		running;
 	bool		shutting_down;
 
-	/* Service launcher */
-	struct svc_runtime	*services;
+	/*
+	 * Units.  Each unit is its own allocation and never moves: kevent
+	 * udata, naming entries and channel contexts keep its address for the
+	 * unit's whole life.  services[] (SWITCHBOARD_MAX_SERVICES entries) is
+	 * only the index; svc_remove() takes a unit out of it and frees it.
+	 */
+	struct svc_runtime	**services;
 	unsigned		 nservices;
 };
 
@@ -446,7 +452,7 @@ void	cancel_watchdog_timer(struct svc_runtime *svc, int kq);
 void	svc_quiesce_complete(struct svc_runtime *, int status, int kq);
 void	supervisor_cleanup_event(struct svc_runtime *svc);
 void	supervisor_cleanup_failed_launch(struct svc_runtime *svc);
-int	supervisor_cleanup_rebind(struct svc_runtime *svc, int kq);
+void	supervisor_disarm_timers(struct svc_runtime *svc, int kq);
 void	schedule_restart(struct svc_runtime *svc, int kq);
 
 /* svc_proto.c — service channel protocol dispatch */
@@ -457,7 +463,6 @@ void	supervisor_handle_channel(struct kevent *kev);
  */
 void	svc_launch_cancel(struct svc_runtime *svc, int kq);
 int	svc_channel_attach(struct svc_runtime *, int);
-int	svc_channel_rebind(struct svc_runtime *);
 void	svc_channel_close(struct svc_runtime *);
 void	svc_channel_sync_events(struct svc_runtime *, int);
 int	svc_channel_send_event(struct svc_runtime *, const void *, size_t,
@@ -467,8 +472,7 @@ int	svc_channel_send_event(struct svc_runtime *, const void *, size_t,
 int	supervisor_reload(int kq, char *summary, size_t sumlen);
 struct svc_runtime *svc_by_label(const char *label);
 struct svc_runtime *svc_by_label_scoped(const char *, uid_t);
-void	svc_remove(unsigned idx);
-void	svc_reregister_kevents(int kq);
+void	svc_remove(struct svc_runtime *svc);
 struct svc_new_client_msg;
 /*
  * Resource-ownership identity. Ownership includes the installation namespace; these
@@ -568,8 +572,6 @@ int	naming_register(const char *name, struct svc_runtime *owner,
 	    bool sendable);
 int	naming_unregister(const char *name, struct svc_runtime *owner);
 void	naming_remove_owner(struct svc_runtime *owner);
-void	naming_rebind_owner(struct svc_runtime *old_owner,
-	    struct svc_runtime *new_owner);
 int	naming_lookup(const char *name, struct svc_runtime *requester,
 	    const struct svc_domain *domain, const struct channel_sender *sender,
 	    int *errp, bool *sendablep);
@@ -666,6 +668,40 @@ svc_runtime_init_fds(struct svc_runtime *svc)
 	svc->protocol_ready = false;
 	memset(svc->name_state, SVC_NAME_UNCLAIMED,
 	    sizeof(svc->name_state));
+}
+
+/*
+ * Allocate a stopped unit that is not yet in sd.services[]: ENOMEM when the
+ * index was never allocated or the allocation fails, ENOSPC when the index is
+ * full.  The caller fills it and then either publishes it with
+ * svc_unit_publish(), which cannot fail, or frees it.
+ */
+static inline struct svc_runtime *
+svc_unit_alloc(void)
+{
+	struct svc_runtime *svc;
+
+	if (sd.services == NULL) {
+		errno = ENOMEM;
+		return (NULL);
+	}
+	if (sd.nservices >= SWITCHBOARD_MAX_SERVICES) {
+		errno = ENOSPC;
+		return (NULL);
+	}
+	svc = calloc(1, sizeof(*svc));
+	if (svc == NULL)
+		return (NULL);
+	svc_runtime_init_fds(svc);
+	svc->state = SVC_STATE_STOPPED;
+	return (svc);
+}
+
+static inline void
+svc_unit_publish(struct svc_runtime *svc)
+{
+
+	sd.services[sd.nservices++] = svc;
 }
 
 /*

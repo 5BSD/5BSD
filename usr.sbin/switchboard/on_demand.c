@@ -293,20 +293,20 @@ find_launching_service(const char *name, uid_t owner_uid)
 	unsigned i, j;
 
 	for (i = 0; i < sd.nservices; i++) {
-		if (sd.services[i].owner_uid != owner_uid)
+		if (sd.services[i]->owner_uid != owner_uid)
 			continue;
-		if (sd.services[i].state != SVC_STATE_STARTING &&
-		    sd.services[i].state != SVC_STATE_RUNNING)
+		if (sd.services[i]->state != SVC_STATE_STARTING &&
+		    sd.services[i]->state != SVC_STATE_RUNNING)
 			continue;
 		/* Check by provides name. */
-		for (j = 0; j < sd.services[i].manifest.nprovides; j++) {
-			if (strcmp(sd.services[i].manifest.provides[j],
+		for (j = 0; j < sd.services[i]->manifest.nprovides; j++) {
+			if (strcmp(sd.services[i]->manifest.provides[j],
 			    name) == 0)
-				return (&sd.services[i]);
+				return (sd.services[i]);
 		}
 		/* Check by label. */
-		if (strcmp(sd.services[i].manifest.label, name) == 0)
-			return (&sd.services[i]);
+		if (strcmp(sd.services[i]->manifest.label, name) == 0)
+			return (sd.services[i]);
 	}
 	return (NULL);
 }
@@ -766,24 +766,12 @@ od_launch(const char *name, struct svc_runtime *requester,
 			goto have_target;
 		}
 
-		/* Find a free slot in sd.services[]. */
-		if (sd.services == NULL) {
-			/* Service array was never allocated (startup OOM). */
-			errno = ENOMEM;
-			goto fail_timer;
-		}
-		if (sd.nservices >= SWITCHBOARD_MAX_SERVICES) {
-			syslog(LOG_ERR,
-			    "on_demand: service limit reached, cannot launch '%s'",
+		target = svc_unit_alloc();
+		if (target == NULL) {
+			syslog(LOG_ERR, "on_demand: cannot launch '%s': %m",
 			    name);
-			errno = ENOSPC;
 			goto fail_timer;
 		}
-
-		target = &sd.services[sd.nservices];
-		memset(target, 0, sizeof(*target));
-		svc_runtime_init_fds(target);
-		target->state = SVC_STATE_STOPPED;
 		target->bundle_idx = bundle_idx;
 		target->bundle_svc_idx = service_idx;
 
@@ -793,6 +781,8 @@ od_launch(const char *name, struct svc_runtime *requester,
 			syslog(LOG_ERR,
 			    "on_demand: invalid bundle service '%s'",
 			    capbundle_svc_label(asvc));
+			free(target);
+			errno = EINVAL;
 			goto fail_timer;
 		}
 		/*
@@ -819,25 +809,24 @@ od_launch(const char *name, struct svc_runtime *requester,
 		svc_responsibility_decide(target, requester, ambient_domain);
 		if (!od_launch_constraint_ok(target, name)) {
 			/*
-			 * Roll the unused slot back.  The constraint check
+			 * Drop the unpublished unit.  The constraint check
 			 * already released any parent descriptor it held, so
-			 * this clear leaks nothing.
+			 * this leaks nothing.
 			 */
-			memset(target, 0, sizeof(*target));
-			svc_runtime_init_fds(target);
+			free(target);
 			errno = EACCES;
 			goto fail_timer;
 		}
 
-		sd.nservices++;
+		svc_unit_publish(target);
 
 		/* Launch the service. */
 		if (svc_launch_or_await(target, kq) == -1) {
 			syslog(LOG_ERR,
 				    "on_demand: failed to launch '%s': %m", name);
-			sd.nservices--;
-			memset(target, 0, sizeof(*target));
-			svc_runtime_init_fds(target);
+			saved_errno = errno;
+			svc_remove(target);
+			errno = saved_errno;
 			goto fail_timer;
 		}
 
@@ -1343,8 +1332,6 @@ svc_activate_cleanup_provider(const char *label, int kq)
 	struct svc_runtime *svc = svc_by_label(label);
 	if (sd.shutting_down)
 		return (errno = ESHUTDOWN, -1);
-	if (svc == NULL && (sd.services == NULL || sd.nservices >= SWITCHBOARD_MAX_SERVICES))
-		return (errno = ENOSPC, -1);
 	for (unsigned bi = 0; bi < bundle_registry_count(); bi++) {
 		struct capbundle *b = bundle_registry_get(bi);
 		if (b == NULL || bundle_registry_owner_uid(bi) != (uid_t)-1)
@@ -1363,17 +1350,18 @@ svc_activate_cleanup_provider(const char *label, int kq)
 				svc->bundle_svc_idx = si;
 				return (svc_launch_or_await(svc, kq));
 			}
-			svc = &sd.services[sd.nservices];
-			memset(svc, 0, sizeof(*svc));
-			svc_runtime_init_fds(svc);
-			if (capbundle_svc_fill_manifest(asvc, &svc->manifest) == -1)
+			if ((svc = svc_unit_alloc()) == NULL)
 				return (-1);
-			svc->state = SVC_STATE_STOPPED;
+			if (capbundle_svc_fill_manifest(asvc,
+			    &svc->manifest) == -1) {
+				free(svc);
+				return (errno = EINVAL, -1);
+			}
 			svc->bundle_idx = bi;
 			svc->bundle_svc_idx = si;
 			svc_slot_apply_bundle_policy(svc, bi);
 			strlcpy(svc->launched_by, "cleanup", sizeof(svc->launched_by));
-			sd.nservices++;
+			svc_unit_publish(svc);
 			return (svc_launch_or_await(svc, kq));
 		}
 	}

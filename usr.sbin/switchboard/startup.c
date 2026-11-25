@@ -267,15 +267,15 @@ startup_launch_stopped(int kq)
 	for (i = 0; i < sd.nservices; i++) {
 		/* A lookup may already have activated this unit; a second
 		 * exec would create a duplicate runtime. */
-		if (sd.services[i].state != SVC_STATE_STOPPED)
+		if (sd.services[i]->state != SVC_STATE_STOPPED)
 			continue;
 		syslog(LOG_INFO, "startup: service: %s",
-		    sd.services[i].manifest.label);
-		if (svc_launch_or_await(&sd.services[i], kq) == 0)
+		    sd.services[i]->manifest.label);
+		if (svc_launch_or_await(sd.services[i], kq) == 0)
 			launched++;
 		else
 			syslog(LOG_ERR, "startup: failed to launch '%s'",
-			    sd.services[i].manifest.label);
+			    sd.services[i]->manifest.label);
 	}
 	return (launched);
 }
@@ -418,20 +418,24 @@ startup_launch_system(int kq)
 
 	syslog(LOG_INFO, "startup: %u services loaded", nmanifests);
 
-	/* Copy entries into runtime slots. */
+	/* Copy entries into runtime units. */
 	for (i = 0; i < nmanifests; i++) {
-		sd.services[i].manifest = entries[i].manifest;
-		sd.services[i].bundle_idx = entries[i].bundle_idx;
-		sd.services[i].bundle_svc_idx = entries[i].service_idx;
-		svc_slot_apply_bundle_policy(&sd.services[i],
-		    entries[i].bundle_idx);
-		svc_runtime_init_fds(&sd.services[i]);
-		sd.services[i].state = SVC_STATE_STOPPED;
-		strlcpy(sd.services[i].launched_by, "system",
-		    sizeof(sd.services[i].launched_by));
-		clock_gettime(CLOCK_MONOTONIC, &sd.services[i].launch_time);
+		struct svc_runtime *svc;
+
+		svc = svc_unit_alloc();
+		if (svc == NULL) {
+			syslog(LOG_ERR, "startup: cannot load '%s': %m",
+			    entries[i].manifest.label);
+			continue;
+		}
+		svc->manifest = entries[i].manifest;
+		svc->bundle_idx = entries[i].bundle_idx;
+		svc->bundle_svc_idx = entries[i].service_idx;
+		svc_slot_apply_bundle_policy(svc, entries[i].bundle_idx);
+		strlcpy(svc->launched_by, "system", sizeof(svc->launched_by));
+		clock_gettime(CLOCK_MONOTONIC, &svc->launch_time);
+		svc_unit_publish(svc);
 	}
-	sd.nservices = nmanifests;
 	free(entries);
 
 	/*

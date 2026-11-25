@@ -27,6 +27,33 @@ assert_stack_alive()
 	    atf_fail "Capsule status request failed"
 }
 
+# Wait up to <seconds> for an extended regular expression in the stack log.
+svc_wait_log()
+{
+	local pattern="$1" max i
+
+	max=$(( $2 * 10 ))
+	i=0
+	while ! grep -Eq "$pattern" "$logfile" 2>/dev/null && [ "$i" -lt "$max" ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	grep -Eq "$pattern" "$logfile" 2>/dev/null
+}
+
+# The stack log's line number of the first match of a regular expression.
+svc_log_line()
+{
+	grep -En "$1" "$logfile" | head -n 1 | cut -d: -f1
+}
+
+# Fail with the stack log on stderr.
+fail_case()
+{
+	cat "$logfile" >&2 2>/dev/null
+	atf_fail "$1"
+}
+
 # ===================================================================
 # Restart policy: restart=never
 # ===================================================================
@@ -1478,6 +1505,76 @@ watchdog_user_unit_restarts_cleanup()
 	rm -f wdu.count wdu.launch1 wdu.launch2
 }
 
+# ===================================================================
+# Unit removal: the other units' timers keep working
+# ===================================================================
+
+atf_test_case removal_keeps_unit_timers cleanup
+removal_keeps_unit_timers_head()
+{
+	atf_set "descr" "removing a stopped unit leaves the idle and watchdog timers of the units added after it working"
+	atf_set "require.user" "root"
+	atf_set "timeout" "300"
+	require_capsule_stack_kmods
+}
+removal_keeps_unit_timers_body()
+{
+	local timer removal idle watchdog
+
+	capd_require_unit_issuer
+	find_capd_service_fixture
+	prepare_paths
+	# A boot unit that exits at once and stays stopped: removed below.
+	make_fixture_svc system org.test.gone.unit 'restart = "never";' \
+	    lifecycle-exit "${WORK}/gone.pid" 0 >/dev/null
+	write_config
+	start_stack
+	wait_for_file gone.pid || fail_case "the unit to remove did not start"
+	svc_wait_log 'service org\.test\.gone\.unit[^ ]*: stopped' 15 ||
+	    fail_case "the unit to remove did not stop"
+
+	# Units added after startup follow the stopped one in SwitchBoard's
+	# unit index.  Their timers must outlast the time from arming them to
+	# the removal below, which is two reloads; the case checks that order
+	# in the log rather than assuming it.
+	timer=30
+	make_svc_bin system org.test.keep.idle \
+	    "activation { boot = true; ipc = [\"org.test.keep.idle\"]; }
+visible = [\"user\"];
+arguments = [\"idle-provider\", \"org.test.keep.idle\", \"$timer\", \"$(pwd)/kidle\"];" \
+	    "$capd_service_fixture" >/dev/null
+	make_svc_bin system org.test.keep.wd \
+	    "activation { boot = true; }
+watchdog { interval = $timer; }
+restart = \"always\";
+arguments = [\"watchdog-wedge\", \"org.test.keep.wd\", \"$(pwd)/kwd\"];" \
+	    "$capd_service_fixture" >/dev/null
+	reload_stack
+	wait_for_file kidle.launch1 || fail_case "idle provider did not start"
+	wait_for_file kwd.launch1 || fail_case "watchdog provider did not start"
+
+	rm -rf "${APPS_DIR}/org.test.gone.unit.cap"
+	reload_stack
+	svc_wait_log "removing stopped service 'org\.test\.gone\.unit" 15 ||
+	    fail_case "the stopped unit was not removed"
+
+	svc_wait_log 'org\.test\.keep\.idle[^ ]*: idle timeout, stopping' \
+	    $((timer * 2)) || fail_case "idle timer lost after a unit removal"
+	svc_wait_log 'org\.test\.keep\.wd[^ ]*: watchdog expired' \
+	    $((timer * 2)) || fail_case "watchdog lost after a unit removal"
+	removal=$(svc_log_line "removing stopped service 'org\.test\.gone\.unit")
+	idle=$(svc_log_line 'org\.test\.keep\.idle[^ ]*: idle timeout, stopping')
+	watchdog=$(svc_log_line 'org\.test\.keep\.wd[^ ]*: watchdog expired')
+	[ "$removal" -lt "$idle" ] && [ "$removal" -lt "$watchdog" ] ||
+	    fail_case "a timer fired before the removal (lines $removal $idle $watchdog); the case did not test a removal"
+	assert_stack_alive
+}
+removal_keeps_unit_timers_cleanup()
+{
+	cleanup_common
+	rm -f gone.pid kidle.count kidle.launch1 kwd.count kwd.launch1 kwd.launch2
+}
+
 atf_init_test_cases()
 {
 	# Restart policies
@@ -1501,6 +1598,7 @@ atf_init_test_cases()
 
 	# Reload
 	atf_add_test_case control_reload
+	atf_add_test_case removal_keeps_unit_timers
 
 	# Naming protocol
 	atf_add_test_case svc_unregister_explicit

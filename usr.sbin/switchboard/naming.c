@@ -300,27 +300,6 @@ naming_remove_owner(struct svc_runtime *owner)
 }
 
 /*
- * Rebind registry ownership after sd.services[] compaction.
- */
-void
-naming_rebind_owner(struct svc_runtime *old_owner,
-    struct svc_runtime *new_owner)
-{
-	struct naming_entry *e;
-	unsigned i;
-
-	if (old_owner == new_owner)
-		return;
-
-	for (i = 0; i < NAMING_HASH_SIZE; i++) {
-		for (e = naming_hash[i]; e != NULL; e = e->next) {
-			if (e->owner == old_owner)
-				e->owner = new_owner;
-		}
-	}
-}
-
-/*
  * Look up a name and broker a connection.
  *
  * Creates a new channel through switchboard's delegated channel factory, pushes

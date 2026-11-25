@@ -28,8 +28,8 @@ struct svc_runtime *
 svc_by_label(const char *label)
 {
 	for (unsigned i = 0; i < sd.nservices; i++)
-		if (strcmp(sd.services[i].manifest.label, label) == 0)
-			return (&sd.services[i]);
+		if (strcmp(sd.services[i]->manifest.label, label) == 0)
+			return (sd.services[i]);
 	return (NULL);
 }
 
@@ -85,7 +85,7 @@ ATF_TC_BODY(cleanup_status, tc)
 	ATF_REQUIRE(svc != NULL);
 	strlcpy(svc->manifest.label, "org.test.cleanup", sizeof(svc->manifest.label));
 	svc->state = SVC_STATE_STOPPING;
-	sd.services = svc;
+	sd.services = &svc;
 	sd.nservices = 1;
 	svc->cleanup.pending = true;
 	svc->cleanup.child_pending = true;
@@ -126,7 +126,7 @@ ATF_TC_BODY(cleanup_commands, tc)
 	svc->owner_uid = (uid_t)-1;
 	svc->state = SVC_STATE_STOPPING;
 	svc->cleanup.pending = true;
-	sd.services = svc;
+	sd.services = &svc;
 	sd.nservices = 1;
 	/* Management authorization still precedes the pending-cleanup branch. */
 	sctl_execute_op(SCTL_OP_STOP_SVC, svc->manifest.label,

@@ -69,8 +69,8 @@ svc_by_label(const char *label)
 	unsigned i;
 
 	for (i = 0; i < sd.nservices; i++)
-		if (strcmp(sd.services[i].manifest.label, label) == 0)
-			return (&sd.services[i]);
+		if (strcmp(sd.services[i]->manifest.label, label) == 0)
+			return (sd.services[i]);
 	return (NULL);
 }
 
@@ -101,6 +101,34 @@ bundle_registry_get(unsigned idx)
 }
 
 /* --- Helpers --- */
+
+/*
+ * Give sd.services its production shape: a SWITCHBOARD_MAX_SERVICES index
+ * whose first n entries are separately allocated, zeroed units.  The caller
+ * initializes the units and sets sd.nservices.
+ */
+static void
+services_alloc(unsigned n)
+{
+	unsigned i;
+
+	sd.services = calloc(SWITCHBOARD_MAX_SERVICES, sizeof(*sd.services));
+	ATF_REQUIRE(sd.services != NULL);
+	for (i = 0; i < n; i++) {
+		sd.services[i] = calloc(1, sizeof(*sd.services[i]));
+		ATF_REQUIRE(sd.services[i] != NULL);
+	}
+}
+
+static void
+services_free(void)
+{
+	unsigned i;
+
+	for (i = 0; i < SWITCHBOARD_MAX_SERVICES; i++)
+		free(sd.services[i]);
+	free(sd.services);
+}
 
 static void
 runtime_init(struct svc_runtime *svc, const char *label)
@@ -202,40 +230,40 @@ ATF_TC_BODY(timer_fire_and_coalesce, tc)
 	ATF_REQUIRE(kq >= 0);
 	reset_globals(kq);
 
-	sd.services = calloc(2, sizeof(*sd.services));
+	services_alloc(2);
 	ATF_REQUIRE(sd.services != NULL);
-	runtime_init(&sd.services[0], "org.test/timer");
-	sd.services[0].manifest.timer_interval_sec = 30;
+	runtime_init(sd.services[0], "org.test/timer");
+	sd.services[0]->manifest.timer_interval_sec = 30;
 	sd.nservices = 1;
 
-	activation_source_arm(&sd.services[0], kq);
-	ATF_REQUIRE(sd.services[0].activation_timer_ident != 0);
+	activation_source_arm(sd.services[0], kq);
+	ATF_REQUIRE(sd.services[0]->activation_timer_ident != 0);
 
 	/* First fire: STOPPED -> one launch. */
-	activation_timer_fire(sd.services[0].activation_timer_ident, kq);
+	activation_timer_fire(sd.services[0]->activation_timer_ident, kq);
 	ATF_CHECK_EQ(1, launch_calls);
-	ATF_CHECK_EQ(&sd.services[0], last_launched);
-	ATF_CHECK_EQ(SVC_STATE_STARTING, sd.services[0].state);
+	ATF_CHECK_EQ(sd.services[0], last_launched);
+	ATF_CHECK_EQ(SVC_STATE_STARTING, sd.services[0]->state);
 
 	/* Second fire while STARTING: coalesced, no new launch. */
-	activation_timer_fire(sd.services[0].activation_timer_ident, kq);
+	activation_timer_fire(sd.services[0]->activation_timer_ident, kq);
 	ATF_CHECK_EQ(1, launch_calls);
 
 	/* Running: still coalesced. */
-	sd.services[0].state = SVC_STATE_RUNNING;
-	activation_timer_fire(sd.services[0].activation_timer_ident, kq);
+	sd.services[0]->state = SVC_STATE_RUNNING;
+	activation_timer_fire(sd.services[0]->activation_timer_ident, kq);
 	ATF_CHECK_EQ(1, launch_calls);
 
 	/* A completed oneshot re-activates on the next fire. */
-	sd.services[0].state = SVC_STATE_DONE;
-	activation_timer_fire(sd.services[0].activation_timer_ident, kq);
+	sd.services[0]->state = SVC_STATE_DONE;
+	activation_timer_fire(sd.services[0]->activation_timer_ident, kq);
 	ATF_CHECK_EQ(2, launch_calls);
 
 	/* A stale ident (no owner) is ignored. */
-	activation_timer_fire(sd.services[0].activation_timer_ident + 999, kq);
+	activation_timer_fire(sd.services[0]->activation_timer_ident + 999, kq);
 	ATF_CHECK_EQ(2, launch_calls);
 
-	free(sd.services);
+	services_free();
 	sd.services = NULL;
 	sd.nservices = 0;
 	(void)close(kq);
@@ -268,38 +296,38 @@ ATF_TC_BODY(path_arm_write_and_teardown, tc)
 	ATF_REQUIRE(mkdir(dir, 0755) == 0 || errno == EEXIST);
 
 	/* sd.services must hold the unit so path_owner() can find it by fd. */
-	sd.services = calloc(1, sizeof(*sd.services));
+	services_alloc(1);
 	ATF_REQUIRE(sd.services != NULL);
-	runtime_init(&sd.services[0], "org.test/pathwatch");
-	strlcpy(sd.services[0].manifest.activation_path, dir,
-	    sizeof(sd.services[0].manifest.activation_path));
+	runtime_init(sd.services[0], "org.test/pathwatch");
+	strlcpy(sd.services[0]->manifest.activation_path, dir,
+	    sizeof(sd.services[0]->manifest.activation_path));
 	sd.nservices = 1;
 
-	activation_source_arm(&sd.services[0], kq);
-	watched_fd = sd.services[0].activation_path_fd;
+	activation_source_arm(sd.services[0], kq);
+	watched_fd = sd.services[0]->activation_path_fd;
 	ATF_CHECK(watched_fd >= 0);
 	/* The vnode ident (a descriptor) is disjoint from the timer range. */
 	ATF_CHECK(!activation_timer_owns((uintptr_t)watched_fd));
 
 	/* Idempotent arm keeps the same descriptor. */
-	activation_source_arm(&sd.services[0], kq);
-	ATF_CHECK_EQ(watched_fd, sd.services[0].activation_path_fd);
+	activation_source_arm(sd.services[0], kq);
+	ATF_CHECK_EQ(watched_fd, sd.services[0]->activation_path_fd);
 
 	/* Simulate a NOTE_WRITE event routed from the event loop. */
 	EV_SET(&kev, watched_fd, EVFILT_VNODE, 0, NOTE_WRITE, 0,
-	    &sd.services[0]);
+	    sd.services[0]);
 	activation_path_event(&kev, kq);
 	ATF_CHECK_EQ(1, launch_calls);
-	ATF_CHECK_EQ(SVC_STATE_STARTING, sd.services[0].state);
+	ATF_CHECK_EQ(SVC_STATE_STARTING, sd.services[0]->state);
 
 	/* Burst: a second write while starting coalesces. */
 	activation_path_event(&kev, kq);
 	ATF_CHECK_EQ(1, launch_calls);
 
-	activation_source_teardown(&sd.services[0], kq);
-	ATF_CHECK_EQ(-1, sd.services[0].activation_path_fd);
+	activation_source_teardown(sd.services[0], kq);
+	ATF_CHECK_EQ(-1, sd.services[0]->activation_path_fd);
 
-	free(sd.services);
+	services_free();
 	sd.services = NULL;
 	sd.nservices = 0;
 	(void)rmdir(dir);
@@ -330,15 +358,15 @@ ATF_TC_BODY(path_delete_reopen_and_drop, tc)
 	(void)snprintf(dir, sizeof(dir), "./reopen");
 	ATF_REQUIRE(mkdir(dir, 0755) == 0 || errno == EEXIST);
 
-	sd.services = calloc(1, sizeof(*sd.services));
+	services_alloc(1);
 	ATF_REQUIRE(sd.services != NULL);
-	runtime_init(&sd.services[0], "org.test/pathwatch");
-	strlcpy(sd.services[0].manifest.activation_path, dir,
-	    sizeof(sd.services[0].manifest.activation_path));
+	runtime_init(sd.services[0], "org.test/pathwatch");
+	strlcpy(sd.services[0]->manifest.activation_path, dir,
+	    sizeof(sd.services[0]->manifest.activation_path));
 	sd.nservices = 1;
 
-	activation_source_arm(&sd.services[0], kq);
-	first_fd = sd.services[0].activation_path_fd;
+	activation_source_arm(sd.services[0], kq);
+	first_fd = sd.services[0]->activation_path_fd;
 	ATF_REQUIRE(first_fd >= 0);
 
 	/*
@@ -346,24 +374,24 @@ ATF_TC_BODY(path_delete_reopen_and_drop, tc)
 	 * was put in place), so the delete handler re-opens and re-registers.
 	 */
 	EV_SET(&kev, first_fd, EVFILT_VNODE, 0, NOTE_DELETE, 0,
-	    &sd.services[0]);
+	    sd.services[0]);
 	activation_path_event(&kev, kq);
 	ATF_CHECK_EQ(1, launch_calls);		/* the change created demand */
-	second_fd = sd.services[0].activation_path_fd;
+	second_fd = sd.services[0]->activation_path_fd;
 	ATF_CHECK(second_fd >= 0);		/* re-registered */
 
 	/* Reset demand state so the drop case can re-fire. */
-	sd.services[0].state = SVC_STATE_STOPPED;
+	sd.services[0]->state = SVC_STATE_STOPPED;
 
 	/* Removal case: delete the directory, then a delete event drops it. */
 	ATF_REQUIRE(rmdir(dir) == 0);
 	EV_SET(&kev, second_fd, EVFILT_VNODE, 0, NOTE_DELETE, 0,
-	    &sd.services[0]);
+	    sd.services[0]);
 	activation_path_event(&kev, kq);
 	ATF_CHECK_EQ(2, launch_calls);
-	ATF_CHECK_EQ(-1, sd.services[0].activation_path_fd);	/* dropped */
+	ATF_CHECK_EQ(-1, sd.services[0]->activation_path_fd);	/* dropped */
 
-	free(sd.services);
+	services_free();
 	sd.services = NULL;
 	sd.nservices = 0;
 	(void)close(kq);
@@ -389,7 +417,7 @@ ATF_TC_BODY(register_all_creates_slot, tc)
 	ATF_REQUIRE(kq >= 0);
 	reset_globals(kq);
 
-	sd.services = calloc(SWITCHBOARD_MAX_SERVICES, sizeof(*sd.services));
+	services_alloc(0);
 	ATF_REQUIRE(sd.services != NULL);
 	sd.nservices = 0;
 
@@ -405,19 +433,19 @@ ATF_TC_BODY(register_all_creates_slot, tc)
 	reg_present = true;
 
 	ATF_CHECK_EQ(0, activation_register_all(kq));
-	ATF_CHECK_EQ((uid_t)-1, sd.services[0].owner_uid);
+	ATF_CHECK_EQ((uid_t)-1, sd.services[0]->owner_uid);
 	ATF_CHECK_EQ(1, sd.nservices);
 	ATF_CHECK_STREQ("org.test.reg/timerunit",
-	    sd.services[0].manifest.label);
-	ATF_CHECK_EQ(SVC_STATE_STOPPED, sd.services[0].state);
-	ATF_CHECK(sd.services[0].activation_timer_ident != 0);
+	    sd.services[0]->manifest.label);
+	ATF_CHECK_EQ(SVC_STATE_STOPPED, sd.services[0]->state);
+	ATF_CHECK(sd.services[0]->activation_timer_ident != 0);
 
 	/* Idempotent: a re-run neither duplicates the slot nor re-arms. */
 	ATF_CHECK_EQ(0, activation_register_all(kq));
-	ATF_CHECK_EQ((uid_t)-1, sd.services[0].owner_uid);
+	ATF_CHECK_EQ((uid_t)-1, sd.services[0]->owner_uid);
 	ATF_CHECK_EQ(1, sd.nservices);
 
-	free(sd.services);
+	services_free();
 	sd.services = NULL;
 	sd.nservices = 0;
 	(void)close(kq);
@@ -547,24 +575,24 @@ ATF_TC_BODY(socket_arm_connect_demand_and_coalesce, tc)
 	ATF_REQUIRE(kq >= 0);
 	reset_globals(kq);
 
-	sd.services = calloc(1, sizeof(*sd.services));
+	services_alloc(1);
 	ATF_REQUIRE(sd.services != NULL);
-	runtime_init(&sd.services[0], "org.test/sockunit");
-	socket_spec_tcp_loopback(&sd.services[0].manifest.activation_sockets[0],
+	runtime_init(sd.services[0], "org.test/sockunit");
+	socket_spec_tcp_loopback(&sd.services[0]->manifest.activation_sockets[0],
 	    "listen");
-	sd.services[0].manifest.nactivation_sockets = 1;
+	sd.services[0]->manifest.nactivation_sockets = 1;
 	sd.nservices = 1;
 
-	activation_source_arm(&sd.services[0], kq);
-	listen_fd = sd.services[0].activation_listen_fds[0];
+	activation_source_arm(sd.services[0], kq);
+	listen_fd = sd.services[0]->activation_listen_fds[0];
 	ATF_REQUIRE(listen_fd >= 0);
 	ATF_CHECK(fd_is_listening(listen_fd));
 	ATF_CHECK(activation_socket_owns(listen_fd));
-	ATF_CHECK_EQ(1U, sd.services[0].nactivation_listen);
+	ATF_CHECK_EQ(1U, sd.services[0]->nactivation_listen);
 
 	/* Idempotent arm keeps the same listen fd. */
-	activation_source_arm(&sd.services[0], kq);
-	ATF_CHECK_EQ(listen_fd, sd.services[0].activation_listen_fds[0]);
+	activation_source_arm(sd.services[0], kq);
+	ATF_CHECK_EQ(listen_fd, sd.services[0]->activation_listen_fds[0]);
 
 	port = fd_bound_port(listen_fd);
 	ATF_REQUIRE(port != 0);
@@ -580,8 +608,8 @@ ATF_TC_BODY(socket_arm_connect_demand_and_coalesce, tc)
 
 	activation_socket_event(&ev, kq);
 	ATF_CHECK_EQ(1, launch_calls);
-	ATF_CHECK_EQ(&sd.services[0], last_launched);
-	ATF_CHECK_EQ(SVC_STATE_STARTING, sd.services[0].state);
+	ATF_CHECK_EQ(sd.services[0], last_launched);
+	ATF_CHECK_EQ(SVC_STATE_STARTING, sd.services[0]->state);
 
 	/* A second readable event while starting coalesces (no new launch). */
 	activation_socket_event(&ev, kq);
@@ -591,11 +619,11 @@ ATF_TC_BODY(socket_arm_connect_demand_and_coalesce, tc)
 	ATF_CHECK(fd_is_listening(listen_fd));
 
 	(void)close(client);
-	activation_source_teardown(&sd.services[0], kq);
-	ATF_CHECK_EQ(-1, sd.services[0].activation_listen_fds[0]);
-	ATF_CHECK_EQ(0U, sd.services[0].nactivation_listen);
+	activation_source_teardown(sd.services[0], kq);
+	ATF_CHECK_EQ(-1, sd.services[0]->activation_listen_fds[0]);
+	ATF_CHECK_EQ(0U, sd.services[0]->nactivation_listen);
 
-	free(sd.services);
+	services_free();
 	sd.services = NULL;
 	sd.nservices = 0;
 	(void)close(kq);
@@ -625,16 +653,16 @@ ATF_TC_BODY(socket_restart_preserves_listener, tc)
 	ATF_REQUIRE(kq >= 0);
 	reset_globals(kq);
 
-	sd.services = calloc(1, sizeof(*sd.services));
+	services_alloc(1);
 	ATF_REQUIRE(sd.services != NULL);
-	runtime_init(&sd.services[0], "org.test/sockunit");
-	socket_spec_tcp_loopback(&sd.services[0].manifest.activation_sockets[0],
+	runtime_init(sd.services[0], "org.test/sockunit");
+	socket_spec_tcp_loopback(&sd.services[0]->manifest.activation_sockets[0],
 	    "listen");
-	sd.services[0].manifest.nactivation_sockets = 1;
+	sd.services[0]->manifest.nactivation_sockets = 1;
 	sd.nservices = 1;
 
-	activation_source_arm(&sd.services[0], kq);
-	listen_fd = sd.services[0].activation_listen_fds[0];
+	activation_source_arm(sd.services[0], kq);
+	listen_fd = sd.services[0]->activation_listen_fds[0];
 	ATF_REQUIRE(listen_fd >= 0);
 	port = fd_bound_port(listen_fd);
 
@@ -645,7 +673,7 @@ ATF_TC_BODY(socket_restart_preserves_listener, tc)
 	ATF_REQUIRE_EQ(1, n);
 	activation_socket_event(&ev, kq);
 	ATF_CHECK_EQ(1, launch_calls);
-	ATF_CHECK_EQ(SVC_STATE_STARTING, sd.services[0].state);
+	ATF_CHECK_EQ(SVC_STATE_STARTING, sd.services[0]->state);
 	(void)close(client);
 
 	/*
@@ -653,13 +681,13 @@ ATF_TC_BODY(socket_restart_preserves_listener, tc)
 	 * touch activation_listen_fds.  The listener fd and its registration
 	 * must survive untouched.
 	 */
-	sd.services[0].state = SVC_STATE_STOPPED;
-	ATF_CHECK_EQ(listen_fd, sd.services[0].activation_listen_fds[0]);
+	sd.services[0]->state = SVC_STATE_STOPPED;
+	ATF_CHECK_EQ(listen_fd, sd.services[0]->activation_listen_fds[0]);
 	ATF_CHECK(fd_is_listening(listen_fd));
 
 	/* Re-arm is idempotent (does not replace the live listener). */
-	activation_source_arm(&sd.services[0], kq);
-	ATF_CHECK_EQ(listen_fd, sd.services[0].activation_listen_fds[0]);
+	activation_source_arm(sd.services[0], kq);
+	ATF_CHECK_EQ(listen_fd, sd.services[0]->activation_listen_fds[0]);
 
 	/* A fresh connection re-creates demand on the same descriptor. */
 	client = connect_loopback(port);
@@ -671,8 +699,8 @@ ATF_TC_BODY(socket_restart_preserves_listener, tc)
 	ATF_CHECK_EQ(2, launch_calls);
 
 	(void)close(client);
-	activation_source_teardown(&sd.services[0], kq);
-	free(sd.services);
+	activation_source_teardown(sd.services[0], kq);
+	services_free();
 	sd.services = NULL;
 	sd.nservices = 0;
 	(void)close(kq);
@@ -738,7 +766,7 @@ ATF_TC_BODY(register_all_creates_socket_slot, tc)
 	ATF_REQUIRE(kq >= 0);
 	reset_globals(kq);
 
-	sd.services = calloc(SWITCHBOARD_MAX_SERVICES, sizeof(*sd.services));
+	services_alloc(0);
 	ATF_REQUIRE(sd.services != NULL);
 	sd.nservices = 0;
 
@@ -754,16 +782,16 @@ ATF_TC_BODY(register_all_creates_socket_slot, tc)
 	reg_present = true;
 
 	ATF_CHECK_EQ(0, activation_register_all(kq));
-	ATF_CHECK_EQ((uid_t)-1, sd.services[0].owner_uid);
+	ATF_CHECK_EQ((uid_t)-1, sd.services[0]->owner_uid);
 	ATF_CHECK_EQ(1, sd.nservices);
 	ATF_CHECK_STREQ("org.test.sock/listener",
-	    sd.services[0].manifest.label);
-	ATF_CHECK_EQ(SVC_STATE_STOPPED, sd.services[0].state);
-	ATF_CHECK(sd.services[0].activation_listen_fds[0] >= 0);
-	ATF_CHECK(fd_is_listening(sd.services[0].activation_listen_fds[0]));
+	    sd.services[0]->manifest.label);
+	ATF_CHECK_EQ(SVC_STATE_STOPPED, sd.services[0]->state);
+	ATF_CHECK(sd.services[0]->activation_listen_fds[0] >= 0);
+	ATF_CHECK(fd_is_listening(sd.services[0]->activation_listen_fds[0]));
 
-	activation_source_teardown(&sd.services[0], kq);
-	free(sd.services);
+	activation_source_teardown(sd.services[0], kq);
+	services_free();
 	sd.services = NULL;
 	sd.nservices = 0;
 	(void)close(kq);
