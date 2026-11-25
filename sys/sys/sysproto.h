@@ -1997,6 +1997,20 @@ struct cap_process_args {
 	char uid_l_[PADL_(uid_t)]; uid_t uid; char uid_r_[PADR_(uid_t)];
 	char data_l_[PADL_(void *)]; void * data; char data_r_[PADR_(void *)];
 };
+struct audit_token_get_args {
+	char pd_l_[PADL_(int)]; int pd; char pd_r_[PADR_(int)];
+	char pid_l_[PADL_(pid_t)]; pid_t pid; char pid_r_[PADR_(pid_t)];
+	char flags_l_[PADL_(int)]; int flags; char flags_r_[PADR_(int)];
+	char out_l_[PADL_(struct audit_token *)]; struct audit_token * out; char out_r_[PADR_(struct audit_token *)];
+};
+struct audit_token_check_args {
+	char tok_l_[PADL_(const struct audit_token *)]; const struct audit_token * tok; char tok_r_[PADR_(const struct audit_token *)];
+	char flags_l_[PADL_(int)]; int flags; char flags_r_[PADR_(int)];
+};
+struct pdopentoken_args {
+	char tok_l_[PADL_(const struct audit_token *)]; const struct audit_token * tok; char tok_r_[PADR_(const struct audit_token *)];
+	char flags_l_[PADL_(int)]; int flags; char flags_r_[PADR_(int)];
+};
 int	sys__exit(struct thread *, struct _exit_args *);
 int	sys_fork(struct thread *, struct fork_args *);
 int	sys_read(struct thread *, struct read_args *);
@@ -2422,6 +2436,9 @@ int	sys_pdincapmode(struct thread *, struct pdincapmode_args *);
 int	sys_cap_mmap_capmode(struct thread *, struct cap_mmap_capmode_args *);
 int	sys_cap_lookup_capmode(struct thread *, struct cap_lookup_capmode_args *);
 int	sys_cap_process(struct thread *, struct cap_process_args *);
+int	sys_audit_token_get(struct thread *, struct audit_token_get_args *);
+int	sys_audit_token_check(struct thread *, struct audit_token_check_args *);
+int	sys_pdopentoken(struct thread *, struct pdopentoken_args *);
 
 #ifdef COMPAT_43
 
@@ -3265,6 +3282,9 @@ int	freebsd14_setgroups(struct thread *, struct freebsd14_setgroups_args *);
 #define	SYS_AUE_cap_mmap_capmode	AUE_CAP_MMAP_CAPMODE
 #define	SYS_AUE_cap_lookup_capmode	AUE_CAP_LOOKUP_CAPMODE
 #define	SYS_AUE_cap_process	AUE_NULL
+#define	SYS_AUE_audit_token_get	AUE_AUDIT_TOKEN_GET
+#define	SYS_AUE_audit_token_check	AUE_AUDIT_TOKEN_CHECK
+#define	SYS_AUE_pdopentoken	AUE_PDOPENTOKEN
 
 #undef PAD_
 #undef PADL_

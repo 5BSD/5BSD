@@ -792,6 +792,52 @@ ATF_TC_CLEANUP(pid_reuse_check, tc)
 	sysctl_restore(RANDOMPID);
 }
 
+/* The libc wrappers and libbsm accessors are the calls the pins make. */
+ATF_TC_WITHOUT_HEAD(libc_wrappers);
+ATF_TC_BODY(libc_wrappers, tc)
+{
+	audit_token_t pin, tok;
+	au_asid_t asid;
+	uid_t auid, euid, ruid;
+	gid_t egid, rgid;
+	pid_t pid, got;
+	int pd;
+
+	pins_init();
+	tok_self(&pin);
+	ATF_REQUIRE_EQ(0, audit_token_get(-1, 0, 0, &tok));
+	ATF_CHECK_EQ(0, memcmp(&pin, &tok, sizeof(tok)));
+	ATF_CHECK_EQ(0, audit_token_check(&tok, 0));
+	ATF_CHECK_EQ((int)(audit_token_to_execgen(tok) & 0xffffffff),
+	    audit_token_to_pidversion(tok));
+	audit_token_to_au32(tok, &auid, &euid, &egid, &ruid, &rgid, &pid,
+	    &asid, NULL);
+	ATF_CHECK_EQ(audit_token_to_auid(tok), auid);
+	ATF_CHECK_EQ(geteuid(), euid);
+	ATF_CHECK_EQ(getegid(), egid);
+	ATF_CHECK_EQ(getuid(), ruid);
+	ATF_CHECK_EQ(getgid(), rgid);
+	ATF_CHECK_EQ(getpid(), pid);
+	ATF_CHECK_EQ(audit_token_to_asid(tok), asid);
+
+	pid = fork();
+	ATF_REQUIRE(pid != -1);
+	if (pid == 0) {
+		for (;;)
+			pause();
+	}
+	ATF_REQUIRE_EQ(0, audit_token_get(-1, pid, 0, &tok));
+	pd = pdopentoken(&tok, PD_CLOEXEC);
+	ATF_REQUIRE_MSG(pd >= 0, "pdopentoken: %s", strerror(errno));
+	ATF_REQUIRE_EQ(0, pdgetpid(pd, &got));
+	ATF_CHECK_EQ(pid, got);
+	ATF_REQUIRE_EQ(0, audit_token_get(pd, 0, 0, &pin));
+	ATF_CHECK_EQ(0, memcmp(&pin, &tok, sizeof(tok)));
+	ATF_REQUIRE_EQ(0, pdkill(pd, SIGKILL));
+	ATF_REQUIRE_EQ(pid, waitpid(pid, NULL, 0));
+	ATF_REQUIRE_EQ(0, close(pd));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, self_fields);
@@ -805,5 +851,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, pdopentoken_basic);
 	ATF_TP_ADD_TC(tp, bad_arguments);
 	ATF_TP_ADD_TC(tp, pid_reuse_check);
+	ATF_TP_ADD_TC(tp, libc_wrappers);
 	return (atf_no_error());
 }

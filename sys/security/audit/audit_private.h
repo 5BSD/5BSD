@@ -73,6 +73,7 @@ extern int			audit_panic_on_write_fail;
 extern int			audit_fail_stop;
 extern int			audit_argv;
 extern int			audit_arge;
+extern int			audit_noprocident;
 
 /*
  * Success/failure conditions for the conversion of a kernel audit record to
@@ -203,6 +204,17 @@ struct audit_record {
 	struct au_tid		ar_subj_term;
 	struct au_tid_addr	ar_subj_term_addr;
 	struct au_mask		ar_subj_amask;
+	/*
+	 * The subject's audit token ids (audit_token(3)) as the system call
+	 * started, written as the procident token unless the policy is
+	 * AUDIT_NOPROCIDENT; and the image id an execve installed (0 if
+	 * none), set where the exec commits.
+	 */
+	u_int64_t		ar_subj_uniqueid;
+	u_int64_t		ar_subj_execgen;
+	u_int64_t		ar_subj_imageid;
+	int			ar_subj_jid;
+	u_int64_t		ar_imageid_after;
 
 	/* Operation arguments. */
 	uid_t			ar_arg_euid;

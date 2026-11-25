@@ -24,7 +24,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd November 5, 2006
+.Dd November 25, 2026
 .Dt AUDIT.LOG 5
 .Os
 .Sh NAME
@@ -635,9 +635,58 @@ token can be created using
 .It "Zonename length	2 bytes	Length of zonename string including NUL"
 .It "Zonename	N bytes + 1 NUL	Zonename string including NUL"
 .El
+.Ss Procident Token
+The
+.Dq procident
+token (5BSD, token ID 0xc0) holds the subject's
+.Xr audit_token 3
+IDs as they were when the system call started.
+The kernel writes it in every record it generates, after the return token
+and before the trailer, unless the audit policy has
+.Dq noprocident
+.Pq see Xr audit_control 5 ;
+records submitted with
+.Xr audit 2
+do not get it.
+For
+.Xr execve 2 ,
+the last field gives the image ID the exec installed.
+The body length counts the bytes after it; a later version may add fields
+after those below, which a reader skips.
+A
+.Dq procident
+token can be created using
+.Fn au_to_procident .
+.Bl -column -offset 3n ".No Responsible lifetime ID" ".No 2 bytes"
+.It Sy "Field	Bytes	Description"
+.It "Token ID	1 byte	Token ID"
+.It "Body length	2 bytes	Bytes after this field (57 in version 1)"
+.It "Version	1 byte	Format version (1)"
+.It "Lifetime ID	8 bytes	Subject's uniqueid"
+.It "Exec generation	8 bytes	Subject's execgen"
+.It "Image ID	8 bytes	Subject's imageid (0: no image)"
+.It "Jail ID	4 bytes	Subject's jail"
+.It "Responsible lifetime ID	8 bytes	Responsible process (0: unset)"
+.It "Responsible exec generation	8 bytes	Responsible process"
+.It "Responsible PID	4 bytes	Responsible process"
+.It "Image ID after	8 bytes	Image installed by execve, else 0"
+.El
+.Ss Rights Token
+The
+.Dq rights
+token (FreeBSD, token ID 0x83) holds the capability rights
+.Pq Vt cap_rights_t , see Xr rights 4
+an operation asked for: the words of the rights set, as many as the
+version in the top two bits of the first word gives plus two.
+.Bl -column -offset 3n ".No Rights words" ".No N * 8 bytes"
+.It Sy "Field	Bytes	Description"
+.It "Token ID	1 byte	Token ID"
+.It "Rights words	N * 8 bytes	cap_rights_t words"
+.El
 .Sh SEE ALSO
 .Xr auditreduce 1 ,
 .Xr praudit 1 ,
+.Xr audit_token 3 ,
 .Xr libbsm 3 ,
 .Xr audit 4 ,
 .Xr auditpipe 4 ,

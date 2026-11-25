@@ -829,6 +829,12 @@ struct proc {
 	 * Appended so the asserted member offsets above stay put (KBI).
 	 */
 	struct proc_image p_image;	/* (b) Image source of executable. */
+	/*
+	 * Audit token ids (audit_token(3)).  Outside the zeroed and copied
+	 * ranges: do_fork() writes both for every new process.
+	 */
+	uint64_t	p_uniqueid;	/* (b) Lifetime id, never reused. */
+	uint64_t	p_execgen;	/* (c) Generation, new at fork and exec. */
 };
 
 #define	p_session	p_pgrp->pg_session

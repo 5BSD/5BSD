@@ -123,6 +123,7 @@ void	 audit_arg_upath1_vp(struct thread *td, struct vnode *rdir,
 	    struct vnode *cdir, char *upath);
 void	 audit_arg_dqstart(uint64_t object);
 void	 audit_arg_dqobj(uint64_t object);
+void	 audit_arg_imageid(uint64_t imageid);
 void	 audit_arg_upath2_vp(struct thread *td, struct vnode *rdir,
 	    struct vnode *cdir, char *upath);
 void	 audit_arg_vnode1(struct vnode *vp);
@@ -189,6 +190,11 @@ void	 audit_ret_svipc_id(int id);
 #define	AUDIT_ARG_DQOBJ(object) do {					\
 	if (AUDITING_TD(curthread))					\
 		audit_arg_dqobj((object));				\
+} while (0)
+
+#define	AUDIT_ARG_IMAGEID(imageid) do {					\
+	if (AUDITING_TD(curthread))					\
+		audit_arg_imageid((imageid));				\
 } while (0)
 
 #define	AUDIT_ARG_ATFD2(atfd) do {					\
@@ -478,6 +484,7 @@ void	 audit_ret_svipc_id(int id);
 #define	AUDIT_ARG_ATFD2(atfd)
 #define	AUDIT_ARG_DQSTART(object)
 #define	AUDIT_ARG_DQOBJ(object)
+#define	AUDIT_ARG_IMAGEID(imageid)
 #define	AUDIT_ARG_AUDITON(udata)
 #define	AUDIT_ARG_CMD(cmd)
 #define	AUDIT_ARG_DEV(dev)

@@ -27,7 +27,9 @@ ${PACKAGE}FILES+=			\
 		input/procident_old_xml	\
 		input/procident_new_numeric \
 		input/procident_new_raw	\
-		input/procident_new_xml
+		input/procident_new_xml	\
+		input/rights_trail	\
+		input/rights_numeric
 
 TEST_METADATA+= timeout="10"
 

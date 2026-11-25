@@ -85,7 +85,7 @@
  * function kvm_proclist in lib/libkvm/kvm_proc.c .
  */
 #define	KI_NSPARE_INT	2
-#define	KI_NSPARE_LONG	10
+#define	KI_NSPARE_LONG	7
 #define	KI_NSPARE_PTR	4
 
 #ifndef _KERNEL
@@ -218,6 +218,9 @@ struct kinfo_proc {
 	void	*ki_uerrmsg;		/* address of the ext err msg place */
 	void	*ki_spareptrs[KI_NSPARE_PTR];	/* spare room for growth */
 	long	ki_sparelongs[KI_NSPARE_LONG];	/* spare room for growth */
+	uint64_t ki_uniqueid;		/* audit token lifetime id */
+	uint64_t ki_execgen;		/* audit token exec generation */
+	uint64_t ki_imageid;		/* audit token image id, 0 = none */
 	uint64_t ki_coalition;		/* coalition id, 0 = none */
 	uint64_t ki_rcoalition;		/* responsible coalition id, 0 = unset */
 	long	ki_sflag;		/* PS_* flags */

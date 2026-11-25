@@ -261,6 +261,23 @@ praudit_procident_body()
 }
 
 
+# FreeBSD's capability rights token (AUT_RIGHTS, 0x83), which libbsm did
+# not parse: the tokens after it were swallowed as "unknown".
+atf_test_case praudit_rights
+praudit_rights_head()
+{
+	atf_set "descr" "Verify that praudit prints the rights token and " \
+			"the tokens after it"
+	atf_set "require.progs" praudit
+}
+
+praudit_rights_body()
+{
+	export TZ=UTC
+	atf_check -o file:$(atf_get_srcdir)/rights_numeric \
+		praudit -n $(atf_get_srcdir)/rights_trail
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case praudit_delim_comma
@@ -276,4 +293,5 @@ atf_init_test_cases()
 	atf_add_test_case praudit_golden_tokens
 	atf_add_test_case praudit_procident_old_reader
 	atf_add_test_case praudit_procident
+	atf_add_test_case praudit_rights
 }

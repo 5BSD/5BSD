@@ -190,6 +190,7 @@ MAN+=	abort2.2 \
 	aio_suspend.2 \
 	aio_waitcomplete.2 \
 	aio_write.2 \
+	audit_token_get.2 \
 	auxv.3 \
 	bind.2 \
 	bindat.2 \
@@ -519,8 +520,10 @@ MLINKS+=ntp_adjtime.2 ntp_gettime.2
 MLINKS+=open.2 openat.2
 MLINKS+=pathconf.2 fpathconf.2
 MLINKS+=pathconf.2 lpathconf.2
+MLINKS+=audit_token_get.2 audit_token_check.2
 MLINKS+=pdfork.2 pdgetpid.2 \
 	pdfork.2 pdopenpid.2 \
+	pdfork.2 pdopentoken.2 \
 	pdfork.2 pdkill.2 \
 	pdfork.2 pdrfork.2 \
 	pdfork.2 pdwait.2 \

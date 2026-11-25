@@ -1,0 +1,5 @@
+header,85,11,open(2) - attr only,0,Mon Nov 24 16:00:00 2025, + 123 msec
+subject,1001,0,0,1004,1005,4301,91,4660,10.0.0.1
+rights,0x200000000000001,0x400000000000000
+return,success,3
+trailer,85

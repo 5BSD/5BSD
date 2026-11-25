@@ -147,6 +147,21 @@ audit_arg_dqobj(uint64_t object)
 	ARG_SET_VALID(ar, ARG_DQOBJ);
 }
 
+/*
+ * The image id an execve(2) installed (audit_token(3)); the procident
+ * token carries it after the subject's pre-exec ids.
+ */
+void
+audit_arg_imageid(uint64_t imageid)
+{
+	struct kaudit_record *ar;
+
+	ar = currecord();
+	if (ar == NULL)
+		return;
+	ar->k_ar.ar_imageid_after = imageid;
+}
+
 void
 audit_arg_atfd2(int atfd)
 {

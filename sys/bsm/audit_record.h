@@ -128,6 +128,30 @@
 
 #define	AUT_RIGHTS		0x83
 
+/*
+ * 5BSD token ids are taken from 0xc0-0xcf, which no published BSM token
+ * table uses (FreeBSD, XNU, illumos, OpenBSM).
+ *
+ * AUT_PROCIDENT: the subject's audit token ids (audit_token(3)), written
+ * by the kernel after the return token, before the trailer, unless the
+ * audit policy has AUDIT_NOPROCIDENT.  Length-prefixed so that it can grow
+ * without a new id; a reader skips the bytes after the fields it knows.
+ */
+#define	AUT_PROCIDENT		0xc0
+#define	AU_PROCIDENT_VERSION	1
+
+/* The fields of a procident token, version 1. */
+struct au_procident {
+	u_int64_t	api_uniqueid;	/* subject's lifetime id */
+	u_int64_t	api_execgen;	/* subject's exec generation */
+	u_int64_t	api_imageid;	/* subject's image id, 0 = none */
+	int32_t		api_jid;	/* subject's jail */
+	u_int64_t	api_r_uniqueid;	/* responsible process, 0 = unset */
+	u_int64_t	api_r_execgen;
+	int32_t		api_r_pid;
+	u_int64_t	api_image_after; /* image id after execve, else 0 */
+};
+
 /* print values for the arbitrary token */
 #define AUP_BINARY      0
 #define AUP_OCTAL       1
@@ -244,6 +268,7 @@ token_t	*au_to_iport(uint16_t iport);
 token_t	*au_to_opaque(const char *data, uint16_t bytes);
 token_t	*au_to_path(const char *path);
 token_t	*au_to_privset(char *privtypestr, char *privstr);
+token_t	*au_to_procident(const struct au_procident *pi);
 token_t	*au_to_process(au_id_t auid, uid_t euid, gid_t egid, uid_t ruid,
 	    gid_t rgid, pid_t pid, au_asid_t sid, au_tid_t *tid);
 token_t	*au_to_process32(au_id_t auid, uid_t euid, gid_t egid, uid_t ruid,

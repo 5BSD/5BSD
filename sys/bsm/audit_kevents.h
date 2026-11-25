@@ -697,6 +697,9 @@
 #define	AUE_CRYPTOCMP_POLICY	43960	/* 5BSD: CryptoCmp policy */
 #define	AUE_AUTHAGENT_ELEVATE	43961	/* 5BSD: auth agent elevation (anoint) */
 #define	AUE_AUTHAGENT_MINT	43962	/* 5BSD: auth agent session mint */
+#define	AUE_AUDIT_TOKEN_GET	43963	/* 5BSD: audit_token_get(2) */
+#define	AUE_AUDIT_TOKEN_CHECK	43964	/* 5BSD: audit_token_check(2) */
+#define	AUE_PDOPENTOKEN		43965	/* 5BSD: pdopentoken(2) */
 
 /*
  * Darwin BSM uses a number of AUE_O_* definitions, which are aliased to the

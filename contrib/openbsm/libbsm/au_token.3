@@ -79,7 +79,8 @@
 .Nm au_to_header_ex ,
 .Nm au_to_header32_ex ,
 .Nm au_to_trailer ,
-.Nm au_to_zonename
+.Nm au_to_zonename ,
+.Nm au_to_procident
 .Nd "routines for generating BSM audit tokens"
 .Sh LIBRARY
 .Lb libbsm
@@ -211,6 +212,8 @@
 .Fn au_to_trailer "int rec_size"
 .Ft "token_t *"
 .Fn au_to_zonename "const char *zonename"
+.Ft "token_t *"
+.Fn au_to_procident "const struct au_procident *pi"
 .Sh DESCRIPTION
 These interfaces support the allocation of BSM audit tokens, represented by
 .Vt token_t ,
@@ -224,6 +227,17 @@ errors to BSM error numbers before they are passed to
 .Fn au_to_return32 ,
 and
 .Fn au_to_return64 .
+.Pp
+.Fn au_to_procident
+(5BSD) makes the procident token of
+.Xr audit.log 5
+from the
+.Vt struct au_procident
+of
+.In bsm/audit_record.h :
+a subject's
+.Xr audit_token 3
+IDs.
 .Sh RETURN VALUES
 On success, a pointer to a
 .Vt token_t
@@ -237,6 +251,7 @@ will be returned, and an error condition returned via
 .Va errno .
 .Sh SEE ALSO
 .Xr au_errno_to_bsm 3 ,
+.Xr audit_token 3 ,
 .Xr libbsm 3
 .Sh HISTORY
 The OpenBSM implementation was created by McAfee Research, the security

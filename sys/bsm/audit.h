@@ -151,6 +151,12 @@
 #define	AUDIT_PUBLIC	0x0800
 #define	AUDIT_ZONENAME	0x1000
 #define	AUDIT_PERZONE	0x2000
+/*
+ * 5BSD: kernel records leave out the procident token (AUT_PROCIDENT).  A
+ * negative policy, so that the token is written unless a configuration
+ * names this bit.
+ */
+#define	AUDIT_NOPROCIDENT	0x00010000
 
 /*
  * Default audit queue control parameters.
@@ -249,6 +255,20 @@ typedef struct au_session       au_session_t;
 typedef	struct au_token	token_t;
 
 /*
+ * The audit token of a process (audit_token(3)): who it is, which exec of
+ * it, which image it runs and with what identity, at one point of its life.
+ * Opaque: read only through the audit_token_to_*() accessors of libbsm (and
+ * of <bsm/audit_token.h> in the kernel); the layout is private to them.
+ */
+typedef struct audit_token {
+	u_int64_t	__at_w[8];
+} audit_token_t;
+
+/* audit_token_get(2) and audit_token_check(2) flags. */
+#define	AUDIT_TOKEN_MAY_EXEC	0x00000001	/* any exec of the process */
+#define	AUDIT_TOKEN_MAY_EXIT	0x00000002	/* also an exited process */
+
+/*
  * Kernel audit queue control parameters:
  * 			Default:		Maximum:
  * 	aq_hiwater:	AQ_HIWATER (100)	AQ_MAXHIGH (10000) 
@@ -331,6 +351,8 @@ int	getaudit(struct auditinfo *);
 int	setaudit(const struct auditinfo *);
 int	getaudit_addr(struct auditinfo_addr *, int);
 int	setaudit_addr(const struct auditinfo_addr *, int);
+int	audit_token_get(int, pid_t, int, audit_token_t *);
+int	audit_token_check(const audit_token_t *, int);
 
 #ifdef __APPLE_API_PRIVATE
 #include <mach/port.h>

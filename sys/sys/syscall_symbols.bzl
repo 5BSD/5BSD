@@ -457,4 +457,7 @@ SYSCALL_SYMBOLS = [
     "cap_mmap_capmode",
     "cap_lookup_capmode",
     "cap_process",
+    "audit_token_get",
+    "audit_token_check",
+    "pdopentoken",
 ]

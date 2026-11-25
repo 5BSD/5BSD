@@ -145,6 +145,8 @@ static const struct procstat_cmd cmd_table[] = {
 	    PS_CMP_PLURAL | PS_CMP_SUBSTR },
 	{ "thread", "threads", NULL, &procstat_threads, &cmdopt_none,
 	    PS_CMP_PLURAL },
+	{ "token", "token", NULL, &procstat_token, &cmdopt_none,
+	    PS_CMP_NORMAL },
 	{ "tsignal", "thread_signals", "[-n]", &procstat_threads_sigs,
 	    &cmdopt_signals, PS_CMP_PLURAL | PS_CMP_SUBSTR },
 	{ "vm", "vm", NULL, &procstat_vm, &cmdopt_none, PS_CMP_NORMAL }

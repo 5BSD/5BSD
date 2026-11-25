@@ -153,7 +153,7 @@ Do not record failed events.
 The policy flags field is a comma-delimited list of policy flags from the
 following list:
 .Pp
-.Bl -tag -width ".Cm zonename" -compact -offset indent
+.Bl -tag -width ".Cm noprocident" -compact -offset indent
 .It Cm cnt
 Allow processes to continue running even though events are not being audited.
 If not set, processes will be suspended when the audit store space is
@@ -203,6 +203,13 @@ or Darwin; on
 .Fx ,
 audit records are collected from all jails and placed in a single
 global trail, and only limited audit controls are permitted within a jail).
+.It Cm noprocident
+Leave the procident token, the subject's
+.Xr audit_token 3
+ids, out of the records the kernel generates
+(5BSD).
+The token is written unless this flag is named, so a configuration that
+does not mention it keeps it.
 .El
 .Pp
 It is recommended that installations set the

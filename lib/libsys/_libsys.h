@@ -23,6 +23,7 @@ struct __ucontext;
 struct __wrusage;
 struct acl;
 struct aiocb;
+struct audit_token;
 struct auditinfo;
 struct auditinfo_addr;
 struct ffclock_estimate;
@@ -490,6 +491,9 @@ typedef int (__sys_pdincapmode_t)(int);
 typedef int (__sys_cap_mmap_capmode_t)(int);
 typedef int (__sys_cap_lookup_capmode_t)(int);
 typedef int (__sys_cap_process_t)(int, int, uid_t, void *);
+typedef int (__sys_audit_token_get_t)(int, pid_t, int, struct audit_token *);
+typedef int (__sys_audit_token_check_t)(const struct audit_token *, int);
+typedef int (__sys_pdopentoken_t)(const struct audit_token *, int);
 
 _Noreturn void __sys__exit(int rval);
 int __sys_fork(void);
@@ -915,6 +919,9 @@ int __sys_pdincapmode(int fd);
 int __sys_cap_mmap_capmode(int fd);
 int __sys_cap_lookup_capmode(int fd);
 int __sys_cap_process(int op, int fd, uid_t uid, void * data);
+int __sys_audit_token_get(int pd, pid_t pid, int flags, struct audit_token * out);
+int __sys_audit_token_check(const struct audit_token * tok, int flags);
+int __sys_pdopentoken(const struct audit_token * tok, int flags);
 __END_DECLS
 
 #endif /* __LIBSYS_H_ */

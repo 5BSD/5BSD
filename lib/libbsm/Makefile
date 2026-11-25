@@ -31,6 +31,8 @@ SRCS=	bsm_audit.c							\
 # Must use BSM include files from within the contrib area, not the system.
 #
 CFLAGS+=	-I${OPENBSMDIR} -I${_LIBBSMDIR}
+# The private audit token layout shared with the kernel (audit_token(3)).
+CFLAGS.bsm_wrappers.c+=	-I${SRCTOP}/sys/bsm
 
 WARNS?=		1
 
@@ -52,7 +54,8 @@ MAN=	libbsm.3							\
 	au_socket_type.3						\
 	au_token.3							\
 	au_user.3							\
-	audit_submit.3
+	audit_submit.3							\
+	audit_token.3
 
 #
 # It seems like maybe some of these should be installed separately, since
@@ -165,6 +168,7 @@ MLINKS=	libbsm.3 bsm.3							\
 	au_token.3 au_to_header64.3					\
 	au_token.3 au_to_trailer.3					\
 	au_token.3 au_to_zonename.3					\
+	au_token.3 au_to_procident.3					\
 	au_user.3 setauuser.3						\
 	au_user.3 endauuser.3						\
 	au_user.3 getauuserent.3					\
@@ -175,6 +179,21 @@ MLINKS=	libbsm.3 bsm.3							\
 	au_user.3 getfauditflags.3					\
 	getaudit.2 getaudit_addr.2					\
 	setaudit.2 setaudit_addr.2
+
+# audit_token(3) (5BSD).
+MLINKS+=	audit_token.3 audit_token_to_pid.3 \
+	audit_token.3 audit_token_to_pidversion.3 \
+	audit_token.3 audit_token_to_uniqueid.3 \
+	audit_token.3 audit_token_to_execgen.3 \
+	audit_token.3 audit_token_to_imageid.3 \
+	audit_token.3 audit_token_to_jid.3 \
+	audit_token.3 audit_token_to_euid.3 \
+	audit_token.3 audit_token_to_ruid.3 \
+	audit_token.3 audit_token_to_egid.3 \
+	audit_token.3 audit_token_to_rgid.3 \
+	audit_token.3 audit_token_to_auid.3 \
+	audit_token.3 audit_token_to_asid.3 \
+	audit_token.3 audit_token_to_au32.3
 
 .include <bsd.lib.mk>
 

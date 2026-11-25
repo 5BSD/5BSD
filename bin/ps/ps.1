@@ -33,7 +33,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd November 19, 2026
+.Dd November 25, 2026
 .Dt PS 1
 .Os
 .Sh NAME
@@ -483,6 +483,10 @@ minutes:seconds
 .Dc
 .It Cm etimes
 elapsed running time, in decimal integer seconds
+.It Cm execgen
+exec generation of the
+.Xr audit_token 3 :
+new at fork and at every exec
 .It Cm fib
 default FIB number, see
 .Xr setfib 1
@@ -498,6 +502,11 @@ effective group ID (alias
 .It Cm group
 group name (from egid) (alias
 .Cm egroup )
+.It Cm imageid
+image ID of the
+.Xr audit_token 3 :
+new at every exec and shared with the processes forked since;
+0 for kernel processes, which have no image
 .It Cm inblk
 total blocks read (alias
 .Cm inblock )
@@ -640,6 +649,10 @@ process name used for accounting
 .It Cm uid
 effective user ID (alias
 .Cm euid )
+.It Cm uniqueid
+lifetime ID of the
+.Xr audit_token 3 :
+set at fork, never reused (unlike the process ID)
 .It Cm upr
 scheduling priority on return from system call (alias
 .Cm usrpri )
@@ -931,6 +944,7 @@ Display information on all system processes:
 .Xr pkill 1 ,
 .Xr procstat 1 ,
 .Xr w 1 ,
+.Xr audit_token 3 ,
 .Xr kvm 3 ,
 .Xr libxo 3 ,
 .Xr strftime 3 ,

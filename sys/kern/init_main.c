@@ -93,6 +93,7 @@
 #include <x86/x86_var.h>
 #endif
 
+#include <bsm/audit_token.h>
 #include <security/audit/audit.h>
 #include <security/mac/mac_framework.h>
 
@@ -530,6 +531,13 @@ proc0_init(void *dummy __unused)
 	 */
 	p->p_magic = P_MAGIC;
 	p->p_osrel = osreldate;
+	/*
+	 * The first process: uniqueid 1 (kern_fork.c's sequence starts
+	 * after it) and execgen 1.  Its credential, like every credential
+	 * crget() makes, has no image (cr_imageid 0).
+	 */
+	p->p_uniqueid = 1;
+	p->p_execgen = audit_token_next_execgen();
 
 	/*
 	 * Initialize thread and process structures.

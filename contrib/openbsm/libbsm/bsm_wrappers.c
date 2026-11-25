@@ -514,6 +514,124 @@ audit_token_to_au32(audit_token_t atoken, uid_t *auidp, uid_t *euidp,
 		tidp->port = (dev_t)atoken.val[7];
 	}
 }
+#elif defined(AUDIT_TOKEN_MAY_EXEC)
+/*
+ * 5BSD audit tokens (audit_token(3)).  The layout is shared with the
+ * kernel only (sys/bsm/audit_token_internal.h); these accessors are the
+ * one way programs read it.
+ */
+#include "audit_token_internal.h"
+
+void
+audit_token_to_au32(audit_token_t atoken, uid_t *auidp, uid_t *euidp,
+    gid_t *egidp, uid_t *ruidp, gid_t *rgidp, pid_t *pidp, au_asid_t *asidp,
+    au_tid_t *tidp)
+{
+
+	if (auidp != NULL)
+		*auidp = audit_token_to_auid(atoken);
+	if (euidp != NULL)
+		*euidp = audit_token_to_euid(atoken);
+	if (egidp != NULL)
+		*egidp = audit_token_to_egid(atoken);
+	if (ruidp != NULL)
+		*ruidp = audit_token_to_ruid(atoken);
+	if (rgidp != NULL)
+		*rgidp = audit_token_to_rgid(atoken);
+	if (pidp != NULL)
+		*pidp = audit_token_to_pid(atoken);
+	if (asidp != NULL)
+		*asidp = audit_token_to_asid(atoken);
+	if (tidp != NULL) {
+		/* The token has no terminal: this host, port 0. */
+		audit_set_terminal_host(&tidp->machine);
+		tidp->port = 0;
+	}
+}
+
+pid_t
+audit_token_to_pid(audit_token_t atoken)
+{
+
+	return ((pid_t)AUDIT_TOKEN_LO(&atoken, AUDIT_TOKEN_W_PID_JID));
+}
+
+int
+audit_token_to_pidversion(audit_token_t atoken)
+{
+
+	return ((int)AUDIT_TOKEN_LO(&atoken, AUDIT_TOKEN_W_EXECGEN));
+}
+
+uid_t
+audit_token_to_euid(audit_token_t atoken)
+{
+
+	return ((uid_t)AUDIT_TOKEN_LO(&atoken, AUDIT_TOKEN_W_UIDS));
+}
+
+uid_t
+audit_token_to_ruid(audit_token_t atoken)
+{
+
+	return ((uid_t)AUDIT_TOKEN_HI(&atoken, AUDIT_TOKEN_W_UIDS));
+}
+
+gid_t
+audit_token_to_egid(audit_token_t atoken)
+{
+
+	return ((gid_t)AUDIT_TOKEN_LO(&atoken, AUDIT_TOKEN_W_GIDS));
+}
+
+gid_t
+audit_token_to_rgid(audit_token_t atoken)
+{
+
+	return ((gid_t)AUDIT_TOKEN_HI(&atoken, AUDIT_TOKEN_W_GIDS));
+}
+
+uid_t
+audit_token_to_auid(audit_token_t atoken)
+{
+
+	return ((uid_t)AUDIT_TOKEN_LO(&atoken, AUDIT_TOKEN_W_AUDIT));
+}
+
+au_asid_t
+audit_token_to_asid(audit_token_t atoken)
+{
+
+	return ((au_asid_t)AUDIT_TOKEN_HI(&atoken, AUDIT_TOKEN_W_AUDIT));
+}
+
+u_int64_t
+audit_token_to_uniqueid(audit_token_t atoken)
+{
+
+	return (atoken.__at_w[AUDIT_TOKEN_W_UNIQUEID]);
+}
+
+u_int64_t
+audit_token_to_execgen(audit_token_t atoken)
+{
+
+	return (atoken.__at_w[AUDIT_TOKEN_W_EXECGEN]);
+}
+
+u_int64_t
+audit_token_to_imageid(audit_token_t atoken)
+{
+
+	return (atoken.__at_w[AUDIT_TOKEN_W_IMAGEID]);
+}
+
+int
+audit_token_to_jid(audit_token_t atoken)
+{
+
+	return ((int)AUDIT_TOKEN_HI(&atoken, AUDIT_TOKEN_W_PID_JID));
+}
 #endif /* !__APPLE__ */
 
 int

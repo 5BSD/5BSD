@@ -76,6 +76,7 @@
 #include <sys/unistd.h>
 #include <sys/dqres.h>
 
+#include <bsm/audit_token.h>
 #include <security/audit/audit.h>
 #include <security/mac/mac_framework.h>
 
@@ -283,6 +284,12 @@ SYSCTL_INT(_kern, OID_AUTO, lastpid, CTLFLAG_RD, &lastpid, 0,
     "Last used PID");
 
 /*
+ * The last uniqueid handed out (audit_token(3)); proc0 has 1.  Only fork
+ * hands them out, under procid_lock with the pid.  64 bits: never reused.
+ */
+static uint64_t lastuniqueid = 1;
+
+/*
  * Random component to lastpid generation.  We mix in a random factor to make
  * it a little harder to predict.  We sanity check the modulus value to avoid
  * doing it in critical paths.  Don't let it be too small or we pointlessly
@@ -333,13 +340,14 @@ extern bitstr_t proc_id_sessidmap;
 extern bitstr_t proc_id_reapmap;
 
 /*
- * Find an unused process ID
+ * Find an unused process ID, and give the process its uniqueid
+ * (audit_token(3)) with it.
  *
  * If RFHIGHPID is set (used during system boot), do not allocate
  * low-numbered pids.
  */
 static int
-fork_findpid(int flags)
+fork_findpid(int flags, uint64_t *uniqueidp)
 {
 	pid_t result;
 	int trypid, random;
@@ -384,6 +392,7 @@ retry:
 		lastpid = result;
 
 	bit_set(&proc_id_pidmap, result);
+	*uniqueidp = ++lastuniqueid;
 	mtx_unlock(&procid_lock);
 
 	return (result);
@@ -482,7 +491,13 @@ do_fork(struct thread *td, struct fork_req *fr, struct proc *p2, struct thread *
 	prison_proc_hold(p2->p_ucred->cr_prison);
 
 	p2->p_state = PRS_NEW;		/* protect against others */
-	p2->p_pid = fork_findpid(fr->fr_flags);
+	/*
+	 * The audit token ids are written for every process before it is
+	 * published: p_uniqueid and p_execgen lie outside the zeroed and
+	 * copied ranges, and a reused proc_zone item holds old values.
+	 */
+	p2->p_pid = fork_findpid(fr->fr_flags, &p2->p_uniqueid);
+	p2->p_execgen = audit_token_next_execgen();
 	AUDIT_ARG_PID(p2->p_pid);
 	TSFORK(p2->p_pid, p1->p_pid);
 

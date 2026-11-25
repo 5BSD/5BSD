@@ -143,7 +143,10 @@ kvm_proclist(kvm_t *kd, int what, int arg, struct proc *p,
 		}
 		if (proc.p_state == PRS_NEW)
 			continue;
+		kp->ki_uniqueid = proc.p_uniqueid;
+		kp->ki_execgen = proc.p_execgen;
 		if (KREAD(kd, (u_long)proc.p_ucred, &ucred) == 0) {
+			kp->ki_imageid = ucred.cr_imageid;
 			kp->ki_uid = ucred.cr_uid;
 			kp->ki_ruid = ucred.cr_ruid;
 			kp->ki_svuid = ucred.cr_svuid;
