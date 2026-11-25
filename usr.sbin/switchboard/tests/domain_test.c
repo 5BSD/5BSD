@@ -20,6 +20,7 @@
 #include <sys/types.h>
 #include <sys/event.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 
 #include <dev/mac_capability/mac_capability_channel_proto.h>
 #include <dev/mac_capability/mac_capability_ioctl.h>
@@ -1678,9 +1679,126 @@ ATF_TC_BODY(answer_unsendable_closes_private_channel, tc)
 	close(kq);
 }
 
+/*
+ * P0.6 of the channel promotion (channel-ipc-promotion.md S0; marker
+ * removed in S4b): a parent and the child it forks each get their own line
+ * to SwitchBoard, so their lookups arrive on different SwitchBoard-side
+ * descriptors.  The route is a unit route SwitchBoard's own code mints
+ * (domain_mint_unit_channel()) and the case installs in its process slot;
+ * both processes send a lookup on the descriptor the slot gives them, and
+ * the case plays SwitchBoard's event loop: it waits on SwitchBoard's kqueue,
+ * where every SwitchBoard-side lookup descriptor is registered, and reads
+ * each sender's pid from the kernel stamp.  On dev the slot is shared
+ * across fork, so both lookups arrive on the one route.
+ */
+static int
+p06_send_lookup(void)
+{
+	struct mac_capability_sendmsg_args send;
+	struct svc_lookup_req req;
+	int fd, error;
+
+	fd = service_get_ambient_lookup();
+	if (fd < 0)
+		return (-1);
+	memset(&req, 0, sizeof(req));
+	req.op = SVC_OP_LOOKUP;
+	strlcpy(req.name, ALLOW_LOG_NAME, sizeof(req.name));
+	memset(&send, 0, sizeof(send));
+	send.payload = &req;
+	send.payload_len = sizeof(req);
+	send.reply_token = 1;
+	error = ioctl(fd, MAC_CAPABILITY_SENDMSG, &send);
+	(void)close(fd);
+	return (error);
+}
+
+ATF_TC(lookup_lines_per_process);
+ATF_TC_HEAD(lookup_lines_per_process, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "P0.6: a parent's and its forked "
+	    "child's lookups arrive on different SwitchBoard-side descriptors");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(lookup_lines_per_process, tc)
+{
+	struct mac_capability_recvmsg_v2_args recv;
+	struct svc_runtime unit;
+	struct svc_lookup_req req;
+	struct kevent ev;
+	uintptr_t parent_fd, child_fd;
+	int unit_fd, kq, fl, status;
+	pid_t child;
+
+	require_channel_create_syscall(tc);
+	require_process_context();
+	memset(&unit, 0, sizeof(unit));
+	strlcpy(unit.manifest.label, "test.Lines/unit",
+	    sizeof(unit.manifest.label));
+	unit.domain.kind = SVC_DOMAIN_SYSTEM;
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	switchboard_kq = kq;
+	ATF_REQUIRE_EQ(0, domain_mint_unit_channel(&unit, 0, &unit_fd, kq));
+	ATF_REQUIRE_EQ(0, service_install_ambient_lookup(unit_fd));
+	close(unit_fd);
+
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child == 0)
+		_exit(p06_send_lookup() == 0 ? 0 : 1);
+	ATF_REQUIRE_MSG(p06_send_lookup() == 0, "parent lookup: %s",
+	    strerror(errno));
+	ATF_REQUIRE(waitpid(child, &status, 0) == child);
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "child lookup failed: status %#x", status);
+
+	/* SwitchBoard's side: where did each process's lookup arrive? */
+	parent_fd = child_fd = (uintptr_t)-1;
+	while (parent_fd == (uintptr_t)-1 || child_fd == (uintptr_t)-1) {
+		ATF_REQUIRE(kevent(kq, NULL, 0, &ev, 1, NULL) == 1);
+		ATF_REQUIRE(ev.filter == EVFILT_READ);
+		ATF_REQUIRE(lookup_channel_find(ev.ident) != NULL);
+		fl = fcntl((int)ev.ident, F_GETFL);
+		ATF_REQUIRE(fl >= 0);
+		ATF_REQUIRE(fcntl((int)ev.ident, F_SETFL, fl | O_NONBLOCK) == 0);
+		for (;;) {
+			memset(&recv, 0, sizeof(recv));
+			recv.message.payload = &req;
+			recv.message.payload_len = sizeof(req);
+			if (ioctl((int)ev.ident, MAC_CAPABILITY_RECVMSG_V2,
+			    &recv) == -1) {
+				ATF_REQUIRE_EQ_MSG(EAGAIN, errno, "receive: %s",
+				    strerror(errno));
+				break;
+			}
+			ATF_REQUIRE_EQ(sizeof(req), recv.message.payload_len);
+			ATF_REQUIRE_EQ(SVC_OP_LOOKUP, req.op);
+			if (recv.process.pid == getpid())
+				parent_fd = ev.ident;
+			else if (recv.process.pid == child)
+				child_fd = ev.ident;
+			else
+				atf_tc_fail("lookup from pid %d",
+				    (int)recv.process.pid);
+		}
+		(void)fcntl((int)ev.ident, F_SETFL, fl);
+	}
+	ATF_REQUIRE_EQ(0, service_clear_ambient_lookup());
+	domain_channel_teardown();
+	close(kq);
+
+	atf_tc_expect_fail("dev: the process slot is shared across fork, so "
+	    "parent and child send on one route and SwitchBoard receives both "
+	    "on one descriptor");
+	ATF_CHECK_MSG(parent_fd != child_fd, "both lookups arrived on "
+	    "SwitchBoard-side descriptor %ju", (uintmax_t)parent_fd);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, unit_context_generation);
+	ATF_TP_ADD_TC(tp, lookup_lines_per_process);
 
 	ATF_TP_ADD_TC(tp, scope_system_resolves_all);
 	ATF_TP_ADD_TC(tp, scope_user_allow_list);
