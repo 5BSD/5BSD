@@ -62,15 +62,29 @@ and
 .Ql observed=
 fields.
 .Ql cleanup=blocked
-includes a numeric and textual
+and
+.Ql cleanup=failed
+include a numeric and textual
 .Ql cleanup-error .
-A timeout keeps replacement blocked; a retained observer can still report
+A timeout
+.Pq Ql blocked
+keeps replacement blocked; a retained observer can still report
 completion later.
 An authorized start during pending cleanup returns
 .Er EBUSY .
+.Ql cleanup=failed
+means the coalition reported a failed or released cleanup, or could not be
+observed: nothing will complete it, and nothing restarts the unit
+automatically.
+Only an explicit
+.Cm start
+by an authorized operator overrides it: once the previous process has
+exited, that start accepts the failed cleanup and starts the unit; if the
+unit was removed from the bundle registry meanwhile, the start removes it
+and returns
+.Er ENOENT .
 Stop records the request to suppress automatic restart but does not assert
 that cleanup has finished.
-There is no command to force unconfirmed cleanup to count as complete.
 .It Cm tree
 Show the responsibility tree: every running unit indented under the
 coalition it answers to, starting from the switchboard's own root

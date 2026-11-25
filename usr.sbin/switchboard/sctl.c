@@ -160,6 +160,7 @@ sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 			if (svc->cleanup.pending) {
 				BUF_APPEND(summary, sumlen, &off,
 				    " cleanup=%s child=%s coalition=%s observed=%s",
+				    svc_cleanup_failed(svc) ? "failed" :
 				    svc->cleanup.error == 0 ? "pending" : "blocked",
 				    svc->cleanup.child_pending ? "waiting" : "exited",
 				    svc->cleanup.coalition_complete ? "complete" : "unconfirmed",
@@ -470,6 +471,7 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 			    "start: missing service label");
 		} else {
 			struct svc_runtime *svc;
+			bool accepted = false;
 			int error;
 
 			svc = sctl_target(payload, audit_uid, is_admin, true, &error);
@@ -491,10 +493,29 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 				SWITCHBOARD_PROBE_SCTL_DENY(op, audit_uid);
 				switchboard_audit(AUE_SWITCHBOARD_CTL, audit_uid,
 				    EPERM, "start denied svc=%s", payload);
+			} else if (svc_cleanup_failed(svc) &&
+			    !svc->cleanup.child_pending &&
+			    (accepted = true) &&
+			    supervisor_cleanup_acknowledge(svc)) {
+				/* The failed unit's pending removal applied. */
+				reply->status = ENOENT;
+				snprintf(summary, summary_cap,
+				    "start: \"%s\" failed cleanup accepted; the "
+				    "unit was removed", payload);
+				switchboard_audit(AUE_SWITCHBOARD_CTL, audit_uid,
+				    ENOENT, "start after failed cleanup removed "
+				    "svc=%s", payload);
 			} else if (svc->cleanup.pending) {
 				reply->status = EBUSY;
 				snprintf(summary, summary_cap,
 				    "start: \"%s\" cleanup unconfirmed; replacement blocked", payload);
+			} else if (accepted && svc->state == SVC_STATE_STARTING) {
+				/* Accepting the cleanup ran its pending reload. */
+				reply->status = 0;
+				snprintf(summary, summary_cap,
+				    "start: \"%s\" starting", payload);
+				switchboard_audit(AUE_SWITCHBOARD_CTL, audit_uid, 0,
+				    "start after failed cleanup svc=%s", payload);
 			} else if (svc->state != SVC_STATE_STOPPED &&
 			    svc->state != SVC_STATE_DONE) {
 				reply->status = EALREADY;

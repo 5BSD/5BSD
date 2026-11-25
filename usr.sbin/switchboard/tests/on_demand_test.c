@@ -683,51 +683,59 @@ ATF_TC_BODY(restart_timer_for_started_unit, tc)
  * While a unit's previous coalition is still being torn down, svc_exec()
  * refuses with EBUSY.  A restart timer that fires then is postponed, not
  * counted: a slow teardown must not disable a unit that was never exec'd.
+ * The postponed restart waits for the cleanup's completion, not for another
+ * timer: no backoff timer is re-armed, and the completion runs it.
  */
 ATF_TC_WITHOUT_HEAD(restart_waits_for_cleanup);
 ATF_TC_BODY(restart_waits_for_cleanup, tc)
 {
 	struct kevent kev;
 	struct svc_runtime svc;
-	unsigned i;
-	int kq;
+	int fds[2], kq;
 
 	(void)tc;
 	kq = kqueue();
 	ATF_REQUIRE(kq >= 0);
 	switchboard_kq = kq;
 	exec_refuses_started = true;
+	cleanup_mock = true;
 	runtime_init(&svc, "org.test.cleaning", 0, 0);
 	svc.pd_fd = svc.channel_fd = svc.coalition_fd = -1;
 	svc.manifest.max_failures = 3;
-	svc.state = SVC_STATE_STOPPED;
+	svc.state = SVC_STATE_STOPPING;
 	svc.restart_count = 1;
+	/* The teardown of a failed launch: stopping, coalition draining. */
+	ATF_REQUIRE_EQ(0, pipe(fds));
+	svc.cleanup.fd = fds[0];
 	svc.cleanup.pending = true;
+	svc.cleanup.was_stopping = true;
+	cleanup_phase = CAPABILITY_COALITION_DRAINING;
 	launch_calls = 0;
 	schedule_restart(&svc, kq);
-	for (i = 0; i < 2 * svc.manifest.max_failures; i++) {
-		ATF_REQUIRE(svc.restart_pending);
-		memset(&kev, 0, sizeof(kev));
-		kev.ident = svc.timer_ident;
-		kev.filter = EVFILT_TIMER;
-		kev.udata = &svc;
-		supervisor_handle_timer(&kev);
-		ATF_CHECK_EQ(0, launch_calls);
-		ATF_CHECK_EQ(1, svc.restart_count);
-		ATF_CHECK_MSG(svc.restart_pending,
-		    "the postponed restart was not rescheduled");
-	}
-	/* Teardown done: the next firing restarts it. */
-	svc.cleanup.pending = false;
+	ATF_REQUIRE(svc.restart_pending);
 	memset(&kev, 0, sizeof(kev));
 	kev.ident = svc.timer_ident;
 	kev.filter = EVFILT_TIMER;
 	kev.udata = &svc;
 	supervisor_handle_timer(&kev);
+	ATF_CHECK_EQ(0, launch_calls);
+	ATF_CHECK_EQ(1, svc.restart_count);
+	ATF_CHECK_MSG(!svc.restart_pending,
+	    "the postponed restart polls on the backoff timer");
+
+	/* Teardown done: its completion runs the restart. */
+	supervisor_cleanup_event(&svc);
+	ATF_CHECK(svc.cleanup.pending);
+	ATF_CHECK_EQ(0, launch_calls);
+	cleanup_phase = CAPABILITY_COALITION_COMPLETE;
+	supervisor_cleanup_event(&svc);
+	ATF_CHECK(!svc.cleanup.pending);
 	ATF_CHECK_EQ(1, launch_calls);
 	ATF_CHECK_EQ(1, svc.restart_count);
 
 	svc_cancel_restart(&svc, kq);
+	close(fds[1]);
+	cleanup_mock = false;
 	exec_refuses_started = false;
 	switchboard_kq = -1;
 	(void)close(kq);

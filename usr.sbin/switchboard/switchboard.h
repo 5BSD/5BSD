@@ -196,6 +196,7 @@ struct svc_runtime {
 	struct {
 		int fd, exit_status, error;
 		bool pending, was_stopping, child_pending, coalition_complete;
+		bool restart;	/* a restart waits for this cleanup */
 		time_t uptime_sec;
 		uintptr_t timer_ident;
 	} cleanup;
@@ -453,6 +454,7 @@ void	svc_quiesce_complete(struct svc_runtime *, int status, int kq);
 void	supervisor_cleanup_event(struct svc_runtime *svc);
 void	supervisor_cleanup_failed_launch(struct svc_runtime *svc);
 void	supervisor_disarm_timers(struct svc_runtime *svc, int kq);
+bool	supervisor_cleanup_acknowledge(struct svc_runtime *svc);
 void	schedule_restart(struct svc_runtime *svc, int kq);
 
 /* svc_proto.c — service channel protocol dispatch */
@@ -702,6 +704,19 @@ svc_unit_publish(struct svc_runtime *svc)
 {
 
 	sd.services[sd.nservices++] = svc;
+}
+
+/*
+ * A cleanup that cannot complete: its coalition reported failure (or could
+ * not be watched) and nothing observes it any longer.  The unit stays down
+ * until an operator starts it (supervisor_cleanup_acknowledge()).
+ */
+static inline bool
+svc_cleanup_failed(const struct svc_runtime *svc)
+{
+
+	return (svc->cleanup.pending && svc->cleanup.error != 0 &&
+	    svc->cleanup.fd < 0 && !svc->cleanup.coalition_complete);
 }
 
 /*

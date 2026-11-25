@@ -152,15 +152,27 @@ schedule_restart(struct svc_runtime *svc, int kq)
  * A unit that another path has already started (it is no longer STOPPED, or
  * an asynchronous launch is in flight) needs no restart.  svc_exec() refuses
  * it, but that refusal is not an exec failure: counting it would disable a
- * running unit and mark it STOPPED behind its back.  Likewise svc_exec()
- * refuses (EBUSY) while the unit's previous coalition is still being torn
- * down: the restart is postponed, not counted, or a slow teardown could
- * disable a unit that was never exec'd.
+ * running unit and mark it STOPPED behind its back.  While the unit's
+ * previous coalition is still being torn down (the unit is STOPPING then)
+ * the restart is not counted, or a slow teardown could disable a unit that
+ * was never exec'd; it waits for that cleanup to complete, which resumes it
+ * (supervisor_finish_native_exit()).  A launch that fails after its fork
+ * leaves such a cleanup behind; that failure is counted, and the retry
+ * waits for the cleanup the same way.
  */
 static void
 svc_restart_now(struct svc_runtime *svc, int kq)
 {
 
+	if (sd.shutting_down)
+		return;
+	if (svc->cleanup.pending) {
+		syslog(LOG_INFO, "service %s: previous instance still being "
+		    "cleaned up; restart postponed until it completes",
+		    svc->manifest.label);
+		svc->cleanup.restart = true;
+		return;
+	}
 	if (svc->state != SVC_STATE_STOPPED || svc->launch != NULL) {
 		syslog(LOG_INFO, "service %s: already started (state %d); "
 		    "restart dropped", svc->manifest.label, svc->state);
@@ -168,18 +180,20 @@ svc_restart_now(struct svc_runtime *svc, int kq)
 	}
 	if (svc_exec(svc, kq) != -1)
 		return;
-	if (errno == EBUSY && svc->cleanup.pending) {
-		syslog(LOG_INFO, "service %s: previous instance still being "
-		    "cleaned up; restart postponed", svc->manifest.label);
-		schedule_restart(svc, kq);
-		return;
-	}
 	if (++svc->restart_count >= svc->manifest.max_failures) {
 		syslog(LOG_CRIT, "service %s: exec failed %u times, disabling",
 		    svc->manifest.label, svc->restart_count);
 		SWITCHBOARD_PROBE_SVC_DISABLED(svc->manifest.label,
 		    svc->restart_count);
 		svc->state = SVC_STATE_STOPPED;
+		return;
+	}
+	/* A launch that failed after its fork retries once its teardown ends. */
+	if (svc->cleanup.pending) {
+		syslog(LOG_WARNING, "service %s: exec failed (%u), retrying "
+		    "once its cleanup completes", svc->manifest.label,
+		    svc->restart_count);
+		svc->cleanup.restart = true;
 		return;
 	}
 	syslog(LOG_WARNING, "service %s: exec failed (%u), scheduling retry",
@@ -483,7 +497,11 @@ supervisor_finish_native_exit(struct svc_runtime *svc, int exit_status,
     bool was_stopping, bool reload_pending, bool remove_pending,
     time_t uptime_sec)
 {
+	bool resume;
 
+	/* A restart that found this cleanup pending runs now. */
+	resume = svc->cleanup.restart;
+	svc->cleanup.restart = false;
 	svc_run_container_remove(svc->manifest.label, svc->owner_uid);
 	svc->state = SVC_STATE_STOPPED;
 	/*
@@ -571,9 +589,19 @@ supervisor_finish_native_exit(struct svc_runtime *svc, int exit_status,
 		return;
 	}
 
-	/* No restart if we asked it to stop. */
-	if (was_stopping)
+	/*
+	 * No restart if we asked it to stop, unless a restart was waiting for
+	 * this cleanup (a failed launch's teardown, for one).
+	 */
+	if (was_stopping) {
+		if (resume) {
+			syslog(LOG_INFO, "service %s: cleanup complete, "
+			    "running the postponed restart",
+			    svc->manifest.label);
+			svc_restart_now(svc, switchboard_kq);
+		}
 		return;
+	}
 
 	switch (svc->manifest.restart) {
 	case SVC_RESTART_NEVER:
@@ -706,10 +734,35 @@ supervisor_cleanup_progress(struct svc_runtime *svc)
 	else
 		error = state.cleanup_error != 0 ? state.cleanup_error : EBUSY;
 	svc->cleanup.error = error;
-	syslog(LOG_ERR, "service %s: cleanup unconfirmed: %s; retaining runtime",
-	    svc->manifest.label, strerror(error));
+	svc->cleanup.restart = false;
+	syslog(LOG_ERR, "service %s: cleanup failed: %s; the unit stays down "
+	    "until an operator starts it", svc->manifest.label, strerror(error));
 	supervisor_cleanup_disarm(svc);
 	return (false);
+}
+
+/*
+ * An operator starts a unit whose cleanup failed (svc_cleanup_failed()):
+ * accept the failure and finish the unit's exit as a completed cleanup
+ * would, so a pending removal or reload applies.  The caller has checked
+ * that the previous process exited.  Returns true when that finish removed
+ * the unit, which the caller must then no longer use.
+ */
+bool
+supervisor_cleanup_acknowledge(struct svc_runtime *svc)
+{
+	bool removing;
+
+	syslog(LOG_WARNING, "service %s: failed cleanup (%s) accepted by an "
+	    "operator", svc->manifest.label, strerror(svc->cleanup.error));
+	removing = svc->remove_pending;
+	supervisor_cleanup_disarm(svc);
+	svc->cleanup.pending = false;
+	svc->cleanup.error = 0;
+	svc->cleanup.restart = false;
+	supervisor_finish_native_exit(svc, svc->cleanup.exit_status, true,
+	    svc->reload_pending, removing, svc->cleanup.uptime_sec);
+	return (removing);
 }
 
 void
@@ -1091,6 +1144,7 @@ svc_graceful_stop(struct svc_runtime *svc, int kq)
 	if (svc->cleanup.pending) {
 		/* A stop during crash cleanup must suppress automatic restart. */
 		svc->cleanup.was_stopping = true;
+		svc->cleanup.restart = false;
 		return;
 	}
 	if (svc->state != SVC_STATE_RUNNING &&

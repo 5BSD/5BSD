@@ -574,8 +574,16 @@ A missing coalition descriptor during failed-launch cleanup also retains
 the runtime, even after the child exits; child exit alone cannot confirm
 coalition cleanup.
 .Pp
-A failed or released cleanup, or inability to observe cleanup, keeps
-replacement blocked and retains the runtime for diagnosis.
+A failed or released cleanup, or inability to observe cleanup, is final:
+nothing observes the coalition any longer, so the unit stays down, with
+replacement blocked and the runtime retained for diagnosis.
+Nothing restarts it automatically.
+Only an explicit operator start
+.Pq Nm switchboardctl Cm start
+overrides the failure: a removal or reload that waited for the cleanup
+applies, and the unit starts.
+A restart that found a cleanup pending waits for the cleanup to complete,
+not for a timer, and runs when it does.
 Event-registration failures during reload are retained in the cleanup error
 reported by the control status command, even when another cleanup watch
 was successfully registered.
