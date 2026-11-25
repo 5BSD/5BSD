@@ -712,6 +712,20 @@ svc_unit_publish(struct svc_runtime *svc)
 }
 
 /*
+ * The status a failed lookup answers.  A name outside the requester's reach
+ * (EACCES) is answered as unregistered (ENOENT), so the wire cannot tell
+ * the two apart; every other refusal (EAGAIN: too many activations pending,
+ * ENOSPC/ENOMEM: no room for the unit, ECANCELED: the provider is disabled,
+ * EDEADLK, ...) reaches the client as itself.
+ */
+static inline int
+svc_lookup_status(int error)
+{
+
+	return (error == EACCES ? ENOENT : error);
+}
+
+/*
  * A cleanup that cannot complete: its coalition reported failure (or could
  * not be watched) and nothing observes it any longer.  The unit stays down
  * until an operator starts it (supervisor_cleanup_acknowledge()).

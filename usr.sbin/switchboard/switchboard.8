@@ -827,6 +827,22 @@ event for that name.
 If a control reply cannot be queued, the channel is revoked so callers observe
 peer death instead of waiting for a reply that was dropped.
 .Pp
+A lookup of a name outside the requester's reach is answered with
+.Er ENOENT ,
+as for an unregistered name.
+Any other refusal reaches the client as itself:
+.Er EAGAIN
+when too many activations are pending,
+.Er ENOSPC
+or
+.Er ENOMEM
+when there is no room for the provider's unit,
+.Er ECANCELED
+when the provider is disabled
+.Pq Sx Circuit Breaker ,
+.Er EDEADLK
+for a circular activation.
+.Pp
 When a service exits, all of its claims and published names are automatically
 removed, while manifest reservations remain available for a later process
 incarnation.

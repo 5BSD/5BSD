@@ -467,13 +467,9 @@ handle_lookup(struct svc_runtime *svc, struct channel_message *request,
 			if (on_demand_launch(req->name, svc, request,
 			    switchboard_kq) == 0)
 				return (true);
-			if (errno == EDEADLK)
-				error = EDEADLK;
-		} else if (error == EACCES) {
-			/* Out of scope: fail fast, indistinguishable from
-			 * unregistered on the wire. */
-			error = ENOENT;
+			error = errno != 0 ? errno : EIO;
 		}
+		error = svc_lookup_status(error);
 		(void)svc_channel_reply(svc, request, SVC_OP_LOOKUP, error,
 		    NULL, 0);
 		return (false);
@@ -536,13 +532,9 @@ handle_helper_open(struct svc_runtime *svc, struct channel_message *request)
 			if (on_demand_launch(synthetic, svc, request,
 			    switchboard_kq) == 0)
 				return (true);
-			if (errno == EDEADLK)
-				error = EDEADLK;
-		} else if (error == EACCES) {
-			/* Out of scope: fail fast, indistinguishable from
-			 * unregistered on the wire. */
-			error = ENOENT;
+			error = errno != 0 ? errno : EIO;
 		}
+		error = svc_lookup_status(error);
 		(void)svc_channel_reply(svc, request, SVC_OP_HELPER_OPEN, error,
 		    NULL, 0);
 		return (false);

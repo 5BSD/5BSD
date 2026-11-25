@@ -687,10 +687,12 @@ lookup_channel_request(struct channel *channel,
 		 * scope is carried by value so activation stays scoped to this
 		 * channel's authority.
 		 */
-		if (error == ENOENT &&
-		    on_demand_launch_ambient(req->name, lc,
-		    request, switchboard_kq) == 0)
-			return;
+		if (error == ENOENT) {
+			if (on_demand_launch_ambient(req->name, lc,
+			    request, switchboard_kq) == 0)
+				return;
+			error = errno != 0 ? errno : EIO;
+		}
 		/*
 		 * EACCES means out-of-scope for this channel's domain: fail fast
 		 * (no on-demand) and report ENOENT so the client cannot tell an
@@ -699,7 +701,7 @@ lookup_channel_request(struct channel *channel,
 		 * out-of-scope refusal the client is deliberately not told about.
 		 */
 		SWITCHBOARD_PROBE_DOMAIN_LOOKUP_DENY(req->name, kindstr, error);
-		lookup_channel_reply(lc, request, error == EACCES ? ENOENT : error,
+		lookup_channel_reply(lc, request, svc_lookup_status(error),
 		    NULL, 0);
 		goto out;
 	}

@@ -636,7 +636,7 @@ od_launch(const char *name, struct svc_runtime *requester,
 	    (requester != NULL ? requester->owner_uid : (uid_t)-1);
 	if (bundle_registry_lookup_for_uid(name, lookup_uid, &bundle_idx,
 	    &service_idx) == -1)
-		return (-1);  /* not found — caller should return ENOENT */
+		return (errno = ENOENT, -1);
 
 	/*
 	 * IPC attributes (docs/book/src/plane/attributes.md): a requester that could
@@ -644,8 +644,8 @@ od_launch(const char *name, struct svc_runtime *requester,
 	 * provider either.  Check the registry's requires against the requester's
 	 * set -- a unit's own, or the set captured on the ambient session channel
 	 * -- before any process state changes.  A miss is audited and returns
-	 * EACCES; both callers already answer a failed activation with ENOENT, so
-	 * the wire cannot tell it from an unregistered name (S5, U4).
+	 * EACCES, which every caller answers as ENOENT, so the wire cannot tell
+	 * it from an unregistered name (S5, U4).
 	 */
 	{
 		const struct svc_anoint_set *set;
@@ -718,11 +718,11 @@ od_launch(const char *name, struct svc_runtime *requester,
 	if (target == NULL) {
 		/* Need to actually launch. */
 		b = bundle_registry_get(bundle_idx);
-		if (b == NULL)
+		asvc = b != NULL ? capbundle_service(b, service_idx) : NULL;
+		if (asvc == NULL) {
+			errno = ENOENT;
 			goto fail_timer;
-		asvc = capbundle_service(b, service_idx);
-		if (asvc == NULL)
-			goto fail_timer;
+		}
 
 		/*
 		 * A boot-activated unit may already own a runtime slot that

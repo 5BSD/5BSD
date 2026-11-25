@@ -1368,6 +1368,46 @@ ambient_lookup_returns_activation_refusal_cleanup()
 	    cancel-provider.result
 }
 
+atf_test_case ambient_lookup_disabled_provider_refused cleanup
+ambient_lookup_disabled_provider_refused_head()
+{
+	atf_set "descr" \
+	    "a lookup of a name whose provider the circuit breaker disabled is refused with ECANCELED, not reported as unregistered"
+	atf_set "require.user" "root"
+	atf_set "timeout" "180"
+	require_capsule_stack_kmods
+}
+ambient_lookup_disabled_provider_refused_body()
+{
+	capd_require_unit_issuer
+	find_capd_service_fixture
+	prepare_paths
+	capd_find_lookup_exec
+	# Crashes at once, before it claims its name, until the breaker trips.
+	make_svc_bin system org.test.broken.svc \
+	    "activation { boot = true; ipc = [\"org.test.broken.svc\"]; }
+visible = [\"user\"];
+restart = \"always\";
+max_failures = 2;
+arguments = [\"lifecycle-exit\", \"$(pwd)/broken.pid\", \"1\"];" \
+	    "$capd_service_fixture" >/dev/null
+	write_config
+	start_stack
+	svc_wait_log 'service org\.test\.broken\.svc[^ ]*: (exec )?failed .*disabling' \
+	    120 || fail_case "the circuit breaker did not trip"
+	ambient_probe_start org.test.broken.svc probe.out
+	# 85: ECANCELED, the disabled provider's refusal.
+	ambient_probe_expect \
+	    "^FAIL org\.test\.broken\.svc errno=85 " \
+	    probe.out
+	assert_stack_alive
+}
+ambient_lookup_disabled_provider_refused_cleanup()
+{
+	cleanup_common
+	rm -f probe.out broken.pid
+}
+
 atf_test_case ambient_lookup_switchboard_death_resets cleanup
 ambient_lookup_switchboard_death_resets_head()
 {
@@ -1730,6 +1770,7 @@ atf_init_test_cases()
 	atf_add_test_case private_control_route
 	atf_add_test_case ambient_lookup_waits_for_slow_activation
 	atf_add_test_case ambient_lookup_returns_activation_refusal
+	atf_add_test_case ambient_lookup_disabled_provider_refused
 	atf_add_test_case ambient_lookup_switchboard_death_resets
 	atf_add_test_case ambient_lookup_requester_exit_answers
 	atf_add_test_case capmode_is_authoritative_readiness
