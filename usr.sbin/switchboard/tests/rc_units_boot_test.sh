@@ -15,12 +15,8 @@
 #   ifnet_detach_stops_instance    SR3
 #   sshd_per_connection            SR5
 #   base_daemons_tracked           SR2
-#   switchboard_env_has_no_config  SR1 (on dev the shield refuses procstat -e
-#                                  on SwitchBoard, EPERM, so the case fails
-#                                  before it can see the variables; a default
-#                                  boot forwards none of them, and the
-#                                  SwitchBoard after single-user gets
-#                                  SWITCHBOARD_RC_FASTBOOT, reroot harness)
+#   switchboard_env_has_no_config  SR1 (SwitchBoard's start line naming its
+#                                  environment overrides is absent on dev)
 # Regression pins pass on dev and must keep passing:
 #   ssh_maxstartups_enforced (sshd enforces it today; SwitchBoard after SR5).
 #
@@ -413,31 +409,36 @@ base_daemons_tracked_body()
 
 # ---------------------------------------------------------------------------
 # Behaviour (SR1): SwitchBoard reads its own configuration file; Capsule
-# forwards no configuration through its environment.
+# forwards no configuration through its environment.  The observation is
+# SwitchBoard's start line, which SR1 adds:
+#   configuration: <path>; environment overrides: none
+# (names only, never values, of the SWITCHBOARD_* variables it was started
+# with).  procstat -e cannot observe it: the shield refuses it (EPERM).  On
+# dev the line is absent.  The reroot harness checks the SwitchBoard
+# started after single-user, which dev starts with SWITCHBOARD_RC_FASTBOOT.
 
 atf_test_case switchboard_env_has_no_config
 switchboard_env_has_no_config_head()
 {
-	atf_set "descr" "SwitchBoard's environment holds no forwarded configuration"
+	atf_set "descr" "SwitchBoard's start line reports no configuration taken from its environment"
 	atf_set "require.user" "root"
 }
 switchboard_env_has_no_config_body()
 {
-	local sb found
+	local sb l
 
 	require_plane_on
 	sb=$(sb_pid)
-	procstat -e "$sb" > env.out 2> env.err ||
-	    atf_fail "cannot read SwitchBoard's environment: $(cat env.err)"
-	cat env.out
-	# Readable: at least one NAME=VALUE (SwitchBoard always gets some).
-	tr ' ' '\n' < env.out | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*=' ||
-	    atf_fail "SwitchBoard's environment was not read: $(cat env.out env.err | tr '\n' ' ')"
-	found=$(tr ' ' '\n' < env.out | grep -Eo \
-	    '^SWITCHBOARD_(BUNDLE_DIR_[A-Z_]*|RUN_DIR|SKIP_RC|RC_FASTBOOT)=' |
-	    tr '\n' ' ')
-	[ -z "$found" ] ||
-	    atf_fail "Capsule forwards configuration in SwitchBoard's environment: $found"
+	l=$(grep -h "switchboard\[$sb\]: configuration: .*; environment overrides: " \
+	    $SB_LOGS 2>/dev/null | tail -n 1)
+	[ -n "$l" ] ||
+	    atf_fail "SwitchBoard[$sb] logged no 'configuration: <path>; environment overrides:' line (SR1 adds it)"
+	echo "$l"
+	case $l in
+	*"environment overrides: none") ;;
+	*)	! echo "$l" | grep -Eq 'SWITCHBOARD_(BUNDLE_DIR_[A-Z_]*|RUN_DIR|SKIP_RC|RC_FASTBOOT)' ||
+		    atf_fail "Capsule forwards configuration in SwitchBoard's environment: ${l##*environment overrides: }" ;;
+	esac
 }
 
 atf_init_test_cases()

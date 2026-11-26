@@ -12,20 +12,27 @@
 # guest then reroots into Capsule as PID 1, whose /etc/rc is the first one
 # the pins judge.  The loader variable srcpin_case selects:
 #
-#   boot     boot configuration (regression pins cron_disabled_not_running,
-#            flags_respected, rc_local_runs, jail_enable_starts_jail,
-#            dhclient_from_rc_before_rc_ends), then one reboot with a
-#            firstboot sentinel and -reboot (shutdown_order, utx_records,
-#            firstboot_reboot_reaches_pid1);
+#   boot     boot configuration (regression pins flags_respected,
+#            rc_local_runs, jail_enable_starts_jail,
+#            dhclient_from_rc_before_rc_ends; behaviour pin
+#            cron_disabled_not_running, which rc_adopt fails on dev), then
+#            one reboot with a firstboot sentinel and -reboot
+#            (shutdown_order, utx_records, firstboot_reboot_reaches_pid1);
 #   trans    a reboot, then a reroot, requested by an rc.d script during
-#            /etc/rc (transition_signals_registered_early);
+#            /etc/rc (transition_signals_registered_early).  On dev the
+#            reroot hangs the guest at "Trying to mount root" (issue
+#            2026-11-26-reroot-during-rc-hangs-at-mount-root): the reroot
+#            half's failure is printed before the reroot is requested and
+#            replaced by the pass after it, so a hang ends at the run
+#            deadline with that failure on the console;
 #   bgfsck   securelevel_before_getty (kern_securelevel 0 at boot, a getty
 #            wrapper on an nmdm(4) line records the level it starts at;
 #            LOADER_EXTRA nmdm_load="YES"), then harness_unclean_reboot and
 #            bgfsck_unit;
 #   single   `shutdown now` to single-user (single_user_switchboard_sequence;
 #            SINGLE_USER_SHELL=/root/vm-extra.sh, so that this script is the
-#            single-user shell).
+#            single-user shell), then switchboard_env_has_no_config for the
+#            SwitchBoard started after single-user.
 #
 # A run passes through several boots.  Before each reboot the script saves
 # the results as vm-provider.sh's reroot does (/var/db/vm-provider-reroot.tar)
@@ -208,9 +215,11 @@ check_boot_config() {
 	for p in $(pgrep -x cron); do
 		why="$why; cron $p runs with cron_enable=NO (parent $(ps -o comm= -p "$(ps -o ppid= -p "$p")"), jail $(ps -o jid= -p "$p" | tr -d ' '))"
 	done
-	[ -z "$why" ] ||
-	    why="$why; SwitchBoard: $(grep -h 'rc unit cron' /var/log/daemon.log /var/log/messages 2>/dev/null | tail -n 3 | tr '\n' ' ')"
-	judge cron_disabled_not_running regression "$why"
+	if [ -n "$why" ] && grep -hq 'switchboard\[[0-9]*\]: rc unit cron: \(started\|adopted\)' \
+	    /var/log/daemon.log /var/log/messages 2>/dev/null; then
+		why="SwitchBoard's rc_adopt (rc_adopt.conf: cron, devd, ntpd) ran onestart for cron, ignoring cron_enable=NO$why; SwitchBoard: $(grep -h 'rc unit cron' /var/log/daemon.log /var/log/messages 2>/dev/null | tail -n 3 | tr '\n' ' ')"
+	fi
+	judge cron_disabled_not_running behaviour "$why"
 
 	why=
 	sl=$(pgrep -x -j none syslogd | head -n 1)
@@ -396,6 +405,8 @@ check_single() {	# check_single MARK STAMPBOOT
 	why=
 	grep -Eq 'switchboard\[[0-9]+\]: .*stopping for single-user' /tmp/srcpin-since.log ||
 	    why="$why; no SwitchBoard 'stopping for single-user' line (on dev SwitchBoard gets a plain SIGTERM)"
+	# On dev this line comes from rc.shutdown (death()); it is checked for
+	# presence only, so it is never dev's failure reason.
 	grep -q 'Stopping cron\.' /tmp/srcpin-since.log ||
 	    why="$why; no 'Stopping cron.' line from cron's routed stop (cron died in Capsule's sweep)"
 	sbexit=$(grep -n -E 'switchboard( pid [0-9]+)? exited (with )?status 0' /tmp/srcpin-since.log | head -n 1 | cut -d: -f1)
@@ -406,8 +417,25 @@ check_single() {	# check_single MARK STAMPBOOT
 		why="$why; Capsule's sweep came before SwitchBoard's exit"
 	fi
 	[ -z "$(shut_lines "$2")" ] ||
-	    why="$why; rc.shutdown ran on the way to single-user: $(shut_lines "$2")"
+	    why="$why; rc.shutdown ran on the way to single-user (on dev Capsule's death() runs it before death_single): $(shut_lines "$2")"
 	judge single_user_switchboard_sequence behaviour "$why"
+}
+
+# switchboard_env_has_no_config: SwitchBoard's start line (SR1)
+# "configuration: <path>; environment overrides: none" for the SwitchBoard
+# with pid SB, which lists the names of any SWITCHBOARD_* variable it was
+# started with.  Prints why the pin fails, or nothing.
+env_overrides_why() {	# env_overrides_why SB
+	local l
+	[ -n "$1" ] || { echo "no SwitchBoard is running"; return; }
+	l=$(grep -h "switchboard\[$1\]: configuration: .*; environment overrides: " \
+	    /var/log/daemon.log /var/log/messages 2>/dev/null | tail -n 1)
+	case $l in
+	"")	echo "SwitchBoard[$1] logged no 'configuration: <path>; environment overrides:' line (SR1 adds it)" ;;
+	*"environment overrides: none") ;;
+	*)	echo "$l" | grep -Eq 'SWITCHBOARD_(BUNDLE_DIR_[A-Z_]*|RUN_DIR|SKIP_RC|RC_FASTBOOT)' &&
+		    echo "SwitchBoard[$1] was started with configuration in its environment: ${l##*environment overrides: }" ;;
+	esac
 }
 
 summary() {
@@ -492,8 +520,21 @@ trans:trans-reboot)
 	check_transition reboot "${b:-unknown}" "$2 $3 $4 $5" /var/db/srcpin.stamp
 	echo reroot > /var/db/srcpin.trans
 	: > /var/db/srcpin.stamp
+	# The reroot half's verdict needs the reroot to complete: the pass
+	# that follows it (its completion event) replaces this provisional
+	# failure.  On dev a reroot requested during /etc/rc hangs at "Trying
+	# to mount root" (issue 2026-11-26-reroot-during-rc-hangs-at-mount-root); nothing in the guest runs then, so the
+	# run deadline (TIMEOUT_S) ends the run, and this line, printed now,
+	# is the pin's verdict.
+	fail "transition_signals_registered_early:reroot" behaviour \
+	    "reroot did not complete (issue 2026-11-26-reroot-during-rc-hangs-at-mount-root)"
 	leave "trans-reroot $(mark)" /sbin/shutdown -r now ;;
 trans:trans-reroot)
+	# The reroot completed: drop the provisional failure, judge it.
+	grep -v '^fail behaviour transition_signals_registered_early:reroot reroot did not complete ' \
+	    $RESULTS > $RESULTS.new
+	mv $RESULTS.new $RESULTS
+	note "the reroot completed; its provisional failure is replaced"
 	b=$(awk '/^requested reroot/ { sub(/boot=/, "", $3); print $3 }' /var/db/srcpin.trans.log | tail -n 1)
 	check_transition reroot "${b:-unknown}" "$2 $3 $4 $5" /var/db/srcpin.stamp
 	summary; exit $? ;;
@@ -523,24 +564,11 @@ bgfsck:bgfsck)
 single:)
 	leave "single $(mark) $(bootid)" /sbin/shutdown now ;;
 single:single-done)
-	# switchboard_env_has_no_config after single-user: the SwitchBoard
-	# that leaves single-user is the one Capsule configures (fastboot) on
-	# dev; a default boot forwards nothing (rc_units_boot_test).
+	# switchboard_env_has_no_config for the SwitchBoard that left
+	# single-user (on dev Capsule starts it with SWITCHBOARD_RC_FASTBOOT):
+	# its start line (SR1) names its environment overrides.
 	sb=$(pgrep -x switchboard | head -n 1)
-	why=
-	if [ -z "$sb" ]; then
-		why="no SwitchBoard after single-user"
-	elif ! procstat -e "$sb" > /tmp/srcpin-env.txt 2>&1; then
-		why="cannot read SwitchBoard's environment: $(head -n 2 /tmp/srcpin-env.txt)"
-	elif ! tr ' ' '\n' < /tmp/srcpin-env.txt | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*='; then
-		why="SwitchBoard's environment was not read: $(tr '\n' ' ' < /tmp/srcpin-env.txt)"
-	else
-		note "switchboard environment: $(tr '\n' ' ' < /tmp/srcpin-env.txt)"
-		f=$(tr ' ' '\n' < /tmp/srcpin-env.txt | grep -Eo \
-		    '^SWITCHBOARD_(BUNDLE_DIR_[A-Z_]*|RUN_DIR|SKIP_RC|RC_FASTBOOT)=' | tr '\n' ' ')
-		[ -z "$f" ] ||
-		    why="Capsule forwards configuration in SwitchBoard's environment after single-user: $f"
-	fi
+	why=$(env_overrides_why "$sb")
 	judge switchboard_env_has_no_config:after-single-user behaviour "$why"
 	summary; exit $? ;;
 *)

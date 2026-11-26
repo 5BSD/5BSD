@@ -202,7 +202,10 @@ plane_off_unrouted_cleanup()
 # logged and /etc/rc goes on, in both integrity branches.  On dev the
 # enforcing branch exits 1 when shutdown(8) fails and the other exits 1 when
 # `kill -INT 1` fails.  This exercises rc's own cleanup block with seams for
-# the commands that would act on the guest (as firstboot_integrity_test).
+# the commands that would act on the guest (as firstboot_integrity_test):
+# the failing reboot command is substituted, which is the pin's form in the
+# design (rev 1.3).  A refusing capsulectl cannot set it up on a running
+# system: shutdown(8) then falls back to `reboot -l` (reboot(2)).
 
 firstboot_setup()
 {
