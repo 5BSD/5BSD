@@ -66,6 +66,30 @@ TEST_METADATA.switchboard_dynamic_claims_test+=	is_exclusive="true"
 TEST_METADATA.bundle_integration_test+=	is_exclusive="true"
 TEST_METADATA.helper_integration_test+=	is_exclusive="true"
 TEST_METADATA.on_demand_test+=	is_exclusive="true"
+# SwitchBoard init pins (switchboard-init-rescope.md, slice SR0), run
+# against the system SwitchBoard of a plane-on guest after a full boot:
+# rc units, sshd and interfaces (rc_units_boot_test) and logins (getty_test,
+# on a pseudo-terminal rc_pin_pty.py holds).  They change the guest and restore it,
+# so they run alone.  rc_pin_fixture and rc_pin_daemon are the test daemon of
+# libexec/rc/tests (installed here too: a routed script must sit in a
+# root-owned directory chain); rc_pin_dhcpd.py plays the DHCP server on a
+# tap interface.  rc_units_reroot_test.sh is the matching vm-provider.sh
+# EXTRA_SCRIPT of the reroot harness; it is not a Kyua program.
+ATF_TESTS_SH+=	rc_units_boot_test
+ATF_TESTS_SH+=	getty_test
+TEST_METADATA.rc_units_boot_test+=	is_exclusive="true"
+TEST_METADATA.getty_test+=	is_exclusive="true"
+.PATH: ${SRCTOP}/libexec/rc/tests
+PROGS+=		rc_pin_daemon
+LIBADD.rc_pin_daemon+=	util
+${PACKAGE}FILES+=	rc_pin_fixture rc_units_helpers.sh rc_pin_dhcpd.py rc_pin_pty.py \
+		rc_pin_login
+${PACKAGE}FILESMODE_rc_pin_login=	0555
+${PACKAGE}FILESMODE_rc_pin_fixture=	0555
+# Accept-mode manifest pins (SR5's mode), libcapbundle only.
+ATF_TESTS_C+=	accept_mode_test
+LIBADD.accept_mode_test+=	capbundle ucl
+
 # IPC anointment observability contract: probes, the shipped DTrace script
 # and the bsdinstruments profile clauses (staged source greps; dtrace -e parse).
 ATF_TESTS_SH+=	anoint_observability_test
@@ -89,8 +113,12 @@ ${.OBJDIR}/capd_test_harness.sh: \
     ${SRCTOP}/usr.sbin/capsule/tests/capd_test_harness.sh
 	${CP} ${.ALLSRC} ${.TARGET}
 
-all: ${.OBJDIR}/test_helpers.sh ${.OBJDIR}/capd_test_harness.sh
-CLEANFILES+=	test_helpers.sh capd_test_harness.sh
+${.OBJDIR}/rc_units_helpers.sh: ${.CURDIR}/rc_units_helpers.sh
+	${CP} ${.ALLSRC} ${.TARGET}
+
+all: ${.OBJDIR}/test_helpers.sh ${.OBJDIR}/capd_test_harness.sh \
+    ${.OBJDIR}/rc_units_helpers.sh
+CLEANFILES+=	test_helpers.sh capd_test_harness.sh rc_units_helpers.sh
 .endif
 
 PROGS+=		capd_test_guardian
