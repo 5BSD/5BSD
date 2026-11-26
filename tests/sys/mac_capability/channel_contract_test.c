@@ -17,7 +17,7 @@
  *        P0.4, P0.5, P0.7).
  *
  * Nothing here waits for a guessed time.  A case that must act while a
- * thread sleeps learns of the sleep from dtrace(1) (sched:::sleep, as
+ * thread sleeps learns of the sleep from dtrace(1) (sched:::sleep, through
  * sleep_watch.h does), and the cases that count kernel events read the
  * count back through a marker system call the consumer exits on.  dtrace
  * runs only in a test guest, where dtraceall is preloaded (the plane refuses
@@ -60,15 +60,10 @@
 #include "mac_capability_ioctl.h"
 #include "mac_capability_capprotect_proto.h"
 #include "mac_capability_test_helpers.h"
+#include "sleep_watch.h"
 
-#define	DTRACE_PROG	"/usr/sbin/dtrace"
 #define	CHANNEL_KMODS	"mac_capability mac_capability_channel"
 
-/*
- * getpgid(2) of a process ID above PID_MAX fails with ESRCH and has no
- * other effect: the marker the counting consumers exit on.
- */
-#define	DT_MARK		0x7ffffff0
 
 /* ---------------------------------------------------------------------
  * Channel helpers
@@ -276,136 +271,6 @@ jail_enter(const char *tag)
 }
 
 /* ---------------------------------------------------------------------
- * dtrace(1) consumers, in the manner of sleep_watch.h
- * --------------------------------------------------------------------- */
-
-struct dt {
-	pid_t	pid;
-	FILE	*out;
-};
-
-/*
- * Start dtrace(1) with `script` ($1 is always this process's ID, $2 and $3
- * the optional arguments, which the script must use: dtrace refuses an
- * argument nothing references) and wait until it prints READY from its
- * BEGIN clause: every probe is enabled from then on.
- */
-static void
-dt_start(struct dt *d, const char *script, const char *arg2, const char *arg3)
-{
-	char line[128], self[32];
-	int p[2];
-
-	snprintf(self, sizeof(self), "%d", (int)getpid());
-	ATF_REQUIRE(arg3 == NULL || arg2 != NULL);
-	ATF_REQUIRE_EQ(0, pipe(p));
-	d->pid = fork();
-	ATF_REQUIRE(d->pid >= 0);
-	if (d->pid == 0) {
-		if (dup2(p[1], STDOUT_FILENO) < 0)
-			_exit(126);
-		closefrom(3);
-		execl(DTRACE_PROG, "dtrace", "-q", "-x", "switchrate=100hz",
-		    "-n", script, self, arg2, arg3, (char *)NULL);
-		_exit(127);
-	}
-	close(p[1]);
-	d->out = fdopen(p[0], "r");
-	ATF_REQUIRE(d->out != NULL);
-	while (fgets(line, sizeof(line), d->out) != NULL)
-		if (strcmp(line, "READY\n") == 0)
-			return;
-	atf_tc_fail("dtrace exited before it was ready");
-}
-
-/* The next line dtrace prints, or false once it has exited. */
-static bool
-dt_line(struct dt *d, char *line, size_t len)
-{
-
-	return (fgets(line, (int)len, d->out) != NULL);
-}
-
-static void
-dt_stop(struct dt *d)
-{
-	int status;
-
-	if (d->out == NULL)
-		return;
-	(void)kill(d->pid, SIGINT);
-	fclose(d->out);
-	d->out = NULL;
-	(void)waitpid(d->pid, &status, 0);
-}
-
-/*
- * Read the count a counting consumer prints and exits with: the script's
- * marker clause (getpgid(DT_MARK) from this process) prints "COUNT n" and
- * calls exit(), which the consumer acts on after it has processed every
- * record made before the marker.
- */
-static long
-dt_count(struct dt *d)
-{
-	char line[128];
-	long n;
-	int status;
-
-	(void)getpgid(DT_MARK);
-	n = -1;
-	while (dt_line(d, line, sizeof(line)))
-		if (sscanf(line, "COUNT %ld", &n) == 1)
-			break;
-	fclose(d->out);
-	d->out = NULL;
-	(void)waitpid(d->pid, &status, 0);
-	ATF_REQUIRE_MSG(n >= 0, "dtrace exited without a count");
-	return (n);
-}
-
-/*
- * Sleep watch: a line per sleep of this process in a channel wait, with
- * the thread and the sleep's absolute timeout (td_sleeptimo, sbintime_t; 0
- * for none): 'R' a receive ("mac_capabilityrv"), 'S' a send waiting for
- * room ("mcapsnd"), 'C' a CHANNEL_CALL waiting for its reply
- * ("mac_capabilitycl").
- */
-static const char sleep_script[] =
-    "BEGIN { printf(\"READY\\n\"); }\n"
-    "sched:::sleep /pid == $1 &&\n"
-    "    stringof(curthread->td_wmesg) == \"mac_capabilityrv\"/ {\n"
-    "	printf(\"R %d %d\\n\", tid, curthread->td_sleeptimo); }\n"
-    "sched:::sleep /pid == $1 &&\n"
-    "    stringof(curthread->td_wmesg) == \"mcapsnd\"/ {\n"
-    "	printf(\"S %d %d\\n\", tid, curthread->td_sleeptimo); }\n"
-    "sched:::sleep /pid == $1 &&\n"
-    "    stringof(curthread->td_wmesg) == \"mac_capabilitycl\"/ {\n"
-    "	printf(\"C %d %d\\n\", tid, curthread->td_sleeptimo); }\n";
-
-/*
- * Block until thread `tid` next sleeps in a wait of `kind`; its timeout is
- * stored in *timop.  False if dtrace exited first.
- */
-static bool
-sleep_next(struct dt *d, char kind, long tid, int64_t *timop)
-{
-	char line[128], k;
-	long t;
-	long long timo;
-
-	while (dt_line(d, line, sizeof(line))) {
-		if (sscanf(line, "%c %ld %lld", &k, &t, &timo) == 3 &&
-		    k == kind && t == tid) {
-			if (timop != NULL)
-				*timop = timo;
-			return (true);
-		}
-	}
-	return (false);
-}
-
-/* ---------------------------------------------------------------------
  * Signals for the wait cases
  * --------------------------------------------------------------------- */
 
@@ -454,7 +319,7 @@ enum helper_act {
 };
 
 struct helper {
-	struct dt	*watch;
+	struct sleep_watch *watch;
 	enum helper_act	act;
 	char		kind;
 	pthread_t	target;
@@ -470,7 +335,7 @@ helper_run(void *arg)
 {
 	struct helper *h = arg;
 
-	if (!sleep_next(h->watch, h->kind, h->target_tid, &h->timo[0]))
+	if (!sleep_watch_next(h->watch, h->kind, h->target_tid, &h->timo[0]))
 		return (NULL);
 	h->nsleeps = 1;
 	switch (h->act) {
@@ -482,7 +347,7 @@ helper_run(void *arg)
 		pthread_kill(h->target, SIGUSR1);
 		wait_handled();
 		/* Only a restarted call sleeps again. */
-		if (!sleep_next(h->watch, h->kind, h->target_tid, &h->timo[1]))
+		if (!sleep_watch_next(h->watch, h->kind, h->target_tid, &h->timo[1]))
 			return (NULL);
 		h->nsleeps = 2;
 		h->done = send_msg(h->fd, "wake", 4) == 0;
@@ -495,7 +360,7 @@ helper_run(void *arg)
 }
 
 static void
-helper_start(struct helper *h, pthread_t *thread, struct dt *watch,
+helper_start(struct helper *h, pthread_t *thread, struct sleep_watch *watch,
     enum helper_act act, char kind, int fd)
 {
 
@@ -877,7 +742,11 @@ ATF_TC_BODY(r5_move_closes_on_acceptance, tc)
 /*
  * R6.  A receive whose buffers are too small, for the payload or for the
  * descriptors, fails with EMSGSIZE and leaves the message, descriptors
- * included, at the head of the queue for a receive with room.
+ * included, at the head of the queue for a receive with room.  The
+ * required sizes are not checked: the kernel writes them into its copy of
+ * the arguments, but ioctl(2) copies the arguments out only on success
+ * (sys_generic.c:814), so dev cannot report them.  The native call of S2
+ * and S3 reports them, and its form of this case adds that assertion.
  */
 ATF_TC(r6_emsgsize_keeps_message);
 ATF_TC_HEAD(r6_emsgsize_keeps_message, tc)
@@ -1012,7 +881,7 @@ ATF_TC_HEAD(r8_deadline_kept_across_restart, tc)
 	atf_tc_set_md_var(tc, "descr", "R8: an absolute receive deadline is "
 	    "kept across an SA_RESTART restart");
 	atf_tc_set_md_var(tc, "require.kmods", CHANNEL_KMODS);
-	atf_tc_set_md_var(tc, "require.progs", DTRACE_PROG);
+	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(r8_deadline_kept_across_restart, tc)
@@ -1020,7 +889,7 @@ ATF_TC_BODY(r8_deadline_kept_across_restart, tc)
 	struct mac_capability_recvmsg_args ra;
 	struct timespec ts;
 	struct helper h;
-	struct dt watch;
+	struct sleep_watch watch;
 	pthread_t thread;
 	uint64_t deadline;
 	int64_t want;
@@ -1029,7 +898,7 @@ ATF_TC_BODY(r8_deadline_kept_across_restart, tc)
 
 	pair(P);
 	catch_sigusr1(SA_RESTART);
-	dt_start(&watch, sleep_script, NULL, NULL);
+	sleep_watch_start(&watch, SLEEP_WATCH_ANY_LEN);
 	helper_start(&h, &thread, &watch, ACT_SIGNAL_RESLEEP_SEND, 'R', P[0]);
 	deadline = mono_ns() + 3600ULL * 1000000000;
 	ts.tv_sec = deadline / 1000000000;
@@ -1044,8 +913,9 @@ ATF_TC_BODY(r8_deadline_kept_across_restart, tc)
 	ra._reserved[1] = (uint32_t)(deadline >> 32);
 	r = ioctl(P[1], MAC_CAPABILITY_RECVMSG, &ra);
 	ATF_CHECK_MSG(r == 0, "receive: %s", strerror(errno));
+	sleep_watch_end(&watch);
 	ATF_REQUIRE(pthread_join(thread, NULL) == 0);
-	dt_stop(&watch);
+	sleep_watch_stop(&watch);
 	ATF_CHECK_STREQ("wake", buf);
 	ATF_CHECK_EQ(1, atomic_load(&signals_taken));
 	ATF_REQUIRE_EQ_MSG(2, h.nsleeps, "saw %d sleeps", h.nsleeps);
@@ -1070,14 +940,14 @@ ATF_TC_HEAD(r9_eintr_consumes_nothing, tc)
 	atf_tc_set_md_var(tc, "descr", "R9: a handler without SA_RESTART "
 	    "ends a receive or send wait with EINTR, nothing consumed");
 	atf_tc_set_md_var(tc, "require.kmods", CHANNEL_KMODS);
-	atf_tc_set_md_var(tc, "require.progs", DTRACE_PROG);
+	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(r9_eintr_consumes_nothing, tc)
 {
 	struct mac_capability_sendmsg_v2_args sa;
 	struct helper h;
-	struct dt watch;
+	struct sleep_watch watch;
 	pthread_t thread;
 	char buf[16];
 	int P[2], pfd[2], got, filled;
@@ -1087,19 +957,22 @@ ATF_TC_BODY(r9_eintr_consumes_nothing, tc)
 	ATF_REQUIRE(pipe(pfd) == 0);
 	ATF_REQUIRE(xfer_set(pfd[1], CAP_XFER_ONCE) == 0);
 	catch_sigusr1(0);
-	dt_start(&watch, sleep_script, NULL, NULL);
 
 	/* A waiting receive. */
+	sleep_watch_start(&watch, SLEEP_WATCH_ANY_LEN);
 	helper_start(&h, &thread, &watch, ACT_SIGNAL, 'R', -1);
 	ATF_CHECK_ERRNO(EINTR, recv_fds(P[1], buf, sizeof(buf), NULL, NULL, 0,
 	    NULL, NULL, MAC_CAPABILITY_RECV_F_WAIT) == -1);
+	sleep_watch_end(&watch);
 	ATF_REQUIRE(pthread_join(thread, NULL) == 0);
+	sleep_watch_stop(&watch);
 	ATF_CHECK(h.done);
 	ATF_REQUIRE(send_msg(P[0], "after", 5) == 0);
 	expect_next(P[1], "after");
 
 	/* A send waiting for room, moving a one-shot descriptor. */
 	filled = fill(P[0]);
+	sleep_watch_start(&watch, SLEEP_WATCH_ANY_LEN);
 	helper_start(&h, &thread, &watch, ACT_SIGNAL, 'S', -1);
 	memset(&sa, 0, sizeof(sa));
 	sa.message.payload = "late";
@@ -1110,9 +983,10 @@ ATF_TC_BODY(r9_eintr_consumes_nothing, tc)
 	    MAC_CAPABILITY_SEND_F_MOVE;
 	ATF_CHECK_ERRNO(EINTR, ioctl(P[0], MAC_CAPABILITY_SENDMSG_V2, &sa) ==
 	    -1);
+	sleep_watch_end(&watch);
 	ATF_REQUIRE(pthread_join(thread, NULL) == 0);
+	sleep_watch_stop(&watch);
 	ATF_CHECK(h.done);
-	dt_stop(&watch);
 	ATF_CHECK_EQ(2, atomic_load(&signals_taken));
 	ATF_CHECK_MSG(fd_open(pfd[1]), "the moved descriptor was closed");
 	/* Only the fillers are queued. */
@@ -1417,13 +1291,13 @@ ATF_TC_HEAD(r14_recv_after_peer_close_econnreset, tc)
 	atf_tc_set_md_var(tc, "descr", "R14: a receive after the peer closed "
 	    "and the queue drained fails with ECONNRESET");
 	atf_tc_set_md_var(tc, "require.kmods", CHANNEL_KMODS);
-	atf_tc_set_md_var(tc, "require.progs", DTRACE_PROG);
+	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(r14_recv_after_peer_close_econnreset, tc)
 {
 	struct helper h;
-	struct dt watch;
+	struct sleep_watch watch;
 	pthread_t thread;
 	char buf[16];
 	int P[2];
@@ -1431,13 +1305,14 @@ ATF_TC_BODY(r14_recv_after_peer_close_econnreset, tc)
 	pair(P);
 	ATF_REQUIRE(send_msg(P[0], "last", 4) == 0);
 	expect_next(P[1], "last");
-	dt_start(&watch, sleep_script, NULL, NULL);
+	sleep_watch_start(&watch, SLEEP_WATCH_ANY_LEN);
 	/* The peer closes while the receive waits. */
 	helper_start(&h, &thread, &watch, ACT_CLOSE, 'R', P[0]);
 	ATF_CHECK_ERRNO(ECONNRESET, recv_fds(P[1], buf, sizeof(buf), NULL,
 	    NULL, 0, NULL, NULL, MAC_CAPABILITY_RECV_F_WAIT) == -1);
+	sleep_watch_end(&watch);
 	ATF_REQUIRE(pthread_join(thread, NULL) == 0);
-	dt_stop(&watch);
+	sleep_watch_stop(&watch);
 	ATF_CHECK(h.done);
 	/* And every receive after it. */
 	ATF_CHECK_ERRNO(ECONNRESET, recv_msg(P[1], buf, sizeof(buf), NULL) ==
@@ -1459,14 +1334,14 @@ ATF_TC_HEAD(r15_call_not_resent, tc)
 	atf_tc_set_md_var(tc, "descr", "R15: a call interrupted by an "
 	    "SA_RESTART signal is not resent");
 	atf_tc_set_md_var(tc, "require.kmods", CHANNEL_KMODS);
-	atf_tc_set_md_var(tc, "require.progs", DTRACE_PROG);
+	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(r15_call_not_resent, tc)
 {
 	struct mac_capability_channel_call_args ca;
 	struct helper h;
-	struct dt watch;
+	struct sleep_watch watch;
 	pthread_t thread;
 	char reply[16], buf[16];
 	uint64_t token;
@@ -1474,7 +1349,7 @@ ATF_TC_BODY(r15_call_not_resent, tc)
 
 	pair(P);
 	catch_sigusr1(SA_RESTART);
-	dt_start(&watch, sleep_script, NULL, NULL);
+	sleep_watch_start(&watch, SLEEP_WATCH_ANY_LEN);
 	helper_start(&h, &thread, &watch, ACT_SIGNAL, 'C', -1);
 	memset(&ca, 0, sizeof(ca));
 	ca.request.message.payload = "request";
@@ -1487,8 +1362,9 @@ ATF_TC_BODY(r15_call_not_resent, tc)
 	ATF_CHECK_EQ(-1, r);
 	ATF_CHECK_EQ_MSG(EINTR, errno, "errno %d (%s)", errno,
 	    strerror(errno));
+	sleep_watch_end(&watch);
 	ATF_REQUIRE(pthread_join(thread, NULL) == 0);
-	dt_stop(&watch);
+	sleep_watch_stop(&watch);
 	ATF_CHECK(h.done);
 	ATF_CHECK_EQ(1, atomic_load(&signals_taken));
 	memset(buf, 0, sizeof(buf));
@@ -1572,14 +1448,14 @@ ATF_TC_HEAD(p0_4_last_close_frees_in_closer, tc)
 	atf_tc_set_md_var(tc, "descr", "P0.4: the last close of an end "
 	    "frees the descriptors its queue carries before close returns");
 	atf_tc_set_md_var(tc, "require.kmods", CHANNEL_KMODS);
-	atf_tc_set_md_var(tc, "require.progs", DTRACE_PROG);
+	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(p0_4_last_close_frees_in_closer, tc)
 {
 	struct kevent ev;
 	struct pollfd pfd;
-	struct dt dt;
+	struct sleep_watch dt;
 	char mark[32];
 	int P[2], pp[2], kq;
 	long n;
@@ -1596,14 +1472,14 @@ ATF_TC_BODY(p0_4_last_close_frees_in_closer, tc)
 	ATF_REQUIRE(ev.data == 1);
 	close(kq);
 
-	snprintf(mark, sizeof(mark), "%d", DT_MARK);
-	dt_start(&dt, reap_script, mark, NULL);
+	snprintf(mark, sizeof(mark), "%d", SLEEP_WATCH_MARK);
+	sleep_watch_dtrace(&dt, reap_script, mark, NULL);
 	ATF_REQUIRE(close(P[1]) == 0);
 	pfd.fd = pp[0];
 	pfd.events = POLLIN;
 	pfd.revents = 0;
 	ATF_REQUIRE(poll(&pfd, 1, 0) >= 0);
-	n = dt_count(&dt);
+	n = sleep_watch_count(&dt);
 	atf_tc_expect_fail("dev: the closer hands the message to the "
 	    "mac_capability reaper (reap-defer fires; deterministic)");
 	ATF_CHECK_EQ_MSG(0, n, "reap-defer fired %ld times", n);
@@ -1618,21 +1494,32 @@ ATF_TC_BODY(p0_4_last_close_frees_in_closer, tc)
  * P0.5 (marker removed in S2, where the case is vacuous: new ends have no
  * dispatch task).  With direct delivery off, so that every message goes
  * through the channel's dispatch task, and no sender asleep, forwarding
- * 10 000 messages makes no wakeup() call from the dispatch task of the
- * sending end.  dev wakes the send-room channel (and the receiver's) for
- * every message (mac_capability_kern.c:748-749).  The dispatch probe names
- * the message's sender, so only this case's end is counted.
+ * 10 000 messages makes no wakeup() call for send room.  dev makes one per
+ * message, whether or not a sender sleeps (mac_capability_kern.c:748-749).
+ *
+ * What is counted is that call alone: the wakeup() calls the dispatch task
+ * makes after the handler has returned (mac_capability:::dispatch-done)
+ * and before it takes the next message or returns, for messages of this
+ * case's sending end (the probe names the sender's badge).  The handler's
+ * own forwarding wakes the receiver, which may rightly be asleep, and is
+ * not counted.  A last message, received before the count is read, makes
+ * sure the dispatch task has finished with every counted one: the task
+ * takes one message after another, so the last one is forwarded only after
+ * the one before it has been dealt with.
  */
 #define	P05_COUNT	10000
 #define	P05_BATCH	100
+#define	P05_SAVED	"direct_delivery.saved"
 
 static const char dispatch_script[] =
     "BEGIN { printf(\"READY\\n\"); }\n"
     "fbt:kernel:mac_capability_dispatch_task:entry { self->d = 1; }\n"
     "fbt:kernel:mac_capability_dispatch_task:return {\n"
-    "	self->d = 0; self->mine = 0; }\n"
-    "mac_capability:::dispatch /self->d && arg1 == $3/ { self->mine = 1; }\n"
-    "fbt:kernel:wakeup:entry /self->d && self->mine/ { n++; }\n"
+    "	self->d = 0; self->tail = 0; }\n"
+    "mac_capability:::dispatch /self->d/ { self->tail = 0; }\n"
+    "mac_capability:::dispatch-done /self->d && arg1 == $3/ {\n"
+    "	self->tail = 1; }\n"
+    "fbt:kernel:wakeup:entry /self->tail/ { n++; }\n"
     "syscall::getpgid:entry /pid == $1 && arg0 == $2/ {\n"
     "	printf(\"COUNT %d\\n\", n); exit(0); }\n";
 
@@ -1640,26 +1527,31 @@ ATF_TC_WITH_CLEANUP(p0_5_dispatch_no_wakeup_without_sleeper);
 ATF_TC_HEAD(p0_5_dispatch_no_wakeup_without_sleeper, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "P0.5: the dispatch task makes no "
-	    "wakeup() when no sender sleeps");
+	    "send-room wakeup() when no sender sleeps");
 	atf_tc_set_md_var(tc, "require.kmods", CHANNEL_KMODS);
-	atf_tc_set_md_var(tc, "require.progs", DTRACE_PROG);
+	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
 	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "timeout", "600");
 }
 ATF_TC_BODY(p0_5_dispatch_no_wakeup_without_sleeper, tc)
 {
 	char mark[32], badge[32], buf[8];
-	struct dt dt;
+	struct sleep_watch dt;
+	FILE *fp;
 	int P[2], i, j, saved;
 	long n;
 
 	pair(P);
-	snprintf(mark, sizeof(mark), "%d", DT_MARK);
+	snprintf(mark, sizeof(mark), "%d", SLEEP_WATCH_MARK);
 	snprintf(badge, sizeof(badge), "%ju", (uintmax_t)badge_of(P[0]));
 	saved = set_direct(0);
 	ATF_REQUIRE_MSG(saved >= 0, "kern.mac_capability.direct_delivery: %s",
 	    strerror(errno));
-	dt_start(&dt, dispatch_script, mark, badge);
+	/* For the cleanup, which restores it if the body does not. */
+	fp = fopen(P05_SAVED, "w");
+	ATF_REQUIRE(fp != NULL);
+	fprintf(fp, "%d\n", saved);
+	ATF_REQUIRE(fclose(fp) == 0);
+	sleep_watch_dtrace(&dt, dispatch_script, mark, badge);
 	/* Batches well under the queue limits: no send ever waits. */
 	for (i = 0; i < P05_COUNT; i += P05_BATCH) {
 		for (j = 0; j < P05_BATCH; j++)
@@ -1670,24 +1562,37 @@ ATF_TC_BODY(p0_5_dispatch_no_wakeup_without_sleeper, tc)
 			    NULL, 0, NULL, NULL, MAC_CAPABILITY_RECV_F_WAIT) ==
 			    0, "receive %d: %s", i + j, strerror(errno));
 	}
-	n = dt_count(&dt);
-	(void)set_direct(saved);
-	atf_tc_expect_fail("dev: the dispatch task calls wakeup() for every "
-	    "message whether or not anyone sleeps "
-	    "(mac_capability_kern.c:748-749)");
-	ATF_CHECK_EQ_MSG(0, n, "%ld wakeup() calls for %d messages", n,
-	    P05_COUNT);
+	ATF_REQUIRE(send_msg(P[0], "last", 4) == 0);
+	expect_next(P[1], "last");
+	n = sleep_watch_count(&dt);
+	ATF_REQUIRE(set_direct(saved) == 0);
+	ATF_REQUIRE(unlink(P05_SAVED) == 0);
 	close(P[0]);
 	close(P[1]);
+	/* Either none (the fix) or one for each message (dev's defect). */
+	ATF_REQUIRE_MSG(n == 0 || n >= P05_COUNT, "%ld send-room wakeup() "
+	    "calls for %d messages: neither none nor one per message", n,
+	    P05_COUNT);
+	atf_tc_expect_fail("dev: the dispatch task calls wakeup() for send "
+	    "room after every message whether or not anyone sleeps "
+	    "(mac_capability_kern.c:748-749)");
+	ATF_CHECK_EQ_MSG(0, n, "%ld send-room wakeup() calls for %d messages",
+	    n, P05_COUNT);
 }
 ATF_TC_CLEANUP(p0_5_dispatch_no_wakeup_without_sleeper, tc)
 {
-	int on;
+	FILE *fp;
+	int saved;
 
 	(void)tc;
-	on = 1;
-	(void)sysctlbyname("kern.mac_capability.direct_delivery", NULL, NULL,
-	    &on, sizeof(on));
+	/* The body removes the file once it has restored the value. */
+	fp = fopen(P05_SAVED, "r");
+	if (fp == NULL)
+		return;
+	if (fscanf(fp, "%d", &saved) == 1)
+		(void)sysctlbyname("kern.mac_capability.direct_delivery", NULL,
+		    NULL, &saved, sizeof(saved));
+	fclose(fp);
 }
 
 /*
@@ -1708,13 +1613,13 @@ static void
 cycle_wait_freed(int fd_a, int fd_b, int pipe_read, uint64_t badge)
 {
 	struct kevent ev[2];
-	struct dt dt;
+	struct sleep_watch dt;
 	char arg[32];
 	bool exited, eof;
 	int kq, n;
 
 	snprintf(arg, sizeof(arg), "%ju", (uintmax_t)badge);
-	dt_start(&dt, finalize_script, arg, NULL);
+	sleep_watch_dtrace(&dt, finalize_script, arg, NULL);
 	kq = kqueue();
 	ATF_REQUIRE(kq >= 0);
 	EV_SET(&ev[0], dt.pid, EVFILT_PROC, EV_ADD, NOTE_EXIT, 0, NULL);
@@ -1750,8 +1655,13 @@ ATF_TC_HEAD(p0_7_cycle_two_messages_freed, tc)
 	atf_tc_set_md_var(tc, "descr", "P0.7: two ends each carried only in "
 	    "the other's queue are freed once both descriptors close");
 	atf_tc_set_md_var(tc, "require.kmods", CHANNEL_KMODS);
-	atf_tc_set_md_var(tc, "require.progs", DTRACE_PROG);
+	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
 	atf_tc_set_md_var(tc, "require.user", "root");
+	/*
+	 * The only bound on the case, which on dev always runs into it; on
+	 * a kernel without the leak the wait ends on the finalize and EOF
+	 * events.  Below the 300 s default to limit what a dev run costs.
+	 */
 	atf_tc_set_md_var(tc, "timeout", "120");
 }
 ATF_TC_BODY(p0_7_cycle_two_messages_freed, tc)
@@ -1786,8 +1696,13 @@ ATF_TC_HEAD(p0_7_own_peer_in_own_queue_freed, tc)
 	atf_tc_set_md_var(tc, "descr", "P0.7: an end carried only in its own "
 	    "queue is freed once both descriptors close");
 	atf_tc_set_md_var(tc, "require.kmods", CHANNEL_KMODS);
-	atf_tc_set_md_var(tc, "require.progs", DTRACE_PROG);
+	atf_tc_set_md_var(tc, "require.progs", SLEEP_WATCH_PROG);
 	atf_tc_set_md_var(tc, "require.user", "root");
+	/*
+	 * The only bound on the case, which on dev always runs into it; on
+	 * a kernel without the leak the wait ends on the finalize and EOF
+	 * events.  Below the 300 s default to limit what a dev run costs.
+	 */
 	atf_tc_set_md_var(tc, "timeout", "120");
 }
 ATF_TC_BODY(p0_7_own_peer_in_own_queue_freed, tc)
