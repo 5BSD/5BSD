@@ -61,7 +61,10 @@ for name in ('capsule', 'switchboard'):
     # supply older wrappers. Keep the daemon's complete dependency list.
     libraries.insert(libraries.index('-lc'), str(syscalls))
     destination = fixtures / 'tools/test/oes-admission' / name
-    subprocess.run(['cc', '-static', '-o', str(destination), *objects, *libraries],
+    # The build environment's compiler (make buildenv: its sysroot), so the
+    # link takes the tree's own static libraries, not the host's.
+    compiler = shlex.split(os.environ.get('CC', 'cc'))
+    subprocess.run([*compiler, '-static', '-o', str(destination), *objects, *libraries],
                    cwd=private_objects, check=True)
     if 'statically linked' not in subprocess.check_output(['file', str(destination)], text=True):
         raise RuntimeError('static link required: ' + str(destination))
