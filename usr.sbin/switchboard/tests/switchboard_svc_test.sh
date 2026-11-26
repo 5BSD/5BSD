@@ -1707,20 +1707,33 @@ removal_keeps_unit_timers_body()
 	capd_require_unit_issuer
 	find_capd_service_fixture
 	prepare_paths
-	# A boot unit that exits at once and stays stopped: removed below.
-	make_fixture_svc system org.test.gone.unit 'restart = "never";' \
-	    lifecycle-exit "${WORK}/gone.pid" 0 >/dev/null
+	# The timers under test, and a witness whose own idle timer bounds the
+	# wait for them: its unit is first in SwitchBoard's unit index, so a
+	# removal never moves it, and its timeout is twice theirs, armed before
+	# theirs, so it fires after them once setup has taken less than one
+	# period.  Setup is two reloads.
+	timer=30
+	make_svc_bin system org.test.keep.witness \
+	    "activation { boot = true; ipc = [\"org.test.keep.witness\"]; }
+visible = [\"user\"];
+arguments = [\"idle-provider\", \"org.test.keep.witness\", \"$((timer * 2))\", \"$(pwd)/kwit\"];" \
+	    "$capd_service_fixture" >/dev/null
 	write_config
 	start_stack
+	svc_wait kwit.launch1 || fail_case "the witness did not start"
+
+	# A unit that exits at once and stays stopped, after the witness:
+	# removed below.
+	make_fixture_svc system org.test.gone.unit \
+	    'restart = "never";
+activation { boot = true; }' \
+	    lifecycle-exit "${WORK}/gone.pid" 0 >/dev/null
+	reload_stack
 	svc_wait gone.pid || fail_case "the unit to remove did not start"
 	svc_wait "$logfile" "service org.test.gone.unit/unit: stopped" ||
 	    fail_case "the unit to remove did not stop"
 
-	# Units added after startup follow the stopped one in SwitchBoard's
-	# unit index.  Their timers must outlast the time from arming them to
-	# the removal below, which is two reloads; the case checks that order
-	# in the log rather than assuming it.
-	timer=30
+	# Units added now follow the stopped one in the index.
 	make_svc_bin system org.test.keep.idle \
 	    "activation { boot = true; ipc = [\"org.test.keep.idle\"]; }
 visible = [\"user\"];
@@ -1741,11 +1754,13 @@ arguments = [\"watchdog-wedge\", \"org.test.keep.wd\", \"$(pwd)/kwd\"];" \
 	svc_wait "$logfile" "removing stopped service 'org.test.gone.unit/unit'" ||
 	    fail_case "the stopped unit was not removed"
 
-	# With the timers lost, these waits end at the case's timeout.
-	svc_wait "$logfile" "service org.test.keep.idle/idle: idle timeout, stopping" ||
-	    fail_case "idle timer lost after a unit removal"
-	svc_wait "$logfile" "service org.test.keep.wd/wd: watchdog expired" ||
-	    fail_case "watchdog lost after a unit removal"
+	svc_wait "$logfile" \
+	    "service org.test.keep.witness/witness: idle timeout, stopping" ||
+	    fail_case "the witness's idle timer did not fire"
+	grep -q 'service org\.test\.keep\.idle/idle: idle timeout, stopping' \
+	    "$logfile" || fail_case "idle timer lost after a unit removal"
+	grep -q 'service org\.test\.keep\.wd/wd: watchdog expired' \
+	    "$logfile" || fail_case "watchdog lost after a unit removal"
 	removal=$(svc_log_line "removing stopped service 'org\.test\.gone\.unit")
 	idle=$(svc_log_line 'org\.test\.keep\.idle[^ ]*: idle timeout, stopping')
 	watchdog=$(svc_log_line 'org\.test\.keep\.wd[^ ]*: watchdog expired')
@@ -1756,7 +1771,8 @@ arguments = [\"watchdog-wedge\", \"org.test.keep.wd\", \"$(pwd)/kwd\"];" \
 removal_keeps_unit_timers_cleanup()
 {
 	cleanup_common
-	rm -f gone.pid kidle.count kidle.launch1 kwd.count kwd.launch1 kwd.launch2
+	rm -f gone.pid kidle.count kidle.launch1 kwd.count kwd.launch1 kwd.launch2 \
+	    kwit.count kwit.launch1
 }
 
 atf_init_test_cases()

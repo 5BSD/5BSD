@@ -181,6 +181,17 @@ svc_restart_now(struct svc_runtime *svc, int kq)
 	}
 	if (svc_exec(svc, kq) != -1)
 		return;
+	supervisor_exec_failed(svc, kq);
+}
+
+/*
+ * Count a failed exec against the circuit breaker: disable the unit at
+ * max_failures, otherwise retry it after the backoff delay.
+ */
+void
+supervisor_exec_failed(struct svc_runtime *svc, int kq)
+{
+
 	if (++svc->restart_count >= svc->manifest.max_failures) {
 		syslog(LOG_CRIT, "service %s: exec failed %u times, disabling",
 		    svc->manifest.label, svc->restart_count);
@@ -1028,6 +1039,8 @@ supervisor_handle_timer(struct kevent *kev)
 		}
 		syslog(LOG_INFO, "service %s: restart timer fired",
 		    svc->manifest.label);
+		/* Sources a refused launch quieted may create demand again. */
+		activation_source_resume(svc, switchboard_kq);
 		svc_restart_now(svc, switchboard_kq);
 		return;
 	}

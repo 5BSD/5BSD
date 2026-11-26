@@ -17,6 +17,8 @@
 #include <sys/event.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/mount.h>
+#include <sys/uio.h>
 
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -46,6 +48,8 @@ int switchboard_kq = -1;
 
 static unsigned launch_calls;
 static struct svc_runtime *last_launched;
+/* When set, the next launch is refused with this errno before any fork. */
+static int launch_refusal;
 
 /*
  * Stand-in for the real launcher.  Records the demand and moves the unit to
@@ -59,6 +63,11 @@ svc_launch_or_await(struct svc_runtime *svc, int kq)
 	(void)kq;
 	launch_calls++;
 	last_launched = svc;
+	if (launch_refusal != 0) {
+		errno = launch_refusal;
+		launch_refusal = 0;
+		return (-1);
+	}
 	svc->state = SVC_STATE_STARTING;
 	return (0);
 }
@@ -72,6 +81,18 @@ svc_by_label(const char *label)
 		if (strcmp(sd.services[i]->manifest.label, label) == 0)
 			return (sd.services[i]);
 	return (NULL);
+}
+
+/* Failed-launch accounting lives in supervisor.c; record that it ran. */
+static unsigned exec_failures;
+
+void
+supervisor_exec_failed(struct svc_runtime *svc, int kq)
+{
+
+	(void)svc;
+	(void)kq;
+	exec_failures++;
 }
 
 /* Model trusted bundle ownership; assertions below detect skipped policy. */
@@ -146,6 +167,8 @@ reset_globals(int kq)
 
 	launch_calls = 0;
 	last_launched = NULL;
+	launch_refusal = 0;
+	exec_failures = 0;
 	reg_present = false;
 	switchboard_kq = kq;
 }
@@ -912,6 +935,258 @@ ATF_TC_BODY(register_all_creates_socket_slot, tc)
 	(void)close(kq);
 }
 
+/* --- Sources quieted while their unit runs or is refused --- */
+
+/*
+ * Dispatch the source event a change has already queued (vnode, mount and
+ * socket knotes are activated by the change itself, so it is queued when
+ * the call returns); false when nothing was queued.
+ */
+static bool
+dispatch_queued(int kq)
+{
+	struct timespec now = { 0, 0 };
+	struct kevent kev;
+
+	if (kevent(kq, NULL, 0, &kev, 1, &now) != 1)
+		return (false);
+	switch (kev.filter) {
+	case EVFILT_VNODE:
+		activation_path_event(&kev, kq);
+		break;
+	case EVFILT_FS:
+		activation_mount_event(&kev, kq);
+		break;
+	case EVFILT_READ:
+		activation_socket_event(&kev, kq);
+		break;
+	default:
+		atf_tc_fail("unexpected event filter %d", kev.filter);
+	}
+	return (true);
+}
+
+enum quiet_source { QUIET_PATH, QUIET_QUEUE, QUIET_MOUNT };
+
+static void
+quiet_fire(enum quiet_source source, const char *dir, unsigned n)
+{
+	char path[PATH_MAX], mnt[PATH_MAX];
+	int fd;
+
+	switch (source) {
+	case QUIET_PATH:
+	case QUIET_QUEUE:
+		snprintf(path, sizeof(path), "%s/f%u", dir, n);
+		fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0600);
+		ATF_REQUIRE(fd >= 0);
+		ATF_REQUIRE_EQ(2, write(fd, "x\n", 2));
+		close(fd);
+		break;
+	case QUIET_MOUNT:
+		snprintf(mnt, sizeof(mnt), "%s/m%u", dir, n);
+		ATF_REQUIRE_EQ(0, mkdir(mnt, 0700));
+		{
+			char fstype[] = "fstype", tmpfs[] = "tmpfs";
+			char fspath[] = "fspath";
+			struct iovec iov[] = {
+				{ fstype, sizeof(fstype) }, { tmpfs, sizeof(tmpfs) },
+				{ fspath, sizeof(fspath) }, { mnt, strlen(mnt) + 1 } };
+
+			ATF_REQUIRE_EQ_MSG(0, nmount(iov, 4, 0), "mount: %s",
+			    strerror(errno));
+		}
+		break;
+	}
+}
+
+/*
+ * A source fires, the unit launches; it fires again while the unit runs,
+ * which coalesces and quiets the source; the unit stops, and the source must
+ * create demand again (the fire during the run is delivered then).
+ */
+static void
+quiet_then_resume(enum quiet_source source)
+{
+	struct svc_runtime *svc;
+	char dir[PATH_MAX];
+	unsigned n;
+	int kq;
+
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	reset_globals(kq);
+	ATF_REQUIRE(getcwd(dir, sizeof(dir)) != NULL);
+	ATF_REQUIRE(strlcat(dir, "/src", sizeof(dir)) < sizeof(dir));
+	ATF_REQUIRE_EQ(0, mkdir(dir, 0700));
+	services_alloc(1);
+	svc = sd.services[0];
+	runtime_init(svc, "org.test/quiet");
+	switch (source) {
+	case QUIET_PATH:
+		strlcpy(svc->manifest.activation_path, dir,
+		    sizeof(svc->manifest.activation_path));
+		break;
+	case QUIET_QUEUE:
+		strlcpy(svc->manifest.queue_directory, dir,
+		    sizeof(svc->manifest.queue_directory));
+		break;
+	case QUIET_MOUNT:
+		svc->manifest.activation_on_mount = true;
+		break;
+	}
+	sd.nservices = 1;
+	activation_source_arm(svc, kq);
+
+	n = 0;
+	quiet_fire(source, dir, n++);
+	ATF_REQUIRE_MSG(dispatch_queued(kq), "the first fire created no event");
+	ATF_REQUIRE_EQ(1, launch_calls);
+	ATF_REQUIRE_EQ(SVC_STATE_STARTING, svc->state);
+
+	/* While it runs, a fire coalesces and quiets the source. */
+	quiet_fire(source, dir, n++);
+	(void)dispatch_queued(kq);
+	ATF_CHECK_EQ(1, launch_calls);
+	ATF_CHECK(svc->activation_suspended);
+
+	/* It stops: the source creates demand again. */
+	svc->state = SVC_STATE_STOPPED;
+	activation_source_resume(svc, kq);
+	quiet_fire(source, dir, n++);
+	ATF_REQUIRE_MSG(dispatch_queued(kq),
+	    "the source stayed deaf after its unit stopped");
+	ATF_CHECK_EQ(2, launch_calls);
+
+	if (source == QUIET_MOUNT) {
+		char mnt[PATH_MAX];
+
+		for (unsigned i = 0; i < n; i++) {
+			snprintf(mnt, sizeof(mnt), "%s/m%u", dir, i);
+			(void)unmount(mnt, MNT_FORCE);
+		}
+	}
+	activation_source_teardown(svc, kq);
+	services_free();
+	sd.services = NULL;
+	sd.nservices = 0;
+	(void)close(kq);
+}
+
+ATF_TC(path_source_after_run);
+ATF_TC_HEAD(path_source_after_run, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "a path source quieted while its unit ran relaunches it after it "
+	    "stops");
+}
+ATF_TC_BODY(path_source_after_run, tc)
+{
+
+	quiet_then_resume(QUIET_PATH);
+}
+
+ATF_TC(queue_source_after_run);
+ATF_TC_HEAD(queue_source_after_run, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "a queue-directory source quieted while its unit ran relaunches "
+	    "it after it stops");
+}
+ATF_TC_BODY(queue_source_after_run, tc)
+{
+
+	quiet_then_resume(QUIET_QUEUE);
+}
+
+ATF_TC(mount_source_after_run);
+ATF_TC_HEAD(mount_source_after_run, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "a mount source quieted while its unit ran relaunches it after it "
+	    "stops");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "is.exclusive", "true");
+}
+ATF_TC_BODY(mount_source_after_run, tc)
+{
+
+	quiet_then_resume(QUIET_MOUNT);
+}
+
+/*
+ * A launch refused before any fork for a reason with no event of its own
+ * (here ENOMEM) is counted and retried after the backoff; the retry wakes
+ * the source, and a later fire launches the unit.  A refusal that has its
+ * own event (a disabled unit's ECANCELED) is not counted.
+ */
+ATF_TC(socket_source_after_refusal);
+ATF_TC_HEAD(socket_source_after_refusal, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "a socket-only unit whose launch failed before the fork launches "
+	    "on a later connection once its retry has run");
+}
+ATF_TC_BODY(socket_source_after_refusal, tc)
+{
+	struct sockaddr_in sin;
+	struct svc_runtime *svc;
+	socklen_t len;
+	int kq, c1, c2;
+
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	reset_globals(kq);
+	services_alloc(1);
+	svc = sd.services[0];
+	runtime_init(svc, "org.test/refused");
+	socket_spec_tcp_loopback(&svc->manifest.activation_sockets[0],
+	    "listen");
+	svc->manifest.nactivation_sockets = 1;
+	sd.nservices = 1;
+	activation_source_arm(svc, kq);
+	len = sizeof(sin);
+	ATF_REQUIRE_EQ(0, getsockname(svc->activation_listen_fds[0],
+	    (struct sockaddr *)&sin, &len));
+
+	/* A disabled unit: refused, not counted, quiet until an operator. */
+	launch_refusal = ECANCELED;
+	c1 = socket(AF_INET, SOCK_STREAM, 0);
+	ATF_REQUIRE(c1 >= 0);
+	ATF_REQUIRE_EQ(0, connect(c1, (struct sockaddr *)&sin, sizeof(sin)));
+	ATF_REQUIRE(dispatch_queued(kq));
+	ATF_CHECK_EQ(1, launch_calls);
+	ATF_CHECK_EQ(0, exec_failures);
+	ATF_CHECK(svc->activation_suspended);
+	ATF_CHECK(!dispatch_queued(kq));
+	activation_source_resume(svc, kq);
+
+	/* ENOMEM: counted (backoff), quiet until the retry wakes it. */
+	launch_refusal = ENOMEM;
+	ATF_REQUIRE(dispatch_queued(kq));
+	ATF_CHECK_EQ(2, launch_calls);
+	ATF_CHECK_EQ(1, exec_failures);
+	ATF_CHECK(svc->activation_suspended);
+	ATF_CHECK(!dispatch_queued(kq));
+
+	/* The retry runs (supervisor_handle_timer resumes the sources). */
+	activation_source_resume(svc, kq);
+	c2 = socket(AF_INET, SOCK_STREAM, 0);
+	ATF_REQUIRE(c2 >= 0);
+	ATF_REQUIRE_EQ(0, connect(c2, (struct sockaddr *)&sin, sizeof(sin)));
+	ATF_REQUIRE(dispatch_queued(kq));
+	ATF_CHECK_EQ(3, launch_calls);
+	ATF_CHECK_EQ(SVC_STATE_STARTING, svc->state);
+
+	close(c1);
+	close(c2);
+	activation_source_teardown(svc, kq);
+	services_free();
+	sd.services = NULL;
+	sd.nservices = 0;
+	(void)close(kq);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -928,6 +1203,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, socket_restart_preserves_listener);
 	ATF_TP_ADD_TC(tp, socket_address_conflict_second_fails);
 	ATF_TP_ADD_TC(tp, register_all_creates_socket_slot);
+	ATF_TP_ADD_TC(tp, path_source_after_run);
+	ATF_TP_ADD_TC(tp, queue_source_after_run);
+	ATF_TP_ADD_TC(tp, mount_source_after_run);
+	ATF_TP_ADD_TC(tp, socket_source_after_refusal);
 
 	return (atf_no_error());
 }

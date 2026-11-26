@@ -472,6 +472,7 @@ void	svc_quiesce_complete(struct svc_runtime *, int status, int kq);
 void	supervisor_cleanup_event(struct svc_runtime *svc);
 void	supervisor_cleanup_failed_launch(struct svc_runtime *svc);
 void	supervisor_disarm_timers(struct svc_runtime *svc, int kq);
+void	supervisor_exec_failed(struct svc_runtime *svc, int kq);
 bool	supervisor_cleanup_acknowledge(struct svc_runtime *svc);
 void	schedule_restart(struct svc_runtime *svc, int kq);
 

@@ -729,6 +729,21 @@ A user bundle that conflicts with the registry
 is quarantined with the reason and never fails the scan or the boot.
 A system install root that disappears at runtime retains the previous
 registry instead of unloading every system unit.
+.Ss Activation Sources
+A unit's timer, calendar, path, queue-directory, mount and socket sources
+.Pq Xr switchboard 5
+create demand for it while it is stopped.
+While the unit is starting or running, its sources are disabled: a periodic
+timer or a connection that fires meanwhile relaunches the unit once, right
+after it stops.
+A refused launch also disables them until the event that can change the
+answer: an operator
+.Cm start
+for a disabled unit, the completion of a pending cleanup, or, for any other
+refusal, the retry after the restart delay
+.Pq Sx Linear Backoff ,
+which counts against the circuit breaker.
+During a shutdown they stay disabled.
 .Ss Dynamic Claims
 A unit declares no resource capabilities in its manifest, so
 .Nm

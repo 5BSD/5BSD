@@ -197,7 +197,12 @@ listen_owner(int fd)
 	return (NULL);
 }
 
-/* Enable or disable every armed activation source of a unit. */
+/*
+ * Enable or disable every armed activation source of a unit.  A knote
+ * without a touch method takes fflags and data from every change, so each
+ * change restates the source's own notes: zeroes would leave a vnode or
+ * mount watch deaf.  Timers ignore both unless re-added.
+ */
 static void
 activation_source_set(struct svc_runtime *svc, int kq, u_short flag)
 {
@@ -210,18 +215,18 @@ activation_source_set(struct svc_runtime *svc, int kq, u_short flag)
 		(void)kevent(kq, &kev, 1, NULL, 0, NULL);
 	}
 	if (svc->activation_path_fd >= 0) {
-		EV_SET(&kev, svc->activation_path_fd, EVFILT_VNODE, flag, 0, 0,
-		    svc);
+		EV_SET(&kev, svc->activation_path_fd, EVFILT_VNODE,
+		    flag, ACTIVATION_VNODE_FFLAGS, 0, svc);
 		(void)kevent(kq, &kev, 1, NULL, 0, NULL);
 	}
 	if (svc->activation_queue_fd >= 0) {
-		EV_SET(&kev, svc->activation_queue_fd, EVFILT_VNODE, flag, 0, 0,
-		    svc);
+		EV_SET(&kev, svc->activation_queue_fd, EVFILT_VNODE,
+		    flag, ACTIVATION_VNODE_FFLAGS, 0, svc);
 		(void)kevent(kq, &kev, 1, NULL, 0, NULL);
 	}
 	if (svc->activation_mount_ident != 0) {
-		EV_SET(&kev, svc->activation_mount_ident, EVFILT_FS, flag, 0, 0,
-		    svc);
+		EV_SET(&kev, svc->activation_mount_ident, EVFILT_FS,
+		    flag, VQ_MOUNT, 0, svc);
 		(void)kevent(kq, &kev, 1, NULL, 0, NULL);
 	}
 	for (i = 0; i < svc->nactivation_listen; i++) {
@@ -262,10 +267,11 @@ activation_source_resume(struct svc_runtime *svc, int kq)
  * a lookup arriving for the unit: a stopped (or completed-oneshot) unit is
  * launched; a unit that is already starting, running, or stopping coalesces so
  * repeated fires never stack duplicate launches.  Either way, or when the
- * launch is refused (the unit is disabled, a cleanup is pending, the manager
- * is shutting down), the sources go quiet until the unit stops or an operator
- * starts it: a pending connection keeps a listener readable, so a still-armed
- * listener would fire on every pass of the event loop.
+ * launch is refused, the sources go quiet (a pending connection keeps a
+ * listener readable, so a still-armed listener would fire on every pass of
+ * the event loop) until the unit stops, the refusal's own event arrives, or
+ * a retry runs.  What fired meanwhile is delivered then: one relaunch after
+ * the stop.
  */
 static void
 activation_create_demand(struct svc_runtime *svc, const char *source, int kq)
@@ -281,10 +287,21 @@ activation_create_demand(struct svc_runtime *svc, const char *source, int kq)
 	strlcpy(svc->launched_by, source, sizeof(svc->launched_by));
 	clock_gettime(CLOCK_MONOTONIC, &svc->launch_time);
 	if (svc_launch_or_await(svc, kq) == -1) {
-		syslog(LOG_ERR, "activation: %s launch of '%s' failed: %m; "
-		    "its sources wait until it stops or an operator starts it",
+		int error = errno;
+
+		syslog(LOG_ERR, "activation: %s launch of '%s' failed: %m",
 		    source, svc->manifest.label);
 		activation_source_suspend(svc, kq);
+		/*
+		 * The sources stay quiet until the event that can change the
+		 * answer: an operator start for a disabled unit (ECANCELED),
+		 * the cleanup's completion (EBUSY), nothing in a shutdown
+		 * (ESHUTDOWN).  Any other refusal is counted and retried after
+		 * the backoff delay, whose timer wakes the sources again.
+		 */
+		if (error != ECANCELED && error != EBUSY &&
+		    error != ESHUTDOWN && !svc->restart_pending)
+			supervisor_exec_failed(svc, kq);
 		return;
 	}
 	SWITCHBOARD_PROBE_ON_DEMAND_LAUNCH(svc->manifest.label, source);
