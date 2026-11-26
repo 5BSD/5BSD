@@ -1188,6 +1188,7 @@ struct send_wait {
 	bool		signal;		/* send SIGUSR1 first */
 	bool		resleep;	/* then wait for the restarted sleep */
 	bool		drain;		/* then receive one message */
+	bool		done;		/* saw every sleep it waited for */
 };
 
 static atomic_int send_wait_signals;
@@ -1221,18 +1222,23 @@ send_wait_helper(void *arg)
 	struct send_wait *w = arg;
 	char buf[16];
 
-	sleep_watch_wait(w->watch, 'S', w->sender_tid);
+	/* End of the watch (sleep_watch_end()): the sleep never came. */
+	if (!sleep_watch_next(w->watch, 'S', w->sender_tid, NULL))
+		return (NULL);
 	if (w->signal) {
 		pthread_kill(w->sender, SIGUSR1);
 		if (w->resleep) {
 			while (sem_wait(&send_wait_handled) == -1 &&
 			    errno == EINTR)
 				;
-			sleep_watch_wait(w->watch, 'S', w->sender_tid);
+			if (!sleep_watch_next(w->watch, 'S', w->sender_tid,
+			    NULL))
+				return (NULL);
 		}
 	}
 	if (w->drain)
 		(void)chan_recv(w->reader, buf, sizeof(buf), NULL, NULL);
+	w->done = true;
 	return (NULL);
 }
 
@@ -1313,8 +1319,11 @@ ATF_TC_BODY(send_wait_drained, tc)
 	send_wait_start(&w, &thread, P[1], &watch);
 	ATF_CHECK_MSG(send_wait_send(P[0], "last") == 0, "send: %s",
 	    strerror(errno));
+	/* A send that never slept must not leave the join waiting. */
+	sleep_watch_end(&watch);
 	ATF_REQUIRE(pthread_join(thread, NULL) == 0);
 	sleep_watch_stop(&watch);
+	ATF_CHECK_MSG(w.done, "the send did not sleep for room");
 	/* One filler went to the helper; the rest, then "last", remain. */
 	send_wait_expect(P[1], filled, "last");
 	close(P[0]);
@@ -1346,8 +1355,11 @@ ATF_TC_BODY(send_wait_sa_restart, tc)
 	send_wait_start(&w, &thread, P[1], &watch);
 	ATF_CHECK_MSG(send_wait_send(P[0], "last") == 0, "send: %s",
 	    strerror(errno));
+	/* A send that never slept must not leave the join waiting. */
+	sleep_watch_end(&watch);
 	ATF_REQUIRE(pthread_join(thread, NULL) == 0);
 	sleep_watch_stop(&watch);
+	ATF_CHECK_MSG(w.done, "the send did not sleep for room");
 	ATF_CHECK_EQ(1, atomic_load(&send_wait_signals));
 	close(P[0]);
 	close(P[1]);
@@ -1379,8 +1391,11 @@ ATF_TC_BODY(send_wait_eintr, tc)
 	ATF_CHECK_EQ(-1, send_wait_send(P[0], "last"));
 	ATF_CHECK_EQ_MSG(EINTR, errno, "errno %d (%s)", errno,
 	    strerror(errno));
+	/* A send that never slept must not leave the join waiting. */
+	sleep_watch_end(&watch);
 	ATF_REQUIRE(pthread_join(thread, NULL) == 0);
 	sleep_watch_stop(&watch);
+	ATF_CHECK_MSG(w.done, "the send did not sleep for room");
 	ATF_CHECK_EQ(1, atomic_load(&send_wait_signals));
 	/* "last" was never sent: after the fillers comes the next send. */
 	send_wait_expect(P[1], filled, "fill");
@@ -1577,6 +1592,7 @@ struct deadline_far {
 	char	kind;
 	long	tid;
 	int	fd;
+	bool	done;	/* saw the sleep and ended it */
 };
 
 static void *
@@ -1585,7 +1601,10 @@ deadline_far_helper(void *arg)
 	struct deadline_far *w = arg;
 	char buf[16];
 
-	sleep_watch_wait(w->watch, w->kind, w->tid);
+	/* End of the watch (sleep_watch_end()): the sleep never came. */
+	if (!sleep_watch_next(w->watch, w->kind, w->tid, NULL))
+		return (NULL);
+	w->done = true;
 	if (w->kind == 'R')
 		(void)chan_send(w->fd, "wake", 4);
 	else
@@ -1601,6 +1620,7 @@ deadline_far_start(struct deadline_far *w, pthread_t *thread,
 	w->watch = watch;
 	w->kind = kind;
 	w->fd = fd;
+	w->done = false;
 	ATF_REQUIRE(thr_self(&w->tid) == 0);
 	ATF_REQUIRE(pthread_create(thread, NULL, deadline_far_helper, w) == 0);
 }
@@ -1772,28 +1792,35 @@ ATF_TC_BODY(send_deadline_far_future, tc)
 	struct sleep_watch watch;
 	struct deadline_far w;
 	pthread_t thread;
-	int P[2], filled, r;
+	int P[2], error, filled, r;
 
 	ATF_REQUIRE(chan_create_required(P) == 0);
 	filled = send_wait_fill(P[0]);
-	sleep_watch_start(&watch, 0);
 	/*
 	 * Each send sleeps once: the helper takes one message after the
-	 * sleep it waited for, and the send fills the queue again.
+	 * sleep it waited for, and the send fills the queue again.  A send
+	 * that returned without sleeping must not leave the join waiting, so
+	 * each send has a watch of its own, ended before the join.
 	 */
 	for (int v2 = 0; v2 < 2; v2++) {
 		for (size_t i = 0; i < nitems(far_deadlines); i++) {
+			sleep_watch_start(&watch, 0);
 			deadline_far_start(&w, &thread, &watch, 'S', P[1]);
 			r = send_deadline(P[0], v2 != 0, "far",
 			    MAC_CAPABILITY_SEND_F_WAIT |
 			    MAC_CAPABILITY_SEND_F_DEADLINE, far_deadlines[i]);
+			error = errno;
+			sleep_watch_end(&watch);
+			ATF_REQUIRE(pthread_join(thread, NULL) == 0);
+			sleep_watch_stop(&watch);
 			ATF_REQUIRE_MSG(r == 0, "%s, deadline %ju ns: %s",
 			    v2 != 0 ? "SENDMSG_V2" : "SENDMSG",
-			    (uintmax_t)far_deadlines[i], strerror(errno));
-			ATF_REQUIRE(pthread_join(thread, NULL) == 0);
+			    (uintmax_t)far_deadlines[i], strerror(error));
+			ATF_REQUIRE_MSG(w.done, "%s, deadline %ju ns: the send "
+			    "did not sleep", v2 != 0 ? "SENDMSG_V2" : "SENDMSG",
+			    (uintmax_t)far_deadlines[i]);
 		}
 	}
-	sleep_watch_stop(&watch);
 	send_wait_expect(P[1], filled, "far");
 	close(P[0]);
 	close(P[1]);

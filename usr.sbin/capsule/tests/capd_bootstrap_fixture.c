@@ -287,6 +287,27 @@ read_mode(void)
 	return (mode[0] == '\0' ? "ready-then-sleep" : mode);
 }
 
+/*
+ * What this start received as its discovery route: the environment
+ * variable SwitchBoard reads, and the service of the capability descriptor
+ * at SWITCHBOARD_DISCOVERY_FD (9), or "none".
+ */
+static void
+write_discovery(FILE *fp)
+{
+	struct mac_capability_info_args info;
+	const char *env;
+
+	env = getenv("SWITCHBOARD_DISCOVERY_FD");
+	fprintf(fp, "discovery_env=%s\n", env != NULL ? env : "none");
+	memset(&info, 0, sizeof(info));
+	if (ioctl(9, MAC_CAPABILITY_GETINFO, &info) == 0)
+		fprintf(fp, "discovery_fd9=%.*s\n", (int)sizeof(info.name),
+		    info.name);
+	else
+		fprintf(fp, "discovery_fd9=none\n");
+}
+
 static void
 write_started(int channel_fd, const char *mode)
 {
@@ -296,6 +317,7 @@ write_started(int channel_fd, const char *mode)
 	if (fp != NULL) {
 		fprintf(fp, "pid=%d\nchannel_fd=%d\nmode=%s\n", getpid(),
 		    channel_fd, mode);
+		write_discovery(fp);
 		fclose(fp);
 	}
 }

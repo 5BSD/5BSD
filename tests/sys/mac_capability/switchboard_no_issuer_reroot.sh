@@ -206,6 +206,8 @@ aborts=$(count 'switchboard [0-9]* - - application catalogue init failed')
 sched=$(count 'bootstrap: scheduling restart in [0-9]*s')
 next_missing=$(count "no authority issuer for the next switchboard start: $REASON")
 note "starts=$starts catalogue_aborts=$aborts restart_scheduled=$sched next_missing=$next_missing rc_runs=$(rcruns)"
+# Also R17 of the channel promotion (channel-ipc-promotion.md S0): Capsule
+# hands SwitchBoard's start the boot discovery route as fd 9; S7 inverts it.
 logs | grep -q 'inherited service fds: .* authority=8 discovery=9' ||
     fail 'SwitchBoard does not report its issuer and the boot discovery route'
 [ "$aborts$sched" = 00 ] || fail 'SwitchBoard aborted or was restarted during boot'

@@ -56,6 +56,14 @@ TEST_METADATA.mac_capability_channel_test+=	is_exclusive="true"
 TEST_METADATA.mac_capability_coalition_test+=	is_exclusive="true"
 TEST_METADATA.mac_capability_isolation_test+=	is_exclusive="true"
 ATF_TESTS_C+=	mac_capability_channel_test
+# The channel contract pinned before the channel promotion
+# (channel-ipc-promotion.md, S0): regression pins and fails-before pins.
+# Its dtrace cases need dtraceall preloaded (vm-provider.sh does it); one
+# case toggles kern.mac_capability.direct_delivery, so it runs alone.
+ATF_TESTS_C+=	channel_contract_test
+CFLAGS.channel_contract_test+=	-I${SRCTOP}/lib/libchannel
+LIBADD.channel_contract_test+=	channel jail pthread
+TEST_METADATA.channel_contract_test+=	is_exclusive="true"
 PROGS+=		mac_capability_exec_helper
 PROGS+=		mac_capability_channel_helper
 PROGS+=		mac_capability_isolation_helper

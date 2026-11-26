@@ -40,7 +40,8 @@
 #   can occupy, so ENOMEM there is expected), PARALLELISM (kyua, default 1),
 #   with sys/dq (or a program under it) in the suites, imgact_binmisc and
 #   dtraceall are preloaded for them; with sys/mac_capability or its
-#   issuer-decision probe programs, mac_capability_channel_test, lib/libservice
+#   issuer-decision probe programs, mac_capability_channel_test,
+#   channel_contract_test, lib/libservice
 #   or its service_ambient_test, dtraceall; with sys/mac_capability or
 #   its cap_exclusion_test, also filemon (all of sys gets all three); with
 #   sys/kern or sys/kern/ptrace_sleep_test, fusefs (its presleep cases serve
@@ -250,7 +251,8 @@ esac
 # dq_dtrace_test and dq_socket_test's probes, and for the issuer-decision
 # probe in authority_issuer_probe_test and authority_test_issuer_anchor_test,
 # and for the sched:::sleep waits of mac_capability_channel_test's and
-# service_ambient_test's signal cases.
+# service_ambient_test's signal cases, and channel_contract_test's sleep
+# waits and probe counts.
 # LOADER_EXTRA still carries
 # the Linux modules, mac_test_hooks and the rest of the recipe (DQ chapter
 # of the book, section 17); a module named twice is loaded once.
@@ -273,6 +275,7 @@ case " $suites " in
 *" sys/mac_capability/authority_test_issuer_anchor_test"*|\
 *" sys/mac_capability/cap_exclusion_test"*|\
 *" sys/mac_capability/mac_capability_channel_test"*|\
+*" sys/mac_capability/channel_contract_test"*|\
 *" lib/libservice "*|*" lib/libservice/service_ambient_test"*|\
 *" lib/libservice/session_wait_test"*)
 	dq_loader_add 'dtraceall_load="YES"' ;;
