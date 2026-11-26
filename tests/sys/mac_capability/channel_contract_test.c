@@ -1502,7 +1502,9 @@ ATF_TC_BODY(p0_4_last_close_frees_in_closer, tc)
  * and before it takes the next message or returns, for messages of this
  * case's sending end (the probe names the sender's badge).  The handler's
  * own forwarding wakes the receiver, which may rightly be asleep, and is
- * not counted.  A last message, received before the count is read, makes
+ * not counted; nor is the wakeup on the instance itself (its address, the
+ * task's argument) with which the task drops its reference as it returns,
+ * which wakes a close waiting for the references to go.  A last message, received before the count is read, makes
  * sure the dispatch task has finished with every counted one: the task
  * takes one message after another, so the last one is forwarded only after
  * the one before it has been dealt with.
@@ -1513,13 +1515,14 @@ ATF_TC_BODY(p0_4_last_close_frees_in_closer, tc)
 
 static const char dispatch_script[] =
     "BEGIN { printf(\"READY\\n\"); }\n"
-    "fbt:kernel:mac_capability_dispatch_task:entry { self->d = 1; }\n"
+    "fbt:kernel:mac_capability_dispatch_task:entry {\n"
+    "	self->d = 1; self->s = arg0; }\n"
     "fbt:kernel:mac_capability_dispatch_task:return {\n"
     "	self->d = 0; self->tail = 0; }\n"
     "mac_capability:::dispatch /self->d/ { self->tail = 0; }\n"
     "mac_capability:::dispatch-done /self->d && arg1 == $3/ {\n"
     "	self->tail = 1; }\n"
-    "fbt:kernel:wakeup:entry /self->tail/ { n++; }\n"
+    "fbt:kernel:wakeup:entry /self->tail && arg0 != self->s/ { n++; }\n"
     "syscall::getpgid:entry /pid == $1 && arg0 == $2/ {\n"
     "	printf(\"COUNT %d\\n\", n); exit(0); }\n";
 
