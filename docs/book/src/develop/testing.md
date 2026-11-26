@@ -330,7 +330,23 @@ the restart is refused and PID 1 enters single-user) or `firstboot` (the first
 create fails: recovery).  The killing cases need `switchboard_test_no_sigkill="1"`,
 which a test kernel's Capsule turns into the test-only
 `SWITCHBOARD_TEST_SHIELD_NO_SIGKILL`; `refused` and `firstboot` end in
-single-user, so the host reads their result from the serial log.  The `usr.sbin/bsd-build` cases that read the
+single-user, so the host reads their result from the serial log.
+`usr.sbin/switchboard/tests/rc_units_reroot_test.sh` is the extra script of
+the SwitchBoard init pins (`switchboard-init-rescope.md`, SR0) that need boot
+configuration or a transition: the loader variable `srcpin_case` is `boot`
+(rc.conf knobs read at boot, then a reboot with a firstboot sentinel),
+`trans` (a reboot requested during /etc/rc), `reroot` (a reroot requested
+during /etc/rc; on dev the reroot hangs at "Trying to mount root", so the
+run ends only at its deadline with the failure it printed before the
+reroot: give its run a deadline that covers the case's boots), `bgfsck`
+(securelevel at the first getty, then an unclean reboot; it needs
+`nmdm_load="YES"`) or `single` (`shutdown now`; it needs
+`SINGLE_USER_SHELL=/root/vm-extra.sh`).  It reboots the guest plane-on
+itself, saving the results as the reroot does, and prints one
+`SRCPIN_PASS:` or `SRCPIN_FAIL:` line per pin and a `SRCPIN_SUMMARY`.  The
+same pins' full-boot cases are `usr.sbin/switchboard/rc_units_boot_test`
+and `getty_test` (plane on) and
+`libexec/rc/rc_routing_test` (plane on and `PLANE_OFF=1`).  The `usr.sbin/bsd-build` cases that read the
 source tree need `SRC_IMAGE` (and `PORTS_IMAGE` for package plans); without it
 they are counted as `DEFERRED_TO_SOURCE_TIER=N`.  With the source and
 the ports images, a long bsd-build run fills the default 8 GB guest root:

@@ -1,0 +1,33 @@
+#!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
+# The test daemon of the rc routing pins (rc_routing_test, and the
+# SwitchBoard rc unit pins through the copy installed beside them), shaped
+# like a base rc.d script: rc.subr's default start and stop of a daemon
+# that writes a pidfile.  It is installed root-owned and not writable by
+# group or others in a root-owned directory chain, as SwitchBoard requires
+# of a routed script (switchboard-init-rescope.md 3.3).  rc_unit=daemon is
+# the declaration S-rc adds to base scripts; on dev rc.subr ignores it.
+#
+# PROVIDE: rcpinfix
+# REQUIRE: DAEMON
+# KEYWORD: nojail
+
+. /etc/rc.subr
+
+name="rcpinfix"
+desc="rc routing pins: test daemon"
+rcvar="rcpinfix_enable"
+rc_unit="daemon"
+
+load_rc_config $name
+
+: ${rcpinfix_enable:="NO"}
+pidfile="/var/run/${name}.pid"
+command="${0%/*}/rc_pin_daemon"
+command_args="-p ${pidfile}"
+
+run_rc_command "$1"

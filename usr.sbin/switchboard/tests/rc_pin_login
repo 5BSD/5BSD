@@ -1,0 +1,12 @@
+#!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+#
+# The login program (gettytab lo=) of getty_test's line: a plain
+# interactive sh(1) on the terminal getty opened, with no profile that reads
+# the terminal (resizewin) or line editor that discards typed-ahead input,
+# so the test can type on the line as soon as getty has written to it.  It
+# ends the session when it exits, as a login does.
+exec /bin/sh -i
