@@ -34,10 +34,10 @@ class MemoryCLI(unittest.TestCase):
     def test_boundaries_and_default_reach_path_guard(self):
         for value in [None, 512, 1024, 2048]:
             with self.subTest(value=value):
-                self.assertIn('fixtures must use standard /usr/obj/usr/src staging', self.invoke(value))
+                self.assertIn('fixtures must be staged under /usr/obj', self.invoke(value))
 
     def test_explicit_bazel_builder_profile(self):
-        self.assertIn('fixtures must use standard /usr/obj/usr/src staging',
+        self.assertIn('fixtures must be staged under /usr/obj',
                       self.invoke(24576, 8, 'bazel-builder'))
         self.assertIn('guest RAM must be between 512 and 24576 MiB',
                       self.invoke(24577, 8, 'bazel-builder'))

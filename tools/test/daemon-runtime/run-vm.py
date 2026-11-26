@@ -73,7 +73,7 @@ try:
  workspace_budget=workspace_space(work,workspace_required)
 except (OSError,ValueError) as error: p.error(str(error))
 fixtures=(a.fixture_objtop or obj).resolve()
-if not fixtures.is_relative_to('/usr/obj/usr/src'): p.error('fixtures must use standard /usr/obj/usr/src staging')
+if not fixtures.is_relative_to('/usr/obj'): p.error('fixtures must be staged under /usr/obj')
 if not work.is_relative_to('/usr/obj'): p.error('VM staging must be under /usr/obj')
 kernel=obj/'sys'/a.kernconf/'kernel'
 helper=fixtures/'tools/test/daemon-runtime/runtime_init'
@@ -143,7 +143,9 @@ if a.client_ownership:
  (stage/'tests/extra-cases').write_text(''.join(program+' '+case+'\n' for program,case in extra_cases))
 if a.oes_factory:
  source=fixtures/'usr.sbin/BSDFilesystem/tests/oes_factory_test'
- module=obj/'sys'/a.kernconf/'modules/usr/src/sys/modules/oes/oes.ko'
+ # Kernel module objects mirror the source tree's path (/usr/src or a worktree).
+ srctop=Path(__file__).resolve().parents[3]
+ module=obj/'sys'/a.kernconf/('modules'+str(srctop))/'sys/modules/oes/oes.ko'
  if 'statically linked' not in subprocess.check_output(['file',str(source)],text=True): p.error('OES test must be static')
  for src,dst,key in [(source,stage/'tests/oes_factory_test','oes_factory_test'),(module,stage/'boot/kernel/oes.ko','oes_module')]:
   before=digest(src); shutil.copyfile(src,dst)
@@ -348,6 +350,8 @@ passed=cases_completed(text,case_metadata) and 'host_resource_error' not in prov
 passed=passed and lines.count('RUNTIME_VM_PASS')==1 and 'RUNTIME_VM_FAIL' not in text and 'RUNTIME_CASE_FAIL' not in text
 if a.oes_admission:
  passed=passed and lines.count('COALITION_LIFECYCLE_PASS')==1 and 'COALITION_LIFECYCLE_FAIL' not in text and lines.count('OES_ADMISSION_PASS')==1 and 'OES_ADMISSION_FAIL' not in text and lines.count('RUNTIME_FIXTURES_PASS')==1
+ # runtime_init hands Capsule a test switch; a production kernel's boot SwitchBoard must ignore it.
+ passed=passed and 'test configuration SWITCHBOARD_BUNDLE_DIR_SYSTEM ignored' in text
 passed=passed and not forced and proc.returncode==0 and 'Powering system off' in text and not any(x in text for x in ['panic:','Fatal trap','lock order reversal'])
 if input_disk is not None:
  provenance['input_disk_final_sha256']=digest(input_disk)

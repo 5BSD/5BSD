@@ -14,7 +14,8 @@ import subprocess
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--fixture-objtop', type=Path)
 args = parser.parse_args()
-source = Path('/usr/src')
+# The source tree this script belongs to: /usr/src, or a worktree.
+source = Path(__file__).resolve().parents[3]
 
 
 def value(directory, variable, environment=None):
@@ -25,14 +26,14 @@ def value(directory, variable, environment=None):
 
 
 obj = Path(value(source / 'usr.sbin/switchboard', 'OBJTOP'))
-if not obj.is_relative_to('/usr/obj/usr/src'):
-    raise RuntimeError('standard /usr/obj/usr/src object tree required')
+if not obj.is_relative_to('/usr/obj'):
+    raise RuntimeError('an object tree under /usr/obj is required')
 syscalls = obj / 'lib/libsys/libsys.a'
 if not syscalls.is_file():
     raise RuntimeError('build the matching object-tree libsys first')
 fixtures = (args.fixture_objtop or obj).resolve()
-if not fixtures.is_relative_to('/usr/obj/usr/src'):
-    raise RuntimeError('fixtures must use standard /usr/obj/usr/src staging')
+if not fixtures.is_relative_to('/usr/obj'):
+    raise RuntimeError('fixtures must be staged under /usr/obj')
 fixture_objects = fixtures / 'tools/test/oes-admission'
 fixture_objects.mkdir(parents=True, exist_ok=True)
 fixture_environment = dict(os.environ, MAKEOBJDIR=str(fixture_objects))
