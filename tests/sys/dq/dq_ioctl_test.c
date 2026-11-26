@@ -305,9 +305,9 @@ ATF_TC(deny_and_local);
 ATF_TC_HEAD(deny_and_local, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "dp_ioctl = DQ_DENY answers ENOTTY "
-	    "without an event; FIONREAD, FIONBIO, FIOASYNC and FIOSEEKDATA stay "
-	    "local under DQ_EVENT; the controller's own process is refused "
-	    "an event-posting ioctl with EDEADLK");
+	    "without an event; FIONREAD, FIONBIO and FIOASYNC stay local under "
+	    "DQ_EVENT; the controller's own process is refused an "
+	    "event-posting ioctl, FIOSEEKDATA included (C21), with EDEADLK");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(deny_and_local, tc)
@@ -345,8 +345,11 @@ ATF_TC_BODY(deny_and_local, tc)
 	on = 0;
 	ATF_CHECK_EQ(0, ioctl(ev->fd, FIONBIO, &on));
 	ATF_CHECK_EQ(0, ioctl(ev->fd, FIOASYNC, &on));
+	/* Forwarded under DQ_EVENT (C21): refused here as every event is. */
 	off = 0;
-	ATF_CHECK_EQ(0, ioctl(ev->fd, FIOSEEKDATA, &off));
+	errno = 0;
+	ATF_CHECK_EQ(-1, ioctl(ev->fd, FIOSEEKDATA, &off));
+	ATF_CHECK_EQ(EDEADLK, errno);
 	errno = 0;
 	ATF_CHECK_EQ(-1, ioctl(ev->fd, DQT_IOC_IN, &in));
 	ATF_CHECK_EQ(EDEADLK, errno);
