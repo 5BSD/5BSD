@@ -311,15 +311,16 @@ ATF_TC_BODY(mmap_readonly_rules, tc)
 	teardown(&f);
 }
 
-ATF_TC(copy_file_range_einval);
-ATF_TC_HEAD(copy_file_range_einval, tc)
+ATF_TC(copy_file_range_controller_edeadlk);
+ATF_TC_HEAD(copy_file_range_controller_edeadlk, tc)
 {
-	atf_tc_set_md_var(tc, "descr", "copy_file_range answers EINVAL (the "
-	    "default; no vnode to copy between); sendfile is served "
-	    "(dq_sendfile_test)");
+	atf_tc_set_md_var(tc, "descr", "copy_file_range of a served file in "
+	    "the controller's own process is EDEADLK and posts nothing, as "
+	    "every served read there (the copy itself: dq_write_test cfr_*; "
+	    "sendfile: dq_sendfile_test)");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(copy_file_range_einval, tc)
+ATF_TC_BODY(copy_file_range_controller_edeadlk, tc)
 {
 	struct fixture f;
 	int out;
@@ -327,7 +328,7 @@ ATF_TC_BODY(copy_file_range_einval, tc)
 	setup(&f, 35);
 	out = open("copy_out", O_RDWR | O_CREAT | O_TRUNC, 0644);
 	ATF_REQUIRE(out != -1);
-	FAILS(copy_file_range(f.o->fd, NULL, out, NULL, 100, 0), EINVAL);
+	FAILS(copy_file_range(f.o->fd, NULL, out, NULL, 100, 0), EDEADLK);
 	(void)close(out);
 	teardown(&f);
 }
@@ -907,7 +908,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, setattr_local_refusals);
 	ATF_TP_ADD_TC(tp, fsync_ok);
 	ATF_TP_ADD_TC(tp, mmap_readonly_rules);
-	ATF_TP_ADD_TC(tp, copy_file_range_einval);
+	ATF_TP_ADD_TC(tp, copy_file_range_controller_edeadlk);
 	ATF_TP_ADD_TC(tp, cfr_dir_eisdir);
 	ATF_TP_ADD_TC(tp, acl_extattr);
 	ATF_TP_ADD_TC(tp, locks_are_events);

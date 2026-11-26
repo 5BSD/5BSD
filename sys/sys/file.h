@@ -413,6 +413,7 @@ fo_setattr_t	vn_setattr;
 fo_fadvise_t	vn_fadvise;
 fo_readdir_t	vn_readdir;
 fo_copy_file_range_t vn_copy_range;
+fo_copy_file_range_t file_generic_copy_range;
 fo_acl_t	vn_acl;
 fo_extattr_t	vn_extattr;
 fo_fcntl_t	vn_fcntl;
