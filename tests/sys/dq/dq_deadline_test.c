@@ -20,6 +20,7 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -72,7 +73,7 @@ ATF_TC_BODY(small_deadline_eio, tc)
 	struct timed_arg a;
 	struct timed_res r;
 	struct dq_stats st;
-	int oracle;
+	int n, oracle;
 
 	dqt_fill(data, sizeof(data), 71);
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
@@ -96,14 +97,29 @@ ATF_TC_BODY(small_deadline_eio, tc)
 	ATF_CHECK_EQ(1, st.ds_deadline_misses);
 	ATF_CHECK_EQ(0, st.ds_inflight);
 	/*
-	 * The controller had read it, so the expiry abandons a delivered event
-	 * exactly as EINTR does (design 8.2): one INTERRUPT record naming it,
-	 * and the controller's reply is late.  An event still pending would
-	 * have been withdrawn silently with no record.
+	 * The deadline runs from the post, so whether the controller read
+	 * the event before it is up to the scheduler: a loaded guest may not
+	 * run the reader thread within 200 ms.  A withdrawn pending event can
+	 * never be read afterwards, so after the fence the held count says
+	 * which it was.  Still pending, it was withdrawn silently with no
+	 * record (withdraw_read_pending_deadline pins that).  Read, the
+	 * expiry abandons a delivered event exactly as EINTR does (design
+	 * 8.2): one INTERRUPT record naming it, and the controller's reply
+	 * is late.
 	 */
+	dqt_fence(&c);
 	dqt_lock(&c);
-	ATF_REQUIRE_EQ(1, c.nheld);
+	n = c.nheld;
 	dqt_unlock(&c);
+	printf("the controller read the event before its deadline: %s\n",
+	    n == 1 ? "yes" : "no");
+	if (n == 0) {
+		ATF_CHECK_EQ(0, dqt_events(&c, DQ_OP_INTERRUPT));
+		dqt_fini(&c);
+		(void)close(oracle);
+		return;
+	}
+	ATF_REQUIRE_EQ(1, n);
 	ATF_REQUIRE(dqt_wait_interrupts(&c, 1, DQT_WAIT_MS));
 	dqt_lock(&c);
 	ATF_CHECK_EQ(c.held[0].id, c.interrupted[0]);

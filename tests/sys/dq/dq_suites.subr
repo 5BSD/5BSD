@@ -214,8 +214,9 @@ dq_pid1()
 
 # After every suite of the default set has run: fail on an entry of FILE
 # (its patterns numbered from 1, in file order) that matched no case, and
-# report one that hid no difference as stale unless its comment says
-# "intermittent".
+# on one that hid no difference (stale) unless its comment says
+# "intermittent": an entry that hides nothing is an expected difference
+# that is gone, and the list must say so by losing it.
 #
 # An entry whose owner tag carries "[plane-on]" ("# by-design D138
 # [plane-on]: ...") describes a difference that exists only with the
@@ -229,10 +230,11 @@ dq_pid1()
 # usage: dq_pattern_verdict FILE USED
 dq_pattern_verdict()
 {
-	local n line none pid1
+	local n line none pid1 stale
 
 	n=0
 	none=
+	stale=
 	pid1=$(dq_pid1)
 	grep -v -E '^[[:space:]]*(#|$)' "$1" > verdict.lines
 	while IFS= read -r line; do
@@ -255,12 +257,17 @@ dq_pattern_verdict()
 		elif ! grep -q -x "hides ${n}" "$2"; then
 			case "${line}" in
 			*intermittent*) ;;
-			*)	echo "stale (hid no difference): ${line}" >&2 ;;
+			*)	echo "stale (hid no difference): ${line}" >&2
+				stale=yes
+				;;
 			esac
 		fi
 	done < verdict.lines
 	[ -z "${none}" ] || atf_fail "$(basename "$1"): entries that match" \
 	    "no case of the suites they are for"
+	[ -z "${stale}" ] || atf_fail "$(basename "$1"): stale entries" \
+	    "(they hid no difference; remove them, or mark one that comes" \
+	    "and goes intermittent)"
 }
 
 # A system tree for a served-root run at $1 (under /usr/obj, never

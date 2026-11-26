@@ -143,6 +143,7 @@ ATF_TC_BODY(ids_never_reused, tc)
 {
 	struct dqt_ctl c;
 	struct dqt_object *a, *b, *d, *e, *f;
+	struct dq_policy closing;
 	struct dq_stats st;
 	int oracle;
 
@@ -150,7 +151,15 @@ ATF_TC_BODY(ids_never_reused, tc)
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
 	    sizeof(oracle_path));
 	dqt_init(&c);
-	a = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
+	/*
+	 * A close retires the object in the deferred close, after close(2)
+	 * returns; its CLOSE record is posted once the id is retired and
+	 * ds_objects_live lowered (dq_object_retire_ev).  The closed objects
+	 * ask for it, and the counts are read after both records came.
+	 */
+	dq_policy_default(&closing);
+	closing.dp_events |= DQ_EVENTS_CLOSE;
+	a = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &closing);
 	b = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
 	d = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
 	ATF_CHECK(a->id < b->id && b->id < d->id);
@@ -158,13 +167,15 @@ ATF_TC_BODY(ids_never_reused, tc)
 	ATF_REQUIRE_EQ(0, close(a->fd));	/* retires a */
 	a->fd = -1;
 	ATF_REQUIRE_EQ(0, dq_revoke(c.q, b->id));
-	e = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
+	e = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &closing);
 	ATF_CHECK(e->id > d->id);
 	ATF_REQUIRE_EQ(0, close(e->fd));
 	e->fd = -1;
 	f = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
 	ATF_CHECK(f->id > e->id);
 
+	ATF_REQUIRE_MSG(dqt_wait_events(&c, DQ_OP_CLOSE, 2, DQT_WAIT_MS),
+	    "a and e were not retired (no CLOSE records)");
 	dqt_stats(&c, &st);
 	ATF_CHECK_EQ(5, st.ds_objects_total);
 	ATF_CHECK_EQ(3, st.ds_objects_live);	/* b (revoked), d, f */
