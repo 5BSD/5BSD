@@ -1658,7 +1658,7 @@ ATF_TC_BODY(pdkill_failure, tc)
 	snprintf(pdregex, sizeof(pdregex), "pdkill\\(2\\),([^,]*,){3}"
 	    "argument,1,0xffffffff,fd,argument,2,0x%x,signal,"
 	    "subject,.*return,failure : Bad file descriptor,"
-	    "4294967295,trailer", SIGKILL);
+	    "4294967295,procident,([^,]*,){9}trailer", SIGKILL);
 
 	FILE *pipefd = setup(fds, auclass);
 	/* Failure reason: invalid file descriptor */
@@ -1714,7 +1714,7 @@ ATF_TC_BODY(pdwait_failure, tc)
 	snprintf(pdregex, sizeof(pdregex), "pdwait\\(2\\),([^,]*,){3}"
 	    "argument,1,0xffffffff,fd,argument,1,0xffffffff,fd,"
 	    "subject,.*return,failure : Bad file descriptor,"
-	    "4294967295,trailer");
+	    "4294967295,procident,([^,]*,){9}trailer");
 
 	FILE *pipefd = setup(fds, auclass);
 	/* Failure reason: invalid file descriptor */

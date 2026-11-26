@@ -393,7 +393,8 @@ ATF_TC_BODY(crget_cred_imageid_zero, tc)
 			    KP_EXECGEN(&kp[i]) & BOOT_OFFSET_CLEAR,
 			    "proc0 execgen %#jx", (uintmax_t)KP_EXECGEN(&kp[i]));
 		}
-		if ((kp[i].ki_flag & P_SYSTEM) != 0) {
+		/* P_SYSTEM also marks init; kernel processes are P_KPROC. */
+		if ((kp[i].ki_flag & P_KPROC) != 0) {
 			nsys++;
 			ATF_CHECK_EQ_MSG((uint64_t)0, KP_IMAGEID(&kp[i]),
 			    "kernel process %d (%s) has image id %ju",
@@ -653,7 +654,8 @@ ATF_TC_BODY(pdopentoken_basic, tc)
 	pins_init();
 	pid = child_waiting(&wfd, 0);
 	tok_get(-1, pid, 0, &tok);
-	pd = pin_pdopentoken(&tok, PD_CLOEXEC);
+	/* PD_DAEMON: closing this descriptor must not kill the child. */
+	pd = pin_pdopentoken(&tok, PD_CLOEXEC | PD_DAEMON);
 	ATF_REQUIRE_MSG(pd >= 0, "pdopentoken: %s", strerror(errno));
 	ATF_REQUIRE_EQ(0, pdgetpid(pd, &got));
 	ATF_CHECK_EQ(pid, got);
