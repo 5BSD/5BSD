@@ -1,3 +1,9 @@
+# 20261124: linux32_socket_cookie_test is removed: it needs linux.ko, retired
+# with 32-bit execution.  The Linux64 SO_COOKIE checks are linux_socket_cookie
+# in the Linuxulator QEMU gate (tools/test/linuxulator/guest-cookie.sh).
+OLD_FILES+= usr/tests/sys/kern/linux32_socket_cookie_test
+OLD_FILES+= usr/tests/sys/kern/linux32_socket_cookie.c
+
 # 20261121: service_retry_activation(3) removed; ambient lookups wait for
 # switchboard's answer.
 OLD_FILES+=usr/share/man/man3/service_retry_activation.3.gz

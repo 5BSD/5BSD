@@ -25,7 +25,9 @@ require_dtrace()
 # usage: fire PROBE FORMAT ARGS PROGRAM CASE
 # Run one case of a C test program of this directory under DTrace, with
 # PROBE printing FORMAT of ARGS for every firing in the case's progeny,
-# into the file "fired"; the case must pass.  A case with a cleanup part
+# into the file "fired"; the case must pass.  A case that defers to
+# another tier (a DEFERRED_* skip, such as dqt_require_plane()'s on a
+# plane-off boot) defers this one the same way.  A case with a cleanup part
 # has it run after.  Each run has a work directory of its own, as kyua
 # gives each case.
 fire()
@@ -42,6 +44,10 @@ fire()
 	atf_check -o save:fired -e ignore dtrace -q -n "
 	    ${probe} /progenyof(\$target)/ { printf(\"${fmt}\\n\", ${args}); }" \
 	    -c "/bin/sh run.sh"
+	case $(cat result) in
+	skipped:*DEFERRED_*)
+		atf_skip "$(sed 's/^skipped: //' result) (${prog}:${tc})" ;;
+	esac
 	grep -q '^passed' result ||
 	    atf_fail "${prog}:${tc} under DTrace: $(cat result)"
 }

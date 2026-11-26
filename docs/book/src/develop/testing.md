@@ -203,14 +203,17 @@ results.
 The rules those tests follow are written down in
 `docs/book/src/develop/testing.md`. The test owns every process it starts
 and stops its stack before passing; `pkill -f`, `killall` and PID guesses are
-forbidden; readiness is event-driven with a monotonic deadline, never a fixed
-sleep; fixtures are built with the tree, not compiled from heredocs at run
+forbidden; readiness is event-driven (file events with `capd_wait_file`,
+process exit with pwait(1) or kqueue) with no guessed deadline of its own,
+never a fixed sleep or a polling loop: the case's ATF timeout bounds a wait
+that never ends, and the evidence is printed before the wait; fixtures are built with the tree, not compiled from heredocs at run
 time; a denial test checks the exact errno or protocol status and that no
 side effect happened. The compiled fixtures are `capd_test_guardian`
 (`usr.sbin/capsule/tests`), which starts a protected capsule with pdfork(2)
 and keeps the process descriptor as the only termination authority;
 `capd_test_harness.sh` beside it, which supplies guarded start, stop and
-bounded wait to shell tests; `capd_service_fixture` (`lib/libservice/tests`),
+event waits to shell tests (a case its timeout ends in such a wait has the
+wait and the stack's state reported by `capd_cleanup_stack`); `capd_service_fixture` (`lib/libservice/tests`),
 a scenario-selected managed service that sends its ready record only after
 the observed operation has completed; `capd_protocol_fixture`
 (`usr.sbin/switchboard/tests`), which sends deliberately malformed control
@@ -279,7 +282,11 @@ drives the device itself and is not part of it.  A case of a deployed-tier
 suite that needs the device skips with `DEFERRED_DEVICE_TIER`, counted as
 `DEFERRED_TO_DEVICE_TIER=N`: it runs in the plane-on test tier.  Cases that
 start a test-local Capsule and switchboard skip with any plane on as
-`DEFERRED_PLANEOFF_TIER` (`DEFERRED_TO_PLANEOFF_TIER=N`).  Those that launch
+`DEFERRED_PLANEOFF_TIER` (`DEFERRED_TO_PLANEOFF_TIER=N`).  The reverse, a
+case that needs Capsule as PID 1 (`dqt_require_plane` in `tests/sys/dq`),
+skips on a boot with `capability_plane="NO"` (the plane-off and stack tiers)
+as `DEFERRED_PLANEON_TIER` (`DEFERRED_TO_PLANEON_TIER=N`, not a pass) and
+fails on any other boot whose PID 1 is not Capsule.  Those that launch
 no unit run plane-off on any kernel.  Those that launch units need a unit
 issuer, which only PID 1 creates on GENERIC; they call
 `capd_require_unit_issuer` and skip elsewhere with `DEFERRED_STACK_TIER`
@@ -345,7 +352,10 @@ A case skipped because the stage lacks a program or file it requires
 (kyua's "Required program/file ... not found", atf-sh's required program)
 makes the run `VM_NOT_CLEAN` (`STAGE_PREREQ_SKIPPED=N`), as a missing
 kernel module does (`KMOD_SKIPPED=N`).  A device only a kernel option
-provides (`/dev/kcov`) is not a stage input and stays a plain skip.  Every other skip without a
+provides (`/dev/kcov`) is not a stage input and stays a plain skip.  A skip
+whose `DEFERRED_*` token the runner does not count (a new token not yet added
+to its list) is listed as `DEFERRED_UNKNOWN=N`, one `DEFERRED_UNKNOWN:` line
+each, and makes the run `VM_NOT_CLEAN`.  Every other skip without a
 `DEFERRED_*` token is listed, all of them, as `PLAIN_SKIPS=N` with one
 `PLAIN_SKIP:` line each, and expected failures, which kyua counts as passed,
 as `EXPECTED_FAILURES=N`; neither changes the verdict, so read `VM_CLEAN`

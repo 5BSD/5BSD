@@ -299,7 +299,7 @@ do
 	to=${spec#*:}
 	copy_obj_helper "$obj/$from" "$to"
 done
-for helper in capd_test_guardian capd_lookup_exec capd_protocol_fixture service_probe; do
+for helper in capd_test_guardian capd_wait_file capd_lookup_exec capd_protocol_fixture service_probe; do
 	cp "$obj/usr.sbin/switchboard/tests/$helper" "$payload/tests/$helper"
 done
 cp "$obj/lib/libservice/tests/capd_service_fixture" \

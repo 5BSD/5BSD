@@ -123,7 +123,7 @@ wait_for_log()
 
 wait_for_authenticated_shutdown()
 {
-	if ! capd_wait_guardian_exit 100; then
+	if ! capd_wait_guardian_exit; then
 		capd_dump_diagnostics
 		atf_fail "Capsule did not exit after authenticated shutdown"
 	fi

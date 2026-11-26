@@ -16,6 +16,8 @@ SRCS=		dqt_access.c \
 		dqt_tree.c
 
 CFLAGS+=	-I${SRCTOP}/sys -I${SRCTOP}/lib/libdq
+# capsule_plane.h: Capsule's plane-free boot decision (dqt_require_plane).
+CFLAGS+=	-I${SRCTOP}/usr.sbin/capsule
 
 WARNS?=		6
 

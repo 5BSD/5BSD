@@ -928,10 +928,11 @@ scenario_multi_provider(const char *first, const char *second,
 		    &accepted[i]) != 0)
 			errx(1, "pthread_create");
 	}
+	/* The pid lets a test wait on this provider's exit. */
 	write_result(registered,
-	    "listeners_ready=1\nlistener_fds_distinct=%d\n",
+	    "listeners_ready=1\nlistener_fds_distinct=%d\npid=%jd\n",
 	    service_listener_fd(listeners[0]) !=
-	    service_listener_fd(listeners[1]));
+	    service_listener_fd(listeners[1]), (intmax_t)getpid());
 	for (i = 0; i < 2; i++) {
 		if (pthread_join(threads[i], NULL) != 0)
 			errx(1, "pthread_join");
@@ -939,8 +940,16 @@ scenario_multi_provider(const char *first, const char *second,
 			errno = accepted[i].error;
 			err(1, "service_listener_accept");
 		}
+		/*
+		 * Tell the client which name it reached.  A client that has
+		 * already closed its end (compat-lookup records its result
+		 * and exits as soon as it is connected) makes the send fail
+		 * with EPIPE or ECONNRESET: the routing already happened, and
+		 * the accept above is its evidence, so that is no failure.
+		 */
 		if (fixture_event_send(accepted[i].fd, accepted[i].service_name,
-		    strlen(accepted[i].service_name) + 1) == -1)
+		    strlen(accepted[i].service_name) + 1) == -1 &&
+		    errno != EPIPE && errno != ECONNRESET)
 			err(1, "channel_send_event");
 		/*
 		 * Keep the accepted endpoint open: a fire-and-forget event is

@@ -94,6 +94,8 @@ CLEANFILES+=	test_helpers.sh capd_test_harness.sh
 .endif
 
 PROGS+=		capd_test_guardian
+# capd_test_harness.sh waits on file events with it.
+PROGS+=		capd_wait_file
 PROGS+=		capd_lookup_exec
 PROGS+=		capd_service_fixture
 PROGS+=		capd_protocol_fixture

@@ -22,5 +22,7 @@ WARNS?=		6
 .PATH:		${SRCTOP}/tests/sys/dq/libdqtest
 SRCS.libdq_test=	libdq_test.c dqt_access.c dqt_server.c
 CFLAGS.libdq_test+=	-I${SRCTOP}/tests/sys/dq/libdqtest
+# capsule_plane.h: Capsule's plane-free boot decision (dqt_require_plane).
+CFLAGS.libdq_test+=	-I${SRCTOP}/usr.sbin/capsule
 
 .include <bsd.test.mk>

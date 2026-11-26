@@ -64,7 +64,8 @@ CFLAGS.procnet_outside_test.c+=	-I${SRCTOP}/sys -I${SRCTOP}/lib/libdq \
 		-I${SRCTOP}/tests/sys/dq/libdqtest \
 		-I${SRCTOP}/sys/dev/mac_capability \
 		-I${SRCTOP}/tests/sys/mac_capability
-CFLAGS.dqt_access.c+=	-I${SRCTOP}/sys -I${SRCTOP}/lib/libdq
+CFLAGS.dqt_access.c+=	-I${SRCTOP}/sys -I${SRCTOP}/lib/libdq \
+		-I${SRCTOP}/usr.sbin/capsule
 CFLAGS.dqt_harness.c+=	-I${SRCTOP}/sys -I${SRCTOP}/lib/libdq
 LIBADD.procnet_outside_test+=	dq pthread util
 

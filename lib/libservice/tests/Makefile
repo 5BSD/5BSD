@@ -40,6 +40,8 @@ TEST_METADATA.software_identity_test+=	is_exclusive="true"
 
 PROGS+=		capd_service_fixture
 PROGS+=		capd_test_guardian
+# capd_test_harness.sh waits on file events with it.
+PROGS+=		capd_wait_file
 BINDIR=		${TESTSDIR}
 
 LIBADD.capd_service_fixture+=	service

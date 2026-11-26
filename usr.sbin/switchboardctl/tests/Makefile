@@ -19,6 +19,8 @@ ATF_TESTS_SH+= personal_install_test
 ATF_TESTS_SH+=	graph_test
 
 PROGS+=		capd_test_guardian
+# capd_test_harness.sh waits on file events with it.
+PROGS+=		capd_wait_file
 PROGS+=		capd_protocol_fixture
 PROGS+=		switchboardctl_test_bin
 PROGS+=		switchboardctl_success_bin

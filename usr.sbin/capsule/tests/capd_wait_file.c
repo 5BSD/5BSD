@@ -3,13 +3,16 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * capd_wait_file PATH [TEXT]: wait, without a deadline and without polling,
- * until PATH exists and is not empty, or (with TEXT) until PATH contains
- * TEXT.  The wait is a kqueue on the file's directory (a new entry) and then
- * on the file (writes and growth); when the watched file is removed or
- * renamed away, the wait goes back to the directory and the path's current
- * file.  The test case's ATF timeout bounds it.
- * Exits 0 when the condition holds, 1 on an error.
+ * capd_wait_file [-e] [-p pid] PATH [TEXT]: wait, without a deadline and
+ * without polling, until PATH exists and is not empty, or (with TEXT) until
+ * PATH contains TEXT, or (with -e) until PATH exists, whatever its type and
+ * size (a socket, for example).  The wait is a kqueue on the file's
+ * directory (a new entry) and then on the file (writes and growth); when the
+ * watched file is removed or renamed away, the wait goes back to the
+ * directory and the path's current file.  With -p, the wait also ends when
+ * process PID exits (or is already gone), and then fails unless the
+ * condition holds by then.  The test case's ATF timeout bounds it.
+ * Exits 0 when the condition holds, 2 when PID exited first, 1 on an error.
  */
 
 #include <sys/param.h>
@@ -26,9 +29,17 @@
 #include <string.h>
 #include <unistd.h>
 
+static void
+usage(void)
+{
+
+	fprintf(stderr, "usage: capd_wait_file [-e] [-p pid] path [text]\n");
+	exit(1);
+}
+
 /* Whether the file now satisfies the wait; a missing file does not. */
 static bool
-satisfied(const char *path, const char *text)
+satisfied(const char *path, const char *text, bool exists)
 {
 	struct stat sb;
 	char *buf;
@@ -36,6 +47,13 @@ satisfied(const char *path, const char *text)
 	bool found;
 	int fd;
 
+	if (exists) {
+		if (lstat(path, &sb) == 0)
+			return (true);
+		if (errno == ENOENT)
+			return (false);
+		err(1, "%s", path);
+	}
 	fd = open(path, O_RDONLY | O_CLOEXEC);
 	if (fd == -1) {
 		if (errno == ENOENT)
@@ -67,14 +85,37 @@ main(int argc, char **argv)
 	struct kevent kev[2], ev;
 	char dirbuf[PATH_MAX];
 	const char *path, *text;
-	int dfd, ffd, kq, n;
+	char *end;
+	long pid;
+	bool exists;
+	int ch, dfd, ffd, kq, n;
 
-	if (argc != 2 && argc != 3) {
-		fprintf(stderr, "usage: capd_wait_file path [text]\n");
-		return (1);
+	exists = false;
+	pid = -1;
+	while ((ch = getopt(argc, argv, "ep:")) != -1) {
+		switch (ch) {
+		case 'e':
+			exists = true;
+			break;
+		case 'p':
+			errno = 0;
+			pid = strtol(optarg, &end, 10);
+			if (errno != 0 || end == optarg || *end != '\0' ||
+			    pid <= 0)
+				errx(1, "invalid pid: %s", optarg);
+			break;
+		default:
+			usage();
+		}
 	}
-	path = argv[1];
-	text = argc == 3 ? argv[2] : NULL;
+	argc -= optind;
+	argv += optind;
+	if (argc != 1 && argc != 2)
+		usage();
+	path = argv[0];
+	text = argc == 2 ? argv[1] : NULL;
+	if (exists && text != NULL)
+		usage();
 	if (strlcpy(dirbuf, path, sizeof(dirbuf)) >= sizeof(dirbuf))
 		errx(1, "path too long");
 	kq = kqueue();
@@ -87,10 +128,28 @@ main(int argc, char **argv)
 	    NULL);
 	if (kevent(kq, kev, 1, NULL, 0, NULL) == -1)
 		err(1, "kevent");
+	if (pid != -1) {
+		EV_SET(&kev[0], (uintptr_t)pid, EVFILT_PROC, EV_ADD, NOTE_EXIT,
+		    0, NULL);
+		if (kevent(kq, kev, 1, NULL, 0, NULL) == -1) {
+			if (errno != ESRCH)
+				err(1, "kevent pid %ld", pid);
+			/* Already gone: the condition must hold now. */
+			if (satisfied(path, text, exists))
+				return (0);
+			warnx("process %ld is gone and %s %s", pid, path,
+			    text != NULL ? "lacks the text" : "is not there");
+			return (2);
+		}
+	}
 	ffd = -1;
 	for (;;) {
-		/* Watch the file once it exists; re-check after registering. */
-		if (ffd == -1) {
+		/*
+		 * Watch the file once it exists; re-check after registering.
+		 * Existence alone needs only the directory, and the path may
+		 * name something open(2) refuses, such as a socket.
+		 */
+		if (ffd == -1 && !exists) {
 			ffd = open(path, O_RDONLY | O_CLOEXEC);
 			if (ffd != -1) {
 				EV_SET(&kev[1], ffd, EVFILT_VNODE,
@@ -101,11 +160,19 @@ main(int argc, char **argv)
 			} else if (errno != ENOENT)
 				err(1, "%s", path);
 		}
-		if (satisfied(path, text))
+		if (satisfied(path, text, exists))
 			return (0);
 		n = kevent(kq, NULL, 0, &ev, 1, NULL);
 		if (n == -1 && errno != EINTR)
 			err(1, "kevent");
+		if (n == 1 && ev.filter == EVFILT_PROC) {
+			/* Whatever it wrote before it exited is there now. */
+			if (satisfied(path, text, exists))
+				return (0);
+			warnx("process %ld exited and %s %s", pid, path,
+			    text != NULL ? "lacks the text" : "is not there");
+			return (2);
+		}
 		/*
 		 * The watched file left the path (removed, or replaced by a
 		 * rename): stop watching it (close drops its event) and look
