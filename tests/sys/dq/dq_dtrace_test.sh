@@ -65,7 +65,7 @@ dq_probes_present_body()
 	    event-post event-deliver event-reply event-drop event-interrupt \
 	    event-deadline reply-late attach resolve-post resolve-reply \
 	    fop-local quota-wait postop-attr wait-full wait-abandon \
-	    standing-match standing-miss standing-change; do
+	    standing-match standing-miss standing-change pager-error; do
 		atf_check -o ignore dtrace -l -n "dq:::${probe}"
 	done
 }
