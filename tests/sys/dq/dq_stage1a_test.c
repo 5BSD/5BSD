@@ -630,6 +630,55 @@ dir_mmap_errno(int fd, int prot, int flags)
 	return (0);
 }
 
+struct cfr_dir_arg {
+	int		 sdir, rdir, out;
+};
+
+struct cfr_dir_res {
+	struct dqt_rr	 s, o;
+};
+
+static void
+child_cfr_dir(void *arg, void *result)
+{
+	struct cfr_dir_arg *a = arg;
+	struct cfr_dir_res *r = result;
+
+	DQT_RR(r->s, copy_file_range(a->sdir, NULL, a->out, NULL, 4, 0));
+	DQT_RR(r->o, copy_file_range(a->rdir, NULL, a->out, NULL, 4, 0));
+}
+
+ATF_TC(cfr_dir_eisdir);
+ATF_TC_HEAD(cfr_dir_eisdir, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "copy_file_range from a served "
+	    "directory is EISDIR, as from a real one (dev: EINVAL, no "
+	    "fo_copy_file_range)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cfr_dir_eisdir, tc)
+{
+	struct dir_fixture f;
+	struct cfr_dir_arg a;
+	struct cfr_dir_res r;
+
+	dir_setup(&f);
+	a.sdir = f.sdir;
+	a.rdir = f.rdir;
+	a.out = open("cfr_out", O_RDWR | O_CREAT | O_TRUNC, 0644);
+	ATF_REQUIRE(a.out != -1);
+	memset(&r, 0, sizeof(r));
+	dqt_run_child(child_cfr_dir, &a, &r, sizeof(r));
+	ATF_CHECK_EQ(-1, r.o.rv);
+	DQT_CHECK_ERRNO(EISDIR, r.o.err, "real directory");
+	ATF_CHECK_EQ(r.o.rv, r.s.rv);
+	DQT_CHECK_ERRNO(r.o.err, r.s.err, "served directory");
+	(void)close(a.out);
+	(void)close(f.sdir);
+	dqt_fini(&f.c);
+	(void)close(f.rdir);
+}
+
 ATF_TC(dir_local_answers);
 ATF_TC_HEAD(dir_local_answers, tc)
 {
@@ -859,6 +908,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, fsync_ok);
 	ATF_TP_ADD_TC(tp, mmap_readonly_rules);
 	ATF_TP_ADD_TC(tp, copy_file_range_einval);
+	ATF_TP_ADD_TC(tp, cfr_dir_eisdir);
 	ATF_TP_ADD_TC(tp, acl_extattr);
 	ATF_TP_ADD_TC(tp, locks_are_events);
 	ATF_TP_ADD_TC(tp, writable_served);
