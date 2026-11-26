@@ -456,11 +456,10 @@ startup_launch_system(int kq)
 	launched = 0;
 
 	/*
-	 * The boot discovery route exists whenever /etc/rc runs.  A fixture
-	 * that skips rc gets one only under a daemon-personality Capsule, whose
-	 * root client (the test harness) fetches it with CTL_OP_LOOKUP.  A
-	 * fixture that skips rc under Capsule as PID 1 (the daemon-runtime
-	 * OES-admission image) keeps the route-less boot it was written for.
+	 * The boot discovery route exists whenever /etc/rc runs.  A test-local
+	 * SwitchBoard gets one too: its daemon-personality Capsule hands it to
+	 * a root client (the test harness) with CTL_OP_LOOKUP.  Only a boot
+	 * fixture that skips rc on a test kernel boots without it.
 	 */
 	if (!skip_rc || !boot)
 		startup_ambient_lookup();

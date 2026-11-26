@@ -60,6 +60,12 @@ Use --oes-admission for the additional real Capsule/SwitchBoard .ucl allow/deny
 stack. Build its private static fixtures with tools/test/oes-admission/build.py;
 see that directory for the exact scope and invocation. This option implies
 --oes-factory and uses an OES-only provider with production factory code.
+Capsule boots as PID 1 with no test switches, as on a production kernel:
+SwitchBoard runs its /etc/rc step, which fails at once because the fixture
+root has no /etc/rc or /bin/sh (its warning is in serial.log), mints the boot
+discovery route, and launches the admission bundles. runtime_init's tmpfs
+mounts stand in for rc's runtime storage. vm_elapsed_seconds and the serial
+timeline include that rc step.
 
 The OES gate also checks factory quota boundaries and ordinary filesystem
 mediation of a real intermediate-directory alias to /dev/oes. It proves the
