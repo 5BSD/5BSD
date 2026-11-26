@@ -1673,7 +1673,7 @@ for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER 
     DEFERRED_STACK_TIER DEFERRED_PID1_ONLY DEFERRED_SOURCE_TIER DEFERRED_KNOB_TIER \
     DEFERRED_GUEST_SETUP DEFERRED_DISPOSABLE_GUEST DEFERRED_TEST_KERNEL_TIER \
     DEFERRED_RACCT_ZERO_TIER DEFERRED_QUOTA_KERNEL_TIER \
-    DEFERRED_DEBUG_KERNEL_TIER \
+    DEFERRED_DEBUG_KERNEL_TIER DEFERRED_PLANEON_TIER \
     "configuration property 'authority_anchor'"; do
 	ndefer=$(LC_ALL=C tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c "$token" || true)
 	[ "$ndefer" -eq 0 ] || case $token in
@@ -1681,6 +1681,8 @@ for token in DEFERRED_ENFORCED_TIER DEFERRED_PLANEOFF_TIER DEFERRED_DEVICE_TIER 
 		echo "DEFERRED_TO_ENFORCED_TIER=$ndefer (run PLANE_OFF=1 with the same stage and suites; not a pass)";;
 	DEFERRED_KNOB_TIER)
 		echo "DEFERRED_TO_KNOB_TIER=$ndefer (cases that need a fault knob of options DQ_FAULT_INJECTION: run KERNEL_TIER=test with a GENERIC-TEST stage and the same suites; not a pass)";;
+	DEFERRED_PLANEON_TIER)
+		echo "DEFERRED_TO_PLANEON_TIER=$ndefer (run without PLANE_OFF=1; not a pass)";;
 	DEFERRED_PLANEOFF_TIER)
 		echo "DEFERRED_TO_PLANEOFF_TIER=$ndefer (test-local stacks: run PLANE_OFF=1, and their unit cases on the stack tier; not a pass)";;
 	DEFERRED_STACK_TIER)

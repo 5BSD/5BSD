@@ -17,6 +17,8 @@
 #   switchboard_env_has_no_config  SR1 (SwitchBoard's start line naming its
 #                                  environment overrides is absent on dev)
 # Regression pins pass on dev and must keep passing:
+#   sshd_onerestart_keeps_sessions (a daemon restart keeps sshd sessions
+#   today; restarting the accept listener after SR5);
 #   ssh_maxstartups_enforced (sshd enforces it today; SwitchBoard after SR5).
 #
 # The cases change the guest (rc.conf.local, a test user, sshd, a tap
@@ -208,6 +210,30 @@ ifnet_detach_stops_instance_cleanup()
 # ---------------------------------------------------------------------------
 # sshd: a test user with a key, and sessions held open through fifos.
 
+# The PCB addresses of the TCP sockets listening on port 22.
+SSH_LISTENERS_SH='netstat -Aan -p tcp | awk '"'"'$NF == "LISTEN" && $5 ~ /[.:]22$/ { print $1 }'"'"' | sort'
+ssh_listeners()
+{
+	sh -c "$SSH_LISTENERS_SH"
+}
+
+# ssh_wait_listen [BEFORE]: wait until something listens on port 22 (and,
+# with BEFORE, a file of earlier listeners, none of them is among them).
+# rc.subr's start of sshd returns when sshd has daemonized, before it binds;
+# sshd writes its pidfile once its sockets are bound, so the condition is
+# re-read on events of /var/run and the pidfile (rc_pin_waituntil.py).  A
+# SwitchBoard accept listener (SR5) is armed when the routed start returns.
+ssh_wait_listen()
+{
+	python3.12 -I "$(atf_get_srcdir)/rc_pin_waituntil.py" \
+	    /var/run /var/run/sshd.pid -- sh -c '
+		l=$(sh -c "$0")
+		[ -n "$l" ] || exit 1
+		[ -z "$1" ] || [ -z "$(echo "$l" | comm -12 "$1" -)" ]' \
+	    "$SSH_LISTENERS_SH" "${1:-}" ||
+	    atf_fail "waiting for sshd to listen failed"
+}
+
 SSH_USER=srcpin
 
 ssh_setup()
@@ -259,23 +285,24 @@ ssh_session()
 
 # ---------------------------------------------------------------------------
 # Behaviour (SR5): sshd per connection: each connection is an `sshd -i`
-# instance in a coalition of its own, under SwitchBoard; restarting the
-# listener unit keeps the sessions.
+# instance in a coalition of its own, under SwitchBoard.
 
 atf_test_case sshd_per_connection cleanup
 sshd_per_connection_head()
 {
-	atf_set "descr" "two ssh connections: two sshd instances in two coalitions under SwitchBoard; service sshd onerestart replaces the listener and keeps both"
+	atf_set "descr" "two ssh connections: two sshd instances in two coalitions under SwitchBoard"
 	atf_set "require.user" "root"
+	atf_set "require.progs" "python3.12"
 }
 sshd_per_connection_body()
 {
-	local sb listener c1 c2 k1 k2 r1 r2 why n l
+	local sb listener c1 c2 why n
 
 	require_plane_on
 	sb=$(sb_pid)
 	ssh_setup
 	atf_check -s exit:0 -o ignore -e ignore service sshd onestart
+	ssh_wait_listen
 	ssh_session 1
 	ssh_session 2
 	set -- $(pgrep -U "$SSH_USER" -x cat)
@@ -295,30 +322,53 @@ sshd_per_connection_body()
 		done
 	fi
 	[ -z "$why" ] || atf_fail "sshd is not per connection:${why#;}"
-	# sshd_enable is NO in the guest, so `restart` would be a no-op:
-	# onerestart, and the listener must really be replaced (a new daemon
-	# pid on dev's form, a higher restart count of unit sshd after SR5).
-	k1=$(pidfile_pid /var/run/sshd.pid || true)
-	r1=$(unit_field sshd restarts)
+}
+sshd_per_connection_cleanup()
+{
+	. "$(atf_get_srcdir)/rc_units_helpers.sh"
+	ssh_teardown
+}
+
+# ---------------------------------------------------------------------------
+# Regression (SR5 keeps it): `service sshd onerestart` replaces the listener
+# and keeps the sessions.  The listener is observed as sshd's LISTEN sockets
+# (netstat -Aan PCB addresses): a daemon's on dev, SwitchBoard's accept
+# listener after SR5; every one must be new after the restart.  sshd_enable
+# is NO in the guest, so plain `restart` would do nothing: onerestart.
+
+
+atf_test_case sshd_onerestart_keeps_sessions cleanup
+sshd_onerestart_keeps_sessions_head()
+{
+	atf_set "descr" "service sshd onerestart replaces the listener and keeps two sessions"
+	atf_set "require.user" "root"
+	atf_set "require.progs" "python3.12"
+}
+sshd_onerestart_keeps_sessions_body()
+{
+	local n l
+
+	require_plane_on
+	ssh_setup
+	atf_check -s exit:0 -o ignore -e ignore service sshd onestart
+	ssh_wait_listen
+	ssh_session 1
+	ssh_session 2
+	ssh_listeners > listen.before
+	[ -s listen.before ] || atf_fail "no socket listens on port 22"
 	atf_check -s exit:0 -o ignore -e ignore service sshd onerestart
-	k2=$(pidfile_pid /var/run/sshd.pid || true)
-	r2=$(unit_field sshd restarts)
-	if [ -n "$k1" ] || [ -n "$k2" ]; then
-		[ -n "$k2" ] && [ "$k2" != "$k1" ] ||
-		    atf_fail "service sshd onerestart did not replace the listener (pid ${k1:-none} -> ${k2:-none})"
-	elif [ -n "$r1" ] && [ -n "$r2" ]; then
-		[ "$r2" -gt "$r1" ] ||
-		    atf_fail "service sshd onerestart did not restart unit sshd (restarts $r1 -> $r2)"
-	else
-		atf_fail "cannot tell whether the listener was replaced: no sshd pidfile and no restart count"
-	fi
+	ssh_wait_listen "$PWD/listen.before"
+	ssh_listeners > listen.after
+	[ -s listen.after ] || atf_fail "no socket listens on port 22 after onerestart"
+	[ -z "$(comm -12 listen.before listen.after)" ] ||
+	    atf_fail "onerestart kept listening socket(s) $(comm -12 listen.before listen.after | tr '\n' ' '): the listener was not replaced"
 	for n in 1 2; do
 		eval "echo PING$n >&$((3 + n))"
 		eval "read -r l <&$((5 + n))" && [ "$l" = "PING$n" ] ||
 		    atf_fail "session $n did not survive service sshd onerestart"
 	done
 }
-sshd_per_connection_cleanup()
+sshd_onerestart_keeps_sessions_cleanup()
 {
 	. "$(atf_get_srcdir)/rc_units_helpers.sh"
 	ssh_teardown
@@ -334,6 +384,7 @@ ssh_maxstartups_enforced_head()
 {
 	atf_set "descr" "MaxStartups 2:100:2: a third concurrent unauthenticated connection is dropped"
 	atf_set "require.user" "root"
+	atf_set "require.progs" "python3.12"
 }
 ssh_maxstartups_enforced_body()
 {
@@ -342,6 +393,7 @@ ssh_maxstartups_enforced_body()
 	require_plane_on
 	conf_set sshd_flags "-o MaxStartups=2:100:2"
 	atf_check -s exit:0 -o ignore -e ignore service sshd onestart
+	ssh_wait_listen
 	for n in 1 2 3; do
 		mkfifo "nin$n" "nout$n" || atf_fail mkfifo
 		nc 127.0.0.1 22 < "nin$n" > "nout$n" 2> "nerr$n" &
@@ -433,6 +485,7 @@ atf_init_test_cases()
 	atf_add_test_case service_restart_routed
 	atf_add_test_case ifnet_detach_stops_instance
 	atf_add_test_case sshd_per_connection
+	atf_add_test_case sshd_onerestart_keeps_sessions
 	atf_add_test_case ssh_maxstartups_enforced
 	atf_add_test_case base_daemons_tracked
 	atf_add_test_case switchboard_env_has_no_config

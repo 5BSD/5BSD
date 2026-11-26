@@ -82,7 +82,7 @@ TEST_METADATA.getty_test+=	is_exclusive="true"
 .PATH: ${SRCTOP}/libexec/rc/tests
 PROGS+=		rc_pin_daemon
 LIBADD.rc_pin_daemon+=	util
-${PACKAGE}FILES+=	rc_pin_fixture rc_units_helpers.sh rc_pin_dhcpd.py rc_pin_pty.py \
+${PACKAGE}FILES+=	rc_pin_fixture rc_units_helpers.sh rc_pin_dhcpd.py rc_pin_pty.py rc_pin_waituntil.py \
 		rc_pin_login
 ${PACKAGE}FILESMODE_rc_pin_login=	0555
 ${PACKAGE}FILESMODE_rc_pin_fixture=	0555

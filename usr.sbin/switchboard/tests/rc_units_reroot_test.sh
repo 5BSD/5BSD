@@ -27,8 +27,8 @@
 #            2026-11-26-reroot-during-rc-hangs-at-mount-root): the failure
 #            is printed before the reroot is requested and replaced by the
 #            pass the completed reroot starts, so on dev the run ends only
-#            at its deadline, with that failure on the console.  Queue it
-#            with a small VMTIMEOUT;
+#            at its deadline, with that failure on the console: give its
+#            run a deadline that covers the case's boots;
 #   bgfsck   securelevel_before_getty (kern_securelevel 0 at boot, a getty
 #            wrapper on an nmdm(4) line records the level it starts at;
 #            LOADER_EXTRA nmdm_load="YES"), then harness_unclean_reboot and
@@ -157,11 +157,13 @@ EOS
 install_boot_config() {
 	sysrc cron_enable=NO syslogd_flags="-ss" jail_enable=YES \
 	    jail_list=srcpin "ifconfig_$TAP=DHCP" synchronous_dhclient=YES \
-	    rcpinfix_enable=YES rcpinfix_program=$TESTS/rc_pin_daemon \
+	    rcpinboot_enable=YES rcpinboot_program=$TESTS/rc_pin_daemon \
 	    > /dev/null
-	# The test daemon /etc/rc starts: rc_pin_daemon double-forks.
-	cp $TESTS/rc_pin_fixture /etc/rc.d/rcpinfix
-	chmod 555 /etc/rc.d/rcpinfix
+	# The test daemon /etc/rc starts (rc_pin_daemon double-forks): a copy
+	# of rc_pin_fixture under its own name, rcvar and pidfile, so that it
+	# does not touch rc_routing_test's disabled rcpinfix.
+	sed 's/rcpinfix/rcpinboot/g' $TESTS/rc_pin_fixture > /etc/rc.d/rcpinboot
+	chmod 555 /etc/rc.d/rcpinboot
 	cat >> /etc/jail.conf <<'EOS'
 srcpin {
 	path = "/";
@@ -259,10 +261,10 @@ check_boot_config() {
 	# daemon /etc/rc started is SwitchBoard's child (SwitchBoard is the
 	# reaper of its subtree); on dev it is PID 1's.
 	why=
-	p=$(cat /var/run/rcpinfix.pid 2>/dev/null)
+	p=$(cat /var/run/rcpinboot.pid 2>/dev/null)
 	sb=$(pgrep -x switchboard | head -n 1)
 	if [ -z "$p" ] || ! kill -0 "$p" 2>/dev/null; then
-		why="the test daemon /etc/rc starts (rcpinfix) is not running"
+		why="the test daemon /etc/rc starts (rcpinboot) is not running"
 	elif [ "$(ps -o ppid= -p "$p" | tr -d ' ')" != "$sb" ]; then
 		why="the double-forked test daemon's parent is $(ps -o comm= -p "$(ps -o ppid= -p "$p")")[$(ps -o ppid= -p "$p" | tr -d ' ')], not SwitchBoard[$sb]"
 	fi
