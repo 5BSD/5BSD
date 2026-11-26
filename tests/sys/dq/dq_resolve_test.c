@@ -2181,6 +2181,348 @@ ATF_TC_BODY(stats2_reserved_zero, tc)
 	dqt_fini(&c);
 }
 
+/*
+ * The deadline-0 matrix for consultations (rev 8 3.5 B1, owed by C8;
+ * round 2 R2-0), with kern.dq.default_deadline_ms = 0: a requester's own
+ * lookup waits with no deadline, held by the controller, while the
+ * process goes away or its main thread leaves:
+ * - exit_sibling: thread B calls _exit: the process exits, one INTERRUPT;
+ * - sigkill: killed, one INTERRUPT;
+ * - pthread_exit_main: the process lives on; the consultation is
+ *   answered PASS and the call completes with no INTERRUPT.
+ * Sites: stat (DQ_ROP_STAT), rename (DQ_ROP_RENAME, a mutation) and
+ * socket (DQ_ROP_SOCKET).  The case timeout is the hang detector.
+ */
+enum c0_site { C0_STAT, C0_RENAME, C0_SOCKET };
+enum c0_end { C0_EXIT_SIBLING, C0_SIGKILL, C0_PTHREAD_EXIT_MAIN };
+#define	C0_EXIT		7	/* exit_sibling's status: no result sent */
+
+struct c0_arg {
+	enum c0_site	 site;
+	enum c0_end	 end;
+	int		 go[2];
+	int		 gone[2];
+	pthread_t	 main;
+};
+
+static int
+c0_call(const struct c0_arg *a)
+{
+	struct stat sb;
+	int fd;
+
+	switch (a->site) {
+	case C0_STAT:
+		return (stat("c0-stat", &sb) == 0 ? 0 : errno);
+	case C0_RENAME:
+		return (rename("c0-ren-a", "c0-ren-b") == 0 ? 0 : errno);
+	case C0_SOCKET:
+		fd = socket(AF_INET, SOCK_DGRAM, 0);
+		return (fd >= 0 ? 0 : errno);
+	}
+	return (EINVAL);
+}
+
+static void *
+c0_waiter(void *arg)
+{
+	struct c0_arg *a = arg;
+	int error;
+
+	error = c0_call(a);
+	if (a->end == C0_PTHREAD_EXIT_MAIN)
+		_exit(error == 0 ? C0_EXIT : 10);
+	return (NULL);
+}
+
+static void *
+c0_joiner(void *arg)
+{
+	struct c0_arg *a = arg;
+
+	(void)pthread_join(a->main, NULL);
+	(void)write(a->gone[1], "x", 1);
+	return (NULL);
+}
+
+static void
+child_c0(void *arg, void *result __unused)
+{
+	struct c0_arg *a = arg;
+	pthread_t thr, joiner;
+	char ch;
+
+	if (pthread_create(&thr, NULL, c0_waiter, a) != 0)
+		_exit(3);
+	if (a->end == C0_PTHREAD_EXIT_MAIN) {
+		a->main = pthread_self();
+		if (pthread_create(&joiner, NULL, c0_joiner, a) != 0)
+			_exit(3);
+	}
+	if (read(a->go[0], &ch, 1) != 1)
+		_exit(4);
+	if (a->end == C0_PTHREAD_EXIT_MAIN)
+		pthread_exit(NULL);
+	_exit(C0_EXIT);
+}
+
+static void
+c0_case(enum c0_site site, enum c0_end end)
+{
+	struct dqt_ctl c;
+	struct dqt_achild ch;
+	struct c0_arg a;
+	int fd, status;
+	char b;
+
+	if (site != C0_SOCKET) {
+		fd = open(site == C0_STAT ? "c0-stat" : "c0-ren-a",
+		    O_CREAT | O_WRONLY, 0644);
+		ATF_REQUIRE(fd != -1);
+		(void)close(fd);
+	}
+	dqt_sysctl_save_set_uint(DEFAULT_DEADLINE, 0);
+	dqt_init(&c);
+	if (site == C0_SOCKET)
+		dqt_resolve_hold(&c, NULL, DQ_ROP_SOCKET);
+	else
+		dqt_resolve_hold(&c, site == C0_STAT ? "c0-stat" : "c0-ren",
+		    0);
+	memset(&a, 0, sizeof(a));
+	a.site = site;
+	a.end = end;
+	ATF_REQUIRE_EQ(0, pipe(a.go));
+	ATF_REQUIRE_EQ(0, pipe(a.gone));
+	dqt_attach_spawn(&c, &ch, child_c0, &a);
+	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	dqt_resolve_hold(&c, "", 0);
+	switch (end) {
+	case C0_EXIT_SIBLING:
+		ATF_REQUIRE_EQ(1, write(a.go[1], "g", 1));
+		status = dqt_attach_wait(&ch, NULL, 0);
+		ATF_CHECK_MSG(WIFEXITED(status) &&
+		    WEXITSTATUS(status) == C0_EXIT, "status %#x", status);
+		ATF_CHECK(dqt_wait_interrupts(&c, 1, DQT_WAIT_MS));
+		break;
+	case C0_SIGKILL:
+		ATF_REQUIRE_EQ(0, pdkill(ch.pd, SIGKILL));
+		status = dqt_attach_wait(&ch, NULL, 0);
+		ATF_CHECK_MSG(WIFSIGNALED(status) &&
+		    WTERMSIG(status) == SIGKILL, "status %#x", status);
+		ATF_CHECK(dqt_wait_interrupts(&c, 1, DQT_WAIT_MS));
+		break;
+	case C0_PTHREAD_EXIT_MAIN:
+		ATF_REQUIRE_EQ(1, write(a.go[1], "g", 1));
+		ATF_REQUIRE_EQ(1, read(a.gone[0], &b, 1));
+		ATF_REQUIRE_EQ(0, dq_reply_resolve_pass(c.q,
+		    dqt_held_id(&c, 0)));
+		status = dqt_attach_wait(&ch, NULL, 0);
+		ATF_CHECK_MSG(WIFEXITED(status) &&
+		    WEXITSTATUS(status) == C0_EXIT,
+		    "the waiting call failed or the process died: status %#x",
+		    status);
+		dqt_fence(&c);
+		dqt_lock(&c);
+		ATF_CHECK_EQ(0, c.ninterrupted);
+		dqt_unlock(&c);
+		break;
+	}
+	(void)close(a.go[0]);
+	(void)close(a.go[1]);
+	(void)close(a.gone[0]);
+	(void)close(a.gone[1]);
+	dqt_fini(&c);
+	ATF_REQUIRE(dqt_sysctl_restore(DEFAULT_DEADLINE));
+}
+
+#define	C0_TC(name, site, end)						\
+ATF_TC_WITH_CLEANUP(name);						\
+ATF_TC_HEAD(name, tc)							\
+{									\
+	atf_tc_set_md_var(tc, "descr", "deadline-0 matrix: a " #site	\
+	    " consultation waiting with no deadline, ended by " #end	\
+	    " (rev 8 3.5)");						\
+	atf_tc_set_md_var(tc, "require.user", "root");			\
+	atf_tc_set_md_var(tc, "timeout", "60");				\
+}									\
+ATF_TC_BODY(name, tc)							\
+{									\
+	c0_case(site, end);						\
+}									\
+ATF_TC_CLEANUP(name, tc)						\
+{									\
+	(void)dqt_sysctl_restore(DEFAULT_DEADLINE);			\
+}
+
+C0_TC(stat_deadline0_exit_sibling, C0_STAT, C0_EXIT_SIBLING)
+C0_TC(stat_deadline0_sigkill, C0_STAT, C0_SIGKILL)
+C0_TC(stat_deadline0_pthread_exit_main, C0_STAT, C0_PTHREAD_EXIT_MAIN)
+C0_TC(rename_deadline0_exit_sibling, C0_RENAME, C0_EXIT_SIBLING)
+C0_TC(rename_deadline0_sigkill, C0_RENAME, C0_SIGKILL)
+C0_TC(rename_deadline0_pthread_exit_main, C0_RENAME, C0_PTHREAD_EXIT_MAIN)
+C0_TC(socket_deadline0_exit_sibling, C0_SOCKET, C0_EXIT_SIBLING)
+C0_TC(socket_deadline0_sigkill, C0_SOCKET, C0_SIGKILL)
+C0_TC(socket_deadline0_pthread_exit_main, C0_SOCKET, C0_PTHREAD_EXIT_MAIN)
+
+/*
+ * The boundary restart of a consultation in the default mode (issue
+ * 2026-11-24 ... stop-all-proc (e)): thread A's socket(2) or
+ * socketpair(2) consultation is held; thread B's execve(2) of a missing
+ * image single-threads the process to the user boundary and then fails.
+ * A's consultation is asked before anything is done, so it is given up
+ * (INTERRUPT) and the call restarted: it is consulted again, answered
+ * PASS and succeeds.  With signal set, a SIGUSR1 (caught, no SA_RESTART)
+ * is pending on the process when the boundary aborts A's wait: B and the
+ * main thread block it, and A's wait blocks every signal, so the two are
+ * seen at the same wake.  The restart stands (ERESTART always restarts),
+ * the handler runs once, and the call succeeds: no EINTR without a
+ * failed wait of the caller's own.
+ */
+struct cbnd_arg {
+	int		 pair;		/* socketpair, else socket */
+	int		 signal;
+	int		 go[2];
+};
+
+struct cbnd_res {
+	struct dqt_rr	 call;
+	struct dqt_rr	 exec;
+	int		 handled;
+};
+
+static volatile sig_atomic_t cbnd_handled;
+static struct cbnd_res *cbnd_r;
+static struct cbnd_arg *cbnd_a;
+
+static void
+cbnd_on_usr1(int sig __unused)
+{
+
+	cbnd_handled++;
+}
+
+static void *
+cbnd_caller(void *arg __unused)
+{
+	int sv[2];
+
+	if (cbnd_a->pair)
+		DQT_RR(cbnd_r->call, socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+	else
+		DQT_RR(cbnd_r->call, socket(AF_INET, SOCK_DGRAM, 0));
+	return (NULL);
+}
+
+static void
+child_bnd(void *arg, void *result)
+{
+	struct sigaction sa;
+	sigset_t set;
+	pthread_t thr;
+	char ch;
+
+	cbnd_a = arg;
+	cbnd_r = result;
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = cbnd_on_usr1;
+	(void)sigaction(SIGUSR1, &sa, NULL);
+	if (pthread_create(&thr, NULL, cbnd_caller, NULL) != 0)
+		_exit(3);
+	/* Only A may take the signal (after its wait). */
+	sigemptyset(&set);
+	sigaddset(&set, SIGUSR1);
+	(void)pthread_sigmask(SIG_BLOCK, &set, NULL);
+	if (read(cbnd_a->go[0], &ch, 1) != 1)
+		_exit(4);
+	DQT_RR(cbnd_r->exec, execl("/nonexistent/dq_resolve_test", "x",
+	    (char *)NULL));
+	(void)pthread_join(thr, NULL);
+	cbnd_r->handled = cbnd_handled;
+}
+
+static void
+cbnd_case(int pair, int sig)
+{
+	struct dqt_ctl c;
+	struct dqt_achild ch;
+	struct cbnd_arg a;
+	struct cbnd_res r;
+	uint32_t op;
+
+	op = pair ? DQ_ROP_SOCKETPAIR : DQ_ROP_SOCKET;
+	dqt_init(&c);
+	dqt_resolve_hold(&c, NULL, op);
+	memset(&a, 0, sizeof(a));
+	a.pair = pair;
+	a.signal = sig;
+	ATF_REQUIRE_EQ(0, pipe(a.go));
+	dqt_attach_spawn(&c, &ch, child_bnd, &a);
+	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	/* The restarted consultation is answered at once. */
+	dqt_resolve_hold(&c, NULL, 0);
+	if (sig)
+		ATF_REQUIRE_EQ(0, pdkill(ch.pd, SIGUSR1));
+	ATF_REQUIRE_EQ(1, write(a.go[1], "g", 1));
+	memset(&r, 0, sizeof(r));
+	dqt_attach_collect(&ch, &r, sizeof(r));
+	ATF_CHECK_MSG(r.call.rv >= 0, "the call: %s (the boundary failed a "
+	    "consultation that is asked before anything is done)",
+	    strerror(r.call.err));
+	ATF_CHECK_EQ(-1, r.exec.rv);
+	ATF_CHECK_EQ(ENOENT, r.exec.err);
+	ATF_CHECK_EQ(sig ? 1 : 0, r.handled);
+	ATF_CHECK(dqt_wait_interrupts(&c, 1, DQT_WAIT_MS));
+	ATF_CHECK_EQ(2, dqt_count_resolve(&c, "", op));
+	(void)close(a.go[0]);
+	(void)close(a.go[1]);
+	dqt_fini(&c);
+}
+
+ATF_TC(boundary_socket_restarts);
+ATF_TC_HEAD(boundary_socket_restarts, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "default mode: a sibling's failing "
+	    "execve gives up a held socket(2) consultation and restarts the "
+	    "call, which is consulted again and succeeds");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(boundary_socket_restarts, tc)
+{
+
+	cbnd_case(0, 0);
+}
+
+ATF_TC(boundary_socketpair_restarts);
+ATF_TC_HEAD(boundary_socketpair_restarts, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "default mode: as "
+	    "boundary_socket_restarts for socketpair(2)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(boundary_socketpair_restarts, tc)
+{
+
+	cbnd_case(1, 0);
+}
+
+ATF_TC(boundary_and_signal_one_wake);
+ATF_TC_HEAD(boundary_and_signal_one_wake, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "default mode: a caught signal "
+	    "without SA_RESTART pending when a sibling's execve aborts a held "
+	    "socket(2) consultation: the call restarts and succeeds, the "
+	    "handler runs once, no EINTR");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(boundary_and_signal_one_wake, tc)
+{
+
+	cbnd_case(0, 1);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -2206,5 +2548,17 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, link_eagain_eio);
 	ATF_TP_ADD_TC(tp, every_lookup_posts);
 	ATF_TP_ADD_TC(tp, stats2_reserved_zero);
+	ATF_TP_ADD_TC(tp, stat_deadline0_exit_sibling);
+	ATF_TP_ADD_TC(tp, stat_deadline0_sigkill);
+	ATF_TP_ADD_TC(tp, stat_deadline0_pthread_exit_main);
+	ATF_TP_ADD_TC(tp, rename_deadline0_exit_sibling);
+	ATF_TP_ADD_TC(tp, rename_deadline0_sigkill);
+	ATF_TP_ADD_TC(tp, rename_deadline0_pthread_exit_main);
+	ATF_TP_ADD_TC(tp, socket_deadline0_exit_sibling);
+	ATF_TP_ADD_TC(tp, socket_deadline0_sigkill);
+	ATF_TP_ADD_TC(tp, socket_deadline0_pthread_exit_main);
+	ATF_TP_ADD_TC(tp, boundary_socket_restarts);
+	ATF_TP_ADD_TC(tp, boundary_socketpair_restarts);
+	ATF_TP_ADD_TC(tp, boundary_and_signal_one_wake);
 	return (atf_no_error());
 }

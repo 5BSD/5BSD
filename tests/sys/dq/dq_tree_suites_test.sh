@@ -229,7 +229,49 @@ suites_cleanup()
 	dq_teardown_root
 }
 
+atf_test_case verdict_stale_fails
+verdict_stale_fails_head()
+{
+	atf_set "descr" "dq_pattern_verdict fails on an entry that matched " \
+	    "a case but hid no difference, unless its comment says " \
+	    "intermittent (R2-0; dev only reported it)"
+}
+verdict_stale_fails_body()
+{
+	# Three entries: one that hid a difference, one stale, one stale
+	# but marked intermittent; the scoring dq_pattern_verdict reads.
+	cat > scratch.expected <<'XEOF'
+# scratch
+^a_test:hides[[:space:]]  # D1: a difference
+^b_test:stale[[:space:]]  # D2: hides nothing
+^c_test:flaky[[:space:]]  # D3: intermittent, hides nothing
+XEOF
+	printf 'matched 1\nhides 1\nran 1\nmatched 2\nran 2\nmatched 3\nran 3\n' \
+	    > scratch.used
+	# atf_fail ends a case: in this subshell it reports and exits.
+	( atf_fail() { echo "VERDICT_FAIL: $*"; exit 1; }
+	  dq_pattern_verdict scratch.expected scratch.used ) \
+	    > verdict.out 2> verdict.err
+	status=$?
+	cat verdict.out verdict.err
+	[ "${status}" -eq 1 ] ||
+	    atf_fail "a stale entry did not fail the verdict (status ${status})"
+	grep -q 'b_test:stale' verdict.err ||
+	    atf_fail "the stale entry is not named"
+	! grep -q 'c_test:flaky' verdict.err ||
+	    atf_fail "the intermittent entry was reported"
+	! grep -q 'a_test:hides' verdict.err ||
+	    atf_fail "the entry that hid a difference was reported"
+	# Without the stale entry the verdict passes.
+	grep -v b_test scratch.expected > scratch2.expected
+	printf 'matched 1\nhides 1\nran 1\nmatched 2\nran 2\n' > scratch2.used
+	( atf_fail() { echo "VERDICT_FAIL: $*"; exit 1; }
+	  dq_pattern_verdict scratch2.expected scratch2.used ) ||
+	    atf_fail "a verdict with no stale entry failed"
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case suites
+	atf_add_test_case verdict_stale_fails
 }

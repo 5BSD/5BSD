@@ -11,6 +11,7 @@
  */
 
 #include <sys/param.h>
+#include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 
@@ -862,6 +863,325 @@ WD_RESOLVE_TC(withdraw_resolve_pending_signal, WD_PENDING, WD_SIGNAL)
 WD_RESOLVE_TC(withdraw_resolve_delivered_deadline, WD_DELIVERED, WD_DEADLINE)
 WD_RESOLVE_TC(withdraw_resolve_delivered_signal, WD_DELIVERED, WD_SIGNAL)
 
+/*
+ * The deadline-0 matrix (rev 8 3.5 B1, owed by C8; round 2 R2-0): every
+ * object wait that catches no signal, on an object with no deadline,
+ * whose answer the controller holds, while the process goes away or its
+ * main thread leaves:
+ * - exit_sibling: thread B calls _exit(0).  The waiter sees the exit's
+ *   single-threading and gives its event up: the process exits 0 and the
+ *   controller gets the INTERRUPT;
+ * - sigkill: the test sends SIGKILL: killed, one INTERRUPT;
+ * - pthread_exit_main: the main thread calls pthread_exit(3).  The
+ *   process is not dying: the wait goes on until the controller answers,
+ *   the call completes with that answer, and no INTERRUPT is posted.
+ * The case timeout is the hang detector: no wait here has a deadline.
+ */
+enum d0_site { D0_READ, D0_WRITE, D0_FSTAT, D0_FSYNC };
+enum d0_end { D0_EXIT_SIBLING, D0_SIGKILL, D0_PTHREAD_EXIT_MAIN };
+
+struct d0_arg {
+	int		 fd;
+	enum d0_site	 site;
+	enum d0_end	 end;
+	int		 go[2];		/* the test: end now */
+	int		 gone[2];	/* the joiner: main has exited */
+	pthread_t	 main;
+};
+
+/* The site's call: 0, or its errno. */
+static int
+d0_call(const struct d0_arg *a)
+{
+	unsigned char buf[16];
+	struct stat sb;
+
+	switch (a->site) {
+	case D0_READ:
+		return (pread(a->fd, buf, sizeof(buf), 0) ==
+		    (ssize_t)sizeof(buf) ? 0 : errno);
+	case D0_WRITE:
+		memset(buf, 'w', sizeof(buf));
+		return (pwrite(a->fd, buf, 10, 0) == 10 ? 0 : errno);
+	case D0_FSTAT:
+		return (fstat(a->fd, &sb) == 0 ? 0 : errno);
+	case D0_FSYNC:
+		return (fsync(a->fd) == 0 ? 0 : errno);
+	}
+	return (EINVAL);
+}
+
+static void *
+d0_waiter(void *arg)
+{
+	struct d0_arg *a = arg;
+	int error;
+
+	error = d0_call(a);
+	/* After pthread_exit_main this thread ends the process. */
+	if (a->end == D0_PTHREAD_EXIT_MAIN)
+		_exit(error == 0 ? 0 : 10);
+	return (NULL);
+}
+
+static void *
+d0_joiner(void *arg)
+{
+	struct d0_arg *a = arg;
+
+	(void)pthread_join(a->main, NULL);
+	(void)write(a->gone[1], "x", 1);
+	return (NULL);
+}
+
+static void
+d0_child(struct d0_arg *a)
+{
+	pthread_t thr, joiner;
+	char ch;
+
+	if (pthread_create(&thr, NULL, d0_waiter, a) != 0)
+		_exit(3);
+	if (a->end == D0_PTHREAD_EXIT_MAIN) {
+		a->main = pthread_self();
+		if (pthread_create(&joiner, NULL, d0_joiner, a) != 0)
+			_exit(3);
+	}
+	if (read(a->go[0], &ch, 1) != 1)
+		_exit(4);
+	if (a->end == D0_PTHREAD_EXIT_MAIN)
+		pthread_exit(NULL);
+	_exit(0);
+}
+
+static void
+d0_answer(struct dqt_ctl *c, struct dqt_object *o, enum d0_site site)
+    __requires_unlocked(c->mtx)
+{
+	uint64_t id;
+	int rv;
+
+	id = dqt_held_id(c, 0);
+	switch (site) {
+	case D0_READ:
+		rv = dq_reply(c->q, id, 0, data, 16);
+		break;
+	case D0_WRITE:
+		rv = dq_reply_write(c->q, id, 10, 0);
+		break;
+	case D0_FSTAT:
+		rv = dq_reply(c->q, id, 0, &o->ident, sizeof(o->ident));
+		break;
+	case D0_FSYNC:
+	default:
+		rv = dq_reply(c->q, id, 0, NULL, 0);
+		break;
+	}
+	ATF_REQUIRE_MSG(rv == 0, "reply: %s", strerror(errno));
+}
+
+static void
+d0_case(enum d0_site site, enum d0_end end, unsigned seed)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct dq_policy pol;
+	struct d0_arg a;
+	int oracle, status;
+	pid_t pid;
+	char ch;
+
+	dqt_fill(data, sizeof(data), seed);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	dqt_policy_write(&pol);
+	pol.dp_deadline_ms = 0;
+	if (site == D0_FSTAT)
+		pol.dp_events |= DQ_EVENTS_GETATTR;
+	{
+		struct dq_ident_file id;
+		struct statfs sfs;
+		struct stat sb;
+
+		dqt_ident_of(oracle, oracle_path, &id, &sb, &sfs);
+		o = dqt_mint_ident_flags(&c, &id, &pol, DQ_MINT_F_WRITE, data,
+		    sizeof(data));
+	}
+	dqt_hold(&c, true);
+	memset(&a, 0, sizeof(a));
+	a.fd = o->fd;
+	a.site = site;
+	a.end = end;
+	ATF_REQUIRE_EQ(0, pipe(a.go));
+	ATF_REQUIRE_EQ(0, pipe(a.gone));
+	pid = fork();
+	ATF_REQUIRE(pid != -1);
+	if (pid == 0)
+		d0_child(&a);
+	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	switch (end) {
+	case D0_EXIT_SIBLING:
+		ATF_REQUIRE_EQ(1, write(a.go[1], "g", 1));
+		ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+		ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+		    "status %#x", status);
+		ATF_CHECK(dqt_wait_interrupts(&c, 1, DQT_WAIT_MS));
+		break;
+	case D0_SIGKILL:
+		ATF_REQUIRE_EQ(0, kill(pid, SIGKILL));
+		ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+		ATF_CHECK_MSG(WIFSIGNALED(status) &&
+		    WTERMSIG(status) == SIGKILL, "status %#x", status);
+		ATF_CHECK(dqt_wait_interrupts(&c, 1, DQT_WAIT_MS));
+		break;
+	case D0_PTHREAD_EXIT_MAIN:
+		ATF_REQUIRE_EQ(1, write(a.go[1], "g", 1));
+		/* The joiner says the main thread is gone. */
+		ATF_REQUIRE_EQ(1, read(a.gone[0], &ch, 1));
+		d0_answer(&c, o, site);
+		ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+		ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+		    "the waiting call failed or the process died: status %#x",
+		    status);
+		/* Every record posted before the fence has been read. */
+		dqt_fence(&c);
+		dqt_lock(&c);
+		ATF_CHECK_EQ(0, c.ninterrupted);
+		dqt_unlock(&c);
+		break;
+	}
+	(void)close(a.go[0]);
+	(void)close(a.go[1]);
+	(void)close(a.gone[0]);
+	(void)close(a.gone[1]);
+	dqt_hold(&c, false);
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
+#define	D0_TC(name, site, end, seed)					\
+ATF_TC(name);								\
+ATF_TC_HEAD(name, tc)							\
+{									\
+	atf_tc_set_md_var(tc, "descr", "deadline-0 matrix: " #site	\
+	    " waiting with no deadline, ended by " #end);	\
+	atf_tc_set_md_var(tc, "require.user", "root");			\
+	atf_tc_set_md_var(tc, "timeout", "60");				\
+}									\
+ATF_TC_BODY(name, tc)							\
+{									\
+	d0_case(site, end, seed);					\
+}
+
+D0_TC(read_deadline0_sigkill, D0_READ, D0_SIGKILL, 90)
+D0_TC(read_deadline0_pthread_exit_main, D0_READ, D0_PTHREAD_EXIT_MAIN, 91)
+D0_TC(write_deadline0_exit_sibling, D0_WRITE, D0_EXIT_SIBLING, 92)
+D0_TC(write_deadline0_sigkill, D0_WRITE, D0_SIGKILL, 93)
+D0_TC(write_deadline0_pthread_exit_main, D0_WRITE, D0_PTHREAD_EXIT_MAIN, 94)
+D0_TC(fstat_deadline0_exit_sibling, D0_FSTAT, D0_EXIT_SIBLING, 95)
+D0_TC(fstat_deadline0_sigkill, D0_FSTAT, D0_SIGKILL, 96)
+D0_TC(fstat_deadline0_pthread_exit_main, D0_FSTAT, D0_PTHREAD_EXIT_MAIN, 97)
+D0_TC(fsync_deadline0_exit_sibling, D0_FSYNC, D0_EXIT_SIBLING, 98)
+D0_TC(fsync_deadline0_sigkill, D0_FSYNC, D0_SIGKILL, 99)
+D0_TC(fsync_deadline0_pthread_exit_main, D0_FSYNC, D0_PTHREAD_EXIT_MAIN, 100)
+
+/*
+ * The quota sleep × exit_sibling (rev 8 3.5 B1): thread H holds the
+ * object's one in-flight slot (a READ the controller holds); thread A's
+ * READ of the same deadline-0 object sleeps for that quota; thread B
+ * calls _exit(0).  The sleep sees the exit's single-threading and ends:
+ * the process exits 0, and only H's delivered READ gets an INTERRUPT (A's
+ * was never posted).  The sleep is seen through the knob tier's hook
+ * (debug.dq.quota_sleep_wait), not a poll.
+ */
+struct d0q_arg {
+	int		 fd;
+	int		 go[2];
+	int		 armed[2];
+};
+
+static void *
+d0q_reader(void *arg)
+{
+	unsigned char buf[16];
+
+	(void)pread(*(int *)arg, buf, sizeof(buf), 0);
+	return (NULL);
+}
+
+ATF_TC_WITH_CLEANUP(quota_deadline0_exit_sibling);
+ATF_TC_HEAD(quota_deadline0_exit_sibling, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "deadline-0 matrix: a READ asleep for "
+	    "the per-object in-flight quota is ended by a sibling's _exit; "
+	    "the posted READ alone gets an INTERRUPT (rev 8 3.5)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(quota_deadline0_exit_sibling, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct dq_policy pol;
+	pthread_t h, a;
+	uint64_t slept;
+	int fd, go[2], oracle, status;
+	pid_t pid;
+	char ch;
+
+	dqt_require_fault_knob("debug.dq.quota_sleep_wait");
+	dqt_sysctl_save_set_uint(QUOTA_OBJECT, 1);
+	dqt_fill(data, sizeof(data), 101);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	dq_policy_default(&pol);
+	pol.dp_deadline_ms = 0;
+	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), &pol);
+	dqt_hold(&c, true);
+	fd = o->fd;
+	ATF_REQUIRE_EQ(0, pipe(go));
+	slept = dqt_quota_sleeps(DQT_QUOTA_OBJECT);
+	pid = fork();
+	ATF_REQUIRE(pid != -1);
+	if (pid == 0) {
+		if (pthread_create(&h, NULL, d0q_reader, &fd) != 0)
+			_exit(3);
+		if (read(go[0], &ch, 1) != 1)
+			_exit(4);
+		if (pthread_create(&a, NULL, d0q_reader, &fd) != 0)
+			_exit(3);
+		if (read(go[0], &ch, 1) != 1)
+			_exit(4);
+		_exit(0);
+	}
+	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	ATF_REQUIRE_EQ(1, write(go[1], "g", 1));
+	dqt_quota_sleep_wait(DQT_QUOTA_OBJECT, slept + 1);
+	ATF_REQUIRE_EQ(1, write(go[1], "g", 1));
+	ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "status %#x", status);
+	ATF_CHECK(dqt_wait_interrupts(&c, 1, DQT_WAIT_MS));
+	dqt_fence(&c);
+	dqt_lock(&c);
+	ATF_CHECK_EQ(1, c.ninterrupted);
+	ATF_CHECK_EQ(1, c.nheld);	/* A's READ was never posted */
+	dqt_unlock(&c);
+	(void)close(go[0]);
+	(void)close(go[1]);
+	dqt_hold(&c, false);
+	dqt_fini(&c);
+	(void)close(oracle);
+	ATF_REQUIRE(dqt_sysctl_restore(QUOTA_OBJECT));
+}
+ATF_TC_CLEANUP(quota_deadline0_exit_sibling, tc)
+{
+
+	(void)dqt_sysctl_restore(QUOTA_OBJECT);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -881,5 +1201,17 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, withdraw_resolve_pending_signal);
 	ATF_TP_ADD_TC(tp, withdraw_resolve_delivered_deadline);
 	ATF_TP_ADD_TC(tp, withdraw_resolve_delivered_signal);
+	ATF_TP_ADD_TC(tp, read_deadline0_sigkill);
+	ATF_TP_ADD_TC(tp, read_deadline0_pthread_exit_main);
+	ATF_TP_ADD_TC(tp, write_deadline0_exit_sibling);
+	ATF_TP_ADD_TC(tp, write_deadline0_sigkill);
+	ATF_TP_ADD_TC(tp, write_deadline0_pthread_exit_main);
+	ATF_TP_ADD_TC(tp, fstat_deadline0_exit_sibling);
+	ATF_TP_ADD_TC(tp, fstat_deadline0_sigkill);
+	ATF_TP_ADD_TC(tp, fstat_deadline0_pthread_exit_main);
+	ATF_TP_ADD_TC(tp, fsync_deadline0_exit_sibling);
+	ATF_TP_ADD_TC(tp, fsync_deadline0_sigkill);
+	ATF_TP_ADD_TC(tp, fsync_deadline0_pthread_exit_main);
+	ATF_TP_ADD_TC(tp, quota_deadline0_exit_sibling);
 	return (atf_no_error());
 }
