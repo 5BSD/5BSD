@@ -156,9 +156,10 @@ schedule_restart(struct svc_runtime *svc, int kq)
  * previous coalition is still being torn down (the unit is STOPPING then)
  * the restart is not counted, or a slow teardown could disable a unit that
  * was never exec'd; it waits for that cleanup to complete, which resumes it
- * (supervisor_finish_native_exit()).  A launch that fails after its fork
- * leaves such a cleanup behind; that failure is counted, and the retry
- * waits for the cleanup the same way.
+ * (supervisor_finish_native_exit()).  Every failed exec is counted and
+ * retried after the backoff delay (schedule_restart()), whether it failed
+ * before or after its fork; a failure after the fork leaves a cleanup
+ * behind, which the retry then waits for as above.
  */
 static void
 svc_restart_now(struct svc_runtime *svc, int kq)
@@ -187,14 +188,6 @@ svc_restart_now(struct svc_runtime *svc, int kq)
 		    svc->restart_count);
 		svc->state = SVC_STATE_STOPPED;
 		svc->disabled = true;
-		return;
-	}
-	/* A launch that failed after its fork retries once its teardown ends. */
-	if (svc->cleanup.pending) {
-		syslog(LOG_WARNING, "service %s: exec failed (%u), retrying "
-		    "once its cleanup completes", svc->manifest.label,
-		    svc->restart_count);
-		svc->cleanup.restart = true;
 		return;
 	}
 	syslog(LOG_WARNING, "service %s: exec failed (%u), scheduling retry",
@@ -406,6 +399,8 @@ supervisor_command_exited(struct svc_runtime *svc, int exit_status)
 		svc->pd_fd = -1;
 	}
 	svc->pid = 0;
+	/* The command is gone: its unit's activation sources may fire again. */
+	activation_source_resume(svc, switchboard_kq);
 
 	if (svc->rc_enable_probe) {
 		/*
@@ -504,6 +499,7 @@ supervisor_finish_native_exit(struct svc_runtime *svc, int exit_status,
 	svc->cleanup.restart = false;
 	svc_run_container_remove(svc->manifest.label, svc->owner_uid);
 	svc->state = SVC_STATE_STOPPED;
+	activation_source_resume(svc, switchboard_kq);
 	/*
 	 * The exit itself was logged when the process went away, possibly
 	 * long before its coalition's cleanup let the unit leave STOPPING.

@@ -688,10 +688,10 @@ lookup_channel_request(struct channel *channel,
 		 * channel's authority.
 		 */
 		if (error == ENOENT) {
-			if (on_demand_launch_ambient(req->name, lc,
-			    request, switchboard_kq) == 0)
+			error = on_demand_launch_ambient(req->name, lc,
+			    request, switchboard_kq);
+			if (error == 0)
 				return;
-			error = errno != 0 ? errno : EIO;
 		}
 		/*
 		 * EACCES means out-of-scope for this channel's domain: fail fast

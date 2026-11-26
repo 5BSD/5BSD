@@ -589,8 +589,9 @@ send_activation(struct svc_runtime *provider, const char *name)
  * Called from svc_proto.c when naming_lookup() returns ENOENT but the
  * provides registry has a match.
  *
- * Returns 0 if launch initiated (reply deferred), -1 on immediate failure.
- * Sets errno to EDEADLK if circular dependency detected.
+ * Returns 0 if launch initiated (reply deferred), otherwise the refusal: an
+ * errno value (ENOENT for a name the registry lacks, EACCES for one outside
+ * the requester's reach, EDEADLK for a circular activation, ...).
  */
 /*
  * Launch a unit.  Every capability service a unit depends on is now reached
@@ -625,7 +626,7 @@ od_launch(const char *name, struct svc_runtime *requester,
 	struct svc_runtime *target;
 	struct pending_lookup *pl;
 	struct kevent kev;
-	int saved_errno;
+	int error;
 
 	/* Use the same principal as immediate naming. Internal deferred launches
 	 * use the registry owner; wire requests use freshly resolved authority. */
@@ -636,7 +637,7 @@ od_launch(const char *name, struct svc_runtime *requester,
 	    (requester != NULL ? requester->owner_uid : (uid_t)-1);
 	if (bundle_registry_lookup_for_uid(name, lookup_uid, &bundle_idx,
 	    &service_idx) == -1)
-		return (errno = ENOENT, -1);
+		return (ENOENT);
 
 	/*
 	 * IPC attributes (docs/book/src/plane/attributes.md): a requester that could
@@ -657,18 +658,14 @@ od_launch(const char *name, struct svc_runtime *requester,
 			set = NULL;
 		if (od_anoint_precheck(name, set, requester != NULL ?
 		    requester->manifest.label : SVC_SESSION_LABEL,
-		    lookup_uid) == -1) {
-			errno = EACCES;
-			return (-1);
-		}
+		    lookup_uid) == -1)
+			return (EACCES);
 	}
 
 	/* Circular dependency detection. */
 	if (would_deadlock(name, requester,
-	    bundle_registry_owner_uid(bundle_idx))) {
-		errno = EDEADLK;
-		return (-1);
-	}
+	    bundle_registry_owner_uid(bundle_idx)))
+		return (EDEADLK);
 
 	/*
 	 * Reserve the bounded waiter and its timer before changing process
@@ -678,13 +675,12 @@ od_launch(const char *name, struct svc_runtime *requester,
 	if (npending >= ON_DEMAND_MAX_PENDING) {
 		syslog(LOG_WARNING,
 		    "on_demand: too many pending lookups");
-		errno = EAGAIN;
-		return (-1);
+		return (EAGAIN);
 	}
 	pl = calloc(1, sizeof(*pl));
 	if (pl == NULL) {
 		syslog(LOG_ERR, "on_demand: calloc pending: %m");
-		return (-1);
+		return (ENOMEM);
 	}
 	pl->requester_owner_uid = requester != NULL ? requester->owner_uid : (uid_t)-1;
 	pl->provider_owner_uid = bundle_registry_owner_uid(bundle_idx);
@@ -709,6 +705,7 @@ od_launch(const char *name, struct svc_runtime *requester,
 	}
 	pl->request = request;
 	if (arm_timeout(kq, pl) == -1) {
+		error = errno;
 		syslog(LOG_WARNING, "on_demand: kevent timer: %m");
 		goto fail_waiter;
 	}
@@ -720,7 +717,7 @@ od_launch(const char *name, struct svc_runtime *requester,
 		b = bundle_registry_get(bundle_idx);
 		asvc = b != NULL ? capbundle_service(b, service_idx) : NULL;
 		if (asvc == NULL) {
-			errno = ENOENT;
+			error = ENOENT;
 			goto fail_timer;
 		}
 
@@ -741,16 +738,17 @@ od_launch(const char *name, struct svc_runtime *requester,
 					    "is disabled after %u failures", name,
 					    target->manifest.label,
 					    target->restart_count);
-					errno = ECANCELED;
+					error = ECANCELED;
 					goto fail_timer;
 				}
 				svc_responsibility_decide(target, requester,
 				    ambient_domain);
 				if (!od_launch_constraint_ok(target, name)) {
-					errno = EACCES;
+					error = EACCES;
 					goto fail_timer;
 				}
 				if (svc_launch_or_await(target, kq) == -1) {
+					error = errno;
 					syslog(LOG_ERR,
 				    "on_demand: failed to launch '%s': %m", name);
 					goto fail_timer;
@@ -768,6 +766,7 @@ od_launch(const char *name, struct svc_runtime *requester,
 
 		target = svc_unit_alloc();
 		if (target == NULL) {
+			error = errno;
 			syslog(LOG_ERR, "on_demand: cannot launch '%s': %m",
 			    name);
 			goto fail_timer;
@@ -782,7 +781,7 @@ od_launch(const char *name, struct svc_runtime *requester,
 			    "on_demand: invalid bundle service '%s'",
 			    capbundle_svc_label(asvc));
 			free(target);
-			errno = EINVAL;
+			error = EINVAL;
 			goto fail_timer;
 		}
 		/*
@@ -814,7 +813,7 @@ od_launch(const char *name, struct svc_runtime *requester,
 			 * this leaks nothing.
 			 */
 			free(target);
-			errno = EACCES;
+			error = EACCES;
 			goto fail_timer;
 		}
 
@@ -822,11 +821,10 @@ od_launch(const char *name, struct svc_runtime *requester,
 
 		/* Launch the service. */
 		if (svc_launch_or_await(target, kq) == -1) {
+			error = errno;
 			syslog(LOG_ERR,
 				    "on_demand: failed to launch '%s': %m", name);
-			saved_errno = errno;
 			svc_remove(target);
-			errno = saved_errno;
 			goto fail_timer;
 		}
 
@@ -855,21 +853,20 @@ have_target:
 	return (0);
 
 fail_timer:
-	saved_errno = errno != 0 ? errno : EIO;
 	EV_SET(&kev, pl->timeout_ident, EVFILT_TIMER,
 	    EV_DELETE, 0, 0, NULL);
 	(void)kevent(kq, &kev, 1, NULL, 0, NULL);
-	errno = saved_errno;
 fail_waiter:
-	saved_errno = errno != 0 ? errno : EIO;
 	free(pl);
-	errno = saved_errno;
-	return (-1);
+	/* A refusal is never answered as success, even with errno unset. */
+	return (error != 0 ? error : EIO);
 }
 
 /*
  * Activate an on-demand name for a service-to-service requester.  Returns 0 if
- * the launch was initiated (reply deferred, request retained), -1 otherwise.
+ * the launch was initiated (reply deferred, request retained), otherwise the
+ * refusal as an errno value (od_launch()).  A sender whose authority cannot be
+ * resolved is refused as out of reach (EACCES).
  */
 int
 on_demand_launch(const char *name, struct svc_runtime *requester,
@@ -882,7 +879,7 @@ on_demand_launch(const char *name, struct svc_runtime *requester,
 	if (request == NULL)
 		return (od_launch(name, requester, NULL, NULL, request, kq));
 	if (svc_authority_resolve(request, &actual, &sender) == -1)
-		return (-1);
+		return (EACCES);
 	return (od_launch(name, sender, NULL, &actual, request, kq));
 }
 
@@ -890,7 +887,7 @@ on_demand_launch(const char *name, struct svc_runtime *requester,
  * Activate an on-demand name for an ambient (login-session lookup channel)
  * requester (§21). The reply is delivered over `lc`, using software authority
  * resolved from the requesting message.  Returns 0 if the launch was
- * initiated (request retained), -1 otherwise.
+ * initiated (request retained), otherwise the refusal as on_demand_launch().
  */
 int
 on_demand_launch_ambient(const char *name, struct svc_lookup_channel *lc,
@@ -901,7 +898,7 @@ on_demand_launch_ambient(const char *name, struct svc_lookup_channel *lc,
 	struct svc_domain actual;
 
 	if (svc_authority_resolve(request, &actual, &sender) == -1)
-		return (-1);
+		return (EACCES);
 	return (od_launch(name, sender, lc, &actual, request, kq));
 }
 

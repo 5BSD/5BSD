@@ -362,53 +362,74 @@ Optional.
 .It Ev SWITCHBOARD_CAPPROTECT_FD
 File descriptor number for the delegated capprotect service instance.
 Required.
-.It Ev SWITCHBOARD_BUNDLE_DIR_SYSTEM
-Override the system bundle directory.
-Default:
-.Pa /Capabilities/System .
-Primarily useful for testing.
-.It Ev SWITCHBOARD_BUNDLE_DIR_USER
-Override the user bundle directory
-.Pq default Pa /Capabilities/Apps .
-.It Ev SWITCHBOARD_RUN_DIR
-Override the ephemeral run directory
-.Pq default Pa /Capabilities/Run ,
-under which the running-bundle markers are published in
-.Pa live/ .
-Test fixtures set this so a fixture switchboard never touches the host's
-markers.
-.It Ev SWITCHBOARD_REGISTRY_WATCH_SETTLE
-Seconds of quiescence after a change to an install directory before the
-registry is rescanned (1\(en60; default 2).
-Default:
-.Pa /Capabilities .
-Primarily useful for testing.
 .El
 .Pp
-The directory overrides above,
-.Ev SWITCHBOARD_USERS_DIR ,
-.Ev SWITCHBOARD_DISABLED_PATH ,
-.Ev SWITCHBOARD_SKIP_RC ,
-.Ev SWITCHBOARD_ADOPT_CONF
-and
-.Ev SWITCHBOARD_RCD_DIR
-are test configuration, as is
-.Ev SWITCHBOARD_REGISTRY_WATCH_SETTLE .
+The following are test configuration, honoured only where a test can set
+them: on a test kernel
+.Pq Va kern.mac_capability.test_issuer Ns =1 ,
+or in a
+.Nm
+that is not the boot's.
 The boot's
 .Nm ,
 the one
 .Xr capsule 8
-started as PID 1, ignores them unless the kernel is a test kernel
-.Pq Va kern.mac_capability.test_issuer Ns =1 .
+started as PID 1 with its Core role, ignores them on any other kernel and
+logs that it did.
+.Bl -tag -width "SWITCHBOARD_TEST_SHIELD_NO_SIGKILL"
+.It Ev SWITCHBOARD_BUNDLE_DIR_SYSTEM
+Test only.
+Override the system bundle directory
+.Pq default Pa /Capabilities/System .
+.It Ev SWITCHBOARD_BUNDLE_DIR_USER
+Test only.
+Override the user bundle directory
+.Pq default Pa /Capabilities/Apps .
+.It Ev SWITCHBOARD_USERS_DIR
+Test only.
+Override the per-user agent root
+.Pq default Pa /Capabilities/Users .
+.It Ev SWITCHBOARD_RUN_DIR
+Test only.
+Override the ephemeral run directory
+.Pq default Pa /Capabilities/Run ,
+under which the running-bundle markers are published in
+.Pa live/ ,
+so a fixture never touches the host's markers.
+.It Ev SWITCHBOARD_DISABLED_PATH
+Test only.
+Override the operator disable list
+.Pq default Pa /Capabilities/Config/switchboard/disabled .
+.It Ev SWITCHBOARD_REGISTRY_WATCH_SETTLE
+Test only.
+Seconds of quiescence after a change to an install directory before the
+registry is rescanned (1\(en60; default 2).
+.It Ev SWITCHBOARD_SKIP_RC
+Test only.
+Set to
+.Ql 1 ,
+the boot's
+.Nm
+neither runs
+.Pa /etc/rc
+nor adopts rc.d services.
 A
 .Nm
-that is not the boot's never runs
-.Pa /etc/rc
-or adopts rc.d services.
-.Ev SWITCHBOARD_TEST_SHIELD_NO_SIGKILL ,
-which leaves
+that is not the boot's never does either.
+.It Ev SWITCHBOARD_ADOPT_CONF
+Test only.
+Override the rc.d adoption list
+.Pq default Pa /Capabilities/Config/switchboard/rc_adopt.conf .
+.It Ev SWITCHBOARD_RCD_DIR
+Test only.
+Override the rc.d directory adoption reads
+.Pq default Pa /etc/rc.d .
+.It Ev SWITCHBOARD_TEST_SHIELD_NO_SIGKILL
+Test only, and honoured only on a test kernel: leave
 .Dv SIGKILL
-out of the process shield, is honoured only on a test kernel.
+out of the process shield so a test can kill
+.Nm .
+.El
 .Ss Runtime directory lifecycle
 The service manager cleans leftover runtime containers immediately before its
 first native service launch. During normal boot, rc must first make runtime
@@ -607,8 +628,12 @@ Only an explicit operator start
 .Pq Nm switchboardctl Cm start
 overrides the failure: a removal or reload that waited for the cleanup
 applies, and the unit starts.
-A restart that found a cleanup pending waits for the cleanup to complete,
-not for a timer, and runs when it does.
+A launch that fails is counted against the circuit breaker and retried
+after the restart delay
+.Pq Sx Linear Backoff ,
+whether it failed before or after the new process was created.
+A restart that finds the previous instance's cleanup still pending waits for
+that cleanup to complete, not for another timer, and runs when it does.
 Event-registration failures during reload are retained in the cleanup error
 reported by the control status command, even when another cleanup watch
 was successfully registered.
@@ -867,6 +892,9 @@ when the provider is disabled
 .Pq Sx Circuit Breaker ,
 .Er EDEADLK
 for a circular activation.
+A client cannot tell a disabled provider from a lookup that libservice
+cancelled on its own side, which also reports
+.Er ECANCELED .
 .Pp
 When a service exits, all of its claims and published names are automatically
 removed, while manifest reservations remain available for a later process

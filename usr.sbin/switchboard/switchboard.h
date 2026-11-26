@@ -269,6 +269,14 @@ struct svc_runtime {
 	 */
 	int		activation_listen_fds[SWITCHBOARD_MAX_ACTIVATION_SOCKETS];
 	unsigned	nactivation_listen;
+	/*
+	 * The sources are disabled (EV_DISABLE) while their demand cannot
+	 * launch the unit: it is already up, or a launch was refused.  A
+	 * level-triggered listener would otherwise fire on every pass of the
+	 * event loop.  They are enabled again when the unit stops
+	 * (activation_source_resume()).
+	 */
+	bool		activation_suspended;
 
 	/* Attribution */
 	char		launched_by[SWITCHBOARD_LABEL_MAX]; /* who triggered launch */
@@ -543,6 +551,7 @@ int	startup_launch_system(int kq);
 int	activation_register_all(int kq);
 void	activation_source_arm(struct svc_runtime *svc, int kq);
 void	activation_source_teardown(struct svc_runtime *svc, int kq);
+void	activation_source_resume(struct svc_runtime *svc, int kq);
 bool	activation_timer_owns(uintptr_t ident);
 void	activation_timer_fire(uintptr_t ident, int kq);
 void	activation_path_event(struct kevent *kev, int kq);

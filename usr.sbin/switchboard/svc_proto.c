@@ -464,10 +464,10 @@ handle_lookup(struct svc_runtime *svc, struct channel_message *request,
 	    request, &error, &sendable);
 	if (client_fd < 0) {
 		if (error == ENOENT) {
-			if (on_demand_launch(req->name, svc, request,
-			    switchboard_kq) == 0)
+			error = on_demand_launch(req->name, svc, request,
+			    switchboard_kq);
+			if (error == 0)
 				return (true);
-			error = errno != 0 ? errno : EIO;
 		}
 		error = svc_lookup_status(error);
 		(void)svc_channel_reply(svc, request, SVC_OP_LOOKUP, error,
@@ -529,10 +529,10 @@ handle_helper_open(struct svc_runtime *svc, struct channel_message *request)
 	    channel_message_sender(request), &error, &sendable);
 	if (client_fd < 0) {
 		if (error == ENOENT) {
-			if (on_demand_launch(synthetic, svc, request,
-			    switchboard_kq) == 0)
+			error = on_demand_launch(synthetic, svc, request,
+			    switchboard_kq);
+			if (error == 0)
 				return (true);
-			error = errno != 0 ? errno : EIO;
 		}
 		error = svc_lookup_status(error);
 		(void)svc_channel_reply(svc, request, SVC_OP_HELPER_OPEN, error,

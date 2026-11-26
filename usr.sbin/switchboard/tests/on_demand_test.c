@@ -961,6 +961,13 @@ activation_source_teardown(struct svc_runtime *svc, int kq)
 	(void)kq;
 }
 
+void
+activation_source_resume(struct svc_runtime *svc, int kq)
+{
+	(void)kq;
+	svc->activation_suspended = false;
+}
+
 
 /*
  * Removing a unit leaves every other unit where it is: their timers, armed

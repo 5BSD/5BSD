@@ -62,6 +62,13 @@ svc_exec(struct svc_runtime *svc, int kq)
 	return (0);
 }
 
+void
+activation_source_resume(struct svc_runtime *svc, int kq)
+{
+	(void)kq;
+	svc->activation_suspended = false;
+}
+
 /* What supervisor.c does with an accepted failed cleanup, for these cases. */
 bool
 supervisor_cleanup_acknowledge(struct svc_runtime *svc)

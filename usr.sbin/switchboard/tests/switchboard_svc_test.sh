@@ -27,18 +27,12 @@ assert_stack_alive()
 	    atf_fail "Capsule status request failed"
 }
 
-# Wait up to <seconds> for an extended regular expression in the stack log.
-svc_wait_log()
+# Wait, on file events and with no deadline of its own, until FILE exists
+# and is not empty, or contains TEXT (capd_wait_file); the case's ATF
+# timeout bounds the wait.
+svc_wait()
 {
-	local pattern="$1" max i
-
-	max=$(( $2 * 10 ))
-	i=0
-	while ! grep -Eq "$pattern" "$logfile" 2>/dev/null && [ "$i" -lt "$max" ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
-	grep -Eq "$pattern" "$logfile" 2>/dev/null
+	"$(atf_get_srcdir)/../capsule/capd_wait_file" "$@"
 }
 
 # The stack log's line number of the first match of a regular expression.
@@ -240,7 +234,7 @@ disabled_unit_stays_down_head()
 }
 disabled_unit_stays_down_body()
 {
-	local disabled verdict i starts
+	local starts
 
 	use_private_control
 	prepare_paths
@@ -250,46 +244,77 @@ disabled_unit_stays_down_body()
 activation { boot = true; timer = { interval = 1; } }' \
 	    lifecycle-exit "${WORK}/crashy.pid" 1 >/dev/null
 	start_stack
-	svc_wait_log 'service org\.test\.crashy\.unit[^ ]*: (exec )?failed .*disabling' \
-	    120 || fail_case "the circuit breaker did not trip"
-	disabled=$(svc_log_line 'service org\.test\.crashy\.unit[^ ]*: (exec )?failed .*disabling')
-
-	# The next timer fire after the disable must be refused, not launch.
-	i=0
-	verdict=
-	while [ -z "$verdict" ] && [ "$i" -lt 600 ]; do
-		verdict=$(sed -n "$((disabled + 1)),\$p" "$logfile" |
-		    grep -Eo "activation: timer (activated|launch of) 'org\.test\.crashy" |
-		    head -n 1)
-		i=$((i + 1))
-		[ -n "$verdict" ] || sleep 0.1
-	done
-	case "$verdict" in
-	*"launch of"*) ;;
-	*activated*) fail_case "the timer relaunched the disabled unit" ;;
-	*) fail_case "the timer did not fire after the disable" ;;
-	esac
+	svc_wait "$logfile" " times, disabling" ||
+	    fail_case "the circuit breaker did not trip"
+	starts=$(grep -c 'service org\.test\.crashy\.unit/unit: started pid' "$logfile")
 	atf_check -s exit:0 -o match:"org\.test\.crashy\.unit/unit +stopped +disabled" \
 	    "$SWITCHBOARDCTL" status
 
+	# The next timer fire after the disable is refused, and launches nothing.
+	svc_wait "$logfile" \
+	    "activation: timer launch of 'org.test.crashy.unit/unit' failed" ||
+	    fail_case "the timer's demand was not refused"
+	[ "$(grep -c 'service org\.test\.crashy\.unit/unit: started pid' "$logfile")" -eq "$starts" ] ||
+	    fail_case "the timer relaunched the disabled unit"
+
 	# An operator start clears it.
-	starts=$(grep -c 'service org\.test\.crashy\.unit[^ ]*: started pid' "$logfile")
+	rm -f crashy.pid
 	atf_check -s exit:0 -o match:"starting" \
 	    "$SWITCHBOARDCTL" start "org.test.crashy.unit/unit"
-	i=0
-	while [ "$(grep -c 'service org\.test\.crashy\.unit[^ ]*: started pid' "$logfile")" -le "$starts" ] &&
-	    [ "$i" -lt 150 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
-	[ "$(grep -c 'service org\.test\.crashy\.unit[^ ]*: started pid' "$logfile")" -gt "$starts" ] ||
-	    fail_case "the operator start did not launch the unit"
+	svc_wait crashy.pid || fail_case "the operator start did not launch the unit"
 	assert_stack_alive
 }
 disabled_unit_stays_down_cleanup()
 {
 	cleanup_common
 	rm -f crashy.pid
+}
+
+atf_test_case disabled_socket_unit_stays_quiet cleanup
+disabled_socket_unit_stays_quiet_head()
+{
+	atf_set "descr" "a connection to a disabled socket-activated unit is refused once; the listener does not keep firing"
+	atf_set "require.user" "root"
+	atf_set "timeout" "300"
+	require_capsule_stack_kmods
+}
+disabled_socket_unit_stays_quiet_body()
+{
+	local n
+
+	use_private_control
+	prepare_paths
+	# Crashes at once until the circuit breaker disables it.
+	make_fixture_svc system org.test.sock.unit \
+	    "restart = \"always\"; max_failures = 2;
+activation { boot = true; socket = { name = \"l\"; listen = \"unix:${WORK}/sock.unit\"; } }" \
+	    lifecycle-exit "${WORK}/sock.pid" 1 >/dev/null
+	start_stack
+	svc_wait "$logfile" " times, disabling" ||
+	    fail_case "the circuit breaker did not trip"
+
+	# A client connects and is never accepted: the listener stays readable.
+	nc -U -d "${WORK}/sock.unit" >/dev/null 2>&1 &
+	echo $! > nc.pid
+	svc_wait "$logfile" "activation: socket " ||
+	    fail_case "the connection created no demand"
+	# Each control request is answered after everything queued before it:
+	# a listener that fired on every pass would have logged again by the
+	# second answer.
+	"$SWITCHBOARDCTL" reload >/dev/null || fail_case "reload failed"
+	"$SWITCHBOARDCTL" reload >/dev/null || fail_case "reload failed"
+	n=$(grep -c "activation: socket .*'org\.test\.sock\.unit/unit'" "$logfile")
+	[ "$n" -eq 1 ] ||
+	    fail_case "one pending connection created demand $n times"
+	grep -q "activation: socket launch of 'org.test.sock.unit/unit' failed" \
+	    "$logfile" || fail_case "the disabled unit was not refused"
+	assert_stack_alive
+}
+disabled_socket_unit_stays_quiet_cleanup()
+{
+	[ ! -f nc.pid ] || kill "$(cat nc.pid)" 2>/dev/null || true
+	cleanup_common
+	rm -f nc.pid sock.pid
 }
 
 # ===================================================================
@@ -357,14 +382,13 @@ shutdown_drain_waits_under_load_body()
 	# Asked to quiesce, the unit sends 700 requests, one at a time and so
 	# at least one SwitchBoard event each: more than the 600 event
 	# iterations that bounded the drain.  Then it acknowledges and exits 0.
-	# Its stop_timeout keeps the SIGKILL backstop out of the way while
-	# staying inside the test-local Capsule's own 30 s wait for SwitchBoard.
-	make_fixture_svc system org.test.flood.unit 'stop_timeout = 25;' \
-	    lifecycle-quiesce-flood "${WORK}/flood.ready" "${WORK}/flood.done" \
-	    700 >/dev/null
+	make_fixture_svc system org.test.flood.unit \
+	    'activation { boot = true; ipc = ["org.test.flood.svc"]; }' \
+	    lifecycle-quiesce-flood org.test.flood.svc "${WORK}/flood.ready" \
+	    "${WORK}/flood.done" 700 >/dev/null
 
 	start_stack
-	wait_for_file flood.ready || fail_case "service did not start"
+	svc_wait flood.ready || fail_case "service did not start"
 	svc_pid=$(sed -n 's/^ready pid=//p' flood.ready)
 	[ -n "$svc_pid" ] || fail_case "service recorded no pid"
 
@@ -372,8 +396,7 @@ shutdown_drain_waits_under_load_body()
 	    atf_fail "Capsule shutdown request failed"
 	wait "$daemon_pid" 2>/dev/null || true
 	daemon_pid=
-	wait_for_pid_exit "$svc_pid" 600 ||
-	    fail_case "service survived shutdown"
+	pwait "$svc_pid" 2>/dev/null || true
 	[ -s flood.done ] ||
 	    fail_case "SwitchBoard finished its drain before the unit stopped"
 	cat flood.done
@@ -1393,8 +1416,8 @@ arguments = [\"lifecycle-exit\", \"$(pwd)/broken.pid\", \"1\"];" \
 	    "$capd_service_fixture" >/dev/null
 	write_config
 	start_stack
-	svc_wait_log 'service org\.test\.broken\.svc[^ ]*: (exec )?failed .*disabling' \
-	    120 || fail_case "the circuit breaker did not trip"
+	svc_wait "$logfile" " times, disabling" ||
+	    fail_case "the circuit breaker did not trip"
 	ambient_probe_start org.test.broken.svc probe.out
 	# 85: ECANCELED, the disabled provider's refusal.
 	ambient_probe_expect \
@@ -1689,8 +1712,8 @@ removal_keeps_unit_timers_body()
 	    lifecycle-exit "${WORK}/gone.pid" 0 >/dev/null
 	write_config
 	start_stack
-	wait_for_file gone.pid || fail_case "the unit to remove did not start"
-	svc_wait_log 'service org\.test\.gone\.unit[^ ]*: stopped' 15 ||
+	svc_wait gone.pid || fail_case "the unit to remove did not start"
+	svc_wait "$logfile" "service org.test.gone.unit/unit: stopped" ||
 	    fail_case "the unit to remove did not stop"
 
 	# Units added after startup follow the stopped one in SwitchBoard's
@@ -1710,18 +1733,19 @@ restart = \"always\";
 arguments = [\"watchdog-wedge\", \"org.test.keep.wd\", \"$(pwd)/kwd\"];" \
 	    "$capd_service_fixture" >/dev/null
 	reload_stack
-	wait_for_file kidle.launch1 || fail_case "idle provider did not start"
-	wait_for_file kwd.launch1 || fail_case "watchdog provider did not start"
+	svc_wait kidle.launch1 || fail_case "idle provider did not start"
+	svc_wait kwd.launch1 || fail_case "watchdog provider did not start"
 
 	rm -rf "${APPS_DIR}/org.test.gone.unit.cap"
 	reload_stack
-	svc_wait_log "removing stopped service 'org\.test\.gone\.unit" 15 ||
+	svc_wait "$logfile" "removing stopped service 'org.test.gone.unit/unit'" ||
 	    fail_case "the stopped unit was not removed"
 
-	svc_wait_log 'org\.test\.keep\.idle[^ ]*: idle timeout, stopping' \
-	    $((timer * 2)) || fail_case "idle timer lost after a unit removal"
-	svc_wait_log 'org\.test\.keep\.wd[^ ]*: watchdog expired' \
-	    $((timer * 2)) || fail_case "watchdog lost after a unit removal"
+	# With the timers lost, these waits end at the case's timeout.
+	svc_wait "$logfile" "service org.test.keep.idle/idle: idle timeout, stopping" ||
+	    fail_case "idle timer lost after a unit removal"
+	svc_wait "$logfile" "service org.test.keep.wd/wd: watchdog expired" ||
+	    fail_case "watchdog lost after a unit removal"
 	removal=$(svc_log_line "removing stopped service 'org\.test\.gone\.unit")
 	idle=$(svc_log_line 'org\.test\.keep\.idle[^ ]*: idle timeout, stopping')
 	watchdog=$(svc_log_line 'org\.test\.keep\.wd[^ ]*: watchdog expired')
@@ -1744,6 +1768,7 @@ atf_init_test_cases()
 	atf_add_test_case restart_always_restarts_clean
 	atf_add_test_case circuit_breaker_disables
 	atf_add_test_case disabled_unit_stays_down
+	atf_add_test_case disabled_socket_unit_stays_quiet
 	atf_add_test_case restart_backoff
 
 	# Shutdown

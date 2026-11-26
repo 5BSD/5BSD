@@ -185,6 +185,13 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 	if (summary != NULL && sumlen > 0)
 		summary[0] = '\0';
 
+	/* A shutdown starts nothing, so it loads nothing either. */
+	if (sd.shutting_down) {
+		syslog(LOG_NOTICE, "reload: refused, shutting down");
+		if (summary != NULL && sumlen > 0)
+			snprintf(summary, sumlen, "error: shutting down\n");
+		return (-1);
+	}
 	if (sd.services == NULL) {
 		syslog(LOG_WARNING, "reload: supervisor not initialized");
 		if (summary != NULL && sumlen > 0)

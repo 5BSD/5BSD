@@ -146,8 +146,7 @@ on_demand_launch_ambient(const char *name, struct svc_lookup_channel *lc,
 	(void)lc;
 	(void)request;
 	(void)kq;
-	errno = ENOENT;
-	return (-1);
+	return (ENOENT);
 }
 
 void

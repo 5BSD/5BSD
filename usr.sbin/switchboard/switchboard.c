@@ -88,10 +88,16 @@ static bool switchboard_test_kernel;
 const char *
 switchboard_test_getenv(const char *name)
 {
+	const char *value;
 
-	if (switchboard_boot_manager && !switchboard_test_kernel)
+	value = getenv(name);
+	if (value != NULL && switchboard_boot_manager &&
+	    !switchboard_test_kernel) {
+		syslog(LOG_WARNING, "test configuration %s ignored: not a test "
+		    "kernel", name);
 		return (NULL);
-	return (getenv(name));
+	}
+	return (value);
 }
 
 bool
@@ -365,7 +371,6 @@ main(int argc, char *argv[])
 	 */
 	if (syscall(SYS_cap_process, CAP_AUTH_CLEAR, -1, 0, NULL) == -1)
 		err(1, "drop launch authority");
-	switchboard_boot_manager = getppid() == 1;
 	{
 		size_t len;
 		int knob;
@@ -380,21 +385,26 @@ main(int argc, char *argv[])
 	 * without an issuer and a Core authority, and it executes the image
 	 * descriptor that authority pins (fexecve), so this fails only when
 	 * the kernel refused the Core role at exec.  Say so loudly (review
-	 * D3).
+	 * D3).  Only an excluded SwitchBoard whose parent is PID 1 is the
+	 * boot's: a process merely reparented to PID 1 holds no Core role, and
+	 * must not run /etc/rc or load the system's bundles.
 	 */
-	if (switchboard_boot_manager) {
+	if (getppid() == 1) {
 		struct kinfo_proc kp;
 		int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, 0 };
 		size_t kplen = sizeof(kp);
 
 		mib[3] = getpid();
 		if (sysctl(mib, 4, &kp, &kplen, NULL, 0) == 0 &&
-		    (kp.ki_flag2 & P2_CAP_EXCLUDED) == 0)
+		    (kp.ki_flag2 & P2_CAP_EXCLUDED) != 0)
+			switchboard_boot_manager = true;
+		else
 			syslog(LOG_CRIT, "switchboard is not excluded from OES "
 			    "and Capability Brokers (cap_process(2) BASE "
 			    "EXCLUSION): the Core role was refused at exec "
 			    "(traced, ktraced, no_new_privs, or the image was "
-			    "not the pinned one)");
+			    "not the pinned one); not acting as the boot's "
+			    "service manager");
 	}
 
 	/* Present as "SwitchBoard" in ps/top, distinct from lowercase base daemons. */

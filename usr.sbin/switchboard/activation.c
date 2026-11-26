@@ -197,11 +197,75 @@ listen_owner(int fd)
 	return (NULL);
 }
 
+/* Enable or disable every armed activation source of a unit. */
+static void
+activation_source_set(struct svc_runtime *svc, int kq, u_short flag)
+{
+	struct kevent kev;
+	unsigned i;
+
+	if (svc->activation_timer_ident != 0) {
+		EV_SET(&kev, svc->activation_timer_ident, EVFILT_TIMER, flag,
+		    0, 0, svc);
+		(void)kevent(kq, &kev, 1, NULL, 0, NULL);
+	}
+	if (svc->activation_path_fd >= 0) {
+		EV_SET(&kev, svc->activation_path_fd, EVFILT_VNODE, flag, 0, 0,
+		    svc);
+		(void)kevent(kq, &kev, 1, NULL, 0, NULL);
+	}
+	if (svc->activation_queue_fd >= 0) {
+		EV_SET(&kev, svc->activation_queue_fd, EVFILT_VNODE, flag, 0, 0,
+		    svc);
+		(void)kevent(kq, &kev, 1, NULL, 0, NULL);
+	}
+	if (svc->activation_mount_ident != 0) {
+		EV_SET(&kev, svc->activation_mount_ident, EVFILT_FS, flag, 0, 0,
+		    svc);
+		(void)kevent(kq, &kev, 1, NULL, 0, NULL);
+	}
+	for (i = 0; i < svc->nactivation_listen; i++) {
+		if (svc->activation_listen_fds[i] < 0)
+			continue;
+		EV_SET(&kev, svc->activation_listen_fds[i], EVFILT_READ, flag,
+		    0, 0, svc);
+		(void)kevent(kq, &kev, 1, NULL, 0, NULL);
+	}
+}
+
+static void
+activation_source_suspend(struct svc_runtime *svc, int kq)
+{
+
+	if (svc->activation_suspended)
+		return;
+	activation_source_set(svc, kq, EV_DISABLE);
+	svc->activation_suspended = true;
+}
+
+/*
+ * The unit can be launched again (it stopped, or an operator cleared what
+ * refused it): let its sources create demand again.
+ */
+void
+activation_source_resume(struct svc_runtime *svc, int kq)
+{
+
+	if (!svc->activation_suspended)
+		return;
+	svc->activation_suspended = false;
+	activation_source_set(svc, kq, EV_ENABLE);
+}
+
 /*
  * Create demand for a unit from an activation source.  Identical in effect to
  * a lookup arriving for the unit: a stopped (or completed-oneshot) unit is
  * launched; a unit that is already starting, running, or stopping coalesces so
- * repeated fires never stack duplicate launches.
+ * repeated fires never stack duplicate launches.  Either way, or when the
+ * launch is refused (the unit is disabled, a cleanup is pending, the manager
+ * is shutting down), the sources go quiet until the unit stops or an operator
+ * starts it: a pending connection keeps a listener readable, so a still-armed
+ * listener would fire on every pass of the event loop.
  */
 static void
 activation_create_demand(struct svc_runtime *svc, const char *source, int kq)
@@ -210,14 +274,17 @@ activation_create_demand(struct svc_runtime *svc, const char *source, int kq)
 	if (svc->state != SVC_STATE_STOPPED && svc->state != SVC_STATE_DONE) {
 		/* A previous activation is still in flight; coalesce. */
 		SWITCHBOARD_PROBE_ON_DEMAND_COALESCE(svc->manifest.label);
+		activation_source_suspend(svc, kq);
 		return;
 	}
 	svc->state = SVC_STATE_STOPPED;
 	strlcpy(svc->launched_by, source, sizeof(svc->launched_by));
 	clock_gettime(CLOCK_MONOTONIC, &svc->launch_time);
 	if (svc_launch_or_await(svc, kq) == -1) {
-		syslog(LOG_ERR, "activation: %s launch of '%s' failed: %m",
+		syslog(LOG_ERR, "activation: %s launch of '%s' failed: %m; "
+		    "its sources wait until it stops or an operator starts it",
 		    source, svc->manifest.label);
+		activation_source_suspend(svc, kq);
 		return;
 	}
 	SWITCHBOARD_PROBE_ON_DEMAND_LAUNCH(svc->manifest.label, source);

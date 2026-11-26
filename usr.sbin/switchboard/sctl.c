@@ -529,6 +529,7 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 				svc->state = SVC_STATE_STOPPED;
 				svc->restart_count = 0;
 				svc->disabled = false;
+				activation_source_resume(svc, switchboard_kq);
 				svc->lookup_activated = false;
 				strlcpy(svc->launched_by, "operator",
 				    sizeof(svc->launched_by));
