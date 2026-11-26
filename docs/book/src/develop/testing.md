@@ -352,7 +352,10 @@ A case skipped because the stage lacks a program or file it requires
 (kyua's "Required program/file ... not found", atf-sh's required program)
 makes the run `VM_NOT_CLEAN` (`STAGE_PREREQ_SKIPPED=N`), as a missing
 kernel module does (`KMOD_SKIPPED=N`).  A device only a kernel option
-provides (`/dev/kcov`) is not a stage input and stays a plain skip.  Every other skip without a
+provides (`/dev/kcov`) is not a stage input and stays a plain skip.  A skip
+whose `DEFERRED_*` token the runner does not count (a new token not yet added
+to its list) is listed as `DEFERRED_UNKNOWN=N`, one `DEFERRED_UNKNOWN:` line
+each, and makes the run `VM_NOT_CLEAN`.  Every other skip without a
 `DEFERRED_*` token is listed, all of them, as `PLAIN_SKIPS=N` with one
 `PLAIN_SKIP:` line each, and expected failures, which kyua counts as passed,
 as `EXPECTED_FAILURES=N`; neither changes the verdict, so read `VM_CLEAN`
