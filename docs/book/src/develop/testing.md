@@ -328,7 +328,10 @@ single-user, so the host reads their result from the serial log.
 the SwitchBoard init pins (`switchboard-init-rescope.md`, SR0) that need boot
 configuration or a transition: the loader variable `srcpin_case` is `boot`
 (rc.conf knobs read at boot, then a reboot with a firstboot sentinel),
-`trans` (a reboot and a reroot requested during /etc/rc), `bgfsck`
+`trans` (a reboot requested during /etc/rc), `reroot` (a reroot requested
+during /etc/rc; on dev the reroot hangs at "Trying to mount root", so the
+run ends only at its deadline with the failure it printed before the
+reroot: queue it with a small `VMTIMEOUT`), `bgfsck`
 (securelevel at the first getty, then an unclean reboot; it needs
 `nmdm_load="YES"`) or `single` (`shutdown now`; it needs
 `SINGLE_USER_SHELL=/root/vm-extra.sh`).  It reboots the guest plane-on

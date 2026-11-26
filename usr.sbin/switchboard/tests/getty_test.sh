@@ -114,6 +114,7 @@ getty_under_switchboard_head()
 {
 	atf_set "descr" "each getty is SwitchBoard's child, in a coalition of its own with no leader"
 	atf_set "require.user" "root"
+	atf_set "require.progs" "python3.12"
 }
 getty_under_switchboard_body()
 {
@@ -167,6 +168,7 @@ logout_kills_background_head()
 {
 	atf_set "descr" "nohup sleep 1000 &, then logout: the background job is gone"
 	atf_set "require.user" "root"
+	atf_set "require.progs" "python3.12"
 }
 logout_kills_background_body()
 {
@@ -188,8 +190,9 @@ logout_kills_background_body()
 	line_wait_banner
 	line_cmd "echo again" > /dev/null
 	state=$(ps -o state= -p "$bg" 2>/dev/null | tr -d ' ')
+	# Gone, exiting (E) or a zombie (Z): killed by the logout.
 	case $state in
-	''|Z*) ;;
+	''|E*|Z*) ;;
 	*) atf_fail "the background job $(pdesc "$bg") survived the logout (state $state, parent $(pdesc "$(ppid_of "$bg")"))" ;;
 	esac
 }

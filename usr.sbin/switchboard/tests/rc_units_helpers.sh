@@ -7,9 +7,10 @@
 # (slice SR0), which run against the system SwitchBoard of a plane-on guest
 # (Capsule PID 1): rc_units_boot_test and getty_test.
 #
-# Waits are on events: a SwitchBoard log line appended after a mark (tail -F
-# sleeps in kevent until the file grows), a process exit (pwait), a byte on
-# a terminal or a pipe.  None has a deadline of its own; ATF's timeout
+# Waits are on events: a SwitchBoard log line appended after a mark (tail -f
+# on a regular file sleeps in kevent until the file grows; it does not
+# follow a rotation, which no case causes), a process exit (pwait), a byte
+# on a terminal or a pipe.  None has a deadline of its own; ATF's timeout
 # bounds every case.
 
 # Where SwitchBoard's unit lines go (as vm-provider.sh's gate reads them).
@@ -24,7 +25,7 @@ pid1_comm()
 require_plane_on()
 {
 	[ "$(pid1_comm)" = capsule ] && [ "$(kenv -q capability_plane)" != NO ] ||
-	    atf_skip "needs the plane-on tier: PID 1 is $(pid1_comm)"
+	    atf_skip "DEFERRED_PLANEON_TIER: PID 1 is $(pid1_comm); run without PLANE_OFF=1"
 	sb_pid > /dev/null || atf_fail "no switchboard process with the plane on"
 }
 
@@ -111,6 +112,16 @@ unit_field()	# unit_field LABEL KEY: the N of KEY=N, or of "KEY N"
 		if ($i == k && i < NF) { print $(i + 1); exit } } }'
 }
 
+# SwitchBoard PID's start line "configuration: <path>; environment
+# overrides: ..." (SR1), from the console (dmesg -a; its syslog form
+# "<time> <host> switchboard <pid> - - configuration: ...") or a log.
+sb_config_line()	# sb_config_line PID
+{
+	{ dmesg -a; cat $SB_LOGS /var/log/console.log; } 2>/dev/null |
+	    tr -d '\r' | grep -E "(switchboard\[$1\]:| switchboard $1 - -) configuration: .*; environment overrides: " |
+	    tail -n 1
+}
+
 # A mark of the SwitchBoard logs: their sizes now.
 sb_log_mark()
 {
@@ -134,7 +145,7 @@ sb_log_wait()
 	for f in $SB_LOGS; do
 		off=${1:-0}
 		shift
-		tail -c +$((off + 1)) -F "$f" > "$fifo" 2>/dev/null &
+		tail -c +$((off + 1)) -f "$f" > "$fifo" 2>/dev/null &
 		tails="$tails $!"
 	done
 	rc=0
@@ -164,9 +175,27 @@ unit_settled()
 	done
 }
 
-# rc.conf.local settings made by a case, removed by its cleanup.
+# The state of LABEL, waited on SwitchBoard's unit lines until it is WANT;
+# ATF's timeout is the only bound.
+unit_wait_state()	# unit_wait_state LABEL WANT
+{
+	local mark s
+
+	while :; do
+		mark=$(sb_log_mark)
+		s=$(unit_state "$1")
+		[ "$s" = "$2" ] && return 0
+		sb_log_wait "$mark" "$SB_UNIT_RE" ||
+		    atf_fail "the SwitchBoard logs ended while $1 was $s"
+	done
+}
+
+# rc.conf.local settings made by a case, removed by its cleanup (with the
+# file, when the case created it).
 conf_set()	# conf_set NAME VALUE
 {
+	[ -e conf-set.list ] || [ -e /etc/rc.conf.local ] ||
+	    : > "${PWD}/conf-created"
 	sysrc -f /etc/rc.conf.local "$1=$2" > /dev/null ||
 	    atf_fail "cannot set $1 in /etc/rc.conf.local"
 	echo "$1" >> "${PWD}/conf-set.list"
@@ -180,7 +209,11 @@ conf_restore()
 	for n in $(sort -u conf-set.list); do
 		sysrc -f /etc/rc.conf.local -x "$n" > /dev/null 2>&1
 	done
-	rm -f conf-set.list
+	# sysrc -x leaves the file it emptied.
+	if [ -e conf-created ] && ! grep -q '[^[:space:]]' /etc/rc.conf.local 2>/dev/null; then
+		rm -f /etc/rc.conf.local
+	fi
+	rm -f conf-set.list conf-created
 }
 
 # The fixture daemon's rc.d script, installed beside the test.

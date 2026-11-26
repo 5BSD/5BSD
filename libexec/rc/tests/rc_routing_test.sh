@@ -42,7 +42,7 @@ plane_on()
 require_plane_on()
 {
 	plane_on ||
-	    atf_skip "needs the plane-on tier (PID 1 is $(pid1_comm))"
+	    atf_skip "DEFERRED_PLANEON_TIER: PID 1 is $(pid1_comm); run without PLANE_OFF=1"
 }
 
 require_plane_off()

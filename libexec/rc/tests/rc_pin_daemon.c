@@ -9,11 +9,12 @@
  *
  * usage: rc_pin_daemon -p pidfile
  *
- * It daemonizes as a classic rc daemon does (the start command's child
- * exits, so the daemon is an orphan of whoever started it).  The parent
- * exits only once the daemon has written its pid to the pidfile, so the pid
- * is there when rc.subr's start returns.  The daemon then waits for a
- * signal.  SIGTERM, the default of
+ * It daemonizes as a classic rc daemon does, with a double fork: the
+ * start command's child starts a session and forks the daemon, then exits,
+ * so the daemon is an orphan whose parent is whoever reaps orphans.  The
+ * start command exits only once the daemon has written its pid to the
+ * pidfile, so the pid is there when rc.subr's start returns.  The daemon
+ * then waits for a signal.  SIGTERM, the default of
  * rc.subr's stop, ends it.  It never times out: the test that started it
  * stops it.
  */
@@ -76,6 +77,18 @@ main(int argc, char *argv[])
 	close(ready[0]);
 	if (setsid() == -1)
 		err(1, "setsid");
+	/*
+	 * Fork again and let the session leader exit: the daemon is a
+	 * double-fork orphan, whose parent is whoever reaps orphans.
+	 */
+	switch (fork()) {
+	case -1:
+		err(1, "fork");
+	case 0:
+		break;
+	default:
+		_exit(0);
+	}
 	if (chdir("/") == -1)
 		err(1, "chdir");
 	if (pidfile_write(pfh) == -1)

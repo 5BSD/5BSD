@@ -11,7 +11,6 @@
 # slice that makes it pass:
 #   boot_daemons_in_units          SR2 (gettys and sshd exempt until SR4/SR5)
 #   service_restart_routed         SR2
-#   orphans_reparent_to_switchboard  SR1
 #   ifnet_detach_stops_instance    SR3
 #   sshd_per_connection            SR5
 #   base_daemons_tracked           SR2
@@ -118,36 +117,6 @@ service_restart_routed_body()
 }
 
 # ---------------------------------------------------------------------------
-# Behaviour (SR1): SwitchBoard is the reaper of its subtree, so a routed
-# start's daemon (an orphan: daemon(3) forked it and its parent exited) is
-# SwitchBoard's child.
-
-atf_test_case orphans_reparent_to_switchboard cleanup
-orphans_reparent_to_switchboard_head()
-{
-	atf_set "descr" "a unit's daemonized orphan has SwitchBoard as its parent"
-	atf_set "require.user" "root"
-}
-orphans_reparent_to_switchboard_body()
-{
-	local sb pid ppid
-
-	require_plane_on
-	sb=$(sb_pid)
-	fixture_stop
-	atf_check -s exit:0 -o ignore -e ignore "$(fixture)" onestart
-	pid=$(fixture_pid) || atf_fail "the test daemon did not start"
-	ppid=$(ppid_of "$pid")
-	[ "$ppid" = "$sb" ] ||
-	    atf_fail "the daemonized test daemon's parent is $(pdesc "$ppid"), not SwitchBoard[$sb]"
-}
-orphans_reparent_to_switchboard_cleanup()
-{
-	. "$(atf_get_srcdir)/rc_units_helpers.sh"
-	fixture_stop
-}
-
-# ---------------------------------------------------------------------------
 # Behaviour (SR3): an interface's dhclient is the instance unit
 # dhclient@<if>; IFNET DETACH stops it.  The test plays the DHCP server on
 # the far end of a tap(4) interface (rc_pin_dhcpd.py).
@@ -218,11 +187,10 @@ ifnet_detach_stops_instance_body()
 	    atf_fail "no unit dhclient@$TAP (state $state; dhclient $(pdesc "$dh"), parent $(pdesc "$(ppid_of "$dh")"), coalition $(coal_of "$dh"))"
 	dhcpd_stop
 	atf_check -s exit:0 -o ignore -e ignore ifconfig "$TAP" destroy
-	pwait "$dh" 2>/dev/null
-	devd_actions_wait
-	state=$(unit_settled "dhclient@$TAP")
-	[ "$state" = stopped ] ||
-	    atf_fail "dhclient@$TAP is $state after IFNET DETACH, not stopped"
+	# dhclient may exit by itself first (RTM_IFANNOUNCE); the DETACH
+	# stop makes the instance stopped.  Waited on SwitchBoard's unit
+	# lines; ATF's timeout is the only bound.
+	unit_wait_state "dhclient@$TAP" stopped
 }
 ifnet_detach_stops_instance_cleanup()
 {
@@ -297,12 +265,12 @@ ssh_session()
 atf_test_case sshd_per_connection cleanup
 sshd_per_connection_head()
 {
-	atf_set "descr" "two ssh connections: two sshd instances in two coalitions under SwitchBoard; service sshd restart keeps both"
+	atf_set "descr" "two ssh connections: two sshd instances in two coalitions under SwitchBoard; service sshd onerestart replaces the listener and keeps both"
 	atf_set "require.user" "root"
 }
 sshd_per_connection_body()
 {
-	local sb listener c1 c2 k1 k2 why n l
+	local sb listener c1 c2 k1 k2 r1 r2 why n l
 
 	require_plane_on
 	sb=$(sb_pid)
@@ -327,11 +295,27 @@ sshd_per_connection_body()
 		done
 	fi
 	[ -z "$why" ] || atf_fail "sshd is not per connection:${why#;}"
-	atf_check -s exit:0 -o ignore -e ignore service sshd restart
+	# sshd_enable is NO in the guest, so `restart` would be a no-op:
+	# onerestart, and the listener must really be replaced (a new daemon
+	# pid on dev's form, a higher restart count of unit sshd after SR5).
+	k1=$(pidfile_pid /var/run/sshd.pid || true)
+	r1=$(unit_field sshd restarts)
+	atf_check -s exit:0 -o ignore -e ignore service sshd onerestart
+	k2=$(pidfile_pid /var/run/sshd.pid || true)
+	r2=$(unit_field sshd restarts)
+	if [ -n "$k1" ] || [ -n "$k2" ]; then
+		[ -n "$k2" ] && [ "$k2" != "$k1" ] ||
+		    atf_fail "service sshd onerestart did not replace the listener (pid ${k1:-none} -> ${k2:-none})"
+	elif [ -n "$r1" ] && [ -n "$r2" ]; then
+		[ "$r2" -gt "$r1" ] ||
+		    atf_fail "service sshd onerestart did not restart unit sshd (restarts $r1 -> $r2)"
+	else
+		atf_fail "cannot tell whether the listener was replaced: no sshd pidfile and no restart count"
+	fi
 	for n in 1 2; do
 		eval "echo PING$n >&$((3 + n))"
 		eval "read -r l <&$((5 + n))" && [ "$l" = "PING$n" ] ||
-		    atf_fail "session $n did not survive service sshd restart"
+		    atf_fail "session $n did not survive service sshd onerestart"
 	done
 }
 sshd_per_connection_cleanup()
@@ -413,9 +397,12 @@ base_daemons_tracked_body()
 # SwitchBoard's start line, which SR1 adds:
 #   configuration: <path>; environment overrides: none
 # (names only, never values, of the SWITCHBOARD_* variables it was started
-# with).  procstat -e cannot observe it: the shield refuses it (EPERM).  On
-# dev the line is absent.  The reroot harness checks the SwitchBoard
-# started after single-user, which dev starts with SWITCHBOARD_RC_FASTBOOT.
+# with).  SwitchBoard starts before /etc/rc starts syslogd, so the line
+# reaches the console only: it is read from the console (dmesg -a, and the
+# logs in case syslogd also has it).  procstat -e cannot observe the
+# environment: the shield refuses it (EPERM).  On dev the line is absent.
+# The reroot harness checks the SwitchBoard started after single-user,
+# which dev starts with SWITCHBOARD_RC_FASTBOOT.
 
 atf_test_case switchboard_env_has_no_config
 switchboard_env_has_no_config_head()
@@ -429,10 +416,9 @@ switchboard_env_has_no_config_body()
 
 	require_plane_on
 	sb=$(sb_pid)
-	l=$(grep -h "switchboard\[$sb\]: configuration: .*; environment overrides: " \
-	    $SB_LOGS 2>/dev/null | tail -n 1)
+	l=$(sb_config_line "$sb")
 	[ -n "$l" ] ||
-	    atf_fail "SwitchBoard[$sb] logged no 'configuration: <path>; environment overrides:' line (SR1 adds it)"
+	    atf_fail "SwitchBoard[$sb] logged no 'configuration: <path>; environment overrides:' line on the console (SR1 adds it)"
 	echo "$l"
 	case $l in
 	*"environment overrides: none") ;;
@@ -445,7 +431,6 @@ atf_init_test_cases()
 {
 	atf_add_test_case boot_daemons_in_units
 	atf_add_test_case service_restart_routed
-	atf_add_test_case orphans_reparent_to_switchboard
 	atf_add_test_case ifnet_detach_stops_instance
 	atf_add_test_case sshd_per_connection
 	atf_add_test_case ssh_maxstartups_enforced

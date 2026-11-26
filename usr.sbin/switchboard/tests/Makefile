@@ -113,12 +113,8 @@ ${.OBJDIR}/capd_test_harness.sh: \
     ${SRCTOP}/usr.sbin/capsule/tests/capd_test_harness.sh
 	${CP} ${.ALLSRC} ${.TARGET}
 
-${.OBJDIR}/rc_units_helpers.sh: ${.CURDIR}/rc_units_helpers.sh
-	${CP} ${.ALLSRC} ${.TARGET}
-
-all: ${.OBJDIR}/test_helpers.sh ${.OBJDIR}/capd_test_harness.sh \
-    ${.OBJDIR}/rc_units_helpers.sh
-CLEANFILES+=	test_helpers.sh capd_test_harness.sh rc_units_helpers.sh
+all: ${.OBJDIR}/test_helpers.sh ${.OBJDIR}/capd_test_harness.sh
+CLEANFILES+=	test_helpers.sh capd_test_harness.sh
 .endif
 
 PROGS+=		capd_test_guardian

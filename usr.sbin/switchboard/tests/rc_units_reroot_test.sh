@@ -14,17 +14,21 @@
 #
 #   boot     boot configuration (regression pins flags_respected,
 #            rc_local_runs, jail_enable_starts_jail,
-#            dhclient_from_rc_before_rc_ends; behaviour pin
-#            cron_disabled_not_running, which rc_adopt fails on dev), then
+#            dhclient_from_rc_before_rc_ends; behaviour pins
+#            cron_disabled_not_running, which rc_adopt fails on dev, and
+#            orphans_reparent_to_switchboard, a double-forking daemon /etc/rc
+#            starts), then
 #            one reboot with a firstboot sentinel and -reboot
 #            (shutdown_order, utx_records, firstboot_reboot_reaches_pid1);
-#   trans    a reboot, then a reroot, requested by an rc.d script during
-#            /etc/rc (transition_signals_registered_early).  On dev the
+#   trans    a reboot requested by an rc.d script during /etc/rc
+#            (transition_signals_registered_early, reboot half);
+#   reroot   a reroot requested the same way (its reroot half).  On dev the
 #            reroot hangs the guest at "Trying to mount root" (issue
-#            2026-11-26-reroot-during-rc-hangs-at-mount-root): the reroot
-#            half's failure is printed before the reroot is requested and
-#            replaced by the pass after it, so a hang ends at the run
-#            deadline with that failure on the console;
+#            2026-11-26-reroot-during-rc-hangs-at-mount-root): the failure
+#            is printed before the reroot is requested and replaced by the
+#            pass the completed reroot starts, so on dev the run ends only
+#            at its deadline, with that failure on the console.  Queue it
+#            with a small VMTIMEOUT;
 #   bgfsck   securelevel_before_getty (kern_securelevel 0 at boot, a getty
 #            wrapper on an nmdm(4) line records the level it starts at;
 #            LOADER_EXTRA nmdm_load="YES"), then harness_unclean_reboot and
@@ -153,7 +157,11 @@ EOS
 install_boot_config() {
 	sysrc cron_enable=NO syslogd_flags="-ss" jail_enable=YES \
 	    jail_list=srcpin "ifconfig_$TAP=DHCP" synchronous_dhclient=YES \
+	    rcpinfix_enable=YES rcpinfix_program=$TESTS/rc_pin_daemon \
 	    > /dev/null
+	# The test daemon /etc/rc starts: rc_pin_daemon double-forks.
+	cp $TESTS/rc_pin_fixture /etc/rc.d/rcpinfix
+	chmod 555 /etc/rc.d/rcpinfix
 	cat >> /etc/jail.conf <<'EOS'
 srcpin {
 	path = "/";
@@ -246,6 +254,19 @@ check_boot_config() {
 	grep -q "^late .*pid1=capsule lease=yes addr=yes" /var/db/srcpin.dhcp 2>/dev/null ||
 	    why="$why; no lease and address on $TAP when /etc/rc's late script ran ($(grep '^late' /var/db/srcpin.dhcp 2>/dev/null | tr '\n' ' '))"
 	judge dhclient_from_rc_before_rc_ends regression "$why"
+
+	# orphans_reparent_to_switchboard (SR1): the double-fork orphan of a
+	# daemon /etc/rc started is SwitchBoard's child (SwitchBoard is the
+	# reaper of its subtree); on dev it is PID 1's.
+	why=
+	p=$(cat /var/run/rcpinfix.pid 2>/dev/null)
+	sb=$(pgrep -x switchboard | head -n 1)
+	if [ -z "$p" ] || ! kill -0 "$p" 2>/dev/null; then
+		why="the test daemon /etc/rc starts (rcpinfix) is not running"
+	elif [ "$(ps -o ppid= -p "$p" | tr -d ' ')" != "$sb" ]; then
+		why="the double-forked test daemon's parent is $(ps -o comm= -p "$(ps -o ppid= -p "$p")")[$(ps -o ppid= -p "$p" | tr -d ' ')], not SwitchBoard[$sb]"
+	fi
+	judge orphans_reparent_to_switchboard behaviour "$why"
 }
 
 # ------------------------------------------------ the shutdown record checks
@@ -331,20 +352,25 @@ EOS
 }
 
 # The checks of a transition requested during /etc/rc of boot BOOT, with the
-# logs appended since MARK.
+# logs appended since MARK.  On dev Capsule accepts such a request while it
+# is in runcom and takes its minimal path: SwitchBoard logs no sequence and
+# no rc.shutdown runs at all.
 check_transition() {	# check_transition WHAT BOOT MARK STAMPFILE
 	local what=$1 boot=$2 why cores
 	since "$3" > /tmp/srcpin-since.log
 	why=
 	grep -q "requested $what boot=$boot" /var/db/srcpin.trans.log 2>/dev/null ||
 	    why="$why; the rc.d script did not request the $what during /etc/rc"
-	grep -Eq 'switchboard\[[0-9]+\]: .*(reboot|reroot) sequence' /tmp/srcpin-since.log ||
-	    why="$why; no SwitchBoard '$what sequence' line (on dev Capsule sends SIGTERM and runs rc.shutdown itself)"
+	grep -Eq "(switchboard\\[[0-9]+\\]:| switchboard [0-9]+ - -) .*$what sequence" /tmp/srcpin-since.log ||
+	    why="$why; no SwitchBoard '$what sequence' line (on dev a transition accepted during /etc/rc takes Capsule's minimal path)"
 	why="$why$(check_sequence_shutdown "$boot")"
 	grep -Eq 'switchboard (died|killed by signal)' /tmp/srcpin-since.log &&
 	    why="$why; a SwitchBoard crash was logged: $(grep -E 'switchboard (died|killed by signal)' /tmp/srcpin-since.log | head -n 1)"
 	cores=$(find / /var/crash /var/db -maxdepth 1 -name '*switchboard*core*' -newer "$4" 2>/dev/null | tr '\n' ' ')
 	[ -z "$cores" ] || why="$why; core files: $cores"
+	# A reroot keeps the kernel: the same boot.
+	[ "$what" != reroot ] || [ "$(bootid)" = "$boot" ] ||
+	    why="$why; kern.boot_id changed ($boot -> $(bootid)): the guest rebooted instead of rerooting"
 	judge "transition_signals_registered_early:$what" behaviour "$why"
 }
 
@@ -384,11 +410,13 @@ check_bgfsck() {	# check_bgfsck MARK
 	st=0
 	switchboardctl status bgfsck > /tmp/srcpin-bgfsck.txt 2>&1 || st=$?
 	if [ "$st" != 0 ]; then
-		why="$why; switchboardctl status bgfsck failed ($st): $(head -n 2 /tmp/srcpin-bgfsck.txt | tr '\n' ' ') (no unit)"
+		why="$why; switchboardctl status bgfsck failed with exit $st: $(head -n 1 /tmp/srcpin-bgfsck.txt) (dev's switchboardctl has no 'status <unit>' form)"
 	else
 		grep -Eq '(running|done)' /tmp/srcpin-bgfsck.txt ||
 		    why="$why; bgfsck is neither running nor done: $(tr '\n' ' ' < /tmp/srcpin-bgfsck.txt)"
-		grep -q "$(bootid)" /tmp/srcpin-bgfsck.txt ||
+		# Both sides as 32 lower-case hex digits, dashes stripped.
+		tr -d -- '-' < /tmp/srcpin-bgfsck.txt | tr 'A-F' 'a-f' |
+		    grep -q "$(bootid | tr -d -- '-' | tr 'A-F' 'a-f')" ||
 		    why="$why; status bgfsck does not carry kern.boot_id $(bootid)"
 	fi
 	{ cat /tmp/srcpin-since.log; cat /tmp/srcpin-dmesg.txt; } |
@@ -399,22 +427,26 @@ check_bgfsck() {	# check_bgfsck MARK
 
 # ------------------------------------------------ case single: the checks
 check_single() {	# check_single MARK STAMPBOOT
-	local why l sbexit
+	local why sbexit sweep
 	since "$1" > /tmp/srcpin-since.log
-	dmesg -a >> /tmp/srcpin-since.log
+	dmesg -a | tr -d '\r' >> /tmp/srcpin-since.log
 	why=
-	grep -Eq 'switchboard\[[0-9]+\]: .*stopping for single-user' /tmp/srcpin-since.log ||
+	grep -Eq "(switchboard\\[[0-9]+\\]:| switchboard [0-9]+ - -) .*stopping for single-user" /tmp/srcpin-since.log ||
 	    why="$why; no SwitchBoard 'stopping for single-user' line (on dev SwitchBoard gets a plain SIGTERM)"
 	# On dev this line comes from rc.shutdown (death()); it is checked for
 	# presence only, so it is never dev's failure reason.
 	grep -q 'Stopping cron\.' /tmp/srcpin-since.log ||
 	    why="$why; no 'Stopping cron.' line from cron's routed stop (cron died in Capsule's sweep)"
+	# SwitchBoard exits 0 before Capsule's sweep, whose marker SR7 adds.
 	sbexit=$(grep -n -E 'switchboard( pid [0-9]+)? exited (with )?status 0' /tmp/srcpin-since.log | head -n 1 | cut -d: -f1)
-	l=$(grep -n -E 'killing user processes|death_single|sweep' /tmp/srcpin-since.log | head -n 1 | cut -d: -f1)
+	sweep=$(grep -n 'single-user: stopping remaining processes' /tmp/srcpin-since.log | head -n 1 | cut -d: -f1)
 	if [ -z "$sbexit" ]; then
 		why="$why; Capsule logged no SwitchBoard exit with status 0"
-	elif [ -n "$l" ] && [ "$l" -lt "$sbexit" ]; then
-		why="$why; Capsule's sweep came before SwitchBoard's exit"
+	fi
+	if [ -z "$sweep" ]; then
+		why="$why; no Capsule 'single-user: stopping remaining processes' line before death_single's sweep (SR7 adds it), so the order cannot be checked"
+	elif [ -n "$sbexit" ] && [ "$sweep" -lt "$sbexit" ]; then
+		why="$why; Capsule's sweep began before SwitchBoard exited"
 	fi
 	[ -z "$(shut_lines "$2")" ] ||
 	    why="$why; rc.shutdown ran on the way to single-user (on dev Capsule's death() runs it before death_single): $(shut_lines "$2")"
@@ -428,10 +460,13 @@ check_single() {	# check_single MARK STAMPBOOT
 env_overrides_why() {	# env_overrides_why SB
 	local l
 	[ -n "$1" ] || { echo "no SwitchBoard is running"; return; }
-	l=$(grep -h "switchboard\[$1\]: configuration: .*; environment overrides: " \
-	    /var/log/daemon.log /var/log/messages 2>/dev/null | tail -n 1)
+	# SwitchBoard starts before syslogd: its start line reaches the
+	# console ("<time> <host> switchboard <pid> - - configuration: ...").
+	l=$({ dmesg -a; cat /var/log/daemon.log /var/log/messages /var/log/console.log; } 2>/dev/null |
+	    tr -d '\r' | grep -E "(switchboard\\[$1\\]:| switchboard $1 - -) configuration: .*; environment overrides: " |
+	    tail -n 1)
 	case $l in
-	"")	echo "SwitchBoard[$1] logged no 'configuration: <path>; environment overrides:' line (SR1 adds it)" ;;
+	"")	echo "SwitchBoard[$1] logged no 'configuration: <path>; environment overrides:' line on the console (SR1 adds it)" ;;
 	*"environment overrides: none") ;;
 	*)	echo "$l" | grep -Eq 'SWITCHBOARD_(BUNDLE_DIR_[A-Z_]*|RUN_DIR|SKIP_RC|RC_FASTBOOT)' &&
 		    echo "SwitchBoard[$1] was started with configuration in its environment: ${l##*environment overrides: }" ;;
@@ -473,7 +508,7 @@ before)
 	install_markers
 	case $case in
 	boot) install_boot_config ;;
-	trans) install_trans_requester ;;
+	trans|reroot) install_trans_requester ;;
 	bgfsck) install_getty_wrapper ;;
 	single) ;;
 	*) echo "SRCPIN_FAIL: unknown srcpin_case $case"; exit 1 ;;
@@ -518,18 +553,23 @@ trans:)
 trans:trans-reboot)
 	b=$(awk '/^requested reboot/ { sub(/boot=/, "", $3); print $3 }' /var/db/srcpin.trans.log | tail -n 1)
 	check_transition reboot "${b:-unknown}" "$2 $3 $4 $5" /var/db/srcpin.stamp
+	summary; exit $? ;;
+reroot:)
+	install_trans_requester
+	next_boot_plane_on
 	echo reroot > /var/db/srcpin.trans
 	: > /var/db/srcpin.stamp
-	# The reroot half's verdict needs the reroot to complete: the pass
-	# that follows it (its completion event) replaces this provisional
-	# failure.  On dev a reroot requested during /etc/rc hangs at "Trying
-	# to mount root" (issue 2026-11-26-reroot-during-rc-hangs-at-mount-root); nothing in the guest runs then, so the
-	# run deadline (TIMEOUT_S) ends the run, and this line, printed now,
-	# is the pin's verdict.
+	# The verdict needs the reroot to complete: the pass the completed
+	# reroot starts (its completion event) replaces this provisional
+	# failure.  On dev a reroot requested during /etc/rc hangs at
+	# "Trying to mount root" (issue
+	# 2026-11-26-reroot-during-rc-hangs-at-mount-root); nothing in the
+	# guest runs then, so the run deadline (TIMEOUT_S) ends the run and
+	# this line, printed now, is the pin's verdict.
 	fail "transition_signals_registered_early:reroot" behaviour \
 	    "reroot did not complete (issue 2026-11-26-reroot-during-rc-hangs-at-mount-root)"
-	leave "trans-reroot $(mark)" /sbin/shutdown -r now ;;
-trans:trans-reroot)
+	leave "reroot $(mark)" /sbin/shutdown -r now ;;
+reroot:reroot)
 	# The reroot completed: drop the provisional failure, judge it.
 	grep -v '^fail behaviour transition_signals_registered_early:reroot reroot did not complete ' \
 	    $RESULTS > $RESULTS.new
