@@ -284,10 +284,22 @@ SYSCTL_INT(_kern, OID_AUTO, lastpid, CTLFLAG_RD, &lastpid, 0,
     "Last used PID");
 
 /*
- * The last uniqueid handed out (audit_token(3)); proc0 has 1.  Only fork
- * hands them out, under procid_lock with the pid.  64 bits: never reused.
+ * The last uniqueid handed out (audit_token(3)).  Fork hands them out,
+ * under procid_lock with the pid, after proc0's (fork_uniqueid_boot()).
  */
-static uint64_t lastuniqueid = 1;
+static uint64_t lastuniqueid;
+
+/*
+ * Start the uniqueid sequence at the boot's random offset
+ * (audit_token_boot_offset()) and return proc0's, the first of it.
+ */
+uint64_t
+fork_uniqueid_boot(uint64_t offset)
+{
+	KASSERT(lastuniqueid == 0, ("fork_uniqueid_boot: called twice"));
+	lastuniqueid = offset;
+	return (++lastuniqueid);
+}
 
 /*
  * Random component to lastpid generation.  We mix in a random factor to make

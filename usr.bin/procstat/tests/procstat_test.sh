@@ -226,9 +226,11 @@ audit_token_body()
 	# Every id of an exec'd program is set.
 	[ "$3" -gt 0 ] && [ "$4" -gt 0 ] && [ "$5" -gt 0 ] ||
 	    atf_fail "unset id: $*"
-	# The kernel's proc0 is the first process and has no image.
-	atf_check -o inline:"1 1 0\n" sh -c \
-	    "ps -o uniqueid=,execgen=,imageid= -p 0 | awk '{print \$1, \$2, \$3}'"
+	# The kernel's proc0 is the first process of the boot (its ids are
+	# the boot's random offset plus one: low 32 bits 1) and has no image.
+	set -- $(ps -o uniqueid=,execgen=,imageid= -p 0)
+	[ $(($1 & 0xffffffff)) -eq 1 ] && [ $(($2 & 0xffffffff)) -eq 1 ] &&
+	    [ "$3" = 0 ] || atf_fail "proc0 ids: $*"
 }
 
 atf_init_test_cases()

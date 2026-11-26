@@ -52,6 +52,12 @@
 /* Four wraps of the lowered space; more forks than this is a failure. */
 #define	FORKS_MOST	(8 * PID_LOW)
 
+/*
+ * The bits of a sequence value the boot's random offset never sets: bit 63
+ * and the low 32 (kernel-identity-and-coalitions.md 1.1, rev 1.3).
+ */
+#define	BOOT_OFFSET_CLEAR	0x80000000ffffffffULL
+
 /* The unprivileged ids setuid_keeps_ids changes to. */
 #define	UNPRIV_UID	65534
 #define	UNPRIV_GID	65534
@@ -356,7 +362,9 @@ ATF_TC_BODY(setuid_keeps_ids, tc)
 /*
  * Credentials the kernel makes for itself have no image: proc0's (and so
  * every kernel process's, forked from it without an exec), as seen through
- * kinfo_proc.  proc0 is the first process and has uniqueid 1, execgen 1.
+ * kinfo_proc.  proc0 is the first process: it has the first uniqueid and
+ * execgen of the boot, the boot's offset (low 32 bits 0, bit 63 clear)
+ * plus one.
  */
 ATF_TC_WITHOUT_HEAD(crget_cred_imageid_zero);
 ATF_TC_BODY(crget_cred_imageid_zero, tc)
@@ -378,10 +386,12 @@ ATF_TC_BODY(crget_cred_imageid_zero, tc)
 	nsys = 0;
 	for (i = 0; i < n; i++) {
 		if (kp[i].ki_pid == 0) {
-			ATF_CHECK_EQ_MSG((uint64_t)1, KP_UNIQUEID(&kp[i]),
-			    "proc0 uniqueid %ju", (uintmax_t)KP_UNIQUEID(&kp[i]));
-			ATF_CHECK_EQ_MSG((uint64_t)1, KP_EXECGEN(&kp[i]),
-			    "proc0 execgen %ju", (uintmax_t)KP_EXECGEN(&kp[i]));
+			ATF_CHECK_EQ_MSG((uint64_t)1,
+			    KP_UNIQUEID(&kp[i]) & BOOT_OFFSET_CLEAR,
+			    "proc0 uniqueid %#jx", (uintmax_t)KP_UNIQUEID(&kp[i]));
+			ATF_CHECK_EQ_MSG((uint64_t)1,
+			    KP_EXECGEN(&kp[i]) & BOOT_OFFSET_CLEAR,
+			    "proc0 execgen %#jx", (uintmax_t)KP_EXECGEN(&kp[i]));
 		}
 		if ((kp[i].ki_flag & P_SYSTEM) != 0) {
 			nsys++;
@@ -792,6 +802,104 @@ ATF_TC_CLEANUP(pid_reuse_check, tc)
 	sysctl_restore(RANDOMPID);
 }
 
+/* proc0's kinfo_proc. */
+static void
+proc0_kinfo(struct kinfo_proc *kp)
+{
+	kinfo_get(0, kp);
+	ATF_REQUIRE_EQ(0, kp->ki_pid);
+}
+
+/*
+ * Within a boot the ids only grow: every process's uniqueid is above
+ * proc0's and shares its offset; children forked one after another get
+ * increasing uniqueids and execgens; images exec'd one after another get
+ * increasing image ids.
+ */
+ATF_TC_WITHOUT_HEAD(uniqueid_monotonic_within_boot);
+ATF_TC_BODY(uniqueid_monotonic_within_boot, tc)
+{
+	struct kinfo_proc p0, *kp;
+	audit_token_t prev, cur;
+	size_t len;
+	pid_t pid;
+	int mib[3], i, n, wfd;
+
+	pins_init();
+	proc0_kinfo(&p0);
+	ATF_CHECK_EQ_MSG((uint64_t)0, KP_UNIQUEID(&p0) & (1ULL << 63),
+	    "proc0 uniqueid %#jx has bit 63", (uintmax_t)KP_UNIQUEID(&p0));
+
+	mib[0] = CTL_KERN;
+	mib[1] = KERN_PROC;
+	mib[2] = KERN_PROC_PROC;
+	len = 0;
+	ATF_REQUIRE_EQ(0, sysctl(mib, nitems(mib), NULL, &len, NULL, 0));
+	len *= 2;
+	kp = malloc(len);
+	ATF_REQUIRE(kp != NULL);
+	ATF_REQUIRE_EQ(0, sysctl(mib, nitems(mib), kp, &len, NULL, 0));
+	n = len / sizeof(*kp);
+	for (i = 0; i < n; i++) {
+		if (kp[i].ki_pid == 0)
+			continue;
+		ATF_CHECK_MSG(KP_UNIQUEID(&kp[i]) > KP_UNIQUEID(&p0),
+		    "pid %d uniqueid %#jx not above proc0's %#jx",
+		    kp[i].ki_pid, (uintmax_t)KP_UNIQUEID(&kp[i]),
+		    (uintmax_t)KP_UNIQUEID(&p0));
+		ATF_CHECK_MSG(KP_EXECGEN(&kp[i]) > KP_EXECGEN(&p0),
+		    "pid %d execgen %#jx not above proc0's %#jx",
+		    kp[i].ki_pid, (uintmax_t)KP_EXECGEN(&kp[i]),
+		    (uintmax_t)KP_EXECGEN(&p0));
+	}
+	free(kp);
+
+	tok_self(&prev);
+	for (i = 0; i < 16; i++) {
+		pid = child_waiting(&wfd, 0);
+		tok_get(-1, pid, 0, &cur);
+		child_release(pid, wfd, 0);
+		ATF_CHECK(audit_token_to_uniqueid(cur) >
+		    audit_token_to_uniqueid(prev));
+		ATF_CHECK(audit_token_to_execgen(cur) >
+		    audit_token_to_execgen(prev));
+		prev = cur;
+	}
+}
+
+/*
+ * Two boots start the sequences at different offsets.  The case prints
+ * proc0's uniqueid; given the value another boot printed (config variable
+ * previous_boot_uniqueid0, decimal), it checks that this boot's differs.
+ * A guest reroot (reboot -r) keeps the kernel and its sequences, so the
+ * two values must come from two kernel boots.
+ */
+ATF_TC_WITHOUT_HEAD(uniqueid_start_differs_across_boots);
+ATF_TC_BODY(uniqueid_start_differs_across_boots, tc)
+{
+	struct kinfo_proc p0;
+	unsigned long long prev;
+	const char *v;
+	char *end;
+
+	proc0_kinfo(&p0);
+	printf("proc0_uniqueid=%ju proc0_execgen=%ju\n",
+	    (uintmax_t)KP_UNIQUEID(&p0), (uintmax_t)KP_EXECGEN(&p0));
+	ATF_CHECK_EQ((uint64_t)1, KP_UNIQUEID(&p0) & BOOT_OFFSET_CLEAR);
+	if (!atf_tc_has_config_var(tc, "previous_boot_uniqueid0"))
+		atf_tc_skip("DEFERRED_SECOND_BOOT: set previous_boot_uniqueid0 "
+		    "to the proc0_uniqueid another boot printed");
+	v = atf_tc_get_config_var(tc, "previous_boot_uniqueid0");
+	errno = 0;
+	prev = strtoull(v, &end, 10);
+	ATF_REQUIRE_MSG(errno == 0 && *v != '\0' && *end == '\0',
+	    "bad previous_boot_uniqueid0 '%s'", v);
+	ATF_CHECK_MSG(prev != KP_UNIQUEID(&p0),
+	    "proc0 uniqueid %#jx is the other boot's", (uintmax_t)prev);
+	/* The offsets themselves differ, not just the first value. */
+	ATF_CHECK((prev >> 32) != (KP_UNIQUEID(&p0) >> 32));
+}
+
 /* The libc wrappers and libbsm accessors are the calls the pins make. */
 ATF_TC_WITHOUT_HEAD(libc_wrappers);
 ATF_TC_BODY(libc_wrappers, tc)
@@ -852,5 +960,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, bad_arguments);
 	ATF_TP_ADD_TC(tp, pid_reuse_check);
 	ATF_TP_ADD_TC(tp, libc_wrappers);
+	ATF_TP_ADD_TC(tp, uniqueid_monotonic_within_boot);
+	ATF_TP_ADD_TC(tp, uniqueid_start_differs_across_boots);
 	return (atf_no_error());
 }

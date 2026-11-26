@@ -106,7 +106,6 @@ A token holds three identifiers beside the process ID:
 the process's lifetime ID: set when it is created by
 .Xr fork 2 ,
 never changed, never given to another process.
-The first process, the kernel's, has 1.
 .It execgen
 the exec generation: new when the process is created and at every
 successful
@@ -122,8 +121,16 @@ It is 0 for credentials the kernel makes, such as those of kernel
 processes, which have no image.
 .El
 .Pp
-All three are counters, not secrets: what a token allows is decided by
-whoever was handed it, never by its being hard to guess.
+All three are counters: within a boot each only grows, so a later value
+means a later fork or exec.
+Each boot starts them at a random offset (bits 62 to 32 random, the low 32
+bits 0, bit 63 clear), so values are not comparable across boots, and a
+token kept from an earlier boot matches a process of this one only by a
+1 in 2^31 chance of the same offset.
+The first process, the kernel's, has the first uniqueid and exec generation
+of the boot.
+They are not secrets: what a token allows is decided by whoever was handed
+it, never by its being hard to guess.
 A token names a process when its process ID, lifetime ID and exec generation
 match
 .Pq see Xr audit_token_check 2 .
@@ -149,16 +156,16 @@ a token has no terminal, so
 .Fa tidp
 gets this host and port 0.
 .Sh SEE ALSO
+.Xr auditreduce 1 ,
+.Xr praudit 1 ,
+.Xr procstat 1 ,
+.Xr ps 1 ,
 .Xr audit_token_get 2 ,
 .Xr pdopentoken 2 ,
 .Xr libbsm 3 ,
 .Xr audit 4 ,
 .Xr audit.log 5 ,
-.Xr audit_control 5 ,
-.Xr auditreduce 1 ,
-.Xr praudit 1 ,
-.Xr ps 1 ,
-.Xr procstat 1
+.Xr audit_control 5
 .Sh HISTORY
 The audit token appeared in Darwin.
 This version, with the lifetime ID, exec generation and image ID, first

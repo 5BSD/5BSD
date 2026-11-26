@@ -18,7 +18,9 @@
  *		(crget(), proc0 and kernel processes), which have no image.
  *
  * They are counters, not secrets: what a token authorizes is decided by
- * whoever was handed it, never by its being unguessable.
+ * whoever was handed it, never by its being unguessable.  Each boot starts
+ * the three sequences at a random offset (audit_token_boot_offset()), so
+ * that a token kept from another boot does not name a process of this one.
  *
  * A token names a process when its pid, uniqueid and execgen match
  * (AUDIT_TOKEN_MAY_EXEC ignores the execgen); an exited process matches
@@ -43,9 +45,33 @@
 #include <bsm/audit_token.h>
 #include <security/audit/audit.h>
 
-/* The last exec generation and image id handed out; 64 bits, no wrap. */
+/*
+ * The last exec generation and image id handed out.  With the uniqueid
+ * sequence (kern_fork.c) they start at the boot's offset.
+ */
 static uint64_t audit_token_execgen_seq;
 static uint64_t audit_token_imageid_seq;
+
+/*
+ * The boot's offset of the three sequences, taken once when proc0 is made:
+ * random bits 62..32, low 32 bits 0, bit 63 clear.  Each sequence then has
+ * at least 2^32 values before bit 63 and about 2^63 before it would wrap,
+ * so within a boot values stay unique and increasing, and a token kept
+ * from another boot matches a process only by a 1 in 2^31 chance of the
+ * same offset.  Not a secret either way (see above).
+ */
+uint64_t
+audit_token_boot_offset(void)
+{
+	uint32_t r;
+	uint64_t offset;
+
+	arc4random_buf(&r, sizeof(r));
+	offset = (uint64_t)(r & 0x7fffffff) << 32;
+	audit_token_execgen_seq = offset;
+	audit_token_imageid_seq = offset;
+	return (offset);
+}
 
 uint64_t
 audit_token_next_execgen(void)

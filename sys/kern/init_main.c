@@ -520,6 +520,7 @@ proc0_init(void *dummy __unused)
 		.lc_name = "",
 	};
 	vm_paddr_t pageablemem;
+	uint64_t offset;
 	int i;
 
 	GIANT_REQUIRED;
@@ -532,11 +533,13 @@ proc0_init(void *dummy __unused)
 	p->p_magic = P_MAGIC;
 	p->p_osrel = osreldate;
 	/*
-	 * The first process: uniqueid 1 (kern_fork.c's sequence starts
-	 * after it) and execgen 1.  Its credential, like every credential
-	 * crget() makes, has no image (cr_imageid 0).
+	 * The audit token sequences start at this boot's random offset, and
+	 * the first process takes the first uniqueid and execgen.  Its
+	 * credential, like every credential crget() makes, has no image
+	 * (cr_imageid 0).
 	 */
-	p->p_uniqueid = 1;
+	offset = audit_token_boot_offset();
+	p->p_uniqueid = fork_uniqueid_boot(offset);
 	p->p_execgen = audit_token_next_execgen();
 
 	/*

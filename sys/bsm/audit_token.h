@@ -101,6 +101,8 @@ struct proc *audit_token_find(const audit_token_t *tok, int flags);
 /* 0 if the process tok names exists, else ESRCH. */
 int	audit_token_check(const audit_token_t *tok, int flags);
 
+/* The boot's offset of the sequences (proc0_init() only). */
+uint64_t audit_token_boot_offset(void);
 /* The next exec generation (fork, exec) and image id (exec). */
 uint64_t audit_token_next_execgen(void);
 uint64_t audit_token_next_imageid(void);
