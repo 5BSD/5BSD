@@ -381,13 +381,23 @@ main(int argc, char *argv[])
 		    0) == 0 && knob == 1;
 	}
 	/*
+	 * LOG_CONS: during early boot switchboard runs before syslogd exists, so
+	 * syslog() to /var/run/log is undeliverable; LOG_CONS makes those
+	 * messages fall back to /dev/console instead of vanishing.  Essential
+	 * for diagnosing a boot that wedges before convergence.
+	 */
+	openlog("switchboard", LOG_PID | LOG_NDELAY | LOG_PERROR | LOG_CONS,
+	    LOG_DAEMON);
+
+	/*
 	 * Started by PID 1, we must be excluded.  PID 1 never starts us
 	 * without an issuer and a Core authority, and it executes the image
 	 * descriptor that authority pins (fexecve), so this fails only when
-	 * the kernel refused the Core role at exec.  Say so loudly (review
-	 * D3).  Only an excluded SwitchBoard whose parent is PID 1 is the
-	 * boot's: a process merely reparented to PID 1 holds no Core role, and
-	 * must not run /etc/rc or load the system's bundles.
+	 * the kernel refused the Core role at exec.  Such a SwitchBoard must
+	 * neither bring the system up half-way nor skip /etc/rc quietly: it
+	 * says why on the console and exits before READY, with the status of
+	 * its other start-up failures, which capsule(8) treats as a failed
+	 * boot (owner decision 2026-11-26).
 	 */
 	if (getppid() == 1) {
 		struct kinfo_proc kp;
@@ -395,16 +405,19 @@ main(int argc, char *argv[])
 		size_t kplen = sizeof(kp);
 
 		mib[3] = getpid();
-		if (sysctl(mib, 4, &kp, &kplen, NULL, 0) == 0 &&
-		    (kp.ki_flag2 & P2_CAP_EXCLUDED) != 0)
-			switchboard_boot_manager = true;
-		else
-			syslog(LOG_CRIT, "switchboard is not excluded from OES "
-			    "and Capability Brokers (cap_process(2) BASE "
-			    "EXCLUSION): the Core role was refused at exec "
-			    "(traced, ktraced, no_new_privs, or the image was "
-			    "not the pinned one); not acting as the boot's "
-			    "service manager");
+		if (sysctl(mib, 4, &kp, &kplen, NULL, 0) == -1) {
+			syslog(LOG_CRIT, "cannot read the Core role: %m; "
+			    "refusing to start the boot");
+			exit(1);
+		}
+		if ((kp.ki_flag2 & P2_CAP_EXCLUDED) == 0) {
+			syslog(LOG_CRIT, "the Core role was refused at exec "
+			    "(traced, ktraced, no_new_privs, or not the pinned "
+			    "image): not excluded from OES and Capability "
+			    "Brokers; refusing to start the boot");
+			exit(1);
+		}
+		switchboard_boot_manager = true;
 	}
 
 	/* Present as "SwitchBoard" in ps/top, distinct from lowercase base daemons. */
@@ -418,15 +431,6 @@ main(int argc, char *argv[])
 	sd.identity_fd = -1;
 	sd.authority_issuer_fd = -1;
 	sd.discovery_fd = -1;
-
-	/*
-	 * LOG_CONS: during early boot switchboard runs before syslogd exists, so
-	 * syslog() to /var/run/log is undeliverable; LOG_CONS makes those
-	 * messages fall back to /dev/console instead of vanishing.  Essential
-	 * for diagnosing a boot that wedges before convergence.
-	 */
-	openlog("switchboard", LOG_PID | LOG_NDELAY | LOG_PERROR | LOG_CONS,
-	    LOG_DAEMON);
 
 	/* Parse arguments. */
 	while ((ch = getopt(argc, argv, "")) != -1) {

@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 19, 2026
+.Dd November 26, 2026
 .Dt SWITCHBOARD 8
 .Os
 .Sh NAME
@@ -314,6 +314,25 @@ drops the authority
 .Xr capsule 8
 gave it (it only carried the Core role across its exec); exclusion lasts
 until its next exec.
+A
+.Nm
+whose parent is PID 1 but which the kernel did not exclude (the Core role
+was refused at its exec: it was traced or ktraced, had
+.Dv PROC_NO_NEW_PRIVS_CTL
+set, or was not the image its authority pins) refuses to start the boot.
+It logs
+.Dq the Core role was refused at exec
+at
+.Dv LOG_CRIT ,
+which reaches the console, and exits with status 1 before it reports READY,
+as for its other start-up failures.
+.Xr capsule 8
+treats that as a failed boot.
+Such a
+.Nm
+neither runs
+.Pa /etc/rc
+nor starts any unit.
 Programs a Core unit or
 .Nm
 starts are not excluded.
