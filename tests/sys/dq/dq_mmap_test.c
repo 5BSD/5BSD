@@ -20,6 +20,7 @@
 #include <sys/module.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <sys/time.h>
 #include <sys/uio.h>
 #include <sys/user.h>
@@ -31,6 +32,7 @@
 #include <libutil.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -1203,6 +1205,79 @@ ATF_TC_CLEANUP(vmmap_path_served_root, tc)
 	(void)unmount("lp", MNT_FORCE);
 }
 
+/* How many times the kernel message buffer holds needle. */
+static int
+msgbuf_count(const char *needle)
+{
+	const char *p;
+	size_t len;
+	char *buf;
+	int n;
+
+	len = 0;
+	ATF_REQUIRE_MSG(sysctlbyname("kern.msgbuf", NULL, &len, NULL, 0) == 0,
+	    "kern.msgbuf: %s", strerror(errno));
+	len += 4096;
+	buf = malloc(len + 1);
+	ATF_REQUIRE(buf != NULL);
+	ATF_REQUIRE_MSG(sysctlbyname("kern.msgbuf", buf, &len, NULL, 0) == 0,
+	    "kern.msgbuf: %s", strerror(errno));
+	buf[len] = '\0';
+	n = 0;
+	for (p = buf; (p = strstr(p, needle)) != NULL; p += strlen(needle))
+		n++;
+	free(buf);
+	return (n);
+}
+
+static void
+child_fault_forever(void *arg, void *result __unused)
+{
+	int fd = *(int *)arg;
+	unsigned char *p;
+
+	p = mmap(NULL, 4096, PROT_READ, MAP_SHARED, fd, 0);
+	if (p == MAP_FAILED)
+		_exit(3);
+	(void)dqt_touch(p, false, 0, NULL);
+	_exit(5);		/* the READ is held: never reached */
+}
+
+ATF_TC(abandoned_pagein_quiet);
+ATF_TC_HEAD(abandoned_pagein_quiet, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a program killed while its fault "
+	    "waits for a served page leaves no 'vm_fault: pager read error' "
+	    "console line, as a program on a disk leaves none (Q8 (a); dev "
+	    "prints the line for the killed pid)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(abandoned_pagein_quiet, tc)
+{
+	struct dqt_fixture f;
+	struct dqt_child ch;
+	char needle[96];
+	int before, after, status;
+
+	setup(&f, 14);
+	dqt_hold(&f.c, true);
+	dqt_spawn(&ch, child_fault_forever, &f.o->fd);
+	ATF_REQUIRE(dqt_wait_held(&f.c, 1, DQT_WAIT_MS));
+	(void)snprintf(needle, sizeof(needle),
+	    "vm_fault: pager read error, pid %d (", (int)ch.pid);
+	before = msgbuf_count(needle);
+	ATF_REQUIRE_EQ(0, kill(ch.pid, SIGKILL));
+	ATF_REQUIRE_EQ(ch.pid, waitpid(ch.pid, &status, 0));
+	ATF_CHECK(WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL);
+	(void)close(ch.pipefd);
+	after = msgbuf_count(needle);
+	ATF_CHECK_EQ_MSG(before, after, "the console gained %d line(s) "
+	    "\"%s...\"", after - before, needle);
+	ATF_CHECK(dqt_wait_interrupts(&f.c, 1, DQT_WAIT_MS));
+	dqt_hold(&f.c, false);
+	dqt_fixture_fini(&f);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1222,5 +1297,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, vmmap_identity);
 	ATF_TP_ADD_TC(tp, short_reply_inside_size);
 	ATF_TP_ADD_TC(tp, vmmap_path_served_root);
+	ATF_TP_ADD_TC(tp, abandoned_pagein_quiet);
 	return (atf_no_error());
 }
