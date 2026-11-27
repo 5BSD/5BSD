@@ -122,6 +122,19 @@ TEST_METADATA.identity_semantics_test+=	is_exclusive="true"
 CFLAGS.identity_semantics_test+=	-I${SRCTOP}/lib/libchannel
 LIBADD.identity_semantics_test+=	channel
 PROGS+=		identity_semantics_helper
+# LA0 pins on dev (launch-authority-reshape.md, section 3): mint, install
+# once, exec pin, role, revoke, bound ends, lease and stamp, against a test
+# issuer (the stack tier; DEFERRED_STACK_TIER elsewhere).  Test issuers are
+# global, so the program runs alone.  launch_authority_helper is the image
+# the grants pin and the other image; static, since the exec of a pinned
+# image is a set-id exec whose loader takes the issuer's library
+# directories, and these grants have none.
+ATF_TESTS_C+=	launch_authority_pins_test
+TEST_METADATA.launch_authority_pins_test+=	is_exclusive="true"
+CFLAGS.launch_authority_pins_test+=	-I${SRCTOP}/lib/libchannel
+LIBADD.launch_authority_pins_test+=	channel
+PROGS+=		launch_authority_helper
+NO_SHARED.launch_authority_helper=	yes
 ATF_TESTS_SH+=	process_context_test
 PROGS+=		process_context_helper process_context_edge_helper \
 		process_context_ipc_helper

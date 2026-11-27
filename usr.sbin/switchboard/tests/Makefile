@@ -99,6 +99,16 @@ TEST_METADATA.subset_stack_test+=	is_exclusive="true"
 PROGS+=		subset_unit
 CFLAGS.subset_unit+=	-I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libservice
 LIBADD.subset_unit+=	service channel
+# LA0 pins (launch-authority-reshape.md, section 3): what the end a unit is
+# handed allows once the unit executes another image, and the
+# invocation-bound control end.  The unit is subset_unit (requester-exec);
+# launch_authority_probe is the other image, static because units are born
+# in capability mode.  Stack tier, alone, as subset_stack_test.
+ATF_TESTS_SH+=	launch_authority_stack_test
+TEST_METADATA.launch_authority_stack_test+=	is_exclusive="true"
+PROGS+=		launch_authority_probe
+CFLAGS.launch_authority_probe+=	-I${SRCTOP}/sys
+NO_SHARED.launch_authority_probe=	yes
 # Accept-mode manifest pins (SR5's mode), libcapbundle only.
 ATF_TESTS_C+=	accept_mode_test
 LIBADD.accept_mode_test+=	capbundle ucl
