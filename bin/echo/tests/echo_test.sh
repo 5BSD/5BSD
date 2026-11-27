@@ -34,8 +34,8 @@ n_output_head()
 
 n_output_body()
 {
-	atf_check -s ignore -o inline:"Hello world" \
-		"$(atf_get echo /bin/echo)" -n "Hello world"
+	atf_check -s exit:0 -o inline:"Hello world" \
+		"$(atf_config_get echo /bin/echo)" -n "Hello world"
 }
 
 atf_test_case append_c_output
@@ -47,8 +47,8 @@ append_c_output_head()
 
 append_c_output_body()
 {
-	atf_check -s ignore -o inline:"Hello world" \
-		"$(atf_get echo /bin/echo)" "Hello world\c"
+	atf_check -s exit:0 -o inline:"Hello world" \
+		"$(atf_config_get echo /bin/echo)" "Hello world\c"
 }
 
 atf_init_test_cases()
