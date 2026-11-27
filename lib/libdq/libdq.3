@@ -1890,23 +1890,39 @@ A
 blocks in a thread of its own, on a descriptor of its own of the owner's
 open file (the same open file, so the same OFD owner), never on the
 owner's descriptor number, which a close of the owner frees for any other
-open of the process; it answers when the lock is granted;
-when that reply finds the event no longer in flight
+open of the process; it answers when the lock is granted.
+Each owner keeps a shadow of what it holds: the ranges and types its
+requests were granted, merged as the kernel's advisory lock table
+.Pq Xr VOP_ADVLOCK 9
+merges one owner's locks.
+When the reply to a granted wait finds the event no longer in flight
 .Pq Er ESRCH : No the requester gave up and its Dv DQ_OP_INTERRUPT No raced the grant
-the grant is undone by unlocking the requested range for the owner,
-which also drops what the owner held in that range before (an abandoned
-upgrade leaves the range unlocked, where a real file would keep the old
-lock).
+the grant is undone by returning the requested range to what the shadow
+says the owner held there before, so an abandoned upgrade keeps the old
+lock, as on a real file.
+An exclusive
+.Dv DQ_LOCK_FLOCK
+request that would block first drops the open file's shared lock and then
+waits, as
+.Xr flock 2
+does on a real file; one that does not block converts at once.
 Without
 .Va so_state
 every lock is
 .Er ENOLCK .
 A
 .Dv DQ_LOCK_GETLK
-answer carries
+answer carries in
 .Va dlr_pid
--1: the routine does not track which owner holds the blocker (a declared
-difference from a real file, which names a POSIX owner's pid).
+the pid of the POSIX owner that holds the blocker, as a real file names
+it, and -1 for a flock or OFD owner; a real process's POSIX lock on the
+backing file keeps its own pid.
+The shadow follows the order in which the routine applied each owner's
+operations to the backing file: when one owner's operations race each
+other (two threads of a process, one of them waiting), the kernel may
+apply them in the other order, and a
+.Dv DQ_LOCK_GETLK
+that meets a grant before the shadow has it answers -1.
 .It Dv DQ_OP_UNLOCK_ALL
 cancels the owner's blocked waits and waits for their threads to finish,
 then closes the owner's open, which releases its locks.
