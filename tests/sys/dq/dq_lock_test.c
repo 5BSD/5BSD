@@ -1341,6 +1341,402 @@ ATF_TC_BODY(waiter_fd_reuse_stress, tc)
 	dqt_fixture_fini(&f);
 }
 
+/*
+ * Until cond holds and no batch is in progress, so the batch that read the
+ * records cond counts has also handed them to dq_serve_file.  The reader
+ * broadcasts the control's cv at the end of every batch (dqt_batch_done):
+ * the wait sleeps on that event, never a sleep-and-retry; DQT_WAIT_MS only
+ * bounds a failure.
+ */
+static bool
+wait_batches(struct dqt_ctl *c, dqt_cond_fn cond, uintptr_t a, uintptr_t b)
+    __requires_unlocked(c->mtx)
+{
+	struct timespec ts;
+	bool ok;
+
+	ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_REALTIME, &ts));
+	ts.tv_sec += DQT_WAIT_MS / 1000;
+	ts.tv_nsec += (long)(DQT_WAIT_MS % 1000) * 1000000L;
+	if (ts.tv_nsec >= 1000000000L) {
+		ts.tv_sec++;
+		ts.tv_nsec -= 1000000000L;
+	}
+	dqt_lock(c);
+	for (;;) {
+		ok = cond(c, a, b) && c->inbatch == 0;
+		if (ok || pthread_cond_timedwait(&c->cv, &c->mtx, &ts) ==
+		    ETIMEDOUT)
+			break;
+	}
+	ok = cond(c, a, b) && c->inbatch == 0;
+	dqt_unlock(c);
+	return (ok);
+}
+
+static bool
+cond_lock_records(struct dqt_ctl *c __unused, uintptr_t o, uintptr_t n)
+{
+
+	return (((const struct dqt_object *)o)->nlocks >= (int)n);
+}
+
+static bool
+cond_interrupt_records(struct dqt_ctl *c, uintptr_t n, uintptr_t unused __unused)
+    __requires_exclusive(c->mtx)
+{
+
+	return (c->ninterrupted >= (int)n);
+}
+
+/*
+ * o has n LOCK records, each served.  A requester's LOCK is posted before
+ * it sleeps for the reply, so a signal sent after this returns lands in
+ * that sleep or is pending when it starts (the sleep catches signals).
+ */
+static bool
+wait_lock_records(struct dqt_ctl *c, const struct dqt_object *o, int n)
+    __requires_unlocked(c->mtx)
+{
+
+	return (wait_batches(c, cond_lock_records, (uintptr_t)o, (uintptr_t)n));
+}
+
+/*
+ * C15 (T-A08): F_GETLK names the blocker's owner as a real file does: the
+ * POSIX holder's pid, and -1 behind an OFD lock or a flock (lockf(9) keeps
+ * lo_pid -1 for those owners).  One holder of each kind in turn; the probe
+ * asks the whole file and a range inside the lock.
+ */
+ATF_TC(getlk_pid_posix_owner);
+ATF_TC_HEAD(getlk_pid_posix_owner, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "F_GETLK on a served file reports "
+	    "l_pid as the real file does: the POSIX holder's pid, -1 behind an "
+	    "OFD lock or a flock (C15, T-A08)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(getlk_pid_posix_owner, tc)
+{
+	static const int cmds[] = { F_SETLK, F_OFD_SETLK, 0 };
+	static const char *const names[] = { "POSIX", "OFD", "flock" };
+	struct dqt_fixture f;
+	struct dqt_child ch;
+	struct holder_arg h;
+	struct holder_res hr;
+	struct probe_arg pa;
+	struct probe_res pr;
+	int i, k;
+
+	for (k = 0; k < (int)nitems(cmds); k++) {
+		setup(&f, 70 + k);
+		memset(&h, 0, sizeof(h));
+		h.sfd = f.o->fd;
+		h.ofd = f.oracle;
+		h.cmd = cmds[k];
+		h.type = F_WRLCK;
+		h.start = 0;
+		h.len = 100;
+		holder_start(&h, &ch);
+		memset(&pa, 0, sizeof(pa));
+		pa.sfd = f.o->fd;
+		pa.ofd = f.oracle;
+		PROBE(&pa, F_GETLK, 0, F_WRLCK, 0, 0);
+		PROBE(&pa, F_GETLK, 0, F_RDLCK, 50, 10);
+		memset(&pr, 0, sizeof(pr));
+		dqt_run_child(child_probe, &pa, &pr, sizeof(pr));
+		check_probe(&pa, &pr);
+		holder_release(&h, &ch, &hr);
+		ATF_CHECK_EQ(0, hr.s.rv);
+		ATF_CHECK_EQ(0, hr.o.rv);
+		for (i = 0; i < pa.n; i++) {
+			ATF_CHECK_EQ_MSG(F_WRLCK, pr.ofl[i].l_type,
+			    "%s holder, probe %d: the real file reports type %d",
+			    names[k], i, pr.ofl[i].l_type);
+			ATF_CHECK_EQ_MSG(k == 0 ? hr.pid : -1, pr.ofl[i].l_pid,
+			    "%s holder, probe %d: the real file names pid %d",
+			    names[k], i, (int)pr.ofl[i].l_pid);
+			ATF_CHECK_EQ_MSG(pr.ofl[i].l_pid, pr.sfl[i].l_pid,
+			    "%s holder, probe %d: served l_pid %d, real %d",
+			    names[k], i, (int)pr.sfl[i].l_pid,
+			    (int)pr.ofl[i].l_pid);
+		}
+		dqt_fixture_fini(&f);
+	}
+}
+
+/*
+ * C15 (T-A07): a blocking flock(LOCK_EX) by an open file that holds
+ * LOCK_SH first drops the shared lock, then sleeps (lf_setlock); another
+ * shared holder then gets LOCK_EX|LOCK_NB while the upgrade waits, and the
+ * upgrade is granted when that holder unlocks.  x and y are two opens of
+ * each file, both holding LOCK_SH (their locks outlive the children that
+ * took them: the test holds the open files).
+ */
+ATF_TC(flock_upgrade_pair);
+ATF_TC_HEAD(flock_upgrade_pair, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a blocked flock SH-to-EX upgrade on a "
+	    "served file has dropped its shared lock, as on a real file: "
+	    "another shared holder gets LOCK_EX|LOCK_NB, and the upgrade is "
+	    "granted at that holder's unlock (C15, T-A07, D247)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(flock_upgrade_pair, tc)
+{
+	struct dqt_fixture f;
+	struct dqt_object *o2;
+	struct dqt_child sch, och;
+	struct wait_arg w;
+	struct probe_arg pa;
+	struct probe_res pr;
+	struct dqt_rr sr, orr;
+	int oy;
+
+	setup(&f, 73);
+	o2 = dqt_mint_backing(&f.c, f.backing, backing_path, NULL,
+	    DQ_MINT_F_WRITE);
+	oy = open(oracle_path, O_RDWR);
+	ATF_REQUIRE(oy >= 0);
+	/* LOCK_SH through x (f.o, f.oracle) and through y (o2, oy). */
+	memset(&pa, 0, sizeof(pa));
+	pa.sfd = f.o->fd;
+	pa.ofd = f.oracle;
+	PROBE(&pa, 0, LOCK_SH, 0, 0, 0);
+	memset(&pr, 0, sizeof(pr));
+	dqt_run_child(child_probe, &pa, &pr, sizeof(pr));
+	check_probe(&pa, &pr);
+	ATF_REQUIRE_EQ(0, pr.s[0].rv);
+	pa.sfd = o2->fd;
+	pa.ofd = oy;
+	memset(&pr, 0, sizeof(pr));
+	dqt_run_child(child_probe, &pa, &pr, sizeof(pr));
+	check_probe(&pa, &pr);
+	ATF_REQUIRE_EQ(0, pr.s[0].rv);
+
+	/* x asks for LOCK_EX and sleeps: on the real file in lockf ... */
+	memset(&w, 0, sizeof(w));
+	w.fd = f.oracle;
+	dqt_spawn(&och, child_flock_block, &w);
+	ATF_REQUIRE(dqt_wait_wmesg(och.pid, "lockf", DQT_WAIT_MS));
+	/*
+	 * ... and on the served file for its LOCK's reply.  Once the batch
+	 * that read x's LOCK is done, dq_serve_file has dropped x's shared
+	 * lock and started the wait: y's request below comes after that.
+	 */
+	w.fd = f.o->fd;
+	dqt_spawn(&sch, child_flock_block, &w);
+	ATF_REQUIRE(wait_lock_records(&f.c, f.o, 2));
+
+	/* y: LOCK_EX|LOCK_NB succeeds (x holds nothing now), then LOCK_UN. */
+	memset(&pa, 0, sizeof(pa));
+	pa.sfd = o2->fd;
+	pa.ofd = oy;
+	PROBE(&pa, 0, LOCK_EX | LOCK_NB, 0, 0, 0);
+	PROBE(&pa, 0, LOCK_UN, 0, 0, 0);
+	memset(&pr, 0, sizeof(pr));
+	dqt_run_child(child_probe, &pa, &pr, sizeof(pr));
+	check_probe(&pa, &pr);
+	ATF_CHECK_EQ_MSG(0, pr.o[0].rv, "real file: LOCK_EX|LOCK_NB: %s",
+	    strerror(pr.o[0].err));
+	ATF_CHECK_EQ_MSG(0, pr.s[0].rv, "served file: LOCK_EX|LOCK_NB by the "
+	    "other shared holder: %s (the upgrade kept its shared lock)",
+	    strerror(pr.s[0].err));
+
+	/* y's unlock let x's upgrade through, on both files. */
+	dqt_collect(&och, &orr, sizeof(orr));
+	dqt_collect(&sch, &sr, sizeof(sr));
+	ATF_CHECK_EQ_MSG(0, orr.rv, "real file upgrade: %s", strerror(orr.err));
+	ATF_CHECK_EQ_MSG(0, sr.rv, "served upgrade: %s", strerror(sr.err));
+	memset(&pa, 0, sizeof(pa));
+	pa.sfd = o2->fd;
+	pa.ofd = oy;
+	PROBE(&pa, 0, LOCK_SH | LOCK_NB, 0, 0, 0);	/* x holds LOCK_EX */
+	memset(&pr, 0, sizeof(pr));
+	dqt_run_child(child_probe, &pa, &pr, sizeof(pr));
+	check_probe(&pa, &pr);
+	ATF_CHECK_EQ(EWOULDBLOCK, pr.o[0].err);
+	(void)close(oy);
+	dqt_fixture_fini(&f);
+}
+
+/*
+ * C15 (T-A08): an F_SETLKW upgrade that the requester abandons (a signal)
+ * while the controller's proxied wait is granted.  The requester holds a
+ * read lock on [0, 10) and asks for a write lock there; a real open of the
+ * backing file holds a read lock that blocks it.  The controller is paused
+ * after it has started the wait, so the INTERRUPT stays unread; the
+ * requester's F_SETLKW ends EINTR; then the blocker goes, the proxied wait
+ * is granted, its reply finds the event gone (ESRCH) and libdq undoes the
+ * grant.  On a real file an interrupted F_SETLKW changes nothing: the read
+ * lock stays.  The undo must leave the read lock, not an unlocked range.
+ */
+struct race_arg {
+	int		 sfd, ofd;
+	int		 ready[2], go[2];
+};
+
+struct race_res {
+	struct dqt_rr	 rd_s, rd_o, up_o, up_s;
+};
+
+static void
+race_step(struct race_arg *a, char b)
+{
+
+	(void)write(a->ready[1], &b, 1);
+	(void)read(a->go[0], &b, 1);
+}
+
+static void
+child_race(void *arg, void *result)
+{
+	struct race_arg *a = arg;
+	struct race_res *r = result;
+	struct sigaction sa;
+	struct flock fl;
+
+	(void)close(a->ready[0]);
+	(void)close(a->go[1]);
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = on_usr1;		/* no SA_RESTART */
+	(void)sigaction(SIGUSR1, &sa, NULL);
+	setfl(&fl, F_RDLCK, 0, 10);
+	DQT_RR(r->rd_s, fcntl(a->sfd, F_SETLK, &fl));
+	setfl(&fl, F_RDLCK, 0, 10);
+	DQT_RR(r->rd_o, fcntl(a->ofd, F_SETLK, &fl));
+	race_step(a, 'a');
+	setfl(&fl, F_WRLCK, 0, 10);
+	DQT_RR(r->up_o, fcntl(a->ofd, F_SETLKW, &fl));
+	race_step(a, 'b');
+	setfl(&fl, F_WRLCK, 0, 10);
+	DQT_RR(r->up_s, fcntl(a->sfd, F_SETLKW, &fl));
+	race_step(a, 'c');
+}
+
+static void
+race_next(struct race_arg *a, char want)
+{
+	char b;
+
+	ATF_REQUIRE_EQ(1, read(a->ready[0], &b, 1));
+	ATF_REQUIRE_EQ(want, b);
+}
+
+static void
+race_go(struct race_arg *a)
+{
+
+	ATF_REQUIRE_EQ(1, write(a->go[1], "g", 1));
+}
+
+/* Who holds [0, 10) on fd's file, asked for a write lock: the type. */
+static short
+range_holder(int fd)
+{
+	struct flock fl;
+
+	setfl(&fl, F_WRLCK, 0, 10);
+	ATF_REQUIRE_EQ(0, fcntl(fd, F_OFD_GETLK, &fl));
+	return (fl.l_type);
+}
+
+ATF_TC(raced_grant_undo_keeps_shadow);
+ATF_TC_HEAD(raced_grant_undo_keeps_shadow, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "an F_SETLKW upgrade abandoned by a "
+	    "signal and granted by the controller's proxied wait after the "
+	    "requester gave up leaves the requester's read lock, as an "
+	    "interrupted upgrade does on a real file (C15, T-A08)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(raced_grant_undo_keeps_shadow, tc)
+{
+	struct dqt_fixture f;
+	struct dqt_child ch;
+	struct race_arg a;
+	struct race_res r;
+	struct flock fl;
+	int hb, hc, ob, oc;
+
+	setup(&f, 74);
+	hb = open(backing_path, O_RDWR);
+	hc = open(backing_path, O_RDWR);
+	ob = open(oracle_path, O_RDWR);
+	oc = open(oracle_path, O_RDWR);
+	ATF_REQUIRE(hb >= 0 && hc >= 0 && ob >= 0 && oc >= 0);
+	/* The blocker: a real open's read lock on [0, 10) of both files. */
+	setfl(&fl, F_RDLCK, 0, 10);
+	ATF_REQUIRE_EQ(0, fcntl(hb, F_OFD_SETLK, &fl));
+	setfl(&fl, F_RDLCK, 0, 10);
+	ATF_REQUIRE_EQ(0, fcntl(ob, F_OFD_SETLK, &fl));
+
+	memset(&a, 0, sizeof(a));
+	a.sfd = f.o->fd;
+	a.ofd = f.oracle;
+	ATF_REQUIRE(pipe(a.ready) == 0 && pipe(a.go) == 0);
+	dqt_spawn(&ch, child_race, &a);
+	(void)close(a.ready[1]);
+	(void)close(a.go[0]);
+	race_next(&a, 'a');
+
+	/* The real file: the upgrade sleeps in lockf; a signal ends it. */
+	race_go(&a);
+	ATF_REQUIRE(dqt_wait_wmesg(ch.pid, "lockf", DQT_WAIT_MS));
+	ATF_REQUIRE_EQ(0, kill(ch.pid, SIGUSR1));
+	race_next(&a, 'b');
+	setfl(&fl, F_UNLCK, 0, 10);
+	ATF_REQUIRE_EQ(0, fcntl(ob, F_OFD_SETLK, &fl));
+	ATF_CHECK_EQ_MSG(F_RDLCK, range_holder(oc), "the real file: the "
+	    "interrupted upgrade did not leave the read lock");
+
+	/*
+	 * The served file: the controller reads the LOCK and starts its
+	 * proxied wait in the batch wait_lock_records waits out; after the
+	 * pause nothing is read, so the INTERRUPT the signal posts stays
+	 * unread.
+	 */
+	race_go(&a);
+	ATF_REQUIRE(wait_lock_records(&f.c, f.o, 2));
+	dqt_pause(&f.c);
+	ATF_REQUIRE_EQ(0, kill(ch.pid, SIGUSR1));
+	race_next(&a, 'c');
+	/*
+	 * The blocker goes: lockf grants the proxied wait in this unlock
+	 * (a released range activates its waiters at once), so the
+	 * controller holds a write lock on [0, 10) for the gone request.
+	 * Its reply finds the event gone and it undoes the grant; a read
+	 * lock asked by another real open is granted at that undo, whether
+	 * it unlocks or turns the range back into a read lock.
+	 */
+	setfl(&fl, F_UNLCK, 0, 10);
+	ATF_REQUIRE_EQ(0, fcntl(hb, F_OFD_SETLK, &fl));
+	setfl(&fl, F_RDLCK, 0, 10);
+	ATF_REQUIRE_EQ(0, fcntl(hc, F_OFD_SETLKW, &fl));
+	setfl(&fl, F_UNLCK, 0, 10);
+	ATF_REQUIRE_EQ(0, fcntl(hc, F_OFD_SETLK, &fl));
+	ATF_CHECK_EQ_MSG(F_RDLCK, range_holder(hb), "the served file: after "
+	    "the abandoned upgrade the requester's range is %s, where the "
+	    "real file keeps its read lock",
+	    range_holder(hb) == F_UNLCK ? "unlocked" : "write-locked");
+	dqt_resume(&f.c);
+
+	race_go(&a);
+	dqt_collect(&ch, &r, sizeof(r));
+	ATF_CHECK_EQ(0, r.rd_s.rv);
+	ATF_CHECK_EQ(0, r.rd_o.rv);
+	ATF_CHECK_EQ(-1, r.up_o.rv);
+	ATF_CHECK_EQ(EINTR, r.up_o.err);
+	ATF_CHECK_EQ(-1, r.up_s.rv);
+	ATF_CHECK_EQ(EINTR, r.up_s.err);
+	ATF_CHECK(wait_batches(&f.c, cond_interrupt_records, 1, 0));
+	(void)close(hb);
+	(void)close(hc);
+	(void)close(ob);
+	(void)close(oc);
+	dqt_fixture_fini(&f);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1355,5 +1751,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, getlk_creates_no_owner);
 	ATF_TP_ADD_TC(tp, unlock_all_over_depth);
 	ATF_TP_ADD_TC(tp, waiter_fd_reuse_stress);
+	ATF_TP_ADD_TC(tp, getlk_pid_posix_owner);
+	ATF_TP_ADD_TC(tp, flock_upgrade_pair);
+	ATF_TP_ADD_TC(tp, raced_grant_undo_keeps_shadow);
 	return (atf_no_error());
 }
