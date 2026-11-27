@@ -65,7 +65,7 @@ dq_probes_present_body()
 	    event-post event-deliver event-reply event-drop event-interrupt \
 	    event-deadline reply-late attach resolve-post resolve-reply \
 	    fop-local quota-wait postop-attr wait-full wait-abandon \
-	    standing-match standing-miss standing-change; do
+	    standing-match standing-miss standing-change pager-error; do
 		atf_check -o ignore dtrace -l -n "dq:::${probe}"
 	done
 }
@@ -328,6 +328,31 @@ wait_fires_body()
 	atf_check -o ignore grep -qx 'abandon 1' fired
 }
 
+atf_test_case pager_error_reason
+pager_error_reason_head()
+{
+	atf_set "descr" "dq:::pager-error fires at a failed page-in with " \
+	    "its reason: the supervisor's error, the deadline, a dying " \
+	    "process, a revoked object"
+	atf_set "require.user" "root"
+}
+pager_error_reason_body()
+{
+	require_dtrace
+	# Reasons (dq_pager.c): 1 deadline, 2 queue closing, 3 dying,
+	# 4 revoked, 5 reply error, 6 object closed, 7 invalidated.
+	fire dq:::pager-error "pager %d" "arg2" dq_mmap_test sigbus_cases
+	atf_check -o ignore grep -qx 'pager 5' fired
+	fire dq:::pager-error "pager %d" "arg2" dq_mmap_test sigbus_deadline
+	atf_check -o ignore grep -qx 'pager 1' fired
+	fire dq:::pager-error "pager %d" "arg2" dq_mmap_test \
+	    fault_single_exit
+	atf_check -o ignore grep -qx 'pager 3' fired
+	fire dq:::pager-error "pager %d" "arg2" dq_mmap_test \
+	    fork_mapping_revoke
+	atf_check -o ignore grep -qx 'pager 4' fired
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case dq_probes_present
@@ -341,4 +366,5 @@ atf_init_test_cases()
 	atf_add_test_case present_fires
 	atf_add_test_case postop_attr_fires
 	atf_add_test_case wait_fires
+	atf_add_test_case pager_error_reason
 }

@@ -5287,6 +5287,27 @@ as for
 .Fa "struct dq_event_k *"
 (a wait that catches no signal ended because the process is being
 killed, is exiting or is single-threaded for exit)
+.It dq:::pager-error
+.Fa "struct dq_object *" ,
+.Fa "pid_t pid" ,
+.Fa "int reason"
+(a page-in of the pager failed:
+.Va reason
+1 the page deadline passed, 2 the queue is closing, 3 the faulting
+process is dying, 4 the object was revoked, 5 the supervisor answered an
+errno or a short reply inside the size, 6 the object is closing or
+closed, 7 it was invalidated on every try.
+A fault of a dying process (3) is answered as one past the end of the
+file, which
+.Xr vm_fault 9
+does not log: a killed program leaves no
+.Dq pager read error
+console line, as one on a disk leaves none.
+Every other reason is logged as a disk read error is.
+The reason is read from the object's and the queue's state when the
+page-in fails, not from what ended its wait: a page deadline that passes
+while the object is being revoked or closed, or while its queue closes,
+is reported as 4, 6 or 2, not as 1.)
 .It dq:::reply-late
 .Fa "struct dq_queue *" ,
 .Fa "uint64_t id"
