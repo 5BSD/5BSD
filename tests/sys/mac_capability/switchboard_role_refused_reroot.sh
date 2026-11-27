@@ -108,6 +108,10 @@ single\ *)
 	;;
 rerooted)
 	showlogs
+	# The count was spent: an exec was refused the role, so the boot
+	# going on is the failure this pins, not an unarmed knob.
+	[ "$(sysctl -n $KNOB)" = 0 ] ||
+	    fail "$KNOB is $(sysctl -n $KNOB): no exec was refused the role"
 	fail 'the boot went on although SwitchBoard ran without the Core role'
 	;;
 *)	fail "after the reroot in state ${state:-none}" ;;
