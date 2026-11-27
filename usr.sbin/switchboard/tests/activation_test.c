@@ -26,6 +26,7 @@
 #include <atf-c.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -966,6 +967,19 @@ dispatch_queued(int kq)
 	return (true);
 }
 
+/*
+ * Wait until a loopback connection is queued on listener fd: connect(2)
+ * returns once the client side is established, and the server side's accept
+ * queue entry can follow it.  Bounded by the test case's timeout.
+ */
+static void
+wait_listener(int fd)
+{
+	struct pollfd pfd = { .fd = fd, .events = POLLIN };
+
+	ATF_REQUIRE_EQ(1, poll(&pfd, 1, INFTIM));
+}
+
 enum quiet_source { QUIET_PATH, QUIET_QUEUE, QUIET_MOUNT };
 
 static void
@@ -1154,6 +1168,7 @@ ATF_TC_BODY(socket_source_after_refusal, tc)
 	c1 = socket(AF_INET, SOCK_STREAM, 0);
 	ATF_REQUIRE(c1 >= 0);
 	ATF_REQUIRE_EQ(0, connect(c1, (struct sockaddr *)&sin, sizeof(sin)));
+	wait_listener(svc->activation_listen_fds[0]);
 	ATF_REQUIRE(dispatch_queued(kq));
 	ATF_CHECK_EQ(1, launch_calls);
 	ATF_CHECK_EQ(0, exec_failures);
@@ -1174,6 +1189,7 @@ ATF_TC_BODY(socket_source_after_refusal, tc)
 	c2 = socket(AF_INET, SOCK_STREAM, 0);
 	ATF_REQUIRE(c2 >= 0);
 	ATF_REQUIRE_EQ(0, connect(c2, (struct sockaddr *)&sin, sizeof(sin)));
+	wait_listener(svc->activation_listen_fds[0]);
 	ATF_REQUIRE(dispatch_queued(kq));
 	ATF_CHECK_EQ(3, launch_calls);
 	ATF_CHECK_EQ(SVC_STATE_STARTING, svc->state);
