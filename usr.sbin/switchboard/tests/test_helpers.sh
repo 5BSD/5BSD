@@ -594,6 +594,62 @@ wait_for_pid_exit()
 	! kill -0 "$pid" 2>/dev/null
 }
 
+# --- Stack-tier unit pins (subset_stack_test, launch_authority_stack_test) ---
+
+subset_unit=
+
+# The unit program of the NS0/LA0 stack pins, beside the test program.
+find_subset_unit()
+{
+	subset_unit="$(atf_get_srcdir)/subset_unit"
+	[ -x "$subset_unit" ] || atf_fail "subset_unit is unavailable: $subset_unit"
+	readelf -l "$subset_unit" | grep -q INTERP ||
+	    atf_fail "subset_unit must be dynamically linked for SwitchBoard"
+}
+
+# install_unit LABEL "ipc names (UCL list body, or empty)" RESTART ARG...
+# Install subset_unit as a system bundle unit with those arguments.
+install_unit()
+{
+	local label="$1" ipc="$2" restart="$3" activation dir unit arg sep
+	shift 3
+
+	activation="activation { boot = true; }"
+	[ -z "$ipc" ] || activation="activation { boot = true; ipc = [${ipc}]; }"
+	dir=$(make_svc_bin system "$label" "restart = \"${restart}\";
+${activation}" "$subset_unit") || atf_fail "cannot install $label"
+	unit=${label##*.}
+	sep=
+	printf 'arguments = [' >> "$dir/Units/$unit.unit/Unit.ucl"
+	for arg in "$@"; do
+		printf '%s"%s"' "$sep" "$arg" >> "$dir/Units/$unit.unit/Unit.ucl"
+		sep=', '
+	done
+	printf '];\n' >> "$dir/Units/$unit.unit/Unit.ucl"
+}
+
+# await_result FILE TEXT: wait (on file events) until FILE holds TEXT.
+await_result()
+{
+	echo "waiting for $2 in $1"
+	capd_wait_path "${WORK}/$1" "$2" || fail_with_log "no \"$2\" in $1"
+}
+
+# expect FILE LINE: FILE has the exact line LINE.
+expect()
+{
+	grep -qx -- "$2" "${WORK}/$1" ||
+	    fail_with_log "$1: expected the line \"$2\""
+}
+
+# The cleanup of a unit-pin case: evidence unless the body finished.
+unit_case_cleanup()
+{
+	[ -f "${WORK}/evidence.shown" ] || [ -f "${WORK}/case.done" ] ||
+	    case_evidence
+	cleanup_common
+}
+
 # Start the stack expecting it to fail (for negative tests).
 start_stack_expect_failure()
 {

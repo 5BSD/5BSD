@@ -22,6 +22,12 @@
  *	look each NAME up as this unit (service_connect) and record what
  *	the end it receives allows: its transfer state, passing it on, and
  *	its use by a fork child that cleared its software authority.
+ *   requester-exec RESULT PROBE NAME...
+ *	LA0 (launch-authority-reshape.md): look each NAME up and record
+ *	what the end allows here, from a fork child, and from a fork child
+ *	that executed PROBE (launch_authority_probe in the result
+ *	directory: another image, so the unit's grant is invalid there;
+ *	static, since the unit is in capability mode).
  *
  * No step waits on time: accept() sleeps until SwitchBoard delivers a client
  * or quiesces the unit (ECANCELED), and children are waited for.
@@ -374,6 +380,89 @@ child_use(int fd, int *before, int *after)
 		(void)waitpid(pid, NULL, 0);
 }
 
+/*
+ * GETINFO on fd from another image: a fork child makes fd inheritable and
+ * fexecve()s probe (launch_authority_probe), whose exit status is the
+ * errno GETINFO gave it.  254: the descriptor could not be made
+ * inheritable; 253: the exec returned; -1: no child.
+ */
+static int
+exec_use(int probe, int fd)
+{
+	char num[16];
+	char *argv[3], *envp[] = { NULL };
+	pid_t pid;
+	int status;
+
+	pid = fork();
+	if (pid == -1)
+		return (-1);
+	if (pid == 0) {
+		snprintf(num, sizeof(num), "%d", fd);
+		argv[0] = __DECONST(char *, "launch_authority_probe");
+		argv[1] = num;
+		argv[2] = NULL;
+		if (fcntl(fd, F_SETFD, 0) == -1)
+			_exit(254);
+		(void)fexecve(probe, argv, envp);
+		_exit(253);
+	}
+	if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status))
+		return (-1);
+	return (WEXITSTATUS(status));
+}
+
+/*
+ * LA0 pins (launch-authority-reshape.md section 3, rewritten by LA3):
+ * the end a unit is handed, used by the unit, by its fork child (same
+ * grant) and by its fork child after an exec of another image (the grant
+ * is invalid there: a grant-bound end answers EPERM, an unbound one 0;
+ * an invocation-bound end, SwitchBoard's own control name, refuses the
+ * fork child too).
+ */
+static int
+scenario_requester_exec(const char *result, const char *probe_name, int n,
+    char **names)
+{
+	struct cap_authority_info auth;
+	int before, after, error, fd, i, probe;
+
+	error = init();
+	add("init=%s\n", errname(error));
+	if (error != 0) {
+		flush_result(result);
+		return (1);
+	}
+	probe = openat(result_dir, probe_name, O_EXEC | O_CLOEXEC);
+	add("probe_open=%s\n", errname(probe == -1 ? errno : 0));
+	error = ready();
+	add("ready=%s\n", errname(error));
+	if (error != 0 || probe == -1) {
+		flush_result(result);
+		return (1);
+	}
+	memset(&auth, 0, sizeof(auth));
+	add("authority_valid=%d\n", cap_process(CAP_AUTH_INFO, -1, 0,
+	    &auth) == 0 ? (int)auth.valid : -1);
+	for (i = 0; i < n; i++) {
+		fd = -1;
+		error = service_connect(context, names[i], &fd) == -1 ?
+		    errno : 0;
+		add("%s connect=%s\n", names[i], errname(error));
+		if (fd < 0)
+			continue;
+		add("%s getinfo=%s\n", names[i], errname(getinfo(fd)));
+		child_use(fd, &before, &after);
+		add("%s child_getinfo=%s\n", names[i], errname(before));
+		add("%s child_cleared_getinfo=%s\n", names[i], errname(after));
+		add("%s exec_getinfo=%s\n", names[i],
+		    errname(exec_use(probe, fd)));
+		(void)close(fd);
+	}
+	flush_result(result);
+	return (0);
+}
+
 static int
 scenario_requester(const char *result, int n, char **names)
 {
@@ -436,5 +525,8 @@ main(int argc, char **argv)
 		return (scenario_declared(argv[2], argv[3], argv[4]));
 	if (argc >= 3 && strcmp(argv[1], "requester") == 0)
 		return (scenario_requester(argv[2], argc - 3, argv + 3));
+	if (argc >= 4 && strcmp(argv[1], "requester-exec") == 0)
+		return (scenario_requester_exec(argv[2], argv[3], argc - 4,
+		    argv + 4));
 	return (64);
 }
