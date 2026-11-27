@@ -326,6 +326,52 @@ bootstrap_channel_ping_cleanup()
 	cleanup_common
 }
 
+atf_test_case capsule_manager_channel_not_inherited cleanup
+capsule_manager_channel_not_inherited_head()
+{
+	atf_set "descr" "The manager channel answers the manager execution Capsule started, and no other: its fork child has no such descriptor (EBADF) and its next execution does not keep it (Capsule sees the channel end)"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+}
+capsule_manager_channel_not_inherited_body()
+{
+	# T0a pin (kernel-identity-and-coalitions.md 2.4, coordinator decision
+	# 2026-11-27): bootstrap.c locks the delegated channel against fork and,
+	# after the manager's exec, against exec (capsicum.h CAP_CLOFORK_LOCKED,
+	# CAP_CLOEXEC_ONCE), so capsule_proto.c's first-sender check is never
+	# reached by another process or execution.
+	echo "channel-not-inherited" > mock-mode
+	build_mock_switchboard
+	echo "$switchboard_bin" > mock-self
+	start_capsule
+
+	if ! wait_for_file switchboard-pins.out; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "bootstrap fixture did not report its answers"
+	fi
+	# 0: answered; 9: EBADF (no descriptor at that number in the child).
+	atf_check -s exit:0 \
+	    -o inline:"first=0\nfork_getfd=9\nfork_send=9\nafter=0\nsetfd=0\n" \
+	    cat switchboard-pins.out
+	# The manager then executes again: its channel closes either way (exec
+	# or, on a failed exec, exit), which Capsule logs.
+	wait_for_log "switchboard closed channel" ||
+	    atf_fail "Capsule did not see the manager channel end"
+	if [ -e switchboard-exec-failed.out ]; then
+		cat switchboard-exec-failed.out
+		atf_fail "the manager's next execution did not start: $(cat switchboard-exec-failed.out)"
+	fi
+	# The new execution held no channel: Capsule ends it as a lost manager.
+	wait_for_log "switchboard killed by signal" ||
+	    atf_fail "Capsule did not end the manager after its channel closed"
+}
+capsule_manager_channel_not_inherited_cleanup()
+{
+	rm -f mock-mode mock-self switchboard-pins.out \
+	    switchboard-exec-failed.out
+	cleanup_common
+}
+
 atf_test_case control_reload_reaches_switchboard cleanup
 control_reload_reaches_switchboard_head()
 {
@@ -770,6 +816,7 @@ atf_init_test_cases()
 	atf_add_test_case bootstrap_starts_switchboard
 	atf_add_test_case bootstrap_hands_discovery_fd
 	atf_add_test_case bootstrap_channel_ping
+	atf_add_test_case capsule_manager_channel_not_inherited
 	atf_add_test_case channel_short_message_answered
 	atf_add_test_case channel_oversized_message_answered
 	atf_add_test_case channel_extra_descriptors_answered
