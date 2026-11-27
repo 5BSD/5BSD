@@ -966,7 +966,7 @@ wait as an NFS
 .Cm intr
 mount: a caught signal ends the wait with
 .Er EINTR
-(a lookup's first consultation with the restart described in
+(a lookup with the restart described in
 .Sx Attachment and resolution ) .
 An operation that changes something is not restarted once its event is
 marked delivered, which happens when the controller's
@@ -2692,6 +2692,12 @@ the same hint for the second path's start
 .Pq Dv DQ_RF_STARTPATH2_VALID ,
 and the presented path of the process's served root
 .Pq Va drs_root No and Va drs_rootpathlen ; No empty with a real root .
+A start that is not under the process's root, such as a directory
+descriptor opened before
+.Xr chroot 2
+or the working directory
+.Xr chroot 2
+leaves behind, has no hint: its flag is clear and its string empty.
 For a rename or link the second path's own start is described by
 .Va drs_start2_kind
 .Po
@@ -2902,7 +2908,18 @@ signal.
 With
 .Dv DQ_QF_INTR
 a caught signal ends the wait: during the first consultation of a system
-call's path the call restarts
+call's path, and during any consultation of a lookup that changes nothing
+(a
+.Xr stat 2 ,
+an
+.Xr access 2 ,
+an
+.Xr open 2
+without
+.Dv O_CREAT
+or
+.Dv O_TRUNC ,
+such as the consultation of a symbolic link's target), the call restarts
 .Pq Dv SA_RESTART
 and posts again, the abandoned event named by an INTERRUPT; any other
 wait, every wait of

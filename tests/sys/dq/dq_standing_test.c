@@ -1203,8 +1203,8 @@ c_linux(void *arg, void *out)
 	pid_t pid;
 	int fd, status;
 
-	fd = open(dir, O_RDONLY | O_DIRECTORY);
-	DQT_RR(r->r[0], fd);
+	DQT_RR(r->r[0], open(dir, O_RDONLY | O_DIRECTORY));
+	fd = (int)r->r[0].rv;
 	if (fd < 0)
 		return;
 	pid = fork();

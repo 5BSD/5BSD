@@ -2523,6 +2523,388 @@ ATF_TC_BODY(boundary_and_signal_one_wake, tc)
 	cbnd_case(0, 1);
 }
 
+/*
+ * The start hint is relative to the process's root (D131), so a start
+ * outside that root has none (Q15, issue 2026-11-17 dq-startpath-hint):
+ * vn_fullpath stops at the global root as well, and the global path of a
+ * directory opened before chroot(2), or of a working directory chroot
+ * leaves behind, reads like a path under the new root.  A start under the
+ * new root keeps its hint, relative to that root.
+ */
+struct outroot_res {
+	struct dqt_rr	 r[6];
+};
+
+static void
+child_outside_root(void *arg __unused, void *result)
+{
+	struct outroot_res *r = result;
+	struct stat sb;
+	int d, d2;
+
+	DQT_RR(r->r[0], open("rso-outside", O_RDONLY | O_DIRECTORY));
+	d = (int)r->r[0].rv;
+	DQT_RR(r->r[1], chroot("rso-newroot"));
+	if (d >= 0)
+		DQT_RR(r->r[2], fstatat(d, "rso-of", &sb, 0));
+	/* The working directory stays outside: chroot does not chdir. */
+	DQT_RR(r->r[3], stat("rso-cf", &sb));
+	DQT_RR(r->r[4], open("/rso-inside", O_RDONLY | O_DIRECTORY));
+	d2 = (int)r->r[4].rv;
+	if (d2 >= 0)
+		DQT_RR(r->r[5], fstatat(d2, "rso-if", &sb, 0));
+}
+
+/* The STAT of exactly path from a start of kind. */
+static void
+outroot_find(struct dqt_ctl *c, const char *path, uint32_t kind,
+    struct dqt_resolve_seen *rs)
+    __requires_unlocked(c->mtx)
+{
+	int i;
+
+	for (i = dqt_find_resolve(c, path, DQ_ROP_STAT, 0); i != -1;
+	    i = dqt_find_resolve(c, path, DQ_ROP_STAT, i + 1)) {
+		dqt_resolve_at(c, i, rs);
+		if (rs->start_kind == kind && strcmp(rs->path, path) == 0)
+			return;
+	}
+	atf_tc_fail("no STAT of %s from start kind %u", path, kind);
+}
+
+static void
+outroot_touch(const char *path)
+{
+	int fd;
+
+	fd = open(path, O_CREAT | O_WRONLY, 0644);
+	ATF_REQUIRE_MSG(fd >= 0, "%s: %s", path, strerror(errno));
+	(void)close(fd);
+}
+
+ATF_TC(startpath_outside_root_invalid);
+ATF_TC_HEAD(startpath_outside_root_invalid, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a start outside the process's root "
+	    "(a directory descriptor opened before chroot, the working "
+	    "directory chroot left behind) carries no start hint: "
+	    "DQ_RF_STARTPATH_VALID clear; a start under the new root keeps "
+	    "its hint, relative to that root (Q15)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(startpath_outside_root_invalid, tc)
+{
+	struct dqt_resolve_seen rs;
+	struct dqt_ctl c;
+	struct dqt_achild ch;
+	struct outroot_res r;
+	int k;
+
+	ATF_REQUIRE_EQ(0, mkdir("rso-outside", 0755));
+	ATF_REQUIRE_EQ(0, mkdir("rso-newroot", 0755));
+	ATF_REQUIRE_EQ(0, mkdir("rso-newroot/rso-inside", 0755));
+	outroot_touch("rso-outside/rso-of");
+	outroot_touch("rso-cf");
+	outroot_touch("rso-newroot/rso-inside/rso-if");
+	dqt_init(&c);
+	dqt_attach_spawn(&c, &ch, child_outside_root, NULL);
+	memset(&r, 0, sizeof(r));
+	dqt_attach_collect(&ch, &r, sizeof(r));
+	for (k = 0; k < 6; k++)
+		ATF_REQUIRE_EQ_MSG(0, r.r[k].err, "step %d: %s", k,
+		    strerror(r.r[k].err));
+
+	/* The descriptor opened before chroot. */
+	outroot_find(&c, "rso-of", DQ_START_REAL_DIRFD, &rs);
+	ATF_CHECK_MSG((rs.rflags & DQ_RF_STARTPATH_VALID) == 0,
+	    "outside dirfd: hint \"%s\" marked valid", rs.startpath);
+	ATF_CHECK_STREQ("", rs.startpath);
+
+	/* The working directory, outside the new root. */
+	outroot_find(&c, "rso-cf", DQ_START_REAL_CWD, &rs);
+	ATF_CHECK_MSG((rs.rflags & DQ_RF_STARTPATH_VALID) == 0,
+	    "outside cwd: hint \"%s\" marked valid", rs.startpath);
+	ATF_CHECK_STREQ("", rs.startpath);
+
+	/* A directory under the new root: relative to it. */
+	outroot_find(&c, "rso-if", DQ_START_REAL_DIRFD, &rs);
+	ATF_CHECK((rs.rflags & DQ_RF_STARTPATH_VALID) != 0);
+	ATF_CHECK_STREQ("/rso-inside", rs.startpath);
+	dqt_fini(&c);
+}
+
+/*
+ * D149, as amended: a lookup that creates nothing has done nothing when a
+ * signal ends any of its consultations, so SA_RESTART restarts the call
+ * whichever consultation it lands in, not only the first.  The second
+ * consultation here is the re-consultation of a relative symbolic link's
+ * target (start REAL_SYMDIR) in a FIFO open without O_CREAT; the signal
+ * lands while the controller holds it.  Issue
+ * 2026-11-19-dqpass-fifo-open-sa-restart-eintr.
+ *
+ * What "the call restarts" means is what SA_RESTART means everywhere
+ * else: ERESTART leaves the kernel, the handler runs, and the system call
+ * is executed again from the user boundary (dq.4, Interruption: "the call
+ * restarts (SA_RESTART) and posts again ... A restart copies the path in
+ * again").  The re-executed open is a new intent: the link is posted
+ * again (its PASS lives in the old intent, not across system calls) and
+ * so is its target, 2 and 2, with exactly one INTERRUPT (the held target)
+ * and no reply to a withdrawn event.  A restart inside namei cannot stand
+ * in for it: the signal that ended the wait stays pending (TDA_SIG is
+ * cleared only at the user boundary, ast_handler), so a restarted
+ * catching wait ends at once (sleepq_check_ast_sc_locked ->
+ * sig_ast_needsigchk) and the lookup spins, posting and withdrawing the
+ * target's consultation, until a controller reply happens to land inside
+ * one abort window.  On failure every recorded consultation goes to
+ * stderr: dqt_count_resolve's value, the INTERRUPTs, the failed replies
+ * and the kernel's own counters, so one guest run says which it was.
+ *
+ * The handler-first case pins the order the user sees: the handler
+ * rewrites the path buffer the child passed to open(2), so the restarted
+ * call opens the new bytes (a link to a regular file), as a plain
+ * open(2) restarted by SA_RESTART does; a lookup restarted inside the
+ * kernel would open the old bytes (the FIFO) before the handler ran.
+ */
+static char rs2_path[32];
+
+static void
+on_usr1_rs2(int sig __unused)
+{
+
+	/* The bytes a restarted call copies in again. */
+	memcpy(rs2_path, "rt-rs2-m", sizeof("rt-rs2-m"));
+}
+
+static void
+child_restart_second(void *arg, void *result)
+{
+	struct one_res *r = result;
+	struct sigaction sa;
+	struct stat sb;
+	int fd;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = arg != NULL ? on_usr1_rs2 : on_usr1;
+	sa.sa_flags = SA_RESTART;
+	(void)sigemptyset(&sa.sa_mask);
+	if (sigaction(SIGUSR1, &sa, NULL) != 0)
+		_exit(70);
+	memcpy(rs2_path, "rt-rs2-l", sizeof("rt-rs2-l"));
+	/* Non-blocking: once restarted, the open completes without a peer. */
+	DQT_RR(r->r[0], open(rs2_path, O_RDONLY | O_NONBLOCK));
+	fd = (int)r->r[0].rv;
+	if (fd >= 0) {
+		/* r[1]: the opened object's type (S_IFMT bits). */
+		DQT_RR(r->r[1], fstat(fd, &sb));
+		if (r->r[1].rv == 0)
+			r->r[1].rv = (long)(sb.st_mode & S_IFMT);
+		(void)close(fd);
+	}
+}
+
+/*
+ * Everything the controller saw and the kernel counted, to stderr.
+ * dqt_count_resolve alone reports no value, and a spinning restart is
+ * told from a missing one only by the records.
+ */
+static void
+rs2_dump(struct dqt_ctl *c, const char *why)
+    __requires_unlocked(c->mtx)
+{
+	struct dq_stats2 st;
+	int i;
+
+	fprintf(stderr, "%s: recorded RESOLVEs:\n", why);
+	dqt_lock(c);
+	for (i = 0; i < c->nrs; i++)
+		fprintf(stderr, "  [%d] id %ju op %u class %u start %u "
+		    "rflags %#x path \"%s\" path2 \"%s\" startpath \"%s\"\n",
+		    i, (uintmax_t)c->rs[i].id, c->rs[i].op, c->rs[i].cls,
+		    c->rs[i].start_kind, c->rs[i].rflags, c->rs[i].path,
+		    c->rs[i].path2, c->rs[i].startpath);
+	fprintf(stderr, "  %d INTERRUPT(s):", c->ninterrupted);
+	for (i = 0; i < c->ninterrupted && i < DQT_MAX_INTERRUPTS; i++)
+		fprintf(stderr, " %ju", (uintmax_t)c->interrupted[i]);
+	fprintf(stderr, "\n  %d held, %u failed replies (last errno %d)\n",
+	    c->nheld, c->reply_failures, c->last_reply_errno);
+	dqt_unlock(c);
+	if (dq_get_stats2(c->q, &st) == 0)
+		fprintf(stderr, "  kernel: resolves %ju, resolve_pass %ju, "
+		    "events posted %ju, delivered %ju, interrupts %ju, "
+		    "replies %ju, late replies %ju, failclosed %ju\n",
+		    (uintmax_t)st.ds2_resolves, (uintmax_t)st.ds2_resolve_pass,
+		    (uintmax_t)st.ds2_events_posted,
+		    (uintmax_t)st.ds2_events_delivered,
+		    (uintmax_t)st.ds2_interrupts, (uintmax_t)st.ds2_replies,
+		    (uintmax_t)st.ds2_late_replies,
+		    (uintmax_t)st.ds2_resolve_failclosed);
+	else
+		fprintf(stderr, "  dq_get_stats2: %s\n", strerror(errno));
+}
+
+/*
+ * Run one restart case: hold the target's consultation, let the child
+ * reach it, clear the hold, signal.  Afterwards: one INTERRUPT naming the
+ * held id, no failed reply, and the counts the caller expects, with the
+ * dump on any failure.
+ */
+struct rs2_want {
+	const char	*why;
+	void		*arg;		/* child_restart_second's arg */
+	long		 rv_ok;		/* open: 1 succeeds, else -1 */
+	int		 err;		/* its errno when rv_ok is -1 */
+	long		 type;		/* S_IF* of the opened object */
+	const char	*names[4];	/* consulted names, "" ends */
+	int		 counts[4];	/* their expected record counts */
+};
+
+static void
+rs2_run(struct dqt_ctl *c, const struct rs2_want *w)
+    __requires_unlocked(c->mtx)
+{
+	struct dqt_resolve_seen rs;
+	struct dqt_achild ch;
+	struct one_res r;
+	uint64_t id, intr0;
+	unsigned nfail;
+	int counts[4], i, nint, nheld;
+	bool ok;
+
+	ATF_REQUIRE_EQ(0, dq_queue_set_flags(c->q, DQ_QF_INTR, 0, NULL));
+	/* Only the target's consultation names the FIFO: the second one. */
+	dqt_resolve_hold(c, "rt-rs2-fifo", 0);
+	dqt_attach_spawn(c, &ch, child_restart_second, w->arg);
+	ATF_REQUIRE(dqt_wait_held(c, 1, DQT_WAIT_MS));
+	dqt_resolve_hold(c, "", 0);
+	id = dqt_held_id(c, 0);
+	ATF_REQUIRE(dqt_find_resolve(c, "rt-rs2-l", DQ_ROP_OPEN, 0) != -1);
+	i = dqt_find_resolve(c, "rt-rs2-fifo", DQ_ROP_OPEN, 0);
+	ATF_REQUIRE(i != -1);
+	dqt_resolve_at(c, i, &rs);
+	ATF_REQUIRE_EQ(id, rs.id);
+	ATF_REQUIRE_EQ(DQ_START_REAL_SYMDIR, rs.start_kind);
+	ATF_REQUIRE_EQ(0, pdkill(ch.pd, SIGUSR1));
+	memset(&r, 0, sizeof(r));
+	dqt_attach_collect(&ch, &r, sizeof(r));
+	ATF_CHECK(dqt_wait_interrupts(c, 1, DQT_WAIT_MS));
+
+	for (i = 0; i < 4 && w->names[i][0] != '\0'; i++)
+		counts[i] = dqt_count_resolve(c, w->names[i], DQ_ROP_OPEN);
+	dqt_lock(c);
+	nint = c->ninterrupted;
+	intr0 = nint > 0 ? c->interrupted[0] : 0;
+	nheld = c->nheld;
+	nfail = c->reply_failures;
+	dqt_unlock(c);
+	ok = (w->rv_ok > 0 ? r.r[0].rv >= 0 && r.r[1].rv == w->type :
+	    r.r[0].rv == -1 && r.r[0].err == w->err) &&
+	    nint == 1 && intr0 == id && nheld == 1 && nfail == 0;
+	for (i = 0; i < 4 && w->names[i][0] != '\0'; i++)
+		ok = ok && counts[i] == w->counts[i];
+	if (!ok)
+		rs2_dump(c, w->why);
+	if (w->rv_ok > 0) {
+		ATF_CHECK_MSG(r.r[0].rv >= 0, "%s: open: %s (the call did "
+		    "not restart)", w->why, strerror(r.r[0].err));
+		if (r.r[0].rv >= 0)
+			ATF_CHECK_EQ_MSG(w->type, r.r[1].rv, "%s: opened "
+			    "S_IFMT %#lo, want %#lo (the restarted call "
+			    "copied the path in before the handler ran)",
+			    w->why, r.r[1].rv, w->type);
+	} else {
+		ATF_CHECK_EQ_MSG(-1, r.r[0].rv, "%s: open succeeded", w->why);
+		ATF_CHECK_EQ_MSG(w->err, r.r[0].err, "%s: open: %s", w->why,
+		    strerror(r.r[0].err));
+	}
+	ATF_CHECK_EQ_MSG(1, nint, "%s: %d INTERRUPTs, want the held "
+	    "target's alone (more: the restarted lookup posted and withdrew "
+	    "again inside the kernel)", w->why, nint);
+	ATF_CHECK_EQ_MSG(id, intr0, "%s: INTERRUPT names %ju, the held "
+	    "target is %ju", w->why, (uintmax_t)intr0, (uintmax_t)id);
+	ATF_CHECK_EQ_MSG(1, nheld, "%s: %d held events, want the target "
+	    "alone", w->why, nheld);
+	ATF_CHECK_EQ_MSG(0, nfail, "%s: %u replies failed (a reply to an "
+	    "event the requester had withdrawn)", w->why, nfail);
+	for (i = 0; i < 4 && w->names[i][0] != '\0'; i++)
+		ATF_CHECK_EQ_MSG(w->counts[i], counts[i], "%s: \"%s\" "
+		    "consulted %d times, want %d", w->why, w->names[i],
+		    counts[i], w->counts[i]);
+}
+
+ATF_TC(restart_second_consult);
+ATF_TC_HEAD(restart_second_consult, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "DQ_QF_INTR: an SA_RESTART signal "
+	    "during the second consultation of a FIFO open (its relative "
+	    "symbolic link's target) restarts the call, which then succeeds; "
+	    "the lookup creates nothing, so it is not failed with EINTR "
+	    "(D149 as amended).  The restart is the system call's, from the "
+	    "user boundary (dq.4: the call restarts and posts again): a new "
+	    "intent posts the link and its target again, 2 and 2, after one "
+	    "INTERRUPT for the held target and with no failed reply.  A "
+	    "restart inside namei cannot be that: the signal stays pending "
+	    "until the user boundary, so the restarted wait ends at once and "
+	    "the lookup spins until a reply lands by chance");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(restart_second_consult, tc)
+{
+	static const struct rs2_want w = {
+		.why = "restart_second_consult",
+		.arg = NULL,
+		.rv_ok = 1,
+		.type = S_IFIFO,
+		.names = { "rt-rs2-l", "rt-rs2-fifo", "", "" },
+		.counts = { 2, 2, 0, 0 },
+	};
+	struct dqt_ctl c;
+
+	ATF_REQUIRE_EQ(0, mkfifo("rt-rs2-fifo", 0644));
+	ATF_REQUIRE_EQ(0, symlink("rt-rs2-fifo", "rt-rs2-l"));
+	dqt_init(&c);
+	rs2_run(&c, &w);
+	dqt_fini(&c);
+}
+
+ATF_TC(restart_second_consult_handler_first);
+ATF_TC_HEAD(restart_second_consult_handler_first, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "the SA_RESTART handler runs before "
+	    "the restarted call: it rewrites the path buffer from the FIFO's "
+	    "link to a regular file's link, and the restarted open copies the "
+	    "new bytes in (dq.4: a restart copies the path in again) and "
+	    "opens the regular file; the old link and the FIFO were "
+	    "consulted once each, the new link and the file once each.  A "
+	    "lookup restarted inside the kernel would open the FIFO before "
+	    "the handler ran: a difference from every SA_RESTART restart");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(restart_second_consult_handler_first, tc)
+{
+	static int handler_first = 1;
+	static const struct rs2_want w = {
+		.why = "restart_second_consult_handler_first",
+		.arg = &handler_first,
+		.rv_ok = 1,
+		.type = S_IFREG,
+		.names = { "rt-rs2-l", "rt-rs2-fifo", "rt-rs2-m",
+		    "rt-rs2-file" },
+		.counts = { 1, 1, 1, 1 },
+	};
+	struct dqt_ctl c;
+	int fd;
+
+	ATF_REQUIRE_EQ(0, mkfifo("rt-rs2-fifo", 0644));
+	ATF_REQUIRE_EQ(0, symlink("rt-rs2-fifo", "rt-rs2-l"));
+	fd = open("rt-rs2-file", O_CREAT | O_WRONLY, 0644);
+	ATF_REQUIRE(fd != -1);
+	(void)close(fd);
+	ATF_REQUIRE_EQ(0, symlink("rt-rs2-file", "rt-rs2-m"));
+	dqt_init(&c);
+	rs2_run(&c, &w);
+	dqt_fini(&c);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -2560,5 +2942,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, boundary_socket_restarts);
 	ATF_TP_ADD_TC(tp, boundary_socketpair_restarts);
 	ATF_TP_ADD_TC(tp, boundary_and_signal_one_wake);
+	ATF_TP_ADD_TC(tp, startpath_outside_root_invalid);
+	ATF_TP_ADD_TC(tp, restart_second_consult);
+	ATF_TP_ADD_TC(tp, restart_second_consult_handler_first);
 	return (atf_no_error());
 }

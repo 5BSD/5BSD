@@ -1981,8 +1981,8 @@ c_hints(void *arg __unused, void *result)
 
 	/* A cwd start; a dirfd start; a relative link's re-consultation. */
 	DQT_RR(r->r[0], stat("hdir/hint-f", &st));
-	d = open("hdir", O_RDONLY | O_DIRECTORY);
-	DQT_RR(r->r[1], d);
+	DQT_RR(r->r[1], open("hdir", O_RDONLY | O_DIRECTORY));
+	d = (int)r->r[1].rv;
 	if (d >= 0) {
 		DQT_RR(r->r[2], fstatat(d, "hint-f", &st, 0));
 		(void)close(d);
@@ -2046,18 +2046,18 @@ c_outside(void *arg __unused, void *result)
 	struct stat st;
 	int d;
 
-	d = open("outside", O_RDONLY | O_DIRECTORY);
-	DQT_RR(r->r[0], d);
+	DQT_RR(r->r[0], open("outside", O_RDONLY | O_DIRECTORY));
+	d = (int)r->r[0].rv;
 	DQT_RR(r->r[1], chroot("newroot"));
 	if (d >= 0)
 		DQT_RR(r->r[2], fstatat(d, "of", &st, 0));
 }
 
 /*
- * The §7.7 finding, pinned as it is: a directory descriptor opened before
- * chroot(2) names a start outside the new root, and the hint the
- * controller gets is that directory's global path, which reads like a
- * path under the new root.  Only the separate Q15 fix changes it.
+ * The §7.7 finding, fixed by Q15: a directory descriptor opened before
+ * chroot(2) names a start outside the new root, and its global path would
+ * read like a path under the new root, so the controller gets no hint
+ * (dq_resolve_test:startpath_outside_root_invalid pins the rest).
  */
 DQ_TC(relative_hint_outside_root);
 ATF_TC_BODY(relative_hint_outside_root, tc)
@@ -2066,7 +2066,7 @@ ATF_TC_BODY(relative_hint_outside_root, tc)
 	struct dqt_ctl c;
 	struct dqt_achild ch;
 	struct hint_res r;
-	char cwd[PATH_MAX], want[PATH_MAX];
+	char cwd[PATH_MAX];
 	int fd;
 
 	hint_cwd(cwd, sizeof(cwd));
@@ -2082,11 +2082,10 @@ ATF_TC_BODY(relative_hint_outside_root, tc)
 	CHECK_ERRNO(0, r.r[0].err);
 	CHECK_ERRNO(0, r.r[1].err);
 	CHECK_ERRNO(0, r.r[2].err);
-	snprintf(want, sizeof(want), "%s/outside", cwd);
 	ATF_REQUIRE(hint_find(&c, DQ_ROP_STAT, "of", DQ_START_REAL_DIRFD,
 	    &rs) != -1);
-	ATF_CHECK((rs.rflags & DQ_RF_STARTPATH_VALID) != 0);
-	ATF_CHECK_STREQ(want, rs.startpath);
+	ATF_CHECK((rs.rflags & DQ_RF_STARTPATH_VALID) == 0);
+	ATF_CHECK_STREQ("", rs.startpath);
 	dqt_fini(&c);
 }
 

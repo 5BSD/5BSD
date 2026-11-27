@@ -628,18 +628,55 @@ dq_rflags(struct nameidata *ndp, uint32_t class)
 }
 
 /*
- * A start hint: vn_fullpath can look ".." up (vop_stdvptocnp), a kernel
- * lookup of the consultation itself, exempt.  The path is relative to the
- * process's root.
+ * A start hint (D131): the start's path relative to the process's root,
+ * or ENOENT when the start is not under that root (Q15).  vn_fullpath
+ * stops at the global root as well, and the global path of a start
+ * outside a chroot or jail root (a directory descriptor opened before
+ * chroot(2), the working directory chroot leaves behind) reads like a
+ * path under that root.  So under a root other than the global one the
+ * start's global path must lie under the root's, and the hint is what
+ * follows; both walks use the root of one held pwd.  The walks can look
+ * ".." up (vop_stdvptocnp), a kernel lookup of the consultation itself,
+ * exempt.
  */
 static int
 dq_fullpath(struct vnode *vp, char **retbuf, char **freebuf)
 {
+	struct pwd *pwd;
+	char *path, *pathfree, *rpath, *rpathfree;
+	size_t rlen;
 	int error, save;
 
+	pwd = pwd_hold(curthread);
 	DQRES_NORESOLVE_ENTER(save);
-	error = vn_fullpath(vp, retbuf, freebuf);
+	error = vn_fullpath_global(vp, &path, &pathfree);
+	if (error == 0 && pwd->pwd_rdir != NULL &&
+	    pwd->pwd_rdir != rootvnode) {
+		error = vn_fullpath_global(pwd->pwd_rdir, &rpath, &rpathfree);
+		if (error == 0) {
+			rlen = strlen(rpath);
+			if (rlen == 1)		/* "/" */
+				rlen = 0;
+			if (strncmp(path, rpath, rlen) != 0 ||
+			    (path[rlen] != '/' && path[rlen] != '\0'))
+				error = ENOENT;
+			else if (path[rlen] == '\0') {
+				/* The root itself. */
+				path += rlen - 1;
+				path[0] = '/';
+			} else
+				path += rlen;
+			free(rpathfree, M_TEMP);
+		}
+		if (error != 0)
+			free(pathfree, M_TEMP);
+	}
 	DQRES_NORESOLVE_LEAVE(save);
+	pwd_drop(pwd);
+	if (error == 0) {
+		*retbuf = path;
+		*freebuf = pathfree;
+	}
 	return (error);
 }
 
@@ -1375,7 +1412,10 @@ dqres_namei(struct nameidata *ndp, struct vnode *dp, bool abs,
 			rq.rq_path2len = di->di_textlen;
 		}
 	}
-	/* ERESTART only from a slot's first consultation (D149). */
+	/*
+	 * ERESTART from a slot's first consultation (D149); a later one
+	 * restarts only a lookup that creates nothing (dq_resolve_consult).
+	 */
 	rq.rq_may_restart = s != NULL && s->ds_state == DQS_DECLARED &&
 	    (di->di_flags & DQI_NO_ERESTART) == 0;
 	s1 = NULL;
@@ -1994,7 +2034,6 @@ dq_symlink_served_root(struct nameidata *ndp, struct dqres *dr,
 	if (AUDITING_TD(td))
 		AUDIT_ARG_DQSTART(obj);
 	error = dqres_ops->dro_consult(td, dr->dr_binding, &rq, &ans);
-	MPASS(error != ERESTART);
 	if (error != 0)
 		goto out;
 	if (ans.da_kind == DQ_RESOLVE_REAL) {
@@ -2133,7 +2172,6 @@ dqres_namei_symlink(struct nameidata *ndp, struct vnode *dp,
 	rq.rq_st_root = dq_standing_root(&rq, snap);
 	error = dqres_ops->dro_consult(td, dr->dr_binding, &rq, &ans);
 	free(freepath, M_TEMP);
-	MPASS(error != ERESTART);
 	if (error != 0) {
 		free(rootid, M_TEMP);
 		return (error);

@@ -236,7 +236,9 @@ struct dqres_req {
 	uint32_t	 rq_syscall;
 	uint32_t	 rq_expected_locks;
 	bool		 rq_may_restart; /* the first consultation of a slot in
-					   namei_setup, ERESTART allowed */
+					   namei_setup, ERESTART allowed (a
+					   later one of a lookup that creates
+					   nothing, too: dev/dq decides) */
 	bool		 rq_no_erestart; /* DQI_NO_ERESTART: the caller loops
 					   on EAGAIN, so EAGAIN becomes EIO */
 	uint64_t	 rq_object;
@@ -272,8 +274,9 @@ struct dqres_req {
 /*
  * The vector dev/dq registers (D125).  consult posts RESOLVE on the
  * binding's queue and waits; it answers 0 with the answer's kind in
- * *ans (PASS, or a served kind of rq_accept) or an errno.  It never
- * returns ERESTART unless rq_may_restart.  bind turns an FD answer's
+ * *ans (PASS, or a served kind of rq_accept) or an errno.  It returns
+ * ERESTART only with rq_may_restart, or for a lookup that creates nothing
+ * (dq_op_mutates) and never with rq_no_erestart.  bind turns an FD answer's
  * object into a referenced, uninstalled file in the calling thread's
  * credential (consuming da_obj in every case; a failure retires it);
  * answer_release retires an FD answer's object nobody bound.  file_ident

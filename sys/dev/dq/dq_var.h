@@ -603,6 +603,7 @@ void	dq_queue_stats2(struct dq_queue *q, struct dq_stats2 *st);
 int	dq_queue_set_depth(struct dq_queue *q, uint32_t depth);
 int	dq_queue_flags(struct dq_queue *q, struct dq_queue_flags *qf);
 bool	dq_caller_holds_queue(struct dq_queue *q, struct thread *td);
+bool	dq_op_mutates(uint32_t op, const void *body, size_t bodylen);
 
 void	dq_object_hold(struct dq_object *o);
 void	dq_object_rele(struct dq_object *o);

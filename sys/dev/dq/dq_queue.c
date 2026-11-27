@@ -1233,7 +1233,7 @@ dq_wait_abandon(struct thread *td)
  * applied twice (owner, 2026-11-20).  An explicit table: an operation not
  * listed here as reading or idempotent counts as a mutation.
  */
-static bool
+bool
 dq_op_mutates(uint32_t op, const void *body, size_t bodylen)
 {
 	const struct dq_resolve_body *rb;

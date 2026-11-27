@@ -943,7 +943,13 @@ restart:
 		 * (the link's directory) referenced and unlocked across the
 		 * wait.  REAL restarts at the real root; a served answer or an
 		 * errno ends the lookup (dp released before out:, which
-		 * releases no vnode).
+		 * releases no vnode).  ERESTART (a signal ended the wait of a
+		 * lookup that creates nothing, D149 amended) leaves like any
+		 * error and reaches the system call, which restarts from the
+		 * user boundary after the handler ran, as the first
+		 * consultation's ERESTART does (namei_setup): a restart inside
+		 * namei would find the signal still pending (TDA_SIG is cleared
+		 * at the boundary) and abort its next wait at once.
 		 */
 		if (DQRES_ATTACHED_TD(td)) {
 			bool dqreal;
@@ -992,7 +998,12 @@ restart:
 	ndp->ni_vp = NULL;
 	vrele(ndp->ni_dvp);
 out:
-	MPASS(error != 0 && error != ERESTART);
+	/*
+	 * The ABI-root restart never reaches here; ERESTART does only from
+	 * the DescriptorQueue re-consultation of a symbolic link above, for
+	 * the system call to restart from the user boundary.
+	 */
+	MPASS(error != 0);
 	SDT_PROBE4(vfs, namei, lookup, return, error, NULL, false, ndp);
 	namei_cleanup_cnp(cnp);
 	nameicap_cleanup(ndp, error);
