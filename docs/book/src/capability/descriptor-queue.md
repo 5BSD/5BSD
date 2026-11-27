@@ -1129,10 +1129,14 @@ ready when `FWRITE`; `EVFILT_VNODE` supports every note the kernel defines
 — `NOTE_OPEN`, `CLOSE`, `CLOSE_WRITE`, `READ` raised by the kernel on the
 object's own operations, `DELETE`, `WRITE`, `EXTEND`, `ATTRIB`, `LINK`,
 `RENAME`, `REVOKE` by `NOTIFY_VNODE`/`SETIDENT`/`REVOKE` (D27).
-`dq_ioctl` answers `FIONREAD`, `FIONBIO`, `FIOASYNC`, `FIODTYPE`,
-`FIOSEEKDATA/HOLE` (one extent) locally and `FIOBMAP2` with `EOPNOTSUPP`;
-others are `IOCTL` events when `dp_ioctl = EVENT`, else `ENOTTY`.
-`dq_seek` is local, bounded by the identity's size for `SEEK_END`.
+`dq_ioctl` answers `FIONREAD`, `FIONBIO`, `FIOASYNC`, `FIODTYPE` locally
+and `FIOBMAP2` with `EOPNOTSUPP`; others are `IOCTL` events when
+`dp_ioctl = EVENT`, else `ENOTTY`.  `FIOSEEKDATA/HOLE` are `IOCTL` events
+under `EVENT` too, so the holes are the backing file's (C21); a supervisor
+answering `ENOTTY`, and `DENY`, keep the one-extent answer from the
+presented size, and an answer before the start is `EIO`.
+`dq_seek` is local, bounded by the identity's size for `SEEK_END`;
+`SEEK_DATA`/`SEEK_HOLE` go through `FIOSEEKDATA/HOLE`, as `vn_seek` does.
 `dq_add/get_seals` → `EINVAL` as for a vnode. `dq_fallocate`/`fspacectl`
 are events under `dp_write = EVENT`, else `EBADF` as on a read-only fd.
 `dq_aio_queue` is the default (`aio_queue_file`), so aio runs through

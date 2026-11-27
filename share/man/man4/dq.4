@@ -2159,17 +2159,47 @@ of that kind was ever posted on the object, so an object that never
 locked costs its closes nothing.
 .Ss Ioctls on a served file
 .Dv FIONREAD ,
-.Dv FIONBIO ,
-.Dv FIOASYNC ,
-.Dv FIOSEEKDATA
+.Dv FIONBIO
 and
-.Dv FIOSEEKHOLE
-are answered locally from the identity
-.Pq Er ENOTTY No for a directory ,
-and
+.Dv FIOASYNC
+are answered locally from the identity, and
 .Dv FIOBMAP2
 is
 .Er EOPNOTSUPP .
+.Dv FIOSEEKDATA
+and
+.Dv FIOSEEKHOLE
+.Pq Er ENOTTY No for a directory
+are
+.Dv DQ_OP_IOCTL
+events under
+.Dv DQ_EVENT ,
+so the holes are the ones the supervisor reports, the backing file's
+when it runs the command there.
+The start offset is checked against the presented size first: before 0
+or at or past the end is
+.Er ENXIO
+with no event.
+The answer is bounded by the presented size, which is the file the
+program sees: data at or past the end is
+.Er ENXIO ,
+a hole past the end is the end, and an answer before the start offset is
+.Er EIO .
+In the controller's own process the event cannot be served, so the
+commands, and
+.Xr lseek 2
+with
+.Dv SEEK_DATA
+or
+.Dv SEEK_HOLE ,
+are
+.Er EDEADLK ,
+as every event-posting call there.
+Under
+.Dv DQ_DENY ,
+or when the supervisor answers
+.Er ENOTTY ,
+the file is one extent of the presented size.
 Every other command, the
 .Dv FIOSETOWN
 and
@@ -4927,7 +4957,13 @@ as a vnode
 .Dv SEEK_DATA
 and
 .Dv SEEK_HOLE
-treat the file as one extent, so an offset at or beyond the size is
+are answered by
+.Dv FIOSEEKDATA
+and
+.Dv FIOSEEKHOLE ,
+as for a vnode
+.Pq see Sx Ioctls on a served file ;
+as one extent, an offset at or beyond the size is
 .Er ENXIO
 and
 .Dv SEEK_HOLE
