@@ -734,8 +734,7 @@ ATF_TC_BODY(install_once, tc)
  * identity, generation + 1), an ordinary exec (issetugid 0).  The parent
  * death signal is kept across both execs today: kern_exec.c clears it
  * only when the credential changes, which an authority-only set-id exec
- * does not (design section 6.1 says "cleared"; the pin says what the code
- * does).
+ * does not (design section 6.1).
  */
 ATF_TC(exec_pin);
 ATF_TC_HEAD(exec_pin, tc)
@@ -834,10 +833,14 @@ ATF_TC_BODY(exec_pin, tc)
 
 /*
  * LA0 pin: deleted by LA2 (rev 1.2 section 6.2).  An image-less grant
- * (CONSTRAIN never called, nexec 0: what SwitchBoard mints for every
- * ordinary unit as its wire identity) is valid at install and stays valid
+ * (CONSTRAIN never called, nexec 0) is valid at install and stays valid
  * across the exec of any image, generation unchanged, with no set-id exec.
- * It lives until the identity moves to the audit token.
+ * Its one shipped user is SwitchBoard's rc bootstrap grant
+ * (svc_authority_issue_boot(), authority.c; execute.c for the want_console
+ * units): the /etc/rc tree executes many images and needs a wire identity
+ * that survives them.  Every other unit grant is constrained to its program
+ * (svc_authority_constrain_application()) or to its service policy's
+ * images.  It lives until the identity moves to the audit token.
  */
 ATF_TC(unconstrained_grant_survives_exec);
 ATF_TC_HEAD(unconstrained_grant_survives_exec, tc)
