@@ -4873,8 +4873,23 @@ with the requester's credential.
 served
 .Pq see Sx Pages .
 .It Xr copy_file_range 2
-.Er EINVAL :
-no vnode exists to copy between.
+copied with
+.Dv READ
+and
+.Dv WRITE
+events, served or real on either side
+.Pq Xr fileops 9 , Fn file_generic_copy_range :
+the bytes, offsets, counts and errnos are a regular file's, overlapping
+ranges of one identity are
+.Er EINVAL
+and a directory
+.Er EISDIR .
+The count is clipped at
+.Dv RLIMIT_FSIZE
+before anything is read, as for two vnodes.
+No holes are made in the output (zeros are written as data) and the output
+is not truncated or extended past the last byte written; no range lock
+covers both files for the whole copy, as one does for two vnodes.
 .It ACLs, extended attributes
 .Er EOPNOTSUPP .
 .It Xr fcntl 2 Dv F_READAHEAD , F_RDAHEAD , F_ISUNIONSTACK

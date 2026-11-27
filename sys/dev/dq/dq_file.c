@@ -148,6 +148,7 @@ const struct fileops dq_fileops = {
 	.fo_setattr = dq_setattr,
 	.fo_fadvise = dq_fadvise,
 	.fo_readdir = dq_readdir,
+	.fo_copy_file_range = file_generic_copy_range,
 	.fo_acl = dq_acl,
 	.fo_extattr = dq_extattr,
 	.fo_fcntl = dq_fcntl,
