@@ -402,14 +402,15 @@ scenario_requester(const char *result, int n, char **names)
 		add("%s connect=%s\n", names[i], errname(error));
 		if (fd < 0)
 			continue;
+		/* Passing it on first: the limits below tighten it. */
+		add("%s scm_send=%s\n", names[i], errname(scm_send(fd)));
+		add("%s chan_send=%s\n", names[i], errname(chan_send(fd)));
 		add("%s xfer_once=%s\n", names[i],
 		    errname(cap_xfer_limit(fd, CAP_XFER_ONCE) == -1 ? errno :
 		    0));
 		add("%s xfer_none=%s\n", names[i],
 		    errname(cap_xfer_limit(fd, CAP_XFER_NONE) == -1 ? errno :
 		    0));
-		add("%s scm_send=%s\n", names[i], errname(scm_send(fd)));
-		add("%s chan_send=%s\n", names[i], errname(chan_send(fd)));
 		add("%s getinfo=%s\n", names[i], errname(getinfo(fd)));
 		child_use(fd, &before, &after);
 		add("%s child_getinfo=%s\n", names[i], errname(before));

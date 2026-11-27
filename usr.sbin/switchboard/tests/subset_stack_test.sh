@@ -185,8 +185,9 @@ relay_as_self_zero_hops_unit_body()
 	    "org.test.nr7.plain child_cleared_getinfo=EPERM"
 	# Sendable: transferable, and not bound.
 	expect nr7-requester.result "org.test.nr7.sendable connect=0"
-	expect nr7-requester.result "org.test.nr7.sendable xfer_once=0"
 	expect nr7-requester.result "org.test.nr7.sendable scm_send=0"
+	expect nr7-requester.result "org.test.nr7.sendable chan_send=0"
+	expect nr7-requester.result "org.test.nr7.sendable xfer_once=0"
 	expect nr7-requester.result \
 	    "org.test.nr7.sendable child_cleared_getinfo=0"
 	: > "${WORK}/case.done"

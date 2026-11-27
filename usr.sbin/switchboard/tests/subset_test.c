@@ -219,7 +219,6 @@ nr2_provider_rows(const void *arg __unused, void *resp)
 
 	/* A program SwitchBoard did not launch: no bootstrap at all. */
 	(void)unsetenv(SERVICE_BOOTSTRAP_ENV);
-	(void)close(SERVICE_BOOTSTRAP_FD);
 	provider = NULL;
 	r->create = ERRNO_OF(service_provider_create(&provider));
 	r->create_out_null = provider == NULL;
@@ -574,15 +573,16 @@ nr7_rows(const void *arg __unused, void *resp)
 	r->open = ERRNO_OF(service_open("system.Notify", &fd));
 	if (fd < 0)
 		return;
-	/* NONE only tightens to NONE; ONCE could still be set to ONCE. */
-	r->xfer_once = ERRNO_OF(cap_xfer_limit(fd, CAP_XFER_ONCE));
-	r->xfer_none = ERRNO_OF(cap_xfer_limit(fd, CAP_XFER_NONE));
+	/* Passing it on first: the limits below would tighten it. */
 	r->scm_send = scm_send(fd);
 	if (mac_capability_channel_create(pair) == 0) {
 		r->chan_send = send_msg(pair[0], "x", 1, &fd, 1, 0);
 		(void)close(pair[0]);
 		(void)close(pair[1]);
 	}
+	/* NONE only tightens to NONE; ONCE could still be set to ONCE. */
+	r->xfer_once = ERRNO_OF(cap_xfer_limit(fd, CAP_XFER_ONCE));
+	r->xfer_none = ERRNO_OF(cap_xfer_limit(fd, CAP_XFER_NONE));
 	/* Not bound: a process without software authority may use it. */
 	if (pipe(p) == -1)
 		return;
