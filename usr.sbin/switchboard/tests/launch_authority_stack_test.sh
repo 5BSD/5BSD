@@ -33,16 +33,6 @@
 
 . "$(dirname "$0")/test_helpers.sh"
 
-subset_unit=
-
-find_subset_unit()
-{
-	subset_unit="$(atf_get_srcdir)/subset_unit"
-	[ -x "$subset_unit" ] || atf_fail "subset_unit is unavailable: $subset_unit"
-	readelf -l "$subset_unit" | grep -q INTERP ||
-	    atf_fail "subset_unit must be dynamically linked for SwitchBoard"
-}
-
 # The other image, copied into the work directory the units can reach.
 install_probe()
 {
@@ -55,47 +45,6 @@ install_probe()
 	cp "$probe" "${WORK}/launch_authority_probe" ||
 	    atf_fail "cannot copy the probe"
 	chmod 0555 "${WORK}/launch_authority_probe"
-}
-
-# install_unit LABEL "ipc names (UCL list body, or empty)" RESTART ARG...
-install_unit()
-{
-	local label="$1" ipc="$2" restart="$3" activation dir unit arg sep
-	shift 3
-
-	activation="activation { boot = true; }"
-	[ -z "$ipc" ] || activation="activation { boot = true; ipc = [${ipc}]; }"
-	dir=$(make_svc_bin system "$label" "restart = \"${restart}\";
-${activation}" "$subset_unit") || atf_fail "cannot install $label"
-	unit=${label##*.}
-	sep=
-	printf 'arguments = [' >> "$dir/Units/$unit.unit/Unit.ucl"
-	for arg in "$@"; do
-		printf '%s"%s"' "$sep" "$arg" >> "$dir/Units/$unit.unit/Unit.ucl"
-		sep=', '
-	done
-	printf '];\n' >> "$dir/Units/$unit.unit/Unit.ucl"
-}
-
-# await_result FILE TEXT: wait until FILE holds TEXT.
-await_result()
-{
-	echo "waiting for $2 in $1"
-	capd_wait_path "${WORK}/$1" "$2" || fail_with_log "no \"$2\" in $1"
-}
-
-# expect FILE LINE: FILE has the exact line LINE.
-expect()
-{
-	grep -qx -- "$2" "${WORK}/$1" ||
-	    fail_with_log "$1: expected the line \"$2\""
-}
-
-case_cleanup()
-{
-	[ -f "${WORK}/evidence.shown" ] || [ -f "${WORK}/case.done" ] ||
-	    case_evidence
-	cleanup_common
 }
 
 atf_test_case handed_out_end_after_exec cleanup
@@ -159,7 +108,7 @@ handed_out_end_after_exec_body()
 	expect la0-requester.result "system.switchboard exec_getinfo=EPERM"
 	: > "${WORK}/case.done"
 }
-handed_out_end_after_exec_cleanup() { case_cleanup; }
+handed_out_end_after_exec_cleanup() { unit_case_cleanup; }
 
 atf_init_test_cases()
 {
