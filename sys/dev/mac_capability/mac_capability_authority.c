@@ -944,6 +944,36 @@ cap_authority_exec(struct proc *p, struct vnode *image,
 	p->p_cap_authority_generation++;
 }
 
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+/*
+ * Test kernels only: while positive, each exec that would leave a process
+ * other than PID 1 excluded is not excluded instead, and the count drops by
+ * one.  Lets a guest test start SwitchBoard under PID 1 without the Core
+ * role (switchboard_role_refused_reroot.sh): the count set before a reroot
+ * into Capsule is spent on the first SwitchBoard start, and the start after
+ * single-user is excluded again.
+ */
+static int mac_capability_test_issuer_exclusion_refuse;
+SYSCTL_INT(_security_cap_exclusion, OID_AUTO, test_refuse, CTLFLAG_RW,
+    &mac_capability_test_issuer_exclusion_refuse, 0,
+    "Test kernel only: refuse exclusion to this many more execs that "
+    "would otherwise be excluded (PID 1's exec excepted)");
+
+static bool
+mac_capability_test_issuer_exclusion_refused(void)
+{
+	int n;
+
+	n = atomic_load_int(&mac_capability_test_issuer_exclusion_refuse);
+	do {
+		if (n <= 0)
+			return (false);
+	} while (!atomic_fcmpset_int(
+	    &mac_capability_test_issuer_exclusion_refuse, &n, n - 1));
+	return (true);
+}
+#endif
+
 /*
  * Will this exec leave p excluded (P2_CAP_EXCLUDED)?  Called once per
  * IS_CHECK pass by do_execve, right after the software authority for the
@@ -987,6 +1017,11 @@ cap_exclusion_exec_will_exclude(struct proc *p, struct cap_authority *selected,
 		    (p->p_traceflag & KTRFAC_MASK) == 0 &&
 		    (p->p_flag2 & P2_NO_NEW_PRIVS) == 0;
 	PROC_UNLOCK(p);
+#ifdef MAC_CAPABILITY_TEST_PERMISSIVE
+	if (excluded && p != initproc &&
+	    mac_capability_test_issuer_exclusion_refused())
+		excluded = false;
+#endif
 	return (excluded);
 }
 

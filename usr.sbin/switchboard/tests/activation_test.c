@@ -17,6 +17,8 @@
 #include <sys/event.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/mount.h>
+#include <sys/uio.h>
 
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -24,6 +26,7 @@
 #include <atf-c.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -46,6 +49,8 @@ int switchboard_kq = -1;
 
 static unsigned launch_calls;
 static struct svc_runtime *last_launched;
+/* When set, the next launch is refused with this errno before any fork. */
+static int launch_refusal;
 
 /*
  * Stand-in for the real launcher.  Records the demand and moves the unit to
@@ -59,6 +64,11 @@ svc_launch_or_await(struct svc_runtime *svc, int kq)
 	(void)kq;
 	launch_calls++;
 	last_launched = svc;
+	if (launch_refusal != 0) {
+		errno = launch_refusal;
+		launch_refusal = 0;
+		return (-1);
+	}
 	svc->state = SVC_STATE_STARTING;
 	return (0);
 }
@@ -69,9 +79,21 @@ svc_by_label(const char *label)
 	unsigned i;
 
 	for (i = 0; i < sd.nservices; i++)
-		if (strcmp(sd.services[i].manifest.label, label) == 0)
-			return (&sd.services[i]);
+		if (strcmp(sd.services[i]->manifest.label, label) == 0)
+			return (sd.services[i]);
 	return (NULL);
+}
+
+/* Failed-launch accounting lives in supervisor.c; record that it ran. */
+static unsigned exec_failures;
+
+void
+supervisor_exec_failed(struct svc_runtime *svc, int kq)
+{
+
+	(void)svc;
+	(void)kq;
+	exec_failures++;
 }
 
 /* Model trusted bundle ownership; assertions below detect skipped policy. */
@@ -102,6 +124,34 @@ bundle_registry_get(unsigned idx)
 
 /* --- Helpers --- */
 
+/*
+ * Give sd.services its production shape: a SWITCHBOARD_MAX_SERVICES index
+ * whose first n entries are separately allocated, zeroed units.  The caller
+ * initializes the units and sets sd.nservices.
+ */
+static void
+services_alloc(unsigned n)
+{
+	unsigned i;
+
+	sd.services = calloc(SWITCHBOARD_MAX_SERVICES, sizeof(*sd.services));
+	ATF_REQUIRE(sd.services != NULL);
+	for (i = 0; i < n; i++) {
+		sd.services[i] = calloc(1, sizeof(*sd.services[i]));
+		ATF_REQUIRE(sd.services[i] != NULL);
+	}
+}
+
+static void
+services_free(void)
+{
+	unsigned i;
+
+	for (i = 0; i < SWITCHBOARD_MAX_SERVICES; i++)
+		free(sd.services[i]);
+	free(sd.services);
+}
+
 static void
 runtime_init(struct svc_runtime *svc, const char *label)
 {
@@ -118,6 +168,8 @@ reset_globals(int kq)
 
 	launch_calls = 0;
 	last_launched = NULL;
+	launch_refusal = 0;
+	exec_failures = 0;
 	reg_present = false;
 	switchboard_kq = kq;
 }
@@ -202,40 +254,40 @@ ATF_TC_BODY(timer_fire_and_coalesce, tc)
 	ATF_REQUIRE(kq >= 0);
 	reset_globals(kq);
 
-	sd.services = calloc(2, sizeof(*sd.services));
+	services_alloc(2);
 	ATF_REQUIRE(sd.services != NULL);
-	runtime_init(&sd.services[0], "org.test/timer");
-	sd.services[0].manifest.timer_interval_sec = 30;
+	runtime_init(sd.services[0], "org.test/timer");
+	sd.services[0]->manifest.timer_interval_sec = 30;
 	sd.nservices = 1;
 
-	activation_source_arm(&sd.services[0], kq);
-	ATF_REQUIRE(sd.services[0].activation_timer_ident != 0);
+	activation_source_arm(sd.services[0], kq);
+	ATF_REQUIRE(sd.services[0]->activation_timer_ident != 0);
 
 	/* First fire: STOPPED -> one launch. */
-	activation_timer_fire(sd.services[0].activation_timer_ident, kq);
+	activation_timer_fire(sd.services[0]->activation_timer_ident, kq);
 	ATF_CHECK_EQ(1, launch_calls);
-	ATF_CHECK_EQ(&sd.services[0], last_launched);
-	ATF_CHECK_EQ(SVC_STATE_STARTING, sd.services[0].state);
+	ATF_CHECK_EQ(sd.services[0], last_launched);
+	ATF_CHECK_EQ(SVC_STATE_STARTING, sd.services[0]->state);
 
 	/* Second fire while STARTING: coalesced, no new launch. */
-	activation_timer_fire(sd.services[0].activation_timer_ident, kq);
+	activation_timer_fire(sd.services[0]->activation_timer_ident, kq);
 	ATF_CHECK_EQ(1, launch_calls);
 
 	/* Running: still coalesced. */
-	sd.services[0].state = SVC_STATE_RUNNING;
-	activation_timer_fire(sd.services[0].activation_timer_ident, kq);
+	sd.services[0]->state = SVC_STATE_RUNNING;
+	activation_timer_fire(sd.services[0]->activation_timer_ident, kq);
 	ATF_CHECK_EQ(1, launch_calls);
 
 	/* A completed oneshot re-activates on the next fire. */
-	sd.services[0].state = SVC_STATE_DONE;
-	activation_timer_fire(sd.services[0].activation_timer_ident, kq);
+	sd.services[0]->state = SVC_STATE_DONE;
+	activation_timer_fire(sd.services[0]->activation_timer_ident, kq);
 	ATF_CHECK_EQ(2, launch_calls);
 
 	/* A stale ident (no owner) is ignored. */
-	activation_timer_fire(sd.services[0].activation_timer_ident + 999, kq);
+	activation_timer_fire(sd.services[0]->activation_timer_ident + 999, kq);
 	ATF_CHECK_EQ(2, launch_calls);
 
-	free(sd.services);
+	services_free();
 	sd.services = NULL;
 	sd.nservices = 0;
 	(void)close(kq);
@@ -268,38 +320,38 @@ ATF_TC_BODY(path_arm_write_and_teardown, tc)
 	ATF_REQUIRE(mkdir(dir, 0755) == 0 || errno == EEXIST);
 
 	/* sd.services must hold the unit so path_owner() can find it by fd. */
-	sd.services = calloc(1, sizeof(*sd.services));
+	services_alloc(1);
 	ATF_REQUIRE(sd.services != NULL);
-	runtime_init(&sd.services[0], "org.test/pathwatch");
-	strlcpy(sd.services[0].manifest.activation_path, dir,
-	    sizeof(sd.services[0].manifest.activation_path));
+	runtime_init(sd.services[0], "org.test/pathwatch");
+	strlcpy(sd.services[0]->manifest.activation_path, dir,
+	    sizeof(sd.services[0]->manifest.activation_path));
 	sd.nservices = 1;
 
-	activation_source_arm(&sd.services[0], kq);
-	watched_fd = sd.services[0].activation_path_fd;
+	activation_source_arm(sd.services[0], kq);
+	watched_fd = sd.services[0]->activation_path_fd;
 	ATF_CHECK(watched_fd >= 0);
 	/* The vnode ident (a descriptor) is disjoint from the timer range. */
 	ATF_CHECK(!activation_timer_owns((uintptr_t)watched_fd));
 
 	/* Idempotent arm keeps the same descriptor. */
-	activation_source_arm(&sd.services[0], kq);
-	ATF_CHECK_EQ(watched_fd, sd.services[0].activation_path_fd);
+	activation_source_arm(sd.services[0], kq);
+	ATF_CHECK_EQ(watched_fd, sd.services[0]->activation_path_fd);
 
 	/* Simulate a NOTE_WRITE event routed from the event loop. */
 	EV_SET(&kev, watched_fd, EVFILT_VNODE, 0, NOTE_WRITE, 0,
-	    &sd.services[0]);
+	    sd.services[0]);
 	activation_path_event(&kev, kq);
 	ATF_CHECK_EQ(1, launch_calls);
-	ATF_CHECK_EQ(SVC_STATE_STARTING, sd.services[0].state);
+	ATF_CHECK_EQ(SVC_STATE_STARTING, sd.services[0]->state);
 
 	/* Burst: a second write while starting coalesces. */
 	activation_path_event(&kev, kq);
 	ATF_CHECK_EQ(1, launch_calls);
 
-	activation_source_teardown(&sd.services[0], kq);
-	ATF_CHECK_EQ(-1, sd.services[0].activation_path_fd);
+	activation_source_teardown(sd.services[0], kq);
+	ATF_CHECK_EQ(-1, sd.services[0]->activation_path_fd);
 
-	free(sd.services);
+	services_free();
 	sd.services = NULL;
 	sd.nservices = 0;
 	(void)rmdir(dir);
@@ -330,15 +382,15 @@ ATF_TC_BODY(path_delete_reopen_and_drop, tc)
 	(void)snprintf(dir, sizeof(dir), "./reopen");
 	ATF_REQUIRE(mkdir(dir, 0755) == 0 || errno == EEXIST);
 
-	sd.services = calloc(1, sizeof(*sd.services));
+	services_alloc(1);
 	ATF_REQUIRE(sd.services != NULL);
-	runtime_init(&sd.services[0], "org.test/pathwatch");
-	strlcpy(sd.services[0].manifest.activation_path, dir,
-	    sizeof(sd.services[0].manifest.activation_path));
+	runtime_init(sd.services[0], "org.test/pathwatch");
+	strlcpy(sd.services[0]->manifest.activation_path, dir,
+	    sizeof(sd.services[0]->manifest.activation_path));
 	sd.nservices = 1;
 
-	activation_source_arm(&sd.services[0], kq);
-	first_fd = sd.services[0].activation_path_fd;
+	activation_source_arm(sd.services[0], kq);
+	first_fd = sd.services[0]->activation_path_fd;
 	ATF_REQUIRE(first_fd >= 0);
 
 	/*
@@ -346,24 +398,24 @@ ATF_TC_BODY(path_delete_reopen_and_drop, tc)
 	 * was put in place), so the delete handler re-opens and re-registers.
 	 */
 	EV_SET(&kev, first_fd, EVFILT_VNODE, 0, NOTE_DELETE, 0,
-	    &sd.services[0]);
+	    sd.services[0]);
 	activation_path_event(&kev, kq);
 	ATF_CHECK_EQ(1, launch_calls);		/* the change created demand */
-	second_fd = sd.services[0].activation_path_fd;
+	second_fd = sd.services[0]->activation_path_fd;
 	ATF_CHECK(second_fd >= 0);		/* re-registered */
 
 	/* Reset demand state so the drop case can re-fire. */
-	sd.services[0].state = SVC_STATE_STOPPED;
+	sd.services[0]->state = SVC_STATE_STOPPED;
 
 	/* Removal case: delete the directory, then a delete event drops it. */
 	ATF_REQUIRE(rmdir(dir) == 0);
 	EV_SET(&kev, second_fd, EVFILT_VNODE, 0, NOTE_DELETE, 0,
-	    &sd.services[0]);
+	    sd.services[0]);
 	activation_path_event(&kev, kq);
 	ATF_CHECK_EQ(2, launch_calls);
-	ATF_CHECK_EQ(-1, sd.services[0].activation_path_fd);	/* dropped */
+	ATF_CHECK_EQ(-1, sd.services[0]->activation_path_fd);	/* dropped */
 
-	free(sd.services);
+	services_free();
 	sd.services = NULL;
 	sd.nservices = 0;
 	(void)close(kq);
@@ -389,7 +441,7 @@ ATF_TC_BODY(register_all_creates_slot, tc)
 	ATF_REQUIRE(kq >= 0);
 	reset_globals(kq);
 
-	sd.services = calloc(SWITCHBOARD_MAX_SERVICES, sizeof(*sd.services));
+	services_alloc(0);
 	ATF_REQUIRE(sd.services != NULL);
 	sd.nservices = 0;
 
@@ -405,22 +457,137 @@ ATF_TC_BODY(register_all_creates_slot, tc)
 	reg_present = true;
 
 	ATF_CHECK_EQ(0, activation_register_all(kq));
-	ATF_CHECK_EQ((uid_t)-1, sd.services[0].owner_uid);
+	ATF_CHECK_EQ((uid_t)-1, sd.services[0]->owner_uid);
 	ATF_CHECK_EQ(1, sd.nservices);
 	ATF_CHECK_STREQ("org.test.reg/timerunit",
-	    sd.services[0].manifest.label);
-	ATF_CHECK_EQ(SVC_STATE_STOPPED, sd.services[0].state);
-	ATF_CHECK(sd.services[0].activation_timer_ident != 0);
+	    sd.services[0]->manifest.label);
+	ATF_CHECK_EQ(SVC_STATE_STOPPED, sd.services[0]->state);
+	ATF_CHECK(sd.services[0]->activation_timer_ident != 0);
 
 	/* Idempotent: a re-run neither duplicates the slot nor re-arms. */
 	ATF_CHECK_EQ(0, activation_register_all(kq));
-	ATF_CHECK_EQ((uid_t)-1, sd.services[0].owner_uid);
+	ATF_CHECK_EQ((uid_t)-1, sd.services[0]->owner_uid);
 	ATF_CHECK_EQ(1, sd.nservices);
 
-	free(sd.services);
+	services_free();
 	sd.services = NULL;
 	sd.nservices = 0;
 	(void)close(kq);
+}
+
+/*
+ * A unit whose only demand source is a calendar schedule, a queue directory
+ * or a mount trigger has no boot launch and no IPC name either: register_all
+ * must give it a stopped slot and arm that source.
+ */
+enum register_source { REG_CALENDAR, REG_QUEUE, REG_MOUNT };
+
+static void
+register_source_only(enum register_source source)
+{
+	struct capbundle_service *cs;
+	struct svc_runtime *svc;
+	char queue[PATH_MAX];
+	int kq;
+
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	reset_globals(kq);
+	services_alloc(0);
+	sd.nservices = 0;
+
+	memset(&reg_bundle, 0, sizeof(reg_bundle));
+	strlcpy(reg_bundle.bundle_id, "org.test.reg",
+	    sizeof(reg_bundle.bundle_id));
+	reg_bundle.nservices = 1;
+	cs = &reg_bundle.services[0];
+	strlcpy(cs->label, "org.test.reg/sourceunit", sizeof(cs->label));
+	strlcpy(cs->program, "/dev/null", sizeof(cs->program));
+	switch (source) {
+	case REG_CALENDAR:
+		cs->has_calendar = true;
+		cs->calendar.minute = SVC_CAL_ANY;
+		cs->calendar.hour = SVC_CAL_ANY;
+		cs->calendar.mday = SVC_CAL_ANY;
+		cs->calendar.month = SVC_CAL_ANY;
+		cs->calendar.wday = SVC_CAL_ANY;
+		break;
+	case REG_QUEUE:
+		ATF_REQUIRE(getcwd(queue, sizeof(queue)) != NULL);
+		ATF_REQUIRE(strlcat(queue, "/queue", sizeof(queue)) <
+		    sizeof(queue));
+		ATF_REQUIRE_EQ(0, mkdir(queue, 0700));
+		strlcpy(cs->queue_directory, queue,
+		    sizeof(cs->queue_directory));
+		break;
+	case REG_MOUNT:
+		cs->activation_on_mount = true;
+		break;
+	}
+	reg_present = true;
+
+	ATF_CHECK_EQ(0, activation_register_all(kq));
+	ATF_REQUIRE_EQ(1, sd.nservices);
+	svc = svc_by_label("org.test.reg/sourceunit");
+	ATF_REQUIRE(svc != NULL);
+	ATF_CHECK_EQ(SVC_STATE_STOPPED, svc->state);
+	switch (source) {
+	case REG_CALENDAR:
+		ATF_CHECK(svc->activation_timer_ident != 0);
+		break;
+	case REG_QUEUE:
+		ATF_CHECK(svc->activation_queue_fd >= 0);
+		break;
+	case REG_MOUNT:
+		ATF_CHECK(svc->activation_mount_ident != 0);
+		break;
+	}
+	ATF_CHECK_EQ(0, launch_calls);
+
+	activation_source_teardown(svc, kq);
+	services_free();
+	sd.services = NULL;
+	sd.nservices = 0;
+	(void)close(kq);
+}
+
+ATF_TC(register_calendar_only_unit);
+ATF_TC_HEAD(register_calendar_only_unit, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "register_all gives a calendar-only unit a slot and arms its "
+	    "schedule");
+}
+ATF_TC_BODY(register_calendar_only_unit, tc)
+{
+
+	register_source_only(REG_CALENDAR);
+}
+
+ATF_TC(register_queue_only_unit);
+ATF_TC_HEAD(register_queue_only_unit, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "register_all gives a queue-directory-only unit a slot and "
+	    "watches its directory");
+}
+ATF_TC_BODY(register_queue_only_unit, tc)
+{
+
+	register_source_only(REG_QUEUE);
+}
+
+ATF_TC(register_mount_only_unit);
+ATF_TC_HEAD(register_mount_only_unit, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "register_all gives a mount-only unit a slot and arms its mount "
+	    "watch");
+}
+ATF_TC_BODY(register_mount_only_unit, tc)
+{
+
+	register_source_only(REG_MOUNT);
 }
 
 /* --- Phase 4: socket activation --- */
@@ -547,24 +714,24 @@ ATF_TC_BODY(socket_arm_connect_demand_and_coalesce, tc)
 	ATF_REQUIRE(kq >= 0);
 	reset_globals(kq);
 
-	sd.services = calloc(1, sizeof(*sd.services));
+	services_alloc(1);
 	ATF_REQUIRE(sd.services != NULL);
-	runtime_init(&sd.services[0], "org.test/sockunit");
-	socket_spec_tcp_loopback(&sd.services[0].manifest.activation_sockets[0],
+	runtime_init(sd.services[0], "org.test/sockunit");
+	socket_spec_tcp_loopback(&sd.services[0]->manifest.activation_sockets[0],
 	    "listen");
-	sd.services[0].manifest.nactivation_sockets = 1;
+	sd.services[0]->manifest.nactivation_sockets = 1;
 	sd.nservices = 1;
 
-	activation_source_arm(&sd.services[0], kq);
-	listen_fd = sd.services[0].activation_listen_fds[0];
+	activation_source_arm(sd.services[0], kq);
+	listen_fd = sd.services[0]->activation_listen_fds[0];
 	ATF_REQUIRE(listen_fd >= 0);
 	ATF_CHECK(fd_is_listening(listen_fd));
 	ATF_CHECK(activation_socket_owns(listen_fd));
-	ATF_CHECK_EQ(1U, sd.services[0].nactivation_listen);
+	ATF_CHECK_EQ(1U, sd.services[0]->nactivation_listen);
 
 	/* Idempotent arm keeps the same listen fd. */
-	activation_source_arm(&sd.services[0], kq);
-	ATF_CHECK_EQ(listen_fd, sd.services[0].activation_listen_fds[0]);
+	activation_source_arm(sd.services[0], kq);
+	ATF_CHECK_EQ(listen_fd, sd.services[0]->activation_listen_fds[0]);
 
 	port = fd_bound_port(listen_fd);
 	ATF_REQUIRE(port != 0);
@@ -580,8 +747,8 @@ ATF_TC_BODY(socket_arm_connect_demand_and_coalesce, tc)
 
 	activation_socket_event(&ev, kq);
 	ATF_CHECK_EQ(1, launch_calls);
-	ATF_CHECK_EQ(&sd.services[0], last_launched);
-	ATF_CHECK_EQ(SVC_STATE_STARTING, sd.services[0].state);
+	ATF_CHECK_EQ(sd.services[0], last_launched);
+	ATF_CHECK_EQ(SVC_STATE_STARTING, sd.services[0]->state);
 
 	/* A second readable event while starting coalesces (no new launch). */
 	activation_socket_event(&ev, kq);
@@ -591,11 +758,11 @@ ATF_TC_BODY(socket_arm_connect_demand_and_coalesce, tc)
 	ATF_CHECK(fd_is_listening(listen_fd));
 
 	(void)close(client);
-	activation_source_teardown(&sd.services[0], kq);
-	ATF_CHECK_EQ(-1, sd.services[0].activation_listen_fds[0]);
-	ATF_CHECK_EQ(0U, sd.services[0].nactivation_listen);
+	activation_source_teardown(sd.services[0], kq);
+	ATF_CHECK_EQ(-1, sd.services[0]->activation_listen_fds[0]);
+	ATF_CHECK_EQ(0U, sd.services[0]->nactivation_listen);
 
-	free(sd.services);
+	services_free();
 	sd.services = NULL;
 	sd.nservices = 0;
 	(void)close(kq);
@@ -625,16 +792,16 @@ ATF_TC_BODY(socket_restart_preserves_listener, tc)
 	ATF_REQUIRE(kq >= 0);
 	reset_globals(kq);
 
-	sd.services = calloc(1, sizeof(*sd.services));
+	services_alloc(1);
 	ATF_REQUIRE(sd.services != NULL);
-	runtime_init(&sd.services[0], "org.test/sockunit");
-	socket_spec_tcp_loopback(&sd.services[0].manifest.activation_sockets[0],
+	runtime_init(sd.services[0], "org.test/sockunit");
+	socket_spec_tcp_loopback(&sd.services[0]->manifest.activation_sockets[0],
 	    "listen");
-	sd.services[0].manifest.nactivation_sockets = 1;
+	sd.services[0]->manifest.nactivation_sockets = 1;
 	sd.nservices = 1;
 
-	activation_source_arm(&sd.services[0], kq);
-	listen_fd = sd.services[0].activation_listen_fds[0];
+	activation_source_arm(sd.services[0], kq);
+	listen_fd = sd.services[0]->activation_listen_fds[0];
 	ATF_REQUIRE(listen_fd >= 0);
 	port = fd_bound_port(listen_fd);
 
@@ -645,7 +812,7 @@ ATF_TC_BODY(socket_restart_preserves_listener, tc)
 	ATF_REQUIRE_EQ(1, n);
 	activation_socket_event(&ev, kq);
 	ATF_CHECK_EQ(1, launch_calls);
-	ATF_CHECK_EQ(SVC_STATE_STARTING, sd.services[0].state);
+	ATF_CHECK_EQ(SVC_STATE_STARTING, sd.services[0]->state);
 	(void)close(client);
 
 	/*
@@ -653,13 +820,13 @@ ATF_TC_BODY(socket_restart_preserves_listener, tc)
 	 * touch activation_listen_fds.  The listener fd and its registration
 	 * must survive untouched.
 	 */
-	sd.services[0].state = SVC_STATE_STOPPED;
-	ATF_CHECK_EQ(listen_fd, sd.services[0].activation_listen_fds[0]);
+	sd.services[0]->state = SVC_STATE_STOPPED;
+	ATF_CHECK_EQ(listen_fd, sd.services[0]->activation_listen_fds[0]);
 	ATF_CHECK(fd_is_listening(listen_fd));
 
 	/* Re-arm is idempotent (does not replace the live listener). */
-	activation_source_arm(&sd.services[0], kq);
-	ATF_CHECK_EQ(listen_fd, sd.services[0].activation_listen_fds[0]);
+	activation_source_arm(sd.services[0], kq);
+	ATF_CHECK_EQ(listen_fd, sd.services[0]->activation_listen_fds[0]);
 
 	/* A fresh connection re-creates demand on the same descriptor. */
 	client = connect_loopback(port);
@@ -671,8 +838,8 @@ ATF_TC_BODY(socket_restart_preserves_listener, tc)
 	ATF_CHECK_EQ(2, launch_calls);
 
 	(void)close(client);
-	activation_source_teardown(&sd.services[0], kq);
-	free(sd.services);
+	activation_source_teardown(sd.services[0], kq);
+	services_free();
 	sd.services = NULL;
 	sd.nservices = 0;
 	(void)close(kq);
@@ -738,7 +905,7 @@ ATF_TC_BODY(register_all_creates_socket_slot, tc)
 	ATF_REQUIRE(kq >= 0);
 	reset_globals(kq);
 
-	sd.services = calloc(SWITCHBOARD_MAX_SERVICES, sizeof(*sd.services));
+	services_alloc(0);
 	ATF_REQUIRE(sd.services != NULL);
 	sd.nservices = 0;
 
@@ -754,16 +921,283 @@ ATF_TC_BODY(register_all_creates_socket_slot, tc)
 	reg_present = true;
 
 	ATF_CHECK_EQ(0, activation_register_all(kq));
-	ATF_CHECK_EQ((uid_t)-1, sd.services[0].owner_uid);
+	ATF_CHECK_EQ((uid_t)-1, sd.services[0]->owner_uid);
 	ATF_CHECK_EQ(1, sd.nservices);
 	ATF_CHECK_STREQ("org.test.sock/listener",
-	    sd.services[0].manifest.label);
-	ATF_CHECK_EQ(SVC_STATE_STOPPED, sd.services[0].state);
-	ATF_CHECK(sd.services[0].activation_listen_fds[0] >= 0);
-	ATF_CHECK(fd_is_listening(sd.services[0].activation_listen_fds[0]));
+	    sd.services[0]->manifest.label);
+	ATF_CHECK_EQ(SVC_STATE_STOPPED, sd.services[0]->state);
+	ATF_CHECK(sd.services[0]->activation_listen_fds[0] >= 0);
+	ATF_CHECK(fd_is_listening(sd.services[0]->activation_listen_fds[0]));
 
-	activation_source_teardown(&sd.services[0], kq);
-	free(sd.services);
+	activation_source_teardown(sd.services[0], kq);
+	services_free();
+	sd.services = NULL;
+	sd.nservices = 0;
+	(void)close(kq);
+}
+
+/* --- Sources quieted while their unit runs or is refused --- */
+
+/*
+ * Dispatch the source event a change has already queued (vnode, mount and
+ * socket knotes are activated by the change itself, so it is queued when
+ * the call returns); false when nothing was queued.
+ */
+static bool
+dispatch_queued(int kq)
+{
+	struct timespec now = { 0, 0 };
+	struct kevent kev;
+
+	if (kevent(kq, NULL, 0, &kev, 1, &now) != 1)
+		return (false);
+	switch (kev.filter) {
+	case EVFILT_VNODE:
+		activation_path_event(&kev, kq);
+		break;
+	case EVFILT_FS:
+		activation_mount_event(&kev, kq);
+		break;
+	case EVFILT_READ:
+		activation_socket_event(&kev, kq);
+		break;
+	default:
+		atf_tc_fail("unexpected event filter %d", kev.filter);
+	}
+	return (true);
+}
+
+/*
+ * Wait until a loopback connection is queued on listener fd: connect(2)
+ * returns once the client side is established, and the server side's accept
+ * queue entry can follow it.  Bounded by the test case's timeout.
+ */
+static void
+wait_listener(int fd)
+{
+	struct pollfd pfd = { .fd = fd, .events = POLLIN };
+
+	ATF_REQUIRE_EQ(1, poll(&pfd, 1, INFTIM));
+}
+
+enum quiet_source { QUIET_PATH, QUIET_QUEUE, QUIET_MOUNT };
+
+static void
+quiet_fire(enum quiet_source source, const char *dir, unsigned n)
+{
+	char path[PATH_MAX], mnt[PATH_MAX];
+	int fd;
+
+	switch (source) {
+	case QUIET_PATH:
+	case QUIET_QUEUE:
+		snprintf(path, sizeof(path), "%s/f%u", dir, n);
+		fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0600);
+		ATF_REQUIRE(fd >= 0);
+		ATF_REQUIRE_EQ(2, write(fd, "x\n", 2));
+		close(fd);
+		break;
+	case QUIET_MOUNT:
+		snprintf(mnt, sizeof(mnt), "%s/m%u", dir, n);
+		ATF_REQUIRE_EQ(0, mkdir(mnt, 0700));
+		{
+			char fstype[] = "fstype", tmpfs[] = "tmpfs";
+			char fspath[] = "fspath";
+			struct iovec iov[] = {
+				{ fstype, sizeof(fstype) }, { tmpfs, sizeof(tmpfs) },
+				{ fspath, sizeof(fspath) }, { mnt, strlen(mnt) + 1 } };
+
+			ATF_REQUIRE_EQ_MSG(0, nmount(iov, 4, 0), "mount: %s",
+			    strerror(errno));
+		}
+		break;
+	}
+}
+
+/*
+ * A source fires, the unit launches; it fires again while the unit runs,
+ * which coalesces and quiets the source; the unit stops, and the source must
+ * create demand again (the fire during the run is delivered then).
+ */
+static void
+quiet_then_resume(enum quiet_source source)
+{
+	struct svc_runtime *svc;
+	char dir[PATH_MAX];
+	unsigned n;
+	int kq;
+
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	reset_globals(kq);
+	ATF_REQUIRE(getcwd(dir, sizeof(dir)) != NULL);
+	ATF_REQUIRE(strlcat(dir, "/src", sizeof(dir)) < sizeof(dir));
+	ATF_REQUIRE_EQ(0, mkdir(dir, 0700));
+	services_alloc(1);
+	svc = sd.services[0];
+	runtime_init(svc, "org.test/quiet");
+	switch (source) {
+	case QUIET_PATH:
+		strlcpy(svc->manifest.activation_path, dir,
+		    sizeof(svc->manifest.activation_path));
+		break;
+	case QUIET_QUEUE:
+		strlcpy(svc->manifest.queue_directory, dir,
+		    sizeof(svc->manifest.queue_directory));
+		break;
+	case QUIET_MOUNT:
+		svc->manifest.activation_on_mount = true;
+		break;
+	}
+	sd.nservices = 1;
+	activation_source_arm(svc, kq);
+
+	n = 0;
+	quiet_fire(source, dir, n++);
+	ATF_REQUIRE_MSG(dispatch_queued(kq), "the first fire created no event");
+	ATF_REQUIRE_EQ(1, launch_calls);
+	ATF_REQUIRE_EQ(SVC_STATE_STARTING, svc->state);
+
+	/* While it runs, a fire coalesces and quiets the source. */
+	quiet_fire(source, dir, n++);
+	(void)dispatch_queued(kq);
+	ATF_CHECK_EQ(1, launch_calls);
+	ATF_CHECK(svc->activation_suspended);
+
+	/* It stops: the source creates demand again. */
+	svc->state = SVC_STATE_STOPPED;
+	activation_source_resume(svc, kq);
+	quiet_fire(source, dir, n++);
+	ATF_REQUIRE_MSG(dispatch_queued(kq),
+	    "the source stayed deaf after its unit stopped");
+	ATF_CHECK_EQ(2, launch_calls);
+
+	if (source == QUIET_MOUNT) {
+		char mnt[PATH_MAX];
+
+		for (unsigned i = 0; i < n; i++) {
+			snprintf(mnt, sizeof(mnt), "%s/m%u", dir, i);
+			(void)unmount(mnt, MNT_FORCE);
+		}
+	}
+	activation_source_teardown(svc, kq);
+	services_free();
+	sd.services = NULL;
+	sd.nservices = 0;
+	(void)close(kq);
+}
+
+ATF_TC(path_source_after_run);
+ATF_TC_HEAD(path_source_after_run, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "a path source quieted while its unit ran relaunches it after it "
+	    "stops");
+}
+ATF_TC_BODY(path_source_after_run, tc)
+{
+
+	quiet_then_resume(QUIET_PATH);
+}
+
+ATF_TC(queue_source_after_run);
+ATF_TC_HEAD(queue_source_after_run, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "a queue-directory source quieted while its unit ran relaunches "
+	    "it after it stops");
+}
+ATF_TC_BODY(queue_source_after_run, tc)
+{
+
+	quiet_then_resume(QUIET_QUEUE);
+}
+
+ATF_TC(mount_source_after_run);
+ATF_TC_HEAD(mount_source_after_run, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "a mount source quieted while its unit ran relaunches it after it "
+	    "stops");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "is.exclusive", "true");
+}
+ATF_TC_BODY(mount_source_after_run, tc)
+{
+
+	quiet_then_resume(QUIET_MOUNT);
+}
+
+/*
+ * A launch refused before any fork for a reason with no event of its own
+ * (here ENOMEM) is counted and retried after the backoff; the retry wakes
+ * the source, and a later fire launches the unit.  A refusal that has its
+ * own event (a disabled unit's ECANCELED) is not counted.
+ */
+ATF_TC(socket_source_after_refusal);
+ATF_TC_HEAD(socket_source_after_refusal, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "a socket-only unit whose launch failed before the fork launches "
+	    "on a later connection once its retry has run");
+}
+ATF_TC_BODY(socket_source_after_refusal, tc)
+{
+	struct sockaddr_in sin;
+	struct svc_runtime *svc;
+	socklen_t len;
+	int kq, c1, c2;
+
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	reset_globals(kq);
+	services_alloc(1);
+	svc = sd.services[0];
+	runtime_init(svc, "org.test/refused");
+	socket_spec_tcp_loopback(&svc->manifest.activation_sockets[0],
+	    "listen");
+	svc->manifest.nactivation_sockets = 1;
+	sd.nservices = 1;
+	activation_source_arm(svc, kq);
+	len = sizeof(sin);
+	ATF_REQUIRE_EQ(0, getsockname(svc->activation_listen_fds[0],
+	    (struct sockaddr *)&sin, &len));
+
+	/* A disabled unit: refused, not counted, quiet until an operator. */
+	launch_refusal = ECANCELED;
+	c1 = socket(AF_INET, SOCK_STREAM, 0);
+	ATF_REQUIRE(c1 >= 0);
+	ATF_REQUIRE_EQ(0, connect(c1, (struct sockaddr *)&sin, sizeof(sin)));
+	wait_listener(svc->activation_listen_fds[0]);
+	ATF_REQUIRE(dispatch_queued(kq));
+	ATF_CHECK_EQ(1, launch_calls);
+	ATF_CHECK_EQ(0, exec_failures);
+	ATF_CHECK(svc->activation_suspended);
+	ATF_CHECK(!dispatch_queued(kq));
+	activation_source_resume(svc, kq);
+
+	/* ENOMEM: counted (backoff), quiet until the retry wakes it. */
+	launch_refusal = ENOMEM;
+	ATF_REQUIRE(dispatch_queued(kq));
+	ATF_CHECK_EQ(2, launch_calls);
+	ATF_CHECK_EQ(1, exec_failures);
+	ATF_CHECK(svc->activation_suspended);
+	ATF_CHECK(!dispatch_queued(kq));
+
+	/* The retry runs (supervisor_handle_timer resumes the sources). */
+	activation_source_resume(svc, kq);
+	c2 = socket(AF_INET, SOCK_STREAM, 0);
+	ATF_REQUIRE(c2 >= 0);
+	ATF_REQUIRE_EQ(0, connect(c2, (struct sockaddr *)&sin, sizeof(sin)));
+	wait_listener(svc->activation_listen_fds[0]);
+	ATF_REQUIRE(dispatch_queued(kq));
+	ATF_CHECK_EQ(3, launch_calls);
+	ATF_CHECK_EQ(SVC_STATE_STARTING, svc->state);
+
+	close(c1);
+	close(c2);
+	activation_source_teardown(svc, kq);
+	services_free();
 	sd.services = NULL;
 	sd.nservices = 0;
 	(void)close(kq);
@@ -777,11 +1211,18 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, path_arm_write_and_teardown);
 	ATF_TP_ADD_TC(tp, path_delete_reopen_and_drop);
 	ATF_TP_ADD_TC(tp, register_all_creates_slot);
+	ATF_TP_ADD_TC(tp, register_calendar_only_unit);
+	ATF_TP_ADD_TC(tp, register_queue_only_unit);
+	ATF_TP_ADD_TC(tp, register_mount_only_unit);
 	ATF_TP_ADD_TC(tp, socket_listener_create_binds_and_listens);
 	ATF_TP_ADD_TC(tp, socket_arm_connect_demand_and_coalesce);
 	ATF_TP_ADD_TC(tp, socket_restart_preserves_listener);
 	ATF_TP_ADD_TC(tp, socket_address_conflict_second_fails);
 	ATF_TP_ADD_TC(tp, register_all_creates_socket_slot);
+	ATF_TP_ADD_TC(tp, path_source_after_run);
+	ATF_TP_ADD_TC(tp, queue_source_after_run);
+	ATF_TP_ADD_TC(tp, mount_source_after_run);
+	ATF_TP_ADD_TC(tp, socket_source_after_refusal);
 
 	return (atf_no_error());
 }

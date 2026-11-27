@@ -14,7 +14,9 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 
+#include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -194,9 +196,9 @@ struct svc_runtime {
 	struct {
 		int fd, exit_status, error;
 		bool pending, was_stopping, child_pending, coalition_complete;
+		bool restart;	/* a restart waits for this cleanup */
 		time_t uptime_sec;
 		uintptr_t timer_ident;
-		struct timespec deadline;
 	} cleanup;
 	struct svc_launch *launch;	/* non-NULL while a launch is in progress */
 	bool		protocol_ready;	/* SVC_OP_READY advisory received */
@@ -212,6 +214,11 @@ struct svc_runtime {
 
 	/* Restart tracking */
 	unsigned	restart_count;
+	/*
+	 * Too many failures (manifest max_failures): nothing starts the unit
+	 * again until an operator does (svc_exec() refuses with ECANCELED).
+	 */
+	bool		disabled;
 	bool		restart_pending;	/* timer scheduled */
 	uintptr_t	timer_ident;		/* unique kevent ident */
 	bool		stop_kill_pending;	/* SIGKILL timer scheduled */
@@ -262,6 +269,14 @@ struct svc_runtime {
 	 */
 	int		activation_listen_fds[SWITCHBOARD_MAX_ACTIVATION_SOCKETS];
 	unsigned	nactivation_listen;
+	/*
+	 * The sources are disabled (EV_DISABLE) while their demand cannot
+	 * launch the unit: it is already up, or a launch was refused.  A
+	 * level-triggered listener would otherwise fire on every pass of the
+	 * event loop.  They are enabled again when the unit stops
+	 * (activation_source_resume()).
+	 */
+	bool		activation_suspended;
 
 	/* Attribution */
 	char		launched_by[SWITCHBOARD_LABEL_MAX]; /* who triggered launch */
@@ -336,13 +351,23 @@ struct switchboard_state {
 	bool		running;
 	bool		shutting_down;
 
-	/* Service launcher */
-	struct svc_runtime	*services;
+	/*
+	 * Units.  Each unit is its own allocation and never moves: kevent
+	 * udata, naming entries and channel contexts keep its address for the
+	 * unit's whole life.  services[] (SWITCHBOARD_MAX_SERVICES entries) is
+	 * only the index; svc_remove() takes a unit out of it and frees it.
+	 */
+	struct svc_runtime	**services;
 	unsigned		 nservices;
 };
 
 extern struct switchboard_state sd;
 extern int switchboard_kq;
+
+/* switchboard.c: test configuration in the environment (see there). */
+const char *switchboard_test_getenv(const char *name);
+/* switchboard.c: Capsule as PID 1 started this SwitchBoard. */
+bool	switchboard_is_boot_manager(void);
 
 /* switchboard.c — dispatch one ready switchboard_kq event (main loop + rc bootstrap). */
 void	switchboard_dispatch_event(struct kevent *kev);
@@ -446,7 +471,9 @@ void	cancel_watchdog_timer(struct svc_runtime *svc, int kq);
 void	svc_quiesce_complete(struct svc_runtime *, int status, int kq);
 void	supervisor_cleanup_event(struct svc_runtime *svc);
 void	supervisor_cleanup_failed_launch(struct svc_runtime *svc);
-int	supervisor_cleanup_rebind(struct svc_runtime *svc, int kq);
+void	supervisor_disarm_timers(struct svc_runtime *svc, int kq);
+void	supervisor_exec_failed(struct svc_runtime *svc, int kq);
+bool	supervisor_cleanup_acknowledge(struct svc_runtime *svc);
 void	schedule_restart(struct svc_runtime *svc, int kq);
 
 /* svc_proto.c — service channel protocol dispatch */
@@ -457,7 +484,6 @@ void	supervisor_handle_channel(struct kevent *kev);
  */
 void	svc_launch_cancel(struct svc_runtime *svc, int kq);
 int	svc_channel_attach(struct svc_runtime *, int);
-int	svc_channel_rebind(struct svc_runtime *);
 void	svc_channel_close(struct svc_runtime *);
 void	svc_channel_sync_events(struct svc_runtime *, int);
 int	svc_channel_send_event(struct svc_runtime *, const void *, size_t,
@@ -467,8 +493,7 @@ int	svc_channel_send_event(struct svc_runtime *, const void *, size_t,
 int	supervisor_reload(int kq, char *summary, size_t sumlen);
 struct svc_runtime *svc_by_label(const char *label);
 struct svc_runtime *svc_by_label_scoped(const char *, uid_t);
-void	svc_remove(unsigned idx);
-void	svc_reregister_kevents(int kq);
+void	svc_remove(struct svc_runtime *svc);
 struct svc_new_client_msg;
 /*
  * Resource-ownership identity. Ownership includes the installation namespace; these
@@ -527,6 +552,7 @@ int	startup_launch_system(int kq);
 int	activation_register_all(int kq);
 void	activation_source_arm(struct svc_runtime *svc, int kq);
 void	activation_source_teardown(struct svc_runtime *svc, int kq);
+void	activation_source_resume(struct svc_runtime *svc, int kq);
 bool	activation_timer_owns(uintptr_t ident);
 void	activation_timer_fire(uintptr_t ident, int kq);
 void	activation_path_event(struct kevent *kev, int kq);
@@ -568,8 +594,6 @@ int	naming_register(const char *name, struct svc_runtime *owner,
 	    bool sendable);
 int	naming_unregister(const char *name, struct svc_runtime *owner);
 void	naming_remove_owner(struct svc_runtime *owner);
-void	naming_rebind_owner(struct svc_runtime *old_owner,
-	    struct svc_runtime *new_owner);
 int	naming_lookup(const char *name, struct svc_runtime *requester,
 	    const struct svc_domain *domain, const struct channel_sender *sender,
 	    int *errp, bool *sendablep);
@@ -666,6 +690,67 @@ svc_runtime_init_fds(struct svc_runtime *svc)
 	svc->protocol_ready = false;
 	memset(svc->name_state, SVC_NAME_UNCLAIMED,
 	    sizeof(svc->name_state));
+}
+
+/*
+ * Allocate a stopped unit that is not yet in sd.services[]: ENOMEM when the
+ * index was never allocated or the allocation fails, ENOSPC when the index is
+ * full.  The caller fills it and then either publishes it with
+ * svc_unit_publish(), which cannot fail, or frees it.
+ */
+static inline struct svc_runtime *
+svc_unit_alloc(void)
+{
+	struct svc_runtime *svc;
+
+	if (sd.services == NULL) {
+		errno = ENOMEM;
+		return (NULL);
+	}
+	if (sd.nservices >= SWITCHBOARD_MAX_SERVICES) {
+		errno = ENOSPC;
+		return (NULL);
+	}
+	svc = calloc(1, sizeof(*svc));
+	if (svc == NULL)
+		return (NULL);
+	svc_runtime_init_fds(svc);
+	svc->state = SVC_STATE_STOPPED;
+	return (svc);
+}
+
+static inline void
+svc_unit_publish(struct svc_runtime *svc)
+{
+
+	sd.services[sd.nservices++] = svc;
+}
+
+/*
+ * The status a failed lookup answers.  A name outside the requester's reach
+ * (EACCES) is answered as unregistered (ENOENT), so the wire cannot tell
+ * the two apart; every other refusal (EAGAIN: too many activations pending,
+ * ENOSPC/ENOMEM: no room for the unit, ECANCELED: the provider is disabled,
+ * EDEADLK, ...) reaches the client as itself.
+ */
+static inline int
+svc_lookup_status(int error)
+{
+
+	return (error == EACCES ? ENOENT : error);
+}
+
+/*
+ * A cleanup that cannot complete: its coalition reported failure (or could
+ * not be watched) and nothing observes it any longer.  The unit stays down
+ * until an operator starts it (supervisor_cleanup_acknowledge()).
+ */
+static inline bool
+svc_cleanup_failed(const struct svc_runtime *svc)
+{
+
+	return (svc->cleanup.pending && svc->cleanup.error != 0 &&
+	    svc->cleanup.fd < 0 && !svc->cleanup.coalition_complete);
 }
 
 /*

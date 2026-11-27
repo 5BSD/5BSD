@@ -14,7 +14,8 @@ import subprocess
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--fixture-objtop', type=Path)
 args = parser.parse_args()
-source = Path('/usr/src')
+# The source tree this script belongs to: /usr/src, or a worktree.
+source = Path(__file__).resolve().parents[3]
 
 
 def value(directory, variable, environment=None):
@@ -25,14 +26,14 @@ def value(directory, variable, environment=None):
 
 
 obj = Path(value(source / 'usr.sbin/switchboard', 'OBJTOP'))
-if not obj.is_relative_to('/usr/obj/usr/src'):
-    raise RuntimeError('standard /usr/obj/usr/src object tree required')
+if not obj.is_relative_to('/usr/obj'):
+    raise RuntimeError('an object tree under /usr/obj is required')
 syscalls = obj / 'lib/libsys/libsys.a'
 if not syscalls.is_file():
     raise RuntimeError('build the matching object-tree libsys first')
 fixtures = (args.fixture_objtop or obj).resolve()
-if not fixtures.is_relative_to('/usr/obj/usr/src'):
-    raise RuntimeError('fixtures must use standard /usr/obj/usr/src staging')
+if not fixtures.is_relative_to('/usr/obj'):
+    raise RuntimeError('fixtures must be staged under /usr/obj')
 fixture_objects = fixtures / 'tools/test/oes-admission'
 fixture_objects.mkdir(parents=True, exist_ok=True)
 fixture_environment = dict(os.environ, MAKEOBJDIR=str(fixture_objects))
@@ -60,7 +61,10 @@ for name in ('capsule', 'switchboard'):
     # supply older wrappers. Keep the daemon's complete dependency list.
     libraries.insert(libraries.index('-lc'), str(syscalls))
     destination = fixtures / 'tools/test/oes-admission' / name
-    subprocess.run(['cc', '-static', '-o', str(destination), *objects, *libraries],
+    # The build environment's compiler (make buildenv: its sysroot), so the
+    # link takes the tree's own static libraries, not the host's.
+    compiler = shlex.split(os.environ.get('CC', 'cc'))
+    subprocess.run([*compiler, '-static', '-o', str(destination), *objects, *libraries],
                    cwd=private_objects, check=True)
     if 'statically linked' not in subprocess.check_output(['file', str(destination)], text=True):
         raise RuntimeError('static link required: ' + str(destination))

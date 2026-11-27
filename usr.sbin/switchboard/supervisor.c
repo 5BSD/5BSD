@@ -152,15 +152,28 @@ schedule_restart(struct svc_runtime *svc, int kq)
  * A unit that another path has already started (it is no longer STOPPED, or
  * an asynchronous launch is in flight) needs no restart.  svc_exec() refuses
  * it, but that refusal is not an exec failure: counting it would disable a
- * running unit and mark it STOPPED behind its back.  Likewise svc_exec()
- * refuses (EBUSY) while the unit's previous coalition is still being torn
- * down: the restart is postponed, not counted, or a slow teardown could
- * disable a unit that was never exec'd.
+ * running unit and mark it STOPPED behind its back.  While the unit's
+ * previous coalition is still being torn down (the unit is STOPPING then)
+ * the restart is not counted, or a slow teardown could disable a unit that
+ * was never exec'd; it waits for that cleanup to complete, which resumes it
+ * (supervisor_finish_native_exit()).  Every failed exec is counted and
+ * retried after the backoff delay (schedule_restart()), whether it failed
+ * before or after its fork; a failure after the fork leaves a cleanup
+ * behind, which the retry then waits for as above.
  */
 static void
 svc_restart_now(struct svc_runtime *svc, int kq)
 {
 
+	if (sd.shutting_down)
+		return;
+	if (svc->cleanup.pending) {
+		syslog(LOG_INFO, "service %s: previous instance still being "
+		    "cleaned up; restart postponed until it completes",
+		    svc->manifest.label);
+		svc->cleanup.restart = true;
+		return;
+	}
 	if (svc->state != SVC_STATE_STOPPED || svc->launch != NULL) {
 		syslog(LOG_INFO, "service %s: already started (state %d); "
 		    "restart dropped", svc->manifest.label, svc->state);
@@ -168,18 +181,24 @@ svc_restart_now(struct svc_runtime *svc, int kq)
 	}
 	if (svc_exec(svc, kq) != -1)
 		return;
-	if (errno == EBUSY && svc->cleanup.pending) {
-		syslog(LOG_INFO, "service %s: previous instance still being "
-		    "cleaned up; restart postponed", svc->manifest.label);
-		schedule_restart(svc, kq);
-		return;
-	}
+	supervisor_exec_failed(svc, kq);
+}
+
+/*
+ * Count a failed exec against the circuit breaker: disable the unit at
+ * max_failures, otherwise retry it after the backoff delay.
+ */
+void
+supervisor_exec_failed(struct svc_runtime *svc, int kq)
+{
+
 	if (++svc->restart_count >= svc->manifest.max_failures) {
 		syslog(LOG_CRIT, "service %s: exec failed %u times, disabling",
 		    svc->manifest.label, svc->restart_count);
 		SWITCHBOARD_PROBE_SVC_DISABLED(svc->manifest.label,
 		    svc->restart_count);
 		svc->state = SVC_STATE_STOPPED;
+		svc->disabled = true;
 		return;
 	}
 	syslog(LOG_WARNING, "service %s: exec failed (%u), scheduling retry",
@@ -322,6 +341,17 @@ cancel_stop_timer(struct svc_runtime *svc)
 	svc->stop_timer_ident = 0;
 }
 
+/* Drop every per-unit timer registered with this unit's address. */
+void
+supervisor_disarm_timers(struct svc_runtime *svc, int kq)
+{
+
+	svc_cancel_restart(svc, kq);
+	cancel_stop_timer(svc);
+	cancel_idle_timer(svc, kq);
+	cancel_watchdog_timer(svc, kq);
+}
+
 /*
  * Post-STOPPED handling shared by every way an RC unit reaches STOPPED (a
  * clean onestop exit, an onestop launch failure, or the onestop backstop
@@ -336,11 +366,7 @@ supervisor_rc_post_stop(struct svc_runtime *svc)
 {
 
 	if (svc->remove_pending) {
-		unsigned idx;
-
-		idx = (unsigned)(svc - sd.services);
-		svc_remove(idx);
-		svc_reregister_kevents(switchboard_kq);
+		svc_remove(svc);
 		return;
 	}
 	if (svc->reload_pending) {
@@ -378,13 +404,14 @@ supervisor_command_exited(struct svc_runtime *svc, int exit_status)
 	rc_stopping = svc->rc_stopping;
 	was_stopping = (svc->state == SVC_STATE_STOPPING);
 
-	waitpid(svc->pid, NULL, WNOHANG);
 	cancel_stop_timer(svc);
 	if (svc->pd_fd >= 0) {
 		(void)close(svc->pd_fd);	/* EVFILT_PROCDESC auto-removed */
 		svc->pd_fd = -1;
 	}
 	svc->pid = 0;
+	/* The command is gone: its unit's activation sources may fire again. */
+	activation_source_resume(svc, switchboard_kq);
 
 	if (svc->rc_enable_probe) {
 		/*
@@ -476,9 +503,14 @@ supervisor_finish_native_exit(struct svc_runtime *svc, int exit_status,
     bool was_stopping, bool reload_pending, bool remove_pending,
     time_t uptime_sec)
 {
+	bool resume;
 
+	/* A restart that found this cleanup pending runs now. */
+	resume = svc->cleanup.restart;
+	svc->cleanup.restart = false;
 	svc_run_container_remove(svc->manifest.label, svc->owner_uid);
 	svc->state = SVC_STATE_STOPPED;
+	activation_source_resume(svc, switchboard_kq);
 	/*
 	 * The exit itself was logged when the process went away, possibly
 	 * long before its coalition's cleanup let the unit leave STOPPING.
@@ -489,11 +521,7 @@ supervisor_finish_native_exit(struct svc_runtime *svc, int exit_status,
 	syslog(LOG_INFO, "service %s: stopped", svc->manifest.label);
 
 	if (was_stopping && remove_pending) {
-		unsigned idx;
-
-		idx = (unsigned)(svc - sd.services);
-		svc_remove(idx);
-		svc_reregister_kevents(switchboard_kq);
+		svc_remove(svc);
 		return;
 	}
 
@@ -568,9 +596,19 @@ supervisor_finish_native_exit(struct svc_runtime *svc, int exit_status,
 		return;
 	}
 
-	/* No restart if we asked it to stop. */
-	if (was_stopping)
+	/*
+	 * No restart if we asked it to stop, unless a restart was waiting for
+	 * this cleanup (a failed launch's teardown, for one).
+	 */
+	if (was_stopping) {
+		if (resume) {
+			syslog(LOG_INFO, "service %s: cleanup complete, "
+			    "running the postponed restart",
+			    svc->manifest.label);
+			svc_restart_now(svc, switchboard_kq);
+		}
 		return;
+	}
 
 	switch (svc->manifest.restart) {
 	case SVC_RESTART_NEVER:
@@ -602,6 +640,7 @@ supervisor_finish_native_exit(struct svc_runtime *svc, int exit_status,
 		SWITCHBOARD_PROBE_SVC_DISABLED(svc->manifest.label,
 		    svc->restart_count);
 		svc->state = SVC_STATE_STOPPED;
+		svc->disabled = true;
 		return;
 	}
 
@@ -617,17 +656,13 @@ supervisor_finish_native_exit(struct svc_runtime *svc, int exit_status,
 	}
 }
 
-/* Rebinding after slot compaction must preserve the original deadline. */
-int
-supervisor_cleanup_rebind(struct svc_runtime *svc, int kq)
+/* Register the cleanup watches: child exit, coalition, deadline. */
+static int
+supervisor_cleanup_arm(struct svc_runtime *svc, int kq)
 {
 	struct kevent event;
-	struct timespec now;
-	int64_t milliseconds;
 	int error = 0;
 
-	if (!svc->cleanup.pending)
-		return (0);
 	if (svc->cleanup.child_pending && svc->pd_fd >= 0) {
 		EV_SET(&event, svc->pd_fd, EVFILT_PROCDESC, EV_ADD,
 		    NOTE_EXIT, 0, svc);
@@ -639,28 +674,19 @@ supervisor_cleanup_rebind(struct svc_runtime *svc, int kq)
 		if (kevent(kq, &event, 1, NULL, 0, NULL) == -1)
 			error = errno;
 	}
-	if (svc->cleanup.timer_ident == 0) {
-		if (error != 0) {
-			svc->cleanup.error = error;
-			errno = error;
-		}
-		return (error != 0 ? -1 : 0);
+	if (svc->cleanup.timer_ident != 0) {
+		EV_SET(&event, svc->cleanup.timer_ident, EVFILT_TIMER,
+		    EV_ADD | EV_ONESHOT, NOTE_SECONDS, CLEANUP_WAIT_SECONDS,
+		    svc);
+		if (kevent(kq, &event, 1, NULL, 0, NULL) == -1 && error == 0)
+			error = errno;
 	}
-	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
-		svc->cleanup.error = errno;
-		return (-1);
-	}
-	milliseconds = (svc->cleanup.deadline.tv_sec - now.tv_sec) * 1000 +
-	    (svc->cleanup.deadline.tv_nsec - now.tv_nsec + 999999) / 1000000;
-	EV_SET(&event, svc->cleanup.timer_ident, EVFILT_TIMER,
-	    EV_ADD | EV_ONESHOT, NOTE_MSECONDS, MAX(milliseconds, 1), svc);
-	if (kevent(kq, &event, 1, NULL, 0, NULL) == -1 && error == 0)
-		error = errno;
 	if (error != 0) {
 		svc->cleanup.error = error;
 		errno = error;
+		return (-1);
 	}
-	return (error != 0 ? -1 : 0);
+	return (0);
 }
 
 static void
@@ -716,10 +742,35 @@ supervisor_cleanup_progress(struct svc_runtime *svc)
 	else
 		error = state.cleanup_error != 0 ? state.cleanup_error : EBUSY;
 	svc->cleanup.error = error;
-	syslog(LOG_ERR, "service %s: cleanup unconfirmed: %s; retaining runtime",
-	    svc->manifest.label, strerror(error));
+	svc->cleanup.restart = false;
+	syslog(LOG_ERR, "service %s: cleanup failed: %s; the unit stays down "
+	    "until an operator starts it", svc->manifest.label, strerror(error));
 	supervisor_cleanup_disarm(svc);
 	return (false);
+}
+
+/*
+ * An operator starts a unit whose cleanup failed (svc_cleanup_failed()):
+ * accept the failure and finish the unit's exit as a completed cleanup
+ * would, so a pending removal or reload applies.  The caller has checked
+ * that the previous process exited.  Returns true when that finish removed
+ * the unit, which the caller must then no longer use.
+ */
+bool
+supervisor_cleanup_acknowledge(struct svc_runtime *svc)
+{
+	bool removing;
+
+	syslog(LOG_WARNING, "service %s: failed cleanup (%s) accepted by an "
+	    "operator", svc->manifest.label, strerror(svc->cleanup.error));
+	removing = svc->remove_pending;
+	supervisor_cleanup_disarm(svc);
+	svc->cleanup.pending = false;
+	svc->cleanup.error = 0;
+	svc->cleanup.restart = false;
+	supervisor_finish_native_exit(svc, svc->cleanup.exit_status, true,
+	    svc->reload_pending, removing, svc->cleanup.uptime_sec);
+	return (removing);
 }
 
 void
@@ -756,12 +807,9 @@ supervisor_begin_native_cleanup(struct svc_runtime *svc, int exit_status,
 	svc->cleanup.fd = capability_coalition_watch(svc->coalition_fd);
 	if (svc->cleanup.fd < 0 && error == 0)
 		error = errno;
-	if (error == 0) {
-		svc->cleanup.deadline = now;
-		svc->cleanup.deadline.tv_sec += CLEANUP_WAIT_SECONDS;
+	if (error == 0)
 		svc->cleanup.timer_ident = ++cleanup_timer_next_ident;
-	}
-	if (supervisor_cleanup_rebind(svc, switchboard_kq) == -1 && error == 0)
+	if (supervisor_cleanup_arm(svc, switchboard_kq) == -1 && error == 0)
 		error = errno;
 	svc_close_fds(svc);
 	if (error != 0) {
@@ -797,7 +845,6 @@ supervisor_handle_procdesc(struct kevent *kev)
 		if (svc->cleanup.child_pending &&
 		    (int)kev->ident == svc->pd_fd && (kev->fflags & NOTE_EXIT)) {
 			/* Kernel emits NOTE_EXIT after process_exit_resources. */
-			(void)waitpid(svc->pid, NULL, WNOHANG);
 			close(svc->pd_fd);
 			svc->pd_fd = -1;
 			svc->cleanup.child_pending = false;
@@ -899,7 +946,6 @@ supervisor_handle_procdesc(struct kevent *kev)
 
 		was_stopping = (svc->state == SVC_STATE_STOPPING);
 
-		waitpid(svc->pid, NULL, WNOHANG);
 		cancel_stop_timer(svc);
 		/*
 		 * The process is gone, so any idle timer armed for it (e.g. a
@@ -993,6 +1039,8 @@ supervisor_handle_timer(struct kevent *kev)
 		}
 		syslog(LOG_INFO, "service %s: restart timer fired",
 		    svc->manifest.label);
+		/* Sources a refused launch quieted may create demand again. */
+		activation_source_resume(svc, switchboard_kq);
 		svc_restart_now(svc, switchboard_kq);
 		return;
 	}
@@ -1104,6 +1152,7 @@ svc_graceful_stop(struct svc_runtime *svc, int kq)
 	if (svc->cleanup.pending) {
 		/* A stop during crash cleanup must suppress automatic restart. */
 		svc->cleanup.was_stopping = true;
+		svc->cleanup.restart = false;
 		return;
 	}
 	if (svc->state != SVC_STATE_RUNNING &&
@@ -1176,8 +1225,12 @@ svc_quiesce_complete(struct svc_runtime *svc, int status, int kq)
 		return;
 	svc->quiesce_pending = false;
 	SWITCHBOARD_PROBE_QUIESCE_COMPLETE(svc->manifest.label, status);
-	if (svc->idle_stop_pending && status == EBUSY) {
-		/* Accepted work won the race with the idle timer. */
+	/*
+	 * Accepted work won the race with the idle timer.  A stop that came
+	 * after the idle stop (shutdown, removal, reload) still stands.
+	 */
+	if (svc->idle_stop_pending && status == EBUSY && !sd.shutting_down &&
+	    !svc->remove_pending && !svc->reload_pending) {
 		cancel_stop_timer(svc);
 		svc->idle_stop_pending = false;
 		svc->idle_timeout_sec = 0;
@@ -1210,11 +1263,11 @@ supervisor_stop(int kq)
 
 	syslog(LOG_INFO, "supervisor: stopping %u services", sd.nservices);
 
-	/* Stop in reverse dependency order.  Services that are already
-	 * stopped or waiting for a restart timer are removed immediately.
-	 * Running services get graceful stop + remove on NOTE_EXIT. */
+	/* Stop in reverse load order (units carry no dependency order).
+	 * Units already stopped, done or waiting for a restart timer are
+	 * removed now; the others are stopped and removed once they exit. */
 	for (i = sd.nservices; i > 0; i--) {
-		struct svc_runtime *svc = &sd.services[i - 1];
+		struct svc_runtime *svc = sd.services[i - 1];
 
 		/* Cancel any pending restart timer. */
 		if (svc->restart_pending && svc->timer_ident != 0) {
@@ -1225,28 +1278,50 @@ supervisor_stop(int kq)
 			svc->restart_pending = false;
 		}
 
-		if (svc->state == SVC_STATE_STOPPED) {
-			svc_remove(i - 1);
+		if (svc->state == SVC_STATE_STOPPED ||
+		    svc->state == SVC_STATE_DONE) {
+			svc_remove(svc);
 			continue;
 		}
 
 		svc->remove_pending = true;
 		svc_graceful_stop(svc, kq);
 	}
-	svc_reregister_kevents(kq);
 }
 
+/*
+ * True once no unit has a stop still to come: every unit is stopped or done,
+ * or waits on a cleanup that cannot complete (its observation failed or its
+ * deadline passed).  Units that are stopped but not removed (a unit loaded
+ * during the shutdown) need no wait.
+ */
 bool
 supervisor_is_stopped(void)
 {
+	struct svc_runtime *svc;
+	unsigned i;
 
-	return (sd.services == NULL || sd.nservices == 0);
+	for (i = 0; i < sd.nservices; i++) {
+		svc = sd.services[i];
+		if (svc->cleanup.pending) {
+			if (svc->cleanup.error == 0)
+				return (false);
+			continue;
+		}
+		if (svc->state != SVC_STATE_STOPPED &&
+		    svc->state != SVC_STATE_DONE)
+			return (false);
+	}
+	return (true);
 }
 
 void
 supervisor_teardown_state(void)
 {
+	unsigned i;
 
+	for (i = 0; i < sd.nservices; i++)
+		free(sd.services[i]);
 	free(sd.services);
 	sd.services = NULL;
 	sd.nservices = 0;

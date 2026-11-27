@@ -36,10 +36,10 @@ install_dir(void)
 	const char *dir, *root;
 	static char path[PATH_MAX];
 
-	dir = getenv("SWITCHBOARD_BUNDLE_DIR_USER");
+	dir = secure_getenv("SWITCHBOARD_BUNDLE_DIR_USER");
 	if (dir != NULL && dir[0] != '\0')
 		return (dir);
-	root = getenv("SWITCHBOARD_LIFECYCLE_ROOT");
+	root = secure_getenv("SWITCHBOARD_LIFECYCLE_ROOT");
 	if (root == NULL || strcmp(root, "/") == 0)
 		return (INSTALL_DIR);
 	if (snprintf(path, sizeof(path), "%s%s", root, INSTALL_DIR) >= (int)sizeof(path))
@@ -412,9 +412,9 @@ cmd_install(const char *bundle_path)
 		return (1);
 	}
 
-	root = getenv("SWITCHBOARD_LIFECYCLE_ROOT");
+	root = secure_getenv("SWITCHBOARD_LIFECYCLE_ROOT");
 	if (root == NULL || root[0] == '\0') {
-		if (getenv("SWITCHBOARD_BUNDLE_DIR_USER") != NULL) {
+		if (secure_getenv("SWITCHBOARD_BUNDLE_DIR_USER") != NULL) {
 			warnx("install: custom bundle directory requires SWITCHBOARD_LIFECYCLE_ROOT");
 			return (1);
 		}

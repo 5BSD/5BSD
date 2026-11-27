@@ -15,7 +15,8 @@ switchboard_fd_budget_get_stats(struct switchboard_fd_budget_stats *stats)
 
 #include "../management.c"
 
-static unsigned stop_calls;
+static unsigned stop_calls, launch_calls, acknowledge_calls;
+static bool launch_allowed;
 
 const char *
 svc_boot_id(char *buffer, size_t capacity)
@@ -28,8 +29,8 @@ struct svc_runtime *
 svc_by_label(const char *label)
 {
 	for (unsigned i = 0; i < sd.nservices; i++)
-		if (strcmp(sd.services[i].manifest.label, label) == 0)
-			return (&sd.services[i]);
+		if (strcmp(sd.services[i]->manifest.label, label) == 0)
+			return (sd.services[i]);
 	return (NULL);
 }
 
@@ -45,15 +46,38 @@ void
 svc_cancel_restart(struct svc_runtime *svc, int kq)
 {
 	(void)svc; (void)kq;
-	atf_tc_fail("unexpected restart cancellation");
+	if (!launch_allowed)
+		atf_tc_fail("unexpected restart cancellation");
 }
 
 int
 svc_exec(struct svc_runtime *svc, int kq)
 {
-	(void)svc; (void)kq;
-	atf_tc_fail("cleanup permitted unexpected launch");
-	return (-1);
+	(void)kq;
+	if (!launch_allowed)
+		atf_tc_fail("cleanup permitted unexpected launch");
+	ATF_REQUIRE(!svc->cleanup.pending);
+	launch_calls++;
+	svc->state = SVC_STATE_STARTING;
+	return (0);
+}
+
+void
+activation_source_resume(struct svc_runtime *svc, int kq)
+{
+	(void)kq;
+	svc->activation_suspended = false;
+}
+
+/* What supervisor.c does with an accepted failed cleanup, for these cases. */
+bool
+supervisor_cleanup_acknowledge(struct svc_runtime *svc)
+{
+	acknowledge_calls++;
+	svc->cleanup.pending = false;
+	svc->cleanup.error = 0;
+	svc->state = SVC_STATE_STOPPED;
+	return (false);
 }
 
 void
@@ -85,7 +109,7 @@ ATF_TC_BODY(cleanup_status, tc)
 	ATF_REQUIRE(svc != NULL);
 	strlcpy(svc->manifest.label, "org.test.cleanup", sizeof(svc->manifest.label));
 	svc->state = SVC_STATE_STOPPING;
-	sd.services = svc;
+	sd.services = &svc;
 	sd.nservices = 1;
 	svc->cleanup.pending = true;
 	svc->cleanup.child_pending = true;
@@ -126,7 +150,7 @@ ATF_TC_BODY(cleanup_commands, tc)
 	svc->owner_uid = (uid_t)-1;
 	svc->state = SVC_STATE_STOPPING;
 	svc->cleanup.pending = true;
-	sd.services = svc;
+	sd.services = &svc;
 	sd.nservices = 1;
 	/* Management authorization still precedes the pending-cleanup branch. */
 	sctl_execute_op(SCTL_OP_STOP_SVC, svc->manifest.label,
@@ -147,10 +171,54 @@ ATF_TC_BODY(cleanup_commands, tc)
 	sd.services = NULL;
 }
 
+/*
+ * A cleanup whose coalition reported failure leaves the unit with nothing
+ * observing it: status calls that failed, and an operator start accepts it
+ * and starts the unit.
+ */
+ATF_TC_WITHOUT_HEAD(cleanup_failed_operator_start);
+ATF_TC_BODY(cleanup_failed_operator_start, tc)
+{
+	struct svc_runtime *svc;
+	struct sctl_reply reply;
+	char summary[2048];
+
+	(void)tc;
+	svc = calloc(1, sizeof(*svc));
+	ATF_REQUIRE(svc != NULL);
+	strlcpy(svc->manifest.label, "org.test.cleanup", sizeof(svc->manifest.label));
+	svc->manifest.management = SVC_MGMT_SYSTEM;
+	svc->owner_uid = (uid_t)-1;
+	/* As supervisor_cleanup_progress() leaves a failed cleanup. */
+	svc->state = SVC_STATE_STOPPING;
+	svc->cleanup.pending = true;
+	svc->cleanup.error = EIO;
+	svc->cleanup.fd = -1;
+	sd.services = &svc;
+	sd.nservices = 1;
+	sctl_cmd_status(&reply, summary, sizeof(summary));
+	ATF_CHECK_MSG(strstr(summary, " cleanup=failed ") != NULL,
+	    "status: %s", summary);
+
+	launch_allowed = true;
+	launch_calls = acknowledge_calls = 0;
+	sctl_execute_op(SCTL_OP_START_SVC, svc->manifest.label,
+	    strlen(svc->manifest.label) + 1, true, 1001, &reply, summary,
+	    sizeof(summary));
+	ATF_CHECK_EQ_MSG(0, reply.status, "start: %s", summary);
+	ATF_CHECK_EQ(1, launch_calls);
+	ATF_CHECK(!svc->cleanup.pending);
+	launch_allowed = false;
+	free(svc);
+	sd.services = NULL;
+	sd.nservices = 0;
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, cleanup_status);
 	ATF_TP_ADD_TC(tp, cleanup_commands);
+	ATF_TP_ADD_TC(tp, cleanup_failed_operator_start);
 	return (atf_no_error());
 }
 

@@ -27,6 +27,27 @@ assert_stack_alive()
 	    atf_fail "Capsule status request failed"
 }
 
+# Wait, on file events and with no deadline of its own, until FILE exists
+# and is not empty, or contains TEXT (capd_wait_file); the case's ATF
+# timeout bounds the wait.
+svc_wait()
+{
+	"$(atf_get_srcdir)/capd_wait_file" "$@"
+}
+
+# The stack log's line number of the first match of a regular expression.
+svc_log_line()
+{
+	grep -En "$1" "$logfile" | head -n 1 | cut -d: -f1
+}
+
+# Fail with the stack log on stderr.
+fail_case()
+{
+	cat "$logfile" >&2 2>/dev/null
+	atf_fail "$1"
+}
+
 # ===================================================================
 # Restart policy: restart=never
 # ===================================================================
@@ -200,6 +221,103 @@ circuit_breaker_disables_cleanup()
 }
 
 # ===================================================================
+# Circuit breaker: a disabled unit stays down until an operator starts it
+# ===================================================================
+
+atf_test_case disabled_unit_stays_down cleanup
+disabled_unit_stays_down_head()
+{
+	atf_set "descr" "a unit the circuit breaker disabled shows as disabled, its activation timer does not relaunch it, and an operator start does"
+	atf_set "require.user" "root"
+	atf_set "timeout" "300"
+	require_capsule_stack_kmods
+}
+disabled_unit_stays_down_body()
+{
+	local starts
+
+	use_private_control
+	prepare_paths
+	# Crashes at once; its one-second timer keeps creating demand.
+	make_fixture_svc system org.test.crashy.unit \
+	    'restart = "always"; max_failures = 3;
+activation { boot = true; timer = { interval = 1; } }' \
+	    lifecycle-exit "${WORK}/crashy.pid" 1 >/dev/null
+	start_stack
+	svc_wait "$logfile" " times, disabling" ||
+	    fail_case "the circuit breaker did not trip"
+	starts=$(grep -c 'service org\.test\.crashy\.unit/unit: started pid' "$logfile")
+	atf_check -s exit:0 -o match:"org\.test\.crashy\.unit/unit +stopped +disabled" \
+	    "$SWITCHBOARDCTL" status
+
+	# The next timer fire after the disable is refused, and launches nothing.
+	svc_wait "$logfile" \
+	    "activation: timer launch of 'org.test.crashy.unit/unit' failed" ||
+	    fail_case "the timer's demand was not refused"
+	[ "$(grep -c 'service org\.test\.crashy\.unit/unit: started pid' "$logfile")" -eq "$starts" ] ||
+	    fail_case "the timer relaunched the disabled unit"
+
+	# An operator start clears it.
+	rm -f crashy.pid
+	atf_check -s exit:0 -o match:"starting" \
+	    "$SWITCHBOARDCTL" start "org.test.crashy.unit/unit"
+	svc_wait crashy.pid || fail_case "the operator start did not launch the unit"
+	assert_stack_alive
+}
+disabled_unit_stays_down_cleanup()
+{
+	cleanup_common
+	rm -f crashy.pid
+}
+
+atf_test_case disabled_socket_unit_stays_quiet cleanup
+disabled_socket_unit_stays_quiet_head()
+{
+	atf_set "descr" "a connection to a disabled socket-activated unit is refused once; the listener does not keep firing"
+	atf_set "require.user" "root"
+	atf_set "timeout" "300"
+	require_capsule_stack_kmods
+}
+disabled_socket_unit_stays_quiet_body()
+{
+	local n
+
+	use_private_control
+	prepare_paths
+	# Crashes at once until the circuit breaker disables it.
+	make_fixture_svc system org.test.sock.unit \
+	    "restart = \"always\"; max_failures = 2;
+activation { boot = true; socket = { name = \"l\"; listen = \"unix:${WORK}/sock.unit\"; } }" \
+	    lifecycle-exit "${WORK}/sock.pid" 1 >/dev/null
+	start_stack
+	svc_wait "$logfile" " times, disabling" ||
+	    fail_case "the circuit breaker did not trip"
+
+	# A client connects and is never accepted: the listener stays readable.
+	nc -U -d "${WORK}/sock.unit" >/dev/null 2>&1 &
+	echo $! > nc.pid
+	svc_wait "$logfile" "activation: socket " ||
+	    fail_case "the connection created no demand"
+	# Each control request is answered after everything queued before it:
+	# a listener that fired on every pass would have logged again by the
+	# second answer.
+	"$SWITCHBOARDCTL" reload >/dev/null || fail_case "reload failed"
+	"$SWITCHBOARDCTL" reload >/dev/null || fail_case "reload failed"
+	n=$(grep -c "activation: socket .*'org\.test\.sock\.unit/unit'" "$logfile")
+	[ "$n" -eq 1 ] ||
+	    fail_case "one pending connection created demand $n times"
+	grep -q "activation: socket launch of 'org.test.sock.unit/unit' failed" \
+	    "$logfile" || fail_case "the disabled unit was not refused"
+	assert_stack_alive
+}
+disabled_socket_unit_stays_quiet_cleanup()
+{
+	[ ! -f nc.pid ] || kill "$(cat nc.pid)" 2>/dev/null || true
+	cleanup_common
+	rm -f nc.pid sock.pid
+}
+
+# ===================================================================
 # Shutdown: SIGTERM-ignoring service gets SIGKILL after timeout
 # ===================================================================
 
@@ -241,6 +359,58 @@ shutdown_kills_sigterm_ignorer_cleanup()
 		kill -KILL "$(cat ignore-term.pid)" 2>/dev/null || true
 	fi
 	cleanup_common
+}
+
+# ===================================================================
+# Shutdown: the drain waits for each unit's stop, however busy
+# ===================================================================
+
+atf_test_case shutdown_drain_waits_under_load cleanup
+shutdown_drain_waits_under_load_head()
+{
+	atf_set "descr" "the shutdown drain waits for a quiescing unit to stop while that unit sends SwitchBoard many requests"
+	atf_set "require.user" "root"
+	atf_set "timeout" "300"
+	require_capsule_stack_kmods
+}
+shutdown_drain_waits_under_load_body()
+{
+	capd_require_unit_issuer
+	local svc_pid
+
+	prepare_paths
+	# Asked to quiesce, the unit sends 700 requests, one at a time and so
+	# at least one SwitchBoard event each: more than the 600 event
+	# iterations that bounded the drain.  Then it acknowledges and exits 0.
+	make_fixture_svc system org.test.flood.unit \
+	    'activation { boot = true; ipc = ["org.test.flood.svc"]; }' \
+	    lifecycle-quiesce-flood org.test.flood.svc "${WORK}/flood.ready" \
+	    "${WORK}/flood.done" 700 >/dev/null
+
+	start_stack
+	svc_wait flood.ready || fail_case "service did not start"
+	svc_pid=$(sed -n 's/^ready pid=//p' flood.ready)
+	[ -n "$svc_pid" ] || fail_case "service recorded no pid"
+
+	capd_capsule_ctl "$sockpath" shutdown >/dev/null ||
+	    atf_fail "Capsule shutdown request failed"
+	wait "$daemon_pid" 2>/dev/null || true
+	daemon_pid=
+	pwait "$svc_pid" 2>/dev/null || true
+	[ -s flood.done ] ||
+	    fail_case "SwitchBoard finished its drain before the unit stopped"
+	cat flood.done
+	grep -Eq 'service org\.test\.flood\.unit[^ ]*: exited status 0' \
+	    "$logfile" || fail_case "the unit did not exit by itself"
+}
+shutdown_drain_waits_under_load_cleanup()
+{
+	if [ -f flood.ready ]; then
+		kill -KILL "$(sed -n 's/^ready pid=//p' flood.ready)" \
+		    2>/dev/null || true
+	fi
+	cleanup_common
+	rm -f flood.ready flood.done
 }
 
 # ===================================================================
@@ -1221,6 +1391,46 @@ ambient_lookup_returns_activation_refusal_cleanup()
 	    cancel-provider.result
 }
 
+atf_test_case ambient_lookup_disabled_provider_refused cleanup
+ambient_lookup_disabled_provider_refused_head()
+{
+	atf_set "descr" \
+	    "a lookup of a name whose provider the circuit breaker disabled is refused with ECANCELED, not reported as unregistered"
+	atf_set "require.user" "root"
+	atf_set "timeout" "180"
+	require_capsule_stack_kmods
+}
+ambient_lookup_disabled_provider_refused_body()
+{
+	capd_require_unit_issuer
+	find_capd_service_fixture
+	prepare_paths
+	capd_find_lookup_exec
+	# Crashes at once, before it claims its name, until the breaker trips.
+	make_svc_bin system org.test.broken.svc \
+	    "activation { boot = true; ipc = [\"org.test.broken.svc\"]; }
+visible = [\"user\"];
+restart = \"always\";
+max_failures = 2;
+arguments = [\"lifecycle-exit\", \"$(pwd)/broken.pid\", \"1\"];" \
+	    "$capd_service_fixture" >/dev/null
+	write_config
+	start_stack
+	svc_wait "$logfile" " times, disabling" ||
+	    fail_case "the circuit breaker did not trip"
+	ambient_probe_start org.test.broken.svc probe.out
+	# 85: ECANCELED, the disabled provider's refusal.
+	ambient_probe_expect \
+	    "^FAIL org\.test\.broken\.svc errno=85 " \
+	    probe.out
+	assert_stack_alive
+}
+ambient_lookup_disabled_provider_refused_cleanup()
+{
+	cleanup_common
+	rm -f probe.out broken.pid
+}
+
 atf_test_case ambient_lookup_switchboard_death_resets cleanup
 ambient_lookup_switchboard_death_resets_head()
 {
@@ -1478,6 +1688,93 @@ watchdog_user_unit_restarts_cleanup()
 	rm -f wdu.count wdu.launch1 wdu.launch2
 }
 
+# ===================================================================
+# Unit removal: the other units' timers keep working
+# ===================================================================
+
+atf_test_case removal_keeps_unit_timers cleanup
+removal_keeps_unit_timers_head()
+{
+	atf_set "descr" "removing a stopped unit leaves the idle and watchdog timers of the units added after it working"
+	atf_set "require.user" "root"
+	atf_set "timeout" "300"
+	require_capsule_stack_kmods
+}
+removal_keeps_unit_timers_body()
+{
+	local timer removal idle watchdog
+
+	capd_require_unit_issuer
+	find_capd_service_fixture
+	prepare_paths
+	# The timers under test, and a witness whose own idle timer bounds the
+	# wait for them: its unit is first in SwitchBoard's unit index, so a
+	# removal never moves it, and its timeout is twice theirs, armed before
+	# theirs, so it fires after them once setup has taken less than one
+	# period.  Setup is two reloads.
+	timer=30
+	make_svc_bin system org.test.keep.witness \
+	    "activation { boot = true; ipc = [\"org.test.keep.witness\"]; }
+visible = [\"user\"];
+arguments = [\"idle-provider\", \"org.test.keep.witness\", \"$((timer * 2))\", \"$(pwd)/kwit\"];" \
+	    "$capd_service_fixture" >/dev/null
+	write_config
+	start_stack
+	svc_wait kwit.launch1 || fail_case "the witness did not start"
+
+	# A unit that exits at once and stays stopped, after the witness:
+	# removed below.
+	make_fixture_svc system org.test.gone.unit \
+	    'restart = "never";
+activation { boot = true; }' \
+	    lifecycle-exit "${WORK}/gone.pid" 0 >/dev/null
+	reload_stack
+	svc_wait gone.pid || fail_case "the unit to remove did not start"
+	svc_wait "$logfile" "service org.test.gone.unit/unit: stopped" ||
+	    fail_case "the unit to remove did not stop"
+
+	# Units added now follow the stopped one in the index.
+	make_svc_bin system org.test.keep.idle \
+	    "activation { boot = true; ipc = [\"org.test.keep.idle\"]; }
+visible = [\"user\"];
+arguments = [\"idle-provider\", \"org.test.keep.idle\", \"$timer\", \"$(pwd)/kidle\"];" \
+	    "$capd_service_fixture" >/dev/null
+	make_svc_bin system org.test.keep.wd \
+	    "activation { boot = true; }
+watchdog { interval = $timer; }
+restart = \"always\";
+arguments = [\"watchdog-wedge\", \"org.test.keep.wd\", \"$(pwd)/kwd\"];" \
+	    "$capd_service_fixture" >/dev/null
+	reload_stack
+	svc_wait kidle.launch1 || fail_case "idle provider did not start"
+	svc_wait kwd.launch1 || fail_case "watchdog provider did not start"
+
+	rm -rf "${APPS_DIR}/org.test.gone.unit.cap"
+	reload_stack
+	svc_wait "$logfile" "removing stopped service 'org.test.gone.unit/unit'" ||
+	    fail_case "the stopped unit was not removed"
+
+	svc_wait "$logfile" \
+	    "service org.test.keep.witness/witness: idle timeout, stopping" ||
+	    fail_case "the witness's idle timer did not fire"
+	grep -q 'service org\.test\.keep\.idle/idle: idle timeout, stopping' \
+	    "$logfile" || fail_case "idle timer lost after a unit removal"
+	grep -q 'service org\.test\.keep\.wd/wd: watchdog expired' \
+	    "$logfile" || fail_case "watchdog lost after a unit removal"
+	removal=$(svc_log_line "removing stopped service 'org\.test\.gone\.unit")
+	idle=$(svc_log_line 'org\.test\.keep\.idle[^ ]*: idle timeout, stopping')
+	watchdog=$(svc_log_line 'org\.test\.keep\.wd[^ ]*: watchdog expired')
+	[ "$removal" -lt "$idle" ] && [ "$removal" -lt "$watchdog" ] ||
+	    fail_case "a timer fired before the removal (lines $removal $idle $watchdog); the case did not test a removal"
+	assert_stack_alive
+}
+removal_keeps_unit_timers_cleanup()
+{
+	cleanup_common
+	rm -f gone.pid kidle.count kidle.launch1 kwd.count kwd.launch1 kwd.launch2 \
+	    kwit.count kwit.launch1
+}
+
 atf_init_test_cases()
 {
 	# Restart policies
@@ -1486,10 +1783,13 @@ atf_init_test_cases()
 	atf_add_test_case restart_on_failure_restarts_on_error
 	atf_add_test_case restart_always_restarts_clean
 	atf_add_test_case circuit_breaker_disables
+	atf_add_test_case disabled_unit_stays_down
+	atf_add_test_case disabled_socket_unit_stays_quiet
 	atf_add_test_case restart_backoff
 
 	# Shutdown
 	atf_add_test_case shutdown_kills_sigterm_ignorer
+	atf_add_test_case shutdown_drain_waits_under_load
 	atf_add_test_case shutdown_kills_subtree
 	atf_add_test_case managed_quiesce_roundtrip
 	atf_add_test_case private_worker_channel
@@ -1501,6 +1801,7 @@ atf_init_test_cases()
 
 	# Reload
 	atf_add_test_case control_reload
+	atf_add_test_case removal_keeps_unit_timers
 
 	# Naming protocol
 	atf_add_test_case svc_unregister_explicit
@@ -1510,6 +1811,7 @@ atf_init_test_cases()
 	atf_add_test_case private_control_route
 	atf_add_test_case ambient_lookup_waits_for_slow_activation
 	atf_add_test_case ambient_lookup_returns_activation_refusal
+	atf_add_test_case ambient_lookup_disabled_provider_refused
 	atf_add_test_case ambient_lookup_switchboard_death_resets
 	atf_add_test_case ambient_lookup_requester_exit_answers
 	atf_add_test_case capmode_is_authoritative_readiness

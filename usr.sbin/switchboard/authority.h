@@ -48,7 +48,6 @@ int svc_authority_bind(const struct svc_domain *, int);
 int svc_authority_bind_invocation(const struct svc_domain *, int);
 void svc_authority_revoke_unit(const struct svc_runtime *);
 void svc_authority_collect(void);
-void svc_authority_teardown(void);
 void svc_authority_policy_init(void);
 int svc_authority_parse_boot(int, struct svc_domain *, struct svc_authority_scope *);
 int svc_authority_boot_policy(struct svc_domain *, const struct svc_authority_scope **);

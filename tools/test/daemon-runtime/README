@@ -4,8 +4,8 @@ Build the static VM-only PID 1 fixture with:
   make -j$(sysctl -n hw.ncpu) -C /usr/src/tools/test/daemon-runtime all
 Build libservice, BSDFilesystem and their tests from the same source state first.
 
-run-vm.py requires --root (a NO_ROOT staged world), --objtop (the standard
-/usr/obj/usr/src/amd64.amd64), a new --work beneath /usr/obj, --qemu and
+run-vm.py requires --root (a NO_ROOT staged world), --objtop (the object
+tree under /usr/obj, normally /usr/obj/usr/src/amd64.amd64), a new --work beneath /usr/obj, --qemu and
 --qemu-data. It requires exact staged/object kernel hashes and matching kernel
 configurations, and static test/fixture binaries. It copies inputs into its
 own staging tree, with root ownership represented in a makefs METALOG.
@@ -60,6 +60,14 @@ Use --oes-admission for the additional real Capsule/SwitchBoard .ucl allow/deny
 stack. Build its private static fixtures with tools/test/oes-admission/build.py;
 see that directory for the exact scope and invocation. This option implies
 --oes-factory and uses an OES-only provider with production factory code.
+Capsule boots as PID 1 as on a production kernel. runtime_init hands it one
+test switch, a SWITCHBOARD_BUNDLE_DIR_SYSTEM that names no directory; the run
+passes only if the boot's SwitchBoard logs that it ignored it. Otherwise:
+SwitchBoard runs its /etc/rc step, which fails at once because the fixture
+root has no /etc/rc or /bin/sh (its warning is in serial.log), mints the boot
+discovery route, and launches the admission bundles. runtime_init's tmpfs
+mounts stand in for rc's runtime storage. vm_elapsed_seconds and the serial
+timeline include that rc step.
 
 The OES gate also checks factory quota boundaries and ordinary filesystem
 mediation of a real intermediate-directory alias to /dev/oes. It proves the
@@ -208,7 +216,7 @@ timings and does not prove the sole cause of every earlier untraced failure.
 The --oes-admission option now also requires live coalition reload/removal
 acceptance using a private tmpfs bundle. See tools/test/oes-admission/README.
 --fixture-objtop selects a separately built static fixture tree beneath
-/usr/obj/usr/src, leaving --objtop as the authoritative kernel/module tree.
+/usr/obj, leaving --objtop as the authoritative kernel/module tree.
 This keeps fixture compilation from overwriting active world-build objects;
 all staged hashes, kernel checks and pass requirements still apply.
 

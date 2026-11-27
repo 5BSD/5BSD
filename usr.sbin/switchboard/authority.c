@@ -753,15 +753,6 @@ svc_authority_revoke_unit(const struct svc_runtime *svc)
 		}
 	}
 }
-void
-svc_authority_teardown(void)
-{
-	unsigned h;
-
-	for (h = 0; h < AUTH_BUCKETS; h++)
-		while (records[h] != NULL)
-			remove_record(&records[h]);
-}
 
 int
 svc_authority_issue_boot(struct svc_runtime *svc, int *out)

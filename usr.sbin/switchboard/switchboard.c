@@ -6,17 +6,18 @@
  * switchboard — service manager and naming registry.
  *
  * Started by capsule as its single child.  Inherits a mac_capability channel
- * on fd 3 for requesting activation tokens, channels, coalitions, named
- * capability-service descriptors, and kernel-module prerequisites from
- * Capsule.  Scans capability bundles, dependency-sorts, pdfork/execs
- * services, and manages their lifecycle (restart, shutdown).
+ * to Capsule (CAPSULE_CHANNEL_FD) and the delegated capability-service
+ * descriptors named by the SWITCHBOARD_*_FD variables.  Scans capability
+ * bundles, pdfork/execs services, and manages their lifecycle (restart,
+ * shutdown).
  *
  * Startup sequence:
- *   1. Inherit channel fd from CAPSULE_CHANNEL_FD env (fd 3)
- *   2. Create kqueue, register channel + signals
+ *   1. Take the inherited descriptors from the environment and lock them
+ *   2. Create kqueue, register the Capsule channel and signals
  *   3. Scan bundle directories
- *   4. Dependency sort
- *   5. Run /etc/rc, then fork/exec services (requesting tokens from capsule)
+ *   4. Apply the capprotect shield
+ *   5. Run /etc/rc (the boot's SwitchBoard only), then launch the boot
+ *      units in parallel (no ordering)
  *   6. Send CAPSULE_OP_READY to capsule to confirm this boot converged
  *   7. Enter event loop
  */
@@ -28,7 +29,6 @@
 #include <sys/sysctl.h>
 #include <sys/syscall.h>
 #include <sys/user.h>
-#include <sys/wait.h>
 
 #include <dev/mac_capability/mac_capability_capprotect_proto.h>
 #include <dev/mac_capability/mac_capability_isolation_proto.h>
@@ -69,6 +69,43 @@ _Static_assert(SB_NSS_NAME_MAX == sizeof(((struct svc_manifest *)0)->group),
 
 struct switchboard_state sd;
 int switchboard_kq;
+
+/*
+ * Whether this SwitchBoard is the boot's service manager (Capsule as PID 1
+ * started it) and whether the kernel is a test kernel
+ * (kern.mac_capability.test_issuer=1).  Set first thing in main().
+ */
+static bool switchboard_boot_manager;
+static bool switchboard_test_kernel;
+
+/*
+ * Test configuration in the environment (the bundle, user and run
+ * directories, the disable list, the rc switches) is honoured only where a
+ * test can have set it: on a test kernel, or in a SwitchBoard that is not the
+ * boot's (a test-local Capsule started it).  The boot's SwitchBoard on any
+ * other kernel ignores it.
+ */
+const char *
+switchboard_test_getenv(const char *name)
+{
+	const char *value;
+
+	value = getenv(name);
+	if (value != NULL && switchboard_boot_manager &&
+	    !switchboard_test_kernel) {
+		syslog(LOG_WARNING, "test configuration %s ignored: not a test "
+		    "kernel", name);
+		return (NULL);
+	}
+	return (value);
+}
+
+bool
+switchboard_is_boot_manager(void)
+{
+
+	return (switchboard_boot_manager);
+}
 
 const char *switchboard_bundle_dir_system = SWITCHBOARD_BUNDLE_DIR_SYSTEM_DEFAULT;
 const char *switchboard_bundle_dir_user = SWITCHBOARD_BUNDLE_DIR_USER_DEFAULT;
@@ -123,11 +160,6 @@ switchboard_dispatch_one(struct kevent *kev)
 			supervisor_reload(switchboard_kq,
 			    NULL, 0);
 			break;
-		case SIGCHLD:
-			/* Reap strays. */
-			while (waitpid(-1, NULL, WNOHANG) > 0)
-				;
-			break;
 		}
 		return;
 	}
@@ -141,6 +173,12 @@ switchboard_dispatch_one(struct kevent *kev)
 	if (kev->filter == EVFILT_READ &&
 	    (int)kev->ident == sd.capsule_channel_fd) {
 		if (kev->flags & EV_EOF) {
+			struct kevent change;
+
+			/* Level-triggered: report the loss once. */
+			EV_SET(&change, sd.capsule_channel_fd, EVFILT_READ,
+			    EV_DELETE, 0, 0, NULL);
+			(void)kevent(switchboard_kq, &change, 1, NULL, 0, NULL);
 			syslog(LOG_CRIT,
 			    "Capsule exited, stopping all services");
 			SWITCHBOARD_PROBE_CAPSULE_DISCONNECTED();
@@ -164,12 +202,6 @@ switchboard_dispatch_one(struct kevent *kev)
 		return;
 	}
 
-	/*
-	 * Label-reclaim bridge listener (docs/book/src/plane/containers-and-storage.md
-	 * §5b) — the sole deliberate UNIX socket.  Its listener fd carries
-	 * udata == NULL, so it is routed by fd identity here, before the generic
-	 * udata-keyed channel handling below.
-	 */
 	/* Process descriptor events — service lifecycle. */
 	if (kev->filter == EVFILT_PROCDESC) {
 		supervisor_handle_procdesc(kev);
@@ -339,12 +371,33 @@ main(int argc, char *argv[])
 	 */
 	if (syscall(SYS_cap_process, CAP_AUTH_CLEAR, -1, 0, NULL) == -1)
 		err(1, "drop launch authority");
+	{
+		size_t len;
+		int knob;
+
+		len = sizeof(knob);
+		switchboard_test_kernel = sysctlbyname(
+		    "kern.mac_capability.test_issuer", &knob, &len, NULL,
+		    0) == 0 && knob == 1;
+	}
+	/*
+	 * LOG_CONS: during early boot switchboard runs before syslogd exists, so
+	 * syslog() to /var/run/log is undeliverable; LOG_CONS makes those
+	 * messages fall back to /dev/console instead of vanishing.  Essential
+	 * for diagnosing a boot that wedges before convergence.
+	 */
+	openlog("switchboard", LOG_PID | LOG_NDELAY | LOG_PERROR | LOG_CONS,
+	    LOG_DAEMON);
+
 	/*
 	 * Started by PID 1, we must be excluded.  PID 1 never starts us
 	 * without an issuer and a Core authority, and it executes the image
 	 * descriptor that authority pins (fexecve), so this fails only when
-	 * the kernel refused the Core role at exec.  Say so loudly (review
-	 * D3).
+	 * the kernel refused the Core role at exec.  Such a SwitchBoard must
+	 * neither bring the system up half-way nor skip /etc/rc quietly: it
+	 * says why on the console and exits before READY, with the status of
+	 * its other start-up failures, which capsule(8) treats as a failed
+	 * boot (owner decision 2026-11-26).
 	 */
 	if (getppid() == 1) {
 		struct kinfo_proc kp;
@@ -352,13 +405,19 @@ main(int argc, char *argv[])
 		size_t kplen = sizeof(kp);
 
 		mib[3] = getpid();
-		if (sysctl(mib, 4, &kp, &kplen, NULL, 0) == 0 &&
-		    (kp.ki_flag2 & P2_CAP_EXCLUDED) == 0)
-			syslog(LOG_CRIT, "switchboard is not excluded from OES "
-			    "and Capability Brokers (cap_process(2) BASE "
-			    "EXCLUSION): the Core role was refused at exec "
-			    "(traced, ktraced, no_new_privs, or the image was "
-			    "not the pinned one)");
+		if (sysctl(mib, 4, &kp, &kplen, NULL, 0) == -1) {
+			syslog(LOG_CRIT, "cannot read the Core role: %m; "
+			    "refusing to start the boot");
+			exit(1);
+		}
+		if ((kp.ki_flag2 & P2_CAP_EXCLUDED) == 0) {
+			syslog(LOG_CRIT, "the Core role was refused at exec "
+			    "(traced, ktraced, no_new_privs, or not the pinned "
+			    "image): not excluded from OES and Capability "
+			    "Brokers; refusing to start the boot");
+			exit(1);
+		}
+		switchboard_boot_manager = true;
 	}
 
 	/* Present as "SwitchBoard" in ps/top, distinct from lowercase base daemons. */
@@ -372,15 +431,6 @@ main(int argc, char *argv[])
 	sd.identity_fd = -1;
 	sd.authority_issuer_fd = -1;
 	sd.discovery_fd = -1;
-
-	/*
-	 * LOG_CONS: during early boot switchboard runs before syslogd exists, so
-	 * syslog() to /var/run/log is undeliverable; LOG_CONS makes those
-	 * messages fall back to /dev/console instead of vanishing.  Essential
-	 * for diagnosing a boot that wedges before convergence.
-	 */
-	openlog("switchboard", LOG_PID | LOG_NDELAY | LOG_PERROR | LOG_CONS,
-	    LOG_DAEMON);
 
 	/* Parse arguments. */
 	while ((ch = getopt(argc, argv, "")) != -1) {
@@ -513,17 +563,17 @@ main(int argc, char *argv[])
 	if (svc_responsibility_root_init() == -1)
 		syslog(LOG_NOTICE, "no system root coalition: %m");
 
-	/* Override bundle directories from environment (for testing). */
-	s = getenv("SWITCHBOARD_BUNDLE_DIR_SYSTEM");
+	/* Test fixtures' bundle and run directories. */
+	s = switchboard_test_getenv("SWITCHBOARD_BUNDLE_DIR_SYSTEM");
 	if (s != NULL && s[0] != '\0')
 		switchboard_bundle_dir_system = s;
-	s = getenv("SWITCHBOARD_BUNDLE_DIR_USER");
+	s = switchboard_test_getenv("SWITCHBOARD_BUNDLE_DIR_USER");
 	if (s != NULL && s[0] != '\0')
 		switchboard_bundle_dir_user = s;
-	s = getenv("SWITCHBOARD_USERS_DIR");
+	s = switchboard_test_getenv("SWITCHBOARD_USERS_DIR");
 	if (s != NULL && s[0] != '\0')
 		switchboard_users_dir = s;
-	s = getenv("SWITCHBOARD_RUN_DIR");
+	s = switchboard_test_getenv("SWITCHBOARD_RUN_DIR");
 	if (s != NULL && *s != '\0')
 		switchboard_run_dir = s;
 
@@ -610,7 +660,6 @@ main(int argc, char *argv[])
 	add_signal_event(switchboard_kq, SIGTERM);
 	add_signal_event(switchboard_kq, SIGINT);
 	add_signal_event(switchboard_kq, SIGHUP);
-	add_signal_event(switchboard_kq, SIGCHLD);
 
 	/* Initialize bundle registry (scan /Capabilities/System + /Capabilities). */
 	if (bundle_registry_init() == -1) {
@@ -648,11 +697,15 @@ main(int argc, char *argv[])
 		/*
 		 * Test harnesses need to induce a manager crash to prove
 		 * supervisor loss is observable; the shield otherwise denies
-		 * ambient SIGKILL by design.  Only capsule's environment
-		 * allowlist can set this.
+		 * ambient SIGKILL by design.  Only on a test kernel, as for
+		 * Capsule's switchboard_test_no_sigkill.
 		 */
-		if (getenv("SWITCHBOARD_TEST_SHIELD_NO_SIGKILL") != NULL)
+		if (switchboard_test_kernel &&
+		    getenv("SWITCHBOARD_TEST_SHIELD_NO_SIGKILL") != NULL) {
+			syslog(LOG_WARNING, "TEST MODE: shield without SIGKILL "
+			    "(SWITCHBOARD_TEST_SHIELD_NO_SIGKILL)");
 			cp_req.flags &= ~CP_SF_SIGKILL;
+		}
 
 		reply_length = 0;
 		reply_nfds = 0;
@@ -703,16 +756,6 @@ main(int argc, char *argv[])
 	registry_watch_arm(switchboard_kq);
 
 	/*
-	 * Bring up the label-reclaim bridge (docs/book/src/plane/containers-and-storage.md
-	 * §5b) — the sole deliberate UNIX socket, whose only function is to let a
-	 * pkg(8) post-deinstall script (a plain root context with no ambient
-	 * discovery channel) trigger a bundle-label reclaim.  Done AFTER
-	 * startup_launch_system() so /etc/rc has set up /var/run.  Strictly
-	 * best-effort: a setup failure is logged and switchboard runs normally
-	 * (reclaim stays reachable over the ambient ADMIN control plane).
-	 */
-
-	/*
 	 * Control is served entirely over the capability discovery plane: an
 	 * admin login mints a system.switchboard / system.lifecycle channel via
 	 * naming_lookup, and switchboard adopts the provider end with
@@ -735,28 +778,38 @@ main(int argc, char *argv[])
 
 shutdown:
 
-	/* Graceful shutdown: ensure services are stopping.
-	 * supervisor_stop() may have already been called from the
-	 * signal handler — it's idempotent (checks sd.nservices). */
-	if (!sd.shutting_down)
+	/* Graceful shutdown: ensure services are stopping.  The signal and
+	 * Capsule-loss paths have already called supervisor_stop(). */
+	if (!sd.shutting_down) {
+		sd.shutting_down = true;
 		supervisor_stop(switchboard_kq);
+	}
 	SWITCHBOARD_PROBE_SHUTDOWN_START(sd.nservices);
 	{
 		struct kevent sevent;
 		struct timespec drain_start;
-		int w, sn;
+		int sn;
 
 		clock_gettime(CLOCK_MONOTONIC, &drain_start);
 
-		w = 0;
-		while (!supervisor_is_stopped() && w < 600) {  /* 60 seconds */
-			sn = kevent(switchboard_kq, NULL, 0, &sevent, 1,
-			    &(struct timespec){.tv_sec = 0, .tv_nsec = 100000000});
+		/*
+		 * Wait for every unit to stop.  Each stop carries its own
+		 * deadline: the stop-kill timer after the unit's stop_timeout,
+		 * then the cleanup deadline for its coalition.  So the drain
+		 * needs no bound of its own.
+		 */
+		while (!supervisor_is_stopped()) {
+			sn = kevent(switchboard_kq, NULL, 0, &sevent, 1, NULL);
+			if (sn == -1) {
+				if (errno == EINTR)
+					continue;
+				syslog(LOG_ERR, "shutdown: kevent: %m");
+				break;
+			}
 			if (sn == 1) {
 				switchboard_dispatch_event(&sevent);
 				svc_reclaim_publish_if_dirty();
 			}
-			w++;
 		}
 		{
 			struct timespec now;

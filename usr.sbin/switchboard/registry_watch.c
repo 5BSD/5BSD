@@ -191,9 +191,11 @@ static unsigned rescan_retries;
 static unsigned
 settle_seconds(void)
 {
-	const char *s = getenv("SWITCHBOARD_REGISTRY_WATCH_SETTLE");
+	const char *s;
 	char *end;
 	unsigned long v;
+
+	s = switchboard_test_getenv("SWITCHBOARD_REGISTRY_WATCH_SETTLE");
 
 	if (s == NULL || *s == '\0')
 		return (REGISTRY_WATCH_SETTLE_S);

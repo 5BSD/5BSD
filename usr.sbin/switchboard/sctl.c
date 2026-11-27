@@ -98,7 +98,7 @@ sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 
 	if (sd.services != NULL) {
 		for (i = 0; i < sd.nservices; i++) {
-			switch (sd.services[i].state) {
+			switch (sd.services[i]->state) {
 			case SVC_STATE_RUNNING:  nrunning++;  break;
 			case SVC_STATE_STOPPED:  nstopped++;  break;
 			case SVC_STATE_STARTING: nstarting++; break;
@@ -129,7 +129,7 @@ sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 	if (sd.nservices > 0) {
 		BUF_APPEND(summary, sumlen, &off, "\n");
 		for (i = 0; i < sd.nservices; i++) {
-			struct svc_runtime *svc = &sd.services[i];
+			struct svc_runtime *svc = sd.services[i];
 			const char *state;
 
 			if ((unsigned)svc->state < nitems(state_names))
@@ -143,6 +143,8 @@ sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 			else
 				BUF_APPEND(summary, sumlen, &off,
 				    "  %-20s %-8s", svc->manifest.label, state);
+			if (svc->disabled)
+				BUF_APPEND(summary, sumlen, &off, " disabled");
 
 			if (svc->state == SVC_STATE_RUNNING ||
 			    svc->state == SVC_STATE_STARTING) {
@@ -160,6 +162,7 @@ sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 			if (svc->cleanup.pending) {
 				BUF_APPEND(summary, sumlen, &off,
 				    " cleanup=%s child=%s coalition=%s observed=%s",
+				    svc_cleanup_failed(svc) ? "failed" :
 				    svc->cleanup.error == 0 ? "pending" : "blocked",
 				    svc->cleanup.child_pending ? "waiting" : "exited",
 				    svc->cleanup.coalition_complete ? "complete" : "unconfirmed",
@@ -174,8 +177,9 @@ sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 				    " restarts=%u", svc->restart_count);
 			/*
 			 * A stopped unit with a restart timer armed comes back
-			 * by itself; one without (a clean exit, or the circuit
-			 * breaker's disable) stays stopped until started.
+			 * by itself; one without (a clean exit) stays stopped
+			 * until started, and a disabled one (above) until an
+			 * operator starts it.
 			 */
 			if (svc->restart_pending)
 				BUF_APPEND(summary, sumlen, &off,
@@ -251,7 +255,7 @@ sctl_tree_children(char *summary, size_t sumlen, size_t *off,
 	if (depth > SCTL_TREE_MAX_DEPTH)
 		return;
 	for (i = 0; i < sd.nservices; i++) {
-		struct svc_runtime *svc = &sd.services[i];
+		struct svc_runtime *svc = sd.services[i];
 
 		if (svc->coalition_id == 0 ||
 		    svc->responsible.parent_id != parent_id ||
@@ -292,7 +296,7 @@ sctl_cmd_tree(struct sctl_reply *reply, char *summary, size_t sumlen)
 	}
 	/* Units activated by a session, under it. */
 	for (i = 0; i < sd.nservices; i++) {
-		struct svc_runtime *svc = &sd.services[i];
+		struct svc_runtime *svc = sd.services[i];
 
 		if (svc->coalition_id == 0 ||
 		    svc->responsible.kind != SVC_RESP_SESSION)
@@ -310,7 +314,7 @@ sctl_cmd_tree(struct sctl_reply *reply, char *summary, size_t sumlen)
 	}
 	any = false;
 	for (i = 0; i < sd.nservices; i++) {
-		struct svc_runtime *svc = &sd.services[i];
+		struct svc_runtime *svc = sd.services[i];
 
 		if (svc->coalition_id == 0 ||
 		    svc->responsible.parent_id != svc->coalition_id)
@@ -370,7 +374,8 @@ sctl_target_scoped(const char *label, uid_t owner, uid_t caller, bool is_admin,
 			*error = svc_management_check_op(candidate, "started", caller, is_admin);
 			if (*error != 0)
 				goto rejected;
-			if (sd.services == NULL || sd.nservices >= SWITCHBOARD_MAX_SERVICES) {
+			if (sd.services == NULL ||
+			    sd.nservices >= SWITCHBOARD_MAX_SERVICES) {
 				*error = sd.services == NULL ? ENOMEM : ENOSPC;
 				goto rejected;
 			}
@@ -379,10 +384,8 @@ sctl_target_scoped(const char *label, uid_t owner, uid_t caller, bool is_admin,
 			svc_runtime_init_fds(candidate);
 			candidate->state = SVC_STATE_STOPPED;
 			clock_gettime(CLOCK_MONOTONIC, &candidate->launch_time);
-			svc = &sd.services[sd.nservices++];
-			*svc = *candidate;
-			free(candidate);
-			return (svc);
+			svc_unit_publish(candidate);
+			return (candidate);
 rejected:
 			free(candidate);
 			return (NULL);
@@ -471,6 +474,7 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 			    "start: missing service label");
 		} else {
 			struct svc_runtime *svc;
+			bool accepted = false;
 			int error;
 
 			svc = sctl_target(payload, audit_uid, is_admin, true, &error);
@@ -492,10 +496,29 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 				SWITCHBOARD_PROBE_SCTL_DENY(op, audit_uid);
 				switchboard_audit(AUE_SWITCHBOARD_CTL, audit_uid,
 				    EPERM, "start denied svc=%s", payload);
+			} else if (svc_cleanup_failed(svc) &&
+			    !svc->cleanup.child_pending &&
+			    (accepted = true) &&
+			    supervisor_cleanup_acknowledge(svc)) {
+				/* The failed unit's pending removal applied. */
+				reply->status = ENOENT;
+				snprintf(summary, summary_cap,
+				    "start: \"%s\" failed cleanup accepted; the "
+				    "unit was removed", payload);
+				switchboard_audit(AUE_SWITCHBOARD_CTL, audit_uid,
+				    ENOENT, "start after failed cleanup removed "
+				    "svc=%s", payload);
 			} else if (svc->cleanup.pending) {
 				reply->status = EBUSY;
 				snprintf(summary, summary_cap,
 				    "start: \"%s\" cleanup unconfirmed; replacement blocked", payload);
+			} else if (accepted && svc->state == SVC_STATE_STARTING) {
+				/* Accepting the cleanup ran its pending reload. */
+				reply->status = 0;
+				snprintf(summary, summary_cap,
+				    "start: \"%s\" starting", payload);
+				switchboard_audit(AUE_SWITCHBOARD_CTL, audit_uid, 0,
+				    "start after failed cleanup svc=%s", payload);
 			} else if (svc->state != SVC_STATE_STOPPED &&
 			    svc->state != SVC_STATE_DONE) {
 				reply->status = EALREADY;
@@ -505,6 +528,8 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 				svc_cancel_restart(svc, switchboard_kq);
 				svc->state = SVC_STATE_STOPPED;
 				svc->restart_count = 0;
+				svc->disabled = false;
+				activation_source_resume(svc, switchboard_kq);
 				svc->lookup_activated = false;
 				strlcpy(svc->launched_by, "operator",
 				    sizeof(svc->launched_by));

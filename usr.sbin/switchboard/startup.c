@@ -267,15 +267,15 @@ startup_launch_stopped(int kq)
 	for (i = 0; i < sd.nservices; i++) {
 		/* A lookup may already have activated this unit; a second
 		 * exec would create a duplicate runtime. */
-		if (sd.services[i].state != SVC_STATE_STOPPED)
+		if (sd.services[i]->state != SVC_STATE_STOPPED)
 			continue;
 		syslog(LOG_INFO, "startup: service: %s",
-		    sd.services[i].manifest.label);
-		if (svc_launch_or_await(&sd.services[i], kq) == 0)
+		    sd.services[i]->manifest.label);
+		if (svc_launch_or_await(sd.services[i], kq) == 0)
 			launched++;
 		else
 			syslog(LOG_ERR, "startup: failed to launch '%s'",
-			    sd.services[i].manifest.label);
+			    sd.services[i]->manifest.label);
 	}
 	return (launched);
 }
@@ -353,10 +353,17 @@ startup_launch_system(int kq)
 	struct capbundle_service *asvc;
 	struct timespec start_ts;
 	const char *skip_rc_env;
-	bool skip_rc;
+	bool boot, skip_rc;
 
-	skip_rc_env = getenv("SWITCHBOARD_SKIP_RC");
-	skip_rc = skip_rc_env != NULL && skip_rc_env[0] == '1';
+	/*
+	 * /etc/rc and rc.d adoption belong to the boot's SwitchBoard, the one
+	 * Capsule as PID 1 started.  A test-local SwitchBoard never runs them;
+	 * a boot fixture may skip them where test configuration is honoured
+	 * (switchboard_test_getenv()).
+	 */
+	boot = switchboard_is_boot_manager();
+	skip_rc_env = switchboard_test_getenv("SWITCHBOARD_SKIP_RC");
+	skip_rc = !boot || (skip_rc_env != NULL && skip_rc_env[0] == '1');
 
 	clock_gettime(CLOCK_MONOTONIC, &start_ts);
 
@@ -418,20 +425,24 @@ startup_launch_system(int kq)
 
 	syslog(LOG_INFO, "startup: %u services loaded", nmanifests);
 
-	/* Copy entries into runtime slots. */
+	/* Copy entries into runtime units. */
 	for (i = 0; i < nmanifests; i++) {
-		sd.services[i].manifest = entries[i].manifest;
-		sd.services[i].bundle_idx = entries[i].bundle_idx;
-		sd.services[i].bundle_svc_idx = entries[i].service_idx;
-		svc_slot_apply_bundle_policy(&sd.services[i],
-		    entries[i].bundle_idx);
-		svc_runtime_init_fds(&sd.services[i]);
-		sd.services[i].state = SVC_STATE_STOPPED;
-		strlcpy(sd.services[i].launched_by, "system",
-		    sizeof(sd.services[i].launched_by));
-		clock_gettime(CLOCK_MONOTONIC, &sd.services[i].launch_time);
+		struct svc_runtime *svc;
+
+		svc = svc_unit_alloc();
+		if (svc == NULL) {
+			syslog(LOG_ERR, "startup: cannot load '%s': %m",
+			    entries[i].manifest.label);
+			continue;
+		}
+		svc->manifest = entries[i].manifest;
+		svc->bundle_idx = entries[i].bundle_idx;
+		svc->bundle_svc_idx = entries[i].service_idx;
+		svc_slot_apply_bundle_policy(svc, entries[i].bundle_idx);
+		strlcpy(svc->launched_by, "system", sizeof(svc->launched_by));
+		clock_gettime(CLOCK_MONOTONIC, &svc->launch_time);
+		svc_unit_publish(svc);
 	}
-	sd.nservices = nmanifests;
 	free(entries);
 
 	/*
@@ -445,13 +456,12 @@ startup_launch_system(int kq)
 	launched = 0;
 
 	/*
-	 * The boot discovery route exists whenever /etc/rc runs.  A fixture
-	 * that skips rc gets one only under a daemon-personality Capsule, whose
-	 * root client (the test harness) fetches it with CTL_OP_LOOKUP.  A
-	 * fixture that skips rc under Capsule as PID 1 (the daemon-runtime
-	 * OES-admission image) keeps the route-less boot it was written for.
+	 * The boot discovery route exists whenever /etc/rc runs.  A test-local
+	 * SwitchBoard gets one too: its daemon-personality Capsule hands it to
+	 * a root client (the test harness) with CTL_OP_LOOKUP.  Only a boot
+	 * fixture that skips rc on a test kernel boots without it.
 	 */
-	if (!skip_rc || getppid() != 1)
+	if (!skip_rc || !boot)
 		startup_ambient_lookup();
 
 	/*
@@ -469,7 +479,10 @@ startup_launch_system(int kq)
 	 * not replayed.  Adopted rc.d services below still find their running
 	 * instance through onestatus.
 	 */
-	if (skip_rc)
+	if (!boot)
+		syslog(LOG_INFO, "startup: not the boot's service manager: "
+		    "/etc/rc not run");
+	else if (skip_rc)
 		syslog(LOG_INFO, "startup: /etc/rc skipped by environment");
 	else if (sd.boot_complete)
 		syslog(LOG_NOTICE, "startup: restart after boot: /etc/rc not "

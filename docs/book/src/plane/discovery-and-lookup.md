@@ -177,6 +177,9 @@ A consumer sees one of a small set of errors and must treat all of them as
 | the switchboard serving the lookup exited | `ECONNRESET` |
 | no switchboard running (restarting) | the lookup waits for the next one |
 | more than 64 lookups pending at once | `EAGAIN` |
+| no room for the provider's unit | `ENOSPC` or `ENOMEM` |
+| the provider is disabled after too many failures | `ECANCELED` (libservice also reports `ECANCELED` for a lookup it cancels itself, for example when its session closes) |
+| circular on-demand activation | `EDEADLK` |
 | requester tried to look itself up | `ELOOP` |
 
 None of these is fatal by contract. A unit must not `err(3)` because a

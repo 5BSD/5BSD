@@ -701,10 +701,10 @@ cmd_graph(int argc, char *argv[])
 	if (root != NULL)
 		rc = graph_scan(&g, root, true);
 	else {
-		system_dir = getenv("SWITCHBOARD_BUNDLE_DIR_SYSTEM");
+		system_dir = secure_getenv("SWITCHBOARD_BUNDLE_DIR_SYSTEM");
 		if (system_dir == NULL || system_dir[0] == '\0')
 			system_dir = "/Capabilities/System";
-		user_dir = getenv("SWITCHBOARD_BUNDLE_DIR_USER");
+		user_dir = secure_getenv("SWITCHBOARD_BUNDLE_DIR_USER");
 		if (user_dir == NULL || user_dir[0] == '\0')
 			user_dir = "/Capabilities";
 		rc = graph_scan(&g, system_dir, false);

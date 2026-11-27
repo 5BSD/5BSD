@@ -124,6 +124,13 @@ const char	*capbundle_svc_activation_path(
 struct svc_activation_socket;
 unsigned	 capbundle_svc_nactivation_sockets(
 		    const struct capbundle_service *s);
+/*
+ * True when the unit declares a demand source switchboard arms itself: a
+ * timer, a path, a socket, a calendar schedule, a queue directory or an
+ * on-mount trigger.  False for a NULL service.
+ */
+bool		 capbundle_svc_has_activation_source(
+		    const struct capbundle_service *s);
 const struct svc_activation_socket *capbundle_svc_activation_socket(
 		    const struct capbundle_service *s, unsigned i);
 const char	*capbundle_svc_provides(const struct capbundle_service *s,

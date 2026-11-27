@@ -431,7 +431,7 @@ SRCS.launch_gate_test= launch_gate_test.c run_container_cleanup.c
 CFLAGS.launch_gate_test+= -I${SRCTOP}/sys -I${SRCTOP}/lib/libcapsulert -I${SRCTOP}/lib/libcapbundle -I${SRCTOP}/lib/libcapability -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libservice -I${SRCTOP}/contrib/libucl/include -ffunction-sections -fdata-sections
 LDFLAGS.launch_gate_test+= -Wl,--gc-sections
 NO_SHARED.launch_gate_test= yes
-LIBADD.launch_gate_test+= md
+LIBADD.launch_gate_test+= md util
 
 # UID namespace regressions use real private registry/runtime functions.
 PLAIN_TESTS_C+= scope_registry_test scope_runtime_test scope_identity_contract_test scope_storage_test scope_cli_test

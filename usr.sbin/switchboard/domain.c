@@ -274,7 +274,7 @@ lookup_channel_requester(const struct svc_lookup_channel *lc)
 	if (lc == NULL || lc->owner_label[0] == '\0')
 		return (NULL);
 	for (i = 0; i < sd.nservices; i++) {
-		struct svc_runtime *svc = &sd.services[i];
+		struct svc_runtime *svc = sd.services[i];
 		if (svc->owner_uid == lc->owner_uid &&
 		    svc->launch_id == lc->owner_launch_id &&
 		    strcmp(svc->manifest.label, lc->owner_label) == 0)
@@ -687,10 +687,12 @@ lookup_channel_request(struct channel *channel,
 		 * scope is carried by value so activation stays scoped to this
 		 * channel's authority.
 		 */
-		if (error == ENOENT &&
-		    on_demand_launch_ambient(req->name, lc,
-		    request, switchboard_kq) == 0)
-			return;
+		if (error == ENOENT) {
+			error = on_demand_launch_ambient(req->name, lc,
+			    request, switchboard_kq);
+			if (error == 0)
+				return;
+		}
 		/*
 		 * EACCES means out-of-scope for this channel's domain: fail fast
 		 * (no on-demand) and report ENOENT so the client cannot tell an
@@ -699,7 +701,7 @@ lookup_channel_request(struct channel *channel,
 		 * out-of-scope refusal the client is deliberately not told about.
 		 */
 		SWITCHBOARD_PROBE_DOMAIN_LOOKUP_DENY(req->name, kindstr, error);
-		lookup_channel_reply(lc, request, error == EACCES ? ENOENT : error,
+		lookup_channel_reply(lc, request, svc_lookup_status(error),
 		    NULL, 0);
 		goto out;
 	}

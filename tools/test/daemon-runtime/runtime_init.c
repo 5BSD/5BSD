@@ -316,7 +316,11 @@ main(int argc, char **argv)
 		fclose(extra);
 	}
 	if (!failed && access("/tests/oes-admission-boot", F_OK) == 0) {
-		/* rc normally supplies writable runtime mounts; this fixture skips rc. */
+		/*
+		 * rc normally supplies writable runtime mounts.  This root
+		 * carries no /etc/rc or /bin/sh, so SwitchBoard's /etc/rc step
+		 * fails at once (logged) and these tmpfs mounts stand in.
+		 */
 		char run_path[] = "/Capabilities/Run", var_path[] = "/var";
 		char coalition_path[] = "/Capabilities/System/CoalitionLifecycle.cap";
 		char *paths[] = { run_path, var_path, coalition_path };
@@ -349,11 +353,17 @@ main(int argc, char **argv)
 			goto done;
 		}
 		puts("RUNTIME_FIXTURES_PASS");
-		setenv("SWITCHBOARD_SKIP_RC", "1", 1);
-		setenv("SWITCHBOARD_BUNDLE_DIR_SYSTEM", "/Capabilities/System", 1);
-		setenv("SWITCHBOARD_BUNDLE_DIR_USER", "/Capabilities/Apps", 1);
-		setenv("SWITCHBOARD_RUN_DIR", "/Capabilities/Run", 1);
-		/* Preserve PID 1: only Capsule may mint the boot authority issuer. */
+		/*
+		 * A production boot.  SwitchBoard runs its /etc/rc step and
+		 * launches the admission bundles once Capsule's boot converges;
+		 * the fixtures report on the serial console.  One test switch
+		 * is handed down on purpose: a SwitchBoard that honoured it would
+		 * find no bundles, and the runner requires the boot's SwitchBoard
+		 * to report that it ignored it.  Preserve PID 1: only Capsule may
+		 * mint the boot authority issuer.
+		 */
+		setenv("SWITCHBOARD_BUNDLE_DIR_SYSTEM",
+		    "/nonexistent/test-switch-ignored", 1);
 		execl("/tests/capsule", "/tests/capsule", NULL);
 		perror("OES admission Capsule handoff");
 		failed = 1;

@@ -82,8 +82,8 @@ struct svc_runtime *
 svc_by_label(const char *label)
 {
 	for (unsigned i = 0; i < sd.nservices; i++)
-		if (strcmp(sd.services[i].manifest.label, label) == 0)
-			return (&sd.services[i]);
+		if (strcmp(sd.services[i]->manifest.label, label) == 0)
+			return (sd.services[i]);
 	return (NULL);
 }
 
@@ -144,8 +144,7 @@ on_demand_launch_ambient(const char *name, struct svc_lookup_channel *lc,
 	(void)lc;
 	(void)request;
 	(void)kq;
-	errno = ENOENT;
-	return (-1);
+	return (ENOENT);
 }
 
 void

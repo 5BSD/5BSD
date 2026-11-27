@@ -293,36 +293,36 @@ find_launching_service(const char *name, uid_t owner_uid)
 	unsigned i, j;
 
 	for (i = 0; i < sd.nservices; i++) {
-		if (sd.services[i].owner_uid != owner_uid)
+		if (sd.services[i]->owner_uid != owner_uid)
 			continue;
-		if (sd.services[i].state != SVC_STATE_STARTING &&
-		    sd.services[i].state != SVC_STATE_RUNNING)
+		if (sd.services[i]->state != SVC_STATE_STARTING &&
+		    sd.services[i]->state != SVC_STATE_RUNNING)
 			continue;
 		/* Check by provides name. */
-		for (j = 0; j < sd.services[i].manifest.nprovides; j++) {
-			if (strcmp(sd.services[i].manifest.provides[j],
+		for (j = 0; j < sd.services[i]->manifest.nprovides; j++) {
+			if (strcmp(sd.services[i]->manifest.provides[j],
 			    name) == 0)
-				return (&sd.services[i]);
+				return (sd.services[i]);
 		}
 		/* Check by label. */
-		if (strcmp(sd.services[i].manifest.label, name) == 0)
-			return (&sd.services[i]);
+		if (strcmp(sd.services[i]->manifest.label, name) == 0)
+			return (sd.services[i]);
 	}
 	return (NULL);
 }
 
 /*
- * A runtime whose restart circuit breaker has opened stays in the registry so
- * an operator can inspect or explicitly start it.  It must not, however, be
- * treated like an ordinary idle-stopped provider: otherwise every lookup
- * immediately relaunches it and the advertised max_failures limit is illusory.
+ * A runtime whose restart circuit breaker has opened (it is disabled) stays in
+ * the registry so an operator can inspect or explicitly start it.  It must
+ * not, however, be treated like an ordinary idle-stopped provider: otherwise
+ * every lookup immediately relaunches it and the advertised max_failures
+ * limit is illusory.
  */
 static bool
 on_demand_circuit_open(const struct svc_runtime *svc)
 {
 
-	return (svc->manifest.max_failures != 0 &&
-	    svc->restart_count >= svc->manifest.max_failures);
+	return (svc->disabled);
 }
 
 /*
@@ -589,8 +589,9 @@ send_activation(struct svc_runtime *provider, const char *name)
  * Called from svc_proto.c when naming_lookup() returns ENOENT but the
  * provides registry has a match.
  *
- * Returns 0 if launch initiated (reply deferred), -1 on immediate failure.
- * Sets errno to EDEADLK if circular dependency detected.
+ * Returns 0 if launch initiated (reply deferred), otherwise the refusal: an
+ * errno value (ENOENT for a name the registry lacks, EACCES for one outside
+ * the requester's reach, EDEADLK for a circular activation, ...).
  */
 /*
  * Launch a unit.  Every capability service a unit depends on is now reached
@@ -625,7 +626,7 @@ od_launch(const char *name, struct svc_runtime *requester,
 	struct svc_runtime *target;
 	struct pending_lookup *pl;
 	struct kevent kev;
-	int saved_errno;
+	int error;
 
 	/* Use the same principal as immediate naming. Internal deferred launches
 	 * use the registry owner; wire requests use freshly resolved authority. */
@@ -636,7 +637,7 @@ od_launch(const char *name, struct svc_runtime *requester,
 	    (requester != NULL ? requester->owner_uid : (uid_t)-1);
 	if (bundle_registry_lookup_for_uid(name, lookup_uid, &bundle_idx,
 	    &service_idx) == -1)
-		return (-1);  /* not found — caller should return ENOENT */
+		return (ENOENT);
 
 	/*
 	 * IPC attributes (docs/book/src/plane/attributes.md): a requester that could
@@ -644,8 +645,8 @@ od_launch(const char *name, struct svc_runtime *requester,
 	 * provider either.  Check the registry's requires against the requester's
 	 * set -- a unit's own, or the set captured on the ambient session channel
 	 * -- before any process state changes.  A miss is audited and returns
-	 * EACCES; both callers already answer a failed activation with ENOENT, so
-	 * the wire cannot tell it from an unregistered name (S5, U4).
+	 * EACCES, which every caller answers as ENOENT, so the wire cannot tell
+	 * it from an unregistered name (S5, U4).
 	 */
 	{
 		const struct svc_anoint_set *set;
@@ -657,18 +658,14 @@ od_launch(const char *name, struct svc_runtime *requester,
 			set = NULL;
 		if (od_anoint_precheck(name, set, requester != NULL ?
 		    requester->manifest.label : SVC_SESSION_LABEL,
-		    lookup_uid) == -1) {
-			errno = EACCES;
-			return (-1);
-		}
+		    lookup_uid) == -1)
+			return (EACCES);
 	}
 
 	/* Circular dependency detection. */
 	if (would_deadlock(name, requester,
-	    bundle_registry_owner_uid(bundle_idx))) {
-		errno = EDEADLK;
-		return (-1);
-	}
+	    bundle_registry_owner_uid(bundle_idx)))
+		return (EDEADLK);
 
 	/*
 	 * Reserve the bounded waiter and its timer before changing process
@@ -678,13 +675,12 @@ od_launch(const char *name, struct svc_runtime *requester,
 	if (npending >= ON_DEMAND_MAX_PENDING) {
 		syslog(LOG_WARNING,
 		    "on_demand: too many pending lookups");
-		errno = EAGAIN;
-		return (-1);
+		return (EAGAIN);
 	}
 	pl = calloc(1, sizeof(*pl));
 	if (pl == NULL) {
 		syslog(LOG_ERR, "on_demand: calloc pending: %m");
-		return (-1);
+		return (ENOMEM);
 	}
 	pl->requester_owner_uid = requester != NULL ? requester->owner_uid : (uid_t)-1;
 	pl->provider_owner_uid = bundle_registry_owner_uid(bundle_idx);
@@ -709,6 +705,7 @@ od_launch(const char *name, struct svc_runtime *requester,
 	}
 	pl->request = request;
 	if (arm_timeout(kq, pl) == -1) {
+		error = errno;
 		syslog(LOG_WARNING, "on_demand: kevent timer: %m");
 		goto fail_waiter;
 	}
@@ -718,11 +715,11 @@ od_launch(const char *name, struct svc_runtime *requester,
 	if (target == NULL) {
 		/* Need to actually launch. */
 		b = bundle_registry_get(bundle_idx);
-		if (b == NULL)
+		asvc = b != NULL ? capbundle_service(b, service_idx) : NULL;
+		if (asvc == NULL) {
+			error = ENOENT;
 			goto fail_timer;
-		asvc = capbundle_service(b, service_idx);
-		if (asvc == NULL)
-			goto fail_timer;
+		}
 
 		/*
 		 * A boot-activated unit may already own a runtime slot that
@@ -741,16 +738,17 @@ od_launch(const char *name, struct svc_runtime *requester,
 					    "is disabled after %u failures", name,
 					    target->manifest.label,
 					    target->restart_count);
-					errno = ECANCELED;
+					error = ECANCELED;
 					goto fail_timer;
 				}
 				svc_responsibility_decide(target, requester,
 				    ambient_domain);
 				if (!od_launch_constraint_ok(target, name)) {
-					errno = EACCES;
+					error = EACCES;
 					goto fail_timer;
 				}
 				if (svc_launch_or_await(target, kq) == -1) {
+					error = errno;
 					syslog(LOG_ERR,
 				    "on_demand: failed to launch '%s': %m", name);
 					goto fail_timer;
@@ -766,24 +764,13 @@ od_launch(const char *name, struct svc_runtime *requester,
 			goto have_target;
 		}
 
-		/* Find a free slot in sd.services[]. */
-		if (sd.services == NULL) {
-			/* Service array was never allocated (startup OOM). */
-			errno = ENOMEM;
-			goto fail_timer;
-		}
-		if (sd.nservices >= SWITCHBOARD_MAX_SERVICES) {
-			syslog(LOG_ERR,
-			    "on_demand: service limit reached, cannot launch '%s'",
+		target = svc_unit_alloc();
+		if (target == NULL) {
+			error = errno;
+			syslog(LOG_ERR, "on_demand: cannot launch '%s': %m",
 			    name);
-			errno = ENOSPC;
 			goto fail_timer;
 		}
-
-		target = &sd.services[sd.nservices];
-		memset(target, 0, sizeof(*target));
-		svc_runtime_init_fds(target);
-		target->state = SVC_STATE_STOPPED;
 		target->bundle_idx = bundle_idx;
 		target->bundle_svc_idx = service_idx;
 
@@ -793,6 +780,8 @@ od_launch(const char *name, struct svc_runtime *requester,
 			syslog(LOG_ERR,
 			    "on_demand: invalid bundle service '%s'",
 			    capbundle_svc_label(asvc));
+			free(target);
+			error = EINVAL;
 			goto fail_timer;
 		}
 		/*
@@ -819,25 +808,23 @@ od_launch(const char *name, struct svc_runtime *requester,
 		svc_responsibility_decide(target, requester, ambient_domain);
 		if (!od_launch_constraint_ok(target, name)) {
 			/*
-			 * Roll the unused slot back.  The constraint check
+			 * Drop the unpublished unit.  The constraint check
 			 * already released any parent descriptor it held, so
-			 * this clear leaks nothing.
+			 * this leaks nothing.
 			 */
-			memset(target, 0, sizeof(*target));
-			svc_runtime_init_fds(target);
-			errno = EACCES;
+			free(target);
+			error = EACCES;
 			goto fail_timer;
 		}
 
-		sd.nservices++;
+		svc_unit_publish(target);
 
 		/* Launch the service. */
 		if (svc_launch_or_await(target, kq) == -1) {
+			error = errno;
 			syslog(LOG_ERR,
 				    "on_demand: failed to launch '%s': %m", name);
-			sd.nservices--;
-			memset(target, 0, sizeof(*target));
-			svc_runtime_init_fds(target);
+			svc_remove(target);
 			goto fail_timer;
 		}
 
@@ -866,21 +853,20 @@ have_target:
 	return (0);
 
 fail_timer:
-	saved_errno = errno != 0 ? errno : EIO;
 	EV_SET(&kev, pl->timeout_ident, EVFILT_TIMER,
 	    EV_DELETE, 0, 0, NULL);
 	(void)kevent(kq, &kev, 1, NULL, 0, NULL);
-	errno = saved_errno;
 fail_waiter:
-	saved_errno = errno != 0 ? errno : EIO;
 	free(pl);
-	errno = saved_errno;
-	return (-1);
+	/* A refusal is never answered as success, even with errno unset. */
+	return (error != 0 ? error : EIO);
 }
 
 /*
  * Activate an on-demand name for a service-to-service requester.  Returns 0 if
- * the launch was initiated (reply deferred, request retained), -1 otherwise.
+ * the launch was initiated (reply deferred, request retained), otherwise the
+ * refusal as an errno value (od_launch()).  A sender whose authority cannot be
+ * resolved is refused as out of reach (EACCES).
  */
 int
 on_demand_launch(const char *name, struct svc_runtime *requester,
@@ -893,7 +879,7 @@ on_demand_launch(const char *name, struct svc_runtime *requester,
 	if (request == NULL)
 		return (od_launch(name, requester, NULL, NULL, request, kq));
 	if (svc_authority_resolve(request, &actual, &sender) == -1)
-		return (-1);
+		return (EACCES);
 	return (od_launch(name, sender, NULL, &actual, request, kq));
 }
 
@@ -901,7 +887,7 @@ on_demand_launch(const char *name, struct svc_runtime *requester,
  * Activate an on-demand name for an ambient (login-session lookup channel)
  * requester (§21). The reply is delivered over `lc`, using software authority
  * resolved from the requesting message.  Returns 0 if the launch was
- * initiated (request retained), -1 otherwise.
+ * initiated (request retained), otherwise the refusal as on_demand_launch().
  */
 int
 on_demand_launch_ambient(const char *name, struct svc_lookup_channel *lc,
@@ -912,7 +898,7 @@ on_demand_launch_ambient(const char *name, struct svc_lookup_channel *lc,
 	struct svc_domain actual;
 
 	if (svc_authority_resolve(request, &actual, &sender) == -1)
-		return (-1);
+		return (EACCES);
 	return (od_launch(name, sender, lc, &actual, request, kq));
 }
 
@@ -1343,8 +1329,6 @@ svc_activate_cleanup_provider(const char *label, int kq)
 	struct svc_runtime *svc = svc_by_label(label);
 	if (sd.shutting_down)
 		return (errno = ESHUTDOWN, -1);
-	if (svc == NULL && (sd.services == NULL || sd.nservices >= SWITCHBOARD_MAX_SERVICES))
-		return (errno = ENOSPC, -1);
 	for (unsigned bi = 0; bi < bundle_registry_count(); bi++) {
 		struct capbundle *b = bundle_registry_get(bi);
 		if (b == NULL || bundle_registry_owner_uid(bi) != (uid_t)-1)
@@ -1363,17 +1347,18 @@ svc_activate_cleanup_provider(const char *label, int kq)
 				svc->bundle_svc_idx = si;
 				return (svc_launch_or_await(svc, kq));
 			}
-			svc = &sd.services[sd.nservices];
-			memset(svc, 0, sizeof(*svc));
-			svc_runtime_init_fds(svc);
-			if (capbundle_svc_fill_manifest(asvc, &svc->manifest) == -1)
+			if ((svc = svc_unit_alloc()) == NULL)
 				return (-1);
-			svc->state = SVC_STATE_STOPPED;
+			if (capbundle_svc_fill_manifest(asvc,
+			    &svc->manifest) == -1) {
+				free(svc);
+				return (errno = EINVAL, -1);
+			}
 			svc->bundle_idx = bi;
 			svc->bundle_svc_idx = si;
 			svc_slot_apply_bundle_policy(svc, bi);
 			strlcpy(svc->launched_by, "cleanup", sizeof(svc->launched_by));
-			sd.nservices++;
+			svc_unit_publish(svc);
 			return (svc_launch_or_await(svc, kq));
 		}
 	}

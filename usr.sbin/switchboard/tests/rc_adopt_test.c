@@ -25,6 +25,13 @@
 #include "rc_ingest.h"
 #include "rc_adopt.h"
 
+/* As in a test-local SwitchBoard: test configuration is honoured. */
+const char *
+switchboard_test_getenv(const char *name)
+{
+	return (getenv(name));
+}
+
 static void
 write_script(const char *path, const char *body, mode_t mode)
 {

@@ -402,6 +402,16 @@ capbundle_svc_nactivation_sockets(const struct capbundle_service *s)
 	return (s != NULL ? s->nactivation_sockets : 0);
 }
 
+bool
+capbundle_svc_has_activation_source(const struct capbundle_service *s)
+{
+
+	return (s != NULL && (s->timer_interval_sec != 0 ||
+	    s->activation_path[0] != '\0' || s->nactivation_sockets != 0 ||
+	    s->has_calendar || s->queue_directory[0] != '\0' ||
+	    s->activation_on_mount));
+}
+
 const struct svc_activation_socket *
 capbundle_svc_activation_socket(const struct capbundle_service *s, unsigned i)
 {

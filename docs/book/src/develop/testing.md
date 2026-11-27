@@ -346,7 +346,14 @@ itself, saving the results as the reroot does, and prints one
 `SRCPIN_PASS:` or `SRCPIN_FAIL:` line per pin and a `SRCPIN_SUMMARY`.  The
 same pins' full-boot cases are `usr.sbin/switchboard/rc_units_boot_test`
 and `getty_test` (plane on) and
-`libexec/rc/rc_routing_test` (plane on and `PLANE_OFF=1`).  The `usr.sbin/bsd-build` cases that read the
+`libexec/rc/rc_routing_test` (plane on and `PLANE_OFF=1`).
+`tests/sys/mac_capability/switchboard_role_refused_reroot.sh` (with
+`SINGLE_USER_SHELL=/root/vm-extra.sh` and
+`SINGLE_USER_PASSWORDS="wrongpw sbrolepw"`) sets the test kernel's
+`security.cap_exclusion.test_refuse=1` before the reroot, so the first
+SwitchBoard start under Capsule runs without the Core role: it must refuse
+the boot with the reason on the console, and the boot must end in
+single-user without running /etc/rc.  The `usr.sbin/bsd-build` cases that read the
 source tree need `SRC_IMAGE` (and `PORTS_IMAGE` for package plans); without it
 they are counted as `DEFERRED_TO_SOURCE_TIER=N`.  With the source and
 the ports images, a long bsd-build run fills the default 8 GB guest root:

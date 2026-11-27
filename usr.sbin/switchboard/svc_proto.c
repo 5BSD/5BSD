@@ -464,16 +464,12 @@ handle_lookup(struct svc_runtime *svc, struct channel_message *request,
 	    request, &error, &sendable);
 	if (client_fd < 0) {
 		if (error == ENOENT) {
-			if (on_demand_launch(req->name, svc, request,
-			    switchboard_kq) == 0)
+			error = on_demand_launch(req->name, svc, request,
+			    switchboard_kq);
+			if (error == 0)
 				return (true);
-			if (errno == EDEADLK)
-				error = EDEADLK;
-		} else if (error == EACCES) {
-			/* Out of scope: fail fast, indistinguishable from
-			 * unregistered on the wire. */
-			error = ENOENT;
 		}
+		error = svc_lookup_status(error);
 		(void)svc_channel_reply(svc, request, SVC_OP_LOOKUP, error,
 		    NULL, 0);
 		return (false);
@@ -533,16 +529,12 @@ handle_helper_open(struct svc_runtime *svc, struct channel_message *request)
 	    channel_message_sender(request), &error, &sendable);
 	if (client_fd < 0) {
 		if (error == ENOENT) {
-			if (on_demand_launch(synthetic, svc, request,
-			    switchboard_kq) == 0)
+			error = on_demand_launch(synthetic, svc, request,
+			    switchboard_kq);
+			if (error == 0)
 				return (true);
-			if (errno == EDEADLK)
-				error = EDEADLK;
-		} else if (error == EACCES) {
-			/* Out of scope: fail fast, indistinguishable from
-			 * unregistered on the wire. */
-			error = ENOENT;
 		}
+		error = svc_lookup_status(error);
 		(void)svc_channel_reply(svc, request, SVC_OP_HELPER_OPEN, error,
 		    NULL, 0);
 		return (false);
@@ -672,18 +664,6 @@ svc_channel_attach(struct svc_runtime *svc, int fd)
 		return (-1);
 	}
 	return (0);
-}
-
-int
-svc_channel_rebind(struct svc_runtime *svc)
-{
-
-	if (svc == NULL || svc->control_channel == NULL) {
-		errno = EINVAL;
-		return (-1);
-	}
-	return (channel_set_request_handler(svc->control_channel, svc_request,
-	    svc));
 }
 
 void

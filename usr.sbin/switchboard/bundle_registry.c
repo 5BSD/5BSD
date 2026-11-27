@@ -311,7 +311,7 @@ disabled_set_clear(void)
 static const char *
 disabled_path(void)
 {
-	const char *env = getenv("SWITCHBOARD_DISABLED_PATH");
+	const char *env = switchboard_test_getenv("SWITCHBOARD_DISABLED_PATH");
 
 	return ((env != NULL && env[0] != '\0') ? env : SWITCHBOARD_DISABLED_PATH);
 }

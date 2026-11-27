@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 19, 2026
+.Dd November 26, 2026
 .Dt SWITCHBOARD 8
 .Os
 .Sh NAME
@@ -314,6 +314,25 @@ drops the authority
 .Xr capsule 8
 gave it (it only carried the Core role across its exec); exclusion lasts
 until its next exec.
+A
+.Nm
+whose parent is PID 1 but which the kernel did not exclude (the Core role
+was refused at its exec: it was traced or ktraced, had
+.Dv PROC_NO_NEW_PRIVS_CTL
+set, or was not the image its authority pins) refuses to start the boot.
+It logs
+.Dq the Core role was refused at exec
+at
+.Dv LOG_CRIT ,
+which reaches the console, and exits with status 1 before it reports READY,
+as for its other start-up failures.
+.Xr capsule 8
+treats that as a failed boot.
+Such a
+.Nm
+neither runs
+.Pa /etc/rc
+nor starts any unit.
 Programs a Core unit or
 .Nm
 starts are not excluded.
@@ -362,27 +381,73 @@ Optional.
 .It Ev SWITCHBOARD_CAPPROTECT_FD
 File descriptor number for the delegated capprotect service instance.
 Required.
+.El
+.Pp
+The following are test configuration, honoured only where a test can set
+them: on a test kernel
+.Pq Va kern.mac_capability.test_issuer Ns =1 ,
+or in a
+.Nm
+that is not the boot's.
+The boot's
+.Nm ,
+the one
+.Xr capsule 8
+started as PID 1 with its Core role, ignores them on any other kernel and
+logs that it did.
+.Bl -tag -width "SWITCHBOARD_TEST_SHIELD_NO_SIGKILL"
 .It Ev SWITCHBOARD_BUNDLE_DIR_SYSTEM
-Override the system bundle directory.
-Default:
-.Pa /Capabilities/System .
-Primarily useful for testing.
+Test only.
+Override the system bundle directory
+.Pq default Pa /Capabilities/System .
 .It Ev SWITCHBOARD_BUNDLE_DIR_USER
+Test only.
 Override the user bundle directory
 .Pq default Pa /Capabilities/Apps .
+.It Ev SWITCHBOARD_USERS_DIR
+Test only.
+Override the per-user agent root
+.Pq default Pa /Capabilities/Users .
 .It Ev SWITCHBOARD_RUN_DIR
+Test only.
 Override the ephemeral run directory
 .Pq default Pa /Capabilities/Run ,
 under which the running-bundle markers are published in
-.Pa live/ .
-Test fixtures set this so a fixture switchboard never touches the host's
-markers.
+.Pa live/ ,
+so a fixture never touches the host's markers.
+.It Ev SWITCHBOARD_DISABLED_PATH
+Test only.
+Override the operator disable list
+.Pq default Pa /Capabilities/Config/switchboard/disabled .
 .It Ev SWITCHBOARD_REGISTRY_WATCH_SETTLE
+Test only.
 Seconds of quiescence after a change to an install directory before the
 registry is rescanned (1\(en60; default 2).
-Default:
-.Pa /Capabilities .
-Primarily useful for testing.
+.It Ev SWITCHBOARD_SKIP_RC
+Test only.
+Set to
+.Ql 1 ,
+the boot's
+.Nm
+neither runs
+.Pa /etc/rc
+nor adopts rc.d services.
+A
+.Nm
+that is not the boot's never does either.
+.It Ev SWITCHBOARD_ADOPT_CONF
+Test only.
+Override the rc.d adoption list
+.Pq default Pa /Capabilities/Config/switchboard/rc_adopt.conf .
+.It Ev SWITCHBOARD_RCD_DIR
+Test only.
+Override the rc.d directory adoption reads
+.Pq default Pa /etc/rc.d .
+.It Ev SWITCHBOARD_TEST_SHIELD_NO_SIGKILL
+Test only, and honoured only on a test kernel: leave
+.Dv SIGKILL
+out of the process shield so a test can kill
+.Nm .
 .El
 .Ss Runtime directory lifecycle
 The service manager cleans leftover runtime containers immediately before its
@@ -574,8 +639,20 @@ A missing coalition descriptor during failed-launch cleanup also retains
 the runtime, even after the child exits; child exit alone cannot confirm
 coalition cleanup.
 .Pp
-A failed or released cleanup, or inability to observe cleanup, keeps
-replacement blocked and retains the runtime for diagnosis.
+A failed or released cleanup, or inability to observe cleanup, is final:
+nothing observes the coalition any longer, so the unit stays down, with
+replacement blocked and the runtime retained for diagnosis.
+Nothing restarts it automatically.
+Only an explicit operator start
+.Pq Nm switchboardctl Cm start
+overrides the failure: a removal or reload that waited for the cleanup
+applies, and the unit starts.
+A launch that fails is counted against the circuit breaker and retried
+after the restart delay
+.Pq Sx Linear Backoff ,
+whether it failed before or after the new process was created.
+A restart that finds the previous instance's cleanup still pending waits for
+that cleanup to complete, not for another timer, and runs when it does.
 Event-registration failures during reload are retained in the cleanup error
 reported by the control status command, even when another cleanup watch
 was successfully registered.
@@ -625,13 +702,17 @@ is reset.
 .Ss Circuit Breaker
 After
 .Va max_failures
-consecutive rapid failures (default 10), the service is permanently
-disabled and not restarted.
-A manifest reload via
-.Dv SIGHUP
-or the
-.Cm reload
-control command will re-evaluate the manifest.
+consecutive rapid failures (default 10), the service is disabled:
+status shows it as
+.Ql disabled ,
+and no restart, lookup or activation source starts it again
+.Po
+a lookup fails with
+.Er ECANCELED
+.Pc .
+An operator
+.Cm start
+clears it.
 .Pp
 .Nm
 also watches its install directories
@@ -667,6 +748,21 @@ A user bundle that conflicts with the registry
 is quarantined with the reason and never fails the scan or the boot.
 A system install root that disappears at runtime retains the previous
 registry instead of unloading every system unit.
+.Ss Activation Sources
+A unit's timer, calendar, path, queue-directory, mount and socket sources
+.Pq Xr switchboard 5
+create demand for it while it is stopped.
+While the unit is starting or running, its sources are disabled: a periodic
+timer or a connection that fires meanwhile relaunches the unit once, right
+after it stops.
+A refused launch also disables them until the event that can change the
+answer: an operator
+.Cm start
+for a disabled unit, the completion of a pending cleanup, or, for any other
+refusal, the retry after the restart delay
+.Pq Sx Linear Backoff ,
+which counts against the circuit breaker.
+During a shutdown they stay disabled.
 .Ss Dynamic Claims
 A unit declares no resource capabilities in its manifest, so
 .Nm
@@ -707,11 +803,13 @@ If the service has not exited when the timer fires,
 .Dv SIGKILL
 is sent.
 .Pp
-During daemon shutdown, services are stopped in reverse dependency
-order.
-The kevent loop is drained for up to 60 seconds, after which
+During daemon shutdown, services are stopped in reverse load order and no
+new service is started.
 .Nm
-exits.
+exits once every service has stopped; each stop is bounded by the service's
+.Va stop_timeout
+and its coalition cleanup deadline, so the shutdown needs no bound of its
+own.
 .Sh NAMING REGISTRY
 .Nm
 provides a naming registry that allows services to discover
@@ -812,6 +910,25 @@ A publication acknowledgement is queued before any
 event for that name.
 If a control reply cannot be queued, the channel is revoked so callers observe
 peer death instead of waiting for a reply that was dropped.
+.Pp
+A lookup of a name outside the requester's reach is answered with
+.Er ENOENT ,
+as for an unregistered name.
+Any other refusal reaches the client as itself:
+.Er EAGAIN
+when too many activations are pending,
+.Er ENOSPC
+or
+.Er ENOMEM
+when there is no room for the provider's unit,
+.Er ECANCELED
+when the provider is disabled
+.Pq Sx Circuit Breaker ,
+.Er EDEADLK
+for a circular activation.
+A client cannot tell a disabled provider from a lookup that libservice
+cancelled on its own side, which also reports
+.Er ECANCELED .
 .Pp
 When a service exits, all of its claims and published names are automatically
 removed, while manifest reservations remain available for a later process

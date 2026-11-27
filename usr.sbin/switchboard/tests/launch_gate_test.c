@@ -2,8 +2,13 @@
 /* Copyright (c) 2026 Kory Heard */
 #include <sys/types.h>
 #include <sys/event.h>
-#include <unistd.h>
+#include <sys/resource.h>
 #include <errno.h>
+#include <inttypes.h>
+#include <login_cap.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
 #include <atf-c.h>
 
 static int fault, registrations, releases, revoked, channels_closed, cleanup;
@@ -59,6 +64,180 @@ supervisor_cleanup_failed_launch(struct svc_runtime *svc)
 	ATF_REQUIRE(fcntl(svc->pd_fd, F_GETFD) >= 0);
 	ATF_REQUIRE(fcntl(svc->coalition_fd, F_GETFD) >= 0);
 	cleanup++;
+}
+
+/* Leaf symbols svc_exec_command() reaches; the command case needs none. */
+int
+svc_user_manifest_credentials(struct svc_runtime *svc __unused)
+{
+	return (0);
+}
+int
+svc_user_credentials_match(uid_t owner __unused, uid_t selected __unused,
+    bool have_creds __unused)
+{
+	return (0);
+}
+int
+svc_authority_issue_boot(struct svc_runtime *svc __unused, int *out __unused)
+{
+	return (errno = ENOTSUP, -1);
+}
+int
+svc_authority_issue_service(struct svc_runtime *svc __unused,
+    int *out __unused)
+{
+	return (errno = ENOTSUP, -1);
+}
+int
+account_nss_user(const char *name __unused,
+    struct service_account_identity *user __unused)
+{
+	return (errno = ENOENT, -1);
+}
+int
+account_nss_group(const char *name __unused, gid_t *gid __unused)
+{
+	return (errno = ENOENT, -1);
+}
+int
+account_nss_groups(const char *name __unused, gid_t gid __unused,
+    gid_t *groups __unused, int *ngroups __unused)
+{
+	return (errno = ENOENT, -1);
+}
+int
+service_authority_clear(void)
+{
+	return (0);
+}
+int
+service_authority_install(int fd __unused)
+{
+	return (0);
+}
+int
+service_clear_ambient_lookup(void)
+{
+	return (0);
+}
+int
+service_install_ambient_lookup(int fd __unused)
+{
+	return (0);
+}
+
+/*
+ * An RC or oneshot command starts as init(8) starts /etc/rc: none of
+ * SwitchBoard's environment, only what the login.conf "daemon" class sets
+ * (LOGIN_SETENV: no PATH, which /etc/rc sets itself), and that class's limits
+ * rather than SwitchBoard's own.
+ */
+ATF_TC(command_environment_and_class);
+ATF_TC_HEAD(command_environment_and_class, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "20");
+	atf_tc_set_md_var(tc, "descr",
+	    "an rc/oneshot command gets a clean environment and the daemon "
+	    "login class, not SwitchBoard's environment and descriptor limit");
+}
+ATF_TC_BODY(command_environment_and_class, tc)
+{
+	char *argv[] = { __DECONST(char *, "/bin/sh"),
+	    __DECONST(char *, "-c"),
+	    __DECONST(char *, "env > command.env; ulimit -n > command.nofile"),
+	    NULL };
+	struct svc_runtime svc;
+	struct kevent event;
+	struct rlimit limit;
+	login_cap_t *lc;
+	char line[256];
+	FILE *input;
+	rlim_t expected_nofile;
+	int kq, status, report[2];
+	pid_t probe;
+
+	/* The descriptor limit the daemon class gives a process. */
+	lc = login_getclassbyname("daemon", NULL);
+	ATF_REQUIRE_MSG(lc != NULL, "no login.conf daemon class");
+	login_close(lc);
+	ATF_REQUIRE_EQ(0, pipe(report));
+	probe = fork();
+	ATF_REQUIRE(probe >= 0);
+	if (probe == 0) {
+		close(report[0]);
+		lc = login_getclassbyname("daemon", NULL);
+		if (lc == NULL || setusercontext(lc, NULL, 0,
+		    LOGIN_SETRESOURCES) == -1 ||
+		    getrlimit(RLIMIT_NOFILE, &limit) == -1)
+			_exit(1);
+		dprintf(report[1], "%ju\n", (uintmax_t)limit.rlim_cur);
+		_exit(0);
+	}
+	close(report[1]);
+	input = fdopen(report[0], "r");
+	ATF_REQUIRE(input != NULL);
+	ATF_REQUIRE(fgets(line, sizeof(line), input) != NULL);
+	fclose(input);
+	ATF_REQUIRE_EQ(probe, waitpid(probe, &status, 0));
+	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	{
+		uintmax_t value;
+
+		ATF_REQUIRE_EQ(1, sscanf(line, "%ju", &value));
+		expected_nofile = (rlim_t)value;
+	}
+
+	/* SwitchBoard's own state, which the command must not inherit. */
+	ATF_REQUIRE_EQ(0, setenv("CAPSULE_CHANNEL_FD", "3", 1));
+	ATF_REQUIRE_EQ(0, setenv("SWITCHBOARD_TEST_SHIELD_NO_SIGKILL", "1", 1));
+	ATF_REQUIRE_EQ(0, setenv("PATH", "/nonexistent/switchboard", 1));
+	ATF_REQUIRE_EQ(0, getrlimit(RLIMIT_NOFILE, &limit));
+	limit.rlim_cur = 64;
+	ATF_REQUIRE(limit.rlim_cur != expected_nofile);
+	ATF_REQUIRE_EQ(0, setrlimit(RLIMIT_NOFILE, &limit));
+
+	fault = 0;
+	memset(&svc, 0, sizeof(svc));
+	svc.kind = SVC_KIND_ONESHOT;
+	svc.owner_uid = (uid_t)-1;
+	svc.state = SVC_STATE_STOPPED;
+	strlcpy(svc.manifest.label, "org.test.command",
+	    sizeof(svc.manifest.label));
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	ATF_REQUIRE_EQ(0, svc_exec_command(&svc, kq, argv, false));
+	ATF_REQUIRE_EQ(1, kevent(kq, NULL, 0, &event, 1, NULL));
+	ATF_REQUIRE_EQ(EVFILT_PROCDESC, event.filter);
+	ATF_REQUIRE((event.fflags & NOTE_EXIT) != 0);
+	ATF_REQUIRE_MSG(WIFEXITED(event.data) && WEXITSTATUS(event.data) == 0,
+	    "command status %#jx", (uintmax_t)event.data);
+	close(svc.pd_fd);
+	close(kq);
+
+	input = fopen("command.env", "r");
+	ATF_REQUIRE(input != NULL);
+	while (fgets(line, sizeof(line), input) != NULL) {
+		line[strcspn(line, "\n")] = '\0';
+		ATF_CHECK_MSG(strncmp(line, "CAPSULE_", 8) != 0 &&
+		    strncmp(line, "SWITCHBOARD_", 12) != 0 &&
+		    strstr(line, "/nonexistent/switchboard") == NULL,
+		    "inherited %s", line);
+	}
+	fclose(input);
+	input = fopen("command.nofile", "r");
+	ATF_REQUIRE(input != NULL);
+	ATF_REQUIRE(fgets(line, sizeof(line), input) != NULL);
+	fclose(input);
+	line[strcspn(line, "\n")] = '\0';
+	if (expected_nofile == RLIM_INFINITY)
+		ATF_CHECK_STREQ("unlimited", line);
+	else
+		ATF_CHECK_EQ_MSG((uintmax_t)expected_nofile,
+		    strtoumax(line, NULL, 10),
+		    "descriptor limit %s, daemon class %ju", line,
+		    (uintmax_t)expected_nofile);
 }
 
 ATF_TC(launch_gate_failures);
@@ -228,5 +407,6 @@ ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, launch_gate_failures);
 	ATF_TP_ADD_TC(tp, launch_abort_containers);
+	ATF_TP_ADD_TC(tp, command_environment_and_class);
 	return (atf_no_error());
 }

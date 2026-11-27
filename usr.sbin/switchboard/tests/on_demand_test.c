@@ -91,18 +91,11 @@ svc_by_label(const char *label)
 }
 
 void
-svc_remove(unsigned idx)
+svc_remove(struct svc_runtime *svc)
 {
 
 	slot_removals++;
-	(void)idx;
-}
-
-void
-svc_reregister_kevents(int kq)
-{
-
-	(void)kq;
+	(void)svc;
 }
 
 void
@@ -568,16 +561,22 @@ ATF_TC_BODY(circuit_breaker_blocks_on_demand_relaunch, tc)
 	(void)tc;
 	runtime_init(&svc, "org.test.crashloop", 0, 0);
 	svc.manifest.max_failures = 3;
+	svc.manifest.restart = SVC_RESTART_ALWAYS;
+	svc.state = SVC_STATE_STOPPING;
 
+	/* Failures below the limit leave the unit launchable. */
 	svc.restart_count = 2;
 	ATF_CHECK(!on_demand_circuit_open(&svc));
-	svc.restart_count = 3;
-	ATF_CHECK(on_demand_circuit_open(&svc));
-	svc.restart_count = 30;
+	/* The supervisor's breaker trips on the last allowed failure. */
+	supervisor_finish_native_exit(&svc, W_EXITCODE(1, 0), false, false,
+	    false, 0);
+	ATF_CHECK_EQ(SVC_STATE_STOPPED, svc.state);
+	ATF_CHECK_EQ(3, svc.restart_count);
+	ATF_CHECK(svc.disabled);
 	ATF_CHECK(on_demand_circuit_open(&svc));
 
-	/* A fresh runtime and an explicitly reset counter remain launchable. */
-	svc.restart_count = 0;
+	/* Only an operator start clears it (sctl.c); a fresh runtime is not. */
+	runtime_init(&svc, "org.test.fresh", 0, 0);
 	ATF_CHECK(!on_demand_circuit_open(&svc));
 }
 
@@ -690,51 +689,59 @@ ATF_TC_BODY(restart_timer_for_started_unit, tc)
  * While a unit's previous coalition is still being torn down, svc_exec()
  * refuses with EBUSY.  A restart timer that fires then is postponed, not
  * counted: a slow teardown must not disable a unit that was never exec'd.
+ * The postponed restart waits for the cleanup's completion, not for another
+ * timer: no backoff timer is re-armed, and the completion runs it.
  */
 ATF_TC_WITHOUT_HEAD(restart_waits_for_cleanup);
 ATF_TC_BODY(restart_waits_for_cleanup, tc)
 {
 	struct kevent kev;
 	struct svc_runtime svc;
-	unsigned i;
-	int kq;
+	int fds[2], kq;
 
 	(void)tc;
 	kq = kqueue();
 	ATF_REQUIRE(kq >= 0);
 	switchboard_kq = kq;
 	exec_refuses_started = true;
+	cleanup_mock = true;
 	runtime_init(&svc, "org.test.cleaning", 0, 0);
 	svc.pd_fd = svc.channel_fd = svc.coalition_fd = -1;
 	svc.manifest.max_failures = 3;
-	svc.state = SVC_STATE_STOPPED;
+	svc.state = SVC_STATE_STOPPING;
 	svc.restart_count = 1;
+	/* The teardown of a failed launch: stopping, coalition draining. */
+	ATF_REQUIRE_EQ(0, pipe(fds));
+	svc.cleanup.fd = fds[0];
 	svc.cleanup.pending = true;
+	svc.cleanup.was_stopping = true;
+	cleanup_phase = CAPABILITY_COALITION_DRAINING;
 	launch_calls = 0;
 	schedule_restart(&svc, kq);
-	for (i = 0; i < 2 * svc.manifest.max_failures; i++) {
-		ATF_REQUIRE(svc.restart_pending);
-		memset(&kev, 0, sizeof(kev));
-		kev.ident = svc.timer_ident;
-		kev.filter = EVFILT_TIMER;
-		kev.udata = &svc;
-		supervisor_handle_timer(&kev);
-		ATF_CHECK_EQ(0, launch_calls);
-		ATF_CHECK_EQ(1, svc.restart_count);
-		ATF_CHECK_MSG(svc.restart_pending,
-		    "the postponed restart was not rescheduled");
-	}
-	/* Teardown done: the next firing restarts it. */
-	svc.cleanup.pending = false;
+	ATF_REQUIRE(svc.restart_pending);
 	memset(&kev, 0, sizeof(kev));
 	kev.ident = svc.timer_ident;
 	kev.filter = EVFILT_TIMER;
 	kev.udata = &svc;
 	supervisor_handle_timer(&kev);
+	ATF_CHECK_EQ(0, launch_calls);
+	ATF_CHECK_EQ(1, svc.restart_count);
+	ATF_CHECK_MSG(!svc.restart_pending,
+	    "the postponed restart polls on the backoff timer");
+
+	/* Teardown done: its completion runs the restart. */
+	supervisor_cleanup_event(&svc);
+	ATF_CHECK(svc.cleanup.pending);
+	ATF_CHECK_EQ(0, launch_calls);
+	cleanup_phase = CAPABILITY_COALITION_COMPLETE;
+	supervisor_cleanup_event(&svc);
+	ATF_CHECK(!svc.cleanup.pending);
 	ATF_CHECK_EQ(1, launch_calls);
 	ATF_CHECK_EQ(1, svc.restart_count);
 
 	svc_cancel_restart(&svc, kq);
+	close(fds[1]);
+	cleanup_mock = false;
 	exec_refuses_started = false;
 	switchboard_kq = -1;
 	(void)close(kq);
@@ -928,29 +935,17 @@ ATF_TC_BODY(idle_timer_fire_stops_provider, tc)
 	(void)close(kq);
 }
 
-/* Exercise actual compaction without replacing other fixtures' leaf stubs. */
+/* Exercise actual removal without replacing other fixtures' leaf stubs. */
 struct svc_runtime *reload_test_by_label(const char *);
 struct svc_runtime *reload_test_by_label_scoped(const char *, uid_t);
-void reload_test_remove(unsigned);
-void reload_test_reregister(int);
-static int
-reload_test_channel_rebind(struct svc_runtime *svc)
-{
-	(void)svc;
-	atf_tc_fail("cleanup compaction fixture has no control channel");
-	return (-1);
-}
-#define svc_channel_rebind reload_test_channel_rebind
+void reload_test_remove(struct svc_runtime *);
 #define svc_by_label reload_test_by_label
 #define svc_by_label_scoped reload_test_by_label_scoped
 #define svc_remove reload_test_remove
-#define svc_reregister_kevents reload_test_reregister
 #include "../reload.c"
-#undef svc_channel_rebind
 #undef svc_by_label
 #undef svc_by_label_scoped
 #undef svc_remove
-#undef svc_reregister_kevents
 
 void
 svc_launch_cancel(struct svc_runtime *svc, int kq)
@@ -967,78 +962,92 @@ activation_source_teardown(struct svc_runtime *svc, int kq)
 }
 
 void
-naming_rebind_owner(struct svc_runtime *old, struct svc_runtime *new)
+activation_source_resume(struct svc_runtime *svc, int kq)
 {
-	(void)old;
-	(void)new;
+	(void)kq;
+	svc->activation_suspended = false;
 }
 
-ATF_TC(cleanup_compaction);
-ATF_TC_HEAD(cleanup_compaction, tc)
+
+/*
+ * Removing a unit leaves every other unit where it is: their timers, armed
+ * with the unit's address as udata, still reach them.  The removed unit's
+ * own restart timer is deleted before it is freed.
+ */
+ATF_TC(removal_keeps_unit_timers);
+ATF_TC_HEAD(removal_keeps_unit_timers, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "real service compaction rebinds pending cleanup events without losing ownership");
+	    "removing a unit does not move the others: their idle and watchdog "
+	    "timers still fire; the removed unit's timers are deleted");
+	atf_tc_set_md_var(tc, "timeout", "30");
 }
-ATF_TC_BODY(cleanup_compaction, tc)
+ATF_TC_BODY(removal_keeps_unit_timers, tc)
 {
-	struct svc_runtime *slots;
+	struct svc_runtime *removed, *kept;
 	struct kevent event;
-	struct timespec timeout = { .tv_sec = 1 }, deadline;
-	int fds[2], kq;
-	char byte = 'x';
+	uintptr_t restart_ident;
+	unsigned fired;
+	int kq;
 
 	(void)tc;
-	slots = calloc(2, sizeof(*slots));
-	ATF_REQUIRE(slots != NULL);
-	idle_runtime_init(&slots[0], "org.test.removed");
-	idle_runtime_init(&slots[1], "org.test.pending");
-	ATF_REQUIRE_EQ(0, pipe(fds));
 	kq = kqueue();
 	ATF_REQUIRE(kq >= 0);
 	switchboard_kq = kq;
-	sd.services = slots;
-	sd.nservices = 2;
-	slots[1].state = SVC_STATE_STOPPING;
-	slots[1].cleanup.pending = true;
-	slots[1].cleanup.fd = fds[0];
-	slots[1].cleanup.timer_ident = ++cleanup_timer_next_ident;
-	ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &deadline));
-	deadline.tv_sec += 30;
-	slots[1].cleanup.deadline = deadline;
-	ATF_REQUIRE_EQ(0, supervisor_cleanup_rebind(&slots[1], kq));
-	/* Removing the pending slot records intent, without releasing it. */
-	reload_test_remove(1);
-	ATF_CHECK_EQ(2, sd.nservices);
-	ATF_CHECK(slots[1].remove_pending);
-	ATF_CHECK(fcntl(fds[0], F_GETFD) >= 0);
-	/* Removing its predecessor really moves the pending slot. */
-	reload_test_remove(0);
-	reload_test_reregister(kq);
+	sd.services = calloc(SWITCHBOARD_MAX_SERVICES, sizeof(*sd.services));
+	ATF_REQUIRE(sd.services != NULL);
+	removed = svc_unit_alloc();
+	ATF_REQUIRE(removed != NULL);
+	idle_runtime_init(removed, "org.test.removed");
+	svc_unit_publish(removed);
+	kept = svc_unit_alloc();
+	ATF_REQUIRE(kept != NULL);
+	idle_runtime_init(kept, "org.test.kept");
+	svc_unit_publish(kept);
+	ATF_REQUIRE_EQ(2, sd.nservices);
+
+	/* The removed unit waits on a restart; the kept one is running. */
+	removed->restart_count = 1;
+	schedule_restart(removed, kq);
+	ATF_REQUIRE(removed->restart_pending);
+	restart_ident = removed->timer_ident;
+	kept->state = SVC_STATE_RUNNING;
+	kept->idle_timeout_sec = 1;
+	kept->manifest.watchdog_interval = 1;
+	kept->manifest.stop_timeout = 5;
+	arm_idle_timer(kept, kq);
+	arm_watchdog_timer(kept, kq);
+	ATF_REQUIRE(kept->idle_timer_ident != 0);
+	ATF_REQUIRE(kept->watchdog_timer_ident != 0);
+
+	reload_test_remove(removed);
 	ATF_REQUIRE_EQ(1, sd.nservices);
-	ATF_CHECK_STREQ("org.test.pending", slots[0].manifest.label);
-	ATF_CHECK(slots[0].cleanup.pending);
-	ATF_CHECK(slots[0].remove_pending);
-	ATF_CHECK_EQ(deadline.tv_sec, slots[0].cleanup.deadline.tv_sec);
-	ATF_CHECK_EQ(deadline.tv_nsec, slots[0].cleanup.deadline.tv_nsec);
-	ATF_REQUIRE_EQ(1, write(fds[1], &byte, 1));
-	ATF_REQUIRE_EQ(1, kevent(kq, NULL, 0, &event, 1, &timeout));
-	ATF_CHECK_EQ(EVFILT_READ, event.filter);
-	ATF_CHECK_EQ(fds[0], (int)event.ident);
-	ATF_CHECK(event.udata == &slots[0]);
-	ATF_REQUIRE_EQ(1, read(fds[0], &byte, 1));
-	/* Expire the preserved timer and verify its relocated pointer too. */
-	slots[0].cleanup.deadline.tv_sec -= 31;
-	reload_test_reregister(kq);
-	ATF_REQUIRE_EQ(1, kevent(kq, NULL, 0, &event, 1, &timeout));
-	ATF_CHECK_EQ(EVFILT_TIMER, event.filter);
-	ATF_CHECK_EQ(slots[0].cleanup.timer_ident, event.ident);
-	ATF_CHECK(event.udata == &slots[0]);
-	close(fds[0]);
-	close(fds[1]);
-	close(kq);
-	free(slots);
+	ATF_CHECK(sd.services[0] == kept);
+	EV_SET(&event, restart_ident, EVFILT_TIMER, EV_DELETE, 0, 0, NULL);
+	ATF_CHECK_ERRNO(ENOENT, kevent(kq, &event, 1, NULL, 0, NULL) == -1);
+
+	/* Both timers reach the kept unit and take effect. */
+	fired = 0;
+	while (fired < 2) {
+		ATF_REQUIRE_EQ(1, kevent(kq, NULL, 0, &event, 1, NULL));
+		if (event.filter != EVFILT_TIMER || event.udata != kept)
+			continue;
+		if (event.ident == kept->idle_timer_ident ||
+		    event.ident == kept->watchdog_timer_ident)
+			fired++;
+		supervisor_handle_timer(&event);
+	}
+	ATF_CHECK(kept->idle_stop_pending);
+	ATF_CHECK_EQ(SVC_STATE_STOPPING, kept->state);
+	ATF_CHECK_EQ(0, kept->idle_timer_ident);
+	ATF_CHECK_EQ(0, kept->watchdog_timer_ident);
+
+	supervisor_disarm_timers(kept, kq);
+	free(kept);
+	free(sd.services);
 	sd.services = NULL;
 	sd.nservices = 0;
+	close(kq);
 	switchboard_kq = -1;
 }
 
@@ -1050,7 +1059,7 @@ ATF_TC_HEAD(cleanup_updated_intent, tc)
 }
 ATF_TC_BODY(cleanup_updated_intent, tc)
 {
-	struct svc_runtime svc;
+	struct svc_runtime svc, *unit = &svc;
 	int fds[2];
 	unsigned remove;
 
@@ -1063,7 +1072,7 @@ ATF_TC_BODY(cleanup_updated_intent, tc)
 		svc.cleanup.fd = fds[0];
 		svc.cleanup.pending = true;
 		svc.state = SVC_STATE_STOPPING;
-		sd.services = &svc;
+		sd.services = &unit;
 		sd.nservices = 1;
 		launch_calls = slot_removals = runtime_removals = 0;
 		cleanup_phase = CAPABILITY_COALITION_DRAINING;
@@ -1180,7 +1189,7 @@ ATF_TC_BODY(cleanup_registration_failure, tc)
 {
 	struct svc_runtime svc;
 	struct kevent event;
-	struct timespec deadline, timeout = { .tv_sec = 5 };
+	struct timespec timeout = { .tv_sec = 5 };
 	int fds[2], badfd, kq;
 
 	(void)tc;
@@ -1196,23 +1205,17 @@ ATF_TC_BODY(cleanup_registration_failure, tc)
 	svc.cleanup.child_pending = true;
 	svc.cleanup.fd = fds[0];
 	svc.cleanup.timer_ident = ++cleanup_timer_next_ident;
-	ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &deadline));
-	deadline.tv_sec += 1;
-	svc.cleanup.deadline = deadline;
 	runtime_removals = 0;
-	ATF_REQUIRE_EQ(-1, supervisor_cleanup_rebind(&svc, kq));
+	ATF_REQUIRE_EQ(-1, supervisor_cleanup_arm(&svc, kq));
 	ATF_CHECK_EQ(EBADF, errno);
 	ATF_CHECK_EQ(EBADF, svc.cleanup.error);
 	ATF_CHECK(svc.cleanup.pending);
 	ATF_CHECK(svc.cleanup.child_pending);
 	ATF_CHECK_EQ(0, runtime_removals);
-	ATF_CHECK_EQ(deadline.tv_sec, svc.cleanup.deadline.tv_sec);
-	ATF_CHECK_EQ(deadline.tv_nsec, svc.cleanup.deadline.tv_nsec);
-	/* The timer remains observable despite the preceding EBADF. */
-	ATF_REQUIRE_EQ(1, kevent(kq, NULL, 0, &event, 1, &timeout));
-	ATF_CHECK_EQ(EVFILT_TIMER, event.filter);
-	ATF_CHECK_EQ(svc.cleanup.timer_ident, event.ident);
-	ATF_CHECK(event.udata == &svc);
+	/* The deadline timer is registered despite the preceding EBADF. */
+	EV_SET(&event, svc.cleanup.timer_ident, EVFILT_TIMER, EV_DELETE, 0, 0,
+	    NULL);
+	ATF_CHECK_EQ(0, kevent(kq, &event, 1, NULL, 0, NULL));
 	/* The coalition watch is also registered; this pipe stands in for it. */
 	ATF_REQUIRE_EQ(1, write(fds[1], "R", 1));
 	ATF_REQUIRE_EQ(1, kevent(kq, NULL, 0, &event, 1, &timeout));
@@ -1398,50 +1401,6 @@ ATF_TC_BODY(cleanup_live_outcomes, tc)
 	close(switchboard_kq);
 	switchboard_kq = -1;
 	close(device);
-}
-
-ATF_TC(cleanup_rebind_deadline);
-ATF_TC_HEAD(cleanup_rebind_deadline, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "cleanup rebind preserves expired deadline and arms timer despite bad observer");
-	atf_tc_set_md_var(tc, "timeout", "5");
-}
-ATF_TC_BODY(cleanup_rebind_deadline, tc)
-{
-	struct svc_runtime svc;
-	struct kevent event;
-	struct timespec timeout = { .tv_sec = 1 };
-	struct timespec deadline;
-	int kq;
-
-	(void)tc;
-	idle_runtime_init(&svc, "org.test.cleanup");
-	kq = kqueue();
-	ATF_REQUIRE(kq >= 0);
-	svc.cleanup.pending = true;
-	svc.cleanup.fd = -1;
-	svc.cleanup.timer_ident = ++cleanup_timer_next_ident;
-	ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &deadline));
-	deadline.tv_sec--;
-	svc.cleanup.deadline = deadline;
-	ATF_REQUIRE_EQ(0, supervisor_cleanup_rebind(&svc, kq));
-	ATF_REQUIRE_EQ(1, kevent(kq, NULL, 0, &event, 1, &timeout));
-	ATF_CHECK_EQ(EVFILT_TIMER, event.filter);
-	ATF_CHECK_EQ(svc.cleanup.timer_ident, event.ident);
-	ATF_CHECK(event.udata == &svc);
-	ATF_CHECK_EQ(deadline.tv_sec, svc.cleanup.deadline.tv_sec);
-	ATF_CHECK_EQ(deadline.tv_nsec, svc.cleanup.deadline.tv_nsec);
-
-	/* A failed read registration must not skip the independent timer. */
-	svc.cleanup.fd = INT_MAX;
-	ATF_REQUIRE_ERRNO(EBADF, supervisor_cleanup_rebind(&svc, kq) == -1);
-	ATF_REQUIRE_EQ(1, kevent(kq, NULL, 0, &event, 1, &timeout));
-	ATF_CHECK_EQ(EVFILT_TIMER, event.filter);
-	ATF_CHECK_EQ(svc.cleanup.timer_ident, event.ident);
-	ATF_CHECK(event.udata == &svc);
-	ATF_CHECK_EQ(deadline.tv_sec, svc.cleanup.deadline.tv_sec);
-	close(kq);
 }
 
 ATF_TC(cleanup_terminal_states);
@@ -2019,6 +1978,46 @@ ATF_TC_BODY(idle_quiesce_busy_resumes_provider, tc)
 	(void)close(kq);
 }
 
+/*
+ * A stop that arrives while an idle quiesce is outstanding (shutdown,
+ * removal) is not undone by the provider declining the idle stop.
+ */
+ATF_TC_WITHOUT_HEAD(idle_quiesce_busy_yields_to_stop);
+ATF_TC_BODY(idle_quiesce_busy_yields_to_stop, tc)
+{
+	struct svc_runtime svc;
+	unsigned which;
+	int kq;
+
+	(void)tc;
+	for (which = 0; which < 2; which++) {
+		kq = kqueue();
+		ATF_REQUIRE(kq >= 0);
+		switchboard_kq = kq;
+		idle_runtime_init(&svc, "org.test.idle-stop");
+		svc.state = SVC_STATE_STOPPING;
+		svc.protocol_ready = true;
+		svc.idle_stop_pending = true;
+		svc.quiesce_pending = true;
+		svc.idle_timeout_sec = 5;
+		svc.manifest.stop_timeout = 2;
+		schedule_stop_kill(&svc, kq);
+		ATF_REQUIRE(svc.stop_kill_pending);
+		/* The shutdown (or a removal) reached the stopping unit. */
+		if (which == 0)
+			sd.shutting_down = true;
+		else
+			svc.remove_pending = true;
+		svc_quiesce_complete(&svc, EBUSY, kq);
+		ATF_CHECK_EQ(SVC_STATE_STOPPING, svc.state);
+		ATF_CHECK_MSG(svc.stop_kill_pending,
+		    "the stop lost its deadline");
+		sd.shutting_down = false;
+		switchboard_kq = -1;
+		(void)close(kq);
+	}
+}
+
 ATF_TC_WITHOUT_HEAD(retired_principal_claim);
 ATF_TC_BODY(retired_principal_claim, tc)
 {
@@ -2056,17 +2055,17 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, idle_timer_ident_range);
 	ATF_TP_ADD_TC(tp, idle_timer_fire_stops_provider);
 	ATF_TP_ADD_TC(tp, idle_quiesce_busy_resumes_provider);
+	ATF_TP_ADD_TC(tp, idle_quiesce_busy_yields_to_stop);
 	ATF_TP_ADD_TC(tp, idle_note_exit_reactivatable);
 	ATF_TP_ADD_TC(tp, cleanup_stop_intent);
 	ATF_TP_ADD_TC(tp, cleanup_terminal_states);
-	ATF_TP_ADD_TC(tp, cleanup_rebind_deadline);
 	ATF_TP_ADD_TC(tp, cleanup_live_outcomes);
 	ATF_TP_ADD_TC(tp, cleanup_live_process);
 	ATF_TP_ADD_TC(tp, cleanup_unenlisted_child);
 	ATF_TP_ADD_TC(tp, cleanup_missing_coalition);
 	ATF_TP_ADD_TC(tp, cleanup_registration_failure);
 	ATF_TP_ADD_TC(tp, cleanup_updated_intent);
-	ATF_TP_ADD_TC(tp, cleanup_compaction);
+	ATF_TP_ADD_TC(tp, removal_keeps_unit_timers);
 	ATF_TP_ADD_TC(tp, handle_idle_protocol);
 	ATF_TP_ADD_TC(tp, handle_ready_ambient_promotion);
 	return (atf_no_error());

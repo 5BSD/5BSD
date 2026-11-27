@@ -7,7 +7,9 @@ then run from /usr/src:
   /usr/local/bin/python3.12 tools/test/oes-admission/build.py
 
 This compiles daemon objects with all logical CPUs and links private static
-Capsule/SwitchBoard copies under /usr/obj/usr/src/.../tools/test/oes-admission.
+Capsule/SwitchBoard copies under the object tree's tools/test/oes-admission.
+It builds the tree it belongs to (/usr/src or a worktree); run it inside that
+tree's make buildenv so the object tree and libraries match.
 It does not install programs, load host modules, or run either host daemon.
 Use tools/test/daemon-runtime/run-vm.py with --oes-admission --cpus 4 and the
 usual explicit kernel/root/object/QEMU inputs. The runner keeps its kernel
@@ -73,7 +75,7 @@ observer tests cover retained runtime and late completion separately.
 Isolated fixture builds
 -----------------------
 Both build.py and the runtime runner accept --fixture-objtop for a private static
-test tree under /usr/obj/usr/src. Kernel/module inputs still come from --objtop.
+test tree under /usr/obj. Kernel/module inputs still come from --objtop.
 Capsule and SwitchBoard fixture objects always use private subdirectories rather
 than their normal world-build object directories. Build every selected test
 against the matching source libraries and libsys; record and check library hashes

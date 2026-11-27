@@ -46,7 +46,7 @@ static bool adopt_loaded;
 static const char *
 rc_adopt_conf_path(void)
 {
-	const char *p = getenv("SWITCHBOARD_ADOPT_CONF");
+	const char *p = switchboard_test_getenv("SWITCHBOARD_ADOPT_CONF");
 
 	return (p != NULL && p[0] != '\0') ? p : RC_ADOPT_DEFAULT_CONF;
 }
@@ -286,7 +286,7 @@ rc_adopt_register(int kq)
 
 	(void)kq;	/* the caller's boot launch loop starts appended units */
 
-	dir = getenv("SWITCHBOARD_RCD_DIR");
+	dir = switchboard_test_getenv("SWITCHBOARD_RCD_DIR");
 	if (dir == NULL || dir[0] == '\0')
 		dir = "/etc/rc.d";
 
@@ -306,17 +306,16 @@ rc_adopt_register(int kq)
 			    "leaving as is", u.name);
 			continue;
 		}
-		if (sd.nservices >= SWITCHBOARD_MAX_SERVICES) {
-			syslog(LOG_WARNING, "rc adoption: service limit reached; "
-			    "cannot adopt '%s'", u.name);
+		svc = svc_unit_alloc();
+		if (svc == NULL) {
+			syslog(LOG_WARNING, "rc adoption: cannot adopt '%s': %m",
+			    u.name);
 			break;
 		}
-		svc = &sd.services[sd.nservices];
-		memset(svc, 0, sizeof(*svc));
 		rc_adopt_build_unit(&u, svc);
 		strlcpy(svc->launched_by, "system", sizeof(svc->launched_by));
 		clock_gettime(CLOCK_MONOTONIC, &svc->launch_time);
-		sd.nservices++;
+		svc_unit_publish(svc);
 		adopted++;
 		syslog(LOG_INFO, "rc adoption: adopted rc.d service '%s' as a "
 		    "supervised SVC_KIND_RC unit (mgmt=system, restart=on-failure)",

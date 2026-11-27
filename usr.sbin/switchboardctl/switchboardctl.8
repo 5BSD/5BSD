@@ -52,7 +52,15 @@ Software attributes do not establish a login-session coalition.
 A unit whose automatic restart is scheduled shows
 .Ql restart-pending ;
 a stopped unit without it stays stopped until it is started (it exited
-without a restart, or its restarts were disabled after too many failures).
+without a restart).
+A unit that failed
+.Ql max_failures
+times shows
+.Ql disabled :
+no restart, lookup or activation source starts it again until an
+authorized
+.Cm start ,
+which clears it.
 .Pp
 A service waiting for resource teardown also shows
 .Ql cleanup= ,
@@ -62,15 +70,29 @@ and
 .Ql observed=
 fields.
 .Ql cleanup=blocked
-includes a numeric and textual
+and
+.Ql cleanup=failed
+include a numeric and textual
 .Ql cleanup-error .
-A timeout keeps replacement blocked; a retained observer can still report
+A timeout
+.Pq Ql blocked
+keeps replacement blocked; a retained observer can still report
 completion later.
 An authorized start during pending cleanup returns
 .Er EBUSY .
+.Ql cleanup=failed
+means the coalition reported a failed or released cleanup, or could not be
+observed: nothing will complete it, and nothing restarts the unit
+automatically.
+Only an explicit
+.Cm start
+by an authorized operator overrides it: once the previous process has
+exited, that start accepts the failed cleanup and starts the unit; if the
+unit was removed from the bundle registry meanwhile, the start removes it
+and returns
+.Er ENOENT .
 Stop records the request to suppress automatic restart but does not assert
 that cleanup has finished.
-There is no command to force unconfirmed cleanup to count as complete.
 .It Cm tree
 Show the responsibility tree: every running unit indented under the
 coalition it answers to, starting from the switchboard's own root
@@ -250,12 +272,25 @@ Without
 the exit status is 0 whenever the registry parsed.
 .Pp
 The environment variables
-.Ev SWITCHBOARD_BUNDLE_DIR_SYSTEM ,
-.Ev SWITCHBOARD_BUNDLE_DIR_USER
+.Ev SWITCHBOARD_BUNDLE_DIR_SYSTEM
 and
-.Ev SWITCHBOARD_PRINCIPAL_POLICY
-override the registry directories and the policy file.
+.Ev SWITCHBOARD_BUNDLE_DIR_USER
+override the registry directories.
 .El
+.Pp
+The environment overrides
+.Po
+.Ev SWITCHBOARD_BUNDLE_DIR_SYSTEM ,
+.Ev SWITCHBOARD_BUNDLE_DIR_USER ,
+.Ev SWITCHBOARD_DISABLED_PATH
+and
+.Ev SWITCHBOARD_LIFECYCLE_ROOT
+.Pc
+are read with
+.Xr secure_getenv 3 :
+a set-user-ID or set-group-ID
+.Nm
+ignores them.
 .Sh PERSONAL NAMESPACES
 System and Apps bundles share the global namespace.
 Personal bundles are indexed separately for each authenticated installation
