@@ -27,6 +27,22 @@
  * point); the INTERRUPT the kernel posts when the requester gives up
  * cancels it, and a grant that races the INTERRUPT (the reply then answers
  * ESRCH) is undone.
+ *
+ * Each owner keeps a shadow of what it holds (C15): the ranges and types
+ * the replies granted, merged as lockf(9) merges an owner's locks.  It
+ * restores the owner's earlier locks when a raced grant is undone, and it
+ * names the owner of a blocker F_GETLK reports (lockf reports no pid for
+ * the OFD locks it proxies with).  The shadow follows the order this
+ * process applied its operations to the backing file; one owner's
+ * operations that race each other (two threads of a POSIX owner, one
+ * waiting) can be applied by the kernel in either order, and the shadow
+ * records a grant when its thread takes the mutex after it.  A GETLK that
+ * meets a grant in that moment, before its thread has the mutex, names no
+ * owner (-1).
+ *
+ * flock(2) owners follow lf_setlock's rule for an exclusive request that
+ * would block: the open file's shared lock goes first, then it sleeps.
+ * OFD locks convert in place while they wait, so the drop is made here.
  */
 
 #include <sys/param.h>
@@ -55,11 +71,31 @@ struct dq_serve_key {
 	uint64_t	 dev, ino;	/* POSIX */
 };
 
+/* One range of an owner's shadow: [sr_start, sr_end], OFF_MAX = to EOF. */
+struct dq_serve_range {
+	TAILQ_ENTRY(dq_serve_range) sr_link;
+	off_t		 sr_start, sr_end;
+	short		 sr_type;	/* F_RDLCK, F_WRLCK */
+};
+TAILQ_HEAD(dq_serve_shadow, dq_serve_range);
+
+/*
+ * The ranges a shadow update may need: one to insert, one when a range
+ * is split around the change.  Taken before the backing file is touched,
+ * so a shadow update never fails after the lock changed.
+ */
+#define	DQ_SERVE_SPARES	2
+struct dq_serve_spare {
+	struct dq_serve_range *sp[DQ_SERVE_SPARES];
+};
+
 struct dq_serve_owner {
 	LIST_ENTRY(dq_serve_owner) so_link;
 	struct dq_serve_key so_key;
 	int		 so_fd;		/* the owner's open of the backing file */
 	int		 so_nwaits;	/* its SETLKW threads (ss_mtx) */
+	pid_t		 so_pid;	/* POSIX: the process; else -1 */
+	struct dq_serve_shadow so_shadow;	/* what it holds (ss_mtx) */
 };
 
 /*
@@ -79,6 +115,7 @@ struct dq_serve_wait {
 	int		 sw_q;
 	int		 sw_dupfd;	/* a dup of sw_owner->so_fd, the thread's */
 	struct flock	 sw_fl;
+	struct dq_serve_spare sw_spare;	/* for the grant's shadow update */
 };
 
 struct dq_serve_state {
@@ -96,6 +133,216 @@ dq_serve_map(uint32_t op, int error)
 {
 
 	return (dq_reply_errno_allowed(op, error) ? error : EIO);
+}
+
+/*
+ * Shadows
+ */
+
+static int
+dq_serve_spare_get(struct dq_serve_spare *sp)
+{
+	int i;
+
+	memset(sp, 0, sizeof(*sp));
+	for (i = 0; i < DQ_SERVE_SPARES; i++) {
+		sp->sp[i] = malloc(sizeof(*sp->sp[i]));
+		if (sp->sp[i] == NULL) {
+			while (i-- > 0)
+				free(sp->sp[i]);
+			memset(sp, 0, sizeof(*sp));
+			return (ENOLCK);
+		}
+	}
+	return (0);
+}
+
+static void
+dq_serve_spare_put(struct dq_serve_spare *sp)
+{
+	int i;
+
+	for (i = 0; i < DQ_SERVE_SPARES; i++) {
+		free(sp->sp[i]);
+		sp->sp[i] = NULL;
+	}
+}
+
+static struct dq_serve_range *
+dq_serve_spare_take(struct dq_serve_spare *sp)
+{
+	struct dq_serve_range *r;
+	int i;
+
+	for (i = 0; i < DQ_SERVE_SPARES; i++) {
+		if ((r = sp->sp[i]) != NULL) {
+			sp->sp[i] = NULL;
+			return (r);
+		}
+	}
+	return (NULL);	/* not reached: an update takes two at most */
+}
+
+/* The inclusive end of a lock body's or flock's range (len 0: to EOF). */
+static off_t
+dq_serve_range_end(off_t start, off_t len)
+{
+
+	return (len == 0 ? OFF_MAX : start + len - 1);
+}
+
+static void
+dq_serve_range_flock(struct flock *fl, short type, off_t start, off_t end)
+{
+
+	memset(fl, 0, sizeof(*fl));
+	fl->l_type = type;
+	fl->l_whence = SEEK_SET;
+	fl->l_start = start;
+	fl->l_len = end == OFF_MAX ? 0 : end - start + 1;
+}
+
+/*
+ * [start, end] becomes type (F_UNLCK: nothing) in the owner's shadow, as
+ * lockf(9) applies a request to one owner's locks: overlapped ranges are
+ * cut back or split, and a range of the same type that touches or
+ * overlaps the new one joins it.  The mutex is held.
+ */
+static void
+dq_serve_shadow_apply(struct dq_serve_owner *so, off_t start, off_t end,
+    short type, struct dq_serve_spare *sp)
+{
+	struct dq_serve_range *r, *tmp, *nr, *prev;
+
+	TAILQ_FOREACH_SAFE(r, &so->so_shadow, sr_link, tmp) {
+		if (r->sr_end < start)
+			continue;
+		if (r->sr_start > end)
+			break;
+		if (r->sr_start < start && r->sr_end > end) {
+			/* Split: the tail keeps its type after the change. */
+			nr = dq_serve_spare_take(sp);
+			nr->sr_start = end + 1;
+			nr->sr_end = r->sr_end;
+			nr->sr_type = r->sr_type;
+			TAILQ_INSERT_AFTER(&so->so_shadow, r, nr, sr_link);
+			r->sr_end = start - 1;
+			break;
+		}
+		if (r->sr_start < start)
+			r->sr_end = start - 1;
+		else if (r->sr_end > end)
+			r->sr_start = end + 1;
+		else {
+			TAILQ_REMOVE(&so->so_shadow, r, sr_link);
+			free(r);
+		}
+	}
+	if (type == F_UNLCK)
+		return;
+
+	/* Insert in order, then join same-type neighbours that touch it. */
+	prev = NULL;
+	TAILQ_FOREACH(r, &so->so_shadow, sr_link) {
+		if (r->sr_start > end)
+			break;
+		prev = r;
+	}
+	nr = dq_serve_spare_take(sp);
+	nr->sr_start = start;
+	nr->sr_end = end;
+	nr->sr_type = type;
+	if (prev == NULL)
+		TAILQ_INSERT_HEAD(&so->so_shadow, nr, sr_link);
+	else
+		TAILQ_INSERT_AFTER(&so->so_shadow, prev, nr, sr_link);
+	if (prev != NULL && prev->sr_type == type && prev->sr_end + 1 == start) {
+		prev->sr_end = nr->sr_end;
+		TAILQ_REMOVE(&so->so_shadow, nr, sr_link);
+		free(nr);
+		nr = prev;
+	}
+	r = TAILQ_NEXT(nr, sr_link);
+	if (r != NULL && r->sr_type == type && nr->sr_end != OFF_MAX &&
+	    nr->sr_end + 1 == r->sr_start) {
+		nr->sr_end = r->sr_end;
+		TAILQ_REMOVE(&so->so_shadow, r, sr_link);
+		free(r);
+	}
+}
+
+static void
+dq_serve_shadow_free(struct dq_serve_owner *so)
+{
+	struct dq_serve_range *r;
+
+	while ((r = TAILQ_FIRST(&so->so_shadow)) != NULL) {
+		TAILQ_REMOVE(&so->so_shadow, r, sr_link);
+		free(r);
+	}
+}
+
+/*
+ * A grant nobody asked for any more is taken back: [start, end] returns to
+ * what the shadow says the owner held there before (an abandoned upgrade
+ * keeps the old lock, as on a real file).  Each change only lowers a lock
+ * this owner holds over the whole range, so none can block or conflict.
+ * The mutex is held.
+ */
+static void
+dq_serve_shadow_restore(int fd, const struct dq_serve_owner *so, off_t start,
+    off_t end)
+{
+	const struct dq_serve_range *r;
+	struct flock fl;
+	off_t pos;
+
+	pos = start;
+	TAILQ_FOREACH(r, &so->so_shadow, sr_link) {
+		if (r->sr_end < start)
+			continue;
+		if (r->sr_start > end)
+			break;
+		if (r->sr_start > pos) {
+			dq_serve_range_flock(&fl, F_UNLCK, pos, r->sr_start - 1);
+			(void)fcntl(fd, F_OFD_SETLK, &fl);
+		}
+		dq_serve_range_flock(&fl, r->sr_type, MAX(pos, r->sr_start),
+		    MIN(end, r->sr_end));
+		(void)fcntl(fd, F_OFD_SETLK, &fl);
+		if (r->sr_end >= end)
+			return;
+		pos = r->sr_end + 1;
+	}
+	dq_serve_range_flock(&fl, F_UNLCK, pos, end);
+	(void)fcntl(fd, F_OFD_SETLK, &fl);
+}
+
+/*
+ * The pid of the served POSIX owner whose locks are the blocker F_GETLK
+ * reported (type, [start, end]: lockf reports an OFD owner's whole run of
+ * one type), or -1: a flock or OFD owner, as a real file reports them.
+ * The mutex is held.
+ */
+static pid_t
+dq_serve_blocker_pid(struct dq_serve_state *st, short type, off_t start,
+    off_t end)
+{
+	const struct dq_serve_owner *so;
+	const struct dq_serve_range *r;
+
+	LIST_FOREACH(so, &st->ss_owners, so_link) {
+		if (so->so_key.kind != DQ_LOCK_POSIX)
+			continue;
+		TAILQ_FOREACH(r, &so->so_shadow, sr_link) {
+			if (r->sr_start > start)
+				break;
+			if (r->sr_start == start && r->sr_end == end &&
+			    r->sr_type == type)
+				return (so->so_pid);
+		}
+	}
+	return (-1);
 }
 
 /*
@@ -159,6 +406,7 @@ dq_serve_owner_close(struct dq_serve_state *st, struct dq_serve_owner *so)
 		pthread_cond_wait(&st->ss_cv, &st->ss_mtx);
 	}
 	(void)close(so->so_fd);
+	dq_serve_shadow_free(so);
 	free(so);
 }
 
@@ -269,7 +517,7 @@ dq_serve_open_backing(int backing)
  */
 static struct dq_serve_owner *
 dq_serve_owner_get(struct dq_serve_state *st, int backing,
-    const struct dq_serve_key *k, bool create)
+    const struct dq_serve_key *k, pid_t pid, bool create)
 {
 	struct dq_serve_owner *so;
 	int fd;
@@ -291,6 +539,8 @@ dq_serve_owner_get(struct dq_serve_state *st, int backing,
 	}
 	so->so_key = *k;
 	so->so_fd = fd;
+	so->so_pid = k->kind == DQ_LOCK_POSIX ? pid : -1;
+	TAILQ_INIT(&so->so_shadow);
 	LIST_INSERT_HEAD(&st->ss_owners, so, so_link);
 	st->ss_nowners++;
 	return (so);
@@ -325,6 +575,7 @@ dq_serve_wait_unlink(void *arg)
 	w->sw_owner->so_nwaits--;
 	pthread_cond_broadcast(&st->ss_cv);
 	pthread_mutex_unlock(&st->ss_mtx);
+	dq_serve_spare_put(&w->sw_spare);
 	free(w);
 }
 
@@ -332,30 +583,36 @@ static void *
 dq_serve_waiter(void *arg)
 {
 	struct dq_serve_wait *w = arg;
-	struct flock fl;
+	struct dq_serve_state *st = w->sw_state;
+	off_t start, end;
 	int error, old, rv;
 
 	pthread_cleanup_push(dq_serve_wait_unlink, w);
 	/* The cancellation point: an INTERRUPT ends the wait here. */
 	error = fcntl(w->sw_dupfd, F_OFD_SETLKW, &w->sw_fl) == -1 ? errno : 0;
 	(void)pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old);
+	start = w->sw_fl.l_start;
+	end = dq_serve_range_end(w->sw_fl.l_start, w->sw_fl.l_len);
+	/*
+	 * The reply and the shadow under one hold of the mutex: a GETLK
+	 * that finds this grant on the backing file names its owner.
+	 */
+	pthread_mutex_lock(&st->ss_mtx);
 	rv = dq_reply(w->sw_q, w->sw_id, dq_serve_map(DQ_OP_LOCK, error), NULL,
 	    0);
 	if (rv == -1 && errno == ESRCH && error == 0) {
 		/*
 		 * Granted after the requester gave up (its INTERRUPT is on
 		 * its way or already handled, the event is no longer in
-		 * flight): nobody holds this lock, so take it back, on the
-		 * owner's own open file (this thread's descriptor of it).
-		 * The whole range is unlocked for the owner, which also drops
-		 * what the owner held there before the request (a lock
-		 * upgrade that is abandoned leaves the range unlocked; a
-		 * real file would keep the old lock).
+		 * flight): nobody asked for this lock any more, so take it
+		 * back on the owner's own open file (this thread's
+		 * descriptor of it), to what the owner held there before.
 		 */
-		fl = w->sw_fl;
-		fl.l_type = F_UNLCK;
-		(void)fcntl(w->sw_dupfd, F_OFD_SETLK, &fl);
-	}
+		dq_serve_shadow_restore(w->sw_dupfd, w->sw_owner, start, end);
+	} else if (error == 0)
+		dq_serve_shadow_apply(w->sw_owner, start, end, w->sw_fl.l_type,
+		    &w->sw_spare);
+	pthread_mutex_unlock(&st->ss_mtx);
 	pthread_cleanup_pop(1);
 	return (NULL);
 }
@@ -373,9 +630,14 @@ dq_serve_setlkw(struct dq_serve_state *st, int q, uint64_t id,
 	w = calloc(1, sizeof(*w));
 	if (w == NULL)
 		return (ENOLCK);
+	if (dq_serve_spare_get(&w->sw_spare) != 0) {
+		free(w);
+		return (ENOLCK);
+	}
 	/* The same open file, so the same OFD owner: the owner's locks. */
 	w->sw_dupfd = fcntl(so->so_fd, F_DUPFD_CLOEXEC, 0);
 	if (w->sw_dupfd == -1) {
+		dq_serve_spare_put(&w->sw_spare);
 		free(w);
 		return (ENOLCK);
 	}
@@ -397,10 +659,40 @@ dq_serve_setlkw(struct dq_serve_state *st, int q, uint64_t id,
 		st->ss_nwaits--;
 		so->so_nwaits--;
 		(void)close(w->sw_dupfd);
+		dq_serve_spare_put(&w->sw_spare);
 		free(w);
 		return (ENOLCK);
 	}
 	return (0);
+}
+
+/*
+ * An exclusive flock(2) request that may wait (lf_setlock): taken at once
+ * when nothing blocks it, converting the open file's shared lock in place;
+ * when something does, the shared lock is dropped and the request waits.
+ * Returns 0 (granted), EAGAIN (dropped; the caller starts the wait) or the
+ * errno for the reply.  The mutex is held.
+ */
+static int
+dq_serve_flock_upgrade(struct dq_serve_owner *so, struct flock *fl,
+    struct dq_serve_spare *sp)
+{
+	struct flock unl;
+	off_t end;
+
+	end = dq_serve_range_end(fl->l_start, fl->l_len);
+	if (fcntl(so->so_fd, F_OFD_SETLK, fl) == 0) {
+		dq_serve_shadow_apply(so, fl->l_start, end, fl->l_type, sp);
+		return (0);
+	}
+	if (errno != EAGAIN)
+		return (errno);
+	unl = *fl;
+	unl.l_type = F_UNLCK;
+	if (fcntl(so->so_fd, F_OFD_SETLK, &unl) == -1)
+		return (errno);
+	dq_serve_shadow_apply(so, fl->l_start, end, F_UNLCK, sp);
+	return (EAGAIN);
 }
 
 static int
@@ -409,6 +701,7 @@ dq_serve_lock(int q, const struct dq_event *ev, const struct dq_lock_body *lb,
 {
 	struct dq_serve_state *st;
 	struct dq_serve_owner *so;
+	struct dq_serve_spare sp;
 	struct dq_serve_key k;
 	struct dq_lock_reply lr;
 	struct flock fl;
@@ -424,6 +717,9 @@ dq_serve_lock(int q, const struct dq_event *ev, const struct dq_lock_body *lb,
 	    opts, backing) == -1)
 		return (dq_reply(q, ev->de_id, ENOLCK, NULL, 0));
 	dq_serve_flock_from_body(lb, &fl);
+	/* What a shadow update may need, before anything is changed. */
+	if (lb->dl_op != DQ_LOCK_GETLK && dq_serve_spare_get(&sp) != 0)
+		return (dq_reply(q, ev->de_id, ENOLCK, NULL, 0));
 	pthread_mutex_lock(&st->ss_mtx);
 	switch (lb->dl_op) {
 	case DQ_LOCK_GETLK:
@@ -432,36 +728,46 @@ dq_serve_lock(int q, const struct dq_event *ev, const struct dq_lock_body *lb,
 		 * locks never block it), else through a temporary open
 		 * closed at once: a query creates no owner.
 		 */
-		so = dq_serve_owner_get(st, backing, &k, false);
+		so = dq_serve_owner_get(st, backing, &k, lb->dl_pid, false);
 		fd = so != NULL ? so->so_fd : dq_serve_open_backing(backing);
 		if (fd == -1) {
 			error = errno;
-			break;
+			pthread_mutex_unlock(&st->ss_mtx);
+			return (dq_reply(q, ev->de_id,
+			    dq_serve_map(DQ_OP_LOCK, error), NULL, 0));
 		}
 		rv = fcntl(fd, F_OFD_GETLK, &fl);
 		error = rv == -1 ? errno : 0;
 		if (so == NULL)
 			(void)close(fd);
-		if (rv == -1)
-			break;
-		pthread_mutex_unlock(&st->ss_mtx);
-		/*
-		 * The blocker: every lock here is an OFD lock of this
-		 * process, so lockf reports no pid; -1 is what a requester
-		 * sees for an OFD or flock blocker on a real file, and the
-		 * declared answer for a POSIX one.
-		 */
 		memset(&lr, 0, sizeof(lr));
-		lr.dlr_type = (uint32_t)fl.l_type;
-		if (fl.l_type != F_UNLCK) {
-			lr.dlr_start = fl.l_start;
-			lr.dlr_len = fl.l_len;
-			lr.dlr_pid = fl.l_pid > 0 ? fl.l_pid : -1;
+		if (rv == 0) {
+			lr.dlr_type = (uint32_t)fl.l_type;
+			if (fl.l_type != F_UNLCK) {
+				lr.dlr_start = fl.l_start;
+				lr.dlr_len = fl.l_len;
+				/*
+				 * The blocker's owner, as a real file names
+				 * it: a real process's POSIX lock on the
+				 * backing file carries its pid; the OFD
+				 * locks proxied here carry none, and the
+				 * shadows say which served owner holds
+				 * the run (a POSIX owner's pid, else -1).
+				 */
+				lr.dlr_pid = fl.l_pid > 0 ? fl.l_pid :
+				    dq_serve_blocker_pid(st, fl.l_type,
+				    fl.l_start, dq_serve_range_end(fl.l_start,
+				    fl.l_len));
+			}
 		}
+		pthread_mutex_unlock(&st->ss_mtx);
+		if (rv == -1)
+			return (dq_reply(q, ev->de_id,
+			    dq_serve_map(DQ_OP_LOCK, error), NULL, 0));
 		return (dq_reply_lock(q, ev->de_id, &lr));
 	case DQ_LOCK_SETLK:
 	case DQ_LOCK_UNLCK:
-		so = dq_serve_owner_get(st, backing, &k,
+		so = dq_serve_owner_get(st, backing, &k, lb->dl_pid,
 		    lb->dl_op == DQ_LOCK_SETLK);
 		if (so == NULL) {
 			/* An unlock by an owner that holds nothing. */
@@ -471,16 +777,26 @@ dq_serve_lock(int q, const struct dq_event *ev, const struct dq_lock_body *lb,
 		if (lb->dl_op == DQ_LOCK_UNLCK)
 			fl.l_type = F_UNLCK;
 		error = fcntl(so->so_fd, F_OFD_SETLK, &fl) == -1 ? errno : 0;
+		if (error == 0)
+			dq_serve_shadow_apply(so, fl.l_start,
+			    dq_serve_range_end(fl.l_start, fl.l_len), fl.l_type,
+			    &sp);
 		break;
 	case DQ_LOCK_SETLKW:
-		so = dq_serve_owner_get(st, backing, &k, true);
+		so = dq_serve_owner_get(st, backing, &k, lb->dl_pid, true);
 		if (so == NULL) {
 			error = errno;
 			break;
 		}
+		if (lb->dl_kind == DQ_LOCK_FLOCK && fl.l_type == F_WRLCK) {
+			error = dq_serve_flock_upgrade(so, &fl, &sp);
+			if (error != EAGAIN)
+				break;		/* granted at once, or failed */
+		}
 		error = dq_serve_setlkw(st, q, ev->de_id, lb, &k, so);
 		if (error == 0) {
 			pthread_mutex_unlock(&st->ss_mtx);
+			dq_serve_spare_put(&sp);
 			return (0);	/* the thread answers */
 		}
 		break;
@@ -489,8 +805,11 @@ dq_serve_lock(int q, const struct dq_event *ev, const struct dq_lock_body *lb,
 		break;
 	}
 	pthread_mutex_unlock(&st->ss_mtx);
+	if (lb->dl_op != DQ_LOCK_GETLK)
+		dq_serve_spare_put(&sp);
 	return (dq_reply(q, ev->de_id, dq_serve_map(DQ_OP_LOCK, error), NULL, 0));
 }
+
 
 /*
  * UNLOCK_ALL {kind, owner}: that owner's open goes, and its locks with it.

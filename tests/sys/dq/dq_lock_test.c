@@ -10,10 +10,8 @@
  * dq_serve_file(), which proxies each owner onto its own open of a backing
  * file, so conflicts between requesters are the backing file's.  The oracle
  * is a second real file locked the same way by the same processes.
- *
- * Declared difference: dq_serve_file() answers F_GETLK with l_pid -1 (it
- * proxies through OFD locks and does not track which owner holds the
- * blocker); a real file reports the POSIX owner's pid.
+ * F_GETLK names a POSIX blocker's pid as the real file does: dq_serve_file
+ * keeps a shadow of each owner's locks (C15).
  */
 
 #include <sys/param.h>
@@ -310,7 +308,7 @@ ATF_TC_BODY(posix_oracle, tc)
 	check_probe(&pa, &pr);
 	ATF_CHECK_EQ(EAGAIN, pr.s[0].err);
 	ATF_CHECK_EQ(F_WRLCK, pr.sfl[2].l_type);
-	ATF_CHECK_EQ(-1, pr.sfl[2].l_pid);	/* declared: dq_serve_file */
+	ATF_CHECK_EQ(pr.ofl[2].l_pid, pr.sfl[2].l_pid);	/* the holder's */
 	ATF_CHECK_EQ(F_UNLCK, pr.sfl[3].l_type);
 
 	holder_release(&h, &ch, &hr);
