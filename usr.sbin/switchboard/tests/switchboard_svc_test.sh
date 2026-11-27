@@ -32,7 +32,7 @@ assert_stack_alive()
 # timeout bounds the wait.
 svc_wait()
 {
-	"$(atf_get_srcdir)/../capsule/capd_wait_file" "$@"
+	"$(atf_get_srcdir)/capd_wait_file" "$@"
 }
 
 # The stack log's line number of the first match of a regular expression.
