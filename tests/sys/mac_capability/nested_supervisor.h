@@ -31,6 +31,7 @@ enum {
 	NSH_EXIT_SEND,		/* send on the GET descriptor failed */
 	NSH_EXIT_LOOKUP,	/* service_open: unexpected answer */
 	NSH_EXIT_SESSION,	/* send on the session failed */
+	NSH_EXIT_SETUID,	/* the set-id program could not drop root */
 	NSH_EXIT_EXEC = 127	/* exec of the helper failed */
 };
 
@@ -47,6 +48,7 @@ nsh_exit_name(int status)
 	case NSH_EXIT_SEND:	return ("send on the GET descriptor failed");
 	case NSH_EXIT_LOOKUP:	return ("service_open not as pinned");
 	case NSH_EXIT_SESSION:	return ("send on the session failed");
+	case NSH_EXIT_SETUID:	return ("setuid(getuid()) failed");
 	case NSH_EXIT_EXEC:	return ("exec failed");
 	default:		return ("killed or unknown");
 	}

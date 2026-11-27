@@ -34,6 +34,13 @@ main(void)
 	report.issetugid = issetugid();
 	report.ruid = getuid();
 	report.euid = geteuid();
+	/*
+	 * Nothing below needs root: drop it, keeping the set-id mark
+	 * (P_SUGID stays until the next exec).  The route is per process
+	 * and GET checks only the prison, so the pin loses nothing.
+	 */
+	if (setuid(getuid()) == -1)
+		return (NSH_EXIT_SETUID);
 	memset(&info, 0, sizeof(info));
 	report.info_err = cap_process(MAC_CAP_PROCESS_INFO, -1, 0, &info) ==
 	    -1 ? errno : 0;

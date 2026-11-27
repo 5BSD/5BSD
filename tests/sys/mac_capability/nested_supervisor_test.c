@@ -12,7 +12,10 @@
  *	installs a channel it made with the ungated
  *	mac_capability_channel_create() syscall as its child's route; the
  *	child's MAC_CAP_PROCESS_GET descriptor and the child's own lookups
- *	reach the parent's far end, and the parent can answer them.
+ *	reach the parent's far end, and the parent can answer them.  Steps
+ *	2-4 (and NR2's lookup half in subset_test) speak dev's
+ *	REGISTER_LOOKUP handshake on the shared route, which channel S4b
+ *	rewrites; they are rewritten with it.
  *   NR4 coalition_needs_device  the coalition service is gated only by
  *	reaching /dev/mac_capability: an unprivileged open is EACCES, root
  *	is refused too while Capsule's claim is enforced, and a held device

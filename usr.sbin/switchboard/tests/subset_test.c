@@ -8,10 +8,11 @@
  * a program subsets of its own.  Each case pins real behaviour of dev and
  * passes there:
  *
- *   NR2 lookup_channel_refuses_claim  outside a unit, the provider API
- *	fails before any wire operation (service_provider_create EBADF),
- *	and SVC_OP_NAME_CLAIM on a lookup channel answers ENOTSUP
- *	(domain.c lookup_channel_request), leaving the channel usable.
+ *   NR2 provider_api_refused_outside_unit  outside a unit, the provider
+ *	API fails before any wire operation (service_provider_create
+ *	EBADF); lookup_channel_refuses_claim  SVC_OP_NAME_CLAIM on a lookup
+ *	channel answers ENOTSUP (domain.c lookup_channel_request), leaving
+ *	the channel usable.
  *   NR5 provider_drops_flagged_new_client  a libservice provider drops a
  *	SVC_OP_NEW_CLIENT notice whose flags are not 0, closing its
  *	descriptor, and accepts the next one (libservice.c
@@ -28,8 +29,8 @@
  *	route reaches its gated endpoint.
  *
  * NR2's lookup half, NR7 and NR9 need SwitchBoard's system route (Capsule
- * as PID 1) and skip elsewhere with DEFERRED_PLANEON_TIER; NR5 runs on
- * every tier.  Every wait is on an event: a child's exit, a pipe's end of
+ * as PID 1) and skip elsewhere with DEFERRED_PLANEON_TIER; NR2's library
+ * half and NR5 run on every tier.  Every wait is on an event: a child's exit, a pipe's end of
  * file, or a message on a channel (MAC_CAPABILITY_RECV_F_WAIT).
  */
 
@@ -227,25 +228,20 @@ nr2_provider_rows(const void *arg __unused, void *resp)
 	    "org.test.nr2.claim", &listener));
 }
 
-ATF_TC(lookup_channel_refuses_claim);
-ATF_TC_HEAD(lookup_channel_refuses_claim, tc)
+ATF_TC(provider_api_refused_outside_unit);
+ATF_TC_HEAD(provider_api_refused_outside_unit, tc)
 {
-	atf_tc_set_md_var(tc, "descr", "NR2: a program that is not a unit "
-	    "cannot serve a name on dev.  libservice's provider API fails "
+	atf_tc_set_md_var(tc, "descr", "NR2, the library half (every tier): "
+	    "in a program that is not a unit libservice's provider API fails "
 	    "before it sends anything (service_provider_create: EBADF, no "
 	    "bootstrap; service_provider_expose then has no provider: "
-	    "EINVAL), and SVC_OP_NAME_CLAIM sent on a lookup channel, plain "
-	    "or sendable, answers ENOTSUP while the channel keeps serving "
-	    "lookups.  NS3's line claim must not change this outside a "
+	    "EINVAL).  NS3's line claim must not change this outside a "
 	    "subset");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(lookup_channel_refuses_claim, tc)
+ATF_TC_BODY(provider_api_refused_outside_unit, tc)
 {
-	struct svc_name_claim_req claim;
-	struct svc_lookup_req lookup;
 	struct nr2_res r;
-	int chan, status;
 
 	memset(&r, 0, sizeof(r));
 	run_child(nr2_provider_rows, NULL, &r, sizeof(r));
@@ -253,6 +249,23 @@ ATF_TC_BODY(lookup_channel_refuses_claim, tc)
 	ROW("no provider returned", r.create_out_null, 1);
 	ROW("service_provider_expose without a provider", r.expose_null,
 	    EINVAL);
+}
+
+ATF_TC(lookup_channel_refuses_claim);
+ATF_TC_HEAD(lookup_channel_refuses_claim, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "NR2, the SwitchBoard half: "
+	    "SVC_OP_NAME_CLAIM sent on a lookup channel, plain or sendable, "
+	    "answers ENOTSUP (domain.c lookup_channel_request) while the "
+	    "channel keeps serving lookups.  Written against dev's "
+	    "REGISTER_LOOKUP handshake, which channel S4b rewrites");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(lookup_channel_refuses_claim, tc)
+{
+	struct svc_name_claim_req claim;
+	struct svc_lookup_req lookup;
+	int chan, status;
 
 	require_plane();
 	chan = service_ambient_lookup_channel();
@@ -781,6 +794,7 @@ ATF_TC_BODY(route_grants_nothing, tc)
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, provider_api_refused_outside_unit);
 	ATF_TP_ADD_TC(tp, lookup_channel_refuses_claim);
 	ATF_TP_ADD_TC(tp, provider_drops_flagged_new_client);
 	ATF_TP_ADD_TC(tp, relay_as_self_zero_hops);
