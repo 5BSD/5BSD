@@ -1433,8 +1433,13 @@ dq_stat(struct file *fp, struct stat *sb, struct ucred *active_cred)
 	return (0);
 }
 
+/*
+ * The identity's statfs as the reader sees it (D201): the mount name
+ * presented against the reader's served root and the jail rule applied,
+ * as statfs(2) of a name answered DQ_RESOLVE_ATTR gives it.
+ */
 static int
-dq_statfs(struct file *fp, struct statfs *buf, struct thread *td __unused)
+dq_statfs(struct file *fp, struct statfs *buf, struct thread *td)
 {
 	struct dq_object *o;
 	struct dq_statfs *ds;
@@ -1444,29 +1449,7 @@ dq_statfs(struct file *fp, struct statfs *buf, struct thread *td __unused)
 	DQO_LOCK(o);
 	*ds = o->o_ident.di_statfs;
 	DQO_UNLOCK(o);
-	bzero(buf, sizeof(*buf));
-	buf->f_version = STATFS_VERSION;
-	buf->f_type = ds->ds_type;
-	buf->f_flags = ds->ds_flags;
-	buf->f_bsize = ds->ds_bsize;
-	buf->f_iosize = ds->ds_iosize;
-	buf->f_blocks = ds->ds_blocks;
-	buf->f_bfree = ds->ds_bfree;
-	buf->f_bavail = ds->ds_bavail;
-	buf->f_files = ds->ds_files;
-	buf->f_ffree = ds->ds_ffree;
-	buf->f_syncwrites = ds->ds_syncwrites;
-	buf->f_asyncwrites = ds->ds_asyncwrites;
-	buf->f_syncreads = ds->ds_syncreads;
-	buf->f_asyncreads = ds->ds_asyncreads;
-	buf->f_nvnodelistsize = ds->ds_nvnodelistsize;
-	buf->f_namemax = ds->ds_namemax;
-	buf->f_owner = ds->ds_owner;
-	buf->f_fsid.val[0] = ds->ds_fsid[0];
-	buf->f_fsid.val[1] = ds->ds_fsid[1];
-	memcpy(buf->f_fstypename, ds->ds_fstypename, MFSNAMELEN);
-	memcpy(buf->f_mntfromname, ds->ds_mntfromname, MNAMELEN);
-	memcpy(buf->f_mntonname, ds->ds_mntonname, MNAMELEN);
+	dqres_statfs_present(td, o->o_queue->q_gid, ds, buf);
 	free(ds, M_DQ);
 	return (dq_fop_local(fp, DQ_FOP_STATFS, 0));
 }

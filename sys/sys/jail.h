@@ -564,6 +564,8 @@ bool prison_owns_vnet(struct prison *pr);
 int prison_canseemount(struct ucred *cred, struct mount *mp);
 void prison_enforce_statfs(struct ucred *cred, struct mount *mp,
     struct statfs *sp);
+void prison_enforce_statfs_presented(struct ucred *cred, struct statfs *sp,
+    bool presented);
 struct prison *prison_find(int prid);
 struct prison *prison_find_child(struct prison *, int);
 struct prison *prison_find_name(struct prison *, const char *);

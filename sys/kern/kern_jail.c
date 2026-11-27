@@ -4428,24 +4428,14 @@ prison_owns_vnet(struct prison *pr)
 #endif
 
 /*
- * Determine whether the subject represented by cred can "see"
- * status of a mount point.
- * Returns: 0 for permitted, ENOENT otherwise.
- * XXX: This function should be called cr_canseemount() and should be
- *      placed in kern_prot.c.
+ * prison_canseemount's rule for a mount other than the jail root's, by
+ * the mount's name.
  */
-int
-prison_canseemount(struct ucred *cred, struct mount *mp)
+static int
+prison_canseemntonname(struct prison *pr, const char *mntonname)
 {
-	struct prison *pr;
-	struct statfs *sp;
 	size_t len;
 
-	pr = cred->cr_prison;
-	if (pr->pr_enforce_statfs == 0)
-		return (0);
-	if (pr->pr_root->v_mount == mp)
-		return (0);
 	if (pr->pr_enforce_statfs == 2)
 		return (ENOENT);
 	/*
@@ -4457,29 +4447,49 @@ prison_canseemount(struct ucred *cred, struct mount *mp)
 	if (strcmp(pr->pr_path, "/") == 0)
 		return (0);
 	len = strlen(pr->pr_path);
-	sp = &mp->mnt_stat;
-	if (strncmp(pr->pr_path, sp->f_mntonname, len) != 0)
+	if (strncmp(pr->pr_path, mntonname, len) != 0)
 		return (ENOENT);
 	/*
 	 * Be sure that we don't have situation where jail's root directory
 	 * is "/some/path" and mount point is "/some/pathpath".
 	 */
-	if (sp->f_mntonname[len] != '\0' && sp->f_mntonname[len] != '/')
+	if (mntonname[len] != '\0' && mntonname[len] != '/')
 		return (ENOENT);
 	return (0);
 }
 
-void
-prison_enforce_statfs(struct ucred *cred, struct mount *mp, struct statfs *sp)
+/*
+ * Determine whether the subject represented by cred can "see"
+ * status of a mount point.
+ * Returns: 0 for permitted, ENOENT otherwise.
+ * XXX: This function should be called cr_canseemount() and should be
+ *      placed in kern_prot.c.
+ */
+int
+prison_canseemount(struct ucred *cred, struct mount *mp)
 {
-	char jpath[MAXPATHLEN];
 	struct prison *pr;
-	size_t len;
 
 	pr = cred->cr_prison;
 	if (pr->pr_enforce_statfs == 0)
-		return;
-	if (prison_canseemount(cred, mp) != 0) {
+		return (0);
+	if (pr->pr_root->v_mount == mp)
+		return (0);
+	return (prison_canseemntonname(pr, mp->mnt_stat.f_mntonname));
+}
+
+/*
+ * prison_enforce_statfs once its mount is decided: seen (prison_canseemount
+ * allows it) and rootmnt (the mount holding the jail's root).
+ */
+static void
+prison_enforce_statfs_mount(struct prison *pr, bool seen, bool rootmnt,
+    struct statfs *sp)
+{
+	char jpath[MAXPATHLEN];
+	size_t len;
+
+	if (!seen) {
 		bzero(&sp->f_fsid, sizeof(sp->f_fsid));
 		bzero(sp->f_mntonname, sizeof(sp->f_mntonname));
 		strlcpy(sp->f_mntonname, "[restricted]",
@@ -4488,7 +4498,7 @@ prison_enforce_statfs(struct ucred *cred, struct mount *mp, struct statfs *sp)
 	}
 	if (pr->pr_enforce_statfs > 1)
 		bzero(&sp->f_fsid, sizeof(sp->f_fsid));
-	if (pr->pr_root->v_mount == mp) {
+	if (rootmnt) {
 		/*
 		 * Clear current buffer data, so we are sure nothing from
 		 * the valid path left there.
@@ -4516,6 +4526,63 @@ prison_enforce_statfs(struct ucred *cred, struct mount *mp, struct statfs *sp)
 	} else {
 		strlcpy(sp->f_mntonname, jpath, sizeof(sp->f_mntonname));
 	}
+}
+
+void
+prison_enforce_statfs(struct ucred *cred, struct mount *mp, struct statfs *sp)
+{
+	struct prison *pr;
+
+	pr = cred->cr_prison;
+	if (pr->pr_enforce_statfs == 0)
+		return;
+	prison_enforce_statfs_mount(pr, prison_canseemount(cred, mp) == 0,
+	    pr->pr_root->v_mount == mp, sp);
+}
+
+/*
+ * prison_enforce_statfs for a statfs with no struct mount behind it: a
+ * DescriptorQueue served object's, which carries its mount's name only
+ * (D201).  The jail root's mount is the one whose name is the name of the
+ * mount holding the jail's root; any other is judged by its name, as
+ * prison_canseemount does.
+ *
+ * A name presented against the reader's served root (presented) is not a
+ * global name, and the served root stands for the jail's root: "/" is the
+ * root's own mount (seen, "/" kept, f_fsid cleared at enforce_statfs 2);
+ * an empty name is a mount outside the root, or a dead root (never seen:
+ * "[restricted]", no f_fsid); a root-relative name is a mount below the
+ * root, seen at 1 as it stands (already relative, no pr_path to strip)
+ * and not seen at 2, as every other mount is for a real-mount reader.
+ * A jailed reader learns no more through a served root than through a
+ * real one.
+ */
+void
+prison_enforce_statfs_presented(struct ucred *cred, struct statfs *sp,
+    bool presented)
+{
+	struct prison *pr;
+	struct mount *rootmp;
+	bool rootmnt;
+
+	pr = cred->cr_prison;
+	if (pr->pr_enforce_statfs == 0)
+		return;
+	if (presented) {
+		if (strcmp(sp->f_mntonname, "/") == 0)
+			prison_enforce_statfs_mount(pr, true, true, sp);
+		else if (sp->f_mntonname[0] == '\0' ||
+		    pr->pr_enforce_statfs > 1)
+			prison_enforce_statfs_mount(pr, false, false, sp);
+		return;
+	}
+	rootmp = vfs_ref_from_vp(pr->pr_root);
+	rootmnt = rootmp != NULL && strncmp(rootmp->mnt_stat.f_mntonname,
+	    sp->f_mntonname, sizeof(sp->f_mntonname)) == 0;
+	if (rootmp != NULL)
+		vfs_rel(rootmp);
+	prison_enforce_statfs_mount(pr, rootmnt ||
+	    prison_canseemntonname(pr, sp->f_mntonname) == 0, rootmnt, sp);
 }
 
 /*

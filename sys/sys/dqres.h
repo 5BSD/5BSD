@@ -359,6 +359,7 @@ SDT_PROBE_DECLARE(dqres, , , subst__consume);
 /* dqres:::present (viewer pid, DQRES_PRESENT_*, errno). */
 #define	DQRES_PRESENT_SERVED	1	/* a served object's di_path */
 #define	DQRES_PRESENT_REAL	2	/* a real object's vn_fullpath */
+#define	DQRES_PRESENT_MOUNT	3	/* a served object's f_mntonname */
 
 /* The requester's completion refused the answer (dro_bad_answer). */
 void	dqres_bad_answer(struct thread *td);
@@ -411,6 +412,14 @@ dq_intent_slot_rights(struct dq_intent *di, int slot,
 	di->di_slot[slot].ds_rights = rights;
 }
 bool	dqres_inject_drop(struct thread *td);
+#ifdef DQ_FAULT_INJECTION
+/*
+ * dev/dq/dq_faultinj.c, debug.dqres.fail_fhold (D200): the next
+ * inheritance of served starts by the named process fails their fhold.
+ * Callers include opt_dq.h first.
+ */
+bool	dq_faultinj_fhold_fail(void);
+#endif
 int	dqres_consult_slot(struct thread *td, int slot);
 void	dq_intent_slot_content(struct dq_intent *di, int slot,
 	    const char *kpath, int dirfd);
@@ -512,6 +521,8 @@ int	dqres_present_viewer(struct thread *viewer, uint64_t qgid,
 int	dqres_present_file(struct thread *viewer, struct file *fp, char *out,
 	    size_t outsz);
 void	dqres_present_real(struct thread *viewer, char *path, size_t size);
+bool	dqres_present_mntonname(struct thread *td, uint64_t qgid, char *name,
+	    size_t size);
 bool	dqres_served_root(struct thread *td);
 int	dqres_getcwd(struct thread *td, char *buf, size_t *buflenp);
 int	dqres_proc_dirpath(struct thread *viewer, struct proc *p, bool root,
@@ -573,8 +584,9 @@ struct ucred;
 const struct dq_ident_file *dqres_ident(struct dq_intent *di, uint32_t kind);
 void	dqres_ident_to_stat(const struct dq_ident_file *di, struct ucred *cred,
 	    struct stat *sb);
-void	dqres_ident_to_statfs(const struct dq_ident_file *di,
-	    struct statfs *sf);
+struct dq_statfs;
+void	dqres_statfs_present(struct thread *td, uint64_t qgid,
+	    const struct dq_statfs *ds, struct statfs *sf);
 int	dqres_ident_pathconf(const struct dq_ident_file *di, int name,
 	    long *valuep);
 int	dqres_ident_access(const struct dq_ident_file *di, int accmode,

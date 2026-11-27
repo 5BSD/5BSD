@@ -480,15 +480,17 @@ kern_statfs_dqimpl(struct thread *td, const char *path, enum uio_seg pathseg,
 	return (kern_do_statfs(td, mp, buf));
 }
 
+/* ATTR: the identity's statfs as the reader sees it (D201). */
 static int
-kern_statfs_dqserved(struct dq_intent *di, struct statfs *buf)
+kern_statfs_dqserved(struct thread *td, struct dq_intent *di,
+    struct statfs *buf)
 {
 	const struct dq_ident_file *id;
 
 	id = dqres_ident(di, DQ_RESOLVE_ATTR);
 	if (id == NULL)
 		return (EIO);
-	dqres_ident_to_statfs(id, buf);
+	dqres_statfs_present(td, di->di_res.da_qgid, &id->di_statfs, buf);
 	return (0);
 }
 
@@ -510,7 +512,7 @@ kern_statfs(struct thread *td, const char *path, enum uio_seg pathseg,
 	    DQ_RACCEPT(DQ_RESOLVE_ATTR));
 	dq_intent_slot(&dqi, 0, path, pathseg, AT_FDCWD);
 	dqerror = kern_statfs_dqimpl(td, path, pathseg, buf);
-	DQRES_SERVED(td, &dqi, dqerror, kern_statfs_dqserved(&dqi, buf));
+	DQRES_SERVED(td, &dqi, dqerror, kern_statfs_dqserved(td, &dqi, buf));
 	dq_intent_leave(td, &dqi);
 	return (dqerror);
 }

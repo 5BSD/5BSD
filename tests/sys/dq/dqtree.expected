@@ -15,9 +15,12 @@
 # default suites differs for either (getgroups, setid and st_rdev cases
 # agree); entries are added by name when one does.
 
-# The served root has no mount points: statfs(2) of names under the tree's
-# devfs and of a FIFO and a pts master is the backing file system's.
-^fstatfs_test:(devfs_node|fifo|pts_master_ptmx)[[:space:]]  # ux-7: item 11 (N2), served statfs presentation
+# D201: statfs(2) of a served name presents f_mntonname against the served
+# root ("/dev" for the tree's devfs), while fstatfs(2) of the device, FIFO
+# or pts master descriptor dqtree passes through is the real vnode's and
+# keeps chroot(8)'s raw name (kern_do_statfs is untouched).  chroot shows
+# the raw name both ways.
+^fstatfs_test:(devfs_node|fifo|pts_master_ptmx)[[:space:]]  # ux-7 D201: a served name's f_mntonname is presented, a passed-through descriptor's is raw
 
 # D166: no vnode MAC hooks for served objects.
 ^fsetattr_test:fchmod_fchown_mac_first[[:space:]]  # by-design D166: a served file is checked by mac_file_check_setattr, not the vnode hooks the case counts
