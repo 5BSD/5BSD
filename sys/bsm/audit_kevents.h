@@ -700,6 +700,7 @@
 #define	AUE_AUDIT_TOKEN_GET	43963	/* 5BSD: audit_token_get(2) */
 #define	AUE_AUDIT_TOKEN_CHECK	43964	/* 5BSD: audit_token_check(2) */
 #define	AUE_PDOPENTOKEN		43965	/* 5BSD: pdopentoken(2) */
+#define	AUE_AUDIT_TRAIL_START	43966	/* 5BSD: first record of a trail */
 
 /*
  * Darwin BSM uses a number of AUE_O_* definitions, which are aliased to the

@@ -129,6 +129,14 @@ token kept from an earlier boot matches a process of this one only by a
 1 in 2^31 chance of the same offset.
 The first process, the kernel's, has the first uniqueid and exec generation
 of the boot.
+The offset is drawn when the first process is made, early in boot.
+On a system without
+.Pa /boot/entropy ,
+the random device is not seeded yet at that point and the offset comes from
+its early bypass path (with a CPU random source such as RDRAND mixed in when
+there is one); installed systems keep
+.Pa /boot/entropy .
+Uniqueness and order within a boot do not depend on it.
 They are not secrets: what a token allows is decided by whoever was handed
 it, never by its being hard to guess.
 A token names a process when its process ID, lifetime ID and exec generation

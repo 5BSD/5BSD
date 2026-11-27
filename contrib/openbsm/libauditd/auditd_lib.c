@@ -47,11 +47,13 @@
 #include <sys/socket.h>
 
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <sys/time.h>
 
 #include <netinet/in.h>
 
 #include <bsm/audit.h>
+#include <bsm/audit_kevents.h>
 #include <bsm/audit_uevents.h>
 #include <bsm/auditd_lib.h>
 #include <bsm/libbsm.h>
@@ -895,15 +897,72 @@ auditd_rename(const char *fromname, const char *toname)
  * Try to clean up if something goes wrong.
  * *errorp is modified only on auditctl(2) failure.
  */
+#ifdef AUE_AUDIT_TRAIL_START
+/*
+ * 5BSD: write the first record of a new trail file, before the kernel has
+ * it (auditctl(2) appends), so that every trail file says which boot its
+ * records come from: audit token ids (audit_token(3)) are only unique
+ * within a boot.  A text token "boot_id=" with kern.boot_id in hex, or
+ * "boot_id=unavailable" if the kernel cannot give it yet.
+ */
+static int
+write_trail_start(int fd)
+{
+	u_char buf[MAX_AUDIT_RECORD_SIZE];
+	uint8_t id[16];
+	char text[sizeof("boot_id=") + 2 * sizeof(id)];
+	size_t buflen, idlen;
+	token_t *tok;
+	int d, i;
+
+	idlen = sizeof(id);
+	if (sysctlbyname("kern.boot_id", id, &idlen, NULL, 0) == 0 &&
+	    idlen == sizeof(id)) {
+		strlcpy(text, "boot_id=", sizeof(text));
+		for (i = 0; i < (int)sizeof(id); i++)
+			snprintf(text + strlen(text), sizeof(text) -
+			    strlen(text), "%02x", id[i]);
+	} else
+		strlcpy(text, "boot_id=unavailable", sizeof(text));
+
+	if ((d = au_open()) == -1)
+		return (-1);
+	if ((tok = au_to_text(text)) == NULL || au_write(d, tok) != 0 ||
+	    (tok = au_to_return32(0, 0)) == NULL || au_write(d, tok) != 0) {
+		(void)au_close(d, AU_TO_NO_WRITE,
+		    (short)AUE_AUDIT_TRAIL_START);
+		return (-1);
+	}
+	buflen = sizeof(buf);
+	if (au_close_buffer(d, (short)AUE_AUDIT_TRAIL_START, buf,
+	    &buflen) != 0)
+		return (-1);
+	if (write(fd, buf, buflen) != (ssize_t)buflen)
+		return (-1);
+	return (0);
+}
+#endif
+
 static int
 open_trail(char *fname, gid_t gid, int *errorp)
 {
 	int fd;
 
 	/* XXXPJD: What should we do if the file already exists? */
+#ifdef AUE_AUDIT_TRAIL_START
+	fd = open(fname, O_WRONLY | O_CREAT | O_APPEND, S_IRUSR);
+	if (fd < 0)
+		return (-1);
+	if (write_trail_start(fd) != 0) {
+		(void) close(fd);
+		(void) unlink(fname);
+		return (-1);
+	}
+#else
 	fd = open(fname, O_RDONLY | O_CREAT, S_IRUSR);
 	if (fd < 0)
 		return (-1);
+#endif
 	if (fchown(fd, -1, gid) < 0 || fchmod(fd, S_IRUSR | S_IRGRP) < 0) {
 		(void) close(fd);
 		(void) unlink(fname);
