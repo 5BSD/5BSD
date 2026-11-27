@@ -86,6 +86,19 @@ ${PACKAGE}FILES+=	rc_pin_fixture rc_units_helpers.sh rc_pin_dhcpd.py rc_pin_pty.
 		rc_pin_login
 ${PACKAGE}FILESMODE_rc_pin_login=	0555
 ${PACKAGE}FILESMODE_rc_pin_fixture=	0555
+# Nested-supervisor pins on dev (nested-supervisors.md, slice NS0).
+# subset_test runs as a plain program against the system SwitchBoard of a
+# plane-on guest (its provider pin, against a stand-in, on every tier);
+# subset_stack_test starts a test-local stack whose units are subset_unit,
+# so it runs on the stack tier and alone, as the other stack programs do.
+ATF_TESTS_C+=	subset_test
+CFLAGS.subset_test+=	-I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libservice
+LIBADD.subset_test+=	service channel
+ATF_TESTS_SH+=	subset_stack_test
+TEST_METADATA.subset_stack_test+=	is_exclusive="true"
+PROGS+=		subset_unit
+CFLAGS.subset_unit+=	-I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libservice
+LIBADD.subset_unit+=	service channel
 # Accept-mode manifest pins (SR5's mode), libcapbundle only.
 ATF_TESTS_C+=	accept_mode_test
 LIBADD.accept_mode_test+=	capbundle ucl

@@ -64,6 +64,21 @@ ATF_TESTS_C+=	channel_contract_test
 CFLAGS.channel_contract_test+=	-I${SRCTOP}/lib/libchannel
 LIBADD.channel_contract_test+=	channel jail pthread
 TEST_METADATA.channel_contract_test+=	is_exclusive="true"
+# Nested-supervisor pins on dev (nested-supervisors.md, slice NS0): the
+# route a parent installs in its children, CLEAR, the coalition gate, and a
+# set-uid exec under a parent's route.  It creates a coalition (the
+# coalition cases assert on the global count) and changes uids: run alone.
+# nested_supervisor_setid is set-uid root: the set-id exec NR8 makes.
+ATF_TESTS_C+=	nested_supervisor_test
+CFLAGS.nested_supervisor_test+=	-I${SRCTOP}/lib/libchannel \
+				-I${SRCTOP}/lib/libcapsulert \
+				-I${SRCTOP}/lib/libservice
+LIBADD.nested_supervisor_test+=	channel service
+TEST_METADATA.nested_supervisor_test+=	is_exclusive="true"
+PROGS+=		nested_supervisor_helper nested_supervisor_setid
+CFLAGS.nested_supervisor_helper+=	-I${SRCTOP}/lib/libservice
+LIBADD.nested_supervisor_helper+=	service
+BINMODE.nested_supervisor_setid=	4555
 PROGS+=		mac_capability_exec_helper
 PROGS+=		mac_capability_channel_helper
 PROGS+=		mac_capability_isolation_helper
