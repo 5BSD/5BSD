@@ -193,7 +193,8 @@ dq_resolve_may_wait(struct thread *td, const struct dqres_req *rq)
 /*
  * The consultation (kern_dqres.c's dro_consult).  0 is PASS; an errno is
  * the controller's (allow-listed) or the kernel's own verdict.  ERESTART
- * leaves only when the core allowed it (D149); otherwise it is EINTR.
+ * leaves when the core allowed it (D149) or the lookup creates nothing,
+ * never for a caller that misreads it; otherwise it is EINTR.
  */
 static int
 dq_resolve_consult(struct thread *td, struct dqres_binding *b,
@@ -212,7 +213,7 @@ dq_resolve_consult(struct thread *td, struct dqres_binding *b,
 	size_t bodylen, strlen_;
 	char *p;
 	int error, rerror, ms;
-	bool catching, dead;
+	bool catching, dead, mutates;
 
 	bzero(ans, sizeof(*ans));
 	q = b->db_queue;
@@ -315,6 +316,7 @@ dq_resolve_consult(struct thread *td, struct dqres_binding *b,
 	DQ_UNLOCK(q);
 	error = dq_event_post_wait_q(q, DQ_OP_RESOLVE, rb, bodylen, td,
 	    deadline, catching, &reply, &rerror, &robj, &rswap);
+	mutates = dq_op_mutates(DQ_OP_RESOLVE, rb, bodylen);
 	free(rb, M_DQ);
 	DQ_LOCK(q);
 	q->q_stats.ds2_resolves++;
@@ -329,7 +331,16 @@ dq_resolve_consult(struct thread *td, struct dqres_binding *b,
 			if (dead)
 				error = dq_resolve_dead_errno(rq);
 		}
-		if (error == ERESTART && !rq->rq_may_restart)
+		/*
+		 * D149, amended: the call restarts from a slot's first
+		 * consultation, and from any consultation of a lookup that
+		 * creates nothing (dq_op_mutates' table): neither has done
+		 * anything yet.  A later consultation of a lookup that
+		 * changes something fails with EINTR, as does any wait of a
+		 * caller that misreads ERESTART (DQI_NO_ERESTART).
+		 */
+		if (error == ERESTART && !rq->rq_may_restart &&
+		    (mutates || rq->rq_no_erestart))
 			error = EINTR;
 		return (error);
 	}
