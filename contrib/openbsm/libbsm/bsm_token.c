@@ -1430,6 +1430,49 @@ au_to_exec_env(char **envp)
 }
 
 /*
+ * 5BSD procident token (audit_token(3)), version 1:
+ * token ID                1 byte (AUT_PROCIDENT)
+ * body length             2 bytes (the bytes after this field: 57)
+ * version                 1 byte (AU_PROCIDENT_VERSION)
+ * uniqueid                8 bytes
+ * execgen                 8 bytes
+ * imageid                 8 bytes
+ * jail id                 4 bytes
+ * responsible uniqueid    8 bytes
+ * responsible execgen     8 bytes
+ * responsible pid         4 bytes
+ * image id after          8 bytes
+ * A later version appends fields and grows the body length; readers skip
+ * what they do not know.
+ */
+token_t *
+au_to_procident(const struct au_procident *pi)
+{
+	u_char *dptr = NULL;
+	token_t *t;
+	u_int16_t bodylen;
+
+	bodylen = sizeof(u_char) + 6 * sizeof(u_int64_t) +
+	    2 * sizeof(u_int32_t);
+	GET_TOKEN_AREA(t, dptr, sizeof(u_char) + sizeof(u_int16_t) + bodylen);
+	if (t == NULL)
+		return (NULL);
+
+	ADD_U_CHAR(dptr, AUT_PROCIDENT);
+	ADD_U_INT16(dptr, bodylen);
+	ADD_U_CHAR(dptr, AU_PROCIDENT_VERSION);
+	ADD_U_INT64(dptr, pi->api_uniqueid);
+	ADD_U_INT64(dptr, pi->api_execgen);
+	ADD_U_INT64(dptr, pi->api_imageid);
+	ADD_U_INT32(dptr, pi->api_jid);
+	ADD_U_INT64(dptr, pi->api_r_uniqueid);
+	ADD_U_INT64(dptr, pi->api_r_execgen);
+	ADD_U_INT32(dptr, pi->api_r_pid);
+	ADD_U_INT64(dptr, pi->api_image_after);
+	return (t);
+}
+
+/*
  * token ID                1 byte
  * zonename length         2 bytes
  * zonename                N bytes + 1 terminating NULL byte

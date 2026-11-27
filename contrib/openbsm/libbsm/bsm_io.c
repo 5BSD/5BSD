@@ -452,6 +452,18 @@ close_tag(FILE *fp, u_char type)
 	case AUT_ZONENAME:
 		fprintf(fp, "/>");
 		break;
+
+#ifdef AUT_PROCIDENT
+	case AUT_PROCIDENT:
+		fprintf(fp, "/>");
+		break;
+#endif
+
+#ifdef AUT_RIGHTS
+	case AUT_RIGHTS:
+		fprintf(fp, "/>");
+		break;
+#endif
 	}
 }
 
@@ -627,6 +639,18 @@ print_tok_type(FILE *fp, u_char type, const char *tokname, int oflags)
 		case AUT_ZONENAME:
 			fprintf(fp, "<zone ");
 			break;
+
+#ifdef AUT_PROCIDENT
+		case AUT_PROCIDENT:
+			fprintf(fp, "<procident ");
+			break;
+#endif
+
+#ifdef AUT_RIGHTS
+		case AUT_RIGHTS:
+			fprintf(fp, "<rights ");
+			break;
+#endif
 		}
 	} else {
 		if (oflags & AU_OFLAG_RAW)
@@ -4167,6 +4191,158 @@ print_zonename_tok(FILE *fp, tokenstr_t *tok, char *del, int oflags)
 	}
 }
 
+#ifdef AUT_PROCIDENT
+/*
+ * 5BSD procident (audit_token(3)):
+ * body length                  2 bytes (the bytes after it)
+ * version                      1 byte
+ * uniqueid, execgen, imageid   8 bytes each
+ * jail id                      4 bytes
+ * responsible uniqueid, execgen 8 bytes each
+ * responsible pid              4 bytes
+ * image id after               8 bytes
+ * Bytes a later version appends are skipped.
+ */
+#define	PROCIDENT_V1_BODYLEN	57
+
+static int
+fetch_procident_tok(tokenstr_t *tok, u_char *buf, int len)
+{
+	struct au_procident *pi;
+	size_t start;
+	int err = 0;
+
+	pi = &tok->tt.procident.pi;
+	READ_TOKEN_U_INT16(buf, len, tok->tt.procident.bodylen, tok->len, err);
+	if (err || tok->tt.procident.bodylen < PROCIDENT_V1_BODYLEN ||
+	    tok->len + tok->tt.procident.bodylen > (u_int32_t)len)
+		return (-1);
+	start = tok->len;
+	READ_TOKEN_U_CHAR(buf, len, tok->tt.procident.version, tok->len, err);
+	READ_TOKEN_U_INT64(buf, len, pi->api_uniqueid, tok->len, err);
+	READ_TOKEN_U_INT64(buf, len, pi->api_execgen, tok->len, err);
+	READ_TOKEN_U_INT64(buf, len, pi->api_imageid, tok->len, err);
+	READ_TOKEN_U_INT32(buf, len, pi->api_jid, tok->len, err);
+	READ_TOKEN_U_INT64(buf, len, pi->api_r_uniqueid, tok->len, err);
+	READ_TOKEN_U_INT64(buf, len, pi->api_r_execgen, tok->len, err);
+	READ_TOKEN_U_INT32(buf, len, pi->api_r_pid, tok->len, err);
+	READ_TOKEN_U_INT64(buf, len, pi->api_image_after, tok->len, err);
+	if (err)
+		return (-1);
+	tok->len = start + tok->tt.procident.bodylen;
+	return (0);
+}
+
+static void
+print_procident_tok(FILE *fp, tokenstr_t *tok, char *del, int oflags)
+{
+	struct au_procident *pi;
+
+	pi = &tok->tt.procident.pi;
+	print_tok_type(fp, tok->id, "procident", oflags);
+	if (oflags & AU_OFLAG_XML) {
+		open_attr(fp, "version");
+		print_1_byte(fp, tok->tt.procident.version, "%u");
+		close_attr(fp);
+		open_attr(fp, "uniqueid");
+		print_8_bytes(fp, pi->api_uniqueid, "%ju");
+		close_attr(fp);
+		open_attr(fp, "execgen");
+		print_8_bytes(fp, pi->api_execgen, "%ju");
+		close_attr(fp);
+		open_attr(fp, "imageid");
+		print_8_bytes(fp, pi->api_imageid, "%ju");
+		close_attr(fp);
+		open_attr(fp, "jid");
+		print_4_bytes(fp, pi->api_jid, "%d");
+		close_attr(fp);
+		open_attr(fp, "r_uniqueid");
+		print_8_bytes(fp, pi->api_r_uniqueid, "%ju");
+		close_attr(fp);
+		open_attr(fp, "r_execgen");
+		print_8_bytes(fp, pi->api_r_execgen, "%ju");
+		close_attr(fp);
+		open_attr(fp, "r_pid");
+		print_4_bytes(fp, pi->api_r_pid, "%d");
+		close_attr(fp);
+		open_attr(fp, "image_after");
+		print_8_bytes(fp, pi->api_image_after, "%ju");
+		close_attr(fp);
+		close_tag(fp, tok->id);
+	} else {
+		print_delim(fp, del);
+		print_1_byte(fp, tok->tt.procident.version, "%u");
+		print_delim(fp, del);
+		print_8_bytes(fp, pi->api_uniqueid, "%ju");
+		print_delim(fp, del);
+		print_8_bytes(fp, pi->api_execgen, "%ju");
+		print_delim(fp, del);
+		print_8_bytes(fp, pi->api_imageid, "%ju");
+		print_delim(fp, del);
+		print_4_bytes(fp, pi->api_jid, "%d");
+		print_delim(fp, del);
+		print_8_bytes(fp, pi->api_r_uniqueid, "%ju");
+		print_delim(fp, del);
+		print_8_bytes(fp, pi->api_r_execgen, "%ju");
+		print_delim(fp, del);
+		print_4_bytes(fp, pi->api_r_pid, "%d");
+		print_delim(fp, del);
+		print_8_bytes(fp, pi->api_image_after, "%ju");
+	}
+}
+#endif /* AUT_PROCIDENT */
+
+#ifdef AUT_RIGHTS
+/*
+ * FreeBSD capability rights (au_to_rights()): the words of a cap_rights_t,
+ * 8 bytes each; their number is CAPVER (the top two bits of the first
+ * word) + 2.
+ */
+static int
+fetch_rights_tok(tokenstr_t *tok, u_char *buf, int len)
+{
+	u_int i;
+	int err = 0;
+
+	READ_TOKEN_U_INT64(buf, len, tok->tt.rights.words[0], tok->len, err);
+	if (err)
+		return (-1);
+	tok->tt.rights.nwords = (u_int)(tok->tt.rights.words[0] >> 62) + 2;
+	if (tok->tt.rights.nwords > AU_RIGHTS_MAXWORDS)
+		return (-1);
+	for (i = 1; i < tok->tt.rights.nwords; i++) {
+		READ_TOKEN_U_INT64(buf, len, tok->tt.rights.words[i], tok->len,
+		    err);
+		if (err)
+			return (-1);
+	}
+	return (0);
+}
+
+static void
+print_rights_tok(FILE *fp, tokenstr_t *tok, char *del, int oflags)
+{
+	u_int i;
+
+	print_tok_type(fp, tok->id, "rights", oflags);
+	if (oflags & AU_OFLAG_XML) {
+		open_attr(fp, "rights");
+		for (i = 0; i < tok->tt.rights.nwords; i++) {
+			if (i > 0)
+				fprintf(fp, " ");
+			print_8_bytes(fp, tok->tt.rights.words[i], "0x%jx");
+		}
+		close_attr(fp);
+		close_tag(fp, tok->id);
+	} else {
+		for (i = 0; i < tok->tt.rights.nwords; i++) {
+			print_delim(fp, del);
+			print_8_bytes(fp, tok->tt.rights.words[i], "0x%jx");
+		}
+	}
+}
+#endif /* AUT_RIGHTS */
+
 /*
  * Reads the token beginning at buf into tok.
  */
@@ -4310,6 +4486,16 @@ au_fetch_tok(tokenstr_t *tok, u_char *buf, int len)
 
 	case AUT_PRIV:
 		return (fetch_privset_tok(tok, buf, len));
+
+#ifdef AUT_PROCIDENT
+	case AUT_PROCIDENT:
+		return (fetch_procident_tok(tok, buf, len));
+#endif
+
+#ifdef AUT_RIGHTS
+	case AUT_RIGHTS:
+		return (fetch_rights_tok(tok, buf, len));
+#endif
 
 	default:
 		return (fetch_invalid_tok(tok, buf, len));
@@ -4492,6 +4678,18 @@ au_print_flags_tok(FILE *outfp, tokenstr_t *tok, char *del, int oflags)
 	case  AUT_PRIV:
 		print_privset_tok(outfp, tok, del, oflags);
 		return;
+
+#ifdef AUT_PROCIDENT
+	case AUT_PROCIDENT:
+		print_procident_tok(outfp, tok, del, oflags);
+		return;
+#endif
+
+#ifdef AUT_RIGHTS
+	case AUT_RIGHTS:
+		print_rights_tok(outfp, tok, del, oflags);
+		return;
+#endif
 
 	default:
 		print_invalid_tok(outfp, tok, del, oflags);

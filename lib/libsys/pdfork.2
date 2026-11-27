@@ -30,13 +30,14 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd October 18, 2026
+.Dd November 25, 2026
 .Dt PDFORK 2
 .Os
 .Sh NAME
 .Nm pdfork ,
 .Nm pdrfork ,
 .Nm pdopenpid ,
+.Nm pdopentoken ,
 .Nm pdgetpid ,
 .Nm pdincapmode ,
 .Nm pdkill ,
@@ -48,12 +49,15 @@
 .Sh SYNOPSIS
 .In sys/ioctl.h
 .In sys/procdesc.h
+.In bsm/audit.h
 .Ft pid_t
 .Fn pdfork "int *fdp" "int pdflags"
 .Ft pid_t
 .Fn pdrfork "int *fdp" "int pdflags" "int rfflags"
 .Ft int
 .Fn pdopenpid "pid_t pid" "int pdflags"
+.Ft int
+.Fn pdopentoken "const audit_token_t *token" "int pdflags"
 .Ft int
 .Fn pdgetpid "int fd" "pid_t *pidp"
 .Ft int
@@ -207,6 +211,26 @@ The caller must have permission to debug the target process in order for
 .Fn pdopenpid
 to succeed.
 Zombie processes cannot be opened.
+.Pp
+The
+.Fn pdopentoken
+function is
+.Fn pdopenpid
+of the process the audit token
+.Fa token
+names
+.Pq see Xr audit_token 3 :
+the process at the token's PID must have the token's lifetime ID and exec
+generation.
+A token of a process that has exec'd since, or whose PID is gone or now
+belongs to another process, names nobody
+.Pq Er ESRCH ;
+a token of a process that has exited but has not been reaped still names
+it, and the zombie cannot be opened
+.Pq Er EBUSY ,
+as with
+.Fn pdopenpid .
+The token is checked before the permission to debug the process.
 .Pp
 There might be more that one file descriptor referencing the process.
 After the zombie is reaped, calls to
@@ -594,6 +618,22 @@ on it.
 .El
 .Pp
 The
+.Fn pdopentoken
+system call returns the errors of
+.Fn pdopenpid ,
+and:
+.Bl -tag -width Er
+.It Bq Er EFAULT
+.Fa token
+points outside the process's address space.
+.It Bq Er ESRCH
+No process has the token's PID, lifetime ID and exec generation: the
+process is gone, its PID was reused, or it has exec'd since.
+.It Bq Er EBUSY
+The token names a process that has exited and has not been reaped.
+.El
+.Pp
+The
 .Fn pddupfd
 returns the following errors:
 .Bl -tag -width Er
@@ -647,6 +687,7 @@ on the process descriptor that does not have the
 capability enabled.
 .El
 .Sh SEE ALSO
+.Xr audit_token_get 2 ,
 .Xr cap_cloexec_limit 2 ,
 .Xr cap_xfer_limit 2 ,
 .Xr close 2 ,
@@ -658,6 +699,7 @@ capability enabled.
 .Xr pdself 2 ,
 .Xr poll 2 ,
 .Xr wait4 2 ,
+.Xr audit_token 3 ,
 .Xr capsicum 4 ,
 .Xr procdesc 4
 .Sh HISTORY
@@ -680,6 +722,10 @@ and
 .Fn pddupfd
 system calls first appeared in
 .Fx 16.0 .
+.Pp
+The
+.Fn pdopentoken
+system call first appeared in 5BSD.
 .Pp
 Support for process descriptors mode was developed as part of the
 .Tn TrustedBSD

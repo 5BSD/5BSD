@@ -202,8 +202,40 @@ kernel_stacks_body()
 	atf_check -o not-empty awk '{if ($3 == "procstat") print}' procstat.out
 }
 
+atf_test_case audit_token
+audit_token_head()
+{
+	atf_set "descr" "procstat token and the ps keywords show the " \
+	    "audit token ids from kinfo_proc"
+	atf_set "require.progs" "ps"
+}
+audit_token_body()
+{
+	start_program bogus-arg
+
+	header_re=$(printf "$SP*%s$SP+%s$SP+%s$SP+%s$SP+%s$SP*" \
+	    PID COMM UNIQUEID EXECGEN IMAGEID)
+	atf_check -o save:procstat.out procstat token $PROG_PID
+	atf_check -o match:"$header_re" head -n 1 procstat.out
+	set -- $(tail -n 1 procstat.out)
+	[ "$1" = "$PROG_PID" ] || atf_fail "pid $1, wanted $PROG_PID"
+	[ "$2" = "$PROG_COMM" ] || atf_fail "command $2"
+	# ps(1) reads the same fields.
+	atf_check -o inline:"$3 $4 $5\n" sh -c \
+	    "ps -o uniqueid= -o execgen= -o imageid= -p $PROG_PID | awk '{print \$1, \$2, \$3}'"
+	# Every id of an exec'd program is set.
+	[ "$3" -gt 0 ] && [ "$4" -gt 0 ] && [ "$5" -gt 0 ] ||
+	    atf_fail "unset id: $*"
+	# The kernel's proc0 is the first process of the boot (its ids are
+	# the boot's random offset plus one: low 32 bits 1) and has no image.
+	set -- $(ps -o uniqueid= -o execgen= -o imageid= -p 0)
+	[ $(($1 & 0xffffffff)) -eq 1 ] && [ $(($2 & 0xffffffff)) -eq 1 ] &&
+	    [ "$3" = 0 ] || atf_fail "proc0 ids: $*"
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case audit_token
 	atf_add_test_case binary_info
 	atf_add_test_case binary_info_unsignalable
 	atf_add_test_case command_line_arguments

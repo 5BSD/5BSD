@@ -111,6 +111,8 @@ int			audit_panic_on_write_fail;
 int			audit_fail_stop;
 int			audit_argv;
 int			audit_arge;
+/* Policy AUDIT_NOPROCIDENT: kernel records leave out the procident token. */
+int			audit_noprocident;
 
 /*
  * Are we currently "failing stop" due to out of disk space?
@@ -283,6 +285,17 @@ audit_record_ctor(void *mem, int size, void *arg, int flags)
 	ar->k_ar.ar_subj_auid = cred->cr_audit.ai_auid;
 	ar->k_ar.ar_subj_asid = cred->cr_audit.ai_asid;
 	ar->k_ar.ar_subj_pid = td->td_proc->p_pid;
+	/*
+	 * The subject's audit token ids as the system call starts: an
+	 * execve record describes the process before the exec.  p_execgen
+	 * is read without the process lock: it changes only in an exec of
+	 * this process, and a 64-bit load does not tear on any 5BSD
+	 * platform.
+	 */
+	ar->k_ar.ar_subj_uniqueid = td->td_proc->p_uniqueid;
+	ar->k_ar.ar_subj_execgen = td->td_proc->p_execgen;
+	ar->k_ar.ar_subj_imageid = cred->cr_imageid;
+	ar->k_ar.ar_subj_jid = cred->cr_prison->pr_id;
 	ar->k_ar.ar_subj_amask = cred->cr_audit.ai_mask;
 	ar->k_ar.ar_subj_term_addr = cred->cr_audit.ai_termid;
 	/*
@@ -340,6 +353,7 @@ audit_init(void *dummy __unused)
 	audit_in_failure = 0;
 	audit_argv = 0;
 	audit_arge = 0;
+	audit_noprocident = 0;
 
 	audit_fstat.af_filesz = 0;	/* '0' means unset, unbounded. */
 	audit_fstat.af_currsz = 0;

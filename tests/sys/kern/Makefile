@@ -10,6 +10,9 @@ TESTSDIR=	${TESTSBASE}/sys/kern
 CFLAGS+=	-I${SRCTOP}/tests
 
 ATF_TESTS_C+=	aslr
+# audit_token(3) ids and calls; pid_reuse_check lowers kern.pid_max.
+ATF_TESTS_C+=	audit_token_test
+TEST_METADATA.audit_token_test+=	is_exclusive="true" timeout="600"
 ATF_TESTS_C+=	basic_signal
 .if ${MACHINE_ARCH} == "amd64"
 # Audit registration is global guest state.
@@ -188,6 +191,8 @@ TEST_METADATA.envfd_test+=	is_exclusive="true"
 ATF_TESTS_C+=	fdgrowtable_test
 ATF_TESTS_C+=	getdirentries_test
 ATF_TESTS_C+=	jail_lookup_root
+# struct kinfo_proc field offsets of the dev tree (audit_token(3) took spares).
+ATF_TESTS_C+=	kinfo_proc_layout_test
 ATF_TESTS_C+=	jail_thread
 ATF_TESTS_C+=	jail_remove_sync
 ATF_TESTS_C+=	jaildesc
@@ -305,6 +310,7 @@ PROGS+=		capmode_interp_foreign_helper
 SRCS.capmode_interp_foreign_helper=	capmode_interp_helper.c
 CAPMODE_INTERP_PAD=	/${:U:range=255:@i@p@:ts}
 LDFLAGS.capmode_interp_foreign_helper+=	-Wl,--dynamic-linker=${CAPMODE_INTERP_PAD}
+PROGS+=		audit_token_helper
 PROGS+=		coredump_phnum_helper
 PROGS+=		pdeathsig_helper
 PROGS+=		pwd_paths_helper
@@ -335,6 +341,8 @@ LIBADD.unix_connectat+=			util
 LIBADD.unix_seqpacket_test+=		pthread
 LIBADD.inotify_test+=			util
 LIBADD.jaildesc_cap_test+=		jail
+LIBADD.audit_token_test+=		bsm
+LIBADD.audit_token_helper+=		bsm
 LIBADD.kcov+=				pthread
 CFLAGS.ktls_test+=			-DOPENSSL_API_COMPAT=0x10100000L
 LIBADD.ktls_test+=			crypto util

@@ -1428,6 +1428,7 @@ kaudit_to_bsm(struct kaudit_record *kar, struct au_record **pau)
 		}
 		break;
 	case AUE_PDOPENPID:
+	case AUE_PDOPENTOKEN:
 		if (ARG_IS_VALID(kar, ARG_PID)) {
 			tok = au_to_arg32(1, "PID", ar->ar_arg_pid);
 			kau_write(rec, tok);
@@ -1892,6 +1893,32 @@ kaudit_to_bsm(struct kaudit_record *kar, struct au_record **pau)
 		}
 		break;
 
+	case AUE_AUDIT_TOKEN_GET:
+		if (ARG_IS_VALID(kar, ARG_FD)) {
+			tok = au_to_arg32(1, "pd", ar->ar_arg_fd);
+			kau_write(rec, tok);
+		}
+		if (ARG_IS_VALID(kar, ARG_PID)) {
+			tok = au_to_arg32(2, "pid", ar->ar_arg_pid);
+			kau_write(rec, tok);
+		}
+		if (ARG_IS_VALID(kar, ARG_VALUE)) {
+			tok = au_to_arg32(3, "flags", ar->ar_arg_value);
+			kau_write(rec, tok);
+		}
+		break;
+
+	case AUE_AUDIT_TOKEN_CHECK:
+		if (ARG_IS_VALID(kar, ARG_PID)) {
+			tok = au_to_arg32(1, "pid", ar->ar_arg_pid);
+			kau_write(rec, tok);
+		}
+		if (ARG_IS_VALID(kar, ARG_VALUE)) {
+			tok = au_to_arg32(2, "flags", ar->ar_arg_value);
+			kau_write(rec, tok);
+		}
+		break;
+
 	case AUE_PDCMP:
 		if (ARG_IS_VALID(kar, ARG_FD)) {
 			tok = au_to_arg32(1, "fd1", ar->ar_arg_fd);
@@ -1942,6 +1969,24 @@ kaudit_to_bsm(struct kaudit_record *kar, struct au_record **pau)
 	kau_write(rec, subj_tok);
 	tok = au_to_return32(au_errno_to_bsm(ar->ar_errno), ar->ar_retval);
 	kau_write(rec, tok);  /* Every record gets a return token */
+
+	/*
+	 * The subject's audit token ids, last before the trailer: a reader
+	 * that does not know the token loses only it (libbsm's
+	 * fetch_invalid_tok() takes the bytes up to the trailer).
+	 */
+	if (!audit_noprocident) {
+		struct au_procident pi;
+
+		memset(&pi, 0, sizeof(pi));
+		pi.api_uniqueid = ar->ar_subj_uniqueid;
+		pi.api_execgen = ar->ar_subj_execgen;
+		pi.api_imageid = ar->ar_subj_imageid;
+		pi.api_jid = ar->ar_subj_jid;
+		pi.api_image_after = ar->ar_imageid_after;
+		tok = au_to_procident(&pi);
+		kau_write(rec, tok);
+	}
 
 	kau_close(rec, &ar->ar_endtime, ar->ar_event);
 

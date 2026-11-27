@@ -855,4 +855,10 @@ FBSDprivate_1.0 {
 	__sys_cap_lookup_capmode;
 	_cap_process;
 	__sys_cap_process;
+	_audit_token_get;
+	__sys_audit_token_get;
+	_audit_token_check;
+	__sys_audit_token_check;
+	_pdopentoken;
+	__sys_pdopentoken;
 };

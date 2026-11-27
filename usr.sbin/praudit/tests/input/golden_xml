@@ -1,0 +1,53 @@
+<?xml version='1.0' ?>
+<audit>
+<record version="11" event="execve(2)" modifier="0" time="Mon Nov 24 16:00:00 2025" msec=" + 123 msec" >
+<subject audit-uid="1001" uid="1002" gid="1003" ruid="1004" rgid="1005" pid="4242" sid="77" tid="4660 1.0.0.10" />
+<subject audit-uid="1001" uid="0" gid="0" ruid="1004" rgid="1005" pid="4243" sid="78" tid="466010.0.0.1" />
+<subject audit-uid="1001" uid="0" gid="0" ruid="1004" rgid="1005" pid="4244" sid="79" tid="221362001:db8::1" />
+<subject audit-uid="1001" uid="1002" gid="1003" ruid="1004" rgid="1005" pid="4245" sid="80" tid="46601.0.0.10" />
+<subject audit-uid="1001" uid="1002" gid="1003" ruid="1004" rgid="1005" pid="4246" sid="81" tid="221362001:db8::1" />
+<return errval="success" retval="7" />
+</record>
+<record ,219,11,kill(2),0,10.0.0.1,Mon Nov 24 16:00:00 2025, + 123 msec
+<process audit-uid="1001" uid="1002" gid="1003" ruid="1004" rgid="1005" pid="4250" sid="82" tid="46601.0.0.10" />
+<process audit-uid="1001" uid="1002" gid="1003" ruid="1004" rgid="1005" pid="4251" sid="83" tid="466010.0.0.1" />
+<process audit-uid="1001" uid="1002" gid="1003" ruid="1004" rgid="1005" pid="4252" sid="84" tid="46601.0.0.10" />
+<process audit-uid="1001" uid="1002" gid="1003" ruid="1004" rgid="1005" pid="4253" sid="85" tid="221362001:db8::1" />
+<return errval="failure : Permission denied" retval="-1" />
+</record>
+<record version="11" event="open(2) - read,write,creat,trunc" modifier="0" time="Mon Nov 24 16:00:00 2025" msec=" + 123 msec" >
+<argument arg-num="1" value="0x3" desc="fd" />
+<argument arg-num="2" value="0x123456789abcdef" desc="offset" />
+<text>golden text, with a comma</text>
+<path>/usr/tests/golden</path>
+<exec_args><arg>golden</arg><arg>-x</arg><arg>arg</arg></exec_args>
+<exec_env><env>HOME=/root</env><env>TERM=vt100</env></exec_env>
+<zone name="golden-jail" />
+<exit errval="Error 0" retval="3" />
+<sequence seq-num="99" />
+<return errval="success" retval="0" />
+</record>
+<record version="11" event="connect(2)" modifier="0" time="Mon Nov 24 16:00:00 2025" msec=" + 123 msec" >
+<ip_address>192.0.2.1</ip_address>
+<ip_address>2001::2</ip_address>
+<ip version="0x45" service_type="0x10" len="84" id="16962" offset="0" time_to_live="0x40" protocol="0x01" cksum="0" src_addr="192.0.2.1" dest_addr="192.0.2.2" />
+<ip_port>0x901f</ip_port>
+<socket-inet type="2" port="22" addr="192.0.2.3" />
+<socket-inet6 type="28" port="47873" addr="2001::2" />
+<socket-unix type="1" port="" addr="/var/run/golden.sock" />
+<socket sock_dom="0x2" sock_type="0x2" lport="0x16" laddr="192.0.2.3" faddr="192.0.2.3" fport="0x16" />
+<return errval="success" retval="5" />
+</record>
+<record version="11" event="shmget(2)" modifier="0" time="Mon Nov 24 16:00:00 2025" msec=" + 123 msec" >
+<IPCipc-type="Shared Memory IPC" ipc-id="12" />
+<IPC_perm uid="1001" gid="1002" creator-uid="1003" creator-gid="1004" mode="640" seq="5" key="24301" />
+<opaque>0x010203ff</opaque>
+<arbitrary print="hex" type="4" count="2" > 4030201 8070605</arbitrary>
+<arbitrary print="string" type="1" count="6" >golden</arbitrary>
+<arbitrary print="decimal" type="2" count="2" > 256 512</arbitrary>
+<group><gid>0</gid></group><gid>5</gid></group><gid>20</gid></group>
+status="successful use of priv" name="proc_setid" 
+type="effective" priv="file_read,proc_setid" 
+<file time="Mon Nov 24 16:00:01 2025" msec=" + 0 msec" >golden.trail</file>
+<return errval="failure : Operation not permitted" retval="4294967295" />
+</record>

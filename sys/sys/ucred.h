@@ -91,7 +91,8 @@ struct ucred {
 	struct uidinfo	*cr_ruidinfo;	/* per ruid resource consumption */
 	struct prison	*cr_prison;	/* jail(2) */
 	struct loginclass	*cr_loginclass; /* login class */
-	void		*cr_pspare2[2];	/* general use 2 */
+	uint64_t	cr_imageid;	/* exec'd image (audit_token(3)), 0 = none */
+	void		*cr_pspare2[1];	/* general use 2 */
 #define	cr_endcopy	cr_label
 	struct label	*cr_label;	/* MAC label */
 	gid_t	*cr_groups;		/* groups */

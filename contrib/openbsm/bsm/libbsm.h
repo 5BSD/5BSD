@@ -725,6 +725,33 @@ typedef struct {
 	char		*data;
 } au_invalid_t;
 
+#ifdef AUT_PROCIDENT
+/*
+ * 5BSD procident (audit_token(3) ids of the subject):
+ * body length		2 bytes (the bytes after it)
+ * version		1 byte
+ * then the struct au_procident fields of the version (audit_record.h);
+ * bytes after the fields a version defines are skipped.
+ */
+typedef struct {
+	u_int16_t		bodylen;
+	u_char			version;
+	struct au_procident	pi;
+} au_procident_t;
+#endif
+
+#ifdef AUT_RIGHTS
+/*
+ * FreeBSD capability rights (cap_rights_t): CAPVER(word 0) + 2 words of
+ * 8 bytes each.
+ */
+#define	AU_RIGHTS_MAXWORDS	5
+typedef struct {
+	u_int		nwords;
+	u_int64_t	words[AU_RIGHTS_MAXWORDS];
+} au_rights_t;
+#endif
+
 /*
  * trailer magic number    2 bytes
  * record byte count       4 bytes
@@ -783,6 +810,12 @@ struct tokenstr {
 		au_zonename_t		zonename;
 		au_priv_t		priv;
 		au_privset_t		privset;
+#ifdef AUT_PROCIDENT
+		au_procident_t		procident;
+#endif
+#ifdef AUT_RIGHTS
+		au_rights_t		rights;
+#endif
 	} tt; /* The token is one of the above types */
 };
 
@@ -1252,7 +1285,7 @@ int	audit_write_failure_na(short event_code, char *errmsg, int errret,
 
 /* END au_write() WRAPPERS */
 
-#ifdef  __APPLE__
+#if defined(__APPLE__) || defined(AUDIT_TOKEN_MAY_EXEC)
 /*
  * audit_token_to_au32()
  *
@@ -1301,7 +1334,28 @@ void audit_token_to_au32(
 	pid_t		*pidp,
 	au_asid_t	*asidp,
 	au_tid_t	*tidp);
-#endif /* !__APPLE__ */
+#endif /* __APPLE__ || AUDIT_TOKEN_MAY_EXEC */
+
+#if !defined(__APPLE__) && defined(AUDIT_TOKEN_MAY_EXEC)
+/*
+ * The audit token accessors (audit_token(3)), shaped like macOS libbsm's;
+ * audit_token_to_pidversion() is the low 32 bits of the exec generation,
+ * which audit_token_to_execgen() gives whole.
+ */
+#define	_BSM_AUDIT_TOKEN_ACCESSORS	1
+pid_t		audit_token_to_pid(audit_token_t atoken);
+int		audit_token_to_pidversion(audit_token_t atoken);
+uid_t		audit_token_to_euid(audit_token_t atoken);
+uid_t		audit_token_to_ruid(audit_token_t atoken);
+gid_t		audit_token_to_egid(audit_token_t atoken);
+gid_t		audit_token_to_rgid(audit_token_t atoken);
+uid_t		audit_token_to_auid(audit_token_t atoken);
+au_asid_t	audit_token_to_asid(audit_token_t atoken);
+u_int64_t	audit_token_to_uniqueid(audit_token_t atoken);
+u_int64_t	audit_token_to_execgen(audit_token_t atoken);
+u_int64_t	audit_token_to_imageid(audit_token_t atoken);
+int		audit_token_to_jid(audit_token_t atoken);
+#endif
 
 /*
  * Wrapper functions to auditon(2).

@@ -3394,4 +3394,24 @@
             _Inout_opt_ void *data
         );
     }
+1012	AUE_AUDIT_TOKEN_GET	STD|CAPENABLED {
+		int audit_token_get(
+		    int pd,
+		    pid_t pid,
+		    int flags,
+		    _Out_ struct audit_token *out
+		);
+	}
+1013	AUE_AUDIT_TOKEN_CHECK	STD|CAPENABLED {
+		int audit_token_check(
+		    _In_ const struct audit_token *tok,
+		    int flags
+		);
+	}
+1014	AUE_PDOPENTOKEN	STD|CAPENABLED {
+		int pdopentoken(
+		    _In_ const struct audit_token *tok,
+		    int flags
+		);
+	}
 ; vim: syntax=off

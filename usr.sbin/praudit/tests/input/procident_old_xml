@@ -1,0 +1,7 @@
+<?xml version='1.0' ?>
+<audit>
+<record version="11" event="execve(2)" modifier="0" time="Mon Nov 24 16:00:00 2025" msec=" + 123 msec" >
+<subject audit-uid="1001" uid="0" gid="0" ruid="1004" rgid="1005" pid="4300" sid="90" tid="4660 10.0.0.1" />
+<return errval="success" retval="0" />
+
+</record>

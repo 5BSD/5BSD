@@ -1,0 +1,180 @@
+.\"
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.Dd November 25, 2026
+.Dt AUDIT_TOKEN 3
+.Os
+.Sh NAME
+.Nm audit_token_to_pid ,
+.Nm audit_token_to_pidversion ,
+.Nm audit_token_to_uniqueid ,
+.Nm audit_token_to_execgen ,
+.Nm audit_token_to_imageid ,
+.Nm audit_token_to_jid ,
+.Nm audit_token_to_euid ,
+.Nm audit_token_to_ruid ,
+.Nm audit_token_to_egid ,
+.Nm audit_token_to_rgid ,
+.Nm audit_token_to_auid ,
+.Nm audit_token_to_asid ,
+.Nm audit_token_to_au32
+.Nd read an audit token
+.Sh LIBRARY
+.Lb libbsm
+.Sh SYNOPSIS
+.In bsm/libbsm.h
+.Ft pid_t
+.Fn audit_token_to_pid "audit_token_t token"
+.Ft int
+.Fn audit_token_to_pidversion "audit_token_t token"
+.Ft u_int64_t
+.Fn audit_token_to_uniqueid "audit_token_t token"
+.Ft u_int64_t
+.Fn audit_token_to_execgen "audit_token_t token"
+.Ft u_int64_t
+.Fn audit_token_to_imageid "audit_token_t token"
+.Ft int
+.Fn audit_token_to_jid "audit_token_t token"
+.Ft uid_t
+.Fn audit_token_to_euid "audit_token_t token"
+.Ft uid_t
+.Fn audit_token_to_ruid "audit_token_t token"
+.Ft gid_t
+.Fn audit_token_to_egid "audit_token_t token"
+.Ft gid_t
+.Fn audit_token_to_rgid "audit_token_t token"
+.Ft uid_t
+.Fn audit_token_to_auid "audit_token_t token"
+.Ft au_asid_t
+.Fn audit_token_to_asid "audit_token_t token"
+.Ft void
+.Fo audit_token_to_au32
+.Fa "audit_token_t token"
+.Fa "uid_t *auidp"
+.Fa "uid_t *euidp"
+.Fa "gid_t *egidp"
+.Fa "uid_t *ruidp"
+.Fa "gid_t *rgidp"
+.Fa "pid_t *pidp"
+.Fa "au_asid_t *asidp"
+.Fa "au_tid_t *tidp"
+.Fc
+.Sh DESCRIPTION
+An audit token,
+.Vt audit_token_t
+of
+.In bsm/audit.h ,
+is the identity of one process at one point of its life, kept by the
+kernel's audit subsystem.
+It is opaque: its layout is private to the kernel and to these functions,
+and may change with them.
+Tokens are handed out by
+.Xr audit_token_get 2 ,
+checked by
+.Xr audit_token_check 2 ,
+turned into a process descriptor by
+.Xr pdopentoken 2 ,
+and carried in the procident token of kernel audit records
+.Pq see Xr audit.log 5 .
+.Pp
+A token holds three identifiers beside the process ID:
+.Bl -tag -width "imageid"
+.It uniqueid
+the process's lifetime ID: set when it is created by
+.Xr fork 2 ,
+never changed, never given to another process.
+.It execgen
+the exec generation: new when the process is created and at every
+successful
+.Xr execve 2 .
+.It imageid
+the image ID of the process's credential: new at every successful
+.Xr execve 2 ,
+shared with the processes forked since (which inherit the credential), and
+kept across
+.Xr setuid 2
+and the other credential changes that do not exec.
+It is 0 for credentials the kernel makes, such as those of kernel
+processes, which have no image.
+.El
+.Pp
+All three are counters: within a boot each only grows, so a later value
+means a later fork or exec.
+Each boot starts them at a random offset (bits 62 to 32 random, the low 32
+bits 0, bit 63 clear), so values are not comparable across boots, and a
+token kept from an earlier boot matches a process of this one only by a
+1 in 2^31 chance of the same offset.
+The first process, the kernel's, has the first uniqueid and exec generation
+of the boot.
+The offset is drawn when the first process is made, early in boot.
+On a system without
+.Pa /boot/entropy ,
+the random device is not seeded yet at that point and the offset comes from
+its early bypass path (with a CPU random source such as RDRAND mixed in when
+there is one); installed systems keep
+.Pa /boot/entropy .
+Uniqueness and order within a boot do not depend on it.
+They are not secrets: what a token allows is decided by whoever was handed
+it, never by its being hard to guess.
+A token names a process when its process ID, lifetime ID and exec generation
+match
+.Pq see Xr audit_token_check 2 .
+.Pp
+It also holds what the process had when the token was taken: the jail ID
+.Pq 0 outside a jail ,
+the effective and real user and group IDs, and the audit user and session
+IDs.
+.Pp
+Each
+.Fn audit_token_to_*
+function returns the field its name gives.
+.Fn audit_token_to_pidversion
+is the macOS name for the exec generation and returns its low 32 bits;
+.Fn audit_token_to_execgen
+returns it whole.
+.Pp
+.Fn audit_token_to_au32
+stores the fields the 32-bit BSM subject token holds through each pointer
+that is not
+.Dv NULL ;
+a token has no terminal, so
+.Fa tidp
+gets this host and port 0.
+.Sh SEE ALSO
+.Xr auditreduce 1 ,
+.Xr praudit 1 ,
+.Xr procstat 1 ,
+.Xr ps 1 ,
+.Xr audit_token_get 2 ,
+.Xr pdopentoken 2 ,
+.Xr libbsm 3 ,
+.Xr audit 4 ,
+.Xr audit.log 5 ,
+.Xr audit_control 5
+.Sh HISTORY
+The audit token appeared in Darwin.
+This version, with the lifetime ID, exec generation and image ID, first
+appeared in 5BSD.

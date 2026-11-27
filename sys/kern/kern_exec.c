@@ -98,6 +98,7 @@
 #include <dev/hwt/hwt_hook.h>
 #endif
 
+#include <bsm/audit_token.h>
 #include <security/audit/audit.h>
 #include <security/mac/mac_framework.h>
 
@@ -485,8 +486,8 @@ do_execve(struct thread *td, struct image_args *args, struct mac *mac_p,
 	struct dq_intent dqi;
 	int dqerror;
 	struct cap_authority *exec_authority = NULL;
+	struct ucred *execcred = NULL;
 #ifdef MAC
-	struct ucred *relabelcred = NULL;
 	bool will_transition;
 	bool will_relabel;
 #endif
@@ -773,28 +774,27 @@ interpret:
 			change_svgid(imgp->newcred, imgp->newcred->cr_gid);
 		}
 	}
-#ifdef MAC
 	/*
-	 * A MAC policy may need to refresh per-exec credential label state
-	 * (e.g. an identity nonce) without this being a set-id privilege
-	 * transition.  Prepare a private (copy-on-write) credential now,
-	 * while no process lock is held.  It is tracked separately from
-	 * newcred so that execve_nosetid() (setuid stripping / no_new_privs)
-	 * cannot discard it; it is applied and installed below.  Recomputed
-	 * for the interpreter across a #! re-interpret.
+	 * Every exec installs a credential of its own: it carries the new
+	 * image's id (audit_token(3)), and a MAC policy may refresh per-exec
+	 * label state in it (e.g. an identity nonce) without this being a
+	 * set-id privilege transition.  Prepare a private (copy-on-write)
+	 * credential now, while no process lock is held.  It is tracked
+	 * separately from newcred so that execve_nosetid() (setuid stripping
+	 * / no_new_privs) cannot discard it; it is applied and installed
+	 * below.  Recomputed for the interpreter across a #! re-interpret.
 	 */
-	if (relabelcred != NULL) {
-		crfree(relabelcred);
-		relabelcred = NULL;
+	if (execcred != NULL) {
+		crfree(execcred);
+		execcred = NULL;
 	}
+#ifdef MAC
 	will_relabel = IS_MAC(imgp, IS_MAC_WILL_RELABEL,
 	    oldcred, NULL) != 0;
-	if (will_relabel) {
-		IS_UNLOCK(imgp);
-		relabelcred = crdup(oldcred);
-		IS_LOCK(imgp);
-	}
 #endif
+	IS_UNLOCK(imgp);
+	execcred = crdup(oldcred);
+	IS_LOCK(imgp);
 
 	/* The new credentials are installed into the process later. */
 
@@ -1020,33 +1020,39 @@ interpret:
 		    oldcred->cr_gid == oldcred->cr_rgid)
 			p->p_flag &= ~P_SUGID;
 	}
-#ifdef MAC
 	/*
-	 * Apply a non-privilege label refresh (e.g. identity-nonce
-	 * rotation).  If the exec produced no new credential — an ordinary
-	 * exec, or a set-id credential stripped by execve_nosetid() for a
-	 * no_new_privs / disallowed-setid exec — adopt the private
-	 * credential prepared above so the refresh still takes effect.
-	 * PROC_LOCK is held and the image is locked here (matching the
-	 * TRANSITION phase); nothing below sleeps.
+	 * If the exec produced no new credential — an ordinary exec, or a
+	 * set-id credential stripped by execve_nosetid() for a no_new_privs
+	 * / disallowed-setid exec — adopt the private credential prepared
+	 * above.  PROC_LOCK is held and the image is locked here (matching
+	 * the TRANSITION phase); nothing below sleeps.
 	 */
-	if (will_relabel) {
-		if (imgp->newcred == NULL) {
-			imgp->newcred = relabelcred;
-			relabelcred = NULL;
-		}
-		IS_MAC(imgp, IS_MAC_RELABEL, oldcred,
-		    imgp->newcred);
+	if (imgp->newcred == NULL) {
+		imgp->newcred = execcred;
+		execcred = NULL;
 	}
+#ifdef MAC
+	/* Apply a non-privilege label refresh (e.g. identity-nonce rotation). */
+	if (will_relabel)
+		IS_MAC(imgp, IS_MAC_RELABEL, oldcred, imgp->newcred);
 #endif
+	/*
+	 * The new image's ids (audit_token(3)), past the point of no return:
+	 * a new image id in the exec's own credential, which forks share and
+	 * setuid keeps until the next exec, and a new exec generation.
+	 */
+	imgp->newcred->cr_imageid = audit_token_next_imageid();
+	KASSERT(imgp->newcred->cr_imageid != 0,
+	    ("exec installed a credential without an image id"));
+	p->p_execgen = audit_token_next_execgen();
+	AUDIT_ARG_IMAGEID(imgp->newcred->cr_imageid);
+
 	/*
 	 * Set the new credentials.
 	 */
-	if (imgp->newcred != NULL) {
-		proc_set_cred(p, imgp->newcred);
-		crfree(oldcred);
-		oldcred = NULL;
-	}
+	proc_set_cred(p, imgp->newcred);
+	crfree(oldcred);
+	oldcred = NULL;
 
 	/*
 	 * Install the image as the process's: p_textvp (and p_image) for
@@ -1060,8 +1066,7 @@ interpret:
 	 * The credential installed above is this exec's own and not yet
 	 * shared: record in it the authority the new image runs with.
 	 */
-	if (oldcred == NULL)
-		cap_authority_cred_stamp(p, p->p_ucred);
+	cap_authority_cred_stamp(p, p->p_ucred);
 	IS_INSTALL(imgp, p, &old_image);
 	installed_ops = imgp->is_ops;
 
@@ -1186,11 +1191,9 @@ exec_fail:
 
 	if (imgp->newcred != NULL && oldcred != NULL)
 		crfree(imgp->newcred);
-#ifdef MAC
-	/* Free the relabel credential if it was prepared but not adopted. */
-	if (relabelcred != NULL)
-		crfree(relabelcred);
-#endif
+	/* Free the exec credential if it was prepared but not adopted. */
+	if (execcred != NULL)
+		crfree(execcred);
 
 #ifdef MAC
 	mac_execve_exit(imgp);

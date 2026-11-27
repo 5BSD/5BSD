@@ -112,6 +112,16 @@ LIBADD.capprotect_usdt_helper+=	pthread
 ATF_TESTS_C+=	capprotect_hardening_test
 TEST_METADATA.capprotect_hardening_test+=	is_exclusive="true"
 PROGS+=		capprotect_share_helper
+# T0a pins (kernel-identity-and-coalitions.md 2.4): what claims, gates,
+# invocation bindings and the authority debug rule admit across fork and
+# exec, through observable answers only.  System gate claims and test
+# issuers are global, so the program runs alone; its binding and debug cases
+# need the stack tier, its access answers the enforced tier.
+ATF_TESTS_C+=	identity_semantics_test
+TEST_METADATA.identity_semantics_test+=	is_exclusive="true"
+CFLAGS.identity_semantics_test+=	-I${SRCTOP}/lib/libchannel
+LIBADD.identity_semantics_test+=	channel
+PROGS+=		identity_semantics_helper
 ATF_TESTS_SH+=	process_context_test
 PROGS+=		process_context_helper process_context_edge_helper \
 		process_context_ipc_helper

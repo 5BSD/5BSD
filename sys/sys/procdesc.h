@@ -148,6 +148,7 @@ struct rusage;
 __BEGIN_DECLS
 struct __wrusage;
 struct __siginfo;
+struct audit_token;
 
 pid_t	 pdfork(int *, int);
 pid_t	 pdrfork(int *, int, int);
@@ -155,6 +156,7 @@ int	 pdkill(int, int);
 int	 pdgetpid(int, pid_t *);
 int	 pdincapmode(int);
 int	 pdopenpid(pid_t, int);
+int	 pdopentoken(const struct audit_token *, int);
 int	 pdwait(int, int *, int, struct __wrusage *, struct __siginfo *);
 int	 pddupfd(int, int, int);
 pid_t	 pdrfork_thread(int *, int, int, void *, int (*)(void *), void *);

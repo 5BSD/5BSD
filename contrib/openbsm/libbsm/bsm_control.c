@@ -94,6 +94,9 @@ static struct audit_polstr au_polstr[] = {
 	{ AUDIT_PUBLIC,		"public"	},
 	{ AUDIT_ZONENAME,	"zonename"	},
 	{ AUDIT_PERZONE,	"perzone"	},
+#ifdef AUDIT_NOPROCIDENT
+	{ AUDIT_NOPROCIDENT,	"noprocident"	},
+#endif
 	{ -1,			NULL		}
 };
 

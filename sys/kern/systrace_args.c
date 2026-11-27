@@ -3680,6 +3680,32 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		*n_args = 4;
 		break;
 	}
+	/* audit_token_get */
+	case 1012: {
+		struct audit_token_get_args *p = params;
+		iarg[a++] = p->pd; /* int */
+		iarg[a++] = p->pid; /* pid_t */
+		iarg[a++] = p->flags; /* int */
+		uarg[a++] = (intptr_t)p->out; /* struct audit_token * */
+		*n_args = 4;
+		break;
+	}
+	/* audit_token_check */
+	case 1013: {
+		struct audit_token_check_args *p = params;
+		uarg[a++] = (intptr_t)p->tok; /* const struct audit_token * */
+		iarg[a++] = p->flags; /* int */
+		*n_args = 2;
+		break;
+	}
+	/* pdopentoken */
+	case 1014: {
+		struct pdopentoken_args *p = params;
+		uarg[a++] = (intptr_t)p->tok; /* const struct audit_token * */
+		iarg[a++] = p->flags; /* int */
+		*n_args = 2;
+		break;
+	}
 	default:
 		*n_args = 0;
 		break;
@@ -9856,6 +9882,51 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 			break;
 		};
 		break;
+	/* audit_token_get */
+	case 1012:
+		switch (ndx) {
+		case 0:
+			p = "int";
+			break;
+		case 1:
+			p = "pid_t";
+			break;
+		case 2:
+			p = "int";
+			break;
+		case 3:
+			p = "userland struct audit_token *";
+			break;
+		default:
+			break;
+		};
+		break;
+	/* audit_token_check */
+	case 1013:
+		switch (ndx) {
+		case 0:
+			p = "userland const struct audit_token *";
+			break;
+		case 1:
+			p = "int";
+			break;
+		default:
+			break;
+		};
+		break;
+	/* pdopentoken */
+	case 1014:
+		switch (ndx) {
+		case 0:
+			p = "userland const struct audit_token *";
+			break;
+		case 1:
+			p = "int";
+			break;
+		default:
+			break;
+		};
+		break;
 	default:
 		break;
 	};
@@ -11956,6 +12027,21 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* cap_process */
 	case 1011:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
+	/* audit_token_get */
+	case 1012:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
+	/* audit_token_check */
+	case 1013:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
+	/* pdopentoken */
+	case 1014:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;

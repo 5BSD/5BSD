@@ -10,11 +10,13 @@
 
 #include <sys/param.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 
 #include <atf-c.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -342,6 +344,146 @@ ATF_TC_BODY(subscribe, tc)
 	(void)close(oracle);
 }
 
+/* The listing entry of the queue whose controller is pid. */
+static bool
+find_queue_pid(int svc, pid_t pid, struct dqo_queue_info *out)
+{
+	struct dqo_queue_info *buf;
+	size_t count, i;
+	uint64_t first, total;
+	bool found;
+
+	buf = calloc(MAX_LIST, sizeof(*buf));
+	ATF_REQUIRE(buf != NULL);
+	found = false;
+	first = 0;
+	do {
+		ATF_REQUIRE_MSG(dq_observe_list_queues(svc, first, buf, MAX_LIST,
+		    &count, &total) == 0, "list queues: %s", strerror(errno));
+		for (i = 0; i < count; i++) {
+			if (buf[i].qi_pid == pid) {
+				*out = buf[i];
+				found = true;
+			}
+		}
+		first += count;
+	} while (count != 0 && first < total && !found);
+	free(buf);
+	return (found);
+}
+
+/* A queue holder: a fork of the test, or a new execution of the helper. */
+struct holder {
+	pid_t	pid;
+	int	in;	/* the holder's standard input: closing it ends it */
+	FILE	*out;
+};
+
+static void
+holder_start(struct holder *h, const atf_tc_t *tc, bool exec)
+{
+	char path[MAXPATHLEN], line[256];
+	int in[2], out[2];
+
+	snprintf(path, sizeof(path), "%s/dq_exec_helper",
+	    atf_tc_get_config_var(tc, "srcdir"));
+	ATF_REQUIRE(pipe(in) == 0 && pipe(out) == 0);
+	h->pid = fork();
+	ATF_REQUIRE(h->pid >= 0);
+	if (h->pid == 0) {
+		char c;
+		int q;
+
+		if (dup2(in[0], STDIN_FILENO) < 0 ||
+		    dup2(out[1], STDOUT_FILENO) < 0)
+			_exit(1);
+		close(in[1]);
+		close(out[0]);
+		if (exec) {
+			execl(path, path, "queue", "wait", (char *)NULL);
+			_exit(1);
+		}
+		q = dq_open();
+		printf("queue=%s\n", q >= 0 ? "ok" : strerror(errno));
+		fflush(stdout);
+		while (read(STDIN_FILENO, &c, 1) == 1)
+			;
+		_exit(0);
+	}
+	close(in[0]);
+	close(out[1]);
+	h->in = in[1];
+	h->out = fdopen(out[0], "r");
+	ATF_REQUIRE(h->out != NULL);
+	/* Opened when it says so: a line, not a delay. */
+	for (;;) {
+		ATF_REQUIRE_MSG(fgets(line, sizeof(line), h->out) != NULL,
+		    "queue holder %d ended before opening its queue",
+		    (int)h->pid);
+		if (strncmp(line, "queue=", 6) == 0)
+			break;
+	}
+	ATF_REQUIRE_MSG(strcmp(line, "queue=ok\n") == 0, "holder: %s", line);
+}
+
+static void
+holder_stop(struct holder *h)
+{
+	int status;
+
+	close(h->in);
+	fclose(h->out);
+	ATF_REQUIRE_EQ(h->pid, waitpid(h->pid, &status, 0));
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+}
+
+ATF_TC(dq_observe_reports_supervisor_image);
+ATF_TC_HEAD(dq_observe_reports_supervisor_image, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "dq.observe reports each queue with "
+	    "its controller's execution identity: non-zero, the same for two "
+	    "queues of one execution and for its fork child's, different for "
+	    "a queue opened by a new execution, and for each new execution");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(dq_observe_reports_supervisor_image, tc)
+{
+	struct dqo_queue_info q1, q2, fk, e1, e2;
+	struct dq_stats st;
+	struct holder child, ex1, ex2;
+	int a, b, svc;
+
+	a = dqt_open_queue();
+	b = dqt_open_queue();
+	svc = observe_connect();
+	ATF_REQUIRE_EQ(0, dq_get_stats(a, &st));
+	ATF_REQUIRE(find_queue(svc, st.ds_queue_id, &q1));
+	ATF_REQUIRE_EQ(0, dq_get_stats(b, &st));
+	ATF_REQUIRE(find_queue(svc, st.ds_queue_id, &q2));
+	ATF_CHECK(q1.qi_nonce != 0);
+	ATF_CHECK_EQ(q1.qi_nonce, q2.qi_nonce);
+
+	holder_start(&child, tc, false);
+	holder_start(&ex1, tc, true);
+	holder_start(&ex2, tc, true);
+	ATF_REQUIRE(find_queue_pid(svc, child.pid, &fk));
+	ATF_REQUIRE(find_queue_pid(svc, ex1.pid, &e1));
+	ATF_REQUIRE(find_queue_pid(svc, ex2.pid, &e2));
+	/* Fork: the same execution. */
+	ATF_CHECK_EQ(q1.qi_nonce, fk.qi_nonce);
+	/* Exec: another execution, and another again. */
+	ATF_CHECK(e1.qi_nonce != 0 && e2.qi_nonce != 0);
+	ATF_CHECK(e1.qi_nonce != q1.qi_nonce);
+	ATF_CHECK(e2.qi_nonce != q1.qi_nonce);
+	ATF_CHECK(e1.qi_nonce != e2.qi_nonce);
+	holder_stop(&ex2);
+	holder_stop(&ex1);
+	holder_stop(&child);
+	(void)close(svc);
+	(void)close(b);
+	(void)close(a);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -349,5 +491,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, list_queues);
 	ATF_TP_ADD_TC(tp, list_objects);
 	ATF_TP_ADD_TC(tp, subscribe);
+	ATF_TP_ADD_TC(tp, dq_observe_reports_supervisor_image);
 	return (atf_no_error());
 }

@@ -96,6 +96,9 @@ static int		 p_rgid;	/* Real group id. */
 static int		 p_ruid;	/* Real user id. */ 
 static int		 p_subid;	/* Subject id. */
 static const char	*p_zone;	/* Zone. */
+static uint64_t		 p_uniqueid;	/* Subject's audit token ids. */
+static uint64_t		 p_execgen;
+static uint64_t		 p_imageid;
 
 /*
  * Maintain a dynamically sized array of events for -m
@@ -180,6 +183,9 @@ usage(const char *msg)
 	fprintf(stderr, "\t-f <gid|group> : effective group\n");
 	fprintf(stderr, "\t-g <gid|group> : real group\n");
 	fprintf(stderr, "\t-j <pid> : subject id \n");
+	fprintf(stderr, "\t-U <uniqueid> : subject's audit token uniqueid\n");
+	fprintf(stderr, "\t-G <execgen> : subject's audit token execgen\n");
+	fprintf(stderr, "\t-I <imageid> : subject's audit token imageid\n");
 	fprintf(stderr, "\t-m <evno|evname> : matching event\n");
 	fprintf(stderr, "\t-o objecttype=objectvalue\n");
 	fprintf(stderr, "\t\t file=<pathname>\n");
@@ -497,6 +503,42 @@ select_subj32(tokenstr_t tok, uint32_t *optchkd)
 	return (1);
 }
 
+#ifdef AUT_PROCIDENT
+/*
+ * Check the subject's audit token ids (the 5BSD procident token) against
+ * the selection criteria.  A record without the token does not match.
+ */
+static int
+select_procident(tokenstr_t tok, uint32_t *optchkd)
+{
+	const struct au_procident *pi;
+
+	pi = &tok.tt.procident.pi;
+	SETOPT((*optchkd), (OPT_U | OPT_G | OPT_I));
+	if (ISOPTSET(opttochk, OPT_U) && pi->api_uniqueid != p_uniqueid)
+		return (0);
+	if (ISOPTSET(opttochk, OPT_G) && pi->api_execgen != p_execgen)
+		return (0);
+	if (ISOPTSET(opttochk, OPT_I) && pi->api_imageid != p_imageid)
+		return (0);
+	return (1);
+}
+
+/* An unsigned 64-bit id from a command line argument. */
+static uint64_t
+parse_id(const char *arg, const char *opt)
+{
+	unsigned long long val;
+	char *end;
+
+	errno = 0;
+	val = strtoull(arg, &end, 0);
+	if (errno != 0 || *arg == '\0' || *end != '\0' || *arg == '-')
+		usage(opt);
+	return ((uint64_t)val);
+}
+#endif
+
 /*
  * Check if the given zone matches the selection criteria.
   */
@@ -583,6 +625,12 @@ select_records(FILE *fp)
 				selected = select_zone(tok.tt.zonename.zonename, &optchkd);
 				break;
 
+#ifdef AUT_PROCIDENT
+			case AUT_PROCIDENT:
+				selected = select_procident(tok, &optchkd);
+				break;
+#endif
+
 			default:
 				break;
 			}
@@ -653,7 +701,8 @@ main(int argc, char **argv)
 
 	converr = NULL;
 
-	while ((ch = getopt(argc, argv, "Aa:b:c:d:e:f:g:j:m:o:r:u:vz:")) != -1) {
+	while ((ch = getopt(argc, argv,
+	    "Aa:b:c:d:e:f:G:g:I:j:m:o:r:U:u:vz:")) != -1) {
 		switch(ch) {
 		case 'A':
 			SETOPT(opttochk, OPT_A);
@@ -811,6 +860,23 @@ main(int argc, char **argv)
 			p_zone = optarg;
 			SETOPT(opttochk, OPT_z);
 			break;
+
+#ifdef AUT_PROCIDENT
+		case 'U':
+			p_uniqueid = parse_id(optarg, "Invalid -U uniqueid");
+			SETOPT(opttochk, OPT_U);
+			break;
+
+		case 'G':
+			p_execgen = parse_id(optarg, "Invalid -G execgen");
+			SETOPT(opttochk, OPT_G);
+			break;
+
+		case 'I':
+			p_imageid = parse_id(optarg, "Invalid -I imageid");
+			SETOPT(opttochk, OPT_I);
+			break;
+#endif
 
 		case '?':
 		default:

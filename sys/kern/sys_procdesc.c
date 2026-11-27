@@ -89,6 +89,7 @@
 #include <sys/ucred.h>
 #include <sys/user.h>
 
+#include <bsm/audit_token.h>
 #include <security/audit/audit.h>
 
 #include <vm/uma.h>
@@ -802,7 +803,8 @@ procdesc_cmp(struct file *fp1, struct file *fp2, struct thread *td)
 }
 
 static int
-pdopenpid1(struct thread *td, pid_t pid, struct procdesc **pdf, struct file *fp)
+pdopenpid1(struct thread *td, pid_t pid, const audit_token_t *tok,
+    struct procdesc **pdf, struct file *fp)
 {
 	struct proc *p;
 	struct procdesc *pd;
@@ -810,9 +812,29 @@ pdopenpid1(struct thread *td, pid_t pid, struct procdesc **pdf, struct file *fp)
 
 	sx_assert(&proctree_lock, SX_XLOCKED);
 
-	error = pget(pid, PGET_NOTID | PGET_CANDEBUG, &p);
-	if (error != 0)
-		return (error);
+	if (tok == NULL) {
+		error = pget(pid, PGET_NOTID | PGET_CANDEBUG, &p);
+		if (error != 0)
+			return (error);
+	} else {
+		/*
+		 * pdopentoken(2): the process at the token's pid must be the
+		 * one the token names, whoever may debug it; another process
+		 * there means the named one is gone.
+		 */
+		error = pget(pid, PGET_NOTID, &p);
+		if (error != 0)
+			return (error);
+		if (!audit_token_match_proc(p, tok, 0)) {
+			PROC_UNLOCK(p);
+			return (ESRCH);
+		}
+		error = p_candebug(td, p);
+		if (error != 0) {
+			PROC_UNLOCK(p);
+			return (error);
+		}
+	}
 	if ((p->p_flag & (P_SYSTEM | P_WEXIT)) != 0) {
 		PROC_UNLOCK(p);
 		return (EBUSY);
@@ -846,7 +868,8 @@ pdopenpid1(struct thread *td, pid_t pid, struct procdesc **pdf, struct file *fp)
 }
 
 static int
-kern_pdopenpid(struct thread *td, pid_t pid, int flags)
+kern_pdopenpid(struct thread *td, pid_t pid, const audit_token_t *tok,
+    int flags)
 {
 	struct file *fp;
 	struct procdesc *pdf;
@@ -869,7 +892,7 @@ kern_pdopenpid(struct thread *td, pid_t pid, int flags)
 		cap_rights_clear(&fcaps.fc_rights, CAP_PTRACE);
 
 	sx_xlock(&proctree_lock);
-	error = pdopenpid1(td, pid, &pdf, fp);
+	error = pdopenpid1(td, pid, tok, &pdf, fp);
 	sx_xunlock(&proctree_lock);
 
 	if (error == 0) {
@@ -909,7 +932,29 @@ sys_pdopenpid(struct thread *td, struct pdopenpid_args *args)
 
 	if ((args->flags & ~(PD_ALLOWED_AT_OPENPID)) != 0)
 		return (EINVAL);
-	return (kern_pdopenpid(td, args->pid, args->flags));
+	return (kern_pdopenpid(td, args->pid, NULL, args->flags));
+}
+
+/*
+ * pdopentoken(2): pdopenpid(2) of the process an audit token names
+ * (audit_token(3)), refused with ESRCH when the pid now names another
+ * process or another exec of it.
+ */
+int
+sys_pdopentoken(struct thread *td, struct pdopentoken_args *args)
+{
+	audit_token_t tok;
+	int error;
+
+	AUDIT_ARG_FFLAGS(args->flags);
+	if ((args->flags & ~(PD_ALLOWED_AT_OPENPID)) != 0)
+		return (EINVAL);
+	error = copyin(args->tok, &tok, sizeof(tok));
+	if (error != 0)
+		return (error);
+	AUDIT_ARG_PID(audit_token_to_pid(&tok));
+	return (kern_pdopenpid(td, audit_token_to_pid(&tok), &tok,
+	    args->flags));
 }
 
 /*

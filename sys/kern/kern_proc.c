@@ -1116,8 +1116,11 @@ fill_kinfo_proc_only(struct proc *p, struct kinfo_proc *kp)
 	}
 	kp->ki_flag = p->p_flag;
 	kp->ki_flag2 = p->p_flag2;
+	kp->ki_uniqueid = p->p_uniqueid;
+	kp->ki_execgen = p->p_execgen;
 	cred = p->p_ucred;
 	if (cred) {
+		kp->ki_imageid = cred->cr_imageid;
 		kp->ki_uid = cred->cr_uid;
 		kp->ki_ruid = cred->cr_ruid;
 		kp->ki_svuid = cred->cr_svuid;

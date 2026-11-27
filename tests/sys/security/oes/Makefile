@@ -34,6 +34,10 @@ ATF_TESTS_C+=	self_events_test
 ATF_TESTS_C+=	cache_gate_test
 # The deferred queue's byte bound, per-uid share and lost marker (hold).
 ATF_TESTS_C+=	defer_bound_test
+# T0a pins (kernel-identity-and-coalitions.md 2.4): the execution id over
+# fork and exec, readers per process and execution, mutes per process
+# (oes_mute_pid_reuse lowers kern.pid_max to drive pid reuse).
+ATF_TESTS_C+=	identity_semantics_test
 PROGS+=		oes_join_helper
 BINDIR=		${TESTSDIR}
 

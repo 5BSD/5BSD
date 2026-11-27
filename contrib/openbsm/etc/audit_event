@@ -622,6 +622,10 @@
 43930:AUE_PDINCAPMODE:pdincapmode(2):ot
 43931:AUE_CAP_MMAP_CAPMODE:cap_mmap_capmode(2):ot
 43932:AUE_CAP_LOOKUP_CAPMODE:cap_lookup_capmode(2):ot
+43963:AUE_AUDIT_TOKEN_GET:audit_token_get(2):pc
+43964:AUE_AUDIT_TOKEN_CHECK:audit_token_check(2):pc
+43965:AUE_PDOPENTOKEN:pdopentoken(2):pc
+43966:AUE_AUDIT_TRAIL_START:audit trail start:ad
 #
 # Solaris userspace events.
 #

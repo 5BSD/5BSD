@@ -58,6 +58,9 @@ struct re_entry {
 #define OPT_A	0x00020000
 #define OPT_v	0x00040000
 #define OPT_z	0x00080000
+#define OPT_U	0x00100000	/* 5BSD: procident uniqueid */
+#define OPT_G	0x00200000	/* 5BSD: procident execgen */
+#define OPT_I	0x00400000	/* 5BSD: procident imageid */
 
 #define FILEOBJ "file"
 #define MSGQIDOBJ "msgqid"

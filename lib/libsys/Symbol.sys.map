@@ -391,6 +391,8 @@ FBSD_1.8 {
 };
 
 FBSD_1.9 {
+	audit_token_check;
+	audit_token_get;
 	cap_cloexec_limit;
 	cap_clofork_limit;
 	cap_lookup_capmode;
@@ -405,6 +407,7 @@ FBSD_1.9 {
 	pddupfd;
 	pdincapmode;
 	pdopenpid;
+	pdopentoken;
 	pdptrace;
 	pdself;
 	pdrfork;

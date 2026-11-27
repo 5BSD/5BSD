@@ -456,4 +456,7 @@ MIASM =  \
 	pdincapmode.o \
 	cap_mmap_capmode.o \
 	cap_lookup_capmode.o \
-	cap_process.o
+	cap_process.o \
+	audit_token_get.o \
+	audit_token_check.o \
+	pdopentoken.o

@@ -10,8 +10,11 @@
 #include <sys/event.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 
 #include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -266,6 +269,64 @@ flood(int channel_fd)
 	return (0);
 }
 
+/*
+ * Mode "channel-not-inherited" (pin capsule_manager_channel_not_inherited):
+ * the manager channel belongs to the manager execution Capsule started and
+ * to nothing it creates.
+ *  - this execution's PING is answered (first);
+ *  - a fork child has no descriptor at the channel's number: F_GETFD and a
+ *    send there both fail (fork_getfd, fork_send: errno values);
+ *  - this execution is still answered (after);
+ *  - clearing FD_CLOEXEC on it succeeds (setfd), the lock being invisible;
+ * then the answers go to switchboard-pins.out and this process executes
+ * this program again ("channel-not-inherited-next", path from mock-self).
+ * If the exec fails its errno goes to switchboard-exec-failed.out and the
+ * process exits; either way the channel's end is what Capsule sees next.
+ */
+static int
+channel_not_inherited(int channel_fd)
+{
+	char line[192], self[PATH_MAX];
+	int answer[2], first, after, setfd, sv[2], status;
+	pid_t pid;
+	FILE *fp;
+
+	fp = fopen("mock-self", "r");
+	if (fp == NULL || fgets(self, sizeof(self), fp) == NULL)
+		return (1);
+	fclose(fp);
+	self[strcspn(self, "\n")] = '\0';
+
+	first = send_op(channel_fd, CAPSULE_OP_PING);
+	if (pipe(sv) != 0)
+		return (1);
+	pid = fork();
+	if (pid < 0)
+		return (1);
+	if (pid == 0) {
+		answer[0] = fcntl(channel_fd, F_GETFD) == -1 ? errno : 0;
+		answer[1] = send_op(channel_fd, CAPSULE_OP_PING) == -1 ?
+		    errno : 0;
+		_exit(write(sv[1], answer, sizeof(answer)) == sizeof(answer) ?
+		    0 : 1);
+	}
+	close(sv[1]);
+	if (read(sv[0], answer, sizeof(answer)) != sizeof(answer) ||
+	    waitpid(pid, &status, 0) != pid)
+		return (1);
+	close(sv[0]);
+	after = send_op(channel_fd, CAPSULE_OP_PING);
+	setfd = fcntl(channel_fd, F_SETFD, 0) == -1 ? errno : 0;
+	snprintf(line, sizeof(line),
+	    "first=%d\nfork_getfd=%d\nfork_send=%d\nafter=%d\nsetfd=%d\n",
+	    first, answer[0], answer[1], after, setfd);
+	write_file("switchboard-pins.out", line);
+	execl(self, self, "channel-not-inherited-next", (char *)NULL);
+	snprintf(line, sizeof(line), "exec-failed=%d\n", errno);
+	write_file("switchboard-exec-failed.out", line);
+	return (1);
+}
+
 static const char *
 read_mode(void)
 {
@@ -323,7 +384,7 @@ write_started(int channel_fd, const char *mode)
 }
 
 int
-main(void)
+main(int argc, char **argv)
 {
 	struct sigaction act;
 	const char *fd_string, *mode;
@@ -337,6 +398,11 @@ main(void)
 		return (1);
 	}
 	channel_fd = atoi(fd_string);
+	/* channel_not_inherited()'s next execution: Capsule ends it. */
+	if (argc == 2 && strcmp(argv[1], "channel-not-inherited-next") == 0) {
+		for (;;)
+			pause();
+	}
 	mode = read_mode();
 	if (strcmp(mode, "wait-for-reload") == 0) {
 		memset(&act, 0, sizeof(act));
@@ -364,6 +430,14 @@ main(void)
 			fputs("ok\n", fp);
 			fclose(fp);
 		}
+		for (;;)
+			pause();
+	}
+	if (strcmp(mode, "channel-not-inherited") == 0) {
+		/* Once per case: a manager Capsule restarts only waits. */
+		if (access("switchboard-pins.out", F_OK) != 0 &&
+		    channel_not_inherited(channel_fd) != 0)
+			return (1);
 		for (;;)
 			pause();
 	}

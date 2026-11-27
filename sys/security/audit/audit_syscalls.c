@@ -255,6 +255,8 @@ sys_auditon(struct thread *td, struct auditon_args *uap)
 				udata.au_policy64 |= AUDIT_ARGV;
 			if (audit_arge)
 				udata.au_policy64 |= AUDIT_ARGE;
+			if (audit_noprocident)
+				udata.au_policy64 |= AUDIT_NOPROCIDENT;
 			break;
 		}
 		if (uap->length != sizeof(udata.au_policy))
@@ -267,13 +269,19 @@ sys_auditon(struct thread *td, struct auditon_args *uap)
 			udata.au_policy |= AUDIT_ARGV;
 		if (audit_arge)
 			udata.au_policy |= AUDIT_ARGE;
+		if (audit_noprocident)
+			udata.au_policy |= AUDIT_NOPROCIDENT;
 		break;
 
 	case A_OLDSETPOLICY:
 	case A_SETPOLICY:
 		if (uap->length == sizeof(udata.au_policy64)) {
+			/*
+			 * The 32-bit word is checked (as upstream does), so
+			 * every policy bit lives in it.
+			 */
 			if (udata.au_policy & ~(AUDIT_CNT|AUDIT_AHLT|
-			    AUDIT_ARGV|AUDIT_ARGE))
+			    AUDIT_ARGV|AUDIT_ARGE|AUDIT_NOPROCIDENT))
 				return (EINVAL);
 			audit_fail_stop = ((udata.au_policy64 & AUDIT_CNT) ==
 			    0);
@@ -281,12 +289,14 @@ sys_auditon(struct thread *td, struct auditon_args *uap)
 			    AUDIT_AHLT);
 			audit_argv = (udata.au_policy64 & AUDIT_ARGV);
 			audit_arge = (udata.au_policy64 & AUDIT_ARGE);
+			audit_noprocident = (udata.au_policy64 &
+			    AUDIT_NOPROCIDENT) != 0;
 			break;
 		}
 		if (uap->length != sizeof(udata.au_policy))
 			return (EINVAL);
 		if (udata.au_policy & ~(AUDIT_CNT|AUDIT_AHLT|AUDIT_ARGV|
-		    AUDIT_ARGE))
+		    AUDIT_ARGE|AUDIT_NOPROCIDENT))
 			return (EINVAL);
 		/*
 		 * XXX - Need to wake up waiters if the policy relaxes?
@@ -295,6 +305,7 @@ sys_auditon(struct thread *td, struct auditon_args *uap)
 		audit_panic_on_write_fail = (udata.au_policy & AUDIT_AHLT);
 		audit_argv = (udata.au_policy & AUDIT_ARGV);
 		audit_arge = (udata.au_policy & AUDIT_ARGE);
+		audit_noprocident = (udata.au_policy & AUDIT_NOPROCIDENT) != 0;
 		break;
 
 	case A_GETKMASK:

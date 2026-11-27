@@ -40,11 +40,14 @@
 .Op Fl d Ar YYYYMMDD
 .Op Fl e Ar euid
 .Op Fl f Ar egid
+.Op Fl G Ar execgen
 .Op Fl g Ar rgid
+.Op Fl I Ar imageid
 .Op Fl j Ar id
 .Op Fl m Ar event
 .Op Fl o Ar object Ns = Ns Ar value
 .Op Fl r Ar ruid
+.Op Fl U Ar uniqueid
 .Op Fl u Ar auid
 .Op Fl v
 .Op Fl z Ar zone
@@ -88,8 +91,18 @@ or
 Select records with the given effective user ID or name.
 .It Fl f Ar egid
 Select records with the given effective group ID or name.
+.It Fl G Ar execgen
+Select records whose procident token gives the subject this exec
+generation
+.Pq Xr audit_token 3 ;
+5BSD.
 .It Fl g Ar rgid
 Select records with the given real group ID or name.
+.It Fl I Ar imageid
+Select records whose procident token gives the subject this image ID
+(as the system call started; for
+.Xr execve 2 ,
+the image before the exec); 5BSD.
 .It Fl j Ar id
 Select records having a subject token with matching ID, where ID is a process ID.
 .It Fl m Ar event
@@ -126,6 +139,10 @@ Select records containing the given shared memory ID.
 .El
 .It Fl r Ar ruid
 Select records with the given real user ID or name.
+.It Fl U Ar uniqueid
+Select records whose procident token gives the subject this lifetime ID
+.Pq Xr audit_token 3 ;
+records without the token do not match; 5BSD.
 .It Fl u Ar auid
 Select records with the given audit ID.
 .It Fl v

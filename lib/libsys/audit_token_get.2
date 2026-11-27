@@ -1,0 +1,180 @@
+.\"
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.Dd November 25, 2026
+.Dt AUDIT_TOKEN_GET 2
+.Os
+.Sh NAME
+.Nm audit_token_get ,
+.Nm audit_token_check
+.Nd get and check the audit token of a process
+.Sh LIBRARY
+.Lb libc
+.Sh SYNOPSIS
+.In bsm/audit.h
+.Ft int
+.Fn audit_token_get "int pd" "pid_t pid" "int flags" "audit_token_t *token"
+.Ft int
+.Fn audit_token_check "const audit_token_t *token" "int flags"
+.Sh DESCRIPTION
+An audit token
+.Pq Vt audit_token_t , see Xr audit_token 3
+names one process at one point of its life: its process ID, a lifetime ID
+that is never reused, the exec generation, the image ID, and the jail, user,
+group and audit IDs it had when the token was taken.
+It is opaque; the
+.Fn audit_token_to_*
+functions of
+.Xr audit_token 3
+read it.
+.Pp
+The
+.Fn audit_token_get
+system call stores in
+.Fa token
+the token of a process:
+.Bl -tag -width ".Fa pd No \&>= 0"
+.It Fa pd No \&>= 0
+the process the process descriptor
+.Fa pd
+refers to
+.Pq see Xr pdfork 2 ;
+.Fa pid
+must be 0.
+The descriptor needs the
+.Dv CAP_PDGETPID
+right and is all the authority the call needs.
+.It Fa pd No = \-1 , Fa pid No = 0
+the calling process.
+.It Fa pd No = \-1 , Fa pid No > 0
+the process with process ID
+.Fa pid ,
+if the caller may see it
+.Pq the rule of Xr ps 1 .
+.El
+.Pp
+A process that has begun to exit, or has exited and not been waited for,
+is refused unless
+.Fa flags
+has
+.Dv AUDIT_TOKEN_MAY_EXIT .
+.Pp
+The
+.Fn audit_token_check
+system call tells whether the process
+.Fa token
+names still exists: a process with the token's process ID, lifetime ID and
+exec generation.
+In
+.Fa flags ,
+.Dv AUDIT_TOKEN_MAY_EXEC
+accepts any exec generation of the process, and
+.Dv AUDIT_TOKEN_MAY_EXIT
+accepts a process that has exited and has not been waited for.
+A process the caller may not see is reported as not existing.
+.Pp
+The IDs are counters, not secrets: knowing a token gives no access to the
+process it names.
+.Pp
+Use
+.Xr pdopentoken 2
+to get a process descriptor for the process a token names.
+.Ss Capability mode
+In capability mode
+.Pq see Xr capsicum 4 ,
+.Fn audit_token_get
+accepts a process descriptor and the calling process, but not a process ID,
+and
+.Fn audit_token_check
+matches only the calling process and its descendants, so that a sandbox
+cannot probe the process table.
+.Sh RETURN VALUES
+.Rv -std
+.Sh ERRORS
+The
+.Fn audit_token_get
+system call fails if:
+.Bl -tag -width Er
+.It Bq Er EINVAL
+.Fa flags
+has a bit other than
+.Dv AUDIT_TOKEN_MAY_EXIT ,
+.Fa pid
+is negative, or
+.Fa pd
+is a descriptor and
+.Fa pid
+is not 0.
+.It Bq Er EBADF
+.Fa pd
+is less than \-1, is not an open descriptor, or is not a process
+descriptor.
+.It Bq Er ENOTCAPABLE
+.Fa pd
+lacks the
+.Dv CAP_PDGETPID
+right.
+.It Bq Er ECAPMODE
+A process ID was given in capability mode.
+.It Bq Er ESRCH
+The process does not exist, the caller may not see it, or it has exited
+and
+.Dv AUDIT_TOKEN_MAY_EXIT
+was not given.
+.It Bq Er EFAULT
+.Fa token
+points outside the process's address space.
+.El
+.Pp
+The
+.Fn audit_token_check
+system call fails if:
+.Bl -tag -width Er
+.It Bq Er EINVAL
+.Fa flags
+has a bit other than
+.Dv AUDIT_TOKEN_MAY_EXEC
+and
+.Dv AUDIT_TOKEN_MAY_EXIT .
+.It Bq Er EFAULT
+.Fa token
+points outside the process's address space.
+.It Bq Er ESRCH
+No process matches the token, or the caller may not see it.
+.El
+.Sh SEE ALSO
+.Xr pdfork 2 ,
+.Xr pdopentoken 2 ,
+.Xr audit_token 3 ,
+.Xr audit 4 ,
+.Xr capsicum 4
+.Sh HISTORY
+The
+.Fn audit_token_get
+and
+.Fn audit_token_check
+system calls first appeared in 5BSD; the token follows the audit token of
+macOS.

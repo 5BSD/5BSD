@@ -829,6 +829,12 @@ struct proc {
 	 * Appended so the asserted member offsets above stay put (KBI).
 	 */
 	struct proc_image p_image;	/* (b) Image source of executable. */
+	/*
+	 * Audit token ids (audit_token(3)).  Outside the zeroed and copied
+	 * ranges: do_fork() writes both for every new process.
+	 */
+	uint64_t	p_uniqueid;	/* (b) Lifetime id, never reused. */
+	uint64_t	p_execgen;	/* (c) Generation, new at fork and exec. */
 };
 
 #define	p_session	p_pgrp->pg_session
@@ -1247,6 +1253,7 @@ int	enterpgrp(struct proc *p, pid_t pgid, struct pgrp *pgrp,
 	    struct session *sess);
 int	enterthispgrp(struct proc *p, struct pgrp *pgrp);
 int	fork1(struct thread *, struct fork_req *);
+uint64_t fork_uniqueid_boot(uint64_t offset);
 void	fork_exit(void (*)(void *, struct trapframe *), void *,
 	    struct trapframe *);
 void	fork_return(struct thread *, struct trapframe *);
