@@ -673,6 +673,35 @@ ATF_TC_BODY(pdopentoken_basic, tc)
 	ATF_CHECK_EQ(ESRCH, fails(pin_pdopentoken(&tok, 0)));
 }
 
+/*
+ * A token still names an exited process until it is reaped, and that
+ * zombie cannot be opened: EBUSY, as pdopenpid(2) answers.  Once reaped
+ * the token names nobody.
+ */
+ATF_TC_WITHOUT_HEAD(pdopentoken_zombie);
+ATF_TC_BODY(pdopentoken_zombie, tc)
+{
+	audit_token_t tok;
+	siginfo_t si;
+	pid_t pid;
+	int status;
+
+	pins_init();
+	pid = fork();
+	ATF_REQUIRE(pid != -1);
+	if (pid == 0)
+		_exit(0);
+	tok_get(-1, pid, AUDIT_TOKEN_MAY_EXIT, &tok);
+	ATF_REQUIRE_EQ(0, waitid(P_PID, pid, &si, WEXITED | WNOWAIT));
+	ATF_CHECK_EQ(EBUSY, fails(pdopenpid(pid, 0)));
+	ATF_CHECK_EQ(EBUSY, fails(pin_pdopentoken(&tok, 0)));
+	ATF_CHECK_EQ(0, pin_audit_token_check(&tok, AUDIT_TOKEN_MAY_EXIT));
+	ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+	ATF_CHECK_EQ(ESRCH, fails(pin_pdopentoken(&tok, 0)));
+	ATF_CHECK_EQ(ESRCH, fails(pin_audit_token_check(&tok,
+	    AUDIT_TOKEN_MAY_EXIT)));
+}
+
 /* Argument checks, in the order the calls make them. */
 ATF_TC_WITHOUT_HEAD(bad_arguments);
 ATF_TC_BODY(bad_arguments, tc)
@@ -959,6 +988,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, check_capmode);
 	ATF_TP_ADD_TC(tp, check_exec_and_exit);
 	ATF_TP_ADD_TC(tp, pdopentoken_basic);
+	ATF_TP_ADD_TC(tp, pdopentoken_zombie);
 	ATF_TP_ADD_TC(tp, bad_arguments);
 	ATF_TP_ADD_TC(tp, pid_reuse_check);
 	ATF_TP_ADD_TC(tp, libc_wrappers);

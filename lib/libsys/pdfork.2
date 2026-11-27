@@ -221,9 +221,16 @@ of the process the audit token
 names
 .Pq see Xr audit_token 3 :
 the process at the token's PID must have the token's lifetime ID and exec
-generation, so a token of a process that has exited or exec'd since, or
-whose PID now belongs to another process, opens nothing.
-It is checked before the permission to debug the process.
+generation.
+A token of a process that has exec'd since, or whose PID is gone or now
+belongs to another process, names nobody
+.Pq Er ESRCH ;
+a token of a process that has exited but has not been reaped still names
+it, and the zombie cannot be opened
+.Pq Er EBUSY ,
+as with
+.Fn pdopenpid .
+The token is checked before the permission to debug the process.
 .Pp
 There might be more that one file descriptor referencing the process.
 After the zombie is reaped, calls to
@@ -620,7 +627,10 @@ and:
 .Fa token
 points outside the process's address space.
 .It Bq Er ESRCH
-No process has the token's PID, lifetime ID and exec generation.
+No process has the token's PID, lifetime ID and exec generation: the
+process is gone, its PID was reused, or it has exec'd since.
+.It Bq Er EBUSY
+The token names a process that has exited and has not been reaped.
 .El
 .Pp
 The

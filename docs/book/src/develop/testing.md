@@ -731,6 +731,7 @@ differs (the Bluetooth fuzz count is the Makefile's).
 | WASPNest live | `tests/sys/kern/vsock_e2e`, `tests/waspnest` | guest activation, checkpoint, nested VMX, soak | bhyve host root (`waspnest-test run`) | 11 release gates |
 | Container proofs | `tools/test/capability-containers` | reclaim/reconcile model | QEMU rig, plane-on (`run-all.sh`) | 14 proofs |
 | DTrace catalog | `tests/sys/kern/dtrace_catalog_test.sh` | shipped D scripts compile | in-session root | 14 scripts |
+| praudit old readers | `usr.sbin/praudit/tests` | every token type prints as before; a record with the 5BSD procident token read by a praudit that does not know it | in-session; the standing check is the checked-in golden files (`input/golden_*`, `input/procident_old_*`, dev's praudit output); `praudit_procident_old_reader` runs only with `old_praudit` set to a praudit built before the token, else it skips | 13 cases |
 | DTrace fbt exclusion | `tests/sys/kern/dtrace_fbt_exclusion_test.sh` | fbt keeps out of DTrace itself; every fbt entry probe under kinst, pid, sdt and syscall probes | listing case: in-session root; enabling case: VM root with `allow_dtrace_fbt_selftest=yes` | 2 cases |
 | ktest sglist | `tests/sys/kern/sglist_boundary_test.py` | kernel sglist boundaries | in-session root (kmod) | 1 |
 | Release integrity | `tests/release` | base-integrity tool | in-session | 2 cases |
