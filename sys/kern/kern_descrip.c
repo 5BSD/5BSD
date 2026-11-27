@@ -6179,6 +6179,65 @@ export_dqres_to_sb(struct file *fp, int fd, struct export_fd_buf *efbuf)
 }
 
 /*
+ * A dead served cwd or root's row (DR_*_DEAD, D200): the row a reclaimed
+ * directory gives, as export_vnode_to_kinfo fills it for a VBAD vnode
+ * (vn_fullpath and VOP_GETATTR fail: an empty path, no KF_ATTR_VALID).
+ */
+static int
+export_dead_to_sb(int fd, struct export_fd_buf *efbuf)
+{
+	struct kinfo_file *kif;
+
+	if (efbuf->remainder == 0)
+		return (ENOMEM);
+	kif = &efbuf->kif;
+	bzero(kif, sizeof(*kif));
+	kif->kf_type = KF_TYPE_VNODE;
+	kif->kf_un.kf_file.kf_file_type = KF_VTYPE_VBAD;
+	kif->kf_flags = xlate_fflags(FREAD);
+	cap_rights_init_zero(&kif->kf_cap_rights);
+	kif->kf_fd = fd;
+	kif->kf_ref_count = -1;
+	kif->kf_offset = -1;
+	if ((efbuf->flags & KERN_FILEDESC_PACK_KINFO) != 0)
+		pack_kinfo(kif);
+	else
+		kif->kf_structsize = roundup2(sizeof(*kif), sizeof(uint64_t));
+	return (export_kinfo_to_sb(efbuf));
+}
+
+/*
+ * The CWD or ROOT row of a pwddesc (efbuf->pdp, locked): the served
+ * directory when there is one, a dead one's row, or the real vnode's
+ * (D200).  Each is exported with the lock dropped and retaken, as
+ * export_vnode_to_sb does for a real row, so the rows keep their place
+ * (CWD, ROOT, JAIL) and dq's fill_kinfo may sleep.  served is held by
+ * the caller's snapshot; vp belongs to a pwd the caller holds, or is
+ * NULL.
+ */
+static int
+export_pwd_dir_to_sb(struct vnode *vp, struct file *served, bool dead,
+    int fd, struct export_fd_buf *efbuf)
+{
+	int error;
+
+	PWDDESC_ASSERT_XLOCKED(efbuf->pdp);
+	if (served == NULL && !dead) {
+		if (vp == NULL)
+			return (0);
+		vrefact(vp);
+		return (export_vnode_to_sb(vp, fd, FREAD, efbuf));
+	}
+	PWDDESC_XUNLOCK(efbuf->pdp);
+	if (served != NULL)
+		error = export_dqres_to_sb(served, fd, efbuf);
+	else
+		error = export_dead_to_sb(fd, efbuf);
+	PWDDESC_XLOCK(efbuf->pdp);
+	return (error);
+}
+
+/*
  * Store a process file descriptor information to sbuf.
  *
  * Takes a locked proc as argument, and returns with the proc unlocked.
@@ -6240,40 +6299,28 @@ kern_proc_filedesc_out(struct proc *p,  struct sbuf *sb, ssize_t maxlen,
 	PWDDESC_XLOCK(pdp);
 	pwd = pwd_hold_pwddesc(pdp);
 	/*
-	 * A served cwd or root (D169) replaces the real row; a dead one
-	 * (DR_*_DEAD) has no row, never the real directory's.  The files
-	 * are exported after unlocking (D174).
+	 * A served cwd or root (D169) replaces the real row in its place,
+	 * and a dead one (DR_*_DEAD) is a reclaimed directory's row, never
+	 * the real directory's (D200).  The snapshot holds the served
+	 * files until the rows are out; it is released unlocked.
 	 */
 	pwd_dqres_hold_locked(pdp, &snap);
-	if (pwd != NULL) {
-		/* working directory */
-		if (pwd->pwd_cdir != NULL && snap.dsn_cwd == NULL &&
-		    (snap.dsn_flags & DR_CWD_DEAD) == 0) {
-			vrefact(pwd->pwd_cdir);
-			error = export_vnode_to_sb(pwd->pwd_cdir,
-			    KF_FD_TYPE_CWD, FREAD, efbuf);
-		}
-		/* root directory */
-		if (error == 0 && pwd->pwd_rdir != NULL &&
-		    snap.dsn_root == NULL &&
-		    (snap.dsn_flags & DR_ROOT_DEAD) == 0) {
-			vrefact(pwd->pwd_rdir);
-			error = export_vnode_to_sb(pwd->pwd_rdir,
-			    KF_FD_TYPE_ROOT, FREAD, efbuf);
-		}
-		/* jail directory */
-		if (error == 0 && pwd->pwd_jdir != NULL) {
-			vrefact(pwd->pwd_jdir);
-			error = export_vnode_to_sb(pwd->pwd_jdir,
-			    KF_FD_TYPE_JAIL, FREAD, efbuf);
-		}
+	/* working directory */
+	error = export_pwd_dir_to_sb(pwd != NULL ? pwd->pwd_cdir : NULL,
+	    snap.dsn_cwd, (snap.dsn_flags & DR_CWD_DEAD) != 0, KF_FD_TYPE_CWD,
+	    efbuf);
+	/* root directory */
+	if (error == 0)
+		error = export_pwd_dir_to_sb(pwd != NULL ? pwd->pwd_rdir : NULL,
+		    snap.dsn_root, (snap.dsn_flags & DR_ROOT_DEAD) != 0,
+		    KF_FD_TYPE_ROOT, efbuf);
+	/* jail directory */
+	if (error == 0 && pwd != NULL && pwd->pwd_jdir != NULL) {
+		vrefact(pwd->pwd_jdir);
+		error = export_vnode_to_sb(pwd->pwd_jdir, KF_FD_TYPE_JAIL,
+		    FREAD, efbuf);
 	}
 	PWDDESC_XUNLOCK(pdp);
-	if (error == 0 && snap.dsn_cwd != NULL)
-		error = export_dqres_to_sb(snap.dsn_cwd, KF_FD_TYPE_CWD, efbuf);
-	if (error == 0 && snap.dsn_root != NULL)
-		error = export_dqres_to_sb(snap.dsn_root, KF_FD_TYPE_ROOT,
-		    efbuf);
 	dqres_snap_release(&snap);
 	if (pwd != NULL)
 		pwd_drop(pwd);
@@ -6410,19 +6457,15 @@ kern_proc_cwd_out(struct proc *p,  struct sbuf *sb, ssize_t maxlen)
 	PWDDESC_XLOCK(pdp);
 	pwd = PWDDESC_XLOCKED_LOAD_PWD(pdp);
 	cdir = pwd->pwd_cdir;
-	/* A served cwd (D169, D174), exported after unlocking; dead: none. */
+	/* A served cwd (D169, D174), or a dead one's row (D200). */
 	pwd_dqres_hold_locked(pdp, &snap);
-	if (snap.dsn_cwd != NULL) {
-		error = 0;
-	} else if (cdir == NULL || (snap.dsn_flags & DR_CWD_DEAD) != 0) {
+	if (cdir == NULL && snap.dsn_cwd == NULL &&
+	    (snap.dsn_flags & DR_CWD_DEAD) == 0)
 		error = EINVAL;
-	} else {
-		vrefact(cdir);
-		error = export_vnode_to_sb(cdir, KF_FD_TYPE_CWD, FREAD, efbuf);
-	}
+	else
+		error = export_pwd_dir_to_sb(cdir, snap.dsn_cwd,
+		    (snap.dsn_flags & DR_CWD_DEAD) != 0, KF_FD_TYPE_CWD, efbuf);
 	PWDDESC_XUNLOCK(pdp);
-	if (snap.dsn_cwd != NULL)
-		error = export_dqres_to_sb(snap.dsn_cwd, KF_FD_TYPE_CWD, efbuf);
 	dqres_snap_release(&snap);
 	pddrop(pdp);
 	free(efbuf, M_TEMP);

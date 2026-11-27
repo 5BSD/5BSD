@@ -372,7 +372,10 @@ it is a `fo_fcntl` command answered by the vnode body, not `fo_statfs`.
 all three need the referenced mount; the dq body runs `mac_file_check_stat`
 and presents what the controller gave (a jailed requester's `dc_jid` is in
 the event, so the controller can present a jail-shaped answer; no kernel
-enforcement applies to a served `statfs`, stated in `dq(4)`). The `MPASS`
+enforcement applies to a served `statfs`, stated in `dq(4)`; round 2
+(D201) replaced that: the kernel presents `f_mntonname` against the
+reader's served root and applies `enforce_statfs` through the mount-less
+`prison_enforce_statfs_presented`). The `MPASS`
 in `kern_fsync_fp` (`vfs_syscalls.c:3693`) is removed, not moved: it is a
 latent panic for `fsync` on a FIFO or pts fd today. Linux `quotactl_fd`
 needs a mount no fileop yields and stays `ENOSYS` for non-vnode files.

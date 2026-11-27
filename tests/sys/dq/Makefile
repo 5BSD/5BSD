@@ -53,6 +53,7 @@ ATF_TESTS_C+=	dq_restricted_test
 ATF_TESTS_C+=	dq_standing_test
 ATF_TESTS_C+=	dq_ptrace_test
 ATF_TESTS_C+=	dq_execpin_test
+ATF_TESTS_C+=	dq_present_test
 ATF_TESTS_SH+=	dq_dtrace_test
 ATF_TESTS_SH+=	dq_testopen_test
 ATF_TESTS_SH+=	dq_oracle_test
@@ -95,6 +96,8 @@ LIBADD.dq_restricted_test+=	jail
 LIBADD.dq_standing_test+=	jail
 # jail_setv(3) for P1.
 LIBADD.dq_execpin_test+=	jail
+# jail_setv(3) for the JAIL row and the enforce_statfs jails (R2-5).
+LIBADD.dq_present_test+=	jail
 
 # jail_setv(3) for the jailed rows; capability_service_connect(3) on a
 # device descriptor the caller did not open.
@@ -150,6 +153,9 @@ TEST_METADATA.dq_dqswap_test+=	is_exclusive="true"
 # ktrace(2), swapon(2) and kldload(2): run alone (1c-iii-c).
 TEST_METADATA.dq_cwd_test+=	is_exclusive="true"
 TEST_METADATA.dq_getcwd_test+=	is_exclusive="true"
+# Creates jails, mounts tmpfs and nullfs, sets debug.dqres.fail_fhold:
+# run alone (R2-5).
+TEST_METADATA.dq_present_test+=	is_exclusive="true"
 TEST_METADATA.dq_kclass_test+=	is_exclusive="true"
 # Runs whole suites in a served root and in chroot(8): alone, with time.
 TEST_METADATA.dq_tree_suites_test+=	is_exclusive="true" timeout="7200"

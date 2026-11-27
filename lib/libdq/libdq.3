@@ -1330,8 +1330,17 @@ A served object's
 is the real-namespace name the process resolved, never the backing
 path, and its
 .Va ds_mntonname
-is
+is the backing node's mount point in the same namespace: a mount inside
+the tree is named under
+.Fa prefix ,
+one at or above the tree keeps its real name when
+.Fa prefix
+is the tree's real path, and any other is
 .Ql / .
+The kernel presents it to each reader (see
+.Xr fstatfs 2
+in
+.Xr dq 4 ) .
 A symbolic link leading out of
 .Fa prefix
 is

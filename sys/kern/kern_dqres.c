@@ -32,6 +32,7 @@
  */
 
 #include "opt_capsicum.h"
+#include "opt_dq.h"
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -41,6 +42,7 @@
 #include <sys/fdswap.h>
 #include <sys/file.h>
 #include <sys/filedesc.h>
+#include <sys/jail.h>
 #include <sys/kernel.h>
 #include <sys/limits.h>
 #include <sys/lock.h>
@@ -146,6 +148,7 @@ dqres_pd_inherit_locked(struct pwddesc *newpdp, struct pwddesc *oldpdp,
     struct dqres **preallocp)
 {
 	struct dqres *odr, *ndr;
+	bool fail;
 
 	PWDDESC_ASSERT_XLOCKED(oldpdp);
 	odr = oldpdp->pd_dqres;
@@ -157,14 +160,19 @@ dqres_pd_inherit_locked(struct pwddesc *newpdp, struct pwddesc *oldpdp,
 	dqres_ops->dro_hold(odr->dr_binding);
 	ndr->dr_binding = odr->dr_binding;
 	ndr->dr_flags = odr->dr_flags;
+	fail = false;
+#if defined(DEV_DQ) && defined(DQ_FAULT_INJECTION)
+	/* debug.dqres.fail_fhold: this inheritance's fholds overflow. */
+	fail = dq_faultinj_fhold_fail();
+#endif
 	if (odr->dr_cwd != NULL) {
-		if (fhold(odr->dr_cwd))
+		if (!fail && fhold(odr->dr_cwd))
 			ndr->dr_cwd = odr->dr_cwd;
 		else
 			ndr->dr_flags |= DR_CWD_DEAD;
 	}
 	if (odr->dr_root != NULL) {
-		if (fhold(odr->dr_root))
+		if (!fail && fhold(odr->dr_root))
 			ndr->dr_root = odr->dr_root;
 		else
 			ndr->dr_flags |= DR_ROOT_DEAD;
@@ -421,7 +429,7 @@ dq_intent_enter_served(struct thread *td, struct dq_intent *di, uint32_t op,
  * the wrapper; syscallenter maps it to EIO, and its INVARIANTS assertion
  * is suppressed for that syscall only (TDP2_DQ_INJECTED).
  */
-static SYSCTL_NODE(_debug, OID_AUTO, dqres, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
+SYSCTL_NODE(_debug, OID_AUTO, dqres, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
     "DescriptorQueue resolution fault injection");
 static u_int dqres_drop_completion;
 SYSCTL_UINT(_debug_dqres, OID_AUTO, drop_completion, CTLFLAG_RW,
@@ -2428,6 +2436,69 @@ dqres_present_file(struct thread *viewer, struct file *fp, char *out,
 	return (error);
 }
 
+/*
+ * A served object's f_mntonname presented against its reader (D201).
+ * ds_mntonname is a component-boundary prefix of the object's di_path
+ * (MINT checks it), in the controller's names.  A reader with a served
+ * root of the object's queue (qgid) sees it relative to that root's
+ * di_path, and "/" when the mount point is at or above the root, as
+ * vn_fullpath stops at the reader's root; a mount neither under nor above
+ * the root, a dead root, or one whose identity cannot be read presents
+ * no name (empty, as a kinfo path that is not underneath).  Any other
+ * reader sees the name raw, as a chrooted, unjailed reader sees a real
+ * mount's name.  Returns true when the name was presented against a
+ * served root: it is then not a global name, and the jail rule leaves
+ * it alone.
+ */
+bool
+dqres_present_mntonname(struct thread *td, uint64_t qgid, char *name,
+    size_t size)
+{
+	struct dq_ident_file *root;
+	struct dqres_snap snap;
+	uint64_t rqgid;
+	size_t len;
+	int error;
+	bool closed, presented;
+
+	if (dqres_ops == NULL || !dqres_proc_attached(td->td_proc))
+		return (false);
+	pwd_dqres_proc(td->td_proc, &snap);
+	root = NULL;
+	presented = false;
+	if (snap.dsn_root == NULL && (snap.dsn_flags & DR_ROOT_DEAD) == 0)
+		goto out;	/* a real root: the raw name */
+	error = EIO;
+	if (snap.dsn_root != NULL) {
+		root = malloc(sizeof(*root), M_TEMP, M_WAITOK);
+		error = dqres_ops->dro_file_ident(snap.dsn_root, root, &rqgid,
+		    &closed);
+		if (error == 0 && rqgid != qgid)
+			goto out;	/* another queue's root: raw */
+	}
+	presented = true;
+	len = strnlen(name, size);
+	if (error == 0 && len == size)
+		error = ENAMETOOLONG;
+	if (error == 0) {
+		if (dqres_path_under(name, len, root->di_path,
+		    root->di_pathlen))
+			/* At or above the root: the root's own mount point. */
+			strlcpy(name, "/", size);
+		else
+			error = dq_present_rel(root->di_path, root->di_pathlen,
+			    name, len, name, size);
+	}
+	if (error != 0)
+		name[0] = '\0';
+	SDT_PROBE3(dqres, , , present, td->td_proc->p_pid,
+	    DQRES_PRESENT_MOUNT, error);
+out:
+	dqres_snap_release(&snap);
+	free(root, M_TEMP);
+	return (presented);
+}
+
 /* Does the process have a served (or dead) root? */
 bool
 dqres_served_root(struct thread *td)
@@ -2976,13 +3047,21 @@ dqres_ident_to_stat(const struct dq_ident_file *di, struct ucred *cred,
 	sb->st_filerev = di->di_filerev;
 }
 
-/* As dq_statfs: the presented statfs, unfiltered (D87). */
+/*
+ * A served object's statfs as its reader td sees it (D201), for
+ * fstatfs(2) of a served descriptor (dq_statfs) and statfs(2) of a name
+ * answered DQ_RESOLVE_ATTR: the identity's fields, f_mntonname presented
+ * (dqres_present_mntonname) and, for a jailed reader without
+ * PRIV_VFS_GENERATION, enforce_statfs as kern_do_statfs applies it to a
+ * real mount (prison_enforce_statfs_presented).  qgid is the object's
+ * queue.
+ */
 void
-dqres_ident_to_statfs(const struct dq_ident_file *di, struct statfs *buf)
+dqres_statfs_present(struct thread *td, uint64_t qgid,
+    const struct dq_statfs *ds, struct statfs *buf)
 {
-	const struct dq_statfs *ds;
+	bool presented;
 
-	ds = &di->di_statfs;
 	bzero(buf, sizeof(*buf));
 	buf->f_version = STATFS_VERSION;
 	buf->f_type = ds->ds_type;
@@ -3006,6 +3085,10 @@ dqres_ident_to_statfs(const struct dq_ident_file *di, struct statfs *buf)
 	memcpy(buf->f_fstypename, ds->ds_fstypename, MFSNAMELEN);
 	memcpy(buf->f_mntfromname, ds->ds_mntfromname, MNAMELEN);
 	memcpy(buf->f_mntonname, ds->ds_mntonname, MNAMELEN);
+	presented = dqres_present_mntonname(td, qgid, buf->f_mntonname,
+	    sizeof(buf->f_mntonname));
+	if (priv_check_cred_vfs_generation(td->td_ucred))
+		prison_enforce_statfs_presented(td->td_ucred, buf, presented);
 }
 
 /*
