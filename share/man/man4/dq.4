@@ -966,7 +966,7 @@ wait as an NFS
 .Cm intr
 mount: a caught signal ends the wait with
 .Er EINTR
-(a lookup's first consultation with the restart described in
+(a lookup with the restart described in
 .Sx Attachment and resolution ) .
 An operation that changes something is not restarted once its event is
 marked delivered, which happens when the controller's
@@ -2159,17 +2159,47 @@ of that kind was ever posted on the object, so an object that never
 locked costs its closes nothing.
 .Ss Ioctls on a served file
 .Dv FIONREAD ,
-.Dv FIONBIO ,
-.Dv FIOASYNC ,
-.Dv FIOSEEKDATA
+.Dv FIONBIO
 and
-.Dv FIOSEEKHOLE
-are answered locally from the identity
-.Pq Er ENOTTY No for a directory ,
-and
+.Dv FIOASYNC
+are answered locally from the identity, and
 .Dv FIOBMAP2
 is
 .Er EOPNOTSUPP .
+.Dv FIOSEEKDATA
+and
+.Dv FIOSEEKHOLE
+.Pq Er ENOTTY No for a directory
+are
+.Dv DQ_OP_IOCTL
+events under
+.Dv DQ_EVENT ,
+so the holes are the ones the supervisor reports, the backing file's
+when it runs the command there.
+The start offset is checked against the presented size first: before 0
+or at or past the end is
+.Er ENXIO
+with no event.
+The answer is bounded by the presented size, which is the file the
+program sees: data at or past the end is
+.Er ENXIO ,
+a hole past the end is the end, and an answer before the start offset is
+.Er EIO .
+In the controller's own process the event cannot be served, so the
+commands, and
+.Xr lseek 2
+with
+.Dv SEEK_DATA
+or
+.Dv SEEK_HOLE ,
+are
+.Er EDEADLK ,
+as every event-posting call there.
+Under
+.Dv DQ_DENY ,
+or when the supervisor answers
+.Er ENOTTY ,
+the file is one extent of the presented size.
 Every other command, the
 .Dv FIOSETOWN
 and
@@ -2662,6 +2692,12 @@ the same hint for the second path's start
 .Pq Dv DQ_RF_STARTPATH2_VALID ,
 and the presented path of the process's served root
 .Pq Va drs_root No and Va drs_rootpathlen ; No empty with a real root .
+A start that is not under the process's root, such as a directory
+descriptor opened before
+.Xr chroot 2
+or the working directory
+.Xr chroot 2
+leaves behind, has no hint: its flag is clear and its string empty.
 For a rename or link the second path's own start is described by
 .Va drs_start2_kind
 .Po
@@ -2872,7 +2908,18 @@ signal.
 With
 .Dv DQ_QF_INTR
 a caught signal ends the wait: during the first consultation of a system
-call's path the call restarts
+call's path, and during any consultation of a lookup that changes nothing
+(a
+.Xr stat 2 ,
+an
+.Xr access 2 ,
+an
+.Xr open 2
+without
+.Dv O_CREAT
+or
+.Dv O_TRUNC ,
+such as the consultation of a symbolic link's target), the call restarts
 .Pq Dv SA_RESTART
 and posts again, the abandoned event named by an INTERRUPT; any other
 wait, every wait of
@@ -4583,11 +4630,23 @@ A revoked served working directory or root keeps its last presented path
 in
 .Xr getcwd 3
 and in its row; one whose reference could not be taken at inheritance
-has no row and
+has the row of a reclaimed directory (a forcibly unmounted one's:
+.Dv KF_VTYPE_VBAD ,
+an empty
+.Va kf_path ,
+no
+.Dv KF_ATTR_VALID ) ,
+in
+.Dv KERN_PROC_FILEDESC
+and
+.Dv KERN_PROC_CWD ,
+and
 .Xr getcwd 3
 is
 .Er EIO ;
 neither is ever replaced by the real directory.
+A served or dead working directory or root row takes the real one's
+place: the rows come as for any process, working directory, root, jail.
 Real objects' rows keep the real vnode's path.
 .Pp
 .Sy Exec .
@@ -4873,8 +4932,23 @@ with the requester's credential.
 served
 .Pq see Sx Pages .
 .It Xr copy_file_range 2
-.Er EINVAL :
-no vnode exists to copy between.
+copied with
+.Dv READ
+and
+.Dv WRITE
+events, served or real on either side
+.Pq Xr fileops 9 , Fn file_generic_copy_range :
+the bytes, offsets, counts and errnos are a regular file's, overlapping
+ranges of one identity are
+.Er EINVAL
+and a directory
+.Er EISDIR .
+The count is clipped at
+.Dv RLIMIT_FSIZE
+before anything is read, as for two vnodes.
+No holes are made in the output (zeros are written as data) and the output
+is not truncated or extended past the last byte written; no range lock
+covers both files for the whole copy, as one does for two vnodes.
 .It ACLs, extended attributes
 .Er EOPNOTSUPP .
 .It Xr fcntl 2 Dv F_READAHEAD , F_RDAHEAD , F_ISUNIONSTACK
@@ -4912,7 +4986,13 @@ as a vnode
 .Dv SEEK_DATA
 and
 .Dv SEEK_HOLE
-treat the file as one extent, so an offset at or beyond the size is
+are answered by
+.Dv FIOSEEKDATA
+and
+.Dv FIOSEEKHOLE ,
+as for a vnode
+.Pq see Sx Ioctls on a served file ;
+as one extent, an offset at or beyond the size is
 .Er ENXIO
 and
 .Dv SEEK_HOLE
@@ -4920,10 +5000,57 @@ answers the size.
 .It Xr poll 2 , Xr select 2
 Always ready for the standard events, as a regular file.
 .It Xr fstatfs 2
-The identity's statfs, unfiltered: no mount exists for
-.Fn prison_enforce_statfs
-to run, so a jailed requester sees what the controller presented.
-A declared difference.
+The identity's statfs as the reader sees it, as
+.Xr statfs 2
+of a name answered
+.Dv DQ_RESOLVE_ATTR
+gives it.
+.Va f_mntonname
+is presented: a reader whose root is a served directory of the object's
+queue sees it relative to that root's
+.Va di_path ,
+and
+.Ql /
+for a mount point at or above the root (an empty name for one neither
+under nor above it, or when that root is dead); any other reader sees
+.Va ds_mntonname
+as the controller gave it, as a chrooted, unjailed process sees a real
+mount's name.
+For a jailed reader without
+.Dv PRIV_VFS_GENERATION ,
+.Va enforce_statfs
+then applies as it does to a real mount: the mount holding the jail's
+root is the one named as that mount is named, and any other is judged by
+its name
+.Po
+.Ql [restricted]
+and no
+.Va f_fsid
+outside the jail's path, or for every other mount at 2; the jail's path
+stripped inside it
+.Pc .
+For a name presented against a served root the served root stands for
+the jail's root, so the reader learns no more than through a real one:
+.Ql /
+is the root's own mount (the name kept, no
+.Va f_fsid
+at 2); a root-relative name is a mount below the root, kept as it stands
+with its
+.Va f_fsid
+at 1 and
+.Ql [restricted]
+with no
+.Va f_fsid
+at 2, as every other mount is for a real-mount reader; an empty name (a
+mount outside the root, or a dead root) is
+.Ql [restricted]
+with no
+.Va f_fsid
+at 1 and 2.
+A real descriptor's
+.Xr fstatfs 2
+under a served root is unchanged: the real mount's name, as under
+.Xr chroot 2 .
 .It Xr mac_get_fd 3
 .Er EINVAL :
 the label system calls dispatch on the file type and have no arm for a
@@ -5231,6 +5358,15 @@ a requester woken with its reply, before it applies the reply's
 post-operation attributes.
 .El
 .Pp
+.Va debug.dqres.fail_fhold
+holds a process ID instead: that process's next inheritance of its
+served working directory and root (a
+.Xr fork 2 ,
+.Xr rfork 2
+or attach-time copy) fails to take their references, as a reference
+count about to overflow does, so the new process has a dead served
+working directory and root; it acts once and returns to 0.
+.Pp
 The older
 .Va debug.dq
 fault variables
@@ -5287,6 +5423,27 @@ as for
 .Fa "struct dq_event_k *"
 (a wait that catches no signal ended because the process is being
 killed, is exiting or is single-threaded for exit)
+.It dq:::pager-error
+.Fa "struct dq_object *" ,
+.Fa "pid_t pid" ,
+.Fa "int reason"
+(a page-in of the pager failed:
+.Va reason
+1 the page deadline passed, 2 the queue is closing, 3 the faulting
+process is dying, 4 the object was revoked, 5 the supervisor answered an
+errno or a short reply inside the size, 6 the object is closing or
+closed, 7 it was invalidated on every try.
+A fault of a dying process (3) is answered as one past the end of the
+file, which
+.Xr vm_fault 9
+does not log: a killed program leaves no
+.Dq pager read error
+console line, as one on a disk leaves none.
+Every other reason is logged as a disk read error is.
+The reason is read from the object's and the queue's state when the
+page-in fails, not from what ended its wait: a page deadline that passes
+while the object is being revoked or closed, or while its queue closes,
+is reported as 4, 6 or 2, not as 1.)
 .It dq:::reply-late
 .Fa "struct dq_queue *" ,
 .Fa "uint64_t id"
@@ -5403,7 +5560,10 @@ held or cannot be taken, 27 a descriptor entry with states of its own,
 .Fa "int errno"
 (a path presented to an attached viewer:
 .Va kind
-1 a served object's, 2 a real object's under a served root)
+1 a served object's, 2 a real object's under a served root, 3 a served
+object's
+.Va f_mntonname
+under a served root)
 .El
 .Pp
 Every reply also runs the

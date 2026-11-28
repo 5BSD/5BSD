@@ -545,6 +545,55 @@ pseudo-terminal masters were refused by
 and keep the same
 .Er EINVAL
 through the default.
+.It served files
+.Pq Dv DTYPE_DQ
+install
+.Fn file_generic_copy_range ,
+which
+.Fn vn_copy_range
+also calls when the output is served.
+It applies the checks of
+.Fn vn_copy_range
+and
+.Fn vn_copy_file_range
+in their order, on a vnode file's type and attributes and on a served
+file's
+.Fn fo_stat
+answer: overlapping ranges of one identity
+.Pq Va st_dev , st_ino
+are
+.Er EINVAL ,
+a directory
+.Er EISDIR ,
+any other file that is not regular
+.Er EINVAL ,
+and
+.Dv COPY_FILE_RANGE_CLONE
+.Er EOPNOTSUPP .
+Before the first read it clips the count at the output's
+.Dv RLIMIT_FSIZE ,
+as
+.Fn vn_generic_copy_file_range
+does; an output offset at or past the limit is
+.Er EFBIG
+with
+.Dv SIGXFSZ
+and reads nothing.
+It then copies with
+.Fn fo_read
+and
+.Fn fo_write
+at explicit offsets, one buffer at a time: a short read is the end of the
+input, a short write ends the copy, a write that fails counts none of its
+buffer, and a signal after some bytes were copied ends it with the count
+copied.
+It does not look for holes: zeros in the input are written as data, so
+the output gets no holes where a vnode copy may leave them, and the output
+is never truncated, nor extended past the last byte written.
+Unlike
+.Fn vn_copy_range ,
+no range lock covers both files for the whole copy: each read and each
+write holds its own file's range lock.
 .It everything else
 .Fn invfo_copy_file_range
 returns

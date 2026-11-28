@@ -15,9 +15,12 @@
 # default suites differs for either (getgroups, setid and st_rdev cases
 # agree); entries are added by name when one does.
 
-# The served root has no mount points: statfs(2) of names under the tree's
-# devfs and of a FIFO and a pts master is the backing file system's.
-^fstatfs_test:(devfs_node|fifo|pts_master_ptmx)[[:space:]]  # ux-7: item 11 (N2), served statfs presentation
+# D201: statfs(2) of a served name presents f_mntonname against the served
+# root ("/dev" for the tree's devfs), while fstatfs(2) of the device, FIFO
+# or pts master descriptor dqtree passes through is the real vnode's and
+# keeps chroot(8)'s raw name (kern_do_statfs is untouched).  chroot shows
+# the raw name both ways.
+^fstatfs_test:(devfs_node|fifo|pts_master_ptmx)[[:space:]]  # ux-7 D201: a served name's f_mntonname is presented, a passed-through descriptor's is raw
 
 # D166: no vnode MAC hooks for served objects.
 ^fsetattr_test:fchmod_fchown_mac_first[[:space:]]  # by-design D166: a served file is checked by mac_file_check_setattr, not the vnode hooks the case counts
@@ -29,21 +32,10 @@
 # "case  # by-design D###: reason".  dq_tree_suites_test counts the
 # differences each tag still owns.  Paths are relative to the tree.
 
-# A served directory: dq_fileops has no copy_file_range, so the vnode
-# type rule of vn_copy_file_range does not apply to DQ_KIND_DIR objects
-# (fadvise and fcntl on one no longer differ: r-c6-tree).
-^copy_file_range_test:directory[[:space:]]  # ux-1 D245: dq_fileops has no fo_copy_file_range, default EINVAL (vfs_syscalls.c), base EISDIR
-
-# copy_file_range(2) between served files: no fo_copy_file_range.
-^copy_file_range_test:regular_files[[:space:]]  # ux-2 D246: no fo_copy_file_range in dq_fileops, EINVAL (vfs_syscalls.c)
-^copy_file_range_test:same_file[[:space:]]  # ux-2 D246: no fo_copy_file_range in dq_fileops, EINVAL (vfs_syscalls.c)
-
 # dq_serve_lock emulates flock and POSIX locks with OFD locks on a
 # per-owner reopen of the backing file (lib/libdq/libdq_serve.c).
 ^advlock_fd_test:directory[[:space:]]  # ux-0 D247: flock(LOCK_EX) on a served directory: an OFD write lock on the read-only reopen of a directory (libdq_serve.c), base allows
 ^flock_test:main[[:space:]]  # ux-0 D247: lock events on flock_helper's open-unlinked temp file answer EIO (owner reopen libdq_serve.c, dq_serve_map EIO); test 2's parent then blocks reading its own pipe (flock_helper.c), a test-side wait, not a kernel hang
-^flock_shared_test:blocking_upgrade_drops_shared[[:space:]]  # ux-0 D247, parked: a blocking flock SH-to-EX upgrade on a served file keeps its shared lock while it sleeps (one atomic F_OFD_SETLKW conversion on the owner reopen, libdq_serve.c); base unlocks first, so another shared holder gets LOCK_EX|LOCK_NB there and EWOULDBLOCK here
-^flock_shared_test:interrupted_upgrade_state[[:space:]]  # ux-0 D247, parked: a blocking flock SH-to-EX upgrade on a served file that ends in EINTR still holds its shared lock (the cancelled F_OFD_SETLKW converted nothing, libdq_serve.c), so LOCK_EX|LOCK_NB by others stays EWOULDBLOCK until it unlocks or closes; base has dropped the shared lock
 
 # A kernel consumer's relative path from a served cwd (nmount's fspath).
 ^fsetattr_test:fdescfs_(fifo|kqueue|mac_target|no_attributes|opath|ptmx_direct|ptmx_nonowner|regular_file|shm)[[:space:]]  # by-design D175: mount(2) "fspath" from a served cwd is a class-2 path, EXDEV (kern_dqres.c)

@@ -558,7 +558,10 @@ int	dq_serve_file(int q, const struct dq_event *ev, const void *body,
  * lookups and restricted lookups (no served kind in drs_accept) are
  * PASSed, as is a symlink leading out of the prefix answered EACCES.
  * di_path is the real-namespace name the process resolved (under prefix),
- * never the backing path; ds_mntonname is "/".  Object events are served
+ * never the backing path; ds_mntonname is the backing node's mount point
+ * in the same namespace (a mount inside the tree under prefix, one at or
+ * above it by its real name when prefix is the tree's real path, else
+ * "/"), which the kernel presents to each reader.  Object events are served
  * by dq_serve_file() on the backing file; CLOSE closes it.  Parent
  * directory permissions are not checked by the controller (the kernel's
  * DAC applies to FD answers).  DQ_TREE_F_WRITE serves writes; without it

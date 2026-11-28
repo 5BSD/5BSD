@@ -7,9 +7,10 @@
  *
  * Each knob acts the next N times its point is reached: most widen one
  * window a test must hit, by sleeping one second at a point where no lock
- * is held; refuse_postop_reply refuses a reply instead.  Everything the
- * option adds is in this file, built only with the option
- * (sys/conf/files); the call sites are under the option.
+ * is held; refuse_postop_reply refuses a reply instead, and
+ * debug.dqres.fail_fhold fails one process's next inheritance of its
+ * served starts.  Everything the option adds is in this file, built only
+ * with the option (sys/conf/files); the call sites are under the option.
  *
  * A kernel built with the option is a test kernel and must never be
  * published.  release/scripts/check-test-kernel.sh refuses any kernel or
@@ -38,6 +39,7 @@
 #include <sys/malloc.h>
 #include <sys/mutex.h>
 #include <sys/proc.h>
+#include <sys/dqres.h>
 #include <sys/sysctl.h>
 #include <sys/user.h>
 
@@ -54,6 +56,32 @@ static const char dq_faultinj_marker[] __used =
     "@(#)5BSD DQ_FAULT_INJECTION test kernel: not for publication";
 
 SYSCTL_DECL(_debug_dq);
+SYSCTL_DECL(_debug_dqres);
+
+/*
+ * A dead served start (DR_CWD_DEAD, DR_ROOT_DEAD) without 2^31 fholds
+ * (D200's dead row): the next inheritance of served starts by the process
+ * with this pid (fork, rfork, the copy at an attach) fails its fholds of
+ * the served cwd and root, as a reference count about to overflow makes
+ * fhold fail.  A pid, not a count: no other process's fork meanwhile is
+ * touched.  It does not sleep; 0 is off.
+ */
+static u_int dq_faultinj_fhold_pid;
+SYSCTL_UINT(_debug_dqres, OID_AUTO, fail_fhold, CTLFLAG_RW,
+    &dq_faultinj_fhold_pid, 0,
+    "Test kernel only: the next inheritance of served starts by this pid "
+    "fails their fhold (a dead start)");
+
+bool
+dq_faultinj_fhold_fail(void)
+{
+	u_int pid;
+
+	pid = atomic_load_int(&dq_faultinj_fhold_pid);
+	if (pid == 0 || pid != (u_int)curproc->p_pid)
+		return (false);
+	return (atomic_cmpset_int(&dq_faultinj_fhold_pid, pid, 0) != 0);
+}
 
 /*
  * The window between a SWAP answer's take and the queue lock, in which

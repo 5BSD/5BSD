@@ -148,6 +148,7 @@ const struct fileops dq_fileops = {
 	.fo_setattr = dq_setattr,
 	.fo_fadvise = dq_fadvise,
 	.fo_readdir = dq_readdir,
+	.fo_copy_file_range = file_generic_copy_range,
 	.fo_acl = dq_acl,
 	.fo_extattr = dq_extattr,
 	.fo_fcntl = dq_fcntl,
@@ -1433,8 +1434,13 @@ dq_stat(struct file *fp, struct stat *sb, struct ucred *active_cred)
 	return (0);
 }
 
+/*
+ * The identity's statfs as the reader sees it (D201): the mount name
+ * presented against the reader's served root and the jail rule applied,
+ * as statfs(2) of a name answered DQ_RESOLVE_ATTR gives it.
+ */
 static int
-dq_statfs(struct file *fp, struct statfs *buf, struct thread *td __unused)
+dq_statfs(struct file *fp, struct statfs *buf, struct thread *td)
 {
 	struct dq_object *o;
 	struct dq_statfs *ds;
@@ -1444,29 +1450,7 @@ dq_statfs(struct file *fp, struct statfs *buf, struct thread *td __unused)
 	DQO_LOCK(o);
 	*ds = o->o_ident.di_statfs;
 	DQO_UNLOCK(o);
-	bzero(buf, sizeof(*buf));
-	buf->f_version = STATFS_VERSION;
-	buf->f_type = ds->ds_type;
-	buf->f_flags = ds->ds_flags;
-	buf->f_bsize = ds->ds_bsize;
-	buf->f_iosize = ds->ds_iosize;
-	buf->f_blocks = ds->ds_blocks;
-	buf->f_bfree = ds->ds_bfree;
-	buf->f_bavail = ds->ds_bavail;
-	buf->f_files = ds->ds_files;
-	buf->f_ffree = ds->ds_ffree;
-	buf->f_syncwrites = ds->ds_syncwrites;
-	buf->f_asyncwrites = ds->ds_asyncwrites;
-	buf->f_syncreads = ds->ds_syncreads;
-	buf->f_asyncreads = ds->ds_asyncreads;
-	buf->f_nvnodelistsize = ds->ds_nvnodelistsize;
-	buf->f_namemax = ds->ds_namemax;
-	buf->f_owner = ds->ds_owner;
-	buf->f_fsid.val[0] = ds->ds_fsid[0];
-	buf->f_fsid.val[1] = ds->ds_fsid[1];
-	memcpy(buf->f_fstypename, ds->ds_fstypename, MFSNAMELEN);
-	memcpy(buf->f_mntfromname, ds->ds_mntfromname, MNAMELEN);
-	memcpy(buf->f_mntonname, ds->ds_mntonname, MNAMELEN);
+	dqres_statfs_present(td, o->o_queue->q_gid, ds, buf);
 	free(ds, M_DQ);
 	return (dq_fop_local(fp, DQ_FOP_STATFS, 0));
 }
@@ -2220,57 +2204,18 @@ dq_advlock(struct file *fp, void *id, int op, struct flock *fl, int flags,
  */
 
 /*
- * The ioctls a regular file answers from state the identity carries stay
- * local; everything else is an IOCTL event under dp_ioctl = EVENT (D99,
- * N6), carrying the generic layer's post-copyin argument for IOC_IN
- * commands and the integer of an int-sized IOC_VOID command, never a raw
- * pointer value.  The kernel cannot tell a pointer-embedding command from
- * its number: the controller refuses what it cannot serve with ENOTTY.
+ * An ioctl served as an IOCTL event: the parameter in for IOC_IN (and the
+ * int of an int-sized IOC_VOID command), the reply's bytes out for
+ * IOC_OUT.  Returns the posting error or the supervisor's errno.
  */
 static int
-dq_ioctl(struct file *fp, u_long com, void *data, struct ucred *active_cred,
-    struct thread *td)
+dq_ioctl_post(struct dq_object *o, u_long com, void *data, struct thread *td)
 {
-	struct dq_object *o;
 	struct dq_ioctl_body *ib;
 	struct dq_data *reply;
-	off_t size, *offp;
 	size_t inlen, parmlen, bodylen;
-	bool event;
 	int error, rerror;
 
-	o = dq_fp_object(fp);
-	DQO_LOCK(o);
-	size = o->o_ident.di_size;
-	event = o->o_policy.dp_ioctl == DQ_EVENT;
-	DQO_UNLOCK(o);
-	switch (com) {
-	case FIONREAD:
-		/* As vn_ioctl: the int truncation is the real file's too. */
-		*(int *)data = size - fp->f_offset;
-		return (dq_fop_local(fp, DQ_FOP_IOCTL, 0));
-	case FIONBIO:
-	case FIOASYNC:
-		return (dq_fop_local(fp, DQ_FOP_IOCTL, 0));
-	case FIOSEEKDATA:
-	case FIOSEEKHOLE:
-		/* vn_bmap_seekhole: ENOTTY for anything but a regular file. */
-		if (o->o_kind != DQ_KIND_FILE)
-			return (dq_fop_local(fp, DQ_FOP_IOCTL, ENOTTY));
-		offp = data;
-		if (*offp < 0 || *offp >= size)
-			return (dq_fop_local(fp, DQ_FOP_IOCTL, ENXIO));
-		if (com == FIOSEEKHOLE)
-			*offp = size;
-		return (dq_fop_local(fp, DQ_FOP_IOCTL, 0));
-	case FIOBMAP2:
-		/* No VOP_BMAP to run; declared. */
-		return (dq_fop_local(fp, DQ_FOP_IOCTL, EOPNOTSUPP));
-	default:
-		break;
-	}
-	if (!event)	/* dp_ioctl = DENY */
-		return (dq_fop_local(fp, DQ_FOP_IOCTL, ENOTTY));
 	error = dq_object_usable(o);
 	if (error != 0)
 		return (error);
@@ -2299,6 +2244,118 @@ dq_ioctl(struct file *fp, u_long com, void *data, struct ucred *active_cred,
 	}
 	dq_reply_free(reply);
 	return (rerror);
+}
+
+/*
+ * FIOSEEKDATA and FIOSEEKHOLE, for dq_ioctl and for lseek(2)'s SEEK_DATA
+ * and SEEK_HOLE (dq_seek), as vn_bmap_seekhole answers them for a vnode.
+ * Anything but a regular file is ENOTTY.  The start is checked against
+ * the presented size first: before 0 or at or past the end is ENXIO, with
+ * no event.  Under dp_ioctl = EVENT the supervisor's answer gives the
+ * holes (C21), bounded by the presented size, which is the file the
+ * program sees: data at or past the end is ENXIO, a hole past the end is
+ * the end, and an answer before the start breaks vn_bmap_seekhole's
+ * contract and is EIO, as an impossible reply is.  A supervisor that
+ * answers ENOTTY, and dp_ioctl = DENY, leave the presented size's answer:
+ * the whole file is data, as on a file system without holes.  *localp
+ * says whether the answer was the kernel's alone (the caller's
+ * dq:::fop-local probe), not an event's.
+ */
+static int
+dq_seekhole(struct dq_object *o, u_long com, off_t *offp, struct thread *td,
+    bool *localp)
+{
+	off_t size, start;
+	bool event;
+	int error;
+
+	*localp = true;
+	if (o->o_kind != DQ_KIND_FILE)
+		return (ENOTTY);
+	DQO_LOCK(o);
+	size = o->o_ident.di_size;
+	event = o->o_policy.dp_ioctl == DQ_EVENT;
+	DQO_UNLOCK(o);
+	start = *offp;
+	if (start < 0 || start >= size)
+		return (ENXIO);
+	if (event) {
+		*localp = false;
+		error = dq_ioctl_post(o, com, offp, td);
+		if (error != ENOTTY) {
+			if (error != 0)
+				return (error);
+			if (*offp < start)
+				return (EIO);
+			DQO_LOCK(o);
+			size = o->o_ident.di_size;
+			DQO_UNLOCK(o);
+			if (com == FIOSEEKDATA && *offp >= size)
+				return (ENXIO);
+			if (com == FIOSEEKHOLE && *offp > size)
+				*offp = size;
+			return (0);
+		}
+		/* Not answered: the presented size's answer, as under DENY. */
+		*offp = start;
+		DQO_LOCK(o);
+		size = o->o_ident.di_size;
+		DQO_UNLOCK(o);
+		if (start >= size)
+			return (ENXIO);
+	}
+	if (com == FIOSEEKHOLE)
+		*offp = size;
+	return (0);
+}
+
+/*
+ * The ioctls a regular file answers from state the identity carries stay
+ * local; everything else is an IOCTL event under dp_ioctl = EVENT (D99,
+ * N6), carrying the generic layer's post-copyin argument for IOC_IN
+ * commands and the integer of an int-sized IOC_VOID command, never a raw
+ * pointer value.  The kernel cannot tell a pointer-embedding command from
+ * its number: the controller refuses what it cannot serve with ENOTTY.
+ * FIOSEEKDATA and FIOSEEKHOLE, and lseek(2)'s SEEK_DATA and SEEK_HOLE
+ * through them, are events under dp_ioctl = EVENT, so the holes are the
+ * backing file's (C21); under DENY the whole presented size is data, as
+ * on a file system without holes.
+ */
+static int
+dq_ioctl(struct file *fp, u_long com, void *data, struct ucred *active_cred,
+    struct thread *td)
+{
+	struct dq_object *o;
+	off_t size;
+	bool event, local;
+	int error;
+
+	o = dq_fp_object(fp);
+	DQO_LOCK(o);
+	size = o->o_ident.di_size;
+	event = o->o_policy.dp_ioctl == DQ_EVENT;
+	DQO_UNLOCK(o);
+	switch (com) {
+	case FIONREAD:
+		/* As vn_ioctl: the int truncation is the real file's too. */
+		*(int *)data = size - fp->f_offset;
+		return (dq_fop_local(fp, DQ_FOP_IOCTL, 0));
+	case FIONBIO:
+	case FIOASYNC:
+		return (dq_fop_local(fp, DQ_FOP_IOCTL, 0));
+	case FIOSEEKDATA:
+	case FIOSEEKHOLE:
+		error = dq_seekhole(o, com, data, td, &local);
+		return (local ? dq_fop_local(fp, DQ_FOP_IOCTL, error) : error);
+	case FIOBMAP2:
+		/* No VOP_BMAP to run; declared. */
+		return (dq_fop_local(fp, DQ_FOP_IOCTL, EOPNOTSUPP));
+	default:
+		break;
+	}
+	if (!event)	/* dp_ioctl = DENY */
+		return (dq_fop_local(fp, DQ_FOP_IOCTL, ENOTTY));
+	return (dq_ioctl_post(o, com, data, td));
 }
 
 static int
@@ -2405,6 +2462,7 @@ dq_seek(struct file *fp, off_t offset, int whence, struct thread *td)
 {
 	struct dq_object *o;
 	off_t foffset, size;
+	bool local;
 	int error;
 
 	o = dq_fp_object(fp);
@@ -2420,6 +2478,7 @@ dq_seek(struct file *fp, off_t offset, int whence, struct thread *td)
 	DQO_UNLOCK(o);
 	foffset = foffset_lock(fp, 0);
 	error = 0;
+	local = true;
 	switch (whence) {
 	case L_INCR:
 		if (foffset < 0 || (offset > 0 && foffset > OFF_MAX - offset)) {
@@ -2439,13 +2498,16 @@ dq_seek(struct file *fp, off_t offset, int whence, struct thread *td)
 		break;
 	case SEEK_DATA:
 	case SEEK_HOLE:
-		/* vn_bmap_seekhole: ENOTTY, which vn_seek makes EINVAL. */
-		if (o->o_kind != DQ_KIND_FILE)
+		/*
+		 * vn_seek: the FIOSEEKDATA or FIOSEEKHOLE ioctl answers (an
+		 * event under dp_ioctl = EVENT, C21), and its ENOTTY is
+		 * EINVAL.  The helper, not dq_ioctl, so the one probe fired is
+		 * this seek's.
+		 */
+		error = dq_seekhole(o, whence == SEEK_DATA ? FIOSEEKDATA :
+		    FIOSEEKHOLE, &offset, td, &local);
+		if (error == ENOTTY)
 			error = EINVAL;
-		else if (offset < 0 || offset >= size)
-			error = ENXIO;
-		else if (whence == SEEK_HOLE)
-			offset = size;
 		break;
 	default:
 		error = EINVAL;
@@ -2459,7 +2521,7 @@ dq_seek(struct file *fp, off_t offset, int whence, struct thread *td)
 		td->td_uretoff.tdu_off = offset;
 	}
 	foffset_unlock(fp, offset, error != 0 ? FOF_NOUPDATE : 0);
-	return (dq_fop_local(fp, DQ_FOP_SEEK, error));
+	return (local ? dq_fop_local(fp, DQ_FOP_SEEK, error) : error);
 }
 
 static int

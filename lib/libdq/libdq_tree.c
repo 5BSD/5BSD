@@ -597,6 +597,44 @@ done:
 	return (error);
 }
 
+/*
+ * The presented mount point of a backing node whose real mount point is
+ * mnt, rewritten in place (D201): ds_mntonname must be a component-bounded
+ * prefix of the node's presented name, and the kernel presents it to each
+ * reader.  A mount inside the backing tree is named in the presented
+ * namespace (the prefix joined with its part below the tree's real path);
+ * one at or above the tree keeps its real name when the prefix is the
+ * tree's real path, as every presented name then is a real one; anything
+ * else, and a name that does not fit, is "/", a prefix of every name.
+ */
+static void
+dq_tree_mntonname(const struct dq_tree *t, char *mnt, size_t size)
+{
+	char tmp[PATH_MAX];
+	const char *below;
+	size_t rlen;
+	int n;
+
+	rlen = strlen(t->t_realroot);
+	if (rlen > 0 && strncmp(mnt, t->t_realroot, rlen) == 0 &&
+	    (rlen == 1 || mnt[rlen] == '\0' || mnt[rlen] == '/')) {
+		below = rlen == 1 ? mnt + 1 : mnt + rlen;
+		if (*below == '/')
+			below++;
+		if (*below == '\0')
+			n = snprintf(tmp, sizeof(tmp), "%s", t->t_prefix);
+		else
+			n = snprintf(tmp, sizeof(tmp), "%s/%s",
+			    t->t_prefixlen == 1 ? "" : t->t_prefix, below);
+		if (n > 0 && (size_t)n < size) {
+			strlcpy(mnt, tmp, size);
+			return;
+		}
+	} else if (rlen > 0 && strcmp(t->t_prefix, t->t_realroot) == 0)
+		return;
+	strlcpy(mnt, "/", size);
+}
+
 /* The identity of a backing node, presented under its resolved name. */
 static int
 dq_tree_ident(struct dq_tree *t, const struct dq_tree_res *res,
@@ -612,8 +650,7 @@ dq_tree_ident(struct dq_tree *t, const struct dq_tree_res *res,
 	if (fstatfs(fd, &sfs) != 0)
 		error = errno;
 	else {
-		/* The presented mount is "/": a prefix of every name. */
-		strlcpy(sfs.f_mntonname, "/", sizeof(sfs.f_mntonname));
+		dq_tree_mntonname(t, sfs.f_mntonname, sizeof(sfs.f_mntonname));
 		/*
 		 * pathconf(2) values, as dq_ident_from_lstat gives them:
 		 * fpathconf(2) answers through the O_PATH | O_NOFOLLOW
@@ -1367,8 +1404,7 @@ dq_tree_root(struct dq_tree *t, int *fdp, uint64_t *objectp)
 		error = errno;
 		goto fail;
 	}
-	/* The presented mount is "/": a prefix of every name. */
-	strlcpy(ident->di_statfs.ds_mntonname, "/",
+	dq_tree_mntonname(t, ident->di_statfs.ds_mntonname,
 	    sizeof(ident->di_statfs.ds_mntonname));
 	dq_policy_default_dir(&pol);
 	pol.dp_events = DQ_EVENTS_CLOSE;

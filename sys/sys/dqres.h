@@ -236,7 +236,9 @@ struct dqres_req {
 	uint32_t	 rq_syscall;
 	uint32_t	 rq_expected_locks;
 	bool		 rq_may_restart; /* the first consultation of a slot in
-					   namei_setup, ERESTART allowed */
+					   namei_setup, ERESTART allowed (a
+					   later one of a lookup that creates
+					   nothing, too: dev/dq decides) */
 	bool		 rq_no_erestart; /* DQI_NO_ERESTART: the caller loops
 					   on EAGAIN, so EAGAIN becomes EIO */
 	uint64_t	 rq_object;
@@ -272,8 +274,9 @@ struct dqres_req {
 /*
  * The vector dev/dq registers (D125).  consult posts RESOLVE on the
  * binding's queue and waits; it answers 0 with the answer's kind in
- * *ans (PASS, or a served kind of rq_accept) or an errno.  It never
- * returns ERESTART unless rq_may_restart.  bind turns an FD answer's
+ * *ans (PASS, or a served kind of rq_accept) or an errno.  It returns
+ * ERESTART only with rq_may_restart, or for a lookup that creates nothing
+ * (dq_op_mutates) and never with rq_no_erestart.  bind turns an FD answer's
  * object into a referenced, uninstalled file in the calling thread's
  * credential (consuming da_obj in every case; a failure retires it);
  * answer_release retires an FD answer's object nobody bound.  file_ident
@@ -359,6 +362,7 @@ SDT_PROBE_DECLARE(dqres, , , subst__consume);
 /* dqres:::present (viewer pid, DQRES_PRESENT_*, errno). */
 #define	DQRES_PRESENT_SERVED	1	/* a served object's di_path */
 #define	DQRES_PRESENT_REAL	2	/* a real object's vn_fullpath */
+#define	DQRES_PRESENT_MOUNT	3	/* a served object's f_mntonname */
 
 /* The requester's completion refused the answer (dro_bad_answer). */
 void	dqres_bad_answer(struct thread *td);
@@ -411,6 +415,14 @@ dq_intent_slot_rights(struct dq_intent *di, int slot,
 	di->di_slot[slot].ds_rights = rights;
 }
 bool	dqres_inject_drop(struct thread *td);
+#ifdef DQ_FAULT_INJECTION
+/*
+ * dev/dq/dq_faultinj.c, debug.dqres.fail_fhold (D200): the next
+ * inheritance of served starts by the named process fails their fhold.
+ * Callers include opt_dq.h first.
+ */
+bool	dq_faultinj_fhold_fail(void);
+#endif
 int	dqres_consult_slot(struct thread *td, int slot);
 void	dq_intent_slot_content(struct dq_intent *di, int slot,
 	    const char *kpath, int dirfd);
@@ -512,6 +524,8 @@ int	dqres_present_viewer(struct thread *viewer, uint64_t qgid,
 int	dqres_present_file(struct thread *viewer, struct file *fp, char *out,
 	    size_t outsz);
 void	dqres_present_real(struct thread *viewer, char *path, size_t size);
+bool	dqres_present_mntonname(struct thread *td, uint64_t qgid, char *name,
+	    size_t size);
 bool	dqres_served_root(struct thread *td);
 int	dqres_getcwd(struct thread *td, char *buf, size_t *buflenp);
 int	dqres_proc_dirpath(struct thread *viewer, struct proc *p, bool root,
@@ -573,8 +587,9 @@ struct ucred;
 const struct dq_ident_file *dqres_ident(struct dq_intent *di, uint32_t kind);
 void	dqres_ident_to_stat(const struct dq_ident_file *di, struct ucred *cred,
 	    struct stat *sb);
-void	dqres_ident_to_statfs(const struct dq_ident_file *di,
-	    struct statfs *sf);
+struct dq_statfs;
+void	dqres_statfs_present(struct thread *td, uint64_t qgid,
+	    const struct dq_statfs *ds, struct statfs *sf);
 int	dqres_ident_pathconf(const struct dq_ident_file *di, int name,
 	    long *valuep);
 int	dqres_ident_access(const struct dq_ident_file *di, int accmode,

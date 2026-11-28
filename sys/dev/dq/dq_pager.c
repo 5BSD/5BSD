@@ -39,6 +39,7 @@
 #include <sys/proc.h>
 #include <sys/dqres.h>
 #include <sys/rwlock.h>
+#include <sys/sdt.h>
 #include <sys/taskqueue.h>
 #include <sys/user.h>
 
@@ -64,6 +65,61 @@ static pgo_sync_t		dq_pager_sync;
 static pgo_kinfo_t		dq_pager_kinfo;
 static bool	dq_object_errs_in(struct dq_object *o, uint64_t errs0,
 		    off_t start, off_t end);
+
+/*
+ * dq:::pager-error (object, pid, reason): a page operation of the pager
+ * failed (R2-1).  Defined here, the one file that fires it.  The reason
+ * is one of DQ_PAGER_ERR_*; dq.4 lists them.
+ */
+SDT_PROBE_DEFINE3(dq, , , pager__error, "struct dq_object *", "pid_t",
+    "int");
+
+#define	DQ_PAGER_ERR_DEADLINE	1	/* the page deadline passed */
+#define	DQ_PAGER_ERR_QCLOSING	2	/* the queue is closing */
+#define	DQ_PAGER_ERR_DYING	3	/* the faulting process is dying */
+#define	DQ_PAGER_ERR_REVOKED	4	/* the object was revoked */
+#define	DQ_PAGER_ERR_REPLY	5	/* the supervisor's errno, short reply */
+#define	DQ_PAGER_ERR_CLOSED	6	/* the object is closing or closed */
+#define	DQ_PAGER_ERR_INVAL	7	/* invalidated on every try */
+
+/*
+ * Why a waited page-in failed with error (dq_event_post_wait's errno;
+ * a fault catches no signal, so EINTR is dq_wait_abandon's: the process
+ * is being taken down).  Only called with the probe enabled: the locks
+ * are taken on the error path for the probe alone.
+ */
+static int __unused	/* without KDTRACE_HOOKS the probe is empty */
+dq_pager_err_reason(struct dq_object *o, int error)
+{
+	struct dq_queue *q;
+	bool closed, closing, revoked;
+
+	if (error == EINTR)
+		return (DQ_PAGER_ERR_DYING);
+	DQO_LOCK(o);
+	revoked = o->o_state == DQ_OBJ_REVOKED;
+	closed = o->o_closing || o->o_closed;
+	DQO_UNLOCK(o);
+	/*
+	 * Revoke and queue close set o_closing too (dq_object_vm_teardown):
+	 * they are named first, the object's own close only after.
+	 */
+	if (revoked)
+		return (DQ_PAGER_ERR_REVOKED);
+	q = o->o_queue;
+	DQ_LOCK(q);
+	closing = (q->q_flags & DQ_Q_CLOSING) != 0;
+	DQ_UNLOCK(q);
+	if (closing)
+		return (DQ_PAGER_ERR_QCLOSING);
+	return (closed ? DQ_PAGER_ERR_CLOSED : DQ_PAGER_ERR_DEADLINE);
+}
+
+#define	DQ_PAGER_ERROR(o, reason) do {					\
+	if (SDT_PROBES_ENABLED())					\
+		SDT_PROBE3(dq, , , pager__error, (o), curproc->p_pid,	\
+		    (reason));						\
+} while (0)
 
 /*
  * Every member is named.  NULL members are deliberate: populate (no bulk
@@ -277,8 +333,13 @@ dq_pager_getpages(vm_object_t obj, vm_page_t *ma, int count, int *rbehind,
 	if (rahead != NULL)
 		*rahead = 0;
 	o = dq_pager_object(obj);
-	if (o == NULL)
+	if (o == NULL) {
+		if (SDT_PROBES_ENABLED())
+			DQ_PAGER_ERROR(obj->handle, obj->handle == NULL ?
+			    DQ_PAGER_ERR_CLOSED :
+			    dq_pager_err_reason(obj->handle, EIO));
 		return (VM_PAGER_ERROR);
+	}
 	off = IDX_TO_OFF(ma[0]->pindex);
 	maxchunk = (size_t)dq_pager_maxpages() * PAGE_SIZE;
 	for (tries = 0;; tries++) {
@@ -298,11 +359,26 @@ dq_pager_getpages(vm_object_t obj, vm_page_t *ma, int count, int *rbehind,
 			    &rerror);
 			if (error != 0) {
 				/* Failed by a shrink past it: SIGBUS. */
-				return (off >= dq_pager_size(o) ?
-				    VM_PAGER_BAD : VM_PAGER_ERROR);
+				if (off >= dq_pager_size(o))
+					return (VM_PAGER_BAD);
+				if (SDT_PROBES_ENABLED())
+					DQ_PAGER_ERROR(o,
+					    dq_pager_err_reason(o, error));
+				/*
+				 * Abandoned by a dying process (owner Q8
+				 * (a)): VM_PAGER_BAD, which vm_fault handles
+				 * as VM_PAGER_ERROR (KERN_OUT_OF_BOUNDS) but
+				 * does not log, so a killed program leaves no
+				 * "pager read error" line, as one on a disk
+				 * leaves none.  The process never sees the
+				 * answer: it is exiting.
+				 */
+				return (error == EINTR ? VM_PAGER_BAD :
+				    VM_PAGER_ERROR);
 			}
 			if (rerror != 0) {
 				dq_reply_free(reply);
+				DQ_PAGER_ERROR(o, DQ_PAGER_ERR_REPLY);
 				return (VM_PAGER_ERROR);
 			}
 			/* A post-operation block of a page-in is not used. */
@@ -319,8 +395,10 @@ dq_pager_getpages(vm_object_t obj, vm_page_t *ma, int count, int *rbehind,
 				 * an error, never cached zeros.
 				 */
 				if (off + (off_t)(done + rlen) <
-				    dq_pager_size(o))
+				    dq_pager_size(o)) {
+					DQ_PAGER_ERROR(o, DQ_PAGER_ERR_REPLY);
 					return (VM_PAGER_ERROR);
+				}
 				break;
 			}
 		}
@@ -333,8 +411,10 @@ dq_pager_getpages(vm_object_t obj, vm_page_t *ma, int count, int *rbehind,
 		 */
 		if (dq_object_invalgen(o) == gen)
 			break;
-		if (tries >= 8)
+		if (tries >= 8) {
+			DQ_PAGER_ERROR(o, DQ_PAGER_ERR_INVAL);
 			return (VM_PAGER_ERROR);
+		}
 	}
 	/*
 	 * A shrink that ran while the READ was out zeroed only what was not
@@ -406,6 +486,10 @@ dq_pager_getpages_async(vm_object_t obj, vm_page_t *ma, int count,
 		*rahead = 0;
 	o = dq_pager_object(obj);
 	if (o == NULL) {
+		if (SDT_PROBES_ENABLED())
+			DQ_PAGER_ERROR(obj->handle, obj->handle == NULL ?
+			    DQ_PAGER_ERR_CLOSED :
+			    dq_pager_err_reason(obj->handle, EIO));
 		iodone(arg, ma, count, EIO);
 		return (VM_PAGER_ERROR);
 	}
@@ -427,6 +511,9 @@ dq_pager_getpages_async(vm_object_t obj, vm_page_t *ma, int count,
 		iodone(arg, ma, count, rv == VM_PAGER_OK ? 0 : EIO);
 		return (rv);
 	}
+	/* dq_async_post refused: the object or the queue is going away. */
+	if (SDT_PROBES_ENABLED())
+		DQ_PAGER_ERROR(o, dq_pager_err_reason(o, EIO));
 	iodone(arg, ma, count, EIO);
 	return (VM_PAGER_ERROR);
 }

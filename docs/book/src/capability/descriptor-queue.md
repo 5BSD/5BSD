@@ -372,7 +372,10 @@ it is a `fo_fcntl` command answered by the vnode body, not `fo_statfs`.
 all three need the referenced mount; the dq body runs `mac_file_check_stat`
 and presents what the controller gave (a jailed requester's `dc_jid` is in
 the event, so the controller can present a jail-shaped answer; no kernel
-enforcement applies to a served `statfs`, stated in `dq(4)`). The `MPASS`
+enforcement applies to a served `statfs`, stated in `dq(4)`; round 2
+(D201) replaced that: the kernel presents `f_mntonname` against the
+reader's served root and applies `enforce_statfs` through the mount-less
+`prison_enforce_statfs_presented`). The `MPASS`
 in `kern_fsync_fp` (`vfs_syscalls.c:3693`) is removed, not moved: it is a
 latent panic for `fsync` on a FIFO or pts fd today. Linux `quotactl_fd`
 needs a mount no fileop yields and stays `ENOSYS` for non-vnode files.
@@ -1129,10 +1132,14 @@ ready when `FWRITE`; `EVFILT_VNODE` supports every note the kernel defines
 — `NOTE_OPEN`, `CLOSE`, `CLOSE_WRITE`, `READ` raised by the kernel on the
 object's own operations, `DELETE`, `WRITE`, `EXTEND`, `ATTRIB`, `LINK`,
 `RENAME`, `REVOKE` by `NOTIFY_VNODE`/`SETIDENT`/`REVOKE` (D27).
-`dq_ioctl` answers `FIONREAD`, `FIONBIO`, `FIOASYNC`, `FIODTYPE`,
-`FIOSEEKDATA/HOLE` (one extent) locally and `FIOBMAP2` with `EOPNOTSUPP`;
-others are `IOCTL` events when `dp_ioctl = EVENT`, else `ENOTTY`.
-`dq_seek` is local, bounded by the identity's size for `SEEK_END`.
+`dq_ioctl` answers `FIONREAD`, `FIONBIO`, `FIOASYNC`, `FIODTYPE` locally
+and `FIOBMAP2` with `EOPNOTSUPP`; others are `IOCTL` events when
+`dp_ioctl = EVENT`, else `ENOTTY`.  `FIOSEEKDATA/HOLE` are `IOCTL` events
+under `EVENT` too, so the holes are the backing file's (C21); a supervisor
+answering `ENOTTY`, and `DENY`, keep the one-extent answer from the
+presented size, and an answer before the start is `EIO`.
+`dq_seek` is local, bounded by the identity's size for `SEEK_END`;
+`SEEK_DATA`/`SEEK_HOLE` go through `FIOSEEKDATA/HOLE`, as `vn_seek` does.
 `dq_add/get_seals` → `EINVAL` as for a vnode. `dq_fallocate`/`fspacectl`
 are events under `dp_write = EVENT`, else `EBADF` as on a read-only fd.
 `dq_aio_queue` is the default (`aio_queue_file`), so aio runs through
@@ -1571,10 +1578,11 @@ the same backend; of a real file, the same predicate.
 | `write` family, `ftruncate`, `fsync`, `fallocate`, `fspacectl` | events | yes |
 | `mmap` (all modes), faults, `msync` (incl. `MS_SYNC`), `mincore`, `mlock` | dq pager | yes; `MAP_SHARED|PROT_WRITE` is `EACCES` unless allowed, as on a read-only fd |
 | `sendfile` | `getpages_async` | yes |
+| `copy_file_range` with a served side | `file_generic_copy_range`: `READ`/`WRITE` through the fileops | yes for the bytes, offsets, counts and errnos (overlap on one identity `EINVAL`, a directory `EISDIR`); no range lock covers both files for the whole copy, as `vn_copy_range` takes (C11) |
 | `execve`, `fexecve` | stage 3 | yes with `ALLOW`; `EACCES` before stage 3 (`fgetvp_exec`; a descriptor with no vnode is `EINVAL`, as before) |
 | `fstat`/`stat`/`lstat`/`fstatat`, `fstatfs`/`statfs`, `fpathconf`/`pathconf` | identity (`dqres_ident_to_stat`, `dqres_ident_pathconf` for both the descriptor and the name) | yes, incl. `st_dev/ino`; `st_gen` only with `PRIV_VFS_GENERATION`, as `vn_stat` |
 | `F_KINFO`, `procstat -f`, `procstat -v`, `/proc/self/maps`, `realpath`, `/dev/fd/N` readlink, `getcwd` | `fo_fill_kinfo`, `pgo_kinfo` (presented against the viewer), attachment | yes; under a served root a real object (pass-through, real answer, swap) shows no path: empty `kf_path`/`kve_path`, `/dev/fd/N` readlink `ENOENT`, `getcwd`/`realpath` `ENOENT` (D174, D396) |
-| signals during served regular-file I/O, page faults, full queues | `dq_wait_event` (rev 8 ux-2, D192-D194) | yes: a wait is uninterruptible by default, as a local disk's; `DQ_PF_INTR` objects and `DQ_QF_INTR` lookups end on a signal (`EINTR`, or the short count after accepted bytes; a mutation marked delivered is not restarted, D405); `SIGKILL`, exit and single-threading for exit always end it |
+| signals during served regular-file I/O, page faults, full queues | `dq_wait_event` (rev 8 ux-2, D192-D194) | yes: a wait is uninterruptible by default, as a local disk's; `DQ_PF_INTR` objects and `DQ_QF_INTR` lookups end on a signal (`EINTR`, or the short count after accepted bytes; a mutation marked delivered is not restarted, D405); `SIGKILL`, exit and single-threading for exit always end it, and a page fault so ended is not logged as a pager read error (owner Q8 (a); `dq:::pager-error` gives every failed page-in's reason) |
 | swap (`DQ_RESOLVE_SWAP`) | the supervisor's file, moved | yes for files that carry no state of their own (D399); the supervisor's descriptor is closed at the take (D401) |
 | `fcntl` flags/dup/readahead; `F_GETFL` | generic / `fo_fcntl` | yes (no served bit exists in `f_flag`) |
 | `flock`, `F_SETLK*`, `F_OFD_*`, `O_EXLOCK` | `LOCK` events; the controller can proxy to the real file's locks | yes |

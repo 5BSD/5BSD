@@ -2116,6 +2116,530 @@ ATF_TC_CLEANUP(postop_refused_reported, tc)
 	(void)dqt_sysctl_restore(REFUSE_POSTOP);
 }
 
+/*
+ * copy_file_range(2) with a served side (C11).  Every copy runs in the
+ * requester on the served pair and on an oracle pair of real files that
+ * hold the same bytes; the return values, errnos, the offsets after and
+ * the destination bytes are compared.
+ */
+#define	CFR_LEN		(512 * 1024)	/* more than one buffer and max_io */
+#define	CFR_MAXOPS	6
+
+static unsigned char cfr_in[CFR_LEN], cfr_out[CFR_LEN];
+static char cfr_path2[DQT_PATH_MAX], cfr_path3[DQT_PATH_MAX];
+
+struct cfr_op {
+	off_t		 inoff, outoff;	/* -1: the descriptor's offset */
+	size_t		 len;
+};
+
+struct cfr_arg {
+	int		 sin, sout;	/* the pair with a served side */
+	int		 oin, oout;	/* the oracle pair */
+	struct cfr_op	 ops[CFR_MAXOPS];
+	int		 nops;
+};
+
+struct cfr_one {
+	struct dqt_rr	 r;
+	off_t		 in, out;	/* the offsets after */
+};
+
+struct cfr_res {
+	struct cfr_one	 s[CFR_MAXOPS], o[CFR_MAXOPS];
+};
+
+static void
+cfr_one(int in, int out, const struct cfr_op *op, struct cfr_one *r)
+{
+	off_t inoff, outoff;
+
+	inoff = op->inoff;
+	outoff = op->outoff;
+	DQT_RR(r->r, copy_file_range(in, op->inoff < 0 ? NULL : &inoff, out,
+	    op->outoff < 0 ? NULL : &outoff, op->len, 0));
+	r->in = op->inoff < 0 ? lseek(in, 0, SEEK_CUR) : inoff;
+	r->out = op->outoff < 0 ? lseek(out, 0, SEEK_CUR) : outoff;
+}
+
+static void
+child_cfr(void *arg, void *result)
+{
+	struct cfr_arg *a = arg;
+	struct cfr_res *r = result;
+	int i;
+
+	for (i = 0; i < a->nops; i++) {
+		cfr_one(a->sin, a->sout, &a->ops[i], &r->s[i]);
+		cfr_one(a->oin, a->oout, &a->ops[i], &r->o[i]);
+	}
+}
+
+static void
+cfr_check(const struct cfr_arg *a, const struct cfr_res *r)
+{
+	int i;
+
+	for (i = 0; i < a->nops; i++) {
+		ATF_CHECK_EQ_MSG(r->o[i].r.rv, r->s[i].r.rv,
+		    "copy %d: served %ld oracle %ld", i, r->s[i].r.rv,
+		    r->o[i].r.rv);
+		DQT_CHECK_ERRNO(r->o[i].r.err, r->s[i].r.err, "copy errno");
+		ATF_CHECK_EQ_MSG(r->o[i].in, r->s[i].in,
+		    "copy %d: input offset served %jd oracle %jd", i,
+		    (intmax_t)r->s[i].in, (intmax_t)r->o[i].in);
+		ATF_CHECK_EQ_MSG(r->o[i].out, r->s[i].out,
+		    "copy %d: output offset served %jd oracle %jd", i,
+		    (intmax_t)r->s[i].out, (intmax_t)r->o[i].out);
+	}
+}
+
+/* Two real files hold the same bytes (through their own descriptors). */
+static void
+cfr_check_same(int a, int b)
+{
+	struct stat as, bs;
+	unsigned char *x, *y;
+
+	ATF_REQUIRE_EQ(0, fstat(a, &as));
+	ATF_REQUIRE_EQ(0, fstat(b, &bs));
+	ATF_REQUIRE_EQ_MSG(bs.st_size, as.st_size, "size: %jd want %jd",
+	    (intmax_t)as.st_size, (intmax_t)bs.st_size);
+	x = malloc((size_t)as.st_size + 1);
+	y = malloc((size_t)bs.st_size + 1);
+	ATF_REQUIRE(x != NULL && y != NULL);
+	ATF_REQUIRE_EQ(as.st_size, pread(a, x, (size_t)as.st_size, 0));
+	ATF_REQUIRE_EQ(bs.st_size, pread(b, y, (size_t)bs.st_size, 0));
+	ATF_CHECK_MSG(memcmp(x, y, (size_t)as.st_size) == 0,
+	    "the copies' bytes differ");
+	free(x);
+	free(y);
+}
+
+/* The copies every pair below runs: explicit, implicit, past the end. */
+static void
+cfr_ops_common(struct cfr_arg *a)
+{
+
+	a->ops[0] = (struct cfr_op){ .inoff = 100, .outoff = 300,
+	    .len = 5000 };
+	a->ops[1] = (struct cfr_op){ .inoff = -1, .outoff = -1,
+	    .len = 3000 };
+	/* Several buffers and max_io chunks, to the input's end and past. */
+	a->ops[2] = (struct cfr_op){ .inoff = 7, .outoff = 9,
+	    .len = CFR_LEN };
+	a->ops[3] = (struct cfr_op){ .inoff = CFR_LEN, .outoff = 0,
+	    .len = 10 };
+	a->ops[4] = (struct cfr_op){ .inoff = 0, .outoff = 0, .len = 0 };
+	a->nops = 5;
+}
+
+/* A writable served object of cfr_out, from the file name, on c. */
+static struct dqt_object *
+cfr_mint_out(struct dqt_ctl *c, const char *name, char *path, int *backingp)
+{
+
+	*backingp = dqt_make_rw(name, cfr_out, sizeof(cfr_out), path,
+	    DQT_PATH_MAX);
+	return (dqt_mint_backing(c, *backingp, path, NULL, DQ_MINT_F_WRITE));
+}
+
+ATF_TC(cfr_served_to_served);
+ATF_TC_HEAD(cfr_served_to_served, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "copy_file_range between two served "
+	    "files copies the bytes, as between two real files (dev: EINVAL, "
+	    "no fo_copy_file_range)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cfr_served_to_served, tc)
+{
+	struct dqt_fixture f;
+	struct dqt_object *out;
+	struct cfr_arg a;
+	struct cfr_res *r;
+	int backing2, oracle2;
+
+	dqt_fill(cfr_in, sizeof(cfr_in), 51);
+	dqt_fill(cfr_out, sizeof(cfr_out), 52);
+	dqt_fixture_init(&f, cfr_in, sizeof(cfr_in), backing_path,
+	    oracle_path, NULL, DQ_MINT_F_WRITE);
+	out = cfr_mint_out(&f.c, "backing2", cfr_path2, &backing2);
+	oracle2 = dqt_make_rw("oracle2", cfr_out, sizeof(cfr_out), cfr_path3,
+	    sizeof(cfr_path3));
+	a.sin = f.o->fd;
+	a.sout = out->fd;
+	a.oin = f.oracle;
+	a.oout = oracle2;
+	cfr_ops_common(&a);
+	r = calloc(1, sizeof(*r));
+	ATF_REQUIRE(r != NULL);
+	dqt_run_child(child_cfr, &a, r, sizeof(*r));
+	cfr_check(&a, r);
+	cfr_check_same(backing2, oracle2);
+	free(r);
+	(void)close(oracle2);
+	dqt_fixture_fini(&f);
+	(void)close(backing2);
+}
+
+ATF_TC(cfr_served_to_real);
+ATF_TC_HEAD(cfr_served_to_real, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "copy_file_range from a served file to "
+	    "a real one copies the bytes (dev: EINVAL)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cfr_served_to_real, tc)
+{
+	struct dqt_fixture f;
+	struct cfr_arg a;
+	struct cfr_res *r;
+	int out, oracle2;
+
+	dqt_fill(cfr_in, sizeof(cfr_in), 53);
+	dqt_fill(cfr_out, sizeof(cfr_out), 54);
+	dqt_fixture_init(&f, cfr_in, sizeof(cfr_in), backing_path,
+	    oracle_path, NULL, DQ_MINT_F_WRITE);
+	out = dqt_make_rw("out", cfr_out, sizeof(cfr_out), cfr_path2,
+	    sizeof(cfr_path2));
+	oracle2 = dqt_make_rw("oracle2", cfr_out, sizeof(cfr_out), cfr_path3,
+	    sizeof(cfr_path3));
+	a.sin = f.o->fd;
+	a.sout = out;
+	a.oin = f.oracle;
+	a.oout = oracle2;
+	cfr_ops_common(&a);
+	r = calloc(1, sizeof(*r));
+	ATF_REQUIRE(r != NULL);
+	dqt_run_child(child_cfr, &a, r, sizeof(*r));
+	cfr_check(&a, r);
+	cfr_check_same(out, oracle2);
+	free(r);
+	(void)close(out);
+	(void)close(oracle2);
+	dqt_fixture_fini(&f);
+}
+
+ATF_TC(cfr_real_to_served);
+ATF_TC_HEAD(cfr_real_to_served, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "copy_file_range from a real file to a "
+	    "served one copies the bytes (dev: EINVAL, vn_copy_range "
+	    "refused the partner)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cfr_real_to_served, tc)
+{
+	struct dqt_fixture f;
+	struct dqt_object *out;
+	struct cfr_arg a;
+	struct cfr_res *r;
+	int backing2, oracle2;
+
+	dqt_fill(cfr_in, sizeof(cfr_in), 55);
+	dqt_fill(cfr_out, sizeof(cfr_out), 56);
+	/* The oracle is the real input; the served object is the output. */
+	dqt_fixture_init(&f, cfr_in, sizeof(cfr_in), backing_path,
+	    oracle_path, NULL, DQ_MINT_F_WRITE);
+	out = cfr_mint_out(&f.c, "backing2", cfr_path2, &backing2);
+	oracle2 = dqt_make_rw("oracle2", cfr_out, sizeof(cfr_out), cfr_path3,
+	    sizeof(cfr_path3));
+	a.sin = f.oracle;
+	a.sout = out->fd;
+	a.oin = open(oracle_path, O_RDONLY);
+	ATF_REQUIRE(a.oin != -1);
+	a.oout = oracle2;
+	cfr_ops_common(&a);
+	r = calloc(1, sizeof(*r));
+	ATF_REQUIRE(r != NULL);
+	dqt_run_child(child_cfr, &a, r, sizeof(*r));
+	cfr_check(&a, r);
+	cfr_check_same(backing2, oracle2);
+	free(r);
+	(void)close(a.oin);
+	(void)close(oracle2);
+	dqt_fixture_fini(&f);
+	(void)close(backing2);
+}
+
+ATF_TC(cfr_overlap_same_identity);
+ATF_TC_HEAD(cfr_overlap_same_identity, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "copy_file_range between two served "
+	    "objects of one identity, and between a served object and its "
+	    "backing file, refuses overlapping ranges with EINVAL and copies "
+	    "disjoint ones, as within one real file");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cfr_overlap_same_identity, tc)
+{
+	struct dqt_fixture f;
+	struct dqt_object *twin;
+	struct cfr_arg a;
+	struct cfr_res *r;
+	int oracle_b;
+
+	dqt_fill(cfr_in, sizeof(cfr_in), 57);
+	dqt_fixture_init(&f, cfr_in, sizeof(cfr_in), backing_path,
+	    oracle_path, NULL, DQ_MINT_F_WRITE);
+	/* A second object presenting the backing file's identity. */
+	twin = dqt_mint_backing(&f.c, f.backing, backing_path, NULL,
+	    DQ_MINT_F_WRITE);
+	oracle_b = open(oracle_path, O_RDWR);
+	ATF_REQUIRE(oracle_b != -1);
+	a.oin = f.oracle;
+	a.oout = oracle_b;
+	a.ops[0] = (struct cfr_op){ .inoff = 0, .outoff = 500, .len = 1000 };
+	a.ops[1] = (struct cfr_op){ .inoff = 600, .outoff = 0, .len = 1000 };
+	a.ops[2] = (struct cfr_op){ .inoff = 0, .outoff = 4096,
+	    .len = 4096 };
+	a.nops = 3;
+	r = calloc(1, sizeof(*r));
+	ATF_REQUIRE(r != NULL);
+	/* Served to served, one identity. */
+	a.sin = f.o->fd;
+	a.sout = twin->fd;
+	dqt_run_child(child_cfr, &a, r, sizeof(*r));
+	cfr_check(&a, r);
+	cfr_check_same(f.backing, f.oracle);
+	/* Served to its own backing file (real). */
+	a.sin = f.o->fd;
+	a.sout = f.backing;
+	a.ops[2].inoff = 8192;
+	a.ops[2].outoff = 12288;
+	memset(r, 0, sizeof(*r));
+	dqt_run_child(child_cfr, &a, r, sizeof(*r));
+	cfr_check(&a, r);
+	cfr_check_same(f.backing, f.oracle);
+	free(r);
+	(void)close(oracle_b);
+	dqt_fixture_fini(&f);
+}
+
+/* A copy that stops early: EOF inside the copy, and an output limit. */
+static void
+child_cfr_fsize(void *arg, void *result)
+{
+	struct rlimit rl;
+
+	(void)signal(SIGXFSZ, SIG_IGN);
+	rl.rlim_cur = rl.rlim_max = 6000;
+	if (setrlimit(RLIMIT_FSIZE, &rl) != 0)
+		_exit(DQT_EXIT_NORESULT);
+	child_cfr(arg, result);
+}
+
+ATF_TC(cfr_partial_count);
+ATF_TC_HEAD(cfr_partial_count, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "copy_file_range with a served side "
+	    "returns the partial count at the input's end and at the file "
+	    "size limit, then 0 and EFBIG, as between real files");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cfr_partial_count, tc)
+{
+	struct dqt_fixture f;
+	struct dqt_object *out;
+	struct cfr_arg a;
+	struct cfr_res *r;
+	int backing2, oracle2;
+
+	dqt_fill(cfr_in, sizeof(cfr_in), 58);
+	dqt_fill(cfr_out, 4096, 59);
+	dqt_fixture_init(&f, cfr_in, 10000, backing_path, oracle_path, NULL,
+	    DQ_MINT_F_WRITE);
+	backing2 = dqt_make_rw("backing2", cfr_out, 4096, cfr_path2,
+	    sizeof(cfr_path2));
+	out = dqt_mint_backing(&f.c, backing2, cfr_path2, NULL,
+	    DQ_MINT_F_WRITE);
+	oracle2 = dqt_make_rw("oracle2", cfr_out, 4096, cfr_path3,
+	    sizeof(cfr_path3));
+	a.sin = f.o->fd;
+	a.sout = out->fd;
+	a.oin = f.oracle;
+	a.oout = oracle2;
+	/* 9000 asked from 8000: the input's end gives 2000, then 0. */
+	a.ops[0] = (struct cfr_op){ .inoff = 8000, .outoff = 0,
+	    .len = 9000 };
+	a.ops[1] = (struct cfr_op){ .inoff = 10000, .outoff = 0,
+	    .len = 9000 };
+	/* The 6000-byte limit: 4000 of 5000 at 2000, then EFBIG at it. */
+	a.ops[2] = (struct cfr_op){ .inoff = 0, .outoff = 2000,
+	    .len = 5000 };
+	a.ops[3] = (struct cfr_op){ .inoff = 0, .outoff = 6000, .len = 10 };
+	a.nops = 4;
+	r = calloc(1, sizeof(*r));
+	ATF_REQUIRE(r != NULL);
+	dqt_run_child(child_cfr_fsize, &a, r, sizeof(*r));
+	cfr_check(&a, r);
+	ATF_CHECK_EQ(2000, r->s[0].r.rv);
+	ATF_CHECK_EQ(4000, r->s[2].r.rv);
+	ATF_CHECK_EQ(EFBIG, r->s[3].r.err);
+	cfr_check_same(backing2, oracle2);
+	free(r);
+	(void)close(oracle2);
+	dqt_fixture_fini(&f);
+	(void)close(backing2);
+}
+
+/*
+ * The file size limit at a buffer boundary: the copy's count is clipped
+ * before the first read, as vn_generic_copy_file_range clips it, so no
+ * buffer's write meets the limit (no EFBIG after bytes were copied, no
+ * SIGXFSZ); a copy whose output offset is at the limit is EFBIG with one
+ * SIGXFSZ before anything is read.
+ */
+struct cfr_fsize_arg {
+	struct cfr_arg	 a;
+	rlim_t		 lim;
+};
+
+struct cfr_fsize_res {
+	struct cfr_res	 r;
+	int		 ssig[CFR_MAXOPS], osig[CFR_MAXOPS];
+};
+
+static void
+child_cfr_fsize_sig(void *arg, void *result)
+{
+	struct cfr_fsize_arg *fa = arg;
+	struct cfr_fsize_res *fr = result;
+	struct cfr_arg *a = &fa->a;
+	struct rlimit rl;
+	struct sigaction sa;
+	int i;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = on_xfsz;
+	if (sigaction(SIGXFSZ, &sa, NULL) != 0)
+		_exit(DQT_EXIT_NORESULT);
+	rl.rlim_cur = rl.rlim_max = fa->lim;
+	if (setrlimit(RLIMIT_FSIZE, &rl) != 0)
+		_exit(DQT_EXIT_NORESULT);
+	for (i = 0; i < a->nops; i++) {
+		got_xfsz = 0;
+		cfr_one(a->sin, a->sout, &a->ops[i], &fr->r.s[i]);
+		fr->ssig[i] = got_xfsz;
+		got_xfsz = 0;
+		cfr_one(a->oin, a->oout, &a->ops[i], &fr->r.o[i]);
+		fr->osig[i] = got_xfsz;
+	}
+}
+
+/* The buffer the served copy uses: the larger st_blksize, clipped. */
+static size_t
+cfr_buffer(int in, int out)
+{
+	struct stat ins, outs;
+	u_long maxphys;
+	size_t b, len;
+
+	ATF_REQUIRE_EQ(0, fstat(in, &ins));
+	ATF_REQUIRE_EQ(0, fstat(out, &outs));
+	len = sizeof(maxphys);
+	ATF_REQUIRE_EQ(0, sysctlbyname("kern.maxphys", &maxphys, &len, NULL,
+	    0));
+	b = MAX((size_t)MAX(ins.st_blksize, 0), (size_t)MAX(outs.st_blksize,
+	    0));
+	if (b < 4096)
+		b = 4096;
+	else if (b > maxphys)
+		b = maxphys;
+	return (b);
+}
+
+ATF_TC(cfr_fsize_at_buffer_boundary);
+ATF_TC_HEAD(cfr_fsize_at_buffer_boundary, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "copy_file_range with a served side "
+	    "and RLIMIT_FSIZE at the output offset plus two buffers copies "
+	    "the two buffers without EFBIG or SIGXFSZ, and at the limit is "
+	    "EFBIG with one SIGXFSZ and no READ posted, as between real "
+	    "files (the count is clipped before the first read)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cfr_fsize_at_buffer_boundary, tc)
+{
+	struct dqt_fixture f;
+	struct dqt_object *out;
+	struct cfr_fsize_arg fa;
+	struct cfr_fsize_res *fr;
+	unsigned char *in;
+	size_t b, inlen;
+	unsigned reads;
+	int backing2, oracle2;
+
+	dqt_fill(cfr_out, sizeof(cfr_out), 61);
+	/* The buffer is known once both served files answer fstat. */
+	dqt_fixture_init(&f, cfr_in, 4096, backing_path, oracle_path, NULL,
+	    DQ_MINT_F_WRITE);
+	out = cfr_mint_out(&f.c, "backing2", cfr_path2, &backing2);
+	b = cfr_buffer(f.o->fd, out->fd);
+	dqt_fixture_fini(&f);
+	(void)close(backing2);
+
+	/* Four buffers and a page of input: the copies never reach its end. */
+	inlen = 4 * b + 4096;
+	in = malloc(inlen);
+	ATF_REQUIRE(in != NULL);
+	dqt_fill(in, inlen, 60);
+	dqt_fixture_init(&f, in, inlen, backing_path, oracle_path, NULL,
+	    DQ_MINT_F_WRITE);
+	out = cfr_mint_out(&f.c, "backing2", cfr_path2, &backing2);
+	ATF_REQUIRE_EQ_MSG(b, cfr_buffer(f.o->fd, out->fd),
+	    "the buffer changed with the input's size");
+	oracle2 = dqt_make_rw("oracle2", cfr_out, sizeof(cfr_out), cfr_path3,
+	    sizeof(cfr_path3));
+	memset(&fa, 0, sizeof(fa));
+	fa.a.sin = f.o->fd;
+	fa.a.sout = out->fd;
+	fa.a.oin = f.oracle;
+	fa.a.oout = oracle2;
+	fa.lim = 1000 + 2 * b;
+	/* Three buffers asked at 1000: the limit is two buffers on. */
+	fa.a.ops[0] = (struct cfr_op){ .inoff = 0, .outoff = 1000,
+	    .len = 3 * b };
+	fa.a.nops = 1;
+	fr = calloc(1, sizeof(*fr));
+	ATF_REQUIRE(fr != NULL);
+	dqt_run_child(child_cfr_fsize_sig, &fa, fr, sizeof(*fr));
+	cfr_check(&fa.a, &fr->r);
+	ATF_CHECK_EQ_MSG((ssize_t)(2 * b), fr->r.s[0].r.rv,
+	    "served copy returned %ld, want %zu", fr->r.s[0].r.rv, 2 * b);
+	ATF_CHECK_EQ_MSG(0, fr->ssig[0], "served copy: %d SIGXFSZ, want 0",
+	    fr->ssig[0]);
+	ATF_CHECK_EQ_MSG(0, fr->osig[0], "real copy: %d SIGXFSZ, want 0",
+	    fr->osig[0]);
+	cfr_check_same(backing2, oracle2);
+
+	/* At the limit, from input no copy has read yet. */
+	dqt_lock(&f.c);
+	reads = f.o->reads;
+	dqt_unlock(&f.c);
+	fa.a.ops[0] = (struct cfr_op){ .inoff = 3 * b, .outoff = 1000 + 2 * b,
+	    .len = 10 };
+	memset(fr, 0, sizeof(*fr));
+	dqt_run_child(child_cfr_fsize_sig, &fa, fr, sizeof(*fr));
+	cfr_check(&fa.a, &fr->r);
+	ATF_CHECK_EQ(EFBIG, fr->r.s[0].r.err);
+	ATF_CHECK_EQ_MSG(1, fr->ssig[0], "served copy: %d SIGXFSZ, want 1",
+	    fr->ssig[0]);
+	ATF_CHECK_EQ_MSG(1, fr->osig[0], "real copy: %d SIGXFSZ, want 1",
+	    fr->osig[0]);
+	dqt_lock(&f.c);
+	ATF_CHECK_EQ_MSG(reads, f.o->reads, "%u READ posted at the limit",
+	    f.o->reads - reads);
+	dqt_unlock(&f.c);
+	cfr_check_same(backing2, oracle2);
+	free(fr);
+	(void)close(oracle2);
+	dqt_fixture_fini(&f);
+	(void)close(backing2);
+	free(in);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -2147,5 +2671,11 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, postop_time_after_future_set);
 	ATF_TP_ADD_TC(tp, postop_refused_reported);
 	ATF_TP_ADD_TC(tp, fspacectl_past_eof);
+	ATF_TP_ADD_TC(tp, cfr_served_to_served);
+	ATF_TP_ADD_TC(tp, cfr_served_to_real);
+	ATF_TP_ADD_TC(tp, cfr_real_to_served);
+	ATF_TP_ADD_TC(tp, cfr_overlap_same_identity);
+	ATF_TP_ADD_TC(tp, cfr_partial_count);
+	ATF_TP_ADD_TC(tp, cfr_fsize_at_buffer_boundary);
 	return (atf_no_error());
 }

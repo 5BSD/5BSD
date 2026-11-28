@@ -494,7 +494,7 @@ void	dqt_child_read(void *arg, void *result);	/* result: dqt_rr */
  * that is not paused.  dqt_close_fence: a fresh sentinel with CLOSE events
  * is closed and its CLOSE seen.  It orders only CLOSEs of objects with no
  * pages, async I/O or mappings in flight: the destroy task of such an
- * object re-arms itself (DQ_DESTROY_POLL, dq_async.c) until they settle,
+ * object waits for them to settle (dq_object_destroy_task, dq_async.c),
  * and the sentinel, which has none, can overtake it.  Pair it with the
  * object count (ds2_objects_live): an object still counted has posted no
  * CLOSE, and one no longer counted has retired and posts no other.

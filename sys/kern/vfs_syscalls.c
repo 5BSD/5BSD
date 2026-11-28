@@ -70,6 +70,7 @@
 #include <sys/resourcevar.h>
 #include <sys/procdesc.h>
 #include <sys/rwlock.h>
+#include <sys/signalvar.h>
 #include <sys/sdt.h>
 #include <sys/stat.h>
 #include <sys/stdarg.h>
@@ -480,15 +481,17 @@ kern_statfs_dqimpl(struct thread *td, const char *path, enum uio_seg pathseg,
 	return (kern_do_statfs(td, mp, buf));
 }
 
+/* ATTR: the identity's statfs as the reader sees it (D201). */
 static int
-kern_statfs_dqserved(struct dq_intent *di, struct statfs *buf)
+kern_statfs_dqserved(struct thread *td, struct dq_intent *di,
+    struct statfs *buf)
 {
 	const struct dq_ident_file *id;
 
 	id = dqres_ident(di, DQ_RESOLVE_ATTR);
 	if (id == NULL)
 		return (EIO);
-	dqres_ident_to_statfs(id, buf);
+	dqres_statfs_present(td, di->di_res.da_qgid, &id->di_statfs, buf);
 	return (0);
 }
 
@@ -510,7 +513,7 @@ kern_statfs(struct thread *td, const char *path, enum uio_seg pathseg,
 	    DQ_RACCEPT(DQ_RESOLVE_ATTR));
 	dq_intent_slot(&dqi, 0, path, pathseg, AT_FDCWD);
 	dqerror = kern_statfs_dqimpl(td, path, pathseg, buf);
-	DQRES_SERVED(td, &dqi, dqerror, kern_statfs_dqserved(&dqi, buf));
+	DQRES_SERVED(td, &dqi, dqerror, kern_statfs_dqserved(td, &dqi, buf));
 	dq_intent_leave(td, &dqi);
 	return (dqerror);
 }
@@ -7171,7 +7174,13 @@ vn_copy_range(struct file *infp, off_t *inoffp, struct file *outfp,
 	size_t len;
 	int error;
 
-	/* The partner must be a vnode file too. */
+	/*
+	 * The partner must be a vnode file too, or a served one, which
+	 * answers through its file operations (file_generic_copy_range).
+	 */
+	if (outfp->f_type == DTYPE_DQ)
+		return (file_generic_copy_range(infp, inoffp, outfp, outoffp,
+		    lenp, flags, td));
 	if (outfp->f_vnode == NULL)
 		return (EINVAL);
 	invp = infp->f_vnode;
@@ -7214,6 +7223,216 @@ vn_copy_range(struct file *infp, off_t *inoffp, struct file *outfp,
 	*inoffp = inoff;
 	*outoffp = outoff;
 	*lenp = len;
+	return (error);
+}
+
+/*
+ * What file_generic_copy_range needs of one side: its type, its identity
+ * and its I/O size.  A vnode file answers from the vnode, as
+ * vn_copy_file_range reads it (v_type, the attributes, the mount's
+ * f_iosize), so no stat check is added for it; a served file answers
+ * fo_stat, the presented identity.
+ */
+struct cfr_side {
+	__enum_uint8(vtype) type;
+	dev_t		dev;
+	ino_t		ino;
+	size_t		iosize;
+};
+
+static int
+cfr_side(struct file *fp, struct cfr_side *cs, struct thread *td)
+{
+	struct stat sb;
+	struct vattr va;
+	struct vnode *vp;
+	int error;
+
+	if (fp->f_type == DTYPE_VNODE) {
+		vp = fp->f_vnode;
+		vn_lock(vp, LK_SHARED | LK_RETRY);
+		if (VN_IS_DOOMED(vp))
+			error = EBADF;
+		else
+			error = VOP_GETATTR(vp, &va, td->td_ucred);
+		if (error == 0) {
+			cs->type = vp->v_type;
+			cs->dev = va.va_fsid;
+			cs->ino = va.va_fileid;
+			cs->iosize = vp->v_mount->mnt_stat.f_iosize;
+		}
+		VOP_UNLOCK(vp);
+		return (error);
+	}
+	error = fo_stat(fp, &sb, td->td_ucred);
+	if (error != 0)
+		return (error);
+	cs->type = S_ISDIR(sb.st_mode) ? VDIR : S_ISREG(sb.st_mode) ? VREG :
+	    VNON;
+	cs->dev = sb.st_dev;
+	cs->ino = sb.st_ino;
+	cs->iosize = (size_t)MAX(sb.st_blksize, 0);
+	return (0);
+}
+
+/*
+ * copy_file_range(2) with a side that is not a vnode file: a served
+ * (DTYPE_DQ) file, which answers through fo_read and fo_write.  The
+ * checks are vn_copy_range's and vn_copy_file_range's, in their order:
+ * overlapping ranges of one identity (st_dev, st_ino; a served file's is
+ * the presented one) are EINVAL, a directory is EISDIR, anything else
+ * that is not a regular file EINVAL, and COPY_FILE_RANGE_CLONE
+ * EOPNOTSUPP as vn_generic_copy_file_range answers it.  As that function
+ * does before its first read, the count is clipped at RLIMIT_FSIZE on the
+ * output; an output offset already at or past the limit is EFBIG with
+ * SIGXFSZ before anything is read.  The copy is that function's loop
+ * without hole detection: a read of at most one buffer at *inoffp, then a
+ * write of what it returned at *outoffp.  Zeros are written as data, so
+ * the copy makes no holes in the output, and the output is never
+ * truncated or extended past the last byte written.  A short read is the
+ * end of the input; a short write (a full file system, a supervisor's
+ * short count) ends the copy; a write that fails copies nothing of its
+ * buffer, as vn_write_outvp's failed block, so the offsets and the count
+ * cover the buffers written before it; a signal after some bytes were
+ * copied ends the copy with the count copied.  Unlike vn_copy_range, no
+ * range lock covers both files for the whole copy: each read and each
+ * write holds its own file's range lock (fileops.9).  Offsets and the
+ * count are written back whatever the result, as vn_copy_range writes
+ * them.
+ */
+int
+file_generic_copy_range(struct file *infp, off_t *inoffp, struct file *outfp,
+    off_t *outoffp, size_t *lenp, unsigned int flags, struct thread *td)
+{
+	struct cfr_side in, out;
+	struct timespec curts, endts;
+	struct uio auio;
+	struct iovec aiov;
+	char *dat;
+	off_t inoff, outoff;
+	size_t blksize, got, len, savlen, wrote, xfer;
+	ssize_t resid;
+	uint64_t uval;
+	int error, interrupted;
+
+	inoff = *inoffp;
+	outoff = *outoffp;
+	len = savlen = *lenp;
+	dat = NULL;
+
+	error = cfr_side(infp, &in, td);
+	if (error == 0)
+		error = cfr_side(outfp, &out, td);
+	if (error != 0)
+		goto out;
+	/* vn_copy_range: one file's byte ranges may not overlap. */
+	if (in.dev == out.dev && in.ino == out.ino &&
+	    ((inoff <= outoff && inoff + len > outoff) ||
+	    (inoff > outoff && outoff + len > inoff))) {
+		error = EINVAL;
+		goto out;
+	}
+	/* vn_copy_file_range's argument checks. */
+	if (in.type == VDIR || out.type == VDIR) {
+		error = EISDIR;
+		goto out;
+	}
+	if (inoff < 0 || outoff < 0 || in.type != VREG || out.type != VREG) {
+		error = EINVAL;
+		goto out;
+	}
+	/* Ensure offset + len does not wrap around. */
+	uval = inoff;
+	uval += len;
+	if (uval > INT64_MAX)
+		len = INT64_MAX - inoff;
+	uval = outoff;
+	uval += len;
+	if (uval > INT64_MAX)
+		len = INT64_MAX - outoff;
+	savlen = len;
+	if (len == 0)
+		goto out;
+	if ((flags & COPY_FILE_RANGE_CLONE) != 0) {
+		error = EOPNOTSUPP;
+		goto out;
+	}
+	/*
+	 * vn_generic_copy_file_range's vn_rlimit_fsizex, before the first
+	 * read: the count stops at the limit, so no buffer's write meets it;
+	 * an output offset at or past it is EFBIG and SIGXFSZ.
+	 * kern_copy_file_range clamped len to SSIZE_MAX.
+	 */
+	resid = (ssize_t)len;
+	error = rlimit_fsize_check(outoff, &resid, 0, true, td);
+	if (error != 0)
+		goto out;
+	len = savlen = (size_t)resid;
+
+	/* The larger I/O size of the two, clipped as the vnode copy clips. */
+	blksize = MAX(in.iosize, out.iosize);
+	if (blksize < 4096)
+		blksize = 4096;
+	else if (blksize > maxphys)
+		blksize = maxphys;
+	dat = malloc(blksize, M_TEMP, M_WAITOK);
+	if ((flags & COPY_FILE_RANGE_TIMEO1SEC) != 0) {
+		getnanouptime(&endts);
+		endts.tv_sec++;
+	} else
+		timespecclear(&endts);
+
+	interrupted = 0;
+	while (len > 0 && interrupted == 0) {
+		xfer = MIN(len, blksize);
+		aiov.iov_base = dat;
+		aiov.iov_len = xfer;
+		auio.uio_iov = &aiov;
+		auio.uio_iovcnt = 1;
+		auio.uio_offset = inoff;
+		auio.uio_resid = xfer;
+		auio.uio_segflg = UIO_SYSSPACE;
+		auio.uio_rw = UIO_READ;
+		auio.uio_td = td;
+		error = fo_read(infp, &auio, td->td_ucred, FOF_OFFSET, td);
+		if (error != 0)
+			break;
+		got = xfer - auio.uio_resid;
+		if (got == 0)
+			break;		/* the end of the input */
+
+		aiov.iov_base = dat;
+		aiov.iov_len = got;
+		auio.uio_iov = &aiov;
+		auio.uio_iovcnt = 1;
+		auio.uio_offset = outoff;
+		auio.uio_resid = got;
+		auio.uio_segflg = UIO_SYSSPACE;
+		auio.uio_rw = UIO_WRITE;
+		auio.uio_td = td;
+		if (outfp->f_type == DTYPE_VNODE)
+			bwillwrite();	/* as dofilewrite */
+		error = fo_write(outfp, &auio, td->td_ucred, FOF_OFFSET, td);
+		if (error != 0)
+			break;		/* vn_write_outvp: none of it counts */
+		wrote = got - auio.uio_resid;
+		inoff += wrote;
+		outoff += wrote;
+		len -= wrote;
+		if (wrote < got || got < xfer)
+			break;
+		interrupted = sig_intr();
+		if (timespecisset(&endts) && interrupted == 0) {
+			getnanouptime(&curts);
+			if (timespeccmp(&curts, &endts, >=))
+				interrupted = EINTR;
+		}
+	}
+out:
+	free(dat, M_TEMP);
+	*inoffp = inoff;
+	*outoffp = outoff;
+	*lenp = savlen - len;
 	return (error);
 }
 
